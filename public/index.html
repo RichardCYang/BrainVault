@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -7,7 +7,8 @@
     <title>BrainVault</title>
     <meta
       name="description"
-      content="BrainVault - 마크다운 블록 기반 노션 스타일 노트앱"
+      content="BrainVault - a Notion-style notes app built with Markdown blocks"
+      data-i18n-content="meta.description"
     />
     <link rel="stylesheet" href="/styles.css" />
     <script type="module" src="/app.js"></script>
@@ -16,72 +17,77 @@
     <div id="status" class="status" role="status" aria-live="polite"></div>
 
     <div class="shell">
-      <aside class="sidebar" aria-label="BrainVault 사이드바">
-        <div class="brand" aria-label="BrainVault 홈">
+      <aside class="sidebar" aria-label="BrainVault sidebar" data-i18n-aria-label="sidebar.aria">
+        <div class="brand" aria-label="BrainVault home" data-i18n-aria-label="sidebar.homeAria">
           <div class="brand-mark" aria-hidden="true">B</div>
           <div>
-            <p class="brand-eyebrow">Private workspace</p>
+            <p class="brand-eyebrow" data-i18n="brand.eyebrow">Private workspace</p>
             <h1>BrainVault</h1>
           </div>
+        </div>
+
+        <div class="language-switcher">
+          <label for="language-select" data-i18n="language.label">Language</label>
+          <select id="language-select" aria-label="Language" data-i18n-aria-label="language.label"></select>
         </div>
 
         <section id="auth-panel" class="auth-card" aria-labelledby="auth-title">
           <div class="auth-header">
             <p id="auth-kicker" class="auth-kicker">Welcome back</p>
-            <h2 id="auth-title">로그인</h2>
-            <p id="auth-description">노트 작성에 바로 집중할 수 있도록 아이디와 비밀번호만 입력하세요.</p>
+            <h2 id="auth-title">Log in</h2>
+            <p id="auth-description">Enter your ID and password so you can focus on writing notes.</p>
           </div>
 
           <form id="auth-form" class="auth-form">
             <div class="form-field">
-              <label for="username">아이디(ID)</label>
+              <label for="username" data-i18n="auth.username">ID</label>
               <input id="username" name="username" type="text" autocomplete="username" minlength="3" maxlength="40" pattern="[a-zA-Z0-9._-]+" required />
             </div>
             <div class="form-field">
-              <label for="password">비밀번호</label>
+              <label for="password" data-i18n="auth.password">Password</label>
               <input id="password" name="password" type="password" autocomplete="current-password" required />
             </div>
 
             <div id="register-fields" class="register-fields hidden">
               <div class="form-field">
-                <label for="name">이름 <span class="field-note">선택</span></label>
-                <input id="name" name="name" type="text" autocomplete="name" placeholder="Vault Keeper" />
+                <label for="name"><span data-i18n="auth.name">Name</span> <span class="field-note" data-i18n="auth.optional">Optional</span></label>
+                <input id="name" name="name" type="text" autocomplete="name" placeholder="Vault Keeper" data-i18n-placeholder="auth.namePlaceholder" />
               </div>
             </div>
 
             <div class="auth-actions">
-              <button id="auth-submit" type="submit" data-auth-mode="login">로그인</button>
+              <button id="auth-submit" type="submit" data-auth-mode="login">Log in</button>
             </div>
 
             <p class="auth-switch">
-              <span id="auth-switch-copy">회원이 아니신가요?</span>
-              <a id="auth-switch-link" href="#signup">회원가입</a>
+              <span id="auth-switch-copy">New to BrainVault?</span>
+              <a id="auth-switch-link" href="#signup">Sign up</a>
             </p>
           </form>
         </section>
 
-        <section id="workspace-panel" class="workspace-panel hidden" aria-label="워크스페이스 탐색">
+        <section id="workspace-panel" class="workspace-panel hidden" aria-label="Workspace navigation" data-i18n-aria-label="workspace.aria">
           <div class="user-row">
             <span id="user-label"></span>
-            <button id="logout-button" type="button" class="ghost">로그아웃</button>
+            <button id="logout-button" type="button" class="ghost" data-i18n="workspace.logout">Log out</button>
           </div>
 
           <form id="search-form" class="search-form" role="search">
-            <label class="visually-hidden" for="search-input">문서와 블록 검색</label>
-            <input id="search-input" type="search" placeholder="문서/블록 검색" />
-            <button type="submit" class="secondary" aria-label="검색" title="검색"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg></button>
+            <label class="visually-hidden" for="search-input" data-i18n="search.label">Search pages and blocks</label>
+            <input id="search-input" type="search" placeholder="Search pages/blocks" data-i18n-placeholder="search.placeholder" />
+            <button type="submit" class="secondary" aria-label="Search" title="Search" data-i18n-aria-label="search.button" data-i18n-title="search.button"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg></button>
           </form>
 
-          <nav class="sidebar-nav" aria-label="기본 컬렉션과 문서 목록">
+          <nav class="sidebar-nav" aria-label="Default collection and page list" data-i18n-aria-label="navigation.aria">
             <section class="nav-section default-collection" aria-labelledby="default-collection-heading">
               <div class="collection-title-row">
                 <button id="default-collection-button" type="button" class="collection-title-button active" aria-describedby="default-collection-description">
-                  <span class="collection-title-main" id="default-collection-heading">📁 기본 컬렉션</span>
+                  <span class="collection-title-main" id="default-collection-heading" data-i18n="collection.heading">📁 Default collection</span>
                   <span id="collection-count" class="count-pill">0</span>
                 </button>
-                <button id="add-document-button" type="button" class="sidebar-add-button" aria-label="기본 컬렉션에 새 문서 추가" title="새 문서 추가">+</button>
+                <button id="add-document-button" type="button" class="sidebar-add-button" aria-label="Add a new page to the default collection" title="Add new page" data-i18n-aria-label="collection.addAria" data-i18n-title="collection.addTitle">+</button>
               </div>
-              <p id="default-collection-description" class="collection-hint">+ 를 누르면 제목이 ‘새 문서’인 문서가 바로 만들어집니다.</p>
+              <p id="default-collection-description" class="collection-hint" data-i18n="collection.description">Press + to instantly create a page titled ‘Untitled’.</p>
               <div id="page-list" class="document-tree"></div>
             </section>
           </nav>
@@ -91,18 +97,16 @@
       <main class="main">
         <section id="welcome-view" class="workspace-home">
           <div class="workspace-home-header">
-            <p class="kicker">BrainVault workspace</p>
-            <h2>생각을 가볍게 기록하세요.</h2>
-            <p>
-              흩어진 아이디어와 해야 할 일을 한곳에 모으세요. 페이지를 만들고, 블록을 쌓고, 필요한 순간 빠르게 다시 찾을 수 있습니다.
-            </p>
-            <button id="home-new-page-button" type="button">새 페이지 만들기</button>
+            <p class="kicker" data-i18n="home.kicker">BrainVault workspace</p>
+            <h2 data-i18n="home.title">Capture your thoughts with ease.</h2>
+            <p data-i18n="home.description">Bring scattered ideas and tasks into one place. Create pages, stack blocks, and find what you need in moments.</p>
+            <button id="home-new-page-button" type="button" data-i18n="home.newPage">Create new page</button>
           </div>
 
           <div class="home-grid">
             <section class="card home-card" aria-labelledby="recent-documents-heading">
               <div class="section-title-row">
-                <h3 id="recent-documents-heading">최근 페이지</h3>
+                <h3 id="recent-documents-heading" data-i18n="home.recent">Recent pages</h3>
                 <span id="home-document-count" class="muted"></span>
               </div>
               <div id="home-document-list" class="home-list"></div>
@@ -110,8 +114,8 @@
 
             <section class="card home-card" aria-labelledby="home-guide-heading">
               <div class="section-title-row">
-                <h3 id="home-guide-heading">빠른 시작</h3>
-                <span class="muted">3 steps</span>
+                <h3 id="home-guide-heading" data-i18n="home.quickStart">Quick start</h3>
+                <span class="muted" data-i18n="home.steps">3 steps</span>
               </div>
               <div id="home-collection-list" class="home-list"></div>
             </section>
@@ -122,92 +126,92 @@
           <div class="page-toolbar">
             <div>
               <div id="page-kicker" class="kicker"></div>
-              <input id="page-title" class="page-title-input" type="text" aria-label="문서 제목" />
+              <input id="page-title" class="page-title-input" type="text" aria-label="Page title" data-i18n-aria-label="page.titleAria" />
             </div>
             <div class="button-row">
-              <button id="save-page-button" type="button" class="secondary">저장</button>
-              <button id="archive-page-button" type="button" class="danger">보관하기</button>
+              <button id="save-page-button" type="button" class="secondary" data-i18n="page.save">Save</button>
+              <button id="archive-page-button" type="button" class="danger" data-i18n="page.archive">Archive</button>
             </div>
           </div>
 
           <label class="tags-label">
-            <span class="property-label"><span aria-hidden="true">#</span> 태그</span>
-            <input id="page-tags" type="text" placeholder="태그를 쉼표로 구분해 입력" />
+            <span class="property-label"><span aria-hidden="true">#</span> <span data-i18n="page.tags">Tags</span></span>
+            <input id="page-tags" type="text" placeholder="Separate tags with commas" data-i18n-placeholder="page.tagsPlaceholder" />
           </label>
 
           <section class="document-editor" aria-labelledby="document-editor-heading">
             <div class="section-title-row block-editor-header">
               <div>
-                <h2 id="document-editor-heading">페이지 콘텐츠</h2>
-                <p class="block-editor-help"><kbd>Enter</kbd>로 새 블록 · <kbd>Shift</kbd> + <kbd>Enter</kbd>로 줄바꿈 · 빈 블록에서 <kbd>Backspace</kbd>로 삭제</p>
+                <h2 id="document-editor-heading" data-i18n="page.content">Page content</h2>
+                <p class="block-editor-help" data-i18n-html="page.editorHelp">Press <kbd>Enter</kbd> for a new block · <kbd>Shift</kbd> + <kbd>Enter</kbd> for a line break · <kbd>Backspace</kbd> on an empty block to delete it</p>
               </div>
               <span id="block-count" class="muted"></span>
             </div>
-            <div id="block-list" class="block-list block-row-editor" aria-label="통합 블록 문서 에디터"></div>
+            <div id="block-list" class="block-list block-row-editor" aria-label="Unified block document editor" data-i18n-aria-label="page.editorAria"></div>
           </section>
         </section>
       </main>
     </div>
 
-    <div id="slash-menu" class="slash-menu hidden" role="menu" aria-label="블록 타입 선택"></div>
-    <div id="block-context-menu" class="block-context-menu hidden" role="menu" aria-label="블록 작업">
+    <div id="slash-menu" class="slash-menu hidden" role="menu" aria-label="Choose block type" data-i18n-aria-label="menu.slashAria"></div>
+    <div id="block-context-menu" class="block-context-menu hidden" role="menu" aria-label="Block actions" data-i18n-aria-label="menu.blockAria">
       <div class="block-insert-group" role="group" aria-labelledby="block-insert-label">
-        <div id="block-insert-label" class="block-menu-section-label">블록 추가</div>
+        <div id="block-insert-label" class="block-menu-section-label" data-i18n="menu.addBlock">Add block</div>
         <button type="button" data-action="insert-block-before" role="menuitem">
           <span aria-hidden="true">↑</span>
-          <span>상단에 블록 추가</span>
+          <span data-i18n="menu.insertBefore">Add block above</span>
         </button>
         <button type="button" data-action="insert-block-after" role="menuitem">
           <span aria-hidden="true">↓</span>
-          <span>하단에 블록 추가</span>
+          <span data-i18n="menu.insertAfter">Add block below</span>
         </button>
         <div class="block-menu-separator" role="separator"></div>
       </div>
       <div id="callout-type-group" class="callout-type-group hidden" role="group" aria-labelledby="callout-type-label">
-        <div id="callout-type-label" class="block-menu-section-label">콜아웃 타입</div>
+        <div id="callout-type-label" class="block-menu-section-label" data-i18n="menu.calloutType">Callout type</div>
         <button type="button" data-action="change-callout-type" data-callout-type="idea" role="menuitemradio" aria-checked="false">
           <span aria-hidden="true">💡</span>
-          <span>아이디어</span>
+          <span data-i18n="callouts.idea">Idea</span>
         </button>
         <button type="button" data-action="change-callout-type" data-callout-type="info" role="menuitemradio" aria-checked="false">
           <span aria-hidden="true">ℹ️</span>
-          <span>정보</span>
+          <span data-i18n="callouts.info">Information</span>
         </button>
         <button type="button" data-action="change-callout-type" data-callout-type="success" role="menuitemradio" aria-checked="false">
           <span aria-hidden="true">✅</span>
-          <span>성공</span>
+          <span data-i18n="callouts.success">Success</span>
         </button>
         <button type="button" data-action="change-callout-type" data-callout-type="warning" role="menuitemradio" aria-checked="false">
           <span aria-hidden="true">⚠️</span>
-          <span>주의</span>
+          <span data-i18n="callouts.warning">Warning</span>
         </button>
         <button type="button" data-action="change-callout-type" data-callout-type="danger" role="menuitemradio" aria-checked="false">
           <span aria-hidden="true">⛔</span>
-          <span>위험</span>
+          <span data-i18n="callouts.danger">Danger</span>
         </button>
         <div class="block-menu-separator" role="separator"></div>
       </div>
       <button type="button" data-action="save-block" role="menuitem">
         <span aria-hidden="true">✓</span>
-        <span>블록 저장</span>
+        <span data-i18n="menu.saveBlock">Save block</span>
       </button>
       <button type="button" data-action="delete-block" class="danger-menu-item" role="menuitem">
         <span aria-hidden="true">⌫</span>
-        <span>블록 삭제</span>
+        <span data-i18n="menu.deleteBlock">Delete block</span>
       </button>
     </div>
-    <div id="inline-toolbar" class="inline-toolbar hidden" role="toolbar" aria-label="선택 텍스트 서식">
-      <button type="button" data-format="bold" aria-label="굵게" title="굵게">B</button>
-      <button type="button" data-format="italic" aria-label="이탤릭" title="이탤릭"><em>I</em></button>
-      <button type="button" data-format="strike" aria-label="취소선" title="취소선"><s>S</s></button>
-      <button type="button" data-format="code" aria-label="인라인 코드" title="인라인 코드">{ }</button>
-      <button type="button" data-format="link" aria-label="링크" title="링크">Link</button>
+    <div id="inline-toolbar" class="inline-toolbar hidden" role="toolbar" aria-label="Format selected text" data-i18n-aria-label="toolbar.aria">
+      <button type="button" data-format="bold" aria-label="Bold" title="Bold" data-i18n-aria-label="toolbar.bold" data-i18n-title="toolbar.bold">B</button>
+      <button type="button" data-format="italic" aria-label="Italic" title="Italic" data-i18n-aria-label="toolbar.italic" data-i18n-title="toolbar.italic"><em>I</em></button>
+      <button type="button" data-format="strike" aria-label="Strikethrough" title="Strikethrough" data-i18n-aria-label="toolbar.strike" data-i18n-title="toolbar.strike"><s>S</s></button>
+      <button type="button" data-format="code" aria-label="Inline code" title="Inline code" data-i18n-aria-label="toolbar.code" data-i18n-title="toolbar.code">{ }</button>
+      <button type="button" data-format="link" aria-label="Link" title="Link" data-i18n-aria-label="toolbar.link" data-i18n-title="toolbar.link">Link</button>
       <span class="toolbar-separator" aria-hidden="true"></span>
-      <button type="button" data-format="color" data-color="#26384a" aria-label="기본 글자색" title="기본 글자색"><span class="color-dot color-ink"></span></button>
-      <button type="button" data-format="color" data-color="#63a1f2" aria-label="하늘색 글자" title="하늘색 글자"><span class="color-dot color-sky"></span></button>
-      <button type="button" data-format="color" data-color="#2476b8" aria-label="파란색 글자" title="파란색 글자"><span class="color-dot color-blue"></span></button>
-      <button type="button" data-format="color" data-color="#d44c47" aria-label="빨간색 글자" title="빨간색 글자"><span class="color-dot color-red"></span></button>
-      <button type="button" data-format="color" data-color="#448361" aria-label="초록색 글자" title="초록색 글자"><span class="color-dot color-green"></span></button>
+      <button type="button" data-format="color" data-color="#26384a" aria-label="Default text color" title="Default text color" data-i18n-aria-label="toolbar.colorDefault" data-i18n-title="toolbar.colorDefault"><span class="color-dot color-ink"></span></button>
+      <button type="button" data-format="color" data-color="#63a1f2" aria-label="Sky blue text" title="Sky blue text" data-i18n-aria-label="toolbar.colorSky" data-i18n-title="toolbar.colorSky"><span class="color-dot color-sky"></span></button>
+      <button type="button" data-format="color" data-color="#2476b8" aria-label="Blue text" title="Blue text" data-i18n-aria-label="toolbar.colorBlue" data-i18n-title="toolbar.colorBlue"><span class="color-dot color-blue"></span></button>
+      <button type="button" data-format="color" data-color="#d44c47" aria-label="Red text" title="Red text" data-i18n-aria-label="toolbar.colorRed" data-i18n-title="toolbar.colorRed"><span class="color-dot color-red"></span></button>
+      <button type="button" data-format="color" data-color="#448361" aria-label="Green text" title="Green text" data-i18n-aria-label="toolbar.colorGreen" data-i18n-title="toolbar.colorGreen"><span class="color-dot color-green"></span></button>
     </div>
   </body>
 </html>

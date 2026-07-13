@@ -1,3 +1,14 @@
+import {
+  applyDocumentTranslations,
+  formatNumber,
+  getLanguage,
+  getLanguageLabel,
+  getLocale,
+  populateLanguageSelect,
+  setLanguage,
+  t
+} from "./i18n.js";
+
 const tokenKey = "brainvault.token";
 const rootParentKey = "__root__";
 
@@ -20,25 +31,25 @@ const state = {
 };
 
 const blockTypeLabels = {
-  MARKDOWN: "텍스트",
-  HEADING_1: "제목 1",
-  HEADING_2: "제목 2",
-  HEADING_3: "제목 3",
-  TODO: "할 일",
-  QUOTE: "인용",
-  CALLOUT: "콜아웃",
-  TABLE: "표",
-  CODE: "코드",
-  DIVIDER: "구분선",
-  IMAGE: "이미지"
+  MARKDOWN: "blocks.types.MARKDOWN",
+  HEADING_1: "blocks.types.HEADING_1",
+  HEADING_2: "blocks.types.HEADING_2",
+  HEADING_3: "blocks.types.HEADING_3",
+  TODO: "blocks.types.TODO",
+  QUOTE: "blocks.types.QUOTE",
+  CALLOUT: "blocks.types.CALLOUT",
+  TABLE: "blocks.types.TABLE",
+  CODE: "blocks.types.CODE",
+  DIVIDER: "blocks.types.DIVIDER",
+  IMAGE: "blocks.types.IMAGE"
 };
 
 const calloutTypePresets = [
-  { id: "idea", label: "아이디어", icon: "💡" },
-  { id: "info", label: "정보", icon: "ℹ️" },
-  { id: "success", label: "성공", icon: "✅" },
-  { id: "warning", label: "주의", icon: "⚠️" },
-  { id: "danger", label: "위험", icon: "⛔" }
+  { id: "idea", icon: "💡" },
+  { id: "info", icon: "ℹ️" },
+  { id: "success", icon: "✅" },
+  { id: "warning", icon: "⚠️" },
+  { id: "danger", icon: "⛔" }
 ];
 const calloutTypeIds = new Set(calloutTypePresets.map((item) => item.id));
 
@@ -81,17 +92,17 @@ function normalizeTableData(value) {
 }
 
 const slashCommands = [
-  { type: "MARKDOWN", command: "/text", icon: "text", label: "텍스트", hint: "일반 마크다운 블록", keywords: ["markdown", "text", "문단", "텍스트"] },
-  { type: "HEADING_1", command: "/h1", icon: "heading-1", label: "제목 1", hint: "가장 큰 제목", keywords: ["heading", "title", "제목", "h1"] },
-  { type: "HEADING_2", command: "/h2", icon: "heading-2", label: "제목 2", hint: "중간 제목", keywords: ["heading", "subtitle", "제목", "h2"] },
-  { type: "HEADING_3", command: "/h3", icon: "heading-3", label: "제목 3", hint: "작은 제목", keywords: ["heading", "제목", "h3"] },
-  { type: "TODO", command: "/todo", icon: "todo", label: "체크박스", hint: "할 일 블록", keywords: ["todo", "task", "check", "할일", "체크"] },
-  { type: "QUOTE", command: "/quote", icon: "quote", label: "인용", hint: "인용문 블록", keywords: ["quote", "인용"] },
-  { type: "CALLOUT", command: "/callout", icon: "callout", label: "콜아웃", hint: "강조 박스", keywords: ["callout", "notice", "콜아웃", "강조"] },
-  { type: "TABLE", command: "/table", icon: "table", label: "표", hint: "행과 열을 편집하는 간단한 표", keywords: ["table", "grid", "표", "테이블"] },
-  { type: "CODE", command: "/code", icon: "code", label: "코드", hint: "코드 블록", keywords: ["code", "코드"] },
-  { type: "DIVIDER", command: "/divider", icon: "divider", label: "구분선", hint: "가로 구분선", keywords: ["divider", "hr", "line", "구분선"] },
-  { type: "IMAGE", command: "/image", icon: "image", label: "이미지", hint: "이미지 URL 블록", keywords: ["image", "img", "사진", "이미지"] }
+  { type: "MARKDOWN", command: "/text", icon: "text" },
+  { type: "HEADING_1", command: "/h1", icon: "heading-1" },
+  { type: "HEADING_2", command: "/h2", icon: "heading-2" },
+  { type: "HEADING_3", command: "/h3", icon: "heading-3" },
+  { type: "TODO", command: "/todo", icon: "todo" },
+  { type: "QUOTE", command: "/quote", icon: "quote" },
+  { type: "CALLOUT", command: "/callout", icon: "callout" },
+  { type: "TABLE", command: "/table", icon: "table" },
+  { type: "CODE", command: "/code", icon: "code" },
+  { type: "DIVIDER", command: "/divider", icon: "divider" },
+  { type: "IMAGE", command: "/image", icon: "image" }
 ];
 
 const svgNamespace = "http://www.w3.org/2000/svg";
@@ -184,6 +195,7 @@ let blockOrderSaving = false;
 const $ = (selector) => document.querySelector(selector);
 
 const elements = {
+  languageSelect: $("#language-select"),
   authPanel: $("#auth-panel"),
   workspacePanel: $("#workspace-panel"),
   authForm: $("#auth-form"),
@@ -229,15 +241,15 @@ function setAuthMode(mode, updateHash = true) {
   state.authMode = mode === "register" ? "register" : "login";
   const isRegister = state.authMode === "register";
 
-  elements.authKicker.textContent = isRegister ? "Create account" : "Welcome back";
-  elements.authTitle.textContent = isRegister ? "회원가입" : "로그인";
+  elements.authKicker.textContent = t(isRegister ? "auth.registerKicker" : "auth.loginKicker");
+  elements.authTitle.textContent = t(isRegister ? "auth.registerTitle" : "auth.loginTitle");
   elements.authDescription.textContent = isRegister
-    ? "아이디와 비밀번호로 새 BrainVault 계정을 만드세요."
-    : "노트 작성에 바로 집중할 수 있도록 아이디와 비밀번호만 입력하세요.";
+    ? t("auth.registerDescription")
+    : t("auth.loginDescription");
   elements.authSubmit.dataset.authMode = state.authMode;
-  elements.authSubmit.textContent = isRegister ? "회원가입" : "로그인";
-  elements.authSwitchCopy.textContent = isRegister ? "이미 계정이 있으신가요?" : "회원이 아니신가요?";
-  elements.authSwitchLink.textContent = isRegister ? "로그인" : "회원가입";
+  elements.authSubmit.textContent = t(isRegister ? "auth.register" : "auth.login");
+  elements.authSwitchCopy.textContent = t(isRegister ? "auth.registerSwitch" : "auth.loginSwitch");
+  elements.authSwitchLink.textContent = t(isRegister ? "auth.login" : "auth.register");
   elements.authSwitchLink.href = isRegister ? "#login" : "#signup";
   elements.registerFields.classList.toggle("hidden", !isRegister);
   elements.password.autocomplete = isRegister ? "new-password" : "current-password";
@@ -268,7 +280,14 @@ function tagsFromInput(value) {
 
 function formatDate(value) {
   if (!value) return "";
-  return new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  return new Intl.DateTimeFormat(getLocale(), { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function translateApiError(data, status) {
+  const code = data?.error?.code;
+  if (code && t(`errors.${code}`) !== `errors.${code}`) return t(`errors.${code}`);
+  if (status >= 500) return t("errors.INTERNAL_SERVER_ERROR");
+  return data?.error?.message ?? data?.message ?? t("errors.unknown");
 }
 
 async function api(path, options = {}) {
@@ -281,11 +300,21 @@ async function api(path, options = {}) {
     body = JSON.stringify(body);
   }
 
-  const response = await fetch(path, { ...options, headers, body });
+  let response;
+  try {
+    response = await fetch(path, { ...options, headers, body });
+  } catch {
+    throw new Error(t("errors.network"));
+  }
   if (response.status === 204) return null;
 
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(t("errors.invalidResponse"));
+  }
 
   if (!response.ok) {
     if (response.status === 401) {
@@ -293,7 +322,7 @@ async function api(path, options = {}) {
       state.user = null;
       renderShell();
     }
-    throw new Error(data?.error?.message ?? data?.message ?? `HTTP ${response.status}`);
+    throw new Error(translateApiError(data, response.status));
   }
 
   return data;
@@ -350,7 +379,7 @@ function getCollections() {
 
   return [...counts.entries()]
     .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => a.name.localeCompare(b.name, "ko"));
+    .sort((a, b) => a.name.localeCompare(b.name, getLocale()));
 }
 
 function makeCountBadge(text) {
@@ -415,8 +444,8 @@ function renderDocumentTree() {
 
   if (!state.pages.length) {
     const message = state.searchQuery || state.activeTag
-      ? "조건에 맞는 문서가 없습니다. 검색어를 바꿔보세요."
-      : "아직 문서가 없습니다. 기본 컬렉션의 +를 눌러 시작하세요.";
+      ? t("empty.noSearchResults")
+      : t("empty.noDocumentsSidebar");
     elements.pageList.append(makeEmptyMessage(message));
     return;
   }
@@ -460,12 +489,12 @@ function makeHomeGuideRow(titleText, metaText) {
 }
 
 function renderHome() {
-  elements.homeDocumentCount.textContent = `${state.allPages.length}개`;
+  elements.homeDocumentCount.textContent = t("counts.documents", { count: formatNumber(state.allPages.length) });
   elements.homeDocumentList.replaceChildren();
   elements.homeCollectionList.replaceChildren();
 
   if (!state.allPages.length) {
-    elements.homeDocumentList.append(makeEmptyMessage("아직 문서가 없습니다. 왼쪽 기본 컬렉션의 +를 눌러 시작하세요."));
+    elements.homeDocumentList.append(makeEmptyMessage(t("empty.noDocumentsHome")));
   } else {
     for (const page of sortByRecent(state.allPages).slice(0, 8)) {
       elements.homeDocumentList.append(makeHomeDocumentButton(page));
@@ -473,9 +502,9 @@ function renderHome() {
   }
 
   elements.homeCollectionList.append(
-    makeHomeGuideRow("1. 새 페이지 만들기", "사이드바의 + 또는 상단 버튼으로 바로 시작하세요."),
-    makeHomeGuideRow("2. 제목과 태그 정리", "페이지의 맥락을 한눈에 알아볼 수 있게 정리하세요."),
-    makeHomeGuideRow("3. / 로 블록 선택", "텍스트, 제목, 할 일, 표, 코드 블록을 빠르게 추가하세요.")
+    makeHomeGuideRow(t("home.guide1Title"), t("home.guide1Description")),
+    makeHomeGuideRow(t("home.guide2Title"), t("home.guide2Description")),
+    makeHomeGuideRow(t("home.guide3Title"), t("home.guide3Description"))
   );
 }
 
@@ -499,7 +528,12 @@ function flattenBlocks(blocks) {
 }
 
 function getBlockTypeLabel(type) {
-  return blockTypeLabels[type] ?? type;
+  return blockTypeLabels[type] ? t(blockTypeLabels[type]) : type;
+}
+
+function getCalloutTypeLabel(type) {
+  const normalized = normalizeCalloutType(type);
+  return t(`callouts.${normalized}`);
 }
 
 function normalizeCalloutType(value) {
@@ -574,7 +608,7 @@ function createTableEditor(row, tableValue) {
 
   const toolbar = document.createElement("div");
   toolbar.className = "table-block-toolbar";
-  toolbar.setAttribute("aria-label", "표 편집 도구");
+  toolbar.setAttribute("aria-label", t("table.toolbarAria"));
 
   const size = document.createElement("span");
   size.className = "table-size-label";
@@ -582,14 +616,18 @@ function createTableEditor(row, tableValue) {
 
   toolbar.append(
     size,
-    makeTableActionButton("table-toggle-header-row", "첫 행", "첫 행을 머리글로 사용", {
+    makeTableActionButton("table-toggle-header-row", t("table.firstRow"), t("table.firstRowTitle"), {
       pressed: tableData.headerRow
     }),
-    makeTableActionButton("table-toggle-header-column", "첫 열", "첫 열을 머리글로 사용", {
+    makeTableActionButton("table-toggle-header-column", t("table.firstColumn"), t("table.firstColumnTitle"), {
       pressed: tableData.headerColumn
     }),
-    makeTableActionButton("table-delete-row", "− 행", "선택한 행 삭제", { disabled: rowCount <= 1 }),
-    makeTableActionButton("table-delete-column", "− 열", "선택한 열 삭제", { disabled: columnCount <= 1 })
+    makeTableActionButton("table-delete-row", t("table.deleteRow"), t("table.deleteRowTitle"), {
+      disabled: rowCount <= 1
+    }),
+    makeTableActionButton("table-delete-column", t("table.deleteColumn"), t("table.deleteColumnTitle"), {
+      disabled: columnCount <= 1
+    })
   );
 
   const scroller = document.createElement("div");
@@ -599,7 +637,7 @@ function createTableEditor(row, tableValue) {
   const table = document.createElement("table");
   table.className = "table-block-grid";
   table.setAttribute("role", "grid");
-  table.setAttribute("aria-label", "편집 가능한 표");
+  table.setAttribute("aria-label", t("table.editableAria"));
   table.setAttribute("aria-rowcount", String(rowCount));
   table.setAttribute("aria-colcount", String(columnCount));
 
@@ -626,7 +664,10 @@ function createTableEditor(row, tableValue) {
       input.dataset.tableColumn = String(columnIndex);
       input.autocomplete = "off";
       input.spellcheck = true;
-      input.setAttribute("aria-label", `${rowIndex + 1}행 ${columnIndex + 1}열`);
+      input.setAttribute(
+        "aria-label",
+        t("table.cellAria", { row: formatNumber(rowIndex + 1), column: formatNumber(columnIndex + 1) })
+      );
       cell.append(input);
       tr.append(cell);
     });
@@ -642,12 +683,12 @@ function createTableEditor(row, tableValue) {
   const addColumnButton = makeTableActionButton(
     "table-add-column",
     "＋",
-    "표 맨 오른쪽에 열 추가",
+    t("table.addColumn"),
     { disabled: columnCount >= tableLimits.columns }
   );
   addColumnButton.classList.add("table-edge-add", "table-edge-add-column");
 
-  const addRowButton = makeTableActionButton("table-add-row", "＋", "표 맨 아래에 행 추가", {
+  const addRowButton = makeTableActionButton("table-add-row", "＋", t("table.addRow"), {
     disabled: rowCount >= tableLimits.rows
   });
   addRowButton.classList.add("table-edge-add", "table-edge-add-row");
@@ -676,9 +717,9 @@ function createTextBlockEditor(block) {
   textarea.className = "block-row-input";
   textarea.rows = 1;
   textarea.spellcheck = true;
-  textarea.placeholder = block.type === "DIVIDER" ? "구분선 블록" : "내용을 입력하거나 '/'로 블록 타입을 선택하세요";
+  textarea.placeholder = block.type === "DIVIDER" ? t("block.dividerPlaceholder") : t("block.contentPlaceholder");
   textarea.value = block.markdown ?? "";
-  textarea.setAttribute("aria-label", `${getBlockTypeLabel(block.type)} 블록 내용`);
+  textarea.setAttribute("aria-label", t("block.contentAria", { type: getBlockTypeLabel(block.type) }));
   requestAnimationFrame(() => autoGrowTextarea(textarea));
   return textarea;
 }
@@ -705,8 +746,8 @@ function renderBlock(block) {
   const handle = document.createElement("button");
   handle.type = "button";
   handle.className = "block-handle";
-  handle.title = "드래그하여 순서 변경 · 클릭하여 블록 메뉴";
-  handle.setAttribute("aria-label", "블록 순서 변경 핸들 및 블록 메뉴");
+  handle.title = t("block.handleTitle");
+  handle.setAttribute("aria-label", t("block.handleAria"));
   handle.setAttribute("aria-grabbed", "false");
   handle.setAttribute("aria-haspopup", "menu");
   handle.setAttribute("aria-expanded", "false");
@@ -728,7 +769,9 @@ function renderBlock(block) {
 
   const meta = document.createElement("span");
   meta.className = "block-row-meta";
-  meta.textContent = `블록 · ${formatDate(block.updatedAt)}`;
+  meta.textContent = t("block.meta", { date: formatDate(block.updatedAt) });
+  meta.dataset.savingLabel = t("block.saving");
+  meta.dataset.savedLabel = t("block.saved");
   topLine.append(typeButton, meta);
 
   const todoLabel = document.createElement("label");
@@ -738,7 +781,7 @@ function renderBlock(block) {
   checked.type = "checkbox";
   checked.name = "checked";
   checked.checked = Boolean(block.checked);
-  todoLabel.append(checked, document.createTextNode("완료"));
+  todoLabel.append(checked, document.createTextNode(t("block.completed")));
 
   const editorHost = document.createElement("div");
   editorHost.className = "block-editor-host";
@@ -937,7 +980,7 @@ async function changeCalloutType(row, type) {
     row.classList.add("is-saved");
     window.setTimeout(() => row.classList.remove("is-saved"), 900);
     closeBlockContextMenu({ restoreFocus: true });
-    setStatus(`콜아웃 타입을 ${calloutTypePresets.find((item) => item.id === nextType)?.label ?? "변경"}으로 변경했습니다.`);
+    setStatus(t("status.calloutChanged", { type: getCalloutTypeLabel(nextType) }));
   } catch (error) {
     setRowCalloutType(row, previousType);
     syncCalloutTypeMenu(row);
@@ -1114,7 +1157,7 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
 
   blockOrderSaving = true;
   renderSelectedPage();
-  setStatus("블록 순서를 저장하는 중입니다...");
+  setStatus(t("status.savingBlockOrder"));
 
   try {
     await api(`/api/pages/${state.selectedPage.id}/blocks/reorder`, {
@@ -1127,7 +1170,7 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
         }))
       }
     });
-    setStatus("블록 순서를 변경했습니다.");
+    setStatus(t("status.blockOrderChanged"));
   } catch (error) {
     reorderBlockSiblingsInState(drag.parentBlockId, previousIds);
     renderSelectedPage();
@@ -1294,7 +1337,7 @@ async function saveBlockRow(row, { quiet = false } = {}) {
     row.classList.remove("is-saving");
     row.classList.add("is-saved");
     window.setTimeout(() => row.classList.remove("is-saved"), 900);
-    if (!quiet) setStatus("블록을 저장했습니다.");
+    if (!quiet) setStatus(t("status.blockSaved"));
   } catch (error) {
     row.classList.remove("is-saving");
     setStatus(error.message, true);
@@ -1477,13 +1520,13 @@ function applyInlineFormat(format, value = "") {
   const row = getBlockRow(textarea);
   if (row) scheduleBlockSave(row);
   closeInlineToolbar();
-  setStatus("선택한 텍스트 서식을 적용했습니다.");
+  setStatus(t("status.formatApplied"));
 }
 
 function getSlashContext(textarea) {
   const position = textarea.selectionStart ?? textarea.value.length;
   const before = textarea.value.slice(0, position);
-  const match = before.match(/(^|\n)\/([a-zA-Z0-9가-힣_-]*)$/);
+  const match = before.match(/(^|\n)\/([\p{L}\p{N}_-]*)$/u);
   if (!match) return null;
 
   return {
@@ -1496,7 +1539,15 @@ function getSlashContext(textarea) {
 function getFilteredSlashCommands(query = "") {
   if (!query) return slashCommands;
   return slashCommands.filter((item) => {
-    const haystack = [item.command, item.label, item.hint, ...item.keywords].join(" ").toLowerCase();
+    const haystack = [
+      item.command,
+      item.type,
+      t(`slash.${item.type}.label`),
+      t(`slash.${item.type}.hint`),
+      t(`slash.${item.type}.keywords`)
+    ]
+      .join(" ")
+      .toLowerCase();
     return haystack.includes(query);
   });
 }
@@ -1526,7 +1577,7 @@ function renderSlashMenu(row, query = "") {
   if (!commands.length) {
     const empty = document.createElement("div");
     empty.className = "slash-menu-empty";
-    empty.textContent = "일치하는 블록 타입이 없습니다.";
+    empty.textContent = t("empty.noSlashResults");
     elements.slashMenu.append(empty);
   }
 
@@ -1541,14 +1592,14 @@ function renderSlashMenu(row, query = "") {
     const icon = createSlashCommandIcon(item.icon);
 
     const label = document.createElement("strong");
-    label.textContent = item.label;
+    label.textContent = t(`slash.${item.type}.label`);
 
     const command = document.createElement("code");
     command.textContent = item.command;
 
     const hint = document.createElement("span");
     hint.className = "slash-menu-hint";
-    hint.textContent = item.hint;
+    hint.textContent = t(`slash.${item.type}.hint`);
 
     button.append(icon, label, command, hint);
     elements.slashMenu.append(button);
@@ -1622,7 +1673,7 @@ async function insertBlockRelative(referenceRow, placement = "after") {
   const parentBlockId = normalizeParentBlockId(referenceRow.dataset.parentBlockId);
   const siblingIds = getBlockSiblings(parentBlockId).map((block) => block.id);
   const referenceIndex = siblingIds.indexOf(referenceRow.dataset.blockId);
-  if (referenceIndex < 0) throw new Error("현재 블록의 순서를 찾을 수 없습니다.");
+  if (referenceIndex < 0) throw new Error(t("errors.currentBlockOrder"));
 
   const insertionIndex = placement === "before" ? referenceIndex : referenceIndex + 1;
   const data = await createEmptyBlock(state.selectedPage.id, { parentBlockId, sortOrder: insertionIndex });
@@ -1632,7 +1683,11 @@ async function insertBlockRelative(referenceRow, placement = "after") {
 
   state.pendingFocusBlockId = data.block.id;
   await openPage(state.selectedPage.id);
-  setStatus(`${placement === "before" ? "상단" : "하단"}에 새 블록을 만들었습니다. '/'를 입력해 타입을 선택하세요.`);
+  setStatus(
+    t("status.blockInserted", {
+      position: t(placement === "before" ? "position.top" : "position.bottom")
+    })
+  );
 }
 
 async function appendBlock(afterRow = null) {
@@ -1645,7 +1700,7 @@ async function appendBlock(afterRow = null) {
 
   state.pendingFocusBlockId = data.block.id;
   await openPage(state.selectedPage.id);
-  setStatus("새 블록을 만들었습니다. '/'를 입력해 타입을 선택하세요.");
+  setStatus(t("status.blockAppended"));
 }
 
 async function deleteEmptyBlock(row) {
@@ -1684,7 +1739,7 @@ async function deleteEmptyBlock(row) {
 
   state.pendingFocusBlockId = focusBlockId;
   await openPage(state.selectedPage.id);
-  setStatus("빈 블록을 삭제했습니다.");
+  setStatus(t("status.emptyBlockDeleted"));
 }
 
 function focusPendingBlock() {
@@ -1713,11 +1768,11 @@ function renderSelectedPage() {
   elements.pageKicker.textContent = `${page.icon ?? "📄"} ${formatDate(page.updatedAt)}`;
   elements.pageTitle.value = page.title;
   elements.pageTags.value = page.tags?.map((tag) => tag.name).join(", ") ?? "";
-  elements.blockCount.textContent = `${flatBlocks.length}개`;
+  elements.blockCount.textContent = t("counts.blocks", { count: formatNumber(flatBlocks.length) });
 
   elements.blockList.replaceChildren();
   if (!flatBlocks.length) {
-    const empty = makeEmptyMessage("편집할 첫 블록을 준비하고 있습니다.");
+    const empty = makeEmptyMessage(t("empty.preparingBlock"));
     empty.classList.add("block-empty-message");
     elements.blockList.append(empty);
   } else {
@@ -1730,7 +1785,7 @@ function renderSelectedPage() {
 
 function normalizePageTitle(value) {
   const title = value.trim();
-  return title || "새 문서";
+  return title || t("newDocumentTitle");
 }
 
 function applyPageSummaryUpdate(pageId, updates) {
@@ -1757,7 +1812,7 @@ async function savePageTitleNow({ quiet = true } = {}) {
     const data = await api(`/api/pages/${state.selectedPage.id}`, { method: "PATCH", body: { title } });
     state.selectedPage = data.page;
     applyPageSummaryUpdate(data.page.id, { title: data.page.title, updatedAt: data.page.updatedAt });
-    if (!quiet) setStatus("문서 제목을 저장했습니다.");
+    if (!quiet) setStatus(t("status.pageTitleSaved"));
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -1772,7 +1827,7 @@ function schedulePageTitleSave() {
 }
 
 async function createUntitledPage() {
-  setStatus("기본 컬렉션에 새 문서를 만드는 중입니다...");
+  setStatus(t("status.creatingDocument"));
   elements.searchInput.value = "";
   state.searchQuery = "";
   state.activeTag = "";
@@ -1780,7 +1835,7 @@ async function createUntitledPage() {
   const data = await api("/api/pages", {
     method: "POST",
     body: {
-      title: "새 문서",
+      title: t("newDocumentTitle"),
       icon: "📄"
     }
   });
@@ -1791,7 +1846,7 @@ async function createUntitledPage() {
     elements.pageTitle.focus();
     elements.pageTitle.select();
   });
-  setStatus("새 문서를 만들었습니다. 제목을 바로 수정하세요.");
+  setStatus(t("status.documentCreated"));
 }
 
 
@@ -1827,7 +1882,7 @@ async function loadPages(query = state.searchQuery, tag = state.activeTag) {
 }
 
 async function openPage(pageId) {
-  setStatus("문서를 불러오는 중입니다...");
+  setStatus(t("status.loadingDocument"));
   let data = await api(`/api/pages/${pageId}`);
 
   if (!flattenBlocks(data.page.blocks).length) {
@@ -1838,35 +1893,58 @@ async function openPage(pageId) {
 
   state.selectedPage = data.page;
   renderSelectedPage();
-  setStatus("문서를 열었습니다.");
+  setStatus(t("status.documentOpened"));
 }
 
 async function boot() {
+  applyDocumentTranslations();
+  populateLanguageSelect(elements.languageSelect);
   setAuthMode(state.authMode, false);
 
   try {
     await loadMe();
     renderShell();
     if (state.user) await loadPages();
-    setStatus(state.user ? "준비되었습니다." : "로그인하거나 회원가입해서 시작하세요.");
+    setStatus(state.user ? t("status.ready") : t("status.getStarted"));
   } catch (error) {
     setToken(null);
     state.user = null;
     renderShell();
-    setStatus("로그인이 필요합니다.");
+    setStatus(t("status.loginRequired"));
   }
 }
 
 elements.authSwitchLink.addEventListener("click", (event) => {
   event.preventDefault();
   setAuthMode(state.authMode === "register" ? "login" : "register");
-  setStatus(state.authMode === "register" ? "회원가입 정보를 입력하세요." : "아이디와 비밀번호로 로그인하세요.");
+  setStatus(t(state.authMode === "register" ? "status.registerPrompt" : "status.loginPrompt"));
   elements.username.focus();
 });
 
 window.addEventListener("hashchange", () => {
   setAuthMode(window.location.hash === "#signup" ? "register" : "login", false);
 });
+
+function refreshLocalizedUi() {
+  applyDocumentTranslations();
+  elements.languageSelect.value = getLanguage();
+  setAuthMode(state.authMode, false);
+  renderPages();
+  renderSelectedPage();
+
+  if (!elements.slashMenu.classList.contains("hidden") && state.activeSlashBlockId) {
+    const row = elements.blockList.querySelector(`[data-block-id="${state.activeSlashBlockId}"]`);
+    const textarea = getBlockTextarea(row);
+    if (row) renderSlashMenu(row, textarea ? getSlashContext(textarea)?.query ?? "" : "");
+  }
+}
+
+elements.languageSelect.addEventListener("change", () => {
+  const language = setLanguage(elements.languageSelect.value);
+  setStatus(t("status.languageChanged", { language: getLanguageLabel(language) }));
+});
+
+window.addEventListener("brainvault:languagechange", refreshLocalizedUi);
 
 elements.authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1878,13 +1956,13 @@ elements.authForm.addEventListener("submit", async (event) => {
   if (mode === "register" && elements.name.value.trim()) body.name = elements.name.value.trim();
 
   try {
-    setStatus(mode === "login" ? "로그인 중입니다..." : "회원가입 중입니다...");
+    setStatus(t(mode === "login" ? "status.loggingIn" : "status.registering"));
     const data = await api(`/api/auth/${mode}`, { method: "POST", body });
     setToken(data.token);
     state.user = data.user;
     renderShell();
     await loadPages();
-    setStatus(`${state.user.username} ID로 시작합니다.`);
+    setStatus(t("status.loggedInAs", { username: state.user.username }));
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -1901,7 +1979,7 @@ elements.logoutButton.addEventListener("click", () => {
   renderShell();
   renderPages();
   renderSelectedPage();
-  setStatus("로그아웃했습니다.");
+  setStatus(t("status.loggedOut"));
 });
 
 
@@ -1918,7 +1996,7 @@ elements.searchForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
     await loadPages(elements.searchInput.value.trim(), state.activeTag);
-    setStatus("검색 결과를 불러왔습니다.");
+    setStatus(t("status.searchLoaded"));
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -1930,7 +2008,7 @@ elements.defaultCollectionButton.addEventListener("click", async () => {
     state.selectedPage = null;
     await loadPages("", "");
     renderSelectedPage();
-    setStatus("기본 컬렉션을 열었습니다.");
+    setStatus(t("status.collectionOpened"));
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -1972,7 +2050,7 @@ elements.pageTitle.addEventListener("input", () => {
 
 elements.pageTitle.addEventListener("blur", () => {
   if (!state.selectedPage) return;
-  if (!elements.pageTitle.value.trim()) elements.pageTitle.value = "새 문서";
+  if (!elements.pageTitle.value.trim()) elements.pageTitle.value = t("newDocumentTitle");
   savePageTitleNow().catch((error) => setStatus(error.message, true));
 });
 
@@ -1989,7 +2067,7 @@ elements.savePageButton.addEventListener("click", async () => {
     state.selectedPage = data.page;
     await loadPages(elements.searchInput.value.trim(), state.activeTag);
     renderSelectedPage();
-    setStatus("페이지를 저장했습니다.");
+    setStatus(t("status.pageSaved"));
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -1997,14 +2075,14 @@ elements.savePageButton.addEventListener("click", async () => {
 
 elements.archivePageButton.addEventListener("click", async () => {
   if (!state.selectedPage) return;
-  const ok = window.confirm("이 문서를 보관할까요? 목록에서 숨겨집니다.");
+  const ok = window.confirm(t("confirm.archivePage"));
   if (!ok) return;
   try {
     await api(`/api/pages/${state.selectedPage.id}`, { method: "PATCH", body: { isArchived: true } });
     state.selectedPage = null;
     await loadPages(elements.searchInput.value.trim(), state.activeTag);
     renderSelectedPage();
-    setStatus("문서를 보관했습니다.");
+    setStatus(t("status.pageArchived"));
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -2274,12 +2352,12 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
     }
 
     if (button.dataset.action === "delete-block") {
-      const ok = window.confirm("이 블록을 삭제할까요?");
+      const ok = window.confirm(t("confirm.deleteBlock"));
       if (!ok) return;
       closeBlockContextMenu();
       await api(`/api/blocks/${blockId}`, { method: "DELETE" });
       await openPage(state.selectedPage.id);
-      setStatus("블록을 삭제했습니다.");
+      setStatus(t("status.blockDeleted"));
     }
   } catch (error) {
     setStatus(error.message, true);

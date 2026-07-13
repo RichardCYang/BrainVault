@@ -13,22 +13,22 @@ describe("BrainVault web shell and health endpoint", () => {
 
     expect(response.headers["content-type"]).toContain("text/html");
     expect(response.text).toContain("BrainVault");
-    expect(response.text).toContain("아이디(ID)");
+    expect(response.text).toContain('data-i18n="auth.username"');
     expect(response.text).toContain('name="username" type="text" autocomplete="username"');
     expect(response.text).toContain('id="auth-submit" type="submit" data-auth-mode="login"');
-    expect(response.text).toContain("회원이 아니신가요?");
+    expect(response.text).toContain("New to BrainVault?");
     expect(response.text).toContain('id="auth-switch-link" href="#signup"');
     expect(response.text).toContain('id="default-collection-button"');
     expect(response.text).toContain('id="add-document-button"');
     expect(response.text).toContain('id="page-list" class="document-tree"');
-    expect(response.text).toContain("기본 컬렉션");
-    expect(response.text).toContain("새 문서");
+    expect(response.text).toContain('data-i18n="collection.heading"');
+    expect(response.text).toContain("Untitled");
     expect(response.text).not.toContain('id="new-page-parent"');
     expect(response.text).not.toContain('id="new-page-title"');
     expect(response.text).toContain('class="document-editor"');
     expect(response.text).toContain('id="document-editor-heading"');
     expect(response.text).toContain('id="block-list" class="block-list block-row-editor"');
-    expect(response.text).toContain('aria-label="통합 블록 문서 에디터"');
+    expect(response.text).toContain('data-i18n-aria-label="page.editorAria"');
     expect(response.text).not.toContain('id="append-block-button"');
     expect(response.text).not.toContain('id="render-preview"');
     expect(response.text).not.toContain('id="refresh-preview-button"');
@@ -39,21 +39,23 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(response.text).toContain('data-action="change-callout-type" data-callout-type="idea" role="menuitemradio"');
     expect(response.text).toContain('data-action="change-callout-type" data-callout-type="danger" role="menuitemradio"');
     expect(response.text).toContain('data-action="insert-block-before" role="menuitem"');
-    expect(response.text).toContain('상단에 블록 추가');
+    expect(response.text).toContain('data-i18n="menu.insertBefore"');
     expect(response.text).toContain('data-action="insert-block-after" role="menuitem"');
-    expect(response.text).toContain('하단에 블록 추가');
+    expect(response.text).toContain('data-i18n="menu.insertAfter"');
     expect(response.text).toContain('data-action="save-block" role="menuitem"');
     expect(response.text).toContain('data-action="delete-block" class="danger-menu-item" role="menuitem"');
     expect(response.text).toContain('id="inline-toolbar" class="inline-toolbar hidden"');
     expect(response.text).toContain('data-format="bold"');
     expect(response.text).toContain('data-format="color" data-color="#63a1f2"');
-    expect(response.text).toContain("Enter</kbd>로 새 블록");
-    expect(response.text).toContain("Backspace</kbd>로 삭제");
+    expect(response.text).toContain('data-i18n-html="page.editorHelp"');
+    expect(response.text).toContain("Press <kbd>Enter</kbd> for a new block");
     expect(response.text).not.toContain('id="new-block-form"');
     expect(response.text).not.toContain('type="email"');
     expect(response.text).not.toContain('data-auth-mode="register" class="secondary"');
     expect(response.text).not.toContain("회원가입 옵션");
     expect(response.text).toContain("/app.js");
+    expect(response.text).toContain('id="language-select"');
+    expect(response.text).toContain('data-i18n="language.label"');
   });
 
 
@@ -155,7 +157,7 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(response.text).toContain("setPointerCapture");
     expect(response.text).toContain('addEventListener("pointerdown"');
     expect(response.text).toContain("/blocks/reorder");
-    expect(response.text).toContain("블록 순서를 변경했습니다.");
+    expect(response.text).toContain('t("status.blockOrderChanged")');
     expect(response.text).toContain("openBlockContextMenu");
     expect(response.text).toContain('handle.dataset.action = "open-block-menu"');
     expect(response.text).toContain("calloutTypePresets");
@@ -163,8 +165,8 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(response.text).toContain("createTableEditor");
     expect(response.text).toContain('addColumnButton.classList.add("table-edge-add", "table-edge-add-column")');
     expect(response.text).toContain('addRowButton.classList.add("table-edge-add", "table-edge-add-row")');
-    expect(response.text).toContain('"표 맨 오른쪽에 열 추가"');
-    expect(response.text).toContain('"표 맨 아래에 행 추가"');
+    expect(response.text).toContain('t("table.addColumn")');
+    expect(response.text).toContain('t("table.addRow")');
     expect(response.text).not.toContain('makeTableActionButton("table-add-row", "+ 행"');
     expect(response.text).not.toContain('makeTableActionButton("table-add-column", "+ 열"');
     expect(response.text).toContain("handleTableAction");
@@ -176,6 +178,24 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(response.text).toContain('body: { metadata }');
     expect(response.text).toContain("closeBlockContextMenu");
     expect(response.text).not.toContain("state.user.email");
+    expect(response.text).toContain('from "./i18n.js"');
+  });
+
+  it("serves the browser i18n catalog", async () => {
+    const response = await request(createApp()).get("/i18n.js").expect(200);
+
+    expect(response.headers["content-type"]).toContain("javascript");
+    expect(response.text).toContain("brainvault.language");
+    expect(response.text).toContain("navigator?.languages");
+    expect(response.text).toContain('code: "en"');
+    expect(response.text).toContain('code: "ja"');
+    expect(response.text).toContain('code: "ko"');
+    expect(response.text).toContain('code: "fr"');
+    expect(response.text).toContain('code: "de"');
+    expect(response.text).toContain('code: "es"');
+    expect(response.text).toContain('code: "pt"');
+    expect(response.text).toContain("detectBrowserLanguage");
+    expect(response.text).toContain("applyDocumentTranslations");
   });
 
 

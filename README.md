@@ -12,6 +12,7 @@ Writing happens directly on the page. There is no separate preview pane: every r
 - Inline formatting for bold, italic, strikethrough, code, links, and text color
 - Editable table blocks with row, column, header, and keyboard navigation controls
 - Search across page titles and block content
+- Browser-language detection and an in-app language switcher for English, Japanese, Korean, French, German, Spanish, and Portuguese
 - Tags, page nesting, archiving, and permanent deletion
 - Username-and-password authentication backed by JWT
 - Sanitized Markdown rendering through `markdown-it` and `sanitize-html`
@@ -141,6 +142,22 @@ Useful slash commands include:
 ```
 
 Table cells support arrow-key movement. `Enter` advances down the current column, while `Tab` from the final cell adds another row.
+
+## Languages
+
+The browser interface supports:
+
+- English (`en`)
+- Japanese (`ja`)
+- Korean (`ko`)
+- French (`fr`)
+- German (`de`)
+- Spanish (`es`)
+- Portuguese (`pt`)
+
+On the first visit, BrainVault checks `navigator.languages` and selects the first supported browser language, falling back to English when no match is available. A language chosen from the sidebar selector is saved in `localStorage` under `brainvault.language` and reused on later visits.
+
+Translations live in `public/i18n.js`. Static HTML uses `data-i18n*` attributes, while dynamic interface messages use the `t()` helper from the same module.
 
 ## Available scripts
 

@@ -246,6 +246,36 @@ select:focus-visible {
   padding: 0;
 }
 
+.language-switcher {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.18rem 0.45rem 0.58rem;
+}
+
+.language-switcher label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.language-switcher select {
+  min-width: 0;
+  padding: 0.4rem 1.8rem 0.4rem 0.58rem;
+  border-color: rgba(64, 137, 194, 0.2);
+  background-color: rgba(255, 255, 255, 0.72);
+  font-size: 0.78rem;
+}
+
+.auth-mode .language-switcher {
+  width: min(100%, 16rem);
+  margin: -0.35rem auto 0;
+  padding: 0;
+}
+
 .brand-mark {
   display: grid;
   place-items: center;
@@ -1091,12 +1121,12 @@ kbd {
 }
 
 .editor-block-row.is-saving .block-row-meta::after {
-  content: " · 저장 중";
+  content: " · " attr(data-saving-label);
   color: var(--focus);
 }
 
 .editor-block-row.is-saved .block-row-meta::after {
-  content: " · 저장됨";
+  content: " · " attr(data-saved-label);
   color: #2f806e;
 }
 
