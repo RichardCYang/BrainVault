@@ -1,0 +1,276 @@
+openapi: 3.1.0
+info:
+  title: BrainVault API
+  version: 1.0.0
+  description: Markdown block based Notion-style note app server API.
+servers:
+  - url: http://localhost:4000
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    PublicUser:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+          description: Login ID. This is not an email address.
+        name:
+          type: [string, 'null']
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+    RegisterInput:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 40
+          pattern: '^[a-zA-Z0-9._-]+$'
+          example: myid
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+        name:
+          type: string
+          maxLength: 80
+    LoginInput:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: demo
+        password:
+          type: string
+          example: brainvault123
+    AuthResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/PublicUser'
+        token:
+          type: string
+    PageInput:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+        icon:
+          type: string
+        coverUrl:
+          type: string
+          format: uri
+        parentPageId:
+          type: string
+        initialMarkdown:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+    BlockInput:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [MARKDOWN, HEADING_1, HEADING_2, HEADING_3, TODO, QUOTE, CALLOUT, TABLE, CODE, DIVIDER, IMAGE]
+        markdown:
+          type: string
+        checked:
+          type: boolean
+        parentBlockId:
+          type: [string, 'null']
+        sortOrder:
+          type: integer
+        metadata:
+          type: object
+paths:
+  /:
+    get:
+      security: []
+      summary: Serve BrainVault web UI
+      responses:
+        '200':
+          description: HTML shell for the built-in note app UI
+  /health:
+    get:
+      security: []
+      summary: Check API status
+      responses:
+        '200':
+          description: Service status
+  /api/auth/register:
+    post:
+      security: []
+      summary: Register a new user with an ID, not an email address
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterInput'
+      responses:
+        '201':
+          description: Created user and JWT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+  /api/auth/login:
+    post:
+      security: []
+      summary: Login with ID and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginInput'
+      responses:
+        '200':
+          description: User and JWT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+  /api/auth/me:
+    get:
+      summary: Current user
+      responses:
+        '200':
+          description: Current user
+  /api/pages:
+    get:
+      summary: List pages
+      responses:
+        '200':
+          description: User pages
+    post:
+      summary: Create page
+      responses:
+        '201':
+          description: Created page
+  /api/pages/{pageId}:
+    get:
+      summary: Read a page with block tree
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Page with blocks
+    patch:
+      summary: Update page metadata
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Updated page
+    delete:
+      summary: Archive or permanently delete a page
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: permanent
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Archived page
+        '204':
+          description: Permanently deleted
+  /api/pages/{pageId}/blocks:
+    post:
+      summary: Create a block on a page
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Created block
+  /api/blocks/{blockId}:
+    patch:
+      summary: Update a block
+      parameters:
+        - in: path
+          name: blockId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Updated block
+    delete:
+      summary: Delete block and nested children
+      parameters:
+        - in: path
+          name: blockId
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted
+  /api/pages/{pageId}/blocks/reorder:
+    post:
+      summary: Reorder blocks or move blocks under another block
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Reordered blocks
+  /api/pages/{pageId}/render:
+    get:
+      summary: Render page blocks to sanitized HTML
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Rendered HTML
+  /api/search:
+    get:
+      summary: Search pages and markdown blocks
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Search results

@@ -1,0 +1,300 @@
+import express from "express";
+import request from "supertest";
+import { z } from "zod";
+import { describe, expect, it } from "vitest";
+import { createApp } from "../src/app.js";
+import { renderBlockHtml, renderMarkdown } from "../src/lib/markdown.js";
+import { getTableData } from "../src/lib/table.js";
+import { getValidatedQuery, validate } from "../src/middleware/validate.js";
+
+describe("BrainVault web shell and health endpoint", () => {
+  it("serves the web UI at /", async () => {
+    const response = await request(createApp()).get("/").expect(200);
+
+    expect(response.headers["content-type"]).toContain("text/html");
+    expect(response.text).toContain("BrainVault");
+    expect(response.text).toContain("아이디(ID)");
+    expect(response.text).toContain('name="username" type="text" autocomplete="username"');
+    expect(response.text).toContain('id="auth-submit" type="submit" data-auth-mode="login"');
+    expect(response.text).toContain("회원이 아니신가요?");
+    expect(response.text).toContain('id="auth-switch-link" href="#signup"');
+    expect(response.text).toContain('id="default-collection-button"');
+    expect(response.text).toContain('id="add-document-button"');
+    expect(response.text).toContain('id="page-list" class="document-tree"');
+    expect(response.text).toContain("기본 컬렉션");
+    expect(response.text).toContain("새 문서");
+    expect(response.text).not.toContain('id="new-page-parent"');
+    expect(response.text).not.toContain('id="new-page-title"');
+    expect(response.text).toContain('class="document-editor"');
+    expect(response.text).toContain('id="document-editor-heading"');
+    expect(response.text).toContain('id="block-list" class="block-list block-row-editor"');
+    expect(response.text).toContain('aria-label="통합 블록 문서 에디터"');
+    expect(response.text).not.toContain('id="append-block-button"');
+    expect(response.text).not.toContain('id="render-preview"');
+    expect(response.text).not.toContain('id="refresh-preview-button"');
+    expect(response.text).not.toContain('렌더링 미리보기');
+    expect(response.text).toContain('id="slash-menu" class="slash-menu hidden"');
+    expect(response.text).toContain('id="block-context-menu" class="block-context-menu hidden"');
+    expect(response.text).toContain('id="callout-type-group" class="callout-type-group hidden"');
+    expect(response.text).toContain('data-action="change-callout-type" data-callout-type="idea" role="menuitemradio"');
+    expect(response.text).toContain('data-action="change-callout-type" data-callout-type="danger" role="menuitemradio"');
+    expect(response.text).toContain('data-action="insert-block-before" role="menuitem"');
+    expect(response.text).toContain('상단에 블록 추가');
+    expect(response.text).toContain('data-action="insert-block-after" role="menuitem"');
+    expect(response.text).toContain('하단에 블록 추가');
+    expect(response.text).toContain('data-action="save-block" role="menuitem"');
+    expect(response.text).toContain('data-action="delete-block" class="danger-menu-item" role="menuitem"');
+    expect(response.text).toContain('id="inline-toolbar" class="inline-toolbar hidden"');
+    expect(response.text).toContain('data-format="bold"');
+    expect(response.text).toContain('data-format="color" data-color="#63a1f2"');
+    expect(response.text).toContain("Enter</kbd>로 새 블록");
+    expect(response.text).toContain("Backspace</kbd>로 삭제");
+    expect(response.text).not.toContain('id="new-block-form"');
+    expect(response.text).not.toContain('type="email"');
+    expect(response.text).not.toContain('data-auth-mode="register" class="secondary"');
+    expect(response.text).not.toContain("회원가입 옵션");
+    expect(response.text).toContain("/app.js");
+  });
+
+
+  it("serves the sky-blue document-first workspace theme", async () => {
+    const response = await request(createApp()).get("/styles.css").expect(200);
+
+    expect(response.headers["content-type"]).toContain("text/css");
+    expect(response.text).toContain("--sidebar: #eff8ff");
+    expect(response.text).toContain("--ink: #26384a");
+    expect(response.text).toContain("--accent: #bfe5ff");
+    expect(response.text).toContain("--accent-soft: #eaf7ff");
+    expect(response.text).toContain("--radius-lg: 10px");
+    expect(response.text).toContain("--radius-md: 6px");
+    expect(response.text).toContain(".auth-switch");
+    expect(response.text).toContain("color: var(--muted);");
+    expect(response.text).toContain(".sidebar-nav");
+    expect(response.text).toContain(".default-collection");
+    expect(response.text).toContain(".default-collection {\n  border: 0;");
+    expect(response.text).toContain(".collection-title-button");
+    expect(response.text).toContain(".count-pill {\n  display: inline-flex;");
+    expect(response.text).toContain(".sidebar-add-button");
+    expect(response.text).toContain(".document-tree");
+    expect(response.text).toContain(".document-editor");
+    expect(response.text).toContain(".editor-block-row");
+    expect(response.text).toContain("grid-template-columns: 0 minmax(0, 1fr)");
+    expect(response.text).toContain(".editor-block-row.is-menu-open");
+    expect(response.text).toContain("pointer-events: none;");
+    expect(response.text).toContain('[data-block-type="HEADING_1"]');
+    expect(response.text).toContain('[data-block-type="CODE"]');
+    expect(response.text).toContain('[data-block-type="TABLE"]');
+    expect(response.text).toContain(".table-block-grid");
+    expect(response.text).toContain(".table-block-surface");
+    expect(response.text).toContain(".table-edge-add-row");
+    expect(response.text).toContain(".table-edge-add-column");
+    expect(response.text).toContain(".table-cell-input");
+    expect(response.text).toContain(".rendered-table");
+    expect(response.text).not.toContain(".preview {");
+    expect(response.text).toContain(".slash-menu-item");
+    expect(response.text).toContain(".inline-toolbar");
+    expect(response.text).toContain("background: #eaf7ff;");
+    expect(response.text).not.toContain("background: #2f3437;");
+    expect(response.text).toContain(".color-sky");
+    expect(response.text).not.toContain(".add-block-button");
+    expect(response.text).toContain("--depth");
+    expect(response.text).toContain("min-height: 1.72rem");
+    expect(response.text).toContain("grid-template-columns: 0 minmax(0, 1fr);\n  column-gap: 0;\n  align-items: center;");
+    expect(response.text).toContain("height: 1.55rem;\n  align-self: center;");
+    expect(response.text).toContain(".block-editor-host {\n  display: grid;\n  min-width: 0;\n  align-items: center;");
+    expect(response.text).toContain("padding: 0.1875rem 0;");
+    expect(response.text).toContain("line-height: 1.5");
+    expect(response.text).toContain("touch-action: none");
+    expect(response.text).toContain(".block-drop-indicator");
+    expect(response.text).toContain("cursor: grab");
+    expect(response.text).toContain(".block-row-input::placeholder");
+    expect(response.text).toContain(".block-row-input:focus::placeholder");
+    expect(response.text).toContain(".block-context-menu");
+    expect(response.text).toContain('.editor-block-row[data-block-type="CALLOUT"][data-callout-type="warning"]');
+    expect(response.text).toContain('.callout-type-group button[aria-checked="true"]');
+    expect(response.text).toContain(".rendered-callout--danger");
+    expect(response.text).toContain("box-shadow: inset 0 0 0 2px rgba(36, 118, 184, 0.28)");
+    expect(response.text).toContain(".block-row-input:focus-visible");
+    expect(response.text).toContain("outline: none;");
+  });
+
+  it("serves web UI assets", async () => {
+    const response = await request(createApp()).get("/app.js").expect(200);
+
+    expect(response.headers["content-type"]).toContain("javascript");
+    expect(response.text).toContain("brainvault.token");
+    expect(response.text).toContain("username:");
+    expect(response.text).toContain("setAuthMode");
+    expect(response.text).toContain('window.location.hash === "#signup"');
+    expect(response.text).toContain("activeTag");
+    expect(response.text).toContain("buildPageTree");
+    expect(response.text).toContain("createUntitledPage");
+    expect(response.text).toContain("savePageTitleNow");
+    expect(response.text).not.toContain("counts?.blocks");
+    expect(response.text).not.toContain("} blocks");
+    expect(response.text).toContain("default-collection-button");
+    expect(response.text).toContain("slashCommands");
+    expect(response.text).toContain("getSlashContext");
+    expect(response.text).toContain("applySlashCommand");
+    expect(response.text).toContain("getTextareaSelection");
+    expect(response.text).toContain("applyInlineFormat");
+    expect(response.text).toContain("inlineToolbar");
+    expect(response.text).not.toContain("loadPreview");
+    expect(response.text).not.toContain("renderPreview");
+    expect(response.text).not.toContain("refreshPreviewButton");
+    expect(response.text).toContain("insertBlockRelative");
+    expect(response.text).toContain('placement === "before" ? referenceIndex : referenceIndex + 1');
+    expect(response.text).toContain('button.dataset.action === "insert-block-before"');
+    expect(response.text).toContain('button.dataset.action === "insert-block-after"');
+    expect(response.text).toContain("appendBlock");
+    expect(response.text).toContain("deleteEmptyBlock");
+    expect(response.text).toContain('event.key === "Backspace"');
+    expect(response.text).toContain('event.inputType !== "deleteContentBackward"');
+    expect(response.text).toContain("persistBlockOrder");
+    expect(response.text).toContain("getBlockInsertionIndex");
+    expect(response.text).toContain("setPointerCapture");
+    expect(response.text).toContain('addEventListener("pointerdown"');
+    expect(response.text).toContain("/blocks/reorder");
+    expect(response.text).toContain("블록 순서를 변경했습니다.");
+    expect(response.text).toContain("openBlockContextMenu");
+    expect(response.text).toContain('handle.dataset.action = "open-block-menu"');
+    expect(response.text).toContain("calloutTypePresets");
+    expect(response.text).toContain('{ type: "TABLE", command: "/table"');
+    expect(response.text).toContain("createTableEditor");
+    expect(response.text).toContain('addColumnButton.classList.add("table-edge-add", "table-edge-add-column")');
+    expect(response.text).toContain('addRowButton.classList.add("table-edge-add", "table-edge-add-row")');
+    expect(response.text).toContain('"표 맨 오른쪽에 열 추가"');
+    expect(response.text).toContain('"표 맨 아래에 행 추가"');
+    expect(response.text).not.toContain('makeTableActionButton("table-add-row", "+ 행"');
+    expect(response.text).not.toContain('makeTableActionButton("table-add-column", "+ 열"');
+    expect(response.text).toContain("handleTableAction");
+    expect(response.text).toContain("handleTableCellKeydown");
+    expect(response.text).toContain('event.key === "ArrowDown"');
+    expect(response.text).toContain('button.dataset.action.startsWith("table-")');
+    expect(response.text).toContain("syncCalloutTypeMenu");
+    expect(response.text).toContain("changeCalloutType");
+    expect(response.text).toContain('body: { metadata }');
+    expect(response.text).toContain("closeBlockContextMenu");
+    expect(response.text).not.toContain("state.user.email");
+  });
+
+
+  it("allows localhost origins for the bundled web UI", async () => {
+    const response = await request(createApp())
+      .get("/health")
+      .set("Host", "localhost:4000")
+      .set("Origin", "http://localhost:4000")
+      .expect(200);
+
+    expect(response.headers["access-control-allow-origin"]).toBe("http://localhost:4000");
+    expect(response.headers["access-control-allow-credentials"]).toBe("true");
+  });
+
+  it("does not throw noisy CORS errors for disallowed browser origins", async () => {
+    const response = await request(createApp())
+      .get("/health")
+      .set("Origin", "https://not-allowed.example")
+      .expect(200);
+
+    expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+
+  it("documents the legacy email column compatibility fix", async () => {
+    const fs = await import("node:fs/promises");
+    const schemaSource = await fs.readFile("src/lib/schema.ts", "utf8");
+    const migrationSource = await fs.readFile("migrations/002_users_username.sql", "utf8");
+
+    expect(schemaSource).toContain("ALTER TABLE users MODIFY COLUMN email VARCHAR(255) NULL DEFAULT NULL");
+    expect(schemaSource).toContain("ER_NO_DEFAULT_FOR_FIELD");
+    expect(migrationSource).not.toContain("email =");
+  });
+
+
+  it("includes a migration for the TABLE block enum", async () => {
+    const fs = await import("node:fs/promises");
+    const baseline = await fs.readFile("migrations/001_init.sql", "utf8");
+    const migration = await fs.readFile("migrations/003_blocks_table_type.sql", "utf8");
+
+    expect(baseline).toContain("'CALLOUT', 'TABLE', 'CODE'");
+    expect(migration).toContain("MODIFY COLUMN type ENUM");
+    expect(migration).toContain("'TABLE'");
+  });
+
+  it("validates query strings without mutating Express 5 req.query", async () => {
+    const app = express();
+    const querySchema = z.object({
+      page: z.coerce.number().int().min(1).default(1),
+      archived: z.enum(["true", "false"]).default("false").transform((value) => value === "true")
+    });
+
+    app.get("/query-check", validate({ query: querySchema }), (req, res) => {
+      res.json({ query: getValidatedQuery<z.infer<typeof querySchema>>(req) });
+    });
+
+    const response = await request(app).get("/query-check?page=2&archived=true").expect(200);
+
+    expect(response.body).toEqual({ query: { page: 2, archived: true } });
+  });
+
+  it("renders persistent callout type classes from block metadata", () => {
+    expect(renderBlockHtml("CALLOUT", "주의 내용", false, { calloutType: "warning" })).toContain(
+      'class="rendered-callout rendered-callout--warning"'
+    );
+    expect(renderBlockHtml("CALLOUT", "기본 내용", false, { calloutType: "unknown" })).toContain(
+      'class="rendered-callout rendered-callout--idea"'
+    );
+  });
+
+  it("renders editable table metadata as sanitized table HTML", () => {
+    const html = renderBlockHtml("TABLE", "", false, {
+      table: {
+        rows: [
+          ["이름", "상태"],
+          ["BrainVault", "<script>alert(1)</script>완료"]
+        ],
+        headerRow: true,
+        headerColumn: true
+      }
+    });
+
+    expect(html).toContain('class="rendered-table"');
+    expect(html).toContain('<th scope="col" class="rendered-table-header">이름</th>');
+    expect(html).toContain('<th scope="row" class="rendered-table-header">BrainVault</th>');
+    expect(html).toContain("완료");
+    expect(html).not.toContain("script");
+  });
+
+  it("normalizes malformed table metadata to a bounded rectangular grid", () => {
+    const table = getTableData({
+      table: {
+        rows: [["A"], ["B", "C"]],
+        headerRow: true,
+        headerColumn: false
+      }
+    });
+
+    expect(table.rows).toEqual([
+      ["A", ""],
+      ["B", "C"]
+    ]);
+    expect(table.headerRow).toBe(true);
+  });
+
+  it("allows safe inline text color spans while sanitizing unsafe styles", () => {
+    const html = renderMarkdown('<span style="color: #63a1f2">하늘색</span><span style="position:absolute">위험</span><script>alert(1)</script>');
+
+    expect(html).toContain("하늘색");
+    expect(html).toContain("color");
+    expect(html).toContain("#63a1f2");
+    expect(html).toContain("위험");
+    expect(html).not.toContain("position");
+    expect(html).not.toContain("script");
+  });
+
+  it("returns service metadata", async () => {
+    const response = await request(createApp()).get("/health").expect(200);
+
+    expect(response.body).toEqual({ ok: true, name: "BrainVault", version: "1.0.0" });
+  });
+});
