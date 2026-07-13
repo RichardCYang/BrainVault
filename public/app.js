@@ -81,18 +81,99 @@ function normalizeTableData(value) {
 }
 
 const slashCommands = [
-  { type: "MARKDOWN", command: "/text", label: "텍스트", hint: "일반 마크다운 블록", keywords: ["markdown", "text", "문단", "텍스트"] },
-  { type: "HEADING_1", command: "/h1", label: "제목 1", hint: "가장 큰 제목", keywords: ["heading", "title", "제목", "h1"] },
-  { type: "HEADING_2", command: "/h2", label: "제목 2", hint: "중간 제목", keywords: ["heading", "subtitle", "제목", "h2"] },
-  { type: "HEADING_3", command: "/h3", label: "제목 3", hint: "작은 제목", keywords: ["heading", "제목", "h3"] },
-  { type: "TODO", command: "/todo", label: "체크박스", hint: "할 일 블록", keywords: ["todo", "task", "check", "할일", "체크"] },
-  { type: "QUOTE", command: "/quote", label: "인용", hint: "인용문 블록", keywords: ["quote", "인용"] },
-  { type: "CALLOUT", command: "/callout", label: "콜아웃", hint: "강조 박스", keywords: ["callout", "notice", "콜아웃", "강조"] },
-  { type: "TABLE", command: "/table", label: "표", hint: "행과 열을 편집하는 간단한 표", keywords: ["table", "grid", "표", "테이블"] },
-  { type: "CODE", command: "/code", label: "코드", hint: "코드 블록", keywords: ["code", "코드"] },
-  { type: "DIVIDER", command: "/divider", label: "구분선", hint: "가로 구분선", keywords: ["divider", "hr", "line", "구분선"] },
-  { type: "IMAGE", command: "/image", label: "이미지", hint: "이미지 URL 블록", keywords: ["image", "img", "사진", "이미지"] }
+  { type: "MARKDOWN", command: "/text", icon: "text", label: "텍스트", hint: "일반 마크다운 블록", keywords: ["markdown", "text", "문단", "텍스트"] },
+  { type: "HEADING_1", command: "/h1", icon: "heading-1", label: "제목 1", hint: "가장 큰 제목", keywords: ["heading", "title", "제목", "h1"] },
+  { type: "HEADING_2", command: "/h2", icon: "heading-2", label: "제목 2", hint: "중간 제목", keywords: ["heading", "subtitle", "제목", "h2"] },
+  { type: "HEADING_3", command: "/h3", icon: "heading-3", label: "제목 3", hint: "작은 제목", keywords: ["heading", "제목", "h3"] },
+  { type: "TODO", command: "/todo", icon: "todo", label: "체크박스", hint: "할 일 블록", keywords: ["todo", "task", "check", "할일", "체크"] },
+  { type: "QUOTE", command: "/quote", icon: "quote", label: "인용", hint: "인용문 블록", keywords: ["quote", "인용"] },
+  { type: "CALLOUT", command: "/callout", icon: "callout", label: "콜아웃", hint: "강조 박스", keywords: ["callout", "notice", "콜아웃", "강조"] },
+  { type: "TABLE", command: "/table", icon: "table", label: "표", hint: "행과 열을 편집하는 간단한 표", keywords: ["table", "grid", "표", "테이블"] },
+  { type: "CODE", command: "/code", icon: "code", label: "코드", hint: "코드 블록", keywords: ["code", "코드"] },
+  { type: "DIVIDER", command: "/divider", icon: "divider", label: "구분선", hint: "가로 구분선", keywords: ["divider", "hr", "line", "구분선"] },
+  { type: "IMAGE", command: "/image", icon: "image", label: "이미지", hint: "이미지 URL 블록", keywords: ["image", "img", "사진", "이미지"] }
 ];
+
+const svgNamespace = "http://www.w3.org/2000/svg";
+const slashCommandIconShapes = {
+  text: [
+    ["path", { d: "M4 6h16" }],
+    ["path", { d: "M4 12h12" }],
+    ["path", { d: "M4 18h8" }]
+  ],
+  "heading-1": [
+    ["path", { d: "M4 12h8" }],
+    ["path", { d: "M4 18V6" }],
+    ["path", { d: "M12 18V6" }],
+    ["path", { d: "m17 12 3-2v8" }]
+  ],
+  "heading-2": [
+    ["path", { d: "M4 12h8" }],
+    ["path", { d: "M4 18V6" }],
+    ["path", { d: "M12 18V6" }],
+    ["path", { d: "M17 11c.5-1 1.25-1.5 2.25-1.5 1.1 0 1.75.7 1.75 1.6 0 2.4-4 2.6-4 6.4h4" }]
+  ],
+  "heading-3": [
+    ["path", { d: "M4 12h8" }],
+    ["path", { d: "M4 18V6" }],
+    ["path", { d: "M12 18V6" }],
+    ["path", { d: "M17 10c.45-.35 1.05-.5 1.75-.5 1.35 0 2.25.65 2.25 1.65 0 .95-.8 1.6-2.1 1.6" }],
+    ["path", { d: "M18.9 12.75c1.45 0 2.35.65 2.35 1.75 0 1.2-1.05 2-2.65 2-.75 0-1.4-.2-1.9-.6" }]
+  ],
+  todo: [
+    ["path", { d: "m9 11 3 3L22 4" }],
+    ["path", { d: "M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" }]
+  ],
+  quote: [
+    ["path", { d: "M3 21c3 0 7-1 7-8V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v6c0 1.1.9 2 2 2h3c0 4-2 6-5 8Z" }],
+    ["path", { d: "M14 21c3 0 7-1 7-8V5c0-1.1-.9-2-2-2h-3c-1.1 0-2 .9-2 2v6c0 1.1.9 2 2 2h3c0 4-2 6-5 8Z" }]
+  ],
+  callout: [
+    ["path", { d: "M9 18h6" }],
+    ["path", { d: "M10 22h4" }],
+    ["path", { d: "M15.1 14c.2-.6.6-1.1 1.1-1.6A6 6 0 1 0 7.8 12.4c.5.5.9 1 1.1 1.6.2.5.2 1.2.2 2h6c0-.8 0-1.5.2-2Z" }]
+  ],
+  table: [
+    ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
+    ["path", { d: "M3 9h18" }],
+    ["path", { d: "M9 3v18" }]
+  ],
+  code: [
+    ["path", { d: "m18 16 4-4-4-4" }],
+    ["path", { d: "m6 8-4 4 4 4" }],
+    ["path", { d: "m14.5 4-5 16" }]
+  ],
+  divider: [["path", { d: "M3 12h18" }]],
+  image: [
+    ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
+    ["circle", { cx: "9", cy: "9", r: "2" }],
+    ["path", { d: "m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" }]
+  ]
+};
+
+function createSlashCommandIcon(iconName) {
+  const icon = document.createElement("span");
+  icon.className = "slash-menu-icon";
+  icon.setAttribute("aria-hidden", "true");
+
+  const svg = document.createElementNS(svgNamespace, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.8");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+
+  const shapes = slashCommandIconShapes[iconName] ?? slashCommandIconShapes.text;
+  shapes.forEach(([tagName, attributes]) => {
+    const shape = document.createElementNS(svgNamespace, tagName);
+    Object.entries(attributes).forEach(([name, value]) => shape.setAttribute(name, value));
+    svg.append(shape);
+  });
+
+  icon.append(svg);
+  return icon;
+}
 
 const blockSaveTimers = new Map();
 let pageTitleSaveTimer = null;
@@ -1457,6 +1538,8 @@ function renderSlashMenu(row, query = "") {
     button.dataset.type = item.type;
     button.setAttribute("role", "menuitem");
 
+    const icon = createSlashCommandIcon(item.icon);
+
     const label = document.createElement("strong");
     label.textContent = item.label;
 
@@ -1464,9 +1547,10 @@ function renderSlashMenu(row, query = "") {
     command.textContent = item.command;
 
     const hint = document.createElement("span");
+    hint.className = "slash-menu-hint";
     hint.textContent = item.hint;
 
-    button.append(label, command, hint);
+    button.append(icon, label, command, hint);
     elements.slashMenu.append(button);
   });
 

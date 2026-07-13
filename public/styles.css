@@ -1758,18 +1758,20 @@ kbd {
 
 .slash-menu-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 2.2rem minmax(0, 1fr) auto;
   grid-template-areas:
-    "label command"
-    "hint hint";
+    "icon label command"
+    "icon hint hint";
   width: 100%;
-  gap: 0.12rem 0.5rem;
+  min-height: 3.25rem;
+  gap: 0.08rem 0.62rem;
+  align-items: center;
   justify-content: stretch;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
-  padding: 0.55rem 0.62rem;
+  padding: 0.48rem 0.62rem;
   text-align: left;
 }
 
@@ -1779,18 +1781,46 @@ kbd {
   color: var(--ink-strong);
 }
 
+.slash-menu-icon {
+  grid-area: icon;
+  display: grid;
+  width: 2.2rem;
+  height: 2.2rem;
+  place-items: center;
+  align-self: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: var(--shadow-card);
+}
+
+.slash-menu-icon svg {
+  width: 1.16rem;
+  height: 1.16rem;
+  pointer-events: none;
+}
+
+.slash-menu-item:hover .slash-menu-icon,
+.slash-menu-item.active .slash-menu-icon {
+  border-color: var(--line-strong);
+  color: var(--ink-strong);
+}
+
 .slash-menu-item strong {
   grid-area: label;
   min-width: 0;
   overflow: hidden;
   font-size: 0.86rem;
   font-weight: 600;
+  line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .slash-menu-item code {
   grid-area: command;
+  align-self: center;
   border-radius: 3px;
   background: var(--accent-soft);
   color: var(--muted);
@@ -1798,10 +1828,15 @@ kbd {
   font-size: 0.72rem;
 }
 
-.slash-menu-item span {
+.slash-menu-hint {
   grid-area: hint;
+  min-width: 0;
+  overflow: hidden;
   color: var(--muted);
   font-size: 0.74rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .slash-menu-empty {
