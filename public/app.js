@@ -8,6 +8,13 @@ import {
   setLanguage,
   t
 } from "./i18n.js";
+import {
+  createDatabaseEditor,
+  createDefaultDatabaseData,
+  extractDatabaseData,
+  normalizeDatabaseData,
+  summarizeDatabaseData
+} from "./database-block.js";
 
 const tokenKey = "brainvault.token";
 const rootParentKey = "__root__";
@@ -40,6 +47,7 @@ const blockTypeLabels = {
   CALLOUT: "blocks.types.CALLOUT",
   TABLE: "blocks.types.TABLE",
   KANBAN: "blocks.types.KANBAN",
+  DATABASE: "blocks.types.DATABASE",
   CODE: "blocks.types.CODE",
   DIVIDER: "blocks.types.DIVIDER",
   IMAGE: "blocks.types.IMAGE",
@@ -215,6 +223,7 @@ const slashCommands = [
   { type: "QUOTE", command: "/quote", icon: "quote" },
   { type: "CALLOUT", command: "/callout", icon: "callout" },
   { type: "TABLE", command: "/table", icon: "table" },
+  { type: "DATABASE", command: "/database", icon: "database" },
   { type: "KANBAN", command: "/board", icon: "kanban" },
   { type: "CODE", command: "/code", icon: "code" },
   { type: "DIVIDER", command: "/divider", icon: "divider" },
@@ -265,6 +274,11 @@ const slashCommandIconShapes = {
     ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
     ["path", { d: "M3 9h18" }],
     ["path", { d: "M9 3v18" }]
+  ],
+  database: [
+    ["ellipse", { cx: "12", cy: "5", rx: "8", ry: "3" }],
+    ["path", { d: "M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5" }],
+    ["path", { d: "M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7" }]
   ],
   kanban: [
     ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
@@ -778,6 +792,10 @@ function getBlockTableData(block) {
 
 function getBlockKanbanData(block) {
   return normalizeKanbanData(block?.metadata?.kanban);
+}
+
+function getBlockDatabaseData(block) {
+  return normalizeDatabaseData(block?.metadata?.database);
 }
 
 function makeKanbanActionButton(action, label, title, data = {}) {
@@ -1523,9 +1541,11 @@ function mountBlockEditor(row, block) {
       ? createTableEditor(row, getBlockTableData(block))
       : block.type === "KANBAN"
         ? createKanbanEditor(row, getBlockKanbanData(block))
-        : block.type === "ATTACHMENT"
-          ? createAttachmentEditor(block)
-          : createTextBlockEditor(block)
+        : block.type === "DATABASE"
+          ? createDatabaseEditor(row, getBlockDatabaseData(block), { onDirty: () => scheduleBlockSave(row) })
+          : block.type === "ATTACHMENT"
+            ? createAttachmentEditor(block)
+            : createTextBlockEditor(block)
   );
 }
 
@@ -1653,17 +1673,27 @@ function buildBlockPayload(row) {
     const table = extractTableData(row);
     metadata.table = table;
     delete metadata.kanban;
+    delete metadata.database;
     payload.markdown = table.rows.map((cells) => cells.join("\t")).join("\n").slice(0, 20_000);
     payload.metadata = metadata;
   } else if (type === "KANBAN") {
     const kanban = extractKanbanData(row);
     metadata.kanban = kanban;
     delete metadata.table;
+    delete metadata.database;
     payload.markdown = summarizeKanbanData(kanban);
+    payload.metadata = metadata;
+  } else if (type === "DATABASE") {
+    const database = extractDatabaseData(row);
+    metadata.database = database;
+    delete metadata.table;
+    delete metadata.kanban;
+    payload.markdown = summarizeDatabaseData(database);
     payload.metadata = metadata;
   } else {
     if (metadata.table) delete metadata.table;
     if (metadata.kanban) delete metadata.kanban;
+    if (metadata.database) delete metadata.database;
     payload.metadata = Object.keys(metadata).length ? metadata : null;
   }
 
@@ -2004,8 +2034,10 @@ function setRowType(row, type, { markdown } = {}) {
 
   if (previousType === "TABLE") metadata.table = extractTableData(row);
   if (previousType === "KANBAN") metadata.kanban = extractKanbanData(row);
+  if (previousType === "DATABASE") metadata.database = extractDatabaseData(row);
   if (type === "TABLE" && !metadata.table) metadata.table = createDefaultTableData();
   if (type === "KANBAN" && !metadata.kanban) metadata.kanban = createDefaultKanbanData();
+  if (type === "DATABASE" && !metadata.database) metadata.database = createDefaultDatabaseData();
 
   row.dataset.blockType = type;
   if (type === "CALLOUT") setRowCalloutType(row, row.dataset.calloutType);
@@ -2018,7 +2050,7 @@ function setRowType(row, type, { markdown } = {}) {
   mountBlockEditor(row, {
     ...existing,
     type,
-    markdown: type === "TABLE" || type === "KANBAN" ? "" : markdown ?? previousTextarea?.value ?? existing.markdown ?? "",
+    markdown: type === "TABLE" || type === "KANBAN" || type === "DATABASE" ? "" : markdown ?? previousTextarea?.value ?? existing.markdown ?? "",
     metadata
   });
 }
@@ -2554,7 +2586,7 @@ async function applySlashCommand(row, type) {
   }
 
   if (context) markdown = `${markdown.slice(0, context.start)}${markdown.slice(context.end)}`;
-  if (type === "DIVIDER" || type === "TABLE" || type === "KANBAN") markdown = "";
+  if (type === "DIVIDER" || type === "TABLE" || type === "KANBAN" || type === "DATABASE") markdown = "";
 
   setRowType(row, type, { markdown });
   closeSlashMenu();
@@ -2568,6 +2600,8 @@ async function applySlashCommand(row, type) {
     nextTextarea.selectionStart = nextTextarea.selectionEnd = cursor;
   } else if (type === "KANBAN") {
     row.querySelector(".kanban-title-input")?.focus();
+  } else if (type === "DATABASE") {
+    row.querySelector(".database-title-input")?.focus();
   } else {
     focusTableCell(row, 0, 0);
   }

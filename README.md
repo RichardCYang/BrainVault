@@ -7,11 +7,12 @@ Writing happens directly on the page. There is no separate preview pane: every r
 ## Highlights
 
 - Page-first workspace with a compact document tree and automatic title saving
-- Slash commands for headings, tasks, quotes, callouts, tables, code, dividers, images, and file attachments
+- Slash commands for headings, tasks, quotes, callouts, tables, databases, boards, code, dividers, images, and file attachments
 - Drag-and-drop block reordering with support for nested content
 - Inline formatting for bold, italic, strikethrough, code, links, and text color
 - Editable table blocks with row, column, header, and keyboard navigation controls
-- Notion-style Kanban board blocks with editable groups, card emojis, pastel card themes, descriptions, tags, drag-and-drop, and mobile move controls
+- Database blocks with typed properties, saved table/board/list views, per-view property visibility, filters, sorting, and board grouping
+- Kanban board blocks with editable groups, card emojis, pastel card themes, descriptions, tags, drag-and-drop, and mobile move controls
 - Search across page titles and block content
 - Browser-language detection and an in-app language switcher for English, Japanese, Korean, French, German, Spanish, and Portuguese
 - Tags, page nesting, archiving, and permanent deletion
@@ -141,10 +142,12 @@ npm run setup
 Useful slash commands include:
 
 ```text
-/h1  /h2  /h3  /todo  /quote  /callout  /table  /board  /code  /divider  /image  /file
+/h1  /h2  /h3  /todo  /quote  /callout  /table  /database  /board  /code  /divider  /image  /file
 ```
 
 Table cells support arrow-key movement. `Enter` advances down the current column, while `Tab` from the final cell adds another row.
+
+Type `/database` to create a database block. Each database has one required title property plus optional text, number, select, multi-select, checkbox, date, and URL properties. Add table, board, or list views over the same rows; each view keeps its own name, layout, visible properties, filters, sort order, and board grouping. The editor uses a borderless database toolbar with view tabs, popover-based Properties/Filter/Sort controls, in-view search, a split New button, transparent column headers, and colored select pills. Property and row changes are stored in the block's `metadata.database` object, while a searchable text summary is kept in `markdown`.
 
 Kanban boards support direct title/group/card editing. Open the icon button beside a card title to choose an emoji, paste a custom emoji, or apply a default, pink, yellow, blue, light-green, purple, or peach pastel card theme. Drag the six-dot card handle to reorder cards or move them between groups; the arrow buttons provide the same cross-group movement on touch devices and for keyboard users.
 

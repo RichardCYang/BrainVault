@@ -15,6 +15,7 @@ export const blockTypeSchema = z.enum([
   "CALLOUT",
   "TABLE",
   "KANBAN",
+  "DATABASE",
   "CODE",
   "DIVIDER",
   "IMAGE",

@@ -3051,3 +3051,1175 @@ kbd {
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Borderless database block */
+.editor-block-row[data-block-type="DATABASE"] {
+  margin-top: 0.7rem;
+  margin-bottom: 0.85rem;
+}
+
+.editor-block-row[data-block-type="DATABASE"]:hover,
+.editor-block-row[data-block-type="DATABASE"]:focus-within,
+.editor-block-row[data-block-type="DATABASE"].is-menu-open {
+  background: transparent;
+  box-shadow: none;
+}
+
+.editor-block-row[data-block-type="DATABASE"] .block-row-body,
+.editor-block-row[data-block-type="DATABASE"] .block-editor-host {
+  min-width: 0;
+}
+
+.database-block-editor {
+  --database-ink: var(--ink);
+  --database-ink-strong: var(--ink-strong);
+  --database-muted: var(--muted);
+  --database-muted-light: var(--muted-light);
+  --database-line: var(--line);
+  --database-line-strong: var(--line-strong);
+  --database-hover: var(--hover);
+  --database-active: var(--active);
+  --database-panel: var(--panel);
+  --database-panel-soft: var(--panel-soft);
+  --database-accent: var(--accent);
+  --database-accent-hover: var(--accent-hover);
+  --database-accent-ink: var(--accent-ink);
+  --database-blue: var(--focus);
+  --database-focus-soft: var(--focus-soft);
+  display: grid;
+  min-width: 0;
+  gap: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--database-ink);
+  padding: 0.28rem 0 0.45rem;
+}
+
+.database-heading {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.55rem;
+  margin-bottom: 0.82rem;
+  padding-inline: 0.08rem;
+  background: transparent;
+}
+
+.database-title-input,
+.database-view-name,
+.database-property-name,
+.database-property-options,
+.database-value-input,
+.database-value-select,
+.database-view-type,
+.database-group-property,
+.database-filter-property,
+.database-filter-operator,
+.database-filter-value,
+.database-sort-property,
+.database-sort-direction,
+.database-add-view-select,
+.database-property-type,
+.database-search-input {
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--database-ink);
+  font: inherit;
+}
+
+.database-title-input:hover,
+.database-title-input:focus,
+.database-view-name:hover,
+.database-view-name:focus,
+.database-property-name:hover,
+.database-property-name:focus,
+.database-property-options:hover,
+.database-property-options:focus,
+.database-value-input:hover,
+.database-value-input:focus,
+.database-value-select:hover,
+.database-value-select:focus,
+.database-view-type:hover,
+.database-view-type:focus,
+.database-group-property:hover,
+.database-group-property:focus,
+.database-filter-property:hover,
+.database-filter-property:focus,
+.database-filter-operator:hover,
+.database-filter-operator:focus,
+.database-filter-value:hover,
+.database-filter-value:focus,
+.database-sort-property:hover,
+.database-sort-property:focus,
+.database-sort-direction:hover,
+.database-sort-direction:focus,
+.database-property-type:hover,
+.database-property-type:focus,
+.database-search-input:hover,
+.database-search-input:focus {
+  border-color: var(--database-line-strong);
+  background: var(--database-panel-soft);
+  outline: none;
+}
+
+.database-title-input:focus-visible,
+.database-view-name:focus-visible,
+.database-property-name:focus-visible,
+.database-property-options:focus-visible,
+.database-value-input:focus-visible,
+.database-value-select:focus-visible,
+.database-view-type:focus-visible,
+.database-group-property:focus-visible,
+.database-filter-property:focus-visible,
+.database-filter-operator:focus-visible,
+.database-filter-value:focus-visible,
+.database-sort-property:focus-visible,
+.database-sort-direction:focus-visible,
+.database-property-type:focus-visible,
+.database-search-input:focus-visible {
+  outline: 2px solid var(--database-focus-soft);
+  outline-offset: 1px;
+}
+
+.database-title-input {
+  flex: 1 1 auto;
+  width: 100%;
+  padding: 0.2rem 0.25rem;
+  color: var(--database-ink-strong);
+  font-size: clamp(1.16rem, 2.2vw, 1.52rem);
+  font-weight: 700;
+  letter-spacing: -0.018em;
+}
+
+.database-count {
+  flex: 0 0 auto;
+  color: var(--database-muted-light);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.database-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 0.8rem;
+  border-bottom: 1px solid var(--database-line);
+  background: transparent;
+}
+
+.database-view-bar {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: stretch;
+  gap: 0.08rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: transparent;
+  scrollbar-width: thin;
+}
+
+.database-view-tab {
+  position: relative;
+  display: inline-flex;
+  min-height: 2.45rem;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.38rem;
+  border: 0;
+  border-radius: 4px 4px 0 0;
+  background: transparent;
+  color: var(--database-muted);
+  padding: 0.48rem 0.58rem 0.52rem;
+  font: inherit;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.database-view-tab:hover,
+.database-view-tab:focus-visible {
+  background: var(--database-hover);
+  color: var(--database-ink-strong);
+  outline: none;
+}
+
+.database-view-tab[aria-pressed="true"] {
+  background: transparent;
+  color: var(--database-ink-strong);
+  font-weight: 650;
+}
+
+.database-view-tab[aria-pressed="true"]::after {
+  content: "";
+  position: absolute;
+  right: 0.46rem;
+  bottom: -1px;
+  left: 0.46rem;
+  height: 2px;
+  border-radius: 999px 999px 0 0;
+  background: var(--database-blue);
+}
+
+.database-view-tab-icon {
+  display: inline-flex;
+  width: 0.94rem;
+  height: 0.94rem;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.database-view-tab[data-view-type="table"] .database-view-tab-icon::before { content: "▦"; }
+.database-view-tab[data-view-type="board"] .database-view-tab-icon::before { content: "▥"; }
+.database-view-tab[data-view-type="list"] .database-view-tab-icon::before { content: "☷"; }
+
+.database-add-view-select {
+  width: 2rem;
+  min-height: 2.3rem;
+  flex: 0 0 2rem;
+  align-self: center;
+  appearance: none;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--database-muted);
+  padding: 0;
+  text-align: center;
+  text-align-last: center;
+  font-size: 1.05rem;
+  cursor: pointer;
+}
+
+.database-add-view-select:hover,
+.database-add-view-select:focus-visible {
+  background: var(--database-hover);
+  color: var(--database-ink-strong);
+  outline: none;
+}
+
+.database-view-settings {
+  display: flex;
+  min-width: max-content;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.08rem;
+  padding: 0 0 0.28rem;
+  background: transparent;
+}
+
+.database-rule-panel,
+.database-properties-panel,
+.database-search-panel,
+.database-view-options-panel,
+.database-new-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.database-rule-panel > summary,
+.database-properties-panel > summary,
+.database-search-panel > summary,
+.database-view-options-panel > summary,
+.database-new-menu > summary {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  justify-content: center;
+  list-style: none;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--database-muted);
+  padding: 0.32rem 0.48rem;
+  font-size: 0.76rem;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.database-rule-panel > summary::-webkit-details-marker,
+.database-properties-panel > summary::-webkit-details-marker,
+.database-search-panel > summary::-webkit-details-marker,
+.database-view-options-panel > summary::-webkit-details-marker,
+.database-new-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.database-rule-panel > summary:hover,
+.database-rule-panel[open] > summary,
+.database-properties-panel > summary:hover,
+.database-properties-panel[open] > summary,
+.database-search-panel > summary:hover,
+.database-search-panel[open] > summary,
+.database-view-options-panel > summary:hover,
+.database-view-options-panel[open] > summary {
+  background: var(--database-hover);
+  color: var(--database-ink);
+}
+
+.database-view-options-panel > summary {
+  min-width: 2rem;
+  padding-inline: 0.38rem;
+  letter-spacing: 0.08em;
+}
+
+.database-toolbar-popover,
+.database-property-list {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 0.42rem);
+  right: 0;
+  width: min(38rem, calc(100vw - 2.25rem));
+  max-height: min(29rem, calc(100vh - 8rem));
+  overflow: auto;
+  border: 1px solid var(--database-line-strong);
+  border-radius: 8px;
+  background: var(--database-panel);
+  padding: 0.55rem;
+  box-shadow: var(--shadow-popover);
+}
+
+.database-property-list {
+  display: grid;
+  width: min(43rem, calc(100vw - 2.25rem));
+  gap: 0.3rem;
+}
+
+.database-rule-popover {
+  width: min(34rem, calc(100vw - 2.25rem));
+}
+
+.database-filter-panel .database-toolbar-popover,
+.database-sort-panel .database-toolbar-popover {
+  right: auto;
+  left: 0;
+}
+
+.database-search-popover {
+  width: min(19rem, calc(100vw - 2.25rem));
+  padding: 0.42rem;
+}
+
+.database-search-input {
+  width: 100%;
+  min-height: 2.15rem;
+  border-color: var(--database-line);
+  padding: 0.4rem 0.55rem;
+  font-size: 0.78rem;
+}
+
+.database-view-options-menu {
+  display: grid;
+  width: min(17rem, calc(100vw - 2.25rem));
+  gap: 0.55rem;
+}
+
+.database-settings-field {
+  display: grid;
+  gap: 0.26rem;
+}
+
+.database-settings-field > span {
+  color: var(--database-muted-light);
+  font-size: 0.68rem;
+  font-weight: 550;
+}
+
+.database-view-name,
+.database-view-type,
+.database-group-property,
+.database-filter-property,
+.database-filter-operator,
+.database-filter-value,
+.database-sort-property,
+.database-sort-direction,
+.database-property-type {
+  min-height: 2rem;
+  padding: 0.34rem 0.42rem;
+  font-size: 0.76rem;
+}
+
+.database-view-name,
+.database-view-type,
+.database-group-property {
+  width: 100%;
+  border-color: var(--database-line);
+}
+
+.database-rule-builder {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+}
+
+.database-filter-value {
+  min-width: 8rem;
+  flex: 1 1 9rem;
+}
+
+.database-rule-builder > button,
+.database-property-list button,
+.database-view-options-menu button,
+.database-new-menu-popover button,
+.database-footer button,
+.database-board-add-row {
+  min-height: 1.95rem;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--database-muted);
+  padding: 0.32rem 0.48rem;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.database-rule-builder > button:hover,
+.database-rule-builder > button:focus-visible,
+.database-property-list button:hover,
+.database-property-list button:focus-visible,
+.database-view-options-menu button:hover,
+.database-view-options-menu button:focus-visible,
+.database-new-menu-popover button:hover,
+.database-new-menu-popover button:focus-visible,
+.database-footer button:hover,
+.database-footer button:focus-visible,
+.database-board-add-row:hover,
+.database-board-add-row:focus-visible {
+  background: var(--database-hover);
+  color: var(--database-ink-strong);
+  outline: none;
+}
+
+.database-rule-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.48rem;
+  padding-top: 0.48rem;
+  border-top: 1px solid var(--database-line);
+}
+
+.database-rule-chip {
+  min-height: 1.75rem !important;
+  border-radius: 4px !important;
+  background: var(--accent-soft) !important;
+  color: var(--accent-text) !important;
+}
+
+.database-delete-view {
+  justify-self: stretch;
+  width: 100%;
+  margin-top: 0.1rem;
+  color: var(--danger) !important;
+  text-align: left;
+}
+
+.database-property-item {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1fr) minmax(7rem, 0.72fr) minmax(10rem, 1.15fr) auto auto;
+  align-items: center;
+  gap: 0.38rem;
+  border-bottom: 1px solid var(--database-line);
+  padding: 0.2rem 0 0.44rem;
+}
+
+.database-property-item:last-of-type {
+  border-bottom: 0;
+}
+
+.database-property-name,
+.database-property-options {
+  padding: 0.34rem 0.42rem;
+  font-size: 0.77rem;
+}
+
+.database-property-visibility {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--database-muted);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.database-property-visibility input {
+  width: auto;
+  accent-color: var(--database-blue);
+}
+
+.database-property-delete,
+.database-delete-row {
+  color: var(--danger) !important;
+}
+
+.database-property-delete:disabled,
+.database-view-settings button:disabled,
+.database-properties-panel button:disabled,
+.database-footer button:disabled,
+.database-board-add-row:disabled,
+.database-add-view-select:disabled,
+.database-new-row-button:disabled {
+  opacity: 0.36;
+  cursor: not-allowed;
+}
+
+.database-new-button-group {
+  display: inline-flex;
+  align-items: stretch;
+  margin-left: 0.28rem;
+}
+
+.database-new-row-button {
+  min-height: 2rem;
+  border: 1px solid var(--database-line-strong);
+  border-radius: 4px 0 0 4px;
+  border-right: 0;
+  background: var(--database-accent);
+  color: var(--database-accent-ink);
+  padding: 0.34rem 0.7rem;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.database-new-row-button:hover,
+.database-new-row-button:focus-visible {
+  background: var(--database-accent-hover);
+  outline: none;
+}
+
+.database-new-menu > summary {
+  min-width: 1.9rem;
+  height: 2rem;
+  border: 1px solid var(--database-line-strong);
+  border-left-color: rgba(24, 77, 112, 0.16);
+  border-radius: 0 4px 4px 0;
+  background: var(--database-accent);
+  color: var(--database-accent-ink);
+  padding-inline: 0.38rem;
+}
+
+.database-new-menu > summary:hover,
+.database-new-menu[open] > summary {
+  background: var(--database-accent-hover);
+  color: var(--database-accent-ink);
+}
+
+.database-new-menu-popover {
+  width: 12rem;
+  padding: 0.35rem;
+}
+
+.database-new-menu-popover button {
+  width: 100%;
+  text-align: left;
+}
+
+.database-table-scroll,
+.database-board-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.database-table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: transparent;
+}
+
+.database-table th,
+.database-table td {
+  min-width: 9rem;
+  border-right: 1px solid var(--database-line);
+  border-bottom: 1px solid var(--database-line);
+  padding: 0;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.database-table th:first-child,
+.database-table td:first-child {
+  border-left: 1px solid transparent;
+}
+
+.database-table th {
+  height: 2.15rem;
+  background: transparent;
+  color: var(--database-muted);
+  padding: 0.42rem 0.58rem;
+  font-size: 0.73rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.database-table th[data-property-type]::before {
+  display: inline-block;
+  min-width: 1.22rem;
+  margin-right: 0.28rem;
+  color: var(--database-muted-light);
+  font-size: 0.68rem;
+  font-weight: 650;
+  text-align: center;
+}
+
+.database-table th[data-property-type="title"]::before,
+.database-table th[data-property-type="text"]::before { content: "Aa"; }
+.database-table th[data-property-type="number"]::before { content: "#"; }
+.database-table th[data-property-type="select"]::before { content: "●"; }
+.database-table th[data-property-type="multi_select"]::before { content: "☷"; }
+.database-table th[data-property-type="checkbox"]::before { content: "☑"; }
+.database-table th[data-property-type="date"]::before { content: "□"; }
+.database-table th[data-property-type="url"]::before { content: "↗"; }
+
+.database-table tbody tr:hover td {
+  background: var(--database-hover);
+}
+
+.database-value-input,
+.database-value-select {
+  width: 100%;
+  min-height: 2.35rem;
+  border-radius: 0;
+  padding: 0.44rem 0.58rem;
+  font-size: 0.8rem;
+}
+
+.database-value-input:hover,
+.database-value-select:hover {
+  background: var(--database-panel-soft);
+}
+
+.database-value-input:focus,
+.database-value-select:focus {
+  position: relative;
+  z-index: 1;
+  background: var(--database-panel);
+  box-shadow: inset 0 0 0 2px var(--database-focus-soft);
+}
+
+.database-table td[data-property-type="title"] .database-value-input {
+  color: var(--database-ink);
+  font-weight: 520;
+  text-decoration-color: var(--database-line-strong);
+  text-underline-offset: 0.16em;
+}
+
+.database-value-input[type="checkbox"] {
+  width: 1rem;
+  min-height: auto;
+  margin: 0.65rem;
+  accent-color: var(--database-blue);
+}
+
+
+.database-select-chip {
+  width: auto;
+  max-width: calc(100% - 0.72rem);
+  min-height: 1.72rem;
+  margin: 0.3rem 0.36rem;
+  border: 0;
+  border-radius: 4px;
+  background: #efefed;
+  color: #4f4e49;
+  padding: 0.16rem 1.55rem 0.16rem 0.42rem;
+  font-size: 0.77rem;
+  line-height: 1.25;
+}
+
+.database-select-chip[data-option-color="blue"] { background: #dbeafe; color: #245b84; }
+.database-select-chip[data-option-color="purple"] { background: #eee4f5; color: #6e4c87; }
+.database-select-chip[data-option-color="green"] { background: #dfeee3; color: #356c4a; }
+.database-select-chip[data-option-color="yellow"] { background: #f7edcf; color: #7d5e1d; }
+.database-select-chip[data-option-color="red"] { background: #f6dfdd; color: #8e413c; }
+.database-select-chip[data-option-color="pink"] { background: #f5e1e9; color: #914660; }
+.database-select-chip[data-option-color="orange"] { background: #f5e4d7; color: #8b5228; }
+.database-select-chip[data-option-color="gray"] { background: #e9e9e7; color: #4f4e49; }
+
+.database-title-cell {
+  display: flex;
+  min-height: 2.35rem;
+  align-items: center;
+  gap: 0.12rem;
+  padding-left: 0.48rem;
+}
+
+.database-title-cell-icon {
+  flex: 0 0 auto;
+  color: var(--database-muted);
+  font-size: 0.92rem;
+  line-height: 1;
+}
+
+.database-title-cell .database-title-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-left: 0.18rem;
+  text-decoration: underline;
+  text-decoration-color: var(--database-line-strong);
+  text-underline-offset: 0.14em;
+}
+
+.database-table td:last-child {
+  position: relative;
+}
+
+.database-table-delete-row {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  right: 0.22rem;
+  background: var(--database-panel);
+  transform: translateY(-50%);
+}
+
+.database-value-input.is-compact,
+.database-value-select.is-compact {
+  min-height: 1.8rem;
+  padding: 0.25rem 0.35rem;
+  font-size: 0.74rem;
+}
+
+.database-row-actions-cell {
+  width: 2.2rem;
+  min-width: 2.2rem !important;
+  text-align: center !important;
+}
+
+.database-delete-row {
+  width: 1.65rem;
+  min-height: 1.65rem;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.database-table tr:hover .database-delete-row,
+.database-list-row:hover .database-delete-row,
+.database-board-card:hover .database-delete-row,
+.database-delete-row:focus-visible {
+  opacity: 1;
+}
+
+.database-list-view {
+  display: grid;
+}
+
+.database-list-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(10rem, 1.2fr) minmax(12rem, 2fr) auto;
+  align-items: start;
+  gap: 0.55rem;
+  border: 0;
+  border-bottom: 1px solid var(--database-line);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.5rem 0.2rem;
+}
+
+.database-list-row:hover {
+  background: var(--database-hover);
+}
+
+.database-list-title {
+  color: var(--database-ink);
+  font-weight: 600;
+}
+
+.database-list-properties {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.database-list-field,
+.database-board-card-field,
+.database-board-group-field {
+  display: grid;
+  min-width: 8rem;
+  gap: 0.1rem;
+}
+
+.database-list-field > span,
+.database-board-card-field > span,
+.database-board-group-field > span {
+  color: var(--database-muted-light);
+  padding-inline: 0.35rem;
+  font-size: 0.62rem;
+}
+
+.database-board {
+  display: flex;
+  min-width: max-content;
+  align-items: flex-start;
+  gap: 0.7rem;
+  background: transparent;
+  padding: 0.72rem 0.1rem 0.4rem;
+}
+
+.database-board-column {
+  --database-option-color: #8b8b87;
+  display: grid;
+  width: 16.5rem;
+  flex: 0 0 16.5rem;
+  gap: 0.45rem;
+}
+
+.database-board-column[data-option-color="blue"] { --database-option-color: #4d8fc7; }
+.database-board-column[data-option-color="purple"] { --database-option-color: #9065b0; }
+.database-board-column[data-option-color="green"] { --database-option-color: #4f8f67; }
+.database-board-column[data-option-color="yellow"] { --database-option-color: #c99a37; }
+.database-board-column[data-option-color="red"] { --database-option-color: #c85f59; }
+.database-board-column[data-option-color="pink"] { --database-option-color: #cf6f91; }
+.database-board-column[data-option-color="orange"] { --database-option-color: #cf7d3d; }
+
+.database-board-column > header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--database-ink);
+  padding-inline: 0.1rem;
+  font-size: 0.78rem;
+}
+
+.database-board-column > header::before {
+  content: "";
+  width: 0.58rem;
+  height: 0.58rem;
+  border-radius: 3px;
+  background: var(--database-option-color);
+}
+
+.database-board-column > header span {
+  margin-left: auto;
+  color: var(--database-muted-light);
+}
+
+.database-board-cards {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.database-board-card {
+  position: relative;
+  display: grid;
+  gap: 0.3rem;
+  border: 1px solid var(--database-line);
+  border-radius: 5px;
+  background: var(--database-panel);
+  padding: 0.48rem;
+  box-shadow: var(--shadow-card);
+}
+
+.database-board-card-title {
+  color: var(--database-ink);
+  font-weight: 600;
+}
+
+.database-board-card > .database-delete-row {
+  position: absolute;
+  top: 0.2rem;
+  right: 0.2rem;
+}
+
+.database-board-add-row {
+  width: 100%;
+  text-align: left;
+}
+
+.database-footer {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  color: var(--database-muted-light);
+  padding: 0.25rem 0.08rem 0;
+  font-size: 0.7rem;
+  background: transparent;
+}
+
+.database-filtered-count[hidden] {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  .database-toolbar {
+    flex-wrap: wrap;
+    gap: 0;
+  }
+
+  .database-view-bar {
+    flex-basis: 100%;
+    order: 1;
+  }
+
+  .database-view-settings {
+    width: 100%;
+    min-width: 0;
+    order: 2;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    overflow: visible;
+    padding-top: 0.18rem;
+  }
+
+  .database-property-item {
+    grid-template-columns: minmax(8rem, 1fr) minmax(7rem, 0.8fr) auto;
+  }
+
+  .database-property-options {
+    grid-column: 1 / -1;
+  }
+
+  .database-property-visibility {
+    grid-column: 1 / 3;
+  }
+
+  .database-filter-panel .database-toolbar-popover,
+  .database-sort-panel .database-toolbar-popover {
+    right: auto;
+    left: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .database-title-input {
+    font-size: 1.06rem;
+  }
+
+  .database-count,
+  .database-properties-panel > summary,
+  .database-rule-panel > summary,
+  .database-search-panel > summary {
+    font-size: 0.7rem;
+  }
+
+  .database-property-item {
+    grid-template-columns: 1fr auto;
+  }
+
+  .database-property-type,
+  .database-property-options,
+  .database-property-visibility {
+    grid-column: 1 / -1;
+  }
+
+  .database-list-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .database-list-properties {
+    grid-column: 1 / -1;
+  }
+}
+
+.rendered-database {
+  display: grid;
+  max-width: 100%;
+  gap: 0.65rem;
+}
+
+.rendered-database > header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.rendered-database > header h3 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: 1.05rem;
+}
+
+.rendered-database > header span {
+  color: var(--muted-light);
+  font-size: 0.72rem;
+}
+
+.rendered-database-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+}
+
+.rendered-database-table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: #fff;
+}
+
+.rendered-database-table th,
+.rendered-database-table td {
+  min-width: 8.5rem;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 0.48rem 0.58rem;
+  color: var(--ink);
+  font-size: 0.8rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.rendered-database-table th {
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.rendered-database-table tr:last-child td,
+.rendered-database-table tr > *:last-child {
+  border-bottom: 0;
+}
+
+.rendered-database-table tr > *:last-child {
+  border-right: 0;
+}
+
+.rendered-database-option {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: #efefed;
+  color: #5f5e59;
+  padding: 0.12rem 0.38rem;
+  font-size: 0.68rem;
+  line-height: 1.3;
+}
+
+.rendered-database-option--blue { background: #e7f2fa; color: #28668f; }
+.rendered-database-option--purple { background: #f0e8f7; color: #72528e; }
+.rendered-database-option--green { background: #e7f3ea; color: #3e7653; }
+.rendered-database-option--yellow { background: #faf1d5; color: #8a6721; }
+.rendered-database-option--red { background: #fae7e5; color: #9b4b45; }
+.rendered-database-option--pink { background: #f8e8ef; color: #9d4f6b; }
+.rendered-database-option--orange { background: #faecdf; color: #955b2e; }
+
+.rendered-database-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rendered-database-list > li {
+  display: grid;
+  gap: 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 0.55rem;
+}
+
+.rendered-database-list > li > div,
+.rendered-database-list-property {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.rendered-database-list-property small,
+.rendered-database-card-property small {
+  color: var(--muted-light);
+  font-size: 0.62rem;
+}
+
+.rendered-database-board {
+  display: flex;
+  max-width: 100%;
+  overflow-x: auto;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding-bottom: 0.3rem;
+}
+
+.rendered-database-board-column {
+  --rendered-database-color: #8b8b87;
+  display: grid;
+  width: 16rem;
+  flex: 0 0 16rem;
+  align-content: start;
+  gap: 0.45rem;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.5rem 0.1rem;
+}
+
+.rendered-database-board-column--blue { --rendered-database-color: #4d8fc7; }
+.rendered-database-board-column--purple { --rendered-database-color: #9065b0; }
+.rendered-database-board-column--green { --rendered-database-color: #4f8f67; }
+.rendered-database-board-column--yellow { --rendered-database-color: #c99a37; }
+.rendered-database-board-column--red { --rendered-database-color: #c85f59; }
+.rendered-database-board-column--pink { --rendered-database-color: #cf6f91; }
+.rendered-database-board-column--orange { --rendered-database-color: #cf7d3d; }
+
+.rendered-database-board-column > header {
+  display: flex;
+  align-items: center;
+  gap: 0.38rem;
+  color: var(--ink-strong);
+  font-size: 0.78rem;
+}
+
+.rendered-database-board-column > header::before {
+  content: "";
+  width: 0.58rem;
+  height: 0.58rem;
+  border-radius: 3px;
+  background: var(--rendered-database-color);
+}
+
+.rendered-database-board-column > header small {
+  margin-left: auto;
+  color: var(--muted-light);
+}
+
+.rendered-database-board-column > div {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.rendered-database-card {
+  display: grid;
+  gap: 0.28rem;
+  border: 1px solid rgba(55, 53, 47, 0.1);
+  border-radius: 7px;
+  background: #fff;
+  padding: 0.52rem;
+}
+
+.rendered-database-card-property {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+}

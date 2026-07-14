@@ -86,12 +86,15 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(response.text).toContain('[data-block-type="HEADING_1"]');
     expect(response.text).toContain('[data-block-type="CODE"]');
     expect(response.text).toContain('[data-block-type="TABLE"]');
+    expect(response.text).toContain('[data-block-type="DATABASE"]');
     expect(response.text).toContain(".table-block-grid");
     expect(response.text).toContain(".table-block-surface");
     expect(response.text).toContain(".table-edge-add-row");
     expect(response.text).toContain(".table-edge-add-column");
     expect(response.text).toContain(".table-cell-input");
     expect(response.text).toContain(".rendered-table");
+    expect(response.text).toContain(".database-block-editor");
+    expect(response.text).toContain(".rendered-database");
     expect(response.text).not.toContain(".preview {");
     expect(response.text).toContain(".slash-menu-item");
     expect(response.text).toContain(".inline-toolbar");
@@ -162,7 +165,10 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(response.text).toContain('handle.dataset.action = "open-block-menu"');
     expect(response.text).toContain("calloutTypePresets");
     expect(response.text).toContain('{ type: "TABLE", command: "/table"');
+    expect(response.text).toContain('{ type: "DATABASE", command: "/database"');
     expect(response.text).toContain("createTableEditor");
+    expect(response.text).toContain("createDatabaseEditor");
+    expect(response.text).toContain("extractDatabaseData");
     expect(response.text).toContain('addColumnButton.classList.add("table-edge-add", "table-edge-add-column")');
     expect(response.text).toContain('addRowButton.classList.add("table-edge-add", "table-edge-add-row")');
     expect(response.text).toContain('t("table.addColumn")');
@@ -179,6 +185,16 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(response.text).toContain("closeBlockContextMenu");
     expect(response.text).not.toContain("state.user.email");
     expect(response.text).toContain('from "./i18n.js"');
+  });
+
+  it("serves the database block editor module", async () => {
+    const response = await request(createApp()).get("/database-block.js").expect(200);
+
+    expect(response.headers["content-type"]).toContain("javascript");
+    expect(response.text).toContain("createDatabaseEditor");
+    expect(response.text).toContain("normalizeDatabaseData");
+    expect(response.text).toContain("applyDatabaseView");
+    expect(response.text).toContain('view.type === "board"');
   });
 
   it("serves the browser i18n catalog", async () => {
@@ -231,17 +247,20 @@ describe("BrainVault web shell and health endpoint", () => {
   });
 
 
-  it("includes migrations for the TABLE and KANBAN block enums", async () => {
+  it("includes migrations for the TABLE, KANBAN, and DATABASE block enums", async () => {
     const fs = await import("node:fs/promises");
     const baseline = await fs.readFile("migrations/001_init.sql", "utf8");
     const tableMigration = await fs.readFile("migrations/003_blocks_table_type.sql", "utf8");
     const kanbanMigration = await fs.readFile("migrations/004_blocks_kanban_type.sql", "utf8");
+    const databaseMigration = await fs.readFile("migrations/006_blocks_database_type.sql", "utf8");
 
-    expect(baseline).toContain("'CALLOUT', 'TABLE', 'KANBAN', 'CODE'");
+    expect(baseline).toContain("'CALLOUT', 'TABLE', 'KANBAN', 'DATABASE', 'CODE'");
     expect(tableMigration).toContain("MODIFY COLUMN type ENUM");
     expect(tableMigration).toContain("'TABLE'");
     expect(kanbanMigration).toContain("MODIFY COLUMN type ENUM");
     expect(kanbanMigration).toContain("'KANBAN'");
+    expect(databaseMigration).toContain("MODIFY COLUMN type ENUM");
+    expect(databaseMigration).toContain("'DATABASE'");
   });
 
   it("validates query strings without mutating Express 5 req.query", async () => {

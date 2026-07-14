@@ -1,7 +1,7 @@
 {
   "name": "brainvault",
   "version": "1.0.0",
-  "description": "BrainVault - markdown block based Notion-style notes API server built with Node.js, Express, TypeScript, and MariaDB.",
+  "description": "BrainVault - a block-based notes API server built with Node.js, Express, TypeScript, and MariaDB.",
   "type": "module",
   "main": "dist/src/server.js",
   "engines": {

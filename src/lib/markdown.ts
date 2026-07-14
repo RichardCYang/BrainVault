@@ -5,6 +5,7 @@ import { getCalloutType } from "./callout.js";
 import { formatAttachmentSize, getAttachmentInfo, sanitizeAttachmentFilename } from "./attachments.js";
 import { getTableData } from "./table.js";
 import { renderKanbanHtml } from "./kanban.js";
+import { renderDatabaseHtml } from "./database.js";
 
 const markdown = new MarkdownIt({
   html: true,
@@ -57,7 +58,9 @@ const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   tbody: ["class"],
   tr: ["class"],
   th: ["class", "scope"],
-  td: ["class"]
+  td: ["class"],
+  ul: ["class"],
+  li: ["class"]
 };
 
 const sanitizeOptions: sanitizeHtml.IOptions = {
@@ -155,6 +158,8 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
       return renderTable(metadata);
     case "KANBAN":
       return sanitizeHtml(renderKanbanHtml(metadata), sanitizeOptions);
+    case "DATABASE":
+      return sanitizeHtml(renderDatabaseHtml(metadata), sanitizeOptions);
     case "CODE":
       return renderMarkdown(`\`\`\`\n${stripFence(markdownValue)}\n\`\`\``);
     case "DIVIDER":

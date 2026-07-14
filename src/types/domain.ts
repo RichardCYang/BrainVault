@@ -29,6 +29,7 @@ export type BlockType =
   | "CALLOUT"
   | "TABLE"
   | "KANBAN"
+  | "DATABASE"
   | "CODE"
   | "DIVIDER"
   | "IMAGE"
