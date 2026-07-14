@@ -2393,6 +2393,7 @@ function positionSlashMenu(row) {
   elements.slashMenu.classList.remove("hidden");
 
   const menuRect = elements.slashMenu.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
   const viewportPadding = 12;
   const gap = 6;
   const maxLeft = Math.max(viewportPadding, window.innerWidth - menuRect.width - viewportPadding);
@@ -2400,7 +2401,7 @@ function positionSlashMenu(row) {
   let top = rect.top + rect.height + gap;
 
   if (top + menuRect.height > window.innerHeight - viewportPadding) {
-    top = rect.top - menuRect.height - gap;
+    top = rowRect.top - menuRect.height - gap;
   }
 
   const maxTop = Math.max(viewportPadding, window.innerHeight - menuRect.height - viewportPadding);
