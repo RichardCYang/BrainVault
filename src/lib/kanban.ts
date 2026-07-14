@@ -169,6 +169,7 @@ function escapeHtml(value: string) {
 
 export function renderKanbanHtml(metadata: unknown) {
   const board = getKanbanData(metadata);
+  const totalCards = board.columns.reduce((total, column) => total + column.cards.length, 0);
   const columns = board.columns.map((column) => {
     const cards = column.cards.map((card) => {
       const description = card.description
@@ -176,17 +177,20 @@ export function renderKanbanHtml(metadata: unknown) {
         : "";
       const tags = card.tags.length
         ? `<div class="rendered-kanban-card-tags">${card.tags
-          .map((tag) => `<span class="rendered-kanban-tag">${escapeHtml(tag)}</span>`)
+          .map((tag, index) => `<span class="rendered-kanban-tag rendered-kanban-tag--${index % 6}">${escapeHtml(tag)}</span>`)
           .join("")}</div>`
         : "";
       const icon = card.icon
         ? `<span class="rendered-kanban-card-icon">${escapeHtml(card.icon)}</span>`
         : "";
-      return `<article class="rendered-kanban-card rendered-kanban-card--${card.color}"><div class="rendered-kanban-card-heading">${icon}<strong>${escapeHtml(card.title || "Untitled")}</strong></div>${description}${tags}</article>`;
+      const headingClass = card.icon
+        ? "rendered-kanban-card-heading has-custom-icon"
+        : "rendered-kanban-card-heading";
+      return `<article class="rendered-kanban-card rendered-kanban-card--${card.color}"><div class="${headingClass}">${icon}<strong>${escapeHtml(card.title || "Untitled")}</strong></div>${description}${tags}</article>`;
     }).join("");
 
-    return `<section class="rendered-kanban-column rendered-kanban-column--${column.color}"><header><span>${escapeHtml(column.title)}</span><small>${column.cards.length}</small></header><div class="rendered-kanban-card-list">${cards}</div></section>`;
+    return `<section class="rendered-kanban-column rendered-kanban-column--${column.color}"><header><span class="rendered-kanban-column-label">${escapeHtml(column.title)}</span><small>${column.cards.length}</small></header><div class="rendered-kanban-card-list">${cards}</div></section>`;
   }).join("");
 
-  return `<div class="rendered-kanban"><h3>${escapeHtml(board.title)}</h3><div class="rendered-kanban-board">${columns}</div></div>`;
+  return `<div class="rendered-kanban"><h3>${escapeHtml(board.title)}</h3><div class="rendered-kanban-viewbar"><span class="rendered-kanban-viewtab"><span class="rendered-kanban-viewtab-icon">▦</span><span>Board</span></span><small class="rendered-kanban-summary">${board.columns.length} groups · ${totalCards} cards</small></div><div class="rendered-kanban-board">${columns}</div></div>`;
 }

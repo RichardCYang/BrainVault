@@ -812,6 +812,30 @@ function makeKanbanActionButton(action, label, title, data = {}) {
   return button;
 }
 
+function sizeKanbanColumnTitle(input) {
+  const value = input.value || input.placeholder || "";
+  input.size = Math.max(4, Math.min(22, [...value].length + 1));
+}
+
+function renderKanbanTagPreview(preview, tags) {
+  preview.replaceChildren();
+  tags.forEach((tag, index) => {
+    const chip = document.createElement("span");
+    chip.className = `kanban-card-tag kanban-card-tag--${index % 6}`;
+    chip.textContent = tag;
+    preview.append(chip);
+  });
+}
+
+function syncKanbanTagField(input) {
+  const field = input.closest(".kanban-card-tags-field");
+  const preview = field?.querySelector(".kanban-card-tags-preview");
+  if (!field || !preview) return;
+  const tags = normalizeKanbanTags(input.value);
+  field.classList.toggle("is-empty", tags.length === 0);
+  renderKanbanTagPreview(preview, tags);
+}
+
 function closeKanbanCardStyleMenus(except = null) {
   elements.blockList?.querySelectorAll(".kanban-card-style-menu[open]").forEach((details) => {
     if (details === except) return;
@@ -859,7 +883,7 @@ function createKanbanCardStyleMenu(card) {
 
   const preview = document.createElement("span");
   preview.className = "kanban-card-icon-preview";
-  preview.textContent = card.icon || "＋";
+  preview.textContent = card.icon || "▦";
   preview.setAttribute("aria-hidden", "true");
   summary.append(preview);
 
@@ -943,6 +967,9 @@ function createKanbanEditor(row, boardValue) {
   const toolbar = document.createElement("div");
   toolbar.className = "kanban-toolbar";
 
+  const titleRow = document.createElement("div");
+  titleRow.className = "kanban-title-row";
+
   const titleInput = document.createElement("input");
   titleInput.type = "text";
   titleInput.className = "kanban-title-input";
@@ -950,6 +977,25 @@ function createKanbanEditor(row, boardValue) {
   titleInput.maxLength = kanbanLimits.boardTitleLength;
   titleInput.placeholder = t("kanban.boardTitlePlaceholder");
   titleInput.setAttribute("aria-label", t("kanban.boardTitleAria"));
+  titleRow.append(titleInput);
+
+  const viewbar = document.createElement("div");
+  viewbar.className = "kanban-viewbar";
+  viewbar.setAttribute("role", "toolbar");
+  viewbar.setAttribute("aria-label", t("kanban.boardAria"));
+
+  const viewTab = document.createElement("span");
+  viewTab.className = "kanban-view-tab is-active";
+  viewTab.setAttribute("aria-current", "true");
+
+  const viewIcon = document.createElement("span");
+  viewIcon.className = "kanban-view-tab-icon";
+  viewIcon.textContent = "▦";
+  viewIcon.setAttribute("aria-hidden", "true");
+
+  const viewLabel = document.createElement("span");
+  viewLabel.textContent = t("blocks.types.KANBAN");
+  viewTab.append(viewIcon, viewLabel);
 
   const summary = document.createElement("span");
   summary.className = "kanban-summary";
@@ -967,10 +1013,12 @@ function createKanbanEditor(row, boardValue) {
   addColumn.classList.add("kanban-add-column");
   addColumn.disabled = boardData.columns.length >= kanbanLimits.columns;
 
-  toolbar.append(titleInput, summary, addColumn);
+  viewbar.append(viewTab, summary, addColumn);
+  toolbar.append(titleRow, viewbar);
 
   const scroller = document.createElement("div");
   scroller.className = "kanban-board-scroll";
+  scroller.tabIndex = 0;
 
   const board = document.createElement("div");
   board.className = "kanban-board";
@@ -986,6 +1034,9 @@ function createKanbanEditor(row, boardValue) {
 
     const columnHeader = document.createElement("header");
     columnHeader.className = "kanban-column-header";
+
+    const columnLabel = document.createElement("div");
+    columnLabel.className = "kanban-column-label";
 
     const colorButton = makeKanbanActionButton(
       "kanban-cycle-color",
@@ -1005,6 +1056,9 @@ function createKanbanEditor(row, boardValue) {
     columnTitle.placeholder = t("kanban.columnTitlePlaceholder");
     columnTitle.dataset.columnId = column.id;
     columnTitle.setAttribute("aria-label", t("kanban.columnTitleAria"));
+    sizeKanbanColumnTitle(columnTitle);
+
+    columnLabel.append(colorButton, columnTitle);
 
     const count = document.createElement("span");
     count.className = "kanban-column-count";
@@ -1020,7 +1074,7 @@ function createKanbanEditor(row, boardValue) {
     deleteColumn.classList.add("kanban-column-menu");
     deleteColumn.disabled = boardData.columns.length <= 1;
 
-    columnHeader.append(colorButton, columnTitle, count, deleteColumn);
+    columnHeader.append(columnLabel, count, deleteColumn);
 
     const cardList = document.createElement("div");
     cardList.className = "kanban-card-list";
@@ -1086,6 +1140,15 @@ function createKanbanEditor(row, boardValue) {
       description.setAttribute("aria-label", t("kanban.descriptionAria"));
       requestAnimationFrame(() => autoGrowTextarea(description));
 
+      const tagsField = document.createElement("div");
+      tagsField.className = "kanban-card-tags-field";
+
+      const tagsPreview = document.createElement("div");
+      tagsPreview.className = "kanban-card-tags-preview";
+      tagsPreview.tabIndex = 0;
+      tagsPreview.setAttribute("role", "button");
+      tagsPreview.setAttribute("aria-label", t("kanban.tagsAria"));
+
       const tagsInput = document.createElement("input");
       tagsInput.type = "text";
       tagsInput.className = "kanban-card-tags";
@@ -1093,6 +1156,21 @@ function createKanbanEditor(row, boardValue) {
       tagsInput.placeholder = t("kanban.tagsPlaceholder");
       tagsInput.dataset.cardId = card.id;
       tagsInput.setAttribute("aria-label", t("kanban.tagsAria"));
+      tagsInput.autocomplete = "off";
+
+      const focusTagsInput = () => {
+        tagsInput.focus();
+        tagsInput.select();
+      };
+      tagsPreview.addEventListener("click", focusTagsInput);
+      tagsPreview.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        focusTagsInput();
+      });
+
+      tagsField.append(tagsPreview, tagsInput);
+      syncKanbanTagField(tagsInput);
 
       const cardFooter = document.createElement("div");
       cardFooter.className = "kanban-card-footer";
@@ -1118,7 +1196,7 @@ function createKanbanEditor(row, boardValue) {
       position.textContent = `${formatNumber(cardIndex + 1)} / ${formatNumber(column.cards.length)}`;
 
       cardFooter.append(position, moveLeft, moveRight);
-      cardElement.append(cardTop, description, tagsInput, cardFooter);
+      cardElement.append(cardTop, description, tagsField, cardFooter);
       cardList.append(cardElement);
     });
 
@@ -3171,9 +3249,11 @@ elements.blockList.addEventListener("input", (event) => {
   );
   if (kanbanField) {
     if (kanbanField.classList.contains("kanban-card-description")) autoGrowTextarea(kanbanField);
+    if (kanbanField.classList.contains("kanban-column-title")) sizeKanbanColumnTitle(kanbanField);
+    if (kanbanField.classList.contains("kanban-card-tags")) syncKanbanTagField(kanbanField);
     if (kanbanField.classList.contains("kanban-card-emoji-input")) {
       const preview = kanbanField.closest(".kanban-card-style-menu")?.querySelector(".kanban-card-icon-preview");
-      if (preview) preview.textContent = normalizeKanbanIcon(kanbanField.value) || "＋";
+      if (preview) preview.textContent = normalizeKanbanIcon(kanbanField.value) || "▦";
     }
     const row = getBlockRow(kanbanField);
     if (row) scheduleBlockSave(row);
