@@ -2373,15 +2373,42 @@ function getFilteredSlashCommands(query = "") {
 function closeSlashMenu() {
   elements.slashMenu.classList.add("hidden");
   elements.slashMenu.replaceChildren();
+  elements.slashMenu.style.removeProperty("left");
+  elements.slashMenu.style.removeProperty("top");
+  elements.slashMenu.style.removeProperty("visibility");
   state.activeSlashBlockId = null;
   state.activeSlashIndex = 0;
 }
 
 function positionSlashMenu(row) {
-  const anchor = getBlockTextarea(row) ?? row.querySelector(".block-editor-host");
-  const rect = anchor?.getBoundingClientRect() ?? row.getBoundingClientRect();
-  elements.slashMenu.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - 332))}px`;
-  elements.slashMenu.style.top = `${Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - 332))}px`;
+  const textarea = getBlockTextarea(row);
+  const anchor = textarea ?? row.querySelector(".block-editor-host");
+  const slashContext = textarea ? getSlashContext(textarea) : null;
+  const rect =
+    textarea && slashContext
+      ? getTextareaSelectionRect(textarea, { start: slashContext.end, end: slashContext.end })
+      : (anchor?.getBoundingClientRect() ?? row.getBoundingClientRect());
+
+  elements.slashMenu.style.visibility = "hidden";
+  elements.slashMenu.classList.remove("hidden");
+
+  const menuRect = elements.slashMenu.getBoundingClientRect();
+  const viewportPadding = 12;
+  const gap = 6;
+  const maxLeft = Math.max(viewportPadding, window.innerWidth - menuRect.width - viewportPadding);
+  const left = Math.min(Math.max(rect.left, viewportPadding), maxLeft);
+  let top = rect.top + rect.height + gap;
+
+  if (top + menuRect.height > window.innerHeight - viewportPadding) {
+    top = rect.top - menuRect.height - gap;
+  }
+
+  const maxTop = Math.max(viewportPadding, window.innerHeight - menuRect.height - viewportPadding);
+  top = Math.min(Math.max(top, viewportPadding), maxTop);
+
+  elements.slashMenu.style.left = `${left}px`;
+  elements.slashMenu.style.top = `${top}px`;
+  elements.slashMenu.style.visibility = "visible";
 }
 
 function renderSlashMenu(row, query = "") {
