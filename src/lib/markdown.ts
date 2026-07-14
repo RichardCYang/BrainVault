@@ -3,6 +3,7 @@ import sanitizeHtml from "sanitize-html";
 import type { BlockType } from "../types/domain.js";
 import { getCalloutType } from "./callout.js";
 import { getTableData } from "./table.js";
+import { renderKanbanHtml } from "./kanban.js";
 
 const markdown = new MarkdownIt({
   html: true,
@@ -26,6 +27,10 @@ const allowedTags = sanitizeHtml.defaults.allowedTags.concat([
   "input",
   "hr",
   "table",
+  "section",
+  "article",
+  "header",
+  "small",
   "thead",
   "tbody",
   "tr",
@@ -37,6 +42,11 @@ const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   ...sanitizeHtml.defaults.allowedAttributes,
   a: ["href", "name", "target", "rel"],
   div: ["class"],
+  section: ["class"],
+  article: ["class"],
+  header: ["class"],
+  small: ["class"],
+  p: ["class"],
   img: ["src", "srcset", "alt", "title", "width", "height", "loading"],
   code: ["class"],
   span: ["class", "style"],
@@ -142,6 +152,8 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
     }
     case "TABLE":
       return renderTable(metadata);
+    case "KANBAN":
+      return sanitizeHtml(renderKanbanHtml(metadata), sanitizeOptions);
     case "CODE":
       return renderMarkdown(`\`\`\`\n${stripFence(markdownValue)}\n\`\`\``);
     case "DIVIDER":

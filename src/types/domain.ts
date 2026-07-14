@@ -28,6 +28,7 @@ export type BlockType =
   | "QUOTE"
   | "CALLOUT"
   | "TABLE"
+  | "KANBAN"
   | "CODE"
   | "DIVIDER"
   | "IMAGE";

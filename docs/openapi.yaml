@@ -86,7 +86,7 @@ components:
       properties:
         type:
           type: string
-          enum: [MARKDOWN, HEADING_1, HEADING_2, HEADING_3, TODO, QUOTE, CALLOUT, TABLE, CODE, DIVIDER, IMAGE]
+          enum: [MARKDOWN, HEADING_1, HEADING_2, HEADING_3, TODO, QUOTE, CALLOUT, TABLE, KANBAN, CODE, DIVIDER, IMAGE]
         markdown:
           type: string
         checked:

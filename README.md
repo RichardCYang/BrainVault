@@ -11,6 +11,7 @@ Writing happens directly on the page. There is no separate preview pane: every r
 - Drag-and-drop block reordering with support for nested content
 - Inline formatting for bold, italic, strikethrough, code, links, and text color
 - Editable table blocks with row, column, header, and keyboard navigation controls
+- Notion-style Kanban board blocks with editable groups, card emojis, pastel card themes, descriptions, tags, drag-and-drop, and mobile move controls
 - Search across page titles and block content
 - Browser-language detection and an in-app language switcher for English, Japanese, Korean, French, German, Spanish, and Portuguese
 - Tags, page nesting, archiving, and permanent deletion
@@ -138,10 +139,12 @@ npm run setup
 Useful slash commands include:
 
 ```text
-/h1  /h2  /h3  /todo  /quote  /callout  /table  /code  /divider  /image
+/h1  /h2  /h3  /todo  /quote  /callout  /table  /board  /code  /divider  /image
 ```
 
 Table cells support arrow-key movement. `Enter` advances down the current column, while `Tab` from the final cell adds another row.
+
+Kanban boards support direct title/group/card editing. Open the icon button beside a card title to choose an emoji, paste a custom emoji, or apply a default, pink, yellow, blue, light-green, purple, or peach pastel card theme. Drag the six-dot card handle to reorder cards or move them between groups; the arrow buttons provide the same cross-group movement on touch devices and for keyboard users.
 
 ## Languages
 

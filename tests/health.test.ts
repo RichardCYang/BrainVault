@@ -231,14 +231,17 @@ describe("BrainVault web shell and health endpoint", () => {
   });
 
 
-  it("includes a migration for the TABLE block enum", async () => {
+  it("includes migrations for the TABLE and KANBAN block enums", async () => {
     const fs = await import("node:fs/promises");
     const baseline = await fs.readFile("migrations/001_init.sql", "utf8");
-    const migration = await fs.readFile("migrations/003_blocks_table_type.sql", "utf8");
+    const tableMigration = await fs.readFile("migrations/003_blocks_table_type.sql", "utf8");
+    const kanbanMigration = await fs.readFile("migrations/004_blocks_kanban_type.sql", "utf8");
 
-    expect(baseline).toContain("'CALLOUT', 'TABLE', 'CODE'");
-    expect(migration).toContain("MODIFY COLUMN type ENUM");
-    expect(migration).toContain("'TABLE'");
+    expect(baseline).toContain("'CALLOUT', 'TABLE', 'KANBAN', 'CODE'");
+    expect(tableMigration).toContain("MODIFY COLUMN type ENUM");
+    expect(tableMigration).toContain("'TABLE'");
+    expect(kanbanMigration).toContain("MODIFY COLUMN type ENUM");
+    expect(kanbanMigration).toContain("'KANBAN'");
   });
 
   it("validates query strings without mutating Express 5 req.query", async () => {
