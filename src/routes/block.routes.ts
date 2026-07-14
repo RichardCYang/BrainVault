@@ -1,7 +1,22 @@
 import { Router } from "express";
+import multer from "multer";
 import { z } from "zod";
 import { db, transaction, type DbClient, type DbValue } from "../lib/db.js";
 import { createId } from "../lib/id.js";
+import { env } from "../config/env.js";
+import {
+  attachmentFileExists,
+  attachmentTempDir,
+  ensureAttachmentDirectories,
+  getAttachmentFilePath,
+  getAttachmentInfo,
+  moveAttachmentFile,
+  normalizeAttachmentMimeType,
+  removeAttachmentFiles,
+  removeAttachmentPath,
+  sanitizeAttachmentFilename,
+  type AttachmentMetadata
+} from "../lib/attachments.js";
 import { renderBlockHtml } from "../lib/markdown.js";
 import { toBlock } from "../lib/mappers.js";
 import { ApiError, notFound } from "../lib/http.js";
@@ -45,6 +60,36 @@ const reorderSchema = z.object({
     .max(500)
 });
 
+const attachmentFormSchema = z.object({
+  parentBlockId: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() ? value.trim() : null),
+    z.string().min(1).nullable()
+  ),
+  sortOrder: z.preprocess(
+    (value) => (value === undefined || value === "" ? undefined : Number(value)),
+    z.number().int().min(0).optional()
+  )
+});
+
+const attachmentUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, callback) => {
+      ensureAttachmentDirectories()
+        .then(() => callback(null, attachmentTempDir))
+        .catch((error) => callback(error, attachmentTempDir));
+    },
+    filename: (_req, _file, callback) => callback(null, createId("upload"))
+  }),
+  limits: {
+    fileSize: env.MAX_ATTACHMENT_SIZE_MB * 1024 * 1024,
+    files: 1,
+    fields: 4,
+    fieldSize: 16 * 1024
+  },
+  preservePath: false,
+  defParamCharset: "utf8"
+});
+
 async function assertOwnedPage(pageId: string, ownerId: string, client: DbClient = db) {
   const page = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ? AND owner_id = ?", [pageId, ownerId]);
   if (!page) throw notFound("Page");
@@ -68,11 +113,121 @@ async function assertParentBlock(parentBlockId: string | null | undefined, pageI
   if (!parent) throw new ApiError(400, "INVALID_PARENT_BLOCK", "Parent block must exist on the same page");
 }
 
+async function getAttachmentBlockIdsForSubtree(rootBlockId: string, pageId: string) {
+  const rows = await db.query<{ id: string; parent_block_id: string | null; type: string }>(
+    "SELECT id, parent_block_id, type FROM blocks WHERE page_id = ?",
+    [pageId]
+  );
+  const children = new Map<string, string[]>();
+  for (const row of rows) {
+    if (!row.parent_block_id) continue;
+    const group = children.get(row.parent_block_id) ?? [];
+    group.push(row.id);
+    children.set(row.parent_block_id, group);
+  }
+
+  const rowById = new Map(rows.map((row) => [row.id, row]));
+  const pending = [rootBlockId];
+  const attachmentIds: string[] = [];
+  while (pending.length) {
+    const id = pending.pop();
+    if (!id) continue;
+    const row = rowById.get(id);
+    if (row?.type === "ATTACHMENT") attachmentIds.push(id);
+    pending.push(...(children.get(id) ?? []));
+  }
+  return attachmentIds;
+}
+
+blockRouter.post(
+  "/pages/:pageId/attachments",
+  validate({ params: idParamSchema }),
+  attachmentUpload.single("file"),
+  async (req, res, next) => {
+    let cleanupPath = req.file?.path ?? null;
+    try {
+      const user = requireUser(req.user);
+      const pageId = String(req.params.pageId);
+      const file = req.file;
+      if (!file) throw new ApiError(400, "ATTACHMENT_FILE_REQUIRED", "Select a file to attach");
+
+      const body = attachmentFormSchema.parse(req.body);
+      await assertOwnedPage(pageId, user.id);
+      await assertParentBlock(body.parentBlockId, pageId);
+
+      const lastBlock = await db.queryOne<{ sort_order: number }>(
+        "SELECT sort_order FROM blocks WHERE page_id = ? AND parent_block_id <=> ? ORDER BY sort_order DESC LIMIT 1",
+        [pageId, body.parentBlockId]
+      );
+
+      const id = createId("blk");
+      const originalName = sanitizeAttachmentFilename(file.originalname);
+      const metadata: AttachmentMetadata = {
+        attachment: {
+          originalName,
+          mimeType: normalizeAttachmentMimeType(file.mimetype),
+          size: file.size
+        }
+      };
+
+      cleanupPath = await moveAttachmentFile(file.path, user.id, id);
+      await db.execute(
+        `INSERT INTO blocks (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata)
+         VALUES (?, ?, ?, 'ATTACHMENT', ?, ?, 0, ?, ?)`,
+        [
+          id,
+          pageId,
+          body.parentBlockId,
+          originalName,
+          renderBlockHtml("ATTACHMENT", originalName, false, metadata),
+          body.sortOrder ?? (lastBlock ? lastBlock.sort_order + 1 : 0),
+          JSON.stringify(metadata)
+        ]
+      );
+      cleanupPath = null;
+
+      const block = await db.queryOne<BlockRow>("SELECT * FROM blocks WHERE id = ?", [id]);
+      if (!block) throw new ApiError(500, "BLOCK_CREATE_FAILED", "Attachment block was not created");
+      res.status(201).json({ block: toBlock(block) });
+    } catch (error) {
+      if (cleanupPath) await removeAttachmentPath(cleanupPath);
+      next(error);
+    }
+  }
+);
+
+blockRouter.get("/blocks/:blockId/attachment", validate({ params: idParamSchema }), async (req, res, next) => {
+  try {
+    const user = requireUser(req.user);
+    const blockId = String(req.params.blockId);
+    const block = await assertOwnedBlock(blockId, user.id);
+    if (block.type !== "ATTACHMENT") throw notFound("Attachment");
+
+    const info = getAttachmentInfo(toBlock(block).metadata);
+    if (!info || !(await attachmentFileExists(user.id, blockId))) throw notFound("Attachment file");
+
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("Content-Type", info.mimeType);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.download(getAttachmentFilePath(user.id, blockId), info.originalName, (error) => {
+      if (!error) return;
+      if (!res.headersSent) next(error);
+      else console.error("Attachment download failed", error);
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body: createBlockSchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
     const pageId = String(req.params.pageId);
     const body = req.body as z.infer<typeof createBlockSchema>;
+
+    if (body.type === "ATTACHMENT") {
+      throw new ApiError(400, "USE_ATTACHMENT_UPLOAD", "Create attachment blocks through the file upload endpoint");
+    }
 
     await assertOwnedPage(pageId, user.id);
     await assertParentBlock(body.parentBlockId, pageId);
@@ -114,6 +269,18 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
     const blockId = String(req.params.blockId);
     const body = req.body as z.infer<typeof updateBlockSchema>;
     const existing = await assertOwnedBlock(blockId, user.id);
+
+    if (body.type === "ATTACHMENT" && existing.type !== "ATTACHMENT") {
+      throw new ApiError(400, "USE_ATTACHMENT_UPLOAD", "Create attachment blocks through the file upload endpoint");
+    }
+    if (existing.type === "ATTACHMENT") {
+      if (body.type !== undefined && body.type !== "ATTACHMENT") {
+        throw new ApiError(400, "ATTACHMENT_TYPE_IMMUTABLE", "Attachment blocks cannot be converted to another type");
+      }
+      if (body.type !== undefined || body.markdown !== undefined || body.checked !== undefined || body.metadata !== undefined) {
+        throw new ApiError(400, "ATTACHMENT_READ_ONLY", "Attachment block content is read-only");
+      }
+    }
 
     if (body.parentBlockId === blockId) {
       throw new ApiError(400, "INVALID_PARENT_BLOCK", "A block cannot be its own parent");
@@ -179,8 +346,10 @@ blockRouter.delete("/blocks/:blockId", validate({ params: idParamSchema }), asyn
   try {
     const user = requireUser(req.user);
     const blockId = String(req.params.blockId);
-    await assertOwnedBlock(blockId, user.id);
+    const block = await assertOwnedBlock(blockId, user.id);
+    const attachmentIds = await getAttachmentBlockIdsForSubtree(blockId, block.page_id);
     await db.execute("DELETE FROM blocks WHERE id = ?", [blockId]);
+    await removeAttachmentFiles(user.id, attachmentIds);
     res.status(204).send();
   } catch (error) {
     next(error);

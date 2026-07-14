@@ -22,7 +22,9 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default("7d"),
   CORS_ORIGIN: z.string().default("http://localhost:4000,http://127.0.0.1:4000,http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173"),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
-  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120)
+  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
+  ATTACHMENT_UPLOAD_DIR: z.string().min(1).default("uploads"),
+  MAX_ATTACHMENT_SIZE_MB: z.coerce.number().int().min(1).max(500).default(25)
 });
 
 export const env = envSchema.parse(process.env);

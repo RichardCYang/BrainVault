@@ -1473,6 +1473,91 @@ kbd {
   color: var(--focus);
 }
 
+.editor-block-row[data-block-type="ATTACHMENT"] {
+  margin-top: 0.28rem;
+  margin-bottom: 0.28rem;
+}
+
+.editor-block-row[data-block-type="ATTACHMENT"] .block-row-body {
+  min-width: 0;
+}
+
+.editor-block-row.is-uploading .block-row-body {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.block-type-pill:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.attachment-block-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.72rem;
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, rgba(234, 247, 255, 0.82), rgba(255, 255, 255, 0.96));
+  padding: 0.68rem 0.75rem;
+}
+
+.attachment-block-icon {
+  display: grid;
+  width: 2.2rem;
+  height: 2.2rem;
+  place-items: center;
+  border: 1px solid rgba(69, 153, 220, 0.22);
+  border-radius: var(--radius-md);
+  background: #fff;
+  font-size: 1.05rem;
+  box-shadow: var(--shadow-card);
+}
+
+.attachment-block-details {
+  display: grid;
+  min-width: 0;
+  gap: 0.16rem;
+}
+
+.attachment-block-name {
+  overflow: hidden;
+  color: var(--ink-strong);
+  font-size: 0.9rem;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-block-meta {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-download-button {
+  min-height: 2rem;
+  border: 1px solid rgba(69, 153, 220, 0.28);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--focus);
+  padding: 0.38rem 0.65rem;
+  font-size: 0.76rem;
+  font-weight: 680;
+  box-shadow: none;
+}
+
+.attachment-download-button:hover,
+.attachment-download-button:focus-visible {
+  border-color: rgba(36, 118, 184, 0.48);
+  background: var(--active);
+  color: var(--ink-strong);
+}
+
 .editor-block-row[data-block-type="TABLE"] {
   margin-top: 0.3rem;
   margin-bottom: 0.3rem;
@@ -2544,6 +2629,26 @@ kbd {
 }
 
 .rendered-callout--danger::before { content: "⛔"; }
+
+.rendered-attachment {
+  display: grid;
+  gap: 0.2rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--panel-soft);
+  padding: 0.7rem 0.8rem;
+}
+
+.rendered-attachment-name {
+  color: var(--ink-strong);
+  font-weight: 680;
+  overflow-wrap: anywhere;
+}
+
+.rendered-attachment-meta {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
 
 .rendered-table-wrap {
   max-width: 100%;

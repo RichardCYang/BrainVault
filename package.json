@@ -30,6 +30,7 @@
     "mariadb": "^3.5.3",
     "markdown-it": "^14.1.0",
     "morgan": "^1.10.0",
+    "multer": "^2.2.0",
     "sanitize-html": "^2.14.0",
     "zod": "^3.25.0"
   },
@@ -39,6 +40,7 @@
     "@types/jsonwebtoken": "^9.0.8",
     "@types/markdown-it": "^14.1.2",
     "@types/morgan": "^1.9.9",
+    "@types/multer": "^2.2.0",
     "@types/node": "^24.0.0",
     "@types/sanitize-html": "^2.13.0",
     "@types/supertest": "^6.0.3",

@@ -7,7 +7,7 @@ Writing happens directly on the page. There is no separate preview pane: every r
 ## Highlights
 
 - Page-first workspace with a compact document tree and automatic title saving
-- Slash commands for headings, tasks, quotes, callouts, tables, code, dividers, and images
+- Slash commands for headings, tasks, quotes, callouts, tables, code, dividers, images, and file attachments
 - Drag-and-drop block reordering with support for nested content
 - Inline formatting for bold, italic, strikethrough, code, links, and text color
 - Editable table blocks with row, column, header, and keyboard navigation controls
@@ -16,6 +16,7 @@ Writing happens directly on the page. There is no separate preview pane: every r
 - Browser-language detection and an in-app language switcher for English, Japanese, Korean, French, German, Spanish, and Portuguese
 - Tags, page nesting, archiving, and permanent deletion
 - Username-and-password authentication backed by JWT
+- Authenticated attachment upload/download with configurable file-size limits and private disk storage
 - Sanitized Markdown rendering through `markdown-it` and `sanitize-html`
 - Automatic MariaDB database and schema bootstrap during server startup
 - OpenAPI 3.1 specification included in the repository
@@ -30,6 +31,7 @@ Writing happens directly on the page. There is no separate preview pane: every r
 | Database | MariaDB |
 | Authentication | JSON Web Tokens and bcrypt |
 | Validation | Zod |
+| File upload | Multer |
 | Markdown | markdown-it and sanitize-html |
 | Testing | Vitest and Supertest |
 | Frontend | Vanilla HTML, CSS, and JavaScript |
@@ -139,12 +141,20 @@ npm run setup
 Useful slash commands include:
 
 ```text
-/h1  /h2  /h3  /todo  /quote  /callout  /table  /board  /code  /divider  /image
+/h1  /h2  /h3  /todo  /quote  /callout  /table  /board  /code  /divider  /image  /file
 ```
 
 Table cells support arrow-key movement. `Enter` advances down the current column, while `Tab` from the final cell adds another row.
 
 Kanban boards support direct title/group/card editing. Open the icon button beside a card title to choose an emoji, paste a custom emoji, or apply a default, pink, yellow, blue, light-green, purple, or peach pastel card theme. Drag the six-dot card handle to reorder cards or move them between groups; the arrow buttons provide the same cross-group movement on touch devices and for keyboard users.
+
+### Attachment blocks
+
+Type `/file` in a block, choose **Attachment**, and select a file. If the current block contains only the slash command, it is replaced in place; otherwise the attachment is inserted directly below it. The attachment card shows the original filename, media type, size, and an authenticated download button.
+
+Uploaded bytes are stored under `ATTACHMENT_UPLOAD_DIR`, which defaults to `uploads/` at the project root. This directory is ignored by Git and is never mounted as a public static directory. Every download goes through `/api/blocks/:blockId/attachment`, re-checks the current user's ownership, and sends the file with download disposition. Deleting an attachment block, a parent block containing attachments, or a permanently deleted page also removes the associated files.
+
+The default maximum file size is 25 MB. Adjust `MAX_ATTACHMENT_SIZE_MB` when needed. Do not point `ATTACHMENT_UPLOAD_DIR` at `public/`, `docs/`, `.git/`, or the project root.
 
 ## Languages
 
@@ -192,6 +202,8 @@ Translations live in `public/i18n.js`. Static HTML uses `data-i18n*` attributes,
 | `CORS_ORIGIN` | Local development origins | Comma-separated browser origins allowed to call the API |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window in milliseconds |
 | `RATE_LIMIT_MAX` | `120` | Maximum requests per window |
+| `ATTACHMENT_UPLOAD_DIR` | `uploads` | Private on-disk directory for uploaded attachment bytes |
+| `MAX_ATTACHMENT_SIZE_MB` | `25` | Maximum size of one uploaded attachment in megabytes |
 
 Never commit a real `.env` file. The repository already ignores it; keep shareable defaults in `.env.example` instead.
 
@@ -209,9 +221,11 @@ Most API routes require a bearer token returned by the register or login endpoin
 | `GET` | `/api/pages/:pageId` | Read a page and its block tree |
 | `PATCH` | `/api/pages/:pageId` | Update page metadata |
 | `DELETE` | `/api/pages/:pageId` | Archive or permanently delete a page |
-| `POST` | `/api/pages/:pageId/blocks` | Add a block |
+| `POST` | `/api/pages/:pageId/blocks` | Add a non-attachment block |
+| `POST` | `/api/pages/:pageId/attachments` | Upload a file and create an attachment block |
 | `PATCH` | `/api/blocks/:blockId` | Update a block |
-| `DELETE` | `/api/blocks/:blockId` | Delete a block and its descendants |
+| `DELETE` | `/api/blocks/:blockId` | Delete a block and its descendants, including stored attachment files |
+| `GET` | `/api/blocks/:blockId/attachment` | Download an attachment after ownership verification |
 | `POST` | `/api/pages/:pageId/blocks/reorder` | Move or reorder blocks |
 | `GET` | `/api/pages/:pageId/render` | Render sanitized page HTML |
 | `GET` | `/api/search?q=...` | Search titles and block Markdown |
@@ -246,6 +260,7 @@ BrainVault/
 ├── docs/                 # OpenAPI specification
 ├── migrations/           # MariaDB schema migrations
 ├── public/               # Browser UI
+├── uploads/              # Runtime attachment bytes (Git-ignored; created automatically)
 ├── scripts/              # Environment, database, migration, and seed tasks
 ├── src/
 │   ├── config/           # Environment parsing
@@ -262,7 +277,7 @@ BrainVault/
 
 ## Security defaults
 
-The server includes Helmet headers, a configurable CORS allowlist, request rate limiting, password hashing, JWT verification, Zod input validation, and sanitized HTML output. Those defaults are a starting point rather than a substitute for HTTPS, secure secret storage, database backups, and normal production monitoring.
+The server includes Helmet headers, a configurable CORS allowlist, request rate limiting, password hashing, JWT verification, Zod input validation, private attachment storage with authenticated downloads, upload-size limits, and sanitized HTML output. Those defaults are a starting point rather than a substitute for HTTPS, secure secret storage, database backups, and normal production monitoring.
 
 ## Interface language
 

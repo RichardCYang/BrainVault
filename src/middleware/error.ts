@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { ZodError } from "zod";
+import { MulterError } from "multer";
 import { ApiError } from "../lib/http.js";
 
 function getDbError(error: unknown) {
@@ -17,6 +18,17 @@ export function notFoundHandler(req: Request, _res: Response, next: NextFunction
 }
 
 export function errorHandler(error: unknown, _req: Request, res: Response, _next: NextFunction) {
+  if (error instanceof MulterError) {
+    const tooLarge = error.code === "LIMIT_FILE_SIZE";
+    res.status(tooLarge ? 413 : 400).json({
+      error: {
+        code: tooLarge ? "ATTACHMENT_TOO_LARGE" : "ATTACHMENT_UPLOAD_FAILED",
+        message: tooLarge ? "Attachment exceeds the configured size limit" : "Attachment upload failed",
+        details: { multerCode: error.code }
+      }
+    });
+    return;
+  }
   if (error instanceof ZodError) {
     res.status(400).json({
       error: {

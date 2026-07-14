@@ -17,7 +17,8 @@ export const blockTypeSchema = z.enum([
   "KANBAN",
   "CODE",
   "DIVIDER",
-  "IMAGE"
+  "IMAGE",
+  "ATTACHMENT"
 ]);
 
 export const metadataSchema = z.record(z.string(), z.unknown()).optional();

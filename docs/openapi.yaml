@@ -86,7 +86,7 @@ components:
       properties:
         type:
           type: string
-          enum: [MARKDOWN, HEADING_1, HEADING_2, HEADING_3, TODO, QUOTE, CALLOUT, TABLE, KANBAN, CODE, DIVIDER, IMAGE]
+          enum: [MARKDOWN, HEADING_1, HEADING_2, HEADING_3, TODO, QUOTE, CALLOUT, TABLE, KANBAN, CODE, DIVIDER, IMAGE, ATTACHMENT]
         markdown:
           type: string
         checked:
@@ -97,6 +97,25 @@ components:
           type: integer
         metadata:
           type: object
+    AttachmentInfo:
+      type: object
+      required: [originalName, mimeType, size]
+      properties:
+        originalName:
+          type: string
+          description: Sanitized original filename shown to the user and used for downloads.
+        mimeType:
+          type: string
+        size:
+          type: integer
+          minimum: 0
+          description: File size in bytes.
+    AttachmentMetadata:
+      type: object
+      required: [attachment]
+      properties:
+        attachment:
+          $ref: '#/components/schemas/AttachmentInfo'
 paths:
   /:
     get:
@@ -215,6 +234,63 @@ paths:
       responses:
         '201':
           description: Created block
+  /api/pages/{pageId}/attachments:
+    post:
+      summary: Upload a file and create an attachment block
+      description: Stores the file outside the public web root. The configured maximum size defaults to 25 MB.
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                parentBlockId:
+                  type: string
+                sortOrder:
+                  type: integer
+                  minimum: 0
+      responses:
+        '201':
+          description: Attachment block created
+        '400':
+          description: Missing file, invalid parent block, or malformed multipart input
+        '413':
+          description: Attachment exceeds MAX_ATTACHMENT_SIZE_MB
+  /api/blocks/{blockId}/attachment:
+    get:
+      summary: Download an attachment after ownership verification
+      parameters:
+        - in: path
+          name: blockId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Attachment bytes
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: Download disposition with the sanitized original filename.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Attachment block or stored file not found
   /api/blocks/{blockId}:
     patch:
       summary: Update a block

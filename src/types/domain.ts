@@ -31,7 +31,8 @@ export type BlockType =
   | "KANBAN"
   | "CODE"
   | "DIVIDER"
-  | "IMAGE";
+  | "IMAGE"
+  | "ATTACHMENT";
 
 export type BlockRow = {
   id: string;

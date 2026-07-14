@@ -42,7 +42,8 @@ const blockTypeLabels = {
   KANBAN: "blocks.types.KANBAN",
   CODE: "blocks.types.CODE",
   DIVIDER: "blocks.types.DIVIDER",
-  IMAGE: "blocks.types.IMAGE"
+  IMAGE: "blocks.types.IMAGE",
+  ATTACHMENT: "blocks.types.ATTACHMENT"
 };
 
 const calloutTypePresets = [
@@ -217,7 +218,8 @@ const slashCommands = [
   { type: "KANBAN", command: "/board", icon: "kanban" },
   { type: "CODE", command: "/code", icon: "code" },
   { type: "DIVIDER", command: "/divider", icon: "divider" },
-  { type: "IMAGE", command: "/image", icon: "image" }
+  { type: "IMAGE", command: "/image", icon: "image" },
+  { type: "ATTACHMENT", command: "/file", icon: "attachment" }
 ];
 
 const svgNamespace = "http://www.w3.org/2000/svg";
@@ -282,6 +284,9 @@ const slashCommandIconShapes = {
     ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
     ["circle", { cx: "9", cy: "9", r: "2" }],
     ["path", { d: "m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" }]
+  ],
+  attachment: [
+    ["path", { d: "m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.4-9.4a4 4 0 0 1 5.7 5.7l-9.4 9.4a2 2 0 0 1-2.8-2.8l8.8-8.8" }]
   ]
 };
 
@@ -450,6 +455,45 @@ async function api(path, options = {}) {
   }
 
   return data;
+}
+
+async function downloadAttachment(block) {
+  const attachment = getBlockAttachmentData(block);
+  const headers = new Headers();
+  if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
+
+  let response;
+  try {
+    response = await fetch(`/api/blocks/${block.id}/attachment`, { headers });
+  } catch {
+    throw new Error(t("errors.network"));
+  }
+
+  if (!response.ok) {
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      // Use the localized fallback below when the response is not JSON.
+    }
+    if (response.status === 401) {
+      setToken(null);
+      state.user = null;
+      renderShell();
+    }
+    throw new Error(translateApiError(data, response.status));
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = attachment.originalName;
+  link.rel = "noopener";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
 }
 
 function renderShell() {
@@ -672,6 +716,34 @@ function getBlockMetadata(block) {
   return block?.metadata && typeof block.metadata === "object" && !Array.isArray(block.metadata)
     ? { ...block.metadata }
     : {};
+}
+
+function getBlockAttachmentData(block) {
+  const source = block?.metadata?.attachment;
+  const attachment = source && typeof source === "object" && !Array.isArray(source) ? source : {};
+  const size = Number.isFinite(attachment.size) && attachment.size >= 0 ? attachment.size : 0;
+  return {
+    originalName: typeof attachment.originalName === "string" && attachment.originalName.trim()
+      ? attachment.originalName
+      : block?.markdown || t("attachment.unnamed"),
+    mimeType: typeof attachment.mimeType === "string" && attachment.mimeType.trim()
+      ? attachment.mimeType
+      : "application/octet-stream",
+    size
+  };
+}
+
+function formatAttachmentSize(size) {
+  const bytes = Number.isFinite(size) && size > 0 ? size : 0;
+  if (bytes < 1024) return `${formatNumber(bytes)} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${new Intl.NumberFormat(getLocale(), { maximumFractionDigits: value >= 10 ? 0 : 1 }).format(value)} ${units[unitIndex]}`;
 }
 
 function getBlockById(blockId, blocks = state.selectedPage?.blocks ?? []) {
@@ -1409,6 +1481,40 @@ function createTextBlockEditor(block) {
   return textarea;
 }
 
+function createAttachmentEditor(block) {
+  const attachment = getBlockAttachmentData(block);
+  const card = document.createElement("div");
+  card.className = "attachment-block-card";
+
+  const icon = document.createElement("span");
+  icon.className = "attachment-block-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.textContent = "📎";
+
+  const details = document.createElement("div");
+  details.className = "attachment-block-details";
+
+  const name = document.createElement("strong");
+  name.className = "attachment-block-name";
+  name.textContent = attachment.originalName;
+
+  const meta = document.createElement("span");
+  meta.className = "attachment-block-meta";
+  meta.textContent = `${formatAttachmentSize(attachment.size)} · ${attachment.mimeType}`;
+  details.append(name, meta);
+
+  const downloadButton = document.createElement("button");
+  downloadButton.type = "button";
+  downloadButton.className = "attachment-download-button";
+  downloadButton.dataset.action = "download-attachment";
+  downloadButton.textContent = t("attachment.download");
+  downloadButton.title = t("attachment.downloadTitle", { name: attachment.originalName });
+  downloadButton.setAttribute("aria-label", downloadButton.title);
+
+  card.append(icon, details, downloadButton);
+  return card;
+}
+
 function mountBlockEditor(row, block) {
   const host = row.querySelector(".block-editor-host");
   if (!host) return;
@@ -1417,7 +1523,9 @@ function mountBlockEditor(row, block) {
       ? createTableEditor(row, getBlockTableData(block))
       : block.type === "KANBAN"
         ? createKanbanEditor(row, getBlockKanbanData(block))
-        : createTextBlockEditor(block)
+        : block.type === "ATTACHMENT"
+          ? createAttachmentEditor(block)
+          : createTextBlockEditor(block)
   );
 }
 
@@ -1455,6 +1563,8 @@ function renderBlock(block) {
   typeButton.className = "block-type-pill";
   typeButton.dataset.action = "open-slash-menu";
   typeButton.textContent = getBlockTypeLabel(block.type);
+  typeButton.disabled = block.type === "ATTACHMENT";
+  if (typeButton.disabled) typeButton.title = t("attachment.typeLocked");
 
   const meta = document.createElement("span");
   meta.className = "block-row-meta";
@@ -1523,6 +1633,15 @@ function buildBlockPayload(row) {
   const textarea = getBlockTextarea(row);
   const checked = getBlockChecked(row);
   const block = getBlockById(row.dataset.blockId);
+  if (type === "ATTACHMENT") {
+    return {
+      type,
+      markdown: block?.markdown ?? "",
+      checked: false,
+      metadata: getBlockMetadata(block)
+    };
+  }
+
   const payload = {
     type,
     markdown: textarea?.value ?? "",
@@ -2316,10 +2435,95 @@ function updateSlashMenuForTextarea(textarea) {
   renderSlashMenu(row, context.query);
 }
 
+async function uploadAttachmentFromRow(row, file, slashContext = null) {
+  if (!state.selectedPage || !row?.dataset.blockId || !file) return;
+
+  const blockId = row.dataset.blockId;
+  clearTimeout(blockSaveTimers.get(blockId));
+  blockSaveTimers.delete(blockId);
+  const block = getBlockById(blockId);
+  const textarea = getBlockTextarea(row);
+  const currentMarkdown = textarea?.value ?? block?.markdown ?? "";
+  const remainingMarkdown = slashContext
+    ? `${currentMarkdown.slice(0, slashContext.start)}${currentMarkdown.slice(slashContext.end)}`
+    : currentMarkdown;
+  const parentBlockId = normalizeParentBlockId(row.dataset.parentBlockId);
+  const siblingIds = getBlockSiblings(parentBlockId).map((item) => item.id);
+  const referenceIndex = siblingIds.indexOf(blockId);
+  if (referenceIndex < 0) throw new Error(t("errors.currentBlockOrder"));
+
+  const replaceCurrentBlock = !remainingMarkdown.trim() && !(block?.children?.length);
+  if (!replaceCurrentBlock && textarea && textarea.value !== remainingMarkdown) {
+    textarea.value = remainingMarkdown;
+    autoGrowTextarea(textarea);
+    await saveBlockRow(row, { quiet: true });
+  }
+
+  const insertionIndex = replaceCurrentBlock ? referenceIndex : referenceIndex + 1;
+  const formData = new FormData();
+  formData.set("file", file, file.name);
+  if (parentBlockId) formData.set("parentBlockId", parentBlockId);
+  formData.set("sortOrder", String(insertionIndex));
+
+  row.classList.add("is-uploading");
+  setStatus(t("status.attachmentUploading", { name: file.name }));
+  try {
+    const data = await api(`/api/pages/${state.selectedPage.id}/attachments`, {
+      method: "POST",
+      body: formData
+    });
+
+    const orderedIds = [...siblingIds];
+    if (replaceCurrentBlock) {
+      orderedIds.splice(referenceIndex, 1, data.block.id);
+      await api(`/api/blocks/${blockId}`, { method: "DELETE" });
+    } else {
+      orderedIds.splice(insertionIndex, 0, data.block.id);
+    }
+    await persistBlockOrder(parentBlockId, orderedIds);
+
+    state.pendingFocusBlockId = data.block.id;
+    await openPage(state.selectedPage.id);
+    setStatus(t("status.attachmentUploaded", { name: file.name }));
+  } finally {
+    row.classList.remove("is-uploading");
+  }
+}
+
+function requestAttachmentUpload(row, slashContext = null) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.className = "visually-hidden attachment-file-input";
+  input.tabIndex = -1;
+  input.setAttribute("aria-label", t("attachment.chooseFile"));
+  document.body.append(input);
+
+  const cleanup = () => input.remove();
+  input.addEventListener("cancel", cleanup, { once: true });
+  input.addEventListener(
+    "change",
+    () => {
+      const file = input.files?.[0];
+      if (!file) return cleanup();
+      uploadAttachmentFromRow(row, file, slashContext)
+        .catch((error) => setStatus(error.message, true))
+        .finally(cleanup);
+    },
+    { once: true }
+  );
+  input.click();
+}
+
 async function applySlashCommand(row, type) {
   const previousTextarea = getBlockTextarea(row);
   const context = previousTextarea ? getSlashContext(previousTextarea) : null;
   let markdown = previousTextarea?.value ?? "";
+
+  if (type === "ATTACHMENT") {
+    closeSlashMenu();
+    requestAttachmentUpload(row, context);
+    return;
+  }
 
   if (context) markdown = `${markdown.slice(0, context.start)}${markdown.slice(context.end)}`;
   if (type === "DIVIDER" || type === "TABLE" || type === "KANBAN") markdown = "";
@@ -2451,7 +2655,7 @@ function focusPendingBlock() {
     textarea.focus();
     textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
   } else {
-    row?.querySelector(".table-cell-input, .kanban-title-input")?.focus();
+    row?.querySelector(".table-cell-input, .kanban-title-input, .attachment-download-button")?.focus();
   }
   state.pendingFocusBlockId = null;
 }
@@ -3085,6 +3289,15 @@ elements.blockList.addEventListener("click", async (event) => {
   if (!row || !blockId) return;
 
   try {
+    if (button.dataset.action === "download-attachment") {
+      const block = getBlockById(blockId);
+      if (!block) throw new Error(t("errors.attachmentNotFound"));
+      setStatus(t("status.attachmentDownloading", { name: getBlockAttachmentData(block).originalName }));
+      await downloadAttachment(block);
+      setStatus(t("status.attachmentDownloaded", { name: getBlockAttachmentData(block).originalName }));
+      return;
+    }
+
     if (button.dataset.action.startsWith("table-")) {
       handleTableAction(row, button.dataset.action);
       return;
@@ -3128,13 +3341,17 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
     if (button.dataset.action === "insert-block-before" || button.dataset.action === "insert-block-after") {
       const placement = button.dataset.action === "insert-block-before" ? "before" : "after";
       closeBlockContextMenu();
-      await saveBlockRow(row, { quiet: true });
+      if (row.dataset.blockType !== "ATTACHMENT") await saveBlockRow(row, { quiet: true });
       await insertBlockRelative(row, placement);
       return;
     }
 
     if (button.dataset.action === "save-block") {
       closeBlockContextMenu({ restoreFocus: true });
+      if (row.dataset.blockType === "ATTACHMENT") {
+        setStatus(t("status.attachmentReady"));
+        return;
+      }
       await saveBlockRow(row);
       return;
     }

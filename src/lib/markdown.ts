@@ -2,6 +2,7 @@ import MarkdownIt from "markdown-it";
 import sanitizeHtml from "sanitize-html";
 import type { BlockType } from "../types/domain.js";
 import { getCalloutType } from "./callout.js";
+import { formatAttachmentSize, getAttachmentInfo, sanitizeAttachmentFilename } from "./attachments.js";
 import { getTableData } from "./table.js";
 import { renderKanbanHtml } from "./kanban.js";
 
@@ -162,6 +163,20 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
       const src = stripMarkdownImage(markdownValue);
       if (/^https?:\/\//i.test(src)) return renderMarkdown(`![BrainVault image](${src})`);
       return renderMarkdown(markdownValue);
+    }
+    case "ATTACHMENT": {
+      const info = getAttachmentInfo(metadata) ?? {
+        originalName: sanitizeAttachmentFilename(markdownValue),
+        mimeType: "application/octet-stream",
+        size: 0
+      };
+      const safeName = sanitizeHtml(info.originalName, { allowedTags: [], allowedAttributes: {} });
+      const safeMimeType = sanitizeHtml(info.mimeType, { allowedTags: [], allowedAttributes: {} });
+      const detail = `${formatAttachmentSize(info.size)} · ${safeMimeType}`;
+      return sanitizeHtml(
+        `<div class="rendered-attachment"><span class="rendered-attachment-name">${safeName}</span><small class="rendered-attachment-meta">${detail}</small></div>`,
+        sanitizeOptions
+      );
     }
     case "MARKDOWN":
     default:

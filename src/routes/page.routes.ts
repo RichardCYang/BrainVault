@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { db, transaction, type DbClient, type DbValue } from "../lib/db.js";
 import { createId } from "../lib/id.js";
+import { removeAttachmentFiles } from "../lib/attachments.js";
 import { renderBlockHtml } from "../lib/markdown.js";
 import { toBlock, toPage, toTag } from "../lib/mappers.js";
 import { ApiError, notFound } from "../lib/http.js";
@@ -273,7 +274,12 @@ pageRouter.delete(
       await assertOwnedPage(pageId, user.id);
 
       if (query.permanent) {
+        const attachmentRows = await db.query<{ id: string }>(
+          "SELECT id FROM blocks WHERE page_id = ? AND type = 'ATTACHMENT'",
+          [pageId]
+        );
         await db.execute("DELETE FROM pages WHERE id = ?", [pageId]);
+        await removeAttachmentFiles(user.id, attachmentRows.map((row) => row.id));
         res.status(204).send();
         return;
       }

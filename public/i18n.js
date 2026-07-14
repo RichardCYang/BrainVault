@@ -105,8 +105,15 @@ export const translationCatalogs = {
         KANBAN: "Board",
         CODE: "Code",
         DIVIDER: "Divider",
-        IMAGE: "Image"
+        IMAGE: "Image", ATTACHMENT: "Attachment"
       }
+    },
+    attachment: {
+      unnamed: "Unnamed attachment",
+      chooseFile: "Choose a file to attach",
+      download: "Download",
+      downloadTitle: "Download {name}",
+      typeLocked: "Attachment type is fixed after upload."
     },
     callouts: { idea: "Idea", info: "Information", success: "Success", warning: "Warning", danger: "Danger" },
     slash: {
@@ -121,7 +128,8 @@ export const translationCatalogs = {
       KANBAN: { label: "Board", hint: "Kanban board grouped by status", keywords: "kanban board project status cards" },
       CODE: { label: "Code", hint: "Code block", keywords: "code programming" },
       DIVIDER: { label: "Divider", hint: "Horizontal divider", keywords: "divider hr line separator" },
-      IMAGE: { label: "Image", hint: "Image URL block", keywords: "image img photo picture" }
+      IMAGE: { label: "Image", hint: "Image URL block", keywords: "image img photo picture" },
+      ATTACHMENT: { label: "Attachment", hint: "Upload and download a file", keywords: "attachment file upload document download" }
     },
     table: {
       toolbarAria: "Table editing tools",
@@ -241,6 +249,11 @@ export const translationCatalogs = {
       pageSaved: "Page saved.",
       pageArchived: "Page archived.",
       blockDeleted: "Block deleted.",
+      attachmentUploading: "Uploading {name}...",
+      attachmentUploaded: "Attached {name}.",
+      attachmentDownloading: "Downloading {name}...",
+      attachmentDownloaded: "Downloaded {name}.",
+      attachmentReady: "The attachment is already saved.",
       languageChanged: "Language changed to {language}."
     },
     errors: {
@@ -262,6 +275,13 @@ export const translationCatalogs = {
       INVALID_BLOCKS: "The block order is invalid.",
       INVALID_PARENT_BLOCK: "The selected parent block is invalid.",
       INVALID_PARENT_PAGE: "The selected parent page is invalid.",
+      attachmentNotFound: "The attachment could not be found.",
+      ATTACHMENT_TOO_LARGE: "The file is larger than the configured attachment limit.",
+      ATTACHMENT_UPLOAD_FAILED: "The file could not be uploaded.",
+      ATTACHMENT_FILE_REQUIRED: "Select a file to attach.",
+      USE_ATTACHMENT_UPLOAD: "Use the attachment upload command to create attachment blocks.",
+      ATTACHMENT_TYPE_IMMUTABLE: "Attachment blocks cannot be converted to another block type.",
+      ATTACHMENT_READ_ONLY: "Attachment block metadata is managed by the server.",
       unknown: "Something went wrong. Please try again."
     }
   },
@@ -345,7 +365,14 @@ export const translationCatalogs = {
       colorRed: "赤色の文字",
       colorGreen: "緑色の文字"
     },
-    blocks: { types: { MARKDOWN: "テキスト", HEADING_1: "見出し 1", HEADING_2: "見出し 2", HEADING_3: "見出し 3", TODO: "タスク", QUOTE: "引用", CALLOUT: "コールアウト", TABLE: "表", KANBAN: "ボード", CODE: "コード", DIVIDER: "区切り線", IMAGE: "画像" } },
+    blocks: { types: { MARKDOWN: "テキスト", HEADING_1: "見出し 1", HEADING_2: "見出し 2", HEADING_3: "見出し 3", TODO: "タスク", QUOTE: "引用", CALLOUT: "コールアウト", TABLE: "表", KANBAN: "ボード", CODE: "コード", DIVIDER: "区切り線", IMAGE: "画像", ATTACHMENT: "添付ファイル" } },
+    attachment: {
+      unnamed: "無題の添付ファイル",
+      chooseFile: "添付するファイルを選択",
+      download: "ダウンロード",
+      downloadTitle: "{name}をダウンロード",
+      typeLocked: "アップロード後は添付ファイルの種類を変更できません。"
+    },
     callouts: { idea: "アイデア", info: "情報", success: "成功", warning: "注意", danger: "危険" },
     slash: {
       MARKDOWN: { label: "テキスト", hint: "通常のMarkdownブロック", keywords: "markdown text 段落 テキスト" },
@@ -359,7 +386,8 @@ export const translationCatalogs = {
       KANBAN: { label: "ボード", hint: "ステータス別のカンバンボード", keywords: "kanban board ボード カンバン" },
       CODE: { label: "コード", hint: "コードブロック", keywords: "code コード" },
       DIVIDER: { label: "区切り線", hint: "横の区切り線", keywords: "divider hr line 区切り線" },
-      IMAGE: { label: "画像", hint: "画像URLブロック", keywords: "image img 写真 画像" }
+      IMAGE: { label: "画像", hint: "画像URLブロック", keywords: "image img 写真 画像" },
+      ATTACHMENT: { label: "添付ファイル", hint: "ファイルをアップロードしてダウンロード", keywords: "attachment file upload 添付 ファイル アップロード" }
     },
     table: {
       toolbarAria: "表編集ツール",
@@ -473,6 +501,11 @@ export const translationCatalogs = {
       pageSaved: "ページを保存しました。",
       pageArchived: "ページをアーカイブしました。",
       blockDeleted: "ブロックを削除しました。",
+      attachmentUploading: "{name}をアップロードしています...",
+      attachmentUploaded: "{name}を添付しました。",
+      attachmentDownloading: "{name}をダウンロードしています...",
+      attachmentDownloaded: "{name}をダウンロードしました。",
+      attachmentReady: "添付ファイルはすでに保存されています。",
       languageChanged: "言語を{language}に変更しました。"
     },
     errors: {
@@ -494,6 +527,13 @@ export const translationCatalogs = {
       INVALID_BLOCKS: "ブロックの順序が無効です。",
       INVALID_PARENT_BLOCK: "親ブロックの指定が無効です。",
       INVALID_PARENT_PAGE: "親ページの指定が無効です。",
+      attachmentNotFound: "添付ファイルが見つかりません。",
+      ATTACHMENT_TOO_LARGE: "ファイルが設定された添付サイズ上限を超えています。",
+      ATTACHMENT_UPLOAD_FAILED: "ファイルをアップロードできませんでした。",
+      ATTACHMENT_FILE_REQUIRED: "添付するファイルを選択してください。",
+      USE_ATTACHMENT_UPLOAD: "添付ファイルブロックはアップロードコマンドから作成してください。",
+      ATTACHMENT_TYPE_IMMUTABLE: "添付ファイルブロックを別の種類へ変更できません。",
+      ATTACHMENT_READ_ONLY: "添付ファイルの情報はサーバーで管理されます。",
       unknown: "エラーが発生しました。もう一度お試しください。"
     }
   },
@@ -577,7 +617,14 @@ export const translationCatalogs = {
       colorRed: "빨간색 글자",
       colorGreen: "초록색 글자"
     },
-    blocks: { types: { MARKDOWN: "텍스트", HEADING_1: "제목 1", HEADING_2: "제목 2", HEADING_3: "제목 3", TODO: "할 일", QUOTE: "인용", CALLOUT: "콜아웃", TABLE: "표", KANBAN: "보드", CODE: "코드", DIVIDER: "구분선", IMAGE: "이미지" } },
+    blocks: { types: { MARKDOWN: "텍스트", HEADING_1: "제목 1", HEADING_2: "제목 2", HEADING_3: "제목 3", TODO: "할 일", QUOTE: "인용", CALLOUT: "콜아웃", TABLE: "표", KANBAN: "보드", CODE: "코드", DIVIDER: "구분선", IMAGE: "이미지", ATTACHMENT: "첨부파일" } },
+    attachment: {
+      unnamed: "이름 없는 첨부파일",
+      chooseFile: "첨부할 파일 선택",
+      download: "다운로드",
+      downloadTitle: "{name} 다운로드",
+      typeLocked: "업로드한 첨부파일 블록의 유형은 변경할 수 없습니다."
+    },
     callouts: { idea: "아이디어", info: "정보", success: "성공", warning: "주의", danger: "위험" },
     slash: {
       MARKDOWN: { label: "텍스트", hint: "일반 마크다운 블록", keywords: "markdown text 문단 텍스트" },
@@ -591,7 +638,8 @@ export const translationCatalogs = {
       KANBAN: { label: "보드", hint: "상태별 칸반 보드", keywords: "kanban board 칸반 보드 프로젝트 상태 카드" },
       CODE: { label: "코드", hint: "코드 블록", keywords: "code 코드" },
       DIVIDER: { label: "구분선", hint: "가로 구분선", keywords: "divider hr line 구분선" },
-      IMAGE: { label: "이미지", hint: "이미지 URL 블록", keywords: "image img 사진 이미지" }
+      IMAGE: { label: "이미지", hint: "이미지 URL 블록", keywords: "image img 사진 이미지" },
+      ATTACHMENT: { label: "첨부파일", hint: "파일을 업로드하고 다운로드", keywords: "attachment file upload 첨부 첨부파일 파일 업로드 다운로드" }
     },
     table: {
       toolbarAria: "표 편집 도구",
@@ -711,6 +759,11 @@ export const translationCatalogs = {
       pageSaved: "페이지를 저장했습니다.",
       pageArchived: "문서를 보관했습니다.",
       blockDeleted: "블록을 삭제했습니다.",
+      attachmentUploading: "{name} 업로드 중...",
+      attachmentUploaded: "{name} 파일을 첨부했습니다.",
+      attachmentDownloading: "{name} 다운로드 중...",
+      attachmentDownloaded: "{name} 파일을 다운로드했습니다.",
+      attachmentReady: "첨부파일은 이미 저장되어 있습니다.",
       languageChanged: "언어를 {language}(으)로 변경했습니다."
     },
     errors: {
@@ -732,6 +785,13 @@ export const translationCatalogs = {
       INVALID_BLOCKS: "블록 순서가 올바르지 않습니다.",
       INVALID_PARENT_BLOCK: "상위 블록 지정이 올바르지 않습니다.",
       INVALID_PARENT_PAGE: "상위 페이지 지정이 올바르지 않습니다.",
+      attachmentNotFound: "첨부파일을 찾을 수 없습니다.",
+      ATTACHMENT_TOO_LARGE: "파일이 설정된 첨부파일 용량 제한을 초과했습니다.",
+      ATTACHMENT_UPLOAD_FAILED: "파일을 업로드하지 못했습니다.",
+      ATTACHMENT_FILE_REQUIRED: "첨부할 파일을 선택해 주세요.",
+      USE_ATTACHMENT_UPLOAD: "첨부파일 블록은 첨부파일 업로드 명령으로 생성해 주세요.",
+      ATTACHMENT_TYPE_IMMUTABLE: "첨부파일 블록을 다른 블록 유형으로 변경할 수 없습니다.",
+      ATTACHMENT_READ_ONLY: "첨부파일 정보는 서버에서 관리됩니다.",
       unknown: "문제가 발생했습니다. 다시 시도하세요."
     }
   },
@@ -815,7 +875,14 @@ export const translationCatalogs = {
       colorRed: "Texte rouge",
       colorGreen: "Texte vert"
     },
-    blocks: { types: { MARKDOWN: "Texte", HEADING_1: "Titre 1", HEADING_2: "Titre 2", HEADING_3: "Titre 3", TODO: "Tâche", QUOTE: "Citation", CALLOUT: "Encadré", TABLE: "Tableau", KANBAN: "Tableau Kanban", CODE: "Code", DIVIDER: "Séparateur", IMAGE: "Image" } },
+    blocks: { types: { MARKDOWN: "Texte", HEADING_1: "Titre 1", HEADING_2: "Titre 2", HEADING_3: "Titre 3", TODO: "Tâche", QUOTE: "Citation", CALLOUT: "Encadré", TABLE: "Tableau", KANBAN: "Tableau Kanban", CODE: "Code", DIVIDER: "Séparateur", IMAGE: "Image", ATTACHMENT: "Pièce jointe" } },
+    attachment: {
+      unnamed: "Pièce jointe sans nom",
+      chooseFile: "Choisir un fichier à joindre",
+      download: "Télécharger",
+      downloadTitle: "Télécharger {name}",
+      typeLocked: "Le type de pièce jointe est fixe après l’envoi."
+    },
     callouts: { idea: "Idée", info: "Information", success: "Succès", warning: "Avertissement", danger: "Danger" },
     slash: {
       MARKDOWN: { label: "Texte", hint: "Bloc Markdown standard", keywords: "markdown texte paragraphe" },
@@ -829,7 +896,8 @@ export const translationCatalogs = {
       KANBAN: { label: "Tableau Kanban", hint: "Cartes regroupées par statut", keywords: "kanban board tableau projet statut cartes" },
       CODE: { label: "Code", hint: "Bloc de code", keywords: "code programmation" },
       DIVIDER: { label: "Séparateur", hint: "Ligne de séparation horizontale", keywords: "divider ligne séparateur" },
-      IMAGE: { label: "Image", hint: "Bloc d’image par URL", keywords: "image photo illustration" }
+      IMAGE: { label: "Image", hint: "Bloc d’image par URL", keywords: "image photo illustration" },
+      ATTACHMENT: { label: "Pièce jointe", hint: "Envoyer et télécharger un fichier", keywords: "attachment file upload pièce jointe fichier téléverser télécharger" }
     },
     table: {
       toolbarAria: "Outils d’édition du tableau",
@@ -943,6 +1011,11 @@ export const translationCatalogs = {
       pageSaved: "Page enregistrée.",
       pageArchived: "Page archivée.",
       blockDeleted: "Bloc supprimé.",
+      attachmentUploading: "Envoi de {name}...",
+      attachmentUploaded: "{name} a été joint.",
+      attachmentDownloading: "Téléchargement de {name}...",
+      attachmentDownloaded: "{name} a été téléchargé.",
+      attachmentReady: "La pièce jointe est déjà enregistrée.",
       languageChanged: "Langue remplacée par {language}."
     },
     errors: {
@@ -964,6 +1037,13 @@ export const translationCatalogs = {
       INVALID_BLOCKS: "L’ordre des blocs est invalide.",
       INVALID_PARENT_BLOCK: "Le bloc parent sélectionné est invalide.",
       INVALID_PARENT_PAGE: "La page parente sélectionnée est invalide.",
+      attachmentNotFound: "La pièce jointe est introuvable.",
+      ATTACHMENT_TOO_LARGE: "Le fichier dépasse la limite de taille configurée.",
+      ATTACHMENT_UPLOAD_FAILED: "Le fichier n’a pas pu être envoyé.",
+      ATTACHMENT_FILE_REQUIRED: "Choisissez un fichier à joindre.",
+      USE_ATTACHMENT_UPLOAD: "Utilisez la commande d’envoi pour créer une pièce jointe.",
+      ATTACHMENT_TYPE_IMMUTABLE: "Une pièce jointe ne peut pas être convertie en un autre type de bloc.",
+      ATTACHMENT_READ_ONLY: "Les informations de la pièce jointe sont gérées par le serveur.",
       unknown: "Une erreur s’est produite. Réessayez."
     }
   },
@@ -1047,7 +1127,14 @@ export const translationCatalogs = {
       colorRed: "Roter Text",
       colorGreen: "Grüner Text"
     },
-    blocks: { types: { MARKDOWN: "Text", HEADING_1: "Überschrift 1", HEADING_2: "Überschrift 2", HEADING_3: "Überschrift 3", TODO: "Aufgabe", QUOTE: "Zitat", CALLOUT: "Hinweis", TABLE: "Tabelle", KANBAN: "Board", CODE: "Code", DIVIDER: "Trennlinie", IMAGE: "Bild" } },
+    blocks: { types: { MARKDOWN: "Text", HEADING_1: "Überschrift 1", HEADING_2: "Überschrift 2", HEADING_3: "Überschrift 3", TODO: "Aufgabe", QUOTE: "Zitat", CALLOUT: "Hinweis", TABLE: "Tabelle", KANBAN: "Board", CODE: "Code", DIVIDER: "Trennlinie", IMAGE: "Bild", ATTACHMENT: "Anhang" } },
+    attachment: {
+      unnamed: "Unbenannter Anhang",
+      chooseFile: "Datei zum Anhängen auswählen",
+      download: "Herunterladen",
+      downloadTitle: "{name} herunterladen",
+      typeLocked: "Der Anhangstyp ist nach dem Hochladen fest."
+    },
     callouts: { idea: "Idee", info: "Information", success: "Erfolg", warning: "Warnung", danger: "Gefahr" },
     slash: {
       MARKDOWN: { label: "Text", hint: "Normaler Markdown-Block", keywords: "markdown text absatz" },
@@ -1061,7 +1148,8 @@ export const translationCatalogs = {
       KANBAN: { label: "Board", hint: "Kanban-Board nach Status", keywords: "kanban board projekt status karten" },
       CODE: { label: "Code", hint: "Codeblock", keywords: "code programmierung" },
       DIVIDER: { label: "Trennlinie", hint: "Horizontale Trennlinie", keywords: "divider hr line trennlinie" },
-      IMAGE: { label: "Bild", hint: "Bild-URL-Block", keywords: "image img foto bild" }
+      IMAGE: { label: "Bild", hint: "Bild-URL-Block", keywords: "image img foto bild" },
+      ATTACHMENT: { label: "Anhang", hint: "Datei hochladen und herunterladen", keywords: "attachment file upload anhang datei hochladen herunterladen" }
     },
     table: {
       toolbarAria: "Werkzeuge zur Tabellenbearbeitung",
@@ -1175,6 +1263,11 @@ export const translationCatalogs = {
       pageSaved: "Seite gespeichert.",
       pageArchived: "Seite archiviert.",
       blockDeleted: "Block gelöscht.",
+      attachmentUploading: "{name} wird hochgeladen...",
+      attachmentUploaded: "{name} wurde angehängt.",
+      attachmentDownloading: "{name} wird heruntergeladen...",
+      attachmentDownloaded: "{name} wurde heruntergeladen.",
+      attachmentReady: "Der Anhang ist bereits gespeichert.",
       languageChanged: "Sprache zu {language} geändert."
     },
     errors: {
@@ -1196,6 +1289,13 @@ export const translationCatalogs = {
       INVALID_BLOCKS: "Die Blockreihenfolge ist ungültig.",
       INVALID_PARENT_BLOCK: "Der ausgewählte übergeordnete Block ist ungültig.",
       INVALID_PARENT_PAGE: "Die ausgewählte übergeordnete Seite ist ungültig.",
+      attachmentNotFound: "Der Anhang wurde nicht gefunden.",
+      ATTACHMENT_TOO_LARGE: "Die Datei überschreitet das konfigurierte Größenlimit.",
+      ATTACHMENT_UPLOAD_FAILED: "Die Datei konnte nicht hochgeladen werden.",
+      ATTACHMENT_FILE_REQUIRED: "Wähle eine Datei zum Anhängen aus.",
+      USE_ATTACHMENT_UPLOAD: "Erstelle Anhangsblöcke mit dem Upload-Befehl.",
+      ATTACHMENT_TYPE_IMMUTABLE: "Anhangsblöcke können nicht in einen anderen Blocktyp umgewandelt werden.",
+      ATTACHMENT_READ_ONLY: "Anhangsinformationen werden vom Server verwaltet.",
       unknown: "Etwas ist schiefgelaufen. Bitte versuche es erneut."
     }
   },
@@ -1279,7 +1379,14 @@ export const translationCatalogs = {
       colorRed: "Texto rojo",
       colorGreen: "Texto verde"
     },
-    blocks: { types: { MARKDOWN: "Texto", HEADING_1: "Título 1", HEADING_2: "Título 2", HEADING_3: "Título 3", TODO: "Tarea", QUOTE: "Cita", CALLOUT: "Aviso", TABLE: "Tabla", KANBAN: "Tablero", CODE: "Código", DIVIDER: "Separador", IMAGE: "Imagen" } },
+    blocks: { types: { MARKDOWN: "Texto", HEADING_1: "Título 1", HEADING_2: "Título 2", HEADING_3: "Título 3", TODO: "Tarea", QUOTE: "Cita", CALLOUT: "Aviso", TABLE: "Tabla", KANBAN: "Tablero", CODE: "Código", DIVIDER: "Separador", IMAGE: "Imagen", ATTACHMENT: "Archivo adjunto" } },
+    attachment: {
+      unnamed: "Archivo adjunto sin nombre",
+      chooseFile: "Elegir un archivo para adjuntar",
+      download: "Descargar",
+      downloadTitle: "Descargar {name}",
+      typeLocked: "El tipo de archivo adjunto queda fijo tras subirlo."
+    },
     callouts: { idea: "Idea", info: "Información", success: "Éxito", warning: "Advertencia", danger: "Peligro" },
     slash: {
       MARKDOWN: { label: "Texto", hint: "Bloque Markdown normal", keywords: "markdown texto párrafo" },
@@ -1293,7 +1400,8 @@ export const translationCatalogs = {
       KANBAN: { label: "Tablero", hint: "Kanban agrupado por estado", keywords: "kanban board tablero proyecto estado tarjetas" },
       CODE: { label: "Código", hint: "Bloque de código", keywords: "code código programación" },
       DIVIDER: { label: "Separador", hint: "Separador horizontal", keywords: "divider línea separador" },
-      IMAGE: { label: "Imagen", hint: "Bloque de imagen mediante URL", keywords: "image img foto imagen" }
+      IMAGE: { label: "Imagen", hint: "Bloque de imagen mediante URL", keywords: "image img foto imagen" },
+      ATTACHMENT: { label: "Archivo adjunto", hint: "Sube y descarga un archivo", keywords: "attachment file upload adjunto archivo subir descargar" }
     },
     table: {
       toolbarAria: "Herramientas de edición de tabla",
@@ -1407,6 +1515,11 @@ export const translationCatalogs = {
       pageSaved: "Página guardada.",
       pageArchived: "Página archivada.",
       blockDeleted: "Bloque eliminado.",
+      attachmentUploading: "Subiendo {name}...",
+      attachmentUploaded: "Se adjuntó {name}.",
+      attachmentDownloading: "Descargando {name}...",
+      attachmentDownloaded: "Se descargó {name}.",
+      attachmentReady: "El archivo adjunto ya está guardado.",
       languageChanged: "Idioma cambiado a {language}."
     },
     errors: {
@@ -1428,6 +1541,13 @@ export const translationCatalogs = {
       INVALID_BLOCKS: "El orden de los bloques no es válido.",
       INVALID_PARENT_BLOCK: "El bloque principal seleccionado no es válido.",
       INVALID_PARENT_PAGE: "La página principal seleccionada no es válida.",
+      attachmentNotFound: "No se encontró el archivo adjunto.",
+      ATTACHMENT_TOO_LARGE: "El archivo supera el límite de tamaño configurado.",
+      ATTACHMENT_UPLOAD_FAILED: "No se pudo subir el archivo.",
+      ATTACHMENT_FILE_REQUIRED: "Elige un archivo para adjuntar.",
+      USE_ATTACHMENT_UPLOAD: "Usa el comando de subida para crear bloques de archivos adjuntos.",
+      ATTACHMENT_TYPE_IMMUTABLE: "Los archivos adjuntos no se pueden convertir en otro tipo de bloque.",
+      ATTACHMENT_READ_ONLY: "La información del archivo adjunto la gestiona el servidor.",
       unknown: "Algo salió mal. Inténtalo de nuevo."
     }
   },
@@ -1511,7 +1631,14 @@ export const translationCatalogs = {
       colorRed: "Texto vermelho",
       colorGreen: "Texto verde"
     },
-    blocks: { types: { MARKDOWN: "Texto", HEADING_1: "Título 1", HEADING_2: "Título 2", HEADING_3: "Título 3", TODO: "Tarefa", QUOTE: "Citação", CALLOUT: "Destaque", TABLE: "Tabela", KANBAN: "Quadro", CODE: "Código", DIVIDER: "Divisor", IMAGE: "Imagem" } },
+    blocks: { types: { MARKDOWN: "Texto", HEADING_1: "Título 1", HEADING_2: "Título 2", HEADING_3: "Título 3", TODO: "Tarefa", QUOTE: "Citação", CALLOUT: "Destaque", TABLE: "Tabela", KANBAN: "Quadro", CODE: "Código", DIVIDER: "Divisor", IMAGE: "Imagem", ATTACHMENT: "Anexo" } },
+    attachment: {
+      unnamed: "Anexo sem nome",
+      chooseFile: "Escolher um arquivo para anexar",
+      download: "Baixar",
+      downloadTitle: "Baixar {name}",
+      typeLocked: "O tipo do anexo fica fixo após o envio."
+    },
     callouts: { idea: "Ideia", info: "Informação", success: "Sucesso", warning: "Aviso", danger: "Perigo" },
     slash: {
       MARKDOWN: { label: "Texto", hint: "Bloco Markdown comum", keywords: "markdown texto parágrafo" },
@@ -1525,7 +1652,8 @@ export const translationCatalogs = {
       KANBAN: { label: "Quadro", hint: "Kanban agrupado por status", keywords: "kanban board quadro projeto status cartões" },
       CODE: { label: "Código", hint: "Bloco de código", keywords: "code código programação" },
       DIVIDER: { label: "Divisor", hint: "Divisor horizontal", keywords: "divider hr linha divisor" },
-      IMAGE: { label: "Imagem", hint: "Bloco de imagem por URL", keywords: "image img foto imagem" }
+      IMAGE: { label: "Imagem", hint: "Bloco de imagem por URL", keywords: "image img foto imagem" },
+      ATTACHMENT: { label: "Anexo", hint: "Enviar e baixar um arquivo", keywords: "attachment file upload anexo arquivo enviar baixar" }
     },
     table: {
       toolbarAria: "Ferramentas de edição de tabela",
@@ -1639,6 +1767,11 @@ export const translationCatalogs = {
       pageSaved: "Página salva.",
       pageArchived: "Página arquivada.",
       blockDeleted: "Bloco excluído.",
+      attachmentUploading: "Enviando {name}...",
+      attachmentUploaded: "{name} foi anexado.",
+      attachmentDownloading: "Baixando {name}...",
+      attachmentDownloaded: "{name} foi baixado.",
+      attachmentReady: "O anexo já está salvo.",
       languageChanged: "Idioma alterado para {language}."
     },
     errors: {
@@ -1660,6 +1793,13 @@ export const translationCatalogs = {
       INVALID_BLOCKS: "A ordem dos blocos é inválida.",
       INVALID_PARENT_BLOCK: "O bloco pai selecionado é inválido.",
       INVALID_PARENT_PAGE: "A página pai selecionada é inválida.",
+      attachmentNotFound: "O anexo não foi encontrado.",
+      ATTACHMENT_TOO_LARGE: "O arquivo excede o limite de tamanho configurado.",
+      ATTACHMENT_UPLOAD_FAILED: "Não foi possível enviar o arquivo.",
+      ATTACHMENT_FILE_REQUIRED: "Escolha um arquivo para anexar.",
+      USE_ATTACHMENT_UPLOAD: "Use o comando de envio para criar blocos de anexo.",
+      ATTACHMENT_TYPE_IMMUTABLE: "Blocos de anexo não podem ser convertidos em outro tipo.",
+      ATTACHMENT_READ_ONLY: "As informações do anexo são gerenciadas pelo servidor.",
       unknown: "Algo deu errado. Tente novamente."
     }
   }
