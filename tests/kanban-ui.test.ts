@@ -21,6 +21,11 @@ describe("Kanban UI", () => {
     expect(styles).toMatch(/\.rendered-kanban-card\s*\{[^}]*--rendered-kanban-card-border:\s*var\(--line\);[^}]*box-shadow:\s*var\(--shadow-card\);/s);
   });
 
+  it("removes trailing right padding from horizontally scrollable boards", () => {
+    expect(styles).toMatch(/\.kanban-board-scroll\s*\{[^}]*padding:\s*0\.12rem 0 0\.7rem 0\.1rem;/s);
+    expect(styles).toMatch(/\.rendered-kanban-board\s*\{[^}]*padding:\s*0\.08rem 0 0\.45rem 0\.08rem;/s);
+  });
+
   it("keeps columns transparent and presents colored status labels", () => {
     expect(client).toContain('columnLabel.className = "kanban-column-label"');
     expect(styles).toMatch(/\.kanban-column\s*\{[^}]*border:\s*0;[^}]*background:\s*transparent;/s);

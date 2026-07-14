@@ -1928,7 +1928,7 @@ kbd {
 .kanban-board-scroll {
   max-width: 100%;
   overflow-x: auto;
-  padding: 0.12rem 0.1rem 0.7rem;
+  padding: 0.12rem 0 0.7rem 0.1rem;
   outline: none;
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
@@ -2946,7 +2946,7 @@ kbd {
   overflow-x: auto;
   align-items: flex-start;
   gap: 1rem;
-  padding: 0.08rem 0.08rem 0.45rem;
+  padding: 0.08rem 0 0.45rem 0.08rem;
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
 }
