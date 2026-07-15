@@ -280,6 +280,12 @@ select:focus-visible {
   font-size: 0.78rem;
 }
 
+.brand-mark,
+.office-preview-code,
+.office-preview-avatar {
+  object-fit: cover;
+}
+
 .brand-mark {
   display: grid;
   place-items: center;
