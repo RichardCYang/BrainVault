@@ -2713,6 +2713,9 @@ kbd {
   display: flex;
   align-items: center;
   gap: 0.1rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: calc(100vw - 24px);
   border: 1px solid rgba(64, 137, 194, 0.24);
   border-radius: 8px;
   background: #eaf7ff;
@@ -2748,9 +2751,20 @@ kbd {
 }
 
 .inline-toolbar button:hover,
-.inline-toolbar button:focus-visible {
+.inline-toolbar button:focus-visible,
+.inline-toolbar button[aria-pressed="true"] {
   background: #d8efff;
   color: #184d70;
+}
+
+.alignment-icon {
+  display: block;
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
 }
 
 .toolbar-separator {
@@ -2773,6 +2787,10 @@ kbd {
 .color-blue { background: #2476b8; }
 .color-red { background: #d44c47; }
 .color-green { background: #448361; }
+
+.rendered-text-alignment--center { text-align: center; }
+.rendered-text-alignment--right { text-align: right; }
+.rendered-text-alignment--justify { text-align: justify; }
 
 .rendered-callout {
   position: relative;

@@ -10,6 +10,7 @@ Writing happens directly on the page. There is no separate preview pane: every r
 - Slash commands for headings, tasks, quotes, callouts, tables, databases, boards, code, dividers, images, and file attachments
 - Drag-and-drop block reordering with support for nested content
 - Inline formatting for bold, italic, strikethrough, code, links, and text color
+- Block text alignment for left, center, right, and justified paragraphs
 - Editable table blocks with row, column, header, and keyboard navigation controls
 - Database blocks with typed properties, saved table/board/list views, per-view property visibility, filters, sorting, and board grouping
 - Kanban board blocks with editable groups, card emojis, pastel card themes, descriptions, tags, drag-and-drop, and mobile move controls

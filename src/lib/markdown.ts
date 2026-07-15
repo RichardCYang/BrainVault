@@ -79,6 +79,35 @@ const sanitizeOptions: sanitizeHtml.IOptions = {
   }
 };
 
+const textAlignments = new Set(["left", "center", "right", "justify"]);
+
+function getTextAlign(metadata: unknown) {
+  let source: Record<string, unknown> = {};
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    source = metadata as Record<string, unknown>;
+  } else if (typeof metadata === "string") {
+    try {
+      const parsed = JSON.parse(metadata) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        source = parsed as Record<string, unknown>;
+      }
+    } catch {
+      source = {};
+    }
+  }
+  const value = source.textAlign;
+  return typeof value === "string" && textAlignments.has(value) ? value : "left";
+}
+
+function renderTextAlignment(html: string, metadata: unknown) {
+  const textAlign = getTextAlign(metadata);
+  if (textAlign === "left") return html;
+  return sanitizeHtml(
+    `<div class="rendered-text-alignment rendered-text-alignment--${textAlign}">${html}</div>`,
+    sanitizeOptions
+  );
+}
+
 function stripHeadingMarks(raw: string) {
   return raw.replace(/^\s*#{1,6}\s+/, "").trim();
 }
@@ -137,22 +166,28 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
 
   switch (type) {
     case "HEADING_1":
-      return renderMarkdown(`# ${stripHeadingMarks(markdownValue) || "제목 1"}`);
+      return renderTextAlignment(renderMarkdown(`# ${stripHeadingMarks(markdownValue) || "제목 1"}`), metadata);
     case "HEADING_2":
-      return renderMarkdown(`## ${stripHeadingMarks(markdownValue) || "제목 2"}`);
+      return renderTextAlignment(renderMarkdown(`## ${stripHeadingMarks(markdownValue) || "제목 2"}`), metadata);
     case "HEADING_3":
-      return renderMarkdown(`### ${stripHeadingMarks(markdownValue) || "제목 3"}`);
+      return renderTextAlignment(renderMarkdown(`### ${stripHeadingMarks(markdownValue) || "제목 3"}`), metadata);
     case "TODO": {
       const checkbox = `<input type="checkbox" disabled${checked ? " checked" : ""}>`;
-      return sanitizeHtml(`<div class="rendered-todo">${checkbox}${renderMarkdown(markdownValue)}</div>`, sanitizeOptions);
+      return renderTextAlignment(
+        sanitizeHtml(`<div class="rendered-todo">${checkbox}${renderMarkdown(markdownValue)}</div>`, sanitizeOptions),
+        metadata
+      );
     }
     case "QUOTE":
-      return renderMarkdown(`> ${stripBlockquoteMarks(markdownValue)}`);
+      return renderTextAlignment(renderMarkdown(`> ${stripBlockquoteMarks(markdownValue)}`), metadata);
     case "CALLOUT": {
       const calloutType = getCalloutType(metadata);
-      return sanitizeHtml(
-        `<div class="rendered-callout rendered-callout--${calloutType}">${renderMarkdown(markdownValue)}</div>`,
-        sanitizeOptions
+      return renderTextAlignment(
+        sanitizeHtml(
+          `<div class="rendered-callout rendered-callout--${calloutType}">${renderMarkdown(markdownValue)}</div>`,
+          sanitizeOptions
+        ),
+        metadata
       );
     }
     case "TABLE":
@@ -164,13 +199,15 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
     case "BOOKMARK":
       return sanitizeHtml(renderBookmarkHtml(metadata), sanitizeOptions);
     case "CODE":
-      return renderMarkdown(`\`\`\`\n${stripFence(markdownValue)}\n\`\`\``);
+      return renderTextAlignment(renderMarkdown(`\`\`\`\n${stripFence(markdownValue)}\n\`\`\``), metadata);
     case "DIVIDER":
       return sanitizeHtml("<hr>", sanitizeOptions);
     case "IMAGE": {
       const src = stripMarkdownImage(markdownValue);
-      if (/^https?:\/\//i.test(src)) return renderMarkdown(`![BrainVault image](${src})`);
-      return renderMarkdown(markdownValue);
+      if (/^https?:\/\//i.test(src)) {
+        return renderTextAlignment(renderMarkdown(`![BrainVault image](${src})`), metadata);
+      }
+      return renderTextAlignment(renderMarkdown(markdownValue), metadata);
     }
     case "ATTACHMENT": {
       const info = getAttachmentInfo(metadata) ?? {
@@ -188,6 +225,6 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
     }
     case "MARKDOWN":
     default:
-      return renderMarkdown(markdownValue);
+      return renderTextAlignment(renderMarkdown(markdownValue), metadata);
   }
 }

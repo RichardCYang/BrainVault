@@ -65,6 +65,18 @@ const calloutTypePresets = [
 const calloutTypeIds = new Set(calloutTypePresets.map((item) => item.id));
 
 const tableLimits = { rows: 50, columns: 20, cellLength: 4000 };
+const textAlignments = new Set(["left", "center", "right", "justify"]);
+const textAlignableBlockTypes = new Set([
+  "MARKDOWN",
+  "HEADING_1",
+  "HEADING_2",
+  "HEADING_3",
+  "TODO",
+  "QUOTE",
+  "CALLOUT",
+  "CODE",
+  "IMAGE"
+]);
 
 function createDefaultTableData(rows = 3, columns = 3) {
   const safeRows = Math.max(1, Math.min(tableLimits.rows, Math.trunc(rows) || 3));
@@ -816,6 +828,18 @@ function getBlockMetadata(block) {
   return block?.metadata && typeof block.metadata === "object" && !Array.isArray(block.metadata)
     ? { ...block.metadata }
     : {};
+}
+
+function normalizeTextAlign(value) {
+  return textAlignments.has(value) ? value : "left";
+}
+
+function getBlockTextAlign(block) {
+  return normalizeTextAlign(block?.metadata?.textAlign);
+}
+
+function isTextAlignableBlockType(type) {
+  return textAlignableBlockTypes.has(type);
 }
 
 function getBlockAttachmentData(block) {
@@ -1662,6 +1686,7 @@ function createTextBlockEditor(block) {
   textarea.spellcheck = true;
   textarea.placeholder = block.type === "DIVIDER" ? t("block.dividerPlaceholder") : t("block.contentPlaceholder");
   textarea.value = block.markdown ?? "";
+  textarea.style.textAlign = getBlockTextAlign(block);
   textarea.setAttribute("aria-label", t("block.contentAria", { type: getBlockTypeLabel(block.type) }));
   requestAnimationFrame(() => autoGrowTextarea(textarea));
   return textarea;
@@ -1961,6 +1986,7 @@ function renderBlock(block) {
   row.dataset.blockId = block.id;
   row.dataset.blockType = block.type;
   row.dataset.calloutType = getBlockCalloutType(block);
+  row.dataset.textAlign = getBlockTextAlign(block);
   row.dataset.parentBlockId = block.parentBlockId ?? "";
   row.dataset.sortOrder = String(block.sortOrder ?? 0);
   row.dataset.depth = String(Math.min(block.depth ?? 0, 5));
@@ -2074,6 +2100,11 @@ function buildBlockPayload(row) {
     checked: checked ? checked.checked : false
   };
   const metadata = getBlockMetadata(block);
+  if (isTextAlignableBlockType(type)) {
+    const textAlign = normalizeTextAlign(row.dataset.textAlign);
+    if (textAlign === "left") delete metadata.textAlign;
+    else metadata.textAlign = textAlign;
+  }
 
   if (type === "TABLE") {
     const table = extractTableData(row);
@@ -2707,6 +2738,8 @@ function closeInlineToolbar() {
 function positionInlineToolbar(textarea, selection) {
   const selectionRect = getTextareaSelectionRect(textarea, selection);
   elements.inlineToolbar.classList.remove("hidden");
+  elements.inlineToolbar.style.left = "12px";
+  elements.inlineToolbar.style.top = "12px";
   elements.inlineToolbar.style.visibility = "hidden";
 
   const toolbarRect = elements.inlineToolbar.getBoundingClientRect();
@@ -2723,6 +2756,13 @@ function positionInlineToolbar(textarea, selection) {
   elements.inlineToolbar.style.visibility = "visible";
 }
 
+function updateInlineAlignmentButtons(row) {
+  const alignment = normalizeTextAlign(row?.dataset.textAlign);
+  for (const button of elements.inlineToolbar.querySelectorAll("button[data-align]")) {
+    button.setAttribute("aria-pressed", String(button.dataset.align === alignment));
+  }
+}
+
 function updateInlineToolbarForTextarea(textarea) {
   const row = getBlockRow(textarea);
   const selection = getTextareaSelection(textarea);
@@ -2731,6 +2771,7 @@ function updateInlineToolbarForTextarea(textarea) {
   closeSlashMenu();
   state.activeInlineBlockId = row.dataset.blockId;
   state.activeInlineSelection = selection;
+  updateInlineAlignmentButtons(row);
   positionInlineToolbar(textarea, selection);
 }
 
@@ -2744,8 +2785,30 @@ function applyInlineFormat(format, value = "") {
   const textarea = getActiveInlineTextarea() ?? document.activeElement;
   if (!(textarea instanceof HTMLTextAreaElement)) return;
 
+  const row = getBlockRow(textarea);
   const currentSelection = getTextareaSelection(textarea);
   const selection = state.activeInlineSelection ?? currentSelection;
+
+  if (format === "align") {
+    if (!row || !isTextAlignableBlockType(row.dataset.blockType)) return;
+    const textAlign = normalizeTextAlign(value);
+    row.dataset.textAlign = textAlign;
+    textarea.style.textAlign = textAlign;
+    const block = getBlockById(row.dataset.blockId);
+    if (block) {
+      const metadata = getBlockMetadata(block);
+      if (textAlign === "left") delete metadata.textAlign;
+      else metadata.textAlign = textAlign;
+      block.metadata = Object.keys(metadata).length ? metadata : null;
+    }
+    textarea.focus();
+    if (selection) textarea.setSelectionRange(selection.start, selection.end);
+    scheduleBlockSave(row);
+    closeInlineToolbar();
+    setStatus(t("status.formatApplied"));
+    return;
+  }
+
   if (!selection) return;
 
   const selected = textarea.value.slice(selection.start, selection.end);
@@ -2787,7 +2850,6 @@ function applyInlineFormat(format, value = "") {
   textarea.setSelectionRange(selectStart, selectEnd);
   autoGrowTextarea(textarea);
 
-  const row = getBlockRow(textarea);
   if (row) scheduleBlockSave(row);
   closeInlineToolbar();
   setStatus(t("status.formatApplied"));
@@ -3920,7 +3982,7 @@ elements.inlineToolbar.addEventListener("mousedown", (event) => {
 elements.inlineToolbar.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-format]");
   if (!button) return;
-  applyInlineFormat(button.dataset.format, button.dataset.color ?? "");
+  applyInlineFormat(button.dataset.format, button.dataset.align ?? button.dataset.color ?? "");
 });
 
 document.addEventListener("click", (event) => {
