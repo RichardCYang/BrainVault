@@ -1778,6 +1778,7 @@ kbd {
 .editor-block-row[data-block-type="KANBAN"] {
   margin-top: 1.05rem;
   margin-bottom: 1.1rem;
+  padding-right: 0;
 }
 
 .editor-block-row[data-block-type="KANBAN"] .block-row-body {
@@ -1954,7 +1955,7 @@ kbd {
   --kanban-status-ink: var(--accent-text);
   display: grid;
   width: clamp(14.75rem, 25vw, 17.25rem);
-  flex: 0 0 clamp(14.75rem, 25vw, 17.25rem);
+  flex: 1 0 clamp(14.75rem, 25vw, 17.25rem);
   align-content: start;
   gap: 0.48rem;
   border: 0;
@@ -2957,7 +2958,7 @@ kbd {
   --rendered-kanban-status-ink: var(--accent-text);
   display: grid;
   width: 16rem;
-  flex: 0 0 16rem;
+  flex: 1 0 16rem;
   align-content: start;
   gap: 0.48rem;
   border: 0;
