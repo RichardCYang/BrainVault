@@ -30,6 +30,7 @@ export type BlockType =
   | "TABLE"
   | "KANBAN"
   | "DATABASE"
+  | "BOOKMARK"
   | "CODE"
   | "DIVIDER"
   | "IMAGE"

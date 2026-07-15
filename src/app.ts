@@ -16,7 +16,15 @@ export function createApp() {
   const app = express();
 
   app.disable("x-powered-by");
-  app.use(helmet());
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          imgSrc: ["'self'", "data:", "http:", "https:"]
+        }
+      }
+    })
+  );
   app.use(cors(corsOptionsDelegate));
   app.use(express.json({ limit: "1mb" }));
   app.use(express.urlencoded({ extended: false }));

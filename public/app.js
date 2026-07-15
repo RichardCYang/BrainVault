@@ -48,6 +48,7 @@ const blockTypeLabels = {
   TABLE: "blocks.types.TABLE",
   KANBAN: "blocks.types.KANBAN",
   DATABASE: "blocks.types.DATABASE",
+  BOOKMARK: "blocks.types.BOOKMARK",
   CODE: "blocks.types.CODE",
   DIVIDER: "blocks.types.DIVIDER",
   IMAGE: "blocks.types.IMAGE",
@@ -214,6 +215,85 @@ function normalizeKanbanData(value) {
   };
 }
 
+const bookmarkLimits = {
+  items: 50,
+  idLength: 64,
+  urlLength: 2048,
+  titleLength: 300,
+  descriptionLength: 1000,
+  siteNameLength: 160
+};
+
+function normalizeBookmarkText(value, maxLength) {
+  return (typeof value === "string" ? value : "")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function normalizeBookmarkUrl(value, baseUrl) {
+  const raw = normalizeBookmarkText(value, bookmarkLimits.urlLength);
+  if (!raw) return "";
+  try {
+    const url = baseUrl ? new URL(raw, baseUrl) : new URL(raw);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return "";
+    url.hash = "";
+    return url.toString().slice(0, bookmarkLimits.urlLength);
+  } catch {
+    return "";
+  }
+}
+
+function normalizeBookmarkInputUrl(value) {
+  const raw = normalizeBookmarkText(value, bookmarkLimits.urlLength);
+  if (!raw) return "";
+  return normalizeBookmarkUrl(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
+}
+
+function createDefaultBookmarkData() {
+  return { view: "gallery", items: [] };
+}
+
+function normalizeBookmarkData(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const view = source.view === "list" ? "list" : "gallery";
+  const seenIds = new Set();
+  const seenUrls = new Set();
+  const items = [];
+
+  for (const [index, rawItem] of (Array.isArray(source.items) ? source.items : []).slice(0, bookmarkLimits.items).entries()) {
+    if (!rawItem || typeof rawItem !== "object" || Array.isArray(rawItem)) continue;
+    const url = normalizeBookmarkUrl(rawItem.url);
+    if (!url || seenUrls.has(url)) continue;
+    seenUrls.add(url);
+
+    let id = normalizeBookmarkText(rawItem.id, bookmarkLimits.idLength) || createClientId(`bookmark-${index + 1}`);
+    while (seenIds.has(id)) id = createClientId(`bookmark-${index + 1}`);
+    seenIds.add(id);
+    const parsedUrl = new URL(url);
+
+    items.push({
+      id,
+      url,
+      title: normalizeBookmarkText(rawItem.title, bookmarkLimits.titleLength) || parsedUrl.hostname,
+      description: normalizeBookmarkText(rawItem.description, bookmarkLimits.descriptionLength),
+      imageUrl: normalizeBookmarkUrl(rawItem.imageUrl, url),
+      faviconUrl: normalizeBookmarkUrl(rawItem.faviconUrl, url) || new URL("/favicon.ico", url).toString(),
+      siteName: normalizeBookmarkText(rawItem.siteName, bookmarkLimits.siteNameLength) || parsedUrl.hostname
+    });
+  }
+
+  return { view, items };
+}
+
+function summarizeBookmarkData(data) {
+  return normalizeBookmarkData(data).items
+    .map((item) => `${item.title}\n${item.description}\n${item.url}`.trim())
+    .join("\n\n")
+    .slice(0, 20_000);
+}
+
 const slashCommands = [
   { type: "MARKDOWN", command: "/text", icon: "text" },
   { type: "HEADING_1", command: "/h1", icon: "heading-1" },
@@ -225,6 +305,7 @@ const slashCommands = [
   { type: "TABLE", command: "/table", icon: "table" },
   { type: "DATABASE", command: "/database", icon: "database" },
   { type: "KANBAN", command: "/board", icon: "kanban" },
+  { type: "BOOKMARK", command: "/bookmark", icon: "bookmark" },
   { type: "CODE", command: "/code", icon: "code" },
   { type: "DIVIDER", command: "/divider", icon: "divider" },
   { type: "IMAGE", command: "/image", icon: "image" },
@@ -287,6 +368,11 @@ const slashCommandIconShapes = {
     ["path", { d: "M5.5 7h1" }],
     ["path", { d: "M11.5 7h1" }],
     ["path", { d: "M17.5 7h1" }]
+  ],
+  bookmark: [
+    ["path", { d: "M6 4.5A2.5 2.5 0 0 1 8.5 2h7A2.5 2.5 0 0 1 18 4.5V22l-6-3.6L6 22Z" }],
+    ["path", { d: "M9 7h6" }],
+    ["path", { d: "M9 11h4" }]
   ],
   code: [
     ["path", { d: "m18 16 4-4-4-4" }],
@@ -796,6 +882,10 @@ function getBlockKanbanData(block) {
 
 function getBlockDatabaseData(block) {
   return normalizeDatabaseData(block?.metadata?.database);
+}
+
+function getBlockBookmarkData(block) {
+  return normalizeBookmarkData(block?.metadata?.bookmark);
 }
 
 function makeKanbanActionButton(action, label, title, data = {}) {
@@ -1611,6 +1701,242 @@ function createAttachmentEditor(block) {
   return card;
 }
 
+function createBookmarkFavicon(item, className = "bookmark-favicon") {
+  const image = document.createElement("img");
+  image.className = className;
+  image.src = item.faviconUrl;
+  image.alt = "";
+  image.width = 20;
+  image.height = 20;
+  image.loading = "lazy";
+  image.referrerPolicy = "no-referrer";
+  image.addEventListener("error", () => image.remove(), { once: true });
+  return image;
+}
+
+function makeBookmarkActionButton(action, label, title, itemId = "") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "bookmark-action-button";
+  button.dataset.action = action;
+  if (itemId) button.dataset.bookmarkId = itemId;
+  button.textContent = label;
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  return button;
+}
+
+function createBookmarkItem(item, view) {
+  const wrapper = document.createElement(view === "list" ? "div" : "article");
+  wrapper.className = view === "list" ? "bookmark-list-item" : "bookmark-gallery-card";
+  wrapper.dataset.bookmarkId = item.id;
+
+  const link = document.createElement("a");
+  link.href = item.url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.referrerPolicy = "no-referrer";
+  link.className = "bookmark-item-link";
+
+  if (view === "list") {
+    link.append(createBookmarkFavicon(item));
+    const title = document.createElement("strong");
+    title.textContent = item.title;
+    link.append(title);
+  } else {
+    const media = document.createElement("div");
+    media.className = "bookmark-card-media";
+    const fallback = document.createElement("span");
+    fallback.className = "bookmark-card-media-fallback";
+    fallback.setAttribute("aria-hidden", "true");
+    fallback.textContent = "🔖";
+    media.append(fallback);
+    if (item.imageUrl) {
+      const image = document.createElement("img");
+      image.className = "bookmark-card-image";
+      image.src = item.imageUrl;
+      image.alt = "";
+      image.loading = "lazy";
+      image.referrerPolicy = "no-referrer";
+      image.addEventListener("error", () => image.remove(), { once: true });
+      media.append(image);
+    }
+
+    const content = document.createElement("div");
+    content.className = "bookmark-card-content";
+    const title = document.createElement("strong");
+    title.className = "bookmark-card-title";
+    title.textContent = item.title;
+    const description = document.createElement("p");
+    description.className = "bookmark-card-description";
+    description.textContent = item.description || t("bookmark.noDescription");
+    const site = document.createElement("span");
+    site.className = "bookmark-card-site";
+    site.append(createBookmarkFavicon(item), document.createTextNode(item.siteName));
+    content.append(title, description, site);
+    link.append(media, content);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "bookmark-item-actions";
+  actions.append(
+    makeBookmarkActionButton("bookmark-refresh", "↻", t("bookmark.refresh"), item.id),
+    makeBookmarkActionButton("bookmark-remove", "×", t("bookmark.remove"), item.id)
+  );
+  wrapper.append(link, actions);
+  return wrapper;
+}
+
+function createBookmarkEditor(row, value) {
+  const data = normalizeBookmarkData(value);
+  row.bookmarkData = data;
+
+  const editor = document.createElement("div");
+  editor.className = "bookmark-block-editor";
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "bookmark-toolbar";
+
+  const viewToggle = document.createElement("div");
+  viewToggle.className = "bookmark-view-toggle";
+  viewToggle.setAttribute("role", "group");
+  viewToggle.setAttribute("aria-label", t("bookmark.viewAria"));
+  for (const view of ["list", "gallery"]) {
+    const button = makeBookmarkActionButton(
+      "bookmark-set-view",
+      t(`bookmark.${view}View`),
+      t(`bookmark.${view}ViewTitle`)
+    );
+    button.classList.add("bookmark-view-button");
+    button.dataset.bookmarkView = view;
+    button.setAttribute("aria-pressed", String(data.view === view));
+    toolbar.classList.toggle(`is-${view}`, data.view === view);
+    viewToggle.append(button);
+  }
+
+  const count = document.createElement("span");
+  count.className = "bookmark-count";
+  count.textContent = t("bookmark.count", { count: formatNumber(data.items.length) });
+  toolbar.append(viewToggle, count);
+
+  const addRow = document.createElement("div");
+  addRow.className = "bookmark-add-row";
+  const input = document.createElement("input");
+  input.type = "url";
+  input.className = "bookmark-url-input";
+  input.placeholder = t("bookmark.urlPlaceholder");
+  input.setAttribute("aria-label", t("bookmark.urlAria"));
+  input.maxLength = bookmarkLimits.urlLength;
+  input.autocomplete = "url";
+  input.inputMode = "url";
+  const addButton = makeBookmarkActionButton("bookmark-add", t("bookmark.add"), t("bookmark.addTitle"));
+  addButton.classList.add("bookmark-add-button");
+  addButton.disabled = data.items.length >= bookmarkLimits.items;
+  addRow.append(input, addButton);
+
+  const items = document.createElement("div");
+  items.className = `bookmark-items bookmark-items--${data.view}`;
+  if (data.items.length) {
+    data.items.forEach((item) => items.append(createBookmarkItem(item, data.view)));
+  } else {
+    const empty = document.createElement("div");
+    empty.className = "bookmark-empty";
+    empty.textContent = t("bookmark.empty");
+    items.append(empty);
+  }
+
+  editor.append(toolbar, addRow, items);
+  return editor;
+}
+
+function extractBookmarkData(row) {
+  return normalizeBookmarkData(row?.bookmarkData);
+}
+
+function replaceBookmarkEditor(row, value, { focusInput = false } = {}) {
+  const host = row?.querySelector(".block-editor-host");
+  if (!host) return;
+  host.replaceChildren(createBookmarkEditor(row, value));
+  if (focusInput) requestAnimationFrame(() => row.querySelector(".bookmark-url-input")?.focus());
+}
+
+async function addBookmarkToRow(row) {
+  const input = row.querySelector(".bookmark-url-input");
+  const addButton = row.querySelector('[data-action="bookmark-add"]');
+  const url = normalizeBookmarkInputUrl(input?.value ?? "");
+  if (!url) throw new Error(t("errors.BOOKMARK_URL_INVALID"));
+
+  row.classList.add("is-bookmark-loading");
+  if (addButton) addButton.disabled = true;
+  setStatus(t("status.bookmarkFetching"));
+  try {
+    const response = await api("/api/bookmarks/preview", { method: "POST", body: { url } });
+    const data = extractBookmarkData(row);
+    const preview = response.preview;
+    const existingIndex = data.items.findIndex((item) => item.url === preview.url || item.url === url);
+    const item = {
+      id: existingIndex >= 0 ? data.items[existingIndex].id : createClientId("bookmark"),
+      ...preview
+    };
+    if (existingIndex >= 0) data.items.splice(existingIndex, 1, item);
+    else data.items.push(item);
+    replaceBookmarkEditor(row, data, { focusInput: true });
+    await saveBlockRow(row, { quiet: true });
+    setStatus(t(response.warning ? "status.bookmarkAddedFallback" : "status.bookmarkAdded", { title: item.title }));
+  } finally {
+    row.classList.remove("is-bookmark-loading");
+    if (addButton?.isConnected) addButton.disabled = false;
+  }
+}
+
+async function handleBookmarkAction(row, button) {
+  const action = button.dataset.action;
+  const data = extractBookmarkData(row);
+
+  if (action === "bookmark-set-view") {
+    data.view = button.dataset.bookmarkView === "list" ? "list" : "gallery";
+    replaceBookmarkEditor(row, data);
+    await saveBlockRow(row, { quiet: true });
+    setStatus(t("status.bookmarkViewChanged"));
+    return;
+  }
+
+  if (action === "bookmark-add") {
+    await addBookmarkToRow(row);
+    return;
+  }
+
+  const itemIndex = data.items.findIndex((item) => item.id === button.dataset.bookmarkId);
+  if (itemIndex < 0) return;
+
+  if (action === "bookmark-remove") {
+    const [removed] = data.items.splice(itemIndex, 1);
+    replaceBookmarkEditor(row, data);
+    await saveBlockRow(row, { quiet: true });
+    setStatus(t("status.bookmarkRemoved", { title: removed.title }));
+    return;
+  }
+
+  if (action === "bookmark-refresh") {
+    const current = data.items[itemIndex];
+    row.classList.add("is-bookmark-loading");
+    button.disabled = true;
+    setStatus(t("status.bookmarkRefreshing", { title: current.title }));
+    try {
+      const response = await api("/api/bookmarks/preview", { method: "POST", body: { url: current.url } });
+      data.items[itemIndex] = { id: current.id, ...response.preview };
+      replaceBookmarkEditor(row, data);
+      await saveBlockRow(row, { quiet: true });
+      setStatus(t(response.warning ? "status.bookmarkRefreshedFallback" : "status.bookmarkRefreshed", {
+        title: data.items[itemIndex].title
+      }));
+    } finally {
+      row.classList.remove("is-bookmark-loading");
+      if (button.isConnected) button.disabled = false;
+    }
+  }
+}
+
 function mountBlockEditor(row, block) {
   const host = row.querySelector(".block-editor-host");
   if (!host) return;
@@ -1621,6 +1947,8 @@ function mountBlockEditor(row, block) {
         ? createKanbanEditor(row, getBlockKanbanData(block))
         : block.type === "DATABASE"
           ? createDatabaseEditor(row, getBlockDatabaseData(block), { onDirty: () => scheduleBlockSave(row) })
+          : block.type === "BOOKMARK"
+            ? createBookmarkEditor(row, getBlockBookmarkData(block))
           : block.type === "ATTACHMENT"
             ? createAttachmentEditor(block)
             : createTextBlockEditor(block)
@@ -1752,6 +2080,7 @@ function buildBlockPayload(row) {
     metadata.table = table;
     delete metadata.kanban;
     delete metadata.database;
+    delete metadata.bookmark;
     payload.markdown = table.rows.map((cells) => cells.join("\t")).join("\n").slice(0, 20_000);
     payload.metadata = metadata;
   } else if (type === "KANBAN") {
@@ -1759,6 +2088,7 @@ function buildBlockPayload(row) {
     metadata.kanban = kanban;
     delete metadata.table;
     delete metadata.database;
+    delete metadata.bookmark;
     payload.markdown = summarizeKanbanData(kanban);
     payload.metadata = metadata;
   } else if (type === "DATABASE") {
@@ -1766,12 +2096,22 @@ function buildBlockPayload(row) {
     metadata.database = database;
     delete metadata.table;
     delete metadata.kanban;
+    delete metadata.bookmark;
     payload.markdown = summarizeDatabaseData(database);
+    payload.metadata = metadata;
+  } else if (type === "BOOKMARK") {
+    const bookmark = extractBookmarkData(row);
+    metadata.bookmark = bookmark;
+    delete metadata.table;
+    delete metadata.kanban;
+    delete metadata.database;
+    payload.markdown = summarizeBookmarkData(bookmark);
     payload.metadata = metadata;
   } else {
     if (metadata.table) delete metadata.table;
     if (metadata.kanban) delete metadata.kanban;
     if (metadata.database) delete metadata.database;
+    if (metadata.bookmark) delete metadata.bookmark;
     payload.metadata = Object.keys(metadata).length ? metadata : null;
   }
 
@@ -2113,9 +2453,11 @@ function setRowType(row, type, { markdown } = {}) {
   if (previousType === "TABLE") metadata.table = extractTableData(row);
   if (previousType === "KANBAN") metadata.kanban = extractKanbanData(row);
   if (previousType === "DATABASE") metadata.database = extractDatabaseData(row);
+  if (previousType === "BOOKMARK") metadata.bookmark = extractBookmarkData(row);
   if (type === "TABLE" && !metadata.table) metadata.table = createDefaultTableData();
   if (type === "KANBAN" && !metadata.kanban) metadata.kanban = createDefaultKanbanData();
   if (type === "DATABASE" && !metadata.database) metadata.database = createDefaultDatabaseData();
+  if (type === "BOOKMARK" && !metadata.bookmark) metadata.bookmark = createDefaultBookmarkData();
 
   row.dataset.blockType = type;
   if (type === "CALLOUT") setRowCalloutType(row, row.dataset.calloutType);
@@ -2128,7 +2470,7 @@ function setRowType(row, type, { markdown } = {}) {
   mountBlockEditor(row, {
     ...existing,
     type,
-    markdown: type === "TABLE" || type === "KANBAN" || type === "DATABASE" ? "" : markdown ?? previousTextarea?.value ?? existing.markdown ?? "",
+    markdown: type === "TABLE" || type === "KANBAN" || type === "DATABASE" || type === "BOOKMARK" ? "" : markdown ?? previousTextarea?.value ?? existing.markdown ?? "",
     metadata
   });
 }
@@ -2664,7 +3006,7 @@ async function applySlashCommand(row, type) {
   }
 
   if (context) markdown = `${markdown.slice(0, context.start)}${markdown.slice(context.end)}`;
-  if (type === "DIVIDER" || type === "TABLE" || type === "KANBAN" || type === "DATABASE") markdown = "";
+  if (type === "DIVIDER" || type === "TABLE" || type === "KANBAN" || type === "DATABASE" || type === "BOOKMARK") markdown = "";
 
   setRowType(row, type, { markdown });
   closeSlashMenu();
@@ -2680,6 +3022,8 @@ async function applySlashCommand(row, type) {
     row.querySelector(".kanban-title-input")?.focus();
   } else if (type === "DATABASE") {
     row.querySelector(".database-title-input")?.focus();
+  } else if (type === "BOOKMARK") {
+    row.querySelector(".bookmark-url-input")?.focus();
   } else {
     focusTableCell(row, 0, 0);
   }
@@ -3306,6 +3650,21 @@ elements.blockList.addEventListener("change", (event) => {
 });
 
 elements.blockList.addEventListener("keydown", async (event) => {
+  const bookmarkInput = event.target.closest(".bookmark-url-input");
+  if (bookmarkInput) {
+    if (event.key === "Enter" && !event.isComposing) {
+      event.preventDefault();
+      const bookmarkRow = getBlockRow(bookmarkInput);
+      if (!bookmarkRow) return;
+      try {
+        await addBookmarkToRow(bookmarkRow);
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    }
+    return;
+  }
+
   const tableCell = event.target.closest(".table-cell-input");
   if (tableCell) {
     const tableRow = getBlockRow(tableCell);
@@ -3437,6 +3796,11 @@ elements.blockList.addEventListener("click", async (event) => {
       setStatus(t("status.attachmentDownloading", { name: getBlockAttachmentData(block).originalName }));
       await downloadAttachment(block);
       setStatus(t("status.attachmentDownloaded", { name: getBlockAttachmentData(block).originalName }));
+      return;
+    }
+
+    if (button.dataset.action.startsWith("bookmark-")) {
+      await handleBookmarkAction(row, button);
       return;
     }
 

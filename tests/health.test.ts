@@ -248,20 +248,23 @@ describe("BrainVault web shell and health endpoint", () => {
   });
 
 
-  it("includes migrations for the TABLE, KANBAN, and DATABASE block enums", async () => {
+  it("includes migrations for the TABLE, KANBAN, DATABASE, and BOOKMARK block enums", async () => {
     const fs = await import("node:fs/promises");
     const baseline = await fs.readFile("migrations/001_init.sql", "utf8");
     const tableMigration = await fs.readFile("migrations/003_blocks_table_type.sql", "utf8");
     const kanbanMigration = await fs.readFile("migrations/004_blocks_kanban_type.sql", "utf8");
     const databaseMigration = await fs.readFile("migrations/006_blocks_database_type.sql", "utf8");
+    const bookmarkMigration = await fs.readFile("migrations/007_blocks_bookmark_type.sql", "utf8");
 
-    expect(baseline).toContain("'CALLOUT', 'TABLE', 'KANBAN', 'DATABASE', 'CODE'");
+    expect(baseline).toContain("'CALLOUT', 'TABLE', 'KANBAN', 'DATABASE', 'BOOKMARK', 'CODE'");
     expect(tableMigration).toContain("MODIFY COLUMN type ENUM");
     expect(tableMigration).toContain("'TABLE'");
     expect(kanbanMigration).toContain("MODIFY COLUMN type ENUM");
     expect(kanbanMigration).toContain("'KANBAN'");
     expect(databaseMigration).toContain("MODIFY COLUMN type ENUM");
     expect(databaseMigration).toContain("'DATABASE'");
+    expect(bookmarkMigration).toContain("MODIFY COLUMN type ENUM");
+    expect(bookmarkMigration).toContain("'BOOKMARK'");
   });
 
   it("validates query strings without mutating Express 5 req.query", async () => {

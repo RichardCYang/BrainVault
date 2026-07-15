@@ -6,6 +6,7 @@ import { formatAttachmentSize, getAttachmentInfo, sanitizeAttachmentFilename } f
 import { getTableData } from "./table.js";
 import { renderKanbanHtml } from "./kanban.js";
 import { renderDatabaseHtml } from "./database.js";
+import { renderBookmarkHtml } from "./bookmark.js";
 
 const markdown = new MarkdownIt({
   html: true,
@@ -49,7 +50,7 @@ const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   header: ["class"],
   small: ["class"],
   p: ["class"],
-  img: ["src", "srcset", "alt", "title", "width", "height", "loading"],
+  img: ["src", "srcset", "alt", "title", "width", "height", "loading", "referrerpolicy"],
   code: ["class"],
   span: ["class", "style"],
   input: ["type", "checked", "disabled"],
@@ -74,7 +75,7 @@ const sanitizeOptions: sanitizeHtml.IOptions = {
   allowedSchemes: ["http", "https", "mailto"],
   transformTags: {
     a: sanitizeHtml.simpleTransform("a", { rel: "noopener noreferrer", target: "_blank" }),
-    img: sanitizeHtml.simpleTransform("img", { loading: "lazy" })
+    img: sanitizeHtml.simpleTransform("img", { loading: "lazy", referrerpolicy: "no-referrer" })
   }
 };
 
@@ -160,6 +161,8 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
       return sanitizeHtml(renderKanbanHtml(metadata), sanitizeOptions);
     case "DATABASE":
       return sanitizeHtml(renderDatabaseHtml(metadata), sanitizeOptions);
+    case "BOOKMARK":
+      return sanitizeHtml(renderBookmarkHtml(metadata), sanitizeOptions);
     case "CODE":
       return renderMarkdown(`\`\`\`\n${stripFence(markdownValue)}\n\`\`\``);
     case "DIVIDER":

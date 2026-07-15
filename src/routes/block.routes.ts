@@ -18,6 +18,12 @@ import {
   type AttachmentMetadata
 } from "../lib/attachments.js";
 import { renderBlockHtml } from "../lib/markdown.js";
+import {
+  fetchBookmarkPreviewWithFallback,
+  getBookmarkData,
+  normalizeBookmarkMetadata,
+  summarizeBookmarkData
+} from "../lib/bookmark.js";
 import { toBlock } from "../lib/mappers.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -46,6 +52,19 @@ const updateBlockSchema = z.object({
   sortOrder: z.number().int().min(0).optional(),
   metadata: metadataSchema.nullable().optional()
 });
+
+const bookmarkPreviewSchema = z.object({
+  url: z.string().trim().min(1).max(2_048)
+});
+
+function prepareBlockContent(type: BlockRow["type"], markdown: string, metadata: unknown) {
+  if (type !== "BOOKMARK") return { markdown, metadata };
+  const normalizedMetadata = normalizeBookmarkMetadata(metadata);
+  return {
+    markdown: summarizeBookmarkData(getBookmarkData(normalizedMetadata)),
+    metadata: normalizedMetadata
+  };
+}
 
 const reorderSchema = z.object({
   items: z
@@ -88,6 +107,15 @@ const attachmentUpload = multer({
   },
   preservePath: false,
   defParamCharset: "utf8"
+});
+
+blockRouter.post("/bookmarks/preview", validate({ body: bookmarkPreviewSchema }), async (req, res, next) => {
+  try {
+    const result = await fetchBookmarkPreviewWithFallback(String(req.body.url));
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
 });
 
 async function assertOwnedPage(pageId: string, ownerId: string, client: DbClient = db) {
@@ -238,6 +266,7 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
     );
 
     const id = createId("blk");
+    const prepared = prepareBlockContent(body.type, body.markdown, body.metadata);
     await db.execute(
       `INSERT INTO blocks (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -246,11 +275,11 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
         pageId,
         body.parentBlockId ?? null,
         body.type,
-        body.markdown,
-        renderBlockHtml(body.type, body.markdown, Boolean(body.checked), body.metadata),
+        prepared.markdown,
+        renderBlockHtml(body.type, prepared.markdown, Boolean(body.checked), prepared.metadata),
         body.checked ? 1 : 0,
         body.sortOrder ?? (lastBlock ? lastBlock.sort_order + 1 : 0),
-        body.metadata ? JSON.stringify(body.metadata) : null
+        prepared.metadata ? JSON.stringify(prepared.metadata) : null
       ]
     );
 
@@ -290,31 +319,34 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
 
     const fields: string[] = [];
     const values: DbValue[] = [];
+    const contentChanged =
+      body.type !== undefined ||
+      body.markdown !== undefined ||
+      body.checked !== undefined ||
+      body.metadata !== undefined;
+    const nextType = body.type ?? existing.type;
+    const prepared = prepareBlockContent(
+      nextType,
+      body.markdown ?? existing.markdown,
+      body.metadata !== undefined ? body.metadata : existing.metadata
+    );
+    const nextChecked = body.checked ?? Boolean(existing.checked);
 
     if (body.type !== undefined) {
       fields.push("type = ?");
       values.push(body.type);
     }
-    if (body.markdown !== undefined) {
+    if (body.markdown !== undefined || (contentChanged && nextType === "BOOKMARK")) {
       fields.push("markdown = ?");
-      values.push(body.markdown);
+      values.push(prepared.markdown);
     }
     if (body.checked !== undefined) {
       fields.push("checked = ?");
       values.push(body.checked ? 1 : 0);
     }
-    if (
-      body.type !== undefined ||
-      body.markdown !== undefined ||
-      body.checked !== undefined ||
-      body.metadata !== undefined
-    ) {
-      const nextType = body.type ?? existing.type;
-      const nextMarkdown = body.markdown ?? existing.markdown;
-      const nextChecked = body.checked ?? Boolean(existing.checked);
-      const nextMetadata = body.metadata !== undefined ? body.metadata : existing.metadata;
+    if (contentChanged) {
       fields.push("html_cache = ?");
-      values.push(renderBlockHtml(nextType, nextMarkdown, nextChecked, nextMetadata));
+      values.push(renderBlockHtml(nextType, prepared.markdown, nextChecked, prepared.metadata));
     }
     if (body.parentBlockId !== undefined) {
       fields.push("parent_block_id = ?");
@@ -324,9 +356,9 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
       fields.push("sort_order = ?");
       values.push(body.sortOrder);
     }
-    if (body.metadata !== undefined) {
+    if (body.metadata !== undefined || (contentChanged && nextType === "BOOKMARK")) {
       fields.push("metadata = ?");
-      values.push(body.metadata ? JSON.stringify(body.metadata) : null);
+      values.push(prepared.metadata ? JSON.stringify(prepared.metadata) : null);
     }
 
     if (fields.length) {

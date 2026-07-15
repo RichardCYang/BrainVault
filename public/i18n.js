@@ -104,6 +104,7 @@ export const translationCatalogs = {
         TABLE: "Table",
         KANBAN: "Board",
         DATABASE: "Database",
+        BOOKMARK: "Bookmark",
         CODE: "Code",
         DIVIDER: "Divider",
         IMAGE: "Image", ATTACHMENT: "Attachment"
@@ -115,6 +116,22 @@ export const translationCatalogs = {
       download: "Download",
       downloadTitle: "Download {name}",
       typeLocked: "Attachment type is fixed after upload."
+    },
+    bookmark: {
+      viewAria: "Bookmark view",
+      listView: "List",
+      listViewTitle: "Show favicons and titles in a compact list",
+      galleryView: "Gallery",
+      galleryViewTitle: "Show OpenGraph images, titles, and descriptions",
+      count: "{count} bookmarks",
+      urlPlaceholder: "Paste a web page URL",
+      urlAria: "Web page URL to bookmark",
+      add: "Add",
+      addTitle: "Fetch OpenGraph information and add bookmark",
+      refresh: "Refresh bookmark information",
+      remove: "Remove bookmark",
+      noDescription: "No description is available for this page.",
+      empty: "Paste a link above to create a bookmark preview."
     },
     callouts: { idea: "Idea", info: "Information", success: "Success", warning: "Warning", danger: "Danger" },
     slash: {
@@ -128,6 +145,7 @@ export const translationCatalogs = {
       TABLE: { label: "Table", hint: "Simple editable rows and columns", keywords: "table grid rows columns" },
       KANBAN: { label: "Board", hint: "Kanban board grouped by status", keywords: "kanban board project status cards" },
       DATABASE: { label: "Database", hint: "Structured rows with properties, views, filters, and sorts", keywords: "database data source table view filter sort properties" },
+      BOOKMARK: { label: "Bookmark", hint: "Save web pages as a list or OpenGraph gallery", keywords: "bookmark web link url preview opengraph gallery list" },
       CODE: { label: "Code", hint: "Code block", keywords: "code programming" },
       DIVIDER: { label: "Divider", hint: "Horizontal divider", keywords: "divider hr line separator" },
       IMAGE: { label: "Image", hint: "Image URL block", keywords: "image img photo picture" },
@@ -340,6 +358,14 @@ export const translationCatalogs = {
       attachmentDownloading: "Downloading {name}...",
       attachmentDownloaded: "Downloaded {name}.",
       attachmentReady: "The attachment is already saved.",
+      bookmarkFetching: "Fetching OpenGraph bookmark information...",
+      bookmarkAdded: "Added bookmark “{title}”.",
+      bookmarkAddedFallback: "Added “{title}” as a basic bookmark because its preview could not be loaded.",
+      bookmarkRefreshing: "Refreshing “{title}”...",
+      bookmarkRefreshed: "Refreshed bookmark “{title}”.",
+      bookmarkRefreshedFallback: "Kept “{title}” as a basic bookmark because its preview could not be refreshed.",
+      bookmarkRemoved: "Removed bookmark “{title}”.",
+      bookmarkViewChanged: "Bookmark view changed.",
       languageChanged: "Language changed to {language}."
     },
     errors: {
@@ -368,6 +394,13 @@ export const translationCatalogs = {
       USE_ATTACHMENT_UPLOAD: "Use the attachment upload command to create attachment blocks.",
       ATTACHMENT_TYPE_IMMUTABLE: "Attachment blocks cannot be converted to another block type.",
       ATTACHMENT_READ_ONLY: "Attachment block metadata is managed by the server.",
+      BOOKMARK_URL_INVALID: "Enter a valid HTTP or HTTPS web page URL.",
+      BOOKMARK_URL_BLOCKED: "Local and private network URLs cannot be previewed.",
+      BOOKMARK_FETCH_FAILED: "The web page could not be fetched for a bookmark preview.",
+      BOOKMARK_FETCH_TIMEOUT: "The web page took too long to respond.",
+      BOOKMARK_NOT_HTML: "The URL did not return an HTML web page.",
+      BOOKMARK_PAGE_TOO_LARGE: "The web page is too large to preview.",
+      BOOKMARK_REDIRECT_LIMIT: "The web page redirected too many times.",
       unknown: "Something went wrong. Please try again."
     }
   },
@@ -703,13 +736,29 @@ export const translationCatalogs = {
       colorRed: "빨간색 글자",
       colorGreen: "초록색 글자"
     },
-    blocks: { types: { MARKDOWN: "텍스트", HEADING_1: "제목 1", HEADING_2: "제목 2", HEADING_3: "제목 3", TODO: "할 일", QUOTE: "인용", CALLOUT: "콜아웃", TABLE: "표", KANBAN: "보드", DATABASE: "데이터베이스", CODE: "코드", DIVIDER: "구분선", IMAGE: "이미지", ATTACHMENT: "첨부파일" } },
+    blocks: { types: { MARKDOWN: "텍스트", HEADING_1: "제목 1", HEADING_2: "제목 2", HEADING_3: "제목 3", TODO: "할 일", QUOTE: "인용", CALLOUT: "콜아웃", TABLE: "표", KANBAN: "보드", DATABASE: "데이터베이스", BOOKMARK: "북마크", CODE: "코드", DIVIDER: "구분선", IMAGE: "이미지", ATTACHMENT: "첨부파일" } },
     attachment: {
       unnamed: "이름 없는 첨부파일",
       chooseFile: "첨부할 파일 선택",
       download: "다운로드",
       downloadTitle: "{name} 다운로드",
       typeLocked: "업로드한 첨부파일 블록의 유형은 변경할 수 없습니다."
+    },
+    bookmark: {
+      viewAria: "북마크 보기 방식",
+      listView: "리스트",
+      listViewTitle: "파비콘과 제목만 간결한 리스트로 표시",
+      galleryView: "갤러리",
+      galleryViewTitle: "OpenGraph 이미지, 제목, 설명을 카드로 표시",
+      count: "북마크 {count}개",
+      urlPlaceholder: "웹 페이지 URL을 붙여넣으세요",
+      urlAria: "북마크할 웹 페이지 URL",
+      add: "추가",
+      addTitle: "OpenGraph 정보를 불러와 북마크 추가",
+      refresh: "북마크 정보 새로고침",
+      remove: "북마크 삭제",
+      noDescription: "이 페이지에서 설명 정보를 찾지 못했습니다.",
+      empty: "위 입력창에 링크를 붙여넣어 북마크 미리보기를 만드세요."
     },
     callouts: { idea: "아이디어", info: "정보", success: "성공", warning: "주의", danger: "위험" },
     slash: {
@@ -723,6 +772,7 @@ export const translationCatalogs = {
       TABLE: { label: "표", hint: "행과 열을 편집하는 간단한 표", keywords: "table grid 표 테이블" },
       KANBAN: { label: "보드", hint: "상태별 칸반 보드", keywords: "kanban board 칸반 보드 프로젝트 상태 카드" },
       DATABASE: { label: "데이터베이스", hint: "속성, 뷰, 필터와 정렬을 지원하는 구조화 데이터", keywords: "database data source 데이터베이스 표 뷰 필터 정렬 속성" },
+      BOOKMARK: { label: "북마크", hint: "웹 페이지를 리스트 또는 OpenGraph 갤러리로 저장", keywords: "bookmark web link url preview opengraph 북마크 링크 웹 갤러리 리스트" },
       CODE: { label: "코드", hint: "코드 블록", keywords: "code 코드" },
       DIVIDER: { label: "구분선", hint: "가로 구분선", keywords: "divider hr line 구분선" },
       IMAGE: { label: "이미지", hint: "이미지 URL 블록", keywords: "image img 사진 이미지" },
@@ -935,6 +985,14 @@ export const translationCatalogs = {
       attachmentDownloading: "{name} 다운로드 중...",
       attachmentDownloaded: "{name} 파일을 다운로드했습니다.",
       attachmentReady: "첨부파일은 이미 저장되어 있습니다.",
+      bookmarkFetching: "OpenGraph 북마크 정보를 불러오는 중입니다...",
+      bookmarkAdded: "‘{title}’ 북마크를 추가했습니다.",
+      bookmarkAddedFallback: "미리보기를 불러오지 못해 ‘{title}’을(를) 기본 북마크로 추가했습니다.",
+      bookmarkRefreshing: "‘{title}’ 정보를 새로고침하는 중입니다...",
+      bookmarkRefreshed: "‘{title}’ 북마크 정보를 새로고침했습니다.",
+      bookmarkRefreshedFallback: "미리보기를 새로고침하지 못해 ‘{title}’의 기본 북마크 정보를 유지했습니다.",
+      bookmarkRemoved: "‘{title}’ 북마크를 삭제했습니다.",
+      bookmarkViewChanged: "북마크 보기 방식을 변경했습니다.",
       languageChanged: "언어를 {language}(으)로 변경했습니다."
     },
     errors: {
@@ -963,6 +1021,13 @@ export const translationCatalogs = {
       USE_ATTACHMENT_UPLOAD: "첨부파일 블록은 첨부파일 업로드 명령으로 생성해 주세요.",
       ATTACHMENT_TYPE_IMMUTABLE: "첨부파일 블록을 다른 블록 유형으로 변경할 수 없습니다.",
       ATTACHMENT_READ_ONLY: "첨부파일 정보는 서버에서 관리됩니다.",
+      BOOKMARK_URL_INVALID: "올바른 HTTP 또는 HTTPS 웹 페이지 URL을 입력해 주세요.",
+      BOOKMARK_URL_BLOCKED: "로컬 또는 사설 네트워크 URL은 미리보기를 만들 수 없습니다.",
+      BOOKMARK_FETCH_FAILED: "북마크 미리보기를 위해 웹 페이지를 불러오지 못했습니다.",
+      BOOKMARK_FETCH_TIMEOUT: "웹 페이지 응답 시간이 너무 오래 걸립니다.",
+      BOOKMARK_NOT_HTML: "입력한 URL이 HTML 웹 페이지를 반환하지 않았습니다.",
+      BOOKMARK_PAGE_TOO_LARGE: "웹 페이지가 너무 커서 미리보기를 만들 수 없습니다.",
+      BOOKMARK_REDIRECT_LIMIT: "웹 페이지 리다이렉트 횟수가 너무 많습니다.",
       unknown: "문제가 발생했습니다. 다시 시도하세요."
     }
   },

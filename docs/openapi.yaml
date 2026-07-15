@@ -86,7 +86,7 @@ components:
       properties:
         type:
           type: string
-          enum: [MARKDOWN, HEADING_1, HEADING_2, HEADING_3, TODO, QUOTE, CALLOUT, TABLE, KANBAN, DATABASE, CODE, DIVIDER, IMAGE, ATTACHMENT]
+          enum: [MARKDOWN, HEADING_1, HEADING_2, HEADING_3, TODO, QUOTE, CALLOUT, TABLE, KANBAN, DATABASE, BOOKMARK, CODE, DIVIDER, IMAGE, ATTACHMENT]
         markdown:
           type: string
         checked:
@@ -101,6 +101,67 @@ components:
           properties:
             database:
               $ref: '#/components/schemas/DatabaseData'
+            bookmark:
+              $ref: '#/components/schemas/BookmarkData'
+    BookmarkItem:
+      type: object
+      required: [id, url, title, description, imageUrl, faviconUrl, siteName]
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+          format: uri
+        title:
+          type: string
+        description:
+          type: string
+        imageUrl:
+          type: string
+          format: uri
+        faviconUrl:
+          type: string
+          format: uri
+        siteName:
+          type: string
+    BookmarkData:
+      type: object
+      required: [view, items]
+      properties:
+        view:
+          type: string
+          enum: [list, gallery]
+        items:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/BookmarkItem'
+    BookmarkPreview:
+      type: object
+      required: [url, title, description, imageUrl, faviconUrl, siteName]
+      properties:
+        url:
+          type: string
+          format: uri
+        title:
+          type: string
+        description:
+          type: string
+        imageUrl:
+          type: string
+          format: uri
+        faviconUrl:
+          type: string
+          format: uri
+        siteName:
+          type: string
+    BookmarkPreviewWarning:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          description: Recoverable preview-fetch error code. The preview contains basic URL and hostname data.
     DatabaseOption:
       type: object
       required: [id, name, color]
@@ -329,6 +390,36 @@ paths:
           description: Archived page
         '204':
           description: Permanently deleted
+  /api/bookmarks/preview:
+    post:
+      summary: Fetch OpenGraph metadata for a bookmark URL
+      description: Fetches a public HTTP(S) page from the server, validates redirects and every resolved address, and returns title, description, image, favicon, and site information. Local and private network destinations are rejected. Recoverable remote fetch failures return a basic bookmark plus a warning instead of failing the request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  maxLength: 2048
+      responses:
+        '200':
+          description: Bookmark preview metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  preview:
+                    $ref: '#/components/schemas/BookmarkPreview'
+                  warning:
+                    $ref: '#/components/schemas/BookmarkPreviewWarning'
+        '400':
+          description: Invalid, local, or private-network URL
   /api/pages/{pageId}/blocks:
     post:
       summary: Create a block on a page

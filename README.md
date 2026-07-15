@@ -13,6 +13,7 @@ Writing happens directly on the page. There is no separate preview pane: every r
 - Editable table blocks with row, column, header, and keyboard navigation controls
 - Database blocks with typed properties, saved table/board/list views, per-view property visibility, filters, sorting, and board grouping
 - Kanban board blocks with editable groups, card emojis, pastel card themes, descriptions, tags, drag-and-drop, and mobile move controls
+- Web bookmark blocks with compact favicon/title lists or OpenGraph gallery cards containing thumbnails, titles, descriptions, and site information
 - Search across page titles and block content
 - Browser-language detection and an in-app language switcher for English, Japanese, Korean, French, German, Spanish, and Portuguese
 - Tags, page nesting, archiving, and permanent deletion
@@ -142,7 +143,7 @@ npm run setup
 Useful slash commands include:
 
 ```text
-/h1  /h2  /h3  /todo  /quote  /callout  /table  /database  /board  /code  /divider  /image  /file
+/h1  /h2  /h3  /todo  /quote  /callout  /table  /database  /board  /bookmark  /code  /divider  /image  /file
 ```
 
 Table cells support arrow-key movement. `Enter` advances down the current column, while `Tab` from the final cell adds another row.
@@ -150,6 +151,19 @@ Table cells support arrow-key movement. `Enter` advances down the current column
 Type `/database` to create a database block. Each database has one required title property plus optional text, number, select, multi-select, checkbox, date, and URL properties. Add table, board, or list views over the same rows; each view keeps its own name, layout, visible properties, filters, sort order, and board grouping. The editor uses a borderless database toolbar with view tabs, popover-based Properties/Filter/Sort controls, in-view search, a split New button, transparent column headers, and colored select pills. Property and row changes are stored in the block's `metadata.database` object, while a searchable text summary is kept in `markdown`.
 
 Kanban boards support direct title/group/card editing. Open the icon button beside a card title to choose an emoji, paste a custom emoji, or apply a default, pink, yellow, blue, light-green, purple, or peach pastel card theme. Drag the six-dot card handle to reorder cards or move them between groups; the arrow buttons provide the same cross-group movement on touch devices and for keyboard users.
+
+### Bookmark blocks
+
+Type `/bookmark` to create a web bookmark collection inside the page. Paste an HTTP or HTTPS URL and BrainVault fetches the page metadata on the server. The block can switch between:
+
+- **List:** a compact row for each link containing only its favicon and title.
+- **Gallery:** responsive cards containing the OpenGraph thumbnail, title, description, favicon, and site name.
+
+Each bookmark can be refreshed or removed. Stored metadata lives under `metadata.bookmark`, while titles, descriptions, and URLs are summarized into `markdown` so normal block search can find them.
+
+Because browser cross-origin rules prevent the editor from reading arbitrary page HTML directly, OpenGraph retrieval uses the authenticated `/api/bookmarks/preview` server endpoint. The fetcher accepts only public HTTP(S) destinations, revalidates every redirect, rejects local/private/reserved IP ranges, pins all validated DNS results, and lets Node.js fall back between IPv4 and IPv6 connection attempts. It reads only the document head up to the configured byte limit and supports common legacy page character sets.
+
+When a public site blocks automated preview requests, times out, returns a non-HTML response, or is temporarily unreachable, BrainVault still adds a basic bookmark containing the original URL, hostname, and default favicon path. The editor reports that fallback instead of discarding the link; use the refresh action later to retry OpenGraph metadata retrieval.
 
 ### Attachment blocks
 
@@ -205,6 +219,8 @@ Translations live in `public/i18n.js`. Static HTML uses `data-i18n*` attributes,
 | `CORS_ORIGIN` | Local development origins | Comma-separated browser origins allowed to call the API |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window in milliseconds |
 | `RATE_LIMIT_MAX` | `120` | Maximum requests per window |
+| `BOOKMARK_FETCH_TIMEOUT_MS` | `8000` | Maximum duration of one OpenGraph page fetch |
+| `BOOKMARK_FETCH_MAX_BYTES` | `524288` | Maximum document-head bytes inspected for one bookmark preview |
 | `ATTACHMENT_UPLOAD_DIR` | `uploads` | Private on-disk directory for uploaded attachment bytes |
 | `MAX_ATTACHMENT_SIZE_MB` | `25` | Maximum size of one uploaded attachment in megabytes |
 
@@ -225,6 +241,7 @@ Most API routes require a bearer token returned by the register or login endpoin
 | `PATCH` | `/api/pages/:pageId` | Update page metadata |
 | `DELETE` | `/api/pages/:pageId` | Archive or permanently delete a page |
 | `POST` | `/api/pages/:pageId/blocks` | Add a non-attachment block |
+| `POST` | `/api/bookmarks/preview` | Fetch sanitized OpenGraph metadata for a public web page URL |
 | `POST` | `/api/pages/:pageId/attachments` | Upload a file and create an attachment block |
 | `PATCH` | `/api/blocks/:blockId` | Update a block |
 | `DELETE` | `/api/blocks/:blockId` | Delete a block and its descendants, including stored attachment files |
