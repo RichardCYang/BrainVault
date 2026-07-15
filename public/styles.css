@@ -270,12 +270,6 @@ select:focus-visible {
   font-size: 0.78rem;
 }
 
-.auth-mode .language-switcher {
-  width: min(100%, 16rem);
-  margin: -0.35rem auto 0;
-  padding: 0;
-}
-
 .brand-mark {
   display: grid;
   place-items: center;
