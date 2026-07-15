@@ -451,6 +451,7 @@ const elements = {
   password: $("#password"),
   name: $("#name"),
   userLabel: $("#user-label"),
+  addCollectionButton: $("#add-collection-button"),
   logoutButton: $("#logout-button"),
   searchForm: $("#search-form"),
   searchInput: $("#search-input"),
@@ -3430,6 +3431,38 @@ function schedulePageTitleSave() {
   pageTitleSaveTimer = window.setTimeout(() => savePageTitleNow(), 650);
 }
 
+async function createCollection() {
+  const requestedName = window.prompt(t("collection.createPrompt"), t("collection.defaultName"));
+  if (requestedName === null) return;
+
+  const name = requestedName.trim().slice(0, 160);
+  if (!name) {
+    setStatus(t("status.collectionNameRequired"), true);
+    return;
+  }
+
+  setStatus(t("status.creatingCollection"));
+  elements.searchInput.value = "";
+  state.searchQuery = "";
+  state.activeTag = "";
+
+  const data = await api("/api/pages", {
+    method: "POST",
+    body: {
+      title: name,
+      icon: "📁"
+    }
+  });
+
+  await loadPages("", "");
+  await openPage(data.page.id);
+  requestAnimationFrame(() => {
+    elements.pageTitle.focus();
+    elements.pageTitle.select();
+  });
+  setStatus(t("status.collectionCreated", { name }));
+}
+
 async function createUntitledPage() {
   setStatus(t("status.creatingDocument"));
   elements.searchInput.value = "";
@@ -3567,6 +3600,14 @@ elements.authForm.addEventListener("submit", async (event) => {
     renderShell();
     await loadPages();
     setStatus(t("status.loggedInAs", { username: state.user.username }));
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+});
+
+elements.addCollectionButton.addEventListener("click", async () => {
+  try {
+    await createCollection();
   } catch (error) {
     setStatus(error.message, true);
   }

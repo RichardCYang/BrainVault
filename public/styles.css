@@ -767,14 +767,52 @@ textarea {
   white-space: nowrap;
 }
 
-.user-row .ghost {
-  font-size: 0.74rem;
-  opacity: 0;
+.sidebar-footer {
+  display: grid;
+  flex-shrink: 0;
+  gap: 0.18rem;
+  margin-top: auto;
+  padding-top: 0.55rem;
+  border-top: 1px solid rgba(64, 137, 194, 0.14);
 }
 
-.user-row:hover .ghost,
-.user-row:focus-within .ghost {
-  opacity: 1;
+.sidebar-footer-button {
+  display: flex;
+  width: 100%;
+  min-height: 2.2rem;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.55rem;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted);
+  padding: 0.44rem 0.58rem;
+  box-shadow: none;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+.sidebar-footer-button:hover {
+  background: var(--hover);
+  color: var(--ink-strong);
+}
+
+.sidebar-footer-button--danger:hover {
+  background: rgba(210, 66, 66, 0.08);
+  color: var(--danger);
+}
+
+.sidebar-footer-button svg {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .search-form {
@@ -837,13 +875,21 @@ textarea {
 
 .sidebar-nav {
   display: grid;
+  flex: 1 1 auto;
+  align-content: start;
+  grid-auto-rows: max-content;
   gap: 0.75rem;
   min-height: 0;
-  padding-top: 0.2rem;
+  overflow-y: auto;
+  padding: 0.2rem 0.12rem 0.35rem 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(64, 137, 194, 0.22) transparent;
 }
 
 .nav-section {
   display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
   gap: 0.16rem;
 }
 
@@ -3471,9 +3517,6 @@ kbd {
     padding-top: 2.3rem;
   }
 
-  .user-row .ghost {
-    opacity: 1;
-  }
 }
 
 @media (max-width: 860px) {

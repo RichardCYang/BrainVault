@@ -35,13 +35,15 @@ export const translationCatalogs = {
       loginSwitch: "New to BrainVault?",
       registerSwitch: "Already have an account?"
     },
-    workspace: { aria: "Workspace navigation", logout: "Log out" },
+    workspace: { aria: "Workspace navigation", addCollection: "Add collection", logout: "Log out" },
     search: { label: "Search pages and blocks", placeholder: "Search pages/blocks", button: "Search" },
     navigation: { aria: "Default collection and page list" },
     collection: {
       heading: "📁 Default collection",
       addAria: "Add a new page to the default collection",
       addTitle: "Add new page",
+      createPrompt: "Name the new collection",
+      defaultName: "Untitled collection",
       description: "Press + to instantly create a page titled ‘Untitled’."
     },
     home: {
@@ -346,6 +348,9 @@ export const translationCatalogs = {
       pdfDialogClosed: "The PDF export dialog was closed.",
       creatingDocument: "Creating a page in the default collection...",
       documentCreated: "Page created. You can edit its title now.",
+      creatingCollection: "Creating the collection...",
+      collectionCreated: "Collection ‘{name}’ created.",
+      collectionNameRequired: "Enter a collection name.",
       loadingDocument: "Loading page...",
       documentOpened: "Page opened.",
       ready: "Ready.",
@@ -437,13 +442,15 @@ export const translationCatalogs = {
       loginSwitch: "初めてご利用ですか？",
       registerSwitch: "すでにアカウントをお持ちですか？"
     },
-    workspace: { aria: "ワークスペースナビゲーション", logout: "ログアウト" },
+    workspace: { aria: "ワークスペースナビゲーション", addCollection: "コレクションを追加", logout: "ログアウト" },
     search: { label: "ページとブロックを検索", placeholder: "ページ／ブロックを検索", button: "検索" },
     navigation: { aria: "デフォルトコレクションとページ一覧" },
     collection: {
       heading: "📁 デフォルトコレクション",
       addAria: "デフォルトコレクションに新しいページを追加",
       addTitle: "新しいページを追加",
+      createPrompt: "新しいコレクション名を入力してください",
+      defaultName: "無題のコレクション",
       description: "+ を押すと「無題」のページがすぐに作成されます。"
     },
     home: {
@@ -623,6 +630,9 @@ export const translationCatalogs = {
       pdfDialogClosed: "PDF書き出しダイアログを閉じました。",
       creatingDocument: "デフォルトコレクションに新しいページを作成しています...",
       documentCreated: "新しいページを作成しました。タイトルをすぐに編集できます。",
+      creatingCollection: "コレクションを作成しています...",
+      collectionCreated: "コレクション「{name}」を作成しました。",
+      collectionNameRequired: "コレクション名を入力してください。",
       loadingDocument: "ページを読み込んでいます...",
       documentOpened: "ページを開きました。",
       ready: "準備ができました。",
@@ -699,13 +709,15 @@ export const translationCatalogs = {
       loginSwitch: "회원이 아니신가요?",
       registerSwitch: "이미 계정이 있으신가요?"
     },
-    workspace: { aria: "워크스페이스 탐색", logout: "로그아웃" },
+    workspace: { aria: "워크스페이스 탐색", addCollection: "컬렉션 추가", logout: "로그아웃" },
     search: { label: "문서와 블록 검색", placeholder: "문서/블록 검색", button: "검색" },
     navigation: { aria: "기본 컬렉션과 문서 목록" },
     collection: {
       heading: "📁 기본 컬렉션",
       addAria: "기본 컬렉션에 새 문서 추가",
       addTitle: "새 문서 추가",
+      createPrompt: "새 컬렉션 이름을 입력하세요",
+      defaultName: "제목 없는 컬렉션",
       description: "+ 를 누르면 제목이 ‘새 문서’인 문서가 바로 만들어집니다."
     },
     home: {
@@ -993,6 +1005,9 @@ export const translationCatalogs = {
       pdfDialogClosed: "PDF 내보내기 창을 닫았습니다.",
       creatingDocument: "기본 컬렉션에 새 문서를 만드는 중입니다...",
       documentCreated: "새 문서를 만들었습니다. 제목을 바로 수정하세요.",
+      creatingCollection: "컬렉션을 만드는 중입니다...",
+      collectionCreated: "‘{name}’ 컬렉션을 만들었습니다.",
+      collectionNameRequired: "컬렉션 이름을 입력하세요.",
       loadingDocument: "문서를 불러오는 중입니다...",
       documentOpened: "문서를 열었습니다.",
       ready: "준비되었습니다.",
@@ -1084,13 +1099,15 @@ export const translationCatalogs = {
       loginSwitch: "Nouveau sur BrainVault ?",
       registerSwitch: "Vous avez déjà un compte ?"
     },
-    workspace: { aria: "Navigation de l’espace de travail", logout: "Se déconnecter" },
+    workspace: { aria: "Navigation de l’espace de travail", addCollection: "Ajouter une collection", logout: "Se déconnecter" },
     search: { label: "Rechercher des pages et des blocs", placeholder: "Rechercher pages/blocs", button: "Rechercher" },
     navigation: { aria: "Collection par défaut et liste des pages" },
     collection: {
       heading: "📁 Collection par défaut",
       addAria: "Ajouter une page à la collection par défaut",
       addTitle: "Ajouter une page",
+      createPrompt: "Nommez la nouvelle collection",
+      defaultName: "Collection sans titre",
       description: "Appuyez sur + pour créer immédiatement une page intitulée « Sans titre »."
     },
     home: {
@@ -1270,6 +1287,9 @@ export const translationCatalogs = {
       pdfDialogClosed: "La boîte de dialogue d’export PDF a été fermée.",
       creatingDocument: "Création d’une page dans la collection par défaut...",
       documentCreated: "Page créée. Vous pouvez modifier son titre immédiatement.",
+      creatingCollection: "Création de la collection...",
+      collectionCreated: "Collection « {name} » créée.",
+      collectionNameRequired: "Saisissez un nom de collection.",
       loadingDocument: "Chargement de la page...",
       documentOpened: "Page ouverte.",
       ready: "Prêt.",
@@ -1346,13 +1366,15 @@ export const translationCatalogs = {
       loginSwitch: "Neu bei BrainVault?",
       registerSwitch: "Du hast bereits ein Konto?"
     },
-    workspace: { aria: "Arbeitsbereich-Navigation", logout: "Abmelden" },
+    workspace: { aria: "Arbeitsbereich-Navigation", addCollection: "Sammlung hinzufügen", logout: "Abmelden" },
     search: { label: "Seiten und Blöcke durchsuchen", placeholder: "Seiten/Blöcke suchen", button: "Suchen" },
     navigation: { aria: "Standardsammlung und Seitenliste" },
     collection: {
       heading: "📁 Standardsammlung",
       addAria: "Neue Seite zur Standardsammlung hinzufügen",
       addTitle: "Neue Seite hinzufügen",
+      createPrompt: "Neue Sammlung benennen",
+      defaultName: "Unbenannte Sammlung",
       description: "Drücke +, um sofort eine Seite mit dem Titel „Unbenannt“ zu erstellen."
     },
     home: {
@@ -1532,6 +1554,9 @@ export const translationCatalogs = {
       pdfDialogClosed: "Der PDF-Exportdialog wurde geschlossen.",
       creatingDocument: "Seite wird in der Standardsammlung erstellt...",
       documentCreated: "Seite erstellt. Du kannst den Titel jetzt bearbeiten.",
+      creatingCollection: "Sammlung wird erstellt...",
+      collectionCreated: "Sammlung „{name}“ wurde erstellt.",
+      collectionNameRequired: "Gib einen Sammlungsnamen ein.",
       loadingDocument: "Seite wird geladen...",
       documentOpened: "Seite geöffnet.",
       ready: "Bereit.",
@@ -1608,13 +1633,15 @@ export const translationCatalogs = {
       loginSwitch: "¿Eres nuevo en BrainVault?",
       registerSwitch: "¿Ya tienes una cuenta?"
     },
-    workspace: { aria: "Navegación del espacio de trabajo", logout: "Cerrar sesión" },
+    workspace: { aria: "Navegación del espacio de trabajo", addCollection: "Añadir colección", logout: "Cerrar sesión" },
     search: { label: "Buscar páginas y bloques", placeholder: "Buscar páginas/bloques", button: "Buscar" },
     navigation: { aria: "Colección predeterminada y lista de páginas" },
     collection: {
       heading: "📁 Colección predeterminada",
       addAria: "Añadir una página a la colección predeterminada",
       addTitle: "Añadir página",
+      createPrompt: "Ponle nombre a la nueva colección",
+      defaultName: "Colección sin título",
       description: "Pulsa + para crear al instante una página titulada «Sin título»."
     },
     home: {
@@ -1794,6 +1821,9 @@ export const translationCatalogs = {
       pdfDialogClosed: "Se cerró el cuadro de exportación a PDF.",
       creatingDocument: "Creando una página en la colección predeterminada...",
       documentCreated: "Página creada. Ya puedes editar el título.",
+      creatingCollection: "Creando la colección...",
+      collectionCreated: "Colección «{name}» creada.",
+      collectionNameRequired: "Introduce un nombre para la colección.",
       loadingDocument: "Cargando página...",
       documentOpened: "Página abierta.",
       ready: "Listo.",
@@ -1870,13 +1900,15 @@ export const translationCatalogs = {
       loginSwitch: "Novo no BrainVault?",
       registerSwitch: "Já tem uma conta?"
     },
-    workspace: { aria: "Navegação do espaço de trabalho", logout: "Sair" },
+    workspace: { aria: "Navegação do espaço de trabalho", addCollection: "Adicionar coleção", logout: "Sair" },
     search: { label: "Pesquisar páginas e blocos", placeholder: "Pesquisar páginas/blocos", button: "Pesquisar" },
     navigation: { aria: "Coleção padrão e lista de páginas" },
     collection: {
       heading: "📁 Coleção padrão",
       addAria: "Adicionar uma página à coleção padrão",
       addTitle: "Adicionar página",
+      createPrompt: "Dê um nome à nova coleção",
+      defaultName: "Coleção sem título",
       description: "Pressione + para criar imediatamente uma página chamada “Sem título”."
     },
     home: {
@@ -2056,6 +2088,9 @@ export const translationCatalogs = {
       pdfDialogClosed: "A caixa de exportação em PDF foi fechada.",
       creatingDocument: "Criando uma página na coleção padrão...",
       documentCreated: "Página criada. Você já pode editar o título.",
+      creatingCollection: "Criando a coleção...",
+      collectionCreated: "Coleção “{name}” criada.",
+      collectionNameRequired: "Digite um nome para a coleção.",
       loadingDocument: "Carregando página...",
       documentOpened: "Página aberta.",
       ready: "Pronto.",
