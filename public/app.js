@@ -468,6 +468,7 @@ const elements = {
   pageKicker: $("#page-kicker"),
   pageTitle: $("#page-title"),
   pageTags: $("#page-tags"),
+  exportPdfButton: $("#export-pdf-button"),
   savePageButton: $("#save-page-button"),
   archivePageButton: $("#archive-page-button"),
   blockCount: $("#block-count"),
@@ -3206,6 +3207,158 @@ function focusPendingBlock() {
   state.pendingFocusBlockId = null;
 }
 
+const pdfExportPage = Object.freeze({
+  widthMm: 297,
+  horizontalMarginMm: 10,
+  cssPixelsPerInch: 96,
+  millimetersPerInch: 25.4
+});
+
+function waitForAnimationFrame() {
+  return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+function sanitizePdfDocumentTitle(value) {
+  return (value || t("newDocumentTitle"))
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120) || "BrainVault";
+}
+
+function getPdfExportContentWidth(pageRect) {
+  let contentWidth = Math.max(1, pageRect.width);
+  const ignoredSelectors = [
+    ".block-row-topline",
+    ".kanban-card-style-panel",
+    ".database-toolbar-popover",
+    ".bookmark-item-actions"
+  ];
+
+  for (const element of elements.pageView.querySelectorAll("*")) {
+    if (ignoredSelectors.some((selector) => element.matches(selector) || element.closest(selector))) continue;
+    const style = window.getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden" || style.position === "fixed") continue;
+
+    const rect = element.getBoundingClientRect();
+    if (!rect.width && !element.scrollWidth) continue;
+    const offsetLeft = rect.left - pageRect.left;
+    const width = Math.max(rect.width, element.scrollWidth || 0);
+    contentWidth = Math.max(contentWidth, offsetLeft + width);
+  }
+
+  return Math.ceil(contentWidth);
+}
+
+function freezePdfExportComputedStyles() {
+  const snapshots = [];
+  const remember = (element) => {
+    snapshots.push([element, element.getAttribute("style")]);
+    return window.getComputedStyle(element);
+  };
+
+  elements.pageView.querySelectorAll(
+    ".page-title-input, " +
+    '.editor-block-row[data-block-type="HEADING_1"] .block-row-input, ' +
+    '.editor-block-row[data-block-type="HEADING_2"] .block-row-input, ' +
+    '.editor-block-row[data-block-type="HEADING_3"] .block-row-input, ' +
+    ".kanban-title-input, .database-title-input"
+  ).forEach((element) => {
+    const computed = remember(element);
+    element.style.fontSize = computed.fontSize;
+    element.style.lineHeight = computed.lineHeight;
+  });
+
+  elements.pageView.querySelectorAll(".kanban-column, .database-board-column").forEach((element) => {
+    const computed = remember(element);
+    const width = `${element.getBoundingClientRect().width}px`;
+    element.style.width = width;
+    element.style.flexBasis = width;
+    element.style.minWidth = computed.minWidth;
+    element.style.maxWidth = computed.maxWidth;
+  });
+
+  return () => {
+    for (const [element, style] of snapshots) {
+      if (style === null) element.removeAttribute("style");
+      else element.setAttribute("style", style);
+    }
+  };
+}
+
+function configurePdfExportLayout() {
+  const pageRect = elements.pageView.getBoundingClientRect();
+  const pageWidth = Math.max(1, Math.ceil(pageRect.width));
+  const contentWidth = getPdfExportContentWidth(pageRect);
+  const printableWidth =
+    ((pdfExportPage.widthMm - pdfExportPage.horizontalMarginMm * 2) / pdfExportPage.millimetersPerInch) *
+    pdfExportPage.cssPixelsPerInch;
+  const scale = Math.min(1, printableWidth / Math.max(pageWidth, contentWidth));
+
+  document.documentElement.style.setProperty("--pdf-export-page-width", `${pageWidth}px`);
+  document.documentElement.style.setProperty("--pdf-export-scale", scale.toFixed(4));
+}
+
+function clearPdfExportLayout() {
+  document.body.classList.remove("pdf-export-mode");
+  document.documentElement.style.removeProperty("--pdf-export-page-width");
+  document.documentElement.style.removeProperty("--pdf-export-scale");
+}
+
+async function waitForPdfExportAssets() {
+  const imagePromises = [...elements.pageView.querySelectorAll("img")].map((image) => {
+    if (image.complete) return image.decode?.().catch(() => {}) ?? Promise.resolve();
+    return new Promise((resolve) => {
+      image.addEventListener("load", resolve, { once: true });
+      image.addEventListener("error", resolve, { once: true });
+    });
+  });
+  const assetsReady = Promise.allSettled([
+    document.fonts?.ready ?? Promise.resolve(),
+    ...imagePromises
+  ]);
+  const timeout = new Promise((resolve) => window.setTimeout(resolve, 2500));
+  await Promise.race([assetsReady, timeout]);
+}
+
+async function exportCurrentPageToPdf() {
+  if (!state.selectedPage || elements.exportPdfButton.disabled) return;
+
+  const originalDocumentTitle = document.title;
+  let restoreComputedStyles = () => {};
+  elements.exportPdfButton.disabled = true;
+  setStatus(t("status.preparingPdf"));
+
+  try {
+    closeSlashMenu();
+    closeInlineToolbar();
+    closeBlockContextMenu();
+    closeKanbanCardStyleMenus();
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    elements.blockList.querySelectorAll("textarea").forEach(autoGrowTextarea);
+    restoreComputedStyles = freezePdfExportComputedStyles();
+
+    await waitForPdfExportAssets();
+    await waitForAnimationFrame();
+    configurePdfExportLayout();
+    document.body.classList.add("pdf-export-mode");
+    document.title = `${sanitizePdfDocumentTitle(elements.pageTitle.value)} - BrainVault`;
+    await waitForAnimationFrame();
+
+    setStatus(t("status.pdfSaveInstructions"));
+    window.print();
+    setStatus(t("status.pdfDialogClosed"));
+  } catch (error) {
+    console.error("PDF export failed", error);
+    setStatus(t("errors.pdfExportFailed"), true);
+  } finally {
+    document.title = originalDocumentTitle;
+    clearPdfExportLayout();
+    restoreComputedStyles();
+    elements.exportPdfButton.disabled = false;
+  }
+}
+
 function renderSelectedPage() {
   closeBlockContextMenu();
   const page = state.selectedPage;
@@ -3503,6 +3656,15 @@ elements.pageTitle.addEventListener("blur", () => {
   if (!state.selectedPage) return;
   if (!elements.pageTitle.value.trim()) elements.pageTitle.value = t("newDocumentTitle");
   savePageTitleNow().catch((error) => setStatus(error.message, true));
+});
+
+elements.exportPdfButton.addEventListener("click", () => {
+  exportCurrentPageToPdf().catch((error) => {
+    console.error("PDF export failed", error);
+    clearPdfExportLayout();
+    elements.exportPdfButton.disabled = false;
+    setStatus(t("errors.pdfExportFailed"), true);
+  });
 });
 
 elements.savePageButton.addEventListener("click", async () => {

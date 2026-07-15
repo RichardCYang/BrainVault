@@ -16,6 +16,7 @@ Writing happens directly on the page. There is no separate preview pane: every r
 - Kanban board blocks with editable groups, card emojis, pastel card themes, descriptions, tags, drag-and-drop, and mobile move controls
 - Web bookmark blocks with compact favicon/title lists or OpenGraph gallery cards containing thumbnails, titles, descriptions, and site information
 - Search across page titles and block content
+- Current-page PDF export using the browser print engine, with preserved colors and backgrounds, wide-block scaling, and print-safe pagination
 - Browser-language detection and an in-app language switcher for English, Japanese, Korean, French, German, Spanish, and Portuguese
 - Tags, page nesting, archiving, and permanent deletion
 - Username-and-password authentication backed by JWT
@@ -299,6 +300,12 @@ BrainVault/
 ## Security defaults
 
 The server includes Helmet headers, a configurable CORS allowlist, request rate limiting, password hashing, JWT verification, Zod input validation, private attachment storage with authenticated downloads, upload-size limits, and sanitized HTML output. Those defaults are a starting point rather than a substitute for HTTPS, secure secret storage, database backups, and normal production monitoring.
+
+## PDF export
+
+Open any page and select **Export PDF** in the page toolbar. BrainVault prepares only the current page, removes editor-only controls, keeps backgrounds and colors, expands horizontally scrollable tables and boards, and opens the browser print dialog. Choose **Save as PDF** to create the file.
+
+The print stylesheet uses A4 landscape pages so the default 900 px document layout stays unchanged whenever possible. Exceptionally wide tables, Kanban boards, and database views are scaled uniformly to prevent horizontal clipping.
 
 ## Interface language
 

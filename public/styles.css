@@ -964,6 +964,17 @@ textarea {
   font-weight: 560;
 }
 
+.export-pdf-button svg {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .page-title-input {
   min-height: auto;
   border: 0;
@@ -3345,6 +3356,167 @@ kbd {
 
   .kanban-card-drag-handle {
     left: 0.28rem;
+  }
+}
+
+@page {
+  size: A4 landscape;
+  margin: 10mm;
+}
+
+@media print {
+  html,
+  body {
+    width: auto !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    background: #fff !important;
+  }
+
+  body.pdf-export-mode,
+  body.pdf-export-mode * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body.pdf-export-mode {
+    margin: 0 !important;
+    color: var(--ink) !important;
+  }
+
+  body.pdf-export-mode .status,
+  body.pdf-export-mode .sidebar,
+  body.pdf-export-mode #welcome-view,
+  body.pdf-export-mode .page-toolbar .button-row,
+  body.pdf-export-mode .slash-menu,
+  body.pdf-export-mode .block-context-menu,
+  body.pdf-export-mode .inline-toolbar,
+  body.pdf-export-mode .block-row-topline,
+  body.pdf-export-mode .table-block-toolbar,
+  body.pdf-export-mode .table-block-footer,
+  body.pdf-export-mode .table-edge-add,
+  body.pdf-export-mode .kanban-add-column,
+  body.pdf-export-mode .kanban-column-menu,
+  body.pdf-export-mode .kanban-card-drag-handle,
+  body.pdf-export-mode .kanban-card-style-panel,
+  body.pdf-export-mode .kanban-card-delete,
+  body.pdf-export-mode .kanban-card-footer,
+  body.pdf-export-mode .kanban-add-card,
+  body.pdf-export-mode .bookmark-add-row,
+  body.pdf-export-mode .bookmark-item-actions,
+  body.pdf-export-mode .attachment-download-button,
+  body.pdf-export-mode .database-view-settings,
+  body.pdf-export-mode .database-add-view-select,
+  body.pdf-export-mode .database-delete-row,
+  body.pdf-export-mode .database-board-add-row,
+  body.pdf-export-mode .database-footer button,
+  body.pdf-export-mode .database-toolbar-popover {
+    display: none !important;
+  }
+
+  body.pdf-export-mode .shell {
+    display: block !important;
+    min-height: 0 !important;
+  }
+
+  body.pdf-export-mode .main {
+    display: block !important;
+    width: auto !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+    padding: 0 !important;
+  }
+
+  body.pdf-export-mode .page-view {
+    display: block !important;
+    width: var(--pdf-export-page-width, 900px) !important;
+    max-width: none !important;
+    margin: 0 auto !important;
+    zoom: var(--pdf-export-scale, 1);
+  }
+
+  body.pdf-export-mode .page-toolbar {
+    margin-bottom: 0.85rem !important;
+    padding-bottom: 0.5rem !important;
+  }
+
+  body.pdf-export-mode .editor-block-row,
+  body.pdf-export-mode .editor-block-row:hover,
+  body.pdf-export-mode .editor-block-row:focus-within,
+  body.pdf-export-mode .editor-block-row.is-menu-open,
+  body.pdf-export-mode .editor-block-row.is-dragging {
+    grid-template-columns: 0 minmax(0, 1fr) !important;
+    column-gap: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    opacity: 1 !important;
+  }
+
+  body.pdf-export-mode .block-handle {
+    width: 0 !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+
+  body.pdf-export-mode input,
+  body.pdf-export-mode textarea,
+  body.pdf-export-mode select {
+    opacity: 1 !important;
+    caret-color: transparent !important;
+    -webkit-text-fill-color: currentColor !important;
+  }
+
+  body.pdf-export-mode .table-block-scroll,
+  body.pdf-export-mode .kanban-board-scroll,
+  body.pdf-export-mode .database-view-bar,
+  body.pdf-export-mode .database-table-scroll,
+  body.pdf-export-mode .database-board-scroll,
+  body.pdf-export-mode .rendered-table-wrap,
+  body.pdf-export-mode .rendered-kanban-board,
+  body.pdf-export-mode .rendered-database-table-wrap,
+  body.pdf-export-mode .rendered-database-board {
+    max-width: none !important;
+    overflow: visible !important;
+  }
+
+  body.pdf-export-mode .bookmark-item-actions,
+  body.pdf-export-mode .kanban-card-footer,
+  body.pdf-export-mode .kanban-card-delete,
+  body.pdf-export-mode .kanban-card-drag-handle {
+    opacity: 0 !important;
+  }
+
+  body.pdf-export-mode .editor-block-row:not([data-block-type="TABLE"]):not([data-block-type="KANBAN"]):not([data-block-type="DATABASE"]),
+  body.pdf-export-mode .attachment-block-card,
+  body.pdf-export-mode .bookmark-gallery-card,
+  body.pdf-export-mode .bookmark-list-item,
+  body.pdf-export-mode .kanban-card,
+  body.pdf-export-mode .database-board-card,
+  body.pdf-export-mode .database-list-row,
+  body.pdf-export-mode .table-block-grid tr,
+  body.pdf-export-mode .database-table tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  body.pdf-export-mode .page-title-input,
+  body.pdf-export-mode .block-row-input,
+  body.pdf-export-mode .table-cell-input,
+  body.pdf-export-mode .kanban-title-input,
+  body.pdf-export-mode .kanban-column-title,
+  body.pdf-export-mode .kanban-card-title,
+  body.pdf-export-mode .kanban-card-description,
+  body.pdf-export-mode .kanban-card-tags,
+  body.pdf-export-mode .database-title-input,
+  body.pdf-export-mode .database-value-input,
+  body.pdf-export-mode .database-value-select {
+    box-shadow: none !important;
+    outline: none !important;
   }
 }
 

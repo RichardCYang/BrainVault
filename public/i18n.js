@@ -61,6 +61,8 @@ export const translationCatalogs = {
     },
     page: {
       titleAria: "Page title",
+      exportPdf: "Export PDF",
+      exportPdfTitle: "Export the current page as a PDF",
       save: "Save",
       archive: "Archive",
       tags: "Tags",
@@ -339,6 +341,9 @@ export const translationCatalogs = {
       blockAppended: "Created a new block. Type '/' to choose its type.",
       emptyBlockDeleted: "Empty block deleted.",
       pageTitleSaved: "Page title saved.",
+      preparingPdf: "Preparing the current page for PDF export...",
+      pdfSaveInstructions: "In the print dialog, choose Save as PDF.",
+      pdfDialogClosed: "The PDF export dialog was closed.",
       creatingDocument: "Creating a page in the default collection...",
       documentCreated: "Page created. You can edit its title now.",
       loadingDocument: "Loading page...",
@@ -373,6 +378,7 @@ export const translationCatalogs = {
       languageChanged: "Language changed to {language}."
     },
     errors: {
+      pdfExportFailed: "Could not open the PDF export dialog. Try again in a browser that supports printing.",
       currentBlockOrder: "Could not find the current block order.",
       network: "Could not connect to the server. Check your network and try again.",
       invalidResponse: "The server returned an unreadable response.",
@@ -457,6 +463,8 @@ export const translationCatalogs = {
     },
     page: {
       titleAria: "ページタイトル",
+      exportPdf: "PDFに書き出す",
+      exportPdfTitle: "現在のページをPDFとして書き出す",
       save: "保存",
       archive: "アーカイブ",
       tags: "タグ",
@@ -610,6 +618,9 @@ export const translationCatalogs = {
       blockAppended: "新しいブロックを作成しました。「/」を入力してタイプを選択してください。",
       emptyBlockDeleted: "空のブロックを削除しました。",
       pageTitleSaved: "ページタイトルを保存しました。",
+      preparingPdf: "現在のページをPDF用に準備しています...",
+      pdfSaveInstructions: "印刷ダイアログで「PDFとして保存」を選択してください。",
+      pdfDialogClosed: "PDF書き出しダイアログを閉じました。",
       creatingDocument: "デフォルトコレクションに新しいページを作成しています...",
       documentCreated: "新しいページを作成しました。タイトルをすぐに編集できます。",
       loadingDocument: "ページを読み込んでいます...",
@@ -636,6 +647,7 @@ export const translationCatalogs = {
       languageChanged: "言語を{language}に変更しました。"
     },
     errors: {
+      pdfExportFailed: "PDF書き出しダイアログを開けませんでした。印刷に対応したブラウザーで再度お試しください。",
       currentBlockOrder: "現在のブロック順序を確認できません。",
       network: "サーバーに接続できません。ネットワークを確認して再度お試しください。",
       invalidResponse: "サーバーから読み取れない応答が返されました。",
@@ -713,6 +725,8 @@ export const translationCatalogs = {
     },
     page: {
       titleAria: "문서 제목",
+      exportPdf: "PDF 내보내기",
+      exportPdfTitle: "현재 페이지를 PDF로 내보내기",
       save: "저장",
       archive: "보관하기",
       tags: "태그",
@@ -974,6 +988,9 @@ export const translationCatalogs = {
       blockAppended: "새 블록을 만들었습니다. '/'를 입력해 타입을 선택하세요.",
       emptyBlockDeleted: "빈 블록을 삭제했습니다.",
       pageTitleSaved: "문서 제목을 저장했습니다.",
+      preparingPdf: "현재 페이지를 PDF로 내보낼 준비를 하는 중입니다...",
+      pdfSaveInstructions: "인쇄 창에서 ‘PDF로 저장’을 선택하세요.",
+      pdfDialogClosed: "PDF 내보내기 창을 닫았습니다.",
       creatingDocument: "기본 컬렉션에 새 문서를 만드는 중입니다...",
       documentCreated: "새 문서를 만들었습니다. 제목을 바로 수정하세요.",
       loadingDocument: "문서를 불러오는 중입니다...",
@@ -1008,6 +1025,7 @@ export const translationCatalogs = {
       languageChanged: "언어를 {language}(으)로 변경했습니다."
     },
     errors: {
+      pdfExportFailed: "PDF 내보내기 창을 열지 못했습니다. 인쇄를 지원하는 브라우저에서 다시 시도하세요.",
       currentBlockOrder: "현재 블록의 순서를 찾을 수 없습니다.",
       network: "서버에 연결할 수 없습니다. 네트워크를 확인한 뒤 다시 시도하세요.",
       invalidResponse: "서버 응답을 읽을 수 없습니다.",
@@ -1092,6 +1110,8 @@ export const translationCatalogs = {
     },
     page: {
       titleAria: "Titre de la page",
+      exportPdf: "Exporter en PDF",
+      exportPdfTitle: "Exporter la page actuelle au format PDF",
       save: "Enregistrer",
       archive: "Archiver",
       tags: "Tags",
@@ -1245,6 +1265,9 @@ export const translationCatalogs = {
       blockAppended: "Nouveau bloc créé. Saisissez « / » pour choisir son type.",
       emptyBlockDeleted: "Bloc vide supprimé.",
       pageTitleSaved: "Titre de la page enregistré.",
+      preparingPdf: "Préparation de la page actuelle pour l’export PDF...",
+      pdfSaveInstructions: "Dans la boîte de dialogue d’impression, choisissez Enregistrer au format PDF.",
+      pdfDialogClosed: "La boîte de dialogue d’export PDF a été fermée.",
       creatingDocument: "Création d’une page dans la collection par défaut...",
       documentCreated: "Page créée. Vous pouvez modifier son titre immédiatement.",
       loadingDocument: "Chargement de la page...",
@@ -1271,6 +1294,7 @@ export const translationCatalogs = {
       languageChanged: "Langue remplacée par {language}."
     },
     errors: {
+      pdfExportFailed: "Impossible d’ouvrir la boîte de dialogue d’export PDF. Réessayez dans un navigateur prenant en charge l’impression.",
       currentBlockOrder: "Impossible de déterminer l’ordre actuel du bloc.",
       network: "Connexion au serveur impossible. Vérifiez votre réseau et réessayez.",
       invalidResponse: "Le serveur a renvoyé une réponse illisible.",
@@ -1348,6 +1372,8 @@ export const translationCatalogs = {
     },
     page: {
       titleAria: "Seitentitel",
+      exportPdf: "PDF exportieren",
+      exportPdfTitle: "Aktuelle Seite als PDF exportieren",
       save: "Speichern",
       archive: "Archivieren",
       tags: "Tags",
@@ -1501,6 +1527,9 @@ export const translationCatalogs = {
       blockAppended: "Neuen Block erstellt. Gib „/“ ein, um den Typ auszuwählen.",
       emptyBlockDeleted: "Leeren Block gelöscht.",
       pageTitleSaved: "Seitentitel gespeichert.",
+      preparingPdf: "Aktuelle Seite wird für den PDF-Export vorbereitet...",
+      pdfSaveInstructions: "Wähle im Druckdialog Als PDF speichern.",
+      pdfDialogClosed: "Der PDF-Exportdialog wurde geschlossen.",
       creatingDocument: "Seite wird in der Standardsammlung erstellt...",
       documentCreated: "Seite erstellt. Du kannst den Titel jetzt bearbeiten.",
       loadingDocument: "Seite wird geladen...",
@@ -1527,6 +1556,7 @@ export const translationCatalogs = {
       languageChanged: "Sprache zu {language} geändert."
     },
     errors: {
+      pdfExportFailed: "Der PDF-Exportdialog konnte nicht geöffnet werden. Versuche es in einem Browser mit Druckunterstützung erneut.",
       currentBlockOrder: "Die aktuelle Blockreihenfolge konnte nicht ermittelt werden.",
       network: "Keine Verbindung zum Server. Prüfe dein Netzwerk und versuche es erneut.",
       invalidResponse: "Der Server hat eine unlesbare Antwort gesendet.",
@@ -1604,6 +1634,8 @@ export const translationCatalogs = {
     },
     page: {
       titleAria: "Título de la página",
+      exportPdf: "Exportar PDF",
+      exportPdfTitle: "Exportar la página actual como PDF",
       save: "Guardar",
       archive: "Archivar",
       tags: "Etiquetas",
@@ -1757,6 +1789,9 @@ export const translationCatalogs = {
       blockAppended: "Se creó un bloque nuevo. Escribe «/» para elegir su tipo.",
       emptyBlockDeleted: "Bloque vacío eliminado.",
       pageTitleSaved: "Título de la página guardado.",
+      preparingPdf: "Preparando la página actual para exportarla a PDF...",
+      pdfSaveInstructions: "En el cuadro de impresión, elige Guardar como PDF.",
+      pdfDialogClosed: "Se cerró el cuadro de exportación a PDF.",
       creatingDocument: "Creando una página en la colección predeterminada...",
       documentCreated: "Página creada. Ya puedes editar el título.",
       loadingDocument: "Cargando página...",
@@ -1783,6 +1818,7 @@ export const translationCatalogs = {
       languageChanged: "Idioma cambiado a {language}."
     },
     errors: {
+      pdfExportFailed: "No se pudo abrir el cuadro de exportación a PDF. Inténtalo de nuevo en un navegador compatible con impresión.",
       currentBlockOrder: "No se pudo determinar el orden actual del bloque.",
       network: "No se pudo conectar con el servidor. Revisa la red e inténtalo de nuevo.",
       invalidResponse: "El servidor devolvió una respuesta ilegible.",
@@ -1860,6 +1896,8 @@ export const translationCatalogs = {
     },
     page: {
       titleAria: "Título da página",
+      exportPdf: "Exportar PDF",
+      exportPdfTitle: "Exportar a página atual como PDF",
       save: "Salvar",
       archive: "Arquivar",
       tags: "Tags",
@@ -2013,6 +2051,9 @@ export const translationCatalogs = {
       blockAppended: "Novo bloco criado. Digite “/” para escolher o tipo.",
       emptyBlockDeleted: "Bloco vazio excluído.",
       pageTitleSaved: "Título da página salvo.",
+      preparingPdf: "Preparando a página atual para exportação em PDF...",
+      pdfSaveInstructions: "Na caixa de impressão, escolha Salvar como PDF.",
+      pdfDialogClosed: "A caixa de exportação em PDF foi fechada.",
       creatingDocument: "Criando uma página na coleção padrão...",
       documentCreated: "Página criada. Você já pode editar o título.",
       loadingDocument: "Carregando página...",
@@ -2039,6 +2080,7 @@ export const translationCatalogs = {
       languageChanged: "Idioma alterado para {language}."
     },
     errors: {
+      pdfExportFailed: "Não foi possível abrir a caixa de exportação em PDF. Tente novamente em um navegador compatível com impressão.",
       currentBlockOrder: "Não foi possível determinar a ordem atual do bloco.",
       network: "Não foi possível conectar ao servidor. Verifique a rede e tente novamente.",
       invalidResponse: "O servidor retornou uma resposta ilegível.",

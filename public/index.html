@@ -129,6 +129,23 @@
               <input id="page-title" class="page-title-input" type="text" aria-label="Page title" data-i18n-aria-label="page.titleAria" />
             </div>
             <div class="button-row">
+              <button
+                id="export-pdf-button"
+                type="button"
+                class="secondary export-pdf-button"
+                aria-label="Export current page as PDF"
+                title="Export current page as PDF"
+                data-i18n-aria-label="page.exportPdfTitle"
+                data-i18n-title="page.exportPdfTitle"
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                  <path d="M7 3.5h7l3 3V20.5H7z"></path>
+                  <path d="M14 3.5v3h3"></path>
+                  <path d="M9.5 12.5h5"></path>
+                  <path d="M12 10v5"></path>
+                </svg>
+                <span data-i18n="page.exportPdf">Export PDF</span>
+              </button>
               <button id="save-page-button" type="button" class="secondary" data-i18n="page.save">Save</button>
               <button id="archive-page-button" type="button" class="danger" data-i18n="page.archive">Archive</button>
             </div>
