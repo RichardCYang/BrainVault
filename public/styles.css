@@ -7375,6 +7375,7 @@ body.account-settings-open {
 
 .emoji-search-label input:focus {
   border: 0;
+  outline: none;
   box-shadow: none;
 }
 
