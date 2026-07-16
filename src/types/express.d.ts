@@ -5,6 +5,10 @@ declare global {
         id: string;
         username: string;
         name: string | null;
+        avatarData: string | null;
+        preferredLanguage: string | null;
+        createdAt: string;
+        updatedAt: string;
       };
       validated?: {
         body?: unknown;

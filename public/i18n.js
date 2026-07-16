@@ -36,6 +36,48 @@ export const translationCatalogs = {
       registerSwitch: "Already have an account?"
     },
     workspace: { aria: "Workspace navigation", addCollection: "Add collection", logout: "Log out" },
+    account: {
+      open: "Open account settings",
+      title: "Settings",
+      close: "Close settings",
+      profile: "Profile",
+      preferences: "Preferences",
+      security: "Security",
+      signOut: "Log out",
+      profileTitle: "Profile",
+      profileDescription: "Update the name and photo shown in your workspace.",
+      avatar: "Profile photo",
+      avatarDescription: "Use a PNG, JPG, or WebP image. It will be cropped to a square.",
+      uploadAvatar: "Upload photo",
+      removeAvatar: "Remove",
+      displayName: "Display name",
+      displayNamePlaceholder: "Your name",
+      loginId: "Login ID",
+      loginIdHint: "Your login ID cannot be changed.",
+      saveProfile: "Save profile",
+      preferencesTitle: "Preferences",
+      preferencesDescription: "Choose how BrainVault appears and behaves for your account.",
+      languageTitle: "Language",
+      languageDescription: "Use this language whenever you sign in.",
+      securityTitle: "Password",
+      securityDescription: "Confirm your current password before choosing a new one.",
+      currentPassword: "Current password",
+      newPassword: "New password",
+      confirmPassword: "Confirm new password",
+      passwordHint: "Use 8 to 128 characters.",
+      changePassword: "Change password",
+      preparingAvatar: "Preparing your profile photo...",
+      avatarReady: "Your new profile photo is ready to save.",
+      avatarRemoved: "The profile photo will be removed when you save.",
+      invalidAvatar: "Choose a valid PNG, JPG, or WebP image.",
+      avatarTooLarge: "The image is too large. Choose a file under 5 MB.",
+      savingProfile: "Saving your profile...",
+      profileSaved: "Your profile was updated.",
+      savingLanguage: "Saving the language preference...",
+      passwordMismatch: "The new passwords do not match.",
+      changingPassword: "Changing your password...",
+      passwordChanged: "Your password was changed."
+    },
     search: { label: "Search pages and blocks", placeholder: "Search pages/blocks", button: "Search" },
     navigation: { aria: "Default collection and page list" },
     collection: {
@@ -390,6 +432,9 @@ export const translationCatalogs = {
       VALIDATION_ERROR: "Please check the entered information.",
       ID_TAKEN: "That ID is already in use.",
       INVALID_CREDENTIALS: "The ID or password is incorrect.",
+      CURRENT_PASSWORD_INCORRECT: "The current password is incorrect.",
+      NEW_PASSWORD_SAME: "Choose a password different from the current one.",
+      INVALID_AVATAR: "The profile image is invalid or too large.",
       INVALID_TOKEN: "Your session is invalid or has expired. Please log in again.",
       UNAUTHENTICATED: "Please log in to continue.",
       NOT_FOUND: "The requested item could not be found.",
@@ -443,6 +488,14 @@ export const translationCatalogs = {
       registerSwitch: "すでにアカウントをお持ちですか？"
     },
     workspace: { aria: "ワークスペースナビゲーション", addCollection: "コレクションを追加", logout: "ログアウト" },
+    account: {
+      open: "アカウント設定を開く", title: "設定", close: "設定を閉じる", profile: "プロフィール", preferences: "環境設定", security: "セキュリティ", signOut: "ログアウト",
+      profileTitle: "プロフィール", profileDescription: "ワークスペースに表示する名前と写真を更新します。", avatar: "プロフィール写真", avatarDescription: "PNG、JPG、WebP画像を使用できます。正方形に切り抜かれます。", uploadAvatar: "写真をアップロード", removeAvatar: "削除",
+      displayName: "表示名", displayNamePlaceholder: "名前", loginId: "ログインID", loginIdHint: "ログインIDは変更できません。", saveProfile: "プロフィールを保存",
+      preferencesTitle: "環境設定", preferencesDescription: "アカウントでのBrainVaultの表示と動作を選択します。", languageTitle: "言語", languageDescription: "サインイン時にこの言語を使用します。",
+      securityTitle: "パスワード", securityDescription: "新しいパスワードを設定する前に現在のパスワードを確認します。", currentPassword: "現在のパスワード", newPassword: "新しいパスワード", confirmPassword: "新しいパスワードを確認", passwordHint: "8〜128文字で入力してください。", changePassword: "パスワードを変更",
+      preparingAvatar: "プロフィール写真を準備しています...", avatarReady: "新しいプロフィール写真を保存できます。", avatarRemoved: "保存するとプロフィール写真が削除されます。", invalidAvatar: "有効なPNG、JPG、WebP画像を選択してください。", avatarTooLarge: "画像が大きすぎます。5MB未満のファイルを選択してください。", savingProfile: "プロフィールを保存しています...", profileSaved: "プロフィールを更新しました。", savingLanguage: "言語設定を保存しています...", passwordMismatch: "新しいパスワードが一致しません。", changingPassword: "パスワードを変更しています...", passwordChanged: "パスワードを変更しました。"
+    },
     search: { label: "ページとブロックを検索", placeholder: "ページ／ブロックを検索", button: "検索" },
     navigation: { aria: "デフォルトコレクションとページ一覧" },
     collection: {
@@ -664,6 +717,9 @@ export const translationCatalogs = {
       VALIDATION_ERROR: "入力内容を確認してください。",
       ID_TAKEN: "そのIDはすでに使用されています。",
       INVALID_CREDENTIALS: "IDまたはパスワードが正しくありません。",
+      CURRENT_PASSWORD_INCORRECT: "現在のパスワードが正しくありません。",
+      NEW_PASSWORD_SAME: "現在とは異なるパスワードを選択してください。",
+      INVALID_AVATAR: "プロフィール画像が無効か、大きすぎます。",
       INVALID_TOKEN: "セッションが無効または期限切れです。もう一度ログインしてください。",
       UNAUTHENTICATED: "続行するにはログインしてください。",
       NOT_FOUND: "要求された項目が見つかりません。",
@@ -710,6 +766,14 @@ export const translationCatalogs = {
       registerSwitch: "이미 계정이 있으신가요?"
     },
     workspace: { aria: "워크스페이스 탐색", addCollection: "컬렉션 추가", logout: "로그아웃" },
+    account: {
+      open: "계정 설정 열기", title: "설정", close: "설정 닫기", profile: "프로필", preferences: "환경설정", security: "보안", signOut: "로그아웃",
+      profileTitle: "프로필", profileDescription: "워크스페이스에 표시되는 이름과 사진을 관리하세요.", avatar: "프로필 사진", avatarDescription: "PNG, JPG 또는 WebP 이미지를 사용하세요. 정사각형으로 자동 잘라냅니다.", uploadAvatar: "사진 업로드", removeAvatar: "삭제",
+      displayName: "표시 이름", displayNamePlaceholder: "이름", loginId: "로그인 아이디", loginIdHint: "로그인 아이디는 변경할 수 없습니다.", saveProfile: "프로필 저장",
+      preferencesTitle: "환경설정", preferencesDescription: "계정에서 사용할 BrainVault의 표시와 동작을 설정하세요.", languageTitle: "언어", languageDescription: "로그인할 때마다 이 언어를 사용합니다.",
+      securityTitle: "비밀번호", securityDescription: "새 비밀번호를 설정하기 전에 현재 비밀번호를 확인합니다.", currentPassword: "현재 비밀번호", newPassword: "새 비밀번호", confirmPassword: "새 비밀번호 확인", passwordHint: "8자 이상 128자 이하로 입력하세요.", changePassword: "비밀번호 변경",
+      preparingAvatar: "프로필 사진을 준비하고 있습니다...", avatarReady: "새 프로필 사진을 저장할 준비가 되었습니다.", avatarRemoved: "저장하면 프로필 사진이 삭제됩니다.", invalidAvatar: "올바른 PNG, JPG 또는 WebP 이미지를 선택하세요.", avatarTooLarge: "이미지가 너무 큽니다. 5MB 미만 파일을 선택하세요.", savingProfile: "프로필을 저장하고 있습니다...", profileSaved: "프로필을 업데이트했습니다.", savingLanguage: "언어 설정을 저장하고 있습니다...", passwordMismatch: "새 비밀번호가 서로 일치하지 않습니다.", changingPassword: "비밀번호를 변경하고 있습니다...", passwordChanged: "비밀번호를 변경했습니다."
+    },
     search: { label: "문서와 블록 검색", placeholder: "문서/블록 검색", button: "검색" },
     navigation: { aria: "기본 컬렉션과 문서 목록" },
     collection: {
@@ -1047,6 +1111,9 @@ export const translationCatalogs = {
       VALIDATION_ERROR: "입력한 내용을 확인하세요.",
       ID_TAKEN: "이미 사용 중인 아이디입니다.",
       INVALID_CREDENTIALS: "아이디 또는 비밀번호가 올바르지 않습니다.",
+      CURRENT_PASSWORD_INCORRECT: "현재 비밀번호가 올바르지 않습니다.",
+      NEW_PASSWORD_SAME: "현재 비밀번호와 다른 비밀번호를 입력하세요.",
+      INVALID_AVATAR: "프로필 이미지가 올바르지 않거나 너무 큽니다.",
       INVALID_TOKEN: "로그인 정보가 만료되었거나 올바르지 않습니다. 다시 로그인하세요.",
       UNAUTHENTICATED: "계속하려면 로그인하세요.",
       NOT_FOUND: "요청한 항목을 찾을 수 없습니다.",
@@ -1100,6 +1167,14 @@ export const translationCatalogs = {
       registerSwitch: "Vous avez déjà un compte ?"
     },
     workspace: { aria: "Navigation de l’espace de travail", addCollection: "Ajouter une collection", logout: "Se déconnecter" },
+    account: {
+      open: "Ouvrir les paramètres du compte", title: "Paramètres", close: "Fermer les paramètres", profile: "Profil", preferences: "Préférences", security: "Sécurité", signOut: "Se déconnecter",
+      profileTitle: "Profil", profileDescription: "Modifiez le nom et la photo affichés dans votre espace de travail.", avatar: "Photo de profil", avatarDescription: "Utilisez une image PNG, JPG ou WebP. Elle sera recadrée en carré.", uploadAvatar: "Importer une photo", removeAvatar: "Supprimer",
+      displayName: "Nom affiché", displayNamePlaceholder: "Votre nom", loginId: "Identifiant", loginIdHint: "Votre identifiant ne peut pas être modifié.", saveProfile: "Enregistrer le profil",
+      preferencesTitle: "Préférences", preferencesDescription: "Choisissez l’apparence et le comportement de BrainVault pour votre compte.", languageTitle: "Langue", languageDescription: "Utilisez cette langue à chaque connexion.",
+      securityTitle: "Mot de passe", securityDescription: "Confirmez votre mot de passe actuel avant d’en choisir un nouveau.", currentPassword: "Mot de passe actuel", newPassword: "Nouveau mot de passe", confirmPassword: "Confirmer le nouveau mot de passe", passwordHint: "Utilisez entre 8 et 128 caractères.", changePassword: "Modifier le mot de passe",
+      preparingAvatar: "Préparation de votre photo de profil...", avatarReady: "Votre nouvelle photo est prête à être enregistrée.", avatarRemoved: "La photo sera supprimée lors de l’enregistrement.", invalidAvatar: "Choisissez une image PNG, JPG ou WebP valide.", avatarTooLarge: "L’image est trop volumineuse. Choisissez un fichier de moins de 5 Mo.", savingProfile: "Enregistrement du profil...", profileSaved: "Votre profil a été mis à jour.", savingLanguage: "Enregistrement de la langue...", passwordMismatch: "Les nouveaux mots de passe ne correspondent pas.", changingPassword: "Modification du mot de passe...", passwordChanged: "Votre mot de passe a été modifié."
+    },
     search: { label: "Rechercher des pages et des blocs", placeholder: "Rechercher pages/blocs", button: "Rechercher" },
     navigation: { aria: "Collection par défaut et liste des pages" },
     collection: {
@@ -1321,6 +1396,9 @@ export const translationCatalogs = {
       VALIDATION_ERROR: "Vérifiez les informations saisies.",
       ID_TAKEN: "Cet identifiant est déjà utilisé.",
       INVALID_CREDENTIALS: "L’identifiant ou le mot de passe est incorrect.",
+      CURRENT_PASSWORD_INCORRECT: "Le mot de passe actuel est incorrect.",
+      NEW_PASSWORD_SAME: "Choisissez un mot de passe différent de l’actuel.",
+      INVALID_AVATAR: "L’image de profil est invalide ou trop volumineuse.",
       INVALID_TOKEN: "Votre session est invalide ou expirée. Reconnectez-vous.",
       UNAUTHENTICATED: "Connectez-vous pour continuer.",
       NOT_FOUND: "L’élément demandé est introuvable.",
@@ -1367,6 +1445,14 @@ export const translationCatalogs = {
       registerSwitch: "Du hast bereits ein Konto?"
     },
     workspace: { aria: "Arbeitsbereich-Navigation", addCollection: "Sammlung hinzufügen", logout: "Abmelden" },
+    account: {
+      open: "Kontoeinstellungen öffnen", title: "Einstellungen", close: "Einstellungen schließen", profile: "Profil", preferences: "Voreinstellungen", security: "Sicherheit", signOut: "Abmelden",
+      profileTitle: "Profil", profileDescription: "Aktualisiere den Namen und das Foto in deinem Arbeitsbereich.", avatar: "Profilfoto", avatarDescription: "Verwende ein PNG-, JPG- oder WebP-Bild. Es wird quadratisch zugeschnitten.", uploadAvatar: "Foto hochladen", removeAvatar: "Entfernen",
+      displayName: "Anzeigename", displayNamePlaceholder: "Dein Name", loginId: "Anmelde-ID", loginIdHint: "Die Anmelde-ID kann nicht geändert werden.", saveProfile: "Profil speichern",
+      preferencesTitle: "Voreinstellungen", preferencesDescription: "Lege Darstellung und Verhalten von BrainVault für dein Konto fest.", languageTitle: "Sprache", languageDescription: "Diese Sprache bei jeder Anmeldung verwenden.",
+      securityTitle: "Passwort", securityDescription: "Bestätige dein aktuelles Passwort, bevor du ein neues wählst.", currentPassword: "Aktuelles Passwort", newPassword: "Neues Passwort", confirmPassword: "Neues Passwort bestätigen", passwordHint: "Verwende 8 bis 128 Zeichen.", changePassword: "Passwort ändern",
+      preparingAvatar: "Profilfoto wird vorbereitet...", avatarReady: "Das neue Profilfoto kann gespeichert werden.", avatarRemoved: "Das Profilfoto wird beim Speichern entfernt.", invalidAvatar: "Wähle ein gültiges PNG-, JPG- oder WebP-Bild.", avatarTooLarge: "Das Bild ist zu groß. Wähle eine Datei unter 5 MB.", savingProfile: "Profil wird gespeichert...", profileSaved: "Dein Profil wurde aktualisiert.", savingLanguage: "Spracheinstellung wird gespeichert...", passwordMismatch: "Die neuen Passwörter stimmen nicht überein.", changingPassword: "Passwort wird geändert...", passwordChanged: "Dein Passwort wurde geändert."
+    },
     search: { label: "Seiten und Blöcke durchsuchen", placeholder: "Seiten/Blöcke suchen", button: "Suchen" },
     navigation: { aria: "Standardsammlung und Seitenliste" },
     collection: {
@@ -1588,6 +1674,9 @@ export const translationCatalogs = {
       VALIDATION_ERROR: "Bitte prüfe die eingegebenen Daten.",
       ID_TAKEN: "Diese ID wird bereits verwendet.",
       INVALID_CREDENTIALS: "ID oder Passwort ist falsch.",
+      CURRENT_PASSWORD_INCORRECT: "Das aktuelle Passwort ist falsch.",
+      NEW_PASSWORD_SAME: "Wähle ein anderes Passwort als das aktuelle.",
+      INVALID_AVATAR: "Das Profilbild ist ungültig oder zu groß.",
       INVALID_TOKEN: "Deine Sitzung ist ungültig oder abgelaufen. Bitte melde dich erneut an.",
       UNAUTHENTICATED: "Bitte melde dich an, um fortzufahren.",
       NOT_FOUND: "Das angeforderte Element wurde nicht gefunden.",
@@ -1634,6 +1723,14 @@ export const translationCatalogs = {
       registerSwitch: "¿Ya tienes una cuenta?"
     },
     workspace: { aria: "Navegación del espacio de trabajo", addCollection: "Añadir colección", logout: "Cerrar sesión" },
+    account: {
+      open: "Abrir ajustes de la cuenta", title: "Ajustes", close: "Cerrar ajustes", profile: "Perfil", preferences: "Preferencias", security: "Seguridad", signOut: "Cerrar sesión",
+      profileTitle: "Perfil", profileDescription: "Actualiza el nombre y la foto que aparecen en tu espacio de trabajo.", avatar: "Foto de perfil", avatarDescription: "Usa una imagen PNG, JPG o WebP. Se recortará en formato cuadrado.", uploadAvatar: "Subir foto", removeAvatar: "Eliminar",
+      displayName: "Nombre visible", displayNamePlaceholder: "Tu nombre", loginId: "ID de acceso", loginIdHint: "El ID de acceso no se puede cambiar.", saveProfile: "Guardar perfil",
+      preferencesTitle: "Preferencias", preferencesDescription: "Elige cómo se muestra y funciona BrainVault para tu cuenta.", languageTitle: "Idioma", languageDescription: "Usa este idioma cada vez que inicies sesión.",
+      securityTitle: "Contraseña", securityDescription: "Confirma tu contraseña actual antes de elegir una nueva.", currentPassword: "Contraseña actual", newPassword: "Nueva contraseña", confirmPassword: "Confirmar nueva contraseña", passwordHint: "Usa entre 8 y 128 caracteres.", changePassword: "Cambiar contraseña",
+      preparingAvatar: "Preparando tu foto de perfil...", avatarReady: "La nueva foto está lista para guardarse.", avatarRemoved: "La foto se eliminará al guardar.", invalidAvatar: "Elige una imagen PNG, JPG o WebP válida.", avatarTooLarge: "La imagen es demasiado grande. Elige un archivo de menos de 5 MB.", savingProfile: "Guardando el perfil...", profileSaved: "Tu perfil se actualizó.", savingLanguage: "Guardando la preferencia de idioma...", passwordMismatch: "Las nuevas contraseñas no coinciden.", changingPassword: "Cambiando la contraseña...", passwordChanged: "Tu contraseña se cambió."
+    },
     search: { label: "Buscar páginas y bloques", placeholder: "Buscar páginas/bloques", button: "Buscar" },
     navigation: { aria: "Colección predeterminada y lista de páginas" },
     collection: {
@@ -1855,6 +1952,9 @@ export const translationCatalogs = {
       VALIDATION_ERROR: "Revisa la información introducida.",
       ID_TAKEN: "Ese ID ya está en uso.",
       INVALID_CREDENTIALS: "El ID o la contraseña no son correctos.",
+      CURRENT_PASSWORD_INCORRECT: "La contraseña actual no es correcta.",
+      NEW_PASSWORD_SAME: "Elige una contraseña distinta de la actual.",
+      INVALID_AVATAR: "La imagen de perfil no es válida o es demasiado grande.",
       INVALID_TOKEN: "Tu sesión no es válida o ha caducado. Vuelve a iniciar sesión.",
       UNAUTHENTICATED: "Inicia sesión para continuar.",
       NOT_FOUND: "No se encontró el elemento solicitado.",
@@ -1901,6 +2001,14 @@ export const translationCatalogs = {
       registerSwitch: "Já tem uma conta?"
     },
     workspace: { aria: "Navegação do espaço de trabalho", addCollection: "Adicionar coleção", logout: "Sair" },
+    account: {
+      open: "Abrir configurações da conta", title: "Configurações", close: "Fechar configurações", profile: "Perfil", preferences: "Preferências", security: "Segurança", signOut: "Sair",
+      profileTitle: "Perfil", profileDescription: "Atualize o nome e a foto exibidos no seu espaço de trabalho.", avatar: "Foto do perfil", avatarDescription: "Use uma imagem PNG, JPG ou WebP. Ela será recortada em formato quadrado.", uploadAvatar: "Enviar foto", removeAvatar: "Remover",
+      displayName: "Nome de exibição", displayNamePlaceholder: "Seu nome", loginId: "ID de acesso", loginIdHint: "O ID de acesso não pode ser alterado.", saveProfile: "Salvar perfil",
+      preferencesTitle: "Preferências", preferencesDescription: "Escolha como o BrainVault aparece e funciona para sua conta.", languageTitle: "Idioma", languageDescription: "Use este idioma sempre que entrar.",
+      securityTitle: "Senha", securityDescription: "Confirme sua senha atual antes de escolher uma nova.", currentPassword: "Senha atual", newPassword: "Nova senha", confirmPassword: "Confirmar nova senha", passwordHint: "Use de 8 a 128 caracteres.", changePassword: "Alterar senha",
+      preparingAvatar: "Preparando sua foto de perfil...", avatarReady: "A nova foto está pronta para ser salva.", avatarRemoved: "A foto será removida ao salvar.", invalidAvatar: "Escolha uma imagem PNG, JPG ou WebP válida.", avatarTooLarge: "A imagem é muito grande. Escolha um arquivo com menos de 5 MB.", savingProfile: "Salvando o perfil...", profileSaved: "Seu perfil foi atualizado.", savingLanguage: "Salvando a preferência de idioma...", passwordMismatch: "As novas senhas não coincidem.", changingPassword: "Alterando a senha...", passwordChanged: "Sua senha foi alterada."
+    },
     search: { label: "Pesquisar páginas e blocos", placeholder: "Pesquisar páginas/blocos", button: "Pesquisar" },
     navigation: { aria: "Coleção padrão e lista de páginas" },
     collection: {
@@ -2122,6 +2230,9 @@ export const translationCatalogs = {
       VALIDATION_ERROR: "Verifique as informações digitadas.",
       ID_TAKEN: "Esse ID já está em uso.",
       INVALID_CREDENTIALS: "O ID ou a senha está incorreto.",
+      CURRENT_PASSWORD_INCORRECT: "A senha atual está incorreta.",
+      NEW_PASSWORD_SAME: "Escolha uma senha diferente da atual.",
+      INVALID_AVATAR: "A imagem do perfil é inválida ou muito grande.",
       INVALID_TOKEN: "Sua sessão é inválida ou expirou. Entre novamente.",
       UNAUTHENTICATED: "Entre para continuar.",
       NOT_FOUND: "O item solicitado não foi encontrado.",

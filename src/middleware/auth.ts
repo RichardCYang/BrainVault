@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { db } from "../lib/db.js";
 import { verifyAuthToken } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
+import { toPublicUser } from "../lib/mappers.js";
 import type { UserRow } from "../types/domain.js";
 
 export async function requireAuth(req: Request, _res: Response, next: NextFunction) {
@@ -16,7 +17,8 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
   try {
     const payload = verifyAuthToken(token);
     const user = await db.queryOne<UserRow>(
-      "SELECT id, username, name, password_hash, created_at, updated_at FROM users WHERE id = ?",
+      `SELECT id, username, name, avatar_data, preferred_language, password_hash, created_at, updated_at
+       FROM users WHERE id = ?`,
       [payload.sub]
     );
 
@@ -25,7 +27,7 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
       return;
     }
 
-    req.user = { id: user.id, username: user.username, name: user.name };
+    req.user = toPublicUser(user);
     next();
   } catch (error) {
     next(error);

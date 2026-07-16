@@ -24,6 +24,12 @@ components:
           description: Login ID. This is not an email address.
         name:
           type: [string, 'null']
+        avatarData:
+          type: [string, 'null']
+          description: PNG, JPEG, or WebP data URL used as the profile image.
+        preferredLanguage:
+          type: [string, 'null']
+          enum: [en, ja, ko, fr, de, es, pt, null]
         createdAt:
           type: string
         updatedAt:
@@ -45,6 +51,9 @@ components:
         name:
           type: string
           maxLength: 80
+        preferredLanguage:
+          type: string
+          enum: [en, ja, ko, fr, de, es, pt]
     LoginInput:
       type: object
       required: [username, password]
@@ -62,6 +71,29 @@ components:
           $ref: '#/components/schemas/PublicUser'
         token:
           type: string
+    ProfileInput:
+      type: object
+      properties:
+        name:
+          type: [string, 'null']
+          maxLength: 80
+        avatarData:
+          type: [string, 'null']
+          description: PNG, JPEG, or WebP data URL. Decoded image data is limited to 512 KiB.
+        preferredLanguage:
+          type: [string, 'null']
+          enum: [en, ja, ko, fr, de, es, pt, null]
+    PasswordChangeInput:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+          maxLength: 128
+        newPassword:
+          type: string
+          minLength: 8
+          maxLength: 128
     PageInput:
       type: object
       required: [title]
@@ -339,6 +371,37 @@ paths:
       responses:
         '200':
           description: Current user
+  /api/auth/profile:
+    patch:
+      summary: Update the current user profile and account preferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileInput'
+      responses:
+        '200':
+          description: Updated current user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/PublicUser'
+  /api/auth/password:
+    post:
+      summary: Change the current user password after current-password verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordChangeInput'
+      responses:
+        '200':
+          description: Password changed
   /api/pages:
     get:
       summary: List pages

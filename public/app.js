@@ -35,7 +35,10 @@ const state = {
   activeInlineSelection: null,
   activeBlockMenuId: null,
   activeBlockMenuHandle: null,
-  pendingFocusBlockId: null
+  pendingFocusBlockId: null,
+  accountSettingsOpen: false,
+  activeAccountPanel: "profile",
+  pendingAvatarData: null
 };
 
 const blockTypeLabels = {
@@ -437,12 +440,41 @@ let blockOrderSaving = false;
 const $ = (selector) => document.querySelector(selector);
 
 const elements = {
+  shell: $(".shell"),
   appSidebar: $("#app-sidebar"),
   main: $(".main"),
   mobileSidebarToggle: $("#mobile-sidebar-toggle"),
   mobileSidebarClose: $("#mobile-sidebar-close"),
   mobileSidebarBackdrop: $("#mobile-sidebar-backdrop"),
   languageSelect: $("#language-select"),
+  accountSettingsTrigger: $("#account-settings-trigger"),
+  accountSettingsLayer: $("#account-settings-layer"),
+  accountSettingsBackdrop: $("#account-settings-backdrop"),
+  accountSettingsDialog: $("#account-settings-dialog"),
+  accountSettingsClose: $("#account-settings-close"),
+  accountSettingsMessage: $("#account-settings-message"),
+  accountSettingsTabs: [...document.querySelectorAll("[data-account-panel]")],
+  accountSettingsPanels: [...document.querySelectorAll("[data-account-panel-content]")],
+  sidebarUserAvatar: $("#sidebar-user-avatar"),
+  sidebarUserAvatarFallback: $("#sidebar-user-avatar-fallback"),
+  userUsername: $("#user-username"),
+  settingsNavAvatar: $("#settings-nav-avatar"),
+  settingsNavAvatarFallback: $("#settings-nav-avatar-fallback"),
+  settingsNavName: $("#settings-nav-name"),
+  settingsNavUsername: $("#settings-nav-username"),
+  accountAvatarPreview: $("#account-avatar-preview"),
+  accountAvatarFallback: $("#account-avatar-fallback"),
+  accountAvatarInput: $("#account-avatar-input"),
+  accountAvatarRemove: $("#account-avatar-remove"),
+  accountProfileForm: $("#account-profile-form"),
+  accountDisplayName: $("#account-display-name"),
+  accountLoginId: $("#account-login-id"),
+  accountProfileSave: $("#account-profile-save"),
+  accountPasswordForm: $("#account-password-form"),
+  accountCurrentPassword: $("#account-current-password"),
+  accountNewPassword: $("#account-new-password"),
+  accountConfirmPassword: $("#account-confirm-password"),
+  accountPasswordSave: $("#account-password-save"),
   authPanel: $("#auth-panel"),
   workspacePanel: $("#workspace-panel"),
   authForm: $("#auth-form"),
@@ -659,6 +691,7 @@ async function api(path, options = {}) {
 
   if (!response.ok) {
     if (response.status === 401) {
+      closeAccountSettings({ restoreFocus: false });
       setToken(null);
       state.user = null;
       renderShell();
@@ -689,6 +722,7 @@ async function downloadAttachment(block) {
       // Use the localized fallback below when the response is not JSON.
     }
     if (response.status === 401) {
+      closeAccountSettings({ restoreFocus: false });
       setToken(null);
       state.user = null;
       renderShell();
@@ -708,16 +742,218 @@ async function downloadAttachment(block) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
 }
 
+function getUserInitials(user = state.user) {
+  const source = user?.name?.trim() || user?.username?.trim() || "BV";
+  const parts = source.split(/\s+/).filter(Boolean);
+  return (parts.length > 1 ? `${parts[0][0]}${parts.at(-1)[0]}` : source.slice(0, 2)).toUpperCase();
+}
+
+function renderUserAvatar(image, fallback, avatarData = state.user?.avatarData, initials = getUserInitials()) {
+  const hasAvatar = typeof avatarData === "string" && avatarData.startsWith("data:image/");
+  image.classList.toggle("hidden", !hasAvatar);
+  if (hasAvatar) image.src = avatarData;
+  else image.removeAttribute("src");
+  fallback.classList.toggle("hidden", hasAvatar);
+  fallback.textContent = initials;
+}
+
+function updateUserIdentityUi() {
+  if (!state.user) return;
+  const displayName = state.user.name?.trim() || state.user.username;
+  const initials = getUserInitials(state.user);
+  elements.userLabel.textContent = displayName;
+  elements.userUsername.textContent = `@${state.user.username}`;
+  elements.settingsNavName.textContent = displayName;
+  elements.settingsNavUsername.textContent = `@${state.user.username}`;
+  elements.accountSettingsTrigger.setAttribute("aria-label", `${t("account.open")}: ${displayName}`);
+  renderUserAvatar(elements.sidebarUserAvatar, elements.sidebarUserAvatarFallback, state.user.avatarData, initials);
+  renderUserAvatar(elements.settingsNavAvatar, elements.settingsNavAvatarFallback, state.user.avatarData, initials);
+}
+
 function renderShell() {
   const authenticated = Boolean(state.token && state.user);
   const enteringMobileApp = authenticated && mobileSidebarMedia.matches && !document.body.classList.contains("app-mode");
   if (enteringMobileApp) suppressMobileSidebarTransition();
+  if (!authenticated && state.accountSettingsOpen) closeAccountSettings({ restoreFocus: false });
   document.body.classList.toggle("auth-mode", !authenticated);
   document.body.classList.toggle("app-mode", authenticated);
   elements.authPanel.classList.toggle("hidden", authenticated);
   elements.workspacePanel.classList.toggle("hidden", !authenticated);
-  elements.userLabel.textContent = authenticated ? `${state.user.name ?? state.user.username}` : "";
+  if (authenticated) updateUserIdentityUi();
   syncMobileSidebarAccessibility();
+}
+
+function setAccountMessage(message = "", isError = false) {
+  elements.accountSettingsMessage.textContent = message;
+  elements.accountSettingsMessage.classList.toggle("error", isError);
+}
+
+function setAccountPanel(panel, { focusTab = false } = {}) {
+  const nextPanel = ["profile", "preferences", "security"].includes(panel) ? panel : "profile";
+  state.activeAccountPanel = nextPanel;
+  elements.accountSettingsTabs.forEach((tab) => {
+    const selected = tab.dataset.accountPanel === nextPanel;
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+    if (selected && focusTab) tab.focus();
+  });
+  elements.accountSettingsPanels.forEach((panelElement) => {
+    panelElement.classList.toggle("hidden", panelElement.dataset.accountPanelContent !== nextPanel);
+  });
+  setAccountMessage();
+}
+
+function fillAccountSettings() {
+  if (!state.user) return;
+  state.pendingAvatarData = state.user.avatarData ?? null;
+  elements.accountDisplayName.value = state.user.name ?? "";
+  elements.accountLoginId.value = state.user.username;
+  elements.languageSelect.value = state.user.preferredLanguage || getLanguage();
+  renderUserAvatar(
+    elements.accountAvatarPreview,
+    elements.accountAvatarFallback,
+    state.pendingAvatarData,
+    getUserInitials(state.user)
+  );
+  elements.accountAvatarRemove.disabled = !state.pendingAvatarData;
+  elements.accountPasswordForm.reset();
+  updateUserIdentityUi();
+}
+
+function getAccountSettingsFocusableElements() {
+  return [...elements.accountSettingsDialog.querySelectorAll(mobileSidebarFocusableSelector)].filter((element) => {
+    return !element.disabled && !element.hidden && element.getAttribute("aria-hidden") !== "true" && element.getClientRects().length > 0;
+  });
+}
+
+function openAccountSettings(panel = "profile") {
+  if (!state.user || state.accountSettingsOpen) return;
+  closeMobileSidebar();
+  state.accountSettingsOpen = true;
+  fillAccountSettings();
+  setAccountPanel(panel);
+  elements.accountSettingsLayer.classList.remove("hidden");
+  elements.accountSettingsLayer.setAttribute("aria-hidden", "false");
+  document.body.classList.add("account-settings-open");
+  elements.shell.inert = true;
+  window.requestAnimationFrame(() => {
+    const selectedTab = elements.accountSettingsTabs.find((tab) => tab.dataset.accountPanel === state.activeAccountPanel);
+    (selectedTab ?? elements.accountSettingsDialog).focus();
+  });
+}
+
+function closeAccountSettings({ restoreFocus = true } = {}) {
+  if (!state.accountSettingsOpen) return;
+  state.accountSettingsOpen = false;
+  elements.accountSettingsLayer.classList.add("hidden");
+  elements.accountSettingsLayer.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("account-settings-open");
+  elements.shell.inert = false;
+  setAccountMessage();
+  elements.accountAvatarInput.value = "";
+  elements.accountPasswordForm.reset();
+  syncMobileSidebarAccessibility();
+  if (restoreFocus && state.user) elements.accountSettingsTrigger.focus();
+}
+
+function handleAccountSettingsKeydown(event) {
+  if (!state.accountSettingsOpen) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeAccountSettings();
+    return;
+  }
+  if (event.key !== "Tab") return;
+
+  const focusableElements = getAccountSettingsFocusableElements();
+  if (!focusableElements.length) {
+    event.preventDefault();
+    elements.accountSettingsDialog.focus();
+    return;
+  }
+  const first = focusableElements[0];
+  const last = focusableElements.at(-1);
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function handleAccountTabKeydown(event) {
+  if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const tabs = elements.accountSettingsTabs;
+  const currentIndex = Math.max(0, tabs.indexOf(event.currentTarget));
+  const nextIndex = event.key === "Home"
+    ? 0
+    : event.key === "End"
+      ? tabs.length - 1
+      : (currentIndex + (["ArrowUp", "ArrowLeft"].includes(event.key) ? -1 : 1) + tabs.length) % tabs.length;
+  setAccountPanel(tabs[nextIndex].dataset.accountPanel, { focusTab: true });
+}
+
+function estimateDataUrlBytes(dataUrl) {
+  const payload = dataUrl.split(",", 2)[1] ?? "";
+  return Math.floor((payload.length * 3) / 4);
+}
+
+async function createAvatarDataUrl(file) {
+  const allowedTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
+  if (!allowedTypes.has(file.type)) throw new Error(t("account.invalidAvatar"));
+  if (file.size > 5 * 1024 * 1024) throw new Error(t("account.avatarTooLarge"));
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = "async";
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = () => reject(new Error(t("account.invalidAvatar")));
+      image.src = objectUrl;
+    });
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 320;
+    canvas.height = 320;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error(t("account.invalidAvatar"));
+    const sourceSize = Math.min(image.naturalWidth, image.naturalHeight);
+    const sourceX = (image.naturalWidth - sourceSize) / 2;
+    const sourceY = (image.naturalHeight - sourceSize) / 2;
+    context.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, 320, 320);
+
+    let dataUrl = canvas.toDataURL("image/webp", 0.86);
+    if (!dataUrl.startsWith("data:image/webp")) dataUrl = canvas.toDataURL("image/jpeg", 0.86);
+    if (estimateDataUrlBytes(dataUrl) > 512 * 1024) dataUrl = canvas.toDataURL("image/jpeg", 0.72);
+    if (estimateDataUrlBytes(dataUrl) > 512 * 1024) throw new Error(t("account.avatarTooLarge"));
+    return dataUrl;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function applyUserPreferredLanguage() {
+  const preferredLanguage = state.user?.preferredLanguage;
+  if (preferredLanguage && preferredLanguage !== getLanguage()) setLanguage(preferredLanguage);
+}
+
+function logout() {
+  closeAccountSettings({ restoreFocus: false });
+  setToken(null);
+  state.user = null;
+  state.pages = [];
+  state.allPages = [];
+  state.selectedPage = null;
+  state.activeTag = "";
+  state.searchQuery = "";
+  renderShell();
+  renderPages();
+  renderSelectedPage();
+  setStatus(t("status.loggedOut"));
 }
 
 function sortByRecent(items) {
@@ -3641,6 +3877,7 @@ async function boot() {
 
   try {
     await loadMe();
+    await applyUserPreferredLanguage();
     renderShell();
     if (state.user) await loadPages();
     setStatus(state.user ? t("status.ready") : t("status.getStarted"));
@@ -3661,6 +3898,93 @@ mobileSidebarMedia.addEventListener("change", () => {
   closeMobileSidebar();
 });
 
+elements.accountSettingsTrigger.addEventListener("click", () => openAccountSettings("profile"));
+elements.accountSettingsClose.addEventListener("click", () => closeAccountSettings());
+elements.accountSettingsBackdrop.addEventListener("click", () => closeAccountSettings());
+document.addEventListener("keydown", handleAccountSettingsKeydown);
+
+elements.accountSettingsTabs.forEach((tab) => {
+  tab.addEventListener("click", () => setAccountPanel(tab.dataset.accountPanel));
+  tab.addEventListener("keydown", handleAccountTabKeydown);
+});
+
+elements.accountAvatarInput.addEventListener("change", async () => {
+  const [file] = elements.accountAvatarInput.files ?? [];
+  if (!file) return;
+  try {
+    setAccountMessage(t("account.preparingAvatar"));
+    state.pendingAvatarData = await createAvatarDataUrl(file);
+    renderUserAvatar(
+      elements.accountAvatarPreview,
+      elements.accountAvatarFallback,
+      state.pendingAvatarData,
+      getUserInitials(state.user)
+    );
+    elements.accountAvatarRemove.disabled = false;
+    setAccountMessage(t("account.avatarReady"));
+  } catch (error) {
+    state.pendingAvatarData = state.user?.avatarData ?? null;
+    elements.accountAvatarInput.value = "";
+    setAccountMessage(error.message, true);
+  }
+});
+
+elements.accountAvatarRemove.addEventListener("click", () => {
+  state.pendingAvatarData = null;
+  elements.accountAvatarInput.value = "";
+  renderUserAvatar(elements.accountAvatarPreview, elements.accountAvatarFallback, null, getUserInitials(state.user));
+  elements.accountAvatarRemove.disabled = true;
+  setAccountMessage(t("account.avatarRemoved"));
+});
+
+elements.accountProfileForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  elements.accountProfileSave.disabled = true;
+  try {
+    setAccountMessage(t("account.savingProfile"));
+    const data = await api("/api/auth/profile", {
+      method: "PATCH",
+      body: {
+        name: elements.accountDisplayName.value.trim() || null,
+        avatarData: state.pendingAvatarData
+      }
+    });
+    state.user = data.user;
+    fillAccountSettings();
+    setAccountMessage(t("account.profileSaved"));
+    setStatus(t("account.profileSaved"));
+  } catch (error) {
+    setAccountMessage(error.message, true);
+  } finally {
+    elements.accountProfileSave.disabled = false;
+  }
+});
+
+elements.accountPasswordForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const currentPassword = elements.accountCurrentPassword.value;
+  const newPassword = elements.accountNewPassword.value;
+  const confirmPassword = elements.accountConfirmPassword.value;
+  if (newPassword !== confirmPassword) {
+    setAccountMessage(t("account.passwordMismatch"), true);
+    elements.accountConfirmPassword.focus();
+    return;
+  }
+
+  elements.accountPasswordSave.disabled = true;
+  try {
+    setAccountMessage(t("account.changingPassword"));
+    await api("/api/auth/password", { method: "POST", body: { currentPassword, newPassword } });
+    elements.accountPasswordForm.reset();
+    setAccountMessage(t("account.passwordChanged"));
+    setStatus(t("account.passwordChanged"));
+  } catch (error) {
+    setAccountMessage(error.message, true);
+  } finally {
+    elements.accountPasswordSave.disabled = false;
+  }
+});
+
 elements.authSwitchLink.addEventListener("click", (event) => {
   event.preventDefault();
   setAuthMode(state.authMode === "register" ? "login" : "register");
@@ -3678,6 +4002,7 @@ function refreshLocalizedUi() {
   setAuthMode(state.authMode, false);
   renderPages();
   renderSelectedPage();
+  if (state.user) updateUserIdentityUi();
 
   if (!elements.slashMenu.classList.contains("hidden") && state.activeSlashBlockId) {
     const row = elements.blockList.querySelector(`[data-block-id="${state.activeSlashBlockId}"]`);
@@ -3686,9 +4011,21 @@ function refreshLocalizedUi() {
   }
 }
 
-elements.languageSelect.addEventListener("change", () => {
-  const language = setLanguage(elements.languageSelect.value);
-  setStatus(t("status.languageChanged", { language: getLanguageLabel(language) }));
+elements.languageSelect.addEventListener("change", async () => {
+  const language = elements.languageSelect.value;
+  const previousLanguage = getLanguage();
+  try {
+    setAccountMessage(t("account.savingLanguage"));
+    const data = await api("/api/auth/profile", { method: "PATCH", body: { preferredLanguage: language } });
+    state.user = data.user;
+    setLanguage(language);
+    updateUserIdentityUi();
+    setAccountMessage(t("status.languageChanged", { language: getLanguageLabel(language) }));
+    setStatus(t("status.languageChanged", { language: getLanguageLabel(language) }));
+  } catch (error) {
+    elements.languageSelect.value = previousLanguage;
+    setAccountMessage(error.message, true);
+  }
 });
 
 window.addEventListener("brainvault:languagechange", refreshLocalizedUi);
@@ -3700,13 +4037,17 @@ elements.authForm.addEventListener("submit", async (event) => {
     username: elements.username.value.trim(),
     password: elements.password.value
   };
-  if (mode === "register" && elements.name.value.trim()) body.name = elements.name.value.trim();
+  if (mode === "register") {
+    if (elements.name.value.trim()) body.name = elements.name.value.trim();
+    body.preferredLanguage = getLanguage();
+  }
 
   try {
     setStatus(t(mode === "login" ? "status.loggingIn" : "status.registering"));
     const data = await api(`/api/auth/${mode}`, { method: "POST", body });
     setToken(data.token);
     state.user = data.user;
+    await applyUserPreferredLanguage();
     renderShell();
     await loadPages();
     setStatus(t("status.loggedInAs", { username: state.user.username }));
@@ -3723,19 +4064,7 @@ elements.addCollectionButton.addEventListener("click", async () => {
   }
 });
 
-elements.logoutButton.addEventListener("click", () => {
-  setToken(null);
-  state.user = null;
-  state.pages = [];
-  state.allPages = [];
-  state.selectedPage = null;
-  state.activeTag = "";
-  state.searchQuery = "";
-  renderShell();
-  renderPages();
-  renderSelectedPage();
-  setStatus(t("status.loggedOut"));
-});
+elements.logoutButton.addEventListener("click", logout);
 
 
 

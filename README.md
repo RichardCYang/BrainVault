@@ -17,9 +17,9 @@ Writing happens directly on the page. There is no separate preview pane: every r
 - Web bookmark blocks with compact favicon/title lists or OpenGraph gallery cards containing thumbnails, titles, descriptions, and site information
 - Search across page titles and block content
 - Current-page PDF export using the browser print engine, with preserved colors and backgrounds, wide-block scaling, and print-safe pagination
-- Browser-language detection and an in-app language switcher for English, Japanese, Korean, French, German, Spanish, and Portuguese
+- Browser-language detection plus an account-level language preference for English, Japanese, Korean, French, German, Spanish, and Portuguese
 - Tags, page nesting, archiving, and permanent deletion
-- Username-and-password authentication backed by JWT
+- Username-and-password authentication backed by JWT, with profile photos, display names, and in-app password changes
 - Authenticated attachment upload/download with configurable file-size limits and private disk storage
 - Sanitized Markdown rendering through `markdown-it` and `sanitize-html`
 - Automatic MariaDB database and schema bootstrap during server startup
@@ -187,7 +187,7 @@ The browser interface supports:
 - Spanish (`es`)
 - Portuguese (`pt`)
 
-On the first visit, BrainVault checks `navigator.languages` and selects the first supported browser language, falling back to English when no match is available. A language chosen from the sidebar selector is saved in `localStorage` under `brainvault.language` and reused on later visits.
+On the first visit, BrainVault checks `navigator.languages` and selects the first supported browser language, falling back to English when no match is available. After sign-in, open the user card at the top of the sidebar and choose **Preferences** to change the language. The selection is saved both to the account and to `localStorage` under `brainvault.language`.
 
 Translations live in `public/i18n.js`. Static HTML uses `data-i18n*` attributes, while dynamic interface messages use the `t()` helper from the same module.
 
@@ -237,6 +237,8 @@ Most API routes require a bearer token returned by the register or login endpoin
 | `POST` | `/api/auth/register` | Create an account |
 | `POST` | `/api/auth/login` | Sign in and receive a JWT |
 | `GET` | `/api/auth/me` | Read the current user |
+| `PATCH` | `/api/auth/profile` | Update display name, profile image, or preferred language |
+| `POST` | `/api/auth/password` | Change the password after verifying the current password |
 | `GET` | `/api/pages` | List pages |
 | `POST` | `/api/pages` | Create a page |
 | `GET` | `/api/pages/:pageId` | Read a page and its block tree |
@@ -299,7 +301,7 @@ BrainVault/
 
 ## Security defaults
 
-The server includes Helmet headers, a configurable CORS allowlist, request rate limiting, password hashing, JWT verification, Zod input validation, private attachment storage with authenticated downloads, upload-size limits, and sanitized HTML output. Those defaults are a starting point rather than a substitute for HTTPS, secure secret storage, database backups, and normal production monitoring.
+The server includes Helmet headers, a configurable CORS allowlist, request rate limiting, password hashing, current-password verification for password changes, JWT verification, Zod input validation, validated profile-image data, private attachment storage with authenticated downloads, upload-size limits, and sanitized HTML output. Those defaults are a starting point rather than a substitute for HTTPS, secure secret storage, database backups, and normal production monitoring.
 
 ## PDF export
 

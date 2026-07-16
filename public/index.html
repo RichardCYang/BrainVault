@@ -194,14 +194,26 @@
         </section>
 
         <section id="workspace-panel" class="workspace-panel hidden" aria-label="Workspace navigation" data-i18n-aria-label="workspace.aria">
-          <div class="user-row">
-            <span id="user-label"></span>
-          </div>
-
-          <div class="language-switcher">
-            <label for="language-select" data-i18n="language.label">Language</label>
-            <select id="language-select" aria-label="Language" data-i18n-aria-label="language.label"></select>
-          </div>
+          <button
+            id="account-settings-trigger"
+            class="user-row account-settings-trigger"
+            type="button"
+            aria-haspopup="dialog"
+            aria-controls="account-settings-dialog"
+            data-i18n-aria-label="account.open"
+          >
+            <span class="user-avatar user-avatar--sidebar" aria-hidden="true">
+              <img id="sidebar-user-avatar" class="hidden" alt="" />
+              <span id="sidebar-user-avatar-fallback">BV</span>
+            </span>
+            <span class="user-identity">
+              <strong id="user-label"></strong>
+              <small id="user-username"></small>
+            </span>
+            <svg class="account-settings-chevron" aria-hidden="true" viewBox="0 0 24 24">
+              <path d="m9 7 5 5-5 5"></path>
+            </svg>
+          </button>
 
           <form id="search-form" class="search-form" role="search">
             <label class="visually-hidden" for="search-input" data-i18n="search.label">Search pages and blocks</label>
@@ -230,13 +242,6 @@
                 <path d="M12 12.5v5M9.5 15h5"></path>
               </svg>
               <span data-i18n="workspace.addCollection">Add collection</span>
-            </button>
-            <button id="logout-button" type="button" class="sidebar-footer-button sidebar-footer-button--danger">
-              <svg aria-hidden="true" viewBox="0 0 24 24">
-                <path d="M10 5H6.5A1.5 1.5 0 0 0 5 6.5v11A1.5 1.5 0 0 0 6.5 19H10"></path>
-                <path d="M14.5 8.5 18 12l-3.5 3.5M18 12H9"></path>
-              </svg>
-              <span data-i18n="workspace.logout">Log out</span>
             </button>
           </div>
         </section>
@@ -345,6 +350,160 @@
           </section>
         </section>
       </main>
+    </div>
+
+
+    <div id="account-settings-layer" class="account-settings-layer hidden" aria-hidden="true">
+      <button
+        id="account-settings-backdrop"
+        class="account-settings-backdrop"
+        type="button"
+        aria-label="Close settings"
+        data-i18n-aria-label="account.close"
+        tabindex="-1"
+      ></button>
+      <section
+        id="account-settings-dialog"
+        class="account-settings-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="account-settings-title"
+        tabindex="-1"
+      >
+        <header class="account-settings-header">
+          <div>
+            <p class="account-settings-kicker">BrainVault</p>
+            <h2 id="account-settings-title" data-i18n="account.title">Settings</h2>
+          </div>
+          <button
+            id="account-settings-close"
+            class="account-settings-close"
+            type="button"
+            aria-label="Close settings"
+            title="Close settings"
+            data-i18n-aria-label="account.close"
+            data-i18n-title="account.close"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+          </button>
+        </header>
+
+        <div class="account-settings-body">
+          <aside class="account-settings-nav">
+            <div class="account-settings-summary">
+              <span class="user-avatar user-avatar--settings" aria-hidden="true">
+                <img id="settings-nav-avatar" class="hidden" alt="" />
+                <span id="settings-nav-avatar-fallback">BV</span>
+              </span>
+              <span>
+                <strong id="settings-nav-name"></strong>
+                <small id="settings-nav-username"></small>
+              </span>
+            </div>
+
+            <div class="account-settings-tabs" role="tablist" aria-orientation="vertical">
+              <button id="account-tab-profile" type="button" role="tab" aria-selected="true" aria-controls="account-panel-profile" data-account-panel="profile">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"></circle><path d="M5.5 20c.7-4 3-6 6.5-6s5.8 2 6.5 6"></path></svg>
+                <span data-i18n="account.profile">Profile</span>
+              </button>
+              <button id="account-tab-preferences" type="button" role="tab" aria-selected="false" aria-controls="account-panel-preferences" data-account-panel="preferences" tabindex="-1">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h7M15 18h5"></path><circle cx="15" cy="6" r="2"></circle><circle cx="9" cy="12" r="2"></circle><circle cx="13" cy="18" r="2"></circle></svg>
+                <span data-i18n="account.preferences">Preferences</span>
+              </button>
+              <button id="account-tab-security" type="button" role="tab" aria-selected="false" aria-controls="account-panel-security" data-account-panel="security" tabindex="-1">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10M12 14v2.5"></path></svg>
+                <span data-i18n="account.security">Security</span>
+              </button>
+            </div>
+
+            <button id="logout-button" type="button" class="account-settings-logout">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M10 5H6.5A1.5 1.5 0 0 0 5 6.5v11A1.5 1.5 0 0 0 6.5 19H10"></path><path d="M14.5 8.5 18 12l-3.5 3.5M18 12H9"></path></svg>
+              <span data-i18n="account.signOut">Log out</span>
+            </button>
+          </aside>
+
+          <div class="account-settings-content">
+            <div id="account-settings-message" class="account-settings-message" role="status" aria-live="polite"></div>
+
+            <section id="account-panel-profile" class="account-settings-panel" role="tabpanel" aria-labelledby="account-tab-profile" data-account-panel-content="profile">
+              <div class="account-panel-heading">
+                <h3 data-i18n="account.profileTitle">Profile</h3>
+                <p data-i18n="account.profileDescription">Update the name and photo shown in your workspace.</p>
+              </div>
+
+              <div class="account-avatar-editor">
+                <span class="user-avatar user-avatar--editor" aria-hidden="true">
+                  <img id="account-avatar-preview" class="hidden" alt="" />
+                  <span id="account-avatar-fallback">BV</span>
+                </span>
+                <div class="account-avatar-copy">
+                  <strong data-i18n="account.avatar">Profile photo</strong>
+                  <p data-i18n="account.avatarDescription">Use a PNG, JPG, or WebP image. It will be cropped to a square.</p>
+                  <div class="account-avatar-actions">
+                    <label for="account-avatar-input" class="account-upload-button" data-i18n="account.uploadAvatar">Upload photo</label>
+                    <input id="account-avatar-input" class="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" />
+                    <button id="account-avatar-remove" class="secondary" type="button" data-i18n="account.removeAvatar">Remove</button>
+                  </div>
+                </div>
+              </div>
+
+              <form id="account-profile-form" class="account-settings-form">
+                <div class="form-field">
+                  <label for="account-display-name" data-i18n="account.displayName">Display name</label>
+                  <input id="account-display-name" type="text" maxlength="80" autocomplete="name" data-i18n-placeholder="account.displayNamePlaceholder" placeholder="Your name" />
+                </div>
+                <div class="form-field">
+                  <label for="account-login-id" data-i18n="account.loginId">Login ID</label>
+                  <input id="account-login-id" type="text" readonly aria-describedby="account-login-id-hint" />
+                  <p id="account-login-id-hint" class="field-help" data-i18n="account.loginIdHint">Your login ID cannot be changed.</p>
+                </div>
+                <div class="account-form-actions">
+                  <button id="account-profile-save" type="submit" data-i18n="account.saveProfile">Save profile</button>
+                </div>
+              </form>
+            </section>
+
+            <section id="account-panel-preferences" class="account-settings-panel hidden" role="tabpanel" aria-labelledby="account-tab-preferences" data-account-panel-content="preferences">
+              <div class="account-panel-heading">
+                <h3 data-i18n="account.preferencesTitle">Preferences</h3>
+                <p data-i18n="account.preferencesDescription">Choose how BrainVault appears and behaves for your account.</p>
+              </div>
+              <div class="account-preference-card">
+                <div>
+                  <label for="language-select" data-i18n="account.languageTitle">Language</label>
+                  <p data-i18n="account.languageDescription">Use this language whenever you sign in.</p>
+                </div>
+                <select id="language-select" aria-label="Language" data-i18n-aria-label="language.label"></select>
+              </div>
+            </section>
+
+            <section id="account-panel-security" class="account-settings-panel hidden" role="tabpanel" aria-labelledby="account-tab-security" data-account-panel-content="security">
+              <div class="account-panel-heading">
+                <h3 data-i18n="account.securityTitle">Password</h3>
+                <p data-i18n="account.securityDescription">Confirm your current password before choosing a new one.</p>
+              </div>
+              <form id="account-password-form" class="account-settings-form">
+                <div class="form-field">
+                  <label for="account-current-password" data-i18n="account.currentPassword">Current password</label>
+                  <input id="account-current-password" type="password" autocomplete="current-password" maxlength="128" required />
+                </div>
+                <div class="form-field">
+                  <label for="account-new-password" data-i18n="account.newPassword">New password</label>
+                  <input id="account-new-password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required aria-describedby="account-password-hint" />
+                </div>
+                <div class="form-field">
+                  <label for="account-confirm-password" data-i18n="account.confirmPassword">Confirm new password</label>
+                  <input id="account-confirm-password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required />
+                  <p id="account-password-hint" class="field-help" data-i18n="account.passwordHint">Use 8 to 128 characters.</p>
+                </div>
+                <div class="account-form-actions">
+                  <button id="account-password-save" type="submit" data-i18n="account.changePassword">Change password</button>
+                </div>
+              </form>
+            </section>
+          </div>
+        </div>
+      </section>
     </div>
 
     <div id="slash-menu" class="slash-menu hidden" role="menu" aria-label="Choose block type" data-i18n-aria-label="menu.slashAria"></div>

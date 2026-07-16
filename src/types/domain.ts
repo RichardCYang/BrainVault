@@ -2,6 +2,8 @@ export type UserRow = {
   id: string;
   username: string;
   name: string | null;
+  avatar_data: string | null;
+  preferred_language: string | null;
   password_hash: string;
   created_at: string;
   updated_at: string;

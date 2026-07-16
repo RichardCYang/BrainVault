@@ -54,10 +54,11 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(response.text).not.toContain('data-auth-mode="register" class="secondary"');
     expect(response.text).not.toContain("회원가입 옵션");
     expect(response.text).toContain("/app.js");
+    expect(response.text).toContain('id="account-settings-dialog"');
     expect(response.text).toContain('id="language-select"');
-    expect(response.text).toContain('data-i18n="language.label"');
-    expect(response.text.indexOf('id="language-select"')).toBeGreaterThan(response.text.indexOf('id="workspace-panel"'));
-    expect(response.text.indexOf('id="language-select"')).toBeLessThan(response.text.indexOf('id="search-form"'));
+    expect(response.text).toContain('data-i18n="account.languageTitle"');
+    expect(response.text.indexOf('id="language-select"')).toBeGreaterThan(response.text.indexOf('id="account-settings-layer"'));
+    expect(response.text.indexOf('id="language-select"')).toBeGreaterThan(response.text.indexOf('id="search-form"'));
   });
 
 
@@ -73,7 +74,9 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(css).toContain("--radius-lg: 10px");
     expect(css).toContain("--radius-md: 6px");
     expect(css).toContain(".auth-switch");
-    expect(css).not.toContain(".auth-mode .language-switcher");
+    expect(css).not.toContain(".language-switcher");
+    expect(css).toContain(".account-settings-layer");
+    expect(css).toContain(".account-settings-dialog");
     expect(css).toContain("color: var(--muted);");
     expect(css).toContain(".sidebar-nav");
     expect(css).toContain(".default-collection");
@@ -189,6 +192,9 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(response.text).toContain("closeBlockContextMenu");
     expect(response.text).not.toContain("state.user.email");
     expect(response.text).toContain('from "./i18n.js"');
+    expect(response.text).toContain("openAccountSettings");
+    expect(response.text).toContain('api("/api/auth/profile"');
+    expect(response.text).toContain('api("/api/auth/password"');
   });
 
   it("serves the database block editor module", async () => {

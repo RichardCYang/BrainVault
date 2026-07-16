@@ -1,10 +1,14 @@
 import type { BlockRow, PageRow, TagRow, UserRow } from "../types/domain.js";
 
-export function toPublicUser(row: Pick<UserRow, "id" | "username" | "name" | "created_at" | "updated_at">) {
+export function toPublicUser(
+  row: Pick<UserRow, "id" | "username" | "name" | "avatar_data" | "preferred_language" | "created_at" | "updated_at">
+) {
   return {
     id: row.id,
     username: row.username,
     name: row.name,
+    avatarData: row.avatar_data ?? null,
+    preferredLanguage: row.preferred_language ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
