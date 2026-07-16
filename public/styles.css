@@ -1035,10 +1035,17 @@ textarea {
   box-shadow: inset 2px 0 0 #63a1f2;
 }
 
-.document-item.active {
+.document-item-row.active {
+  border-radius: var(--radius-md);
   background: var(--active);
   color: var(--ink-strong);
-  box-shadow: inset 2px 0 0 #63a1f2;
+}
+
+.document-item-row.active .document-item,
+.document-item.active {
+  background: transparent;
+  color: var(--ink-strong);
+  box-shadow: none;
 }
 
 .collection-hint {
@@ -8087,7 +8094,19 @@ body.account-settings-open {
     color: var(--chrome-text);
   }
 
-  .app-mode .document-item.active,
+  .app-mode .document-item-row.active {
+    border-radius: 8px;
+    background: var(--chrome-accent-soft);
+    color: #075985;
+  }
+
+  .app-mode .document-item-row.active .document-item,
+  .app-mode .document-item.active {
+    background: transparent;
+    color: #075985;
+    box-shadow: none;
+  }
+
   .app-mode .custom-collection .collection-title-button.active {
     background: var(--chrome-accent-soft);
     color: #075985;

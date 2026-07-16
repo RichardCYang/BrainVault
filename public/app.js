@@ -1591,10 +1591,13 @@ function renderDocumentNode(page, groups, depth = 0) {
   row.className = "document-item-row";
 
   const children = groups.get(page.id) ?? [];
+  const isActive = state.selectedPage?.id === page.id;
+  row.classList.toggle("active", isActive);
+
   const button = document.createElement("button");
   button.type = "button";
   button.className = "document-item";
-  button.classList.toggle("active", state.selectedPage?.id === page.id);
+  button.classList.toggle("active", isActive);
   button.dataset.pageId = page.id;
 
   const caret = document.createElement("span");
