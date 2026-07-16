@@ -10,6 +10,12 @@ describe("Authentication brand icon", () => {
     expect(index).toContain('<img class="brand-mark mobile-app-brand-mark" src="/img/icon_normal.png"');
   });
 
+  it("keeps the desktop brand icon and title aligned to the left", () => {
+    const brandButtonRule = styles.match(/\.brand-home-button\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(brandButtonRule).toContain("justify-content: flex-start;");
+  });
+
   it("does not draw a square authentication-only frame behind the transparent PNG corners", () => {
     const authBrandRule = styles.match(/\/\* Keep the raster brand mark[^*]*\*\/\n\.auth-mode \.brand-mark\s*\{([^}]*)\}/)?.[1] ?? "";
 
