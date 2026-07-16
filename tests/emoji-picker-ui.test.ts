@@ -27,6 +27,9 @@ describe("page and collection emoji picker", () => {
     expect(index).toContain('id="emoji-grid"');
     expect(styles).toContain(".emoji-picker");
     expect(styles).toContain(".emoji-category-button");
+    expect(styles).toMatch(/\.emoji-picker\s*\{[^}]*border-radius:\s*var\(--radius-lg\);/s);
+    expect(styles).toMatch(/\.emoji-search-label\s*\{[^}]*border-radius:\s*var\(--radius-md\);/s);
+    expect(styles).toContain("border-radius: var(--radius-lg);");
   });
 
   it("ships a broad Unicode 17 dataset with Korean and English search metadata", () => {
