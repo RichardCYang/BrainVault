@@ -88,6 +88,24 @@ export const translationCatalogs = {
       defaultName: "Untitled collection",
       description: "Press + to instantly create a page titled ‘Untitled’."
     },
+    emoji: {
+      eyebrow: "Emoji",
+      title: "Choose an emoji",
+      close: "Close emoji picker",
+      searchLabel: "Search emojis",
+      searchPlaceholder: "Search by Korean or English name",
+      categories: "Emoji categories",
+      results: "Emoji results",
+      empty: "No matching emojis.",
+      help: "Emoji appearance depends on your operating system.",
+      reset: "Use default",
+      searchResults: "Search results",
+      resultCount: "{count} emojis",
+      changeCollection: "Change collection emoji",
+      changePage: "Change page emoji",
+      collectionSaved: "The collection emoji was updated.",
+      pageSaved: "The page emoji was updated."
+    },
     home: {
       kicker: "BrainVault workspace",
       title: "Capture your thoughts with ease.",
@@ -783,6 +801,24 @@ export const translationCatalogs = {
       createPrompt: "새 컬렉션 이름을 입력하세요",
       defaultName: "제목 없는 컬렉션",
       description: "+ 를 누르면 제목이 ‘새 문서’인 문서가 바로 만들어집니다."
+    },
+    emoji: {
+      eyebrow: "이모지",
+      title: "이모지 선택",
+      close: "이모지 선택기 닫기",
+      searchLabel: "이모지 검색",
+      searchPlaceholder: "한글 또는 영어 이름으로 검색",
+      categories: "이모지 카테고리",
+      results: "이모지 검색 결과",
+      empty: "검색 결과가 없습니다.",
+      help: "이모지 모양은 운영체제에 따라 다르게 보일 수 있습니다.",
+      reset: "기본 아이콘",
+      searchResults: "검색 결과",
+      resultCount: "이모지 {count}개",
+      changeCollection: "컬렉션 이모지 변경",
+      changePage: "페이지 이모지 변경",
+      collectionSaved: "컬렉션 이모지를 변경했습니다.",
+      pageSaved: "페이지 이모지를 변경했습니다."
     },
     home: {
       kicker: "BrainVault 워크스페이스",

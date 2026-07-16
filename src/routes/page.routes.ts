@@ -31,6 +31,7 @@ const createPageSchema = z.object({
   icon: z.string().trim().max(32).optional(),
   coverUrl: z.string().url().max(500).optional(),
   parentPageId: z.string().min(1).optional(),
+  isCollection: z.boolean().optional().default(false),
   initialMarkdown: z.string().max(20_000).optional(),
   tags: z.array(z.string().trim().min(1).max(50)).max(20).optional()
 });
@@ -177,12 +178,24 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
     const body = req.body as z.infer<typeof createPageSchema>;
     await assertOwnedParentPage(body.parentPageId, user.id);
 
+    if (body.isCollection && body.parentPageId) {
+      throw new ApiError(400, "INVALID_COLLECTION_PARENT", "A collection cannot have a parent page");
+    }
+
     const pageId = await transaction(async (client) => {
       const id = createId("pag");
       await client.execute(
-        `INSERT INTO pages (id, title, icon, cover_url, owner_id, parent_page_id)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [id, body.title, body.icon ?? null, body.coverUrl ?? null, user.id, body.parentPageId ?? null]
+        `INSERT INTO pages (id, title, icon, cover_url, is_collection, owner_id, parent_page_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          body.title,
+          body.icon ?? null,
+          body.coverUrl ?? null,
+          body.isCollection ? 1 : 0,
+          user.id,
+          body.parentPageId ?? null
+        ]
       );
 
       if (body.initialMarkdown) {

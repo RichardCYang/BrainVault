@@ -308,7 +308,18 @@
         </section>
 
         <section id="collection-view" class="collection-view hidden" aria-labelledby="collection-view-title">
-          <h2 id="collection-view-title" class="collection-view-title"></h2>
+          <div class="collection-view-heading">
+            <button
+              id="collection-icon-button"
+              type="button"
+              class="page-emoji-button collection-view-emoji-button"
+              aria-label="Change collection emoji"
+              title="Change collection emoji"
+              data-i18n-aria-label="emoji.changeCollection"
+              data-i18n-title="emoji.changeCollection"
+            >📁</button>
+            <h2 id="collection-view-title" class="collection-view-title"></h2>
+          </div>
           <div id="collection-view-list" class="collection-view-list document-tree"></div>
         </section>
 
@@ -316,7 +327,18 @@
           <div class="page-toolbar">
             <div>
               <div id="page-kicker" class="kicker"></div>
-              <input id="page-title" class="page-title-input" type="text" aria-label="Page title" data-i18n-aria-label="page.titleAria" />
+              <div class="page-title-row">
+                <button
+                  id="page-icon-button"
+                  type="button"
+                  class="page-emoji-button"
+                  aria-label="Change page emoji"
+                  title="Change page emoji"
+                  data-i18n-aria-label="emoji.changePage"
+                  data-i18n-title="emoji.changePage"
+                >📄</button>
+                <input id="page-title" class="page-title-input" type="text" aria-label="Page title" data-i18n-aria-label="page.titleAria" />
+              </div>
             </div>
             <div class="button-row">
               <button
@@ -586,6 +608,58 @@
       <button type="button" data-format="align" data-align="justify" aria-pressed="false" aria-label="Justify" title="Justify" data-i18n-aria-label="toolbar.alignJustify" data-i18n-title="toolbar.alignJustify">
         <svg class="alignment-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14M3 8h14M3 12h14M3 16h14" /></svg>
       </button>
+    </div>
+    <div id="emoji-picker-layer" class="emoji-picker-layer hidden" aria-hidden="true">
+      <section
+        id="emoji-picker"
+        class="emoji-picker"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="emoji-picker-title"
+        tabindex="-1"
+      >
+        <header class="emoji-picker-header">
+          <div>
+            <p class="emoji-picker-eyebrow" data-i18n="emoji.eyebrow">Emoji</p>
+            <h2 id="emoji-picker-title" data-i18n="emoji.title">Choose an emoji</h2>
+          </div>
+          <button
+            id="emoji-picker-close"
+            type="button"
+            class="emoji-picker-close"
+            aria-label="Close emoji picker"
+            title="Close"
+            data-i18n-aria-label="emoji.close"
+            data-i18n-title="emoji.close"
+          >×</button>
+        </header>
+
+        <label class="emoji-search-label" for="emoji-search-input">
+          <span class="visually-hidden" data-i18n="emoji.searchLabel">Search emojis</span>
+          <span aria-hidden="true">⌕</span>
+          <input
+            id="emoji-search-input"
+            type="search"
+            autocomplete="off"
+            placeholder="Search by Korean or English name"
+            data-i18n-placeholder="emoji.searchPlaceholder"
+          />
+        </label>
+
+        <nav id="emoji-category-list" class="emoji-category-list" aria-label="Emoji categories" data-i18n-aria-label="emoji.categories"></nav>
+
+        <div class="emoji-results-heading">
+          <strong id="emoji-results-title"></strong>
+          <span id="emoji-results-count"></span>
+        </div>
+        <div id="emoji-grid" class="emoji-grid" role="listbox" aria-label="Emoji results" data-i18n-aria-label="emoji.results"></div>
+        <p id="emoji-empty" class="emoji-empty hidden" data-i18n="emoji.empty">No matching emojis.</p>
+
+        <footer class="emoji-picker-footer">
+          <span id="emoji-picker-help" data-i18n="emoji.help">Emoji appearance depends on your operating system.</span>
+          <button id="emoji-reset-button" type="button" class="secondary" data-i18n="emoji.reset">Use default</button>
+        </footer>
+      </section>
     </div>
   </body>
 </html>

@@ -7,6 +7,7 @@ Writing happens directly on the page. There is no separate preview pane: every r
 ## Highlights
 
 - Page-first workspace with a compact document tree and automatic title saving
+- Unicode Emoji 17 picker for every page and collection, with Korean/English search, categories, skin-tone variants, and recent selections
 - Slash commands for headings, tasks, quotes, callouts, tables, databases, boards, code, dividers, images, and file attachments
 - Drag-and-drop block reordering with support for nested content
 - Inline formatting for bold, italic, strikethrough, code, links, and text color

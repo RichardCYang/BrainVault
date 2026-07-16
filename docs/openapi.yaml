@@ -30,6 +30,10 @@ components:
         preferredLanguage:
           type: [string, 'null']
           enum: [en, ja, ko, fr, de, es, pt, null]
+        defaultCollectionIcon:
+          type: [string, 'null']
+          maxLength: 32
+          description: Emoji used for the built-in default collection.
         createdAt:
           type: string
         updatedAt:
@@ -83,6 +87,10 @@ components:
         preferredLanguage:
           type: [string, 'null']
           enum: [en, ja, ko, fr, de, es, pt, null]
+        defaultCollectionIcon:
+          type: [string, 'null']
+          maxLength: 32
+          description: Emoji used for the built-in default collection.
     PasswordChangeInput:
       type: object
       required: [currentPassword, newPassword]
@@ -107,6 +115,10 @@ components:
           format: uri
         parentPageId:
           type: string
+        isCollection:
+          type: boolean
+          default: false
+          description: Marks a root page as a collection independently of its editable emoji.
         initialMarkdown:
           type: string
         tags:

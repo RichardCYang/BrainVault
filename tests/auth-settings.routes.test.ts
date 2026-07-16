@@ -28,6 +28,7 @@ beforeEach(async () => {
     name: "Settings User",
     avatar_data: null,
     preferred_language: null,
+    default_collection_icon: null,
     password_hash: await hashPassword("old-password-123"),
     created_at: "2026-07-16T00:00:00.000Z",
     updated_at: "2026-07-16T00:00:00.000Z"
@@ -42,12 +43,14 @@ beforeEach(async () => {
   });
 
   database.execute.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
-    if (sql.startsWith("UPDATE users SET name = ?")) {
-      user.name = params[0];
-      user.avatar_data = params[1];
-      user.preferred_language = params[2];
-    } else if (sql.startsWith("UPDATE users SET password_hash = ?")) {
+    if (sql.startsWith("UPDATE users SET password_hash = ?")) {
       user.password_hash = params[0];
+    } else if (sql.startsWith("UPDATE users SET ")) {
+      const assignments = sql.slice("UPDATE users SET ".length, sql.indexOf(" WHERE id = ?")).split(", ");
+      assignments.forEach((assignment, index) => {
+        const column = assignment.replace(" = ?", "");
+        user[column] = params[index];
+      });
     }
     return { affectedRows: 1 };
   });
@@ -68,6 +71,17 @@ describe("Account settings routes", () => {
       avatarData,
       preferredLanguage: "ko"
     });
+  });
+
+  it("persists the built-in collection emoji in the user profile", async () => {
+    const response = await request(createApp())
+      .patch("/api/auth/profile")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ defaultCollectionIcon: "🧠" })
+      .expect(200);
+
+    expect(response.body.user.defaultCollectionIcon).toBe("🧠");
+    expect(user.default_collection_icon).toBe("🧠");
   });
 
   it("rejects an invalid profile image", async () => {

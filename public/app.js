@@ -15,11 +15,20 @@ import {
   normalizeDatabaseData,
   summarizeDatabaseData
 } from "./database-block.js";
+import { emojiCategoryDefinitions, emojiRecords } from "./emoji-data.js";
 
 const tokenKey = "brainvault.token";
 const rootParentKey = "__root__";
 const defaultCollectionKey = "__default_collection__";
+const recentEmojiStorageKey = "brainvault.recentEmojis";
+const emojiBatchSize = 240;
 const mobileSidebarMedia = window.matchMedia("(max-width: 760px)");
+
+const emojiSearchIndex = emojiRecords.map((record) =>
+  `${record[0]} ${record[2]} ${record[3]} ${record[4]} ${record[5]}`.toLocaleLowerCase()
+);
+const emojiRecordByValue = new Map(emojiRecords.map((record, index) => [record[0], { record, index }]));
+const emojiCategoryById = new Map(emojiCategoryDefinitions.map((category) => [category.id, category]));
 
 const state = {
   token: localStorage.getItem(tokenKey),
@@ -41,7 +50,13 @@ const state = {
   pendingFocusBlockId: null,
   accountSettingsOpen: false,
   activeAccountPanel: "profile",
-  pendingAvatarData: null
+  pendingAvatarData: null,
+  emojiPickerTarget: null,
+  emojiPickerReturnFocus: null,
+  activeEmojiCategory: "recent",
+  emojiPickerResults: [],
+  emojiRenderedCount: 0,
+  emojiSaving: false
 };
 
 const blockTypeLabels = {
@@ -499,6 +514,7 @@ const elements = {
   searchForm: $("#search-form"),
   searchInput: $("#search-input"),
   defaultCollectionButton: $("#default-collection-button"),
+  defaultCollectionHeading: $("#default-collection-heading"),
   addDocumentButton: $("#add-document-button"),
   collectionCount: $("#collection-count"),
   pageList: $("#page-list"),
@@ -510,10 +526,12 @@ const elements = {
   homeDocumentCount: $("#home-document-count"),
   homeCollectionList: $("#home-collection-list"),
   collectionView: $("#collection-view"),
+  collectionIconButton: $("#collection-icon-button"),
   collectionViewTitle: $("#collection-view-title"),
   collectionViewList: $("#collection-view-list"),
   pageView: $("#page-view"),
   pageKicker: $("#page-kicker"),
+  pageIconButton: $("#page-icon-button"),
   pageTitle: $("#page-title"),
   pageTags: $("#page-tags"),
   exportPdfButton: $("#export-pdf-button"),
@@ -524,7 +542,17 @@ const elements = {
   slashMenu: $("#slash-menu"),
   blockContextMenu: $("#block-context-menu"),
   calloutTypeGroup: $("#callout-type-group"),
-  inlineToolbar: $("#inline-toolbar")
+  inlineToolbar: $("#inline-toolbar"),
+  emojiPickerLayer: $("#emoji-picker-layer"),
+  emojiPicker: $("#emoji-picker"),
+  emojiPickerClose: $("#emoji-picker-close"),
+  emojiSearchInput: $("#emoji-search-input"),
+  emojiCategoryList: $("#emoji-category-list"),
+  emojiResultsTitle: $("#emoji-results-title"),
+  emojiResultsCount: $("#emoji-results-count"),
+  emojiGrid: $("#emoji-grid"),
+  emojiEmpty: $("#emoji-empty"),
+  emojiResetButton: $("#emoji-reset-button")
 };
 
 const mobileSidebarFocusableSelector = [
@@ -952,6 +980,7 @@ async function applyUserPreferredLanguage() {
 
 function logout() {
   closeAccountSettings({ restoreFocus: false });
+  closeEmojiPicker({ restoreFocus: false });
   setToken(null);
   state.user = null;
   state.pages = [];
@@ -999,7 +1028,7 @@ function flattenPageTree(pages = state.allPages) {
 }
 
 function isCollectionPage(page) {
-  return page?.parentPageId == null && page.icon === "📁";
+  return page?.isCollection === true;
 }
 
 function getRootCollections(pages = state.allPages) {
@@ -1075,8 +1104,288 @@ function makeEmptyMessage(message) {
   return empty;
 }
 
+function getUserScopedStorageKey(baseKey) {
+  return `${baseKey}.${state.user?.id ?? "anonymous"}`;
+}
+
+function readJsonStorage(key, fallback) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) ?? "null");
+    return value ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJsonStorage(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Private browsing or a full storage quota should not block emoji selection.
+  }
+}
+
+function getDefaultCollectionName() {
+  return t("collection.heading").replace(/^📁\s*/, "");
+}
+
+function getDefaultCollectionEmoji() {
+  return state.user?.defaultCollectionIcon || "📁";
+}
+
+function getRecentEmojis() {
+  const values = readJsonStorage(getUserScopedStorageKey(recentEmojiStorageKey), []);
+  if (!Array.isArray(values)) return [];
+  return values.filter((emoji) => typeof emoji === "string" && emojiRecordByValue.has(emoji)).slice(0, 36);
+}
+
+function rememberRecentEmoji(emoji) {
+  const next = [emoji, ...getRecentEmojis().filter((item) => item !== emoji)].slice(0, 36);
+  writeJsonStorage(getUserScopedStorageKey(recentEmojiStorageKey), next);
+}
+
+function getEmojiCategoryLabel(category) {
+  return getLanguage() === "ko" ? category.labelKo : category.labelEn;
+}
+
+function getEmojiRecordLabel(record) {
+  return getLanguage() === "ko" ? record[2] : record[3];
+}
+
+function normalizeEmojiSearch(value) {
+  return value.trim().normalize("NFKC").toLocaleLowerCase();
+}
+
+function getEmojiResults() {
+  const query = normalizeEmojiSearch(elements.emojiSearchInput.value);
+  if (query) {
+    const terms = query.split(/\s+/).filter(Boolean);
+    return emojiSearchIndex.reduce((results, searchText, index) => {
+      if (terms.every((term) => searchText.includes(term))) results.push(index);
+      return results;
+    }, []);
+  }
+
+  if (state.activeEmojiCategory === "recent") {
+    return getRecentEmojis()
+      .map((emoji) => emojiRecordByValue.get(emoji)?.index)
+      .filter((index) => Number.isInteger(index));
+  }
+
+  const group = emojiCategoryById.get(state.activeEmojiCategory)?.group;
+  return emojiRecords.reduce((results, record, index) => {
+    if (record[1] === group) results.push(index);
+    return results;
+  }, []);
+}
+
+function renderEmojiCategories() {
+  const fragment = document.createDocumentFragment();
+  for (const category of emojiCategoryDefinitions) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "emoji-category-button";
+    button.classList.toggle("active", state.activeEmojiCategory === category.id);
+    button.dataset.emojiCategory = category.id;
+    button.textContent = category.icon;
+    const label = getEmojiCategoryLabel(category);
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.setAttribute("aria-pressed", String(state.activeEmojiCategory === category.id));
+    fragment.append(button);
+  }
+  elements.emojiCategoryList.replaceChildren(fragment);
+}
+
+function appendEmojiBatch() {
+  if (state.emojiRenderedCount >= state.emojiPickerResults.length) return;
+
+  const nextCount = Math.min(state.emojiRenderedCount + emojiBatchSize, state.emojiPickerResults.length);
+  const fragment = document.createDocumentFragment();
+  for (let position = state.emojiRenderedCount; position < nextCount; position += 1) {
+    const recordIndex = state.emojiPickerResults[position];
+    const record = emojiRecords[recordIndex];
+    if (!record) continue;
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "emoji-option";
+    button.dataset.emojiIndex = String(recordIndex);
+    button.setAttribute("role", "option");
+    button.textContent = record[0];
+    const localizedLabel = getEmojiRecordLabel(record);
+    button.setAttribute("aria-label", localizedLabel);
+    button.title = getLanguage() === "ko" && record[3] ? `${localizedLabel} · ${record[3]}` : localizedLabel;
+    fragment.append(button);
+  }
+
+  elements.emojiGrid.append(fragment);
+  state.emojiRenderedCount = nextCount;
+}
+
+function renderEmojiPickerResults() {
+  state.emojiPickerResults = getEmojiResults();
+  state.emojiRenderedCount = 0;
+  elements.emojiGrid.replaceChildren();
+
+  const query = normalizeEmojiSearch(elements.emojiSearchInput.value);
+  const category = emojiCategoryById.get(state.activeEmojiCategory);
+  elements.emojiResultsTitle.textContent = query
+    ? t("emoji.searchResults")
+    : getEmojiCategoryLabel(category ?? emojiCategoryDefinitions[1]);
+  elements.emojiResultsCount.textContent = t("emoji.resultCount", {
+    count: formatNumber(state.emojiPickerResults.length)
+  });
+  elements.emojiEmpty.classList.toggle("hidden", state.emojiPickerResults.length > 0);
+  elements.emojiGrid.classList.toggle("hidden", state.emojiPickerResults.length === 0);
+  appendEmojiBatch();
+  elements.emojiGrid.scrollTop = 0;
+}
+
+function renderEmojiPicker() {
+  renderEmojiCategories();
+  renderEmojiPickerResults();
+}
+
+function positionEmojiPicker(trigger) {
+  elements.emojiPicker.style.removeProperty("--emoji-picker-left");
+  elements.emojiPicker.style.removeProperty("--emoji-picker-top");
+  if (window.matchMedia("(max-width: 560px)").matches || !(trigger instanceof HTMLElement)) return;
+
+  const rect = trigger.getBoundingClientRect();
+  const pickerWidth = Math.min(400, window.innerWidth - 24);
+  const pickerHeight = Math.min(560, window.innerHeight - 24);
+  const halfWidth = pickerWidth / 2;
+  const halfHeight = pickerHeight / 2;
+  const centerX = Math.min(window.innerWidth - halfWidth - 12, Math.max(halfWidth + 12, rect.left + rect.width / 2));
+  const belowCenter = rect.bottom + 10 + halfHeight;
+  const aboveCenter = rect.top - 10 - halfHeight;
+  const centerY = belowCenter <= window.innerHeight - 12
+    ? belowCenter
+    : Math.max(halfHeight + 12, aboveCenter);
+
+  elements.emojiPicker.style.setProperty("--emoji-picker-left", `${centerX}px`);
+  elements.emojiPicker.style.setProperty("--emoji-picker-top", `${centerY}px`);
+}
+
+function openEmojiPicker(target, trigger) {
+  state.emojiPickerTarget = target;
+  state.emojiPickerReturnFocus = trigger instanceof HTMLElement ? trigger : null;
+  state.emojiSaving = false;
+  elements.emojiSearchInput.value = "";
+
+  const currentRecord = emojiRecordByValue.get(target.currentEmoji);
+  const matchingCategory = emojiCategoryDefinitions.find((category) => category.group === currentRecord?.record[1]);
+  state.activeEmojiCategory = getRecentEmojis().length ? "recent" : matchingCategory?.id ?? "smileys-emotion";
+
+  elements.emojiPickerLayer.classList.remove("hidden");
+  elements.emojiPickerLayer.setAttribute("aria-hidden", "false");
+  elements.emojiPicker.removeAttribute("aria-busy");
+  elements.emojiResetButton.disabled = false;
+  renderEmojiPicker();
+  positionEmojiPicker(trigger);
+  requestAnimationFrame(() => elements.emojiSearchInput.focus());
+}
+
+function closeEmojiPicker({ restoreFocus = true } = {}) {
+  if (elements.emojiPickerLayer.classList.contains("hidden")) return;
+  elements.emojiPickerLayer.classList.add("hidden");
+  elements.emojiPickerLayer.setAttribute("aria-hidden", "true");
+  const returnFocus = state.emojiPickerReturnFocus;
+  state.emojiPickerTarget = null;
+  state.emojiPickerReturnFocus = null;
+  state.emojiPickerResults = [];
+  if (restoreFocus && returnFocus instanceof HTMLElement) returnFocus.focus();
+}
+
+function openPageEmojiPicker(page, trigger) {
+  if (!page) return;
+  openEmojiPicker(
+    {
+      type: "page",
+      pageId: page.id,
+      currentEmoji: page.icon ?? (isCollectionPage(page) ? "📁" : "📄"),
+      defaultEmoji: isCollectionPage(page) ? "📁" : "📄",
+      isCollection: isCollectionPage(page)
+    },
+    trigger
+  );
+}
+
+async function saveEmojiSelection(emoji) {
+  const target = state.emojiPickerTarget;
+  if (!target || state.emojiSaving) return;
+
+  state.emojiSaving = true;
+  elements.emojiPicker.setAttribute("aria-busy", "true");
+  elements.emojiResetButton.disabled = true;
+
+  try {
+    if (target.type === "defaultCollection") {
+      const data = await api("/api/auth/profile", {
+        method: "PATCH",
+        body: { defaultCollectionIcon: emoji }
+      });
+      state.user = data.user;
+      rememberRecentEmoji(emoji);
+      closeEmojiPicker({ restoreFocus: false });
+      renderDefaultCollection();
+      renderSelectedPage();
+      elements.collectionIconButton.focus();
+      setStatus(t("emoji.collectionSaved"));
+      return;
+    }
+
+    const data = await api(`/api/pages/${target.pageId}`, {
+      method: "PATCH",
+      body: { icon: emoji }
+    });
+    if (state.selectedPage?.id === data.page.id) state.selectedPage = data.page;
+    applyPageSummaryUpdate(data.page.id, {
+      icon: data.page.icon,
+      isCollection: data.page.isCollection,
+      updatedAt: data.page.updatedAt
+    });
+    rememberRecentEmoji(emoji);
+    closeEmojiPicker({ restoreFocus: false });
+    renderSelectedPage();
+    (target.isCollection ? elements.collectionIconButton : elements.pageIconButton).focus();
+    setStatus(t(target.isCollection ? "emoji.collectionSaved" : "emoji.pageSaved"));
+  } catch (error) {
+    setStatus(error.message, true);
+  } finally {
+    state.emojiSaving = false;
+    elements.emojiPicker.removeAttribute("aria-busy");
+    elements.emojiResetButton.disabled = false;
+  }
+}
+
+function handleEmojiPickerKeydown(event) {
+  if (elements.emojiPickerLayer.classList.contains("hidden")) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeEmojiPicker();
+    return;
+  }
+
+  if (event.key !== "Tab") return;
+  const focusable = [...elements.emojiPicker.querySelectorAll('button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => !element.classList.contains("hidden"));
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 function renderDefaultCollection() {
   elements.collectionCount.textContent = String(getDefaultCollectionPages().length);
+  elements.defaultCollectionHeading.textContent = `${getDefaultCollectionEmoji()} ${getDefaultCollectionName()}`;
   elements.defaultCollectionButton.classList.toggle(
     "active",
     getActiveCollectionId() === defaultCollectionKey
@@ -1234,9 +1543,8 @@ function renderCollectionView() {
     : state.allPages.find((page) => page.id === collectionId && isCollectionPage(page));
   const pages = getCollectionPages(collectionId);
 
-  elements.collectionViewTitle.textContent = collection
-    ? `${collection.icon ?? "📁"} ${collection.title}`
-    : t("collection.heading");
+  elements.collectionIconButton.textContent = collection?.icon ?? getDefaultCollectionEmoji();
+  elements.collectionViewTitle.textContent = collection ? collection.title : getDefaultCollectionName();
   elements.collectionViewList.replaceChildren();
 
   const groups = buildPageTree(pages);
@@ -3863,7 +4171,8 @@ function renderSelectedPage() {
   }
 
   const flatBlocks = flattenBlocks(page.blocks);
-  elements.pageKicker.textContent = `${page.icon ?? "📄"} ${formatDate(page.updatedAt)}`;
+  elements.pageKicker.textContent = formatDate(page.updatedAt);
+  elements.pageIconButton.textContent = page.icon ?? "📄";
   elements.pageTitle.value = page.title;
   elements.pageTags.value = page.tags?.map((tag) => tag.name).join(", ") ?? "";
   elements.blockCount.textContent = t("counts.blocks", { count: formatNumber(flatBlocks.length) });
@@ -3943,7 +4252,8 @@ async function createCollection() {
     method: "POST",
     body: {
       title: name,
-      icon: "📁"
+      icon: "📁",
+      isCollection: true
     }
   });
 
@@ -4094,6 +4404,62 @@ mobileSidebarMedia.addEventListener("change", () => {
   closeMobileSidebar();
 });
 
+elements.pageIconButton.addEventListener("click", () => {
+  openPageEmojiPicker(state.selectedPage, elements.pageIconButton);
+});
+
+elements.collectionIconButton.addEventListener("click", () => {
+  if (state.activeCollectionId === defaultCollectionKey) {
+    openEmojiPicker(
+      {
+        type: "defaultCollection",
+        currentEmoji: getDefaultCollectionEmoji(),
+        defaultEmoji: "📁",
+        isCollection: true
+      },
+      elements.collectionIconButton
+    );
+    return;
+  }
+
+  const collection = state.allPages.find((page) => page.id === state.activeCollectionId && isCollectionPage(page));
+  openPageEmojiPicker(collection, elements.collectionIconButton);
+});
+
+elements.emojiPickerClose.addEventListener("click", () => closeEmojiPicker());
+elements.emojiPickerLayer.addEventListener("click", (event) => {
+  if (event.target === elements.emojiPickerLayer) closeEmojiPicker();
+});
+elements.emojiSearchInput.addEventListener("input", () => renderEmojiPickerResults());
+elements.emojiCategoryList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-emoji-category]");
+  if (!button) return;
+  state.activeEmojiCategory = button.dataset.emojiCategory;
+  elements.emojiSearchInput.value = "";
+  renderEmojiPicker();
+});
+elements.emojiGrid.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-emoji-index]");
+  if (!button) return;
+  const record = emojiRecords[Number(button.dataset.emojiIndex)];
+  if (record) void saveEmojiSelection(record[0]);
+});
+elements.emojiGrid.addEventListener("scroll", () => {
+  if (elements.emojiGrid.scrollTop + elements.emojiGrid.clientHeight >= elements.emojiGrid.scrollHeight - 180) {
+    appendEmojiBatch();
+  }
+});
+elements.emojiResetButton.addEventListener("click", () => {
+  const defaultEmoji = state.emojiPickerTarget?.defaultEmoji;
+  if (defaultEmoji) void saveEmojiSelection(defaultEmoji);
+});
+document.addEventListener("keydown", handleEmojiPickerKeydown);
+window.addEventListener("resize", () => {
+  if (!elements.emojiPickerLayer.classList.contains("hidden")) {
+    positionEmojiPicker(state.emojiPickerReturnFocus);
+  }
+});
+
 elements.accountSettingsTrigger.addEventListener("click", () => openAccountSettings("profile"));
 elements.accountSettingsClose.addEventListener("click", () => closeAccountSettings());
 elements.accountSettingsBackdrop.addEventListener("click", () => closeAccountSettings());
@@ -4199,6 +4565,7 @@ function refreshLocalizedUi() {
   renderPages();
   renderSelectedPage();
   if (state.user) updateUserIdentityUi();
+  if (!elements.emojiPickerLayer.classList.contains("hidden")) renderEmojiPicker();
 
   if (!elements.slashMenu.classList.contains("hidden") && state.activeSlashBlockId) {
     const row = elements.blockList.querySelector(`[data-block-id="${state.activeSlashBlockId}"]`);

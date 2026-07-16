@@ -17,7 +17,7 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
   try {
     const payload = verifyAuthToken(token);
     const user = await db.queryOne<UserRow>(
-      `SELECT id, username, name, avatar_data, preferred_language, password_hash, created_at, updated_at
+      `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon, password_hash, created_at, updated_at
        FROM users WHERE id = ?`,
       [payload.sub]
     );

@@ -43,7 +43,8 @@ const profileSchema = z
   .object({
     name: z.string().trim().max(80).nullable().optional(),
     avatarData: z.string().max(Math.ceil((maxAvatarBytes * 4) / 3) + 128).nullable().optional(),
-    preferredLanguage: preferredLanguageSchema.nullable().optional()
+    preferredLanguage: preferredLanguageSchema.nullable().optional(),
+    defaultCollectionIcon: z.string().trim().min(1).max(32).nullable().optional()
   })
   .refine((value) => Object.values(value).some((item) => item !== undefined), {
     message: "At least one profile field is required"
@@ -124,6 +125,10 @@ authRouter.patch("/profile", requireAuth, validate({ body: profileSchema }), asy
     if (body.preferredLanguage !== undefined) {
       fields.push("preferred_language = ?");
       values.push(body.preferredLanguage);
+    }
+    if (body.defaultCollectionIcon !== undefined) {
+      fields.push("default_collection_icon = ?");
+      values.push(body.defaultCollectionIcon);
     }
 
     await db.execute(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`, [...values, currentUser.id]);

@@ -7,6 +7,7 @@ declare global {
         name: string | null;
         avatarData: string | null;
         preferredLanguage: string | null;
+        defaultCollectionIcon: string | null;
         createdAt: string;
         updatedAt: string;
       };

@@ -1,7 +1,17 @@
 import type { BlockRow, PageRow, TagRow, UserRow } from "../types/domain.js";
 
 export function toPublicUser(
-  row: Pick<UserRow, "id" | "username" | "name" | "avatar_data" | "preferred_language" | "created_at" | "updated_at">
+  row: Pick<
+    UserRow,
+    | "id"
+    | "username"
+    | "name"
+    | "avatar_data"
+    | "preferred_language"
+    | "default_collection_icon"
+    | "created_at"
+    | "updated_at"
+  >
 ) {
   return {
     id: row.id,
@@ -9,6 +19,7 @@ export function toPublicUser(
     name: row.name,
     avatarData: row.avatar_data ?? null,
     preferredLanguage: row.preferred_language ?? null,
+    defaultCollectionIcon: row.default_collection_icon ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -21,6 +32,7 @@ export function toPage(row: PageRow) {
     icon: row.icon,
     coverUrl: row.cover_url,
     isArchived: Boolean(row.is_archived),
+    isCollection: Boolean(row.is_collection),
     ownerId: row.owner_id,
     parentPageId: row.parent_page_id,
     createdAt: row.created_at,

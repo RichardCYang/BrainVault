@@ -4,6 +4,7 @@ export type UserRow = {
   name: string | null;
   avatar_data: string | null;
   preferred_language: string | null;
+  default_collection_icon: string | null;
   password_hash: string;
   created_at: string;
   updated_at: string;
@@ -15,6 +16,7 @@ export type PageRow = {
   icon: string | null;
   cover_url: string | null;
   is_archived: 0 | 1;
+  is_collection: 0 | 1;
   owner_id: string;
   parent_page_id: string | null;
   created_at: string;
