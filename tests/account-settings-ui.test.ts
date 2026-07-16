@@ -38,6 +38,7 @@ describe("Account settings layer", () => {
     expect(styles).toContain(".account-settings-layer");
     expect(styles).toContain(".account-settings-dialog");
     expect(styles).toContain("body.account-settings-open");
+    expect(styles).toMatch(/\.account-settings-backdrop:hover,[\s\S]*background:\s*rgba\(29, 45, 57, 0\.36\);/);
     expect(styles).toContain("@media (max-width: 760px)");
     expect(i18n).toContain('open: "계정 설정 열기"');
     expect(i18n).toContain('passwordChanged: "비밀번호를 변경했습니다."');

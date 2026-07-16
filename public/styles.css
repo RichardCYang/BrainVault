@@ -6609,6 +6609,12 @@ body.account-settings-open {
   backdrop-filter: blur(3px);
 }
 
+.account-settings-backdrop:hover,
+.account-settings-backdrop:active,
+.account-settings-backdrop:focus-visible {
+  background: rgba(29, 45, 57, 0.36);
+}
+
 .account-settings-dialog {
   position: relative;
   display: grid;
