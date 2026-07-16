@@ -230,6 +230,12 @@ select:focus-visible {
   display: none;
 }
 
+.mobile-app-header,
+.mobile-sidebar-backdrop,
+.mobile-sidebar-close {
+  display: none;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -3506,23 +3512,150 @@ kbd {
 }
 
 @media (max-width: 760px) {
-  .shell {
-    grid-template-columns: 1fr;
+  .app-mode .shell {
+    display: block;
+    min-height: 100dvh;
   }
 
-  .sidebar {
-    position: static;
-    height: auto;
-    max-height: 48vh;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
+  .app-mode .sidebar {
+    position: fixed;
+    z-index: 110;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(86vw, 19rem);
+    height: 100dvh;
+    max-height: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-right: 1px solid rgba(64, 137, 194, 0.22);
+    border-bottom: 0;
+    padding: max(0.55rem, env(safe-area-inset-top)) 0.5rem max(0.75rem, env(safe-area-inset-bottom));
+    box-shadow: 18px 0 48px rgba(25, 68, 101, 0.2);
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition: transform 220ms ease, visibility 0s linear 220ms;
+    will-change: transform;
   }
 
-  .main {
-    min-height: auto;
-    padding-top: 2.3rem;
+  body.app-mode.mobile-sidebar-open {
+    overflow: hidden;
   }
 
+  body.app-mode.mobile-sidebar-open .sidebar {
+    transform: translateX(0);
+    visibility: visible;
+    transition-delay: 0s;
+  }
+
+  body.app-mode.mobile-sidebar-no-transition .sidebar,
+  body.app-mode.mobile-sidebar-no-transition .mobile-sidebar-backdrop {
+    transition: none;
+  }
+
+  .app-mode .main {
+    --mobile-main-gutter: clamp(1rem, 4vw, 1.5rem);
+    min-height: 100dvh;
+    padding: 0 var(--mobile-main-gutter) 3.5rem;
+  }
+
+  .mobile-app-header {
+    position: sticky;
+    z-index: 70;
+    top: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    min-height: 3.65rem;
+    margin: 0 calc(var(--mobile-main-gutter) * -1) 1.5rem;
+    padding: max(0.65rem, env(safe-area-inset-top)) var(--mobile-main-gutter) 0.65rem;
+    border-bottom: 1px solid rgba(64, 137, 194, 0.15);
+    background: rgba(251, 253, 255, 0.92);
+    backdrop-filter: blur(14px);
+  }
+
+  .mobile-sidebar-toggle,
+  .app-mode .mobile-sidebar-close {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 2.35rem;
+    height: 2.35rem;
+    padding: 0;
+    border-color: var(--line);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.86);
+    color: var(--ink);
+  }
+
+  .mobile-sidebar-toggle:hover,
+  .app-mode .mobile-sidebar-close:hover {
+    border-color: var(--line-strong);
+    background: var(--hover);
+  }
+
+  .mobile-sidebar-toggle svg,
+  .app-mode .mobile-sidebar-close svg {
+    width: 1.3rem;
+    height: 1.3rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+  }
+
+  .app-mode .mobile-sidebar-close {
+    margin-left: auto;
+  }
+
+  .mobile-app-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    min-width: 0;
+    color: var(--ink-strong);
+  }
+
+  .mobile-app-brand strong {
+    overflow: hidden;
+    font-size: 0.96rem;
+    letter-spacing: -0.02em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-app-brand-mark {
+    width: 1.8rem;
+    height: 1.8rem;
+  }
+
+  .mobile-sidebar-backdrop {
+    position: fixed;
+    z-index: 100;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: rgba(18, 38, 54, 0.38);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 180ms ease, visibility 0s linear 180ms;
+  }
+
+  .mobile-sidebar-backdrop:hover {
+    background: rgba(18, 38, 54, 0.38);
+  }
+
+  body.app-mode.mobile-sidebar-open .mobile-sidebar-backdrop {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition-delay: 0s;
+  }
 }
 
 @media (max-width: 860px) {
@@ -3556,8 +3689,8 @@ kbd {
 }
 
 @media (max-width: 640px) {
-  .main {
-    padding: 1.8rem 1rem 3.5rem;
+  .app-mode .main {
+    --mobile-main-gutter: 1rem;
   }
 
   .auth-mode .shell {
@@ -3727,6 +3860,8 @@ kbd {
 
   body.pdf-export-mode .status,
   body.pdf-export-mode .sidebar,
+  body.pdf-export-mode .mobile-app-header,
+  body.pdf-export-mode .mobile-sidebar-backdrop,
   body.pdf-export-mode #welcome-view,
   body.pdf-export-mode .page-toolbar .button-row,
   body.pdf-export-mode .slash-menu,

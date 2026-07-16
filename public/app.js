@@ -18,6 +18,7 @@ import {
 
 const tokenKey = "brainvault.token";
 const rootParentKey = "__root__";
+const mobileSidebarMedia = window.matchMedia("(max-width: 760px)");
 
 const state = {
   token: localStorage.getItem(tokenKey),
@@ -436,6 +437,11 @@ let blockOrderSaving = false;
 const $ = (selector) => document.querySelector(selector);
 
 const elements = {
+  appSidebar: $("#app-sidebar"),
+  main: $(".main"),
+  mobileSidebarToggle: $("#mobile-sidebar-toggle"),
+  mobileSidebarClose: $("#mobile-sidebar-close"),
+  mobileSidebarBackdrop: $("#mobile-sidebar-backdrop"),
   languageSelect: $("#language-select"),
   authPanel: $("#auth-panel"),
   workspacePanel: $("#workspace-panel"),
@@ -479,6 +485,98 @@ const elements = {
   calloutTypeGroup: $("#callout-type-group"),
   inlineToolbar: $("#inline-toolbar")
 };
+
+const mobileSidebarFocusableSelector = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])'
+].join(",");
+
+function isMobileSidebarLayout() {
+  return mobileSidebarMedia.matches && document.body.classList.contains("app-mode");
+}
+
+function isMobileSidebarOpen() {
+  return isMobileSidebarLayout() && document.body.classList.contains("mobile-sidebar-open");
+}
+
+function suppressMobileSidebarTransition() {
+  document.body.classList.add("mobile-sidebar-no-transition");
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => document.body.classList.remove("mobile-sidebar-no-transition"));
+  });
+}
+
+function syncMobileSidebarAccessibility() {
+  const mobileLayout = isMobileSidebarLayout();
+  if (!mobileLayout) document.body.classList.remove("mobile-sidebar-open");
+
+  const open = mobileLayout && document.body.classList.contains("mobile-sidebar-open");
+  elements.mobileSidebarToggle.setAttribute("aria-expanded", String(open));
+  elements.appSidebar.inert = mobileLayout && !open;
+  elements.main.inert = open;
+
+  if (mobileLayout) elements.appSidebar.setAttribute("aria-hidden", String(!open));
+  else elements.appSidebar.removeAttribute("aria-hidden");
+}
+
+function getMobileSidebarFocusableElements() {
+  return [...elements.appSidebar.querySelectorAll(mobileSidebarFocusableSelector)].filter((element) => {
+    return !element.hidden && element.getAttribute("aria-hidden") !== "true" && element.getClientRects().length > 0;
+  });
+}
+
+function openMobileSidebar() {
+  if (!isMobileSidebarLayout()) return;
+  document.body.classList.add("mobile-sidebar-open");
+  syncMobileSidebarAccessibility();
+  window.requestAnimationFrame(() => elements.mobileSidebarClose.focus());
+}
+
+function closeMobileSidebar({ restoreFocus = false } = {}) {
+  const wasOpen = document.body.classList.contains("mobile-sidebar-open");
+  document.body.classList.remove("mobile-sidebar-open");
+  syncMobileSidebarAccessibility();
+  if (restoreFocus && wasOpen && isMobileSidebarLayout()) elements.mobileSidebarToggle.focus();
+}
+
+function toggleMobileSidebar() {
+  if (isMobileSidebarOpen()) closeMobileSidebar({ restoreFocus: true });
+  else openMobileSidebar();
+}
+
+function handleMobileSidebarKeydown(event) {
+  if (!isMobileSidebarOpen()) return;
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeMobileSidebar({ restoreFocus: true });
+    return;
+  }
+
+  if (event.key !== "Tab") return;
+  const focusableElements = getMobileSidebarFocusableElements();
+  if (!focusableElements.length) {
+    event.preventDefault();
+    elements.appSidebar.focus();
+    return;
+  }
+
+  const first = focusableElements[0];
+  const last = focusableElements.at(-1);
+  const activeElement = document.activeElement;
+  if (event.shiftKey && (activeElement === first || !elements.appSidebar.contains(activeElement))) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
 
 function setAuthMode(mode, updateHash = true) {
   state.authMode = mode === "register" ? "register" : "login";
@@ -612,11 +710,14 @@ async function downloadAttachment(block) {
 
 function renderShell() {
   const authenticated = Boolean(state.token && state.user);
+  const enteringMobileApp = authenticated && mobileSidebarMedia.matches && !document.body.classList.contains("app-mode");
+  if (enteringMobileApp) suppressMobileSidebarTransition();
   document.body.classList.toggle("auth-mode", !authenticated);
   document.body.classList.toggle("app-mode", authenticated);
   elements.authPanel.classList.toggle("hidden", authenticated);
   elements.workspacePanel.classList.toggle("hidden", !authenticated);
   elements.userLabel.textContent = authenticated ? `${state.user.name ?? state.user.username}` : "";
+  syncMobileSidebarAccessibility();
 }
 
 function sortByRecent(items) {
@@ -3551,6 +3652,15 @@ async function boot() {
   }
 }
 
+elements.mobileSidebarToggle.addEventListener("click", toggleMobileSidebar);
+elements.mobileSidebarClose.addEventListener("click", () => closeMobileSidebar({ restoreFocus: true }));
+elements.mobileSidebarBackdrop.addEventListener("click", () => closeMobileSidebar({ restoreFocus: true }));
+document.addEventListener("keydown", handleMobileSidebarKeydown);
+mobileSidebarMedia.addEventListener("change", () => {
+  suppressMobileSidebarTransition();
+  closeMobileSidebar();
+});
+
 elements.authSwitchLink.addEventListener("click", (event) => {
   event.preventDefault();
   setAuthMode(state.authMode === "register" ? "login" : "register");
@@ -3639,6 +3749,7 @@ elements.homeNewPageButton.addEventListener("click", async () => {
 
 elements.searchForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  closeMobileSidebar({ restoreFocus: true });
   try {
     await loadPages(elements.searchInput.value.trim(), state.activeTag);
     setStatus(t("status.searchLoaded"));
@@ -3648,6 +3759,7 @@ elements.searchForm.addEventListener("submit", async (event) => {
 });
 
 elements.defaultCollectionButton.addEventListener("click", async () => {
+  closeMobileSidebar({ restoreFocus: true });
   try {
     elements.searchInput.value = "";
     state.selectedPage = null;
@@ -3660,6 +3772,7 @@ elements.defaultCollectionButton.addEventListener("click", async () => {
 });
 
 elements.addDocumentButton.addEventListener("click", async () => {
+  closeMobileSidebar({ restoreFocus: true });
   try {
     await createUntitledPage();
   } catch (error) {
@@ -3671,6 +3784,7 @@ elements.addDocumentButton.addEventListener("click", async () => {
 elements.pageList.addEventListener("click", async (event) => {
   const item = event.target.closest(".document-item");
   if (!item) return;
+  closeMobileSidebar({ restoreFocus: true });
   try {
     await openPage(item.dataset.pageId);
   } catch (error) {
