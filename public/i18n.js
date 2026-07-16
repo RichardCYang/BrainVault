@@ -140,8 +140,8 @@ export const translationCatalogs = {
       steps: "3 steps",
       guide1Title: "1. Create a new page",
       guide1Description: "Start instantly with the + in the sidebar or the button above.",
-      guide2Title: "2. Organize the title and tags",
-      guide2Description: "Make each page's context easy to understand at a glance.",
+      guide2Title: "2. Organize the page title",
+      guide2Description: "Give each page a clear title so it is easy to recognize at a glance.",
       guide3Title: "3. Choose a block with /",
       guide3Description: "Quickly add text, headings, tasks, tables, and code blocks."
     },
@@ -157,8 +157,6 @@ export const translationCatalogs = {
       exportPdfTitle: "Export the current page as a PDF",
       save: "Save",
       archive: "Archive",
-      tags: "Tags",
-      tagsPlaceholder: "Separate tags with commas",
       content: "Page content",
       editorHelp: "Press <kbd>Enter</kbd> for a new block · <kbd>Shift</kbd> + <kbd>Enter</kbd> for a line break · <kbd>Backspace</kbd> on an empty block to delete it",
       editorAria: "Unified block document editor"
@@ -579,8 +577,8 @@ export const translationCatalogs = {
       steps: "3ステップ",
       guide1Title: "1. 新しいページを作成",
       guide1Description: "サイドバーの + または上のボタンからすぐ始められます。",
-      guide2Title: "2. タイトルとタグを整理",
-      guide2Description: "ページの内容がひと目で分かるように整理しましょう。",
+      guide2Title: "2. ページタイトルを整理",
+      guide2Description: "各ページがひと目で分かるよう、分かりやすいタイトルを付けましょう。",
       guide3Title: "3. / でブロックを選択",
       guide3Description: "テキスト、見出し、タスク、表、コードブロックをすばやく追加できます。"
     },
@@ -596,8 +594,6 @@ export const translationCatalogs = {
       exportPdfTitle: "現在のページをPDFとして書き出す",
       save: "保存",
       archive: "アーカイブ",
-      tags: "タグ",
-      tagsPlaceholder: "タグをカンマで区切って入力",
       content: "ページ内容",
       editorHelp: "<kbd>Enter</kbd>で新しいブロック · <kbd>Shift</kbd> + <kbd>Enter</kbd>で改行 · 空のブロックで<kbd>Backspace</kbd>を押すと削除",
       editorAria: "統合ブロックドキュメントエディター"
@@ -912,8 +908,8 @@ export const translationCatalogs = {
       steps: "3단계",
       guide1Title: "1. 새 페이지 만들기",
       guide1Description: "사이드바의 + 또는 상단 버튼으로 바로 시작하세요.",
-      guide2Title: "2. 제목과 태그 정리",
-      guide2Description: "페이지의 맥락을 한눈에 알아볼 수 있게 정리하세요.",
+      guide2Title: "2. 페이지 제목 정리",
+      guide2Description: "한눈에 알아볼 수 있도록 페이지 제목을 명확하게 정리하세요.",
       guide3Title: "3. / 로 블록 선택",
       guide3Description: "텍스트, 제목, 할 일, 표, 코드 블록을 빠르게 추가하세요."
     },
@@ -929,8 +925,6 @@ export const translationCatalogs = {
       exportPdfTitle: "현재 페이지를 PDF로 내보내기",
       save: "저장",
       archive: "보관하기",
-      tags: "태그",
-      tagsPlaceholder: "태그를 쉼표로 구분해 입력",
       content: "페이지 콘텐츠",
       editorHelp: "<kbd>Enter</kbd>로 새 블록 · <kbd>Shift</kbd> + <kbd>Enter</kbd>로 줄바꿈 · 빈 블록에서 <kbd>Backspace</kbd>로 삭제",
       editorAria: "통합 블록 문서 에디터"
@@ -1334,8 +1328,8 @@ export const translationCatalogs = {
       steps: "3 étapes",
       guide1Title: "1. Créer une page",
       guide1Description: "Commencez immédiatement avec le + de la barre latérale ou le bouton ci-dessus.",
-      guide2Title: "2. Organiser le titre et les tags",
-      guide2Description: "Rendez le contexte de chaque page clair au premier coup d’œil.",
+      guide2Title: "2. Organiser le titre de la page",
+      guide2Description: "Donnez à chaque page un titre clair pour la reconnaître d’un coup d’œil.",
       guide3Title: "3. Choisir un bloc avec /",
       guide3Description: "Ajoutez rapidement du texte, des titres, des tâches, des tableaux et du code."
     },
@@ -1351,8 +1345,6 @@ export const translationCatalogs = {
       exportPdfTitle: "Exporter la page actuelle au format PDF",
       save: "Enregistrer",
       archive: "Archiver",
-      tags: "Tags",
-      tagsPlaceholder: "Séparez les tags par des virgules",
       content: "Contenu de la page",
       editorHelp: "<kbd>Entrée</kbd> pour un nouveau bloc · <kbd>Maj</kbd> + <kbd>Entrée</kbd> pour un saut de ligne · <kbd>Retour arrière</kbd> sur un bloc vide pour le supprimer",
       editorAria: "Éditeur de document à blocs unifié"
@@ -1634,8 +1626,8 @@ export const translationCatalogs = {
       steps: "3 Schritte",
       guide1Title: "1. Neue Seite erstellen",
       guide1Description: "Starte sofort über das + in der Seitenleiste oder die Schaltfläche oben.",
-      guide2Title: "2. Titel und Tags ordnen",
-      guide2Description: "Mach den Kontext jeder Seite auf einen Blick verständlich.",
+      guide2Title: "2. Seitentitel ordnen",
+      guide2Description: "Gib jeder Seite einen klaren Titel, damit sie auf einen Blick erkennbar ist.",
       guide3Title: "3. Block mit / auswählen",
       guide3Description: "Füge schnell Text, Überschriften, Aufgaben, Tabellen und Codeblöcke hinzu."
     },
@@ -1651,8 +1643,6 @@ export const translationCatalogs = {
       exportPdfTitle: "Aktuelle Seite als PDF exportieren",
       save: "Speichern",
       archive: "Archivieren",
-      tags: "Tags",
-      tagsPlaceholder: "Tags durch Kommas trennen",
       content: "Seiteninhalt",
       editorHelp: "<kbd>Eingabe</kbd> für einen neuen Block · <kbd>Umschalt</kbd> + <kbd>Eingabe</kbd> für einen Zeilenumbruch · <kbd>Rücktaste</kbd> in einem leeren Block zum Löschen",
       editorAria: "Einheitlicher Block-Dokumenteditor"
@@ -1934,8 +1924,8 @@ export const translationCatalogs = {
       steps: "3 pasos",
       guide1Title: "1. Crear una página",
       guide1Description: "Empieza al instante con el + de la barra lateral o el botón superior.",
-      guide2Title: "2. Organizar el título y las etiquetas",
-      guide2Description: "Haz que el contexto de cada página se entienda de un vistazo.",
+      guide2Title: "2. Organizar el título de la página",
+      guide2Description: "Pon un título claro a cada página para reconocerla de un vistazo.",
       guide3Title: "3. Elegir un bloque con /",
       guide3Description: "Añade rápidamente texto, títulos, tareas, tablas y bloques de código."
     },
@@ -1951,8 +1941,6 @@ export const translationCatalogs = {
       exportPdfTitle: "Exportar la página actual como PDF",
       save: "Guardar",
       archive: "Archivar",
-      tags: "Etiquetas",
-      tagsPlaceholder: "Separa las etiquetas con comas",
       content: "Contenido de la página",
       editorHelp: "<kbd>Intro</kbd> para un bloque nuevo · <kbd>Mayús</kbd> + <kbd>Intro</kbd> para un salto de línea · <kbd>Retroceso</kbd> en un bloque vacío para eliminarlo",
       editorAria: "Editor unificado de documentos por bloques"
@@ -2234,8 +2222,8 @@ export const translationCatalogs = {
       steps: "3 etapas",
       guide1Title: "1. Criar uma página",
       guide1Description: "Comece na hora com o + da barra lateral ou o botão acima.",
-      guide2Title: "2. Organizar o título e as tags",
-      guide2Description: "Deixe o contexto de cada página claro de relance.",
+      guide2Title: "2. Organizar o título da página",
+      guide2Description: "Dê a cada página um título claro para reconhecê-la rapidamente.",
       guide3Title: "3. Escolher um bloco com /",
       guide3Description: "Adicione rapidamente texto, títulos, tarefas, tabelas e blocos de código."
     },
@@ -2251,8 +2239,6 @@ export const translationCatalogs = {
       exportPdfTitle: "Exportar a página atual como PDF",
       save: "Salvar",
       archive: "Arquivar",
-      tags: "Tags",
-      tagsPlaceholder: "Separe as tags com vírgulas",
       content: "Conteúdo da página",
       editorHelp: "<kbd>Enter</kbd> para um novo bloco · <kbd>Shift</kbd> + <kbd>Enter</kbd> para quebrar a linha · <kbd>Backspace</kbd> em um bloco vazio para excluí-lo",
       editorAria: "Editor unificado de documentos em blocos"

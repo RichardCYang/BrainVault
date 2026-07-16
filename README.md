@@ -19,7 +19,7 @@ Writing happens directly on the page. There is no separate preview pane: every r
 - Search across page titles and block content
 - Current-page PDF export using the browser print engine, with preserved colors and backgrounds, wide-block scaling, and print-safe pagination
 - Browser-language detection plus an account-level language preference for English, Japanese, Korean, French, German, Spanish, and Portuguese
-- Tags, page nesting, archiving, and permanent deletion from page and collection three-dot menus
+- Page nesting, archiving, and permanent deletion from page and collection three-dot menus
 - Username-and-password authentication backed by JWT, with profile photos, display names, and in-app password changes
 - Authenticated attachment upload/download with configurable file-size limits and private disk storage
 - Sanitized Markdown rendering through `markdown-it` and `sanitize-html`

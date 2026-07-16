@@ -545,7 +545,6 @@ const elements = {
   pageKicker: $("#page-kicker"),
   pageIconButton: $("#page-icon-button"),
   pageTitle: $("#page-title"),
-  pageTags: $("#page-tags"),
   exportPdfButton: $("#export-pdf-button"),
   savePageButton: $("#save-page-button"),
   archivePageButton: $("#archive-page-button"),
@@ -715,13 +714,6 @@ function setToken(token) {
   state.token = token;
   if (token) localStorage.setItem(tokenKey, token);
   else localStorage.removeItem(tokenKey);
-}
-
-function tagsFromInput(value) {
-  return value
-    .split(",")
-    .map((tag) => tag.trim().toLowerCase())
-    .filter(Boolean);
 }
 
 function formatDate(value) {
@@ -4583,7 +4575,6 @@ function renderSelectedPage() {
   elements.pageKicker.textContent = formatDate(page.updatedAt);
   elements.pageIconButton.textContent = page.icon ?? "📄";
   elements.pageTitle.value = page.title;
-  elements.pageTags.value = page.tags?.map((tag) => tag.name).join(", ") ?? "";
   elements.blockCount.textContent = t("counts.blocks", { count: formatNumber(flatBlocks.length) });
 
   elements.blockList.replaceChildren();
@@ -5186,8 +5177,7 @@ elements.savePageButton.addEventListener("click", async () => {
   pageTitleSaveTimer = null;
   try {
     const body = {
-      title: normalizePageTitle(elements.pageTitle.value),
-      tags: tagsFromInput(elements.pageTags.value)
+      title: normalizePageTitle(elements.pageTitle.value)
     };
     const data = await api(`/api/pages/${state.selectedPage.id}`, { method: "PATCH", body });
     state.selectedPage = data.page;

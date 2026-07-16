@@ -1555,46 +1555,6 @@ button.page-view-path-segment:focus-visible {
   font-size: 0.76rem;
 }
 
-.tags-label {
-  display: grid;
-  grid-template-columns: 7.5rem minmax(0, 1fr);
-  align-items: center;
-  gap: 0.75rem;
-  min-height: 2.65rem;
-  margin: 0 0 1.6rem;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 0.82rem;
-  font-weight: 500;
-}
-
-.property-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  color: var(--muted);
-}
-
-.property-label > span {
-  color: #63a1f2;
-  font-weight: 650;
-}
-
-.tags-label input {
-  min-height: 2.55rem;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0.45rem 0;
-  color: var(--ink);
-  box-shadow: none;
-}
-
-.tags-label input:focus {
-  box-shadow: none;
-}
-
 .document-editor {
   margin-top: 0;
 }
@@ -4093,10 +4053,6 @@ kbd {
 
   .page-title-input {
     font-size: clamp(1.85rem, 7.4vw, 2.2rem);
-  }
-
-  .tags-label {
-    grid-template-columns: 5rem minmax(0, 1fr);
   }
 
   .home-guide-row {

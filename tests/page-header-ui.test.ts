@@ -55,4 +55,15 @@ describe("Page view header and actions menu", () => {
     expect(i18n).toContain('moreActionsGeneric: "페이지 더보기"');
     expect(i18n).toContain('actionsAriaGeneric: "페이지 작업"');
   });
+
+  it("removes the page-level tag input and its save wiring", () => {
+    expect(index).not.toContain('id="page-tags"');
+    expect(index).not.toContain('class="tags-label"');
+    expect(client).not.toContain('pageTags: $("#page-tags")');
+    expect(client).not.toContain("elements.pageTags");
+    expect(client).not.toContain("function tagsFromInput");
+    expect(client).toMatch(/const body = \{\s*title: normalizePageTitle\(elements\.pageTitle\.value\)\s*\};/);
+    expect(styles).not.toContain(".tags-label");
+    expect(i18n).not.toContain('guide2Title: "2. 제목과 태그 정리"');
+  });
 });
