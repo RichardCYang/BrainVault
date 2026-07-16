@@ -9,6 +9,7 @@
   },
   "scripts": {
     "env:init": "tsx scripts/env-init.ts",
+    "db:configure": "node scripts/db-configure.mjs",
     "db:init": "tsx scripts/db-init.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",

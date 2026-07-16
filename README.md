@@ -50,17 +50,19 @@ Docker is not required. MariaDB may run locally or on a remote host, as long as 
 
 ## Getting started
 
-Install the dependencies and create a local environment file:
+Configure the database credentials interactively, then install the dependencies:
 
 ```bash
+npm run db:configure
 npm install
-npm run env:init
 ```
 
-Open `.env` and confirm the database connection:
+The command uses only Node.js built-ins, so it can run before `npm install`. It asks for the database username and password, hides the password in an interactive terminal, and updates `DATABASE_URL` in `.env`. It preserves the current protocol, host, port, and database name. When `.env` does not exist, it creates one from `.env.example` before applying the credentials.
 
-```env
-DATABASE_URL="mariadb://brainvault:brainvault_password@127.0.0.1:3306/brainvault"
+You can still create an unchanged local environment file from the example with:
+
+```bash
+npm run env:init
 ```
 
 Start the development server:
@@ -196,6 +198,7 @@ Translations live in `public/i18n.js`. Static HTML uses `data-i18n*` attributes,
 | Command | Purpose |
 | --- | --- |
 | `npm run env:init` | Create `.env` from `.env.example` when needed |
+| `npm run db:configure` | Prompt for DB credentials and update or create `.env` |
 | `npm run db:init` | Prepare the database and verify connectivity |
 | `npm run db:migrate` | Reconcile the schema and apply migrations |
 | `npm run db:seed` | Add the demo account and starter content |
