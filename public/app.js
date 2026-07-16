@@ -21,6 +21,8 @@ const tokenKey = "brainvault.token";
 const rootParentKey = "__root__";
 const defaultCollectionKey = "__default_collection__";
 const recentEmojiStorageKey = "brainvault.recentEmojis";
+const emojiSkinToneStorageKey = "brainvault.emojiSkinTone";
+const emojiSkinToneModifiers = Object.freeze(["🏻", "🏼", "🏽", "🏾", "🏿"]);
 const emojiBatchSize = 240;
 const mobileSidebarMedia = window.matchMedia("(max-width: 760px)");
 
@@ -58,6 +60,7 @@ const state = {
   activeEmojiCategory: "recent",
   emojiPickerResults: [],
   emojiRenderedCount: 0,
+  emojiSkinTone: "",
   emojiSaving: false
 };
 
@@ -551,7 +554,12 @@ const elements = {
   emojiPicker: $("#emoji-picker"),
   emojiPickerClose: $("#emoji-picker-close"),
   emojiSearchInput: $("#emoji-search-input"),
+  emojiRandomButton: $("#emoji-random-button"),
+  emojiSkinToneButton: $("#emoji-skin-tone-button"),
+  emojiSkinToneMenu: $("#emoji-skin-tone-menu"),
   emojiCategoryList: $("#emoji-category-list"),
+  emojiRecentSection: $("#emoji-recent-section"),
+  emojiRecentGrid: $("#emoji-recent-grid"),
   emojiResultsTitle: $("#emoji-results-title"),
   emojiResultsCount: $("#emoji-results-count"),
   emojiGrid: $("#emoji-grid"),
@@ -1160,27 +1168,46 @@ function normalizeEmojiSearch(value) {
   return value.trim().normalize("NFKC").toLocaleLowerCase();
 }
 
+function getStoredEmojiSkinTone() {
+  const value = readJsonStorage(getUserScopedStorageKey(emojiSkinToneStorageKey), "");
+  return emojiSkinToneModifiers.includes(value) ? value : "";
+}
+
+function recordMatchesEmojiSkinTone(record) {
+  const recordTone = emojiSkinToneModifiers.find((modifier) => record[0].includes(modifier));
+  return !state.emojiSkinTone || !recordTone || recordTone === state.emojiSkinTone;
+}
+
+function filterEmojiResultsForSkinTone(indices) {
+  return indices.filter((index) => {
+    const record = emojiRecords[index];
+    return record && recordMatchesEmojiSkinTone(record);
+  });
+}
+
 function getEmojiResults() {
   const query = normalizeEmojiSearch(elements.emojiSearchInput.value);
+  let results;
+
   if (query) {
     const terms = query.split(/\s+/).filter(Boolean);
-    return emojiSearchIndex.reduce((results, searchText, index) => {
-      if (terms.every((term) => searchText.includes(term))) results.push(index);
-      return results;
+    results = emojiSearchIndex.reduce((matches, searchText, index) => {
+      if (terms.every((term) => searchText.includes(term))) matches.push(index);
+      return matches;
+    }, []);
+  } else if (state.activeEmojiCategory === "recent") {
+    results = getRecentEmojis()
+      .map((emoji) => emojiRecordByValue.get(emoji)?.index)
+      .filter((index) => Number.isInteger(index));
+  } else {
+    const group = emojiCategoryById.get(state.activeEmojiCategory)?.group;
+    results = emojiRecords.reduce((matches, record, index) => {
+      if (record[1] === group) matches.push(index);
+      return matches;
     }, []);
   }
 
-  if (state.activeEmojiCategory === "recent") {
-    return getRecentEmojis()
-      .map((emoji) => emojiRecordByValue.get(emoji)?.index)
-      .filter((index) => Number.isInteger(index));
-  }
-
-  const group = emojiCategoryById.get(state.activeEmojiCategory)?.group;
-  return emojiRecords.reduce((results, record, index) => {
-    if (record[1] === group) results.push(index);
-    return results;
-  }, []);
+  return filterEmojiResultsForSkinTone(results);
 }
 
 function renderEmojiCategories() {
@@ -1201,30 +1228,63 @@ function renderEmojiCategories() {
   elements.emojiCategoryList.replaceChildren(fragment);
 }
 
+function createEmojiOption(recordIndex) {
+  const record = emojiRecords[recordIndex];
+  if (!record) return null;
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "emoji-option";
+  button.dataset.emojiIndex = String(recordIndex);
+  button.setAttribute("role", "option");
+  button.textContent = record[0];
+  const localizedLabel = getEmojiRecordLabel(record);
+  button.setAttribute("aria-label", localizedLabel);
+  button.title = getLanguage() === "ko" && record[3] ? `${localizedLabel} · ${record[3]}` : localizedLabel;
+  return button;
+}
+
 function appendEmojiBatch() {
   if (state.emojiRenderedCount >= state.emojiPickerResults.length) return;
 
   const nextCount = Math.min(state.emojiRenderedCount + emojiBatchSize, state.emojiPickerResults.length);
   const fragment = document.createDocumentFragment();
   for (let position = state.emojiRenderedCount; position < nextCount; position += 1) {
-    const recordIndex = state.emojiPickerResults[position];
-    const record = emojiRecords[recordIndex];
-    if (!record) continue;
-
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "emoji-option";
-    button.dataset.emojiIndex = String(recordIndex);
-    button.setAttribute("role", "option");
-    button.textContent = record[0];
-    const localizedLabel = getEmojiRecordLabel(record);
-    button.setAttribute("aria-label", localizedLabel);
-    button.title = getLanguage() === "ko" && record[3] ? `${localizedLabel} · ${record[3]}` : localizedLabel;
-    fragment.append(button);
+    const button = createEmojiOption(state.emojiPickerResults[position]);
+    if (button) fragment.append(button);
   }
 
   elements.emojiGrid.append(fragment);
   state.emojiRenderedCount = nextCount;
+}
+
+function renderEmojiSkinToneControl() {
+  elements.emojiSkinToneButton.textContent = `👋${state.emojiSkinTone}`;
+  elements.emojiSkinToneMenu.querySelectorAll("[data-emoji-skin-tone]").forEach((button) => {
+    button.setAttribute("aria-checked", String(button.dataset.emojiSkinTone === state.emojiSkinTone));
+  });
+}
+
+function hideEmojiSkinToneMenu() {
+  elements.emojiSkinToneMenu.classList.add("hidden");
+  elements.emojiSkinToneButton.setAttribute("aria-expanded", "false");
+}
+
+function renderRecentEmojiSection() {
+  const query = normalizeEmojiSearch(elements.emojiSearchInput.value);
+  const shouldShow = !query && state.activeEmojiCategory !== "recent";
+  const indices = shouldShow
+    ? filterEmojiResultsForSkinTone(
+        getRecentEmojis()
+          .map((emoji) => emojiRecordByValue.get(emoji)?.index)
+          .filter((index) => Number.isInteger(index))
+      ).slice(0, 16)
+    : [];
+
+  elements.emojiRecentGrid.replaceChildren(
+    ...indices.map((index) => createEmojiOption(index)).filter(Boolean)
+  );
+  elements.emojiRecentSection.classList.toggle("hidden", indices.length === 0);
 }
 
 function renderEmojiPickerResults() {
@@ -1242,11 +1302,14 @@ function renderEmojiPickerResults() {
   });
   elements.emojiEmpty.classList.toggle("hidden", state.emojiPickerResults.length > 0);
   elements.emojiGrid.classList.toggle("hidden", state.emojiPickerResults.length === 0);
+  elements.emojiRandomButton.disabled = state.emojiPickerResults.length === 0 || state.emojiSaving;
+  renderRecentEmojiSection();
   appendEmojiBatch();
   elements.emojiGrid.scrollTop = 0;
 }
 
 function renderEmojiPicker() {
+  renderEmojiSkinToneControl();
   renderEmojiCategories();
   renderEmojiPickerResults();
 }
@@ -1257,7 +1320,7 @@ function positionEmojiPicker(trigger) {
   if (window.matchMedia("(max-width: 560px)").matches || !(trigger instanceof HTMLElement)) return;
 
   const rect = trigger.getBoundingClientRect();
-  const pickerWidth = Math.min(400, window.innerWidth - 24);
+  const pickerWidth = Math.min(432, window.innerWidth - 24);
   const pickerHeight = Math.min(560, window.innerHeight - 24);
   const halfWidth = pickerWidth / 2;
   const halfHeight = pickerHeight / 2;
@@ -1276,11 +1339,11 @@ function openEmojiPicker(target, trigger) {
   state.emojiPickerTarget = target;
   state.emojiPickerReturnFocus = trigger instanceof HTMLElement ? trigger : null;
   state.emojiSaving = false;
+  state.emojiSkinTone = getStoredEmojiSkinTone();
   elements.emojiSearchInput.value = "";
+  hideEmojiSkinToneMenu();
 
-  const currentRecord = emojiRecordByValue.get(target.currentEmoji);
-  const matchingCategory = emojiCategoryDefinitions.find((category) => category.group === currentRecord?.record[1]);
-  state.activeEmojiCategory = getRecentEmojis().length ? "recent" : matchingCategory?.id ?? "smileys-emotion";
+  state.activeEmojiCategory = "smileys-emotion";
 
   elements.emojiPickerLayer.classList.remove("hidden");
   elements.emojiPickerLayer.setAttribute("aria-hidden", "false");
@@ -1299,6 +1362,7 @@ function closeEmojiPicker({ restoreFocus = true } = {}) {
   state.emojiPickerTarget = null;
   state.emojiPickerReturnFocus = null;
   state.emojiPickerResults = [];
+  hideEmojiSkinToneMenu();
   if (restoreFocus && returnFocus instanceof HTMLElement) returnFocus.focus();
 }
 
@@ -1323,6 +1387,7 @@ async function saveEmojiSelection(emoji) {
   state.emojiSaving = true;
   elements.emojiPicker.setAttribute("aria-busy", "true");
   elements.emojiResetButton.disabled = true;
+  elements.emojiRandomButton.disabled = true;
 
   try {
     if (target.type === "defaultCollection") {
@@ -1331,7 +1396,7 @@ async function saveEmojiSelection(emoji) {
         body: { defaultCollectionIcon: emoji }
       });
       state.user = data.user;
-      rememberRecentEmoji(emoji);
+      if (typeof emoji === "string") rememberRecentEmoji(emoji);
       closeEmojiPicker({ restoreFocus: false });
       renderDefaultCollection();
       renderSelectedPage();
@@ -1350,7 +1415,7 @@ async function saveEmojiSelection(emoji) {
       isCollection: data.page.isCollection,
       updatedAt: data.page.updatedAt
     });
-    rememberRecentEmoji(emoji);
+    if (typeof emoji === "string") rememberRecentEmoji(emoji);
     closeEmojiPicker({ restoreFocus: false });
     renderSelectedPage();
     (target.isCollection ? elements.collectionIconButton : elements.pageIconButton).focus();
@@ -1361,6 +1426,7 @@ async function saveEmojiSelection(emoji) {
     state.emojiSaving = false;
     elements.emojiPicker.removeAttribute("aria-busy");
     elements.emojiResetButton.disabled = false;
+    elements.emojiRandomButton.disabled = state.emojiPickerResults.length === 0;
   }
 }
 
@@ -1368,13 +1434,18 @@ function handleEmojiPickerKeydown(event) {
   if (elements.emojiPickerLayer.classList.contains("hidden")) return;
   if (event.key === "Escape") {
     event.preventDefault();
-    closeEmojiPicker();
+    if (!elements.emojiSkinToneMenu.classList.contains("hidden")) {
+      hideEmojiSkinToneMenu();
+      elements.emojiSkinToneButton.focus();
+    } else {
+      closeEmojiPicker();
+    }
     return;
   }
 
   if (event.key !== "Tab") return;
   const focusable = [...elements.emojiPicker.querySelectorAll('button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])')]
-    .filter((element) => !element.classList.contains("hidden"));
+    .filter((element) => !element.closest(".hidden"));
   if (!focusable.length) return;
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
@@ -4600,11 +4671,43 @@ elements.collectionIconButton.addEventListener("click", () => {
   openPageEmojiPicker(collection, elements.collectionIconButton);
 });
 
+function handleEmojiOptionClick(event) {
+  const button = event.target.closest("[data-emoji-index]");
+  if (!button) return;
+  const record = emojiRecords[Number(button.dataset.emojiIndex)];
+  if (record) void saveEmojiSelection(record[0]);
+}
+
 elements.emojiPickerClose.addEventListener("click", () => closeEmojiPicker());
 elements.emojiPickerLayer.addEventListener("click", (event) => {
   if (event.target === elements.emojiPickerLayer) closeEmojiPicker();
 });
+elements.emojiPicker.addEventListener("click", (event) => {
+  if (!event.target.closest(".emoji-skin-tone-control")) hideEmojiSkinToneMenu();
+});
 elements.emojiSearchInput.addEventListener("input", () => renderEmojiPickerResults());
+elements.emojiRandomButton.addEventListener("click", () => {
+  if (!state.emojiPickerResults.length || state.emojiSaving) return;
+  const randomIndex = state.emojiPickerResults[Math.floor(Math.random() * state.emojiPickerResults.length)];
+  const record = emojiRecords[randomIndex];
+  if (record) void saveEmojiSelection(record[0]);
+});
+elements.emojiSkinToneButton.addEventListener("click", () => {
+  const willOpen = elements.emojiSkinToneMenu.classList.contains("hidden");
+  elements.emojiSkinToneMenu.classList.toggle("hidden", !willOpen);
+  elements.emojiSkinToneButton.setAttribute("aria-expanded", String(willOpen));
+});
+elements.emojiSkinToneMenu.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-emoji-skin-tone]");
+  if (!button) return;
+  state.emojiSkinTone = emojiSkinToneModifiers.includes(button.dataset.emojiSkinTone)
+    ? button.dataset.emojiSkinTone
+    : "";
+  writeJsonStorage(getUserScopedStorageKey(emojiSkinToneStorageKey), state.emojiSkinTone);
+  hideEmojiSkinToneMenu();
+  renderEmojiPicker();
+  elements.emojiSkinToneButton.focus();
+});
 elements.emojiCategoryList.addEventListener("click", (event) => {
   const button = event.target.closest("[data-emoji-category]");
   if (!button) return;
@@ -4612,20 +4715,15 @@ elements.emojiCategoryList.addEventListener("click", (event) => {
   elements.emojiSearchInput.value = "";
   renderEmojiPicker();
 });
-elements.emojiGrid.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-emoji-index]");
-  if (!button) return;
-  const record = emojiRecords[Number(button.dataset.emojiIndex)];
-  if (record) void saveEmojiSelection(record[0]);
-});
+elements.emojiGrid.addEventListener("click", handleEmojiOptionClick);
+elements.emojiRecentGrid.addEventListener("click", handleEmojiOptionClick);
 elements.emojiGrid.addEventListener("scroll", () => {
   if (elements.emojiGrid.scrollTop + elements.emojiGrid.clientHeight >= elements.emojiGrid.scrollHeight - 180) {
     appendEmojiBatch();
   }
 });
 elements.emojiResetButton.addEventListener("click", () => {
-  const defaultEmoji = state.emojiPickerTarget?.defaultEmoji;
-  if (defaultEmoji) void saveEmojiSelection(defaultEmoji);
+  if (!state.emojiSaving) void saveEmojiSelection(null);
 });
 document.addEventListener("keydown", handleEmojiPickerKeydown);
 window.addEventListener("resize", () => {

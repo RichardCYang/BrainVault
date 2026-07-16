@@ -632,47 +632,127 @@
         aria-labelledby="emoji-picker-title"
         tabindex="-1"
       >
+        <h2 id="emoji-picker-title" class="visually-hidden" data-i18n="emoji.title">Choose an emoji</h2>
         <header class="emoji-picker-header">
-          <div>
-            <p class="emoji-picker-eyebrow" data-i18n="emoji.eyebrow">Emoji</p>
-            <h2 id="emoji-picker-title" data-i18n="emoji.title">Choose an emoji</h2>
+          <div class="emoji-picker-tabs" role="tablist" aria-label="Icon type" data-i18n-aria-label="emoji.tabs">
+            <button
+              id="emoji-tab-emojis"
+              type="button"
+              class="emoji-picker-tab active"
+              role="tab"
+              aria-selected="true"
+              data-i18n="emoji.tabEmojis"
+            >Emojis</button>
+            <button
+              id="emoji-tab-icons"
+              type="button"
+              class="emoji-picker-tab"
+              role="tab"
+              aria-selected="false"
+              aria-disabled="true"
+              disabled
+              title="Coming soon"
+              data-i18n="emoji.tabIcons"
+              data-i18n-title="emoji.comingSoon"
+            >Icons</button>
+            <button
+              id="emoji-tab-custom"
+              type="button"
+              class="emoji-picker-tab"
+              role="tab"
+              aria-selected="false"
+              aria-disabled="true"
+              disabled
+              title="Coming soon"
+              data-i18n="emoji.tabCustom"
+              data-i18n-title="emoji.comingSoon"
+            >Custom</button>
           </div>
-          <button
-            id="emoji-picker-close"
-            type="button"
-            class="emoji-picker-close"
-            aria-label="Close emoji picker"
-            title="Close"
-            data-i18n-aria-label="emoji.close"
-            data-i18n-title="emoji.close"
-          >×</button>
+          <div class="emoji-picker-header-actions">
+            <button id="emoji-reset-button" type="button" class="emoji-picker-remove" data-i18n="emoji.reset">Remove</button>
+            <button
+              id="emoji-picker-close"
+              type="button"
+              class="emoji-picker-close"
+              aria-label="Close emoji picker"
+              title="Close"
+              data-i18n-aria-label="emoji.close"
+              data-i18n-title="emoji.close"
+            >×</button>
+          </div>
         </header>
 
-        <label class="emoji-search-label" for="emoji-search-input">
-          <span class="visually-hidden" data-i18n="emoji.searchLabel">Search emojis</span>
-          <span aria-hidden="true">⌕</span>
-          <input
-            id="emoji-search-input"
-            type="search"
-            autocomplete="off"
-            placeholder="Search by Korean or English name"
-            data-i18n-placeholder="emoji.searchPlaceholder"
-          />
-        </label>
+        <div class="emoji-picker-toolbar">
+          <label class="emoji-search-label" for="emoji-search-input">
+            <span class="visually-hidden" data-i18n="emoji.searchLabel">Search emojis</span>
+            <svg class="emoji-search-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="6.5"></circle>
+              <path d="m16 16 4 4"></path>
+            </svg>
+            <input
+              id="emoji-search-input"
+              type="search"
+              autocomplete="off"
+              placeholder="Search by Korean or English name"
+              data-i18n-placeholder="emoji.searchPlaceholder"
+            />
+          </label>
+
+          <button
+            id="emoji-random-button"
+            type="button"
+            class="emoji-tool-button"
+            aria-label="Choose a random emoji"
+            title="Choose a random emoji"
+            data-i18n-aria-label="emoji.random"
+            data-i18n-title="emoji.random"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M16 3h5v5"></path>
+              <path d="m21 3-6.5 6.5a3.5 3.5 0 0 1-5 0L3 3"></path>
+              <path d="M16 21h5v-5"></path>
+              <path d="m21 21-6.5-6.5a3.5 3.5 0 0 0-5 0L3 21"></path>
+            </svg>
+          </button>
+
+          <div class="emoji-skin-tone-control">
+            <button
+              id="emoji-skin-tone-button"
+              type="button"
+              class="emoji-tool-button emoji-skin-tone-button"
+              aria-label="Choose a skin tone"
+              title="Choose a skin tone"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              data-i18n-aria-label="emoji.skinTone"
+              data-i18n-title="emoji.skinTone"
+            >👋</button>
+            <div id="emoji-skin-tone-menu" class="emoji-skin-tone-menu hidden" role="menu" aria-label="Skin tone" data-i18n-aria-label="emoji.skinTone">
+              <button type="button" role="menuitemradio" data-emoji-skin-tone="" aria-checked="true" aria-label="All skin tones" title="All skin tones" data-i18n-aria-label="emoji.skinToneDefault" data-i18n-title="emoji.skinToneDefault">👋</button>
+              <button type="button" role="menuitemradio" data-emoji-skin-tone="🏻" aria-checked="false" aria-label="Light skin tone" title="Light skin tone" data-i18n-aria-label="emoji.skinToneLight" data-i18n-title="emoji.skinToneLight">👋🏻</button>
+              <button type="button" role="menuitemradio" data-emoji-skin-tone="🏼" aria-checked="false" aria-label="Medium-light skin tone" title="Medium-light skin tone" data-i18n-aria-label="emoji.skinToneMediumLight" data-i18n-title="emoji.skinToneMediumLight">👋🏼</button>
+              <button type="button" role="menuitemradio" data-emoji-skin-tone="🏽" aria-checked="false" aria-label="Medium skin tone" title="Medium skin tone" data-i18n-aria-label="emoji.skinToneMedium" data-i18n-title="emoji.skinToneMedium">👋🏽</button>
+              <button type="button" role="menuitemradio" data-emoji-skin-tone="🏾" aria-checked="false" aria-label="Medium-dark skin tone" title="Medium-dark skin tone" data-i18n-aria-label="emoji.skinToneMediumDark" data-i18n-title="emoji.skinToneMediumDark">👋🏾</button>
+              <button type="button" role="menuitemradio" data-emoji-skin-tone="🏿" aria-checked="false" aria-label="Dark skin tone" title="Dark skin tone" data-i18n-aria-label="emoji.skinToneDark" data-i18n-title="emoji.skinToneDark">👋🏿</button>
+            </div>
+          </div>
+        </div>
 
         <nav id="emoji-category-list" class="emoji-category-list" aria-label="Emoji categories" data-i18n-aria-label="emoji.categories"></nav>
 
-        <div class="emoji-results-heading">
+        <section id="emoji-recent-section" class="emoji-recent-section hidden" aria-labelledby="emoji-recent-title">
+          <div class="emoji-section-heading">
+            <strong id="emoji-recent-title" data-i18n="emoji.recent">Recent</strong>
+          </div>
+          <div id="emoji-recent-grid" class="emoji-recent-grid" role="listbox" aria-label="Recent emojis" data-i18n-aria-label="emoji.recentResults"></div>
+        </section>
+
+        <div class="emoji-results-heading emoji-section-heading">
           <strong id="emoji-results-title"></strong>
           <span id="emoji-results-count"></span>
         </div>
         <div id="emoji-grid" class="emoji-grid" role="listbox" aria-label="Emoji results" data-i18n-aria-label="emoji.results"></div>
         <p id="emoji-empty" class="emoji-empty hidden" data-i18n="emoji.empty">No matching emojis.</p>
-
-        <footer class="emoji-picker-footer">
-          <span id="emoji-picker-help" data-i18n="emoji.help">Emoji appearance depends on your operating system.</span>
-          <button id="emoji-reset-button" type="button" class="secondary" data-i18n="emoji.reset">Use default</button>
-        </footer>
       </section>
     </div>
   </body>
