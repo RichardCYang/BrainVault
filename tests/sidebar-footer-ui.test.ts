@@ -35,4 +35,20 @@ describe("Sidebar bottom actions", () => {
     expect(i18n).toContain('addCollection: "컬렉션 추가"');
     expect(i18n).toContain('signOut: "로그아웃"');
   });
+
+  it("renders user collections beside the default collection instead of inside it", () => {
+    const defaultSection = index.indexOf('class="nav-section default-collection"');
+    const defaultSectionEnd = index.indexOf("</section>", defaultSection);
+    const collectionList = index.indexOf('id="collection-list"', defaultSectionEnd);
+    const navigationEnd = index.indexOf("</nav>", collectionList);
+
+    expect(collectionList).toBeGreaterThan(defaultSectionEnd);
+    expect(collectionList).toBeLessThan(navigationEnd);
+    expect(client).toContain("function isCollectionPage(page)");
+    expect(client).toContain("elements.collectionList.replaceChildren()");
+    expect(client).toContain("elements.collectionList.append(renderCollectionSection");
+    expect(client).toContain('elements.collectionList.addEventListener("click", handleSidebarPageClick)');
+    expect(styles).toContain(".collection-list");
+    expect(styles).toContain(".custom-collection .collection-title-button.active");
+  });
 });

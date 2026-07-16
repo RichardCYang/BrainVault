@@ -21,6 +21,7 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(response.text).toContain('id="default-collection-button"');
     expect(response.text).toContain('id="add-document-button"');
     expect(response.text).toContain('id="page-list" class="document-tree"');
+    expect(response.text).toContain('id="collection-list" class="collection-list"');
     expect(response.text).toContain('data-i18n="collection.heading"');
     expect(response.text).toContain("Untitled");
     expect(response.text).not.toContain('id="new-page-parent"');

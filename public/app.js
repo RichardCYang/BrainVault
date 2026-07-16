@@ -497,6 +497,7 @@ const elements = {
   addDocumentButton: $("#add-document-button"),
   collectionCount: $("#collection-count"),
   pageList: $("#page-list"),
+  collectionList: $("#collection-list"),
   status: $("#status"),
   welcomeView: $("#welcome-view"),
   homeNewPageButton: $("#home-new-page-button"),
@@ -987,6 +988,40 @@ function flattenPageTree(pages = state.allPages) {
   return flat;
 }
 
+function isCollectionPage(page) {
+  return page?.parentPageId == null && page.icon === "📁";
+}
+
+function getRootCollections(pages = state.allPages) {
+  return sortByRecent(pages.filter(isCollectionPage));
+}
+
+function getCollectionRootId(pageId, pages = state.allPages) {
+  if (!pageId) return null;
+
+  const pagesById = new Map(pages.map((page) => [page.id, page]));
+  const visited = new Set();
+  let page = pagesById.get(pageId);
+
+  while (page && !visited.has(page.id)) {
+    if (isCollectionPage(page)) return page.id;
+    visited.add(page.id);
+    page = page.parentPageId ? pagesById.get(page.parentPageId) : null;
+  }
+
+  return null;
+}
+
+function getDefaultCollectionPages(pages = state.allPages) {
+  return pages.filter((page) => !getCollectionRootId(page.id, pages));
+}
+
+function getCollectionPageCount(collectionId, pages = state.allPages) {
+  return pages.filter(
+    (page) => page.id !== collectionId && getCollectionRootId(page.id, pages) === collectionId
+  ).length;
+}
+
 function getCollections() {
   const counts = new Map();
   for (const page of state.allPages) {
@@ -1016,8 +1051,9 @@ function makeEmptyMessage(message) {
 }
 
 function renderDefaultCollection() {
-  elements.collectionCount.textContent = String(state.allPages.length);
-  elements.defaultCollectionButton.classList.add("active");
+  const selectedCollectionId = getCollectionRootId(state.selectedPage?.id);
+  elements.collectionCount.textContent = String(getDefaultCollectionPages().length);
+  elements.defaultCollectionButton.classList.toggle("active", !selectedCollectionId);
 }
 
 
@@ -1058,20 +1094,75 @@ function renderDocumentNode(page, groups, depth = 0) {
   return wrapper;
 }
 
+function renderCollectionSection(collection, pages) {
+  const section = document.createElement("section");
+  section.className = "nav-section custom-collection";
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "collection-title-button";
+  button.classList.toggle("active", getCollectionRootId(state.selectedPage?.id) === collection.id);
+  button.dataset.pageId = collection.id;
+
+  const title = document.createElement("span");
+  title.className = "collection-title-main";
+  title.textContent = `${collection.icon ?? "📁"} ${collection.title}`;
+
+  const count = document.createElement("span");
+  count.className = "count-pill";
+  count.textContent = String(getCollectionPageCount(collection.id));
+
+  button.append(title, count);
+  section.append(button);
+
+  if (pages.length) {
+    const tree = document.createElement("div");
+    tree.className = "document-tree";
+    const groups = buildPageTree(pages);
+    for (const page of groups.get(rootParentKey) ?? []) {
+      tree.append(renderDocumentNode(page, groups));
+    }
+    section.append(tree);
+  }
+
+  return section;
+}
+
 function renderDocumentTree() {
   elements.pageList.replaceChildren();
+  elements.collectionList.replaceChildren();
 
-  if (!state.pages.length) {
+  const collectionRoots = getRootCollections();
+  const collectionPages = new Map(collectionRoots.map((collection) => [collection.id, []]));
+  const matchedCollectionIds = new Set();
+  const defaultPages = [];
+
+  for (const page of state.pages) {
+    const collectionId = getCollectionRootId(page.id);
+    if (!collectionId) {
+      defaultPages.push(page);
+      continue;
+    }
+
+    matchedCollectionIds.add(collectionId);
+    if (page.id !== collectionId) collectionPages.get(collectionId)?.push(page);
+  }
+
+  const defaultGroups = buildPageTree(defaultPages);
+  const defaultRoots = defaultGroups.get(rootParentKey) ?? [];
+  if (!defaultRoots.length) {
     const message = state.searchQuery || state.activeTag
       ? t("empty.noSearchResults")
       : t("empty.noDocumentsSidebar");
     elements.pageList.append(makeEmptyMessage(message));
-    return;
+  } else {
+    for (const page of defaultRoots) elements.pageList.append(renderDocumentNode(page, defaultGroups));
   }
 
-  const groups = buildPageTree(state.pages);
-  for (const page of groups.get(rootParentKey) ?? []) {
-    elements.pageList.append(renderDocumentNode(page, groups));
+  const isFiltering = Boolean(state.searchQuery || state.activeTag);
+  for (const collection of collectionRoots) {
+    if (isFiltering && !matchedCollectionIds.has(collection.id)) continue;
+    elements.collectionList.append(renderCollectionSection(collection, collectionPages.get(collection.id) ?? []));
   }
 }
 
@@ -4110,8 +4201,8 @@ elements.addDocumentButton.addEventListener("click", async () => {
 });
 
 
-elements.pageList.addEventListener("click", async (event) => {
-  const item = event.target.closest(".document-item");
+async function handleSidebarPageClick(event) {
+  const item = event.target.closest("[data-page-id]");
   if (!item) return;
   closeMobileSidebar({ restoreFocus: true });
   try {
@@ -4119,7 +4210,10 @@ elements.pageList.addEventListener("click", async (event) => {
   } catch (error) {
     setStatus(error.message, true);
   }
-});
+}
+
+elements.pageList.addEventListener("click", handleSidebarPageClick);
+elements.collectionList.addEventListener("click", handleSidebarPageClick);
 
 elements.homeDocumentList.addEventListener("click", async (event) => {
   const item = event.target.closest(".home-document-item");

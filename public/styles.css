@@ -991,6 +991,12 @@ textarea {
   background: transparent;
 }
 
+.custom-collection .collection-title-button.active {
+  background: var(--active);
+  color: var(--ink-strong);
+  box-shadow: inset 2px 0 0 #63a1f2;
+}
+
 .document-item.active {
   background: var(--active);
   color: var(--ink-strong);
@@ -1021,6 +1027,11 @@ textarea {
   font-size: 0.7rem;
   font-weight: 600;
   text-align: center;
+}
+
+.collection-list {
+  display: grid;
+  gap: 0.75rem;
 }
 
 .document-tree,
