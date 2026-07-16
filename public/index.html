@@ -280,6 +280,39 @@
             <strong>BrainVault</strong>
           </button>
         </header>
+
+        <header
+          id="page-view-header"
+          class="page-view-header hidden"
+          aria-label="Page header"
+          data-i18n-aria-label="page.headerAria"
+        >
+          <nav
+            id="page-path"
+            class="page-view-path"
+            aria-label="Current page path"
+            data-i18n-aria-label="page.pathAria"
+          ></nav>
+          <button
+            id="page-actions-button"
+            class="page-actions-button"
+            type="button"
+            aria-label="More page actions"
+            title="More page actions"
+            data-i18n-aria-label="page.moreActionsGeneric"
+            data-i18n-title="page.moreActionsGeneric"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-controls="page-actions-menu"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <circle cx="5" cy="12" r="1.5"></circle>
+              <circle cx="12" cy="12" r="1.5"></circle>
+              <circle cx="19" cy="12" r="1.5"></circle>
+            </svg>
+          </button>
+        </header>
+
         <section id="welcome-view" class="workspace-home">
           <div class="workspace-home-header">
             <p class="kicker" data-i18n="home.kicker">BrainVault workspace</p>
@@ -341,25 +374,7 @@
               </div>
             </div>
             <div class="button-row">
-              <button
-                id="export-pdf-button"
-                type="button"
-                class="secondary export-pdf-button"
-                aria-label="Export current page as PDF"
-                title="Export current page as PDF"
-                data-i18n-aria-label="page.exportPdfTitle"
-                data-i18n-title="page.exportPdfTitle"
-              >
-                <svg aria-hidden="true" viewBox="0 0 24 24">
-                  <path d="M7 3.5h7l3 3V20.5H7z"></path>
-                  <path d="M14 3.5v3h3"></path>
-                  <path d="M9.5 12.5h5"></path>
-                  <path d="M12 10v5"></path>
-                </svg>
-                <span data-i18n="page.exportPdf">Export PDF</span>
-              </button>
               <button id="save-page-button" type="button" class="secondary" data-i18n="page.save">Save</button>
-              <button id="archive-page-button" type="button" class="danger" data-i18n="page.archive">Archive</button>
             </div>
           </div>
 
@@ -549,6 +564,39 @@
           <path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"></path>
         </svg>
         <span id="navigation-delete-label">Delete</span>
+      </button>
+    </div>
+    <div
+      id="page-actions-menu"
+      class="page-actions-menu hidden"
+      role="menu"
+      aria-label="Page actions"
+      data-i18n-aria-label="page.actionsAriaGeneric"
+    >
+      <button
+        id="export-pdf-button"
+        type="button"
+        class="page-action-menu-item"
+        role="menuitem"
+        aria-label="Export current page as PDF"
+        title="Export current page as PDF"
+        data-i18n-aria-label="page.exportPdfTitle"
+        data-i18n-title="page.exportPdfTitle"
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M7 3.5h7l3 3V20.5H7z"></path>
+          <path d="M14 3.5v3h3"></path>
+          <path d="M9.5 12.5h5"></path>
+          <path d="M12 10v5"></path>
+        </svg>
+        <span data-i18n="page.exportPdf">Export PDF</span>
+      </button>
+      <button id="archive-page-button" type="button" class="page-action-menu-item danger-menu-item" role="menuitem">
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M4.5 6.5h15v13h-15z"></path>
+          <path d="M3.5 3.5h17v3h-17zM9 11h6"></path>
+        </svg>
+        <span data-i18n="page.archive">Archive</span>
       </button>
     </div>
     <div id="block-context-menu" class="block-context-menu hidden" role="menu" aria-label="Block actions" data-i18n-aria-label="menu.blockAria">
