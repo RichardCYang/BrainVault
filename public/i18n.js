@@ -80,6 +80,15 @@ export const translationCatalogs = {
     },
     search: { label: "Search pages and blocks", placeholder: "Search pages/blocks", button: "Search" },
     navigation: { aria: "Default collection and page list" },
+    navigationMenu: {
+      aria: "Page or collection actions",
+      pageAria: "Actions for page “{title}”",
+      collectionAria: "Actions for collection “{title}”",
+      openPage: "Open actions for page “{title}”",
+      openCollection: "Open actions for collection “{title}”",
+      deletePage: "Delete page",
+      deleteCollection: "Delete collection"
+    },
     collection: {
       heading: "📁 Default collection",
       addAria: "Add a new page to the default collection",
@@ -391,7 +400,9 @@ export const translationCatalogs = {
       deleteBlock: "Delete this block?",
       deleteKanbanColumn: "Delete this group?",
       deleteKanbanColumnWithCards: "Delete this group and its {count} cards?",
-      deleteKanbanCard: "Delete this card?"
+      deleteKanbanCard: "Delete this card?",
+      deletePage: "Permanently delete “{title}” and all pages nested inside it? This cannot be undone.",
+      deleteCollection: "Permanently delete the “{title}” collection and every page inside it? This cannot be undone."
     },
     status: {
       calloutChanged: "Changed the callout type to {type}.",
@@ -403,6 +414,10 @@ export const translationCatalogs = {
       blockAppended: "Created a new block. Type '/' to choose its type.",
       emptyBlockDeleted: "Empty block deleted.",
       pageTitleSaved: "Page title saved.",
+      deletingPage: "Deleting the page...",
+      deletingCollection: "Deleting the collection...",
+      pageDeleted: "Page deleted.",
+      collectionDeleted: "Collection deleted.",
       preparingPdf: "Preparing the current page for PDF export...",
       pdfSaveInstructions: "In the print dialog, choose Save as PDF.",
       pdfDialogClosed: "The PDF export dialog was closed.",
@@ -516,6 +531,15 @@ export const translationCatalogs = {
     },
     search: { label: "ページとブロックを検索", placeholder: "ページ／ブロックを検索", button: "検索" },
     navigation: { aria: "デフォルトコレクションとページ一覧" },
+    navigationMenu: {
+      aria: "ページまたはコレクションの操作",
+      pageAria: "ページ「{title}」の操作",
+      collectionAria: "コレクション「{title}」の操作",
+      openPage: "ページ「{title}」の操作を開く",
+      openCollection: "コレクション「{title}」の操作を開く",
+      deletePage: "ページを削除",
+      deleteCollection: "コレクションを削除"
+    },
     collection: {
       heading: "📁 デフォルトコレクション",
       addAria: "デフォルトコレクションに新しいページを追加",
@@ -685,7 +709,10 @@ export const translationCatalogs = {
     counts: { documents: "{count}ページ", blocks: "{count}ブロック" },
     newDocumentTitle: "無題",
     position: { top: "上", bottom: "下" },
-    confirm: { archivePage: "このページをアーカイブしますか？一覧から非表示になります。", deleteBlock: "このブロックを削除しますか？" },
+    confirm: { archivePage: "このページをアーカイブしますか？一覧から非表示になります。", deleteBlock: "このブロックを削除しますか？",
+      deletePage: "「{title}」とその配下のすべてのページを完全に削除しますか？この操作は取り消せません。",
+      deleteCollection: "コレクション「{title}」とその中のすべてのページを完全に削除しますか？この操作は取り消せません。"
+    },
     status: {
       calloutChanged: "コールアウトタイプを「{type}」に変更しました。",
       savingBlockOrder: "ブロックの順序を保存しています...",
@@ -696,6 +723,10 @@ export const translationCatalogs = {
       blockAppended: "新しいブロックを作成しました。「/」を入力してタイプを選択してください。",
       emptyBlockDeleted: "空のブロックを削除しました。",
       pageTitleSaved: "ページタイトルを保存しました。",
+      deletingPage: "ページを削除しています...",
+      deletingCollection: "コレクションを削除しています...",
+      pageDeleted: "ページを削除しました。",
+      collectionDeleted: "コレクションを削除しました。",
       preparingPdf: "現在のページをPDF用に準備しています...",
       pdfSaveInstructions: "印刷ダイアログで「PDFとして保存」を選択してください。",
       pdfDialogClosed: "PDF書き出しダイアログを閉じました。",
@@ -794,6 +825,15 @@ export const translationCatalogs = {
     },
     search: { label: "문서와 블록 검색", placeholder: "문서/블록 검색", button: "검색" },
     navigation: { aria: "기본 컬렉션과 문서 목록" },
+    navigationMenu: {
+      aria: "페이지 또는 컬렉션 작업",
+      pageAria: "“{title}” 페이지 작업",
+      collectionAria: "“{title}” 컬렉션 작업",
+      openPage: "“{title}” 페이지 메뉴 열기",
+      openCollection: "“{title}” 컬렉션 메뉴 열기",
+      deletePage: "페이지 삭제",
+      deleteCollection: "컬렉션 삭제"
+    },
     collection: {
       heading: "📁 기본 컬렉션",
       addAria: "기본 컬렉션에 새 문서 추가",
@@ -1088,7 +1128,9 @@ export const translationCatalogs = {
       deleteBlock: "이 블록을 삭제할까요?",
       deleteKanbanColumn: "이 그룹을 삭제할까요?",
       deleteKanbanColumnWithCards: "이 그룹과 카드 {count}개를 함께 삭제할까요?",
-      deleteKanbanCard: "이 카드를 삭제할까요?"
+      deleteKanbanCard: "이 카드를 삭제할까요?",
+      deletePage: "“{title}” 페이지와 그 안의 모든 하위 페이지를 영구 삭제할까요? 이 작업은 되돌릴 수 없습니다.",
+      deleteCollection: "“{title}” 컬렉션과 그 안의 모든 페이지를 영구 삭제할까요? 이 작업은 되돌릴 수 없습니다."
     },
     status: {
       calloutChanged: "콜아웃 타입을 {type}(으)로 변경했습니다.",
@@ -1100,6 +1142,10 @@ export const translationCatalogs = {
       blockAppended: "새 블록을 만들었습니다. '/'를 입력해 타입을 선택하세요.",
       emptyBlockDeleted: "빈 블록을 삭제했습니다.",
       pageTitleSaved: "문서 제목을 저장했습니다.",
+      deletingPage: "페이지를 삭제하는 중입니다...",
+      deletingCollection: "컬렉션을 삭제하는 중입니다...",
+      pageDeleted: "페이지를 삭제했습니다.",
+      collectionDeleted: "컬렉션을 삭제했습니다.",
       preparingPdf: "현재 페이지를 PDF로 내보낼 준비를 하는 중입니다...",
       pdfSaveInstructions: "인쇄 창에서 ‘PDF로 저장’을 선택하세요.",
       pdfDialogClosed: "PDF 내보내기 창을 닫았습니다.",
@@ -1213,6 +1259,15 @@ export const translationCatalogs = {
     },
     search: { label: "Rechercher des pages et des blocs", placeholder: "Rechercher pages/blocs", button: "Rechercher" },
     navigation: { aria: "Collection par défaut et liste des pages" },
+    navigationMenu: {
+      aria: "Actions de page ou de collection",
+      pageAria: "Actions pour la page « {title} »",
+      collectionAria: "Actions pour la collection « {title} »",
+      openPage: "Ouvrir les actions de la page « {title} »",
+      openCollection: "Ouvrir les actions de la collection « {title} »",
+      deletePage: "Supprimer la page",
+      deleteCollection: "Supprimer la collection"
+    },
     collection: {
       heading: "📁 Collection par défaut",
       addAria: "Ajouter une page à la collection par défaut",
@@ -1382,7 +1437,10 @@ export const translationCatalogs = {
     counts: { documents: "{count} pages", blocks: "{count} blocs" },
     newDocumentTitle: "Sans titre",
     position: { top: "au-dessus", bottom: "en dessous" },
-    confirm: { archivePage: "Archiver cette page ? Elle sera masquée de la liste.", deleteBlock: "Supprimer ce bloc ?" },
+    confirm: { archivePage: "Archiver cette page ? Elle sera masquée de la liste.", deleteBlock: "Supprimer ce bloc ?",
+      deletePage: "Supprimer définitivement « {title} » et toutes ses pages imbriquées ? Cette action est irréversible.",
+      deleteCollection: "Supprimer définitivement la collection « {title} » et toutes ses pages ? Cette action est irréversible."
+    },
     status: {
       calloutChanged: "Type d’encadré remplacé par « {type} ».",
       savingBlockOrder: "Enregistrement de l’ordre des blocs...",
@@ -1393,6 +1451,10 @@ export const translationCatalogs = {
       blockAppended: "Nouveau bloc créé. Saisissez « / » pour choisir son type.",
       emptyBlockDeleted: "Bloc vide supprimé.",
       pageTitleSaved: "Titre de la page enregistré.",
+      deletingPage: "Suppression de la page...",
+      deletingCollection: "Suppression de la collection...",
+      pageDeleted: "Page supprimée.",
+      collectionDeleted: "Collection supprimée.",
       preparingPdf: "Préparation de la page actuelle pour l’export PDF...",
       pdfSaveInstructions: "Dans la boîte de dialogue d’impression, choisissez Enregistrer au format PDF.",
       pdfDialogClosed: "La boîte de dialogue d’export PDF a été fermée.",
@@ -1491,6 +1553,15 @@ export const translationCatalogs = {
     },
     search: { label: "Seiten und Blöcke durchsuchen", placeholder: "Seiten/Blöcke suchen", button: "Suchen" },
     navigation: { aria: "Standardsammlung und Seitenliste" },
+    navigationMenu: {
+      aria: "Seiten- oder Sammlungsaktionen",
+      pageAria: "Aktionen für die Seite „{title}“",
+      collectionAria: "Aktionen für die Sammlung „{title}“",
+      openPage: "Aktionen für die Seite „{title}“ öffnen",
+      openCollection: "Aktionen für die Sammlung „{title}“ öffnen",
+      deletePage: "Seite löschen",
+      deleteCollection: "Sammlung löschen"
+    },
     collection: {
       heading: "📁 Standardsammlung",
       addAria: "Neue Seite zur Standardsammlung hinzufügen",
@@ -1660,7 +1731,10 @@ export const translationCatalogs = {
     counts: { documents: "{count} Seiten", blocks: "{count} Blöcke" },
     newDocumentTitle: "Unbenannt",
     position: { top: "darüber", bottom: "darunter" },
-    confirm: { archivePage: "Diese Seite archivieren? Sie wird aus der Liste ausgeblendet.", deleteBlock: "Diesen Block löschen?" },
+    confirm: { archivePage: "Diese Seite archivieren? Sie wird aus der Liste ausgeblendet.", deleteBlock: "Diesen Block löschen?",
+      deletePage: "„{title}“ und alle untergeordneten Seiten endgültig löschen? Dies kann nicht rückgängig gemacht werden.",
+      deleteCollection: "Die Sammlung „{title}“ und alle enthaltenen Seiten endgültig löschen? Dies kann nicht rückgängig gemacht werden."
+    },
     status: {
       calloutChanged: "Hinweis-Typ zu „{type}“ geändert.",
       savingBlockOrder: "Blockreihenfolge wird gespeichert...",
@@ -1671,6 +1745,10 @@ export const translationCatalogs = {
       blockAppended: "Neuen Block erstellt. Gib „/“ ein, um den Typ auszuwählen.",
       emptyBlockDeleted: "Leeren Block gelöscht.",
       pageTitleSaved: "Seitentitel gespeichert.",
+      deletingPage: "Seite wird gelöscht...",
+      deletingCollection: "Sammlung wird gelöscht...",
+      pageDeleted: "Seite gelöscht.",
+      collectionDeleted: "Sammlung gelöscht.",
       preparingPdf: "Aktuelle Seite wird für den PDF-Export vorbereitet...",
       pdfSaveInstructions: "Wähle im Druckdialog Als PDF speichern.",
       pdfDialogClosed: "Der PDF-Exportdialog wurde geschlossen.",
@@ -1769,6 +1847,15 @@ export const translationCatalogs = {
     },
     search: { label: "Buscar páginas y bloques", placeholder: "Buscar páginas/bloques", button: "Buscar" },
     navigation: { aria: "Colección predeterminada y lista de páginas" },
+    navigationMenu: {
+      aria: "Acciones de página o colección",
+      pageAria: "Acciones de la página «{title}»",
+      collectionAria: "Acciones de la colección «{title}»",
+      openPage: "Abrir acciones de la página «{title}»",
+      openCollection: "Abrir acciones de la colección «{title}»",
+      deletePage: "Eliminar página",
+      deleteCollection: "Eliminar colección"
+    },
     collection: {
       heading: "📁 Colección predeterminada",
       addAria: "Añadir una página a la colección predeterminada",
@@ -1938,7 +2025,10 @@ export const translationCatalogs = {
     counts: { documents: "{count} páginas", blocks: "{count} bloques" },
     newDocumentTitle: "Sin título",
     position: { top: "arriba", bottom: "abajo" },
-    confirm: { archivePage: "¿Archivar esta página? Se ocultará de la lista.", deleteBlock: "¿Eliminar este bloque?" },
+    confirm: { archivePage: "¿Archivar esta página? Se ocultará de la lista.", deleteBlock: "¿Eliminar este bloque?",
+      deletePage: "¿Eliminar permanentemente «{title}» y todas sus páginas anidadas? Esta acción no se puede deshacer.",
+      deleteCollection: "¿Eliminar permanentemente la colección «{title}» y todas sus páginas? Esta acción no se puede deshacer."
+    },
     status: {
       calloutChanged: "El tipo de aviso se cambió a «{type}».",
       savingBlockOrder: "Guardando el orden de los bloques...",
@@ -1949,6 +2039,10 @@ export const translationCatalogs = {
       blockAppended: "Se creó un bloque nuevo. Escribe «/» para elegir su tipo.",
       emptyBlockDeleted: "Bloque vacío eliminado.",
       pageTitleSaved: "Título de la página guardado.",
+      deletingPage: "Eliminando la página...",
+      deletingCollection: "Eliminando la colección...",
+      pageDeleted: "Página eliminada.",
+      collectionDeleted: "Colección eliminada.",
       preparingPdf: "Preparando la página actual para exportarla a PDF...",
       pdfSaveInstructions: "En el cuadro de impresión, elige Guardar como PDF.",
       pdfDialogClosed: "Se cerró el cuadro de exportación a PDF.",
@@ -2047,6 +2141,15 @@ export const translationCatalogs = {
     },
     search: { label: "Pesquisar páginas e blocos", placeholder: "Pesquisar páginas/blocos", button: "Pesquisar" },
     navigation: { aria: "Coleção padrão e lista de páginas" },
+    navigationMenu: {
+      aria: "Ações da página ou coleção",
+      pageAria: "Ações da página “{title}”",
+      collectionAria: "Ações da coleção “{title}”",
+      openPage: "Abrir ações da página “{title}”",
+      openCollection: "Abrir ações da coleção “{title}”",
+      deletePage: "Excluir página",
+      deleteCollection: "Excluir coleção"
+    },
     collection: {
       heading: "📁 Coleção padrão",
       addAria: "Adicionar uma página à coleção padrão",
@@ -2216,7 +2319,10 @@ export const translationCatalogs = {
     counts: { documents: "{count} páginas", blocks: "{count} blocos" },
     newDocumentTitle: "Sem título",
     position: { top: "acima", bottom: "abaixo" },
-    confirm: { archivePage: "Arquivar esta página? Ela ficará oculta na lista.", deleteBlock: "Excluir este bloco?" },
+    confirm: { archivePage: "Arquivar esta página? Ela ficará oculta na lista.", deleteBlock: "Excluir este bloco?",
+      deletePage: "Excluir permanentemente “{title}” e todas as páginas dentro dela? Esta ação não pode ser desfeita.",
+      deleteCollection: "Excluir permanentemente a coleção “{title}” e todas as páginas nela? Esta ação não pode ser desfeita."
+    },
     status: {
       calloutChanged: "Tipo de destaque alterado para “{type}”.",
       savingBlockOrder: "Salvando a ordem dos blocos...",
@@ -2227,6 +2333,10 @@ export const translationCatalogs = {
       blockAppended: "Novo bloco criado. Digite “/” para escolher o tipo.",
       emptyBlockDeleted: "Bloco vazio excluído.",
       pageTitleSaved: "Título da página salvo.",
+      deletingPage: "Excluindo a página...",
+      deletingCollection: "Excluindo a coleção...",
+      pageDeleted: "Página excluída.",
+      collectionDeleted: "Coleção excluída.",
       preparingPdf: "Preparando a página atual para exportação em PDF...",
       pdfSaveInstructions: "Na caixa de impressão, escolha Salvar como PDF.",
       pdfDialogClosed: "A caixa de exportação em PDF foi fechada.",

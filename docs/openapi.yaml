@@ -450,6 +450,7 @@ paths:
           description: Updated page
     delete:
       summary: Archive or permanently delete a page
+      description: When permanent is true, the page and every nested descendant page are deleted together, including their blocks and attachment files. Collection pages therefore delete all pages contained in that collection.
       parameters:
         - in: path
           name: pageId
@@ -464,7 +465,7 @@ paths:
         '200':
           description: Archived page
         '204':
-          description: Permanently deleted
+          description: Page subtree permanently deleted
   /api/bookmarks/preview:
     post:
       summary: Fetch OpenGraph metadata for a bookmark URL

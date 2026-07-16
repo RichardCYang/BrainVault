@@ -47,6 +47,8 @@ const state = {
   activeInlineSelection: null,
   activeBlockMenuId: null,
   activeBlockMenuHandle: null,
+  activeNavigationMenuTarget: null,
+  activeNavigationMenuTrigger: null,
   pendingFocusBlockId: null,
   accountSettingsOpen: false,
   activeAccountPanel: "profile",
@@ -541,6 +543,8 @@ const elements = {
   blockList: $("#block-list"),
   slashMenu: $("#slash-menu"),
   blockContextMenu: $("#block-context-menu"),
+  navigationContextMenu: $("#navigation-context-menu"),
+  navigationDeleteLabel: $("#navigation-delete-label"),
   calloutTypeGroup: $("#callout-type-group"),
   inlineToolbar: $("#inline-toolbar"),
   emojiPickerLayer: $("#emoji-picker-layer"),
@@ -1392,11 +1396,31 @@ function renderDefaultCollection() {
   );
 }
 
+function makeNavigationMenuButton({ id, kind, title }) {
+  const labelKey = kind === "collection" ? "navigationMenu.openCollection" : "navigationMenu.openPage";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "navigation-more-button";
+  button.dataset.navigationMenuId = id;
+  button.dataset.navigationMenuKind = kind;
+  button.dataset.navigationMenuTitle = title;
+  button.setAttribute("aria-label", t(labelKey, { title }));
+  button.setAttribute("title", t(labelKey, { title }));
+  button.setAttribute("aria-haspopup", "menu");
+  button.setAttribute("aria-expanded", "false");
+  button.setAttribute("aria-controls", "navigation-context-menu");
+  button.textContent = "⋮";
+  return button;
+}
+
 
 function renderDocumentNode(page, groups, depth = 0) {
   const wrapper = document.createElement("div");
   wrapper.className = "document-node";
   wrapper.style.setProperty("--depth", String(depth));
+
+  const row = document.createElement("div");
+  row.className = "document-item-row";
 
   const children = groups.get(page.id) ?? [];
   const button = document.createElement("button");
@@ -1418,7 +1442,11 @@ function renderDocumentNode(page, groups, depth = 0) {
   label.textContent = page.title;
 
   button.append(caret, icon, label);
-  wrapper.append(button);
+  row.append(
+    button,
+    makeNavigationMenuButton({ id: page.id, kind: "page", title: page.title })
+  );
+  wrapper.append(row);
 
   if (children.length) {
     const group = document.createElement("div");
@@ -1433,6 +1461,9 @@ function renderDocumentNode(page, groups, depth = 0) {
 function renderCollectionSection(collection, pages) {
   const section = document.createElement("section");
   section.className = "nav-section custom-collection";
+
+  const row = document.createElement("div");
+  row.className = "collection-title-row";
 
   const button = document.createElement("button");
   button.type = "button";
@@ -1449,7 +1480,11 @@ function renderCollectionSection(collection, pages) {
   count.textContent = String(getCollectionPageCount(collection.id));
 
   button.append(title, count);
-  section.append(button);
+  row.append(
+    button,
+    makeNavigationMenuButton({ id: collection.id, kind: "collection", title: collection.title })
+  );
+  section.append(row);
 
   if (pages.length) {
     const tree = document.createElement("div");
@@ -1465,6 +1500,7 @@ function renderCollectionSection(collection, pages) {
 }
 
 function renderDocumentTree() {
+  closeNavigationContextMenu();
   elements.pageList.replaceChildren();
   elements.collectionList.replaceChildren();
 
@@ -1508,6 +1544,9 @@ function renderParentOptions() {
 
 
 function makeHomeDocumentButton(page) {
+  const row = document.createElement("div");
+  row.className = "home-document-row";
+
   const button = document.createElement("button");
   button.type = "button";
   button.className = "home-row home-document-item";
@@ -1517,7 +1556,15 @@ function makeHomeDocumentButton(page) {
   title.textContent = `${page.icon ?? "📄"} ${page.title}`;
 
   button.append(title);
-  return button;
+  row.append(
+    button,
+    makeNavigationMenuButton({
+      id: page.id,
+      kind: isCollectionPage(page) ? "collection" : "page",
+      title: page.title
+    })
+  );
+  return row;
 }
 
 function makeHomeGuideRow(titleText, metaText) {
@@ -1532,6 +1579,133 @@ function makeHomeGuideRow(titleText, metaText) {
 
   row.append(title, meta);
   return row;
+}
+
+function getPageSubtreeIds(pageId, pages = state.allPages) {
+  const ids = new Set([pageId]);
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+    for (const page of pages) {
+      if (!page.parentPageId || !ids.has(page.parentPageId) || ids.has(page.id)) continue;
+      ids.add(page.id);
+      changed = true;
+    }
+  }
+
+  return ids;
+}
+
+function getNavigationContextMenuItems() {
+  return [...elements.navigationContextMenu.querySelectorAll('[role="menuitem"]')];
+}
+
+function closeNavigationContextMenu({ restoreFocus = false } = {}) {
+  const trigger = state.activeNavigationMenuTrigger;
+  trigger?.closest(".document-item-row, .collection-title-row, .home-document-row")?.classList.remove("is-menu-open");
+  elements.navigationContextMenu.classList.add("hidden");
+  elements.navigationContextMenu.style.removeProperty("left");
+  elements.navigationContextMenu.style.removeProperty("top");
+  elements.navigationContextMenu.style.removeProperty("visibility");
+  trigger?.setAttribute("aria-expanded", "false");
+  state.activeNavigationMenuTarget = null;
+  state.activeNavigationMenuTrigger = null;
+
+  if (restoreFocus && trigger?.isConnected) trigger.focus();
+}
+
+function positionNavigationContextMenu(trigger) {
+  const triggerRect = trigger.getBoundingClientRect();
+  elements.navigationContextMenu.style.visibility = "hidden";
+  elements.navigationContextMenu.classList.remove("hidden");
+
+  const menuRect = elements.navigationContextMenu.getBoundingClientRect();
+  const viewportPadding = 10;
+  const gap = 6;
+  const maxLeft = Math.max(viewportPadding, window.innerWidth - menuRect.width - viewportPadding);
+  const left = Math.min(Math.max(triggerRect.right - menuRect.width, viewportPadding), maxLeft);
+  let top = triggerRect.bottom + gap;
+
+  if (top + menuRect.height > window.innerHeight - viewportPadding) {
+    top = triggerRect.top - menuRect.height - gap;
+  }
+
+  elements.navigationContextMenu.style.left = `${left}px`;
+  elements.navigationContextMenu.style.top = `${Math.max(viewportPadding, top)}px`;
+  elements.navigationContextMenu.style.visibility = "visible";
+}
+
+function openNavigationContextMenu(trigger, { focusFirst = false } = {}) {
+  const id = trigger?.dataset.navigationMenuId;
+  const kind = trigger?.dataset.navigationMenuKind;
+  const title = trigger?.dataset.navigationMenuTitle;
+  if (!id || !title || !["page", "collection"].includes(kind)) return;
+
+  const isSameOpenMenu =
+    state.activeNavigationMenuTarget?.id === id &&
+    !elements.navigationContextMenu.classList.contains("hidden");
+  if (isSameOpenMenu) {
+    closeNavigationContextMenu({ restoreFocus: true });
+    return;
+  }
+
+  closeSlashMenu();
+  closeInlineToolbar();
+  closeBlockContextMenu();
+  closeNavigationContextMenu();
+
+  state.activeNavigationMenuTarget = { id, kind, title };
+  state.activeNavigationMenuTrigger = trigger;
+  trigger.closest(".document-item-row, .collection-title-row, .home-document-row")?.classList.add("is-menu-open");
+  trigger.setAttribute("aria-expanded", "true");
+  elements.navigationContextMenu.setAttribute(
+    "aria-label",
+    t(kind === "collection" ? "navigationMenu.collectionAria" : "navigationMenu.pageAria", { title })
+  );
+  elements.navigationDeleteLabel.textContent = t(
+    kind === "collection" ? "navigationMenu.deleteCollection" : "navigationMenu.deletePage"
+  );
+  positionNavigationContextMenu(trigger);
+
+  if (focusFirst) getNavigationContextMenuItems()[0]?.focus();
+}
+
+async function deleteNavigationTarget() {
+  const target = state.activeNavigationMenuTarget;
+  if (!target) return;
+
+  const isCollection = target.kind === "collection";
+  const ok = window.confirm(
+    t(isCollection ? "confirm.deleteCollection" : "confirm.deletePage", { title: target.title })
+  );
+  if (!ok) return;
+
+  const subtreeIds = getPageSubtreeIds(target.id);
+  const selectedPageWasDeleted = Boolean(state.selectedPage?.id && subtreeIds.has(state.selectedPage.id));
+  const activeCollectionWasDeleted = state.activeCollectionId === target.id;
+  const fallbackCollectionId = isCollection
+    ? defaultCollectionKey
+    : getCollectionRootId(target.id) ?? defaultCollectionKey;
+
+  if (selectedPageWasDeleted) {
+    window.clearTimeout(pageTitleSaveTimer);
+    pageTitleSaveTimer = null;
+  }
+
+  closeNavigationContextMenu();
+  setStatus(t(isCollection ? "status.deletingCollection" : "status.deletingPage"));
+
+  await api(`/api/pages/${target.id}?permanent=true`, { method: "DELETE" });
+
+  if (selectedPageWasDeleted) state.selectedPage = null;
+  await loadPages(elements.searchInput.value.trim(), state.activeTag);
+
+  if (selectedPageWasDeleted || activeCollectionWasDeleted) {
+    showCollection(fallbackCollectionId);
+  }
+
+  setStatus(t(isCollection ? "status.collectionDeleted" : "status.pageDeleted"));
 }
 
 function renderCollectionView() {
@@ -5181,6 +5355,39 @@ elements.blockContextMenu.addEventListener("keydown", (event) => {
   items[nextIndex].focus();
 });
 
+elements.navigationContextMenu.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (!button || button.dataset.action !== "delete-navigation-item") return;
+
+  try {
+    await deleteNavigationTarget();
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+});
+
+elements.navigationContextMenu.addEventListener("keydown", (event) => {
+  const items = getNavigationContextMenuItems();
+  const currentIndex = items.indexOf(document.activeElement);
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeNavigationContextMenu({ restoreFocus: true });
+    return;
+  }
+
+  if (!items.length || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+
+  let nextIndex = currentIndex;
+  if (event.key === "Home") nextIndex = 0;
+  else if (event.key === "End") nextIndex = items.length - 1;
+  else if (event.key === "ArrowDown") nextIndex = (currentIndex + 1 + items.length) % items.length;
+  else nextIndex = (currentIndex - 1 + items.length) % items.length;
+
+  items[nextIndex].focus();
+});
+
 elements.slashMenu.addEventListener("mousedown", (event) => {
   event.preventDefault();
 });
@@ -5208,10 +5415,21 @@ elements.inlineToolbar.addEventListener("click", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+  const navigationMenuTrigger = event.target.closest(".navigation-more-button");
+  if (navigationMenuTrigger) {
+    event.preventDefault();
+    openNavigationContextMenu(navigationMenuTrigger, { focusFirst: event.detail === 0 });
+    return;
+  }
+
   if (!event.target.closest(".kanban-card-style-menu")) closeKanbanCardStyleMenus();
 
   if (!event.target.closest("#block-context-menu") && !event.target.closest(".block-handle")) {
     closeBlockContextMenu();
+  }
+
+  if (!event.target.closest("#navigation-context-menu")) {
+    closeNavigationContextMenu();
   }
 
   if (event.target.closest("#slash-menu") || event.target.closest("#inline-toolbar") || event.target.closest(".editor-block-row")) return;
@@ -5220,19 +5438,35 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || elements.blockContextMenu.classList.contains("hidden")) return;
-  event.preventDefault();
-  closeBlockContextMenu({ restoreFocus: true });
+  if (event.key !== "Escape") return;
+
+  if (!elements.navigationContextMenu.classList.contains("hidden")) {
+    event.preventDefault();
+    closeNavigationContextMenu({ restoreFocus: true });
+    return;
+  }
+
+  if (!elements.blockContextMenu.classList.contains("hidden")) {
+    event.preventDefault();
+    closeBlockContextMenu({ restoreFocus: true });
+  }
 });
 
 window.addEventListener("resize", () => {
   closeSlashMenu();
   closeInlineToolbar();
   closeBlockContextMenu();
+  closeNavigationContextMenu();
   closeKanbanCardStyleMenus();
 });
 
-document.addEventListener("scroll", () => closeKanbanCardStyleMenus(), { capture: true, passive: true });
-window.addEventListener("scroll", () => closeBlockContextMenu(), { passive: true });
+document.addEventListener("scroll", () => {
+  closeNavigationContextMenu();
+  closeKanbanCardStyleMenus();
+}, { capture: true, passive: true });
+window.addEventListener("scroll", () => {
+  closeBlockContextMenu();
+  closeNavigationContextMenu();
+}, { passive: true });
 
 boot();

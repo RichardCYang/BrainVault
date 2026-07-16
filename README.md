@@ -19,7 +19,7 @@ Writing happens directly on the page. There is no separate preview pane: every r
 - Search across page titles and block content
 - Current-page PDF export using the browser print engine, with preserved colors and backgrounds, wide-block scaling, and print-safe pagination
 - Browser-language detection plus an account-level language preference for English, Japanese, Korean, French, German, Spanish, and Portuguese
-- Tags, page nesting, archiving, and permanent deletion
+- Tags, page nesting, archiving, and permanent deletion from page and collection three-dot menus
 - Username-and-password authentication backed by JWT, with profile photos, display names, and in-app password changes
 - Authenticated attachment upload/download with configurable file-size limits and private disk storage
 - Sanitized Markdown rendering through `markdown-it` and `sanitize-html`
@@ -174,7 +174,7 @@ When a public site blocks automated preview requests, times out, returns a non-H
 
 Type `/file` in a block, choose **Attachment**, and select a file. If the current block contains only the slash command, it is replaced in place; otherwise the attachment is inserted directly below it. The attachment card shows the original filename, media type, size, and an authenticated download button.
 
-Uploaded bytes are stored under `ATTACHMENT_UPLOAD_DIR`, which defaults to `uploads/` at the project root. This directory is ignored by Git and is never mounted as a public static directory. Every download goes through `/api/blocks/:blockId/attachment`, re-checks the current user's ownership, and sends the file with download disposition. Deleting an attachment block, a parent block containing attachments, or a permanently deleted page also removes the associated files.
+Uploaded bytes are stored under `ATTACHMENT_UPLOAD_DIR`, which defaults to `uploads/` at the project root. This directory is ignored by Git and is never mounted as a public static directory. Every download goes through `/api/blocks/:blockId/attachment`, re-checks the current user's ownership, and sends the file with download disposition. Deleting an attachment block, a parent block containing attachments, or a permanently deleted page subtree also removes the associated files.
 
 The default maximum file size is 25 MB. Adjust `MAX_ATTACHMENT_SIZE_MB` when needed. Do not point `ATTACHMENT_UPLOAD_DIR` at `public/`, `docs/`, `.git/`, or the project root.
 

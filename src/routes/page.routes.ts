@@ -62,6 +62,30 @@ async function assertOwnedPage(pageId: string, ownerId: string, client: DbClient
   return page;
 }
 
+async function getOwnedPageSubtreeIds(pageId: string, ownerId: string, client: DbClient = db) {
+  await assertOwnedPage(pageId, ownerId, client);
+
+  const ids: string[] = [];
+  const pending = [pageId];
+  const visited = new Set<string>();
+
+  while (pending.length) {
+    const currentId = pending.pop();
+    if (!currentId || visited.has(currentId)) continue;
+
+    visited.add(currentId);
+    ids.push(currentId);
+
+    const children = await client.query<{ id: string }>(
+      "SELECT id FROM pages WHERE parent_page_id = ? AND owner_id = ?",
+      [currentId, ownerId]
+    );
+    for (const child of children) pending.push(child.id);
+  }
+
+  return ids;
+}
+
 async function assertOwnedParentPage(parentPageId: string | null | undefined, ownerId: string, client: DbClient = db) {
   if (!parentPageId) return;
   const parent = await client.queryOne("SELECT id FROM pages WHERE id = ? AND owner_id = ?", [parentPageId, ownerId]);
@@ -287,12 +311,25 @@ pageRouter.delete(
       await assertOwnedPage(pageId, user.id);
 
       if (query.permanent) {
-        const attachmentRows = await db.query<{ id: string }>(
-          "SELECT id FROM blocks WHERE page_id = ? AND type = 'ATTACHMENT'",
-          [pageId]
-        );
-        await db.execute("DELETE FROM pages WHERE id = ?", [pageId]);
-        await removeAttachmentFiles(user.id, attachmentRows.map((row) => row.id));
+        const attachmentIds: string[] = [];
+
+        await transaction(async (client) => {
+          const subtreeIds = await getOwnedPageSubtreeIds(pageId, user.id, client);
+
+          for (const subtreePageId of subtreeIds) {
+            const attachmentRows = await client.query<{ id: string }>(
+              "SELECT id FROM blocks WHERE page_id = ? AND type = 'ATTACHMENT'",
+              [subtreePageId]
+            );
+            attachmentIds.push(...attachmentRows.map((row) => row.id));
+          }
+
+          for (const subtreePageId of subtreeIds.reverse()) {
+            await client.execute("DELETE FROM pages WHERE id = ? AND owner_id = ?", [subtreePageId, user.id]);
+          }
+        });
+
+        await removeAttachmentFiles(user.id, attachmentIds);
         res.status(204).send();
         return;
       }
