@@ -18,6 +18,7 @@ import {
 
 const tokenKey = "brainvault.token";
 const rootParentKey = "__root__";
+const defaultCollectionKey = "__default_collection__";
 const mobileSidebarMedia = window.matchMedia("(max-width: 760px)");
 
 const state = {
@@ -26,6 +27,8 @@ const state = {
   pages: [],
   allPages: [],
   selectedPage: null,
+  workspaceView: "home",
+  activeCollectionId: null,
   activeTag: "",
   searchQuery: "",
   authMode: window.location.hash === "#signup" ? "register" : "login",
@@ -443,6 +446,8 @@ const elements = {
   shell: $(".shell"),
   appSidebar: $("#app-sidebar"),
   main: $(".main"),
+  homeBrandButton: $("#home-brand-button"),
+  mobileHomeBrandButton: $("#mobile-home-brand-button"),
   mobileSidebarToggle: $("#mobile-sidebar-toggle"),
   mobileSidebarClose: $("#mobile-sidebar-close"),
   mobileSidebarBackdrop: $("#mobile-sidebar-backdrop"),
@@ -504,6 +509,9 @@ const elements = {
   homeDocumentList: $("#home-document-list"),
   homeDocumentCount: $("#home-document-count"),
   homeCollectionList: $("#home-collection-list"),
+  collectionView: $("#collection-view"),
+  collectionViewTitle: $("#collection-view-title"),
+  collectionViewList: $("#collection-view-list"),
   pageView: $("#page-view"),
   pageKicker: $("#page-kicker"),
   pageTitle: $("#page-title"),
@@ -949,6 +957,8 @@ function logout() {
   state.pages = [];
   state.allPages = [];
   state.selectedPage = null;
+  state.workspaceView = "home";
+  state.activeCollectionId = null;
   state.activeTag = "";
   state.searchQuery = "";
   renderShell();
@@ -1022,6 +1032,21 @@ function getCollectionPageCount(collectionId, pages = state.allPages) {
   ).length;
 }
 
+function getCollectionPages(collectionId, pages = state.allPages) {
+  if (collectionId === defaultCollectionKey) return getDefaultCollectionPages(pages);
+  return pages.filter(
+    (page) => page.id !== collectionId && getCollectionRootId(page.id, pages) === collectionId
+  );
+}
+
+function getActiveCollectionId() {
+  if (state.workspaceView === "collection") return state.activeCollectionId;
+  if (state.workspaceView === "page" && state.selectedPage) {
+    return getCollectionRootId(state.selectedPage.id) ?? defaultCollectionKey;
+  }
+  return null;
+}
+
 function getCollections() {
   const counts = new Map();
   for (const page of state.allPages) {
@@ -1051,9 +1076,11 @@ function makeEmptyMessage(message) {
 }
 
 function renderDefaultCollection() {
-  const selectedCollectionId = getCollectionRootId(state.selectedPage?.id);
   elements.collectionCount.textContent = String(getDefaultCollectionPages().length);
-  elements.defaultCollectionButton.classList.toggle("active", !selectedCollectionId);
+  elements.defaultCollectionButton.classList.toggle(
+    "active",
+    getActiveCollectionId() === defaultCollectionKey
+  );
 }
 
 
@@ -1101,8 +1128,8 @@ function renderCollectionSection(collection, pages) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "collection-title-button";
-  button.classList.toggle("active", getCollectionRootId(state.selectedPage?.id) === collection.id);
-  button.dataset.pageId = collection.id;
+  button.classList.toggle("active", getActiveCollectionId() === collection.id);
+  button.dataset.collectionId = collection.id;
 
   const title = document.createElement("span");
   title.className = "collection-title-main";
@@ -1198,6 +1225,32 @@ function makeHomeGuideRow(titleText, metaText) {
   return row;
 }
 
+function renderCollectionView() {
+  if (state.workspaceView !== "collection") return;
+
+  const collectionId = state.activeCollectionId;
+  const collection = collectionId === defaultCollectionKey
+    ? null
+    : state.allPages.find((page) => page.id === collectionId && isCollectionPage(page));
+  const pages = getCollectionPages(collectionId);
+
+  elements.collectionViewTitle.textContent = collection
+    ? `${collection.icon ?? "📁"} ${collection.title}`
+    : t("collection.heading");
+  elements.collectionViewList.replaceChildren();
+
+  const groups = buildPageTree(pages);
+  const roots = groups.get(rootParentKey) ?? [];
+  if (!roots.length) {
+    elements.collectionViewList.append(makeEmptyMessage(t("empty.noDocumentsSidebar")));
+    return;
+  }
+
+  for (const page of roots) {
+    elements.collectionViewList.append(renderDocumentNode(page, groups));
+  }
+}
+
 function renderHome() {
   elements.homeDocumentCount.textContent = t("counts.documents", { count: formatNumber(state.allPages.length) });
   elements.homeDocumentList.replaceChildren();
@@ -1223,6 +1276,7 @@ function renderPages() {
   renderDefaultCollection();
   renderDocumentTree();
   renderHome();
+  renderCollectionView();
 }
 
 function flattenBlocks(blocks) {
@@ -3791,11 +3845,22 @@ async function exportCurrentPageToPdf() {
 function renderSelectedPage() {
   closeBlockContextMenu();
   const page = state.selectedPage;
-  const hasPage = Boolean(page);
+  const isHome = state.workspaceView === "home";
+  const isCollection = state.workspaceView === "collection";
+  const hasPage = state.workspaceView === "page" && Boolean(page);
 
-  elements.welcomeView.classList.toggle("hidden", hasPage);
+  elements.welcomeView.classList.toggle("hidden", !isHome);
+  elements.collectionView.classList.toggle("hidden", !isCollection);
   elements.pageView.classList.toggle("hidden", !hasPage);
-  if (!page) return;
+
+  if (isCollection) {
+    renderPages();
+    return;
+  }
+  if (!hasPage) {
+    renderPages();
+    return;
+  }
 
   const flatBlocks = flattenBlocks(page.blocks);
   elements.pageKicker.textContent = `${page.icon ?? "📄"} ${formatDate(page.updatedAt)}`;
@@ -3883,11 +3948,7 @@ async function createCollection() {
   });
 
   await loadPages("", "");
-  await openPage(data.page.id);
-  requestAnimationFrame(() => {
-    elements.pageTitle.focus();
-    elements.pageTitle.select();
-  });
+  showCollection(data.page.id);
   setStatus(t("status.collectionCreated", { name }));
 }
 
@@ -3946,9 +4007,36 @@ async function loadPages(query = state.searchQuery, tag = state.activeTag) {
   renderPages();
 }
 
+function showHome() {
+  state.selectedPage = null;
+  state.workspaceView = "home";
+  state.activeCollectionId = null;
+  renderSelectedPage();
+}
+
+function showCollection(collectionId) {
+  state.selectedPage = null;
+  state.workspaceView = "collection";
+  state.activeCollectionId = collectionId;
+  renderSelectedPage();
+}
+
 async function openPage(pageId) {
+  const summary = state.allPages.find((page) => page.id === pageId);
+  if (isCollectionPage(summary)) {
+    showCollection(pageId);
+    setStatus(t("status.collectionOpened"));
+    return;
+  }
+
   setStatus(t("status.loadingDocument"));
   let data = await api(`/api/pages/${pageId}`);
+
+  if (isCollectionPage(data.page)) {
+    showCollection(pageId);
+    setStatus(t("status.collectionOpened"));
+    return;
+  }
 
   if (!flattenBlocks(data.page.blocks).length) {
     const starter = await createEmptyBlock(pageId);
@@ -3957,6 +4045,8 @@ async function openPage(pageId) {
   }
 
   state.selectedPage = data.page;
+  state.workspaceView = "page";
+  state.activeCollectionId = null;
   renderSelectedPage();
   setStatus(t("status.documentOpened"));
 }
@@ -3980,6 +4070,21 @@ async function boot() {
   }
 }
 
+async function openHomeFromBrand() {
+  if (!state.user) return;
+  closeMobileSidebar({ restoreFocus: false });
+  elements.searchInput.value = "";
+  try {
+    await loadPages("", "");
+    showHome();
+    setStatus(t("status.ready"));
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+elements.homeBrandButton.addEventListener("click", openHomeFromBrand);
+elements.mobileHomeBrandButton.addEventListener("click", openHomeFromBrand);
 elements.mobileSidebarToggle.addEventListener("click", toggleMobileSidebar);
 elements.mobileSidebarClose.addEventListener("click", () => closeMobileSidebar({ restoreFocus: true }));
 elements.mobileSidebarBackdrop.addEventListener("click", () => closeMobileSidebar({ restoreFocus: true }));
@@ -4182,9 +4287,8 @@ elements.defaultCollectionButton.addEventListener("click", async () => {
   closeMobileSidebar({ restoreFocus: true });
   try {
     elements.searchInput.value = "";
-    state.selectedPage = null;
     await loadPages("", "");
-    renderSelectedPage();
+    showCollection(defaultCollectionKey);
     setStatus(t("status.collectionOpened"));
   } catch (error) {
     setStatus(error.message, true);
@@ -4202,10 +4306,17 @@ elements.addDocumentButton.addEventListener("click", async () => {
 
 
 async function handleSidebarPageClick(event) {
-  const item = event.target.closest("[data-page-id]");
+  const item = event.target.closest("[data-page-id], [data-collection-id]");
   if (!item) return;
   closeMobileSidebar({ restoreFocus: true });
   try {
+    if (item.dataset.collectionId) {
+      elements.searchInput.value = "";
+      await loadPages("", "");
+      showCollection(item.dataset.collectionId);
+      setStatus(t("status.collectionOpened"));
+      return;
+    }
     await openPage(item.dataset.pageId);
   } catch (error) {
     setStatus(error.message, true);
@@ -4214,6 +4325,7 @@ async function handleSidebarPageClick(event) {
 
 elements.pageList.addEventListener("click", handleSidebarPageClick);
 elements.collectionList.addEventListener("click", handleSidebarPageClick);
+elements.collectionViewList.addEventListener("click", handleSidebarPageClick);
 
 elements.homeDocumentList.addEventListener("click", async (event) => {
   const item = event.target.closest(".home-document-item");
@@ -4268,9 +4380,12 @@ elements.archivePageButton.addEventListener("click", async () => {
   if (!state.selectedPage) return;
   const ok = window.confirm(t("confirm.archivePage"));
   if (!ok) return;
+  const parentCollectionId = getCollectionRootId(state.selectedPage.id) ?? defaultCollectionKey;
   try {
     await api(`/api/pages/${state.selectedPage.id}`, { method: "PATCH", body: { isArchived: true } });
     state.selectedPage = null;
+    state.workspaceView = "collection";
+    state.activeCollectionId = parentCollectionId;
     await loadPages(elements.searchInput.value.trim(), state.activeTag);
     renderSelectedPage();
     setStatus(t("status.pageArchived"));

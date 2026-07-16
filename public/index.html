@@ -19,12 +19,14 @@
 
     <div class="shell">
       <aside id="app-sidebar" class="sidebar" aria-label="BrainVault sidebar" data-i18n-aria-label="sidebar.aria" tabindex="-1">
-        <div class="brand" aria-label="BrainVault home" data-i18n-aria-label="sidebar.homeAria">
-          <img class="brand-mark" src="/img/icon_normal.png" alt="" aria-hidden="true" />
-          <div>
-            <p class="brand-eyebrow" data-i18n="brand.eyebrow">Private workspace</p>
-            <h1>BrainVault</h1>
-          </div>
+        <div class="brand">
+          <button id="home-brand-button" type="button" class="brand-home-button" aria-label="BrainVault home" data-i18n-aria-label="sidebar.homeAria">
+            <img class="brand-mark" src="/img/icon_normal.png" alt="" aria-hidden="true" />
+            <span class="brand-copy">
+              <span class="brand-eyebrow" data-i18n="brand.eyebrow">Private workspace</span>
+              <span class="brand-title">BrainVault</span>
+            </span>
+          </button>
           <button
             id="mobile-sidebar-close"
             class="mobile-sidebar-close"
@@ -273,10 +275,10 @@
               <path d="M4 7h16M4 12h16M4 17h16"></path>
             </svg>
           </button>
-          <div class="mobile-app-brand" aria-label="BrainVault home" data-i18n-aria-label="sidebar.homeAria">
+          <button id="mobile-home-brand-button" type="button" class="mobile-app-brand" aria-label="BrainVault home" data-i18n-aria-label="sidebar.homeAria">
             <img class="brand-mark mobile-app-brand-mark" src="/img/icon_normal.png" alt="" aria-hidden="true" />
             <strong>BrainVault</strong>
-          </div>
+          </button>
         </header>
         <section id="welcome-view" class="workspace-home">
           <div class="workspace-home-header">
@@ -303,6 +305,11 @@
               <div id="home-collection-list" class="home-list"></div>
             </section>
           </div>
+        </section>
+
+        <section id="collection-view" class="collection-view hidden" aria-labelledby="collection-view-title">
+          <h2 id="collection-view-title" class="collection-view-title"></h2>
+          <div id="collection-view-list" class="collection-view-list document-tree"></div>
         </section>
 
         <section id="page-view" class="page-view hidden">
