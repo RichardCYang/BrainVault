@@ -5718,15 +5718,16 @@ body.auth-mode * {
   background: #eaf5fc;
 }
 
+/* Keep the raster brand mark independent from the square Office-style frame reset. */
 .auth-mode .brand-mark {
+  display: block;
   width: 2.5rem;
   height: 2.5rem;
-  border: 1px solid #277fab;
-  background: #70c6f2;
-  color: #123e58;
-  font-family: "Segoe UI", "Noto Sans KR", sans-serif;
-  font-size: 1.05rem;
-  font-weight: 800;
+  border: 0;
+  border-radius: 10px !important;
+  background: transparent;
+  object-fit: contain;
+  overflow: hidden;
   box-shadow: none;
 }
 
