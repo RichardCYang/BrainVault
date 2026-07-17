@@ -358,20 +358,20 @@
 
         <section id="page-view" class="page-view hidden">
           <div class="page-toolbar">
-            <div>
-              <div id="page-kicker" class="kicker"></div>
+            <div class="page-heading">
+              <button
+                id="page-icon-button"
+                type="button"
+                class="page-emoji-button page-title-icon-button"
+                aria-label="Change page emoji"
+                title="Change page emoji"
+                data-i18n-aria-label="emoji.changePage"
+                data-i18n-title="emoji.changePage"
+              >📄</button>
               <div class="page-title-row">
-                <button
-                  id="page-icon-button"
-                  type="button"
-                  class="page-emoji-button"
-                  aria-label="Change page emoji"
-                  title="Change page emoji"
-                  data-i18n-aria-label="emoji.changePage"
-                  data-i18n-title="emoji.changePage"
-                >📄</button>
                 <input id="page-title" class="page-title-input" type="text" aria-label="Page title" data-i18n-aria-label="page.titleAria" />
               </div>
+              <div id="page-kicker" class="kicker page-updated-meta"></div>
             </div>
             <div class="button-row">
               <span id="page-mode-badge" class="page-mode-badge" role="status">

@@ -9005,3 +9005,116 @@ body.account-settings-open {
     }
   }
 }
+
+
+/* Notion-inspired page icon and title hierarchy */
+@media screen {
+  .app-mode .page-view-header {
+    margin-bottom: 2.35rem;
+  }
+
+  .app-mode .page-view {
+    width: min(100%, 960px);
+  }
+
+  .app-mode .page-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    column-gap: clamp(1.25rem, 3vw, 2.5rem);
+    row-gap: 1rem;
+    margin-bottom: 2rem;
+    padding-bottom: 0;
+  }
+
+  .app-mode .page-toolbar > .page-heading {
+    display: grid;
+    min-width: 0;
+    justify-items: start;
+  }
+
+  .app-mode .page-title-icon-button {
+    width: 5.75rem;
+    height: 5.75rem;
+    margin: 0 0 1.2rem -0.48rem;
+    border-radius: 14px;
+    padding: 0.12rem;
+    font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+    font-size: 4.7rem;
+    line-height: 1;
+  }
+
+  .app-mode .page-title-row {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .app-mode .page-title-input {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    color: var(--chrome-text);
+    font-size: clamp(2.55rem, 5vw, 3.4rem);
+    font-weight: 760;
+    letter-spacing: -0.07em;
+    line-height: 1.02;
+  }
+
+  .app-mode .page-heading .page-updated-meta {
+    margin: 0.8rem 0 0 0.08rem;
+    color: var(--chrome-text-faint);
+    font-size: 0.7rem;
+    font-weight: 620;
+    letter-spacing: 0.025em;
+    line-height: 1.4;
+    text-transform: none;
+  }
+
+  .app-mode .page-toolbar .button-row {
+    align-self: end;
+    justify-content: flex-end;
+    margin-bottom: 0.08rem;
+  }
+}
+
+@media screen and (max-width: 760px) {
+  .app-mode .page-view-header {
+    margin-bottom: 1.7rem;
+  }
+
+  .app-mode .page-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.55rem;
+  }
+
+  .app-mode .page-title-icon-button {
+    width: 4.85rem;
+    height: 4.85rem;
+    margin-bottom: 1rem;
+    font-size: 3.95rem;
+  }
+
+  .app-mode .page-title-input {
+    font-size: clamp(2.25rem, 8vw, 2.9rem);
+  }
+
+  .app-mode .page-toolbar .button-row {
+    justify-content: flex-start;
+    margin-bottom: 0;
+  }
+}
+
+@media screen and (max-width: 430px) {
+  .app-mode .page-title-icon-button {
+    width: 4.25rem;
+    height: 4.25rem;
+    margin-left: -0.34rem;
+    font-size: 3.45rem;
+  }
+
+  .app-mode .page-title-input {
+    font-size: clamp(2.05rem, 10vw, 2.55rem);
+  }
+}

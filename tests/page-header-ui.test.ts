@@ -18,6 +18,13 @@ describe("Page view header and actions menu", () => {
     expect(client).toContain('emoji.textContent = segment.icon');
   });
 
+  it("stacks the page icon above a large, full-width title like a Notion page", () => {
+    expect(index).toMatch(/class="page-heading"[\s\S]*class="page-emoji-button page-title-icon-button"[\s\S]*class="page-title-row"[\s\S]*id="page-kicker"/);
+    expect(styles).toContain("/* Notion-inspired page icon and title hierarchy */");
+    expect(styles).toMatch(/\.app-mode \.page-title-icon-button\s*\{[\s\S]*?width:\s*5\.75rem;[\s\S]*?font-size:\s*4\.7rem;/);
+    expect(styles).toMatch(/\.app-mode \.page-title-input\s*\{[\s\S]*?width:\s*100%;[\s\S]*?font-size:\s*clamp\(2\.55rem, 5vw, 3\.4rem\);/);
+  });
+
   it("moves PDF export and archive into the page context menu", () => {
     expect(index).toMatch(/id="page-actions-menu"[\s\S]*id="export-pdf-button"[\s\S]*id="archive-page-button"/);
     const toolbar = index.match(/<div class="page-toolbar">[\s\S]*?<\/div>\s*<\/div>/)?.[0] ?? "";
