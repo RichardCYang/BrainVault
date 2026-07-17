@@ -1032,7 +1032,7 @@ textarea {
 .custom-collection .collection-title-button.active {
   background: var(--active);
   color: var(--ink-strong);
-  box-shadow: inset 2px 0 0 #63a1f2;
+  box-shadow: none;
 }
 
 .document-item-row.active {
@@ -8272,7 +8272,7 @@ body.account-settings-open {
   .app-mode .custom-collection .collection-title-button.active {
     background: var(--chrome-accent-soft);
     color: #075985;
-    box-shadow: inset 2px 0 0 var(--chrome-accent);
+    box-shadow: none;
   }
 
   .app-mode .doc-caret,
@@ -9295,7 +9295,7 @@ body.account-settings-open {
   .app-mode .sidebar-utility-button.active {
     background: var(--notion-sidebar-active);
     color: #075985;
-    box-shadow: inset 3px 0 0 var(--chrome-accent);
+    box-shadow: none;
   }
 
   .app-mode .sidebar-utility-button svg {
@@ -9362,7 +9362,7 @@ body.account-settings-open {
   .app-mode .custom-collection .collection-title-button.active {
     background: var(--notion-sidebar-active);
     color: #075985;
-    box-shadow: inset 3px 0 0 var(--chrome-accent);
+    box-shadow: none;
   }
 
   .app-mode .count-pill {
@@ -9408,7 +9408,7 @@ body.account-settings-open {
     border-radius: 5px;
     background: var(--notion-sidebar-active);
     color: #075985;
-    box-shadow: inset 3px 0 0 var(--chrome-accent);
+    box-shadow: none;
   }
 
   .app-mode .document-item-row.active .document-item,
