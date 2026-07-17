@@ -9118,3 +9118,379 @@ body.account-settings-open {
     font-size: clamp(2.05rem, 10vw, 2.55rem);
   }
 }
+
+/* ========================================================================== 
+   Notion-inspired sidebar refinement
+   Keeps BrainVault's sky-blue identity while adopting a calmer workspace
+   switcher, compact utility rows, section labels, and page-tree rhythm.
+   ========================================================================== */
+@media screen {
+  body.app-mode {
+    --notion-sidebar: #f4f8fb;
+    --notion-sidebar-deep: #eef5f9;
+    --notion-sidebar-hover: rgba(56, 189, 248, 0.1);
+    --notion-sidebar-active: rgba(56, 189, 248, 0.17);
+    --notion-sidebar-line: rgba(54, 103, 133, 0.13);
+    --notion-sidebar-text: #3f4b53;
+    --notion-sidebar-muted: #7f8b93;
+  }
+
+  .app-mode .shell {
+    grid-template-columns: 286px minmax(0, 1fr);
+  }
+
+  .app-mode .sidebar {
+    overflow: hidden;
+    border-right: 1px solid var(--notion-sidebar-line);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.32), transparent 8rem),
+      linear-gradient(180deg, var(--notion-sidebar) 0%, var(--notion-sidebar-deep) 100%);
+    padding: 0.66rem 0.58rem 0.72rem;
+  }
+
+  .app-mode .brand {
+    display: none;
+  }
+
+  .app-mode .workspace-panel {
+    gap: 0;
+  }
+
+  .app-mode .account-settings-trigger {
+    min-height: 3rem;
+    grid-template-columns: 1.85rem minmax(0, 1fr) 1.05rem;
+    gap: 0.58rem;
+    margin: 0 0 0.48rem;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    padding: 0.38rem 0.48rem;
+    color: #303a40;
+  }
+
+  .app-mode .account-settings-trigger:hover,
+  .app-mode .account-settings-trigger:focus-visible {
+    border-color: transparent;
+    background: var(--notion-sidebar-hover);
+    color: #1f2b32;
+  }
+
+  .app-mode .user-avatar--sidebar {
+    width: 1.78rem;
+    height: 1.78rem;
+    border: 1px solid rgba(14, 165, 233, 0.2);
+    border-radius: 7px;
+    background: linear-gradient(145deg, #ffffff, #c8ecff);
+    box-shadow: 0 1px 2px rgba(36, 92, 126, 0.08);
+    font-size: 0.68rem;
+  }
+
+  .app-mode .user-identity {
+    gap: 0;
+  }
+
+  .app-mode .user-identity strong {
+    color: #303a40;
+    font-size: 0.9rem;
+    font-weight: 690;
+    letter-spacing: -0.015em;
+  }
+
+  .app-mode .user-identity small {
+    color: var(--notion-sidebar-muted);
+    font-size: 0.64rem;
+    font-weight: 560;
+  }
+
+  .app-mode .account-settings-chevron {
+    width: 1rem;
+    height: 1rem;
+    color: var(--notion-sidebar-muted);
+    stroke-width: 1.6;
+    opacity: 0.9;
+  }
+
+  .sidebar-primary-actions {
+    display: grid;
+    gap: 0.08rem;
+    margin-bottom: 0.72rem;
+  }
+
+  .app-mode .search-form,
+  .app-mode .sidebar-utility-button {
+    width: 100%;
+    min-height: 2.2rem;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    box-shadow: none;
+    color: var(--notion-sidebar-text);
+  }
+
+  .app-mode .search-form {
+    grid-template-columns: 1.65rem minmax(0, 1fr);
+    margin: 0;
+    transition: background-color 120ms ease, box-shadow 120ms ease;
+  }
+
+  .app-mode .search-form:hover {
+    border-color: transparent;
+    background: var(--notion-sidebar-hover);
+  }
+
+  .app-mode .search-form:focus-within {
+    border-color: transparent;
+    background: #ffffff;
+    box-shadow: inset 0 0 0 1px rgba(14, 165, 233, 0.4), 0 0 0 2px rgba(56, 189, 248, 0.1);
+  }
+
+  .app-mode .search-form input {
+    grid-column: 2;
+    grid-row: 1;
+    height: 2.2rem;
+    padding: 0.42rem 0.5rem 0.42rem 0;
+    color: var(--notion-sidebar-text);
+    font-size: 0.84rem;
+    font-weight: 600;
+  }
+
+  .app-mode .search-form input::placeholder {
+    color: #66737c;
+    opacity: 1;
+  }
+
+  .app-mode .search-form button {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: center;
+    justify-self: center;
+    width: 1.6rem;
+    height: 1.6rem;
+    color: #82909a;
+  }
+
+  .app-mode .search-form button:hover {
+    background: transparent;
+    color: var(--chrome-accent-strong);
+  }
+
+  .app-mode .sidebar-utility-button {
+    display: grid;
+    grid-template-columns: 1.65rem minmax(0, 1fr);
+    align-items: center;
+    justify-items: start;
+    gap: 0;
+    padding: 0.4rem 0.48rem;
+    font-size: 0.84rem;
+    font-weight: 600;
+    text-align: left;
+  }
+
+  .app-mode .sidebar-utility-button:hover,
+  .app-mode .sidebar-utility-button:focus-visible {
+    background: var(--notion-sidebar-hover);
+    color: #25333b;
+  }
+
+  .app-mode .sidebar-utility-button.active {
+    background: var(--notion-sidebar-active);
+    color: #075985;
+    box-shadow: inset 3px 0 0 var(--chrome-accent);
+  }
+
+  .app-mode .sidebar-utility-button svg {
+    width: 1rem;
+    height: 1rem;
+    fill: none;
+    stroke: #82909a;
+    stroke-width: 1.65;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .app-mode .sidebar-utility-button:hover svg,
+  .app-mode .sidebar-utility-button:focus-visible svg,
+  .app-mode .sidebar-utility-button.active svg {
+    stroke: var(--chrome-accent-strong);
+  }
+
+  .app-mode .sidebar-section-label,
+  .app-mode .sidebar-footer-label {
+    display: block;
+    margin: 0.2rem 0.5rem 0.28rem;
+    color: #8b969e;
+    font-size: 0.66rem;
+    font-weight: 720;
+    letter-spacing: 0.065em;
+    line-height: 1.3;
+    text-transform: uppercase;
+  }
+
+  .app-mode .sidebar-nav {
+    gap: 0.42rem;
+    padding: 0 0.02rem 0.48rem 0;
+    scrollbar-color: rgba(56, 115, 149, 0.18) transparent;
+  }
+
+  .app-mode .nav-section,
+  .app-mode .collection-list {
+    gap: 0.12rem;
+  }
+
+  .app-mode .collection-title-row {
+    grid-template-columns: minmax(0, 1fr) 1.72rem;
+    gap: 0.04rem;
+  }
+
+  .app-mode .collection-title-button {
+    min-height: 2.25rem;
+    border-radius: 5px;
+    padding: 0.38rem 0.48rem;
+    color: #56636b;
+    font-size: 0.84rem;
+    font-weight: 630;
+    letter-spacing: -0.008em;
+    text-transform: none;
+  }
+
+  .app-mode .collection-title-button:hover {
+    background: var(--notion-sidebar-hover);
+    color: #27343c;
+  }
+
+  .app-mode .default-collection .collection-title-button.active,
+  .app-mode .custom-collection .collection-title-button.active {
+    background: var(--notion-sidebar-active);
+    color: #075985;
+    box-shadow: inset 3px 0 0 var(--chrome-accent);
+  }
+
+  .app-mode .count-pill {
+    color: #8a969e;
+    font-size: 0.68rem;
+  }
+
+  .app-mode .sidebar-add-button,
+  .app-mode .navigation-more-button {
+    border-radius: 5px;
+    color: #87939a;
+  }
+
+  .app-mode .sidebar-add-button:hover,
+  .app-mode .navigation-more-button:hover,
+  .app-mode .navigation-more-button:focus-visible,
+  .app-mode .navigation-more-button[aria-expanded="true"] {
+    background: var(--notion-sidebar-hover);
+    color: var(--chrome-accent-strong);
+  }
+
+  .app-mode .document-tree {
+    gap: 0.04rem;
+  }
+
+  .app-mode .document-item {
+    min-height: 2.12rem;
+    grid-template-columns: 0.72rem 1.05rem minmax(0, 1fr);
+    border-radius: 5px;
+    padding-block: 0.32rem;
+    color: #5d6970;
+    font-size: 0.84rem;
+    font-weight: 540;
+  }
+
+  .app-mode .document-item:hover,
+  .app-mode .document-item-row.is-menu-open .document-item {
+    background: var(--notion-sidebar-hover);
+    color: #27343c;
+  }
+
+  .app-mode .document-item-row.active {
+    border-radius: 5px;
+    background: var(--notion-sidebar-active);
+    color: #075985;
+    box-shadow: inset 3px 0 0 var(--chrome-accent);
+  }
+
+  .app-mode .document-item-row.active .document-item,
+  .app-mode .document-item.active {
+    color: #075985;
+  }
+
+  .app-mode .doc-caret {
+    color: #93a0a8;
+  }
+
+  .app-mode .doc-icon {
+    filter: saturate(0.82);
+  }
+
+  .app-mode .sidebar-footer {
+    gap: 0.06rem;
+    margin-top: auto;
+    border-top: 1px solid var(--notion-sidebar-line);
+    padding-top: 0.55rem;
+  }
+
+  .app-mode .sidebar-footer-label {
+    margin-bottom: 0.16rem;
+  }
+
+  .app-mode .sidebar-footer-button {
+    min-height: 2.2rem;
+    border-radius: 5px;
+    padding: 0.4rem 0.48rem;
+    color: #65727a;
+    font-size: 0.82rem;
+    font-weight: 590;
+  }
+
+  .app-mode .sidebar-footer-button:hover {
+    background: var(--notion-sidebar-hover);
+    color: #27343c;
+  }
+
+  .app-mode .sidebar-footer-button:hover svg {
+    stroke: var(--chrome-accent-strong);
+  }
+}
+
+@media (max-width: 1080px) {
+  .app-mode .shell {
+    grid-template-columns: 252px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .app-mode .sidebar {
+    width: min(88vw, 19.5rem);
+    padding: max(0.66rem, env(safe-area-inset-top)) 0.58rem max(0.72rem, env(safe-area-inset-bottom));
+  }
+
+  .app-mode .brand {
+    position: absolute;
+    z-index: 3;
+    top: max(0.66rem, env(safe-area-inset-top));
+    right: 0.58rem;
+    display: flex;
+    width: auto;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    pointer-events: none;
+  }
+
+  .app-mode .brand-home-button {
+    display: none;
+  }
+
+  .app-mode .mobile-sidebar-close {
+    margin: 0;
+    pointer-events: auto;
+  }
+
+  .app-mode .account-settings-trigger {
+    padding-right: 3rem;
+  }
+}

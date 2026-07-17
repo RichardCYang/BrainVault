@@ -35,7 +35,7 @@ export const translationCatalogs = {
       loginSwitch: "New to BrainVault?",
       registerSwitch: "Already have an account?"
     },
-    workspace: { aria: "Workspace navigation", addCollection: "Add collection", logout: "Log out" },
+    workspace: { aria: "Workspace Navigation", shortcutsAria: "Workspace Shortcuts", home: "Workspace Home", settings: "Settings & Account", section: "Workspace", tools: "Tools", addCollection: "Add Collection", logout: "Log Out" },
     account: {
       open: "Open account settings",
       title: "Settings",
@@ -78,7 +78,7 @@ export const translationCatalogs = {
       changingPassword: "Changing your password...",
       passwordChanged: "Your password was changed."
     },
-    search: { label: "Search pages and blocks", placeholder: "Search pages/blocks", button: "Search" },
+    search: { label: "Search pages and blocks", placeholder: "Quick Find", button: "Search" },
     navigation: { aria: "Default collection and page list" },
     navigationMenu: {
       aria: "Page or collection actions",
@@ -551,7 +551,7 @@ export const translationCatalogs = {
       loginSwitch: "初めてご利用ですか？",
       registerSwitch: "すでにアカウントをお持ちですか？"
     },
-    workspace: { aria: "ワークスペースナビゲーション", addCollection: "コレクションを追加", logout: "ログアウト" },
+    workspace: { aria: "ワークスペースナビゲーション", shortcutsAria: "ワークスペースのショートカット", home: "ワークスペースホーム", settings: "設定とアカウント", section: "ワークスペース", tools: "ツール", addCollection: "コレクションを追加", logout: "ログアウト" },
     account: {
       open: "アカウント設定を開く", title: "設定", close: "設定を閉じる", profile: "プロフィール", preferences: "環境設定", security: "セキュリティ", signOut: "ログアウト",
       profileTitle: "プロフィール", profileDescription: "ワークスペースに表示する名前と写真を更新します。", avatar: "プロフィール写真", avatarDescription: "PNG、JPG、WebP画像を使用できます。正方形に切り抜かれます。", uploadAvatar: "写真をアップロード", removeAvatar: "削除",
@@ -560,7 +560,7 @@ export const translationCatalogs = {
       securityTitle: "パスワード", securityDescription: "新しいパスワードを設定する前に現在のパスワードを確認します。", currentPassword: "現在のパスワード", newPassword: "新しいパスワード", confirmPassword: "新しいパスワードを確認", passwordHint: "8〜128文字で入力してください。", changePassword: "パスワードを変更",
       preparingAvatar: "プロフィール写真を準備しています...", avatarReady: "新しいプロフィール写真を保存できます。", avatarRemoved: "保存するとプロフィール写真が削除されます。", invalidAvatar: "有効なPNG、JPG、WebP画像を選択してください。", avatarTooLarge: "画像が大きすぎます。5MB未満のファイルを選択してください。", savingProfile: "プロフィールを保存しています...", profileSaved: "プロフィールを更新しました。", savingLanguage: "言語設定を保存しています...", passwordMismatch: "新しいパスワードが一致しません。", changingPassword: "パスワードを変更しています...", passwordChanged: "パスワードを変更しました。"
     },
-    search: { label: "ページとブロックを検索", placeholder: "ページ／ブロックを検索", button: "検索" },
+    search: { label: "ページとブロックを検索", placeholder: "クイック検索", button: "検索" },
     navigation: { aria: "デフォルトコレクションとページ一覧" },
     navigationMenu: {
       aria: "ページまたはコレクションの操作",
@@ -861,7 +861,7 @@ export const translationCatalogs = {
       loginSwitch: "회원이 아니신가요?",
       registerSwitch: "이미 계정이 있으신가요?"
     },
-    workspace: { aria: "워크스페이스 탐색", addCollection: "컬렉션 추가", logout: "로그아웃" },
+    workspace: { aria: "워크스페이스 탐색", shortcutsAria: "워크스페이스 바로가기", home: "워크스페이스 홈", settings: "설정 및 계정", section: "워크스페이스", tools: "도구", addCollection: "컬렉션 추가", logout: "로그아웃" },
     account: {
       open: "계정 설정 열기", title: "설정", close: "설정 닫기", profile: "프로필", preferences: "환경설정", security: "보안", signOut: "로그아웃",
       profileTitle: "프로필", profileDescription: "워크스페이스에 표시되는 이름과 사진을 관리하세요.", avatar: "프로필 사진", avatarDescription: "PNG, JPG 또는 WebP 이미지를 사용하세요. 정사각형으로 자동 잘라냅니다.", uploadAvatar: "사진 업로드", removeAvatar: "삭제",
@@ -870,7 +870,7 @@ export const translationCatalogs = {
       securityTitle: "비밀번호", securityDescription: "새 비밀번호를 설정하기 전에 현재 비밀번호를 확인합니다.", currentPassword: "현재 비밀번호", newPassword: "새 비밀번호", confirmPassword: "새 비밀번호 확인", passwordHint: "8자 이상 128자 이하로 입력하세요.", changePassword: "비밀번호 변경",
       preparingAvatar: "프로필 사진을 준비하고 있습니다...", avatarReady: "새 프로필 사진을 저장할 준비가 되었습니다.", avatarRemoved: "저장하면 프로필 사진이 삭제됩니다.", invalidAvatar: "올바른 PNG, JPG 또는 WebP 이미지를 선택하세요.", avatarTooLarge: "이미지가 너무 큽니다. 5MB 미만 파일을 선택하세요.", savingProfile: "프로필을 저장하고 있습니다...", profileSaved: "프로필을 업데이트했습니다.", savingLanguage: "언어 설정을 저장하고 있습니다...", passwordMismatch: "새 비밀번호가 서로 일치하지 않습니다.", changingPassword: "비밀번호를 변경하고 있습니다...", passwordChanged: "비밀번호를 변경했습니다."
     },
-    search: { label: "문서와 블록 검색", placeholder: "문서/블록 검색", button: "검색" },
+    search: { label: "문서와 블록 검색", placeholder: "빠른 찾기", button: "검색" },
     navigation: { aria: "기본 컬렉션과 문서 목록" },
     navigationMenu: {
       aria: "페이지 또는 컬렉션 작업",
@@ -1326,7 +1326,7 @@ export const translationCatalogs = {
       loginSwitch: "Nouveau sur BrainVault ?",
       registerSwitch: "Vous avez déjà un compte ?"
     },
-    workspace: { aria: "Navigation de l’espace de travail", addCollection: "Ajouter une collection", logout: "Se déconnecter" },
+    workspace: { aria: "Navigation de l’espace de travail", shortcutsAria: "Raccourcis de l’espace de travail", home: "Accueil de l’espace", settings: "Paramètres et compte", section: "Espace de travail", tools: "Outils", addCollection: "Ajouter une collection", logout: "Se déconnecter" },
     account: {
       open: "Ouvrir les paramètres du compte", title: "Paramètres", close: "Fermer les paramètres", profile: "Profil", preferences: "Préférences", security: "Sécurité", signOut: "Se déconnecter",
       profileTitle: "Profil", profileDescription: "Modifiez le nom et la photo affichés dans votre espace de travail.", avatar: "Photo de profil", avatarDescription: "Utilisez une image PNG, JPG ou WebP. Elle sera recadrée en carré.", uploadAvatar: "Importer une photo", removeAvatar: "Supprimer",
@@ -1335,7 +1335,7 @@ export const translationCatalogs = {
       securityTitle: "Mot de passe", securityDescription: "Confirmez votre mot de passe actuel avant d’en choisir un nouveau.", currentPassword: "Mot de passe actuel", newPassword: "Nouveau mot de passe", confirmPassword: "Confirmer le nouveau mot de passe", passwordHint: "Utilisez entre 8 et 128 caractères.", changePassword: "Modifier le mot de passe",
       preparingAvatar: "Préparation de votre photo de profil...", avatarReady: "Votre nouvelle photo est prête à être enregistrée.", avatarRemoved: "La photo sera supprimée lors de l’enregistrement.", invalidAvatar: "Choisissez une image PNG, JPG ou WebP valide.", avatarTooLarge: "L’image est trop volumineuse. Choisissez un fichier de moins de 5 Mo.", savingProfile: "Enregistrement du profil...", profileSaved: "Votre profil a été mis à jour.", savingLanguage: "Enregistrement de la langue...", passwordMismatch: "Les nouveaux mots de passe ne correspondent pas.", changingPassword: "Modification du mot de passe...", passwordChanged: "Votre mot de passe a été modifié."
     },
-    search: { label: "Rechercher des pages et des blocs", placeholder: "Rechercher pages/blocs", button: "Rechercher" },
+    search: { label: "Rechercher des pages et des blocs", placeholder: "Recherche rapide", button: "Rechercher" },
     navigation: { aria: "Collection par défaut et liste des pages" },
     navigationMenu: {
       aria: "Actions de page ou de collection",
@@ -1636,7 +1636,7 @@ export const translationCatalogs = {
       loginSwitch: "Neu bei BrainVault?",
       registerSwitch: "Du hast bereits ein Konto?"
     },
-    workspace: { aria: "Arbeitsbereich-Navigation", addCollection: "Sammlung hinzufügen", logout: "Abmelden" },
+    workspace: { aria: "Arbeitsbereich-Navigation", shortcutsAria: "Arbeitsbereich-Kurzbefehle", home: "Arbeitsbereich-Startseite", settings: "Einstellungen und Konto", section: "Arbeitsbereich", tools: "Werkzeuge", addCollection: "Sammlung hinzufügen", logout: "Abmelden" },
     account: {
       open: "Kontoeinstellungen öffnen", title: "Einstellungen", close: "Einstellungen schließen", profile: "Profil", preferences: "Voreinstellungen", security: "Sicherheit", signOut: "Abmelden",
       profileTitle: "Profil", profileDescription: "Aktualisiere den Namen und das Foto in deinem Arbeitsbereich.", avatar: "Profilfoto", avatarDescription: "Verwende ein PNG-, JPG- oder WebP-Bild. Es wird quadratisch zugeschnitten.", uploadAvatar: "Foto hochladen", removeAvatar: "Entfernen",
@@ -1645,7 +1645,7 @@ export const translationCatalogs = {
       securityTitle: "Passwort", securityDescription: "Bestätige dein aktuelles Passwort, bevor du ein neues wählst.", currentPassword: "Aktuelles Passwort", newPassword: "Neues Passwort", confirmPassword: "Neues Passwort bestätigen", passwordHint: "Verwende 8 bis 128 Zeichen.", changePassword: "Passwort ändern",
       preparingAvatar: "Profilfoto wird vorbereitet...", avatarReady: "Das neue Profilfoto kann gespeichert werden.", avatarRemoved: "Das Profilfoto wird beim Speichern entfernt.", invalidAvatar: "Wähle ein gültiges PNG-, JPG- oder WebP-Bild.", avatarTooLarge: "Das Bild ist zu groß. Wähle eine Datei unter 5 MB.", savingProfile: "Profil wird gespeichert...", profileSaved: "Dein Profil wurde aktualisiert.", savingLanguage: "Spracheinstellung wird gespeichert...", passwordMismatch: "Die neuen Passwörter stimmen nicht überein.", changingPassword: "Passwort wird geändert...", passwordChanged: "Dein Passwort wurde geändert."
     },
-    search: { label: "Seiten und Blöcke durchsuchen", placeholder: "Seiten/Blöcke suchen", button: "Suchen" },
+    search: { label: "Seiten und Blöcke durchsuchen", placeholder: "Schnellsuche", button: "Suchen" },
     navigation: { aria: "Standardsammlung und Seitenliste" },
     navigationMenu: {
       aria: "Seiten- oder Sammlungsaktionen",
@@ -1946,7 +1946,7 @@ export const translationCatalogs = {
       loginSwitch: "¿Eres nuevo en BrainVault?",
       registerSwitch: "¿Ya tienes una cuenta?"
     },
-    workspace: { aria: "Navegación del espacio de trabajo", addCollection: "Añadir colección", logout: "Cerrar sesión" },
+    workspace: { aria: "Navegación del espacio de trabajo", shortcutsAria: "Accesos del espacio de trabajo", home: "Inicio del espacio", settings: "Ajustes y cuenta", section: "Espacio de trabajo", tools: "Herramientas", addCollection: "Añadir colección", logout: "Cerrar sesión" },
     account: {
       open: "Abrir ajustes de la cuenta", title: "Ajustes", close: "Cerrar ajustes", profile: "Perfil", preferences: "Preferencias", security: "Seguridad", signOut: "Cerrar sesión",
       profileTitle: "Perfil", profileDescription: "Actualiza el nombre y la foto que aparecen en tu espacio de trabajo.", avatar: "Foto de perfil", avatarDescription: "Usa una imagen PNG, JPG o WebP. Se recortará en formato cuadrado.", uploadAvatar: "Subir foto", removeAvatar: "Eliminar",
@@ -1955,7 +1955,7 @@ export const translationCatalogs = {
       securityTitle: "Contraseña", securityDescription: "Confirma tu contraseña actual antes de elegir una nueva.", currentPassword: "Contraseña actual", newPassword: "Nueva contraseña", confirmPassword: "Confirmar nueva contraseña", passwordHint: "Usa entre 8 y 128 caracteres.", changePassword: "Cambiar contraseña",
       preparingAvatar: "Preparando tu foto de perfil...", avatarReady: "La nueva foto está lista para guardarse.", avatarRemoved: "La foto se eliminará al guardar.", invalidAvatar: "Elige una imagen PNG, JPG o WebP válida.", avatarTooLarge: "La imagen es demasiado grande. Elige un archivo de menos de 5 MB.", savingProfile: "Guardando el perfil...", profileSaved: "Tu perfil se actualizó.", savingLanguage: "Guardando la preferencia de idioma...", passwordMismatch: "Las nuevas contraseñas no coinciden.", changingPassword: "Cambiando la contraseña...", passwordChanged: "Tu contraseña se cambió."
     },
-    search: { label: "Buscar páginas y bloques", placeholder: "Buscar páginas/bloques", button: "Buscar" },
+    search: { label: "Buscar páginas y bloques", placeholder: "Búsqueda rápida", button: "Buscar" },
     navigation: { aria: "Colección predeterminada y lista de páginas" },
     navigationMenu: {
       aria: "Acciones de página o colección",
@@ -2256,7 +2256,7 @@ export const translationCatalogs = {
       loginSwitch: "Novo no BrainVault?",
       registerSwitch: "Já tem uma conta?"
     },
-    workspace: { aria: "Navegação do espaço de trabalho", addCollection: "Adicionar coleção", logout: "Sair" },
+    workspace: { aria: "Navegação do espaço de trabalho", shortcutsAria: "Atalhos do espaço de trabalho", home: "Início do espaço", settings: "Configurações e conta", section: "Espaço de trabalho", tools: "Ferramentas", addCollection: "Adicionar coleção", logout: "Sair" },
     account: {
       open: "Abrir configurações da conta", title: "Configurações", close: "Fechar configurações", profile: "Perfil", preferences: "Preferências", security: "Segurança", signOut: "Sair",
       profileTitle: "Perfil", profileDescription: "Atualize o nome e a foto exibidos no seu espaço de trabalho.", avatar: "Foto do perfil", avatarDescription: "Use uma imagem PNG, JPG ou WebP. Ela será recortada em formato quadrado.", uploadAvatar: "Enviar foto", removeAvatar: "Remover",
@@ -2265,7 +2265,7 @@ export const translationCatalogs = {
       securityTitle: "Senha", securityDescription: "Confirme sua senha atual antes de escolher uma nova.", currentPassword: "Senha atual", newPassword: "Nova senha", confirmPassword: "Confirmar nova senha", passwordHint: "Use de 8 a 128 caracteres.", changePassword: "Alterar senha",
       preparingAvatar: "Preparando sua foto de perfil...", avatarReady: "A nova foto está pronta para ser salva.", avatarRemoved: "A foto será removida ao salvar.", invalidAvatar: "Escolha uma imagem PNG, JPG ou WebP válida.", avatarTooLarge: "A imagem é muito grande. Escolha um arquivo com menos de 5 MB.", savingProfile: "Salvando o perfil...", profileSaved: "Seu perfil foi atualizado.", savingLanguage: "Salvando a preferência de idioma...", passwordMismatch: "As novas senhas não coincidem.", changingPassword: "Alterando a senha...", passwordChanged: "Sua senha foi alterada."
     },
-    search: { label: "Pesquisar páginas e blocos", placeholder: "Pesquisar páginas/blocos", button: "Pesquisar" },
+    search: { label: "Pesquisar páginas e blocos", placeholder: "Busca rápida", button: "Pesquisar" },
     navigation: { aria: "Coleção padrão e lista de páginas" },
     navigationMenu: {
       aria: "Ações da página ou coleção",

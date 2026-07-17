@@ -474,6 +474,8 @@ const elements = {
   main: $(".main"),
   homeBrandButton: $("#home-brand-button"),
   mobileHomeBrandButton: $("#mobile-home-brand-button"),
+  sidebarHomeShortcut: $("#sidebar-home-shortcut"),
+  sidebarSettingsShortcut: $("#sidebar-settings-shortcut"),
   mobileSidebarToggle: $("#mobile-sidebar-toggle"),
   mobileSidebarClose: $("#mobile-sidebar-close"),
   mobileSidebarBackdrop: $("#mobile-sidebar-backdrop"),
@@ -4766,6 +4768,10 @@ function renderSelectedPage() {
   const isCollection = state.workspaceView === "collection";
   const hasPage = state.workspaceView === "page" && Boolean(page);
 
+  elements.sidebarHomeShortcut.classList.toggle("active", isHome);
+  if (isHome) elements.sidebarHomeShortcut.setAttribute("aria-current", "page");
+  else elements.sidebarHomeShortcut.removeAttribute("aria-current");
+
   elements.welcomeView.classList.toggle("hidden", !isHome);
   elements.collectionView.classList.toggle("hidden", !isCollection);
   elements.pageViewHeader.classList.toggle("hidden", !hasPage);
@@ -5005,6 +5011,8 @@ async function openHomeFromBrand() {
 }
 
 elements.homeBrandButton.addEventListener("click", openHomeFromBrand);
+elements.sidebarHomeShortcut.addEventListener("click", openHomeFromBrand);
+elements.sidebarSettingsShortcut.addEventListener("click", () => openAccountSettings("profile"));
 elements.mobileHomeBrandButton.addEventListener("click", openHomeFromBrand);
 elements.mobileSidebarToggle.addEventListener("click", toggleMobileSidebar);
 elements.mobileSidebarClose.addEventListener("click", () => closeMobileSidebar({ restoreFocus: true }));
