@@ -22,7 +22,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/server.js",
     "test": "npm run lockfile:check && vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "preview:capture": "node scripts/capture-preview.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.2",

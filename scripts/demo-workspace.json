@@ -1,0 +1,261 @@
+{
+  "page": {
+    "title": "Product Launch Dashboard",
+    "icon": "🚀",
+    "tags": [
+      "demo",
+      "launch",
+      "workspace"
+    ]
+  },
+  "blocks": [
+    {
+      "type": "MARKDOWN",
+      "markdown": "Q3 2026 launch readiness overview. Track execution items on the Kanban board and review owners and due dates in the database below."
+    },
+    {
+      "type": "KANBAN",
+      "markdown": "",
+      "metadata": {
+        "kanban": {
+          "title": "Launch Readiness Kanban",
+          "columns": [
+            {
+              "id": "todo",
+              "title": "To Do",
+              "color": "gray",
+              "cards": [
+                {
+                  "id": "card-onboarding-copy",
+                  "title": "Finalize onboarding copy",
+                  "description": "Review the first-run experience and help-center copy.",
+                  "icon": "✍️",
+                  "color": "yellow",
+                  "tags": [
+                    "Content",
+                    "D-5"
+                  ]
+                },
+                {
+                  "id": "card-pricing-review",
+                  "title": "Review pricing plans",
+                  "description": "Confirm feature boundaries for the Free and Pro plans.",
+                  "icon": "💳",
+                  "color": "peach",
+                  "tags": [
+                    "Business"
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "in-progress",
+              "title": "In Progress",
+              "color": "blue",
+              "cards": [
+                {
+                  "id": "card-mobile-qa",
+                  "title": "Mobile editor QA",
+                  "description": "Verify drag and drop, slash commands, and attachment flows.",
+                  "icon": "📱",
+                  "color": "blue",
+                  "tags": [
+                    "QA",
+                    "Mobile"
+                  ]
+                },
+                {
+                  "id": "card-database-filter",
+                  "title": "Test database filters",
+                  "description": "Validate filter and sort combinations for every saved view.",
+                  "icon": "🔎",
+                  "color": "purple",
+                  "tags": [
+                    "Core",
+                    "Testing"
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "done",
+              "title": "Done",
+              "color": "green",
+              "cards": [
+                {
+                  "id": "card-design-system",
+                  "title": "Approve design system",
+                  "description": "Finalize color, spacing, and component tokens.",
+                  "icon": "✅",
+                  "color": "green",
+                  "tags": [
+                    "Design"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "DATABASE",
+      "markdown": "",
+      "metadata": {
+        "database": {
+          "title": "Launch Task Database",
+          "properties": [
+            {
+              "id": "title",
+              "name": "Task",
+              "type": "title",
+              "options": []
+            },
+            {
+              "id": "status",
+              "name": "Status",
+              "type": "select",
+              "options": [
+                {
+                  "id": "not-started",
+                  "name": "Not started",
+                  "color": "gray"
+                },
+                {
+                  "id": "in-progress",
+                  "name": "In progress",
+                  "color": "blue"
+                },
+                {
+                  "id": "review",
+                  "name": "Review",
+                  "color": "purple"
+                },
+                {
+                  "id": "done",
+                  "name": "Done",
+                  "color": "green"
+                }
+              ]
+            },
+            {
+              "id": "owner",
+              "name": "Owner",
+              "type": "text",
+              "options": []
+            },
+            {
+              "id": "priority",
+              "name": "Priority",
+              "type": "select",
+              "options": [
+                {
+                  "id": "high",
+                  "name": "High",
+                  "color": "red"
+                },
+                {
+                  "id": "medium",
+                  "name": "Medium",
+                  "color": "yellow"
+                },
+                {
+                  "id": "low",
+                  "name": "Low",
+                  "color": "gray"
+                }
+              ]
+            },
+            {
+              "id": "due",
+              "name": "Due date",
+              "type": "date",
+              "options": []
+            },
+            {
+              "id": "complete",
+              "name": "Done",
+              "type": "checkbox",
+              "options": []
+            }
+          ],
+          "rows": [
+            {
+              "id": "row-release-checklist",
+              "values": {
+                "title": "Release checklist",
+                "status": "in-progress",
+                "owner": "Jordan",
+                "priority": "high",
+                "due": "2026-07-22",
+                "complete": false
+              }
+            },
+            {
+              "id": "row-help-center",
+              "values": {
+                "title": "Help center update",
+                "status": "not-started",
+                "owner": "Mia",
+                "priority": "medium",
+                "due": "2026-07-24",
+                "complete": false
+              }
+            },
+            {
+              "id": "row-workspace-template",
+              "values": {
+                "title": "Workspace templates",
+                "status": "done",
+                "owner": "Ethan",
+                "priority": "low",
+                "due": "2026-07-16",
+                "complete": true
+              }
+            },
+            {
+              "id": "row-launch-email",
+              "values": {
+                "title": "Launch announcement email",
+                "status": "review",
+                "owner": "Sophia",
+                "priority": "high",
+                "due": "2026-07-20",
+                "complete": false
+              }
+            }
+          ],
+          "views": [
+            {
+              "id": "table-view",
+              "name": "Table",
+              "type": "table",
+              "filters": [],
+              "sorts": [
+                {
+                  "id": "sort-due",
+                  "propertyId": "due",
+                  "direction": "ascending"
+                }
+              ],
+              "groupPropertyId": null,
+              "hiddenPropertyIds": []
+            },
+            {
+              "id": "board-view",
+              "name": "Board",
+              "type": "board",
+              "filters": [],
+              "sorts": [],
+              "groupPropertyId": "status",
+              "hiddenPropertyIds": [
+                "status"
+              ]
+            }
+          ],
+          "activeViewId": "table-view"
+        }
+      }
+    }
+  ]
+}

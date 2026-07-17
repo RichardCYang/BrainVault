@@ -4,6 +4,12 @@ BrainVault is a self-hosted, block-based note app built with Node.js, Express, T
 
 Writing happens directly on the page. There is no separate preview pane: every row is an editable block that can be formatted, moved, nested, or changed into another block type without leaving the document.
 
+## Preview
+
+![BrainVault main workspace preview with Kanban and database blocks](docs/preview.png)
+
+This image is captured from the actual BrainVault browser UI (`public/index.html` and `public/app.js`) in the default English read mode. The capture uses the same English sample workspace data as `npm run db:seed`; it is not a separately drawn mockup. Regenerate it locally with `npm run preview:capture` (Chromium or Chrome is required).
+
 ## Highlights
 
 - Page-first workspace with a compact document tree and automatic title saving
