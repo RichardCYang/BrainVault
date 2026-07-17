@@ -31,7 +31,8 @@ const envSchema = z.object({
   BOOKMARK_FETCH_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(8_000),
   BOOKMARK_FETCH_MAX_BYTES: z.coerce.number().int().min(64 * 1024).max(768 * 1024).default(512 * 1024),
   ATTACHMENT_UPLOAD_DIR: z.string().min(1).default("uploads"),
-  MAX_ATTACHMENT_SIZE_MB: z.coerce.number().int().min(1).max(500).default(25)
+  MAX_ATTACHMENT_SIZE_MB: z.coerce.number().int().min(1).max(500).default(25),
+  DATA_TRANSFER_MAX_SIZE_MB: z.coerce.number().int().min(1).max(102_400).default(4096)
 });
 
 export const env = envSchema.parse(process.env);

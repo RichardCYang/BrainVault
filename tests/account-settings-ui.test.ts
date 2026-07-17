@@ -6,6 +6,7 @@ const styles = readFileSync(new URL("../public/styles.css", import.meta.url), "u
 const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const i18n = readFileSync(new URL("../public/i18n.js", import.meta.url), "utf8");
 const authRoutes = readFileSync(new URL("../src/routes/auth.routes.ts", import.meta.url), "utf8");
+const dataRoutes = readFileSync(new URL("../src/routes/data.routes.ts", import.meta.url), "utf8");
 const migration = readFileSync(new URL("../migrations/008_user_account_settings.sql", import.meta.url), "utf8");
 
 describe("Account settings layer", () => {
@@ -16,9 +17,13 @@ describe("Account settings layer", () => {
     expect(index).toContain('data-account-panel="profile"');
     expect(index).toContain('data-account-panel="preferences"');
     expect(index).toContain('data-account-panel="security"');
+    expect(index).toContain('data-account-panel="data"');
     expect(index).toContain('id="account-avatar-input"');
     expect(index).toContain('id="language-select"');
     expect(index).toContain('id="account-current-password"');
+    expect(index).toContain('id="account-data-export"');
+    expect(index).toContain('id="account-data-input"');
+    expect(index).toContain('id="account-data-import"');
     expect(index).toContain('id="logout-button"');
     expect(index).not.toContain('class="language-switcher"');
   });
@@ -32,6 +37,8 @@ describe("Account settings layer", () => {
     expect(client).toContain('api("/api/auth/profile"');
     expect(client).toContain('api("/api/auth/password"');
     expect(client).toContain("applyUserPreferredLanguage");
+    expect(client).toContain('fetch("/api/data/export"');
+    expect(client).toContain('api("/api/data/import"');
   });
 
   it("includes responsive modal styling, localized copy, and persistent schema support", () => {
@@ -45,9 +52,13 @@ describe("Account settings layer", () => {
     expect(styles).toContain("border-radius: var(--radius-lg) var(--radius-lg) 0 0;");
     expect(i18n).toContain('open: "계정 설정 열기"');
     expect(i18n).toContain('passwordChanged: "비밀번호를 변경했습니다."');
+    expect(i18n).toContain('exportTitle: "모든 데이터 내보내기"');
+    expect(i18n).toContain('importTitle: "백업 복원"');
     expect(authRoutes).toContain('authRouter.patch("/profile"');
     expect(authRoutes).toContain('authRouter.post("/password"');
     expect(authRoutes).toContain("verifyPassword(currentPassword");
+    expect(dataRoutes).toContain('dataRouter.get("/export"');
+    expect(dataRoutes).toContain('dataRouter.post("/import"');
     expect(migration).toContain("avatar_data MEDIUMTEXT");
     expect(migration).toContain("preferred_language VARCHAR(10)");
   });

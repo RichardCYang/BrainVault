@@ -17,13 +17,18 @@ export function notFoundHandler(req: Request, _res: Response, next: NextFunction
   next(new ApiError(404, "ROUTE_NOT_FOUND", `Route ${req.method} ${req.originalUrl} not found`));
 }
 
-export function errorHandler(error: unknown, _req: Request, res: Response, _next: NextFunction) {
+export function errorHandler(error: unknown, req: Request, res: Response, _next: NextFunction) {
   if (error instanceof MulterError) {
     const tooLarge = error.code === "LIMIT_FILE_SIZE";
+    const dataTransfer = req.originalUrl.startsWith("/api/data/import");
     res.status(tooLarge ? 413 : 400).json({
       error: {
-        code: tooLarge ? "ATTACHMENT_TOO_LARGE" : "ATTACHMENT_UPLOAD_FAILED",
-        message: tooLarge ? "Attachment exceeds the configured size limit" : "Attachment upload failed",
+        code: dataTransfer
+          ? (tooLarge ? "DATA_BACKUP_TOO_LARGE" : "DATA_BACKUP_UPLOAD_FAILED")
+          : (tooLarge ? "ATTACHMENT_TOO_LARGE" : "ATTACHMENT_UPLOAD_FAILED"),
+        message: dataTransfer
+          ? (tooLarge ? "Backup exceeds the configured data-transfer limit" : "Backup upload failed")
+          : (tooLarge ? "Attachment exceeds the configured size limit" : "Attachment upload failed"),
         details: { multerCode: error.code }
       }
     });

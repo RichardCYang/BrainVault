@@ -23,6 +23,7 @@ Writing happens directly on the page. There is no separate preview pane: every r
 - Username-and-password authentication backed by JWT, with profile photos, display names, and in-app password changes
 - Optional two-step verification with TOTP authenticator apps or multiple WebAuthn/FIDO2 passkeys per account
 - Authenticated attachment upload/download with configurable file-size limits and private disk storage
+- Complete account data export and restore as a lossless ZIP backup, including pages, collections, blocks, tags, settings, and original attachment bytes
 - Sanitized Markdown rendering through `markdown-it` and `sanitize-html`
 - Automatic MariaDB database and schema bootstrap during server startup
 - OpenAPI 3.1 specification included in the repository
@@ -223,6 +224,16 @@ Uploaded bytes are stored under `ATTACHMENT_UPLOAD_DIR`, which defaults to `uplo
 
 The default maximum file size is 25 MB. Adjust `MAX_ATTACHMENT_SIZE_MB` when needed. Do not point `ATTACHMENT_UPLOAD_DIR` at `public/`, `docs/`, `.git/`, or the project root.
 
+## Complete data backup and restore
+
+Open **Settings → Data** to download a complete BrainVault backup or restore one that BrainVault previously exported. The ZIP contains the account's full workspace graph: normal and archived pages, collections, nested blocks, block metadata, page/tag relationships, supported profile preferences, and every attachment file as its original byte sequence.
+
+Each attachment entry is recorded with its byte size, CRC-32, and SHA-256 digest. Restore validates the ZIP directory, manifest relationships, entry paths, counts, and attachment digests before replacing current workspace data. Files are staged first, and the database replacement runs inside a transaction so a malformed or incomplete backup does not partially overwrite the account.
+
+Restore is intentionally destructive for workspace content: the current account's pages, collections, blocks, tags links, and attachment directory are replaced by the backup state. The login username, password hash, authenticator secret, passkeys, and other security credentials are not exported and remain unchanged.
+
+`DATA_TRANSFER_MAX_SIZE_MB` limits one uploaded backup ZIP and defaults to 4096 MB. The export response streams the archive rather than buffering the entire backup in memory. Only ZIP files produced by BrainVault's data export are accepted.
+
 ## Languages
 
 The browser interface supports:
@@ -280,6 +291,7 @@ Translations live in `public/i18n.js`. Static HTML uses `data-i18n*` attributes,
 | `BOOKMARK_FETCH_MAX_BYTES` | `524288` | Maximum document-head bytes inspected for one bookmark preview |
 | `ATTACHMENT_UPLOAD_DIR` | `uploads` | Private on-disk directory for uploaded attachment bytes |
 | `MAX_ATTACHMENT_SIZE_MB` | `25` | Maximum size of one uploaded attachment in megabytes |
+| `DATA_TRANSFER_MAX_SIZE_MB` | `4096` | Maximum size of one uploaded complete-data backup ZIP in megabytes |
 
 Never commit a real `.env` file. The repository already ignores it; keep shareable defaults in `.env.example` instead.
 
@@ -316,6 +328,8 @@ Most API routes require a bearer token returned by the register or login endpoin
 | `PATCH` | `/api/blocks/:blockId` | Update a block |
 | `DELETE` | `/api/blocks/:blockId` | Delete a block and its descendants, including stored attachment files |
 | `GET` | `/api/blocks/:blockId/attachment` | Download an attachment after ownership verification |
+| `GET` | `/api/data/export` | Stream a complete ZIP backup of the authenticated account workspace |
+| `POST` | `/api/data/import` | Validate and restore a BrainVault backup ZIP for the authenticated account |
 | `POST` | `/api/pages/:pageId/blocks/reorder` | Move or reorder blocks |
 | `GET` | `/api/pages/:pageId/render` | Render sanitized page HTML |
 | `GET` | `/api/search?q=...` | Search titles and block Markdown |

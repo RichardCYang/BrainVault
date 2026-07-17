@@ -253,6 +253,30 @@ components:
           type: string
           minLength: 8
           maxLength: 128
+    DataTransferCounts:
+      type: object
+      required: [pages, blocks, attachments, tags]
+      properties:
+        pages:
+          type: integer
+          minimum: 0
+        blocks:
+          type: integer
+          minimum: 0
+        attachments:
+          type: integer
+          minimum: 0
+        tags:
+          type: integer
+          minimum: 0
+    DataImportResponse:
+      type: object
+      required: [user, counts]
+      properties:
+        user:
+          $ref: '#/components/schemas/PublicUser'
+        counts:
+          $ref: '#/components/schemas/DataTransferCounts'
     PageInput:
       type: object
       required: [title]
@@ -953,6 +977,50 @@ paths:
       responses:
         '200':
           description: Rendered HTML
+  /api/data/export:
+    get:
+      summary: Export the authenticated account workspace as a complete BrainVault ZIP backup
+      responses:
+        '200':
+          description: Lossless workspace backup containing the manifest and original attachment bytes
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Authenticated user no longer exists
+  /api/data/import:
+    post:
+      summary: Replace the authenticated account workspace from a BrainVault backup ZIP
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [backup]
+              properties:
+                backup:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Backup validated and restored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataImportResponse'
+        '400':
+          description: Missing, malformed, incompatible, or integrity-failed backup
+        '409':
+          description: Backup identifiers conflict with data owned by another account
+        '413':
+          description: Backup exceeds DATA_TRANSFER_MAX_SIZE_MB
   /api/search:
     get:
       summary: Search pages and markdown blocks

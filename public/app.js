@@ -526,6 +526,10 @@ const elements = {
   accountNewPassword: $("#account-new-password"),
   accountConfirmPassword: $("#account-confirm-password"),
   accountPasswordSave: $("#account-password-save"),
+  accountDataExport: $("#account-data-export"),
+  accountDataInput: $("#account-data-input"),
+  accountDataFileName: $("#account-data-file-name"),
+  accountDataImport: $("#account-data-import"),
   accountMfaPassword: $("#account-mfa-password"),
   accountMfaSummary: $("#account-mfa-summary"),
   accountTotpStatus: $("#account-totp-status"),
@@ -977,6 +981,79 @@ async function downloadAttachment(block) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
 }
 
+function getResponseFilename(response, fallback) {
+  const contentDisposition = response.headers.get("content-disposition") ?? "";
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      // Fall back to the simple filename below.
+    }
+  }
+  const quotedMatch = contentDisposition.match(/filename="([^"]+)"/i);
+  return quotedMatch?.[1] || fallback;
+}
+
+async function downloadUserDataBackup() {
+  const headers = new Headers();
+  if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
+  let response;
+  try {
+    response = await fetch("/api/data/export", { headers });
+  } catch {
+    throw new Error(t("errors.network"));
+  }
+
+  if (!response.ok) {
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      // Use the localized fallback below when the response is not JSON.
+    }
+    if (response.status === 401) {
+      closeAccountSettings({ restoreFocus: false });
+      setToken(null);
+      state.user = null;
+      renderShell();
+    }
+    throw new Error(translateApiError(data, response.status));
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = getResponseFilename(response, `BrainVault-backup-${new Date().toISOString().slice(0, 10)}.zip`);
+  link.rel = "noopener";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
+function resetDataImportSelection() {
+  elements.accountDataInput.value = "";
+  elements.accountDataFileName.textContent = t("account.noBackupSelected");
+  elements.accountDataImport.disabled = true;
+}
+
+async function restoreUserDataBackup(file) {
+  const formData = new FormData();
+  formData.append("backup", file, file.name);
+  const data = await api("/api/data/import", { method: "POST", body: formData });
+  state.user = data.user;
+  await applyUserPreferredLanguage();
+  fillAccountSettings();
+  elements.searchInput.value = "";
+  state.searchQuery = "";
+  state.activeTag = "";
+  await loadPages("", "");
+  showHome();
+  return data.counts;
+}
+
 function getUserInitials(user = state.user) {
   const source = user?.name?.trim() || user?.username?.trim() || "BV";
   const parts = source.split(/\s+/).filter(Boolean);
@@ -1024,7 +1101,7 @@ function setAccountMessage(message = "", isError = false) {
 }
 
 function setAccountPanel(panel, { focusTab = false } = {}) {
-  const nextPanel = ["profile", "preferences", "security"].includes(panel) ? panel : "profile";
+  const nextPanel = ["profile", "preferences", "security", "data"].includes(panel) ? panel : "profile";
   state.activeAccountPanel = nextPanel;
   elements.accountSettingsTabs.forEach((tab) => {
     const selected = tab.dataset.accountPanel === nextPanel;
@@ -1181,6 +1258,7 @@ function fillAccountSettings() {
   );
   elements.accountAvatarRemove.disabled = !state.pendingAvatarData;
   elements.accountPasswordForm.reset();
+  resetDataImportSelection();
   elements.accountMfaPassword.value = "";
   elements.accountPasskeyRegisterForm.reset();
   hideTotpSetup();
@@ -5503,6 +5581,54 @@ document.addEventListener("keydown", handleAccountSettingsKeydown);
 elements.accountSettingsTabs.forEach((tab) => {
   tab.addEventListener("click", () => setAccountPanel(tab.dataset.accountPanel));
   tab.addEventListener("keydown", handleAccountTabKeydown);
+});
+
+elements.accountDataExport.addEventListener("click", async () => {
+  elements.accountDataExport.disabled = true;
+  try {
+    setAccountMessage(t("account.exportingData"));
+    await downloadUserDataBackup();
+    setAccountMessage(t("account.exportReady"));
+  } catch (error) {
+    setAccountMessage(error.message, true);
+  } finally {
+    elements.accountDataExport.disabled = false;
+  }
+});
+
+elements.accountDataInput.addEventListener("change", () => {
+  const [file] = elements.accountDataInput.files ?? [];
+  elements.accountDataFileName.textContent = file?.name || t("account.noBackupSelected");
+  elements.accountDataImport.disabled = !file;
+  setAccountMessage();
+});
+
+elements.accountDataImport.addEventListener("click", async () => {
+  const [file] = elements.accountDataInput.files ?? [];
+  if (!file) return;
+  if (!window.confirm(t("account.importConfirm"))) return;
+
+  elements.accountDataExport.disabled = true;
+  elements.accountDataInput.disabled = true;
+  elements.accountDataImport.disabled = true;
+  try {
+    setAccountMessage(t("account.importingData"));
+    const counts = await restoreUserDataBackup(file);
+    resetDataImportSelection();
+    const message = t("account.importComplete", {
+      pages: formatNumber(counts.pages),
+      blocks: formatNumber(counts.blocks),
+      attachments: formatNumber(counts.attachments)
+    });
+    setAccountMessage(message);
+    setStatus(message);
+  } catch (error) {
+    setAccountMessage(error.message, true);
+  } finally {
+    elements.accountDataExport.disabled = false;
+    elements.accountDataInput.disabled = false;
+    elements.accountDataImport.disabled = !(elements.accountDataInput.files?.length);
+  }
 });
 
 elements.accountAvatarInput.addEventListener("change", async () => {

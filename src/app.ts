@@ -10,6 +10,7 @@ import { authRouter } from "./routes/auth.routes.js";
 import { pageRouter } from "./routes/page.routes.js";
 import { blockRouter } from "./routes/block.routes.js";
 import { searchRouter } from "./routes/search.routes.js";
+import { dataRouter } from "./routes/data.routes.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.js";
 
 export function createApp() {
@@ -55,6 +56,7 @@ export function createApp() {
   app.use("/api/pages", pageRouter);
   app.use("/api", blockRouter);
   app.use("/api/search", searchRouter);
+  app.use("/api/data", dataRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

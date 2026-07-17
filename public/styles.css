@@ -10293,3 +10293,94 @@ button.danger {
     box-shadow: none;
   }
 }
+
+/* Complete workspace data backup and restore */
+.account-data-stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.account-data-card {
+  display: grid;
+  gap: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(247, 251, 253, 0.72);
+  padding: 1rem;
+}
+
+.account-data-card > div:first-child {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.account-data-card h4 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: 0.9rem;
+}
+
+.account-data-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.account-data-card .account-data-warning {
+  border-left: 3px solid var(--danger);
+  background: rgba(190, 67, 67, 0.07);
+  color: var(--danger);
+  padding: 0.7rem 0.8rem;
+}
+
+.account-data-actions,
+.account-data-file-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.account-data-actions {
+  justify-content: flex-end;
+}
+
+.account-data-file-row > span {
+  min-width: 0;
+  flex: 1 1 12rem;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-data-actions button {
+  min-width: 10.5rem;
+}
+
+.app-mode .account-data-card {
+  border-color: var(--chrome-line);
+  background: var(--chrome-surface-soft);
+}
+
+.app-mode .account-data-card h4 {
+  color: var(--chrome-text);
+}
+
+.app-mode .account-data-card p,
+.app-mode .account-data-file-row > span {
+  color: var(--chrome-text-soft);
+}
+
+@media (max-width: 520px) {
+  .account-data-actions {
+    justify-content: stretch;
+  }
+
+  .account-data-actions button,
+  .account-data-file-row .account-upload-button {
+    width: 100%;
+  }
+}

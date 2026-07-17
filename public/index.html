@@ -497,6 +497,10 @@
                 <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10M12 14v2.5"></path></svg>
                 <span data-i18n="account.security">Security</span>
               </button>
+              <button id="account-tab-data" type="button" role="tab" aria-selected="false" aria-controls="account-panel-data" data-account-panel="data" tabindex="-1">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12M8 11l4 4 4-4"></path><path d="M5 16v3h14v-3"></path></svg>
+                <span data-i18n="account.data">Data</span>
+              </button>
             </div>
 
             <button id="logout-button" type="button" class="account-settings-logout">
@@ -557,6 +561,41 @@
                   <p data-i18n="account.languageDescription">Use this language whenever you sign in.</p>
                 </div>
                 <select id="language-select" aria-label="Language" data-i18n-aria-label="language.label"></select>
+              </div>
+            </section>
+
+            <section id="account-panel-data" class="account-settings-panel hidden" role="tabpanel" aria-labelledby="account-tab-data" data-account-panel-content="data">
+              <div class="account-panel-heading">
+                <h3 data-i18n="account.dataTitle">Data</h3>
+                <p data-i18n="account.dataDescription">Export or restore your complete BrainVault workspace.</p>
+              </div>
+
+              <div class="account-data-stack">
+                <article class="account-data-card">
+                  <div>
+                    <h4 data-i18n="account.exportTitle">Export all data</h4>
+                    <p data-i18n="account.exportDescription">Download pages, collections, blocks, tags, profile settings, and every attached file in one ZIP backup.</p>
+                  </div>
+                  <div class="account-data-actions">
+                    <button id="account-data-export" type="button" data-i18n="account.exportButton">Export ZIP backup</button>
+                  </div>
+                </article>
+
+                <article class="account-data-card account-data-card--restore">
+                  <div>
+                    <h4 data-i18n="account.importTitle">Restore a backup</h4>
+                    <p data-i18n="account.importDescription">Validate and restore a ZIP backup exported by BrainVault. Passwords and two-step verification remain unchanged.</p>
+                  </div>
+                  <p class="account-data-warning" data-i18n="account.importWarning">Restoring replaces every current page, collection, block, tag link, and attachment in this account.</p>
+                  <div class="account-data-file-row">
+                    <label for="account-data-input" class="account-upload-button" data-i18n="account.chooseBackup">Choose backup</label>
+                    <input id="account-data-input" class="visually-hidden" type="file" accept=".zip,application/zip" />
+                    <span id="account-data-file-name" data-i18n="account.noBackupSelected">No backup selected</span>
+                  </div>
+                  <div class="account-data-actions">
+                    <button id="account-data-import" class="danger" type="button" disabled data-i18n="account.importButton">Restore selected backup</button>
+                  </div>
+                </article>
               </div>
             </section>
 
