@@ -75,6 +75,9 @@ describe("AI conversation block", () => {
   it("uses responsive chat bubbles and hides settings in read mode", () => {
     expect(styles).toContain(".ai-chat-message--question");
     expect(styles).toContain(".ai-chat-message--answer");
+    expect(styles).toMatch(/\.ai-chat-block-editor\s*\{[^}]*border:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s);
+    expect(styles).toMatch(/\.ai-chat-settings\s*\{[^}]*background:\s*var\(--ai-chat-panel\);[^}]*box-shadow:\s*var\(--shadow-card\);/s);
+    expect(styles).toMatch(/\.ai-chat-message\s*\{[^}]*border-radius:\s*8px;[^}]*background:\s*var\(--ai-chat-panel\);[^}]*box-shadow:\s*var\(--shadow-card\);/s);
     expect(styles).toMatch(/\.page-view\.is-read-only \.ai-chat-settings\s*\{[^}]*display:\s*none;/s);
     expect(styles).toMatch(/@media \(max-width: 640px\)[\s\S]*\.ai-chat-message,[\s\S]*width:\s*100%;/s);
   });
