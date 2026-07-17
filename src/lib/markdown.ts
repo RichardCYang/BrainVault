@@ -16,6 +16,103 @@ const markdown = new MarkdownIt({
   typographer: true
 });
 
+function renderMathPlaceholder(latex: string, displayMode: boolean) {
+  const source = latex.trim();
+  const escaped = markdown.utils.escapeHtml(source);
+  const tag = displayMode ? "div" : "span";
+  const mode = displayMode ? "display" : "inline";
+  return `<${tag} class="math-expression math-expression--${mode}" data-latex="${escaped}" data-math-display="${String(displayMode)}">${escaped}</${tag}>`;
+}
+
+function mathInlineParensRule(state: any, silent: boolean) {
+  const start = state.pos;
+  if (state.src.slice(start, start + 2) !== "\\(") return false;
+  const end = state.src.indexOf("\\)", start + 2);
+  if (end < 0 || state.src.slice(start + 2, end).includes("\n")) return false;
+  if (!silent) {
+    const token = state.push("math_inline", "span", 0);
+    token.content = state.src.slice(start + 2, end).trim();
+    token.markup = "\\(\\)";
+  }
+  state.pos = end + 2;
+  return true;
+}
+
+function mathInlineDollarRule(state: any, silent: boolean) {
+  const start = state.pos;
+  if (state.src[start] !== "$" || state.src[start + 1] === "$" || /\s/.test(state.src[start + 1] ?? "")) {
+    return false;
+  }
+
+  let end = start + 1;
+  while ((end = state.src.indexOf("$", end)) >= 0) {
+    let slashCount = 0;
+    for (let index = end - 1; index >= 0 && state.src[index] === "\\"; index -= 1) slashCount += 1;
+    if (slashCount % 2 === 0) break;
+    end += 1;
+  }
+  if (end < 0 || /\s/.test(state.src[end - 1] ?? "") || state.src.slice(start + 1, end).includes("\n")) {
+    return false;
+  }
+
+  if (!silent) {
+    const token = state.push("math_inline", "span", 0);
+    token.content = state.src.slice(start + 1, end).trim();
+    token.markup = "$";
+  }
+  state.pos = end + 1;
+  return true;
+}
+
+function mathBlockRule(state: any, startLine: number, endLine: number, silent: boolean) {
+  const start = state.bMarks[startLine] + state.tShift[startLine];
+  const max = state.eMarks[startLine];
+  const firstLine = state.src.slice(start, max);
+  if (!firstLine.startsWith("$$")) return false;
+
+  const singleLine = firstLine.trim();
+  let content = "";
+  let nextLine = startLine + 1;
+
+  if (singleLine.length > 4 && singleLine.endsWith("$$")) {
+    content = singleLine.slice(2, -2);
+  } else {
+    content = firstLine.slice(2);
+    let closed = false;
+    for (; nextLine < endLine; nextLine += 1) {
+      const lineStart = state.bMarks[nextLine] + state.tShift[nextLine];
+      const lineEnd = state.eMarks[nextLine];
+      const line = state.src.slice(lineStart, lineEnd);
+      const closing = line.indexOf("$$");
+      if (closing >= 0) {
+        content += `${content ? "\n" : ""}${line.slice(0, closing)}`;
+        nextLine += 1;
+        closed = true;
+        break;
+      }
+      content += `${content ? "\n" : ""}${line}`;
+    }
+    if (!closed) return false;
+  }
+
+  if (silent) return true;
+  state.line = nextLine;
+  const token = state.push("math_block", "div", 0);
+  token.block = true;
+  token.content = content.trim();
+  token.map = [startLine, nextLine];
+  token.markup = "$$";
+  return true;
+}
+
+markdown.inline.ruler.before("escape", "math_inline_parens", mathInlineParensRule);
+markdown.inline.ruler.before("text", "math_inline_dollar", mathInlineDollarRule);
+markdown.block.ruler.before("fence", "math_block", mathBlockRule, {
+  alt: ["paragraph", "reference", "blockquote", "list"]
+});
+markdown.renderer.rules.math_inline = (tokens, index) => renderMathPlaceholder(tokens[index].content, false);
+markdown.renderer.rules.math_block = (tokens, index) => `${renderMathPlaceholder(tokens[index].content, true)}\n`;
+
 const allowedTags = sanitizeHtml.defaults.allowedTags.concat([
   "div",
   "img",
@@ -45,7 +142,7 @@ const allowedTags = sanitizeHtml.defaults.allowedTags.concat([
 const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   ...sanitizeHtml.defaults.allowedAttributes,
   a: ["href", "name", "target", "rel"],
-  div: ["class"],
+  div: ["class", "data-latex", "data-math-display"],
   section: ["class"],
   article: ["class"],
   header: ["class"],
@@ -53,7 +150,7 @@ const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   p: ["class"],
   img: ["src", "srcset", "alt", "title", "width", "height", "loading", "referrerpolicy"],
   code: ["class"],
-  span: ["class", "style"],
+  span: ["class", "style", "data-latex", "data-math-display"],
   input: ["type", "checked", "disabled"],
   table: ["class"],
   thead: ["class"],
@@ -225,6 +322,8 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
       return sanitizeHtml(renderBookmarkHtml(metadata), sanitizeOptions);
     case "AI_CHAT":
       return renderAiChat(metadata);
+    case "MATH":
+      return sanitizeHtml(renderMathPlaceholder(markdownValue, true), sanitizeOptions);
     case "CODE":
       return renderTextAlignment(renderMarkdown(`\`\`\`\n${stripFence(markdownValue)}\n\`\`\``), metadata);
     case "DIVIDER":

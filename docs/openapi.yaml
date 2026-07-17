@@ -305,7 +305,7 @@ components:
       properties:
         type:
           type: string
-          enum: [MARKDOWN, HEADING_1, HEADING_2, HEADING_3, TODO, QUOTE, CALLOUT, TABLE, KANBAN, DATABASE, BOOKMARK, AI_CHAT, CODE, DIVIDER, IMAGE, ATTACHMENT]
+          enum: [MARKDOWN, HEADING_1, HEADING_2, HEADING_3, TODO, QUOTE, CALLOUT, TABLE, KANBAN, DATABASE, BOOKMARK, AI_CHAT, MATH, CODE, DIVIDER, IMAGE, ATTACHMENT]
         markdown:
           type: string
         checked:

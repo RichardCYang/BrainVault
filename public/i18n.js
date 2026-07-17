@@ -265,6 +265,7 @@ export const translationCatalogs = {
       italic: "Italic",
       strike: "Strikethrough",
       code: "Inline code",
+      inlineMath: "Inline formula",
       link: "Link",
       alignLeft: "Align left",
       alignCenter: "Align center",
@@ -290,10 +291,17 @@ export const translationCatalogs = {
         DATABASE: "Database",
         BOOKMARK: "Bookmark",
         AI_CHAT: "AI chat",
+        MATH: "Formula",
         CODE: "Code",
         DIVIDER: "Divider",
         IMAGE: "Image", ATTACHMENT: "Attachment"
       }
+    },
+    math: {
+      blockPlaceholder: "Enter LaTeX, e.g. \\frac{a}{b}",
+      blockAria: "LaTeX formula source",
+      previewAria: "Rendered formula preview",
+      emptyPreview: "Enter a formula to preview it."
     },
     attachment: {
       unnamed: "Unnamed attachment",
@@ -350,6 +358,7 @@ export const translationCatalogs = {
       DATABASE: { label: "Database", hint: "Structured rows with properties, views, filters, and sorts", keywords: "database data source table view filter sort properties" },
       BOOKMARK: { label: "Bookmark", hint: "Save web pages as a list or OpenGraph gallery", keywords: "bookmark web link url preview opengraph gallery list" },
       AI_CHAT: { label: "AI chat", hint: "Save a question and AI answer as chat bubbles", keywords: "ai chat conversation question answer model prompt" },
+      MATH: { label: "Formula", hint: "Display a centered LaTeX formula", keywords: "math latex formula equation display" },
       CODE: { label: "Code", hint: "Code block", keywords: "code programming" },
       DIVIDER: { label: "Divider", hint: "Horizontal divider", keywords: "divider hr line separator" },
       IMAGE: { label: "Image", hint: "Image URL block", keywords: "image img photo picture" },
@@ -1151,6 +1160,7 @@ export const translationCatalogs = {
       italic: "이탤릭",
       strike: "취소선",
       code: "인라인 코드",
+      inlineMath: "인라인 수식",
       link: "링크",
       alignLeft: "좌측 정렬",
       alignCenter: "중앙 정렬",
@@ -1162,7 +1172,13 @@ export const translationCatalogs = {
       colorRed: "빨간색 글자",
       colorGreen: "초록색 글자"
     },
-    blocks: { types: { MARKDOWN: "텍스트", HEADING_1: "제목 1", HEADING_2: "제목 2", HEADING_3: "제목 3", TODO: "할 일", QUOTE: "인용", CALLOUT: "콜아웃", TABLE: "표", KANBAN: "보드", DATABASE: "데이터베이스", BOOKMARK: "북마크", AI_CHAT: "AI 대화", CODE: "코드", DIVIDER: "구분선", IMAGE: "이미지", ATTACHMENT: "첨부파일" } },
+    blocks: { types: { MARKDOWN: "텍스트", HEADING_1: "제목 1", HEADING_2: "제목 2", HEADING_3: "제목 3", TODO: "할 일", QUOTE: "인용", CALLOUT: "콜아웃", TABLE: "표", KANBAN: "보드", DATABASE: "데이터베이스", BOOKMARK: "북마크", AI_CHAT: "AI 대화", MATH: "수식", CODE: "코드", DIVIDER: "구분선", IMAGE: "이미지", ATTACHMENT: "첨부파일" } },
+    math: {
+      blockPlaceholder: "LaTeX 수식을 입력하세요. 예: \\frac{a}{b}",
+      blockAria: "LaTeX 수식 원문",
+      previewAria: "렌더링된 수식 미리보기",
+      emptyPreview: "수식을 입력하면 여기에 미리보기가 표시됩니다."
+    },
     attachment: {
       unnamed: "이름 없는 첨부파일",
       chooseFile: "첨부할 파일 선택",
@@ -1218,6 +1234,7 @@ export const translationCatalogs = {
       DATABASE: { label: "데이터베이스", hint: "속성, 뷰, 필터와 정렬을 지원하는 구조화 데이터", keywords: "database data source 데이터베이스 표 뷰 필터 정렬 속성" },
       BOOKMARK: { label: "북마크", hint: "웹 페이지를 리스트 또는 OpenGraph 갤러리로 저장", keywords: "bookmark web link url preview opengraph 북마크 링크 웹 갤러리 리스트" },
       AI_CHAT: { label: "AI 대화", hint: "질문과 AI 답변을 채팅 말풍선으로 저장", keywords: "ai chat conversation 질문 답변 모델 프롬프트 대화" },
+      MATH: { label: "수식", hint: "가운데 정렬된 LaTeX 수식 표시", keywords: "math latex formula equation 수식 공식 방정식" },
       CODE: { label: "코드", hint: "코드 블록", keywords: "code 코드" },
       DIVIDER: { label: "구분선", hint: "가로 구분선", keywords: "divider hr line 구분선" },
       IMAGE: { label: "이미지", hint: "이미지 URL 블록", keywords: "image img 사진 이미지" },

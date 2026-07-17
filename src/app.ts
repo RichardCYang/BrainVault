@@ -21,7 +21,10 @@ export function createApp() {
     helmet({
       contentSecurityPolicy: {
         directives: {
-          imgSrc: ["'self'", "data:", "http:", "https:"]
+          imgSrc: ["'self'", "data:", "http:", "https:"],
+          scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
+          fontSrc: ["'self'", "data:", "https://cdn.jsdelivr.net"]
         }
       }
     })

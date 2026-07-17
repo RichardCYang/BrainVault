@@ -36,6 +36,7 @@ export type BlockType =
   | "DATABASE"
   | "BOOKMARK"
   | "AI_CHAT"
+  | "MATH"
   | "CODE"
   | "DIVIDER"
   | "IMAGE"

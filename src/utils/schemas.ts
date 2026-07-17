@@ -18,6 +18,7 @@ export const blockTypeSchema = z.enum([
   "DATABASE",
   "BOOKMARK",
   "AI_CHAT",
+  "MATH",
   "CODE",
   "DIVIDER",
   "IMAGE",

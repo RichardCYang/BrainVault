@@ -14,9 +14,9 @@ This image is captured from the actual BrainVault browser UI (`public/index.html
 
 - Page-first workspace with a compact document tree and automatic title saving
 - Unicode Emoji 17 picker for every page and collection, with Korean/English search, categories, skin-tone variants, and recent selections
-- Slash commands for headings, tasks, quotes, callouts, tables, databases, boards, AI conversations, code, dividers, images, and file attachments
+- Slash commands for headings, tasks, quotes, callouts, tables, databases, boards, AI conversations, LaTeX formulas, code, dividers, images, and file attachments
 - Drag-and-drop block reordering with support for nested content
-- Inline formatting for bold, italic, strikethrough, code, links, and text color
+- Inline formatting for bold, italic, strikethrough, code, LaTeX formulas, links, and text color
 - Block text alignment for left, center, right, and justified paragraphs
 - Editable table blocks with row, column, header, and keyboard navigation controls
 - Database blocks with typed properties, saved table/board/list views, per-view property visibility, filters, sorting, and board grouping
@@ -45,7 +45,7 @@ This image is captured from the actual BrainVault browser UI (`public/index.html
 | Authentication | JSON Web Tokens, bcrypt, RFC 6238 TOTP, and WebAuthn/FIDO2 passkeys |
 | Validation | Zod |
 | File upload | Multer |
-| Markdown | markdown-it and sanitize-html |
+| Markdown and math | markdown-it, sanitize-html, and KaTeX |
 | Testing | Vitest and Supertest |
 | Frontend | Vanilla HTML, CSS, and JavaScript |
 
@@ -189,15 +189,22 @@ Local WebAuthn development works at `http://localhost:4000`. Production deployme
 | `/` | Open the block type menu |
 | `Ctrl/Cmd + B` | Apply bold formatting to selected text |
 | `Ctrl/Cmd + I` | Apply italic formatting to selected text |
+| `Ctrl/Cmd + Shift + M` | Wrap selected text as an inline LaTeX formula |
 | Drag the six-dot handle | Reorder a block within its current hierarchy |
 
 Useful slash commands include:
 
 ```text
-/h1  /h2  /h3  /todo  /quote  /callout  /table  /database  /board  /bookmark  /ai  /code  /divider  /image  /file
+/h1  /h2  /h3  /todo  /quote  /callout  /table  /database  /board  /bookmark  /ai  /math  /code  /divider  /image  /file
 ```
 
 Table cells support arrow-key movement. `Enter` advances down the current column, while `Tab` from the final cell adds another row.
+
+### LaTeX formulas
+
+Type `/math` to create a centered display-formula block with a live KaTeX preview. Enter the formula source without surrounding delimiters, for example `\frac{-b \pm \sqrt{b^2-4ac}}{2a}`.
+
+For inline formulas, select text and press the `∑` toolbar button or use `Ctrl/Cmd + Shift + M`; BrainVault wraps the selection in `\(...\)`. Markdown blocks also recognize `$...$` and display formulas delimited by `$$...$$`. Formula rendering is sanitized and uses KaTeX with trusted commands disabled.
 
 Type `/database` to create a database block. Each database has one required title property plus optional text, number, select, multi-select, checkbox, date, and URL properties. Add table, board, or list views over the same rows; each view keeps its own name, layout, visible properties, filters, sort order, and board grouping. The editor uses a borderless database toolbar with view tabs, popover-based Properties/Filter/Sort controls, in-view search, a split New button, transparent column headers, and colored select pills. Property and row changes are stored in the block's `metadata.database` object, while a searchable text summary is kept in `markdown`.
 

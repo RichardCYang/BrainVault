@@ -1852,6 +1852,97 @@ kbd {
   outline: none;
 }
 
+.text-block-editor {
+  display: grid;
+  min-width: 0;
+  gap: 0.48rem;
+}
+
+.block-rendered-preview {
+  display: none;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 1rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.block-rendered-preview > :first-child {
+  margin-top: 0;
+}
+
+.block-rendered-preview > :last-child {
+  margin-bottom: 0;
+}
+
+.block-rendered-preview pre {
+  max-width: 100%;
+  overflow-x: auto;
+  border-radius: var(--radius-md);
+  background: #f4f9fc;
+  padding: 0.62rem 0.82rem;
+}
+
+.block-rendered-preview img {
+  max-width: 100%;
+  height: auto;
+}
+
+.math-block-editor {
+  gap: 0.58rem;
+}
+
+.editor-block-row[data-block-type="MATH"] .block-row-input {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #f8fbfd;
+  padding: 0.56rem 0.7rem;
+  color: #294357;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.editor-block-row[data-block-type="MATH"] .block-rendered-preview {
+  display: grid;
+}
+
+.math-block-preview {
+  min-height: 4rem;
+  place-items: center;
+  overflow-x: auto;
+  border: 1px solid rgba(69, 153, 220, 0.18);
+  border-radius: var(--radius-md);
+  background: #fbfdff;
+  padding: 0.72rem 0.9rem;
+  text-align: center;
+}
+
+.math-block-preview.is-empty {
+  color: var(--muted-light);
+  font-size: 0.84rem;
+}
+
+.math-expression--inline {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: -0.08em;
+}
+
+.math-expression--display {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-align: center;
+}
+
+.math-expression--display .katex-display {
+  margin: 0.4rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
 .editor-block-row[data-block-type="HEADING_1"] {
   margin-top: 1.1rem;
 }
@@ -3280,6 +3371,24 @@ kbd {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.page-view.is-read-only .text-block-editor > .block-row-input {
+  display: none;
+}
+
+.page-view.is-read-only .text-block-editor > .block-rendered-preview {
+  display: block;
+}
+
+.page-view.is-read-only .inline-todo {
+  display: none;
+}
+
+.page-view.is-read-only .math-block-preview {
+  border-color: transparent;
+  background: transparent;
+  padding-inline: 0;
+}
+
 .page-view.is-read-only .block-row-input,
 .page-view.is-read-only .table-cell-input,
 .page-view.is-read-only .kanban-title-input,
@@ -4421,6 +4530,21 @@ kbd {
     visibility: hidden !important;
     opacity: 0 !important;
     pointer-events: none !important;
+  }
+
+  body.pdf-export-mode .text-block-editor > .block-row-input,
+  body.pdf-export-mode .inline-todo {
+    display: none !important;
+  }
+
+  body.pdf-export-mode .text-block-editor > .block-rendered-preview {
+    display: block !important;
+  }
+
+  body.pdf-export-mode .math-block-preview {
+    border-color: transparent !important;
+    background: transparent !important;
+    padding-inline: 0 !important;
   }
 
   body.pdf-export-mode input,

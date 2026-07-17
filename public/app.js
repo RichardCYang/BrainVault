@@ -90,6 +90,7 @@ const blockTypeLabels = {
   DATABASE: "blocks.types.DATABASE",
   BOOKMARK: "blocks.types.BOOKMARK",
   AI_CHAT: "blocks.types.AI_CHAT",
+  MATH: "blocks.types.MATH",
   CODE: "blocks.types.CODE",
   DIVIDER: "blocks.types.DIVIDER",
   IMAGE: "blocks.types.IMAGE",
@@ -360,6 +361,7 @@ const slashCommands = [
   { type: "KANBAN", command: "/board", icon: "kanban" },
   { type: "BOOKMARK", command: "/bookmark", icon: "bookmark" },
   { type: "AI_CHAT", command: "/ai", icon: "ai-chat" },
+  { type: "MATH", command: "/math", icon: "math" },
   { type: "CODE", command: "/code", icon: "code" },
   { type: "DIVIDER", command: "/divider", icon: "divider" },
   { type: "IMAGE", command: "/image", icon: "image" },
@@ -433,6 +435,9 @@ const slashCommandIconShapes = {
     ["path", { d: "M8 9h8" }],
     ["path", { d: "M8 13h5" }],
     ["path", { d: "m17.5 9 .45 1.05L19 10.5l-1.05.45L17.5 12l-.45-1.05L16 10.5l1.05-.45Z" }]
+  ],
+  math: [
+    ["path", { d: "M18 5H8l6 7-6 7h10" }]
   ],
   code: [
     ["path", { d: "m18 16 4-4-4-4" }],
@@ -2330,6 +2335,7 @@ function syncPageModeUi() {
   for (const row of elements.blockList.querySelectorAll(".editor-block-row")) {
     syncBlockReadOnlyState(row, readOnly);
   }
+  requestAnimationFrame(() => hydrateMathExpressions(elements.pageView));
 
   if (readOnly) {
     closeSlashMenu();
@@ -3496,18 +3502,94 @@ function createTableEditor(row, tableValue) {
   return editor;
 }
 
+function renderLatexInto(element, latex, displayMode = false) {
+  if (!element) return;
+  const source = String(latex ?? "").trim();
+  element.dataset.latex = source;
+  element.dataset.mathDisplay = String(displayMode);
+  element.classList.toggle("is-empty", !source);
+
+  if (!source) {
+    element.textContent = t("math.emptyPreview");
+    return;
+  }
+
+  const katex = globalThis.katex;
+  if (!katex?.render) {
+    element.textContent = source;
+    return;
+  }
+
+  try {
+    katex.render(source, element, {
+      displayMode,
+      throwOnError: false,
+      strict: "warn",
+      trust: false,
+      output: "htmlAndMathml"
+    });
+  } catch (error) {
+    console.warn("KaTeX rendering failed", error);
+    element.textContent = source;
+  }
+}
+
+function hydrateMathExpressions(root = document) {
+  for (const expression of root.querySelectorAll(".math-expression[data-latex]")) {
+    renderLatexInto(expression, expression.dataset.latex ?? expression.textContent ?? "", expression.dataset.mathDisplay === "true");
+  }
+}
+
+function updateMathBlockPreview(row, latex) {
+  const preview = row?.querySelector(".math-block-preview");
+  if (preview) renderLatexInto(preview, latex, true);
+}
+
+function updateRenderedBlockPreview(row, block) {
+  const preview = row?.querySelector(".block-rendered-preview");
+  if (!preview || !block) return;
+  if (block.type === "MATH") {
+    renderLatexInto(preview, block.markdown, true);
+    return;
+  }
+  preview.innerHTML = block.htmlCache ?? "";
+  if (!block.htmlCache) preview.textContent = block.markdown ?? "";
+  hydrateMathExpressions(preview);
+}
+
 function createTextBlockEditor(block) {
+  const editor = document.createElement("div");
+  editor.className = "text-block-editor";
+  if (block.type === "MATH") editor.classList.add("math-block-editor");
+
   const textarea = document.createElement("textarea");
   textarea.name = "markdown";
   textarea.className = "block-row-input";
-  textarea.rows = 1;
-  textarea.spellcheck = true;
-  textarea.placeholder = block.type === "DIVIDER" ? t("block.dividerPlaceholder") : t("block.contentPlaceholder");
+  textarea.rows = block.type === "MATH" ? 2 : 1;
+  textarea.spellcheck = block.type !== "MATH";
+  textarea.placeholder = block.type === "DIVIDER"
+    ? t("block.dividerPlaceholder")
+    : block.type === "MATH"
+      ? t("math.blockPlaceholder")
+      : t("block.contentPlaceholder");
   textarea.value = block.markdown ?? "";
   textarea.style.textAlign = getBlockTextAlign(block);
-  textarea.setAttribute("aria-label", t("block.contentAria", { type: getBlockTypeLabel(block.type) }));
+  textarea.setAttribute(
+    "aria-label",
+    block.type === "MATH" ? t("math.blockAria") : t("block.contentAria", { type: getBlockTypeLabel(block.type) })
+  );
+
+  const preview = document.createElement("div");
+  preview.className = "block-rendered-preview";
+  if (block.type === "MATH") {
+    preview.classList.add("math-block-preview", "math-expression", "math-expression--display");
+    preview.setAttribute("aria-label", t("math.previewAria"));
+  }
+
+  editor.append(textarea, preview);
+  updateRenderedBlockPreview(editor, block);
   requestAnimationFrame(() => autoGrowTextarea(textarea));
-  return textarea;
+  return editor;
 }
 
 function createAttachmentEditor(block) {
@@ -4476,6 +4558,7 @@ async function saveBlockRow(row, { quiet = false } = {}) {
   try {
     const data = await api(`/api/blocks/${blockId}`, { method: "PATCH", body: buildBlockPayload(row) });
     updateBlockInState(data.block);
+    updateRenderedBlockPreview(row, data.block);
     row.classList.remove("is-dirty");
     row.classList.remove("is-saving");
     row.classList.add("is-saved");
@@ -4609,7 +4692,7 @@ function updateInlineToolbarForTextarea(textarea) {
   if (!requireWritablePage({ announce: false })) return closeInlineToolbar();
   const row = getBlockRow(textarea);
   const selection = getTextareaSelection(textarea);
-  if (!row || !selection) return closeInlineToolbar();
+  if (!row || row.dataset.blockType === "MATH" || !selection) return closeInlineToolbar();
 
   closeSlashMenu();
   state.activeInlineBlockId = row.dataset.blockId;
@@ -4675,6 +4758,10 @@ function applyInlineFormat(format, value = "") {
   } else if (format === "code") {
     replacement = `\`${selected}\``;
     selectStart = selection.start + 1;
+    selectEnd = selectStart + selected.length;
+  } else if (format === "math-inline") {
+    replacement = `\\(${selected}\\)`;
+    selectStart = selection.start + 2;
     selectEnd = selectStart + selected.length;
   } else if (format === "link") {
     replacement = `[${selected}](https://)`;
@@ -5186,6 +5273,7 @@ async function exportCurrentPageToPdf() {
     closeKanbanCardStyleMenus();
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     elements.blockList.querySelectorAll("textarea").forEach(autoGrowTextarea);
+    hydrateMathExpressions(elements.pageView);
     restoreComputedStyles = freezePdfExportComputedStyles();
 
     await waitForPdfExportAssets();
@@ -5253,7 +5341,10 @@ function renderSelectedPage() {
 
   syncPageModeUi();
   renderPages();
-  requestAnimationFrame(focusPendingBlock);
+  requestAnimationFrame(() => {
+    hydrateMathExpressions(elements.pageView);
+    focusPendingBlock();
+  });
 }
 
 function normalizePageTitle(value) {
@@ -6270,7 +6361,10 @@ elements.blockList.addEventListener("input", (event) => {
   updateSlashMenuForTextarea(textarea);
   if (elements.slashMenu.classList.contains("hidden")) updateInlineToolbarForTextarea(textarea);
   const row = getBlockRow(textarea);
-  if (row) scheduleBlockSave(row);
+  if (row) {
+    if (row.dataset.blockType === "MATH") updateMathBlockPreview(row, textarea.value);
+    scheduleBlockSave(row);
+  }
 });
 
 elements.blockList.addEventListener("focusin", (event) => {
@@ -6332,13 +6426,13 @@ elements.blockList.addEventListener("keydown", async (event) => {
   const row = getBlockRow(textarea);
   if (!row) return;
 
-  if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.isComposing) {
+  if (row.dataset.blockType !== "MATH" && (event.ctrlKey || event.metaKey) && !event.altKey && !event.isComposing) {
     const shortcut = event.key.toLowerCase();
-    if (shortcut === "b" || shortcut === "i") {
+    if (shortcut === "b" || shortcut === "i" || (shortcut === "m" && event.shiftKey)) {
       event.preventDefault();
       state.activeInlineBlockId = row.dataset.blockId;
       state.activeInlineSelection = getTextareaSelection(textarea);
-      applyInlineFormat(shortcut === "b" ? "bold" : "italic");
+      applyInlineFormat(shortcut === "b" ? "bold" : shortcut === "i" ? "italic" : "math-inline");
       return;
     }
   }
@@ -6719,3 +6813,5 @@ window.addEventListener("scroll", () => {
 }, { passive: true });
 
 boot();
+
+window.addEventListener("load", () => hydrateMathExpressions(document));

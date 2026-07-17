@@ -9,6 +9,7 @@ import { attachmentUploadRoot, getAttachmentFilePath } from "./attachments.js";
 import { db, transaction, type DbClient } from "./db.js";
 import { ApiError } from "./http.js";
 import { createId } from "./id.js";
+import { renderBlockHtml } from "./markdown.js";
 import { copyZipEntryToFile, crc32, readZipDirectory, readZipEntryBuffer, updateCrc32, ZipWriter } from "./zip.js";
 import type { BlockType, UserRow } from "../types/domain.js";
 
@@ -35,7 +36,7 @@ const pageSchema = z.object({
 
 const blockTypes = [
   "MARKDOWN", "HEADING_1", "HEADING_2", "HEADING_3", "TODO", "QUOTE", "CALLOUT", "TABLE",
-  "KANBAN", "DATABASE", "BOOKMARK", "AI_CHAT", "CODE", "DIVIDER", "IMAGE", "ATTACHMENT"
+  "KANBAN", "DATABASE", "BOOKMARK", "AI_CHAT", "MATH", "CODE", "DIVIDER", "IMAGE", "ATTACHMENT"
 ] as const satisfies readonly BlockType[];
 
 const blockSchema = z.object({
@@ -430,7 +431,8 @@ async function importRows(client: DbClient, userId: string, manifest: BrainVault
        (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        block.id, block.page_id, block.parent_block_id, block.type, block.markdown, block.html_cache,
+        block.id, block.page_id, block.parent_block_id, block.type, block.markdown,
+        renderBlockHtml(block.type, block.markdown, Boolean(block.checked), block.metadata),
         block.checked, block.sort_order, block.metadata, block.created_at, block.updated_at
       ]
     );
