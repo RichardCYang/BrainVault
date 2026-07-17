@@ -72,7 +72,9 @@ Start the development server:
 npm run dev
 ```
 
-With `AUTO_BOOTSTRAP_DATABASE=true`, startup creates the database when permitted, reconciles the base schema, and applies any pending migrations. The app will be available at:
+With `AUTO_BOOTSTRAP_DATABASE=true`, startup creates the database when permitted, reconciles the base schema, and applies any pending migrations. After MariaDB is ready and the HTTP server is listening, the development command opens the app in the system default browser's private/incognito mode. The browser is opened only once for the current watch session, even when source changes restart the server.
+
+Automatic private-mode launch supports Chrome, Edge, Firefox, and Brave. If the default browser cannot be opened privately (for example, Safari has no supported private-window command-line switch), BrainVault reports the issue and does not fall back to a normal browser window. The app remains available at:
 
 ```text
 http://localhost:4000
@@ -204,7 +206,7 @@ Translations live in `public/i18n.js`. Static HTML uses `data-i18n*` attributes,
 | `npm run db:migrate` | Reconcile the schema and apply migrations |
 | `npm run db:seed` | Add the demo account and starter content |
 | `npm run setup` | Run environment, database, migration, and seed tasks |
-| `npm run dev` | Start the server in watch mode |
+| `npm run dev` | Start the server in watch mode and open the private default browser after DB readiness |
 | `npm run build` | Compile TypeScript into `dist/` |
 | `npm start` | Run the compiled server |
 | `npm test` | Execute the test suite once |
@@ -279,7 +281,7 @@ npm run build
 npm start
 ```
 
-Before using production mode, set a unique `JWT_SECRET` with at least 32 characters. The server refuses to start in production when the bundled development secret is still in use.
+The automatic browser launch belongs exclusively to `npm run dev`; `npm start` and production execution never invoke it. Before using production mode, set a unique `JWT_SECRET` with at least 32 characters. The server refuses to start in production when the bundled development secret is still in use.
 
 ## Project structure
 

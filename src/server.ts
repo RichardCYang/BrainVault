@@ -15,8 +15,13 @@ async function start() {
   }
 
   const app = createApp();
+  const appUrl = `http://localhost:${env.PORT}`;
   const server = app.listen(env.PORT, () => {
-    console.log(`BrainVault API listening on http://localhost:${env.PORT}`);
+    console.log(`BrainVault API listening on ${appUrl}`);
+
+    if (env.AUTO_BOOTSTRAP_DATABASE && process.env.BRAINVAULT_DEV_BROWSER_READY_SIGNAL === "1") {
+      console.log(`BRAINVAULT_DEV_BROWSER_READY=${appUrl}`);
+    }
   });
 
   function shutdown(signal: string) {
