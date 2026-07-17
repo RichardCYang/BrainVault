@@ -40,12 +40,15 @@ const page = {
   is_archived: 0,
   owner_id: user.id,
   parent_page_id: null,
+  edit_version: 1,
+  content_version: 1,
   created_at: "2026-07-14T00:00:00.000Z",
   updated_at: "2026-07-14T00:00:00.000Z"
 };
 const token = signAuthToken({ sub: user.id, username: user.username });
 
 beforeEach(async () => {
+  page.content_version = 1;
   database.blocks.clear();
   database.query.mockReset();
   database.queryOne.mockReset();
@@ -78,7 +81,9 @@ beforeEach(async () => {
   });
 
   database.execute.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
-    if (sql.includes("INSERT INTO blocks")) {
+    if (sql.includes("SET content_version = content_version + 1")) {
+      page.content_version = Number(page.content_version) + 1;
+    } else if (sql.includes("INSERT INTO blocks")) {
       const [id, pageId, parentBlockId, markdown, htmlCache, sortOrder, metadata] = params;
       database.blocks.set(String(id), {
         id,
@@ -119,6 +124,8 @@ describe("Attachment routes", () => {
 
     expect(upload.body.block.type).toBe("ATTACHMENT");
     expect(upload.body.block.markdown).toBe("report.txt");
+    expect(upload.body.pageContentVersion).toBe(2);
+    expect(page.content_version).toBe(2);
     expect(upload.body.block.metadata.attachment).toMatchObject({
       originalName: "report.txt",
       mimeType: "text/plain",
@@ -141,6 +148,7 @@ describe("Attachment routes", () => {
     await request(createApp())
       .delete(`/api/blocks/${blockId}`)
       .set("Authorization", `Bearer ${token}`)
+      .send({ expectedVersions: [{ id: blockId, version: upload.body.block.version }] })
       .expect(204);
 
     await expect(stat(getAttachmentFilePath(user.id, blockId))).rejects.toMatchObject({ code: "ENOENT" });

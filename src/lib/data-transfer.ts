@@ -2,10 +2,10 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import type { Writable } from "node:stream";
-import { access, copyFile, mkdir, rename, rm, stat } from "node:fs/promises";
+import { access, copyFile, mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import { z } from "zod";
 import { env } from "../config/env.js";
-import { attachmentUploadRoot, getAttachmentFilePath } from "./attachments.js";
+import { attachmentUploadRoot, getAttachmentFilePath, withUserAttachmentLock } from "./attachments.js";
 import { db, transaction, type DbClient } from "./db.js";
 import { ApiError } from "./http.js";
 import { createId } from "./id.js";
@@ -21,6 +21,14 @@ const maxManifestBytes = 128 * 1024 * 1024;
 const idSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
 const timestampSchema = z.string().min(1).max(40);
 const nullableString = (max: number) => z.string().max(max).nullable();
+const restoreJournalPrefix = "restore-journal-";
+const restoreJournalSchema = z.object({
+  version: z.literal(1),
+  userId: idSchema,
+  operationId: idSchema,
+  hadPreviousAttachments: z.boolean()
+});
+type RestoreJournal = z.infer<typeof restoreJournalSchema>;
 
 const pageSchema = z.object({
   id: idSchema,
@@ -30,6 +38,8 @@ const pageSchema = z.object({
   is_archived: z.union([z.literal(0), z.literal(1)]),
   is_collection: z.union([z.literal(0), z.literal(1)]),
   parent_page_id: idSchema.nullable(),
+  edit_version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+  content_version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   created_at: timestampSchema,
   updated_at: timestampSchema
 }).strict();
@@ -49,6 +59,7 @@ const blockSchema = z.object({
   checked: z.union([z.literal(0), z.literal(1)]),
   sort_order: z.number().int(),
   metadata: z.string().nullable(),
+  edit_version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   created_at: timestampSchema,
   updated_at: timestampSchema
 }).strict();
@@ -93,6 +104,28 @@ type BackupPage = BrainVaultBackup["data"]["pages"][number];
 type BackupBlock = BrainVaultBackup["data"]["blocks"][number];
 type BackupTag = BrainVaultBackup["data"]["tags"][number];
 
+type WorkspaceRestoreAccountRow = {
+  name: string | null;
+  avatar_data: string | null;
+  preferred_language: string | null;
+  default_collection_icon: string | null;
+};
+
+type WorkspaceRestorePageRow = {
+  id: string;
+  parent_page_id: string | null;
+  edit_version: number;
+  content_version: number;
+};
+
+type WorkspaceRestoreBlockRow = {
+  id: string;
+  page_id: string;
+  parent_block_id: string | null;
+  type: BlockType;
+  edit_version: number;
+};
+
 type RawAccountRow = {
   id: string;
   username: string;
@@ -119,6 +152,55 @@ async function inspectFile(filePath: string): Promise<FileInspection> {
     size += BigInt(data.length);
   }
   return { size, sha256: hash.digest("hex"), crc32: checksum };
+}
+
+async function syncPath(value: string) {
+  const handle = await open(value, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function syncDirectoryIfPresent(value: string) {
+  if (await pathExists(value)) await syncPath(value);
+}
+
+async function createWorkspaceRestoreSnapshot(userId: string, client: DbClient = db, lock = false) {
+  const lockClause = lock ? " FOR UPDATE" : "";
+  const account = await client.queryOne<WorkspaceRestoreAccountRow>(
+    `SELECT name, avatar_data, preferred_language, default_collection_icon
+     FROM users WHERE id = ?${lockClause}`,
+    [userId]
+  );
+  if (!account) throw new ApiError(404, "NOT_FOUND", "User not found");
+
+  const pages = await client.query<WorkspaceRestorePageRow>(
+    `SELECT id, parent_page_id, edit_version, content_version
+     FROM pages WHERE owner_id = ? ORDER BY id ASC${lockClause}`,
+    [userId]
+  );
+  const blocks = await client.query<WorkspaceRestoreBlockRow>(
+    `SELECT b.id, b.page_id, b.parent_block_id, b.type, b.edit_version
+     FROM blocks b INNER JOIN pages p ON p.id = b.page_id
+     WHERE p.owner_id = ? ORDER BY b.id ASC${lockClause}`,
+    [userId]
+  );
+
+  const hash = createHash("sha256");
+  hash.update(`account\0${JSON.stringify(account)}\n`);
+  for (const page of pages) {
+    hash.update(
+      `page\0${page.id}\0${page.parent_page_id ?? ""}\0${Number(page.edit_version ?? 1)}\0${Number(page.content_version ?? 1)}\n`
+    );
+  }
+  for (const block of blocks) {
+    hash.update(
+      `block\0${block.id}\0${block.page_id}\0${block.parent_block_id ?? ""}\0${block.type}\0${Number(block.edit_version ?? 1)}\n`
+    );
+  }
+  return hash.digest("hex");
 }
 
 function invalidBackup(message: string, details?: unknown): never {
@@ -225,7 +307,7 @@ export async function prepareUserDataBackup(userId: string) {
   await mkdir(stagedAttachmentDir, { recursive: true });
 
   try {
-    const snapshot = await transaction(async (client) => {
+    const { snapshot, attachmentFiles } = await withUserAttachmentLock(userId, async (client) => {
       const account = await client.queryOne<RawAccountRow>(
         `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon
          FROM users WHERE id = ?`,
@@ -234,7 +316,7 @@ export async function prepareUserDataBackup(userId: string) {
       if (!account) throw new ApiError(404, "NOT_FOUND", "User not found");
 
       const pages = await client.query<BackupPage>(
-        `SELECT id, title, icon, cover_url, is_archived, is_collection, parent_page_id,
+        `SELECT id, title, icon, cover_url, is_archived, is_collection, parent_page_id, edit_version, content_version,
            DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at,
            DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at
          FROM pages WHERE owner_id = ? ORDER BY created_at ASC, id ASC`,
@@ -242,7 +324,7 @@ export async function prepareUserDataBackup(userId: string) {
       );
       const blocks = await client.query<BackupBlock>(
         `SELECT b.id, b.page_id, b.parent_block_id, b.type, b.markdown, b.html_cache, b.checked, b.sort_order,
-           CAST(b.metadata AS CHAR CHARACTER SET utf8mb4) AS metadata,
+           CAST(b.metadata AS CHAR CHARACTER SET utf8mb4) AS metadata, b.edit_version,
            DATE_FORMAT(b.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at,
            DATE_FORMAT(b.updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at
          FROM blocks b INNER JOIN pages p ON p.id = b.page_id
@@ -260,28 +342,27 @@ export async function prepareUserDataBackup(userId: string) {
          WHERE p.owner_id = ? ORDER BY pt.page_id ASC, pt.tag_id ASC`,
         [userId]
       );
-      return { account, pages, blocks, tags, pageTags };
-    });
-
-    const attachmentBlocks = snapshot.blocks.filter((block) => block.type === "ATTACHMENT");
-    const attachmentFiles = [] as Array<{ blockId: string; path: string; filePath: string; inspection: FileInspection }>;
-    for (const block of attachmentBlocks) {
-      const sourcePath = getAttachmentFilePath(userId, block.id);
-      const stagedPath = path.join(stagedAttachmentDir, block.id);
-      try {
-        const fileStat = await stat(sourcePath);
-        if (!fileStat.isFile()) throw new Error("not a file");
-        await copyFile(sourcePath, stagedPath);
-      } catch {
-        throw new ApiError(409, "BACKUP_ATTACHMENT_MISSING", `Attachment file is missing for block ${block.id}`);
+      const snapshot = { account, pages, blocks, tags, pageTags };
+      const attachmentFiles = [] as Array<{ blockId: string; path: string; filePath: string; inspection: FileInspection }>;
+      for (const block of blocks.filter((item) => item.type === "ATTACHMENT")) {
+        const sourcePath = getAttachmentFilePath(userId, block.id);
+        const stagedPath = path.join(stagedAttachmentDir, block.id);
+        try {
+          const fileStat = await stat(sourcePath);
+          if (!fileStat.isFile()) throw new Error("not a file");
+          await copyFile(sourcePath, stagedPath);
+        } catch {
+          throw new ApiError(409, "BACKUP_ATTACHMENT_MISSING", `Attachment file is missing for block ${block.id}`);
+        }
+        attachmentFiles.push({
+          blockId: block.id,
+          path: `attachments/${block.id}`,
+          filePath: stagedPath,
+          inspection: await inspectFile(stagedPath)
+        });
       }
-      attachmentFiles.push({
-        blockId: block.id,
-        path: `attachments/${block.id}`,
-        filePath: stagedPath,
-        inspection: await inspectFile(stagedPath)
-      });
-    }
+      return { snapshot, attachmentFiles };
+    });
 
     const manifest: BrainVaultBackup = {
       format: backupFormat,
@@ -398,7 +479,54 @@ async function getExistingTags(client: DbClient, tags: BackupTag[]) {
   return { byId, byName };
 }
 
-async function importRows(client: DbClient, userId: string, manifest: BrainVaultBackup) {
+const restoreVersionGap = 1_000_000;
+
+function getManifestMaxEditVersion(manifest: BrainVaultBackup) {
+  let maximum = 0;
+  for (const page of manifest.data.pages) {
+    maximum = Math.max(maximum, Number(page.edit_version ?? 1), Number(page.content_version ?? 1));
+  }
+  for (const block of manifest.data.blocks) maximum = Math.max(maximum, Number(block.edit_version ?? 1));
+  return maximum;
+}
+
+async function createRestoreEditVersion(client: DbClient, userId: string, manifest: BrainVaultBackup) {
+  const current = await client.queryOne<{ max_edit_version: number | null }>(
+    `SELECT GREATEST(
+       COALESCE((SELECT MAX(edit_version) FROM pages WHERE owner_id = ?), 0),
+       COALESCE((SELECT MAX(content_version) FROM pages WHERE owner_id = ?), 0),
+       COALESCE((
+         SELECT MAX(b.edit_version)
+         FROM blocks b INNER JOIN pages p ON p.id = b.page_id
+         WHERE p.owner_id = ?
+       ), 0)
+     ) AS max_edit_version`,
+    [userId, userId, userId]
+  );
+  const currentMaximum = Number(current?.max_edit_version ?? 0);
+  const manifestMaximum = getManifestMaxEditVersion(manifest);
+  const clockFloor = Date.now() * 1000;
+  const restoreVersion = Math.max(
+    clockFloor,
+    currentMaximum + restoreVersionGap,
+    manifestMaximum + restoreVersionGap
+  );
+  if (!Number.isSafeInteger(restoreVersion) || restoreVersion < 1) {
+    throw new ApiError(
+      500,
+      "DATA_RESTORE_VERSION_EXHAUSTED",
+      "The workspace edit version cannot be advanced safely"
+    );
+  }
+  return restoreVersion;
+}
+
+async function importRows(
+  client: DbClient,
+  userId: string,
+  manifest: BrainVaultBackup,
+  restoreVersion: number
+) {
   await client.execute("DELETE FROM pages WHERE owner_id = ?", [userId]);
   await client.execute(
     `UPDATE users SET name = ?, avatar_data = ?, preferred_language = ?, default_collection_icon = ? WHERE id = ?`,
@@ -415,11 +543,11 @@ async function importRows(client: DbClient, userId: string, manifest: BrainVault
   for (const page of orderedPages) {
     await client.execute(
       `INSERT INTO pages
-       (id, title, icon, cover_url, is_archived, is_collection, owner_id, parent_page_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, title, icon, cover_url, is_archived, is_collection, owner_id, parent_page_id, edit_version, content_version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         page.id, page.title, page.icon, page.cover_url, page.is_archived, page.is_collection, userId,
-        page.parent_page_id, page.created_at, page.updated_at
+        page.parent_page_id, restoreVersion, restoreVersion, page.created_at, page.updated_at
       ]
     );
   }
@@ -428,12 +556,12 @@ async function importRows(client: DbClient, userId: string, manifest: BrainVault
   for (const block of orderedBlocks) {
     await client.execute(
       `INSERT INTO blocks
-       (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata, edit_version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         block.id, block.page_id, block.parent_block_id, block.type, block.markdown,
         renderBlockHtml(block.type, block.markdown, Boolean(block.checked), block.metadata),
-        block.checked, block.sort_order, block.metadata, block.created_at, block.updated_at
+        block.checked, block.sort_order, block.metadata, restoreVersion, block.created_at, block.updated_at
       ]
     );
   }
@@ -465,6 +593,38 @@ async function importRows(client: DbClient, userId: string, manifest: BrainVault
   }
 }
 
+function getRestorePaths(journal: RestoreJournal) {
+  const safeUserId = journal.userId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return {
+    journalPath: path.join(dataTransferTempDir, `${restoreJournalPrefix}${journal.operationId}.json`),
+    operationRoot: path.join(dataTransferTempDir, journal.operationId),
+    stagedAttachmentDir: path.join(dataTransferTempDir, journal.operationId, "attachments"),
+    oldAttachmentDir: path.join(attachmentUploadRoot, `.restore-previous-${safeUserId}-${journal.operationId}`),
+    targetAttachmentDir: path.join(attachmentUploadRoot, safeUserId)
+  };
+}
+
+async function writeRestoreJournal(journal: RestoreJournal) {
+  await ensureDataTransferDirectories();
+  const { journalPath } = getRestorePaths(journal);
+  const temporaryPath = `${journalPath}.tmp-${createId("journal")}`;
+  try {
+    const handle = await open(temporaryPath, "wx");
+    try {
+      await handle.writeFile(`${JSON.stringify(journal)}\n`, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(temporaryPath, journalPath);
+    await syncPath(dataTransferTempDir);
+  } catch (error) {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+  return journalPath;
+}
+
 async function pathExists(value: string) {
   try {
     await access(value);
@@ -474,7 +634,84 @@ async function pathExists(value: string) {
   }
 }
 
+export async function recoverDataRestoreJournal(journalInput: unknown) {
+  return recoverRestoreJournal(restoreJournalSchema.parse(journalInput));
+}
+
+async function recoverRestoreJournal(journal: RestoreJournal) {
+  const paths = getRestorePaths(journal);
+  await withUserAttachmentLock(journal.userId, async (client) => {
+    const marker = await client.queryOne<{ operation_id: string }>(
+      "SELECT operation_id FROM data_restore_markers WHERE user_id = ? AND operation_id = ?",
+      [journal.userId, journal.operationId]
+    );
+    const committed = marker?.operation_id === journal.operationId;
+
+    if (committed) {
+      if (!(await pathExists(paths.targetAttachmentDir)) && await pathExists(paths.stagedAttachmentDir)) {
+        await mkdir(path.dirname(paths.targetAttachmentDir), { recursive: true });
+        await rename(paths.stagedAttachmentDir, paths.targetAttachmentDir);
+        await syncPath(path.dirname(paths.targetAttachmentDir));
+        await syncDirectoryIfPresent(paths.operationRoot);
+      }
+      if (!(await pathExists(paths.targetAttachmentDir))) {
+        throw new Error(`Committed restore ${journal.operationId} is missing its attachment directory`);
+      }
+      await rm(paths.oldAttachmentDir, { recursive: true, force: true });
+      await syncPath(path.dirname(paths.oldAttachmentDir));
+    } else if (journal.hadPreviousAttachments) {
+      if (await pathExists(paths.oldAttachmentDir)) {
+        await rm(paths.targetAttachmentDir, { recursive: true, force: true });
+        await rename(paths.oldAttachmentDir, paths.targetAttachmentDir);
+        await syncPath(path.dirname(paths.targetAttachmentDir));
+      }
+    } else {
+      await rm(paths.targetAttachmentDir, { recursive: true, force: true });
+      await syncPath(path.dirname(paths.targetAttachmentDir));
+    }
+
+    await rm(paths.operationRoot, { recursive: true, force: true });
+    await rm(paths.journalPath, { force: true });
+    await syncPath(dataTransferTempDir);
+  });
+  try {
+    await db.execute(
+      "DELETE FROM data_restore_markers WHERE user_id = ? AND operation_id = ?",
+      [journal.userId, journal.operationId]
+    );
+  } catch (error) {
+    console.error("Committed data restore marker cleanup failed", {
+      userId: journal.userId,
+      operationId: journal.operationId,
+      error
+    });
+  }
+}
+
+export async function recoverInterruptedDataRestores() {
+  await ensureDataTransferDirectories();
+  const entries = await readdir(dataTransferTempDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.startsWith(restoreJournalPrefix) || !entry.name.endsWith(".json")) continue;
+    const journalPath = path.join(dataTransferTempDir, entry.name);
+    try {
+      const journal = restoreJournalSchema.parse(JSON.parse(await readFile(journalPath, "utf8")));
+      if (getRestorePaths(journal).journalPath !== journalPath) {
+        throw new Error("Restore journal filename does not match its operation ID");
+      }
+      await recoverRestoreJournal(journal);
+      console.log(`Recovered interrupted data restore: ${journal.operationId}`);
+    } catch (error) {
+      console.error("Interrupted data restore requires manual recovery", { journalPath, error });
+      throw error;
+    }
+  }
+}
+
 export async function importUserDataBackup(userId: string, zipPath: string) {
+  const initialWorkspaceSnapshot = await transaction((client) =>
+    createWorkspaceRestoreSnapshot(userId, client)
+  );
   let entries;
   try {
     entries = await readZipDirectory(zipPath);
@@ -515,11 +752,10 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
   await assertNoForeignIdConflicts(userId, manifest);
   await ensureDataTransferDirectories();
   const operationId = createId("restore");
-  const operationRoot = path.join(dataTransferTempDir, operationId);
-  const stagedAttachmentDir = path.join(operationRoot, "attachments");
-  const safeUserId = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const oldAttachmentDir = path.join(attachmentUploadRoot, `.restore-previous-${safeUserId}-${operationId}`);
-  const targetAttachmentDir = path.join(attachmentUploadRoot, safeUserId);
+  const journalBase = { version: 1 as const, userId, operationId };
+  const derivedPaths = getRestorePaths({ ...journalBase, hadPreviousAttachments: false });
+  const { operationRoot, stagedAttachmentDir, oldAttachmentDir, targetAttachmentDir, journalPath } = derivedPaths;
+  let journalWritten = false;
   await mkdir(stagedAttachmentDir, { recursive: true });
 
   try {
@@ -532,6 +768,7 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
       const outputPath = path.join(stagedAttachmentDir, attachment.blockId);
       try {
         await copyZipEntryToFile(zipPath, entry, outputPath);
+        await syncPath(outputPath);
       } catch (error) {
         invalidBackup(error instanceof Error ? error.message : `Attachment is corrupt: ${attachment.blockId}`);
       }
@@ -540,54 +777,96 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
         invalidBackup(`Attachment SHA-256 does not match: ${attachment.blockId}`);
       }
     }
+    await syncPath(stagedAttachmentDir);
+    await syncPath(operationRoot);
+
+    const restoreJournal: RestoreJournal = {
+      ...journalBase,
+      hadPreviousAttachments: await pathExists(targetAttachmentDir)
+    };
+    await writeRestoreJournal(restoreJournal);
+    journalWritten = true;
 
     let movedOld = false;
-    let installedNew = false;
     try {
       await transaction(async (client) => {
-        await importRows(client, userId, manifest);
+        const lockedWorkspaceSnapshot = await createWorkspaceRestoreSnapshot(userId, client, true);
+        if (lockedWorkspaceSnapshot !== initialWorkspaceSnapshot) {
+          throw new ApiError(
+            409,
+            "DATA_RESTORE_CONFLICT",
+            "The workspace changed while the backup was being prepared. No data was replaced."
+          );
+        }
+        const restoreVersion = await createRestoreEditVersion(client, userId, manifest);
+        await importRows(client, userId, manifest, restoreVersion);
         await mkdir(path.dirname(targetAttachmentDir), { recursive: true });
         if (await pathExists(targetAttachmentDir)) {
           await rename(targetAttachmentDir, oldAttachmentDir);
           movedOld = true;
         }
         await rename(stagedAttachmentDir, targetAttachmentDir);
-        installedNew = true;
+        await syncPath(attachmentUploadRoot);
+        await syncPath(operationRoot);
+        await client.execute(
+          `INSERT INTO data_restore_markers (user_id, operation_id, committed_at)
+           VALUES (?, ?, CURRENT_TIMESTAMP(3))`,
+          [userId, operationId]
+        );
       });
     } catch (error) {
-      let rollbackError: unknown = null;
-      if (installedNew) {
-        try {
-          await rm(targetAttachmentDir, { recursive: true, force: true });
-        } catch (candidate) {
-          rollbackError = candidate;
-        }
-      }
-      if (movedOld) {
-        try {
-          await rename(oldAttachmentDir, targetAttachmentDir);
-        } catch (candidate) {
-          rollbackError ??= candidate;
-        }
-      }
-      if (rollbackError) {
-        console.error("Attachment restore rollback requires manual recovery", {
+      let marker: { operation_id: string } | undefined;
+      try {
+        marker = await db.queryOne<{ operation_id: string }>(
+          "SELECT operation_id FROM data_restore_markers WHERE user_id = ? AND operation_id = ?",
+          [userId, operationId]
+        );
+      } catch (verificationError) {
+        console.error("Data restore commit outcome is unknown; preserving both attachment generations", {
+          userId,
+          operationId,
           targetAttachmentDir,
-          preservedAttachmentDir: oldAttachmentDir,
-          rollbackError
+          preservedAttachmentDir: movedOld ? oldAttachmentDir : null,
+          journalPath,
+          verificationError
         });
         throw new ApiError(
           500,
-          "DATA_RESTORE_ROLLBACK_FAILED",
-          "The database restore failed and the previous attachment directory was preserved for recovery"
+          "DATA_RESTORE_OUTCOME_UNKNOWN",
+          "The restore outcome could not be verified. Attachment generations were preserved for startup recovery."
         );
       }
-      throw error;
+
+      const committed = marker?.operation_id === operationId;
+      await recoverRestoreJournal(restoreJournal).catch((recoveryError) => {
+        console.error("Attachment restore reconciliation requires manual recovery", {
+          userId,
+          operationId,
+          committed,
+          targetAttachmentDir,
+          preservedAttachmentDir: movedOld ? oldAttachmentDir : null,
+          journalPath,
+          recoveryError
+        });
+        throw new ApiError(
+          500,
+          "DATA_RESTORE_RECOVERY_FAILED",
+          "The restore outcome was identified, but attachment reconciliation requires manual recovery."
+        );
+      });
+      journalWritten = false;
+      if (!committed) throw error;
+      console.warn("Data restore commit succeeded despite a transaction response error", {
+        userId,
+        operationId,
+        error
+      });
     }
 
-    await rm(oldAttachmentDir, { recursive: true, force: true }).catch((error) => {
-      console.error("Previous attachment directory cleanup failed", { oldAttachmentDir, error });
-    });
+    if (journalWritten) {
+      await recoverRestoreJournal(restoreJournal);
+      journalWritten = false;
+    }
     const user = await db.queryOne<UserRow>("SELECT * FROM users WHERE id = ?", [userId]);
     if (!user) throw new ApiError(404, "NOT_FOUND", "User not found after import");
     return {
@@ -600,6 +879,8 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
       }
     };
   } finally {
-    await rm(operationRoot, { recursive: true, force: true }).catch(() => undefined);
+    if (!journalWritten) {
+      await rm(operationRoot, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 }

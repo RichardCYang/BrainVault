@@ -20,6 +20,7 @@ export type PageRow = {
   owner_id: string;
   parent_page_id: string | null;
   edit_version?: number;
+  content_version?: number;
   created_at: string;
   updated_at: string;
 };

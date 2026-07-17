@@ -1,6 +1,7 @@
 import path from "node:path";
-import { mkdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, open, rename, rm, stat } from "node:fs/promises";
 import { env } from "../config/env.js";
+import { transaction, type DbClient } from "./db.js";
 
 export type AttachmentInfo = {
   originalName: string;
@@ -91,6 +92,15 @@ export async function ensureAttachmentDirectories() {
   await mkdir(attachmentTempDir, { recursive: true });
 }
 
+async function syncPath(value: string) {
+  const handle = await open(value, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 export function getAttachmentFilePath(ownerId: string, blockId: string) {
   return path.join(
     attachmentUploadRoot,
@@ -101,9 +111,25 @@ export function getAttachmentFilePath(ownerId: string, blockId: string) {
 
 export async function moveAttachmentFile(temporaryPath: string, ownerId: string, blockId: string) {
   const target = getAttachmentFilePath(ownerId, blockId);
-  await mkdir(path.dirname(target), { recursive: true });
-  await rename(temporaryPath, target);
-  return target;
+  const targetDirectory = path.dirname(target);
+  const temporaryDirectory = path.dirname(temporaryPath);
+  await mkdir(targetDirectory, { recursive: true });
+  let moved = false;
+  try {
+    await rename(temporaryPath, target);
+    moved = true;
+    await syncPath(target);
+    await syncPath(targetDirectory);
+    if (temporaryDirectory !== targetDirectory) await syncPath(temporaryDirectory);
+    await syncPath(attachmentUploadRoot);
+    return target;
+  } catch (error) {
+    if (moved) {
+      await rm(target, { force: true }).catch(() => undefined);
+      await syncPath(targetDirectory).catch(() => undefined);
+    }
+    throw error;
+  }
 }
 
 export async function removeAttachmentPath(filePath: string) {
@@ -116,6 +142,40 @@ export async function removeAttachmentFile(ownerId: string, blockId: string) {
 
 export async function removeAttachmentFiles(ownerId: string, blockIds: string[]) {
   await Promise.all(blockIds.map((blockId) => removeAttachmentFile(ownerId, blockId)));
+}
+
+export async function withUserAttachmentLock<Result>(
+  ownerId: string,
+  fn: (client: DbClient) => Promise<Result>
+) {
+  return transaction(async (client) => {
+    const user = await client.queryOne<{ id: string }>(
+      "SELECT id FROM users WHERE id = ? FOR UPDATE",
+      [ownerId]
+    );
+    if (!user) throw new Error(`Attachment owner does not exist: ${ownerId}`);
+    return fn(client);
+  });
+}
+
+export async function removeDeletedAttachmentFiles(ownerId: string, blockIds: string[]) {
+  const uniqueIds = [...new Set(blockIds)];
+  if (!uniqueIds.length) return;
+
+  await withUserAttachmentLock(ownerId, async (client) => {
+    const existingIds = new Set<string>();
+    for (let index = 0; index < uniqueIds.length; index += 500) {
+      const group = uniqueIds.slice(index, index + 500);
+      const rows = await client.query<{ id: string }>(
+        `SELECT b.id
+         FROM blocks b INNER JOIN pages p ON p.id = b.page_id
+         WHERE p.owner_id = ? AND b.id IN (${group.map(() => "?").join(",")})`,
+        [ownerId, ...group]
+      );
+      for (const row of rows) existingIds.add(row.id);
+    }
+    await removeAttachmentFiles(ownerId, uniqueIds.filter((id) => !existingIds.has(id)));
+  });
 }
 
 export async function attachmentFileExists(ownerId: string, blockId: string) {

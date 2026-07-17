@@ -2249,11 +2249,6 @@ function getPageSubtreeIds(pageId, pages = state.allPages) {
   return ids;
 }
 
-function getPageVersionSnapshot(pageIds) {
-  const pagesById = new Map(state.allPages.map((page) => [page.id, page]));
-  if (state.selectedPage) pagesById.set(state.selectedPage.id, state.selectedPage);
-  return [...pageIds].map((id) => ({ id, version: Number(pagesById.get(id)?.version ?? 1) }));
-}
 
 function getPageActionsMenuItems() {
   return [...elements.pageActionsMenu.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]')].filter(
@@ -2661,28 +2656,58 @@ async function deleteNavigationTarget() {
   }
 
   const isCollection = target.kind === "collection";
-  const ok = window.confirm(
-    t(isCollection ? "confirm.deleteCollection" : "confirm.deletePage", { title: target.title })
-  );
-  if (!ok) return;
-
   const selectedPageWasDeleted = Boolean(state.selectedPage?.id && subtreeIds.has(state.selectedPage.id));
   const activeCollectionWasDeleted = state.activeCollectionId === target.id;
   const fallbackCollectionId = isCollection
     ? defaultCollectionKey
     : getCollectionRootId(target.id) ?? defaultCollectionKey;
 
-  if (selectedPageWasDeleted) discardPendingPageEdits();
+  await flushPendingPageEdits();
+  const deletionSnapshot = await api(`/api/pages/${target.id}/deletion-snapshot`);
+  const localPageIds = [...subtreeIds].sort();
+  const serverPageIds = Array.isArray(deletionSnapshot.pageIds) ? [...deletionSnapshot.pageIds].sort() : [];
+  const serverPages = new Map(
+    (Array.isArray(deletionSnapshot.pages) ? deletionSnapshot.pages : []).map((page) => [page.id, page])
+  );
+  const localPages = new Map(
+    [...state.allPages, ...(state.selectedPage ? [state.selectedPage] : [])].map((page) => [page.id, page])
+  );
+  if (
+    localPageIds.length !== serverPageIds.length ||
+    localPageIds.some((pageId, index) => pageId !== serverPageIds[index]) ||
+    localPageIds.some((pageId) => {
+      const localPage = localPages.get(pageId);
+      const serverPage = serverPages.get(pageId);
+      return (
+        !localPage ||
+        !serverPage ||
+        Number(localPage.version ?? 1) !== Number(serverPage.version ?? 1) ||
+        Number(localPage.contentVersion ?? 1) !== Number(serverPage.contentVersion ?? 1)
+      );
+    })
+  ) {
+    closeNavigationContextMenu();
+    await loadPages(elements.searchInput.value.trim(), state.activeTag);
+    throw new Error(t("errors.PAGE_DELETE_SCOPE_CHANGED"));
+  }
+
+  const ok = window.confirm(
+    t(isCollection ? "confirm.deleteCollection" : "confirm.deletePage", { title: target.title })
+  );
+  if (!ok) return;
 
   closeNavigationContextMenu();
   setStatus(t(isCollection ? "status.deletingCollection" : "status.deletingPage"));
 
   await api(`/api/pages/${target.id}?permanent=true`, {
     method: "DELETE",
-    body: { expectedVersions: getPageVersionSnapshot(subtreeIds) }
+    body: { expectedSnapshot: deletionSnapshot.snapshot }
   });
 
-  if (selectedPageWasDeleted) state.selectedPage = null;
+  if (selectedPageWasDeleted) {
+    resetPageEditTracking();
+    state.selectedPage = null;
+  }
   await loadPages(elements.searchInput.value.trim(), state.activeTag);
 
   if (selectedPageWasDeleted || activeCollectionWasDeleted) {
@@ -4522,16 +4547,7 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
   setStatus(t("status.savingBlockOrder"));
 
   try {
-    await api(`/api/pages/${state.selectedPage.id}/blocks/reorder`, {
-      method: "POST",
-      body: {
-        items: orderedIds.map((id, index) => ({
-          id,
-          sortOrder: index,
-          parentBlockId: drag.parentBlockId
-        }))
-      }
-    });
+    await persistBlockOrder(drag.parentBlockId, orderedIds);
     setStatus(t("status.blockOrderChanged"));
   } catch (error) {
     reorderBlockSiblingsInState(drag.parentBlockId, previousIds);
@@ -4717,6 +4733,7 @@ function getBlockSaveQueue(blockId) {
       keepalive: task.keepalive === true,
       body: { ...task.payload, expectedVersion: currentVersion }
     });
+    applyPageContentVersion(task.pageId, data.pageContentVersion);
     updateBlockInState(data.block);
     if (task.row?.dataset.blockId === blockId) updateRenderedBlockPreview(task.row, data.block);
 
@@ -4744,6 +4761,7 @@ async function saveBlockRow(row, { quiet = false, keepalive = false } = {}) {
   blockSaveTaskIds.set(blockId, taskId);
   const task = {
     taskId,
+    pageId: state.selectedPage.id,
     editRevision: Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0,
     payload: buildBlockPayload(row),
     row,
@@ -5149,6 +5167,7 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
       method: "POST",
       body: formData
     });
+    applyPageContentVersion(state.selectedPage.id, data.pageContentVersion);
 
     const orderedIds = [...siblingIds];
     if (replaceCurrentBlock) {
@@ -5159,7 +5178,7 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
     } else {
       orderedIds.splice(insertionIndex, 0, data.block.id);
     }
-    await persistBlockOrder(parentBlockId, orderedIds);
+    await persistBlockOrder(parentBlockId, orderedIds, { [data.block.id]: data.block.version });
 
     state.pendingFocusBlockId = data.block.id;
     await openPage(state.selectedPage.id);
@@ -5232,24 +5251,28 @@ async function applySlashCommand(row, type) {
   }
 }
 
-async function persistBlockOrder(parentBlockId, orderedIds) {
+async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {}) {
   if (!requireWritablePage() || !orderedIds.length) return;
 
-  await api(`/api/pages/${state.selectedPage.id}/blocks/reorder`, {
-    method: "POST",
-    body: {
-      items: orderedIds.map((id, index) => ({
-        id,
-        sortOrder: index,
-        parentBlockId
-      }))
+  const items = orderedIds.map((id, index) => {
+    const expectedVersion = Number(versionOverrides[id] ?? getBlockById(id)?.version);
+    if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+      throw new Error(t("errors.BLOCK_EDIT_CONFLICT"));
     }
+    return { id, sortOrder: index, parentBlockId, expectedVersion };
   });
+  const data = await api(`/api/pages/${state.selectedPage.id}/blocks/reorder`, {
+    method: "POST",
+    body: { items }
+  });
+  applyPageContentVersion(state.selectedPage.id, data.pageContentVersion);
+  for (const block of data.blocks ?? []) updateBlockInState(block);
+  return data;
 }
 
 async function createEmptyBlock(pageId, { parentBlockId = null, sortOrder } = {}) {
   if (!requireWritablePage()) throw new Error(t("errors.readOnlyPage"));
-  return api(`/api/pages/${pageId}/blocks`, {
+  const data = await api(`/api/pages/${pageId}/blocks`, {
     method: "POST",
     body: {
       type: "MARKDOWN",
@@ -5258,6 +5281,8 @@ async function createEmptyBlock(pageId, { parentBlockId = null, sortOrder } = {}
       ...(sortOrder === undefined ? {} : { sortOrder })
     }
   });
+  applyPageContentVersion(pageId, data.pageContentVersion);
+  return data;
 }
 
 async function insertBlockRelative(referenceRow, placement = "after") {
@@ -5272,7 +5297,7 @@ async function insertBlockRelative(referenceRow, placement = "after") {
   const data = await createEmptyBlock(state.selectedPage.id, { parentBlockId, sortOrder: insertionIndex });
   const orderedIds = [...siblingIds];
   orderedIds.splice(insertionIndex, 0, data.block.id);
-  await persistBlockOrder(parentBlockId, orderedIds);
+  await persistBlockOrder(parentBlockId, orderedIds, { [data.block.id]: data.block.version });
 
   state.pendingFocusBlockId = data.block.id;
   await openPage(state.selectedPage.id);
@@ -5289,7 +5314,7 @@ async function appendBlock(afterRow = null) {
 
   const siblingIds = getBlockSiblings(null).map((block) => block.id);
   const data = await createEmptyBlock(state.selectedPage.id, { sortOrder: siblingIds.length });
-  await persistBlockOrder(null, [...siblingIds, data.block.id]);
+  await persistBlockOrder(null, [...siblingIds, data.block.id], { [data.block.id]: data.block.version });
 
   state.pendingFocusBlockId = data.block.id;
   await openPage(state.selectedPage.id);
@@ -5312,6 +5337,7 @@ async function deleteEmptyBlock(row) {
   const nextBlockId = rows[rowIndex + groupRows.length]?.dataset.blockId ?? null;
   let focusBlockId = previousBlockId ?? childIds[0] ?? nextBlockId;
 
+  await flushPendingPageEdits();
   row.dataset.deleting = "true";
   discardBlockSave(blockId);
   closeSlashMenu();
@@ -5568,6 +5594,17 @@ function applyPageSummaryUpdate(pageId, updates) {
   updateArray(state.allPages);
   renderDocumentTree();
   renderHome();
+}
+
+function applyPageContentVersion(pageId, contentVersion) {
+  const version = Number(contentVersion);
+  if (!Number.isSafeInteger(version) || version < 1) return;
+  if (state.selectedPage?.id === pageId) state.selectedPage.contentVersion = version;
+  for (const pages of [state.pages, state.allPages]) {
+    for (const page of pages) {
+      if (page.id === pageId) page.contentVersion = version;
+    }
+  }
 }
 
 async function savePageTitleNow({ quiet = true, keepalive = false } = {}) {
@@ -6856,9 +6893,15 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
       const ok = window.confirm(t("confirm.deleteBlock"));
       if (!ok) return;
       closeBlockContextMenu();
+      await flushPendingPageEdits();
       row.dataset.deleting = "true";
       discardBlockSave(blockId);
-      await deleteBlockWithVersionCheck(blockId);
+      try {
+        await deleteBlockWithVersionCheck(blockId);
+      } catch (error) {
+        row.dataset.deleting = "false";
+        throw error;
+      }
       await openPage(state.selectedPage.id);
       setStatus(t("status.blockDeleted"));
     }

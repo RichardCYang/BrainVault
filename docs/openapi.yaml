@@ -324,6 +324,131 @@ components:
               $ref: '#/components/schemas/BookmarkData'
             aiChat:
               $ref: '#/components/schemas/AiChatData'
+    PageUpdateInput:
+      type: object
+      required: [expectedVersion]
+      properties:
+        title:
+          type: string
+          maxLength: 160
+        icon:
+          type: [string, 'null']
+          maxLength: 32
+        coverUrl:
+          type: [string, 'null']
+          format: uri
+        isArchived:
+          type: boolean
+        parentPageId:
+          type: [string, 'null']
+        tags:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+        expectedVersion:
+          type: integer
+          minimum: 1
+          description: Required optimistic-concurrency precondition.
+    BlockUpdateInput:
+      allOf:
+        - $ref: '#/components/schemas/BlockInput'
+        - type: object
+          required: [expectedVersion]
+          properties:
+            expectedVersion:
+              type: integer
+              minimum: 1
+              description: Required optimistic-concurrency precondition.
+    VersionSnapshot:
+      type: object
+      required: [id, version]
+      properties:
+        id:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+    BlockDeleteInput:
+      type: object
+      required: [expectedVersions]
+      properties:
+        expectedVersions:
+          type: array
+          minItems: 1
+          maxItems: 10000
+          items:
+            $ref: '#/components/schemas/VersionSnapshot'
+    PageDeleteInput:
+      type: object
+      properties:
+        expectedSnapshot:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: Required for permanent deletion. SHA-256 snapshot returned by the deletion-snapshot endpoint.
+        expectedVersion:
+          type: integer
+          minimum: 1
+          description: Required when the legacy DELETE endpoint archives rather than permanently deletes.
+    PageDeletionSnapshot:
+      type: object
+      required: [snapshot, pageIds, pages, counts]
+      properties:
+        snapshot:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        pageIds:
+          type: array
+          description: Exact page IDs covered by this deletion snapshot, sorted lexicographically.
+          items:
+            type: string
+        pages:
+          type: array
+          description: Server-observed metadata and content generations for stale-view detection before confirmation.
+          items:
+            type: object
+            required: [id, version, contentVersion]
+            properties:
+              id:
+                type: string
+              version:
+                type: integer
+                minimum: 1
+              contentVersion:
+                type: integer
+                minimum: 1
+        counts:
+          type: object
+          required: [pages, blocks]
+          properties:
+            pages:
+              type: integer
+              minimum: 1
+            blocks:
+              type: integer
+              minimum: 0
+    BlockReorderInput:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            type: object
+            required: [id, sortOrder, expectedVersion]
+            properties:
+              id:
+                type: string
+              sortOrder:
+                type: integer
+                minimum: 0
+              parentBlockId:
+                type: [string, 'null']
+              expectedVersion:
+                type: integer
+                minimum: 1
     BookmarkItem:
       type: object
       required: [id, url, title, description, imageUrl, faviconUrl, siteName]
@@ -804,18 +929,27 @@ paths:
           description: Page with blocks
     patch:
       summary: Update page metadata
+      description: Requires the last observed page version; stale writes are rejected with 409.
       parameters:
         - in: path
           name: pageId
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PageUpdateInput'
       responses:
         '200':
           description: Updated page
+        '409':
+          description: Page changed in another session
     delete:
       summary: Archive or permanently delete a page
-      description: When permanent is true, the page and every nested descendant page are deleted together, including their blocks and attachment files. Collection pages therefore delete all pages contained in that collection.
+      description: When permanent is true, the page and every nested descendant page are deleted together, including their blocks and attachment files. Collection pages therefore delete all pages contained in that collection. Non-permanent archival requires expectedVersion; new clients should prefer PATCH with isArchived=true.
       parameters:
         - in: path
           name: pageId
@@ -826,11 +960,36 @@ paths:
           name: permanent
           schema:
             type: boolean
+      requestBody:
+        description: Supply expectedSnapshot for permanent deletion, or expectedVersion for legacy archival.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PageDeleteInput'
       responses:
         '200':
           description: Archived page
         '204':
           description: Page subtree permanently deleted
+        '409':
+          description: A page or block in the subtree changed after the snapshot
+  /api/pages/{pageId}/deletion-snapshot:
+    get:
+      summary: Create a page-subtree deletion precondition
+      description: Hashes every page and block version in the target subtree. The hash must be supplied for permanent deletion.
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Fresh deletion snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageDeletionSnapshot'
   /api/bookmarks/preview:
     post:
       summary: Fetch OpenGraph metadata for a bookmark URL
@@ -933,38 +1092,65 @@ paths:
   /api/blocks/{blockId}:
     patch:
       summary: Update a block
+      description: Requires the last observed block version; stale writes are rejected with 409.
       parameters:
         - in: path
           name: blockId
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlockUpdateInput'
       responses:
         '200':
           description: Updated block
+        '409':
+          description: Block changed in another session
     delete:
       summary: Delete block and nested children
+      description: Requires an exact version snapshot of the block subtree.
       parameters:
         - in: path
           name: blockId
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlockDeleteInput'
       responses:
         '204':
           description: Deleted
+        '409':
+          description: Block subtree changed after the snapshot
   /api/pages/{pageId}/blocks/reorder:
     post:
       summary: Reorder blocks or move blocks under another block
+      description: Locks the page's block set and rejects stale per-block versions. Successful reorder operations increment every affected block version.
       parameters:
         - in: path
           name: pageId
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlockReorderInput'
       responses:
         '200':
           description: Reordered blocks
+        '409':
+          description: One or more blocks changed in another session
   /api/pages/{pageId}/render:
     get:
       summary: Render page blocks to sanitized HTML
@@ -997,6 +1183,7 @@ paths:
   /api/data/import:
     post:
       summary: Replace the authenticated account workspace from a BrainVault backup ZIP
+      description: Restored rows receive a new edit-version generation, and a durable restore journal automatically reconciles database and attachment state after an interrupted process.
       requestBody:
         required: true
         content:
@@ -1018,7 +1205,7 @@ paths:
         '400':
           description: Missing, malformed, incompatible, or integrity-failed backup
         '409':
-          description: Backup identifiers conflict with data owned by another account
+          description: Backup identifiers conflict with another account, or the workspace changed while the backup was being validated and no data was replaced
         '413':
           description: Backup exceeds DATA_TRANSFER_MAX_SIZE_MB
   /api/search:

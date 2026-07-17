@@ -43,6 +43,7 @@ beforeEach(() => {
     owner_id: user.id,
     parent_page_id: null,
     edit_version: 1,
+    content_version: 1,
     created_at: "2026-07-17T00:00:00.000Z",
     updated_at: "2026-07-17T00:00:00.000Z"
   };
@@ -86,6 +87,10 @@ beforeEach(() => {
   });
 
   database.execute.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
+    if (sql.includes("SET content_version = content_version + 1")) {
+      database.page.content_version = Number(database.page.content_version) + 1;
+      return { affectedRows: 1 };
+    }
     if (sql.startsWith("UPDATE blocks SET")) {
       const expectedVersion = Number(params.at(-1));
       if (expectedVersion !== Number(database.block.edit_version)) return { affectedRows: 0 };
@@ -114,6 +119,8 @@ describe("Optimistic edit conflict protection", () => {
       .expect(200);
 
     expect(first.body.block.version).toBe(2);
+    expect(first.body.pageContentVersion).toBe(2);
+    expect(database.page.content_version).toBe(2);
 
     const stale = await request(createApp())
       .patch(`/api/blocks/${database.block.id}`)
@@ -156,4 +163,27 @@ describe("Optimistic edit conflict protection", () => {
     expect(response.body.error.code).toBe("BLOCK_EDIT_CONFLICT");
     expect(database.execute).not.toHaveBeenCalledWith("DELETE FROM blocks WHERE id = ?", [database.block.id]);
   });
+  it("requires version preconditions for destructive and overwriting requests", async () => {
+    await request(createApp())
+      .patch(`/api/blocks/${database.block.id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ markdown: "Unconditional overwrite" })
+      .expect(400);
+
+    await request(createApp())
+      .patch(`/api/pages/${database.page.id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ title: "Unconditional overwrite" })
+      .expect(400);
+
+    const deletion = await request(createApp())
+      .delete(`/api/blocks/${database.block.id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(400);
+
+    expect(deletion.body.error.code).toBe("BLOCK_DELETE_SNAPSHOT_REQUIRED");
+    expect(database.block.markdown).toBe("Original block");
+    expect(database.page.title).toBe("Original title");
+  });
+
 });

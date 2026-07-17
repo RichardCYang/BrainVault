@@ -36,6 +36,7 @@ export function toPage(row: PageRow) {
     ownerId: row.owner_id,
     parentPageId: row.parent_page_id,
     version: Number(row.edit_version ?? 1),
+    contentVersion: Number(row.content_version ?? 1),
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

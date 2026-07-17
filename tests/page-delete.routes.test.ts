@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const database = vi.hoisted(() => ({
   pages: new Map<string, Record<string, unknown>>(),
+  blocks: new Map<string, Record<string, unknown>>(),
   query: vi.fn(),
   queryOne: vi.fn(),
   execute: vi.fn()
@@ -42,9 +43,35 @@ function makePage(id: string, parentPageId: string | null, isCollection = false)
     owner_id: user.id,
     parent_page_id: parentPageId,
     edit_version: 1,
+    content_version: 1,
     created_at: "2026-07-16T00:00:00.000Z",
     updated_at: "2026-07-16T00:00:00.000Z"
   };
+}
+
+function makeBlock(id: string, pageId: string, type = "MARKDOWN") {
+  return {
+    id,
+    page_id: pageId,
+    parent_block_id: null,
+    type,
+    edit_version: 1
+  };
+}
+
+async function getDeletionSnapshot(pageId = "pag_collection") {
+  const response = await request(createApp())
+    .get(`/api/pages/${pageId}/deletion-snapshot`)
+    .set("Authorization", `Bearer ${token}`)
+    .expect(200);
+  expect(response.body.snapshot).toMatch(/^[a-f0-9]{64}$/);
+  expect(response.body.pageIds).toEqual(["pag_child", "pag_collection", "pag_grandchild"]);
+  expect(response.body.pages).toEqual([
+    { id: "pag_child", version: 1, contentVersion: 1 },
+    { id: "pag_collection", version: 1, contentVersion: 1 },
+    { id: "pag_grandchild", version: 1, contentVersion: 1 }
+  ]);
+  return String(response.body.snapshot);
 }
 
 beforeEach(() => {
@@ -52,6 +79,11 @@ beforeEach(() => {
     ["pag_collection", makePage("pag_collection", null, true)],
     ["pag_child", makePage("pag_child", "pag_collection")],
     ["pag_grandchild", makePage("pag_grandchild", "pag_child")]
+  ]);
+  database.blocks = new Map([
+    ["blk_root", makeBlock("blk_root", "pag_collection")],
+    ["blk_child_attachment", makeBlock("blk_child_attachment", "pag_child", "ATTACHMENT")],
+    ["blk_grandchild", makeBlock("blk_grandchild", "pag_grandchild")]
   ]);
   database.query.mockReset();
   database.queryOne.mockReset();
@@ -66,36 +98,46 @@ beforeEach(() => {
   });
 
   database.query.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
-    if (sql.includes("SELECT id, edit_version FROM pages") && sql.includes("FOR UPDATE")) {
-      const ids = new Set(params.slice(1).map(String));
+    if (sql.includes("SELECT id, parent_page_id, edit_version") && sql.includes("WHERE owner_id = ?")) {
       return [...database.pages.values()]
-        .filter((page) => ids.has(String(page.id)) && page.owner_id === params[0])
-        .map((page) => ({ id: page.id, edit_version: page.edit_version }));
+        .filter((page) => page.owner_id === params[0])
+        .sort((left, right) => String(left.id).localeCompare(String(right.id)))
+        .map((page) => ({
+          id: page.id,
+          parent_page_id: page.parent_page_id,
+          edit_version: page.edit_version,
+          content_version: page.content_version
+        }));
     }
-    if (sql.includes("SELECT id FROM pages WHERE parent_page_id = ?")) {
-      return [...database.pages.values()]
-        .filter((page) => page.parent_page_id === params[0] && page.owner_id === params[1])
-        .map((page) => ({ id: page.id }));
-    }
-    if (sql.includes("SELECT id FROM blocks WHERE page_id = ? AND type = 'ATTACHMENT'")) {
-      return [{ id: `att_${String(params[0])}` }];
+    if (sql.includes("SELECT id, page_id, type, edit_version") && sql.includes("WHERE page_id = ?")) {
+      return [...database.blocks.values()]
+        .filter((block) => block.page_id === params[0])
+        .sort((left, right) => String(left.id).localeCompare(String(right.id)))
+        .map((block) => ({ id: block.id, page_id: block.page_id, type: block.type, edit_version: block.edit_version }));
     }
     return [];
   });
 
   database.execute.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
     if (sql.includes("DELETE FROM pages WHERE id = ? AND owner_id = ?")) {
-      database.pages.delete(String(params[0]));
+      const pageId = String(params[0]);
+      database.pages.delete(pageId);
+      for (const [blockId, block] of database.blocks) {
+        if (block.page_id === pageId) database.blocks.delete(blockId);
+      }
     }
     return { affectedRows: 1 };
   });
 });
 
 describe("Permanent page deletion", () => {
-  it("deletes a collection subtree from deepest page to root", async () => {
+  it("deletes a collection subtree from deepest page to root after validating every block version", async () => {
+    const snapshot = await getDeletionSnapshot();
+
     await request(createApp())
       .delete("/api/pages/pag_collection?permanent=true")
       .set("Authorization", `Bearer ${token}`)
+      .send({ expectedSnapshot: snapshot })
       .expect(204);
 
     const deletedPageIds = database.execute.mock.calls
@@ -104,32 +146,68 @@ describe("Permanent page deletion", () => {
 
     expect(deletedPageIds).toEqual(["pag_grandchild", "pag_child", "pag_collection"]);
     expect(database.pages.size).toBe(0);
+    expect(database.blocks.size).toBe(0);
     expect(database.query).toHaveBeenCalledWith(
-      "SELECT id FROM blocks WHERE page_id = ? AND type = 'ATTACHMENT'",
-      ["pag_grandchild"]
+      expect.stringContaining("FROM blocks"),
+      ["pag_child"]
     );
   });
 
-  it("rejects deletion when any page in the subtree has a newer version", async () => {
+  it("rejects deletion when any page in the subtree changed after the snapshot", async () => {
+    const snapshot = await getDeletionSnapshot();
     database.pages.get("pag_child")!.edit_version = 2;
 
     const response = await request(createApp())
       .delete("/api/pages/pag_collection?permanent=true")
       .set("Authorization", `Bearer ${token}`)
-      .send({
-        expectedVersions: [
-          { id: "pag_collection", version: 1 },
-          { id: "pag_child", version: 1 },
-          { id: "pag_grandchild", version: 1 }
-        ]
-      })
+      .send({ expectedSnapshot: snapshot })
       .expect(409);
 
     expect(response.body.error.code).toBe("PAGE_EDIT_CONFLICT");
     expect(database.pages.size).toBe(3);
+  });
+
+
+  it("rejects deletion when only a page content generation changed after the snapshot", async () => {
+    const snapshot = await getDeletionSnapshot();
+    database.pages.get("pag_child")!.content_version = 2;
+
+    const response = await request(createApp())
+      .delete("/api/pages/pag_collection?permanent=true")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ expectedSnapshot: snapshot })
+      .expect(409);
+
+    expect(response.body.error.code).toBe("PAGE_EDIT_CONFLICT");
+    expect(database.pages.size).toBe(3);
+  });
+
+  it("rejects deletion when a newer block edit exists even though page versions are unchanged", async () => {
+    const snapshot = await getDeletionSnapshot();
+    database.blocks.get("blk_grandchild")!.edit_version = 2;
+
+    const response = await request(createApp())
+      .delete("/api/pages/pag_collection?permanent=true")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ expectedSnapshot: snapshot })
+      .expect(409);
+
+    expect(response.body.error.code).toBe("PAGE_EDIT_CONFLICT");
+    expect(database.pages.size).toBe(3);
+    expect(database.blocks.size).toBe(3);
     expect(database.execute).not.toHaveBeenCalledWith(
       expect.stringContaining("DELETE FROM pages"),
       expect.anything()
     );
+  });
+
+  it("requires a fresh deletion snapshot for permanent deletion", async () => {
+    const response = await request(createApp())
+      .delete("/api/pages/pag_collection?permanent=true")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(400);
+
+    expect(response.body.error.code).toBe("PAGE_DELETE_SNAPSHOT_REQUIRED");
+    expect(database.pages.size).toBe(3);
   });
 });

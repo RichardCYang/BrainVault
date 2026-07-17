@@ -53,8 +53,10 @@ describe("Attachment integration surface", () => {
 
     expect(routeSource).toContain('attachmentUpload.single("file")');
     expect(routeSource).toContain('"/blocks/:blockId/attachment"');
-    expect(routeSource).toContain("removeAttachmentFiles(user.id, attachmentIds)");
-    expect(pageRouteSource).toContain("type = 'ATTACHMENT'");
+    expect(routeSource).toContain("removeDeletedAttachmentFiles(user.id, deletion.attachmentIds)");
+    expect(pageRouteSource).toContain("removeDeletedAttachmentFiles(user.id, attachmentIds)");
+    expect(await readFile("src/lib/attachments.ts", "utf8")).toContain("await handle.sync()");
+    expect(pageRouteSource).toContain('row.type === "ATTACHMENT"');
     expect(appSource).toContain('{ type: "ATTACHMENT", command: "/file", icon: "attachment" }');
     expect(appSource).toContain("uploadAttachmentFromRow");
     expect(appSource).toContain("downloadAttachment");

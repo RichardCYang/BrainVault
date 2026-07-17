@@ -2,6 +2,7 @@ import { createApp } from "./app.js";
 import { env } from "./config/env.js";
 import { bootstrapDatabase } from "./lib/db-bootstrap.js";
 import { closeDb } from "./lib/db.js";
+import { recoverInterruptedDataRestores } from "./lib/data-transfer.js";
 
 async function start() {
   if (env.AUTO_BOOTSTRAP_DATABASE) {
@@ -13,6 +14,8 @@ async function start() {
   } else {
     console.log("AUTO_BOOTSTRAP_DATABASE=false. Skipping database/schema bootstrap.");
   }
+
+  await recoverInterruptedDataRestores();
 
   const app = createApp();
   const appUrl = `http://localhost:${env.PORT}`;
