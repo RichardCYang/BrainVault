@@ -9494,3 +9494,341 @@ body.account-settings-open {
     padding-right: 3rem;
   }
 }
+
+/* Two-step verification and passkeys */
+.mfa-login-panel {
+  display: grid;
+  gap: 1rem;
+  width: min(100%, 26rem);
+  margin: 0 auto;
+}
+
+.mfa-login-copy {
+  display: grid;
+  gap: 0.42rem;
+  text-align: center;
+}
+
+.mfa-login-copy h3 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: clamp(1.35rem, 3vw, 1.8rem);
+  letter-spacing: -0.035em;
+}
+
+.mfa-login-copy p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.mfa-login-totp-form {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.mfa-login-totp-form input {
+  text-align: center;
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.24em;
+}
+
+.mfa-login-totp-form button,
+.mfa-login-passkey {
+  width: 100%;
+}
+
+.mfa-login-divider {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.mfa-login-divider::before,
+.mfa-login-divider::after {
+  content: "";
+  height: 1px;
+  background: var(--line);
+}
+
+.text-button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.38rem;
+  box-shadow: none;
+  font-size: 0.74rem;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.text-button:hover {
+  color: var(--ink-strong);
+  background: transparent;
+}
+
+.account-security-section {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(247, 251, 253, 0.74);
+  padding: 1rem;
+}
+
+.account-security-section + .account-security-section {
+  margin-top: 1.25rem;
+}
+
+.account-security-section-heading,
+.mfa-method-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.account-security-section-heading > div,
+.mfa-method-card-header > div {
+  display: grid;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
+.account-security-section-heading h4,
+.mfa-method-card h5 {
+  margin: 0;
+  color: var(--ink-strong);
+  letter-spacing: -0.02em;
+}
+
+.account-security-section-heading h4 {
+  font-size: 0.96rem;
+}
+
+.mfa-method-card h5 {
+  font-size: 0.84rem;
+}
+
+.account-security-section-heading p,
+.mfa-method-card-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.mfa-summary-badge,
+.mfa-method-status {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  padding: 0.3rem 0.55rem;
+  font-size: 0.68rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.mfa-method-status.enabled {
+  border-color: rgba(32, 139, 98, 0.22);
+  background: rgba(32, 139, 98, 0.08);
+  color: #16704d;
+}
+
+.mfa-password-confirmation {
+  display: grid;
+  gap: 0.4rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 0.85rem;
+}
+
+.mfa-method-card {
+  display: grid;
+  gap: 0.9rem;
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+
+.mfa-method-actions,
+.passkey-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.48rem;
+  flex-wrap: wrap;
+}
+
+.mfa-method-actions button,
+.passkey-register-form > button {
+  min-height: 2.1rem;
+}
+
+button.compact {
+  min-height: 1.85rem;
+  padding: 0.32rem 0.55rem;
+  font-size: 0.68rem;
+}
+
+button.danger {
+  color: var(--danger);
+}
+
+.totp-setup-panel {
+  display: grid;
+  grid-template-columns: 11rem minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  padding: 0.9rem;
+}
+
+.totp-qr-wrap {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 0.5rem;
+}
+
+.totp-qr-wrap img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.totp-setup-copy {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.totp-setup-copy p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.totp-setup-copy code {
+  overflow-wrap: anywhere;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(236, 246, 252, 0.62);
+  padding: 0.55rem;
+  color: var(--ink-strong);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+}
+
+.totp-verify-form {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 0.75rem;
+}
+
+.totp-verify-form input {
+  max-width: 12rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.16em;
+}
+
+.passkey-register-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.65rem;
+}
+
+.passkey-register-form .form-field {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.passkey-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.passkey-empty {
+  margin: 0;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 0.8rem;
+  font-size: 0.74rem;
+  text-align: center;
+}
+
+.passkey-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 0.72rem;
+}
+
+.passkey-list-copy {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.passkey-list-copy strong,
+.passkey-list-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.passkey-list-copy strong {
+  color: var(--ink-strong);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.passkey-list-copy small {
+  color: var(--muted);
+  font-size: 0.66rem;
+  line-height: 1.45;
+}
+
+@media (max-width: 620px) {
+  .account-security-section-heading,
+  .mfa-method-card-header,
+  .passkey-list-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .mfa-summary-badge,
+  .mfa-method-status {
+    align-self: flex-start;
+  }
+
+  .totp-setup-panel,
+  .passkey-register-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .totp-qr-wrap {
+    width: min(100%, 13rem);
+  }
+
+  .passkey-register-form > button {
+    width: 100%;
+  }
+}

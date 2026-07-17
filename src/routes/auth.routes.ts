@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { db, type DbValue } from "../lib/db.js";
+import { db, transaction, type DbValue } from "../lib/db.js";
 import { createId } from "../lib/id.js";
 import { hashPassword, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
@@ -14,6 +14,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { requireUser } from "../utils/schemas.js";
 import type { UserRow } from "../types/domain.js";
+import { createMfaLoginSession, getMfaMethods, mfaRouter } from "./mfa.routes.js";
 
 export const authRouter = Router();
 
@@ -95,6 +96,18 @@ authRouter.post("/login", validate({ body: loginSchema }), async (req, res, next
       throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid ID or password");
     }
 
+    const methods = await getMfaMethods(user.id);
+    if (methods.totp || methods.passkey) {
+      const mfaToken = await createMfaLoginSession(user.id);
+      res.json({
+        mfaRequired: true,
+        mfaToken,
+        methods,
+        expiresInSeconds: 300
+      });
+      return;
+    }
+
     const token = signAuthToken({ sub: user.id, username: user.username });
     res.json({ user: toPublicUser(user), token });
   } catch (error) {
@@ -154,9 +167,17 @@ authRouter.post("/password", requireAuth, validate({ body: passwordSchema }), as
       throw new ApiError(400, "NEW_PASSWORD_SAME", "New password must differ from the current password");
     }
 
-    await db.execute("UPDATE users SET password_hash = ? WHERE id = ?", [await hashPassword(newPassword), user.id]);
+    const passwordHash = await hashPassword(newPassword);
+    await transaction(async (client) => {
+      await client.execute("UPDATE users SET password_hash = ? WHERE id = ?", [passwordHash, user.id]);
+      await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [user.id]);
+      await client.execute("DELETE FROM webauthn_challenges WHERE user_id = ?", [user.id]);
+    });
     res.json({ ok: true });
   } catch (error) {
     next(error);
   }
 });
+
+
+authRouter.use("/mfa", mfaRouter);

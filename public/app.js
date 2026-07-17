@@ -58,6 +58,9 @@ const state = {
   accountSettingsOpen: false,
   activeAccountPanel: "profile",
   pendingAvatarData: null,
+  mfaLogin: null,
+  mfaStatus: { totpEnabled: false, passkeys: [] },
+  totpSetupToken: null,
   emojiPickerTarget: null,
   emojiPickerReturnFocus: null,
   activeEmojiCategory: "recent",
@@ -508,9 +511,35 @@ const elements = {
   accountNewPassword: $("#account-new-password"),
   accountConfirmPassword: $("#account-confirm-password"),
   accountPasswordSave: $("#account-password-save"),
+  accountMfaPassword: $("#account-mfa-password"),
+  accountMfaSummary: $("#account-mfa-summary"),
+  accountTotpStatus: $("#account-totp-status"),
+  accountTotpSetup: $("#account-totp-setup"),
+  accountTotpDisable: $("#account-totp-disable"),
+  accountTotpSetupPanel: $("#account-totp-setup-panel"),
+  accountTotpQr: $("#account-totp-qr"),
+  accountTotpSecret: $("#account-totp-secret"),
+  accountTotpVerifyForm: $("#account-totp-verify-form"),
+  accountTotpCode: $("#account-totp-code"),
+  accountTotpVerify: $("#account-totp-verify"),
+  accountTotpCancel: $("#account-totp-cancel"),
+  accountPasskeyCount: $("#account-passkey-count"),
+  accountPasskeyRegisterForm: $("#account-passkey-register-form"),
+  accountPasskeyName: $("#account-passkey-name"),
+  accountPasskeyRegister: $("#account-passkey-register"),
+  accountPasskeySupport: $("#account-passkey-support"),
+  accountPasskeyList: $("#account-passkey-list"),
   authPanel: $("#auth-panel"),
+  authHeader: $("#auth-panel .auth-header"),
   workspacePanel: $("#workspace-panel"),
   authForm: $("#auth-form"),
+  mfaLoginPanel: $("#mfa-login-panel"),
+  mfaLoginTotpForm: $("#mfa-login-totp-form"),
+  mfaLoginCode: $("#mfa-login-code"),
+  mfaLoginTotpSubmit: $("#mfa-login-totp-submit"),
+  mfaLoginPasskey: $("#mfa-login-passkey"),
+  mfaLoginDivider: $("#mfa-login-panel .mfa-login-divider"),
+  mfaLoginCancel: $("#mfa-login-cancel"),
   authKicker: $("#auth-kicker"),
   authTitle: $("#auth-title"),
   authDescription: $("#auth-description"),
@@ -728,6 +757,119 @@ function setToken(token) {
   else localStorage.removeItem(tokenKey);
 }
 
+function isWebAuthnSupported() {
+  return Boolean(window.isSecureContext && window.PublicKeyCredential && navigator.credentials);
+}
+
+function base64UrlToArrayBuffer(value) {
+  const normalized = String(value).replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  const binary = window.atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes.buffer;
+}
+
+function arrayBufferToBase64Url(value) {
+  const bytes = new Uint8Array(value);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return window.btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function prepareRegistrationOptions(options) {
+  return {
+    ...options,
+    challenge: base64UrlToArrayBuffer(options.challenge),
+    user: { ...options.user, id: base64UrlToArrayBuffer(options.user.id) },
+    excludeCredentials: (options.excludeCredentials ?? []).map((credential) => ({
+      ...credential,
+      id: base64UrlToArrayBuffer(credential.id)
+    }))
+  };
+}
+
+function prepareAuthenticationOptions(options) {
+  return {
+    ...options,
+    challenge: base64UrlToArrayBuffer(options.challenge),
+    allowCredentials: (options.allowCredentials ?? []).map((credential) => ({
+      ...credential,
+      id: base64UrlToArrayBuffer(credential.id)
+    }))
+  };
+}
+
+function serializeRegistrationCredential(credential) {
+  const response = credential.response;
+  const serialized = {
+    id: credential.id,
+    rawId: arrayBufferToBase64Url(credential.rawId),
+    type: credential.type,
+    clientExtensionResults: credential.getClientExtensionResults(),
+    response: {
+      clientDataJSON: arrayBufferToBase64Url(response.clientDataJSON),
+      attestationObject: arrayBufferToBase64Url(response.attestationObject),
+      transports: typeof response.getTransports === "function" ? response.getTransports() : undefined
+    }
+  };
+  if (credential.authenticatorAttachment) serialized.authenticatorAttachment = credential.authenticatorAttachment;
+  if (typeof response.getAuthenticatorData === "function") {
+    const authenticatorData = response.getAuthenticatorData();
+    if (authenticatorData) serialized.response.authenticatorData = arrayBufferToBase64Url(authenticatorData);
+  }
+  if (typeof response.getPublicKey === "function") {
+    const publicKey = response.getPublicKey();
+    if (publicKey) serialized.response.publicKey = arrayBufferToBase64Url(publicKey);
+  }
+  if (typeof response.getPublicKeyAlgorithm === "function") {
+    serialized.response.publicKeyAlgorithm = response.getPublicKeyAlgorithm();
+  }
+  return serialized;
+}
+
+function serializeAuthenticationCredential(credential) {
+  const response = credential.response;
+  const serialized = {
+    id: credential.id,
+    rawId: arrayBufferToBase64Url(credential.rawId),
+    type: credential.type,
+    clientExtensionResults: credential.getClientExtensionResults(),
+    response: {
+      clientDataJSON: arrayBufferToBase64Url(response.clientDataJSON),
+      authenticatorData: arrayBufferToBase64Url(response.authenticatorData),
+      signature: arrayBufferToBase64Url(response.signature)
+    }
+  };
+  if (credential.authenticatorAttachment) serialized.authenticatorAttachment = credential.authenticatorAttachment;
+  if (response.userHandle) serialized.response.userHandle = arrayBufferToBase64Url(response.userHandle);
+  return serialized;
+}
+
+async function createWebAuthnCredential(options) {
+  if (!isWebAuthnSupported()) throw new Error(t("mfa.passkeyUnsupported"));
+  const credential = await navigator.credentials.create({ publicKey: prepareRegistrationOptions(options) });
+  if (!credential) throw new Error(t("mfa.passkeyOperationCancelled"));
+  return serializeRegistrationCredential(credential);
+}
+
+async function getWebAuthnCredential(options) {
+  if (!isWebAuthnSupported()) throw new Error(t("mfa.passkeyUnsupported"));
+  const credential = await navigator.credentials.get({ publicKey: prepareAuthenticationOptions(options) });
+  if (!credential) throw new Error(t("mfa.passkeyOperationCancelled"));
+  return serializeAuthenticationCredential(credential);
+}
+
+function normalizeWebAuthnError(error) {
+  if (error?.name === "NotAllowedError" || error?.name === "AbortError") {
+    return new Error(t("mfa.passkeyOperationCancelled"));
+  }
+  return error instanceof Error ? error : new Error(t("errors.unknown"));
+}
+
 function formatDate(value) {
   if (!value) return "";
   return new Intl.DateTimeFormat(getLocale(), { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
@@ -741,10 +883,11 @@ function translateApiError(data, status) {
 }
 
 async function api(path, options = {}) {
-  const headers = new Headers(options.headers ?? {});
+  const { skipAuthReset = false, ...requestOptions } = options;
+  const headers = new Headers(requestOptions.headers ?? {});
   if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
 
-  let body = options.body;
+  let body = requestOptions.body;
   if (body && typeof body === "object" && !(body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
     body = JSON.stringify(body);
@@ -752,7 +895,7 @@ async function api(path, options = {}) {
 
   let response;
   try {
-    response = await fetch(path, { ...options, headers, body });
+    response = await fetch(path, { ...requestOptions, headers, body });
   } catch {
     throw new Error(t("errors.network"));
   }
@@ -767,7 +910,7 @@ async function api(path, options = {}) {
   }
 
   if (!response.ok) {
-    if (response.status === 401) {
+    if (response.status === 401 && !skipAuthReset) {
       closeAccountSettings({ restoreFocus: false });
       setToken(null);
       state.user = null;
@@ -878,6 +1021,135 @@ function setAccountPanel(panel, { focusTab = false } = {}) {
     panelElement.classList.toggle("hidden", panelElement.dataset.accountPanelContent !== nextPanel);
   });
   setAccountMessage();
+  if (nextPanel === "security" && state.accountSettingsOpen) void loadMfaSettings();
+}
+
+function hideTotpSetup() {
+  state.totpSetupToken = null;
+  elements.accountTotpSetupPanel.classList.add("hidden");
+  elements.accountTotpVerifyForm.reset();
+  elements.accountTotpQr.removeAttribute("src");
+  elements.accountTotpSecret.textContent = "";
+}
+
+function requireMfaPassword() {
+  const currentPassword = elements.accountMfaPassword.value;
+  if (currentPassword) return currentPassword;
+  setAccountMessage(t("mfa.passwordRequired"), true);
+  elements.accountMfaPassword.focus();
+  return null;
+}
+
+function createPasskeyActionButton(labelKey, className, handler) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = t(labelKey);
+  button.addEventListener("click", handler);
+  return button;
+}
+
+function renderPasskeyList() {
+  elements.accountPasskeyList.replaceChildren();
+  const passkeys = Array.isArray(state.mfaStatus.passkeys) ? state.mfaStatus.passkeys : [];
+  if (!passkeys.length) {
+    const empty = document.createElement("p");
+    empty.className = "passkey-empty";
+    empty.textContent = t("mfa.noPasskeys");
+    elements.accountPasskeyList.append(empty);
+    return;
+  }
+
+  passkeys.forEach((passkey) => {
+    const item = document.createElement("article");
+    item.className = "passkey-list-item";
+
+    const copy = document.createElement("div");
+    copy.className = "passkey-list-copy";
+    const name = document.createElement("strong");
+    name.textContent = passkey.name;
+    const metadata = document.createElement("small");
+    const deviceLabel = passkey.deviceType === "multiDevice" ? t("mfa.multiDevice") : t("mfa.singleDevice");
+    const backupLabel = passkey.backedUp ? t("mfa.backedUp") : t("mfa.notBackedUp");
+    const usageLabel = passkey.lastUsedAt
+      ? t("mfa.passkeyLastUsed", { date: formatDate(passkey.lastUsedAt) })
+      : t("mfa.passkeyNeverUsed");
+    metadata.textContent = `${deviceLabel} · ${backupLabel} · ${usageLabel}`;
+    copy.append(name, metadata);
+
+    const actions = document.createElement("div");
+    actions.className = "passkey-list-actions";
+    actions.append(
+      createPasskeyActionButton("mfa.renamePasskey", "secondary compact", async () => {
+        const nextName = window.prompt(t("mfa.renamePrompt"), passkey.name)?.trim();
+        if (!nextName || nextName === passkey.name) return;
+        try {
+          await api(`/api/auth/mfa/passkeys/${encodeURIComponent(passkey.id)}`, {
+            method: "PATCH",
+            body: { name: nextName }
+          });
+          await loadMfaSettings({ showLoading: false });
+          setAccountMessage(t("mfa.passkeyRenamed"));
+        } catch (error) {
+          setAccountMessage(error.message, true);
+        }
+      }),
+      createPasskeyActionButton("mfa.removePasskey", "secondary danger compact", async () => {
+        if (!window.confirm(t("mfa.removePasskeyConfirm", { name: passkey.name }))) return;
+        const currentPassword = requireMfaPassword();
+        if (!currentPassword) return;
+        try {
+          await api(`/api/auth/mfa/passkeys/${encodeURIComponent(passkey.id)}`, {
+            method: "DELETE",
+            body: { currentPassword }
+          });
+          elements.accountMfaPassword.value = "";
+          await loadMfaSettings({ showLoading: false });
+          setAccountMessage(t("mfa.passkeyRemoved"));
+        } catch (error) {
+          setAccountMessage(error.message, true);
+        }
+      })
+    );
+
+    item.append(copy, actions);
+    elements.accountPasskeyList.append(item);
+  });
+}
+
+function renderMfaSettings() {
+  const passkeys = Array.isArray(state.mfaStatus.passkeys) ? state.mfaStatus.passkeys : [];
+  const configuredCount = (state.mfaStatus.totpEnabled ? 1 : 0) + passkeys.length;
+  elements.accountMfaSummary.textContent = configuredCount
+    ? t("mfa.configuredMethods", { count: formatNumber(configuredCount) })
+    : t("mfa.notConfigured");
+  elements.accountTotpStatus.textContent = t(state.mfaStatus.totpEnabled ? "mfa.enabled" : "mfa.disabled");
+  elements.accountTotpStatus.classList.toggle("enabled", state.mfaStatus.totpEnabled);
+  elements.accountTotpSetup.textContent = t(state.mfaStatus.totpEnabled ? "mfa.replaceTotp" : "mfa.setUpTotp");
+  elements.accountTotpDisable.classList.toggle("hidden", !state.mfaStatus.totpEnabled);
+  elements.accountPasskeyCount.textContent = t("mfa.passkeyCount", { count: formatNumber(passkeys.length) });
+
+  const supported = isWebAuthnSupported();
+  elements.accountPasskeySupport.textContent = t(supported ? "mfa.passkeyReady" : "mfa.passkeyUnsupported");
+  elements.accountPasskeyRegister.disabled = !supported;
+  elements.accountPasskeyName.disabled = !supported;
+  renderPasskeyList();
+}
+
+async function loadMfaSettings({ showLoading = true } = {}) {
+  if (!state.user) return;
+  if (showLoading) setAccountMessage(t("mfa.loading"));
+  try {
+    const data = await api("/api/auth/mfa/status");
+    state.mfaStatus = {
+      totpEnabled: Boolean(data?.totpEnabled),
+      passkeys: Array.isArray(data?.passkeys) ? data.passkeys : []
+    };
+    renderMfaSettings();
+    if (showLoading) setAccountMessage();
+  } catch (error) {
+    setAccountMessage(error.message, true);
+  }
 }
 
 function fillAccountSettings() {
@@ -894,6 +1166,10 @@ function fillAccountSettings() {
   );
   elements.accountAvatarRemove.disabled = !state.pendingAvatarData;
   elements.accountPasswordForm.reset();
+  elements.accountMfaPassword.value = "";
+  elements.accountPasskeyRegisterForm.reset();
+  hideTotpSetup();
+  renderMfaSettings();
   updateUserIdentityUi();
 }
 
@@ -929,6 +1205,9 @@ function closeAccountSettings({ restoreFocus = true } = {}) {
   setAccountMessage();
   elements.accountAvatarInput.value = "";
   elements.accountPasswordForm.reset();
+  elements.accountMfaPassword.value = "";
+  elements.accountPasskeyRegisterForm.reset();
+  hideTotpSetup();
   syncMobileSidebarAccessibility();
   if (restoreFocus && state.user) elements.accountSettingsTrigger.focus();
 }
@@ -1018,9 +1297,58 @@ async function applyUserPreferredLanguage() {
   if (preferredLanguage && preferredLanguage !== getLanguage()) setLanguage(preferredLanguage);
 }
 
+function resetMfaLogin({ focus = false } = {}) {
+  state.mfaLogin = null;
+  elements.authHeader.classList.remove("hidden");
+  elements.authForm.classList.remove("hidden");
+  elements.mfaLoginPanel.classList.add("hidden");
+  elements.mfaLoginTotpForm.classList.remove("hidden");
+  elements.mfaLoginPasskey.classList.remove("hidden");
+  elements.mfaLoginPasskey.disabled = false;
+  elements.mfaLoginTotpForm.reset();
+  elements.mfaLoginTotpSubmit.disabled = false;
+  if (focus) window.requestAnimationFrame(() => elements.username.focus());
+}
+
+function showMfaLogin(data) {
+  const methods = {
+    totp: Boolean(data?.methods?.totp),
+    passkey: Boolean(data?.methods?.passkey)
+  };
+  if (!methods.totp && !methods.passkey) throw new Error(t("errors.unknown"));
+
+  state.mfaLogin = { token: data.mfaToken, methods };
+  elements.authHeader.classList.add("hidden");
+  elements.authForm.classList.add("hidden");
+  elements.mfaLoginPanel.classList.remove("hidden");
+  elements.mfaLoginTotpForm.classList.toggle("hidden", !methods.totp);
+  elements.mfaLoginPasskey.classList.toggle("hidden", !methods.passkey);
+  elements.mfaLoginPasskey.disabled = methods.passkey && !isWebAuthnSupported();
+  elements.mfaLoginDivider.classList.toggle("hidden", !(methods.totp && methods.passkey));
+  elements.mfaLoginTotpForm.reset();
+  setStatus(methods.passkey && !methods.totp && !isWebAuthnSupported() ? t("mfa.passkeyUnsupported") : "", true);
+  window.requestAnimationFrame(() => {
+    if (methods.totp) elements.mfaLoginCode.focus();
+    else if (methods.passkey && isWebAuthnSupported()) elements.mfaLoginPasskey.focus();
+    else elements.mfaLoginCancel.focus();
+  });
+}
+
+async function completeAuthenticatedLogin(data) {
+  setToken(data.token);
+  state.user = data.user;
+  elements.password.value = "";
+  resetMfaLogin();
+  await applyUserPreferredLanguage();
+  renderShell();
+  await loadPages();
+  setStatus(t("status.loggedInAs", { username: state.user.username }));
+}
+
 function logout() {
   closeAccountSettings({ restoreFocus: false });
   closeEmojiPicker({ restoreFocus: false });
+  resetMfaLogin();
   setToken(null);
   state.user = null;
   state.pages = [];
@@ -5211,6 +5539,185 @@ elements.accountPasswordForm.addEventListener("submit", async (event) => {
   }
 });
 
+elements.accountTotpSetup.addEventListener("click", async () => {
+  const currentPassword = requireMfaPassword();
+  if (!currentPassword) return;
+  elements.accountTotpSetup.disabled = true;
+  try {
+    setAccountMessage(t("mfa.loading"));
+    const data = await api("/api/auth/mfa/totp/setup", {
+      method: "POST",
+      body: { currentPassword }
+    });
+    state.totpSetupToken = data.setupToken;
+    elements.accountTotpQr.src = data.qrCodeDataUrl;
+    elements.accountTotpSecret.textContent = data.secret;
+    elements.accountTotpSetupPanel.classList.remove("hidden");
+    elements.accountTotpVerifyForm.reset();
+    setAccountMessage(t("mfa.totpSetupStarted"));
+    window.requestAnimationFrame(() => elements.accountTotpCode.focus());
+  } catch (error) {
+    hideTotpSetup();
+    setAccountMessage(error.message, true);
+  } finally {
+    elements.accountTotpSetup.disabled = false;
+  }
+});
+
+elements.accountTotpVerifyForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.totpSetupToken) {
+    setAccountMessage(t("mfa.totpSetupExpired"), true);
+    return;
+  }
+  elements.accountTotpVerify.disabled = true;
+  try {
+    await api("/api/auth/mfa/totp/verify", {
+      method: "POST",
+      body: {
+        setupToken: state.totpSetupToken,
+        code: elements.accountTotpCode.value.trim()
+      }
+    });
+    elements.accountMfaPassword.value = "";
+    hideTotpSetup();
+    await loadMfaSettings({ showLoading: false });
+    setAccountMessage(t("mfa.totpEnabled"));
+  } catch (error) {
+    setAccountMessage(error.message, true);
+  } finally {
+    elements.accountTotpVerify.disabled = false;
+  }
+});
+
+elements.accountTotpCancel.addEventListener("click", () => {
+  hideTotpSetup();
+  setAccountMessage();
+});
+
+elements.accountTotpDisable.addEventListener("click", async () => {
+  if (!window.confirm(t("mfa.disableTotpConfirm"))) return;
+  const currentPassword = requireMfaPassword();
+  if (!currentPassword) return;
+  elements.accountTotpDisable.disabled = true;
+  try {
+    await api("/api/auth/mfa/totp", {
+      method: "DELETE",
+      body: { currentPassword }
+    });
+    elements.accountMfaPassword.value = "";
+    hideTotpSetup();
+    await loadMfaSettings({ showLoading: false });
+    setAccountMessage(t("mfa.totpDisabled"));
+  } catch (error) {
+    setAccountMessage(error.message, true);
+  } finally {
+    elements.accountTotpDisable.disabled = false;
+  }
+});
+
+elements.accountPasskeyRegisterForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const currentPassword = requireMfaPassword();
+  if (!currentPassword) return;
+  const name = elements.accountPasskeyName.value.trim();
+  if (!name) {
+    setAccountMessage(t("mfa.nameRequired"), true);
+    elements.accountPasskeyName.focus();
+    return;
+  }
+  if (!isWebAuthnSupported()) {
+    setAccountMessage(t("mfa.passkeyUnsupported"), true);
+    return;
+  }
+
+  elements.accountPasskeyRegister.disabled = true;
+  try {
+    setAccountMessage(t("mfa.passkeyAdding"));
+    const optionsData = await api("/api/auth/mfa/passkeys/options", {
+      method: "POST",
+      body: { currentPassword, name }
+    });
+    const response = await createWebAuthnCredential(optionsData.options);
+    await api("/api/auth/mfa/passkeys", {
+      method: "POST",
+      body: { challengeToken: optionsData.challengeToken, response }
+    });
+    elements.accountMfaPassword.value = "";
+    elements.accountPasskeyRegisterForm.reset();
+    await loadMfaSettings({ showLoading: false });
+    setAccountMessage(t("mfa.passkeyAdded"));
+  } catch (error) {
+    setAccountMessage(normalizeWebAuthnError(error).message, true);
+  } finally {
+    elements.accountPasskeyRegister.disabled = !isWebAuthnSupported();
+  }
+});
+
+elements.mfaLoginTotpForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.mfaLogin?.token) {
+    resetMfaLogin({ focus: true });
+    setStatus(t("mfa.sessionExpired"), true);
+    return;
+  }
+  elements.mfaLoginTotpSubmit.disabled = true;
+  try {
+    setStatus(t("mfa.verifying"));
+    const data = await api("/api/auth/mfa/login/totp", {
+      method: "POST",
+      body: {
+        mfaToken: state.mfaLogin.token,
+        code: elements.mfaLoginCode.value.trim()
+      },
+      skipAuthReset: true
+    });
+    await completeAuthenticatedLogin(data);
+  } catch (error) {
+    setStatus(error.message, true);
+    elements.mfaLoginCode.select();
+  } finally {
+    elements.mfaLoginTotpSubmit.disabled = false;
+  }
+});
+
+elements.mfaLoginPasskey.addEventListener("click", async () => {
+  if (!state.mfaLogin?.token) {
+    resetMfaLogin({ focus: true });
+    setStatus(t("mfa.sessionExpired"), true);
+    return;
+  }
+  elements.mfaLoginPasskey.disabled = true;
+  try {
+    setStatus(t("mfa.passkeyAuthenticating"));
+    const optionsData = await api("/api/auth/mfa/login/passkey/options", {
+      method: "POST",
+      body: { mfaToken: state.mfaLogin.token },
+      skipAuthReset: true
+    });
+    const response = await getWebAuthnCredential(optionsData.options);
+    const data = await api("/api/auth/mfa/login/passkey/verify", {
+      method: "POST",
+      body: {
+        mfaToken: state.mfaLogin.token,
+        challengeToken: optionsData.challengeToken,
+        response
+      },
+      skipAuthReset: true
+    });
+    await completeAuthenticatedLogin(data);
+  } catch (error) {
+    setStatus(normalizeWebAuthnError(error).message, true);
+  } finally {
+    elements.mfaLoginPasskey.disabled = !isWebAuthnSupported();
+  }
+});
+
+elements.mfaLoginCancel.addEventListener("click", () => {
+  resetMfaLogin({ focus: true });
+  setStatus(t("status.loginPrompt"));
+});
+
 elements.authSwitchLink.addEventListener("click", (event) => {
   event.preventDefault();
   setAuthMode(state.authMode === "register" ? "login" : "register");
@@ -5219,6 +5726,7 @@ elements.authSwitchLink.addEventListener("click", (event) => {
 });
 
 window.addEventListener("hashchange", () => {
+  if (state.mfaLogin) resetMfaLogin();
   setAuthMode(window.location.hash === "#signup" ? "register" : "login", false);
 });
 
@@ -5230,6 +5738,10 @@ function refreshLocalizedUi() {
   renderSelectedPage();
   syncPageModeUi();
   if (state.user) updateUserIdentityUi();
+  if (state.accountSettingsOpen) renderMfaSettings();
+  if (state.mfaLogin?.methods?.passkey) {
+    elements.mfaLoginPasskey.disabled = !isWebAuthnSupported();
+  }
   if (!elements.emojiPickerLayer.classList.contains("hidden")) renderEmojiPicker();
 
   if (!elements.slashMenu.classList.contains("hidden") && state.activeSlashBlockId) {
@@ -5273,12 +5785,11 @@ elements.authForm.addEventListener("submit", async (event) => {
   try {
     setStatus(t(mode === "login" ? "status.loggingIn" : "status.registering"));
     const data = await api(`/api/auth/${mode}`, { method: "POST", body });
-    setToken(data.token);
-    state.user = data.user;
-    await applyUserPreferredLanguage();
-    renderShell();
-    await loadPages();
-    setStatus(t("status.loggedInAs", { username: state.user.username }));
+    if (mode === "login" && data?.mfaRequired) {
+      showMfaLogin(data);
+      return;
+    }
+    await completeAuthenticatedLogin(data);
   } catch (error) {
     setStatus(error.message, true);
   }

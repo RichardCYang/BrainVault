@@ -193,6 +193,24 @@
               <a id="auth-switch-link" href="#signup">Sign up</a>
             </p>
           </form>
+
+          <section id="mfa-login-panel" class="mfa-login-panel hidden" aria-labelledby="mfa-login-title">
+            <div class="mfa-login-copy">
+              <p class="auth-kicker" data-i18n="mfa.loginKicker">Two-step verification</p>
+              <h3 id="mfa-login-title" data-i18n="mfa.loginTitle">Verify it’s you</h3>
+              <p data-i18n="mfa.loginDescription">Use an authenticator code or one of your registered passkeys.</p>
+            </div>
+            <form id="mfa-login-totp-form" class="mfa-login-totp-form">
+              <div class="form-field">
+                <label for="mfa-login-code" data-i18n="mfa.codeLabel">6-digit code</label>
+                <input id="mfa-login-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required />
+              </div>
+              <button id="mfa-login-totp-submit" type="submit" data-i18n="mfa.verifyCode">Verify code</button>
+            </form>
+            <div class="mfa-login-divider"><span data-i18n="mfa.or">or</span></div>
+            <button id="mfa-login-passkey" class="secondary mfa-login-passkey" type="button" data-i18n="mfa.usePasskey">Use a passkey</button>
+            <button id="mfa-login-cancel" class="text-button" type="button" data-i18n="mfa.cancelLogin">Back to login</button>
+          </section>
         </section>
 
         <section id="workspace-panel" class="workspace-panel hidden" aria-label="Workspace navigation" data-i18n-aria-label="workspace.aria">
@@ -544,9 +562,86 @@
 
             <section id="account-panel-security" class="account-settings-panel hidden" role="tabpanel" aria-labelledby="account-tab-security" data-account-panel-content="security">
               <div class="account-panel-heading">
-                <h3 data-i18n="account.securityTitle">Password</h3>
-                <p data-i18n="account.securityDescription">Confirm your current password before choosing a new one.</p>
+                <h3 data-i18n="account.securityTitle">Security</h3>
+                <p data-i18n="account.securityDescription">Manage your password and two-step verification methods.</p>
               </div>
+
+              <section class="account-security-section mfa-settings-section" aria-labelledby="account-mfa-title">
+                <div class="account-security-section-heading">
+                  <div>
+                    <h4 id="account-mfa-title" data-i18n="mfa.settingsTitle">Two-step verification</h4>
+                    <p data-i18n="mfa.settingsDescription">Add an authenticator app or multiple FIDO2 passkeys for backup access.</p>
+                  </div>
+                  <span id="account-mfa-summary" class="mfa-summary-badge" data-i18n="mfa.notConfigured">Not configured</span>
+                </div>
+
+                <div class="form-field mfa-password-confirmation">
+                  <label for="account-mfa-password" data-i18n="mfa.currentPasswordLabel">Current password for security changes</label>
+                  <input id="account-mfa-password" type="password" autocomplete="current-password" maxlength="128" />
+                  <p class="field-help" data-i18n="mfa.currentPasswordHint">Enter it before adding or removing a verification method.</p>
+                </div>
+
+                <article class="mfa-method-card">
+                  <div class="mfa-method-card-header">
+                    <div>
+                      <h5 data-i18n="mfa.totpTitle">Authenticator app (TOTP)</h5>
+                      <p data-i18n="mfa.totpDescription">Use a 6-digit code from an authenticator app.</p>
+                    </div>
+                    <span id="account-totp-status" class="mfa-method-status" data-i18n="mfa.disabled">Disabled</span>
+                  </div>
+                  <div class="mfa-method-actions">
+                    <button id="account-totp-setup" type="button" data-i18n="mfa.setUpTotp">Set up authenticator</button>
+                    <button id="account-totp-disable" class="secondary danger hidden" type="button" data-i18n="mfa.disableTotp">Disable</button>
+                  </div>
+                  <div id="account-totp-setup-panel" class="totp-setup-panel hidden">
+                    <div class="totp-qr-wrap">
+                      <img id="account-totp-qr" alt="TOTP QR code" data-i18n-alt="mfa.qrAlt" />
+                    </div>
+                    <div class="totp-setup-copy">
+                      <strong data-i18n="mfa.scanQr">Scan this QR code with your authenticator app.</strong>
+                      <p data-i18n="mfa.manualEntry">Or enter this setup key manually:</p>
+                      <code id="account-totp-secret"></code>
+                    </div>
+                    <form id="account-totp-verify-form" class="totp-verify-form">
+                      <div class="form-field">
+                        <label for="account-totp-code" data-i18n="mfa.codeLabel">6-digit code</label>
+                        <input id="account-totp-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required />
+                      </div>
+                      <div class="mfa-method-actions">
+                        <button id="account-totp-verify" type="submit" data-i18n="mfa.confirmTotp">Confirm and enable</button>
+                        <button id="account-totp-cancel" class="secondary" type="button" data-i18n="mfa.cancel">Cancel</button>
+                      </div>
+                    </form>
+                  </div>
+                </article>
+
+                <article class="mfa-method-card">
+                  <div class="mfa-method-card-header">
+                    <div>
+                      <h5 data-i18n="mfa.passkeyTitle">Passkeys (WebAuthn/FIDO2)</h5>
+                      <p data-i18n="mfa.passkeyDescription">Register more than one device or hardware security key.</p>
+                    </div>
+                    <span id="account-passkey-count" class="mfa-method-status">0</span>
+                  </div>
+                  <form id="account-passkey-register-form" class="passkey-register-form">
+                    <div class="form-field">
+                      <label for="account-passkey-name" data-i18n="mfa.passkeyNameLabel">Passkey name</label>
+                      <input id="account-passkey-name" type="text" maxlength="80" placeholder="Laptop, phone, backup key…" data-i18n-placeholder="mfa.passkeyNamePlaceholder" />
+                    </div>
+                    <button id="account-passkey-register" type="submit" data-i18n="mfa.addPasskey">Add passkey</button>
+                  </form>
+                  <div id="account-passkey-support" class="field-help"></div>
+                  <div id="account-passkey-list" class="passkey-list" aria-live="polite"></div>
+                </article>
+              </section>
+
+              <section class="account-security-section" aria-labelledby="account-password-title">
+                <div class="account-security-section-heading">
+                  <div>
+                    <h4 id="account-password-title" data-i18n="account.passwordTitle">Password</h4>
+                    <p data-i18n="account.passwordDescription">Confirm your current password before choosing a new one.</p>
+                  </div>
+                </div>
               <form id="account-password-form" class="account-settings-form">
                 <div class="form-field">
                   <label for="account-current-password" data-i18n="account.currentPassword">Current password</label>
@@ -565,6 +660,7 @@
                   <button id="account-password-save" type="submit" data-i18n="account.changePassword">Change password</button>
                 </div>
               </form>
+              </section>
             </section>
           </div>
         </div>

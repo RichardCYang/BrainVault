@@ -70,11 +70,162 @@ components:
           example: brainvault123
     AuthResponse:
       type: object
+      required: [user, token]
       properties:
         user:
           $ref: '#/components/schemas/PublicUser'
         token:
           type: string
+    MfaMethods:
+      type: object
+      required: [totp, passkey]
+      properties:
+        totp:
+          type: boolean
+        passkey:
+          type: boolean
+    MfaRequiredResponse:
+      type: object
+      required: [mfaRequired, mfaToken, methods, expiresInSeconds]
+      properties:
+        mfaRequired:
+          type: boolean
+          const: true
+        mfaToken:
+          type: string
+          description: Short-lived opaque token used only to finish this login.
+        methods:
+          $ref: '#/components/schemas/MfaMethods'
+        expiresInSeconds:
+          type: integer
+          example: 300
+    CurrentPasswordInput:
+      type: object
+      required: [currentPassword]
+      properties:
+        currentPassword:
+          type: string
+          maxLength: 128
+    TotpSetupResponse:
+      type: object
+      required: [setupToken, secret, otpauthUri, qrCodeDataUrl]
+      properties:
+        setupToken:
+          type: string
+        secret:
+          type: string
+        otpauthUri:
+          type: string
+        qrCodeDataUrl:
+          type: string
+          description: PNG data URL for the enrollment QR code.
+    TotpVerifyInput:
+      type: object
+      required: [setupToken, code]
+      properties:
+        setupToken:
+          type: string
+        code:
+          type: string
+          pattern: '^\d{6}$'
+    Passkey:
+      type: object
+      required: [id, name, deviceType, backedUp, transports, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          maxLength: 80
+        deviceType:
+          type: string
+        backedUp:
+          type: boolean
+        transports:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        lastUsedAt:
+          type: [string, 'null']
+    MfaStatusResponse:
+      type: object
+      required: [totpEnabled, passkeys, webAuthnAvailable]
+      properties:
+        totpEnabled:
+          type: boolean
+        passkeys:
+          type: array
+          items:
+            $ref: '#/components/schemas/Passkey'
+        webAuthnAvailable:
+          type: boolean
+    PasskeyOptionsInput:
+      type: object
+      required: [currentPassword, name]
+      properties:
+        currentPassword:
+          type: string
+          maxLength: 128
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+    WebAuthnOptionsResponse:
+      type: object
+      required: [options, challengeToken]
+      properties:
+        options:
+          type: object
+          additionalProperties: true
+        challengeToken:
+          type: string
+    WebAuthnRegistrationInput:
+      type: object
+      required: [challengeToken, response]
+      properties:
+        challengeToken:
+          type: string
+        response:
+          type: object
+          additionalProperties: true
+    PasskeyRenameInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+    MfaTokenInput:
+      type: object
+      required: [mfaToken]
+      properties:
+        mfaToken:
+          type: string
+    MfaTotpLoginInput:
+      allOf:
+        - $ref: '#/components/schemas/MfaTokenInput'
+        - type: object
+          required: [code]
+          properties:
+            code:
+              type: string
+              pattern: '^\d{6}$'
+    WebAuthnLoginVerifyInput:
+      type: object
+      required: [mfaToken, challengeToken, response]
+      properties:
+        mfaToken:
+          type: string
+        challengeToken:
+          type: string
+        response:
+          type: object
+          additionalProperties: true
     ProfileInput:
       type: object
       properties:
@@ -370,6 +521,173 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/LoginInput'
+      responses:
+        '200':
+          description: User and JWT, or a temporary MFA session when two-step verification is configured
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/AuthResponse'
+                  - $ref: '#/components/schemas/MfaRequiredResponse'
+  /api/auth/mfa/status:
+    get:
+      summary: Read the current user's TOTP and passkey configuration
+      responses:
+        '200':
+          description: Configured verification methods
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaStatusResponse'
+  /api/auth/mfa/totp/setup:
+    post:
+      summary: Begin TOTP enrollment after current-password verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CurrentPasswordInput'
+      responses:
+        '200':
+          description: Pending TOTP setup details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TotpSetupResponse'
+  /api/auth/mfa/totp/verify:
+    post:
+      summary: Confirm and enable a pending TOTP enrollment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpVerifyInput'
+      responses:
+        '200':
+          description: TOTP enabled
+  /api/auth/mfa/totp:
+    delete:
+      summary: Disable TOTP after current-password verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CurrentPasswordInput'
+      responses:
+        '200':
+          description: TOTP disabled
+  /api/auth/mfa/passkeys/options:
+    post:
+      summary: Begin registration of another passkey after current-password verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasskeyOptionsInput'
+      responses:
+        '200':
+          description: WebAuthn registration options and one-time challenge token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnOptionsResponse'
+  /api/auth/mfa/passkeys:
+    post:
+      summary: Verify and store a passkey registration response
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnRegistrationInput'
+      responses:
+        '201':
+          description: Stored passkey
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  passkey:
+                    $ref: '#/components/schemas/Passkey'
+  /api/auth/mfa/passkeys/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    patch:
+      summary: Rename a registered passkey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasskeyRenameInput'
+      responses:
+        '200':
+          description: Passkey renamed
+    delete:
+      summary: Remove a registered passkey after current-password verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CurrentPasswordInput'
+      responses:
+        '200':
+          description: Passkey removed
+  /api/auth/mfa/login/totp:
+    post:
+      security: []
+      summary: Complete a pending login with a TOTP code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaTotpLoginInput'
+      responses:
+        '200':
+          description: User and JWT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+  /api/auth/mfa/login/passkey/options:
+    post:
+      security: []
+      summary: Create a passkey challenge for a pending login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaTokenInput'
+      responses:
+        '200':
+          description: WebAuthn authentication options and one-time challenge token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnOptionsResponse'
+  /api/auth/mfa/login/passkey/verify:
+    post:
+      security: []
+      summary: Verify a passkey and complete a pending login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnLoginVerifyInput'
       responses:
         '200':
           description: User and JWT

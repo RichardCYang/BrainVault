@@ -21,6 +21,7 @@ Writing happens directly on the page. There is no separate preview pane: every r
 - Browser-language detection plus an account-level language preference for English, Japanese, Korean, French, German, Spanish, and Portuguese
 - Page nesting, archiving, and permanent deletion from page and collection three-dot menus
 - Username-and-password authentication backed by JWT, with profile photos, display names, and in-app password changes
+- Optional two-step verification with TOTP authenticator apps or multiple WebAuthn/FIDO2 passkeys per account
 - Authenticated attachment upload/download with configurable file-size limits and private disk storage
 - Sanitized Markdown rendering through `markdown-it` and `sanitize-html`
 - Automatic MariaDB database and schema bootstrap during server startup
@@ -34,7 +35,7 @@ Writing happens directly on the page. There is no separate preview pane: every r
 | Server | Express 5 |
 | Language | TypeScript |
 | Database | MariaDB |
-| Authentication | JSON Web Tokens and bcrypt |
+| Authentication | JSON Web Tokens, bcrypt, RFC 6238 TOTP, and WebAuthn/FIDO2 passkeys |
 | Validation | Zod |
 | File upload | Multer |
 | Markdown | markdown-it and sanitize-html |
@@ -160,6 +161,17 @@ For a complete first-time setup, run:
 npm run setup
 ```
 
+## Two-step verification
+
+Open **Settings → Security** to configure either verification method:
+
+- **Authenticator app (TOTP):** BrainVault displays a QR code and manual setup key, then enables the method only after a valid six-digit code is confirmed. The stored TOTP secret is encrypted with AES-256-GCM, and a code cannot be replayed within the same time step.
+- **Passkeys (WebAuthn/FIDO2):** Add, name, rename, and remove multiple platform passkeys or external hardware security keys. Each credential is stored separately so a primary device and multiple recovery keys can coexist.
+
+After the password is accepted, accounts with at least one configured method receive a short-lived, one-time MFA session instead of a JWT. Completing either an available TOTP or passkey challenge issues the normal access token.
+
+Local WebAuthn development works at `http://localhost:4000`. Production deployments should use HTTPS and set `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGIN` to the exact relying-party domain and browser origin. Changing `MFA_ENCRYPTION_KEY` after users enroll TOTP invalidates their encrypted authenticator secrets, so store and rotate it through a managed secret process.
+
 ## Editor basics
 
 | Action | Result |
@@ -251,6 +263,10 @@ Translations live in `public/i18n.js`. Static HTML uses `data-i18n*` attributes,
 | `DATABASE_CONNECTION_LIMIT` | `10` | Maximum pool size |
 | `JWT_SECRET` | Development-only value | Secret used to sign access tokens; minimum 32 characters |
 | `JWT_EXPIRES_IN` | `7d` | Token lifetime |
+| `MFA_ENCRYPTION_KEY` | Development-only value | Key material used to encrypt TOTP secrets; minimum 32 characters |
+| `WEBAUTHN_RP_NAME` | `BrainVault` | Name shown by browsers during passkey registration |
+| `WEBAUTHN_RP_ID` | `localhost` | WebAuthn relying-party domain, without scheme or port |
+| `WEBAUTHN_ORIGIN` | `http://localhost:4000` | Comma-separated exact browser origins accepted for WebAuthn responses |
 | `CORS_ORIGIN` | Local development origins | Comma-separated browser origins allowed to call the API |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window in milliseconds |
 | `RATE_LIMIT_MAX` | `120` | Maximum requests per window |
@@ -268,7 +284,18 @@ Most API routes require a bearer token returned by the register or login endpoin
 | Method | Route | Description |
 | --- | --- | --- |
 | `POST` | `/api/auth/register` | Create an account |
-| `POST` | `/api/auth/login` | Sign in and receive a JWT |
+| `POST` | `/api/auth/login` | Sign in; returns either a JWT or a temporary MFA session |
+| `GET` | `/api/auth/mfa/status` | Read configured TOTP and passkey methods |
+| `POST` | `/api/auth/mfa/totp/setup` | Begin current-password-protected TOTP enrollment |
+| `POST` | `/api/auth/mfa/totp/verify` | Confirm and enable a pending TOTP enrollment |
+| `DELETE` | `/api/auth/mfa/totp` | Disable TOTP after current-password verification |
+| `POST` | `/api/auth/mfa/passkeys/options` | Begin current-password-protected passkey registration |
+| `POST` | `/api/auth/mfa/passkeys` | Verify and store a passkey credential |
+| `PATCH` | `/api/auth/mfa/passkeys/:id` | Rename a registered passkey |
+| `DELETE` | `/api/auth/mfa/passkeys/:id` | Remove a passkey after current-password verification |
+| `POST` | `/api/auth/mfa/login/totp` | Complete a pending login with a TOTP code |
+| `POST` | `/api/auth/mfa/login/passkey/options` | Create a passkey authentication challenge |
+| `POST` | `/api/auth/mfa/login/passkey/verify` | Verify a passkey and complete login |
 | `GET` | `/api/auth/me` | Read the current user |
 | `PATCH` | `/api/auth/profile` | Update display name, profile image, or preferred language |
 | `POST` | `/api/auth/password` | Change the password after verifying the current password |
@@ -308,7 +335,7 @@ npm run build
 npm start
 ```
 
-The automatic browser launch belongs exclusively to `npm run dev`; `npm start` and production execution never invoke it. Before using production mode, set a unique `JWT_SECRET` with at least 32 characters. The server refuses to start in production when the bundled development secret is still in use.
+The automatic browser launch belongs exclusively to `npm run dev`; `npm start` and production execution never invoke it. Before using production mode, set unique `JWT_SECRET` and `MFA_ENCRYPTION_KEY` values with at least 32 characters, and configure the production WebAuthn RP ID and origin. The server refuses to start in production when either bundled development secret is still in use.
 
 ## Project structure
 
@@ -335,7 +362,7 @@ BrainVault/
 
 ## Security defaults
 
-The server includes Helmet headers, a configurable CORS allowlist, request rate limiting, password hashing, current-password verification for password changes, JWT verification, Zod input validation, validated profile-image data, private attachment storage with authenticated downloads, upload-size limits, and sanitized HTML output. Those defaults are a starting point rather than a substitute for HTTPS, secure secret storage, database backups, and normal production monitoring.
+The server includes Helmet headers, a configurable CORS allowlist, request rate limiting, password hashing, current-password verification for password and MFA changes, encrypted TOTP secrets with replay protection, one-time expiring MFA/WebAuthn challenges, WebAuthn user verification, JWT verification, Zod input validation, validated profile-image data, private attachment storage with authenticated downloads, upload-size limits, and sanitized HTML output. Those defaults are a starting point rather than a substitute for HTTPS, secure secret storage, database backups, and normal production monitoring.
 
 ## PDF export
 

@@ -2,6 +2,7 @@ import "dotenv/config";
 import { z } from "zod";
 
 const defaultJwtSecret = "brainvault-local-development-secret-change-me-32chars";
+const defaultMfaEncryptionKey = "brainvault-local-development-mfa-key-change-me-32chars";
 
 const booleanString = z
   .enum(["true", "false", "1", "0", "yes", "no", "on", "off"])
@@ -20,6 +21,10 @@ const envSchema = z.object({
   DATABASE_CONNECTION_LIMIT: z.coerce.number().int().min(1).max(50).default(10),
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters long").default(defaultJwtSecret),
   JWT_EXPIRES_IN: z.string().default("7d"),
+  MFA_ENCRYPTION_KEY: z.string().min(32, "MFA_ENCRYPTION_KEY must be at least 32 characters long").default(defaultMfaEncryptionKey),
+  WEBAUTHN_RP_NAME: z.string().trim().min(1).max(100).default("BrainVault"),
+  WEBAUTHN_RP_ID: z.string().trim().min(1).default("localhost"),
+  WEBAUTHN_ORIGIN: z.string().trim().min(1).default("http://localhost:4000"),
   CORS_ORIGIN: z.string().default("http://localhost:4000,http://127.0.0.1:4000,http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173"),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
@@ -33,6 +38,36 @@ export const env = envSchema.parse(process.env);
 
 if (env.NODE_ENV === "production" && env.JWT_SECRET === defaultJwtSecret) {
   throw new Error("JWT_SECRET must be changed before running BrainVault in production");
+}
+
+if (env.NODE_ENV === "production" && env.MFA_ENCRYPTION_KEY === defaultMfaEncryptionKey) {
+  throw new Error("MFA_ENCRYPTION_KEY must be changed before running BrainVault in production");
+}
+
+const webAuthnOrigins = env.WEBAUTHN_ORIGIN.split(",")
+  .map((origin) => origin.trim().replace(/\/$/, ""))
+  .filter(Boolean);
+
+if (!webAuthnOrigins.length) {
+  throw new Error("WEBAUTHN_ORIGIN must include at least one browser origin");
+}
+
+for (const origin of webAuthnOrigins) {
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    throw new Error(`WEBAUTHN_ORIGIN contains an invalid origin: ${origin}`);
+  }
+  if (!["http:", "https:"].includes(parsed.protocol) || parsed.origin !== origin) {
+    throw new Error(`WEBAUTHN_ORIGIN must contain exact HTTP(S) origins without paths: ${origin}`);
+  }
+  if (parsed.hostname !== env.WEBAUTHN_RP_ID && !parsed.hostname.endsWith(`.${env.WEBAUTHN_RP_ID}`)) {
+    throw new Error(`WEBAUTHN_RP_ID must match or be a registrable suffix of ${parsed.hostname}`);
+  }
+  if (env.NODE_ENV === "production" && parsed.protocol !== "https:") {
+    throw new Error("WEBAUTHN_ORIGIN must use HTTPS in production");
+  }
 }
 
 export const corsOrigins = env.CORS_ORIGIN.split(",")
