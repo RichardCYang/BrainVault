@@ -49,6 +49,7 @@ const state = {
   selectedPage: null,
   pageMode: pageModes.READ,
   pageModeChanging: false,
+  pageEditLockDepth: 0,
   workspaceView: "home",
   activeCollectionId: null,
   activeTag: "",
@@ -1031,42 +1032,43 @@ function getResponseFilename(response, fallback) {
 }
 
 async function downloadUserDataBackup() {
-  await flushPendingPageEdits();
-  const headers = new Headers();
-  if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
-  let response;
-  try {
-    response = await fetch("/api/data/export", { headers });
-  } catch {
-    throw new Error(t("errors.network"));
-  }
-
-  if (!response.ok) {
-    let data = null;
+  return withPageEditLock(async () => {
+    const headers = new Headers();
+    if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
+    let response;
     try {
-      data = await response.json();
+      response = await fetch("/api/data/export", { headers });
     } catch {
-      // Use the localized fallback below when the response is not JSON.
+      throw new Error(t("errors.network"));
     }
-    if (response.status === 401) {
-      closeAccountSettings({ restoreFocus: false });
-      setToken(null);
-      state.user = null;
-      renderShell();
-    }
-    throw new Error(translateApiError(data, response.status));
-  }
 
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = objectUrl;
-  link.download = getResponseFilename(response, `BrainVault-backup-${new Date().toISOString().slice(0, 10)}.zip`);
-  link.rel = "noopener";
-  document.body.append(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    if (!response.ok) {
+      let data = null;
+      try {
+        data = await response.json();
+      } catch {
+        // Use the localized fallback below when the response is not JSON.
+      }
+      if (response.status === 401) {
+        closeAccountSettings({ restoreFocus: false });
+        setToken(null);
+        state.user = null;
+        renderShell();
+      }
+      throw new Error(translateApiError(data, response.status));
+    }
+
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = getResponseFilename(response, `BrainVault-backup-${new Date().toISOString().slice(0, 10)}.zip`);
+    link.rel = "noopener";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  });
 }
 
 function resetDataImportSelection() {
@@ -1076,19 +1078,20 @@ function resetDataImportSelection() {
 }
 
 async function restoreUserDataBackup(file) {
-  await flushPendingPageEdits();
-  const formData = new FormData();
-  formData.append("backup", file, file.name);
-  const data = await api("/api/data/import", { method: "POST", body: formData });
-  state.user = data.user;
-  await applyUserPreferredLanguage();
-  fillAccountSettings();
-  elements.searchInput.value = "";
-  state.searchQuery = "";
-  state.activeTag = "";
-  await loadPages("", "");
-  await showHome({ skipFlush: true });
-  return data.counts;
+  return withPageEditLock(async () => {
+    const formData = new FormData();
+    formData.append("backup", file, file.name);
+    const data = await api("/api/data/import", { method: "POST", body: formData });
+    state.user = data.user;
+    await applyUserPreferredLanguage();
+    fillAccountSettings();
+    elements.searchInput.value = "";
+    state.searchQuery = "";
+    state.activeTag = "";
+    await loadPages("", "");
+    await showHome({ skipFlush: true });
+    return data.counts;
+  });
 }
 
 function getUserInitials(user = state.user) {
@@ -1476,24 +1479,25 @@ async function completeAuthenticatedLogin(data) {
 }
 
 async function logout() {
-  await flushPendingPageEdits();
-  discardPendingPageEdits();
-  closeAccountSettings({ restoreFocus: false });
-  closeEmojiPicker({ restoreFocus: false });
-  resetMfaLogin();
-  setToken(null);
-  state.user = null;
-  state.pages = [];
-  state.allPages = [];
-  state.selectedPage = null;
-  state.workspaceView = "home";
-  state.activeCollectionId = null;
-  state.activeTag = "";
-  state.searchQuery = "";
-  renderShell();
-  renderPages();
-  renderSelectedPage();
-  setStatus(t("status.loggedOut"));
+  return withPageEditLock(async () => {
+    discardPendingPageEdits();
+    closeAccountSettings({ restoreFocus: false });
+    closeEmojiPicker({ restoreFocus: false });
+    resetMfaLogin();
+    setToken(null);
+    state.user = null;
+    state.pages = [];
+    state.allPages = [];
+    state.selectedPage = null;
+    state.workspaceView = "home";
+    state.activeCollectionId = null;
+    state.activeTag = "";
+    state.searchQuery = "";
+    renderShell();
+    renderPages();
+    renderSelectedPage();
+    setStatus(t("status.loggedOut"));
+  });
 }
 
 function sortByRecent(items) {
@@ -1977,27 +1981,31 @@ async function saveEmojiSelection(emoji) {
     }
 
     if (state.selectedPage?.id === target.pageId && !isCollectionPage(state.selectedPage) && !requireWritablePage()) return;
-    if (state.selectedPage?.id === target.pageId) await flushPendingPageEdits();
-    const currentPage = state.selectedPage?.id === target.pageId
-      ? state.selectedPage
-      : state.allPages.find((page) => page.id === target.pageId);
+    const savePageEmoji = async () => {
+      const currentPage = state.selectedPage?.id === target.pageId
+        ? state.selectedPage
+        : state.allPages.find((page) => page.id === target.pageId);
 
-    const data = await api(`/api/pages/${target.pageId}`, {
-      method: "PATCH",
-      body: { icon: emoji, expectedVersion: currentPage?.version }
-    });
-    if (state.selectedPage?.id === data.page.id) state.selectedPage = data.page;
-    applyPageSummaryUpdate(data.page.id, {
-      icon: data.page.icon,
-      isCollection: data.page.isCollection,
-      version: data.page.version,
-      updatedAt: data.page.updatedAt
-    });
-    if (typeof emoji === "string") rememberRecentEmoji(emoji);
-    closeEmojiPicker({ restoreFocus: false });
-    renderSelectedPage();
-    (target.isCollection ? elements.collectionIconButton : elements.pageIconButton).focus();
-    setStatus(t(target.isCollection ? "emoji.collectionSaved" : "emoji.pageSaved"));
+      const data = await api(`/api/pages/${target.pageId}`, {
+        method: "PATCH",
+        body: { icon: emoji, expectedVersion: currentPage?.version }
+      });
+      if (state.selectedPage?.id === data.page.id) state.selectedPage = data.page;
+      applyPageSummaryUpdate(data.page.id, {
+        icon: data.page.icon,
+        isCollection: data.page.isCollection,
+        version: data.page.version,
+        updatedAt: data.page.updatedAt
+      });
+      if (typeof emoji === "string") rememberRecentEmoji(emoji);
+      closeEmojiPicker({ restoreFocus: false });
+      renderSelectedPage();
+      (target.isCollection ? elements.collectionIconButton : elements.pageIconButton).focus();
+      setStatus(t(target.isCollection ? "emoji.collectionSaved" : "emoji.pageSaved"));
+    };
+
+    if (state.selectedPage?.id === target.pageId) await withPageEditLock(savePageEmoji);
+    else await savePageEmoji();
   } catch (error) {
     setStatus(error.message, true);
   } finally {
@@ -2260,8 +2268,16 @@ function isPageReadOnly() {
   return state.pageMode !== pageModes.WRITE;
 }
 
-function canEditSelectedPage() {
+function isPageInteractionLocked() {
+  return state.pageModeChanging || state.pageEditLockDepth > 0;
+}
+
+function canPersistSelectedPage() {
   return Boolean(state.selectedPage && state.workspaceView === "page" && !isPageReadOnly());
+}
+
+function canEditSelectedPage() {
+  return canPersistSelectedPage() && !isPageInteractionLocked();
 }
 
 function reportReadOnlyBlocked() {
@@ -2322,7 +2338,7 @@ function setControlReadOnlyState(control, readOnly) {
   }
 }
 
-function syncBlockReadOnlyState(row, readOnly = isPageReadOnly()) {
+function syncBlockReadOnlyState(row, readOnly = isPageReadOnly() || isPageInteractionLocked()) {
   if (!row) return;
   row.classList.toggle("is-read-only", readOnly);
   row.setAttribute("aria-readonly", String(readOnly));
@@ -2350,21 +2366,25 @@ function syncBlockReadOnlyState(row, readOnly = isPageReadOnly()) {
 
 function syncPageModeUi() {
   const readOnly = isPageReadOnly();
+  const interactionLocked = isPageInteractionLocked();
+  const controlsReadOnly = readOnly || interactionLocked;
   const modeLabelKey = readOnly ? "page.readMode" : "page.writeMode";
   const modeDescriptionKey = readOnly ? "page.readModeDescription" : "page.writeModeDescription";
 
   elements.pageView.classList.toggle("is-read-only", readOnly);
+  elements.pageView.classList.toggle("is-edit-locked", interactionLocked);
+  elements.pageView.setAttribute("aria-busy", String(interactionLocked));
   elements.pageView.dataset.pageMode = state.pageMode;
-  elements.pageTitle.readOnly = readOnly;
-  elements.pageIconButton.disabled = readOnly;
-  elements.savePageButton.disabled = readOnly;
+  elements.pageTitle.readOnly = controlsReadOnly;
+  elements.pageIconButton.disabled = controlsReadOnly;
+  elements.savePageButton.disabled = controlsReadOnly;
   elements.savePageButton.classList.toggle("hidden", readOnly);
-  elements.archivePageButton.disabled = readOnly;
-  elements.blockList.setAttribute("aria-readonly", String(readOnly));
+  elements.archivePageButton.disabled = controlsReadOnly;
+  elements.blockList.setAttribute("aria-readonly", String(controlsReadOnly));
   elements.blockList.setAttribute("aria-label", t(readOnly ? "page.readerAria" : "page.editorAria"));
   elements.blockEditorHelp.innerHTML = t(readOnly ? "page.readOnlyHelp" : "page.editorHelp");
 
-  elements.pageModeToggle.disabled = state.pageModeChanging;
+  elements.pageModeToggle.disabled = interactionLocked;
   elements.pageModeToggle.setAttribute("aria-checked", String(!readOnly));
   elements.pageModeToggle.classList.toggle("is-write-mode", !readOnly);
   elements.pageModeToggleIcon.textContent = readOnly ? "◉" : "✎";
@@ -2374,7 +2394,7 @@ function syncPageModeUi() {
   elements.pageModeBadgeLabel.textContent = t(modeLabelKey);
 
   for (const row of elements.blockList.querySelectorAll(".editor-block-row")) {
-    syncBlockReadOnlyState(row, readOnly);
+    syncBlockReadOnlyState(row, controlsReadOnly);
   }
   requestAnimationFrame(() => hydrateMathExpressions(elements.pageView));
 
@@ -2453,14 +2473,34 @@ function discardBlockSave(blockId) {
   syncBeforeUnloadProtection();
 }
 
-async function flushPendingPageEdits({ keepalive = false } = {}) {
-  if (!canEditSelectedPage()) return;
+function lockPageEdits() {
+  state.pageEditLockDepth += 1;
+  syncPageModeUi();
+}
+
+function unlockPageEdits() {
+  state.pageEditLockDepth = Math.max(0, state.pageEditLockDepth - 1);
+  syncPageModeUi();
+}
+
+async function withPageEditLock(action, { flush = true } = {}) {
+  lockPageEdits();
+  try {
+    if (flush) await flushPendingPageEdits({ allowLocked: true });
+    return await action();
+  } finally {
+    unlockPageEdits();
+  }
+}
+
+async function flushPendingPageEdits({ keepalive = false, allowLocked = false } = {}) {
+  if (!(allowLocked ? canPersistSelectedPage() : canEditSelectedPage())) return;
 
   const titleWasPending = pageTitleSaveTimer !== null;
   window.clearTimeout(pageTitleSaveTimer);
   pageTitleSaveTimer = null;
   if (titleWasPending || pageTitleSavedRevision < pageTitleEditRevision) {
-    await savePageTitleNow({ quiet: true, keepalive });
+    await savePageTitleNow({ quiet: true, keepalive, allowLocked });
   } else if (pageTitleSaveQueue.busy) {
     await pageTitleSaveQueue.flush();
   }
@@ -2474,7 +2514,7 @@ async function flushPendingPageEdits({ keepalive = false } = {}) {
       window.clearTimeout(blockSaveTimers.get(blockId));
       blockSaveTimers.delete(blockId);
       blockSaveRows.delete(blockId);
-      return saveBlockRow(row, { quiet: true, keepalive });
+      return saveBlockRow(row, { quiet: true, keepalive, allowLocked });
     })
   );
 
@@ -2497,7 +2537,7 @@ async function setPageMode(nextMode, { announce = true } = {}) {
   state.pageModeChanging = true;
   syncPageModeUi();
   try {
-    if (normalizedMode === pageModes.READ) await flushPendingPageEdits();
+    if (normalizedMode === pageModes.READ) await flushPendingPageEdits({ allowLocked: true });
     state.pageMode = normalizedMode;
     state.pendingFocusBlockId = null;
     syncPageModeUi();
@@ -2655,66 +2695,67 @@ async function deleteNavigationTarget() {
     return;
   }
 
-  const isCollection = target.kind === "collection";
-  const selectedPageWasDeleted = Boolean(state.selectedPage?.id && subtreeIds.has(state.selectedPage.id));
-  const activeCollectionWasDeleted = state.activeCollectionId === target.id;
-  const fallbackCollectionId = isCollection
-    ? defaultCollectionKey
-    : getCollectionRootId(target.id) ?? defaultCollectionKey;
+  return withPageEditLock(async () => {
+    const isCollection = target.kind === "collection";
+    const selectedPageWasDeleted = Boolean(state.selectedPage?.id && subtreeIds.has(state.selectedPage.id));
+    const activeCollectionWasDeleted = state.activeCollectionId === target.id;
+    const fallbackCollectionId = isCollection
+      ? defaultCollectionKey
+      : getCollectionRootId(target.id) ?? defaultCollectionKey;
 
-  await flushPendingPageEdits();
-  const deletionSnapshot = await api(`/api/pages/${target.id}/deletion-snapshot`);
-  const localPageIds = [...subtreeIds].sort();
-  const serverPageIds = Array.isArray(deletionSnapshot.pageIds) ? [...deletionSnapshot.pageIds].sort() : [];
-  const serverPages = new Map(
-    (Array.isArray(deletionSnapshot.pages) ? deletionSnapshot.pages : []).map((page) => [page.id, page])
-  );
-  const localPages = new Map(
-    [...state.allPages, ...(state.selectedPage ? [state.selectedPage] : [])].map((page) => [page.id, page])
-  );
-  if (
-    localPageIds.length !== serverPageIds.length ||
-    localPageIds.some((pageId, index) => pageId !== serverPageIds[index]) ||
-    localPageIds.some((pageId) => {
-      const localPage = localPages.get(pageId);
-      const serverPage = serverPages.get(pageId);
-      return (
-        !localPage ||
-        !serverPage ||
-        Number(localPage.version ?? 1) !== Number(serverPage.version ?? 1) ||
-        Number(localPage.contentVersion ?? 1) !== Number(serverPage.contentVersion ?? 1)
-      );
-    })
-  ) {
+    const deletionSnapshot = await api(`/api/pages/${target.id}/deletion-snapshot`);
+    const localPageIds = [...subtreeIds].sort();
+    const serverPageIds = Array.isArray(deletionSnapshot.pageIds) ? [...deletionSnapshot.pageIds].sort() : [];
+    const serverPages = new Map(
+      (Array.isArray(deletionSnapshot.pages) ? deletionSnapshot.pages : []).map((page) => [page.id, page])
+    );
+    const localPages = new Map(
+      [...state.allPages, ...(state.selectedPage ? [state.selectedPage] : [])].map((page) => [page.id, page])
+    );
+    if (
+      localPageIds.length !== serverPageIds.length ||
+      localPageIds.some((pageId, index) => pageId !== serverPageIds[index]) ||
+      localPageIds.some((pageId) => {
+        const localPage = localPages.get(pageId);
+        const serverPage = serverPages.get(pageId);
+        return (
+          !localPage ||
+          !serverPage ||
+          Number(localPage.version ?? 1) !== Number(serverPage.version ?? 1) ||
+          Number(localPage.contentVersion ?? 1) !== Number(serverPage.contentVersion ?? 1)
+        );
+      })
+    ) {
+      closeNavigationContextMenu();
+      await loadPages(elements.searchInput.value.trim(), state.activeTag);
+      throw new Error(t("errors.PAGE_DELETE_SCOPE_CHANGED"));
+    }
+
+    const ok = window.confirm(
+      t(isCollection ? "confirm.deleteCollection" : "confirm.deletePage", { title: target.title })
+    );
+    if (!ok) return;
+
     closeNavigationContextMenu();
+    setStatus(t(isCollection ? "status.deletingCollection" : "status.deletingPage"));
+
+    await api(`/api/pages/${target.id}?permanent=true`, {
+      method: "DELETE",
+      body: { expectedSnapshot: deletionSnapshot.snapshot }
+    });
+
+    if (selectedPageWasDeleted) {
+      resetPageEditTracking();
+      state.selectedPage = null;
+    }
     await loadPages(elements.searchInput.value.trim(), state.activeTag);
-    throw new Error(t("errors.PAGE_DELETE_SCOPE_CHANGED"));
-  }
 
-  const ok = window.confirm(
-    t(isCollection ? "confirm.deleteCollection" : "confirm.deletePage", { title: target.title })
-  );
-  if (!ok) return;
+    if (selectedPageWasDeleted || activeCollectionWasDeleted) {
+      await showCollection(fallbackCollectionId, { skipFlush: true });
+    }
 
-  closeNavigationContextMenu();
-  setStatus(t(isCollection ? "status.deletingCollection" : "status.deletingPage"));
-
-  await api(`/api/pages/${target.id}?permanent=true`, {
-    method: "DELETE",
-    body: { expectedSnapshot: deletionSnapshot.snapshot }
+    setStatus(t(isCollection ? "status.collectionDeleted" : "status.pageDeleted"));
   });
-
-  if (selectedPageWasDeleted) {
-    resetPageEditTracking();
-    state.selectedPage = null;
-  }
-  await loadPages(elements.searchInput.value.trim(), state.activeTag);
-
-  if (selectedPageWasDeleted || activeCollectionWasDeleted) {
-    await showCollection(fallbackCollectionId, { skipFlush: true });
-  }
-
-  setStatus(t(isCollection ? "status.collectionDeleted" : "status.pageDeleted"));
 }
 
 function renderCollectionView() {
@@ -4750,8 +4791,9 @@ function getBlockSaveQueue(blockId) {
   return queue;
 }
 
-async function saveBlockRow(row, { quiet = false, keepalive = false } = {}) {
-  if (!requireWritablePage({ announce: !quiet }) || !row?.dataset.blockId || row.dataset.deleting === "true") return null;
+async function saveBlockRow(row, { quiet = false, keepalive = false, allowLocked = false } = {}) {
+  const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage({ announce: !quiet });
+  if (!writable || !row?.dataset.blockId || row.dataset.deleting === "true") return null;
   const blockId = row.dataset.blockId;
   window.clearTimeout(blockSaveTimers.get(blockId));
   blockSaveTimers.delete(blockId);
@@ -5607,8 +5649,9 @@ function applyPageContentVersion(pageId, contentVersion) {
   }
 }
 
-async function savePageTitleNow({ quiet = true, keepalive = false } = {}) {
-  if (!requireWritablePage({ announce: !quiet })) return null;
+async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked = false } = {}) {
+  const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage({ announce: !quiet });
+  if (!writable) return null;
   const pageId = state.selectedPage.id;
   const title = normalizePageTitle(elements.pageTitle.value);
   window.clearTimeout(pageTitleSaveTimer);
@@ -5728,55 +5771,70 @@ async function loadPages(query = state.searchQuery, tag = state.activeTag) {
 }
 
 async function showHome({ skipFlush = false } = {}) {
-  if (!skipFlush) await flushPendingPageEdits();
-  resetPageEditTracking();
-  state.selectedPage = null;
-  state.pageMode = pageModes.READ;
-  state.workspaceView = "home";
-  state.activeCollectionId = null;
-  renderSelectedPage();
+  const shouldFlush = !skipFlush || state.pageEditLockDepth === 0;
+  return withPageEditLock(
+    async () => {
+      resetPageEditTracking();
+      state.selectedPage = null;
+      state.pageMode = pageModes.READ;
+      state.workspaceView = "home";
+      state.activeCollectionId = null;
+      renderSelectedPage();
+    },
+    { flush: shouldFlush }
+  );
 }
 
 async function showCollection(collectionId, { skipFlush = false } = {}) {
-  if (!skipFlush) await flushPendingPageEdits();
-  resetPageEditTracking();
-  state.selectedPage = null;
-  state.pageMode = pageModes.READ;
-  state.workspaceView = "collection";
-  state.activeCollectionId = collectionId;
-  renderSelectedPage();
+  const shouldFlush = !skipFlush || state.pageEditLockDepth === 0;
+  return withPageEditLock(
+    async () => {
+      resetPageEditTracking();
+      state.selectedPage = null;
+      state.pageMode = pageModes.READ;
+      state.workspaceView = "collection";
+      state.activeCollectionId = collectionId;
+      renderSelectedPage();
+    },
+    { flush: shouldFlush }
+  );
 }
 
 async function openPage(pageId, { skipFlush = false } = {}) {
-  if (!skipFlush) await flushPendingPageEdits();
-  const preserveMode = state.workspaceView === "page" && state.selectedPage?.id === pageId;
-  const summary = state.allPages.find((page) => page.id === pageId);
-  if (isCollectionPage(summary)) {
-    await showCollection(pageId, { skipFlush: true });
-    setStatus(t("status.collectionOpened"));
-    return;
-  }
+  const shouldFlush = !skipFlush || state.pageEditLockDepth === 0;
+  return withPageEditLock(
+    async () => {
+      const preserveMode = state.workspaceView === "page" && state.selectedPage?.id === pageId;
+      const summary = state.allPages.find((page) => page.id === pageId);
+      if (isCollectionPage(summary)) {
+        await showCollection(pageId, { skipFlush: true });
+        setStatus(t("status.collectionOpened"));
+        return;
+      }
 
-  setStatus(t("status.loadingDocument"));
-  let data = await api(`/api/pages/${pageId}`);
+      setStatus(t("status.loadingDocument"));
+      const data = await api(`/api/pages/${pageId}`);
 
-  if (isCollectionPage(data.page)) {
-    await showCollection(pageId, { skipFlush: true });
-    setStatus(t("status.collectionOpened"));
-    return;
-  }
+      if (isCollectionPage(data.page)) {
+        await showCollection(pageId, { skipFlush: true });
+        setStatus(t("status.collectionOpened"));
+        return;
+      }
 
-  if (!preserveMode) {
-    state.pageMode = pageModes.READ;
-    state.pendingFocusBlockId = null;
-  }
+      if (!preserveMode) {
+        state.pageMode = pageModes.READ;
+        state.pendingFocusBlockId = null;
+      }
 
-  resetPageEditTracking();
-  state.selectedPage = data.page;
-  state.workspaceView = "page";
-  state.activeCollectionId = null;
-  renderSelectedPage();
-  setStatus(t("status.documentOpened"));
+      resetPageEditTracking();
+      state.selectedPage = data.page;
+      state.workspaceView = "page";
+      state.activeCollectionId = null;
+      renderSelectedPage();
+      setStatus(t("status.documentOpened"));
+    },
+    { flush: shouldFlush }
+  );
 }
 
 async function boot() {
@@ -6444,10 +6502,11 @@ elements.exportPdfButton.addEventListener("click", () => {
 elements.savePageButton.addEventListener("click", async () => {
   if (!requireWritablePage()) return;
   try {
-    await flushPendingPageEdits();
-    await loadPages(elements.searchInput.value.trim(), state.activeTag);
-    renderSelectedPage();
-    setStatus(t("status.pageSaved"));
+    await withPageEditLock(async () => {
+      await loadPages(elements.searchInput.value.trim(), state.activeTag);
+      renderSelectedPage();
+      setStatus(t("status.pageSaved"));
+    });
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -6461,18 +6520,19 @@ elements.archivePageButton.addEventListener("click", async () => {
   const pageId = state.selectedPage.id;
   const parentCollectionId = getCollectionRootId(pageId) ?? defaultCollectionKey;
   try {
-    await flushPendingPageEdits();
-    await api(`/api/pages/${pageId}`, {
-      method: "PATCH",
-      body: { isArchived: true, expectedVersion: state.selectedPage.version }
+    await withPageEditLock(async () => {
+      await api(`/api/pages/${pageId}`, {
+        method: "PATCH",
+        body: { isArchived: true, expectedVersion: state.selectedPage.version }
+      });
+      resetPageEditTracking();
+      state.selectedPage = null;
+      state.workspaceView = "collection";
+      state.activeCollectionId = parentCollectionId;
+      await loadPages(elements.searchInput.value.trim(), state.activeTag);
+      renderSelectedPage();
+      setStatus(t("status.pageArchived"));
     });
-    resetPageEditTracking();
-    state.selectedPage = null;
-    state.workspaceView = "collection";
-    state.activeCollectionId = parentCollectionId;
-    await loadPages(elements.searchInput.value.trim(), state.activeTag);
-    renderSelectedPage();
-    setStatus(t("status.pageArchived"));
   } catch (error) {
     setStatus(error.message, true);
   }

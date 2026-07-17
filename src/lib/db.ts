@@ -54,19 +54,35 @@ function createClient(target: Pool | PoolConnection): DbClient {
 
 export const db = createClient(pool);
 
+export class TransactionCommitOutcomeUnknownError extends Error {
+  readonly commitOutcomeUnknown = true;
+
+  constructor(cause: unknown) {
+    super("Database commit outcome could not be confirmed", { cause });
+    this.name = "TransactionCommitOutcomeUnknownError";
+  }
+}
+
 export async function transaction<Result>(fn: (client: DbClient) => Promise<Result>) {
   const conn = await pool.getConnection();
+  let commitStarted = false;
 
   try {
     await conn.beginTransaction();
     const result = await fn(createClient(conn));
+    commitStarted = true;
     await conn.commit();
     return result;
   } catch (error) {
     await conn.rollback().catch(() => undefined);
+    if (commitStarted) throw new TransactionCommitOutcomeUnknownError(error);
     throw error;
   } finally {
-    await conn.release();
+    try {
+      await conn.release();
+    } catch (releaseError) {
+      console.error("Failed to release a database connection", releaseError);
+    }
   }
 }
 

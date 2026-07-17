@@ -319,6 +319,14 @@ blockRouter.post(
         });
         movedPath = null;
       } catch (error) {
+        const commitOutcomeUnknown = Boolean(
+          error && typeof error === "object" && "commitOutcomeUnknown" in error && error.commitOutcomeUnknown === true
+        );
+        if (commitOutcomeUnknown) {
+          console.error("Attachment commit outcome is unknown; preserving the moved file", { id, movedPath, error });
+          throw error;
+        }
+
         let insertDefinitelyFailed = false;
         try {
           insertDefinitelyFailed = !(await db.queryOne<{ id: string }>("SELECT id FROM blocks WHERE id = ?", [id]));

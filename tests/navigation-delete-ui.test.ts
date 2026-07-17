@@ -32,7 +32,8 @@ describe("Page and collection deletion menus", () => {
     expect(client).toContain('["ArrowDown", "ArrowUp", "Home", "End"]');
     expect(client).toContain('event.key === "Escape"');
     expect(client).toContain('const deletionSnapshot = await api(`/api/pages/${target.id}/deletion-snapshot`)');
-    expect(client).toContain("await flushPendingPageEdits();\n  const deletionSnapshot");
+    expect(client).toContain("return withPageEditLock(async () => {");
+    expect(client).toContain("if (flush) await flushPendingPageEdits({ allowLocked: true });");
     expect(client).toContain("localPageIds.length !== serverPageIds.length");
     expect(client).toContain("Number(localPage.contentVersion ?? 1) !== Number(serverPage.contentVersion ?? 1)");
     expect(client).toContain('t("errors.PAGE_DELETE_SCOPE_CHANGED")');

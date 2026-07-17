@@ -389,7 +389,23 @@ export async function prepareUserDataBackup(userId: string) {
         crc32: item.inspection.crc32
       }))
     };
-    return { account: snapshot.account, manifest, attachmentFiles, operationRoot };
+    const manifestBuffer = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    if (manifestBuffer.length > maxManifestBytes) {
+      throw new ApiError(
+        413,
+        "DATA_BACKUP_TOO_LARGE",
+        "The backup manifest exceeds the supported import limit"
+      );
+    }
+    const totalUncompressedSize = attachmentFiles.reduce(
+      (total, item) => total + item.inspection.size,
+      BigInt(manifestBuffer.length)
+    );
+    const maxTransferBytes = BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n;
+    if (totalUncompressedSize > maxTransferBytes) {
+      throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
+    }
+    return { account: snapshot.account, manifest, manifestBuffer, attachmentFiles, operationRoot };
   } catch (error) {
     await rm(operationRoot, { recursive: true, force: true }).catch(() => undefined);
     throw error;
@@ -400,9 +416,8 @@ export async function writeUserDataBackup(
   plan: Awaited<ReturnType<typeof prepareUserDataBackup>>,
   output: Writable
 ) {
-  const { account, manifest, attachmentFiles } = plan;
+  const { account, manifest, manifestBuffer, attachmentFiles } = plan;
   try {
-    const manifestBuffer = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
     const writer = new ZipWriter(output);
     await writer.add({
       name: manifestName,
