@@ -31,7 +31,8 @@ describe("Page and collection deletion menus", () => {
     expect(client).toContain('{ focusFirst: event.detail === 0 }');
     expect(client).toContain('["ArrowDown", "ArrowUp", "Home", "End"]');
     expect(client).toContain('event.key === "Escape"');
-    expect(client).toContain('api(`/api/pages/${target.id}?permanent=true`, { method: "DELETE" })');
+    expect(client).toContain('body: { expectedVersions: getPageVersionSnapshot(subtreeIds) }');
+    expect(client).toContain('body: { expectedVersions: getBlockVersionSnapshot(blockId, options) }');
     expect(styles).toContain("touch-action: manipulation;");
     expect(styles).toContain("@media (hover: none), (pointer: coarse)");
   });

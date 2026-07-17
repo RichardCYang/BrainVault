@@ -35,6 +35,7 @@ export function toPage(row: PageRow) {
     isCollection: Boolean(row.is_collection),
     ownerId: row.owner_id,
     parentPageId: row.parent_page_id,
+    version: Number(row.edit_version ?? 1),
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -62,6 +63,7 @@ export function toBlock(row: BlockRow) {
     checked: Boolean(row.checked),
     sortOrder: row.sort_order,
     metadata: parseMetadata(row.metadata),
+    version: Number(row.edit_version ?? 1),
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

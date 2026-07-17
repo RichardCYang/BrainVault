@@ -514,10 +514,12 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
 
   await assertNoForeignIdConflicts(userId, manifest);
   await ensureDataTransferDirectories();
-  const operationRoot = path.join(dataTransferTempDir, createId("restore"));
+  const operationId = createId("restore");
+  const operationRoot = path.join(dataTransferTempDir, operationId);
   const stagedAttachmentDir = path.join(operationRoot, "attachments");
-  const oldAttachmentDir = path.join(operationRoot, "previous-attachments");
-  const targetAttachmentDir = path.join(attachmentUploadRoot, userId.replace(/[^a-zA-Z0-9_-]/g, "_"));
+  const safeUserId = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const oldAttachmentDir = path.join(attachmentUploadRoot, `.restore-previous-${safeUserId}-${operationId}`);
+  const targetAttachmentDir = path.join(attachmentUploadRoot, safeUserId);
   await mkdir(stagedAttachmentDir, { recursive: true });
 
   try {
@@ -553,12 +555,39 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
         installedNew = true;
       });
     } catch (error) {
-      if (installedNew) await rm(targetAttachmentDir, { recursive: true, force: true }).catch(() => undefined);
-      if (movedOld) await rename(oldAttachmentDir, targetAttachmentDir).catch(() => undefined);
+      let rollbackError: unknown = null;
+      if (installedNew) {
+        try {
+          await rm(targetAttachmentDir, { recursive: true, force: true });
+        } catch (candidate) {
+          rollbackError = candidate;
+        }
+      }
+      if (movedOld) {
+        try {
+          await rename(oldAttachmentDir, targetAttachmentDir);
+        } catch (candidate) {
+          rollbackError ??= candidate;
+        }
+      }
+      if (rollbackError) {
+        console.error("Attachment restore rollback requires manual recovery", {
+          targetAttachmentDir,
+          preservedAttachmentDir: oldAttachmentDir,
+          rollbackError
+        });
+        throw new ApiError(
+          500,
+          "DATA_RESTORE_ROLLBACK_FAILED",
+          "The database restore failed and the previous attachment directory was preserved for recovery"
+        );
+      }
       throw error;
     }
 
-    await rm(oldAttachmentDir, { recursive: true, force: true });
+    await rm(oldAttachmentDir, { recursive: true, force: true }).catch((error) => {
+      console.error("Previous attachment directory cleanup failed", { oldAttachmentDir, error });
+    });
     const user = await db.queryOne<UserRow>("SELECT * FROM users WHERE id = ?", [userId]);
     if (!user) throw new ApiError(404, "NOT_FOUND", "User not found after import");
     return {

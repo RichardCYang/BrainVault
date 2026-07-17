@@ -19,6 +19,7 @@ export type PageRow = {
   is_collection: 0 | 1;
   owner_id: string;
   parent_page_id: string | null;
+  edit_version?: number;
   created_at: string;
   updated_at: string;
 };
@@ -52,6 +53,7 @@ export type BlockRow = {
   checked: 0 | 1;
   sort_order: number;
   metadata: string | Record<string, unknown> | null;
+  edit_version?: number;
   created_at: string;
   updated_at: string;
 };

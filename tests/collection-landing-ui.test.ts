@@ -19,8 +19,9 @@ describe("Collection landing navigation", () => {
     expect(index).toContain('id="collection-view-title"');
     expect(index).toContain('id="collection-view-list"');
     expect(client).toContain('button.dataset.collectionId = collection.id');
-    expect(client).toContain('showCollection(defaultCollectionKey)');
-    expect(client).toContain('showCollection(data.page.id)');
+    expect(client).toContain('showCollection(defaultCollectionKey, { skipFlush: true })');
+    expect(client).toContain('await flushPendingPageEdits()');
+    expect(client).toContain('showCollection(data.page.id, { skipFlush: true })');
     expect(client).toContain('if (isCollectionPage(summary))');
     expect(client).toContain('elements.collectionViewList.addEventListener("click", handleSidebarPageClick)');
     expect(styles).toContain('.collection-view-title');

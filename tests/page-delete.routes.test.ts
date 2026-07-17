@@ -41,6 +41,7 @@ function makePage(id: string, parentPageId: string | null, isCollection = false)
     is_collection: isCollection ? 1 : 0,
     owner_id: user.id,
     parent_page_id: parentPageId,
+    edit_version: 1,
     created_at: "2026-07-16T00:00:00.000Z",
     updated_at: "2026-07-16T00:00:00.000Z"
   };
@@ -65,6 +66,12 @@ beforeEach(() => {
   });
 
   database.query.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
+    if (sql.includes("SELECT id, edit_version FROM pages") && sql.includes("FOR UPDATE")) {
+      const ids = new Set(params.slice(1).map(String));
+      return [...database.pages.values()]
+        .filter((page) => ids.has(String(page.id)) && page.owner_id === params[0])
+        .map((page) => ({ id: page.id, edit_version: page.edit_version }));
+    }
     if (sql.includes("SELECT id FROM pages WHERE parent_page_id = ?")) {
       return [...database.pages.values()]
         .filter((page) => page.parent_page_id === params[0] && page.owner_id === params[1])
@@ -100,6 +107,29 @@ describe("Permanent page deletion", () => {
     expect(database.query).toHaveBeenCalledWith(
       "SELECT id FROM blocks WHERE page_id = ? AND type = 'ATTACHMENT'",
       ["pag_grandchild"]
+    );
+  });
+
+  it("rejects deletion when any page in the subtree has a newer version", async () => {
+    database.pages.get("pag_child")!.edit_version = 2;
+
+    const response = await request(createApp())
+      .delete("/api/pages/pag_collection?permanent=true")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        expectedVersions: [
+          { id: "pag_collection", version: 1 },
+          { id: "pag_child", version: 1 },
+          { id: "pag_grandchild", version: 1 }
+        ]
+      })
+      .expect(409);
+
+    expect(response.body.error.code).toBe("PAGE_EDIT_CONFLICT");
+    expect(database.pages.size).toBe(3);
+    expect(database.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining("DELETE FROM pages"),
+      expect.anything()
     );
   });
 });

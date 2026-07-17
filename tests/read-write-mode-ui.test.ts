@@ -58,7 +58,7 @@ describe("Page read/write mode", () => {
   });
 
   it("does not create a block merely by opening an empty page", () => {
-    const openPage = client.match(/async function openPage\(pageId\) \{[\s\S]*?\n\}/)?.[0] ?? "";
+    const openPage = client.match(/async function openPage\(pageId, \{ skipFlush = false \} = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? "";
     expect(openPage).not.toContain('createEmptyBlock(pageId)');
     expect(openPage).toContain('state.pageMode = pageModes.READ');
   });

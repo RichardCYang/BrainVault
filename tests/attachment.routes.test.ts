@@ -66,11 +66,12 @@ beforeEach(async () => {
   });
 
   database.query.mockImplementation(async (sql: string) => {
-    if (sql.includes("SELECT id, parent_block_id, type FROM blocks")) {
+    if (sql.includes("SELECT id, parent_block_id, type, edit_version FROM blocks")) {
       return [...database.blocks.values()].map((block) => ({
         id: block.id,
         parent_block_id: block.parent_block_id,
-        type: block.type
+        type: block.type,
+        edit_version: block.edit_version
       }));
     }
     return [];
@@ -89,6 +90,7 @@ beforeEach(async () => {
         checked: 0,
         sort_order: sortOrder,
         metadata,
+        edit_version: 1,
         created_at: "2026-07-14T00:00:00.000Z",
         updated_at: "2026-07-14T00:00:00.000Z"
       });

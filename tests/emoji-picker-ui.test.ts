@@ -52,7 +52,7 @@ describe("page and collection emoji picker", () => {
   });
 
   it("persists selected emojis and keeps collection identity separate from the icon", () => {
-    expect(app).toContain('body: { icon: emoji }');
+    expect(app).toContain('body: { icon: emoji, expectedVersion: currentPage?.version }');
     expect(app).toContain('body: { defaultCollectionIcon: emoji }');
     expect(app).toContain('isCollection: true');
     expect(app).toContain('page?.isCollection === true');

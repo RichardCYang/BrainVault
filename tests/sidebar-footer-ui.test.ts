@@ -31,7 +31,7 @@ describe("Sidebar bottom actions", () => {
     expect(client).toContain("async function createCollection()");
     expect(client).toContain('icon: "📁"');
     expect(client).toContain('elements.addCollectionButton.addEventListener("click"');
-    expect(client).toContain('elements.logoutButton.addEventListener("click", logout)');
+    expect(client).toMatch(/elements\.logoutButton\.addEventListener\("click", \(\) => \{[\s\S]*logout\(\)\.catch/);
     expect(i18n).toContain('addCollection: "컬렉션 추가"');
     expect(i18n).toContain('signOut: "로그아웃"');
   });

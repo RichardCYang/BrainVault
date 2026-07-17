@@ -194,7 +194,7 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(response.text).toContain('button.dataset.action.startsWith("table-")');
     expect(response.text).toContain("syncCalloutTypeMenu");
     expect(response.text).toContain("changeCalloutType");
-    expect(response.text).toContain('body: { metadata }');
+    expect(response.text).toContain('body: { ...task.payload, expectedVersion: currentVersion }');
     expect(response.text).toContain("closeBlockContextMenu");
     expect(response.text).not.toContain("state.user.email");
     expect(response.text).toContain('from "./i18n.js"');

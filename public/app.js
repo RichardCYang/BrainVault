@@ -23,6 +23,7 @@ import {
   summarizeAiChatData
 } from "./ai-chat-block.js";
 import { emojiCategoryDefinitions, emojiRecords } from "./emoji-data.js";
+import { createLatestWriteQueue } from "./save-queue.js";
 
 const tokenKey = "brainvault.token";
 const rootParentKey = "__root__";
@@ -480,7 +481,14 @@ function createSlashCommandIcon(iconName) {
 }
 
 const blockSaveTimers = new Map();
+const blockSaveRows = new Map();
+const blockSaveQueues = new Map();
+const blockSaveTaskIds = new Map();
 let pageTitleSaveTimer = null;
+let pageTitleEditRevision = 0;
+let pageTitleSavedRevision = 0;
+let pageTitleTaskId = 0;
+let beforeUnloadProtectionActive = false;
 let statusClearTimer = null;
 const statusDismissDelay = 2400;
 const statusErrorDismissDelay = 6000;
@@ -946,6 +954,28 @@ async function api(path, options = {}) {
   return data;
 }
 
+const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
+  const currentPage = state.selectedPage?.id === task.pageId
+    ? state.selectedPage
+    : state.allPages.find((page) => page.id === task.pageId);
+  const data = await api(`/api/pages/${task.pageId}`, {
+    method: "PATCH",
+    keepalive: task.keepalive === true,
+    body: { title: task.title, expectedVersion: currentPage?.version }
+  });
+
+  if (state.selectedPage?.id === task.pageId) {
+    const currentBlocks = state.selectedPage.blocks;
+    state.selectedPage = { ...data.page, blocks: currentBlocks };
+    applyPageSummaryUpdate(data.page.id, { title: data.page.title, version: data.page.version, updatedAt: data.page.updatedAt });
+    renderPageHeader(state.selectedPage);
+  }
+  if (pageTitleTaskId === task.taskId && pageTitleEditRevision === task.editRevision) {
+    pageTitleSavedRevision = task.editRevision;
+  }
+  return data;
+});
+
 async function downloadAttachment(block) {
   const attachment = getBlockAttachmentData(block);
   const headers = new Headers();
@@ -1001,6 +1031,7 @@ function getResponseFilename(response, fallback) {
 }
 
 async function downloadUserDataBackup() {
+  await flushPendingPageEdits();
   const headers = new Headers();
   if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
   let response;
@@ -1045,6 +1076,7 @@ function resetDataImportSelection() {
 }
 
 async function restoreUserDataBackup(file) {
+  await flushPendingPageEdits();
   const formData = new FormData();
   formData.append("backup", file, file.name);
   const data = await api("/api/data/import", { method: "POST", body: formData });
@@ -1055,7 +1087,7 @@ async function restoreUserDataBackup(file) {
   state.searchQuery = "";
   state.activeTag = "";
   await loadPages("", "");
-  showHome();
+  await showHome({ skipFlush: true });
   return data.counts;
 }
 
@@ -1443,7 +1475,9 @@ async function completeAuthenticatedLogin(data) {
   setStatus(t("status.loggedInAs", { username: state.user.username }));
 }
 
-function logout() {
+async function logout() {
+  await flushPendingPageEdits();
+  discardPendingPageEdits();
   closeAccountSettings({ restoreFocus: false });
   closeEmojiPicker({ restoreFocus: false });
   resetMfaLogin();
@@ -1935,6 +1969,7 @@ async function saveEmojiSelection(emoji) {
       if (typeof emoji === "string") rememberRecentEmoji(emoji);
       closeEmojiPicker({ restoreFocus: false });
       renderDefaultCollection();
+      syncVisibleBlocksToState();
       renderSelectedPage();
       elements.collectionIconButton.focus();
       setStatus(t("emoji.collectionSaved"));
@@ -1942,15 +1977,20 @@ async function saveEmojiSelection(emoji) {
     }
 
     if (state.selectedPage?.id === target.pageId && !isCollectionPage(state.selectedPage) && !requireWritablePage()) return;
+    if (state.selectedPage?.id === target.pageId) await flushPendingPageEdits();
+    const currentPage = state.selectedPage?.id === target.pageId
+      ? state.selectedPage
+      : state.allPages.find((page) => page.id === target.pageId);
 
     const data = await api(`/api/pages/${target.pageId}`, {
       method: "PATCH",
-      body: { icon: emoji }
+      body: { icon: emoji, expectedVersion: currentPage?.version }
     });
     if (state.selectedPage?.id === data.page.id) state.selectedPage = data.page;
     applyPageSummaryUpdate(data.page.id, {
       icon: data.page.icon,
       isCollection: data.page.isCollection,
+      version: data.page.version,
       updatedAt: data.page.updatedAt
     });
     if (typeof emoji === "string") rememberRecentEmoji(emoji);
@@ -2209,6 +2249,12 @@ function getPageSubtreeIds(pageId, pages = state.allPages) {
   return ids;
 }
 
+function getPageVersionSnapshot(pageIds) {
+  const pagesById = new Map(state.allPages.map((page) => [page.id, page]));
+  if (state.selectedPage) pagesById.set(state.selectedPage.id, state.selectedPage);
+  return [...pageIds].map((id) => ({ id, version: Number(pagesById.get(id)?.version ?? 1) }));
+}
+
 function getPageActionsMenuItems() {
   return [...elements.pageActionsMenu.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]')].filter(
     (item) => !item.disabled
@@ -2345,23 +2391,107 @@ function syncPageModeUi() {
   }
 }
 
-async function flushPendingPageEdits() {
+function hasPendingPageEdits() {
+  if (!state.selectedPage || state.workspaceView !== "page") return false;
+  if (pageTitleSaveTimer !== null || pageTitleSaveQueue.busy || pageTitleSavedRevision < pageTitleEditRevision) return true;
+  if (blockSaveTimers.size > 0) return true;
+  if ([...blockSaveQueues.values()].some((queue) => queue.busy)) return true;
+  return Boolean(elements.blockList.querySelector(".editor-block-row.is-dirty"));
+}
+
+function handleBeforeUnload(event) {
+  if (!hasPendingPageEdits()) return;
+  event.preventDefault();
+  event.returnValue = "";
+}
+
+function syncBeforeUnloadProtection() {
+  const shouldProtect = hasPendingPageEdits();
+  if (shouldProtect === beforeUnloadProtectionActive) return;
+  beforeUnloadProtectionActive = shouldProtect;
+  if (shouldProtect) window.addEventListener("beforeunload", handleBeforeUnload);
+  else window.removeEventListener("beforeunload", handleBeforeUnload);
+}
+
+function disableBeforeUnloadProtection() {
+  window.removeEventListener("beforeunload", handleBeforeUnload);
+  beforeUnloadProtectionActive = false;
+}
+
+function resetPageEditTracking() {
+  window.clearTimeout(pageTitleSaveTimer);
+  pageTitleSaveTimer = null;
+  pageTitleEditRevision = 0;
+  pageTitleSavedRevision = 0;
+  pageTitleTaskId = 0;
+  for (const timer of blockSaveTimers.values()) window.clearTimeout(timer);
+  blockSaveTimers.clear();
+  blockSaveRows.clear();
+  blockSaveQueues.clear();
+  blockSaveTaskIds.clear();
+  disableBeforeUnloadProtection();
+}
+
+function discardPendingPageEdits() {
+  window.clearTimeout(pageTitleSaveTimer);
+  pageTitleSaveTimer = null;
+  pageTitleSaveQueue.discard();
+  for (const timer of blockSaveTimers.values()) window.clearTimeout(timer);
+  blockSaveTimers.clear();
+  blockSaveRows.clear();
+  for (const queue of blockSaveQueues.values()) queue.discard();
+  blockSaveQueues.clear();
+  blockSaveTaskIds.clear();
+  pageTitleEditRevision = 0;
+  pageTitleSavedRevision = 0;
+  pageTitleTaskId = 0;
+  disableBeforeUnloadProtection();
+}
+
+function discardBlockSave(blockId) {
+  window.clearTimeout(blockSaveTimers.get(blockId));
+  blockSaveTimers.delete(blockId);
+  blockSaveRows.delete(blockId);
+  blockSaveQueues.get(blockId)?.discard();
+  blockSaveQueues.delete(blockId);
+  blockSaveTaskIds.delete(blockId);
+  syncBeforeUnloadProtection();
+}
+
+async function flushPendingPageEdits({ keepalive = false } = {}) {
   if (!canEditSelectedPage()) return;
 
   const titleWasPending = pageTitleSaveTimer !== null;
   window.clearTimeout(pageTitleSaveTimer);
   pageTitleSaveTimer = null;
-  if (titleWasPending) await savePageTitleNow({ quiet: true });
+  if (titleWasPending || pageTitleSavedRevision < pageTitleEditRevision) {
+    await savePageTitleNow({ quiet: true, keepalive });
+  } else if (pageTitleSaveQueue.busy) {
+    await pageTitleSaveQueue.flush();
+  }
 
-  const dirtyRows = [...elements.blockList.querySelectorAll(".editor-block-row.is-dirty")];
+  const rowsToSave = new Map(blockSaveRows);
+  for (const row of elements.blockList.querySelectorAll(".editor-block-row.is-dirty")) {
+    if (row.dataset.blockId) rowsToSave.set(row.dataset.blockId, row);
+  }
   await Promise.all(
-    dirtyRows.map((row) => {
-      const blockId = row.dataset.blockId;
-      clearTimeout(blockSaveTimers.get(blockId));
+    [...rowsToSave.entries()].map(([blockId, row]) => {
+      window.clearTimeout(blockSaveTimers.get(blockId));
       blockSaveTimers.delete(blockId);
-      return saveBlockRow(row, { quiet: true });
+      blockSaveRows.delete(blockId);
+      return saveBlockRow(row, { quiet: true, keepalive });
     })
   );
+
+  const visibleBlockIds = new Set(
+    [...elements.blockList.querySelectorAll(".editor-block-row[data-block-id]")].map((row) => row.dataset.blockId)
+  );
+  await Promise.all(
+    [...blockSaveQueues.entries()]
+      .filter(([blockId]) => visibleBlockIds.has(blockId))
+      .map(([, queue]) => queue.flush())
+  );
+  syncBeforeUnloadProtection();
 }
 
 async function setPageMode(nextMode, { announce = true } = {}) {
@@ -2542,21 +2672,21 @@ async function deleteNavigationTarget() {
     ? defaultCollectionKey
     : getCollectionRootId(target.id) ?? defaultCollectionKey;
 
-  if (selectedPageWasDeleted) {
-    window.clearTimeout(pageTitleSaveTimer);
-    pageTitleSaveTimer = null;
-  }
+  if (selectedPageWasDeleted) discardPendingPageEdits();
 
   closeNavigationContextMenu();
   setStatus(t(isCollection ? "status.deletingCollection" : "status.deletingPage"));
 
-  await api(`/api/pages/${target.id}?permanent=true`, { method: "DELETE" });
+  await api(`/api/pages/${target.id}?permanent=true`, {
+    method: "DELETE",
+    body: { expectedVersions: getPageVersionSnapshot(subtreeIds) }
+  });
 
   if (selectedPageWasDeleted) state.selectedPage = null;
   await loadPages(elements.searchInput.value.trim(), state.activeTag);
 
   if (selectedPageWasDeleted || activeCollectionWasDeleted) {
-    showCollection(fallbackCollectionId);
+    await showCollection(fallbackCollectionId, { skipFlush: true });
   }
 
   setStatus(t(isCollection ? "status.collectionDeleted" : "status.pageDeleted"));
@@ -2697,6 +2827,26 @@ function getBlockById(blockId, blocks = state.selectedPage?.blocks ?? []) {
     if (child) return child;
   }
   return null;
+}
+
+function getBlockVersionSnapshot(blockId, { includeDescendants = true } = {}) {
+  const block = getBlockById(blockId);
+  if (!block) return [];
+
+  const snapshot = [];
+  const visit = (item) => {
+    snapshot.push({ id: item.id, version: Number(item.version ?? 1) });
+    if (includeDescendants) for (const child of item.children ?? []) visit(child);
+  };
+  visit(block);
+  return snapshot;
+}
+
+async function deleteBlockWithVersionCheck(blockId, options) {
+  return api(`/api/blocks/${blockId}`, {
+    method: "DELETE",
+    body: { expectedVersions: getBlockVersionSnapshot(blockId, options) }
+  });
 }
 
 function updateBlockInState(updatedBlock, blocks = state.selectedPage?.blocks ?? []) {
@@ -4179,20 +4329,19 @@ async function changeCalloutType(row, type) {
     return;
   }
 
-  const metadata = { ...getBlockMetadata(block), calloutType: nextType };
+  const previousMetadata = getBlockMetadata(block);
+  const metadata = { ...previousMetadata, calloutType: nextType };
+  if (block) block.metadata = metadata;
   setRowCalloutType(row, nextType);
   syncCalloutTypeMenu(row);
-  row.classList.add("is-saving");
+  markBlockDirty(row);
 
   try {
-    const data = await api(`/api/blocks/${blockId}`, { method: "PATCH", body: { metadata } });
-    updateBlockInState(data.block);
-    row.classList.remove("is-saving");
-    row.classList.add("is-saved");
-    window.setTimeout(() => row.classList.remove("is-saved"), 900);
+    await saveBlockRow(row, { quiet: true });
     closeBlockContextMenu({ restoreFocus: true });
     setStatus(t("status.calloutChanged", { type: getCalloutTypeLabel(nextType) }));
   } catch (error) {
+    if (block) block.metadata = previousMetadata;
     setRowCalloutType(row, previousType);
     syncCalloutTypeMenu(row);
     row.classList.remove("is-saving");
@@ -4548,37 +4697,91 @@ function handleTableCellKeydown(event, input, row) {
   return false;
 }
 
-async function saveBlockRow(row, { quiet = false } = {}) {
-  if (!requireWritablePage({ announce: !quiet }) || !row?.dataset.blockId || row.dataset.deleting === "true") return;
+function markBlockDirty(row) {
+  if (!row?.dataset.blockId) return;
+  const editRevision = (Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0) + 1;
+  row.dataset.editRevision = String(editRevision);
+  row.classList.add("is-dirty");
+  row.classList.remove("is-saved", "save-error");
+  syncBeforeUnloadProtection();
+}
+
+function getBlockSaveQueue(blockId) {
+  let queue = blockSaveQueues.get(blockId);
+  if (queue) return queue;
+
+  queue = createLatestWriteQueue(async (task) => {
+    const currentVersion = getBlockById(blockId)?.version;
+    const data = await api(`/api/blocks/${blockId}`, {
+      method: "PATCH",
+      keepalive: task.keepalive === true,
+      body: { ...task.payload, expectedVersion: currentVersion }
+    });
+    updateBlockInState(data.block);
+    if (task.row?.dataset.blockId === blockId) updateRenderedBlockPreview(task.row, data.block);
+
+    const latestTaskId = blockSaveTaskIds.get(blockId);
+    const currentEditRevision = Number.parseInt(task.row?.dataset.editRevision ?? "0", 10) || 0;
+    if (latestTaskId === task.taskId && currentEditRevision === task.editRevision) {
+      task.row.classList.remove("is-dirty", "save-error");
+      task.row.classList.add("is-saved");
+      window.setTimeout(() => task.row.classList.remove("is-saved"), 900);
+    }
+    return data;
+  });
+  blockSaveQueues.set(blockId, queue);
+  return queue;
+}
+
+async function saveBlockRow(row, { quiet = false, keepalive = false } = {}) {
+  if (!requireWritablePage({ announce: !quiet }) || !row?.dataset.blockId || row.dataset.deleting === "true") return null;
   const blockId = row.dataset.blockId;
-  clearTimeout(blockSaveTimers.get(blockId));
+  window.clearTimeout(blockSaveTimers.get(blockId));
   blockSaveTimers.delete(blockId);
+  blockSaveRows.delete(blockId);
+
+  const taskId = (blockSaveTaskIds.get(blockId) ?? 0) + 1;
+  blockSaveTaskIds.set(blockId, taskId);
+  const task = {
+    taskId,
+    editRevision: Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0,
+    payload: buildBlockPayload(row),
+    row,
+    keepalive
+  };
+  const queue = getBlockSaveQueue(blockId);
   row.classList.add("is-saving");
+  row.classList.remove("save-error");
+  syncBeforeUnloadProtection();
 
   try {
-    const data = await api(`/api/blocks/${blockId}`, { method: "PATCH", body: buildBlockPayload(row) });
-    updateBlockInState(data.block);
-    updateRenderedBlockPreview(row, data.block);
-    row.classList.remove("is-dirty");
-    row.classList.remove("is-saving");
-    row.classList.add("is-saved");
-    window.setTimeout(() => row.classList.remove("is-saved"), 900);
+    const data = await queue.enqueue(task);
+    if (!queue.busy) row.classList.remove("is-saving");
     if (!quiet) setStatus(t("status.blockSaved"));
+    return data;
   } catch (error) {
     row.classList.remove("is-saving");
-    setStatus(error.message, true);
+    row.classList.add("is-dirty", "save-error");
+    throw error;
+  } finally {
+    syncBeforeUnloadProtection();
   }
 }
 
 function scheduleBlockSave(row) {
   if (!requireWritablePage({ announce: false }) || !row?.dataset.blockId) return;
-  row.classList.add("is-dirty");
+  markBlockDirty(row);
   const blockId = row.dataset.blockId;
-  clearTimeout(blockSaveTimers.get(blockId));
+  window.clearTimeout(blockSaveTimers.get(blockId));
+  blockSaveRows.set(blockId, row);
   blockSaveTimers.set(
     blockId,
-    window.setTimeout(() => saveBlockRow(row, { quiet: true }), 700)
+    window.setTimeout(() => {
+      blockSaveTimers.delete(blockId);
+      saveBlockRow(row, { quiet: true }).catch((error) => setStatus(error.message, true));
+    }, 700)
   );
+  syncBeforeUnloadProtection();
 }
 
 function getTextareaSelection(textarea) {
@@ -4913,7 +5116,7 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
   if (!requireWritablePage() || !row?.dataset.blockId || !file) return;
 
   const blockId = row.dataset.blockId;
-  clearTimeout(blockSaveTimers.get(blockId));
+  window.clearTimeout(blockSaveTimers.get(blockId));
   blockSaveTimers.delete(blockId);
   const block = getBlockById(blockId);
   const textarea = getBlockTextarea(row);
@@ -4950,7 +5153,9 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
     const orderedIds = [...siblingIds];
     if (replaceCurrentBlock) {
       orderedIds.splice(referenceIndex, 1, data.block.id);
-      await api(`/api/blocks/${blockId}`, { method: "DELETE" });
+      row.dataset.deleting = "true";
+      discardBlockSave(blockId);
+      await deleteBlockWithVersionCheck(blockId, { includeDescendants: false });
     } else {
       orderedIds.splice(insertionIndex, 0, data.block.id);
     }
@@ -5108,8 +5313,7 @@ async function deleteEmptyBlock(row) {
   let focusBlockId = previousBlockId ?? childIds[0] ?? nextBlockId;
 
   row.dataset.deleting = "true";
-  clearTimeout(blockSaveTimers.get(blockId));
-  blockSaveTimers.delete(blockId);
+  discardBlockSave(blockId);
   closeSlashMenu();
   closeInlineToolbar();
   closeBlockContextMenu();
@@ -5118,7 +5322,7 @@ async function deleteEmptyBlock(row) {
   if (siblingIndex >= 0) nextSiblingIds.splice(siblingIndex, 1, ...childIds);
   if (nextSiblingIds.length) await persistBlockOrder(parentBlockId, nextSiblingIds);
 
-  await api(`/api/blocks/${blockId}`, { method: "DELETE" });
+  await deleteBlockWithVersionCheck(blockId, { includeDescendants: false });
 
   if (!focusBlockId) {
     const starter = await createEmptyBlock(state.selectedPage.id);
@@ -5366,30 +5570,42 @@ function applyPageSummaryUpdate(pageId, updates) {
   renderHome();
 }
 
-async function savePageTitleNow({ quiet = true } = {}) {
-  if (!requireWritablePage({ announce: !quiet })) return;
+async function savePageTitleNow({ quiet = true, keepalive = false } = {}) {
+  if (!requireWritablePage({ announce: !quiet })) return null;
+  const pageId = state.selectedPage.id;
   const title = normalizePageTitle(elements.pageTitle.value);
   window.clearTimeout(pageTitleSaveTimer);
   pageTitleSaveTimer = null;
+  const task = {
+    pageId,
+    title,
+    editRevision: pageTitleEditRevision,
+    taskId: ++pageTitleTaskId,
+    keepalive
+  };
+  syncBeforeUnloadProtection();
 
   try {
-    const data = await api(`/api/pages/${state.selectedPage.id}`, { method: "PATCH", body: { title } });
-    state.selectedPage = data.page;
-    applyPageSummaryUpdate(data.page.id, { title: data.page.title, updatedAt: data.page.updatedAt });
-    renderPageHeader(state.selectedPage);
+    const data = await pageTitleSaveQueue.enqueue(task);
     if (!quiet) setStatus(t("status.pageTitleSaved"));
-  } catch (error) {
-    setStatus(error.message, true);
+    return data;
+  } finally {
+    syncBeforeUnloadProtection();
   }
 }
 
 function schedulePageTitleSave() {
   if (!requireWritablePage({ announce: false })) return;
+  pageTitleEditRevision += 1;
   const title = normalizePageTitle(elements.pageTitle.value);
   applyPageSummaryUpdate(state.selectedPage.id, { title });
   renderPageHeader(state.selectedPage);
   window.clearTimeout(pageTitleSaveTimer);
-  pageTitleSaveTimer = window.setTimeout(() => savePageTitleNow(), 650);
+  pageTitleSaveTimer = window.setTimeout(() => {
+    pageTitleSaveTimer = null;
+    savePageTitleNow().catch((error) => setStatus(error.message, true));
+  }, 650);
+  syncBeforeUnloadProtection();
 }
 
 async function createCollection() {
@@ -5402,6 +5618,7 @@ async function createCollection() {
     return;
   }
 
+  await flushPendingPageEdits();
   setStatus(t("status.creatingCollection"));
   elements.searchInput.value = "";
   state.searchQuery = "";
@@ -5417,11 +5634,12 @@ async function createCollection() {
   });
 
   await loadPages("", "");
-  showCollection(data.page.id);
+  await showCollection(data.page.id, { skipFlush: true });
   setStatus(t("status.collectionCreated", { name }));
 }
 
 async function createUntitledPage() {
+  await flushPendingPageEdits();
   setStatus(t("status.creatingDocument"));
   elements.searchInput.value = "";
   state.searchQuery = "";
@@ -5436,7 +5654,7 @@ async function createUntitledPage() {
   });
 
   await loadPages("", "");
-  await openPage(data.page.id);
+  await openPage(data.page.id, { skipFlush: true });
   setStatus(t("status.documentCreated"));
 }
 
@@ -5472,7 +5690,9 @@ async function loadPages(query = state.searchQuery, tag = state.activeTag) {
   renderPages();
 }
 
-function showHome() {
+async function showHome({ skipFlush = false } = {}) {
+  if (!skipFlush) await flushPendingPageEdits();
+  resetPageEditTracking();
   state.selectedPage = null;
   state.pageMode = pageModes.READ;
   state.workspaceView = "home";
@@ -5480,7 +5700,9 @@ function showHome() {
   renderSelectedPage();
 }
 
-function showCollection(collectionId) {
+async function showCollection(collectionId, { skipFlush = false } = {}) {
+  if (!skipFlush) await flushPendingPageEdits();
+  resetPageEditTracking();
   state.selectedPage = null;
   state.pageMode = pageModes.READ;
   state.workspaceView = "collection";
@@ -5488,11 +5710,12 @@ function showCollection(collectionId) {
   renderSelectedPage();
 }
 
-async function openPage(pageId) {
+async function openPage(pageId, { skipFlush = false } = {}) {
+  if (!skipFlush) await flushPendingPageEdits();
   const preserveMode = state.workspaceView === "page" && state.selectedPage?.id === pageId;
   const summary = state.allPages.find((page) => page.id === pageId);
   if (isCollectionPage(summary)) {
-    showCollection(pageId);
+    await showCollection(pageId, { skipFlush: true });
     setStatus(t("status.collectionOpened"));
     return;
   }
@@ -5501,7 +5724,7 @@ async function openPage(pageId) {
   let data = await api(`/api/pages/${pageId}`);
 
   if (isCollectionPage(data.page)) {
-    showCollection(pageId);
+    await showCollection(pageId, { skipFlush: true });
     setStatus(t("status.collectionOpened"));
     return;
   }
@@ -5511,6 +5734,7 @@ async function openPage(pageId) {
     state.pendingFocusBlockId = null;
   }
 
+  resetPageEditTracking();
   state.selectedPage = data.page;
   state.workspaceView = "page";
   state.activeCollectionId = null;
@@ -5542,8 +5766,9 @@ async function openHomeFromBrand() {
   closeMobileSidebar({ restoreFocus: false });
   elements.searchInput.value = "";
   try {
+    await flushPendingPageEdits();
     await loadPages("", "");
-    showHome();
+    await showHome({ skipFlush: true });
     setStatus(t("status.ready"));
   } catch (error) {
     setStatus(error.message, true);
@@ -5570,7 +5795,7 @@ elements.pagePath.addEventListener("click", async (event) => {
   closePageActionsMenu();
   try {
     if (target.dataset.pagePathKind === "collection") {
-      showCollection(target.dataset.pagePathId);
+      await showCollection(target.dataset.pagePathId);
       setStatus(t("status.collectionOpened"));
       return;
     }
@@ -5995,6 +6220,7 @@ function refreshLocalizedUi() {
   elements.languageSelect.value = getLanguage();
   setAuthMode(state.authMode, false);
   renderPages();
+  syncVisibleBlocksToState();
   renderSelectedPage();
   syncPageModeUi();
   if (state.user) updateUserIdentityUi();
@@ -6063,7 +6289,9 @@ elements.addCollectionButton.addEventListener("click", async () => {
   }
 });
 
-elements.logoutButton.addEventListener("click", logout);
+elements.logoutButton.addEventListener("click", () => {
+  logout().catch((error) => setStatus(error.message, true));
+});
 
 
 
@@ -6090,8 +6318,9 @@ elements.defaultCollectionButton.addEventListener("click", async () => {
   closeMobileSidebar({ restoreFocus: true });
   try {
     elements.searchInput.value = "";
+    await flushPendingPageEdits();
     await loadPages("", "");
-    showCollection(defaultCollectionKey);
+    await showCollection(defaultCollectionKey, { skipFlush: true });
     setStatus(t("status.collectionOpened"));
   } catch (error) {
     setStatus(error.message, true);
@@ -6115,8 +6344,9 @@ async function handleSidebarPageClick(event) {
   try {
     if (item.dataset.collectionId) {
       elements.searchInput.value = "";
+      await flushPendingPageEdits();
       await loadPages("", "");
-      showCollection(item.dataset.collectionId);
+      await showCollection(item.dataset.collectionId, { skipFlush: true });
       setStatus(t("status.collectionOpened"));
       return;
     }
@@ -6176,14 +6406,8 @@ elements.exportPdfButton.addEventListener("click", () => {
 
 elements.savePageButton.addEventListener("click", async () => {
   if (!requireWritablePage()) return;
-  window.clearTimeout(pageTitleSaveTimer);
-  pageTitleSaveTimer = null;
   try {
-    const body = {
-      title: normalizePageTitle(elements.pageTitle.value)
-    };
-    const data = await api(`/api/pages/${state.selectedPage.id}`, { method: "PATCH", body });
-    state.selectedPage = data.page;
+    await flushPendingPageEdits();
     await loadPages(elements.searchInput.value.trim(), state.activeTag);
     renderSelectedPage();
     setStatus(t("status.pageSaved"));
@@ -6197,9 +6421,15 @@ elements.archivePageButton.addEventListener("click", async () => {
   closePageActionsMenu({ restoreFocus: true });
   const ok = window.confirm(t("confirm.archivePage"));
   if (!ok) return;
-  const parentCollectionId = getCollectionRootId(state.selectedPage.id) ?? defaultCollectionKey;
+  const pageId = state.selectedPage.id;
+  const parentCollectionId = getCollectionRootId(pageId) ?? defaultCollectionKey;
   try {
-    await api(`/api/pages/${state.selectedPage.id}`, { method: "PATCH", body: { isArchived: true } });
+    await flushPendingPageEdits();
+    await api(`/api/pages/${pageId}`, {
+      method: "PATCH",
+      body: { isArchived: true, expectedVersion: state.selectedPage.version }
+    });
+    resetPageEditTracking();
     state.selectedPage = null;
     state.workspaceView = "collection";
     state.activeCollectionId = parentCollectionId;
@@ -6394,7 +6624,10 @@ elements.blockList.addEventListener("change", (event) => {
   const checkbox = event.target.closest('input[name="checked"]');
   if (!checkbox) return;
   const row = getBlockRow(checkbox);
-  if (row) saveBlockRow(row).catch((error) => setStatus(error.message, true));
+  if (row) {
+    markBlockDirty(row);
+    saveBlockRow(row).catch((error) => setStatus(error.message, true));
+  }
 });
 
 elements.blockList.addEventListener("keydown", async (event) => {
@@ -6623,13 +6856,20 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
       const ok = window.confirm(t("confirm.deleteBlock"));
       if (!ok) return;
       closeBlockContextMenu();
-      await api(`/api/blocks/${blockId}`, { method: "DELETE" });
+      row.dataset.deleting = "true";
+      discardBlockSave(blockId);
+      await deleteBlockWithVersionCheck(blockId);
       await openPage(state.selectedPage.id);
       setStatus(t("status.blockDeleted"));
     }
   } catch (error) {
     setStatus(error.message, true);
   }
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "hidden" || !hasPendingPageEdits()) return;
+  flushPendingPageEdits({ keepalive: true }).catch((error) => setStatus(error.message, true));
 });
 
 elements.blockContextMenu.addEventListener("keydown", (event) => {

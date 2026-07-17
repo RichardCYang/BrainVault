@@ -51,8 +51,20 @@ const updateBlockSchema = z.object({
   checked: z.boolean().optional(),
   parentBlockId: z.string().min(1).nullable().optional(),
   sortOrder: z.number().int().min(0).optional(),
-  metadata: metadataSchema.nullable().optional()
+  metadata: metadataSchema.nullable().optional(),
+  expectedVersion: z.number().int().min(1).optional()
 });
+
+const versionSnapshotSchema = z.object({
+  id: z.string().min(1).max(64),
+  version: z.number().int().min(1)
+});
+
+const deleteBlockSchema = z
+  .object({
+    expectedVersions: z.array(versionSnapshotSchema).max(10_000).optional()
+  })
+  .default({});
 
 const bookmarkPreviewSchema = z.object({
   url: z.string().trim().min(1).max(2_048)
@@ -153,9 +165,57 @@ async function assertParentBlock(parentBlockId: string | null | undefined, pageI
   if (!parent) throw new ApiError(400, "INVALID_PARENT_BLOCK", "Parent block must exist on the same page");
 }
 
-async function getAttachmentBlockIdsForSubtree(rootBlockId: string, pageId: string) {
-  const rows = await db.query<{ id: string; parent_block_id: string | null; type: string }>(
-    "SELECT id, parent_block_id, type FROM blocks WHERE page_id = ?",
+async function assertBlockParentDoesNotCycle(
+  blockId: string,
+  parentBlockId: string | null | undefined,
+  pageId: string,
+  client: DbClient = db
+) {
+  let currentId = parentBlockId ?? null;
+  const visited = new Set<string>();
+  while (currentId) {
+    if (currentId === blockId || visited.has(currentId)) {
+      throw new ApiError(400, "INVALID_PARENT_BLOCK", "Block hierarchy cannot contain a cycle");
+    }
+    visited.add(currentId);
+    const current = await client.queryOne<{ parent_block_id: string | null }>(
+      "SELECT parent_block_id FROM blocks WHERE id = ? AND page_id = ?",
+      [currentId, pageId]
+    );
+    if (!current) throw new ApiError(400, "INVALID_PARENT_BLOCK", "Parent block must exist on the same page");
+    currentId = current.parent_block_id;
+  }
+}
+
+function assertReorderDoesNotCreateCycle(
+  rows: Array<{ id: string; parent_block_id: string | null }>,
+  items: Array<{ id: string; parentBlockId?: string | null }>
+) {
+  const parentById = new Map(rows.map((row) => [row.id, row.parent_block_id]));
+  for (const item of items) {
+    if (item.parentBlockId !== undefined) parentById.set(item.id, item.parentBlockId);
+  }
+  for (const startId of parentById.keys()) {
+    const path = new Set<string>();
+    let currentId: string | null | undefined = startId;
+    while (currentId) {
+      if (path.has(currentId)) {
+        throw new ApiError(400, "INVALID_PARENT_BLOCK", "Block hierarchy cannot contain a cycle");
+      }
+      path.add(currentId);
+      currentId = parentById.get(currentId);
+    }
+  }
+}
+
+async function getBlockSubtreeRows(rootBlockId: string, pageId: string, client: DbClient = db, lock = false) {
+  const rows = await client.query<{
+    id: string;
+    parent_block_id: string | null;
+    type: string;
+    edit_version: number;
+  }>(
+    `SELECT id, parent_block_id, type, edit_version FROM blocks WHERE page_id = ?${lock ? " FOR UPDATE" : ""}`,
     [pageId]
   );
   const children = new Map<string, string[]>();
@@ -168,15 +228,39 @@ async function getAttachmentBlockIdsForSubtree(rootBlockId: string, pageId: stri
 
   const rowById = new Map(rows.map((row) => [row.id, row]));
   const pending = [rootBlockId];
-  const attachmentIds: string[] = [];
+  const subtreeRows = [] as typeof rows;
+  const visited = new Set<string>();
   while (pending.length) {
     const id = pending.pop();
-    if (!id) continue;
+    if (!id || visited.has(id)) continue;
+    visited.add(id);
     const row = rowById.get(id);
-    if (row?.type === "ATTACHMENT") attachmentIds.push(id);
+    if (row) subtreeRows.push(row);
     pending.push(...(children.get(id) ?? []));
   }
-  return attachmentIds;
+  return subtreeRows;
+}
+
+function assertBlockVersionSnapshot(
+  rows: Array<{ id: string; edit_version: number }>,
+  expectedVersions: Array<{ id: string; version: number }> | undefined
+) {
+  if (!expectedVersions) return;
+
+  const expectedById = new Map(expectedVersions.map((item) => [item.id, item.version]));
+  const currentById = new Map(rows.map((item) => [item.id, Number(item.edit_version ?? 1)]));
+  const exactSnapshot =
+    expectedById.size === expectedVersions.length &&
+    expectedById.size === rows.length &&
+    rows.every((row) => expectedById.get(row.id) === currentById.get(row.id));
+
+  if (!exactSnapshot) {
+    throw new ApiError(
+      409,
+      "BLOCK_EDIT_CONFLICT",
+      "This block subtree changed in another session. It was not deleted."
+    );
+  }
 }
 
 blockRouter.post(
@@ -185,6 +269,7 @@ blockRouter.post(
   attachmentUpload.single("file"),
   async (req, res, next) => {
     let cleanupPath = req.file?.path ?? null;
+    let movedPath: string | null = null;
     try {
       const user = requireUser(req.user);
       const pageId = String(req.params.pageId);
@@ -210,27 +295,49 @@ blockRouter.post(
         }
       };
 
-      cleanupPath = await moveAttachmentFile(file.path, user.id, id);
-      await db.execute(
-        `INSERT INTO blocks (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata)
-         VALUES (?, ?, ?, 'ATTACHMENT', ?, ?, 0, ?, ?)`,
-        [
-          id,
-          pageId,
-          body.parentBlockId,
-          originalName,
-          renderBlockHtml("ATTACHMENT", originalName, false, metadata),
-          body.sortOrder ?? (lastBlock ? lastBlock.sort_order + 1 : 0),
-          JSON.stringify(metadata)
-        ]
-      );
+      movedPath = await moveAttachmentFile(file.path, user.id, id);
       cleanupPath = null;
+      try {
+        await db.execute(
+          `INSERT INTO blocks (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata)
+           VALUES (?, ?, ?, 'ATTACHMENT', ?, ?, 0, ?, ?)`,
+          [
+            id,
+            pageId,
+            body.parentBlockId,
+            originalName,
+            renderBlockHtml("ATTACHMENT", originalName, false, metadata),
+            body.sortOrder ?? (lastBlock ? lastBlock.sort_order + 1 : 0),
+            JSON.stringify(metadata)
+          ]
+        );
+        movedPath = null;
+      } catch (error) {
+        let insertDefinitelyFailed = false;
+        try {
+          insertDefinitelyFailed = !(await db.queryOne<{ id: string }>("SELECT id FROM blocks WHERE id = ?", [id]));
+        } catch (verificationError) {
+          console.error("Attachment insert outcome is unknown; preserving the moved file", {
+            id,
+            movedPath,
+            verificationError
+          });
+        }
+        if (insertDefinitelyFailed && movedPath) {
+          await removeAttachmentPath(movedPath);
+          movedPath = null;
+        }
+        throw error;
+      }
 
       const block = await db.queryOne<BlockRow>("SELECT * FROM blocks WHERE id = ?", [id]);
       if (!block) throw new ApiError(500, "BLOCK_CREATE_FAILED", "Attachment block was not created");
       res.status(201).json({ block: toBlock(block) });
     } catch (error) {
       if (cleanupPath) await removeAttachmentPath(cleanupPath);
+      if (movedPath) {
+        console.error("Preserving an attachment file because the database write outcome is unknown", { movedPath });
+      }
       next(error);
     }
   }
@@ -328,6 +435,7 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
     }
 
     await assertParentBlock(body.parentBlockId, existing.page_id);
+    await assertBlockParentDoesNotCycle(blockId, body.parentBlockId, existing.page_id);
 
     const fields: string[] = [];
     const values: DbValue[] = [];
@@ -374,7 +482,19 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
     }
 
     if (fields.length) {
-      await db.execute(`UPDATE blocks SET ${fields.join(", ")} WHERE id = ?`, [...values, blockId]);
+      const versionWhere = body.expectedVersion === undefined ? "id = ?" : "id = ? AND edit_version = ?";
+      const versionValues = body.expectedVersion === undefined ? [blockId] : [blockId, body.expectedVersion];
+      const result = await db.execute<{ affectedRows: number }>(
+        `UPDATE blocks SET ${[...fields, "edit_version = edit_version + 1"].join(", ")} WHERE ${versionWhere}`,
+        [...values, ...versionValues]
+      );
+      if (body.expectedVersion !== undefined && Number(result.affectedRows) === 0) {
+        throw new ApiError(
+          409,
+          "BLOCK_EDIT_CONFLICT",
+          "This block was changed in another session. Your local edits were not overwritten."
+        );
+      }
     }
 
     const block = await db.queryOne<BlockRow>("SELECT * FROM blocks WHERE id = ?", [blockId]);
@@ -386,19 +506,28 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
   }
 });
 
-blockRouter.delete("/blocks/:blockId", validate({ params: idParamSchema }), async (req, res, next) => {
+blockRouter.delete(
+  "/blocks/:blockId",
+  validate({ params: idParamSchema, body: deleteBlockSchema }),
+  async (req, res, next) => {
   try {
     const user = requireUser(req.user);
     const blockId = String(req.params.blockId);
-    const block = await assertOwnedBlock(blockId, user.id);
-    const attachmentIds = await getAttachmentBlockIdsForSubtree(blockId, block.page_id);
-    await db.execute("DELETE FROM blocks WHERE id = ?", [blockId]);
+    const body = req.body as z.infer<typeof deleteBlockSchema>;
+    const attachmentIds = await transaction(async (client) => {
+      const block = await assertOwnedBlock(blockId, user.id, client);
+      const subtreeRows = await getBlockSubtreeRows(blockId, block.page_id, client, true);
+      assertBlockVersionSnapshot(subtreeRows, body.expectedVersions);
+      await client.execute("DELETE FROM blocks WHERE id = ?", [blockId]);
+      return subtreeRows.filter((row) => row.type === "ATTACHMENT").map((row) => row.id);
+    });
     await removeAttachmentFiles(user.id, attachmentIds);
     res.status(204).send();
   } catch (error) {
     next(error);
   }
-});
+  }
+);
 
 blockRouter.post(
   "/pages/:pageId/blocks/reorder",
@@ -425,6 +554,11 @@ blockRouter.post(
           throw new ApiError(400, "INVALID_PARENT_BLOCK", "A block cannot be its own parent");
         }
       }
+      const hierarchyRows = await db.query<{ id: string; parent_block_id: string | null }>(
+        "SELECT id, parent_block_id FROM blocks WHERE page_id = ?",
+        [pageId]
+      );
+      assertReorderDoesNotCreateCycle(hierarchyRows, items);
 
       await transaction(async (client) => {
         for (const item of items) {

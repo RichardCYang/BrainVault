@@ -42,7 +42,8 @@ const updatePageSchema = z.object({
   coverUrl: z.string().url().max(500).nullable().optional(),
   isArchived: z.boolean().optional(),
   parentPageId: z.string().min(1).nullable().optional(),
-  tags: z.array(z.string().trim().min(1).max(50)).max(20).optional()
+  tags: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+  expectedVersion: z.number().int().min(1).optional()
 });
 
 const tagSchema = z.object({
@@ -55,6 +56,17 @@ const deletePageQuerySchema = z.object({
     .optional()
     .transform((value) => value === "true")
 });
+
+const versionSnapshotSchema = z.object({
+  id: z.string().min(1).max(64),
+  version: z.number().int().min(1)
+});
+
+const deletePageBodySchema = z
+  .object({
+    expectedVersions: z.array(versionSnapshotSchema).max(10_000).optional()
+  })
+  .default({});
 
 async function assertOwnedPage(pageId: string, ownerId: string, client: DbClient = db) {
   const page = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ? AND owner_id = ?", [pageId, ownerId]);
@@ -86,10 +98,63 @@ async function getOwnedPageSubtreeIds(pageId: string, ownerId: string, client: D
   return ids;
 }
 
+async function lockAndAssertPageVersionSnapshot(
+  client: DbClient,
+  subtreeIds: string[],
+  ownerId: string,
+  expectedVersions: Array<{ id: string; version: number }> | undefined
+) {
+  if (!expectedVersions) return;
+
+  const rows = await client.query<{ id: string; edit_version: number }>(
+    `SELECT id, edit_version FROM pages
+     WHERE owner_id = ? AND id IN (${subtreeIds.map(() => "?").join(",")})
+     FOR UPDATE`,
+    [ownerId, ...subtreeIds]
+  );
+  const expectedById = new Map(expectedVersions.map((item) => [item.id, item.version]));
+  const currentById = new Map(rows.map((item) => [item.id, Number(item.edit_version ?? 1)]));
+  const exactSnapshot =
+    expectedById.size === expectedVersions.length &&
+    expectedById.size === subtreeIds.length &&
+    currentById.size === subtreeIds.length &&
+    subtreeIds.every((id) => expectedById.get(id) === currentById.get(id));
+
+  if (!exactSnapshot) {
+    throw new ApiError(
+      409,
+      "PAGE_EDIT_CONFLICT",
+      "This page subtree changed in another session. It was not deleted."
+    );
+  }
+}
+
 async function assertOwnedParentPage(parentPageId: string | null | undefined, ownerId: string, client: DbClient = db) {
   if (!parentPageId) return;
   const parent = await client.queryOne("SELECT id FROM pages WHERE id = ? AND owner_id = ?", [parentPageId, ownerId]);
   if (!parent) throw new ApiError(400, "INVALID_PARENT_PAGE", "Parent page does not exist");
+}
+
+async function assertPageParentDoesNotCycle(
+  pageId: string,
+  parentPageId: string | null | undefined,
+  ownerId: string,
+  client: DbClient = db
+) {
+  let currentId = parentPageId ?? null;
+  const visited = new Set<string>();
+  while (currentId) {
+    if (currentId === pageId || visited.has(currentId)) {
+      throw new ApiError(400, "INVALID_PARENT_PAGE", "Page hierarchy cannot contain a cycle");
+    }
+    visited.add(currentId);
+    const current = await client.queryOne<{ parent_page_id: string | null }>(
+      "SELECT parent_page_id FROM pages WHERE id = ? AND owner_id = ?",
+      [currentId, ownerId]
+    );
+    if (!current) throw new ApiError(400, "INVALID_PARENT_PAGE", "Parent page does not exist");
+    currentId = current.parent_page_id;
+  }
 }
 
 async function getPageTags(pageId: string, client: DbClient = db) {
@@ -255,14 +320,15 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
     const user = requireUser(req.user);
     const pageId = String(req.params.pageId);
     const body = req.body as z.infer<typeof updatePageSchema>;
-    await assertOwnedPage(pageId, user.id);
+    const existingPage = await assertOwnedPage(pageId, user.id);
     await assertOwnedParentPage(body.parentPageId, user.id);
+    await assertPageParentDoesNotCycle(pageId, body.parentPageId, user.id);
 
-    if (body.parentPageId === pageId) {
-      throw new ApiError(400, "INVALID_PARENT_PAGE", "A page cannot be its own parent");
+    if (existingPage.is_collection && body.parentPageId) {
+      throw new ApiError(400, "INVALID_COLLECTION_PARENT", "A collection cannot have a parent page");
     }
 
-    const { tags, ...updates } = body;
+    const { tags, expectedVersion, ...updates } = body;
     const fields: string[] = [];
     const values: DbValue[] = [];
 
@@ -288,8 +354,20 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
     }
 
     await transaction(async (client) => {
-      if (fields.length) {
-        await client.execute(`UPDATE pages SET ${fields.join(", ")} WHERE id = ?`, [...values, pageId]);
+      if (fields.length || tags) {
+        const versionWhere = expectedVersion === undefined ? "id = ?" : "id = ? AND edit_version = ?";
+        const versionValues = expectedVersion === undefined ? [pageId] : [pageId, expectedVersion];
+        const result = await client.execute<{ affectedRows: number }>(
+          `UPDATE pages SET ${[...fields, "edit_version = edit_version + 1"].join(", ")} WHERE ${versionWhere}`,
+          [...values, ...versionValues]
+        );
+        if (expectedVersion !== undefined && Number(result.affectedRows) === 0) {
+          throw new ApiError(
+            409,
+            "PAGE_EDIT_CONFLICT",
+            "This page was changed in another session. Your local edits were not overwritten."
+          );
+        }
       }
       if (tags) await replaceTags(client, pageId, tags);
     });
@@ -302,12 +380,13 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
 
 pageRouter.delete(
   "/:pageId",
-  validate({ params: idParamSchema, query: deletePageQuerySchema }),
+  validate({ params: idParamSchema, query: deletePageQuerySchema, body: deletePageBodySchema }),
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
       const pageId = String(req.params.pageId);
       const query = getValidatedQuery<z.infer<typeof deletePageQuerySchema>>(req);
+      const body = req.body as z.infer<typeof deletePageBodySchema>;
       await assertOwnedPage(pageId, user.id);
 
       if (query.permanent) {
@@ -315,6 +394,7 @@ pageRouter.delete(
 
         await transaction(async (client) => {
           const subtreeIds = await getOwnedPageSubtreeIds(pageId, user.id, client);
+          await lockAndAssertPageVersionSnapshot(client, subtreeIds, user.id, body.expectedVersions);
 
           for (const subtreePageId of subtreeIds) {
             const attachmentRows = await client.query<{ id: string }>(

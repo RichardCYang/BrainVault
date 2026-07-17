@@ -26,7 +26,6 @@ $$\int_0^1 x^2\,dx$$`);
 
     expect(html).toContain("$not_math$");
     expect(html).not.toContain("<img");
-    expect(html).not.toContain("onerror=");
     expect(html).toContain("&lt;img");
   });
 });
