@@ -15,6 +15,13 @@ import {
   normalizeDatabaseData,
   summarizeDatabaseData
 } from "./database-block.js";
+import {
+  createAiChatEditor,
+  createDefaultAiChatData,
+  extractAiChatData,
+  normalizeAiChatData,
+  summarizeAiChatData
+} from "./ai-chat-block.js";
 import { emojiCategoryDefinitions, emojiRecords } from "./emoji-data.js";
 
 const tokenKey = "brainvault.token";
@@ -82,6 +89,7 @@ const blockTypeLabels = {
   KANBAN: "blocks.types.KANBAN",
   DATABASE: "blocks.types.DATABASE",
   BOOKMARK: "blocks.types.BOOKMARK",
+  AI_CHAT: "blocks.types.AI_CHAT",
   CODE: "blocks.types.CODE",
   DIVIDER: "blocks.types.DIVIDER",
   IMAGE: "blocks.types.IMAGE",
@@ -351,6 +359,7 @@ const slashCommands = [
   { type: "DATABASE", command: "/database", icon: "database" },
   { type: "KANBAN", command: "/board", icon: "kanban" },
   { type: "BOOKMARK", command: "/bookmark", icon: "bookmark" },
+  { type: "AI_CHAT", command: "/ai", icon: "ai-chat" },
   { type: "CODE", command: "/code", icon: "code" },
   { type: "DIVIDER", command: "/divider", icon: "divider" },
   { type: "IMAGE", command: "/image", icon: "image" },
@@ -418,6 +427,12 @@ const slashCommandIconShapes = {
     ["path", { d: "M6 4.5A2.5 2.5 0 0 1 8.5 2h7A2.5 2.5 0 0 1 18 4.5V22l-6-3.6L6 22Z" }],
     ["path", { d: "M9 7h6" }],
     ["path", { d: "M9 11h4" }]
+  ],
+  "ai-chat": [
+    ["path", { d: "M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" }],
+    ["path", { d: "M8 9h8" }],
+    ["path", { d: "M8 13h5" }],
+    ["path", { d: "m17.5 9 .45 1.05L19 10.5l-1.05.45L17.5 12l-.45-1.05L16 10.5l1.05-.45Z" }]
   ],
   code: [
     ["path", { d: "m18 16 4-4-4-4" }],
@@ -2633,6 +2648,10 @@ function getBlockBookmarkData(block) {
   return normalizeBookmarkData(block?.metadata?.bookmark);
 }
 
+function getBlockAiChatData(block) {
+  return normalizeAiChatData(block?.metadata?.aiChat, { fallbackAnsweredAt: block?.updatedAt });
+}
+
 function makeKanbanActionButton(action, label, title, data = {}) {
   const button = document.createElement("button");
   button.type = "button";
@@ -3695,9 +3714,11 @@ function mountBlockEditor(row, block) {
           ? createDatabaseEditor(row, getBlockDatabaseData(block), { onDirty: () => scheduleBlockSave(row) })
           : block.type === "BOOKMARK"
             ? createBookmarkEditor(row, getBlockBookmarkData(block))
-          : block.type === "ATTACHMENT"
-            ? createAttachmentEditor(block)
-            : createTextBlockEditor(block)
+            : block.type === "AI_CHAT"
+              ? createAiChatEditor(row, getBlockAiChatData(block), { onDirty: () => scheduleBlockSave(row) })
+              : block.type === "ATTACHMENT"
+                ? createAttachmentEditor(block)
+                : createTextBlockEditor(block)
   );
 }
 
@@ -3833,6 +3854,7 @@ function buildBlockPayload(row) {
     delete metadata.kanban;
     delete metadata.database;
     delete metadata.bookmark;
+    delete metadata.aiChat;
     payload.markdown = table.rows.map((cells) => cells.join("\t")).join("\n").slice(0, 20_000);
     payload.metadata = metadata;
   } else if (type === "KANBAN") {
@@ -3841,6 +3863,7 @@ function buildBlockPayload(row) {
     delete metadata.table;
     delete metadata.database;
     delete metadata.bookmark;
+    delete metadata.aiChat;
     payload.markdown = summarizeKanbanData(kanban);
     payload.metadata = metadata;
   } else if (type === "DATABASE") {
@@ -3849,6 +3872,7 @@ function buildBlockPayload(row) {
     delete metadata.table;
     delete metadata.kanban;
     delete metadata.bookmark;
+    delete metadata.aiChat;
     payload.markdown = summarizeDatabaseData(database);
     payload.metadata = metadata;
   } else if (type === "BOOKMARK") {
@@ -3857,13 +3881,24 @@ function buildBlockPayload(row) {
     delete metadata.table;
     delete metadata.kanban;
     delete metadata.database;
+    delete metadata.aiChat;
     payload.markdown = summarizeBookmarkData(bookmark);
+    payload.metadata = metadata;
+  } else if (type === "AI_CHAT") {
+    const aiChat = extractAiChatData(row);
+    metadata.aiChat = aiChat;
+    delete metadata.table;
+    delete metadata.kanban;
+    delete metadata.database;
+    delete metadata.bookmark;
+    payload.markdown = summarizeAiChatData(aiChat);
     payload.metadata = metadata;
   } else {
     if (metadata.table) delete metadata.table;
     if (metadata.kanban) delete metadata.kanban;
     if (metadata.database) delete metadata.database;
     if (metadata.bookmark) delete metadata.bookmark;
+    if (metadata.aiChat) delete metadata.aiChat;
     payload.metadata = Object.keys(metadata).length ? metadata : null;
   }
 
@@ -4208,10 +4243,16 @@ function setRowType(row, type, { markdown } = {}) {
   if (previousType === "KANBAN") metadata.kanban = extractKanbanData(row);
   if (previousType === "DATABASE") metadata.database = extractDatabaseData(row);
   if (previousType === "BOOKMARK") metadata.bookmark = extractBookmarkData(row);
+  if (previousType === "AI_CHAT") metadata.aiChat = extractAiChatData(row);
   if (type === "TABLE" && !metadata.table) metadata.table = createDefaultTableData();
   if (type === "KANBAN" && !metadata.kanban) metadata.kanban = createDefaultKanbanData();
   if (type === "DATABASE" && !metadata.database) metadata.database = createDefaultDatabaseData();
   if (type === "BOOKMARK" && !metadata.bookmark) metadata.bookmark = createDefaultBookmarkData();
+  if (type === "AI_CHAT" && !metadata.aiChat) {
+    metadata.aiChat = createDefaultAiChatData({
+      question: markdown ?? previousTextarea?.value ?? existing.markdown ?? ""
+    });
+  }
 
   row.dataset.blockType = type;
   if (type === "CALLOUT") setRowCalloutType(row, row.dataset.calloutType);
@@ -4224,7 +4265,7 @@ function setRowType(row, type, { markdown } = {}) {
   mountBlockEditor(row, {
     ...existing,
     type,
-    markdown: type === "TABLE" || type === "KANBAN" || type === "DATABASE" || type === "BOOKMARK" ? "" : markdown ?? previousTextarea?.value ?? existing.markdown ?? "",
+    markdown: type === "TABLE" || type === "KANBAN" || type === "DATABASE" || type === "BOOKMARK" || type === "AI_CHAT" ? "" : markdown ?? previousTextarea?.value ?? existing.markdown ?? "",
     metadata
   });
 }
@@ -4814,6 +4855,8 @@ async function applySlashCommand(row, type) {
     row.querySelector(".database-title-input")?.focus();
   } else if (type === "BOOKMARK") {
     row.querySelector(".bookmark-url-input")?.focus();
+  } else if (type === "AI_CHAT") {
+    row.querySelector(".ai-chat-question-input")?.focus();
   } else {
     focusTableCell(row, 0, 0);
   }

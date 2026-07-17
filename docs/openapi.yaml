@@ -281,7 +281,7 @@ components:
       properties:
         type:
           type: string
-          enum: [MARKDOWN, HEADING_1, HEADING_2, HEADING_3, TODO, QUOTE, CALLOUT, TABLE, KANBAN, DATABASE, BOOKMARK, CODE, DIVIDER, IMAGE, ATTACHMENT]
+          enum: [MARKDOWN, HEADING_1, HEADING_2, HEADING_3, TODO, QUOTE, CALLOUT, TABLE, KANBAN, DATABASE, BOOKMARK, AI_CHAT, CODE, DIVIDER, IMAGE, ATTACHMENT]
         markdown:
           type: string
         checked:
@@ -298,6 +298,8 @@ components:
               $ref: '#/components/schemas/DatabaseData'
             bookmark:
               $ref: '#/components/schemas/BookmarkData'
+            aiChat:
+              $ref: '#/components/schemas/AiChatData'
     BookmarkItem:
       type: object
       required: [id, url, title, description, imageUrl, faviconUrl, siteName]
@@ -331,6 +333,27 @@ components:
           maxItems: 50
           items:
             $ref: '#/components/schemas/BookmarkItem'
+    AiChatData:
+      type: object
+      required: [provider, model, answeredAt, question, answer]
+      properties:
+        provider:
+          type: string
+          enum: [chatgpt, gemini, claude, deepseek, grok]
+          description: Selects the built-in AI icon and provider label.
+        model:
+          type: string
+          maxLength: 120
+        answeredAt:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$'
+          description: User-configured local date and time without a time-zone offset.
+        question:
+          type: string
+          maxLength: 8000
+        answer:
+          type: string
+          maxLength: 12000
     BookmarkPreview:
       type: object
       required: [url, title, description, imageUrl, faviconUrl, siteName]

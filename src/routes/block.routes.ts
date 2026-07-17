@@ -24,6 +24,7 @@ import {
   normalizeBookmarkMetadata,
   summarizeBookmarkData
 } from "../lib/bookmark.js";
+import { getAiChatData, normalizeAiChatMetadata, summarizeAiChatData } from "../lib/ai-chat.js";
 import { toBlock } from "../lib/mappers.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -58,12 +59,23 @@ const bookmarkPreviewSchema = z.object({
 });
 
 function prepareBlockContent(type: BlockRow["type"], markdown: string, metadata: unknown) {
-  if (type !== "BOOKMARK") return { markdown, metadata };
-  const normalizedMetadata = normalizeBookmarkMetadata(metadata);
-  return {
-    markdown: summarizeBookmarkData(getBookmarkData(normalizedMetadata)),
-    metadata: normalizedMetadata
-  };
+  if (type === "BOOKMARK") {
+    const normalizedMetadata = normalizeBookmarkMetadata(metadata);
+    return {
+      markdown: summarizeBookmarkData(getBookmarkData(normalizedMetadata)),
+      metadata: normalizedMetadata
+    };
+  }
+
+  if (type === "AI_CHAT") {
+    const normalizedMetadata = normalizeAiChatMetadata(metadata);
+    return {
+      markdown: summarizeAiChatData(getAiChatData(normalizedMetadata)),
+      metadata: normalizedMetadata
+    };
+  }
+
+  return { markdown, metadata };
 }
 
 const reorderSchema = z.object({
@@ -336,7 +348,7 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
       fields.push("type = ?");
       values.push(body.type);
     }
-    if (body.markdown !== undefined || (contentChanged && nextType === "BOOKMARK")) {
+    if (body.markdown !== undefined || (contentChanged && (nextType === "BOOKMARK" || nextType === "AI_CHAT"))) {
       fields.push("markdown = ?");
       values.push(prepared.markdown);
     }
@@ -356,7 +368,7 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
       fields.push("sort_order = ?");
       values.push(body.sortOrder);
     }
-    if (body.metadata !== undefined || (contentChanged && nextType === "BOOKMARK")) {
+    if (body.metadata !== undefined || (contentChanged && (nextType === "BOOKMARK" || nextType === "AI_CHAT"))) {
       fields.push("metadata = ?");
       values.push(prepared.metadata ? JSON.stringify(prepared.metadata) : null);
     }

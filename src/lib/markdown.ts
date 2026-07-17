@@ -7,6 +7,7 @@ import { getTableData } from "./table.js";
 import { renderKanbanHtml } from "./kanban.js";
 import { renderDatabaseHtml } from "./database.js";
 import { renderBookmarkHtml } from "./bookmark.js";
+import { getAiChatData, getAiProviderLabel } from "./ai-chat.js";
 
 const markdown = new MarkdownIt({
   html: true,
@@ -129,6 +130,30 @@ function renderTableCell(raw: string) {
   return sanitizeHtml(markdown.renderInline(raw ?? ""), sanitizeOptions);
 }
 
+function renderAiChat(metadata: unknown) {
+  const data = getAiChatData(metadata);
+  const escapeText = (value: string) => sanitizeHtml(value, { allowedTags: [], allowedAttributes: {} });
+  const provider = escapeText(getAiProviderLabel(data.provider));
+  const model = escapeText(data.model);
+  const answeredAt = escapeText(data.answeredAt);
+  const question = renderMarkdown(data.question);
+  const answer = renderMarkdown(data.answer);
+
+  return sanitizeHtml(
+    `<section class="rendered-ai-chat">
+      <article class="rendered-ai-chat-message rendered-ai-chat-question">
+        <header class="rendered-ai-chat-meta"><strong>Question</strong></header>
+        <div class="rendered-ai-chat-content">${question}</div>
+      </article>
+      <article class="rendered-ai-chat-message rendered-ai-chat-answer">
+        <header class="rendered-ai-chat-meta"><strong>${provider}</strong>${model ? `<span class="rendered-ai-chat-model">${model}</span>` : ""}${answeredAt ? `<small class="rendered-ai-chat-time">${answeredAt}</small>` : ""}</header>
+        <div class="rendered-ai-chat-content">${answer}</div>
+      </article>
+    </section>`,
+    sanitizeOptions
+  );
+}
+
 function renderTable(metadata: unknown) {
   const table = getTableData(metadata);
   const bodyRows = table.headerRow ? table.rows.slice(1) : table.rows;
@@ -198,6 +223,8 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
       return sanitizeHtml(renderDatabaseHtml(metadata), sanitizeOptions);
     case "BOOKMARK":
       return sanitizeHtml(renderBookmarkHtml(metadata), sanitizeOptions);
+    case "AI_CHAT":
+      return renderAiChat(metadata);
     case "CODE":
       return renderTextAlignment(renderMarkdown(`\`\`\`\n${stripFence(markdownValue)}\n\`\`\``), metadata);
     case "DIVIDER":

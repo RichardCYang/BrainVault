@@ -272,6 +272,7 @@ export const translationCatalogs = {
         KANBAN: "Board",
         DATABASE: "Database",
         BOOKMARK: "Bookmark",
+        AI_CHAT: "AI chat",
         CODE: "Code",
         DIVIDER: "Divider",
         IMAGE: "Image", ATTACHMENT: "Attachment"
@@ -300,6 +301,24 @@ export const translationCatalogs = {
       noDescription: "No description is available for this page.",
       empty: "Paste a link above to create a bookmark preview."
     },
+    aiChat: {
+      editorAria: "AI question and answer conversation",
+      providerLabel: "AI icon",
+      providerAria: "Choose the AI that answered",
+      chooseProvider: "Use the {provider} icon",
+      modelLabel: "Model name",
+      modelPlaceholder: "Example: model name or version",
+      modelAria: "AI model name",
+      modelNotSet: "Model not set",
+      timeLabel: "Answered at",
+      timeAria: "Date and time the AI answered",
+      timeNotSet: "Answer time not set",
+      questionLabel: "Question",
+      questionPlaceholder: "Enter the question you asked the AI…",
+      questionAria: "AI conversation question",
+      answerPlaceholder: "Paste or enter the AI answer…",
+      answerAria: "AI conversation answer"
+    },
     callouts: { idea: "Idea", info: "Information", success: "Success", warning: "Warning", danger: "Danger" },
     slash: {
       MARKDOWN: { label: "Text", hint: "Plain Markdown block", keywords: "markdown text paragraph" },
@@ -313,6 +332,7 @@ export const translationCatalogs = {
       KANBAN: { label: "Board", hint: "Kanban board grouped by status", keywords: "kanban board project status cards" },
       DATABASE: { label: "Database", hint: "Structured rows with properties, views, filters, and sorts", keywords: "database data source table view filter sort properties" },
       BOOKMARK: { label: "Bookmark", hint: "Save web pages as a list or OpenGraph gallery", keywords: "bookmark web link url preview opengraph gallery list" },
+      AI_CHAT: { label: "AI chat", hint: "Save a question and AI answer as chat bubbles", keywords: "ai chat conversation question answer model prompt" },
       CODE: { label: "Code", hint: "Code block", keywords: "code programming" },
       DIVIDER: { label: "Divider", hint: "Horizontal divider", keywords: "divider hr line separator" },
       IMAGE: { label: "Image", hint: "Image URL block", keywords: "image img photo picture" },
@@ -1079,7 +1099,7 @@ export const translationCatalogs = {
       colorRed: "빨간색 글자",
       colorGreen: "초록색 글자"
     },
-    blocks: { types: { MARKDOWN: "텍스트", HEADING_1: "제목 1", HEADING_2: "제목 2", HEADING_3: "제목 3", TODO: "할 일", QUOTE: "인용", CALLOUT: "콜아웃", TABLE: "표", KANBAN: "보드", DATABASE: "데이터베이스", BOOKMARK: "북마크", CODE: "코드", DIVIDER: "구분선", IMAGE: "이미지", ATTACHMENT: "첨부파일" } },
+    blocks: { types: { MARKDOWN: "텍스트", HEADING_1: "제목 1", HEADING_2: "제목 2", HEADING_3: "제목 3", TODO: "할 일", QUOTE: "인용", CALLOUT: "콜아웃", TABLE: "표", KANBAN: "보드", DATABASE: "데이터베이스", BOOKMARK: "북마크", AI_CHAT: "AI 대화", CODE: "코드", DIVIDER: "구분선", IMAGE: "이미지", ATTACHMENT: "첨부파일" } },
     attachment: {
       unnamed: "이름 없는 첨부파일",
       chooseFile: "첨부할 파일 선택",
@@ -1103,6 +1123,24 @@ export const translationCatalogs = {
       noDescription: "이 페이지에서 설명 정보를 찾지 못했습니다.",
       empty: "위 입력창에 링크를 붙여넣어 북마크 미리보기를 만드세요."
     },
+    aiChat: {
+      editorAria: "AI 질문과 답변 대화",
+      providerLabel: "AI 아이콘",
+      providerAria: "답변한 AI 선택",
+      chooseProvider: "{provider} 아이콘 사용",
+      modelLabel: "모델명",
+      modelPlaceholder: "예: 모델명 또는 버전",
+      modelAria: "AI 모델명",
+      modelNotSet: "모델명 미설정",
+      timeLabel: "답변 일시",
+      timeAria: "AI가 답변한 날짜와 시간",
+      timeNotSet: "답변 일시 미설정",
+      questionLabel: "질문",
+      questionPlaceholder: "AI에게 한 질문을 입력하세요…",
+      questionAria: "AI 대화 질문",
+      answerPlaceholder: "AI 답변을 붙여넣거나 입력하세요…",
+      answerAria: "AI 대화 답변"
+    },
     callouts: { idea: "아이디어", info: "정보", success: "성공", warning: "주의", danger: "위험" },
     slash: {
       MARKDOWN: { label: "텍스트", hint: "일반 마크다운 블록", keywords: "markdown text 문단 텍스트" },
@@ -1116,6 +1154,7 @@ export const translationCatalogs = {
       KANBAN: { label: "보드", hint: "상태별 칸반 보드", keywords: "kanban board 칸반 보드 프로젝트 상태 카드" },
       DATABASE: { label: "데이터베이스", hint: "속성, 뷰, 필터와 정렬을 지원하는 구조화 데이터", keywords: "database data source 데이터베이스 표 뷰 필터 정렬 속성" },
       BOOKMARK: { label: "북마크", hint: "웹 페이지를 리스트 또는 OpenGraph 갤러리로 저장", keywords: "bookmark web link url preview opengraph 북마크 링크 웹 갤러리 리스트" },
+      AI_CHAT: { label: "AI 대화", hint: "질문과 AI 답변을 채팅 말풍선으로 저장", keywords: "ai chat conversation 질문 답변 모델 프롬프트 대화" },
       CODE: { label: "코드", hint: "코드 블록", keywords: "code 코드" },
       DIVIDER: { label: "구분선", hint: "가로 구분선", keywords: "divider hr line 구분선" },
       IMAGE: { label: "이미지", hint: "이미지 URL 블록", keywords: "image img 사진 이미지" },

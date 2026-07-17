@@ -35,6 +35,7 @@ export type BlockType =
   | "KANBAN"
   | "DATABASE"
   | "BOOKMARK"
+  | "AI_CHAT"
   | "CODE"
   | "DIVIDER"
   | "IMAGE"

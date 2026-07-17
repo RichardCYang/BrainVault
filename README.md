@@ -8,7 +8,7 @@ Writing happens directly on the page. There is no separate preview pane: every r
 
 - Page-first workspace with a compact document tree and automatic title saving
 - Unicode Emoji 17 picker for every page and collection, with Korean/English search, categories, skin-tone variants, and recent selections
-- Slash commands for headings, tasks, quotes, callouts, tables, databases, boards, code, dividers, images, and file attachments
+- Slash commands for headings, tasks, quotes, callouts, tables, databases, boards, AI conversations, code, dividers, images, and file attachments
 - Drag-and-drop block reordering with support for nested content
 - Inline formatting for bold, italic, strikethrough, code, links, and text color
 - Block text alignment for left, center, right, and justified paragraphs
@@ -187,7 +187,7 @@ Local WebAuthn development works at `http://localhost:4000`. Production deployme
 Useful slash commands include:
 
 ```text
-/h1  /h2  /h3  /todo  /quote  /callout  /table  /database  /board  /bookmark  /code  /divider  /image  /file
+/h1  /h2  /h3  /todo  /quote  /callout  /table  /database  /board  /bookmark  /ai  /code  /divider  /image  /file
 ```
 
 Table cells support arrow-key movement. `Enter` advances down the current column, while `Tab` from the final cell adds another row.
@@ -195,6 +195,12 @@ Table cells support arrow-key movement. `Enter` advances down the current column
 Type `/database` to create a database block. Each database has one required title property plus optional text, number, select, multi-select, checkbox, date, and URL properties. Add table, board, or list views over the same rows; each view keeps its own name, layout, visible properties, filters, sort order, and board grouping. The editor uses a borderless database toolbar with view tabs, popover-based Properties/Filter/Sort controls, in-view search, a split New button, transparent column headers, and colored select pills. Property and row changes are stored in the block's `metadata.database` object, while a searchable text summary is kept in `markdown`.
 
 Kanban boards support direct title/group/card editing. Open the icon button beside a card title to choose an emoji, paste a custom emoji, or apply a default, pink, yellow, blue, light-green, purple, or peach pastel card theme. Drag the six-dot card handle to reorder cards or move them between groups; the arrow buttons provide the same cross-group movement on touch devices and for keyboard users.
+
+### AI conversation blocks
+
+Type `/ai` to store a question and an AI answer as a clean two-sided chat transcript. The question appears as a right-aligned bubble and the answer appears as a left-aligned bubble with its AI identity and response metadata.
+
+The built-in icon picker includes ChatGPT, Gemini, Claude, DeepSeek, and Grok. The provider icon, a free-form model name, the local answer date/time, the question, and the answer are stored under `metadata.aiChat`. BrainVault also writes a bounded text summary to `markdown`, so page and block search can match the provider, model, question, or answer. Read mode hides the configuration controls while keeping the conversation presentation intact.
 
 ### Bookmark blocks
 
