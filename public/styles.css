@@ -3086,7 +3086,7 @@ kbd {
   position: fixed;
   z-index: 90;
   display: grid;
-  width: 13.25rem;
+  width: min(19rem, calc(100vw - 20px));
   gap: 0.12rem;
   border: 1px solid rgba(64, 137, 194, 0.2);
   border-radius: 8px;
@@ -3142,6 +3142,168 @@ kbd {
 .navigation-context-menu .danger-menu-item:focus-visible {
   background: rgba(196, 78, 74, 0.08);
   color: var(--danger);
+}
+
+
+.page-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  min-height: 2rem;
+  padding: 0.34rem 0.68rem;
+  border: 1px solid rgba(74, 97, 122, 0.16);
+  border-radius: 999px;
+  background: rgba(92, 111, 132, 0.08);
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.page-mode-badge.is-write-mode {
+  border-color: rgba(44, 120, 190, 0.22);
+  background: rgba(73, 145, 214, 0.12);
+  color: #2f6f9f;
+}
+
+.page-mode-badge-icon {
+  font-size: 0.66rem;
+}
+
+.page-mode-toggle {
+  display: grid !important;
+  grid-template-columns: 1.25rem minmax(0, 1fr) auto !important;
+  align-items: center;
+  gap: 0.65rem !important;
+  min-width: 0;
+}
+
+.page-mode-toggle-icon {
+  display: grid;
+  place-items: center;
+  width: 1.2rem;
+  color: #4f6579;
+  font-weight: 800;
+}
+
+.page-mode-toggle-copy {
+  display: grid;
+  gap: 0.13rem;
+  text-align: left;
+}
+
+.page-mode-toggle-copy strong {
+  color: var(--ink);
+  font-size: 0.86rem;
+  line-height: 1.2;
+}
+
+.page-mode-toggle-copy small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 540;
+  line-height: 1.35;
+}
+
+.page-mode-switch {
+  position: relative;
+  width: 2.15rem;
+  height: 1.2rem;
+  border-radius: 999px;
+  background: rgba(91, 108, 126, 0.26);
+  transition: background 150ms ease;
+}
+
+.page-mode-switch span {
+  position: absolute;
+  top: 0.15rem;
+  left: 0.15rem;
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(22, 35, 49, 0.24);
+  transition: transform 150ms ease;
+}
+
+.page-mode-toggle.is-write-mode .page-mode-switch {
+  background: #4d91ca;
+}
+
+.page-mode-toggle.is-write-mode .page-mode-switch span {
+  transform: translateX(0.95rem);
+}
+
+.page-action-menu-separator {
+  height: 1px;
+  margin: 0.32rem 0.45rem;
+  background: rgba(78, 96, 116, 0.12);
+}
+
+.page-actions-menu button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.page-view.is-read-only .page-title-input {
+  cursor: text;
+}
+
+.page-view.is-read-only .page-title-input:focus {
+  box-shadow: none;
+}
+
+.page-view.is-read-only .block-handle,
+.page-view.is-read-only .block-row-topline,
+.page-view.is-read-only .table-block-toolbar,
+.page-view.is-read-only .table-block-footer,
+.page-view.is-read-only .table-edge-add,
+.page-view.is-read-only .kanban-add-column,
+.page-view.is-read-only .kanban-column-menu,
+.page-view.is-read-only .kanban-card-drag-handle,
+.page-view.is-read-only .kanban-card-style-menu,
+.page-view.is-read-only .kanban-card-delete,
+.page-view.is-read-only .kanban-card-footer,
+.page-view.is-read-only .kanban-add-card,
+.page-view.is-read-only .bookmark-add-row,
+.page-view.is-read-only .bookmark-item-actions,
+.page-view.is-read-only .database-view-settings,
+.page-view.is-read-only .database-add-view-select,
+.page-view.is-read-only .database-delete-row,
+.page-view.is-read-only .database-board-add-row,
+.page-view.is-read-only .database-footer button,
+.page-view.is-read-only .database-toolbar-popover {
+  display: none !important;
+}
+
+.page-view.is-read-only .editor-block-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.page-view.is-read-only .block-row-input,
+.page-view.is-read-only .table-cell-input,
+.page-view.is-read-only .kanban-title-input,
+.page-view.is-read-only .kanban-column-title,
+.page-view.is-read-only .kanban-card-title,
+.page-view.is-read-only .kanban-card-description,
+.page-view.is-read-only .kanban-card-tags,
+.page-view.is-read-only .kanban-card-emoji-input,
+.page-view.is-read-only .database-title-input,
+.page-view.is-read-only .database-value-input,
+.page-view.is-read-only input[readonly],
+.page-view.is-read-only textarea[readonly] {
+  cursor: text;
+  caret-color: transparent;
+}
+
+.page-view.is-read-only .editor-block-row:hover,
+.page-view.is-read-only .editor-block-row:focus-within {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.page-view.is-read-only .inline-todo input:disabled {
+  opacity: 1;
 }
 
 .block-context-menu button {
@@ -7856,7 +8018,7 @@ body.account-settings-open {
   }
 }
 
-/* ========================================================================== 
+/* ==========================================================================
    BrainVault application chrome refresh
    Scope: authenticated workspace UI only. Editor block styling is intentionally
    excluded from this section so existing block visuals and interactions remain

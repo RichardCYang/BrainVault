@@ -374,6 +374,10 @@
               </div>
             </div>
             <div class="button-row">
+              <span id="page-mode-badge" class="page-mode-badge" role="status">
+                <span class="page-mode-badge-icon" aria-hidden="true">◉</span>
+                <span id="page-mode-badge-label" data-i18n="page.readMode">Read mode</span>
+              </span>
               <button id="save-page-button" type="button" class="secondary" data-i18n="page.save">Save</button>
             </div>
           </div>
@@ -382,7 +386,7 @@
             <div class="section-title-row block-editor-header">
               <div>
                 <h2 id="document-editor-heading" data-i18n="page.content">Page content</h2>
-                <p class="block-editor-help" data-i18n-html="page.editorHelp">Press <kbd>Enter</kbd> for a new block · <kbd>Shift</kbd> + <kbd>Enter</kbd> for a line break · <kbd>Backspace</kbd> on an empty block to delete it</p>
+                <p id="block-editor-help" class="block-editor-help" data-i18n-html="page.editorHelp">Press <kbd>Enter</kbd> for a new block · <kbd>Shift</kbd> + <kbd>Enter</kbd> for a line break · <kbd>Backspace</kbd> on an empty block to delete it</p>
               </div>
               <span id="block-count" class="muted"></span>
             </div>
@@ -568,6 +572,21 @@
       aria-label="Page actions"
       data-i18n-aria-label="page.actionsAriaGeneric"
     >
+      <button
+        id="page-mode-toggle"
+        type="button"
+        class="page-action-menu-item page-mode-toggle"
+        role="menuitemcheckbox"
+        aria-checked="false"
+      >
+        <span id="page-mode-toggle-icon" class="page-mode-toggle-icon" aria-hidden="true">◉</span>
+        <span class="page-mode-toggle-copy">
+          <strong id="page-mode-toggle-label" data-i18n="page.readMode">Read mode</strong>
+          <small id="page-mode-toggle-description" data-i18n="page.readModeDescription">This page is read-only.</small>
+        </span>
+        <span class="page-mode-switch" aria-hidden="true"><span></span></span>
+      </button>
+      <div class="page-action-menu-separator" role="separator"></div>
       <button
         id="export-pdf-button"
         type="button"

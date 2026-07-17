@@ -25,6 +25,7 @@ const emojiSkinToneStorageKey = "brainvault.emojiSkinTone";
 const emojiSkinToneModifiers = Object.freeze(["🏻", "🏼", "🏽", "🏾", "🏿"]);
 const emojiBatchSize = 240;
 const mobileSidebarMedia = window.matchMedia("(max-width: 760px)");
+const pageModes = Object.freeze({ READ: "read", WRITE: "write" });
 
 const emojiSearchIndex = emojiRecords.map((record) =>
   `${record[0]} ${record[2]} ${record[3]} ${record[4]} ${record[5]}`.toLocaleLowerCase()
@@ -38,6 +39,8 @@ const state = {
   pages: [],
   allPages: [],
   selectedPage: null,
+  pageMode: pageModes.READ,
+  pageModeChanging: false,
   workspaceView: "home",
   activeCollectionId: null,
   activeTag: "",
@@ -541,6 +544,12 @@ const elements = {
   pagePath: $("#page-path"),
   pageActionsButton: $("#page-actions-button"),
   pageActionsMenu: $("#page-actions-menu"),
+  pageModeToggle: $("#page-mode-toggle"),
+  pageModeToggleIcon: $("#page-mode-toggle-icon"),
+  pageModeToggleLabel: $("#page-mode-toggle-label"),
+  pageModeToggleDescription: $("#page-mode-toggle-description"),
+  pageModeBadge: $("#page-mode-badge"),
+  pageModeBadgeLabel: $("#page-mode-badge-label"),
   pageView: $("#page-view"),
   pageKicker: $("#page-kicker"),
   pageIconButton: $("#page-icon-button"),
@@ -548,6 +557,7 @@ const elements = {
   exportPdfButton: $("#export-pdf-button"),
   savePageButton: $("#save-page-button"),
   archivePageButton: $("#archive-page-button"),
+  blockEditorHelp: $("#block-editor-help"),
   blockCount: $("#block-count"),
   blockList: $("#block-list"),
   slashMenu: $("#slash-menu"),
@@ -1465,6 +1475,7 @@ function closeEmojiPicker({ restoreFocus = true } = {}) {
 
 function openPageEmojiPicker(page, trigger) {
   if (!page) return;
+  if (state.selectedPage?.id === page.id && !isCollectionPage(page) && !requireWritablePage()) return;
   openEmojiPicker(
     {
       type: "page",
@@ -1501,6 +1512,8 @@ async function saveEmojiSelection(emoji) {
       setStatus(t("emoji.collectionSaved"));
       return;
     }
+
+    if (state.selectedPage?.id === target.pageId && !isCollectionPage(state.selectedPage) && !requireWritablePage()) return;
 
     const data = await api(`/api/pages/${target.pageId}`, {
       method: "PATCH",
@@ -1769,8 +1782,188 @@ function getPageSubtreeIds(pageId, pages = state.allPages) {
 }
 
 function getPageActionsMenuItems() {
-  return [...elements.pageActionsMenu.querySelectorAll('[role="menuitem"]')].filter((item) => !item.disabled);
+  return [...elements.pageActionsMenu.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]')].filter(
+    (item) => !item.disabled
+  );
 }
+
+function isPageReadOnly() {
+  return state.pageMode !== pageModes.WRITE;
+}
+
+function canEditSelectedPage() {
+  return Boolean(state.selectedPage && state.workspaceView === "page" && !isPageReadOnly());
+}
+
+function reportReadOnlyBlocked() {
+  setStatus(t("status.readOnlyBlocked"));
+}
+
+function requireWritablePage({ announce = true } = {}) {
+  if (canEditSelectedPage()) return true;
+  if (announce && state.selectedPage && state.workspaceView === "page") reportReadOnlyBlocked();
+  return false;
+}
+
+function setControlReadOnlyState(control, readOnly) {
+  if (!(control instanceof HTMLElement)) return;
+
+  if (control instanceof HTMLButtonElement || control instanceof HTMLSelectElement) {
+    const allowedInReadMode = control.matches('[data-action="download-attachment"]');
+    if (readOnly) {
+      if (!control.dataset.pageModeWasDisabled) control.dataset.pageModeWasDisabled = String(control.disabled);
+      if (!allowedInReadMode) control.disabled = true;
+    } else if (control.dataset.pageModeWasDisabled) {
+      control.disabled = control.dataset.pageModeWasDisabled === "true";
+      delete control.dataset.pageModeWasDisabled;
+    }
+    return;
+  }
+
+  if (control instanceof HTMLInputElement) {
+    if (["checkbox", "radio", "file", "button", "submit", "reset"].includes(control.type)) {
+      if (readOnly) {
+        if (!control.dataset.pageModeWasDisabled) control.dataset.pageModeWasDisabled = String(control.disabled);
+        control.disabled = true;
+      } else if (control.dataset.pageModeWasDisabled) {
+        control.disabled = control.dataset.pageModeWasDisabled === "true";
+        delete control.dataset.pageModeWasDisabled;
+      }
+      return;
+    }
+
+    if (readOnly) {
+      if (!control.dataset.pageModeWasReadOnly) control.dataset.pageModeWasReadOnly = String(control.readOnly);
+      control.readOnly = true;
+    } else if (control.dataset.pageModeWasReadOnly) {
+      control.readOnly = control.dataset.pageModeWasReadOnly === "true";
+      delete control.dataset.pageModeWasReadOnly;
+    }
+    return;
+  }
+
+  if (control instanceof HTMLTextAreaElement) {
+    if (readOnly) {
+      if (!control.dataset.pageModeWasReadOnly) control.dataset.pageModeWasReadOnly = String(control.readOnly);
+      control.readOnly = true;
+    } else if (control.dataset.pageModeWasReadOnly) {
+      control.readOnly = control.dataset.pageModeWasReadOnly === "true";
+      delete control.dataset.pageModeWasReadOnly;
+    }
+  }
+}
+
+function syncBlockReadOnlyState(row, readOnly = isPageReadOnly()) {
+  if (!row) return;
+  row.classList.toggle("is-read-only", readOnly);
+  row.setAttribute("aria-readonly", String(readOnly));
+
+  for (const control of row.querySelectorAll("input, textarea, select, button")) {
+    setControlReadOnlyState(control, readOnly);
+  }
+
+  for (const draggable of row.querySelectorAll("[draggable]")) {
+    if (readOnly) {
+      if (!draggable.dataset.pageModeWasDraggable) {
+        draggable.dataset.pageModeWasDraggable = String(draggable.draggable);
+      }
+      draggable.draggable = false;
+    } else if (draggable.dataset.pageModeWasDraggable) {
+      draggable.draggable = draggable.dataset.pageModeWasDraggable === "true";
+      delete draggable.dataset.pageModeWasDraggable;
+    }
+  }
+
+  for (const details of row.querySelectorAll("details")) {
+    if (readOnly) details.removeAttribute("open");
+  }
+}
+
+function syncPageModeUi() {
+  const readOnly = isPageReadOnly();
+  const modeLabelKey = readOnly ? "page.readMode" : "page.writeMode";
+  const modeDescriptionKey = readOnly ? "page.readModeDescription" : "page.writeModeDescription";
+
+  elements.pageView.classList.toggle("is-read-only", readOnly);
+  elements.pageView.dataset.pageMode = state.pageMode;
+  elements.pageTitle.readOnly = readOnly;
+  elements.pageIconButton.disabled = readOnly;
+  elements.savePageButton.disabled = readOnly;
+  elements.savePageButton.classList.toggle("hidden", readOnly);
+  elements.archivePageButton.disabled = readOnly;
+  elements.blockList.setAttribute("aria-readonly", String(readOnly));
+  elements.blockList.setAttribute("aria-label", t(readOnly ? "page.readerAria" : "page.editorAria"));
+  elements.blockEditorHelp.innerHTML = t(readOnly ? "page.readOnlyHelp" : "page.editorHelp");
+
+  elements.pageModeToggle.disabled = state.pageModeChanging;
+  elements.pageModeToggle.setAttribute("aria-checked", String(!readOnly));
+  elements.pageModeToggle.classList.toggle("is-write-mode", !readOnly);
+  elements.pageModeToggleIcon.textContent = readOnly ? "◉" : "✎";
+  elements.pageModeToggleLabel.textContent = t(modeLabelKey);
+  elements.pageModeToggleDescription.textContent = t(modeDescriptionKey);
+  elements.pageModeBadge.classList.toggle("is-write-mode", !readOnly);
+  elements.pageModeBadgeLabel.textContent = t(modeLabelKey);
+
+  for (const row of elements.blockList.querySelectorAll(".editor-block-row")) {
+    syncBlockReadOnlyState(row, readOnly);
+  }
+
+  if (readOnly) {
+    closeSlashMenu();
+    closeInlineToolbar();
+    closeBlockContextMenu();
+    closeKanbanCardStyleMenus();
+  }
+}
+
+async function flushPendingPageEdits() {
+  if (!canEditSelectedPage()) return;
+
+  const titleWasPending = pageTitleSaveTimer !== null;
+  window.clearTimeout(pageTitleSaveTimer);
+  pageTitleSaveTimer = null;
+  if (titleWasPending) await savePageTitleNow({ quiet: true });
+
+  const dirtyRows = [...elements.blockList.querySelectorAll(".editor-block-row.is-dirty")];
+  await Promise.all(
+    dirtyRows.map((row) => {
+      const blockId = row.dataset.blockId;
+      clearTimeout(blockSaveTimers.get(blockId));
+      blockSaveTimers.delete(blockId);
+      return saveBlockRow(row, { quiet: true });
+    })
+  );
+}
+
+async function setPageMode(nextMode, { announce = true } = {}) {
+  if (!state.selectedPage || state.workspaceView !== "page" || state.pageModeChanging) return;
+  const normalizedMode = nextMode === pageModes.WRITE ? pageModes.WRITE : pageModes.READ;
+  if (state.pageMode === normalizedMode) return;
+
+  state.pageModeChanging = true;
+  syncPageModeUi();
+  try {
+    if (normalizedMode === pageModes.READ) await flushPendingPageEdits();
+    state.pageMode = normalizedMode;
+    state.pendingFocusBlockId = null;
+    syncPageModeUi();
+
+    const hasBlocks = flattenBlocks(state.selectedPage.blocks).length > 0;
+    if (!hasBlocks) renderSelectedPage();
+
+    if (normalizedMode === pageModes.WRITE && !hasBlocks) {
+      const data = await createEmptyBlock(state.selectedPage.id);
+      state.pendingFocusBlockId = data.block.id;
+      await openPage(state.selectedPage.id);
+    }
+
+    if (announce) setStatus(t(normalizedMode === pageModes.READ ? "status.readModeEnabled" : "status.writeModeEnabled"));
+  } finally {
+    state.pageModeChanging = false;
+    syncPageModeUi();
+  }
+}
+
 
 function closePageActionsMenu({ restoreFocus = false } = {}) {
   elements.pageActionsMenu.classList.add("hidden");
@@ -1901,13 +2094,19 @@ async function deleteNavigationTarget() {
   const target = state.activeNavigationMenuTarget;
   if (!target) return;
 
+  const subtreeIds = getPageSubtreeIds(target.id);
+  if (isPageReadOnly() && state.selectedPage?.id && subtreeIds.has(state.selectedPage.id)) {
+    closeNavigationContextMenu({ restoreFocus: true });
+    reportReadOnlyBlocked();
+    return;
+  }
+
   const isCollection = target.kind === "collection";
   const ok = window.confirm(
     t(isCollection ? "confirm.deleteCollection" : "confirm.deletePage", { title: target.title })
   );
   if (!ok) return;
 
-  const subtreeIds = getPageSubtreeIds(target.id);
   const selectedPageWasDeleted = Boolean(state.selectedPage?.id && subtreeIds.has(state.selectedPage.id));
   const activeCollectionWasDeleted = state.activeCollectionId === target.id;
   const fallbackCollectionId = isCollection
@@ -3444,7 +3643,7 @@ function setRowCalloutType(row, type) {
 }
 
 async function changeCalloutType(row, type) {
-  if (!state.selectedPage || !row?.dataset.blockId || row.dataset.blockType !== "CALLOUT") return;
+  if (!requireWritablePage() || !row?.dataset.blockId || row.dataset.blockType !== "CALLOUT") return;
 
   const blockId = row.dataset.blockId;
   const block = getBlockById(blockId);
@@ -3512,6 +3711,7 @@ function positionBlockContextMenu(handle) {
 }
 
 function openBlockContextMenu(row, handle, { focusFirst = false } = {}) {
+  if (!requireWritablePage()) return;
   const blockId = row?.dataset.blockId;
   if (!blockId || !handle) return;
 
@@ -3564,6 +3764,7 @@ function autoScrollForBlockDrag(clientY) {
 }
 
 function activateBlockDrag(event) {
+  if (!requireWritablePage({ announce: false })) return;
   const drag = activeBlockDrag;
   if (!drag || drag.active) return;
 
@@ -3817,7 +4018,7 @@ function handleTableCellKeydown(event, input, row) {
 }
 
 async function saveBlockRow(row, { quiet = false } = {}) {
-  if (!state.selectedPage || !row?.dataset.blockId || row.dataset.deleting === "true") return;
+  if (!requireWritablePage({ announce: !quiet }) || !row?.dataset.blockId || row.dataset.deleting === "true") return;
   const blockId = row.dataset.blockId;
   clearTimeout(blockSaveTimers.get(blockId));
   blockSaveTimers.delete(blockId);
@@ -3838,7 +4039,7 @@ async function saveBlockRow(row, { quiet = false } = {}) {
 }
 
 function scheduleBlockSave(row) {
-  if (!row?.dataset.blockId) return;
+  if (!requireWritablePage({ announce: false }) || !row?.dataset.blockId) return;
   row.classList.add("is-dirty");
   const blockId = row.dataset.blockId;
   clearTimeout(blockSaveTimers.get(blockId));
@@ -3956,6 +4157,7 @@ function updateInlineAlignmentButtons(row) {
 }
 
 function updateInlineToolbarForTextarea(textarea) {
+  if (!requireWritablePage({ announce: false })) return closeInlineToolbar();
   const row = getBlockRow(textarea);
   const selection = getTextareaSelection(textarea);
   if (!row || !selection) return closeInlineToolbar();
@@ -3974,6 +4176,7 @@ function getActiveInlineTextarea() {
 }
 
 function applyInlineFormat(format, value = "") {
+  if (!requireWritablePage()) return;
   const textarea = getActiveInlineTextarea() ?? document.activeElement;
   if (!(textarea instanceof HTMLTextAreaElement)) return;
 
@@ -4119,6 +4322,7 @@ function positionSlashMenu(row) {
 }
 
 function renderSlashMenu(row, query = "") {
+  if (!requireWritablePage()) return closeSlashMenu();
   closeInlineToolbar();
   closeBlockContextMenu();
   const commands = getFilteredSlashCommands(query);
@@ -4170,7 +4374,7 @@ function updateSlashMenuForTextarea(textarea) {
 }
 
 async function uploadAttachmentFromRow(row, file, slashContext = null) {
-  if (!state.selectedPage || !row?.dataset.blockId || !file) return;
+  if (!requireWritablePage() || !row?.dataset.blockId || !file) return;
 
   const blockId = row.dataset.blockId;
   clearTimeout(blockSaveTimers.get(blockId));
@@ -4225,6 +4429,7 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
 }
 
 function requestAttachmentUpload(row, slashContext = null) {
+  if (!requireWritablePage()) return;
   const input = document.createElement("input");
   input.type = "file";
   input.className = "visually-hidden attachment-file-input";
@@ -4249,6 +4454,7 @@ function requestAttachmentUpload(row, slashContext = null) {
 }
 
 async function applySlashCommand(row, type) {
+  if (!requireWritablePage()) return;
   const previousTextarea = getBlockTextarea(row);
   const context = previousTextarea ? getSlashContext(previousTextarea) : null;
   let markdown = previousTextarea?.value ?? "";
@@ -4284,7 +4490,7 @@ async function applySlashCommand(row, type) {
 }
 
 async function persistBlockOrder(parentBlockId, orderedIds) {
-  if (!state.selectedPage || !orderedIds.length) return;
+  if (!requireWritablePage() || !orderedIds.length) return;
 
   await api(`/api/pages/${state.selectedPage.id}/blocks/reorder`, {
     method: "POST",
@@ -4299,6 +4505,7 @@ async function persistBlockOrder(parentBlockId, orderedIds) {
 }
 
 async function createEmptyBlock(pageId, { parentBlockId = null, sortOrder } = {}) {
+  if (!requireWritablePage()) throw new Error(t("errors.readOnlyPage"));
   return api(`/api/pages/${pageId}/blocks`, {
     method: "POST",
     body: {
@@ -4311,7 +4518,7 @@ async function createEmptyBlock(pageId, { parentBlockId = null, sortOrder } = {}
 }
 
 async function insertBlockRelative(referenceRow, placement = "after") {
-  if (!state.selectedPage || !referenceRow?.dataset.blockId) return;
+  if (!requireWritablePage() || !referenceRow?.dataset.blockId) return;
 
   const parentBlockId = normalizeParentBlockId(referenceRow.dataset.parentBlockId);
   const siblingIds = getBlockSiblings(parentBlockId).map((block) => block.id);
@@ -4334,8 +4541,8 @@ async function insertBlockRelative(referenceRow, placement = "after") {
 }
 
 async function appendBlock(afterRow = null) {
+  if (!requireWritablePage()) return;
   if (afterRow) return insertBlockRelative(afterRow, "after");
-  if (!state.selectedPage) return;
 
   const siblingIds = getBlockSiblings(null).map((block) => block.id);
   const data = await createEmptyBlock(state.selectedPage.id, { sortOrder: siblingIds.length });
@@ -4347,7 +4554,7 @@ async function appendBlock(afterRow = null) {
 }
 
 async function deleteEmptyBlock(row) {
-  if (!state.selectedPage || !row?.dataset.blockId || row.dataset.deleting === "true") return;
+  if (!requireWritablePage() || !row?.dataset.blockId || row.dataset.deleting === "true") return;
 
   const blockId = row.dataset.blockId;
   const block = getBlockById(blockId);
@@ -4386,7 +4593,7 @@ async function deleteEmptyBlock(row) {
 }
 
 function focusPendingBlock() {
-  if (!state.pendingFocusBlockId) return;
+  if (isPageReadOnly() || !state.pendingFocusBlockId) return;
   const row = elements.blockList.querySelector(`[data-block-id="${state.pendingFocusBlockId}"]`);
   const textarea = getBlockTextarea(row);
   if (textarea) {
@@ -4582,13 +4789,14 @@ function renderSelectedPage() {
 
   elements.blockList.replaceChildren();
   if (!flatBlocks.length) {
-    const empty = makeEmptyMessage(t("empty.preparingBlock"));
+    const empty = makeEmptyMessage(t(isPageReadOnly() ? "empty.readOnlyPage" : "empty.noBlocksWrite"));
     empty.classList.add("block-empty-message");
     elements.blockList.append(empty);
   } else {
     for (const block of flatBlocks) elements.blockList.append(renderBlock(block));
   }
 
+  syncPageModeUi();
   renderPages();
   requestAnimationFrame(focusPendingBlock);
 }
@@ -4613,7 +4821,7 @@ function applyPageSummaryUpdate(pageId, updates) {
 }
 
 async function savePageTitleNow({ quiet = true } = {}) {
-  if (!state.selectedPage) return;
+  if (!requireWritablePage({ announce: !quiet })) return;
   const title = normalizePageTitle(elements.pageTitle.value);
   window.clearTimeout(pageTitleSaveTimer);
   pageTitleSaveTimer = null;
@@ -4630,7 +4838,7 @@ async function savePageTitleNow({ quiet = true } = {}) {
 }
 
 function schedulePageTitleSave() {
-  if (!state.selectedPage) return;
+  if (!requireWritablePage({ announce: false })) return;
   const title = normalizePageTitle(elements.pageTitle.value);
   applyPageSummaryUpdate(state.selectedPage.id, { title });
   renderPageHeader(state.selectedPage);
@@ -4683,10 +4891,6 @@ async function createUntitledPage() {
 
   await loadPages("", "");
   await openPage(data.page.id);
-  requestAnimationFrame(() => {
-    elements.pageTitle.focus();
-    elements.pageTitle.select();
-  });
   setStatus(t("status.documentCreated"));
 }
 
@@ -4724,6 +4928,7 @@ async function loadPages(query = state.searchQuery, tag = state.activeTag) {
 
 function showHome() {
   state.selectedPage = null;
+  state.pageMode = pageModes.READ;
   state.workspaceView = "home";
   state.activeCollectionId = null;
   renderSelectedPage();
@@ -4731,12 +4936,14 @@ function showHome() {
 
 function showCollection(collectionId) {
   state.selectedPage = null;
+  state.pageMode = pageModes.READ;
   state.workspaceView = "collection";
   state.activeCollectionId = collectionId;
   renderSelectedPage();
 }
 
 async function openPage(pageId) {
+  const preserveMode = state.workspaceView === "page" && state.selectedPage?.id === pageId;
   const summary = state.allPages.find((page) => page.id === pageId);
   if (isCollectionPage(summary)) {
     showCollection(pageId);
@@ -4753,10 +4960,9 @@ async function openPage(pageId) {
     return;
   }
 
-  if (!flattenBlocks(data.page.blocks).length) {
-    const starter = await createEmptyBlock(pageId);
-    state.pendingFocusBlockId = starter.block.id;
-    data = await api(`/api/pages/${pageId}`);
+  if (!preserveMode) {
+    state.pageMode = pageModes.READ;
+    state.pendingFocusBlockId = null;
   }
 
   state.selectedPage = data.page;
@@ -4827,6 +5033,7 @@ elements.pagePath.addEventListener("click", async (event) => {
 });
 
 elements.pageIconButton.addEventListener("click", () => {
+  if (!requireWritablePage()) return;
   openPageEmojiPicker(state.selectedPage, elements.pageIconButton);
 });
 
@@ -5013,6 +5220,7 @@ function refreshLocalizedUi() {
   setAuthMode(state.authMode, false);
   renderPages();
   renderSelectedPage();
+  syncPageModeUi();
   if (state.user) updateUserIdentityUi();
   if (!elements.emojiPickerLayer.classList.contains("hidden")) renderEmojiPicker();
 
@@ -5155,13 +5363,26 @@ elements.homeDocumentList.addEventListener("click", async (event) => {
 
 
 elements.pageTitle.addEventListener("input", () => {
+  if (!requireWritablePage({ announce: false })) return;
   schedulePageTitleSave();
 });
 
 elements.pageTitle.addEventListener("blur", () => {
-  if (!state.selectedPage) return;
+  if (!requireWritablePage({ announce: false })) return;
   if (!elements.pageTitle.value.trim()) elements.pageTitle.value = t("newDocumentTitle");
   savePageTitleNow().catch((error) => setStatus(error.message, true));
+});
+
+elements.pageModeToggle.addEventListener("click", async () => {
+  const nextMode = isPageReadOnly() ? pageModes.WRITE : pageModes.READ;
+  closePageActionsMenu({ restoreFocus: false });
+  try {
+    await setPageMode(nextMode);
+  } catch (error) {
+    setStatus(error.message, true);
+  } finally {
+    elements.pageActionsButton.focus();
+  }
 });
 
 elements.exportPdfButton.addEventListener("click", () => {
@@ -5175,7 +5396,7 @@ elements.exportPdfButton.addEventListener("click", () => {
 });
 
 elements.savePageButton.addEventListener("click", async () => {
-  if (!state.selectedPage) return;
+  if (!requireWritablePage()) return;
   window.clearTimeout(pageTitleSaveTimer);
   pageTitleSaveTimer = null;
   try {
@@ -5193,7 +5414,7 @@ elements.savePageButton.addEventListener("click", async () => {
 });
 
 elements.archivePageButton.addEventListener("click", async () => {
-  if (!state.selectedPage) return;
+  if (!requireWritablePage()) return;
   closePageActionsMenu({ restoreFocus: true });
   const ok = window.confirm(t("confirm.archivePage"));
   if (!ok) return;
@@ -5212,6 +5433,7 @@ elements.archivePageButton.addEventListener("click", async () => {
 });
 
 elements.blockList.addEventListener("pointerdown", (event) => {
+  if (!requireWritablePage({ announce: false })) return;
   const handle = event.target.closest(".block-handle");
   if (!handle || activeBlockDrag || blockOrderSaving || event.isPrimary === false) return;
   if (event.pointerType === "mouse" && event.button !== 0) return;
@@ -5259,6 +5481,10 @@ elements.blockList.addEventListener("lostpointercapture", (event) => {
 
 
 elements.blockList.addEventListener("dragstart", (event) => {
+  if (!requireWritablePage({ announce: false })) {
+    event.preventDefault();
+    return;
+  }
   const handle = event.target.closest(".kanban-card-drag-handle");
   const card = handle?.closest(".kanban-card");
   const row = getBlockRow(card);
@@ -5307,6 +5533,10 @@ elements.blockList.addEventListener("dragend", () => {
 });
 
 elements.blockList.addEventListener("beforeinput", (event) => {
+  if (!requireWritablePage({ announce: false })) {
+    event.preventDefault();
+    return;
+  }
   const textarea = event.target.closest('textarea[name="markdown"]');
   if (!textarea || event.inputType !== "deleteContentBackward" || event.isComposing) return;
   if (textarea.value.trim()) return;
@@ -5322,6 +5552,7 @@ elements.blockList.addEventListener("beforeinput", (event) => {
 });
 
 elements.blockList.addEventListener("input", (event) => {
+  if (!requireWritablePage({ announce: false })) return;
   const kanbanField = event.target.closest(
     ".kanban-title-input, .kanban-column-title, .kanban-card-title, .kanban-card-description, .kanban-card-tags, .kanban-card-emoji-input"
   );
@@ -5377,6 +5608,7 @@ elements.blockList.addEventListener("keyup", (event) => {
 });
 
 elements.blockList.addEventListener("change", (event) => {
+  if (!requireWritablePage()) return;
   const checkbox = event.target.closest('input[name="checked"]');
   if (!checkbox) return;
   const row = getBlockRow(checkbox);
@@ -5384,6 +5616,7 @@ elements.blockList.addEventListener("change", (event) => {
 });
 
 elements.blockList.addEventListener("keydown", async (event) => {
+  if (!requireWritablePage({ announce: false })) return;
   const bookmarkInput = event.target.closest(".bookmark-url-input");
   if (bookmarkInput) {
     if (event.key === "Enter" && !event.isComposing) {
@@ -5472,6 +5705,7 @@ elements.blockList.addEventListener("keydown", async (event) => {
 });
 
 elements.blockList.addEventListener("focusout", (event) => {
+  if (!requireWritablePage({ announce: false })) return;
   const kanbanField = event.target.closest(
     ".kanban-title-input, .kanban-column-title, .kanban-card-title, .kanban-card-description, .kanban-card-tags, .kanban-card-emoji-input"
   );
@@ -5505,6 +5739,12 @@ elements.blockList.addEventListener("focusout", (event) => {
 });
 
 elements.blockList.addEventListener("click", async (event) => {
+  const downloadButton = event.target.closest('button[data-action="download-attachment"]');
+  if (isPageReadOnly() && !downloadButton) {
+    if (event.target.closest("button, summary, input, textarea, select")) reportReadOnlyBlocked();
+    return;
+  }
+
   const styleSummary = event.target.closest(".kanban-card-icon-button");
   if (styleSummary) {
     const details = styleSummary.closest(".kanban-card-style-menu");
@@ -5565,6 +5805,7 @@ elements.blockList.addEventListener("click", async (event) => {
 
 
 elements.blockContextMenu.addEventListener("click", async (event) => {
+  if (!requireWritablePage()) return;
   const button = event.target.closest("button[data-action]");
   const blockId = state.activeBlockMenuId;
   if (!button || !blockId || !state.selectedPage) return;
@@ -5691,6 +5932,7 @@ elements.slashMenu.addEventListener("mousedown", (event) => {
 });
 
 elements.slashMenu.addEventListener("click", async (event) => {
+  if (!requireWritablePage()) return;
   const item = event.target.closest(".slash-menu-item");
   if (!item || !state.activeSlashBlockId) return;
   const row = elements.blockList.querySelector(`[data-block-id="${state.activeSlashBlockId}"]`);
@@ -5707,6 +5949,7 @@ elements.inlineToolbar.addEventListener("mousedown", (event) => {
 });
 
 elements.inlineToolbar.addEventListener("click", (event) => {
+  if (!requireWritablePage()) return;
   const button = event.target.closest("button[data-format]");
   if (!button) return;
   applyInlineFormat(button.dataset.format, button.dataset.align ?? button.dataset.color ?? "");
