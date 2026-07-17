@@ -5,9 +5,13 @@
   "type": "module",
   "main": "dist/src/server.js",
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.13.0",
+    "npm": ">=10.9.0"
   },
   "scripts": {
+    "lockfile:check": "node scripts/lockfile-registry.mjs",
+    "lockfile:repair": "node scripts/lockfile-registry.mjs --fix",
+    "preinstall": "npm run lockfile:check",
     "env:init": "tsx scripts/env-init.ts",
     "db:configure": "node scripts/db-configure.mjs",
     "db:init": "tsx scripts/db-init.ts",
@@ -17,7 +21,7 @@
     "dev": "node scripts/dev.mjs",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/server.js",
-    "test": "vitest run",
+    "test": "npm run lockfile:check && vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -50,5 +54,6 @@
     "tsx": "^4.20.0",
     "typescript": "^5.8.3",
     "vitest": "^3.2.0"
-  }
+  },
+  "packageManager": "npm@10.9.2"
 }

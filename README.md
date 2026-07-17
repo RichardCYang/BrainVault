@@ -66,6 +66,31 @@ You can still create an unchanged local environment file from the example with:
 npm run env:init
 ```
 
+### Dependency lockfile reliability
+
+`package-lock.json` is intentionally committed and must not be deleted as part of a normal install. The project-level `.npmrc` keeps registry downloads portable, replaces stale registry hosts with the configured registry, and limits fetch retries so an unreachable registry produces a bounded failure instead of appearing to loop indefinitely.
+
+Before committing dependency changes, validate the lockfile:
+
+```bash
+npm run lockfile:check
+```
+
+If the check reports URLs from an internal mirror or another machine-specific registry, repair and review the lockfile:
+
+```bash
+npm run lockfile:repair
+git diff -- package-lock.json
+```
+
+For reproducible clean installs in CI, prefer:
+
+```bash
+npm ci
+```
+
+Teams that intentionally use a private registry can add its hostname temporarily through `BRAINVAULT_ALLOWED_NPM_REGISTRY_HOSTS`; do not commit credentials or machine-only registry URLs to the lockfile.
+
 Start the development server:
 
 ```bash
@@ -200,6 +225,8 @@ Translations live in `public/i18n.js`. Static HTML uses `data-i18n*` attributes,
 
 | Command | Purpose |
 | --- | --- |
+| `npm run lockfile:check` | Reject machine-specific registry URLs in `package-lock.json` |
+| `npm run lockfile:repair` | Normalize registry tarball URLs to the public npm registry |
 | `npm run env:init` | Create `.env` from `.env.example` when needed |
 | `npm run db:configure` | Prompt for DB credentials and update or create `.env` |
 | `npm run db:init` | Prepare the database and verify connectivity |
@@ -301,6 +328,7 @@ BrainVault/
 │   └── utils/            # Block-tree and schema utilities
 ├── tests/                # Vitest and Supertest coverage
 ├── .env.example
+├── .npmrc               # Portable registry and bounded retry settings
 ├── package.json
 └── tsconfig.json
 ```

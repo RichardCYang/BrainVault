@@ -1,11 +1,16 @@
 import express from "express";
 import request from "supertest";
 import { z } from "zod";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import { renderBlockHtml, renderMarkdown } from "../src/lib/markdown.js";
+import { closeDb } from "../src/lib/db.js";
 import { getTableData } from "../src/lib/table.js";
 import { getValidatedQuery, validate } from "../src/middleware/validate.js";
+
+afterAll(async () => {
+  await closeDb();
+});
 
 describe("BrainVault web shell and health endpoint", () => {
   it("serves the web UI at /", async () => {
