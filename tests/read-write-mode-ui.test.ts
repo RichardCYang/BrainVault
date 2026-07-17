@@ -1,10 +1,35 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+// @ts-expect-error Browser-side JavaScript module intentionally has no TypeScript declaration.
+import { supportedLanguages, translationCatalogs } from "../public/i18n.js";
 
 const index = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../public/styles.css", import.meta.url), "utf8");
 const i18n = readFileSync(new URL("../public/i18n.js", import.meta.url), "utf8");
+
+const modeTranslationKeys = [
+  "page.readMode",
+  "page.writeMode",
+  "page.readModeDescription",
+  "page.writeModeDescription",
+  "page.readOnlyHelp",
+  "page.readerAria",
+  "empty.readOnlyPage",
+  "empty.noBlocksWrite",
+  "status.documentCreated",
+  "status.readModeEnabled",
+  "status.writeModeEnabled",
+  "status.readOnlyBlocked",
+  "errors.readOnlyPage"
+];
+
+function getTranslation(catalog: object, key: string) {
+  return key.split(".").reduce<unknown>((value, segment) => {
+    if (!value || typeof value !== "object") return undefined;
+    return (value as Record<string, unknown>)[segment];
+  }, catalog);
+}
 
 describe("Page read/write mode", () => {
   it("adds an accessible toggle menu and defaults the page state to read mode", () => {
@@ -42,5 +67,19 @@ describe("Page read/write mode", () => {
     expect(i18n).toContain('readMode: "읽기 모드"');
     expect(i18n).toContain('writeMode: "쓰기 모드"');
     expect(i18n).toContain('readOnlyBlocked: "읽기 전용 페이지입니다. 편집하려면 쓰기 모드로 전환하세요."');
+  });
+
+  it("localizes every read/write-mode message in every supported language", () => {
+    for (const { code } of supportedLanguages) {
+      const catalog = translationCatalogs[code as keyof typeof translationCatalogs];
+      for (const key of modeTranslationKeys) {
+        const localized = getTranslation(catalog, key);
+        expect(localized).toBeTypeOf("string");
+        expect(localized).not.toBe("");
+        if (code !== "en") {
+          expect(localized).not.toBe(getTranslation(translationCatalogs.en, key));
+        }
+      }
+    }
   });
 });
