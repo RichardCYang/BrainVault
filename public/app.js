@@ -34,6 +34,7 @@ const emojiSkinToneModifiers = Object.freeze(["🏻", "🏼", "🏽", "🏾", "�
 const emojiBatchSize = 240;
 const mobileSidebarMedia = window.matchMedia("(max-width: 760px)");
 const pageModes = Object.freeze({ READ: "read", WRITE: "write" });
+const keepaliveSaveBudgetBytes = 60 * 1024;
 
 const emojiSearchIndex = emojiRecords.map((record) =>
   `${record[0]} ${record[2]} ${record[3]} ${record[4]} ${record[5]}`.toLocaleLowerCase()
@@ -2493,28 +2494,60 @@ async function withPageEditLock(action, { flush = true } = {}) {
   }
 }
 
+function getJsonPayloadByteLength(payload) {
+  try {
+    return new TextEncoder().encode(JSON.stringify(payload)).byteLength;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function getPendingSavePayloadBytes({ saveTitle, rowsToSave }) {
+  let totalBytes = 0;
+  if (saveTitle) {
+    totalBytes += getJsonPayloadByteLength({
+      title: normalizePageTitle(elements.pageTitle.value),
+      expectedVersion: state.selectedPage?.version
+    });
+  }
+
+  for (const [blockId, row] of rowsToSave) {
+    if (!row?.dataset.blockId || row.dataset.deleting === "true") continue;
+    totalBytes += getJsonPayloadByteLength({
+      ...buildBlockPayload(row),
+      expectedVersion: getBlockById(blockId)?.version
+    });
+  }
+  return totalBytes;
+}
+
 async function flushPendingPageEdits({ keepalive = false, allowLocked = false } = {}) {
   if (!(allowLocked ? canPersistSelectedPage() : canEditSelectedPage())) return;
 
   const titleWasPending = pageTitleSaveTimer !== null;
+  const shouldSaveTitle = titleWasPending || pageTitleSavedRevision < pageTitleEditRevision;
   window.clearTimeout(pageTitleSaveTimer);
   pageTitleSaveTimer = null;
-  if (titleWasPending || pageTitleSavedRevision < pageTitleEditRevision) {
-    await savePageTitleNow({ quiet: true, keepalive, allowLocked });
-  } else if (pageTitleSaveQueue.busy) {
-    await pageTitleSaveQueue.flush();
-  }
 
   const rowsToSave = new Map(blockSaveRows);
   for (const row of elements.blockList.querySelectorAll(".editor-block-row.is-dirty")) {
     if (row.dataset.blockId) rowsToSave.set(row.dataset.blockId, row);
   }
+  const pendingSavePayloadBytes = keepalive ? getPendingSavePayloadBytes({ saveTitle: shouldSaveTitle, rowsToSave }) : 0;
+  const useKeepalive = keepalive && pendingSavePayloadBytes <= keepaliveSaveBudgetBytes;
+
+  if (shouldSaveTitle) {
+    await savePageTitleNow({ quiet: true, keepalive: useKeepalive, allowLocked });
+  } else if (pageTitleSaveQueue.busy) {
+    await pageTitleSaveQueue.flush();
+  }
+
   await Promise.all(
     [...rowsToSave.entries()].map(([blockId, row]) => {
       window.clearTimeout(blockSaveTimers.get(blockId));
       blockSaveTimers.delete(blockId);
       blockSaveRows.delete(blockId);
-      return saveBlockRow(row, { quiet: true, keepalive, allowLocked });
+      return saveBlockRow(row, { quiet: true, keepalive: useKeepalive, allowLocked });
     })
   );
 
@@ -5175,58 +5208,78 @@ function updateSlashMenuForTextarea(textarea) {
 async function uploadAttachmentFromRow(row, file, slashContext = null) {
   if (!requireWritablePage() || !row?.dataset.blockId || !file) return;
 
+  const pageId = state.selectedPage.id;
   const blockId = row.dataset.blockId;
-  window.clearTimeout(blockSaveTimers.get(blockId));
-  blockSaveTimers.delete(blockId);
-  const block = getBlockById(blockId);
-  const textarea = getBlockTextarea(row);
-  const currentMarkdown = textarea?.value ?? block?.markdown ?? "";
-  const remainingMarkdown = slashContext
-    ? `${currentMarkdown.slice(0, slashContext.start)}${currentMarkdown.slice(slashContext.end)}`
-    : currentMarkdown;
-  const parentBlockId = normalizeParentBlockId(row.dataset.parentBlockId);
-  const siblingIds = getBlockSiblings(parentBlockId).map((item) => item.id);
-  const referenceIndex = siblingIds.indexOf(blockId);
-  if (referenceIndex < 0) throw new Error(t("errors.currentBlockOrder"));
-
-  const replaceCurrentBlock = !remainingMarkdown.trim() && !(block?.children?.length);
-  if (!replaceCurrentBlock && textarea && textarea.value !== remainingMarkdown) {
-    textarea.value = remainingMarkdown;
-    autoGrowTextarea(textarea);
-    await saveBlockRow(row, { quiet: true });
-  }
-
-  const insertionIndex = replaceCurrentBlock ? referenceIndex : referenceIndex + 1;
-  const formData = new FormData();
-  formData.set("file", file, file.name);
-  if (parentBlockId) formData.set("parentBlockId", parentBlockId);
-  formData.set("sortOrder", String(insertionIndex));
-
+  const sourceEditRevision = Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0;
   row.classList.add("is-uploading");
+  row.setAttribute("aria-busy", "true");
+  syncBlockReadOnlyState(row, true);
   setStatus(t("status.attachmentUploading", { name: file.name }));
+
   try {
-    const data = await api(`/api/pages/${state.selectedPage.id}/attachments`, {
+    window.clearTimeout(blockSaveTimers.get(blockId));
+    blockSaveTimers.delete(blockId);
+    const block = getBlockById(blockId);
+    const textarea = getBlockTextarea(row);
+    const currentMarkdown = textarea?.value ?? block?.markdown ?? "";
+    const remainingMarkdown = slashContext
+      ? `${currentMarkdown.slice(0, slashContext.start)}${currentMarkdown.slice(slashContext.end)}`
+      : currentMarkdown;
+    const parentBlockId = normalizeParentBlockId(row.dataset.parentBlockId);
+    const siblingIds = getBlockSiblings(parentBlockId).map((item) => item.id);
+    const referenceIndex = siblingIds.indexOf(blockId);
+    if (referenceIndex < 0) throw new Error(t("errors.currentBlockOrder"));
+
+    const replaceCurrentBlock = !remainingMarkdown.trim() && !(block?.children?.length);
+    if (!replaceCurrentBlock && textarea && textarea.value !== remainingMarkdown) {
+      textarea.value = remainingMarkdown;
+      autoGrowTextarea(textarea);
+      await saveBlockRow(row, { quiet: true });
+    }
+
+    const insertionIndex = replaceCurrentBlock ? referenceIndex : referenceIndex + 1;
+    const formData = new FormData();
+    formData.set("file", file, file.name);
+    if (parentBlockId) formData.set("parentBlockId", parentBlockId);
+    formData.set("sortOrder", String(insertionIndex));
+
+    const data = await api(`/api/pages/${pageId}/attachments`, {
       method: "POST",
       body: formData
     });
-    applyPageContentVersion(state.selectedPage.id, data.pageContentVersion);
+    applyPageContentVersion(pageId, data.pageContentVersion);
 
+    const sourceStillCurrent =
+      state.selectedPage?.id === pageId && row.isConnected && row.dataset.blockId === blockId;
+    if (!sourceStillCurrent) {
+      setStatus(t("status.attachmentUploaded", { name: file.name }));
+      return data;
+    }
+
+    const currentEditRevision = Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0;
+    const shouldReplaceCurrentBlock = replaceCurrentBlock && currentEditRevision === sourceEditRevision;
+    const effectiveInsertionIndex = shouldReplaceCurrentBlock ? referenceIndex : referenceIndex + 1;
     const orderedIds = [...siblingIds];
-    if (replaceCurrentBlock) {
+    if (shouldReplaceCurrentBlock) {
       orderedIds.splice(referenceIndex, 1, data.block.id);
-      row.dataset.deleting = "true";
       discardBlockSave(blockId);
       await deleteBlockWithVersionCheck(blockId, { includeDescendants: false });
+      row.dataset.deleting = "true";
     } else {
-      orderedIds.splice(insertionIndex, 0, data.block.id);
+      orderedIds.splice(effectiveInsertionIndex, 0, data.block.id);
     }
     await persistBlockOrder(parentBlockId, orderedIds, { [data.block.id]: data.block.version });
 
-    state.pendingFocusBlockId = data.block.id;
-    await openPage(state.selectedPage.id);
+    if (state.selectedPage?.id === pageId) {
+      state.pendingFocusBlockId = data.block.id;
+      await openPage(pageId);
+    }
     setStatus(t("status.attachmentUploaded", { name: file.name }));
+    return data;
   } finally {
     row.classList.remove("is-uploading");
+    row.removeAttribute("aria-busy");
+    if (row.isConnected && row.dataset.deleting !== "true") syncBlockReadOnlyState(row);
   }
 }
 
@@ -5296,6 +5349,7 @@ async function applySlashCommand(row, type) {
 async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {}) {
   if (!requireWritablePage() || !orderedIds.length) return;
 
+  const pageId = state.selectedPage.id;
   const items = orderedIds.map((id, index) => {
     const expectedVersion = Number(versionOverrides[id] ?? getBlockById(id)?.version);
     if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
@@ -5303,12 +5357,14 @@ async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {
     }
     return { id, sortOrder: index, parentBlockId, expectedVersion };
   });
-  const data = await api(`/api/pages/${state.selectedPage.id}/blocks/reorder`, {
+  const data = await api(`/api/pages/${pageId}/blocks/reorder`, {
     method: "POST",
     body: { items }
   });
-  applyPageContentVersion(state.selectedPage.id, data.pageContentVersion);
-  for (const block of data.blocks ?? []) updateBlockInState(block);
+  applyPageContentVersion(pageId, data.pageContentVersion);
+  if (state.selectedPage?.id === pageId) {
+    for (const block of data.blocks ?? []) updateBlockInState(block);
+  }
   return data;
 }
 

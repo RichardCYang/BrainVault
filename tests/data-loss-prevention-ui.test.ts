@@ -30,6 +30,27 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain('async function downloadUserDataBackup() {\n  return withPageEditLock(async () => {');
     expect(client).toContain('async function restoreUserDataBackup(file) {\n  return withPageEditLock(async () => {');
     expect(client).toContain('applyPageContentVersion(task.pageId, data.pageContentVersion)');
+    expect(client).toContain('const keepaliveSaveBudgetBytes = 60 * 1024;');
+    expect(client).toContain('const pendingSavePayloadBytes = keepalive ? getPendingSavePayloadBytes');
+    expect(client).toContain('const useKeepalive = keepalive && pendingSavePayloadBytes <= keepaliveSaveBudgetBytes;');
+    expect(client).toContain('keepalive: useKeepalive');
+  });
+
+  it("does not delete attachment source text changed while an upload is in flight", () => {
+    expect(client).toContain('const pageId = state.selectedPage.id;');
+    expect(client).toContain('const sourceEditRevision = Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0;');
+    expect(client).toContain('row.setAttribute("aria-busy", "true");');
+    expect(client).toContain('syncBlockReadOnlyState(row, true);');
+    expect(client).toContain('const shouldReplaceCurrentBlock = replaceCurrentBlock && currentEditRevision === sourceEditRevision;');
+    expect(client).toContain('if (row.isConnected && row.dataset.deleting !== "true") syncBlockReadOnlyState(row);');
+    expect(client).toContain('const data = await api(`/api/pages/${pageId}/attachments`');
+    expect(client).toContain(`if (state.selectedPage?.id === pageId) {\n      state.pendingFocusBlockId = data.block.id;`);
+  });
+
+  it("keeps reorder responses scoped to the page that started the request", () => {
+    expect(client).toContain('const data = await api(`/api/pages/${pageId}/blocks/reorder`');
+    expect(client).toContain('applyPageContentVersion(pageId, data.pageContentVersion);');
+    expect(client).toContain(`if (state.selectedPage?.id === pageId) {\n    for (const block of data.blocks ?? []) updateBlockInState(block);`);
   });
 
   it("preserves attachment files when a database commit response is ambiguous", () => {
