@@ -96,11 +96,20 @@ describe("Interrupted data restore recovery", () => {
     await expect(readFile(paths().oldAttachmentDir, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("removes newly installed attachments when an empty prior workspace did not commit", async () => {
+  it("removes promoted restore attachments when an empty prior workspace did not commit", async () => {
     const journal = await writeFixture(false);
+    await rm(paths().stagedAttachmentDir, { recursive: true, force: true });
 
     await recoverDataRestoreJournal(journal);
 
     await expect(readFile(path.join(paths().targetAttachmentDir, "payload"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves a later attachment generation when staged restore files were never promoted", async () => {
+    const journal = await writeFixture(false);
+
+    await recoverDataRestoreJournal(journal);
+
+    await expect(readFile(path.join(paths().targetAttachmentDir, "payload"), "utf8")).resolves.toBe("new");
   });
 });

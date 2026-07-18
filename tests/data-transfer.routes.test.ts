@@ -13,7 +13,7 @@ const store = vi.hoisted(() => ({
   tags: new Map<string, Record<string, unknown>>(),
   pageTags: [] as Array<{ page_id: string; tag_id: string }>,
   restoreMarker: null as string | null,
-  transactionHooks: [] as Array<() => void>,
+  transactionHooks: [] as Array<() => void | Promise<void>>,
   failTransactionAfterCallback: false,
   query: vi.fn(),
   queryOne: vi.fn(),
@@ -23,7 +23,7 @@ const store = vi.hoisted(() => ({
 vi.mock("../src/lib/db.js", () => ({
   db: { query: store.query, queryOne: store.queryOne, execute: store.execute },
   transaction: async (fn: (client: unknown) => unknown) => {
-    store.transactionHooks.shift()?.();
+    await store.transactionHooks.shift()?.();
     const result = await fn({ query: store.query, queryOne: store.queryOne, execute: store.execute });
     if (store.failTransactionAfterCallback) {
       store.failTransactionAfterCallback = false;
@@ -273,6 +273,59 @@ describe("Complete data transfer routes", () => {
     expect(response.body.error.code).toBe("DATA_RESTORE_CONFLICT");
     expect(store.pages.get(pageId)?.title).toBe("Concurrent Page");
     await expect(readFile(getAttachmentFilePath(userId, blockId))).resolves.toEqual(originalBytes);
+  });
+
+  it("does not delete an attachment created while restore is waiting for its lock", async () => {
+    const exported = await request(createApp())
+      .get("/api/data/export")
+      .set("Authorization", `Bearer ${token}`)
+      .buffer(true)
+      .parse(binaryParser)
+      .expect(200);
+
+    const concurrentBlockId = "blk_concurrent_upload";
+    const concurrentBytes = Buffer.from("created while restore waits");
+    store.blocks.clear();
+    store.pages.get(pageId)!.content_version = 12;
+    await rm(path.join(attachmentUploadRoot, userId), { recursive: true, force: true });
+    store.transactionHooks = [
+      () => undefined,
+      async () => {
+        store.blocks.set(concurrentBlockId, {
+          id: concurrentBlockId,
+          page_id: pageId,
+          parent_block_id: null,
+          type: "ATTACHMENT",
+          markdown: "concurrent.txt",
+          html_cache: "<p>concurrent.txt</p>",
+          checked: 0,
+          sort_order: 0,
+          metadata: JSON.stringify({
+            attachment: {
+              originalName: "concurrent.txt",
+              mimeType: "text/plain",
+              size: concurrentBytes.length
+            }
+          }),
+          edit_version: 1,
+          created_at: "2026-07-17 00:02:00.000000",
+          updated_at: "2026-07-17 00:02:00.000000"
+        });
+        store.pages.get(pageId)!.content_version = 13;
+        await mkdir(path.dirname(getAttachmentFilePath(userId, concurrentBlockId)), { recursive: true });
+        await writeFile(getAttachmentFilePath(userId, concurrentBlockId), concurrentBytes);
+      }
+    ];
+
+    const response = await request(createApp())
+      .post("/api/data/import")
+      .set("Authorization", `Bearer ${token}`)
+      .attach("backup", exported.body as Buffer, { filename: "BrainVault-backup.zip", contentType: "application/zip" })
+      .expect(409);
+
+    expect(response.body.error.code).toBe("DATA_RESTORE_CONFLICT");
+    expect(store.blocks.has(concurrentBlockId)).toBe(true);
+    await expect(readFile(getAttachmentFilePath(userId, concurrentBlockId))).resolves.toEqual(concurrentBytes);
   });
 
   it("keeps the committed restore when only the transaction response is lost", async () => {

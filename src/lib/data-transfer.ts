@@ -680,7 +680,9 @@ async function recoverRestoreJournal(journal: RestoreJournal) {
         await rename(paths.oldAttachmentDir, paths.targetAttachmentDir);
         await syncPath(path.dirname(paths.targetAttachmentDir));
       }
-    } else {
+    } else if (!(await pathExists(paths.stagedAttachmentDir))) {
+      // A present staged directory means this restore never promoted its files.
+      // Preserve any target directory created by a later attachment transaction.
       await rm(paths.targetAttachmentDir, { recursive: true, force: true });
       await syncPath(path.dirname(paths.targetAttachmentDir));
     }
@@ -771,6 +773,7 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
   const derivedPaths = getRestorePaths({ ...journalBase, hadPreviousAttachments: false });
   const { operationRoot, stagedAttachmentDir, oldAttachmentDir, targetAttachmentDir, journalPath } = derivedPaths;
   let journalWritten = false;
+  let restoreJournal: RestoreJournal | null = null;
   await mkdir(stagedAttachmentDir, { recursive: true });
 
   try {
@@ -795,13 +798,6 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
     await syncPath(stagedAttachmentDir);
     await syncPath(operationRoot);
 
-    const restoreJournal: RestoreJournal = {
-      ...journalBase,
-      hadPreviousAttachments: await pathExists(targetAttachmentDir)
-    };
-    await writeRestoreJournal(restoreJournal);
-    journalWritten = true;
-
     let movedOld = false;
     try {
       await transaction(async (client) => {
@@ -813,6 +809,15 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
             "The workspace changed while the backup was being prepared. No data was replaced."
           );
         }
+        // Record the live attachment generation only after the user row is locked.
+        // Otherwise an attachment created between the check and the lock could be
+        // mistaken for failed-restore output and deleted during conflict recovery.
+        restoreJournal = {
+          ...journalBase,
+          hadPreviousAttachments: await pathExists(targetAttachmentDir)
+        };
+        await writeRestoreJournal(restoreJournal);
+        journalWritten = true;
         const restoreVersion = await createRestoreEditVersion(client, userId, manifest);
         await importRows(client, userId, manifest, restoreVersion);
         await mkdir(path.dirname(targetAttachmentDir), { recursive: true });
@@ -830,6 +835,7 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
         );
       });
     } catch (error) {
+      if (!restoreJournal || !journalWritten) throw error;
       let marker: { operation_id: string } | undefined;
       try {
         marker = await db.queryOne<{ operation_id: string }>(
@@ -878,7 +884,7 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
       });
     }
 
-    if (journalWritten) {
+    if (journalWritten && restoreJournal) {
       await recoverRestoreJournal(restoreJournal);
       journalWritten = false;
     }

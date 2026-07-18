@@ -1133,7 +1133,8 @@ async function restoreUserDataBackup(file) {
     const formData = new FormData();
     formData.append("backup", file, file.name);
     const data = await api("/api/data/import", { method: "POST", body: formData });
-    checkDraftStoreWrite(pageDraftStore.clearUser(data.user.id));
+    // Preserve durable drafts from every tab. Restored rows receive fresh edit versions,
+    // so pre-restore drafts are recovered as explicit conflicts instead of overwriting data.
     state.user = data.user;
     await applyUserPreferredLanguage();
     fillAccountSettings();

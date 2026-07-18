@@ -51,6 +51,17 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("if (!activatePersistedPageDraft(recovery)) setStatus(t(\"status.documentOpened\"));");
   });
 
+  it("preserves durable drafts from every tab after a backup restore", () => {
+    const restoreStart = client.indexOf("async function restoreUserDataBackup(file)");
+    const restoreEnd = client.indexOf("function getUserInitials", restoreStart);
+    const restoreBody = client.slice(restoreStart, restoreEnd);
+
+    expect(restoreBody).toContain("Preserve durable drafts from every tab");
+    expect(restoreBody).not.toContain("pageDraftStore.clearUser");
+    expect(transfer).toContain("const restoreVersionGap = 1_000_000");
+    expect(transfer).toContain("const clockFloor = Date.now() * 1000");
+  });
+
   it("does not delete attachment source text changed while an upload is in flight", () => {
     expect(client).toContain('const pageId = state.selectedPage.id;');
     expect(client).toContain('const sourceEditRevision = Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0;');
@@ -85,6 +96,9 @@ describe("Data-loss prevention integration", () => {
     expect(transfer).toContain('DATA_RESTORE_CONFLICT');
     expect(transfer).toContain('createWorkspaceRestoreSnapshot');
     expect(transfer).toContain('const { snapshot, attachmentFiles } = await withUserAttachmentLock');
+    expect(transfer).toContain("Record the live attachment generation only after the user row is locked");
+    expect(transfer).toContain("if (!restoreJournal || !journalWritten) throw error");
+    expect(transfer).toContain("else if (!(await pathExists(paths.stagedAttachmentDir)))");
     expect(transfer).toContain('restoreJournalPrefix');
     expect(transfer).toContain('data_restore_markers');
     expect(transfer).toContain('recoverInterruptedDataRestores');

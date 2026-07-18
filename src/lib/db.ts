@@ -68,6 +68,9 @@ export async function transaction<Result>(fn: (client: DbClient) => Promise<Resu
   let commitStarted = false;
 
   try {
+    // Backup, restore, and destructive-operation snapshots span multiple SELECTs.
+    // Do not depend on a server-wide isolation default that operators can change.
+    await conn.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
     await conn.beginTransaction();
     const result = await fn(createClient(conn));
     commitStarted = true;

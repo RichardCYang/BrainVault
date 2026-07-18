@@ -29,10 +29,22 @@ import { TransactionCommitOutcomeUnknownError, transaction } from "../src/lib/db
 describe("database transaction outcome handling", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.connection.query.mockResolvedValue([]);
     mocks.connection.beginTransaction.mockResolvedValue(undefined);
     mocks.connection.commit.mockResolvedValue(undefined);
     mocks.connection.rollback.mockResolvedValue(undefined);
     mocks.connection.release.mockResolvedValue(undefined);
+  });
+
+  it("pins multi-query snapshots to repeatable read before beginning", async () => {
+    await expect(transaction(async () => "snapshot")).resolves.toBe("snapshot");
+
+    expect(mocks.connection.query).toHaveBeenCalledWith(
+      "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"
+    );
+    expect(mocks.connection.query.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.connection.beginTransaction.mock.invocationCallOrder[0]
+    );
   });
 
   it("keeps callback failures distinguishable from commit ambiguity", async () => {
