@@ -2,7 +2,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import type { Writable } from "node:stream";
-import { access, copyFile, mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { access, copyFile, link, mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import { z } from "zod";
 import { env } from "../config/env.js";
 import { attachmentUploadRoot, getAttachmentFilePath, withUserAttachmentLock } from "./attachments.js";
@@ -39,9 +39,21 @@ const restoreJournalV2Schema = z.object({
   operationId: idSchema,
   hadPreviousAttachments: z.boolean()
 }).strict();
-const restoreJournalSchema = z.discriminatedUnion("version", [restoreJournalV1Schema, restoreJournalV2Schema]);
+const restoreJournalV3Schema = z.object({
+  version: z.literal(3),
+  userId: idSchema,
+  operationId: idSchema,
+  hadPreviousAttachments: z.boolean(),
+  restoredAttachmentIds: z.array(idSchema).max(1_000_000)
+}).strict();
+const restoreJournalSchema = z.discriminatedUnion("version", [
+  restoreJournalV1Schema,
+  restoreJournalV2Schema,
+  restoreJournalV3Schema
+]);
 type RestoreJournal = z.infer<typeof restoreJournalSchema>;
 type RestoreJournalV2 = z.infer<typeof restoreJournalV2Schema>;
+type RestoreJournalV3 = z.infer<typeof restoreJournalV3Schema>;
 
 const pageSchema = z.object({
   id: idSchema,
@@ -713,6 +725,57 @@ function describeRestoreGeneration(state: RestoreGenerationMarkerState) {
   return "the current restore generation";
 }
 
+async function listTrackedRestoreEntries(directory: string) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === dataRestoreGenerationMarkerName) continue;
+    if (!entry.isFile()) {
+      throw new Error(
+        `Restore recovery found an unsupported attachment entry: ${path.join(directory, entry.name)}`
+      );
+    }
+  }
+  return entries;
+}
+
+async function preserveAttachmentEntry(source: string, destination: string) {
+  await mkdir(path.dirname(destination), { recursive: true });
+  let linked = false;
+  let sourceRemoved = false;
+  try {
+    // Claim the destination without replacing a pre-restore file. A hard link
+    // also makes this merge restart-safe if recovery is interrupted midway.
+    await link(source, destination);
+    linked = true;
+    await syncPath(destination);
+    await syncPath(path.dirname(destination));
+    await rm(source);
+    sourceRemoved = true;
+    await syncPath(path.dirname(source));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      const [sourceStats, destinationStats] = await Promise.all([stat(source), stat(destination)]);
+      if (sourceStats.dev === destinationStats.dev && sourceStats.ino === destinationStats.ino) {
+        // A prior recovery attempt created the hard link and crashed before
+        // removing the source name. Finish that interrupted move idempotently.
+        await rm(source);
+        await syncPath(path.dirname(source));
+        return;
+      }
+      throw new Error(
+        `Restore recovery found conflicting attachment files at ${source} and ${destination}; preserving both generations for manual recovery`
+      );
+    }
+    // Once the source name is gone, destination is the only remaining link and
+    // must never be removed even if a later directory fsync reports an error.
+    if (linked && !sourceRemoved) {
+      await rm(destination, { force: true }).catch(() => undefined);
+      await syncPath(path.dirname(destination)).catch(() => undefined);
+    }
+    throw error;
+  }
+}
+
 async function recoverLegacyRestoreAttachments(
   journal: RestoreJournal,
   paths: ReturnType<typeof getRestorePaths>,
@@ -829,6 +892,113 @@ async function recoverVersionedRestoreAttachments(
   );
 }
 
+async function recoverTrackedRestoreAttachments(
+  journal: RestoreJournalV3,
+  paths: ReturnType<typeof getRestorePaths>,
+  committed: boolean
+) {
+  let targetExists = await pathExists(paths.targetAttachmentDir);
+  const stagedExists = await pathExists(paths.stagedAttachmentDir);
+
+  if (committed) {
+    if (!targetExists && stagedExists) {
+      const stagedGeneration = await readRestoreGenerationMarker(paths.stagedAttachmentDir, journal.operationId);
+      if (stagedGeneration.status !== "match") {
+        throw new Error(
+          `Committed restore ${journal.operationId} cannot promote ${describeRestoreGeneration(stagedGeneration)}`
+        );
+      }
+      await mkdir(path.dirname(paths.targetAttachmentDir), { recursive: true });
+      await rename(paths.stagedAttachmentDir, paths.targetAttachmentDir);
+      await syncPath(path.dirname(paths.targetAttachmentDir));
+      await syncDirectoryIfPresent(paths.operationRoot);
+      targetExists = true;
+    }
+    if (!targetExists) {
+      throw new Error(`Committed restore ${journal.operationId} is missing its attachment directory`);
+    }
+    const targetGeneration = await readRestoreGenerationMarker(paths.targetAttachmentDir, journal.operationId);
+    if (targetGeneration.status !== "match") {
+      throw new Error(
+        `Committed restore ${journal.operationId} found ${describeRestoreGeneration(targetGeneration)}; preserving all attachment generations for manual recovery`
+      );
+    }
+    await rm(paths.oldAttachmentDir, { recursive: true, force: true });
+    await syncPath(path.dirname(paths.oldAttachmentDir));
+    return;
+  }
+
+  const restoredAttachmentIds = new Set(journal.restoredAttachmentIds);
+
+  if (journal.hadPreviousAttachments) {
+    if (await pathExists(paths.oldAttachmentDir)) {
+      if (targetExists) {
+        const targetGeneration = await readRestoreGenerationMarker(paths.targetAttachmentDir, journal.operationId);
+        if (targetGeneration.status !== "match") {
+          throw new Error(
+            `Restore ${journal.operationId} found ${describeRestoreGeneration(targetGeneration)} after a failed rollback; preserving both attachment generations for manual recovery`
+          );
+        }
+
+        // A new upload can commit after the failed restore transaction releases
+        // its row lock but before recovery reacquires it. Preserve every file not
+        // owned by this restore before discarding the failed restore generation.
+        const entries = await listTrackedRestoreEntries(paths.targetAttachmentDir);
+        for (const entry of entries) {
+          if (entry.name === dataRestoreGenerationMarkerName || restoredAttachmentIds.has(entry.name)) continue;
+          await preserveAttachmentEntry(
+            path.join(paths.targetAttachmentDir, entry.name),
+            path.join(paths.oldAttachmentDir, entry.name)
+          );
+        }
+        await rm(paths.targetAttachmentDir, { recursive: true, force: true });
+      }
+      await rename(paths.oldAttachmentDir, paths.targetAttachmentDir);
+      await syncPath(path.dirname(paths.targetAttachmentDir));
+      return;
+    }
+
+    if (!targetExists) {
+      throw new Error(
+        `Restore ${journal.operationId} is missing both the previous and current attachment directories`
+      );
+    }
+    const targetGeneration = await readRestoreGenerationMarker(paths.targetAttachmentDir, journal.operationId);
+    if (targetGeneration.status === "match") {
+      throw new Error(
+        `Restore ${journal.operationId} cannot roll back because its previous attachment directory is missing`
+      );
+    }
+    return;
+  }
+
+  if (!targetExists) return;
+  const targetGeneration = await readRestoreGenerationMarker(paths.targetAttachmentDir, journal.operationId);
+  if (targetGeneration.status === "match") {
+    const entries = await listTrackedRestoreEntries(paths.targetAttachmentDir);
+    for (const entry of entries) {
+      if (restoredAttachmentIds.has(entry.name)) {
+        await rm(path.join(paths.targetAttachmentDir, entry.name), { force: true });
+      }
+    }
+    // Remove the ownership marker last. If recovery crashes earlier, a retry can
+    // still identify and finish cleaning this failed restore generation.
+    await rm(restoreGenerationMarkerPath(paths.targetAttachmentDir), { force: true });
+    await syncPath(paths.targetAttachmentDir);
+    if ((await readdir(paths.targetAttachmentDir)).length === 0) {
+      await rm(paths.targetAttachmentDir, { recursive: true, force: true });
+      await syncPath(path.dirname(paths.targetAttachmentDir));
+    }
+    return;
+  }
+  if (targetGeneration.status === "missing") {
+    return;
+  }
+  throw new Error(
+    `Restore ${journal.operationId} found ${describeRestoreGeneration(targetGeneration)}; preserving it for manual recovery`
+  );
+}
+
 export async function recoverDataRestoreJournal(journalInput: unknown) {
   return recoverRestoreJournal(restoreJournalSchema.parse(journalInput));
 }
@@ -845,15 +1015,17 @@ async function recoverRestoreJournal(journal: RestoreJournal) {
 
     if (journal.version === 1) {
       await recoverLegacyRestoreAttachments(journal, paths, committed);
-    } else {
+    } else if (journal.version === 2) {
       await recoverVersionedRestoreAttachments(journal, paths, committed);
+    } else {
+      await recoverTrackedRestoreAttachments(journal, paths, committed);
     }
 
     await rm(paths.operationRoot, { recursive: true, force: true });
     await rm(paths.journalPath, { force: true });
     await syncPath(dataTransferTempDir);
 
-    if (committed && journal.version === 2) {
+    if (committed && journal.version !== 1) {
       // The journal is durably gone before this best-effort marker cleanup. If
       // cleanup is interrupted, a harmless hidden marker may remain, but no
       // future recovery can mistake a later attachment generation for this one.
@@ -947,7 +1119,12 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
   await assertNoForeignIdConflicts(userId, manifest);
   await ensureDataTransferDirectories();
   const operationId = createId("restore");
-  const journalBase = { version: 2 as const, userId, operationId };
+  const journalBase = {
+    version: 3 as const,
+    userId,
+    operationId,
+    restoredAttachmentIds: manifest.attachments.map((attachment) => attachment.blockId)
+  };
   const derivedPaths = getRestorePaths({ ...journalBase, hadPreviousAttachments: false });
   const { operationRoot, stagedAttachmentDir, oldAttachmentDir, targetAttachmentDir, journalPath } = derivedPaths;
   let journalWritten = false;

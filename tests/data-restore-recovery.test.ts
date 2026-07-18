@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -87,6 +87,31 @@ async function writeVersionedFixture(options: {
     userId,
     operationId,
     hadPreviousAttachments: options.hadPreviousAttachments
+  };
+  await mkdir(dataTransferTempDir, { recursive: true });
+  await writeFile(value.journalPath, JSON.stringify(journal));
+  return journal;
+}
+
+async function writeTrackedFixture(hadPreviousAttachments: boolean) {
+  const value = paths();
+  await mkdir(value.targetAttachmentDir, { recursive: true });
+  await writeFile(path.join(value.targetAttachmentDir, "payload"), "restored");
+  await writeFile(path.join(value.targetAttachmentDir, "later_attachment"), "later");
+  await writeFile(
+    path.join(value.targetAttachmentDir, dataRestoreGenerationMarkerName),
+    JSON.stringify({ version: 1, operationId })
+  );
+  if (hadPreviousAttachments) {
+    await mkdir(value.oldAttachmentDir, { recursive: true });
+    await writeFile(path.join(value.oldAttachmentDir, "payload"), "old");
+  }
+  const journal = {
+    version: 3 as const,
+    userId,
+    operationId,
+    hadPreviousAttachments,
+    restoredAttachmentIds: ["payload"]
   };
   await mkdir(dataTransferTempDir, { recursive: true });
   await writeFile(value.journalPath, JSON.stringify(journal));
@@ -192,6 +217,56 @@ describe("Interrupted data restore recovery", () => {
     await expect(readFile(path.join(paths().targetAttachmentDir, "payload"), "utf8")).resolves.toBe("new");
     await expect(readFile(path.join(paths().oldAttachmentDir, "payload"), "utf8")).resolves.toBe("old");
     await expect(readFile(paths().journalPath, "utf8")).resolves.toContain('"version":2');
+  });
+
+  it("preserves an attachment uploaded after a failed tracked restore before rollback recovery", async () => {
+    const journal = await writeTrackedFixture(true);
+
+    await recoverDataRestoreJournal(journal);
+
+    await expect(readFile(path.join(paths().targetAttachmentDir, "payload"), "utf8")).resolves.toBe("old");
+    await expect(readFile(path.join(paths().targetAttachmentDir, "later_attachment"), "utf8")).resolves.toBe("later");
+    await expect(
+      readFile(path.join(paths().targetAttachmentDir, dataRestoreGenerationMarkerName), "utf8")
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(paths().journalPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("finishes an interrupted survivor merge without losing the linked attachment", async () => {
+    const journal = await writeTrackedFixture(true);
+    await link(
+      path.join(paths().targetAttachmentDir, "later_attachment"),
+      path.join(paths().oldAttachmentDir, "later_attachment")
+    );
+
+    await recoverDataRestoreJournal(journal);
+
+    await expect(readFile(path.join(paths().targetAttachmentDir, "payload"), "utf8")).resolves.toBe("old");
+    await expect(readFile(path.join(paths().targetAttachmentDir, "later_attachment"), "utf8")).resolves.toBe("later");
+  });
+
+  it("preserves both generations when survivor filenames contain different bytes", async () => {
+    const journal = await writeTrackedFixture(true);
+    await writeFile(path.join(paths().oldAttachmentDir, "later_attachment"), "conflicting-old-file");
+
+    await expect(recoverDataRestoreJournal(journal)).rejects.toThrow("preserving both generations");
+
+    await expect(readFile(path.join(paths().targetAttachmentDir, "later_attachment"), "utf8")).resolves.toBe("later");
+    await expect(readFile(path.join(paths().oldAttachmentDir, "later_attachment"), "utf8")).resolves.toBe("conflicting-old-file");
+    await expect(readFile(paths().journalPath, "utf8")).resolves.toContain('"version":3');
+  });
+
+  it("removes only restore-owned files when a later upload created the first attachment directory", async () => {
+    const journal = await writeTrackedFixture(false);
+
+    await recoverDataRestoreJournal(journal);
+
+    await expect(readFile(path.join(paths().targetAttachmentDir, "payload"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(path.join(paths().targetAttachmentDir, "later_attachment"), "utf8")).resolves.toBe("later");
+    await expect(
+      readFile(path.join(paths().targetAttachmentDir, dataRestoreGenerationMarkerName), "utf8")
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(paths().journalPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("cleans the versioned generation marker after a committed restore", async () => {
