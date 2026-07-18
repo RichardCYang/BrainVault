@@ -2,12 +2,14 @@ export function createLatestWriteQueue(writer) {
   let retryTask = null;
   let pendingTask = null;
   let runningPromise = null;
+  let discardGeneration = 0;
   let lastResult;
 
   async function drain() {
     while (retryTask !== null || pendingTask !== null) {
       const isRetry = retryTask !== null;
       const task = isRetry ? retryTask : pendingTask;
+      const taskGeneration = discardGeneration;
       if (isRetry) retryTask = null;
       else pendingTask = null;
 
@@ -16,7 +18,7 @@ export function createLatestWriteQueue(writer) {
       } catch (error) {
         // A failed write must be retried before any newer coalesced edit. Otherwise an
         // ambiguous committed write can leave the newer edit stuck on a stale version.
-        retryTask = task;
+        if (taskGeneration === discardGeneration) retryTask = task;
         throw error;
       }
     }
@@ -45,6 +47,7 @@ export function createLatestWriteQueue(writer) {
       return lastResult;
     },
     discard() {
+      discardGeneration += 1;
       retryTask = null;
       pendingTask = null;
     },

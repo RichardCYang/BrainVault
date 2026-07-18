@@ -60,6 +60,26 @@ describe("Latest write queue", () => {
     expect(queue.busy).toBe(false);
   });
 
+  it("does not resurrect an in-flight task discarded at an authentication boundary", async () => {
+    const firstAttempt = deferred();
+    const calls = [];
+    const queue = createLatestWriteQueue(async (value) => {
+      calls.push(value);
+      if (value === "old-account") await firstAttempt.promise;
+      return value;
+    });
+
+    const saving = queue.enqueue("old-account");
+    await Promise.resolve();
+    queue.discard();
+    firstAttempt.reject(new Error("session expired"));
+
+    await expect(saving).rejects.toThrow("session expired");
+    expect(queue.busy).toBe(false);
+    await expect(queue.enqueue("new-account")).resolves.toBe("new-account");
+    expect(calls).toEqual(["old-account", "new-account"]);
+  });
+
   it("preserves a failed task for an explicit retry", async () => {
     let attempts = 0;
     const queue = createLatestWriteQueue(async (value) => {

@@ -917,9 +917,56 @@ paths:
   /api/pages:
     get:
       summary: List pages
+      description: Returns a stable page of summaries ordered by update time and ID. Follow nextCursor until it is null to enumerate every matching page.
+      parameters:
+        - in: query
+          name: q
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+        - in: query
+          name: archived
+          schema:
+            type: boolean
+            default: false
+        - in: query
+          name: tag
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 50
+        - in: query
+          name: cursor
+          description: Opaque nextCursor value returned by the previous page.
+          schema:
+            type: string
+            maxLength: 256
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
       responses:
         '200':
           description: User pages
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pages, nextCursor]
+                properties:
+                  pages:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  nextCursor:
+                    type: [string, 'null']
+        '400':
+          description: Invalid list query or cursor
     post:
       summary: Create page
       responses:

@@ -51,6 +51,32 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("if (!activatePersistedPageDraft(recovery)) setStatus(t(\"status.documentOpened\"));");
   });
 
+  it("clears stale editor state and retry queues at every authentication boundary", () => {
+    expect(client).toContain("function resetAuthenticationSessionState({ render = true } = {})");
+    expect(client).toContain("discardPendingPageEdits();");
+    expect(client).toContain("state.pages = [];");
+    expect(client).toContain("state.allPages = [];");
+    expect(client).toContain("state.selectedPage = null;");
+    expect(client).toContain("state.pageEditLockDepth = 0;");
+    expect(client).toContain("resetAuthenticationSessionState({ render: false });\n  setToken(data.token);");
+    expect(client.match(/if \(response\.status === 401[^}]*resetAuthenticationSessionState\(\);/g)).toHaveLength(3);
+
+    const resetStart = client.indexOf("function resetAuthenticationSessionState");
+    const resetEnd = client.indexOf("function setAccountMessage", resetStart);
+    const resetBody = client.slice(resetStart, resetEnd);
+    expect(resetBody).not.toContain("pageDraftStore.remove");
+    expect(resetBody).not.toContain("pageDraftStore.clear");
+  });
+
+  it("loads every page summary instead of silently truncating at one hundred", () => {
+    expect(client).toContain("async function fetchAllPageSummaries");
+    expect(client).toContain('if (cursor) params.set("cursor", cursor);');
+    expect(client).toContain("const seenPageIds = new Set();");
+    expect(client).toContain("const seenCursors = new Set();");
+    expect(client).toContain("} while (cursor);");
+    expect(client).not.toContain('const data = await api("/api/pages?limit=100")');
+  });
+
   it("preserves durable drafts from every tab after a backup restore", () => {
     const restoreStart = client.indexOf("async function restoreUserDataBackup(file)");
     const restoreEnd = client.indexOf("function getUserInitials", restoreStart);

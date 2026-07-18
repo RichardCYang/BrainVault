@@ -969,10 +969,7 @@ async function api(path, options = {}) {
 
   if (!response.ok) {
     if (response.status === 401 && !skipAuthReset) {
-      closeAccountSettings({ restoreFocus: false });
-      setToken(null);
-      state.user = null;
-      renderShell();
+      resetAuthenticationSessionState();
     }
     throw new Error(translateApiError(data, response.status));
   }
@@ -1049,10 +1046,7 @@ async function downloadAttachment(block) {
       // Use the localized fallback below when the response is not JSON.
     }
     if (response.status === 401) {
-      closeAccountSettings({ restoreFocus: false });
-      setToken(null);
-      state.user = null;
-      renderShell();
+      resetAuthenticationSessionState();
     }
     throw new Error(translateApiError(data, response.status));
   }
@@ -1102,10 +1096,7 @@ async function downloadUserDataBackup() {
         // Use the localized fallback below when the response is not JSON.
       }
       if (response.status === 401) {
-        closeAccountSettings({ restoreFocus: false });
-        setToken(null);
-        state.user = null;
-        renderShell();
+        resetAuthenticationSessionState();
       }
       throw new Error(translateApiError(data, response.status));
     }
@@ -1187,6 +1178,41 @@ function renderShell() {
   elements.workspacePanel.classList.toggle("hidden", !authenticated);
   if (authenticated) updateUserIdentityUi();
   syncMobileSidebarAccessibility();
+}
+
+function resetAuthenticationSessionState({ render = true } = {}) {
+  // Input handlers persist durable per-account drafts before enqueueing writes. Keep those
+  // records, but never carry live editor state or retry queues across an auth boundary.
+  discardPendingPageEdits();
+  closeAccountSettings({ restoreFocus: false });
+  closeEmojiPicker({ restoreFocus: false });
+  closeNavigationContextMenu();
+  closeBlockContextMenu();
+  closePageActionsMenu();
+  closeInlineToolbar();
+  closeSlashMenu();
+  closeMobileSidebar();
+  resetMfaLogin();
+  setToken(null);
+  state.user = null;
+  state.pages = [];
+  state.allPages = [];
+  state.selectedPage = null;
+  state.pageMode = pageModes.READ;
+  state.pageModeChanging = false;
+  state.pageEditLockDepth = 0;
+  state.workspaceView = "home";
+  state.activeCollectionId = null;
+  state.activeTag = "";
+  state.searchQuery = "";
+  state.pendingFocusBlockId = null;
+  state.pendingAvatarData = null;
+  elements.searchInput.value = "";
+
+  if (render) {
+    renderShell();
+    renderSelectedPage();
+  }
 }
 
 function setAccountMessage(message = "", isError = false) {
@@ -1522,6 +1548,7 @@ function showMfaLogin(data) {
 }
 
 async function completeAuthenticatedLogin(data) {
+  resetAuthenticationSessionState({ render: false });
   setToken(data.token);
   state.user = data.user;
   elements.password.value = "";
@@ -1534,22 +1561,7 @@ async function completeAuthenticatedLogin(data) {
 
 async function logout() {
   return withPageEditLock(async () => {
-    discardPendingPageEdits();
-    closeAccountSettings({ restoreFocus: false });
-    closeEmojiPicker({ restoreFocus: false });
-    resetMfaLogin();
-    setToken(null);
-    state.user = null;
-    state.pages = [];
-    state.allPages = [];
-    state.selectedPage = null;
-    state.workspaceView = "home";
-    state.activeCollectionId = null;
-    state.activeTag = "";
-    state.searchQuery = "";
-    renderShell();
-    renderPages();
-    renderSelectedPage();
+    resetAuthenticationSessionState();
     setStatus(t("status.loggedOut"));
   });
 }
@@ -6281,24 +6293,46 @@ async function loadMe() {
   state.user = data.user;
 }
 
+async function fetchAllPageSummaries({ query = "", tag = "" } = {}) {
+  const pages = [];
+  const seenPageIds = new Set();
+  const seenCursors = new Set();
+  let cursor = null;
+
+  do {
+    const params = new URLSearchParams({ limit: "100" });
+    if (query) params.set("q", query);
+    if (tag) params.set("tag", tag);
+    if (cursor) params.set("cursor", cursor);
+
+    const data = await api(`/api/pages?${params.toString()}`);
+    if (!Array.isArray(data?.pages)) throw new Error(t("errors.invalidResponse"));
+    for (const page of data.pages) {
+      if (!page?.id || seenPageIds.has(page.id)) continue;
+      seenPageIds.add(page.id);
+      pages.push(page);
+    }
+
+    const nextCursor = typeof data.nextCursor === "string" && data.nextCursor ? data.nextCursor : null;
+    if (nextCursor && seenCursors.has(nextCursor)) throw new Error(t("errors.invalidResponse"));
+    if (nextCursor) seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  } while (cursor);
+
+  return pages;
+}
+
 async function loadAllPages() {
-  const data = await api("/api/pages?limit=100");
-  state.allPages = data.pages;
+  state.allPages = await fetchAllPageSummaries();
 }
 
 async function loadPages(query = state.searchQuery, tag = state.activeTag) {
   state.searchQuery = query;
   state.activeTag = tag;
-
-  const params = new URLSearchParams({ limit: "100" });
-  if (query) params.set("q", query);
-  if (tag) params.set("tag", tag);
-
-  const data = await api(`/api/pages?${params.toString()}`);
-  state.pages = data.pages;
+  state.pages = await fetchAllPageSummaries({ query, tag });
 
   if (!query && !tag) {
-    state.allPages = data.pages;
+    state.allPages = state.pages;
   } else {
     await loadAllPages();
   }
@@ -6388,9 +6422,7 @@ async function boot() {
     if (state.user) await loadPages();
     setStatus(state.user ? t("status.ready") : t("status.getStarted"));
   } catch (error) {
-    setToken(null);
-    state.user = null;
-    renderShell();
+    resetAuthenticationSessionState();
     setStatus(t("status.loginRequired"));
   }
 }

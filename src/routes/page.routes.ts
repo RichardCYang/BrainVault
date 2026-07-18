@@ -17,6 +17,11 @@ export const pageRouter = Router();
 
 pageRouter.use(requireAuth);
 
+const pageListCursorSchema = z.object({
+  updatedAt: z.string().regex(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/),
+  id: z.string().min(1).max(64)
+});
+
 const listPagesQuerySchema = z.object({
   q: z.string().trim().min(1).max(100).optional(),
   archived: z
@@ -24,8 +29,21 @@ const listPagesQuerySchema = z.object({
     .optional()
     .transform((value) => (value ? value === "true" : false)),
   tag: z.string().trim().min(1).max(50).optional(),
+  cursor: z.string().min(1).max(256).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50)
 });
+
+function decodePageListCursor(value: string) {
+  try {
+    return pageListCursorSchema.parse(JSON.parse(Buffer.from(value, "base64url").toString("utf8")));
+  } catch {
+    throw new ApiError(400, "INVALID_PAGE_CURSOR", "The page cursor is invalid");
+  }
+}
+
+function encodePageListCursor(row: { id: string; cursor_updated_at: string }) {
+  return Buffer.from(JSON.stringify({ updatedAt: row.cursor_updated_at, id: row.id }), "utf8").toString("base64url");
+}
 
 const createPageSchema = z.object({
   title: z.string().trim().min(1).max(160),
@@ -275,27 +293,40 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
       params.push(query.tag.toLowerCase());
     }
 
-    params.push(query.limit);
-    const rows = await db.query<PageRow & { block_count: number; child_count: number }>(
+    if (query.cursor) {
+      const cursor = decodePageListCursor(query.cursor);
+      where.push("(p.updated_at < ? OR (p.updated_at = ? AND p.id < ?))");
+      params.push(cursor.updatedAt, cursor.updatedAt, cursor.id);
+    }
+
+    params.push(query.limit + 1);
+    const rows = await db.query<
+      PageRow & { block_count: number; child_count: number; cursor_updated_at: string }
+    >(
       `SELECT p.*,
+        DATE_FORMAT(p.updated_at, '%Y-%m-%d %H:%i:%s.%f') AS cursor_updated_at,
         (SELECT COUNT(*) FROM blocks b WHERE b.page_id = p.id) AS block_count,
         (SELECT COUNT(*) FROM pages c WHERE c.parent_page_id = p.id) AS child_count
        FROM pages p
        WHERE ${where.join(" AND ")}
-       ORDER BY p.updated_at DESC
+       ORDER BY p.updated_at DESC, p.id DESC
        LIMIT ?`,
       params
     );
 
+    const pageRows = rows.slice(0, query.limit);
     const pages = await Promise.all(
-      rows.map(async (row) => ({
+      pageRows.map(async (row) => ({
         ...toPage(row),
         tags: await getPageTags(row.id),
         counts: { blocks: row.block_count, children: row.child_count }
       }))
     );
+    const nextCursor = rows.length > query.limit
+      ? encodePageListCursor(pageRows[pageRows.length - 1])
+      : null;
 
-    res.json({ pages });
+    res.json({ pages, nextCursor });
   } catch (error) {
     next(error);
   }
