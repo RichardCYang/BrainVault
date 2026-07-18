@@ -115,6 +115,7 @@ export async function moveAttachmentFile(temporaryPath: string, ownerId: string,
   const temporaryDirectory = path.dirname(temporaryPath);
   await mkdir(targetDirectory, { recursive: true });
   let linked = false;
+  let sourceRemoved = false;
   try {
     // rename() replaces an existing destination on POSIX. Claim the final path with
     // an exclusive hard link so an ID collision can never overwrite stored bytes.
@@ -123,11 +124,15 @@ export async function moveAttachmentFile(temporaryPath: string, ownerId: string,
     await syncPath(target);
     await syncPath(targetDirectory);
     await rm(temporaryPath);
+    sourceRemoved = true;
     if (temporaryDirectory !== targetDirectory) await syncPath(temporaryDirectory);
     await syncPath(attachmentUploadRoot);
     return target;
   } catch (error) {
-    if (linked) {
+    // Before the temporary name is removed, rolling back the new link restores
+    // the original two-copy state. Afterwards the destination is the only live
+    // name and must be preserved even when a later directory sync fails.
+    if (linked && !sourceRemoved) {
       await rm(target, { force: true }).catch(() => undefined);
       await syncPath(targetDirectory).catch(() => undefined);
     }
