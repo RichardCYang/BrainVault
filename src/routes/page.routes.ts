@@ -44,7 +44,8 @@ const updatePageSchema = z.object({
   isArchived: z.boolean().optional(),
   parentPageId: z.string().min(1).nullable().optional(),
   tags: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
-  expectedVersion: z.number().int().min(1)
+  expectedVersion: z.number().int().min(1),
+  mutationId: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/).optional()
 });
 
 const tagSchema = z.object({
@@ -391,7 +392,7 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
     const user = requireUser(req.user);
     const pageId = String(req.params.pageId);
     const body = req.body as z.infer<typeof updatePageSchema>;
-    const { tags, expectedVersion, ...updates } = body;
+    const { tags, expectedVersion, mutationId, ...updates } = body;
     const fields: string[] = [];
     const values: DbValue[] = [];
 
@@ -436,14 +437,22 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
         existingPage = lockedPage;
       }
 
+      if (mutationId && existingPage.last_mutation_id === mutationId) return;
+
       if (existingPage.is_collection && updates.parentPageId) {
         throw new ApiError(400, "INVALID_COLLECTION_PARENT", "A collection cannot have a parent page");
       }
 
       if (fields.length || tags !== undefined) {
+        const updateFields = [...fields];
+        const updateValues = [...values];
+        if (mutationId) {
+          updateFields.push("last_mutation_id = ?");
+          updateValues.push(mutationId);
+        }
         const result = await client.execute<{ affectedRows: number }>(
-          `UPDATE pages SET ${[...fields, "edit_version = edit_version + 1"].join(", ")} WHERE id = ? AND owner_id = ? AND edit_version = ?`,
-          [...values, pageId, user.id, expectedVersion]
+          `UPDATE pages SET ${[...updateFields, "edit_version = edit_version + 1"].join(", ")} WHERE id = ? AND owner_id = ? AND edit_version = ?`,
+          [...updateValues, pageId, user.id, expectedVersion]
         );
         if (Number(result.affectedRows) === 0) {
           throw new ApiError(

@@ -350,6 +350,11 @@ components:
           type: integer
           minimum: 1
           description: Required optimistic-concurrency precondition.
+        mutationId:
+          type: string
+          maxLength: 64
+          pattern: '^[a-zA-Z0-9_-]+$'
+          description: Stable client-generated ID used to make a retried update idempotent.
     BlockUpdateInput:
       allOf:
         - $ref: '#/components/schemas/BlockInput'
@@ -360,6 +365,11 @@ components:
               type: integer
               minimum: 1
               description: Required optimistic-concurrency precondition.
+            mutationId:
+              type: string
+              maxLength: 64
+              pattern: '^[a-zA-Z0-9_-]+$'
+              description: Stable client-generated ID used to make a retried update idempotent.
     VersionSnapshot:
       type: object
       required: [id, version]

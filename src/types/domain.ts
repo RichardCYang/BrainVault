@@ -21,6 +21,7 @@ export type PageRow = {
   parent_page_id: string | null;
   edit_version?: number;
   content_version?: number;
+  last_mutation_id?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -55,6 +56,7 @@ export type BlockRow = {
   sort_order: number;
   metadata: string | Record<string, unknown> | null;
   edit_version?: number;
+  last_mutation_id?: string | null;
   created_at: string;
   updated_at: string;
 };

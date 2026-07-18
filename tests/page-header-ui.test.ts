@@ -69,7 +69,7 @@ describe("Page view header and actions menu", () => {
     expect(client).not.toContain('pageTags: $("#page-tags")');
     expect(client).not.toContain("elements.pageTags");
     expect(client).not.toContain("function tagsFromInput");
-    expect(client).toContain('body: { title: task.title, expectedVersion: currentPage?.version }');
+    expect(client).toContain('body: { title: task.title, expectedVersion: currentPage?.version, mutationId: task.mutationId }');
     expect(styles).not.toContain(".tags-label");
     expect(i18n).not.toContain('guide2Title: "2. 제목과 태그 정리"');
   });

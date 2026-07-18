@@ -17,7 +17,8 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain('document.addEventListener("visibilitychange"');
     expect(client).toContain('saveBlockRow(row, { quiet: true }).catch');
     expect(client).toContain('keepalive: task.keepalive === true');
-    expect(client).toContain('expectedVersion: currentVersion');
+    expect(client).toContain('expectedVersion: currentVersion, mutationId: task.mutationId');
+    expect(client).toContain('mutationId: createMutationId()');
     expect(client).toContain('const blockSaveRows = new Map()');
     expect(client).toContain('const rowsToSave = new Map(blockSaveRows)');
     expect(client).toContain('syncVisibleBlocksToState();\n  renderSelectedPage();');
@@ -30,6 +31,7 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain('async function downloadUserDataBackup() {\n  return withPageEditLock(async () => {');
     expect(client).toContain('async function restoreUserDataBackup(file) {\n  return withPageEditLock(async () => {');
     expect(client).toContain('applyPageContentVersion(task.pageId, data.pageContentVersion)');
+    expect(client).toContain('Math.max(Number(page.contentVersion ?? 1), version)');
     expect(client).toContain('const keepaliveSaveBudgetBytes = 60 * 1024;');
     expect(client).toContain('const pendingSavePayloadBytes = keepalive ? getPendingSavePayloadBytes');
     expect(client).toContain('const useKeepalive = keepalive && pendingSavePayloadBytes <= keepaliveSaveBudgetBytes;');

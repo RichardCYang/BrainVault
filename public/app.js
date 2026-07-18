@@ -916,6 +916,16 @@ function translateApiError(data, status) {
   return data?.error?.message ?? data?.message ?? t("errors.unknown");
 }
 
+function createMutationId() {
+  const randomUuid = globalThis.crypto?.randomUUID?.();
+  if (randomUuid) return `mut_${randomUuid}`;
+
+  const bytes = new Uint8Array(16);
+  globalThis.crypto?.getRandomValues?.(bytes);
+  const entropy = [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+  return `mut_${Date.now().toString(36)}_${entropy || Math.random().toString(36).slice(2)}`.slice(0, 64);
+}
+
 async function api(path, options = {}) {
   const { skipAuthReset = false, ...requestOptions } = options;
   const headers = new Headers(requestOptions.headers ?? {});
@@ -963,7 +973,7 @@ const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
   const data = await api(`/api/pages/${task.pageId}`, {
     method: "PATCH",
     keepalive: task.keepalive === true,
-    body: { title: task.title, expectedVersion: currentPage?.version }
+    body: { title: task.title, expectedVersion: currentPage?.version, mutationId: task.mutationId }
   });
 
   if (state.selectedPage?.id === task.pageId) {
@@ -4805,7 +4815,7 @@ function getBlockSaveQueue(blockId) {
     const data = await api(`/api/blocks/${blockId}`, {
       method: "PATCH",
       keepalive: task.keepalive === true,
-      body: { ...task.payload, expectedVersion: currentVersion }
+      body: { ...task.payload, expectedVersion: currentVersion, mutationId: task.mutationId }
     });
     applyPageContentVersion(task.pageId, data.pageContentVersion);
     updateBlockInState(data.block);
@@ -4840,7 +4850,8 @@ async function saveBlockRow(row, { quiet = false, keepalive = false, allowLocked
     editRevision: Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0,
     payload: buildBlockPayload(row),
     row,
-    keepalive
+    keepalive,
+    mutationId: createMutationId()
   };
   const queue = getBlockSaveQueue(blockId);
   row.classList.add("is-saving");
@@ -5697,11 +5708,13 @@ function applyPageSummaryUpdate(pageId, updates) {
 function applyPageContentVersion(pageId, contentVersion) {
   const version = Number(contentVersion);
   if (!Number.isSafeInteger(version) || version < 1) return;
-  if (state.selectedPage?.id === pageId) state.selectedPage.contentVersion = version;
+  const applyVersion = (page) => {
+    if (page?.id !== pageId) return;
+    page.contentVersion = Math.max(Number(page.contentVersion ?? 1), version);
+  };
+  applyVersion(state.selectedPage);
   for (const pages of [state.pages, state.allPages]) {
-    for (const page of pages) {
-      if (page.id === pageId) page.contentVersion = version;
-    }
+    for (const page of pages) applyVersion(page);
   }
 }
 
@@ -5717,7 +5730,8 @@ async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked =
     title,
     editRevision: pageTitleEditRevision,
     taskId: ++pageTitleTaskId,
-    keepalive
+    keepalive,
+    mutationId: createMutationId()
   };
   syncBeforeUnloadProtection();
 

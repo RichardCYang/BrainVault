@@ -39,6 +39,27 @@ describe("Latest write queue", () => {
     expect(queue.busy).toBe(false);
   });
 
+  it("retries a failed in-flight task before a newer queued edit", async () => {
+    const firstAttempt = deferred();
+    const calls = [];
+    let firstCalls = 0;
+    const queue = createLatestWriteQueue(async (value) => {
+      calls.push(value);
+      if (value === "first" && firstCalls++ === 0) await firstAttempt.promise;
+      return value;
+    });
+
+    const saving = queue.enqueue("first");
+    queue.enqueue("latest");
+    await Promise.resolve();
+    firstAttempt.reject(new Error("response lost after commit"));
+
+    await expect(saving).rejects.toThrow("response lost after commit");
+    await expect(queue.flush()).resolves.toBe("latest");
+    expect(calls).toEqual(["first", "first", "latest"]);
+    expect(queue.busy).toBe(false);
+  });
+
   it("preserves a failed task for an explicit retry", async () => {
     let attempts = 0;
     const queue = createLatestWriteQueue(async (value) => {

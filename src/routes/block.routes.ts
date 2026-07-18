@@ -52,7 +52,8 @@ const updateBlockSchema = z.object({
   parentBlockId: z.string().min(1).nullable().optional(),
   sortOrder: z.number().int().min(0).optional(),
   metadata: metadataSchema.nullable().optional(),
-  expectedVersion: z.number().int().min(1)
+  expectedVersion: z.number().int().min(1),
+  mutationId: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/).optional()
 });
 
 const versionSnapshotSchema = z.object({
@@ -474,6 +475,10 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
         existing = lockedBlock;
       }
 
+      if (body.mutationId && existing.last_mutation_id === body.mutationId) {
+        return { block: existing, pageContentVersion: Number(lockedPage.content_version ?? 1) };
+      }
+
       if (Number(existing.edit_version ?? 1) !== body.expectedVersion) {
         throw new ApiError(
           409,
@@ -536,6 +541,11 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
       if (body.metadata !== undefined || (contentChanged && (nextType === "BOOKMARK" || nextType === "AI_CHAT"))) {
         fields.push("metadata = ?");
         values.push(prepared.metadata ? JSON.stringify(prepared.metadata) : null);
+      }
+
+      if (fields.length && body.mutationId) {
+        fields.push("last_mutation_id = ?");
+        values.push(body.mutationId);
       }
 
       let pageContentVersion = Number(lockedPage.content_version ?? 1);
