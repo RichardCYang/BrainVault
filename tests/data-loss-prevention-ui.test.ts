@@ -79,6 +79,43 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain(`if (state.selectedPage?.id === pageId) {\n    for (const block of data.blocks ?? []) updateBlockInState(block);`);
   });
 
+  it("preserves other-tab drafts during block and page deletion and surfaces orphaned pages", () => {
+    expect(client).toContain("pageDraftStore.removeBlocks(");
+    expect(client).toContain("pageDraftStore.removePages(state.user.id, serverPageIds, pageDraftSourceId)");
+    expect(client).not.toContain("pageDraftStore.clearBlocks(");
+    expect(client).not.toContain("pageDraftStore.clearPages(");
+    expect(client).toContain(".loadUserDrafts(state.user.id)");
+    expect(client).toContain('heading.textContent = t("status.orphanedLocalDrafts")');
+    expect(client).toContain('window.addEventListener("storage", (event) => {');
+    expect(client).toContain('if (state.workspaceView === "home") renderHome();');
+  });
+
+  it("locks the whole editor before destructive block deletion flushes and commits", () => {
+    const emptyDeleteStart = client.indexOf("async function deleteEmptyBlock(row)");
+    const emptyDeleteEnd = client.indexOf("function focusPendingBlock", emptyDeleteStart);
+    const emptyDeleteBody = client.slice(emptyDeleteStart, emptyDeleteEnd);
+
+    expect(emptyDeleteBody).toContain("return withPageEditLock(async () => {");
+    expect(emptyDeleteBody).not.toContain("await flushPendingPageEdits();");
+    expect(emptyDeleteBody).toContain(
+      "await persistBlockOrder(parentBlockId, nextSiblingIds, {}, { allowLocked: true });"
+    );
+    expect(emptyDeleteBody).toContain(
+      "const starter = await createEmptyBlock(state.selectedPage.id, { allowLocked: true });"
+    );
+    expect(emptyDeleteBody).toContain("await openPage(state.selectedPage.id, { skipFlush: true });");
+
+    expect(client).toMatch(
+      /if \(button\.dataset\.action === "delete-block"\) \{[\s\S]*?await withPageEditLock\(async \(\) => \{[\s\S]*?await deleteBlockWithVersionCheck\(blockId\);[\s\S]*?await openPage\(pageId, \{ skipFlush: true \}\);/
+    );
+    expect(client).toContain(
+      "async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {}, { allowLocked = false } = {})"
+    );
+    expect(client).toContain(
+      "async function createEmptyBlock(pageId, { parentBlockId = null, sortOrder, allowLocked = false } = {})"
+    );
+  });
+
   it("preserves attachment files when a database commit response is ambiguous", () => {
     expect(database).toContain("export class TransactionCommitOutcomeUnknownError extends Error");
     expect(database).toContain("readonly commitOutcomeUnknown = true");

@@ -43,6 +43,7 @@ function createPageDraftSourceId() {
 
 // Generate this in memory instead of sessionStorage. Browsers may clone sessionStorage
 // when a tab is duplicated, which would let two live tabs overwrite the same draft.
+const pageDraftStoragePrefix = "brainvault.pageDraft.v2:";
 const pageDraftSourceId = createPageDraftSourceId();
 const pageDraftStore = createPageDraftStore(window.localStorage, { sourceId: pageDraftSourceId });
 
@@ -2902,7 +2903,9 @@ async function deleteNavigationTarget() {
       method: "DELETE",
       body: { expectedSnapshot: deletionSnapshot.snapshot }
     });
-    if (state.user?.id) checkDraftStoreWrite(pageDraftStore.clearPages(state.user.id, serverPageIds));
+    if (state.user?.id) {
+      checkDraftStoreWrite(pageDraftStore.removePages(state.user.id, serverPageIds, pageDraftSourceId));
+    }
 
     if (selectedPageWasDeleted) {
       resetPageEditTracking();
@@ -2943,10 +2946,44 @@ function renderCollectionView() {
   }
 }
 
+function getOrphanedPageDrafts() {
+  if (!state.user?.id) return [];
+  const availablePageIds = new Set(state.allPages.map((page) => page.id));
+  return pageDraftStore
+    .loadUserDrafts(state.user.id)
+    .filter((record) => !availablePageIds.has(record.pageId))
+    .map((record) => ({
+      pageId: record.pageId,
+      sourceId: record.sourceId,
+      updatedAt: new Date(record.updatedAt).toISOString(),
+      title: record.title,
+      blocks: record.blocks
+    }));
+}
+
+function appendOrphanedPageDraftRecovery() {
+  const drafts = getOrphanedPageDrafts();
+  if (!drafts.length) return;
+
+  const panel = document.createElement("section");
+  panel.className = "local-draft-recovery-panel home-local-draft-recovery-panel";
+  panel.setAttribute("role", "alert");
+
+  const heading = document.createElement("strong");
+  heading.textContent = t("status.orphanedLocalDrafts");
+
+  const details = document.createElement("pre");
+  details.tabIndex = 0;
+  details.textContent = JSON.stringify(drafts, null, 2);
+  panel.append(heading, details);
+  elements.homeDocumentList.append(panel);
+}
+
 function renderHome() {
   elements.homeDocumentCount.textContent = t("counts.documents", { count: formatNumber(state.allPages.length) });
   elements.homeDocumentList.replaceChildren();
   elements.homeCollectionList.replaceChildren();
+  appendOrphanedPageDraftRecovery();
 
   if (!state.allPages.length) {
     elements.homeDocumentList.append(makeEmptyMessage(t("empty.noDocumentsHome")));
@@ -3075,7 +3112,16 @@ async function deleteBlockWithVersionCheck(blockId, options) {
     method: "DELETE",
     body: { expectedVersions }
   });
-  if (scope) checkDraftStoreWrite(pageDraftStore.clearBlocks(scope.userId, scope.pageId, expectedVersions.map(({ id }) => id)));
+  if (scope) {
+    checkDraftStoreWrite(
+      pageDraftStore.removeBlocks(
+        scope.userId,
+        scope.pageId,
+        expectedVersions.map(({ id }) => id),
+        pageDraftSourceId
+      )
+    );
+  }
   return data;
 }
 
@@ -5523,8 +5569,9 @@ async function applySlashCommand(row, type) {
   }
 }
 
-async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {}) {
-  if (!requireWritablePage() || !orderedIds.length) return;
+async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {}, { allowLocked = false } = {}) {
+  const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage();
+  if (!writable || !orderedIds.length) return;
 
   const pageId = state.selectedPage.id;
   const items = orderedIds.map((id, index) => {
@@ -5545,8 +5592,9 @@ async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {
   return data;
 }
 
-async function createEmptyBlock(pageId, { parentBlockId = null, sortOrder } = {}) {
-  if (!requireWritablePage()) throw new Error(t("errors.readOnlyPage"));
+async function createEmptyBlock(pageId, { parentBlockId = null, sortOrder, allowLocked = false } = {}) {
+  const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage();
+  if (!writable) throw new Error(t("errors.readOnlyPage"));
   const data = await api(`/api/pages/${pageId}/blocks`, {
     method: "POST",
     body: {
@@ -5599,40 +5647,43 @@ async function appendBlock(afterRow = null) {
 async function deleteEmptyBlock(row) {
   if (!requireWritablePage() || !row?.dataset.blockId || row.dataset.deleting === "true") return;
 
-  const blockId = row.dataset.blockId;
-  const block = getBlockById(blockId);
-  const parentBlockId = normalizeParentBlockId(row.dataset.parentBlockId);
-  const siblingIds = getBlockSiblings(parentBlockId).map((item) => item.id);
-  const siblingIndex = siblingIds.indexOf(blockId);
-  const childIds = (block?.children ?? []).map((child) => child.id);
-  const rows = [...elements.blockList.querySelectorAll(".editor-block-row")];
-  const rowIndex = rows.indexOf(row);
-  const groupRows = getBlockGroupRows(row);
-  const previousBlockId = rows[rowIndex - 1]?.dataset.blockId ?? null;
-  const nextBlockId = rows[rowIndex + groupRows.length]?.dataset.blockId ?? null;
-  let focusBlockId = previousBlockId ?? childIds[0] ?? nextBlockId;
+  return withPageEditLock(async () => {
+    const blockId = row.dataset.blockId;
+    const block = getBlockById(blockId);
+    const parentBlockId = normalizeParentBlockId(row.dataset.parentBlockId);
+    const siblingIds = getBlockSiblings(parentBlockId).map((item) => item.id);
+    const siblingIndex = siblingIds.indexOf(blockId);
+    const childIds = (block?.children ?? []).map((child) => child.id);
+    const rows = [...elements.blockList.querySelectorAll(".editor-block-row")];
+    const rowIndex = rows.indexOf(row);
+    const groupRows = getBlockGroupRows(row);
+    const previousBlockId = rows[rowIndex - 1]?.dataset.blockId ?? null;
+    const nextBlockId = rows[rowIndex + groupRows.length]?.dataset.blockId ?? null;
+    let focusBlockId = previousBlockId ?? childIds[0] ?? nextBlockId;
 
-  await flushPendingPageEdits();
-  row.dataset.deleting = "true";
-  discardBlockSave(blockId);
-  closeSlashMenu();
-  closeInlineToolbar();
-  closeBlockContextMenu();
+    row.dataset.deleting = "true";
+    discardBlockSave(blockId);
+    closeSlashMenu();
+    closeInlineToolbar();
+    closeBlockContextMenu();
 
-  const nextSiblingIds = [...siblingIds];
-  if (siblingIndex >= 0) nextSiblingIds.splice(siblingIndex, 1, ...childIds);
-  if (nextSiblingIds.length) await persistBlockOrder(parentBlockId, nextSiblingIds);
+    const nextSiblingIds = [...siblingIds];
+    if (siblingIndex >= 0) nextSiblingIds.splice(siblingIndex, 1, ...childIds);
+    if (nextSiblingIds.length) {
+      await persistBlockOrder(parentBlockId, nextSiblingIds, {}, { allowLocked: true });
+    }
 
-  await deleteBlockWithVersionCheck(blockId, { includeDescendants: false });
+    await deleteBlockWithVersionCheck(blockId, { includeDescendants: false });
 
-  if (!focusBlockId) {
-    const starter = await createEmptyBlock(state.selectedPage.id);
-    focusBlockId = starter.block.id;
-  }
+    if (!focusBlockId) {
+      const starter = await createEmptyBlock(state.selectedPage.id, { allowLocked: true });
+      focusBlockId = starter.block.id;
+    }
 
-  state.pendingFocusBlockId = focusBlockId;
-  await openPage(state.selectedPage.id);
-  setStatus(t("status.emptyBlockDeleted"));
+    state.pendingFocusBlockId = focusBlockId;
+    await openPage(state.selectedPage.id, { skipFlush: true });
+    setStatus(t("status.emptyBlockDeleted"));
+  });
 }
 
 function focusPendingBlock() {
@@ -7441,17 +7492,19 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
       const ok = window.confirm(t("confirm.deleteBlock"));
       if (!ok) return;
       closeBlockContextMenu();
-      await flushPendingPageEdits();
-      row.dataset.deleting = "true";
-      discardBlockSave(blockId);
-      try {
-        await deleteBlockWithVersionCheck(blockId);
-      } catch (error) {
-        row.dataset.deleting = "false";
-        throw error;
-      }
-      await openPage(state.selectedPage.id);
-      setStatus(t("status.blockDeleted"));
+      const pageId = state.selectedPage.id;
+      await withPageEditLock(async () => {
+        row.dataset.deleting = "true";
+        discardBlockSave(blockId);
+        try {
+          await deleteBlockWithVersionCheck(blockId);
+        } catch (error) {
+          row.dataset.deleting = "false";
+          throw error;
+        }
+        await openPage(pageId, { skipFlush: true });
+        setStatus(t("status.blockDeleted"));
+      });
     }
   } catch (error) {
     setStatus(error.message, true);
@@ -7461,6 +7514,11 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "hidden" || !hasPendingPageEdits()) return;
   flushPendingPageEdits({ keepalive: true }).catch((error) => setStatus(error.message, true));
+});
+
+window.addEventListener("storage", (event) => {
+  if (!event.key?.startsWith(pageDraftStoragePrefix)) return;
+  if (state.workspaceView === "home") renderHome();
 });
 
 elements.blockContextMenu.addEventListener("keydown", (event) => {

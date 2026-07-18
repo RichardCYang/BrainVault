@@ -117,6 +117,32 @@ export function createPageDraftStore(
     }
   }
 
+  function loadUserDrafts(userId) {
+    if (!storage || !isNonEmptyString(userId)) return [];
+    const userPrefix = getUserPrefix(userId);
+    try {
+      const records = [];
+      for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index);
+        if (!key?.startsWith(userPrefix)) continue;
+        try {
+          const raw = storage.getItem(key);
+          if (!raw) continue;
+          const value = JSON.parse(raw);
+          const pageId = value?.pageId;
+          if (!isNonEmptyString(pageId)) continue;
+          const record = normalizeRecord(value, userId, pageId);
+          if (record) records.push(record);
+        } catch {
+          // One corrupt record must not hide every other recoverable draft.
+        }
+      }
+      return records.sort((left, right) => right.updatedAt - left.updatedAt);
+    } catch {
+      return [];
+    }
+  }
+
   function writePage(record) {
     if (!storage) return false;
     const hasTitle = Boolean(record.title);
@@ -243,6 +269,40 @@ export function createPageDraftStore(
     return writePage(record);
   }
 
+  // Destructive actions use source-scoped removal so another tab's unsaved work survives.
+  function removeBlocks(userId, pageId, blockIds, recordSourceId = sourceId) {
+    let succeeded = true;
+    for (const blockId of blockIds ?? []) {
+      succeeded = removeBlock(userId, pageId, blockId, recordSourceId) && succeeded;
+    }
+    return succeeded;
+  }
+
+  function removePage(userId, pageId, recordSourceId = sourceId) {
+    if (
+      !storage ||
+      !isNonEmptyString(userId) ||
+      !isNonEmptyString(pageId) ||
+      !isNonEmptyString(recordSourceId)
+    ) {
+      return false;
+    }
+    try {
+      storage.removeItem(getKey(userId, pageId, recordSourceId));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function removePages(userId, pageIds, recordSourceId = sourceId) {
+    let succeeded = true;
+    for (const pageId of pageIds ?? []) {
+      succeeded = removePage(userId, pageId, recordSourceId) && succeeded;
+    }
+    return succeeded;
+  }
+
   function clearBlocks(userId, pageId, blockIds) {
     let succeeded = true;
     for (const record of loadPageDrafts(userId, pageId)) {
@@ -294,12 +354,16 @@ export function createPageDraftStore(
     sourceId,
     loadPage,
     loadPageDrafts,
+    loadUserDrafts,
     saveTitle,
     saveBlock,
     acknowledgeTitle,
     acknowledgeBlock,
     removeTitle,
     removeBlock,
+    removeBlocks,
+    removePage,
+    removePages,
     clearBlocks,
     clearPage,
     clearPages,
