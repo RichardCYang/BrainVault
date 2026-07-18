@@ -74,6 +74,7 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("const seenPageIds = new Set();");
     expect(client).toContain("const seenCursors = new Set();");
     expect(client).toContain("} while (cursor);");
+    expect(client).toContain("return sortByRecent(pages);");
     expect(client).not.toContain('const data = await api("/api/pages?limit=100")');
   });
 

@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS page_tags (
 
 CREATE INDEX IF NOT EXISTS idx_pages_owner_updated_at ON pages(owner_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_pages_owner_archived ON pages(owner_id, is_archived);
+CREATE INDEX IF NOT EXISTS idx_pages_owner_archived_created ON pages(owner_id, is_archived, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_pages_parent ON pages(parent_page_id);
 CREATE INDEX IF NOT EXISTS idx_blocks_page_sort ON blocks(page_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_blocks_parent_sort ON blocks(parent_block_id, sort_order);

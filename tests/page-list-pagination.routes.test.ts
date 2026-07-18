@@ -27,7 +27,7 @@ const user = {
 };
 const token = signAuthToken({ sub: user.id, username: user.username });
 
-function page(id: string, updatedAt: string) {
+function page(id: string, createdAt: string, updatedAt = createdAt) {
   return {
     id,
     title: id,
@@ -39,9 +39,9 @@ function page(id: string, updatedAt: string) {
     parent_page_id: null,
     edit_version: 1,
     content_version: 1,
-    created_at: updatedAt,
+    created_at: createdAt,
     updated_at: updatedAt,
-    cursor_updated_at: updatedAt,
+    cursor_created_at: createdAt,
     block_count: 0,
     child_count: 0
   };
@@ -63,7 +63,7 @@ beforeEach(() => {
 });
 
 describe("Page-list pagination", () => {
-  it("returns an opaque cursor and resumes after the last emitted page", async () => {
+  it("uses an immutable cursor so edits cannot move an unread page ahead of the scan", async () => {
     database.pageBatches.push([
       page("pag_c", "2026-07-18 12:00:00.000000"),
       page("pag_b", "2026-07-18 11:00:00.000000"),
@@ -77,12 +77,22 @@ describe("Page-list pagination", () => {
 
     expect(first.body.pages.map((item: { id: string }) => item.id)).toEqual(["pag_c", "pag_b"]);
     expect(first.body.nextCursor).toEqual(expect.any(String));
+    const cursorPayload = JSON.parse(
+      Buffer.from(first.body.nextCursor, "base64url").toString("utf8")
+    );
+    expect(cursorPayload).toEqual({ createdAt: "2026-07-18 11:00:00.000000", id: "pag_b" });
+    expect(cursorPayload).not.toHaveProperty("updatedAt");
     const firstListCall = database.query.mock.calls.find(([sql]) => String(sql).includes("SELECT p.*"));
-    expect(firstListCall?.[0]).toContain("ORDER BY p.updated_at DESC, p.id DESC");
+    expect(firstListCall?.[0]).toContain("ORDER BY p.created_at DESC, p.id DESC");
+    expect(firstListCall?.[0]).not.toContain("ORDER BY p.updated_at DESC, p.id DESC");
     expect(firstListCall?.[1]).toEqual([user.id, 0, 3]);
 
     database.query.mockClear();
-    database.pageBatches.push([page("pag_a", "2026-07-18 10:00:00.000000")]);
+    // pag_a was edited after the first request. Its updated_at now sorts ahead
+    // of the old cursor, but its immutable created_at remains behind the frontier.
+    database.pageBatches.push([
+      page("pag_a", "2026-07-18 10:00:00.000000", "2026-07-18 13:00:00.000000")
+    ]);
     const second = await request(createApp())
       .get(`/api/pages?limit=2&cursor=${encodeURIComponent(first.body.nextCursor)}`)
       .set("Authorization", `Bearer ${token}`)
@@ -91,7 +101,8 @@ describe("Page-list pagination", () => {
     expect(second.body.pages.map((item: { id: string }) => item.id)).toEqual(["pag_a"]);
     expect(second.body.nextCursor).toBeNull();
     const secondListCall = database.query.mock.calls.find(([sql]) => String(sql).includes("SELECT p.*"));
-    expect(secondListCall?.[0]).toContain("p.updated_at < ?");
+    expect(secondListCall?.[0]).toContain("p.created_at < ?");
+    expect(secondListCall?.[0]).not.toContain("p.updated_at < ?");
     expect(secondListCall?.[1]).toEqual([
       user.id,
       0,

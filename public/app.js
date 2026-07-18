@@ -6319,7 +6319,9 @@ async function fetchAllPageSummaries({ query = "", tag = "" } = {}) {
     cursor = nextCursor;
   } while (cursor);
 
-  return pages;
+  // The API scans with immutable creation keys so edits cannot cross the
+  // pagination frontier. Restore the existing recent-first UI after the full scan.
+  return sortByRecent(pages);
 }
 
 async function loadAllPages() {

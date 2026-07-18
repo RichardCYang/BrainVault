@@ -917,7 +917,7 @@ paths:
   /api/pages:
     get:
       summary: List pages
-      description: Returns a stable page of summaries ordered by update time and ID. Follow nextCursor until it is null to enumerate every matching page.
+      description: Returns summaries in a stable creation-time and ID scan order. Follow nextCursor until it is null to enumerate every matching page; consumers that need recency ordering should sort the complete result by updatedAt.
       parameters:
         - in: query
           name: q

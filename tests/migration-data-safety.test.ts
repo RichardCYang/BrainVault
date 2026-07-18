@@ -34,6 +34,20 @@ describe("migration replay data safety", () => {
     }
   });
 
+  it("keeps a composite index for the immutable page-list scan", () => {
+    const baseline = fs.readFileSync(path.join(migrationsDir, "001_init.sql"), "utf8");
+    const migration = fs.readFileSync(
+      path.join(migrationsDir, "017_stable_page_list_pagination.sql"),
+      "utf8"
+    );
+
+    for (const sql of [baseline, migration]) {
+      expect(sql).toMatch(
+        /idx_pages_owner_archived_created[\s\S]*pages\s*\(owner_id,\s*is_archived,\s*created_at,\s*id\)/i
+      );
+    }
+  });
+
   it("persists and consumes a crash-safe marker for the legacy collection backfill", () => {
     const sql = fs.readFileSync(
       path.join(migrationsDir, "009_pages_collection_kind.sql"),
