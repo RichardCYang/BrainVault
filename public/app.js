@@ -501,12 +501,15 @@ const blockSaveTimers = new Map();
 const blockSaveRows = new Map();
 const blockSaveQueues = new Map();
 const blockSaveTaskIds = new Map();
+const blockDraftConflictOrigins = new Map();
 let pageTitleSaveTimer = null;
 let pageTitleEditRevision = 0;
 let pageTitleSavedRevision = 0;
 let pageTitleTaskId = 0;
 let pageTitleDraftExpectedVersion = null;
 let pageTitleDraftSourceId = pageDraftSourceId;
+let pageTitleDraftConflict = false;
+let pageTitleConflictOrigin = null;
 let localDraftStorageWarningShown = false;
 let beforeUnloadProtectionActive = false;
 let statusClearTimer = null;
@@ -1010,6 +1013,16 @@ const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
         nextExpectedVersion: data.page.version
       })
     );
+    if (task.recoveredConflictOrigin) {
+      const removed = checkDraftStoreWrite(
+        pageDraftStore.removeTitleIfUnchanged({
+          userId: task.userId,
+          pageId: task.pageId,
+          ...task.recoveredConflictOrigin
+        })
+      );
+      if (removed && pageTitleConflictOrigin === task.recoveredConflictOrigin) pageTitleConflictOrigin = null;
+    }
   }
 
   if (state.selectedPage?.id === task.pageId) {
@@ -2588,6 +2601,9 @@ function resetPageEditTracking() {
   pageTitleTaskId = 0;
   pageTitleDraftExpectedVersion = null;
   pageTitleDraftSourceId = pageDraftSourceId;
+  pageTitleDraftConflict = false;
+  pageTitleConflictOrigin = null;
+  blockDraftConflictOrigins.clear();
   for (const timer of blockSaveTimers.values()) window.clearTimeout(timer);
   blockSaveTimers.clear();
   blockSaveRows.clear();
@@ -2612,6 +2628,9 @@ function discardPendingPageEdits() {
   pageTitleTaskId = 0;
   pageTitleDraftExpectedVersion = null;
   pageTitleDraftSourceId = pageDraftSourceId;
+  pageTitleDraftConflict = false;
+  pageTitleConflictOrigin = null;
+  blockDraftConflictOrigins.clear();
   disableBeforeUnloadProtection();
 }
 
@@ -4998,6 +5017,12 @@ function handleTableCellKeydown(event, input, row) {
 
 function markBlockDirty(row) {
   if (!row?.dataset.blockId) return;
+  if (row.dataset.draftConflict === "true") {
+    delete row.dataset.draftConflict;
+    row.dataset.draftSourceId = pageDraftSourceId;
+    const serverVersion = getPositiveVersion(getBlockById(row.dataset.blockId)?.version);
+    if (serverVersion !== null) row.dataset.draftExpectedVersion = String(serverVersion);
+  }
   const editRevision = (Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0) + 1;
   row.dataset.editRevision = String(editRevision);
   row.classList.add("is-dirty");
@@ -5036,6 +5061,19 @@ function getBlockSaveQueue(blockId) {
           nextExpectedVersion: data.block.version
         })
       );
+      if (task.recoveredConflictOrigin) {
+        const removed = checkDraftStoreWrite(
+          pageDraftStore.removeBlockIfUnchanged({
+            userId: task.userId,
+            pageId: task.pageId,
+            blockId,
+            ...task.recoveredConflictOrigin
+          })
+        );
+        if (removed && blockDraftConflictOrigins.get(blockId) === task.recoveredConflictOrigin) {
+          blockDraftConflictOrigins.delete(blockId);
+        }
+      }
     }
     applyPageContentVersion(task.pageId, data.pageContentVersion);
     updateBlockInState(data.block);
@@ -5067,7 +5105,9 @@ function getBlockSaveQueue(blockId) {
 
 async function saveBlockRow(row, { quiet = false, keepalive = false, allowLocked = false } = {}) {
   const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage({ announce: !quiet });
-  if (!writable || !row?.dataset.blockId || row.dataset.deleting === "true") return null;
+  if (!writable || !row?.dataset.blockId || row.dataset.deleting === "true" || row.dataset.draftConflict === "true") {
+    return null;
+  }
   const blockId = row.dataset.blockId;
   const payload = buildBlockPayload(row);
   const scope = getDraftScope();
@@ -5101,6 +5141,7 @@ async function saveBlockRow(row, { quiet = false, keepalive = false, allowLocked
       storedDraft?.expectedVersion,
       getBlockById(blockId)?.version
     ),
+    recoveredConflictOrigin: blockDraftConflictOrigins.get(blockId) ?? null,
     payload,
     row,
     keepalive,
@@ -6026,7 +6067,7 @@ function applyPageContentVersion(pageId, contentVersion) {
 
 async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked = false } = {}) {
   const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage({ announce: !quiet });
-  if (!writable) return null;
+  if (!writable || pageTitleDraftConflict) return null;
   const pageId = state.selectedPage.id;
   const title = normalizePageTitle(elements.pageTitle.value);
   window.clearTimeout(pageTitleSaveTimer);
@@ -6039,6 +6080,7 @@ async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked =
     title,
     editRevision: pageTitleEditRevision,
     expectedVersion: getPositiveVersion(pageTitleDraftExpectedVersion),
+    recoveredConflictOrigin: pageTitleConflictOrigin,
     taskId: ++pageTitleTaskId,
     keepalive,
     mutationId: createMutationId()
@@ -6056,6 +6098,12 @@ async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked =
 
 function schedulePageTitleSave() {
   if (!requireWritablePage({ announce: false })) return;
+  if (pageTitleDraftConflict) {
+    pageTitleDraftConflict = false;
+    pageTitleDraftSourceId = pageDraftSourceId;
+    pageTitleDraftExpectedVersion = getPositiveVersion(state.selectedPage?.version);
+    elements.pageTitle.classList.remove("save-error");
+  }
   pageTitleEditRevision += 1;
   const title = normalizePageTitle(elements.pageTitle.value);
   applyPageSummaryUpdate(state.selectedPage.id, { title });
@@ -6271,8 +6319,17 @@ function activatePersistedPageDraft(recovery) {
     pageTitleEditRevision = Math.max(1, recovery.title.revision);
     pageTitleSavedRevision = Math.max(0, pageTitleEditRevision - 1);
     pageTitleDraftExpectedVersion = recovery.title.expectedVersion;
-    pageTitleDraftSourceId = pageDraftSourceId;
-    persistPageTitleDraft();
+    pageTitleDraftConflict = recovery.title.conflict;
+    pageTitleConflictOrigin = recovery.title.conflict
+      ? {
+          sourceId: recovery.title.sourceId,
+          value: recovery.title.value,
+          expectedVersion: recovery.title.expectedVersion,
+          revision: recovery.title.revision
+        }
+      : null;
+    pageTitleDraftSourceId = recovery.title.conflict ? recovery.title.sourceId : pageDraftSourceId;
+    if (!recovery.title.conflict) persistPageTitleDraft();
     elements.pageTitle.classList.add("local-draft-recovered");
     if (recovery.title.conflict) {
       elements.pageTitle.classList.add("save-error");
@@ -6289,14 +6346,25 @@ function activatePersistedPageDraft(recovery) {
     if (!row) continue;
     row.dataset.editRevision = String(Math.max(1, recovered.draft.revision));
     row.dataset.draftExpectedVersion = String(recovered.draft.expectedVersion);
-    row.dataset.draftSourceId = pageDraftSourceId;
-    persistBlockDraft(row);
+    row.dataset.draftSourceId = recovered.conflict ? recovered.sourceId : pageDraftSourceId;
+    if (recovered.conflict) {
+      row.dataset.draftConflict = "true";
+      blockDraftConflictOrigins.set(recovered.blockId, {
+        sourceId: recovered.sourceId,
+        payload: recovered.draft.payload,
+        expectedVersion: recovered.draft.expectedVersion,
+        revision: recovered.draft.revision
+      });
+    } else {
+      blockDraftConflictOrigins.delete(recovered.blockId);
+    }
+    if (!recovered.conflict) persistBlockDraft(row);
     row.classList.add("is-dirty", "local-draft-recovered");
-    blockSaveRows.set(recovered.blockId, row);
     if (recovered.conflict) {
       row.classList.add("save-error");
       continue;
     }
+    blockSaveRows.set(recovered.blockId, row);
     blockSaveTimers.set(
       recovered.blockId,
       window.setTimeout(() => {

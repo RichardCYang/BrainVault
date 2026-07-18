@@ -40,6 +40,57 @@ const blockDraft = {
 };
 
 describe("page draft store", () => {
+  it("cleans up only the exact recovered conflict and preserves concurrent tab changes", () => {
+    const storage = new MemoryStorage();
+    const recovered = createPageDraftStore(storage, { sourceId: "tab-recovered" });
+    recovered.saveTitle({ ...titleDraft, value: "stale title" });
+    recovered.saveBlock({ ...blockDraft, payload: { ...blockDraft.payload, markdown: "stale block" } });
+
+    expect(
+      recovered.removeTitleIfUnchanged({
+        ...titleDraft,
+        sourceId: "tab-recovered",
+        value: "stale title"
+      })
+    ).toBe(true);
+    expect(recovered.loadPage("user-1", "page-1")?.title).toBeNull();
+
+    recovered.saveTitle({ ...titleDraft, value: "changed in original tab", revision: 3 });
+    expect(
+      recovered.removeTitleIfUnchanged({
+        ...titleDraft,
+        sourceId: "tab-recovered",
+        value: "stale title"
+      })
+    ).toBe(true);
+    expect(recovered.loadPage("user-1", "page-1")?.title?.value).toBe("changed in original tab");
+
+    expect(
+      recovered.removeBlockIfUnchanged({
+        ...blockDraft,
+        sourceId: "tab-recovered",
+        payload: { ...blockDraft.payload, markdown: "stale block" }
+      })
+    ).toBe(true);
+    expect(recovered.loadPage("user-1", "page-1")?.blocks["block-1"]).toBeUndefined();
+
+    recovered.saveBlock({
+      ...blockDraft,
+      revision: 4,
+      payload: { ...blockDraft.payload, markdown: "changed in original tab" }
+    });
+    expect(
+      recovered.removeBlockIfUnchanged({
+        ...blockDraft,
+        sourceId: "tab-recovered",
+        payload: { ...blockDraft.payload, markdown: "stale block" }
+      })
+    ).toBe(true);
+    expect(recovered.loadPage("user-1", "page-1")?.blocks["block-1"]?.payload.markdown).toBe(
+      "changed in original tab"
+    );
+  });
+
   it("persists title and block drafts across store instances", () => {
     const storage = new MemoryStorage();
     const first = createPageDraftStore(storage, { sourceId: "tab-a" });

@@ -255,6 +255,70 @@ export function createPageDraftStore(
     return writePage(record);
   }
 
+  function removeTitleIfUnchanged({ userId, pageId, sourceId: recordSourceId, value, expectedVersion, revision }) {
+    const normalizedVersion = normalizeVersion(expectedVersion);
+    const normalizedRevision = normalizeRevision(revision);
+    if (
+      !isNonEmptyString(userId) ||
+      !isNonEmptyString(pageId) ||
+      !isNonEmptyString(recordSourceId) ||
+      typeof value !== "string" ||
+      normalizedVersion === null ||
+      normalizedRevision === null
+    ) {
+      return false;
+    }
+    const record = loadPage(userId, pageId, recordSourceId);
+    if (!record?.title) return true;
+    if (
+      record.title.value !== value ||
+      record.title.expectedVersion !== normalizedVersion ||
+      record.title.revision !== normalizedRevision
+    ) {
+      return true;
+    }
+    record.title = null;
+    return writePage(record);
+  }
+
+  function removeBlockIfUnchanged({
+    userId,
+    pageId,
+    blockId,
+    sourceId: recordSourceId,
+    payload,
+    expectedVersion,
+    revision
+  }) {
+    const normalizedVersion = normalizeVersion(expectedVersion);
+    const normalizedRevision = normalizeRevision(revision);
+    if (
+      !isNonEmptyString(userId) ||
+      !isNonEmptyString(pageId) ||
+      !isNonEmptyString(blockId) ||
+      !isNonEmptyString(recordSourceId) ||
+      !payload ||
+      typeof payload !== "object" ||
+      Array.isArray(payload) ||
+      normalizedVersion === null ||
+      normalizedRevision === null
+    ) {
+      return false;
+    }
+    const record = loadPage(userId, pageId, recordSourceId);
+    const draft = record?.blocks?.[blockId];
+    if (!record || !draft) return true;
+    if (
+      draft.expectedVersion !== normalizedVersion ||
+      draft.revision !== normalizedRevision ||
+      JSON.stringify(draft.payload) !== JSON.stringify(payload)
+    ) {
+      return true;
+    }
+    delete record.blocks[blockId];
+    return writePage(record);
+  }
+
   function removeTitle(userId, pageId, recordSourceId) {
     const record = loadPage(userId, pageId, recordSourceId);
     if (!record) return true;
@@ -359,6 +423,8 @@ export function createPageDraftStore(
     saveBlock,
     acknowledgeTitle,
     acknowledgeBlock,
+    removeTitleIfUnchanged,
+    removeBlockIfUnchanged,
     removeTitle,
     removeBlock,
     removeBlocks,
