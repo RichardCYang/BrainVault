@@ -63,6 +63,29 @@ export function getBraveAppCandidates({
   return uniqueNonEmpty([...executableCandidates, ...toAppList(fallbackApp)]);
 }
 
+export function isPrivateBrowserRequested(value = process.env.BRAINVAULT_DEV_BROWSER_PRIVATE) {
+  return /^(?:1|true|yes|on)$/i.test(String(value ?? "").trim());
+}
+
+export async function openDevelopmentBrowser(
+  url,
+  {
+    privateMode = false,
+    openUrl = open,
+    browserApps = apps,
+    platform = process.platform,
+    env = process.env
+  } = {}
+) {
+  if (!privateMode) {
+    await openUrl(url);
+    return "normal";
+  }
+
+  await openPrivateDefaultBrowser(url, { openUrl, browserApps, platform, env });
+  return "private";
+}
+
 export async function openPrivateDefaultBrowser(
   url,
   {

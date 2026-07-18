@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createServerOutputInspector,
   getBraveAppCandidates,
+  isPrivateBrowserRequested,
   isUnsupportedBraveDefaultBrowserError,
+  openDevelopmentBrowser,
   openPrivateDefaultBrowser
 } from "../scripts/dev-browser.mjs";
 
@@ -32,6 +34,34 @@ describe("development browser launcher", () => {
 
     expect(onServerReady).toHaveBeenCalledOnce();
     expect(onServerReady).toHaveBeenCalledWith("http://localhost:4567");
+  });
+
+  it("uses a durable normal browser profile unless private mode is explicitly requested", async () => {
+    const openUrl = vi.fn().mockResolvedValue(undefined);
+
+    expect(isPrivateBrowserRequested("")).toBe(false);
+    expect(isPrivateBrowserRequested("false")).toBe(false);
+    expect(isPrivateBrowserRequested("true")).toBe(true);
+    expect(isPrivateBrowserRequested("1")).toBe(true);
+
+    await expect(openDevelopmentBrowser("http://localhost:4000", { openUrl })).resolves.toBe("normal");
+    expect(openUrl).toHaveBeenCalledWith("http://localhost:4000");
+  });
+
+  it("opens private mode only when explicitly requested", async () => {
+    const openUrl = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      openDevelopmentBrowser("http://localhost:4000", {
+        privateMode: true,
+        openUrl,
+        browserApps: { browserPrivate: "browserPrivate", brave: "brave" }
+      })
+    ).resolves.toBe("private");
+
+    expect(openUrl).toHaveBeenCalledWith("http://localhost:4000", {
+      app: { name: "browserPrivate" }
+    });
   });
 
   it("recognizes the mixed-case Brave default-browser failure", () => {

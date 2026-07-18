@@ -1,10 +1,16 @@
 import { spawn } from "node:child_process";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { createServerOutputInspector, openPrivateDefaultBrowser } from "./dev-browser.mjs";
+import "dotenv/config";
+import {
+  createServerOutputInspector,
+  isPrivateBrowserRequested,
+  openDevelopmentBrowser
+} from "./dev-browser.mjs";
 
+const privateBrowserRequested = isPrivateBrowserRequested();
 const inspectServerOutput = createServerOutputInspector((url) => {
-  void launchPrivateBrowser(url);
+  void launchDevelopmentBrowser(url);
 });
 
 const tsxCliPath = fileURLToPath(import.meta.resolve("tsx/cli"));
@@ -18,16 +24,19 @@ const serverProcess = spawn(process.execPath, [tsxCliPath, "watch", "src/server.
   stdio: ["inherit", "pipe", "pipe"]
 });
 
-async function launchPrivateBrowser(url) {
+async function launchDevelopmentBrowser(url) {
   try {
-    await openPrivateDefaultBrowser(url);
-    console.log(`[dev] Opened the default browser in private mode: ${url}`);
+    const mode = await openDevelopmentBrowser(url, { privateMode: privateBrowserRequested });
+    console.log(`[dev] Opened the default browser in ${mode} mode: ${url}`);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    console.error(`[dev] Could not open the default browser in private mode: ${reason}`);
-    console.error(
-      "[dev] Automatic private-mode launch supports Chrome, Edge, Firefox, and Brave. A normal browser window was not opened."
-    );
+    const mode = privateBrowserRequested ? "private" : "normal";
+    console.error(`[dev] Could not open the default browser in ${mode} mode: ${reason}`);
+    if (privateBrowserRequested) {
+      console.error(
+        "[dev] Private-mode launch supports Chrome, Edge, Firefox, and Brave. Set BRAINVAULT_DEV_BROWSER_PRIVATE=false to use a durable normal browser profile."
+      );
+    }
   }
 }
 

@@ -11,6 +11,10 @@ const blockRoutes = readFileSync(new URL("../src/routes/block.routes.ts", import
 
 describe("Data-loss prevention integration", () => {
   it("serializes autosaves, flushes navigation, and protects dirty unloads", () => {
+    expect(client).toContain('import { createPageDraftStore } from "./draft-store.js"');
+    expect(client).toContain("const pageDraftSourceId = createPageDraftSourceId()");
+    expect(client).toContain("createPageDraftStore(window.localStorage, { sourceId: pageDraftSourceId })");
+    expect(client).not.toContain("sessionStorage.setItem(pageDraftSourceSessionKey");
     expect(client).toContain('import { createLatestWriteQueue } from "./save-queue.js"');
     expect(client).toContain("await flushPendingPageEdits();");
     expect(client).toContain('window.addEventListener("beforeunload", handleBeforeUnload)');
@@ -36,6 +40,15 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain('const pendingSavePayloadBytes = keepalive ? getPendingSavePayloadBytes');
     expect(client).toContain('const useKeepalive = keepalive && pendingSavePayloadBytes <= keepaliveSaveBudgetBytes;');
     expect(client).toContain('keepalive: useKeepalive');
+    expect(client).toContain("function persistPageTitleDraft()");
+    expect(client).toContain("function persistBlockDraft(row, payload = null)");
+    expect(client).toContain("pageDraftStore.acknowledgeTitle");
+    expect(client).toContain("pageDraftStore.acknowledgeBlock");
+    expect(client).toContain("function applyPersistedPageDraft(page)");
+    expect(client).toContain("pageDraftStore.loadPageDrafts(scope.userId, scope.pageId)");
+    expect(client).toContain("row.dataset.draftSourceId = pageDraftSourceId");
+    expect(client).toContain("expectedVersion: getPositiveVersion(row.dataset.draftExpectedVersion)");
+    expect(client).toContain("if (!activatePersistedPageDraft(recovery)) setStatus(t(\"status.documentOpened\"));");
   });
 
   it("does not delete attachment source text changed while an upload is in flight", () => {

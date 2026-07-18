@@ -1555,6 +1555,14 @@ button.page-view-path-segment:focus-visible {
   color: var(--muted-light);
 }
 
+.page-title-input.local-draft-recovered {
+  background: rgba(99, 161, 242, 0.1);
+}
+
+.page-title-input.save-error {
+  box-shadow: inset 0 -2px 0 rgba(190, 62, 62, 0.7);
+}
+
 .page-view .kicker {
   display: block;
   margin-bottom: 0.55rem;
@@ -1646,6 +1654,29 @@ kbd {
 
 .editor-block-row.is-dirty {
   background: rgba(99, 161, 242, 0.08);
+}
+
+.editor-block-row.save-error {
+  box-shadow: inset 3px 0 0 rgba(190, 62, 62, 0.72);
+}
+
+.local-draft-recovery-panel {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.8rem 0;
+  padding: 0.85rem;
+  border: 1px solid rgba(190, 62, 62, 0.34);
+  border-radius: var(--radius-sm);
+  background: rgba(190, 62, 62, 0.07);
+}
+
+.local-draft-recovery-panel pre {
+  max-height: 18rem;
+  overflow: auto;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 
 .editor-block-row.is-saving .block-row-meta::after {

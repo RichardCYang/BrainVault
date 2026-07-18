@@ -38,7 +38,8 @@ describe("Page and collection deletion menus", () => {
     expect(client).toContain("Number(localPage.contentVersion ?? 1) !== Number(serverPage.contentVersion ?? 1)");
     expect(client).toContain('t("errors.PAGE_DELETE_SCOPE_CHANGED")');
     expect(client).toContain('body: { expectedSnapshot: deletionSnapshot.snapshot }');
-    expect(client).toContain('body: { expectedVersions: getBlockVersionSnapshot(blockId, options) }');
+    expect(client).toContain('const expectedVersions = getBlockVersionSnapshot(blockId, options);');
+    expect(client).toContain('body: { expectedVersions }');
     expect(styles).toContain("touch-action: manipulation;");
     expect(styles).toContain("@media (hover: none), (pointer: coarse)");
   });

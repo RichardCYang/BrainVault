@@ -23,6 +23,7 @@ import {
   summarizeAiChatData
 } from "./ai-chat-block.js";
 import { emojiCategoryDefinitions, emojiRecords } from "./emoji-data.js";
+import { createPageDraftStore } from "./draft-store.js";
 import { createLatestWriteQueue } from "./save-queue.js";
 
 const tokenKey = "brainvault.token";
@@ -35,6 +36,15 @@ const emojiBatchSize = 240;
 const mobileSidebarMedia = window.matchMedia("(max-width: 760px)");
 const pageModes = Object.freeze({ READ: "read", WRITE: "write" });
 const keepaliveSaveBudgetBytes = 60 * 1024;
+
+function createPageDraftSourceId() {
+  return globalThis.crypto?.randomUUID?.() ?? `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+// Generate this in memory instead of sessionStorage. Browsers may clone sessionStorage
+// when a tab is duplicated, which would let two live tabs overwrite the same draft.
+const pageDraftSourceId = createPageDraftSourceId();
+const pageDraftStore = createPageDraftStore(window.localStorage, { sourceId: pageDraftSourceId });
 
 const emojiSearchIndex = emojiRecords.map((record) =>
   `${record[0]} ${record[2]} ${record[3]} ${record[4]} ${record[5]}`.toLocaleLowerCase()
@@ -490,6 +500,9 @@ let pageTitleSaveTimer = null;
 let pageTitleEditRevision = 0;
 let pageTitleSavedRevision = 0;
 let pageTitleTaskId = 0;
+let pageTitleDraftExpectedVersion = null;
+let pageTitleDraftSourceId = pageDraftSourceId;
+let localDraftStorageWarningShown = false;
 let beforeUnloadProtectionActive = false;
 let statusClearTimer = null;
 const statusDismissDelay = 2400;
@@ -970,11 +983,31 @@ const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
   const currentPage = state.selectedPage?.id === task.pageId
     ? state.selectedPage
     : state.allPages.find((page) => page.id === task.pageId);
+  const storedExpectedVersion = task.userId
+    ? pageDraftStore.loadPage(task.userId, task.pageId, task.draftSourceId)?.title?.expectedVersion
+    : null;
+  const expectedVersion =
+    (state.selectedPage?.id === task.pageId ? getPositiveVersion(pageTitleDraftExpectedVersion) : null) ??
+    getPositiveVersion(storedExpectedVersion) ??
+    getPositiveVersion(task.expectedVersion) ??
+    getPositiveVersion(currentPage?.version);
   const data = await api(`/api/pages/${task.pageId}`, {
     method: "PATCH",
     keepalive: task.keepalive === true,
-    body: { title: task.title, expectedVersion: currentPage?.version, mutationId: task.mutationId }
+    body: { title: task.title, expectedVersion, mutationId: task.mutationId }
   });
+
+  if (task.userId) {
+    checkDraftStoreWrite(
+      pageDraftStore.acknowledgeTitle({
+        userId: task.userId,
+        pageId: task.pageId,
+        sourceId: task.draftSourceId,
+        revision: task.editRevision,
+        nextExpectedVersion: data.page.version
+      })
+    );
+  }
 
   if (state.selectedPage?.id === task.pageId) {
     const currentBlocks = state.selectedPage.blocks;
@@ -984,6 +1017,13 @@ const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
   }
   if (pageTitleTaskId === task.taskId && pageTitleEditRevision === task.editRevision) {
     pageTitleSavedRevision = task.editRevision;
+    pageTitleDraftExpectedVersion = null;
+    pageTitleDraftSourceId = pageDraftSourceId;
+  } else if (
+    state.selectedPage?.id === task.pageId &&
+    (pageTitleEditRevision > task.editRevision || pageTitleTaskId > task.taskId)
+  ) {
+    pageTitleDraftExpectedVersion = getPositiveVersion(data.page.version);
   }
   return data;
 });
@@ -1093,6 +1133,7 @@ async function restoreUserDataBackup(file) {
     const formData = new FormData();
     formData.append("backup", file, file.name);
     const data = await api("/api/data/import", { method: "POST", body: formData });
+    checkDraftStoreWrite(pageDraftStore.clearUser(data.user.id));
     state.user = data.user;
     await applyUserPreferredLanguage();
     fillAccountSettings();
@@ -2439,6 +2480,75 @@ function syncBeforeUnloadProtection() {
   else window.removeEventListener("beforeunload", handleBeforeUnload);
 }
 
+function getDraftScope(pageId = state.selectedPage?.id) {
+  const userId = state.user?.id;
+  return userId && pageId ? { userId, pageId } : null;
+}
+
+function getPositiveVersion(value) {
+  const version = Number(value);
+  return Number.isSafeInteger(version) && version >= 1 ? version : null;
+}
+
+function reportLocalDraftStorageFailure() {
+  if (localDraftStorageWarningShown) return;
+  localDraftStorageWarningShown = true;
+  setStatus(t("status.localDraftStorageFailed"), true);
+}
+
+function checkDraftStoreWrite(succeeded) {
+  if (!succeeded) reportLocalDraftStorageFailure();
+  return succeeded;
+}
+
+function persistPageTitleDraft() {
+  const scope = getDraftScope();
+  if (!scope || !state.selectedPage) return false;
+  const draftSourceId = pageTitleDraftSourceId || pageDraftSourceId;
+  const storedDraft = pageDraftStore.loadPage(scope.userId, scope.pageId, draftSourceId)?.title;
+  const expectedVersion =
+    getPositiveVersion(pageTitleDraftExpectedVersion) ??
+    getPositiveVersion(storedDraft?.expectedVersion) ??
+    getPositiveVersion(state.selectedPage.version);
+  if (expectedVersion === null || pageTitleEditRevision < 1) return false;
+  pageTitleDraftExpectedVersion = expectedVersion;
+  return checkDraftStoreWrite(
+    pageDraftStore.saveTitle({
+      ...scope,
+      sourceId: draftSourceId,
+      value: normalizePageTitle(elements.pageTitle.value),
+      expectedVersion,
+      revision: pageTitleEditRevision
+    })
+  );
+}
+
+function persistBlockDraft(row, payload = null) {
+  const scope = getDraftScope();
+  const blockId = row?.dataset.blockId;
+  const editRevision = Number.parseInt(row?.dataset.editRevision ?? "0", 10) || 0;
+  if (!scope || !blockId || editRevision < 1) return false;
+  const draftSourceId = row.dataset.draftSourceId || pageDraftSourceId;
+  const storedDraft = pageDraftStore.loadPage(scope.userId, scope.pageId, draftSourceId)?.blocks?.[blockId];
+  const expectedVersion =
+    getPositiveVersion(row.dataset.draftExpectedVersion) ??
+    getPositiveVersion(storedDraft?.expectedVersion) ??
+    getPositiveVersion(getBlockById(blockId)?.version);
+  if (expectedVersion === null) return false;
+  row.dataset.draftExpectedVersion = String(expectedVersion);
+  row.dataset.draftSourceId = draftSourceId;
+  return checkDraftStoreWrite(
+    pageDraftStore.saveBlock({
+      ...scope,
+      sourceId: draftSourceId,
+      blockId,
+      payload: payload ?? buildBlockPayload(row),
+      expectedVersion,
+      revision: editRevision
+    })
+  );
+}
+
 function disableBeforeUnloadProtection() {
   window.removeEventListener("beforeunload", handleBeforeUnload);
   beforeUnloadProtectionActive = false;
@@ -2450,11 +2560,14 @@ function resetPageEditTracking() {
   pageTitleEditRevision = 0;
   pageTitleSavedRevision = 0;
   pageTitleTaskId = 0;
+  pageTitleDraftExpectedVersion = null;
+  pageTitleDraftSourceId = pageDraftSourceId;
   for (const timer of blockSaveTimers.values()) window.clearTimeout(timer);
   blockSaveTimers.clear();
   blockSaveRows.clear();
   blockSaveQueues.clear();
   blockSaveTaskIds.clear();
+  elements.pageTitle.classList.remove("local-draft-recovered", "save-error");
   disableBeforeUnloadProtection();
 }
 
@@ -2471,6 +2584,8 @@ function discardPendingPageEdits() {
   pageTitleEditRevision = 0;
   pageTitleSavedRevision = 0;
   pageTitleTaskId = 0;
+  pageTitleDraftExpectedVersion = null;
+  pageTitleDraftSourceId = pageDraftSourceId;
   disableBeforeUnloadProtection();
 }
 
@@ -2517,7 +2632,7 @@ function getPendingSavePayloadBytes({ saveTitle, rowsToSave }) {
   if (saveTitle) {
     totalBytes += getJsonPayloadByteLength({
       title: normalizePageTitle(elements.pageTitle.value),
-      expectedVersion: state.selectedPage?.version
+      expectedVersion: getPositiveVersion(pageTitleDraftExpectedVersion) ?? state.selectedPage?.version
     });
   }
 
@@ -2525,7 +2640,7 @@ function getPendingSavePayloadBytes({ saveTitle, rowsToSave }) {
     if (!row?.dataset.blockId || row.dataset.deleting === "true") continue;
     totalBytes += getJsonPayloadByteLength({
       ...buildBlockPayload(row),
-      expectedVersion: getBlockById(blockId)?.version
+      expectedVersion: getPositiveVersion(row.dataset.draftExpectedVersion) ?? getBlockById(blockId)?.version
     });
   }
   return totalBytes;
@@ -2786,6 +2901,7 @@ async function deleteNavigationTarget() {
       method: "DELETE",
       body: { expectedSnapshot: deletionSnapshot.snapshot }
     });
+    if (state.user?.id) checkDraftStoreWrite(pageDraftStore.clearPages(state.user.id, serverPageIds));
 
     if (selectedPageWasDeleted) {
       resetPageEditTracking();
@@ -2952,10 +3068,14 @@ function getBlockVersionSnapshot(blockId, { includeDescendants = true } = {}) {
 }
 
 async function deleteBlockWithVersionCheck(blockId, options) {
-  return api(`/api/blocks/${blockId}`, {
+  const expectedVersions = getBlockVersionSnapshot(blockId, options);
+  const scope = getDraftScope();
+  const data = await api(`/api/blocks/${blockId}`, {
     method: "DELETE",
-    body: { expectedVersions: getBlockVersionSnapshot(blockId, options) }
+    body: { expectedVersions }
   });
+  if (scope) checkDraftStoreWrite(pageDraftStore.clearBlocks(scope.userId, scope.pageId, expectedVersions.map(({ id }) => id)));
+  return data;
 }
 
 function updateBlockInState(updatedBlock, blocks = state.selectedPage?.blocks ?? []) {
@@ -4803,6 +4923,7 @@ function markBlockDirty(row) {
   row.dataset.editRevision = String(editRevision);
   row.classList.add("is-dirty");
   row.classList.remove("is-saved", "save-error");
+  persistBlockDraft(row);
   syncBeforeUnloadProtection();
 }
 
@@ -4811,12 +4932,31 @@ function getBlockSaveQueue(blockId) {
   if (queue) return queue;
 
   queue = createLatestWriteQueue(async (task) => {
-    const currentVersion = getBlockById(blockId)?.version;
+    const storedExpectedVersion = task.userId
+      ? pageDraftStore.loadPage(task.userId, task.pageId, task.draftSourceId)?.blocks?.[blockId]?.expectedVersion
+      : null;
+    const currentVersion =
+      getPositiveVersion(task.row?.dataset.draftExpectedVersion) ??
+      getPositiveVersion(storedExpectedVersion) ??
+      getPositiveVersion(task.expectedVersion) ??
+      getPositiveVersion(getBlockById(blockId)?.version);
     const data = await api(`/api/blocks/${blockId}`, {
       method: "PATCH",
       keepalive: task.keepalive === true,
       body: { ...task.payload, expectedVersion: currentVersion, mutationId: task.mutationId }
     });
+    if (task.userId) {
+      checkDraftStoreWrite(
+        pageDraftStore.acknowledgeBlock({
+          userId: task.userId,
+          pageId: task.pageId,
+          sourceId: task.draftSourceId,
+          blockId,
+          revision: task.editRevision,
+          nextExpectedVersion: data.block.version
+        })
+      );
+    }
     applyPageContentVersion(task.pageId, data.pageContentVersion);
     updateBlockInState(data.block);
     if (task.row?.dataset.blockId === blockId) updateRenderedBlockPreview(task.row, data.block);
@@ -4826,7 +4966,14 @@ function getBlockSaveQueue(blockId) {
     if (latestTaskId === task.taskId && currentEditRevision === task.editRevision) {
       task.row.classList.remove("is-dirty", "save-error");
       task.row.classList.add("is-saved");
+      delete task.row.dataset.draftExpectedVersion;
+      delete task.row.dataset.draftSourceId;
       window.setTimeout(() => task.row.classList.remove("is-saved"), 900);
+    } else if (
+      task.row?.dataset.blockId === blockId &&
+      (currentEditRevision > task.editRevision || Number(latestTaskId) > task.taskId)
+    ) {
+      task.row.dataset.draftExpectedVersion = String(data.block.version);
     }
     return data;
   });
@@ -4838,6 +4985,21 @@ async function saveBlockRow(row, { quiet = false, keepalive = false, allowLocked
   const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage({ announce: !quiet });
   if (!writable || !row?.dataset.blockId || row.dataset.deleting === "true") return null;
   const blockId = row.dataset.blockId;
+  const payload = buildBlockPayload(row);
+  const scope = getDraftScope();
+  const draftSourceId = row.dataset.draftSourceId || pageDraftSourceId;
+  const storedDraft = scope
+    ? pageDraftStore.loadPage(scope.userId, scope.pageId, draftSourceId)?.blocks?.[blockId]
+    : null;
+  let editRevision = Math.max(
+    Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0,
+    Number.parseInt(String(storedDraft?.revision ?? 0), 10) || 0
+  );
+  if (!storedDraft || !jsonValuesMatch(storedDraft.payload, payload)) editRevision += 1;
+  editRevision = Math.max(1, editRevision);
+  row.dataset.editRevision = String(editRevision);
+  row.classList.add("is-dirty");
+  persistBlockDraft(row, payload);
   window.clearTimeout(blockSaveTimers.get(blockId));
   blockSaveTimers.delete(blockId);
   blockSaveRows.delete(blockId);
@@ -4846,9 +5008,12 @@ async function saveBlockRow(row, { quiet = false, keepalive = false, allowLocked
   blockSaveTaskIds.set(blockId, taskId);
   const task = {
     taskId,
+    userId: state.user?.id,
+    draftSourceId,
     pageId: state.selectedPage.id,
-    editRevision: Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0,
-    payload: buildBlockPayload(row),
+    editRevision,
+    expectedVersion: getPositiveVersion(row.dataset.draftExpectedVersion),
+    payload,
     row,
     keepalive,
     mutationId: createMutationId()
@@ -5725,10 +5890,14 @@ async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked =
   const title = normalizePageTitle(elements.pageTitle.value);
   window.clearTimeout(pageTitleSaveTimer);
   pageTitleSaveTimer = null;
+  if (pageTitleEditRevision > 0) persistPageTitleDraft();
   const task = {
+    userId: state.user?.id,
+    draftSourceId: pageTitleDraftSourceId || pageDraftSourceId,
     pageId,
     title,
     editRevision: pageTitleEditRevision,
+    expectedVersion: getPositiveVersion(pageTitleDraftExpectedVersion),
     taskId: ++pageTitleTaskId,
     keepalive,
     mutationId: createMutationId()
@@ -5750,12 +5919,257 @@ function schedulePageTitleSave() {
   const title = normalizePageTitle(elements.pageTitle.value);
   applyPageSummaryUpdate(state.selectedPage.id, { title });
   renderPageHeader(state.selectedPage);
+  persistPageTitleDraft();
   window.clearTimeout(pageTitleSaveTimer);
   pageTitleSaveTimer = window.setTimeout(() => {
     pageTitleSaveTimer = null;
     savePageTitleNow().catch((error) => setStatus(error.message, true));
   }, 650);
   syncBeforeUnloadProtection();
+}
+
+function normalizeRecoveredBlockPayload(payload, currentBlock) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const type = typeof payload.type === "string" && Object.hasOwn(blockTypeLabels, payload.type)
+    ? payload.type
+    : currentBlock?.type;
+  if (!type || type === "ATTACHMENT") return null;
+  const metadata = payload.metadata && typeof payload.metadata === "object" && !Array.isArray(payload.metadata)
+    ? payload.metadata
+    : null;
+  return {
+    type,
+    markdown: typeof payload.markdown === "string" ? payload.markdown : "",
+    checked: Boolean(payload.checked),
+    metadata
+  };
+}
+
+function sortJsonValue(value) {
+  if (Array.isArray(value)) return value.map(sortJsonValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortJsonValue(value[key])]));
+}
+
+function jsonValuesMatch(left, right) {
+  return JSON.stringify(sortJsonValue(left)) === JSON.stringify(sortJsonValue(right));
+}
+
+function normalizeComparableMetadata(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length === 0) return null;
+  return value;
+}
+
+function blockPayloadsMatch(block, payload) {
+  const current = {
+    type: block.type,
+    markdown: block.markdown ?? "",
+    checked: Boolean(block.checked),
+    metadata: normalizeComparableMetadata(block.metadata)
+  };
+  const candidate = {
+    ...payload,
+    metadata: normalizeComparableMetadata(payload.metadata)
+  };
+  return jsonValuesMatch(current, candidate);
+}
+
+function applyPersistedPageDraft(page) {
+  const scope = getDraftScope(page?.id);
+  const records = scope ? pageDraftStore.loadPageDrafts(scope.userId, scope.pageId) : [];
+  const recovery = { scope, title: null, blocks: [], missing: [], alternates: [], conflictCount: 0 };
+  if (!scope || records.length === 0 || !page) return recovery;
+
+  const titleCandidates = [];
+  for (const record of records) {
+    if (!record.title) continue;
+    if (page.title === record.title.value) {
+      checkDraftStoreWrite(
+        pageDraftStore.acknowledgeTitle({
+          ...scope,
+          sourceId: record.sourceId,
+          revision: record.title.revision,
+          nextExpectedVersion: page.version
+        })
+      );
+    } else {
+      titleCandidates.push({ sourceId: record.sourceId, draft: record.title });
+    }
+  }
+
+  titleCandidates.sort((left, right) => right.draft.updatedAt - left.draft.updatedAt);
+  if (titleCandidates.length > 0) {
+    const selected = titleCandidates[0];
+    const serverVersion = getPositiveVersion(page.version);
+    const conflict = serverVersion !== selected.draft.expectedVersion;
+    recovery.title = { ...selected.draft, sourceId: selected.sourceId, serverVersion, conflict };
+    recovery.conflictCount += conflict ? 1 : 0;
+    page.title = selected.draft.value;
+
+    for (const candidate of titleCandidates.slice(1)) {
+      if (candidate.draft.value === selected.draft.value) continue;
+      recovery.alternates.push({
+        kind: "title",
+        sourceId: candidate.sourceId,
+        value: candidate.draft.value,
+        expectedVersion: candidate.draft.expectedVersion,
+        updatedAt: candidate.draft.updatedAt
+      });
+      recovery.conflictCount += 1;
+    }
+  }
+
+  const blockCandidates = new Map();
+  for (const record of records) {
+    for (const [blockId, draft] of Object.entries(record.blocks)) {
+      const candidates = blockCandidates.get(blockId) ?? [];
+      candidates.push({ sourceId: record.sourceId, draft });
+      blockCandidates.set(blockId, candidates);
+    }
+  }
+
+  for (const [blockId, candidates] of blockCandidates) {
+    const block = getBlockById(blockId, page.blocks ?? []);
+    if (!block) {
+      for (const candidate of candidates) recovery.missing.push({ blockId, ...candidate });
+      recovery.conflictCount += candidates.length;
+      continue;
+    }
+
+    const pending = [];
+    for (const candidate of candidates) {
+      const payload = normalizeRecoveredBlockPayload(candidate.draft.payload, block);
+      if (!payload) {
+        recovery.missing.push({ blockId, ...candidate });
+        recovery.conflictCount += 1;
+        continue;
+      }
+      if (blockPayloadsMatch(block, payload)) {
+        checkDraftStoreWrite(
+          pageDraftStore.acknowledgeBlock({
+            ...scope,
+            sourceId: candidate.sourceId,
+            blockId,
+            revision: candidate.draft.revision,
+            nextExpectedVersion: block.version
+          })
+        );
+      } else {
+        pending.push({ ...candidate, payload });
+      }
+    }
+
+    pending.sort((left, right) => right.draft.updatedAt - left.draft.updatedAt);
+    if (pending.length === 0) continue;
+    const selected = pending[0];
+    const serverVersion = getPositiveVersion(block.version);
+    const conflict = serverVersion !== selected.draft.expectedVersion;
+    recovery.blocks.push({
+      blockId,
+      draft: selected.draft,
+      sourceId: selected.sourceId,
+      serverVersion,
+      conflict
+    });
+    recovery.conflictCount += conflict ? 1 : 0;
+    Object.assign(block, selected.payload);
+
+    for (const candidate of pending.slice(1)) {
+      if (jsonValuesMatch(candidate.payload, selected.payload)) continue;
+      recovery.alternates.push({
+        kind: "block",
+        blockId,
+        sourceId: candidate.sourceId,
+        payload: candidate.draft.payload,
+        expectedVersion: candidate.draft.expectedVersion,
+        updatedAt: candidate.draft.updatedAt
+      });
+      recovery.conflictCount += 1;
+    }
+  }
+
+  return recovery;
+}
+
+function findRenderedBlockRow(blockId) {
+  return [...elements.blockList.querySelectorAll(".editor-block-row[data-block-id]")].find(
+    (row) => row.dataset.blockId === blockId
+  );
+}
+
+function appendDraftRecoveryPanel(recovery) {
+  const recoveryItems = [
+    ...recovery.missing.map(({ blockId, sourceId, draft }) => ({
+      kind: "missing-block",
+      blockId,
+      sourceId,
+      payload: draft.payload,
+      expectedVersion: draft.expectedVersion,
+      updatedAt: draft.updatedAt
+    })),
+    ...recovery.alternates
+  ];
+  if (recoveryItems.length === 0) return;
+  const panel = document.createElement("section");
+  panel.className = "local-draft-recovery-panel";
+  panel.setAttribute("role", "alert");
+  const heading = document.createElement("strong");
+  heading.textContent = t("status.localDraftConflict");
+  const details = document.createElement("pre");
+  details.tabIndex = 0;
+  details.textContent = JSON.stringify(recoveryItems, null, 2);
+  panel.append(heading, details);
+  elements.blockList.append(panel);
+}
+
+function activatePersistedPageDraft(recovery) {
+  const recoveredCount = (recovery.title ? 1 : 0) + recovery.blocks.length;
+  if (recoveredCount === 0 && recovery.missing.length === 0 && recovery.alternates.length === 0) return false;
+
+  if (recovery.title) {
+    pageTitleEditRevision = Math.max(1, recovery.title.revision);
+    pageTitleSavedRevision = Math.max(0, pageTitleEditRevision - 1);
+    pageTitleDraftExpectedVersion = recovery.title.expectedVersion;
+    pageTitleDraftSourceId = pageDraftSourceId;
+    persistPageTitleDraft();
+    elements.pageTitle.classList.add("local-draft-recovered");
+    if (recovery.title.conflict) {
+      elements.pageTitle.classList.add("save-error");
+    } else {
+      pageTitleSaveTimer = window.setTimeout(() => {
+        pageTitleSaveTimer = null;
+        savePageTitleNow().catch((error) => setStatus(error.message, true));
+      }, 150);
+    }
+  }
+
+  for (const recovered of recovery.blocks) {
+    const row = findRenderedBlockRow(recovered.blockId);
+    if (!row) continue;
+    row.dataset.editRevision = String(Math.max(1, recovered.draft.revision));
+    row.dataset.draftExpectedVersion = String(recovered.draft.expectedVersion);
+    row.dataset.draftSourceId = pageDraftSourceId;
+    persistBlockDraft(row);
+    row.classList.add("is-dirty", "local-draft-recovered");
+    blockSaveRows.set(recovered.blockId, row);
+    if (recovered.conflict) {
+      row.classList.add("save-error");
+      continue;
+    }
+    blockSaveTimers.set(
+      recovered.blockId,
+      window.setTimeout(() => {
+        blockSaveTimers.delete(recovered.blockId);
+        saveBlockRow(row, { quiet: true }).catch((error) => setStatus(error.message, true));
+      }, 200)
+    );
+  }
+
+  appendDraftRecoveryPanel(recovery);
+  syncBeforeUnloadProtection();
+  const hasConflict = recovery.conflictCount > 0 || recovery.missing.length > 0 || recovery.alternates.length > 0;
+  setStatus(t(hasConflict ? "status.localDraftConflict" : "status.localDraftRecovered"), hasConflict);
+  return true;
 }
 
 async function createCollection() {
@@ -5897,11 +6311,14 @@ async function openPage(pageId, { skipFlush = false } = {}) {
       }
 
       resetPageEditTracking();
+      const recovery = applyPersistedPageDraft(data.page);
+      if (!preserveMode && (recovery.title || recovery.blocks.length > 0)) state.pageMode = pageModes.WRITE;
       state.selectedPage = data.page;
       state.workspaceView = "page";
       state.activeCollectionId = null;
+      if (recovery.title) applyPageSummaryUpdate(data.page.id, { title: data.page.title });
       renderSelectedPage();
-      setStatus(t("status.documentOpened"));
+      if (!activatePersistedPageDraft(recovery)) setStatus(t("status.documentOpened"));
     },
     { flush: shouldFlush }
   );

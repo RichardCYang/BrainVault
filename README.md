@@ -13,6 +13,7 @@ This image is captured from the actual BrainVault browser UI (`public/index.html
 ## Highlights
 
 - Page-first workspace with a compact document tree and automatic title saving
+- Crash-resilient browser draft journal that restores unacknowledged title and block edits without overwriting a newer server version
 - Unicode Emoji 17 picker for every page and collection, with Korean/English search, categories, skin-tone variants, and recent selections
 - Slash commands for headings, tasks, quotes, callouts, tables, databases, boards, AI conversations, LaTeX formulas, code, dividers, images, and file attachments
 - Drag-and-drop block reordering with support for nested content
@@ -105,9 +106,9 @@ Start the development server:
 npm run dev
 ```
 
-With `AUTO_BOOTSTRAP_DATABASE=true`, startup creates the database when permitted, reconciles the base schema, and applies any pending migrations. After MariaDB is ready and the HTTP server is listening, the development command opens the app in the system default browser's private/incognito mode. The browser is opened only once for the current watch session, even when source changes restart the server.
+With `AUTO_BOOTSTRAP_DATABASE=true`, startup creates the database when permitted, reconciles the base schema, and applies any pending migrations. After MariaDB is ready and the HTTP server is listening, the development command opens the app once in the system default browser's normal profile so crash-recovery drafts remain available across browser restarts. Set `BRAINVAULT_DEV_BROWSER_PRIVATE=true` only when ephemeral private/incognito storage is intentional.
 
-Automatic private-mode launch supports Chrome, Edge, Firefox, and Brave. If the default browser cannot be opened privately (for example, Safari has no supported private-window command-line switch), BrainVault reports the issue and does not fall back to a normal browser window. The app remains available at:
+Optional private-mode launch supports Chrome, Edge, Firefox, and Brave. If a requested private window cannot be opened (for example, Safari has no supported private-window command-line switch), BrainVault reports the issue and does not silently fall back to a normal window. The app remains available at:
 
 ```text
 http://localhost:4000
@@ -275,7 +276,7 @@ Translations live in `public/i18n.js`. Static HTML uses `data-i18n*` attributes,
 | `npm run db:migrate` | Reconcile the schema and apply migrations |
 | `npm run db:seed` | Add the demo account and starter content |
 | `npm run setup` | Run environment, database, migration, and seed tasks |
-| `npm run dev` | Start the server in watch mode and open the private default browser after DB readiness |
+| `npm run dev` | Start the server in watch mode and open the normal default browser after DB readiness |
 | `npm run build` | Compile TypeScript into `dist/` |
 | `npm start` | Run the compiled server |
 | `npm test` | Execute the test suite once |
