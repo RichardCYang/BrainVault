@@ -1,8 +1,13 @@
-import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
+  attachmentTempDir,
   formatAttachmentSize,
+  getAttachmentFilePath,
   getAttachmentInfo,
+  moveAttachmentFile,
   normalizeAttachmentMimeType,
   sanitizeAttachmentFilename
 } from "../src/lib/attachments.js";
@@ -38,6 +43,28 @@ describe("Attachment metadata", () => {
     expect(html).toContain(">report.pdf</span>");
     expect(html).toContain("2.0 KB · application/pdf");
     expect(html).not.toContain("<img");
+  });
+
+  it("never overwrites an existing attachment when a block ID collides", async () => {
+    const suffix = randomUUID().replaceAll("-", "");
+    const ownerId = `usr_collision_${suffix}`;
+    const blockId = `blk_collision_${suffix}`;
+    const target = getAttachmentFilePath(ownerId, blockId);
+    const temporaryPath = path.join(attachmentTempDir, `incoming-${suffix}`);
+
+    await mkdir(path.dirname(target), { recursive: true });
+    await mkdir(path.dirname(temporaryPath), { recursive: true });
+    await writeFile(target, Buffer.from("original attachment"));
+    await writeFile(temporaryPath, Buffer.from("new upload"));
+
+    try {
+      await expect(moveAttachmentFile(temporaryPath, ownerId, blockId)).rejects.toMatchObject({ code: "EEXIST" });
+      await expect(readFile(target, "utf8")).resolves.toBe("original attachment");
+      await expect(readFile(temporaryPath, "utf8")).resolves.toBe("new upload");
+    } finally {
+      await rm(path.dirname(target), { recursive: true, force: true });
+      await rm(temporaryPath, { force: true });
+    }
   });
 });
 

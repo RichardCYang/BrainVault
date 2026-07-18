@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdir, open, rename, rm, stat } from "node:fs/promises";
+import { link, mkdir, open, rm, stat } from "node:fs/promises";
 import { env } from "../config/env.js";
 import { transaction, type DbClient } from "./db.js";
 
@@ -114,17 +114,20 @@ export async function moveAttachmentFile(temporaryPath: string, ownerId: string,
   const targetDirectory = path.dirname(target);
   const temporaryDirectory = path.dirname(temporaryPath);
   await mkdir(targetDirectory, { recursive: true });
-  let moved = false;
+  let linked = false;
   try {
-    await rename(temporaryPath, target);
-    moved = true;
+    // rename() replaces an existing destination on POSIX. Claim the final path with
+    // an exclusive hard link so an ID collision can never overwrite stored bytes.
+    await link(temporaryPath, target);
+    linked = true;
     await syncPath(target);
     await syncPath(targetDirectory);
+    await rm(temporaryPath);
     if (temporaryDirectory !== targetDirectory) await syncPath(temporaryDirectory);
     await syncPath(attachmentUploadRoot);
     return target;
   } catch (error) {
-    if (moved) {
+    if (linked) {
       await rm(target, { force: true }).catch(() => undefined);
       await syncPath(targetDirectory).catch(() => undefined);
     }
