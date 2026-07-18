@@ -108,6 +108,31 @@ describe("page draft store", () => {
     expect(store.loadPage("user-1", "page-1")).toBeNull();
   });
 
+  it("preserves the post-rerender edit when an older in-flight write is acknowledged", () => {
+    const storage = new MemoryStorage();
+    const store = createPageDraftStore(storage, { sourceId: "tab-a" });
+
+    store.saveBlock({ ...blockDraft, revision: 3 });
+    const restoredAfterRerender = store.loadPage("user-1", "page-1")?.blocks["block-1"];
+    expect(restoredAfterRerender).toMatchObject({ expectedVersion: 7, revision: 3 });
+
+    store.saveBlock({
+      ...blockDraft,
+      expectedVersion: restoredAfterRerender.expectedVersion,
+      revision: restoredAfterRerender.revision + 1,
+      payload: { ...blockDraft.payload, markdown: "typed after rerender" }
+    });
+
+    expect(
+      store.acknowledgeBlock({ ...blockDraft, revision: 3, nextExpectedVersion: 8 })
+    ).toBe(true);
+    expect(store.loadPage("user-1", "page-1")?.blocks["block-1"]).toMatchObject({
+      expectedVersion: 8,
+      revision: 4,
+      payload: { markdown: "typed after rerender" }
+    });
+  });
+
   it("clears an acknowledged draft only after its revision reaches the stored revision", () => {
     const storage = new MemoryStorage();
     const store = createPageDraftStore(storage, { sourceId: "tab-a" });

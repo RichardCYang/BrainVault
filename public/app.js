@@ -984,11 +984,12 @@ const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
   const storedExpectedVersion = task.userId
     ? pageDraftStore.loadPage(task.userId, task.pageId, task.draftSourceId)?.title?.expectedVersion
     : null;
-  const expectedVersion =
-    (state.selectedPage?.id === task.pageId ? getPositiveVersion(pageTitleDraftExpectedVersion) : null) ??
-    getPositiveVersion(storedExpectedVersion) ??
-    getPositiveVersion(task.expectedVersion) ??
-    getPositiveVersion(currentPage?.version);
+  const expectedVersion = getLatestKnownVersion(
+    state.selectedPage?.id === task.pageId ? pageTitleDraftExpectedVersion : null,
+    storedExpectedVersion,
+    task.expectedVersion,
+    currentPage?.version
+  );
   const data = await api(`/api/pages/${task.pageId}`, {
     method: "PATCH",
     keepalive: task.keepalive === true,
@@ -2504,6 +2505,11 @@ function getPositiveVersion(value) {
   return Number.isSafeInteger(version) && version >= 1 ? version : null;
 }
 
+function getLatestKnownVersion(...values) {
+  const versions = values.map(getPositiveVersion).filter((version) => version !== null);
+  return versions.length ? Math.max(...versions) : null;
+}
+
 function reportLocalDraftStorageFailure() {
   if (localDraftStorageWarningShown) return;
   localDraftStorageWarningShown = true;
@@ -2520,10 +2526,11 @@ function persistPageTitleDraft() {
   if (!scope || !state.selectedPage) return false;
   const draftSourceId = pageTitleDraftSourceId || pageDraftSourceId;
   const storedDraft = pageDraftStore.loadPage(scope.userId, scope.pageId, draftSourceId)?.title;
-  const expectedVersion =
-    getPositiveVersion(pageTitleDraftExpectedVersion) ??
-    getPositiveVersion(storedDraft?.expectedVersion) ??
-    getPositiveVersion(state.selectedPage.version);
+  const expectedVersion = getLatestKnownVersion(
+    pageTitleDraftExpectedVersion,
+    storedDraft?.expectedVersion,
+    state.selectedPage.version
+  );
   if (expectedVersion === null || pageTitleEditRevision < 1) return false;
   pageTitleDraftExpectedVersion = expectedVersion;
   return checkDraftStoreWrite(
@@ -2544,10 +2551,11 @@ function persistBlockDraft(row, payload = null) {
   if (!scope || !blockId || editRevision < 1) return false;
   const draftSourceId = row.dataset.draftSourceId || pageDraftSourceId;
   const storedDraft = pageDraftStore.loadPage(scope.userId, scope.pageId, draftSourceId)?.blocks?.[blockId];
-  const expectedVersion =
-    getPositiveVersion(row.dataset.draftExpectedVersion) ??
-    getPositiveVersion(storedDraft?.expectedVersion) ??
-    getPositiveVersion(getBlockById(blockId)?.version);
+  const expectedVersion = getLatestKnownVersion(
+    row.dataset.draftExpectedVersion,
+    storedDraft?.expectedVersion,
+    getBlockById(blockId)?.version
+  );
   if (expectedVersion === null) return false;
   row.dataset.draftExpectedVersion = String(expectedVersion);
   row.dataset.draftSourceId = draftSourceId;
@@ -4320,11 +4328,17 @@ function mountBlockEditor(row, block) {
   );
 }
 
-function renderBlock(block) {
+function renderBlock(block, currentSourceDraft = null) {
   const row = document.createElement("article");
   row.className = "editor-block-row";
   row.dataset.blockId = block.id;
   row.dataset.blockType = block.type;
+  if (currentSourceDraft) {
+    row.dataset.editRevision = String(currentSourceDraft.revision);
+    row.dataset.draftExpectedVersion = String(currentSourceDraft.expectedVersion);
+    row.dataset.draftSourceId = pageDraftSourceId;
+    row.classList.add("is-dirty");
+  }
   row.dataset.calloutType = getBlockCalloutType(block);
   row.dataset.textAlign = getBlockTextAlign(block);
   row.dataset.parentBlockId = block.parentBlockId ?? "";
@@ -4799,26 +4813,28 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
 
   if (cancelled || drag.targetIndex === drag.initialIndex) return;
 
-  const previousIds = getBlockSiblings(drag.parentBlockId).map((block) => block.id);
-  const orderedIds = drag.candidates.map((row) => row.dataset.blockId);
-  orderedIds.splice(drag.targetIndex, 0, drag.row.dataset.blockId);
+  return withPageEditLock(async () => {
+    const previousIds = getBlockSiblings(drag.parentBlockId).map((block) => block.id);
+    const orderedIds = drag.candidates.map((row) => row.dataset.blockId);
+    orderedIds.splice(drag.targetIndex, 0, drag.row.dataset.blockId);
 
-  if (!reorderBlockSiblingsInState(drag.parentBlockId, orderedIds)) return;
+    if (!reorderBlockSiblingsInState(drag.parentBlockId, orderedIds)) return;
 
-  blockOrderSaving = true;
-  renderSelectedPage();
-  setStatus(t("status.savingBlockOrder"));
-
-  try {
-    await persistBlockOrder(drag.parentBlockId, orderedIds);
-    setStatus(t("status.blockOrderChanged"));
-  } catch (error) {
-    reorderBlockSiblingsInState(drag.parentBlockId, previousIds);
+    blockOrderSaving = true;
     renderSelectedPage();
-    setStatus(error.message, true);
-  } finally {
-    blockOrderSaving = false;
-  }
+    setStatus(t("status.savingBlockOrder"));
+
+    try {
+      await persistBlockOrder(drag.parentBlockId, orderedIds, {}, { allowLocked: true });
+      setStatus(t("status.blockOrderChanged"));
+    } catch (error) {
+      reorderBlockSiblingsInState(drag.parentBlockId, previousIds);
+      renderSelectedPage();
+      setStatus(error.message, true);
+    } finally {
+      blockOrderSaving = false;
+    }
+  });
 }
 
 function setRowType(row, type, { markdown } = {}) {
@@ -4994,11 +5010,12 @@ function getBlockSaveQueue(blockId) {
     const storedExpectedVersion = task.userId
       ? pageDraftStore.loadPage(task.userId, task.pageId, task.draftSourceId)?.blocks?.[blockId]?.expectedVersion
       : null;
-    const currentVersion =
-      getPositiveVersion(task.row?.dataset.draftExpectedVersion) ??
-      getPositiveVersion(storedExpectedVersion) ??
-      getPositiveVersion(task.expectedVersion) ??
-      getPositiveVersion(getBlockById(blockId)?.version);
+    const currentVersion = getLatestKnownVersion(
+      storedExpectedVersion,
+      task.row?.dataset.draftExpectedVersion,
+      task.expectedVersion,
+      getBlockById(blockId)?.version
+    );
     const data = await api(`/api/blocks/${blockId}`, {
       method: "PATCH",
       keepalive: task.keepalive === true,
@@ -5018,21 +5035,25 @@ function getBlockSaveQueue(blockId) {
     }
     applyPageContentVersion(task.pageId, data.pageContentVersion);
     updateBlockInState(data.block);
-    if (task.row?.dataset.blockId === blockId) updateRenderedBlockPreview(task.row, data.block);
+
+    // A locale change or drag reorder can rebuild the editor while this request is in flight.
+    // Always rebase the currently rendered row, not the detached row that started the request.
+    const currentRow = findRenderedBlockRow(blockId) ?? task.row;
+    if (currentRow?.dataset.blockId === blockId) updateRenderedBlockPreview(currentRow, data.block);
 
     const latestTaskId = blockSaveTaskIds.get(blockId);
-    const currentEditRevision = Number.parseInt(task.row?.dataset.editRevision ?? "0", 10) || 0;
-    if (latestTaskId === task.taskId && currentEditRevision === task.editRevision) {
-      task.row.classList.remove("is-dirty", "save-error");
-      task.row.classList.add("is-saved");
-      delete task.row.dataset.draftExpectedVersion;
-      delete task.row.dataset.draftSourceId;
-      window.setTimeout(() => task.row.classList.remove("is-saved"), 900);
+    const currentEditRevision = Number.parseInt(currentRow?.dataset.editRevision ?? "0", 10) || 0;
+    if (currentRow && latestTaskId === task.taskId && currentEditRevision === task.editRevision) {
+      currentRow.classList.remove("is-dirty", "save-error");
+      currentRow.classList.add("is-saved");
+      delete currentRow.dataset.draftExpectedVersion;
+      delete currentRow.dataset.draftSourceId;
+      window.setTimeout(() => currentRow.classList.remove("is-saved"), 900);
     } else if (
-      task.row?.dataset.blockId === blockId &&
+      currentRow?.dataset.blockId === blockId &&
       (currentEditRevision > task.editRevision || Number(latestTaskId) > task.taskId)
     ) {
-      task.row.dataset.draftExpectedVersion = String(data.block.version);
+      currentRow.dataset.draftExpectedVersion = String(data.block.version);
     }
     return data;
   });
@@ -5071,7 +5092,11 @@ async function saveBlockRow(row, { quiet = false, keepalive = false, allowLocked
     draftSourceId,
     pageId: state.selectedPage.id,
     editRevision,
-    expectedVersion: getPositiveVersion(row.dataset.draftExpectedVersion),
+    expectedVersion: getLatestKnownVersion(
+      row.dataset.draftExpectedVersion,
+      storedDraft?.expectedVersion,
+      getBlockById(blockId)?.version
+    ),
     payload,
     row,
     keepalive,
@@ -5088,8 +5113,9 @@ async function saveBlockRow(row, { quiet = false, keepalive = false, allowLocked
     if (!quiet) setStatus(t("status.blockSaved"));
     return data;
   } catch (error) {
-    row.classList.remove("is-saving");
-    row.classList.add("is-dirty", "save-error");
+    const currentRow = findRenderedBlockRow(blockId) ?? row;
+    currentRow.classList.remove("is-saving");
+    currentRow.classList.add("is-dirty", "save-error");
     throw error;
   } finally {
     syncBeforeUnloadProtection();
@@ -5891,6 +5917,9 @@ function renderSelectedPage() {
     return;
   }
 
+  const currentSourceDraft = state.user?.id
+    ? pageDraftStore.loadPage(state.user.id, page.id, pageDraftSourceId)
+    : null;
   const flatBlocks = flattenBlocks(page.blocks);
   renderPageHeader(page);
   elements.pageKicker.textContent = formatDate(page.updatedAt);
@@ -5904,7 +5933,9 @@ function renderSelectedPage() {
     empty.classList.add("block-empty-message");
     elements.blockList.append(empty);
   } else {
-    for (const block of flatBlocks) elements.blockList.append(renderBlock(block));
+    for (const block of flatBlocks) {
+      elements.blockList.append(renderBlock(block, currentSourceDraft?.blocks?.[block.id] ?? null));
+    }
   }
 
   syncPageModeUi();
@@ -6910,6 +6941,7 @@ elements.languageSelect.addEventListener("change", async () => {
   const previousLanguage = getLanguage();
   try {
     setAccountMessage(t("account.savingLanguage"));
+    await flushPendingPageEdits();
     const data = await api("/api/auth/profile", { method: "PATCH", body: { preferredLanguage: language } });
     state.user = data.user;
     setLanguage(language);

@@ -143,6 +143,32 @@ describe("Data-loss prevention integration", () => {
     );
   });
 
+  it("keeps newer drafts durable when an in-flight save outlives an editor rerender", () => {
+    expect(client).toContain("function getLatestKnownVersion(...values)");
+    expect(client).toContain("const currentRow = findRenderedBlockRow(blockId) ?? task.row;");
+    expect(client).toContain("currentRow.dataset.draftExpectedVersion = String(data.block.version);");
+    expect(client).toContain("row.dataset.editRevision = String(currentSourceDraft.revision);");
+    expect(client).toContain("row.dataset.draftExpectedVersion = String(currentSourceDraft.expectedVersion);");
+    expect(client).toContain(
+      "elements.blockList.append(renderBlock(block, currentSourceDraft?.blocks?.[block.id] ?? null));"
+    );
+
+    const dragStart = client.indexOf("async function finishBlockDrag");
+    const dragEnd = client.indexOf("function setRowType", dragStart);
+    const dragBody = client.slice(dragStart, dragEnd);
+    expect(dragBody).toContain("return withPageEditLock(async () => {");
+    expect(dragBody).toContain(
+      "await persistBlockOrder(drag.parentBlockId, orderedIds, {}, { allowLocked: true });"
+    );
+
+    const languageStart = client.indexOf('elements.languageSelect.addEventListener("change"');
+    const languageEnd = client.indexOf('window.addEventListener("brainvault:languagechange"', languageStart);
+    const languageBody = client.slice(languageStart, languageEnd);
+    expect(languageBody.indexOf("await flushPendingPageEdits();")).toBeLessThan(
+      languageBody.indexOf('await api("/api/auth/profile"')
+    );
+  });
+
   it("preserves attachment files when a database commit response is ambiguous", () => {
     expect(database).toContain("export class TransactionCommitOutcomeUnknownError extends Error");
     expect(database).toContain("readonly commitOutcomeUnknown = true");
