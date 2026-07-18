@@ -20,7 +20,11 @@ vi.mock("../src/lib/db.js", () => ({
 }));
 
 import { attachmentUploadRoot } from "../src/lib/attachments.js";
-import { dataTransferTempDir, recoverDataRestoreJournal } from "../src/lib/data-transfer.js";
+import {
+  dataRestoreGenerationMarkerName,
+  dataTransferTempDir,
+  recoverDataRestoreJournal
+} from "../src/lib/data-transfer.js";
 
 const userId = "usr_restore_recovery_test";
 let operationId = "";
@@ -47,6 +51,43 @@ async function writeFixture(hadPreviousAttachments: boolean) {
     await writeFile(path.join(value.oldAttachmentDir, "payload"), "old");
   }
   const journal = { version: 1 as const, userId, operationId, hadPreviousAttachments };
+  await mkdir(dataTransferTempDir, { recursive: true });
+  await writeFile(value.journalPath, JSON.stringify(journal));
+  return journal;
+}
+
+async function writeVersionedFixture(options: {
+  hadPreviousAttachments: boolean;
+  targetMarker?: boolean;
+  staged?: boolean;
+}) {
+  const value = paths();
+  if (options.staged !== false) {
+    await mkdir(value.stagedAttachmentDir, { recursive: true });
+    await writeFile(path.join(value.stagedAttachmentDir, "staged"), "staged");
+    await writeFile(
+      path.join(value.stagedAttachmentDir, dataRestoreGenerationMarkerName),
+      JSON.stringify({ version: 1, operationId })
+    );
+  }
+  await mkdir(value.targetAttachmentDir, { recursive: true });
+  await writeFile(path.join(value.targetAttachmentDir, "payload"), "new");
+  if (options.targetMarker) {
+    await writeFile(
+      path.join(value.targetAttachmentDir, dataRestoreGenerationMarkerName),
+      JSON.stringify({ version: 1, operationId })
+    );
+  }
+  if (options.hadPreviousAttachments) {
+    await mkdir(value.oldAttachmentDir, { recursive: true });
+    await writeFile(path.join(value.oldAttachmentDir, "payload"), "old");
+  }
+  const journal = {
+    version: 2 as const,
+    userId,
+    operationId,
+    hadPreviousAttachments: options.hadPreviousAttachments
+  };
   await mkdir(dataTransferTempDir, { recursive: true });
   await writeFile(value.journalPath, JSON.stringify(journal));
   return journal;
@@ -111,5 +152,61 @@ describe("Interrupted data restore recovery", () => {
     await recoverDataRestoreJournal(journal);
 
     await expect(readFile(path.join(paths().targetAttachmentDir, "payload"), "utf8")).resolves.toBe("new");
+  });
+
+  it("removes only the matching promoted generation for a versioned failed restore", async () => {
+    const journal = await writeVersionedFixture({
+      hadPreviousAttachments: false,
+      targetMarker: true,
+      staged: false
+    });
+
+    await recoverDataRestoreJournal(journal);
+
+    await expect(readFile(path.join(paths().targetAttachmentDir, "payload"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(paths().journalPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves a later unmarked generation when versioned rollback cleanup is retried", async () => {
+    const journal = await writeVersionedFixture({
+      hadPreviousAttachments: false,
+      targetMarker: false,
+      staged: false
+    });
+
+    await recoverDataRestoreJournal(journal);
+
+    await expect(readFile(path.join(paths().targetAttachmentDir, "payload"), "utf8")).resolves.toBe("new");
+    await expect(readFile(paths().journalPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves both generations when a later directory makes automatic rollback unsafe", async () => {
+    const journal = await writeVersionedFixture({
+      hadPreviousAttachments: true,
+      targetMarker: false,
+      staged: false
+    });
+
+    await expect(recoverDataRestoreJournal(journal)).rejects.toThrow("preserving both attachment generations");
+
+    await expect(readFile(path.join(paths().targetAttachmentDir, "payload"), "utf8")).resolves.toBe("new");
+    await expect(readFile(path.join(paths().oldAttachmentDir, "payload"), "utf8")).resolves.toBe("old");
+    await expect(readFile(paths().journalPath, "utf8")).resolves.toContain('"version":2');
+  });
+
+  it("cleans the versioned generation marker after a committed restore", async () => {
+    const journal = await writeVersionedFixture({
+      hadPreviousAttachments: true,
+      targetMarker: true,
+      staged: false
+    });
+    database.marker = operationId;
+
+    await recoverDataRestoreJournal(journal);
+
+    await expect(readFile(path.join(paths().targetAttachmentDir, "payload"), "utf8")).resolves.toBe("new");
+    await expect(
+      readFile(path.join(paths().targetAttachmentDir, dataRestoreGenerationMarkerName), "utf8")
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
