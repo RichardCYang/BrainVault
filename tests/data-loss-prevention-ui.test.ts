@@ -47,7 +47,7 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("function applyPersistedPageDraft(page)");
     expect(client).toContain("pageDraftStore.loadPageDrafts(scope.userId, scope.pageId)");
     expect(client).toContain('if (!writable || pageTitleDraftConflict) return null;');
-    expect(client).toContain('row.dataset.deleting === "true" || row.dataset.draftConflict === "true"');
+    expect(client).toContain('if (row.dataset.draftConflict === "true" && (!resolveConflict || !promoteBlockDraftConflict(row)))');
     expect(client).toContain("pageTitleDraftSourceId = recovery.title.conflict ? recovery.title.sourceId : pageDraftSourceId");
     expect(client).toContain("if (!recovery.title.conflict) persistPageTitleDraft()");
     expect(client).toContain("row.dataset.draftSourceId = recovered.conflict ? recovered.sourceId : pageDraftSourceId");
@@ -60,6 +60,36 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("recoveredConflictOrigin: blockDraftConflictOrigins.get(blockId) ?? null");
     expect(client).toContain("expectedVersion: getPositiveVersion(row.dataset.draftExpectedVersion)");
     expect(client).toContain("if (!activatePersistedPageDraft(recovery)) setStatus(t(\"status.documentOpened\"));");
+  });
+
+  it("requires explicit resolution before recovered conflict drafts can overwrite or delete newer server data", () => {
+    expect(client).toContain('function confirmRecoveredDraftOverwrite()');
+    expect(client).toContain('window.confirm(t("confirm.overwriteRecoveredDraft"))');
+    expect(client).toContain('const expectedVersion = pageTitleDraftConflict');
+    expect(client).toContain('const expectedVersion = row.dataset.draftConflict === "true"');
+    expect(client).toContain('function promotePageTitleDraftConflict()');
+    expect(client).toContain('function promoteBlockDraftConflict(row)');
+    expect(client).toContain('function hasUnresolvedDraftConflicts()');
+    expect(client).toContain('if (!allowConflictPrompt || !promotePageTitleDraftConflict())');
+    expect(client).toContain('if (!allowConflictPrompt || !promoteBlockDraftConflict(row))');
+    expect(client).toContain('await saveBlockRow(row, { resolveConflict: true });');
+    expect(client).toContain('if (row.dataset.draftConflict === "true") {\n    reportUnresolvedDraftConflict();');
+    expect(client).toContain('state.selectedPage?.id && subtreeIds.has(state.selectedPage.id) && hasUnresolvedDraftConflicts()');
+    expect(client).toContain('pageDraftStore.removeBlockIfUnchanged({');
+    expect(client).toContain('function blockSnapshotHasUnresolvedDraftConflict(expectedVersions)');
+    expect(client).toContain('if (blockDeletionHasUnresolvedDraftConflict(blockId))');
+
+    const markDirtyStart = client.indexOf('function markBlockDirty(row');
+    const markDirtyEnd = client.indexOf('function getBlockSaveQueue', markDirtyStart);
+    const markDirtyBody = client.slice(markDirtyStart, markDirtyEnd);
+    expect(markDirtyBody).not.toContain('delete row.dataset.draftConflict;');
+    expect(markDirtyBody).not.toContain('getBlockById(row.dataset.blockId)?.version');
+
+    const titleScheduleStart = client.indexOf('function schedulePageTitleSave');
+    const titleScheduleEnd = client.indexOf('function normalizeRecoveredBlockPayload', titleScheduleStart);
+    const titleScheduleBody = client.slice(titleScheduleStart, titleScheduleEnd);
+    expect(titleScheduleBody).not.toContain('pageTitleDraftConflict = false;');
+    expect(titleScheduleBody).not.toContain('pageTitleDraftExpectedVersion = getPositiveVersion(state.selectedPage?.version);');
   });
 
   it("clears stale editor state and retry queues at every authentication boundary", () => {

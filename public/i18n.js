@@ -536,6 +536,7 @@ export const translationCatalogs = {
     confirm: {
       archivePage: "Archive this page? It will be hidden from the list.",
       deleteBlock: "Delete this block?",
+      overwriteRecoveredDraft: "A newer server version exists. Overwrite it with this recovered local draft? Newer server changes may be lost.",
       deleteKanbanColumn: "Delete this group?",
       deleteKanbanColumnWithCards: "Delete this group and its {count} cards?",
       deleteKanbanCard: "Delete this card?",
@@ -568,6 +569,8 @@ export const translationCatalogs = {
       documentOpened: "Page opened.",
       localDraftRecovered: "Recovered unsaved changes from this browser and resumed saving.",
       localDraftConflict: "Recovered unsaved changes, but the server version changed. Your local content is shown and was not overwritten; copy it before reloading.",
+      localDraftOverwriteCancelled: "The recovered content remains only in this browser and was not saved over the newer server version.",
+      resolveRecoveredDraftConflict: "Resolve the recovered draft conflict before saving, archiving, deleting, or replacing content. Use the block menu’s Save block action, or edit the page title and confirm the overwrite.",
       localDraftStorageFailed: "Unsaved changes could not be stored for crash recovery. Keep this page open until saving succeeds.",
       orphanedLocalDrafts: "Unsaved changes for a deleted or unavailable page were preserved from another tab or earlier session. Copy the recovery data below before clearing browser storage.",
       ready: "Ready.",
@@ -1430,6 +1433,7 @@ export const translationCatalogs = {
     confirm: {
       archivePage: "이 문서를 보관할까요? 목록에서 숨겨집니다.",
       deleteBlock: "이 블록을 삭제할까요?",
+      overwriteRecoveredDraft: "서버에 더 최신 버전이 있습니다. 복구한 로컬 초안으로 덮어쓸까요? 서버의 최신 변경사항이 사라질 수 있습니다.",
       deleteKanbanColumn: "이 그룹을 삭제할까요?",
       deleteKanbanColumnWithCards: "이 그룹과 카드 {count}개를 함께 삭제할까요?",
       deleteKanbanCard: "이 카드를 삭제할까요?",
@@ -1462,6 +1466,8 @@ export const translationCatalogs = {
       documentOpened: "문서를 열었습니다.",
       localDraftRecovered: "이 브라우저에 남아 있던 미저장 변경사항을 복구하고 저장을 다시 시작했습니다.",
       localDraftConflict: "미저장 변경사항을 복구했지만 서버 버전이 바뀌었습니다. 로컬 내용은 덮어쓰지 않고 화면에 보존했습니다. 새로고침 전에 복사해 두세요.",
+      localDraftOverwriteCancelled: "복구한 내용은 이 브라우저에만 보존했으며 최신 서버 버전 위에 저장하지 않았습니다.",
+      resolveRecoveredDraftConflict: "저장·보관·삭제·내용 교체 전에 복구 초안 충돌을 해결하세요. 블록 메뉴의 ‘블록 저장’을 사용하거나 페이지 제목을 편집한 뒤 덮어쓰기를 확인하세요.",
       localDraftStorageFailed: "장애 복구용 로컬 저장소에 미저장 변경사항을 기록하지 못했습니다. 저장이 완료될 때까지 이 페이지를 열어 두세요.",
       orphanedLocalDrafts: "다른 탭이나 이전 세션에 남아 있던, 삭제되었거나 현재 열 수 없는 페이지의 미저장 변경사항을 보존했습니다. 브라우저 저장소를 지우기 전에 아래 복구 데이터를 복사하세요.",
       ready: "준비되었습니다.",
