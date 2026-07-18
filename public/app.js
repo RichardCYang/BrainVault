@@ -382,6 +382,10 @@ const slashCommands = [
   { type: "ATTACHMENT", command: "/file", icon: "attachment" }
 ];
 
+// These block types cannot retain arbitrary source markdown. When their slash command is
+// used on a later line, insert a new sibling instead of replacing earlier note text.
+const slashInsertAfterTypes = new Set(["TABLE", "DATABASE", "KANBAN", "BOOKMARK", "DIVIDER"]);
+
 const svgNamespace = "http://www.w3.org/2000/svg";
 const slashCommandIconShapes = {
   text: [
@@ -5569,6 +5573,14 @@ function requestAttachmentUpload(row, slashContext = null) {
   input.click();
 }
 
+function createInitialBlockMetadata(type) {
+  if (type === "TABLE") return { table: createDefaultTableData() };
+  if (type === "KANBAN") return { kanban: createDefaultKanbanData() };
+  if (type === "DATABASE") return { database: createDefaultDatabaseData() };
+  if (type === "BOOKMARK") return { bookmark: createDefaultBookmarkData() };
+  return undefined;
+}
+
 async function applySlashCommand(row, type) {
   if (!requireWritablePage()) return;
   const previousTextarea = getBlockTextarea(row);
@@ -5582,7 +5594,24 @@ async function applySlashCommand(row, type) {
   }
 
   if (context) markdown = `${markdown.slice(0, context.start)}${markdown.slice(context.end)}`;
-  if (type === "DIVIDER" || type === "TABLE" || type === "KANBAN" || type === "DATABASE" || type === "BOOKMARK") markdown = "";
+
+  if (slashInsertAfterTypes.has(type) && markdown.trim()) {
+    // Structured blocks store their content in metadata, so converting this block would
+    // discard any note text that remains before or after the slash-command line.
+    if (previousTextarea && previousTextarea.value !== markdown) {
+      previousTextarea.value = markdown;
+      autoGrowTextarea(previousTextarea);
+    }
+    closeSlashMenu();
+    await saveBlockRow(row, { quiet: true });
+    await insertBlockRelative(row, "after", {
+      type,
+      metadata: createInitialBlockMetadata(type)
+    });
+    return;
+  }
+
+  if (slashInsertAfterTypes.has(type)) markdown = "";
 
   setRowType(row, type, { markdown });
   closeSlashMenu();
@@ -5630,15 +5659,19 @@ async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {
   return data;
 }
 
-async function createEmptyBlock(pageId, { parentBlockId = null, sortOrder, allowLocked = false } = {}) {
+async function createEmptyBlock(
+  pageId,
+  { parentBlockId = null, sortOrder, allowLocked = false, type = "MARKDOWN", markdown = "", metadata } = {}
+) {
   const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage();
   if (!writable) throw new Error(t("errors.readOnlyPage"));
   const data = await api(`/api/pages/${pageId}/blocks`, {
     method: "POST",
     body: {
-      type: "MARKDOWN",
-      markdown: "",
+      type,
+      markdown,
       parentBlockId,
+      ...(metadata === undefined ? {} : { metadata }),
       ...(sortOrder === undefined ? {} : { sortOrder })
     }
   });
@@ -5646,7 +5679,11 @@ async function createEmptyBlock(pageId, { parentBlockId = null, sortOrder, allow
   return data;
 }
 
-async function insertBlockRelative(referenceRow, placement = "after") {
+async function insertBlockRelative(
+  referenceRow,
+  placement = "after",
+  { type = "MARKDOWN", markdown = "", metadata } = {}
+) {
   if (!requireWritablePage() || !referenceRow?.dataset.blockId) return;
 
   const parentBlockId = normalizeParentBlockId(referenceRow.dataset.parentBlockId);
@@ -5655,7 +5692,13 @@ async function insertBlockRelative(referenceRow, placement = "after") {
   if (referenceIndex < 0) throw new Error(t("errors.currentBlockOrder"));
 
   const insertionIndex = placement === "before" ? referenceIndex : referenceIndex + 1;
-  const data = await createEmptyBlock(state.selectedPage.id, { parentBlockId, sortOrder: insertionIndex });
+  const data = await createEmptyBlock(state.selectedPage.id, {
+    parentBlockId,
+    sortOrder: insertionIndex,
+    type,
+    markdown,
+    metadata
+  });
   const orderedIds = [...siblingIds];
   orderedIds.splice(insertionIndex, 0, data.block.id);
   await persistBlockOrder(parentBlockId, orderedIds, { [data.block.id]: data.block.version });
@@ -5667,6 +5710,7 @@ async function insertBlockRelative(referenceRow, placement = "after") {
       position: t(placement === "before" ? "position.top" : "position.bottom")
     })
   );
+  return data;
 }
 
 async function appendBlock(afterRow = null) {
@@ -5732,7 +5776,9 @@ function focusPendingBlock() {
     textarea.focus();
     textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
   } else {
-    row?.querySelector(".table-cell-input, .kanban-title-input, .attachment-download-button")?.focus();
+    row?.querySelector(
+      ".table-cell-input, .kanban-title-input, .database-title-input, .bookmark-url-input, .attachment-download-button"
+    )?.focus();
   }
   state.pendingFocusBlockId = null;
 }

@@ -89,6 +89,26 @@ describe("Data-loss prevention integration", () => {
     expect(transfer).toContain("const clockFloor = Date.now() * 1000");
   });
 
+  it("preserves earlier note text when a structured slash command is used on a later line", () => {
+    expect(client).toContain(
+      'const slashInsertAfterTypes = new Set(["TABLE", "DATABASE", "KANBAN", "BOOKMARK", "DIVIDER"]);'
+    );
+
+    const slashStart = client.indexOf("async function applySlashCommand(row, type)");
+    const slashEnd = client.indexOf("async function persistBlockOrder", slashStart);
+    const slashBody = client.slice(slashStart, slashEnd);
+    const preserveBranch = slashBody.indexOf("if (slashInsertAfterTypes.has(type) && markdown.trim())");
+    const saveExisting = slashBody.indexOf('await saveBlockRow(row, { quiet: true });', preserveBranch);
+    const insertSibling = slashBody.indexOf('await insertBlockRelative(row, "after", {', preserveBranch);
+
+    expect(preserveBranch).toBeGreaterThanOrEqual(0);
+    expect(slashBody).toContain("previousTextarea.value = markdown;");
+    expect(saveExisting).toBeGreaterThan(preserveBranch);
+    expect(insertSibling).toBeGreaterThan(saveExisting);
+    expect(slashBody).toContain("metadata: createInitialBlockMetadata(type)");
+    expect(client).toContain('{ parentBlockId = null, sortOrder, allowLocked = false, type = "MARKDOWN", markdown = "", metadata }');
+  });
+
   it("does not delete attachment source text changed while an upload is in flight", () => {
     expect(client).toContain('const pageId = state.selectedPage.id;');
     expect(client).toContain('const sourceEditRevision = Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0;');
@@ -138,8 +158,9 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain(
       "async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {}, { allowLocked = false } = {})"
     );
+    expect(client).toContain("async function createEmptyBlock(");
     expect(client).toContain(
-      "async function createEmptyBlock(pageId, { parentBlockId = null, sortOrder, allowLocked = false } = {})"
+      '{ parentBlockId = null, sortOrder, allowLocked = false, type = "MARKDOWN", markdown = "", metadata }'
     );
   });
 
