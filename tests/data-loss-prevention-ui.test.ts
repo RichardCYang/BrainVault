@@ -260,6 +260,25 @@ describe("Data-loss prevention integration", () => {
     );
   });
 
+  it("prevents delayed bookmark lookups from overwriting newer structured-block edits", () => {
+    const addStart = client.indexOf("async function addBookmarkToRow(row)");
+    const addEnd = client.indexOf("async function handleBookmarkAction", addStart);
+    const addBody = client.slice(addStart, addEnd);
+    expect(addBody).toContain("const context = createBookmarkRequestContext(row);");
+    expect(addBody.indexOf("resolveCurrentBookmarkRow(context)")).toBeGreaterThan(
+      addBody.indexOf('await api("/api/bookmarks/preview"')
+    );
+    expect(addBody).toContain("const data = extractBookmarkData(currentRow);");
+
+    const refreshStart = client.indexOf('if (action === "bookmark-refresh")');
+    const refreshEnd = client.indexOf("function mountBlockEditor", refreshStart);
+    const refreshBody = client.slice(refreshStart, refreshEnd);
+    expect(refreshBody).toContain("const latestData = extractBookmarkData(currentRow);");
+    expect(refreshBody).toContain("latestIndex < 0 || !jsonValuesMatch(latestData.items[latestIndex], current)");
+    expect(refreshBody).toContain("replaceBookmarkEditor(currentRow, latestData);");
+    expect(refreshBody).toContain("await saveBlockRow(currentRow, { quiet: true });");
+  });
+
   it("preserves attachment files when a database commit response is ambiguous", () => {
     expect(database).toContain("export class TransactionCommitOutcomeUnknownError extends Error");
     expect(database).toContain("readonly commitOutcomeUnknown = true");

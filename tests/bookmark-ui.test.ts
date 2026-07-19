@@ -32,6 +32,32 @@ describe("bookmark block UI", () => {
     expect(client).toContain('response.warning ? "status.bookmarkAddedFallback"');
   });
 
+  it("merges delayed bookmark previews into the live block without replaying stale metadata", () => {
+    expect(client).toContain("function createBookmarkRequestContext(row)");
+    expect(client).toContain("function resolveCurrentBookmarkRow(context)");
+
+    const addStart = client.indexOf("async function addBookmarkToRow(row)");
+    const addEnd = client.indexOf("async function handleBookmarkAction", addStart);
+    const addBody = client.slice(addStart, addEnd);
+    const addRequest = addBody.indexOf('await api("/api/bookmarks/preview"');
+    const addResolve = addBody.indexOf("const currentRow = resolveCurrentBookmarkRow(context);", addRequest);
+    const addLatestRead = addBody.indexOf("const data = extractBookmarkData(currentRow);", addResolve);
+    expect(addResolve).toBeGreaterThan(addRequest);
+    expect(addLatestRead).toBeGreaterThan(addResolve);
+    expect(addBody).toContain("replaceBookmarkEditor(currentRow, data, { focusInput: true });");
+    expect(addBody).toContain("await saveBlockRow(currentRow, { quiet: true });");
+
+    const refreshStart = client.indexOf('if (action === "bookmark-refresh")');
+    const refreshEnd = client.indexOf("function mountBlockEditor", refreshStart);
+    const refreshBody = client.slice(refreshStart, refreshEnd);
+    const refreshRequest = refreshBody.indexOf('await api("/api/bookmarks/preview"');
+    const latestRead = refreshBody.indexOf("const latestData = extractBookmarkData(currentRow);", refreshRequest);
+    expect(latestRead).toBeGreaterThan(refreshRequest);
+    expect(refreshBody).toContain("latestData.items.findIndex((item) => item.id === current.id)");
+    expect(refreshBody).toContain("!jsonValuesMatch(latestData.items[latestIndex], current)");
+    expect(refreshBody).not.toContain("data.items[itemIndex] =");
+  });
+
   it("keeps bookmark galleries responsive", () => {
     expect(styles).toMatch(/\.bookmark-items--gallery\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fill,/s);
     expect(styles).toMatch(/@media \(max-width: 640px\)[\s\S]*\.bookmark-items--gallery,[\s\S]*grid-template-columns:\s*1fr;/s);

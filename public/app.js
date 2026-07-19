@@ -4360,6 +4360,26 @@ function extractBookmarkData(row) {
   return normalizeBookmarkData(row?.bookmarkData);
 }
 
+function createBookmarkRequestContext(row) {
+  const pageId = state.selectedPage?.id;
+  const blockId = row?.dataset.blockId;
+  if (!pageId || !blockId || row.dataset.blockType !== "BOOKMARK") return null;
+  return { pageId, blockId };
+}
+
+function findCurrentBookmarkRow(context) {
+  if (!context || state.workspaceView !== "page" || state.selectedPage?.id !== context.pageId) return null;
+  const currentRow = findRenderedBlockRow(context.blockId);
+  if (!currentRow || currentRow.dataset.blockType !== "BOOKMARK" || currentRow.dataset.deleting === "true") {
+    return null;
+  }
+  return currentRow;
+}
+
+function resolveCurrentBookmarkRow(context) {
+  return canEditSelectedPage() ? findCurrentBookmarkRow(context) : null;
+}
+
 function replaceBookmarkEditor(row, value, { focusInput = false } = {}) {
   const host = row?.querySelector(".block-editor-host");
   if (!host) return;
@@ -4368,6 +4388,8 @@ function replaceBookmarkEditor(row, value, { focusInput = false } = {}) {
 }
 
 async function addBookmarkToRow(row) {
+  const context = createBookmarkRequestContext(row);
+  if (!context) return;
   const input = row.querySelector(".bookmark-url-input");
   const addButton = row.querySelector('[data-action="bookmark-add"]');
   const url = normalizeBookmarkInputUrl(input?.value ?? "");
@@ -4379,7 +4401,11 @@ async function addBookmarkToRow(row) {
   setStatus(t("status.bookmarkFetching"));
   try {
     const response = await api("/api/bookmarks/preview", { method: "POST", body: { url } });
-    const data = extractBookmarkData(row);
+    // The row may have been rerendered or edited while OpenGraph lookup was in flight.
+    // Merge into the live block instead of replaying a stale pre-request snapshot.
+    const currentRow = resolveCurrentBookmarkRow(context);
+    if (!currentRow) return;
+    const data = extractBookmarkData(currentRow);
     const preview = response.preview;
     const existingIndex = data.items.findIndex((item) => item.url === preview.url || item.url === url);
     const item = {
@@ -4388,11 +4414,13 @@ async function addBookmarkToRow(row) {
     };
     if (existingIndex >= 0) data.items.splice(existingIndex, 1, item);
     else data.items.push(item);
-    replaceBookmarkEditor(row, data, { focusInput: true });
-    await saveBlockRow(row, { quiet: true });
+    replaceBookmarkEditor(currentRow, data, { focusInput: true });
+    await saveBlockRow(currentRow, { quiet: true });
     setStatus(t(response.warning ? "status.bookmarkAddedFallback" : "status.bookmarkAdded", { title: item.title }));
   } finally {
     row.classList.remove("is-bookmark-loading");
+    const currentRow = findCurrentBookmarkRow(context);
+    currentRow?.classList.remove("is-bookmark-loading");
     if (addButton?.isConnected) addButton.disabled = false;
   }
 }
@@ -4428,20 +4456,34 @@ async function handleBookmarkAction(row, button) {
   }
 
   if (action === "bookmark-refresh") {
-    const current = data.items[itemIndex];
+    const context = createBookmarkRequestContext(row);
+    if (!context) return;
+    const current = { ...data.items[itemIndex] };
     row.classList.add("is-bookmark-loading");
     button.disabled = true;
     setStatus(t("status.bookmarkRefreshing", { title: current.title }));
     try {
       const response = await api("/api/bookmarks/preview", { method: "POST", body: { url: current.url } });
-      data.items[itemIndex] = { id: current.id, ...response.preview };
-      replaceBookmarkEditor(row, data);
-      await saveBlockRow(row, { quiet: true });
+      const currentRow = resolveCurrentBookmarkRow(context);
+      if (!currentRow) return;
+      const latestData = extractBookmarkData(currentRow);
+      const latestIndex = latestData.items.findIndex((item) => item.id === current.id);
+      // A removed or independently refreshed item must never be resurrected by this older response.
+      if (latestIndex < 0 || !jsonValuesMatch(latestData.items[latestIndex], current)) {
+        setStatus(t("errors.BLOCK_EDIT_CONFLICT"), true);
+        return;
+      }
+      const refreshedItem = { id: current.id, ...response.preview };
+      latestData.items[latestIndex] = refreshedItem;
+      replaceBookmarkEditor(currentRow, latestData);
+      await saveBlockRow(currentRow, { quiet: true });
       setStatus(t(response.warning ? "status.bookmarkRefreshedFallback" : "status.bookmarkRefreshed", {
-        title: data.items[itemIndex].title
+        title: refreshedItem.title
       }));
     } finally {
       row.classList.remove("is-bookmark-loading");
+      const currentRow = findCurrentBookmarkRow(context);
+      currentRow?.classList.remove("is-bookmark-loading");
       if (button.isConnected) button.disabled = false;
     }
   }
