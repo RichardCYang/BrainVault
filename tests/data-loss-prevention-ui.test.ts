@@ -16,6 +16,9 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("createPageDraftStore(window.localStorage, { sourceId: pageDraftSourceId })");
     expect(client).not.toContain("sessionStorage.setItem(pageDraftSourceSessionKey");
     expect(client).toContain('import { createLatestWriteQueue } from "./save-queue.js"');
+    expect(client).toContain(
+      'import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-rebase.js"'
+    );
     expect(client).toContain("await flushPendingPageEdits();");
     expect(client).toContain('window.addEventListener("beforeunload", handleBeforeUnload)');
     expect(client).toContain('document.addEventListener("visibilitychange"');
@@ -70,6 +73,8 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain('function promotePageTitleDraftConflict()');
     expect(client).toContain('function promoteBlockDraftConflict(row)');
     expect(client).toContain('function hasUnresolvedDraftConflicts()');
+    expect(client).toContain('[...blockDraftConflictOrigins.values()].some((origin) => origin.resolved !== true)');
+    expect(client).toContain('Boolean(storedOrigin && storedOrigin.resolved !== true)');
     expect(client).toContain('if (!allowConflictPrompt || !promotePageTitleDraftConflict())');
     expect(client).toContain('if (!allowConflictPrompt || !promoteBlockDraftConflict(row))');
     expect(client).toContain('await saveBlockRow(row, { resolveConflict: true });');
@@ -237,12 +242,24 @@ describe("Data-loss prevention integration", () => {
   it("keeps newer drafts durable when an in-flight save outlives an editor rerender", () => {
     expect(client).toContain("function getLatestKnownVersion(...values)");
     expect(client).toContain("const currentRow = findRenderedBlockRow(blockId) ?? task.row;");
+    expect(client).toContain("const latestStoredDraft = task.userId");
+    expect(client).toContain("const hasNewerLocalContent =");
+    expect(client).toContain("const committedBlock = rebaseCommittedBlockContent(data.block, latestLocalPayload);");
     expect(client).toContain("currentRow.dataset.draftExpectedVersion = String(data.block.version);");
-    expect(client).toContain("row.dataset.editRevision = String(currentSourceDraft.revision);");
-    expect(client).toContain("row.dataset.draftExpectedVersion = String(currentSourceDraft.expectedVersion);");
+    expect(client).toContain("function getBlockRenderDraft(pageId, blockId)");
+    expect(client).toContain("syncVisibleBlocksToState({ dirtyOnly: true });");
+    expect(client).toContain("elements.blockList.dataset.pageId = page.id;");
+    expect(client).toContain("const draftPayload = normalizeRecoveredBlockPayload(renderedDraft?.payload, block);");
+    expect(client).toContain("const renderedBlock = draftPayload ? { ...block, ...draftPayload, htmlCache: null } : block;");
+    expect(client).toContain("row.dataset.editRevision = String(renderedDraft.revision);");
+    expect(client).toContain("row.dataset.draftExpectedVersion = String(renderedDraft.expectedVersion);");
+    expect(client).toContain('row.dataset.draftConflict = "true";');
     expect(client).toContain(
-      "elements.blockList.append(renderBlock(block, currentSourceDraft?.blocks?.[block.id] ?? null));"
+      "elements.blockList.append(renderBlock(block, getBlockRenderDraft(page.id, block.id)));"
     );
+    expect(client).toContain("const latestStoredTitle = task.userId");
+    expect(client).toContain("const hasNewerLocalTitle =");
+    expect(client).toContain("const committedPage = rebaseCommittedPageTitle(");
 
     const dragStart = client.indexOf("async function finishBlockDrag");
     const dragEnd = client.indexOf("function setRowType", dragStart);

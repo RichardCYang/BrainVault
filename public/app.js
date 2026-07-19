@@ -25,6 +25,7 @@ import {
 import { emojiCategoryDefinitions, emojiRecords } from "./emoji-data.js";
 import { createPageDraftStore } from "./draft-store.js";
 import { createLatestWriteQueue } from "./save-queue.js";
+import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-rebase.js";
 
 const tokenKey = "brainvault.token";
 const rootParentKey = "__root__";
@@ -510,6 +511,7 @@ const blockSaveRows = new Map();
 const blockSaveQueues = new Map();
 const blockSaveTaskIds = new Map();
 const blockDraftConflictOrigins = new Map();
+const blockDraftRenderSources = new Map();
 let pageTitleSaveTimer = null;
 let pageTitleEditRevision = 0;
 let pageTitleSavedRevision = 0;
@@ -1033,23 +1035,35 @@ const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
     }
   }
 
+  const latestStoredTitle = task.userId
+    ? pageDraftStore.loadPage(task.userId, task.pageId, task.draftSourceId)?.title
+    : null;
+  const hasNewerLocalTitle =
+    state.selectedPage?.id === task.pageId &&
+    (pageTitleEditRevision > task.editRevision || pageTitleTaskId > task.taskId);
+  const committedPage = rebaseCommittedPageTitle(
+    data.page,
+    hasNewerLocalTitle ? latestStoredTitle?.value ?? normalizePageTitle(elements.pageTitle.value) : null
+  );
+
   if (state.selectedPage?.id === task.pageId) {
     const currentBlocks = state.selectedPage.blocks;
-    state.selectedPage = { ...data.page, blocks: currentBlocks };
-    applyPageSummaryUpdate(data.page.id, { title: data.page.title, version: data.page.version, updatedAt: data.page.updatedAt });
+    state.selectedPage = { ...committedPage, blocks: currentBlocks };
+    applyPageSummaryUpdate(committedPage.id, {
+      title: committedPage.title,
+      version: committedPage.version,
+      updatedAt: committedPage.updatedAt
+    });
     renderPageHeader(state.selectedPage);
   }
   if (pageTitleTaskId === task.taskId && pageTitleEditRevision === task.editRevision) {
     pageTitleSavedRevision = task.editRevision;
     pageTitleDraftExpectedVersion = null;
     pageTitleDraftSourceId = pageDraftSourceId;
-  } else if (
-    state.selectedPage?.id === task.pageId &&
-    (pageTitleEditRevision > task.editRevision || pageTitleTaskId > task.taskId)
-  ) {
+  } else if (hasNewerLocalTitle) {
     pageTitleDraftExpectedVersion = getPositiveVersion(data.page.version);
   }
-  return data;
+  return { ...data, page: committedPage };
 });
 
 async function downloadAttachment(block) {
@@ -2580,7 +2594,7 @@ function persistBlockDraft(row, payload = null) {
   if (expectedVersion === null) return false;
   row.dataset.draftExpectedVersion = String(expectedVersion);
   row.dataset.draftSourceId = draftSourceId;
-  return checkDraftStoreWrite(
+  const saved = checkDraftStoreWrite(
     pageDraftStore.saveBlock({
       ...scope,
       sourceId: draftSourceId,
@@ -2590,6 +2604,8 @@ function persistBlockDraft(row, payload = null) {
       revision: editRevision
     })
   );
+  if (saved) blockDraftRenderSources.set(blockId, draftSourceId);
+  return saved;
 }
 
 function refreshPageTitleConflictOrigin() {
@@ -2616,7 +2632,8 @@ function refreshBlockDraftConflictOrigin(row) {
     sourceId: draftSourceId,
     payload: storedDraft.payload,
     expectedVersion: storedDraft.expectedVersion,
-    revision: storedDraft.revision
+    revision: storedDraft.revision,
+    resolved: false
   });
 }
 
@@ -2640,15 +2657,28 @@ function promotePageTitleDraftConflict() {
 }
 
 function promoteBlockDraftConflict(row) {
-  if (row?.dataset.draftConflict !== "true") return true;
+  const blockId = row?.dataset.blockId;
+  const storedOrigin = blockId ? blockDraftConflictOrigins.get(blockId) : null;
+  const hasStoredConflict = Boolean(storedOrigin && storedOrigin.resolved !== true);
+  if (row?.dataset.draftConflict !== "true" && !hasStoredConflict) return true;
+
+  if (row.dataset.draftConflict !== "true" && storedOrigin) {
+    row.dataset.draftConflict = "true";
+    row.dataset.draftSourceId = storedOrigin.sourceId;
+    row.dataset.draftExpectedVersion = String(storedOrigin.expectedVersion);
+    row.dataset.editRevision = String(storedOrigin.revision);
+    row.classList.add("is-dirty", "save-error");
+  }
   refreshBlockDraftConflictOrigin(row);
   if (!confirmRecoveredDraftOverwrite()) {
     setStatus(t("status.localDraftOverwriteCancelled"), true);
     return false;
   }
+  const conflictOrigin = blockDraftConflictOrigins.get(blockId);
+  if (conflictOrigin) conflictOrigin.resolved = true;
   delete row.dataset.draftConflict;
   row.dataset.draftSourceId = pageDraftSourceId;
-  const serverVersion = getPositiveVersion(getBlockById(row.dataset.blockId)?.version);
+  const serverVersion = getPositiveVersion(getBlockById(blockId)?.version);
   if (serverVersion !== null) row.dataset.draftExpectedVersion = String(serverVersion);
   row.classList.remove("save-error");
   persistBlockDraft(row);
@@ -2658,6 +2688,7 @@ function promoteBlockDraftConflict(row) {
 function hasUnresolvedDraftConflicts() {
   return (
     pageTitleDraftConflict ||
+    [...blockDraftConflictOrigins.values()].some((origin) => origin.resolved !== true) ||
     Boolean(elements.blockList.querySelector('.editor-block-row[data-draft-conflict="true"]'))
   );
 }
@@ -2682,6 +2713,7 @@ function resetPageEditTracking() {
   pageTitleDraftConflict = false;
   pageTitleConflictOrigin = null;
   blockDraftConflictOrigins.clear();
+  blockDraftRenderSources.clear();
   for (const timer of blockSaveTimers.values()) window.clearTimeout(timer);
   blockSaveTimers.clear();
   blockSaveRows.clear();
@@ -2709,6 +2741,7 @@ function discardPendingPageEdits() {
   pageTitleDraftConflict = false;
   pageTitleConflictOrigin = null;
   blockDraftConflictOrigins.clear();
+  blockDraftRenderSources.clear();
   disableBeforeUnloadProtection();
 }
 
@@ -3232,9 +3265,13 @@ function getBlockVersionSnapshot(blockId, { includeDescendants = true } = {}) {
 }
 
 function blockSnapshotHasUnresolvedDraftConflict(expectedVersions) {
-  return expectedVersions.some(
-    ({ id }) => findRenderedBlockRow(id)?.dataset.draftConflict === "true"
-  );
+  return expectedVersions.some(({ id }) => {
+    const storedOrigin = blockDraftConflictOrigins.get(id);
+    return (
+      Boolean(storedOrigin && storedOrigin.resolved !== true) ||
+      findRenderedBlockRow(id)?.dataset.draftConflict === "true"
+    );
+  });
 }
 
 function blockDeletionHasUnresolvedDraftConflict(blockId, options) {
@@ -3254,6 +3291,7 @@ async function deleteBlockWithVersionCheck(blockId, options) {
     method: "DELETE",
     body: { expectedVersions }
   });
+  for (const { id } of expectedVersions) blockDraftRenderSources.delete(id);
   if (scope) {
     checkDraftStoreWrite(
       pageDraftStore.removeBlocks(
@@ -4509,19 +4547,37 @@ function mountBlockEditor(row, block) {
   );
 }
 
-function renderBlock(block, currentSourceDraft = null) {
+function getBlockRenderDraft(pageId, blockId) {
+  const conflictOrigin = blockDraftConflictOrigins.get(blockId);
+  const hasUnresolvedConflict = Boolean(conflictOrigin && conflictOrigin.resolved !== true);
+  const sourceId = hasUnresolvedConflict ? conflictOrigin.sourceId : blockDraftRenderSources.get(blockId);
+  if (!state.user?.id || !sourceId) return null;
+
+  const storedDraft = pageDraftStore.loadPage(state.user.id, pageId, sourceId)?.blocks?.[blockId];
+  const draft = storedDraft ?? (hasUnresolvedConflict ? conflictOrigin : null);
+  if (!draft) return null;
+  return { ...draft, sourceId, conflict: hasUnresolvedConflict };
+}
+
+function renderBlock(block, renderedDraft = null) {
+  const draftPayload = normalizeRecoveredBlockPayload(renderedDraft?.payload, block);
+  const renderedBlock = draftPayload ? { ...block, ...draftPayload, htmlCache: null } : block;
   const row = document.createElement("article");
   row.className = "editor-block-row";
   row.dataset.blockId = block.id;
-  row.dataset.blockType = block.type;
-  if (currentSourceDraft) {
-    row.dataset.editRevision = String(currentSourceDraft.revision);
-    row.dataset.draftExpectedVersion = String(currentSourceDraft.expectedVersion);
-    row.dataset.draftSourceId = pageDraftSourceId;
+  row.dataset.blockType = renderedBlock.type;
+  if (renderedDraft) {
+    row.dataset.editRevision = String(renderedDraft.revision);
+    row.dataset.draftExpectedVersion = String(renderedDraft.expectedVersion);
+    row.dataset.draftSourceId = renderedDraft.sourceId;
     row.classList.add("is-dirty");
+    if (renderedDraft.conflict) {
+      row.dataset.draftConflict = "true";
+      row.classList.add("save-error");
+    }
   }
-  row.dataset.calloutType = getBlockCalloutType(block);
-  row.dataset.textAlign = getBlockTextAlign(block);
+  row.dataset.calloutType = getBlockCalloutType(renderedBlock);
+  row.dataset.textAlign = getBlockTextAlign(renderedBlock);
   row.dataset.parentBlockId = block.parentBlockId ?? "";
   row.dataset.sortOrder = String(block.sortOrder ?? 0);
   row.dataset.depth = String(Math.min(block.depth ?? 0, 5));
@@ -4549,8 +4605,8 @@ function renderBlock(block, currentSourceDraft = null) {
   typeButton.type = "button";
   typeButton.className = "block-type-pill";
   typeButton.dataset.action = "open-slash-menu";
-  typeButton.textContent = getBlockTypeLabel(block.type);
-  typeButton.disabled = block.type === "ATTACHMENT";
+  typeButton.textContent = getBlockTypeLabel(renderedBlock.type);
+  typeButton.disabled = renderedBlock.type === "ATTACHMENT";
   if (typeButton.disabled) typeButton.title = t("attachment.typeLocked");
 
   const meta = document.createElement("span");
@@ -4562,18 +4618,18 @@ function renderBlock(block, currentSourceDraft = null) {
 
   const todoLabel = document.createElement("label");
   todoLabel.className = "inline-todo";
-  todoLabel.classList.toggle("hidden", block.type !== "TODO");
+  todoLabel.classList.toggle("hidden", renderedBlock.type !== "TODO");
   const checked = document.createElement("input");
   checked.type = "checkbox";
   checked.name = "checked";
-  checked.checked = Boolean(block.checked);
+  checked.checked = Boolean(renderedBlock.checked);
   todoLabel.append(checked, document.createTextNode(t("block.completed")));
 
   const editorHost = document.createElement("div");
   editorHost.className = "block-editor-host";
   body.append(topLine, todoLabel, editorHost);
   row.append(handle, body);
-  mountBlockEditor(row, block);
+  mountBlockEditor(row, renderedBlock);
   return row;
 }
 
@@ -4708,8 +4764,9 @@ function getBlockSiblings(parentBlockId) {
   return getBlockById(parentBlockId)?.children ?? [];
 }
 
-function syncVisibleBlocksToState() {
+function syncVisibleBlocksToState({ dirtyOnly = false } = {}) {
   for (const row of elements.blockList.querySelectorAll(".editor-block-row")) {
+    if (dirtyOnly && !row.classList.contains("is-dirty")) continue;
     const block = getBlockById(row.dataset.blockId);
     if (!block) continue;
     Object.assign(block, buildBlockPayload(row));
@@ -5242,28 +5299,45 @@ function getBlockSaveQueue(blockId) {
       }
     }
     applyPageContentVersion(task.pageId, data.pageContentVersion);
-    updateBlockInState(data.block);
 
     // A locale change or drag reorder can rebuild the editor while this request is in flight.
     // Always rebase the currently rendered row, not the detached row that started the request.
     const currentRow = findRenderedBlockRow(blockId) ?? task.row;
-    if (currentRow?.dataset.blockId === blockId) updateRenderedBlockPreview(currentRow, data.block);
-
     const latestTaskId = blockSaveTaskIds.get(blockId);
     const currentEditRevision = Number.parseInt(currentRow?.dataset.editRevision ?? "0", 10) || 0;
+    const latestStoredDraft = task.userId
+      ? pageDraftStore.loadPage(task.userId, task.pageId, task.draftSourceId)?.blocks?.[blockId]
+      : null;
+    const hasNewerLocalContent =
+      Number(latestStoredDraft?.revision ?? 0) > task.editRevision ||
+      currentEditRevision > task.editRevision ||
+      Number(latestTaskId) > task.taskId;
+    const latestStoredPayload = Number(latestStoredDraft?.revision ?? 0) > task.editRevision
+      ? latestStoredDraft.payload
+      : null;
+    const currentRowPayload = hasNewerLocalContent && currentRow?.dataset.blockId === blockId
+      ? buildBlockPayload(currentRow)
+      : null;
+    const latestLocalPayload = normalizeRecoveredBlockPayload(
+      latestStoredPayload ?? currentRowPayload,
+      data.block
+    );
+    const committedBlock = rebaseCommittedBlockContent(data.block, latestLocalPayload);
+    updateBlockInState(committedBlock);
+    if (currentRow?.dataset.blockId === blockId) updateRenderedBlockPreview(currentRow, committedBlock);
+
     if (currentRow && latestTaskId === task.taskId && currentEditRevision === task.editRevision) {
       currentRow.classList.remove("is-dirty", "save-error");
       currentRow.classList.add("is-saved");
       delete currentRow.dataset.draftExpectedVersion;
       delete currentRow.dataset.draftSourceId;
+      if (!latestStoredDraft) blockDraftRenderSources.delete(blockId);
       window.setTimeout(() => currentRow.classList.remove("is-saved"), 900);
-    } else if (
-      currentRow?.dataset.blockId === blockId &&
-      (currentEditRevision > task.editRevision || Number(latestTaskId) > task.taskId)
-    ) {
+    } else if (currentRow?.dataset.blockId === blockId && hasNewerLocalContent) {
       currentRow.dataset.draftExpectedVersion = String(data.block.version);
+      if (latestStoredDraft) blockDraftRenderSources.set(blockId, task.draftSourceId);
     }
-    return data;
+    return { ...data, block: committedBlock };
   });
   blockSaveQueues.set(blockId, queue);
   return queue;
@@ -6209,6 +6283,14 @@ function renderSelectedPage() {
   const isHome = state.workspaceView === "home";
   const isCollection = state.workspaceView === "collection";
   const hasPage = state.workspaceView === "page" && Boolean(page);
+  const renderedPageId = elements.blockList.dataset.pageId;
+
+  if (hasPage && renderedPageId === page.id) {
+    if (pageTitleDraftConflict || pageTitleEditRevision > pageTitleSavedRevision) {
+      page.title = normalizePageTitle(elements.pageTitle.value);
+    }
+    syncVisibleBlocksToState({ dirtyOnly: true });
+  }
 
   elements.sidebarHomeShortcut.classList.toggle("active", isHome);
   if (isHome) elements.sidebarHomeShortcut.setAttribute("aria-current", "page");
@@ -6220,17 +6302,17 @@ function renderSelectedPage() {
   elements.pageView.classList.toggle("hidden", !hasPage);
 
   if (isCollection) {
+    delete elements.blockList.dataset.pageId;
     renderPages();
     return;
   }
   if (!hasPage) {
+    delete elements.blockList.dataset.pageId;
     renderPages();
     return;
   }
 
-  const currentSourceDraft = state.user?.id
-    ? pageDraftStore.loadPage(state.user.id, page.id, pageDraftSourceId)
-    : null;
+  elements.blockList.dataset.pageId = page.id;
   const flatBlocks = flattenBlocks(page.blocks);
   renderPageHeader(page);
   elements.pageKicker.textContent = formatDate(page.updatedAt);
@@ -6245,7 +6327,7 @@ function renderSelectedPage() {
     elements.blockList.append(empty);
   } else {
     for (const block of flatBlocks) {
-      elements.blockList.append(renderBlock(block, currentSourceDraft?.blocks?.[block.id] ?? null));
+      elements.blockList.append(renderBlock(block, getBlockRenderDraft(page.id, block.id)));
     }
   }
 
@@ -6583,11 +6665,13 @@ function activatePersistedPageDraft(recovery) {
         sourceId: recovered.sourceId,
         payload: recovered.draft.payload,
         expectedVersion: recovered.draft.expectedVersion,
-        revision: recovered.draft.revision
+        revision: recovered.draft.revision,
+        resolved: false
       });
     } else {
       blockDraftConflictOrigins.delete(recovered.blockId);
     }
+    blockDraftRenderSources.set(recovered.blockId, row.dataset.draftSourceId);
     if (!recovered.conflict) persistBlockDraft(row);
     row.classList.add("is-dirty", "local-draft-recovered");
     if (recovered.conflict) {
