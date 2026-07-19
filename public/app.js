@@ -386,6 +386,14 @@ const slashCommands = [
 // used on a later line, insert a new sibling instead of replacing earlier note text.
 const slashInsertAfterTypes = new Set(["TABLE", "DATABASE", "KANBAN", "BOOKMARK", "DIVIDER"]);
 
+// Structured editors serialize their real content into metadata. Converting one in place
+// would make buildBlockPayload remove the source metadata for the newly selected type.
+const structuredBlockTypes = new Set(["TABLE", "DATABASE", "KANBAN", "BOOKMARK", "AI_CHAT"]);
+
+function isStructuredBlockType(type) {
+  return structuredBlockTypes.has(type);
+}
+
 const svgNamespace = "http://www.w3.org/2000/svg";
 const slashCommandIconShapes = {
   text: [
@@ -5679,11 +5687,18 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
     const referenceIndex = siblingIds.indexOf(blockId);
     if (referenceIndex < 0) throw new Error(t("errors.currentBlockOrder"));
 
-    const replaceCurrentBlock = !remainingMarkdown.trim() && !(block?.children?.length);
+    const sourceType = row.dataset.blockType ?? block?.type ?? "MARKDOWN";
+    const replaceCurrentBlock =
+      !isStructuredBlockType(sourceType) && !remainingMarkdown.trim() && !(block?.children?.length);
+    let sourceNeedsSave = row.classList.contains("is-dirty");
     if (!replaceCurrentBlock && textarea && textarea.value !== remainingMarkdown) {
       textarea.value = remainingMarkdown;
       autoGrowTextarea(textarea);
-      await saveBlockRow(row, { quiet: true });
+      sourceNeedsSave = true;
+    }
+    if (!replaceCurrentBlock && sourceNeedsSave) await saveBlockRow(row, { quiet: true });
+    if (!replaceCurrentBlock && blockSaveQueues.get(blockId)?.busy) {
+      await blockSaveQueues.get(blockId).flush();
     }
 
     const insertionIndex = replaceCurrentBlock ? referenceIndex : referenceIndex + 1;
@@ -5762,11 +5777,13 @@ function createInitialBlockMetadata(type) {
   if (type === "KANBAN") return { kanban: createDefaultKanbanData() };
   if (type === "DATABASE") return { database: createDefaultDatabaseData() };
   if (type === "BOOKMARK") return { bookmark: createDefaultBookmarkData() };
+  if (type === "AI_CHAT") return { aiChat: createDefaultAiChatData() };
   return undefined;
 }
 
 async function applySlashCommand(row, type) {
   if (!requireWritablePage()) return;
+  const previousType = row.dataset.blockType ?? getBlockById(row.dataset.blockId)?.type ?? "MARKDOWN";
   const previousTextarea = getBlockTextarea(row);
   const context = previousTextarea ? getSlashContext(previousTextarea) : null;
   let markdown = previousTextarea?.value ?? "";
@@ -5779,6 +5796,23 @@ async function applySlashCommand(row, type) {
   if (!promoteBlockDraftConflict(row)) return;
 
   if (context) markdown = `${markdown.slice(0, context.start)}${markdown.slice(context.end)}`;
+
+  if (!context && previousType === type) {
+    closeSlashMenu();
+    return;
+  }
+
+  if (isStructuredBlockType(previousType) && previousType !== type) {
+    // Never reinterpret metadata-backed content as another block type in place. Persist the
+    // source first, then create the requested type as a sibling so the original stays intact.
+    closeSlashMenu();
+    await saveBlockRow(row, { quiet: true });
+    await insertBlockRelative(row, "after", {
+      type,
+      metadata: createInitialBlockMetadata(type)
+    });
+    return;
+  }
 
   if (slashInsertAfterTypes.has(type) && markdown.trim()) {
     // Structured blocks store their content in metadata, so converting this block would

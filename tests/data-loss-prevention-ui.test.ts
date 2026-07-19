@@ -150,6 +150,35 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain('{ parentBlockId = null, sortOrder, allowLocked = false, type = "MARKDOWN", markdown = "", metadata }');
   });
 
+  it("preserves metadata-backed blocks when their type is changed or an attachment is inserted", () => {
+    expect(client).toContain(
+      'const structuredBlockTypes = new Set(["TABLE", "DATABASE", "KANBAN", "BOOKMARK", "AI_CHAT"]);'
+    );
+    expect(client).toContain("function isStructuredBlockType(type)");
+    expect(client).toContain('if (type === "AI_CHAT") return { aiChat: createDefaultAiChatData() };');
+
+    const slashStart = client.indexOf("async function applySlashCommand(row, type)");
+    const slashEnd = client.indexOf("async function persistBlockOrder", slashStart);
+    const slashBody = client.slice(slashStart, slashEnd);
+    const preserveStructured = slashBody.indexOf(
+      "if (isStructuredBlockType(previousType) && previousType !== type)"
+    );
+    const saveStructured = slashBody.indexOf('await saveBlockRow(row, { quiet: true });', preserveStructured);
+    const insertStructuredSibling = slashBody.indexOf('await insertBlockRelative(row, "after", {', preserveStructured);
+
+    expect(preserveStructured).toBeGreaterThanOrEqual(0);
+    expect(saveStructured).toBeGreaterThan(preserveStructured);
+    expect(insertStructuredSibling).toBeGreaterThan(saveStructured);
+
+    const uploadStart = client.indexOf("async function uploadAttachmentFromRow");
+    const uploadEnd = client.indexOf("function requestAttachmentUpload", uploadStart);
+    const uploadBody = client.slice(uploadStart, uploadEnd);
+    expect(uploadBody).toContain("!isStructuredBlockType(sourceType)");
+    expect(uploadBody).toContain('let sourceNeedsSave = row.classList.contains("is-dirty");');
+    expect(uploadBody).toContain("if (!replaceCurrentBlock && sourceNeedsSave) await saveBlockRow(row, { quiet: true });");
+    expect(uploadBody).toContain("await blockSaveQueues.get(blockId).flush();");
+  });
+
   it("does not delete attachment source text changed while an upload is in flight", () => {
     expect(client).toContain('const pageId = state.selectedPage.id;');
     expect(client).toContain('const sourceEditRevision = Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0;');
