@@ -3150,7 +3150,8 @@ function getOrphanedPageDrafts() {
       sourceId: record.sourceId,
       updatedAt: new Date(record.updatedAt).toISOString(),
       title: record.title,
-      blocks: record.blocks
+      blocks: record.blocks,
+      blockOrder: record.blockOrder
     }));
 }
 
@@ -4792,10 +4793,14 @@ function normalizeParentBlockId(value) {
   return value || null;
 }
 
+function getPageBlockSiblings(page, parentBlockId) {
+  if (!page) return [];
+  if (!parentBlockId) return page.blocks ?? [];
+  return getBlockById(parentBlockId, page.blocks ?? [])?.children ?? [];
+}
+
 function getBlockSiblings(parentBlockId) {
-  if (!state.selectedPage) return [];
-  if (!parentBlockId) return state.selectedPage.blocks ?? [];
-  return getBlockById(parentBlockId)?.children ?? [];
+  return getPageBlockSiblings(state.selectedPage, parentBlockId);
 }
 
 function syncVisibleBlocksToState({ dirtyOnly = false } = {}) {
@@ -4807,8 +4812,9 @@ function syncVisibleBlocksToState({ dirtyOnly = false } = {}) {
   }
 }
 
-function reorderBlockSiblingsInState(parentBlockId, orderedIds) {
-  const siblings = getBlockSiblings(parentBlockId);
+function reorderPageBlockSiblings(page, parentBlockId, orderedIds) {
+  const siblings = getPageBlockSiblings(page, parentBlockId);
+  if (orderedIds.length !== siblings.length || new Set(orderedIds).size !== orderedIds.length) return false;
   const byId = new Map(siblings.map((block) => [block.id, block]));
   const reordered = orderedIds.map((id) => byId.get(id)).filter(Boolean);
   if (reordered.length !== siblings.length) return false;
@@ -4818,6 +4824,10 @@ function reorderBlockSiblingsInState(parentBlockId, orderedIds) {
   });
   siblings.splice(0, siblings.length, ...reordered);
   return true;
+}
+
+function reorderBlockSiblingsInState(parentBlockId, orderedIds) {
+  return reorderPageBlockSiblings(state.selectedPage, parentBlockId, orderedIds);
 }
 
 function getBlockDepth(row) {
@@ -5089,8 +5099,12 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
     const orderedIds = drag.candidates.map((row) => row.dataset.blockId);
     orderedIds.splice(drag.targetIndex, 0, drag.row.dataset.blockId);
     const task = createBlockOrderTask(drag.parentBlockId, orderedIds, {}, { previousIds });
+    persistBlockOrderDraft(task);
 
-    if (!reorderBlockSiblingsInState(drag.parentBlockId, orderedIds)) return;
+    if (!reorderBlockSiblingsInState(drag.parentBlockId, orderedIds)) {
+      acknowledgeBlockOrderDraft(task);
+      throw new Error(t("errors.currentBlockOrder"));
+    }
 
     pendingBlockOrderTask = task;
     blockOrderSaving = true;
@@ -5101,6 +5115,7 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
 
     try {
       await submitBlockOrderTaskWithReplay(task);
+      acknowledgeBlockOrderDraft(task);
       pendingBlockOrderTask = null;
       setStatus(t("status.blockOrderChanged"));
     } catch (error) {
@@ -6017,9 +6032,16 @@ function createBlockOrderTask(
   parentBlockId,
   orderedIds,
   versionOverrides = {},
-  { pageId = state.selectedPage?.id, mutationId = createMutationId(), previousIds = null } = {}
+  {
+    pageId = state.selectedPage?.id,
+    userId = state.user?.id,
+    sourceId = pageDraftSourceId,
+    mutationId = createMutationId(),
+    previousIds = null,
+    recovered = false
+  } = {}
 ) {
-  if (!pageId || !orderedIds.length) throw new Error(t("errors.currentBlockOrder"));
+  if (!pageId || !userId || !sourceId || !orderedIds.length) throw new Error(t("errors.currentBlockOrder"));
   const items = orderedIds.map((id, index) => {
     const expectedVersion = Number(versionOverrides[id] ?? getBlockById(id)?.version);
     if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
@@ -6028,13 +6050,44 @@ function createBlockOrderTask(
     return { id, sortOrder: index, parentBlockId, expectedVersion };
   });
   return {
+    userId,
     pageId,
+    sourceId,
     parentBlockId,
     orderedIds: [...orderedIds],
     previousIds: previousIds ? [...previousIds] : null,
     mutationId,
-    items
+    items,
+    recovered
   };
+}
+
+function persistBlockOrderDraft(task) {
+  const succeeded = checkDraftStoreWrite(
+    pageDraftStore.saveBlockOrder({
+      userId: task.userId,
+      pageId: task.pageId,
+      sourceId: task.sourceId,
+      parentBlockId: task.parentBlockId,
+      orderedIds: task.orderedIds,
+      previousIds: task.previousIds,
+      mutationId: task.mutationId,
+      items: task.items
+    })
+  );
+  if (!succeeded) throw new Error(t("status.localDraftStorageFailed"));
+  return true;
+}
+
+function acknowledgeBlockOrderDraft(task) {
+  return checkDraftStoreWrite(
+    pageDraftStore.acknowledgeBlockOrder({
+      userId: task.userId,
+      pageId: task.pageId,
+      sourceId: task.sourceId,
+      mutationId: task.mutationId
+    })
+  );
 }
 
 async function submitBlockOrderTask(task, { keepalive = false } = {}) {
@@ -6075,6 +6128,7 @@ async function retryPendingBlockOrder({ keepalive = false } = {}) {
   syncBeforeUnloadProtection();
   try {
     const data = await submitBlockOrderTaskWithReplay(task, { keepalive });
+    acknowledgeBlockOrderDraft(task);
     if (pendingBlockOrderTask === task) pendingBlockOrderTask = null;
     if (state.selectedPage?.id === task.pageId) renderSelectedPage();
     setStatus(t("status.blockOrderChanged"));
@@ -6098,7 +6152,29 @@ async function retryPendingBlockOrder({ keepalive = false } = {}) {
 async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {}, { allowLocked = false } = {}) {
   const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage();
   if (!writable || !orderedIds.length) return;
-  return submitBlockOrderTaskWithReplay(createBlockOrderTask(parentBlockId, orderedIds, versionOverrides));
+
+  const task = createBlockOrderTask(parentBlockId, orderedIds, versionOverrides);
+  persistBlockOrderDraft(task);
+  pendingBlockOrderTask = task;
+  blockOrderSaving = true;
+  syncPageModeUi();
+  syncBeforeUnloadProtection();
+
+  try {
+    const data = await submitBlockOrderTaskWithReplay(task);
+    acknowledgeBlockOrderDraft(task);
+    if (pendingBlockOrderTask === task) pendingBlockOrderTask = null;
+    return data;
+  } catch (error) {
+    if (isDefinitiveApiError(error) && pendingBlockOrderTask === task) {
+      pendingBlockOrderTask = null;
+    }
+    throw error;
+  } finally {
+    blockOrderSaving = Boolean(pendingBlockOrderTask);
+    syncPageModeUi();
+    syncBeforeUnloadProtection();
+  }
 }
 
 async function createEmptyBlock(
@@ -6585,7 +6661,16 @@ function blockPayloadsMatch(block, payload) {
 function applyPersistedPageDraft(page) {
   const scope = getDraftScope(page?.id);
   const records = scope ? pageDraftStore.loadPageDrafts(scope.userId, scope.pageId) : [];
-  const recovery = { scope, title: null, blocks: [], missing: [], alternates: [], conflictCount: 0 };
+  const recovery = {
+    scope,
+    title: null,
+    blocks: [],
+    blockOrder: null,
+    orderConflicts: [],
+    missing: [],
+    alternates: [],
+    conflictCount: 0
+  };
   if (!scope || records.length === 0 || !page) return recovery;
 
   const titleCandidates = [];
@@ -6696,6 +6781,56 @@ function applyPersistedPageDraft(page) {
     }
   }
 
+  const orderCandidates = records
+    .filter((record) => record.blockOrder)
+    .map((record) => ({ sourceId: record.sourceId, draft: record.blockOrder }))
+    .sort((left, right) => right.draft.updatedAt - left.draft.updatedAt);
+  const pendingOrderCandidates = [];
+
+  for (const candidate of orderCandidates) {
+    const siblings = getPageBlockSiblings(page, candidate.draft.parentBlockId);
+    const currentIds = siblings.map((block) => block.id);
+    if (jsonValuesMatch(currentIds, candidate.draft.orderedIds)) {
+      checkDraftStoreWrite(
+        pageDraftStore.acknowledgeBlockOrder({
+          ...scope,
+          sourceId: candidate.sourceId,
+          mutationId: candidate.draft.mutationId
+        })
+      );
+      continue;
+    }
+    pendingOrderCandidates.push(candidate);
+  }
+
+  if (pendingOrderCandidates.length > 0) {
+    const selected = pendingOrderCandidates[0];
+    const itemBlocks = selected.draft.items.map((item) => getBlockById(item.id, page.blocks ?? []));
+    const siblings = getPageBlockSiblings(page, selected.draft.parentBlockId);
+    const siblingIds = siblings.map((block) => block.id);
+    const replayable =
+      siblingIds.length === selected.draft.orderedIds.length &&
+      siblingIds.every((id) => selected.draft.orderedIds.includes(id)) &&
+      itemBlocks.every(
+        (block, index) =>
+          block &&
+          Number(block.version ?? 1) === selected.draft.items[index].expectedVersion
+      );
+
+    if (replayable && reorderPageBlockSiblings(page, selected.draft.parentBlockId, selected.draft.orderedIds)) {
+      recovery.blockOrder = { sourceId: selected.sourceId, draft: selected.draft, serverIds: siblingIds };
+    } else {
+      recovery.orderConflicts.push({ sourceId: selected.sourceId, draft: selected.draft });
+      recovery.conflictCount += 1;
+    }
+
+    for (const candidate of pendingOrderCandidates.slice(1)) {
+      if (jsonValuesMatch(candidate.draft.orderedIds, selected.draft.orderedIds)) continue;
+      recovery.orderConflicts.push({ sourceId: candidate.sourceId, draft: candidate.draft });
+      recovery.conflictCount += 1;
+    }
+  }
+
   return recovery;
 }
 
@@ -6715,6 +6850,14 @@ function appendDraftRecoveryPanel(recovery) {
       expectedVersion: draft.expectedVersion,
       updatedAt: draft.updatedAt
     })),
+    ...recovery.orderConflicts.map(({ sourceId, draft }) => ({
+      kind: "block-order",
+      sourceId,
+      parentBlockId: draft.parentBlockId,
+      orderedIds: draft.orderedIds,
+      expectedVersions: draft.items.map(({ id, expectedVersion }) => ({ id, expectedVersion })),
+      updatedAt: draft.updatedAt
+    })),
     ...recovery.alternates
   ];
   if (recoveryItems.length === 0) return;
@@ -6731,8 +6874,15 @@ function appendDraftRecoveryPanel(recovery) {
 }
 
 function activatePersistedPageDraft(recovery) {
-  const recoveredCount = (recovery.title ? 1 : 0) + recovery.blocks.length;
-  if (recoveredCount === 0 && recovery.missing.length === 0 && recovery.alternates.length === 0) return false;
+  const recoveredCount = (recovery.title ? 1 : 0) + recovery.blocks.length + (recovery.blockOrder ? 1 : 0);
+  if (
+    recoveredCount === 0 &&
+    recovery.missing.length === 0 &&
+    recovery.orderConflicts.length === 0 &&
+    recovery.alternates.length === 0
+  ) {
+    return false;
+  }
 
   if (recovery.title) {
     pageTitleEditRevision = Math.max(1, recovery.title.revision);
@@ -6795,9 +6945,31 @@ function activatePersistedPageDraft(recovery) {
     );
   }
 
+  if (recovery.blockOrder) {
+    const { sourceId, draft } = recovery.blockOrder;
+    pendingBlockOrderTask = createBlockOrderTask(draft.parentBlockId, draft.orderedIds, {}, {
+      pageId: recovery.scope.pageId,
+      userId: recovery.scope.userId,
+      sourceId,
+      mutationId: draft.mutationId,
+      previousIds: draft.previousIds ?? recovery.blockOrder.serverIds,
+      recovered: true
+    });
+    pendingBlockOrderTask.items = draft.items.map((item) => ({ ...item }));
+    blockOrderSaving = true;
+    window.setTimeout(() => {
+      if (pendingBlockOrderTask?.mutationId !== draft.mutationId) return;
+      retryPendingBlockOrder().catch((error) => setStatus(error.message, true));
+    }, 0);
+  }
+
   appendDraftRecoveryPanel(recovery);
   syncBeforeUnloadProtection();
-  const hasConflict = recovery.conflictCount > 0 || recovery.missing.length > 0 || recovery.alternates.length > 0;
+  const hasConflict =
+    recovery.conflictCount > 0 ||
+    recovery.missing.length > 0 ||
+    recovery.orderConflicts.length > 0 ||
+    recovery.alternates.length > 0;
   setStatus(t(hasConflict ? "status.localDraftConflict" : "status.localDraftRecovered"), hasConflict);
   return true;
 }
@@ -6966,7 +7138,9 @@ async function openPage(pageId, { skipFlush = false } = {}) {
 
       resetPageEditTracking();
       const recovery = applyPersistedPageDraft(data.page);
-      if (!preserveMode && (recovery.title || recovery.blocks.length > 0)) state.pageMode = pageModes.WRITE;
+      if (!preserveMode && (recovery.title || recovery.blocks.length > 0 || recovery.blockOrder)) {
+        state.pageMode = pageModes.WRITE;
+      }
       state.selectedPage = data.page;
       state.workspaceView = "page";
       state.activeCollectionId = null;

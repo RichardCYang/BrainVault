@@ -216,8 +216,8 @@ describe("Data-loss prevention integration", () => {
   });
 
   it("keeps reorder responses scoped to the page that started the request", () => {
-    expect(client).toContain('const data = await api(`/api/pages/${pageId}/blocks/reorder`');
-    expect(client).toContain('applyPageContentVersion(pageId, data.pageContentVersion);');
+    expect(client).toContain('const data = await api(`/api/pages/${task.pageId}/blocks/reorder`');
+    expect(client).toContain('applyPageContentVersion(task.pageId, data.pageContentVersion);');
     expect(client).toContain(`if (state.selectedPage?.id === pageId) {\n    for (const block of data.blocks ?? []) updateBlockInState(block);`);
   });
 
@@ -261,6 +261,8 @@ describe("Data-loss prevention integration", () => {
 
   it("replays ambiguous block-order commits instead of rolling the UI back", () => {
     expect(client).toContain("let pendingBlockOrderTask = null;");
+    expect(client).toContain("pageDraftStore.saveBlockOrder({");
+    expect(client).toContain("pageDraftStore.acknowledgeBlockOrder({");
     expect(client).toContain("body: { mutationId: task.mutationId, items: task.items }");
     expect(client).toContain("if (!isAmbiguousApiError(error)) throw error;");
     expect(client).toContain("if (pendingBlockOrderTask) return true;");
@@ -273,11 +275,28 @@ describe("Data-loss prevention integration", () => {
     const definitiveBranch = dragBody.indexOf("if (isDefinitiveApiError(error))");
     const rollback = dragBody.indexOf("reorderBlockSiblingsInState(drag.parentBlockId, previousIds)");
 
+    expect(client).toContain('if (!succeeded) throw new Error(t("status.localDraftStorageFailed"));');
+    expect(dragBody).toContain("persistBlockOrderDraft(task);");
+    expect(dragBody.indexOf("persistBlockOrderDraft(task);")).toBeLessThan(
+      dragBody.indexOf("await submitBlockOrderTaskWithReplay(task);")
+    );
     expect(dragBody).toContain("pendingBlockOrderTask = task;");
     expect(dragBody).toContain("await submitBlockOrderTaskWithReplay(task);");
+    expect(dragBody).toContain("acknowledgeBlockOrderDraft(task);");
     expect(definitiveBranch).toBeGreaterThanOrEqual(0);
     expect(rollback).toBeGreaterThan(definitiveBranch);
     expect(dragBody).toContain("blockOrderSaving = Boolean(pendingBlockOrderTask);");
+  });
+
+  it("recovers durable block-order retries without overwriting a newer server order", () => {
+    expect(client).toContain("const orderCandidates = records");
+    expect(client).toContain("Number(block.version ?? 1) === selected.draft.items[index].expectedVersion");
+    expect(client).toContain("recovery.orderConflicts.push({ sourceId: selected.sourceId, draft: selected.draft });");
+    expect(client).toContain("serverIds: siblingIds");
+    expect(client).toContain("previousIds: draft.previousIds ?? recovery.blockOrder.serverIds");
+    expect(client).toContain("recovered: true");
+    expect(client).toContain("if (isDefinitiveApiError(error) && pendingBlockOrderTask === task)");
+    expect(client).toContain("retryPendingBlockOrder().catch((error) => setStatus(error.message, true));");
   });
 
   it("stores block-order mutation receipts in the same transaction", () => {
@@ -317,6 +336,7 @@ describe("Data-loss prevention integration", () => {
     const dragBody = client.slice(dragStart, dragEnd);
     expect(dragBody).toContain("return withPageEditLock(async () => {");
     expect(dragBody).toContain("const task = createBlockOrderTask(drag.parentBlockId, orderedIds, {}, { previousIds });");
+    expect(dragBody).toContain("persistBlockOrderDraft(task);");
     expect(dragBody).toContain("await submitBlockOrderTaskWithReplay(task);");
 
     const languageStart = client.indexOf('elements.languageSelect.addEventListener("change"');

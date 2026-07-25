@@ -38,6 +38,18 @@ const blockDraft = {
   expectedVersion: 7,
   revision: 3
 };
+const blockOrderDraft = {
+  userId: "user-1",
+  pageId: "page-1",
+  parentBlockId: null,
+  orderedIds: ["block-2", "block-1"],
+  previousIds: ["block-1", "block-2"],
+  mutationId: "mut-order-1",
+  items: [
+    { id: "block-2", sortOrder: 0, parentBlockId: null, expectedVersion: 5 },
+    { id: "block-1", sortOrder: 1, parentBlockId: null, expectedVersion: 7 }
+  ]
+};
 
 describe("page draft store", () => {
   it("cleans up only the exact recovered conflict and preserves concurrent tab changes", () => {
@@ -105,6 +117,49 @@ describe("page draft store", () => {
       expectedVersion: 7,
       revision: 3
     });
+  });
+
+  it("persists block-order retries and acknowledges only the exact mutation", () => {
+    const storage = new MemoryStorage();
+    const first = createPageDraftStore(storage, { sourceId: "tab-a" });
+    expect(first.saveBlockOrder(blockOrderDraft)).toBe(true);
+
+    const restored = createPageDraftStore(storage, { sourceId: "tab-a" }).loadPage("user-1", "page-1");
+    expect(restored?.blockOrder).toMatchObject({
+      mutationId: "mut-order-1",
+      orderedIds: ["block-2", "block-1"],
+      previousIds: ["block-1", "block-2"]
+    });
+
+    expect(
+      first.acknowledgeBlockOrder({
+        userId: "user-1",
+        pageId: "page-1",
+        mutationId: "another-mutation"
+      })
+    ).toBe(true);
+    expect(first.loadPage("user-1", "page-1")?.blockOrder?.mutationId).toBe("mut-order-1");
+
+    expect(
+      first.acknowledgeBlockOrder({
+        userId: "user-1",
+        pageId: "page-1",
+        mutationId: "mut-order-1"
+      })
+    ).toBe(true);
+    expect(first.loadPage("user-1", "page-1")).toBeNull();
+  });
+
+  it("keeps another tab's order retry and clears an order that references a deleted block", () => {
+    const storage = new MemoryStorage();
+    const tabA = createPageDraftStore(storage, { sourceId: "tab-a" });
+    const tabB = createPageDraftStore(storage, { sourceId: "tab-b" });
+    tabA.saveBlockOrder(blockOrderDraft);
+    tabB.saveBlockOrder({ ...blockOrderDraft, mutationId: "mut-order-2" });
+
+    expect(tabA.removeBlocks("user-1", "page-1", ["block-1"], "tab-a")).toBe(true);
+    expect(tabA.loadPage("user-1", "page-1", "tab-a")).toBeNull();
+    expect(tabB.loadPage("user-1", "page-1")?.blockOrder?.mutationId).toBe("mut-order-2");
   });
 
   it("isolates drafts from concurrent tabs and acknowledges only the matching source", () => {
@@ -284,5 +339,6 @@ describe("page draft store", () => {
     const store = createPageDraftStore(storage, { sourceId: "tab-a" });
     expect(store.saveTitle(titleDraft)).toBe(false);
     expect(store.saveBlock(blockDraft)).toBe(false);
+    expect(store.saveBlockOrder(blockOrderDraft)).toBe(false);
   });
 });

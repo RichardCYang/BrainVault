@@ -36,6 +36,58 @@ function normalizeBlockDraft(value) {
   return { payload: value.payload, revision, expectedVersion, updatedAt: normalizeUpdatedAt(value.updatedAt) };
 }
 
+function normalizeParentBlockId(value) {
+  if (value === null) return null;
+  return isNonEmptyString(value) ? value : undefined;
+}
+
+function normalizeBlockOrderDraft(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const parentBlockId = normalizeParentBlockId(value.parentBlockId);
+  if (parentBlockId === undefined || !isNonEmptyString(value.mutationId)) return null;
+  if (!Array.isArray(value.orderedIds) || value.orderedIds.length === 0) return null;
+  if (!Array.isArray(value.items) || value.items.length !== value.orderedIds.length) return null;
+
+  const orderedIds = value.orderedIds.every(isNonEmptyString) ? [...value.orderedIds] : null;
+  if (!orderedIds || new Set(orderedIds).size !== orderedIds.length) return null;
+
+  const items = [];
+  for (let index = 0; index < value.items.length; index += 1) {
+    const item = value.items[index];
+    const itemParentBlockId = normalizeParentBlockId(item?.parentBlockId);
+    const expectedVersion = normalizeVersion(item?.expectedVersion);
+    if (
+      !item ||
+      typeof item !== "object" ||
+      Array.isArray(item) ||
+      item.id !== orderedIds[index] ||
+      item.sortOrder !== index ||
+      itemParentBlockId !== parentBlockId ||
+      expectedVersion === null
+    ) {
+      return null;
+    }
+    items.push({ id: item.id, sortOrder: index, parentBlockId, expectedVersion });
+  }
+
+  let previousIds = null;
+  if (value.previousIds !== null && value.previousIds !== undefined) {
+    if (!Array.isArray(value.previousIds) || value.previousIds.length !== orderedIds.length) return null;
+    if (!value.previousIds.every(isNonEmptyString) || new Set(value.previousIds).size !== orderedIds.length) return null;
+    if (value.previousIds.some((id) => !orderedIds.includes(id))) return null;
+    previousIds = [...value.previousIds];
+  }
+
+  return {
+    parentBlockId,
+    orderedIds,
+    previousIds,
+    mutationId: value.mutationId,
+    items,
+    updatedAt: normalizeUpdatedAt(value.updatedAt)
+  };
+}
+
 function normalizeRecord(value, userId, pageId, expectedSourceId = null) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   if (
@@ -49,6 +101,7 @@ function normalizeRecord(value, userId, pageId, expectedSourceId = null) {
   }
 
   const title = normalizeTitleDraft(value.title);
+  const blockOrder = normalizeBlockOrderDraft(value.blockOrder);
   const blocks = {};
   if (value.blocks && typeof value.blocks === "object" && !Array.isArray(value.blocks)) {
     for (const [blockId, blockDraft] of Object.entries(value.blocks)) {
@@ -58,7 +111,7 @@ function normalizeRecord(value, userId, pageId, expectedSourceId = null) {
     }
   }
 
-  if (!title && Object.keys(blocks).length === 0) return null;
+  if (!title && !blockOrder && Object.keys(blocks).length === 0) return null;
   return {
     schemaVersion: draftSchemaVersion,
     userId,
@@ -66,7 +119,8 @@ function normalizeRecord(value, userId, pageId, expectedSourceId = null) {
     sourceId: value.sourceId,
     updatedAt: normalizeUpdatedAt(value.updatedAt),
     title,
-    blocks
+    blocks,
+    blockOrder
   };
 }
 
@@ -147,9 +201,10 @@ export function createPageDraftStore(
     if (!storage) return false;
     const hasTitle = Boolean(record.title);
     const hasBlocks = Object.keys(record.blocks ?? {}).length > 0;
+    const hasBlockOrder = Boolean(record.blockOrder);
     const key = getKey(record.userId, record.pageId, record.sourceId);
     try {
-      if (!hasTitle && !hasBlocks) storage.removeItem(key);
+      if (!hasTitle && !hasBlocks && !hasBlockOrder) storage.removeItem(key);
       else storage.setItem(key, JSON.stringify({ ...record, updatedAt: Date.now() }));
       return true;
     } catch {
@@ -165,7 +220,8 @@ export function createPageDraftStore(
       sourceId: recordSourceId,
       updatedAt: Date.now(),
       title: null,
-      blocks: {}
+      blocks: {},
+      blockOrder: null
     };
   }
 
@@ -221,6 +277,34 @@ export function createPageDraftStore(
     return writePage(record);
   }
 
+  function saveBlockOrder({
+    userId,
+    pageId,
+    parentBlockId = null,
+    orderedIds,
+    previousIds = null,
+    mutationId,
+    items,
+    sourceId: recordSourceId = sourceId
+  }) {
+    if (!isNonEmptyString(userId) || !isNonEmptyString(pageId) || !isNonEmptyString(recordSourceId)) {
+      return false;
+    }
+    const normalized = normalizeBlockOrderDraft({
+      parentBlockId,
+      orderedIds,
+      previousIds,
+      mutationId,
+      items,
+      updatedAt: Date.now()
+    });
+    if (!normalized) return false;
+    const record = loadPage(userId, pageId, recordSourceId) ?? createRecord(userId, pageId, recordSourceId);
+    record.blockOrder = normalized;
+    record.updatedAt = normalized.updatedAt;
+    return writePage(record);
+  }
+
   function acknowledgeTitle({
     userId,
     pageId,
@@ -252,6 +336,26 @@ export function createPageDraftStore(
     if (!record || !draft || acknowledgedRevision === null || nextVersion === null) return true;
     if (draft.revision <= acknowledgedRevision) delete record.blocks[blockId];
     else draft.expectedVersion = nextVersion;
+    return writePage(record);
+  }
+
+  function acknowledgeBlockOrder({
+    userId,
+    pageId,
+    mutationId,
+    sourceId: recordSourceId = sourceId
+  }) {
+    if (
+      !isNonEmptyString(userId) ||
+      !isNonEmptyString(pageId) ||
+      !isNonEmptyString(recordSourceId) ||
+      !isNonEmptyString(mutationId)
+    ) {
+      return false;
+    }
+    const record = loadPage(userId, pageId, recordSourceId);
+    if (!record?.blockOrder || record.blockOrder.mutationId !== mutationId) return true;
+    record.blockOrder = null;
     return writePage(record);
   }
 
@@ -330,6 +434,7 @@ export function createPageDraftStore(
     const record = loadPage(userId, pageId, recordSourceId);
     if (!record) return true;
     delete record.blocks[blockId];
+    if (record.blockOrder?.orderedIds.includes(blockId)) record.blockOrder = null;
     return writePage(record);
   }
 
@@ -369,8 +474,10 @@ export function createPageDraftStore(
 
   function clearBlocks(userId, pageId, blockIds) {
     let succeeded = true;
+    const removedIds = new Set(blockIds ?? []);
     for (const record of loadPageDrafts(userId, pageId)) {
-      for (const blockId of blockIds ?? []) delete record.blocks[blockId];
+      for (const blockId of removedIds) delete record.blocks[blockId];
+      if (record.blockOrder?.orderedIds.some((blockId) => removedIds.has(blockId))) record.blockOrder = null;
       succeeded = writePage(record) && succeeded;
     }
     return succeeded;
@@ -421,8 +528,10 @@ export function createPageDraftStore(
     loadUserDrafts,
     saveTitle,
     saveBlock,
+    saveBlockOrder,
     acknowledgeTitle,
     acknowledgeBlock,
+    acknowledgeBlockOrder,
     removeTitleIfUnchanged,
     removeBlockIfUnchanged,
     removeTitle,
