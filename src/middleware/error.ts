@@ -56,6 +56,21 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
     return;
   }
 
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "commitOutcomeUnknown" in error &&
+    error.commitOutcomeUnknown === true
+  ) {
+    res.status(503).json({
+      error: {
+        code: "TRANSACTION_COMMIT_OUTCOME_UNKNOWN",
+        message: "The database commit may have succeeded; retry the same mutation id to confirm the result"
+      }
+    });
+    return;
+  }
+
   const dbError = getDbError(error);
   if (dbError?.sqlState === "23000" || dbError?.code === "ER_DUP_ENTRY") {
     res.status(409).json({

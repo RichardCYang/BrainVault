@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const database = vi.hoisted(() => ({
   blocks: new Map<string, Record<string, unknown>>(),
+  receipts: new Map<string, { page_id: string }>(),
   query: vi.fn(),
   queryOne: vi.fn(),
   execute: vi.fn()
@@ -58,8 +59,9 @@ function makeBlock(id: string, sortOrder: number) {
   };
 }
 
-function reorderBody(firstVersion = 1, secondVersion = 1) {
+function reorderBody(firstVersion = 1, secondVersion = 1, mutationId?: string) {
   return {
+    ...(mutationId ? { mutationId } : {}),
     items: [
       { id: "blk_second", sortOrder: 0, parentBlockId: null, expectedVersion: secondVersion },
       { id: "blk_first", sortOrder: 1, parentBlockId: null, expectedVersion: firstVersion }
@@ -73,13 +75,17 @@ beforeEach(() => {
     ["blk_first", makeBlock("blk_first", 0)],
     ["blk_second", makeBlock("blk_second", 1)]
   ]);
+  database.receipts = new Map();
   database.query.mockReset();
   database.queryOne.mockReset();
   database.execute.mockReset();
 
-  database.queryOne.mockImplementation(async (sql: string) => {
+  database.queryOne.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
     if (sql.includes("FROM users WHERE id = ?")) return user;
     if (sql.includes("FROM pages WHERE id = ? AND owner_id = ?")) return page;
+    if (sql.includes("FROM block_order_mutations")) {
+      return database.receipts.get(`${String(params[0])}:${String(params[1])}`);
+    }
     return undefined;
   });
 
@@ -101,6 +107,10 @@ beforeEach(() => {
   });
 
   database.execute.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
+    if (sql.includes("INSERT INTO block_order_mutations")) {
+      database.receipts.set(`${String(params[0])}:${String(params[1])}`, { page_id: String(params[2]) });
+      return { affectedRows: 1 };
+    }
     if (sql.includes("SET content_version = content_version + 1")) {
       page.content_version = Number(page.content_version) + 1;
       return { affectedRows: 1 };
@@ -130,6 +140,27 @@ describe("Block reorder conflict protection", () => {
     expect(database.blocks.get("blk_first")?.edit_version).toBe(2);
     expect(database.blocks.get("blk_second")?.edit_version).toBe(2);
     expect(response.body.pageContentVersion).toBe(2);
+    expect(page.content_version).toBe(2);
+  });
+
+  it("replays a committed reorder without applying it twice when the response was lost", async () => {
+    const mutationId = "mut_reorder_response_lost";
+    const first = await request(createApp())
+      .post(`/api/pages/${page.id}/blocks/reorder`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(reorderBody(1, 1, mutationId))
+      .expect(200);
+
+    const replay = await request(createApp())
+      .post(`/api/pages/${page.id}/blocks/reorder`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(reorderBody(1, 1, mutationId))
+      .expect(200);
+
+    expect(first.body.blocks.map((block: { id: string }) => block.id)).toEqual(["blk_second", "blk_first"]);
+    expect(replay.body.blocks.map((block: { id: string }) => block.id)).toEqual(["blk_second", "blk_first"]);
+    expect(database.blocks.get("blk_first")?.edit_version).toBe(2);
+    expect(database.blocks.get("blk_second")?.edit_version).toBe(2);
     expect(page.content_version).toBe(2);
   });
 

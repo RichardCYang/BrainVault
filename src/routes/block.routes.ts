@@ -92,6 +92,7 @@ function prepareBlockContent(type: BlockRow["type"], markdown: string, metadata:
 }
 
 const reorderSchema = z.object({
+  mutationId: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/).optional(),
   items: z
     .array(
       z.object({
@@ -622,7 +623,7 @@ blockRouter.post(
     try {
       const user = requireUser(req.user);
       const pageId = String(req.params.pageId);
-      const { items } = req.body as z.infer<typeof reorderSchema>;
+      const { items, mutationId } = req.body as z.infer<typeof reorderSchema>;
 
       const result = await transaction(async (client) => {
         const lockedPage = await client.queryOne<PageRow>(
@@ -630,6 +631,27 @@ blockRouter.post(
           [pageId, user.id]
         );
         if (!lockedPage) throw notFound("Page");
+
+        if (mutationId) {
+          const receipt = await client.queryOne<{ page_id: string }>(
+            `SELECT page_id
+             FROM block_order_mutations
+             WHERE owner_id = ? AND mutation_id = ?
+             FOR UPDATE`,
+            [user.id, mutationId]
+          );
+          if (receipt) {
+            if (receipt.page_id !== pageId) {
+              throw new ApiError(409, "MUTATION_ID_REUSED", "This mutation id was already used for another page");
+            }
+            const rows = await client.query<BlockRow>(
+              "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC",
+              [pageId]
+            );
+            return { rows, pageContentVersion: Number(lockedPage.content_version ?? 1) };
+          }
+        }
+
         const hierarchyRows = await client.query<{
           id: string;
           parent_block_id: string | null;
@@ -686,6 +708,13 @@ blockRouter.post(
         }
 
         const pageContentVersion = await advancePageContentVersion(client, pageId, user.id);
+        if (mutationId) {
+          await client.execute(
+            `INSERT INTO block_order_mutations (owner_id, mutation_id, page_id)
+             VALUES (?, ?, ?)`,
+            [user.id, mutationId, pageId]
+          );
+        }
         const rows = await client.query<BlockRow>(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC",
           [pageId]

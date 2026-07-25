@@ -4,10 +4,18 @@ import { describe, expect, it } from "vitest";
 const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const transfer = readFileSync(new URL("../src/lib/data-transfer.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const database = readFileSync(new URL("../src/lib/db.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const errorMiddleware = readFileSync(new URL("../src/middleware/error.ts", import.meta.url), "utf8").replace(
+  /\r\n/g,
+  "\n"
+);
 const blockRoutes = readFileSync(new URL("../src/routes/block.routes.ts", import.meta.url), "utf8").replace(
   /\r\n/g,
   "\n"
 );
+const blockOrderMigration = readFileSync(
+  new URL("../migrations/018_block_order_mutation_receipts.sql", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 
 describe("Data-loss prevention integration", () => {
   it("serializes autosaves, flushes navigation, and protects dirty unloads", () => {
@@ -251,6 +259,37 @@ describe("Data-loss prevention integration", () => {
     );
   });
 
+  it("replays ambiguous block-order commits instead of rolling the UI back", () => {
+    expect(client).toContain("let pendingBlockOrderTask = null;");
+    expect(client).toContain("body: { mutationId: task.mutationId, items: task.items }");
+    expect(client).toContain("if (!isAmbiguousApiError(error)) throw error;");
+    expect(client).toContain("if (pendingBlockOrderTask) return true;");
+    expect(client).toContain("state.pageEditLockDepth > 0 || blockOrderSaving");
+    expect(client).toContain('window.addEventListener("online", () => {');
+
+    const dragStart = client.indexOf("async function finishBlockDrag");
+    const dragEnd = client.indexOf("function setRowType", dragStart);
+    const dragBody = client.slice(dragStart, dragEnd);
+    const definitiveBranch = dragBody.indexOf("if (isDefinitiveApiError(error))");
+    const rollback = dragBody.indexOf("reorderBlockSiblingsInState(drag.parentBlockId, previousIds)");
+
+    expect(dragBody).toContain("pendingBlockOrderTask = task;");
+    expect(dragBody).toContain("await submitBlockOrderTaskWithReplay(task);");
+    expect(definitiveBranch).toBeGreaterThanOrEqual(0);
+    expect(rollback).toBeGreaterThan(definitiveBranch);
+    expect(dragBody).toContain("blockOrderSaving = Boolean(pendingBlockOrderTask);");
+  });
+
+  it("stores block-order mutation receipts in the same transaction", () => {
+    expect(blockOrderMigration).toContain("CREATE TABLE IF NOT EXISTS block_order_mutations");
+    expect(blockOrderMigration).toContain("PRIMARY KEY (owner_id, mutation_id)");
+    expect(blockRoutes).toContain("FROM block_order_mutations");
+    expect(blockRoutes).toContain("FOR UPDATE");
+    expect(blockRoutes).toContain("INSERT INTO block_order_mutations (owner_id, mutation_id, page_id)");
+    expect(errorMiddleware).toContain('code: "TRANSACTION_COMMIT_OUTCOME_UNKNOWN"');
+    expect(errorMiddleware).toContain("res.status(503).json");
+  });
+
   it("keeps newer drafts durable when an in-flight save outlives an editor rerender", () => {
     expect(client).toContain("function getLatestKnownVersion(...values)");
     expect(client).toContain("const currentRow = findRenderedBlockRow(blockId) ?? task.row;");
@@ -277,9 +316,8 @@ describe("Data-loss prevention integration", () => {
     const dragEnd = client.indexOf("function setRowType", dragStart);
     const dragBody = client.slice(dragStart, dragEnd);
     expect(dragBody).toContain("return withPageEditLock(async () => {");
-    expect(dragBody).toContain(
-      "await persistBlockOrder(drag.parentBlockId, orderedIds, {}, { allowLocked: true });"
-    );
+    expect(dragBody).toContain("const task = createBlockOrderTask(drag.parentBlockId, orderedIds, {}, { previousIds });");
+    expect(dragBody).toContain("await submitBlockOrderTaskWithReplay(task);");
 
     const languageStart = client.indexOf('elements.languageSelect.addEventListener("change"');
     const languageEnd = client.indexOf('window.addEventListener("brainvault:languagechange"', languageStart);

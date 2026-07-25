@@ -529,6 +529,7 @@ let activeBlockDrag = null;
 let activeKanbanCardDrag = null;
 let suppressBlockHandleClickUntil = 0;
 let blockOrderSaving = false;
+let pendingBlockOrderTask = null;
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -957,6 +958,24 @@ function createMutationId() {
   return `mut_${Date.now().toString(36)}_${entropy || Math.random().toString(36).slice(2)}`.slice(0, 64);
 }
 
+function createApiRequestError(message, { status = 0, code = null, ambiguous = false } = {}) {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.ambiguous = ambiguous;
+  return error;
+}
+
+function isAmbiguousApiError(error) {
+  const status = Number(error?.status ?? 0);
+  return error?.ambiguous === true || status === 0 || status >= 500;
+}
+
+function isDefinitiveApiError(error) {
+  const status = Number(error?.status ?? 0);
+  return Number.isInteger(status) && status >= 400 && status < 500;
+}
+
 async function api(path, options = {}) {
   const { skipAuthReset = false, ...requestOptions } = options;
   const headers = new Headers(requestOptions.headers ?? {});
@@ -972,7 +991,7 @@ async function api(path, options = {}) {
   try {
     response = await fetch(path, { ...requestOptions, headers, body });
   } catch {
-    throw new Error(t("errors.network"));
+    throw createApiRequestError(t("errors.network"), { ambiguous: true });
   }
   if (response.status === 204) return null;
 
@@ -981,14 +1000,21 @@ async function api(path, options = {}) {
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
-    throw new Error(t("errors.invalidResponse"));
+    throw createApiRequestError(t("errors.invalidResponse"), {
+      status: response.status,
+      ambiguous: response.ok || response.status >= 500
+    });
   }
 
   if (!response.ok) {
     if (response.status === 401 && !skipAuthReset) {
       resetAuthenticationSessionState();
     }
-    throw new Error(translateApiError(data, response.status));
+    throw createApiRequestError(translateApiError(data, response.status), {
+      status: response.status,
+      code: data?.error?.code ?? null,
+      ambiguous: response.status >= 500
+    });
   }
 
   return data;
@@ -2375,7 +2401,7 @@ function isPageReadOnly() {
 }
 
 function isPageInteractionLocked() {
-  return state.pageModeChanging || state.pageEditLockDepth > 0;
+  return state.pageModeChanging || state.pageEditLockDepth > 0 || blockOrderSaving;
 }
 
 function canPersistSelectedPage() {
@@ -2517,6 +2543,7 @@ function hasPendingPageEdits() {
   if (pageTitleSaveTimer !== null || pageTitleSaveQueue.busy || pageTitleSavedRevision < pageTitleEditRevision) return true;
   if (blockSaveTimers.size > 0) return true;
   if ([...blockSaveQueues.values()].some((queue) => queue.busy)) return true;
+  if (pendingBlockOrderTask) return true;
   return Boolean(elements.blockList.querySelector(".editor-block-row.is-dirty"));
 }
 
@@ -2719,6 +2746,8 @@ function resetPageEditTracking() {
   blockSaveRows.clear();
   blockSaveQueues.clear();
   blockSaveTaskIds.clear();
+  pendingBlockOrderTask = null;
+  blockOrderSaving = false;
   elements.pageTitle.classList.remove("local-draft-recovered", "save-error");
   disableBeforeUnloadProtection();
 }
@@ -2733,6 +2762,8 @@ function discardPendingPageEdits() {
   for (const queue of blockSaveQueues.values()) queue.discard();
   blockSaveQueues.clear();
   blockSaveTaskIds.clear();
+  pendingBlockOrderTask = null;
+  blockOrderSaving = false;
   pageTitleEditRevision = 0;
   pageTitleSavedRevision = 0;
   pageTitleTaskId = 0;
@@ -2803,6 +2834,9 @@ function getPendingSavePayloadBytes({ saveTitle, rowsToSave }) {
 }
 
 async function flushPendingPageEdits({ keepalive = false, allowLocked = false } = {}) {
+  if (pendingBlockOrderTask && canPersistSelectedPage()) {
+    await retryPendingBlockOrder({ keepalive });
+  }
   if (!(allowLocked ? canPersistSelectedPage() : canEditSelectedPage())) return;
 
   const titleWasPending = pageTitleSaveTimer !== null;
@@ -5054,22 +5088,32 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
     const previousIds = getBlockSiblings(drag.parentBlockId).map((block) => block.id);
     const orderedIds = drag.candidates.map((row) => row.dataset.blockId);
     orderedIds.splice(drag.targetIndex, 0, drag.row.dataset.blockId);
+    const task = createBlockOrderTask(drag.parentBlockId, orderedIds, {}, { previousIds });
 
     if (!reorderBlockSiblingsInState(drag.parentBlockId, orderedIds)) return;
 
+    pendingBlockOrderTask = task;
     blockOrderSaving = true;
     renderSelectedPage();
+    syncPageModeUi();
+    syncBeforeUnloadProtection();
     setStatus(t("status.savingBlockOrder"));
 
     try {
-      await persistBlockOrder(drag.parentBlockId, orderedIds, {}, { allowLocked: true });
+      await submitBlockOrderTaskWithReplay(task);
+      pendingBlockOrderTask = null;
       setStatus(t("status.blockOrderChanged"));
     } catch (error) {
-      reorderBlockSiblingsInState(drag.parentBlockId, previousIds);
-      renderSelectedPage();
+      if (isDefinitiveApiError(error)) {
+        pendingBlockOrderTask = null;
+        reorderBlockSiblingsInState(drag.parentBlockId, previousIds);
+        renderSelectedPage();
+      }
       setStatus(error.message, true);
     } finally {
-      blockOrderSaving = false;
+      blockOrderSaving = Boolean(pendingBlockOrderTask);
+      syncPageModeUi();
+      syncBeforeUnloadProtection();
     }
   });
 }
@@ -5969,11 +6013,13 @@ async function applySlashCommand(row, type) {
   }
 }
 
-async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {}, { allowLocked = false } = {}) {
-  const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage();
-  if (!writable || !orderedIds.length) return;
-
-  const pageId = state.selectedPage.id;
+function createBlockOrderTask(
+  parentBlockId,
+  orderedIds,
+  versionOverrides = {},
+  { pageId = state.selectedPage?.id, mutationId = createMutationId(), previousIds = null } = {}
+) {
+  if (!pageId || !orderedIds.length) throw new Error(t("errors.currentBlockOrder"));
   const items = orderedIds.map((id, index) => {
     const expectedVersion = Number(versionOverrides[id] ?? getBlockById(id)?.version);
     if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
@@ -5981,15 +6027,78 @@ async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {
     }
     return { id, sortOrder: index, parentBlockId, expectedVersion };
   });
-  const data = await api(`/api/pages/${pageId}/blocks/reorder`, {
+  return {
+    pageId,
+    parentBlockId,
+    orderedIds: [...orderedIds],
+    previousIds: previousIds ? [...previousIds] : null,
+    mutationId,
+    items
+  };
+}
+
+async function submitBlockOrderTask(task, { keepalive = false } = {}) {
+  const data = await api(`/api/pages/${task.pageId}/blocks/reorder`, {
     method: "POST",
-    body: { items }
+    keepalive,
+    body: { mutationId: task.mutationId, items: task.items }
   });
-  applyPageContentVersion(pageId, data.pageContentVersion);
-  if (state.selectedPage?.id === pageId) {
+  applyPageContentVersion(task.pageId, data.pageContentVersion);
+  if (state.selectedPage?.id === task.pageId) {
     for (const block of data.blocks ?? []) updateBlockInState(block);
+    const returnedIds = (data.blocks ?? [])
+      .filter((block) => normalizeParentBlockId(block.parentBlockId) === task.parentBlockId)
+      .sort((left, right) => Number(left.sortOrder ?? 0) - Number(right.sortOrder ?? 0) || left.id.localeCompare(right.id))
+      .map((block) => block.id);
+    if (returnedIds.length === getBlockSiblings(task.parentBlockId).length) {
+      reorderBlockSiblingsInState(task.parentBlockId, returnedIds);
+    }
   }
   return data;
+}
+
+async function submitBlockOrderTaskWithReplay(task, options = {}) {
+  try {
+    return await submitBlockOrderTask(task, options);
+  } catch (error) {
+    if (!isAmbiguousApiError(error)) throw error;
+    return submitBlockOrderTask(task, options);
+  }
+}
+
+async function retryPendingBlockOrder({ keepalive = false } = {}) {
+  const task = pendingBlockOrderTask;
+  if (!task) return null;
+
+  blockOrderSaving = true;
+  syncPageModeUi();
+  syncBeforeUnloadProtection();
+  try {
+    const data = await submitBlockOrderTaskWithReplay(task, { keepalive });
+    if (pendingBlockOrderTask === task) pendingBlockOrderTask = null;
+    if (state.selectedPage?.id === task.pageId) renderSelectedPage();
+    setStatus(t("status.blockOrderChanged"));
+    return data;
+  } catch (error) {
+    if (isDefinitiveApiError(error) && pendingBlockOrderTask === task) {
+      pendingBlockOrderTask = null;
+      if (state.selectedPage?.id === task.pageId && task.previousIds) {
+        reorderBlockSiblingsInState(task.parentBlockId, task.previousIds);
+        renderSelectedPage();
+      }
+    }
+    throw error;
+  } finally {
+    blockOrderSaving = Boolean(pendingBlockOrderTask);
+    syncPageModeUi();
+    syncBeforeUnloadProtection();
+  }
+}
+
+async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {}, { allowLocked = false } = {}) {
+  const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage();
+  if (!writable || !orderedIds.length) return;
+  return submitBlockOrderTaskWithReplay(createBlockOrderTask(parentBlockId, orderedIds, versionOverrides));
 }
 
 async function createEmptyBlock(
@@ -8023,6 +8132,11 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "hidden" || !hasPendingPageEdits()) return;
   flushPendingPageEdits({ keepalive: true }).catch((error) => setStatus(error.message, true));
+});
+
+window.addEventListener("online", () => {
+  if (!pendingBlockOrderTask) return;
+  retryPendingBlockOrder().catch((error) => setStatus(error.message, true));
 });
 
 window.addEventListener("storage", (event) => {
