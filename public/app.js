@@ -4870,8 +4870,7 @@ async function changeCalloutType(row, type) {
   }
   if (!promoteBlockDraftConflict(row)) return;
 
-  const previousMetadata = getBlockMetadata(block);
-  const metadata = { ...previousMetadata, calloutType: nextType };
+  const metadata = { ...getBlockMetadata(block), calloutType: nextType };
   if (block) block.metadata = metadata;
   setRowCalloutType(row, nextType);
   syncCalloutTypeMenu(row);
@@ -4882,10 +4881,9 @@ async function changeCalloutType(row, type) {
     closeBlockContextMenu({ restoreFocus: true });
     setStatus(t("status.calloutChanged", { type: getCalloutTypeLabel(nextType) }));
   } catch (error) {
-    if (block) block.metadata = previousMetadata;
-    setRowCalloutType(row, previousType);
+    // Keep the optimistic value: the durable draft and retry queue already contain it.
+    // Rolling the row back here would let a later save overwrite the intended change.
     syncCalloutTypeMenu(row);
-    row.classList.remove("is-saving");
     setStatus(error.message, true);
   }
 }

@@ -65,6 +65,18 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("if (!activatePersistedPageDraft(recovery)) setStatus(t(\"status.documentOpened\"));");
   });
 
+  it("keeps failed callout style edits durable instead of rolling them back", () => {
+    const changeStart = client.indexOf("async function changeCalloutType");
+    const changeEnd = client.indexOf("function closeBlockContextMenu", changeStart);
+    const changeBody = client.slice(changeStart, changeEnd);
+
+    expect(changeBody).toContain("markBlockDirty(row);");
+    expect(changeBody).toContain("await saveBlockRow(row, { quiet: true });");
+    expect(changeBody).not.toContain("block.metadata = previousMetadata");
+    expect(changeBody).not.toContain("setRowCalloutType(row, previousType)");
+    expect(changeBody).toContain("the durable draft and retry queue already contain it");
+  });
+
   it("requires explicit resolution before recovered conflict drafts can overwrite or delete newer server data", () => {
     expect(client).toContain('function confirmRecoveredDraftOverwrite()');
     expect(client).toContain('window.confirm(t("confirm.overwriteRecoveredDraft"))');
