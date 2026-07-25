@@ -5,6 +5,7 @@ import { db, transaction, type DbClient, type DbValue } from "../lib/db.js";
 import { createId } from "../lib/id.js";
 import { removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { renderBlockHtml } from "../lib/markdown.js";
+import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
 import { toBlock, toPage, toTag } from "../lib/mappers.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -427,6 +428,9 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
     const pageId = String(req.params.pageId);
     const body = req.body as z.infer<typeof updatePageSchema>;
     const { tags, expectedVersion, mutationId, ...updates } = body;
+    const mutationHash = mutationId
+      ? createMutationRequestHash({ expectedVersion, tags, updates })
+      : undefined;
     const fields: string[] = [];
     const values: DbValue[] = [];
 
@@ -471,7 +475,14 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
         existingPage = lockedPage;
       }
 
-      if (mutationId && existingPage.last_mutation_id === mutationId) return;
+      if (
+        isMatchingMutationReplay(
+          existingPage.last_mutation_id,
+          existingPage.last_mutation_hash,
+          mutationId,
+          mutationHash
+        )
+      ) return;
 
       if (existingPage.is_collection && updates.parentPageId) {
         throw new ApiError(400, "INVALID_COLLECTION_PARENT", "A collection cannot have a parent page");
@@ -480,9 +491,9 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
       if (fields.length || tags !== undefined) {
         const updateFields = [...fields];
         const updateValues = [...values];
-        if (mutationId) {
-          updateFields.push("last_mutation_id = ?");
-          updateValues.push(mutationId);
+        if (mutationId && mutationHash) {
+          updateFields.push("last_mutation_id = ?", "last_mutation_hash = ?");
+          updateValues.push(mutationId, mutationHash);
         }
         const result = await client.execute<{ affectedRows: number }>(
           `UPDATE pages SET ${[...updateFields, "edit_version = edit_version + 1"].join(", ")} WHERE id = ? AND owner_id = ? AND edit_version = ?`,

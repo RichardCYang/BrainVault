@@ -16,6 +16,14 @@ const blockOrderMigration = readFileSync(
   new URL("../migrations/018_block_order_mutation_receipts.sql", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const mutationMigration = readFileSync(
+  new URL("../migrations/019_mutation_request_hashes.sql", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
+const mutationIds = readFileSync(new URL("../public/mutation-id.js", import.meta.url), "utf8").replace(
+  /\r\n/g,
+  "\n"
+);
 
 describe("Data-loss prevention integration", () => {
   it("serializes autosaves, flushes navigation, and protects dirty unloads", () => {
@@ -24,6 +32,11 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("createPageDraftStore(window.localStorage, { sourceId: pageDraftSourceId })");
     expect(client).not.toContain("sessionStorage.setItem(pageDraftSourceSessionKey");
     expect(client).toContain('import { createLatestWriteQueue } from "./save-queue.js"');
+    expect(client).toContain('import { createMutationId, submitWithFreshMutationIdOnReuse } from "./mutation-id.js"');
+    expect(mutationIds).toContain('if (typeof cryptoApi?.getRandomValues === "function")');
+    expect(mutationIds).toContain("fallbackSequence = (fallbackSequence + 1)");
+    expect(mutationIds).toContain("export async function submitWithFreshMutationIdOnReuse");
+    expect(mutationIds).toContain('if (error?.code !== "MUTATION_ID_REUSED") throw error;');
     expect(client).toContain(
       'import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-rebase.js"'
     );
@@ -282,6 +295,7 @@ describe("Data-loss prevention integration", () => {
     );
     expect(dragBody).toContain("pendingBlockOrderTask = task;");
     expect(dragBody).toContain("await submitBlockOrderTaskWithReplay(task);");
+    expect(client).toContain("() => persistBlockOrderDraft(task)");
     expect(dragBody).toContain("acknowledgeBlockOrderDraft(task);");
     expect(definitiveBranch).toBeGreaterThanOrEqual(0);
     expect(rollback).toBeGreaterThan(definitiveBranch);
@@ -302,9 +316,16 @@ describe("Data-loss prevention integration", () => {
   it("stores block-order mutation receipts in the same transaction", () => {
     expect(blockOrderMigration).toContain("CREATE TABLE IF NOT EXISTS block_order_mutations");
     expect(blockOrderMigration).toContain("PRIMARY KEY (owner_id, mutation_id)");
+    expect(blockOrderMigration).toContain("request_hash CHAR(64)");
+    expect(mutationMigration).toContain("last_mutation_hash CHAR(64)");
+    expect(mutationMigration).toContain("request_hash CHAR(64)");
     expect(blockRoutes).toContain("FROM block_order_mutations");
     expect(blockRoutes).toContain("FOR UPDATE");
-    expect(blockRoutes).toContain("INSERT INTO block_order_mutations (owner_id, mutation_id, page_id)");
+    expect(blockRoutes).toContain("receipt.request_hash !== mutationHash");
+    expect(blockRoutes).toContain("last_mutation_hash = ?");
+    expect(blockRoutes).toContain(
+      "INSERT INTO block_order_mutations (owner_id, mutation_id, page_id, request_hash)"
+    );
     expect(errorMiddleware).toContain('code: "TRANSACTION_COMMIT_OUTCOME_UNKNOWN"');
     expect(errorMiddleware).toContain("res.status(503).json");
   });

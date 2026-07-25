@@ -25,6 +25,7 @@ import {
 import { emojiCategoryDefinitions, emojiRecords } from "./emoji-data.js";
 import { createPageDraftStore } from "./draft-store.js";
 import { createLatestWriteQueue } from "./save-queue.js";
+import { createMutationId, submitWithFreshMutationIdOnReuse } from "./mutation-id.js";
 import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-rebase.js";
 
 const tokenKey = "brainvault.token";
@@ -948,16 +949,6 @@ function translateApiError(data, status) {
   return data?.error?.message ?? data?.message ?? t("errors.unknown");
 }
 
-function createMutationId() {
-  const randomUuid = globalThis.crypto?.randomUUID?.();
-  if (randomUuid) return `mut_${randomUuid}`;
-
-  const bytes = new Uint8Array(16);
-  globalThis.crypto?.getRandomValues?.(bytes);
-  const entropy = [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
-  return `mut_${Date.now().toString(36)}_${entropy || Math.random().toString(36).slice(2)}`.slice(0, 64);
-}
-
 function createApiRequestError(message, { status = 0, code = null, ambiguous = false } = {}) {
   const error = new Error(message);
   error.status = status;
@@ -1033,11 +1024,13 @@ const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
     task.expectedVersion,
     currentPage?.version
   );
-  const data = await api(`/api/pages/${task.pageId}`, {
-    method: "PATCH",
-    keepalive: task.keepalive === true,
-    body: { title: task.title, expectedVersion, mutationId: task.mutationId }
-  });
+  const data = await submitWithFreshMutationIdOnReuse(task, () =>
+    api(`/api/pages/${task.pageId}`, {
+      method: "PATCH",
+      keepalive: task.keepalive === true,
+      body: { title: task.title, expectedVersion, mutationId: task.mutationId }
+    })
+  );
 
   if (task.userId) {
     checkDraftStoreWrite(
@@ -5325,11 +5318,13 @@ function getBlockSaveQueue(blockId) {
       task.expectedVersion,
       getBlockById(blockId)?.version
     );
-    const data = await api(`/api/blocks/${blockId}`, {
-      method: "PATCH",
-      keepalive: task.keepalive === true,
-      body: { ...task.payload, expectedVersion: currentVersion, mutationId: task.mutationId }
-    });
+    const data = await submitWithFreshMutationIdOnReuse(task, () =>
+      api(`/api/blocks/${blockId}`, {
+        method: "PATCH",
+        keepalive: task.keepalive === true,
+        body: { ...task.payload, expectedVersion: currentVersion, mutationId: task.mutationId }
+      })
+    );
     if (task.userId) {
       checkDraftStoreWrite(
         pageDraftStore.acknowledgeBlock({
@@ -6111,12 +6106,18 @@ async function submitBlockOrderTask(task, { keepalive = false } = {}) {
 }
 
 async function submitBlockOrderTaskWithReplay(task, options = {}) {
-  try {
-    return await submitBlockOrderTask(task, options);
-  } catch (error) {
-    if (!isAmbiguousApiError(error)) throw error;
-    return submitBlockOrderTask(task, options);
-  }
+  return submitWithFreshMutationIdOnReuse(
+    task,
+    async () => {
+      try {
+        return await submitBlockOrderTask(task, options);
+      } catch (error) {
+        if (!isAmbiguousApiError(error)) throw error;
+        return submitBlockOrderTask(task, options);
+      }
+    },
+    () => persistBlockOrderDraft(task)
+  );
 }
 
 async function retryPendingBlockOrder({ keepalive = false } = {}) {

@@ -45,6 +45,7 @@ beforeEach(() => {
     edit_version: 1,
     content_version: 1,
     last_mutation_id: null,
+    last_mutation_hash: null,
     created_at: "2026-07-17T00:00:00.000Z",
     updated_at: "2026-07-17T00:00:00.000Z"
   };
@@ -60,6 +61,7 @@ beforeEach(() => {
     metadata: null,
     edit_version: 1,
     last_mutation_id: null,
+    last_mutation_hash: null,
     created_at: "2026-07-17T00:00:00.000Z",
     updated_at: "2026-07-17T00:00:00.000Z"
   };
@@ -98,7 +100,10 @@ beforeEach(() => {
       if (expectedVersion !== Number(database.block.edit_version)) return { affectedRows: 0 };
       database.block.markdown = params[0];
       database.block.html_cache = params[1];
-      if (sql.includes("last_mutation_id = ?")) database.block.last_mutation_id = params.at(-3);
+      if (sql.includes("last_mutation_id = ?")) {
+        database.block.last_mutation_id = params.at(-4);
+        database.block.last_mutation_hash = params.at(-3);
+      }
       database.block.edit_version = Number(database.block.edit_version) + 1;
       return { affectedRows: 1 };
     }
@@ -106,7 +111,10 @@ beforeEach(() => {
       const expectedVersion = Number(params.at(-1));
       if (expectedVersion !== Number(database.page.edit_version)) return { affectedRows: 0 };
       database.page.title = params[0];
-      if (sql.includes("last_mutation_id = ?")) database.page.last_mutation_id = params.at(-4);
+      if (sql.includes("last_mutation_id = ?")) {
+        database.page.last_mutation_id = params.at(-5);
+        database.page.last_mutation_hash = params.at(-4);
+      }
       database.page.edit_version = Number(database.page.edit_version) + 1;
       return { affectedRows: 1 };
     }
@@ -156,6 +164,24 @@ describe("Optimistic edit conflict protection", () => {
     expect(database.block.markdown).toBe("Committed block");
   });
 
+  it("rejects a reused block mutation id when the request body differs", async () => {
+    const mutationId = "mut_block_collision";
+    await request(createApp())
+      .patch(`/api/blocks/${database.block.id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ markdown: "Committed block", expectedVersion: 1, mutationId })
+      .expect(200);
+
+    const collision = await request(createApp())
+      .patch(`/api/blocks/${database.block.id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ markdown: "Silently lost block", expectedVersion: 1, mutationId })
+      .expect(409);
+
+    expect(collision.body.error.code).toBe("MUTATION_ID_REUSED");
+    expect(database.block.markdown).toBe("Committed block");
+  });
+
   it("rejects a stale page-title write instead of overwriting the newer title", async () => {
     const first = await request(createApp())
       .patch(`/api/pages/${database.page.id}`)
@@ -191,6 +217,24 @@ describe("Optimistic edit conflict protection", () => {
 
     expect(first.body.page.version).toBe(2);
     expect(replay.body.page.version).toBe(2);
+    expect(database.page.title).toBe("Committed title");
+  });
+
+  it("rejects a reused page mutation id when the request body differs", async () => {
+    const mutationId = "mut_page_collision";
+    await request(createApp())
+      .patch(`/api/pages/${database.page.id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ title: "Committed title", expectedVersion: 1, mutationId })
+      .expect(200);
+
+    const collision = await request(createApp())
+      .patch(`/api/pages/${database.page.id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ title: "Silently lost title", expectedVersion: 1, mutationId })
+      .expect(409);
+
+    expect(collision.body.error.code).toBe("MUTATION_ID_REUSED");
     expect(database.page.title).toBe("Committed title");
   });
 

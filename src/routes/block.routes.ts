@@ -18,6 +18,7 @@ import {
   type AttachmentMetadata
 } from "../lib/attachments.js";
 import { renderBlockHtml } from "../lib/markdown.js";
+import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
 import {
   fetchBookmarkPreviewWithFallback,
   getBookmarkData,
@@ -437,6 +438,8 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
     const user = requireUser(req.user);
     const blockId = String(req.params.blockId);
     const body = req.body as z.infer<typeof updateBlockSchema>;
+    const { mutationId, ...mutationPayload } = body;
+    const mutationHash = mutationId ? createMutationRequestHash(mutationPayload) : undefined;
 
     const result = await transaction(async (client) => {
       const hierarchyChanged = body.parentBlockId !== undefined || body.sortOrder !== undefined;
@@ -476,7 +479,14 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
         existing = lockedBlock;
       }
 
-      if (body.mutationId && existing.last_mutation_id === body.mutationId) {
+      if (
+        isMatchingMutationReplay(
+          existing.last_mutation_id,
+          existing.last_mutation_hash,
+          mutationId,
+          mutationHash
+        )
+      ) {
         return { block: existing, pageContentVersion: Number(lockedPage.content_version ?? 1) };
       }
 
@@ -544,9 +554,9 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
         values.push(prepared.metadata ? JSON.stringify(prepared.metadata) : null);
       }
 
-      if (fields.length && body.mutationId) {
-        fields.push("last_mutation_id = ?");
-        values.push(body.mutationId);
+      if (fields.length && mutationId && mutationHash) {
+        fields.push("last_mutation_id = ?", "last_mutation_hash = ?");
+        values.push(mutationId, mutationHash);
       }
 
       let pageContentVersion = Number(lockedPage.content_version ?? 1);
@@ -624,6 +634,7 @@ blockRouter.post(
       const user = requireUser(req.user);
       const pageId = String(req.params.pageId);
       const { items, mutationId } = req.body as z.infer<typeof reorderSchema>;
+      const mutationHash = mutationId ? createMutationRequestHash({ pageId, items }) : undefined;
 
       const result = await transaction(async (client) => {
         const lockedPage = await client.queryOne<PageRow>(
@@ -633,16 +644,20 @@ blockRouter.post(
         if (!lockedPage) throw notFound("Page");
 
         if (mutationId) {
-          const receipt = await client.queryOne<{ page_id: string }>(
-            `SELECT page_id
+          const receipt = await client.queryOne<{ page_id: string; request_hash: string | null }>(
+            `SELECT page_id, request_hash
              FROM block_order_mutations
              WHERE owner_id = ? AND mutation_id = ?
              FOR UPDATE`,
             [user.id, mutationId]
           );
           if (receipt) {
-            if (receipt.page_id !== pageId) {
-              throw new ApiError(409, "MUTATION_ID_REUSED", "This mutation id was already used for another page");
+            if (receipt.page_id !== pageId || !mutationHash || receipt.request_hash !== mutationHash) {
+              throw new ApiError(
+                409,
+                "MUTATION_ID_REUSED",
+                "This mutation id was already used for a different request. The new order was not applied."
+              );
             }
             const rows = await client.query<BlockRow>(
               "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC",
@@ -708,11 +723,11 @@ blockRouter.post(
         }
 
         const pageContentVersion = await advancePageContentVersion(client, pageId, user.id);
-        if (mutationId) {
+        if (mutationId && mutationHash) {
           await client.execute(
-            `INSERT INTO block_order_mutations (owner_id, mutation_id, page_id)
-             VALUES (?, ?, ?)`,
-            [user.id, mutationId, pageId]
+            `INSERT INTO block_order_mutations (owner_id, mutation_id, page_id, request_hash)
+             VALUES (?, ?, ?, ?)`,
+            [user.id, mutationId, pageId, mutationHash]
           );
         }
         const rows = await client.query<BlockRow>(

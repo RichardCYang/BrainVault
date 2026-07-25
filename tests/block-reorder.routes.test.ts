@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const database = vi.hoisted(() => ({
   blocks: new Map<string, Record<string, unknown>>(),
-  receipts: new Map<string, { page_id: string }>(),
+  receipts: new Map<string, { page_id: string; request_hash: string | null }>(),
   query: vi.fn(),
   queryOne: vi.fn(),
   execute: vi.fn()
@@ -108,7 +108,10 @@ beforeEach(() => {
 
   database.execute.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
     if (sql.includes("INSERT INTO block_order_mutations")) {
-      database.receipts.set(`${String(params[0])}:${String(params[1])}`, { page_id: String(params[2]) });
+      database.receipts.set(`${String(params[0])}:${String(params[1])}`, {
+        page_id: String(params[2]),
+        request_hash: String(params[3])
+      });
       return { affectedRows: 1 };
     }
     if (sql.includes("SET content_version = content_version + 1")) {
@@ -161,6 +164,32 @@ describe("Block reorder conflict protection", () => {
     expect(replay.body.blocks.map((block: { id: string }) => block.id)).toEqual(["blk_second", "blk_first"]);
     expect(database.blocks.get("blk_first")?.edit_version).toBe(2);
     expect(database.blocks.get("blk_second")?.edit_version).toBe(2);
+    expect(page.content_version).toBe(2);
+  });
+
+  it("rejects a reused reorder mutation id when the requested order differs", async () => {
+    const mutationId = "mut_reorder_collision";
+    await request(createApp())
+      .post(`/api/pages/${page.id}/blocks/reorder`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(reorderBody(1, 1, mutationId))
+      .expect(200);
+
+    const collision = await request(createApp())
+      .post(`/api/pages/${page.id}/blocks/reorder`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        mutationId,
+        items: [
+          { id: "blk_first", sortOrder: 0, parentBlockId: null, expectedVersion: 1 },
+          { id: "blk_second", sortOrder: 1, parentBlockId: null, expectedVersion: 1 }
+        ]
+      })
+      .expect(409);
+
+    expect(collision.body.error.code).toBe("MUTATION_ID_REUSED");
+    expect(database.blocks.get("blk_second")?.sort_order).toBe(0);
+    expect(database.blocks.get("blk_first")?.sort_order).toBe(1);
     expect(page.content_version).toBe(2);
   });
 

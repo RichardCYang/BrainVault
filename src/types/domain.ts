@@ -22,6 +22,7 @@ export type PageRow = {
   edit_version?: number;
   content_version?: number;
   last_mutation_id?: string | null;
+  last_mutation_hash?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -57,6 +58,7 @@ export type BlockRow = {
   metadata: string | Record<string, unknown> | null;
   edit_version?: number;
   last_mutation_id?: string | null;
+  last_mutation_hash?: string | null;
   created_at: string;
   updated_at: string;
 };

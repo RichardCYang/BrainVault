@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS block_order_mutations (
   owner_id VARCHAR(64) NOT NULL,
   mutation_id VARCHAR(64) NOT NULL,
   page_id VARCHAR(64) NOT NULL,
+  request_hash CHAR(64) NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (owner_id, mutation_id),
   KEY idx_block_order_mutations_page (page_id),
