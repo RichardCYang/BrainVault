@@ -1,0 +1,56 @@
+# API
+
+Most API routes require a bearer token returned by the register or login endpoint. Accounts with MFA enabled receive a temporary MFA session during login and obtain the normal access token after completing a TOTP or passkey challenge.
+
+## Route overview
+
+| Method | Route | Description |
+| --- | --- | --- |
+| `POST` | `/api/auth/register` | Create an account |
+| `POST` | `/api/auth/login` | Sign in; returns either a JWT or a temporary MFA session |
+| `GET` | `/api/auth/mfa/status` | Read configured TOTP and passkey methods |
+| `POST` | `/api/auth/mfa/totp/setup` | Begin current-password-protected TOTP enrollment |
+| `POST` | `/api/auth/mfa/totp/verify` | Confirm and enable a pending TOTP enrollment |
+| `DELETE` | `/api/auth/mfa/totp` | Disable TOTP after current-password verification |
+| `POST` | `/api/auth/mfa/passkeys/options` | Begin current-password-protected passkey registration |
+| `POST` | `/api/auth/mfa/passkeys` | Verify and store a passkey credential |
+| `PATCH` | `/api/auth/mfa/passkeys/:id` | Rename a registered passkey |
+| `DELETE` | `/api/auth/mfa/passkeys/:id` | Remove a passkey after current-password verification |
+| `POST` | `/api/auth/mfa/login/totp` | Complete a pending login with a TOTP code |
+| `POST` | `/api/auth/mfa/login/passkey/options` | Create a passkey authentication challenge |
+| `POST` | `/api/auth/mfa/login/passkey/verify` | Verify a passkey and complete login |
+| `GET` | `/api/auth/me` | Read the current user |
+| `PATCH` | `/api/auth/profile` | Update display name, profile image, or preferred language |
+| `POST` | `/api/auth/password` | Change the password after verifying the current password |
+| `GET` | `/api/pages` | List pages |
+| `POST` | `/api/pages` | Create a page |
+| `GET` | `/api/pages/:pageId` | Read a page and its block tree |
+| `PATCH` | `/api/pages/:pageId` | Update page metadata |
+| `DELETE` | `/api/pages/:pageId` | Archive or permanently delete a page |
+| `POST` | `/api/pages/:pageId/blocks` | Add a non-attachment block |
+| `POST` | `/api/bookmarks/preview` | Fetch sanitized OpenGraph metadata for a public web page URL |
+| `POST` | `/api/pages/:pageId/attachments` | Upload a file and create an attachment block |
+| `PATCH` | `/api/blocks/:blockId` | Update a block |
+| `DELETE` | `/api/blocks/:blockId` | Delete a block and its descendants, including stored attachment files |
+| `GET` | `/api/blocks/:blockId/attachment` | Download an attachment after ownership verification |
+| `GET` | `/api/data/export` | Stream a complete ZIP backup of the authenticated workspace |
+| `POST` | `/api/data/import` | Validate and restore a BrainVault backup ZIP |
+| `POST` | `/api/pages/:pageId/blocks/reorder` | Move or reorder blocks |
+| `GET` | `/api/pages/:pageId/render` | Render sanitized page HTML |
+| `GET` | `/api/search?q=...` | Search titles and block Markdown |
+
+## OpenAPI
+
+The complete OpenAPI 3.1 document is stored at [`docs/openapi.yaml`](openapi.yaml) and served by a running application at:
+
+```text
+http://localhost:4000/docs/openapi.yaml
+```
+
+## Health check
+
+The health endpoint is available without authentication:
+
+```bash
+curl http://localhost:4000/health
+```

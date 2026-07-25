@@ -1,0 +1,20 @@
+# BrainVault documentation
+
+The root [README](../README.md) is intentionally short. Detailed setup, operation, and implementation notes are organized here by topic.
+
+## Guides
+
+| Document | Use it for |
+| --- | --- |
+| [Getting started](getting-started.md) | Installing dependencies, preparing MariaDB, running locally, loading demo data, and building for production |
+| [Features](features.md) | Learning the editor controls, block types, backup/restore flow, languages, and PDF export |
+| [Configuration](configuration.md) | Reviewing every supported environment variable and its default behavior |
+| [Security](security.md) | Configuring MFA and understanding the project security boundaries and production requirements |
+| [API](api.md) | Finding route summaries, authentication expectations, the health endpoint, and the OpenAPI document |
+| [Development](development.md) | Using npm scripts, maintaining the lockfile, navigating the repository, updating translations, and capturing the preview |
+| [OpenAPI specification](openapi.yaml) | Reading the complete machine-readable OpenAPI 3.1 definition |
+
+## Assets
+
+- [`preview.png`](preview.png): workspace screenshot used by the root README
+- [`openapi.yaml`](openapi.yaml): API contract served by the application

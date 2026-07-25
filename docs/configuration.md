@@ -1,0 +1,58 @@
+# Configuration
+
+BrainVault reads runtime settings from environment variables. For local development, copy [`.env.example`](../.env.example) to `.env` with `npm run env:init`, or use `npm run db:configure` to create/update `.env` interactively.
+
+Never commit a real `.env` file.
+
+## Environment variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `NODE_ENV` | `development` | Runtime environment |
+| `PORT` | `4000` | HTTP port |
+| `DATABASE_URL` | Local BrainVault database | MariaDB connection used by the app |
+| `MARIADB_ADMIN_URL` | Not set | Optional admin connection for database and user creation |
+| `AUTO_BOOTSTRAP_DATABASE` | `true` | Run database bootstrap before listening |
+| `BRAINVAULT_DEV_BROWSER_PRIVATE` | `false` | Open a supported private/incognito browser window during `npm run dev` |
+| `DATABASE_CONNECTION_LIMIT` | `10` | Maximum database pool size |
+| `JWT_SECRET` | Development-only value | Secret used to sign access tokens; minimum 32 characters |
+| `JWT_EXPIRES_IN` | `7d` | Access-token lifetime |
+| `MFA_ENCRYPTION_KEY` | Development-only value | Key material used to encrypt TOTP secrets; minimum 32 characters |
+| `WEBAUTHN_RP_NAME` | `BrainVault` | Name shown during passkey registration |
+| `WEBAUTHN_RP_ID` | `localhost` | WebAuthn relying-party domain without scheme or port |
+| `WEBAUTHN_ORIGIN` | `http://localhost:4000` | Comma-separated exact browser origins accepted for WebAuthn responses |
+| `CORS_ORIGIN` | Local development origins | Comma-separated browser origins allowed to call the API |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window in milliseconds |
+| `RATE_LIMIT_MAX` | `120` | Maximum requests per window |
+| `BOOKMARK_FETCH_TIMEOUT_MS` | `8000` | Maximum duration of one OpenGraph page fetch |
+| `BOOKMARK_FETCH_MAX_BYTES` | `524288` | Maximum document-head bytes inspected for one bookmark preview |
+| `ATTACHMENT_UPLOAD_DIR` | `uploads` | Private on-disk directory for attachment bytes |
+| `MAX_ATTACHMENT_SIZE_MB` | `25` | Maximum size of one uploaded attachment in megabytes |
+| `DATA_TRANSFER_MAX_SIZE_MB` | `4096` | Maximum size of one uploaded complete-data backup ZIP in megabytes |
+
+## Database behavior
+
+With `AUTO_BOOTSTRAP_DATABASE=true`, application startup attempts to prepare the target database, reconcile the baseline schema, and apply migrations before listening.
+
+Use `MARIADB_ADMIN_URL` when the application account does not yet exist or cannot create the database/user itself. To move schema management outside the application, set:
+
+```env
+AUTO_BOOTSTRAP_DATABASE=false
+```
+
+See [Getting started](getting-started.md#database-bootstrap) for the bootstrap sequence and database commands.
+
+## Production values
+
+At minimum, production deployments should provide unique values for:
+
+```env
+NODE_ENV=production
+JWT_SECRET="replace-with-a-unique-secret-of-at-least-32-characters"
+MFA_ENCRYPTION_KEY="replace-with-a-different-secret-of-at-least-32-characters"
+WEBAUTHN_RP_ID="notes.example.com"
+WEBAUTHN_ORIGIN="https://notes.example.com"
+CORS_ORIGIN="https://notes.example.com"
+```
+
+Do not change `MFA_ENCRYPTION_KEY` casually after users enroll TOTP. Existing encrypted authenticator secrets depend on that key and become unusable when it changes.
