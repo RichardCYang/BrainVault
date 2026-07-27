@@ -6,6 +6,16 @@ BrainVault uses a page-first workspace with a compact document tree and automati
 
 Pages and collections support Unicode Emoji 17 icons with Korean/English search, categories, skin-tone variants, and recent selections. Pages can be nested, archived, or permanently deleted from their three-dot menus, and search covers page titles and block content.
 
+## Page sharing and simultaneous editing
+
+Open an ordinary page and select **Share** to add an existing BrainVault account by login ID. The page owner controls the access list; invited users receive edit access to that page but cannot add/remove collaborators, move it in the owner’s hierarchy, archive it, or permanently delete it. Collections and archived pages are not shareable.
+
+While at least one collaborator is configured, the page title and block document are synchronized through a Yjs shared document over an authenticated WebSocket connection. Concurrent text and structural changes merge automatically, active collaborators and their current editing location are shown in the page header, and edits made during a temporary disconnect are merged after reconnection.
+
+Attachment bytes continue to use the authenticated upload/download API. The server publishes the canonical attachment block into the Yjs room so collaborators receive it without allowing clients to forge file metadata. Yjs updates are persisted in MariaDB and periodically materialized into the normal page/block tables for search, render, export, and backup compatibility.
+
+See [Page sharing and real-time collaboration](collaboration.md) for the access model, protocol, persistence, reverse-proxy setup, and verification commands.
+
 ### Keyboard and block controls
 
 | Action | Result |

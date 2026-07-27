@@ -14,6 +14,7 @@
 | `npm run setup` | Run environment, database, migration, and seed tasks |
 | `npm run dev` | Start the server and open the default browser after database readiness |
 | `npm run build` | Compile TypeScript into `dist/` |
+| `npm run verify:collaboration` | Check exact Yjs pins, collaboration wiring, hierarchy invariants, RFC 6455 behavior, and all executable JS/TS syntax without MariaDB |
 | `npm start` | Run the compiled server |
 | `npm test` | Validate the lockfile and run the test suite once |
 | `npm run test:watch` | Run tests in watch mode |
@@ -55,7 +56,7 @@ BrainVault/
 ├── scripts/              # Environment, database, migration, seed, and preview tasks
 ├── src/
 │   ├── config/           # Environment parsing
-│   ├── lib/              # Database, auth, Markdown, and shared helpers
+│   ├── lib/              # Database, auth, Markdown, WebSocket, and collaboration helpers
 │   ├── middleware/       # Validation, authentication, CORS, and errors
 │   ├── routes/           # REST endpoints
 │   ├── types/            # Domain and Express type definitions
@@ -84,3 +85,9 @@ npm run preview:capture
 ```
 
 Chromium or Chrome is required. The command updates [`docs/preview.png`](preview.png).
+
+## Collaboration implementation
+
+The browser adapter is `public/collaboration.js`. Access/session/materialization routes live in `src/routes/collaboration.routes.ts`; the authenticated room server is `src/lib/collaboration-server.ts`; and the dependency-free RFC 6455 transport is `src/lib/websocket.ts`. Database objects are introduced by `migrations/020_page_sharing_yjs_collaboration.sql`.
+
+Keep the pinned Yjs browser version, CSP allowlist, protocol tests, and collaboration documentation synchronized when changing the transport. Run `npm run verify:collaboration`, `npm run build`, and `npm test` before deployment.

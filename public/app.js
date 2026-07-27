@@ -27,6 +27,7 @@ import { createPageDraftStore } from "./draft-store.js";
 import { createLatestWriteQueue } from "./save-queue.js";
 import { createMutationId, submitWithFreshMutationIdOnReuse } from "./mutation-id.js";
 import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-rebase.js";
+import { createPageCollaboration } from "./collaboration.js";
 
 const tokenKey = "brainvault.token";
 const rootParentKey = "__root__";
@@ -90,7 +91,14 @@ const state = {
   emojiPickerResults: [],
   emojiRenderedCount: 0,
   emojiSkinTone: "",
-  emojiSaving: false
+  emojiSaving: false,
+  collaborationSession: null,
+  collaborationStatus: "offline",
+  collaborationPresence: [],
+  collaborationGeneration: 0,
+  applyingCollaborationSnapshot: false,
+  sharePageOpen: false,
+  sharePageEntries: []
 };
 
 const blockTypeLabels = {
@@ -652,9 +660,24 @@ const elements = {
   pageKicker: $("#page-kicker"),
   pageIconButton: $("#page-icon-button"),
   pageTitle: $("#page-title"),
+  collaborationIndicator: $("#collaboration-indicator"),
+  collaborationStatusDot: $("#collaboration-status-dot"),
+  collaborationStatusLabel: $("#collaboration-status-label"),
+  collaborationPresence: $("#collaboration-presence"),
+  sharePageButton: $("#share-page-button"),
   exportPdfButton: $("#export-pdf-button"),
   savePageButton: $("#save-page-button"),
   archivePageButton: $("#archive-page-button"),
+  sharePageLayer: $("#share-page-layer"),
+  sharePageBackdrop: $("#share-page-backdrop"),
+  sharePageDialog: $("#share-page-dialog"),
+  sharePageClose: $("#share-page-close"),
+  sharePageForm: $("#share-page-form"),
+  sharePageUsername: $("#share-page-username"),
+  sharePageSubmit: $("#share-page-submit"),
+  sharePageMessage: $("#share-page-message"),
+  sharePageCount: $("#share-page-count"),
+  sharePageList: $("#share-page-list"),
   blockEditorHelp: $("#block-editor-help"),
   blockCount: $("#block-count"),
   blockList: $("#block-list"),
@@ -1240,6 +1263,8 @@ function renderShell() {
 }
 
 function resetAuthenticationSessionState({ render = true } = {}) {
+  void destroyPageCollaboration({ flush: false });
+  closeSharePageDialog({ restoreFocus: false });
   // Input handlers persist durable per-account drafts before enqueueing writes. Keep those
   // records, but never carry live editor state or retry queues across an auth boundary.
   discardPendingPageEdits();
@@ -2227,10 +2252,10 @@ function renderDocumentNode(page, groups, depth = 0) {
   label.textContent = page.title;
 
   button.append(caret, icon, label);
-  row.append(
-    button,
-    makeNavigationMenuButton({ id: page.id, kind: "page", title: page.title })
-  );
+  row.append(button);
+  if (isPageOwner(page)) {
+    row.append(makeNavigationMenuButton({ id: page.id, kind: "page", title: page.title }));
+  }
   wrapper.append(row);
 
   if (children.length) {
@@ -2341,14 +2366,16 @@ function makeHomeDocumentButton(page) {
   title.textContent = `${page.icon ?? "📄"} ${page.title}`;
 
   button.append(title);
-  row.append(
-    button,
-    makeNavigationMenuButton({
-      id: page.id,
-      kind: isCollectionPage(page) ? "collection" : "page",
-      title: page.title
-    })
-  );
+  row.append(button);
+  if (isPageOwner(page)) {
+    row.append(
+      makeNavigationMenuButton({
+        id: page.id,
+        kind: isCollectionPage(page) ? "collection" : "page",
+        title: page.title
+      })
+    );
+  }
   return row;
 }
 
@@ -2393,8 +2420,27 @@ function isPageReadOnly() {
   return state.pageMode !== pageModes.WRITE;
 }
 
+function isPageOwner(page = state.selectedPage) {
+  if (!page) return false;
+  if (page.access && typeof page.access.isOwner === "boolean") return page.access.isOwner;
+  return Boolean(state.user?.id && page.ownerId === state.user.id);
+}
+
+function isCollaborativePage(page = state.selectedPage) {
+  return Boolean(page?.collaboration?.enabled);
+}
+
+function isCollaborationReady() {
+  return !isCollaborativePage() || Boolean(state.collaborationSession?.isReady);
+}
+
 function isPageInteractionLocked() {
-  return state.pageModeChanging || state.pageEditLockDepth > 0 || blockOrderSaving;
+  return (
+    state.pageModeChanging ||
+    state.pageEditLockDepth > 0 ||
+    blockOrderSaving ||
+    (isCollaborativePage() && !isCollaborationReady())
+  );
 }
 
 function canPersistSelectedPage() {
@@ -2406,6 +2452,10 @@ function canEditSelectedPage() {
 }
 
 function reportReadOnlyBlocked() {
+  if (isCollaborativePage() && !isCollaborationReady()) {
+    setStatus(t("sharing.syncRequired"), true);
+    return;
+  }
   setStatus(t("status.readOnlyBlocked"));
 }
 
@@ -2495,16 +2545,21 @@ function syncPageModeUi() {
   const controlsReadOnly = readOnly || interactionLocked;
   const modeLabelKey = readOnly ? "page.readMode" : "page.writeMode";
   const modeDescriptionKey = readOnly ? "page.readModeDescription" : "page.writeModeDescription";
+  const owner = isPageOwner();
 
   elements.pageView.classList.toggle("is-read-only", readOnly);
+  elements.pageView.classList.toggle("is-collaborative", isCollaborativePage());
   elements.pageView.classList.toggle("is-edit-locked", interactionLocked);
   elements.pageView.setAttribute("aria-busy", String(interactionLocked));
   elements.pageView.dataset.pageMode = state.pageMode;
   elements.pageTitle.readOnly = controlsReadOnly;
-  elements.pageIconButton.disabled = controlsReadOnly;
+  elements.pageIconButton.disabled = controlsReadOnly || !owner;
   elements.savePageButton.disabled = controlsReadOnly;
   elements.savePageButton.classList.toggle("hidden", readOnly);
-  elements.archivePageButton.disabled = controlsReadOnly;
+  elements.archivePageButton.disabled = controlsReadOnly || !owner;
+  elements.archivePageButton.classList.toggle("hidden", !owner);
+  elements.sharePageButton.classList.toggle("hidden", !state.selectedPage || !owner);
+  elements.sharePageButton.disabled = state.pageModeChanging || state.pageEditLockDepth > 0;
   elements.blockList.setAttribute("aria-readonly", String(controlsReadOnly));
   elements.blockList.setAttribute("aria-label", t(readOnly ? "page.readerAria" : "page.editorAria"));
   elements.blockEditorHelp.innerHTML = t(readOnly ? "page.readOnlyHelp" : "page.editorHelp");
@@ -2521,6 +2576,7 @@ function syncPageModeUi() {
   for (const row of elements.blockList.querySelectorAll(".editor-block-row")) {
     syncBlockReadOnlyState(row, controlsReadOnly);
   }
+  renderCollaborationChrome();
   requestAnimationFrame(() => hydrateMathExpressions(elements.pageView));
 
   if (readOnly) {
@@ -2533,6 +2589,7 @@ function syncPageModeUi() {
 
 function hasPendingPageEdits() {
   if (!state.selectedPage || state.workspaceView !== "page") return false;
+  if (isCollaborativePage()) return Boolean(state.collaborationSession?.hasPendingChanges);
   if (pageTitleSaveTimer !== null || pageTitleSaveQueue.busy || pageTitleSavedRevision < pageTitleEditRevision) return true;
   if (blockSaveTimers.size > 0) return true;
   if ([...blockSaveQueues.values()].some((queue) => queue.busy)) return true;
@@ -2827,6 +2884,12 @@ function getPendingSavePayloadBytes({ saveTitle, rowsToSave }) {
 }
 
 async function flushPendingPageEdits({ keepalive = false, allowLocked = false } = {}) {
+  if (isCollaborativePage()) {
+    const session = state.collaborationSession;
+    if (session?.isReady) await session.flushMaterialization();
+    syncBeforeUnloadProtection();
+    return;
+  }
   if (pendingBlockOrderTask && canPersistSelectedPage()) {
     await retryPendingBlockOrder({ keepalive });
   }
@@ -3207,6 +3270,500 @@ function flattenBlocks(blocks) {
   return result;
 }
 
+function buildCollaborationBlockTree(flatBlocks) {
+  const nodes = new Map();
+  for (const block of flatBlocks ?? []) {
+    if (!block?.id || nodes.has(block.id)) continue;
+    const previous = getBlockById(block.id);
+    nodes.set(block.id, {
+      ...(previous ?? {}),
+      ...block,
+      version: Number(previous?.version ?? block.version ?? 1),
+      createdAt: previous?.createdAt ?? block.createdAt ?? null,
+      updatedAt: previous?.updatedAt ?? block.updatedAt ?? null,
+      children: []
+    });
+  }
+
+  const wouldCreateCycleOrExcessiveDepth = (node) => {
+    const visited = new Set([node.id]);
+    let parentId = node.parentBlockId;
+    let depth = 0;
+    while (parentId) {
+      if (visited.has(parentId) || depth >= 128) return true;
+      visited.add(parentId);
+      parentId = nodes.get(parentId)?.parentBlockId ?? null;
+      depth += 1;
+    }
+    return false;
+  };
+
+  const roots = [];
+  for (const node of nodes.values()) {
+    const parent = node.parentBlockId && !wouldCreateCycleOrExcessiveDepth(node)
+      ? nodes.get(node.parentBlockId)
+      : null;
+    if (parent) parent.children.push(node);
+    else {
+      node.parentBlockId = null;
+      roots.push(node);
+    }
+  }
+
+  const sortChildren = (items) => {
+    items.sort((left, right) =>
+      Number(left.sortOrder ?? 0) - Number(right.sortOrder ?? 0) || String(left.id).localeCompare(String(right.id))
+    );
+    items.forEach((item, index) => {
+      item.sortOrder = index;
+      sortChildren(item.children ?? []);
+    });
+  };
+  sortChildren(roots);
+  return roots;
+}
+
+function getCollaborationBlockSignature(blocks) {
+  return JSON.stringify(
+    flattenBlocks(blocks ?? []).map((block) => ({
+      id: block.id,
+      type: block.type,
+      markdown: block.markdown ?? "",
+      checked: Boolean(block.checked),
+      parentBlockId: block.parentBlockId ?? null,
+      sortOrder: Number(block.sortOrder ?? 0),
+      metadata: block.metadata ?? null
+    }))
+  );
+}
+
+function captureCollaborationEditorFocus() {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return null;
+  if (active === elements.pageTitle) {
+    return {
+      kind: "title",
+      start: elements.pageTitle.selectionStart,
+      end: elements.pageTitle.selectionEnd
+    };
+  }
+  const row = getBlockRow(active);
+  if (!row?.dataset.blockId) return null;
+  const controls = [...row.querySelectorAll("input, textarea, select, button, summary")];
+  const index = controls.indexOf(active);
+  return {
+    kind: "block",
+    blockId: row.dataset.blockId,
+    controlIndex: index,
+    start: "selectionStart" in active ? active.selectionStart : null,
+    end: "selectionEnd" in active ? active.selectionEnd : null
+  };
+}
+
+function restoreCollaborationEditorFocus(focus) {
+  if (!focus) return;
+  let control = null;
+  if (focus.kind === "title") control = elements.pageTitle;
+  else if (focus.kind === "block") {
+    const row = findRenderedBlockRow(focus.blockId);
+    control = [...(row?.querySelectorAll("input, textarea, select, button, summary") ?? [])][focus.controlIndex] ?? null;
+  }
+  if (!(control instanceof HTMLElement) || control.disabled) return;
+  control.focus({ preventScroll: true });
+  if (
+    Number.isInteger(focus.start) &&
+    Number.isInteger(focus.end) &&
+    "setSelectionRange" in control &&
+    typeof control.setSelectionRange === "function"
+  ) {
+    const length = typeof control.value === "string" ? control.value.length : 0;
+    control.setSelectionRange(Math.min(focus.start, length), Math.min(focus.end, length));
+  }
+}
+
+function updateInputValuePreservingSelection(input, value) {
+  if (!input || input.value === value) return;
+  const active = document.activeElement === input;
+  const start = active ? input.selectionStart : null;
+  const end = active ? input.selectionEnd : null;
+  input.value = value;
+  if (active && Number.isInteger(start) && Number.isInteger(end)) {
+    input.setSelectionRange(Math.min(start, value.length), Math.min(end, value.length));
+  }
+}
+
+function updatePageCollaborationSummary(pageId, collaboration) {
+  const apply = (page) => {
+    if (page?.id === pageId) page.collaboration = { ...collaboration };
+  };
+  apply(state.selectedPage);
+  for (const pages of [state.pages, state.allPages]) pages.forEach(apply);
+}
+
+function applyCollaborationSnapshot(snapshot, { source = "remote" } = {}) {
+  if (!state.selectedPage || state.workspaceView !== "page" || !isCollaborativePage()) return;
+  const previousTitle = state.selectedPage.title ?? "";
+  const previousBlockSignature = getCollaborationBlockSignature(state.selectedPage.blocks);
+  const nextBlocks = buildCollaborationBlockTree(snapshot.blocks ?? []);
+  const nextBlockSignature = getCollaborationBlockSignature(nextBlocks);
+  const nextTitle = String(snapshot.title ?? "").slice(0, 160);
+
+  state.selectedPage.title = nextTitle;
+  state.selectedPage.blocks = nextBlocks;
+  for (const pages of [state.pages, state.allPages]) {
+    const summary = pages.find((page) => page.id === state.selectedPage.id);
+    if (summary) summary.title = nextTitle;
+  }
+
+  if (source === "local") {
+    syncBeforeUnloadProtection();
+    return;
+  }
+
+  const blocksChanged = previousBlockSignature !== nextBlockSignature;
+  const titleChanged = previousTitle !== nextTitle;
+  if (!blocksChanged) {
+    if (titleChanged) {
+      updateInputValuePreservingSelection(elements.pageTitle, nextTitle);
+      renderPageHeader(state.selectedPage);
+      renderDocumentTree();
+      renderHome();
+    }
+    renderCollaborationPresence();
+    return;
+  }
+
+  const focus = captureCollaborationEditorFocus();
+  state.applyingCollaborationSnapshot = true;
+  try {
+    renderSelectedPage();
+  } finally {
+    state.applyingCollaborationSnapshot = false;
+  }
+  requestAnimationFrame(() => {
+    restoreCollaborationEditorFocus(focus);
+    renderCollaborationPresence();
+  });
+}
+
+function applyCollaborationMaterialization(result) {
+  if (!state.selectedPage || !result) return;
+  state.selectedPage.version = Number(result.pageVersion ?? state.selectedPage.version ?? 1);
+  state.selectedPage.contentVersion = Number(result.pageContentVersion ?? state.selectedPage.contentVersion ?? 1);
+  if (result.pageUpdatedAt) state.selectedPage.updatedAt = result.pageUpdatedAt;
+
+  const serverBlocks = new Map((result.blocks ?? []).map((block) => [block.id, block]));
+  for (const block of flattenBlocks(state.selectedPage.blocks ?? [])) {
+    const serverBlock = serverBlocks.get(block.id);
+    if (!serverBlock) continue;
+    block.version = Number(serverBlock.version ?? block.version ?? 1);
+    block.updatedAt = serverBlock.updatedAt ?? block.updatedAt;
+    block.createdAt = serverBlock.createdAt ?? block.createdAt;
+    if (block.type === "ATTACHMENT") {
+      block.markdown = serverBlock.markdown;
+      block.metadata = serverBlock.metadata;
+    }
+  }
+
+  for (const pages of [state.pages, state.allPages]) {
+    const page = pages.find((item) => item.id === state.selectedPage.id);
+    if (!page) continue;
+    page.title = state.selectedPage.title;
+    page.version = state.selectedPage.version;
+    page.contentVersion = state.selectedPage.contentVersion;
+    page.updatedAt = state.selectedPage.updatedAt;
+  }
+  syncBeforeUnloadProtection();
+}
+
+function getCollaborationStatusLabel(status = state.collaborationStatus) {
+  return t(`sharing.status.${status}`);
+}
+
+function getPresenceDisplayName(client) {
+  return client?.user?.name?.trim() || client?.user?.username || t("sharing.editor");
+}
+
+function renderCollaborationPresence() {
+  elements.collaborationPresence.replaceChildren();
+  const presence = state.collaborationPresence.filter((client) => client?.user?.id !== state.user?.id);
+  elements.collaborationPresence.setAttribute(
+    "aria-label",
+    t("sharing.activeEditors", { count: presence.length })
+  );
+
+  for (const client of presence.slice(0, 5)) {
+    const avatar = document.createElement("span");
+    avatar.className = "collaboration-presence-avatar";
+    const name = getPresenceDisplayName(client);
+    avatar.title = name;
+    avatar.setAttribute("aria-label", name);
+    if (client.user?.avatarData) {
+      const image = document.createElement("img");
+      image.src = client.user.avatarData;
+      image.alt = "";
+      avatar.append(image);
+    } else {
+      avatar.textContent = getUserInitials(client.user ?? { username: "?" });
+    }
+    elements.collaborationPresence.append(avatar);
+  }
+
+  for (const row of elements.blockList.querySelectorAll(".editor-block-row")) {
+    row.classList.remove("has-remote-editor");
+    row.querySelectorAll(".remote-editor-label").forEach((label) => label.remove());
+  }
+  const byBlock = new Map();
+  for (const client of presence) {
+    const blockId = client?.state?.blockId;
+    if (!blockId) continue;
+    const editors = byBlock.get(blockId) ?? [];
+    editors.push(client);
+    byBlock.set(blockId, editors);
+  }
+  for (const [blockId, editors] of byBlock) {
+    const row = findRenderedBlockRow(blockId);
+    if (!row) continue;
+    row.classList.add("has-remote-editor");
+    const label = document.createElement("span");
+    label.className = "remote-editor-label";
+    label.textContent = editors.map(getPresenceDisplayName).join(", ");
+    label.title = t("sharing.remoteEditing", { name: label.textContent });
+    row.querySelector(".block-row-topline")?.append(label);
+  }
+}
+
+function renderCollaborationChrome() {
+  const visible = Boolean(state.selectedPage && state.workspaceView === "page" && isCollaborativePage());
+  elements.collaborationIndicator.classList.toggle("hidden", !visible);
+  if (!visible) {
+    elements.collaborationPresence.replaceChildren();
+    return;
+  }
+  elements.collaborationIndicator.dataset.status = state.collaborationStatus;
+  elements.collaborationStatusLabel.textContent = getCollaborationStatusLabel();
+  renderCollaborationPresence();
+}
+
+async function destroyPageCollaboration({ flush = true } = {}) {
+  const session = state.collaborationSession;
+  state.collaborationGeneration += 1;
+  state.collaborationSession = null;
+  state.collaborationStatus = "offline";
+  state.collaborationPresence = [];
+  renderCollaborationChrome();
+  if (session) await session.destroy({ flush });
+}
+
+async function handleCollaborationAccessChanged(generation, pageId) {
+  if (generation !== state.collaborationGeneration || state.selectedPage?.id !== pageId) return;
+  setStatus(t("sharing.accessChanged"), true);
+  await destroyPageCollaboration({ flush: false });
+  try {
+    const data = await api(`/api/pages/${encodeURIComponent(pageId)}`);
+    if (state.selectedPage?.id !== pageId) return;
+    state.selectedPage = data.page;
+    renderSelectedPage();
+    if (isCollaborativePage(data.page)) await startPageCollaboration(data.page);
+  } catch {
+    await loadPages(elements.searchInput.value.trim(), state.activeTag).catch(() => undefined);
+    await showHome({ skipFlush: true });
+  }
+}
+
+async function startPageCollaboration(page = state.selectedPage) {
+  if (!page || !isCollaborativePage(page) || state.selectedPage?.id !== page.id) return null;
+  const generation = state.collaborationGeneration + 1;
+  state.collaborationGeneration = generation;
+  state.collaborationStatus = "connecting";
+  state.collaborationPresence = [];
+  syncPageModeUi();
+
+  try {
+    const session = await createPageCollaboration({
+      page,
+      api,
+      onSnapshot: (snapshot, context) => {
+        if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) return;
+        applyCollaborationSnapshot(snapshot, context);
+      },
+      onPresence: (presence) => {
+        if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) return;
+        state.collaborationPresence = presence;
+        renderCollaborationChrome();
+      },
+      onStatus: (status) => {
+        if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) return;
+        state.collaborationStatus = status;
+        syncPageModeUi();
+      },
+      onError: (error) => {
+        console.error("Page collaboration error", error);
+        if (generation === state.collaborationGeneration && state.selectedPage?.id === page.id) {
+          state.collaborationStatus = "error";
+          renderCollaborationChrome();
+        }
+      },
+      onAccessChanged: () => {
+        void handleCollaborationAccessChanged(generation, page.id);
+      },
+      onMaterialized: (result) => {
+        if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) return;
+        applyCollaborationMaterialization(result);
+      }
+    });
+
+    if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) {
+      await session.destroy({ flush: false });
+      return null;
+    }
+    state.collaborationSession = session;
+    syncPageModeUi();
+    return session;
+  } catch (error) {
+    if (generation === state.collaborationGeneration && state.selectedPage?.id === page.id) {
+      state.collaborationStatus = "error";
+      syncPageModeUi();
+      setStatus(error.message, true);
+    }
+    return null;
+  }
+}
+
+function getCollaborationField(target) {
+  if (target === elements.pageTitle) return "title";
+  if (target?.matches?.('textarea[name="markdown"]')) return "markdown";
+  if (target?.matches?.('input[name="checked"]')) return "checked";
+  if (target?.classList?.contains("table-cell-input")) return "table";
+  if (target?.closest?.(".kanban-block-editor")) return "kanban";
+  if (target?.closest?.(".database-block-editor")) return "database";
+  if (target?.closest?.(".bookmark-block-editor")) return "bookmark";
+  if (target?.closest?.(".ai-chat-block-editor")) return "ai-chat";
+  return "block";
+}
+
+function updateCollaborationAwareness(target = document.activeElement) {
+  const session = state.collaborationSession;
+  if (!session?.isReady) return;
+  if (target === elements.pageTitle) {
+    session.setAwareness({
+      blockId: null,
+      field: "title",
+      selection: Number.isInteger(elements.pageTitle.selectionStart)
+        ? { anchor: elements.pageTitle.selectionStart, head: elements.pageTitle.selectionEnd }
+        : null
+    });
+    return;
+  }
+  const row = getBlockRow(target);
+  if (!row?.dataset.blockId) {
+    session.setAwareness({ blockId: null, field: null, selection: null });
+    return;
+  }
+  const selection = Number.isInteger(target?.selectionStart)
+    ? { anchor: target.selectionStart, head: target.selectionEnd }
+    : null;
+  session.setAwareness({ blockId: row.dataset.blockId, field: getCollaborationField(target), selection });
+}
+
+function setSharePageMessage(message = "", isError = false) {
+  elements.sharePageMessage.textContent = message;
+  elements.sharePageMessage.classList.toggle("is-error", isError);
+}
+
+function renderSharePageList() {
+  elements.sharePageList.replaceChildren();
+  elements.sharePageCount.textContent = t("sharing.count", { count: state.sharePageEntries.length });
+  if (!state.sharePageEntries.length) {
+    const empty = document.createElement("li");
+    empty.className = "share-page-empty";
+    empty.textContent = t("sharing.none");
+    elements.sharePageList.append(empty);
+    return;
+  }
+
+  for (const share of state.sharePageEntries) {
+    const item = document.createElement("li");
+    item.className = "share-page-list-item";
+    const avatar = document.createElement("span");
+    avatar.className = "share-page-user-avatar";
+    if (share.user?.avatarData) {
+      const image = document.createElement("img");
+      image.src = share.user.avatarData;
+      image.alt = "";
+      avatar.append(image);
+    } else {
+      avatar.textContent = getUserInitials(share.user ?? { username: "?" });
+    }
+    const copy = document.createElement("span");
+    copy.className = "share-page-user-copy";
+    const name = document.createElement("strong");
+    name.textContent = share.user?.name?.trim() || share.user?.username;
+    const meta = document.createElement("span");
+    meta.textContent = `@${share.user?.username} · ${t("sharing.editor")}`;
+    copy.append(name, meta);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "share-page-remove";
+    remove.dataset.userId = share.user?.id;
+    remove.dataset.username = share.user?.username;
+    remove.textContent = t("sharing.remove");
+    item.append(avatar, copy, remove);
+    elements.sharePageList.append(item);
+  }
+}
+
+async function loadPageShares() {
+  if (!state.selectedPage || !isPageOwner()) return;
+  setSharePageMessage(t("sharing.loading"));
+  const data = await api(`/api/pages/${encodeURIComponent(state.selectedPage.id)}/shares`);
+  state.sharePageEntries = data.shares ?? [];
+  renderSharePageList();
+  setSharePageMessage();
+}
+
+async function openSharePageDialog() {
+  if (!state.selectedPage || !isPageOwner()) return;
+  await flushPendingPageEdits();
+  state.sharePageOpen = true;
+  state.sharePageEntries = [];
+  elements.sharePageLayer.classList.remove("hidden");
+  elements.sharePageLayer.setAttribute("aria-hidden", "false");
+  renderSharePageList();
+  await loadPageShares();
+  requestAnimationFrame(() => elements.sharePageUsername.focus());
+}
+
+function closeSharePageDialog({ restoreFocus = true } = {}) {
+  if (!state.sharePageOpen) return;
+  state.sharePageOpen = false;
+  elements.sharePageLayer.classList.add("hidden");
+  elements.sharePageLayer.setAttribute("aria-hidden", "true");
+  elements.sharePageForm.reset();
+  setSharePageMessage();
+  if (restoreFocus && elements.sharePageButton.isConnected && !elements.sharePageButton.classList.contains("hidden")) {
+    elements.sharePageButton.focus();
+  }
+}
+
+async function setSelectedPageShareCount(count) {
+  if (!state.selectedPage) return;
+  const previousEnabled = isCollaborativePage();
+  const collaboration = { enabled: count > 0, participantCount: count + 1 };
+  updatePageCollaborationSummary(state.selectedPage.id, collaboration);
+  renderSharePageList();
+
+  if (!previousEnabled && collaboration.enabled) {
+    renderSelectedPage();
+    await startPageCollaboration(state.selectedPage);
+  } else if (previousEnabled && !collaboration.enabled) {
+    await destroyPageCollaboration({ flush: false });
+    renderSelectedPage();
+  } else {
+    renderCollaborationChrome();
+  }
+}
+
 function getBlockTypeLabel(type) {
   return blockTypeLabels[type] ? t(blockTypeLabels[type]) : type;
 }
@@ -3306,7 +3863,12 @@ function blockDeletionHasUnresolvedDraftConflict(blockId, options) {
   return blockSnapshotHasUnresolvedDraftConflict(getBlockVersionSnapshot(blockId, options));
 }
 
-async function deleteBlockWithVersionCheck(blockId, options) {
+async function deleteBlockWithVersionCheck(blockId, options = {}) {
+  if (isCollaborativePage()) {
+    const session = state.collaborationSession;
+    if (!session?.isReady) throw new Error(t("sharing.syncRequired"));
+    return { deletedIds: session.deleteBlock(blockId, { cascade: options.includeDescendants !== false }) };
+  }
   const expectedVersions = getBlockVersionSnapshot(blockId, options);
   if (blockSnapshotHasUnresolvedDraftConflict(expectedVersions)) {
     throw new Error(t("status.resolveRecoveredDraftConflict"));
@@ -5091,6 +5653,15 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
     const previousIds = getBlockSiblings(drag.parentBlockId).map((block) => block.id);
     const orderedIds = drag.candidates.map((row) => row.dataset.blockId);
     orderedIds.splice(drag.targetIndex, 0, drag.row.dataset.blockId);
+    if (isCollaborativePage()) {
+      if (!reorderBlockSiblingsInState(drag.parentBlockId, orderedIds)) {
+        throw new Error(t("errors.currentBlockOrder"));
+      }
+      await persistBlockOrder(drag.parentBlockId, orderedIds, {}, { allowLocked: true });
+      renderSelectedPage();
+      setStatus(t("status.blockOrderChanged"));
+      return;
+    }
     const task = createBlockOrderTask(drag.parentBlockId, orderedIds, {}, { previousIds });
     persistBlockOrderDraft(task);
 
@@ -5284,6 +5855,24 @@ function handleTableCellKeydown(event, input, row) {
 
 function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
   if (!row?.dataset.blockId) return false;
+  if (isCollaborativePage()) {
+    const session = state.collaborationSession;
+    if (!session?.isReady) return false;
+    const current = getBlockById(row.dataset.blockId);
+    if (!current) return false;
+    session.upsertBlock({
+      ...current,
+      ...buildBlockPayload(row),
+      parentBlockId: normalizeParentBlockId(row.dataset.parentBlockId),
+      sortOrder: Number(current.sortOrder ?? 0)
+    });
+    row.classList.remove("is-dirty", "is-saving", "save-error");
+    row.classList.add("is-saved");
+    window.setTimeout(() => row.classList.remove("is-saved"), 450);
+    updateCollaborationAwareness(document.activeElement);
+    syncBeforeUnloadProtection();
+    return true;
+  }
   const editRevision = (Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0) + 1;
   row.dataset.editRevision = String(editRevision);
   row.classList.add("is-dirty");
@@ -5404,6 +5993,25 @@ async function saveBlockRow(
 
   const blockId = row.dataset.blockId;
   const payload = buildBlockPayload(row);
+  if (isCollaborativePage()) {
+    const session = state.collaborationSession;
+    if (!session?.isReady) throw new Error(t("sharing.syncRequired"));
+    const current = getBlockById(blockId);
+    if (!current) return null;
+    const block = session.upsertBlock({
+      ...current,
+      ...payload,
+      parentBlockId: normalizeParentBlockId(row.dataset.parentBlockId),
+      sortOrder: Number(current.sortOrder ?? 0)
+    });
+    row.classList.remove("is-dirty", "is-saving", "save-error");
+    row.classList.add("is-saved");
+    updateRenderedBlockPreview(row, { ...current, ...block });
+    if (!quiet) setStatus(t("status.blockSaved"));
+    window.setTimeout(() => row.classList.remove("is-saved"), 450);
+    syncBeforeUnloadProtection();
+    return { block: { ...current, ...block } };
+  }
   const scope = getDraftScope();
   if (row.dataset.draftConflict === "true" && (!resolveConflict || !promoteBlockDraftConflict(row))) {
     const conflictSourceId = row.dataset.draftSourceId || pageDraftSourceId;
@@ -5481,6 +6089,10 @@ async function saveBlockRow(
 
 function scheduleBlockSave(row, { allowConflictPrompt = true } = {}) {
   if (!requireWritablePage({ announce: false }) || !row?.dataset.blockId) return;
+  if (isCollaborativePage()) {
+    markBlockDirty(row, { allowConflictPrompt });
+    return;
+  }
   const blockId = row.dataset.blockId;
   if (!markBlockDirty(row, { allowConflictPrompt })) {
     window.clearTimeout(blockSaveTimers.get(blockId));
@@ -5834,6 +6446,7 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
   if (!promoteBlockDraftConflict(row)) return;
 
   const pageId = state.selectedPage.id;
+  const collaborationSessionAtStart = isCollaborativePage() ? state.collaborationSession : null;
   const blockId = row.dataset.blockId;
   const sourceEditRevision = Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0;
   row.classList.add("is-uploading");
@@ -5884,11 +6497,46 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
     const sourceStillCurrent =
       state.selectedPage?.id === pageId && row.isConnected && row.dataset.blockId === blockId;
     if (!sourceStillCurrent) {
+      collaborationSessionAtStart?.adoptAttachment({
+        ...data.block,
+        parentBlockId,
+        sortOrder: referenceIndex + 1
+      });
       setStatus(t("status.attachmentUploaded", { name: file.name }));
       return data;
     }
 
     const currentEditRevision = Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0;
+    if (isCollaborativePage()) {
+      const session = state.collaborationSession ?? collaborationSessionAtStart;
+      if (!session || session.isDestroyed) throw new Error(t("sharing.syncRequired"));
+      const shouldReplaceCurrentBlock = replaceCurrentBlock && currentEditRevision === sourceEditRevision;
+      const effectiveInsertionIndex = shouldReplaceCurrentBlock ? referenceIndex : referenceIndex + 1;
+      const orderedIds = [...siblingIds];
+      if (shouldReplaceCurrentBlock) {
+        orderedIds.splice(referenceIndex, 1, data.block.id);
+        session.deleteBlock(blockId, { cascade: false, allowDisconnected: true });
+        row.dataset.deleting = "true";
+      } else {
+        orderedIds.splice(effectiveInsertionIndex, 0, data.block.id);
+      }
+      session.upsertBlock({
+        ...data.block,
+        parentBlockId,
+        sortOrder: effectiveInsertionIndex
+      }, { allowDisconnected: true });
+      const snapshotById = new Map(session.getSnapshot().blocks.map((block) => [block.id, block]));
+      const orderUpdates = orderedIds.map((id, sortOrder) => {
+        const current = snapshotById.get(id);
+        if (!current) throw new Error(t("errors.currentBlockOrder"));
+        return { ...current, parentBlockId: parentBlockId ?? null, sortOrder };
+      });
+      session.upsertBlocks(orderUpdates, { allowDisconnected: true });
+      state.pendingFocusBlockId = data.block.id;
+      renderSelectedPage();
+      setStatus(t("status.attachmentUploaded", { name: file.name }));
+      return data;
+    }
     const shouldReplaceCurrentBlock = replaceCurrentBlock && currentEditRevision === sourceEditRevision;
     const effectiveInsertionIndex = shouldReplaceCurrentBlock ? referenceIndex : referenceIndex + 1;
     const orderedIds = [...siblingIds];
@@ -6154,6 +6802,18 @@ async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {
   const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage();
   if (!writable || !orderedIds.length) return;
 
+  if (isCollaborativePage()) {
+    const session = state.collaborationSession;
+    if (!session?.isReady) throw new Error(t("sharing.syncRequired"));
+    const updates = orderedIds.map((id, sortOrder) => {
+      const block = getBlockById(id);
+      if (!block) throw new Error(t("errors.currentBlockOrder"));
+      return { ...block, parentBlockId: parentBlockId ?? null, sortOrder };
+    });
+    session.upsertBlocks(updates);
+    return { blocks: updates };
+  }
+
   const task = createBlockOrderTask(parentBlockId, orderedIds, versionOverrides);
   persistBlockOrderDraft(task);
   pendingBlockOrderTask = task;
@@ -6184,6 +6844,25 @@ async function createEmptyBlock(
 ) {
   const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage();
   if (!writable) throw new Error(t("errors.readOnlyPage"));
+  if (isCollaborativePage()) {
+    const session = state.collaborationSession;
+    if (!session?.isReady) throw new Error(t("sharing.syncRequired"));
+    const block = {
+      id: createClientId("blk"),
+      type,
+      markdown,
+      checked: false,
+      parentBlockId: parentBlockId ?? null,
+      sortOrder: sortOrder ?? getBlockSiblings(parentBlockId ?? null).length,
+      metadata: metadata ?? null,
+      version: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      children: []
+    };
+    session.upsertBlock(block);
+    return { block, pageContentVersion: state.selectedPage?.contentVersion ?? 1 };
+  }
   const data = await api(`/api/pages/${pageId}/blocks`, {
     method: "POST",
     body: {
@@ -6223,7 +6902,8 @@ async function insertBlockRelative(
   await persistBlockOrder(parentBlockId, orderedIds, { [data.block.id]: data.block.version });
 
   state.pendingFocusBlockId = data.block.id;
-  await openPage(state.selectedPage.id);
+  if (isCollaborativePage()) renderSelectedPage();
+  else await openPage(state.selectedPage.id);
   setStatus(
     t("status.blockInserted", {
       position: t(placement === "before" ? "position.top" : "position.bottom")
@@ -6241,7 +6921,8 @@ async function appendBlock(afterRow = null) {
   await persistBlockOrder(null, [...siblingIds, data.block.id], { [data.block.id]: data.block.version });
 
   state.pendingFocusBlockId = data.block.id;
-  await openPage(state.selectedPage.id);
+  if (isCollaborativePage()) renderSelectedPage();
+  else await openPage(state.selectedPage.id);
   setStatus(t("status.blockAppended"));
 }
 
@@ -6286,7 +6967,8 @@ async function deleteEmptyBlock(row) {
     }
 
     state.pendingFocusBlockId = focusBlockId;
-    await openPage(state.selectedPage.id, { skipFlush: true });
+    if (isCollaborativePage()) renderSelectedPage();
+    else await openPage(state.selectedPage.id, { skipFlush: true });
     setStatus(t("status.emptyBlockDeleted"));
   });
 }
@@ -6469,7 +7151,12 @@ function renderSelectedPage() {
   const hasPage = state.workspaceView === "page" && Boolean(page);
   const renderedPageId = elements.blockList.dataset.pageId;
 
-  if (hasPage && renderedPageId === page.id) {
+  if (
+    hasPage &&
+    renderedPageId === page.id &&
+    !state.applyingCollaborationSnapshot &&
+    !isCollaborativePage(page)
+  ) {
     if (pageTitleDraftConflict || pageTitleEditRevision > pageTitleSavedRevision) {
       page.title = normalizePageTitle(elements.pageTitle.value);
     }
@@ -6487,11 +7174,13 @@ function renderSelectedPage() {
 
   if (isCollection) {
     delete elements.blockList.dataset.pageId;
+    renderCollaborationChrome();
     renderPages();
     return;
   }
   if (!hasPage) {
     delete elements.blockList.dataset.pageId;
+    renderCollaborationChrome();
     renderPages();
     return;
   }
@@ -6511,7 +7200,9 @@ function renderSelectedPage() {
     elements.blockList.append(empty);
   } else {
     for (const block of flatBlocks) {
-      elements.blockList.append(renderBlock(block, getBlockRenderDraft(page.id, block.id)));
+      elements.blockList.append(
+        renderBlock(block, isCollaborativePage(page) ? null : getBlockRenderDraft(page.id, block.id))
+      );
     }
   }
 
@@ -6560,6 +7251,21 @@ async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked =
   if (!writable || pageTitleDraftConflict) return null;
   const pageId = state.selectedPage.id;
   const title = normalizePageTitle(elements.pageTitle.value);
+  if (isCollaborativePage()) {
+    const session = state.collaborationSession;
+    if (!session?.isReady) throw new Error(t("sharing.syncRequired"));
+    elements.pageTitle.value = title;
+    session.setTitle(title);
+    state.selectedPage.title = title;
+    for (const pages of [state.pages, state.allPages]) {
+      const page = pages.find((item) => item.id === pageId);
+      if (page) page.title = title;
+    }
+    renderPageHeader(state.selectedPage);
+    updateCollaborationAwareness(elements.pageTitle);
+    if (!quiet) setStatus(t("status.pageTitleSaved"));
+    return { page: state.selectedPage };
+  }
   window.clearTimeout(pageTitleSaveTimer);
   pageTitleSaveTimer = null;
   if (pageTitleEditRevision > 0) persistPageTitleDraft();
@@ -6588,6 +7294,28 @@ async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked =
 
 function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
   if (!requireWritablePage({ announce: false })) return;
+  if (isCollaborativePage()) {
+    const session = state.collaborationSession;
+    if (!session?.isReady) return;
+    const title = elements.pageTitle.value.slice(0, 160);
+    // Keep an empty in-progress field local. The materialized document requires
+    // a non-blank title, and the blur handler restores the localized default.
+    if (!title.trim()) {
+      updateCollaborationAwareness(elements.pageTitle);
+      syncBeforeUnloadProtection();
+      return;
+    }
+    session.setTitle(title);
+    state.selectedPage.title = title;
+    for (const pages of [state.pages, state.allPages]) {
+      const page = pages.find((item) => item.id === state.selectedPage.id);
+      if (page) page.title = title;
+    }
+    renderPageHeader(state.selectedPage);
+    updateCollaborationAwareness(elements.pageTitle);
+    syncBeforeUnloadProtection();
+    return;
+  }
   pageTitleEditRevision += 1;
   const title = normalizePageTitle(elements.pageTitle.value);
   applyPageSummaryUpdate(state.selectedPage.id, { title });
@@ -7085,6 +7813,8 @@ async function showHome({ skipFlush = false } = {}) {
   const shouldFlush = !skipFlush || state.pageEditLockDepth === 0;
   return withPageEditLock(
     async () => {
+      await destroyPageCollaboration({ flush: false });
+      closeSharePageDialog({ restoreFocus: false });
       resetPageEditTracking();
       state.selectedPage = null;
       state.pageMode = pageModes.READ;
@@ -7100,6 +7830,8 @@ async function showCollection(collectionId, { skipFlush = false } = {}) {
   const shouldFlush = !skipFlush || state.pageEditLockDepth === 0;
   return withPageEditLock(
     async () => {
+      await destroyPageCollaboration({ flush: false });
+      closeSharePageDialog({ restoreFocus: false });
       resetPageEditTracking();
       state.selectedPage = null;
       state.pageMode = pageModes.READ;
@@ -7132,13 +7864,17 @@ async function openPage(pageId, { skipFlush = false } = {}) {
         return;
       }
 
+      await destroyPageCollaboration({ flush: false });
+      closeSharePageDialog({ restoreFocus: false });
       if (!preserveMode) {
         state.pageMode = pageModes.READ;
         state.pendingFocusBlockId = null;
       }
 
       resetPageEditTracking();
-      const recovery = applyPersistedPageDraft(data.page);
+      const recovery = isCollaborativePage(data.page)
+        ? { title: null, blocks: [], blockOrder: null }
+        : applyPersistedPageDraft(data.page);
       if (!preserveMode && (recovery.title || recovery.blocks.length > 0 || recovery.blockOrder)) {
         state.pageMode = pageModes.WRITE;
       }
@@ -7147,7 +7883,12 @@ async function openPage(pageId, { skipFlush = false } = {}) {
       state.activeCollectionId = null;
       if (recovery.title) applyPageSummaryUpdate(data.page.id, { title: data.page.title });
       renderSelectedPage();
-      if (!activatePersistedPageDraft(recovery)) setStatus(t("status.documentOpened"));
+      if (isCollaborativePage(data.page)) {
+        await startPageCollaboration(data.page);
+        setStatus(t("status.documentOpened"));
+      } else if (!activatePersistedPageDraft(recovery)) {
+        setStatus(t("status.documentOpened"));
+      }
     },
     { flush: shouldFlush }
   );
@@ -7629,7 +8370,7 @@ function refreshLocalizedUi() {
   elements.languageSelect.value = getLanguage();
   setAuthMode(state.authMode, false);
   renderPages();
-  syncVisibleBlocksToState();
+  if (!isCollaborativePage()) syncVisibleBlocksToState();
   renderSelectedPage();
   syncPageModeUi();
   if (state.user) updateUserIdentityUi();
@@ -7781,6 +8522,78 @@ elements.homeDocumentList.addEventListener("click", async (event) => {
 });
 
 
+elements.sharePageButton.addEventListener("click", () => {
+  openSharePageDialog().catch((error) => setSharePageMessage(error.message, true));
+});
+
+elements.sharePageClose.addEventListener("click", () => closeSharePageDialog());
+elements.sharePageBackdrop.addEventListener("click", () => closeSharePageDialog());
+
+elements.sharePageForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.selectedPage || !isPageOwner()) return;
+  const username = elements.sharePageUsername.value.trim();
+  if (!username) return;
+  elements.sharePageSubmit.disabled = true;
+  setSharePageMessage(t("sharing.adding"));
+  try {
+    const pageId = state.selectedPage.id;
+    const data = await api(`/api/pages/${encodeURIComponent(pageId)}/shares`, {
+      method: "POST",
+      body: { username }
+    });
+    if (state.selectedPage?.id !== pageId) return;
+    state.sharePageEntries.push(data.share);
+    elements.sharePageForm.reset();
+    renderSharePageList();
+    await setSelectedPageShareCount(Number(data.count ?? state.sharePageEntries.length));
+    setSharePageMessage(t("sharing.added", { username: data.share?.user?.username ?? username }));
+  } catch (error) {
+    setSharePageMessage(error.message, true);
+  } finally {
+    elements.sharePageSubmit.disabled = false;
+    elements.sharePageUsername.focus();
+  }
+});
+
+elements.sharePageList.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-user-id]");
+  if (!button || !state.selectedPage || !isPageOwner()) return;
+  const pageId = state.selectedPage.id;
+  const userId = button.dataset.userId;
+  const username = button.dataset.username || "";
+  button.disabled = true;
+  setSharePageMessage(t("sharing.removing", { username }));
+  try {
+    if (state.sharePageEntries.length === 1 && state.collaborationSession?.isReady) {
+      await state.collaborationSession.flushMaterialization({ compact: false });
+      await destroyPageCollaboration({ flush: false });
+    }
+    const data = await api(
+      `/api/pages/${encodeURIComponent(pageId)}/shares/${encodeURIComponent(userId)}`,
+      { method: "DELETE" }
+    );
+    if (state.selectedPage?.id !== pageId) return;
+    state.sharePageEntries = state.sharePageEntries.filter((share) => share.user?.id !== userId);
+    renderSharePageList();
+    await setSelectedPageShareCount(Number(data.count ?? state.sharePageEntries.length));
+    setSharePageMessage(t("sharing.removed", { username }));
+  } catch (error) {
+    button.disabled = false;
+    if (isCollaborativePage() && !state.collaborationSession) {
+      void startPageCollaboration(state.selectedPage);
+    }
+    setSharePageMessage(error.message, true);
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.sharePageOpen) {
+    event.preventDefault();
+    closeSharePageDialog();
+  }
+});
+
 elements.pageTitle.addEventListener("input", (event) => {
   if (!requireWritablePage({ announce: false })) return;
   schedulePageTitleSave({ allowConflictPrompt: !event.isComposing });
@@ -7790,7 +8603,12 @@ elements.pageTitle.addEventListener("blur", () => {
   if (!requireWritablePage({ announce: false })) return;
   if (!elements.pageTitle.value.trim()) elements.pageTitle.value = t("newDocumentTitle");
   savePageTitleNow().catch((error) => setStatus(error.message, true));
+  window.setTimeout(() => updateCollaborationAwareness(document.activeElement));
 });
+
+elements.pageTitle.addEventListener("focus", () => updateCollaborationAwareness(elements.pageTitle));
+elements.pageTitle.addEventListener("keyup", () => updateCollaborationAwareness(elements.pageTitle));
+elements.pageTitle.addEventListener("mouseup", () => updateCollaborationAwareness(elements.pageTitle));
 
 elements.pageModeToggle.addEventListener("click", async () => {
   const nextMode = isPageReadOnly() ? pageModes.WRITE : pageModes.READ;
@@ -7859,6 +8677,20 @@ elements.archivePageButton.addEventListener("click", async () => {
   } catch (error) {
     setStatus(error.message, true);
   }
+});
+
+for (const eventName of ["focusin", "input", "keyup", "mouseup", "change"]) {
+  elements.blockList.addEventListener(eventName, (event) => {
+    if (isCollaborativePage()) updateCollaborationAwareness(event.target);
+  });
+}
+
+elements.blockList.addEventListener("focusout", () => {
+  if (!isCollaborativePage()) return;
+  window.setTimeout(() => {
+    const active = document.activeElement;
+    if (active !== elements.pageTitle && !elements.blockList.contains(active)) updateCollaborationAwareness(active);
+  });
 });
 
 elements.blockList.addEventListener("pointerdown", (event) => {
@@ -8295,7 +9127,8 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
           row.dataset.deleting = "false";
           throw error;
         }
-        await openPage(pageId, { skipFlush: true });
+        if (isCollaborativePage()) renderSelectedPage();
+        else await openPage(pageId, { skipFlush: true });
         setStatus(t("status.blockDeleted"));
       });
     }

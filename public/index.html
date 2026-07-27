@@ -424,7 +424,13 @@
               </div>
               <div id="page-kicker" class="kicker page-updated-meta"></div>
             </div>
-            <div class="button-row">
+            <div class="button-row page-toolbar-actions">
+              <div id="collaboration-indicator" class="collaboration-indicator hidden" role="status" aria-live="polite">
+                <span id="collaboration-status-dot" class="collaboration-status-dot" aria-hidden="true"></span>
+                <span id="collaboration-status-label">Offline</span>
+                <span id="collaboration-presence" class="collaboration-presence" aria-label="Active collaborators"></span>
+              </div>
+              <button id="share-page-button" type="button" class="secondary share-page-button hidden" data-i18n="sharing.button">Share</button>
               <span id="page-mode-badge" class="page-mode-badge" role="status">
                 <span class="page-mode-badge-icon" aria-hidden="true">◉</span>
                 <span id="page-mode-badge-label" data-i18n="page.readMode">Read mode</span>
@@ -445,6 +451,66 @@
           </section>
         </section>
       </main>
+    </div>
+
+
+    <div id="share-page-layer" class="share-page-layer hidden" aria-hidden="true">
+      <button
+        id="share-page-backdrop"
+        class="share-page-backdrop"
+        type="button"
+        aria-label="Close sharing dialog"
+        data-i18n-aria-label="sharing.close"
+        tabindex="-1"
+      ></button>
+      <section
+        id="share-page-dialog"
+        class="share-page-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="share-page-title"
+        tabindex="-1"
+      >
+        <header class="share-page-header">
+          <div>
+            <p class="kicker" data-i18n="sharing.kicker">Real-time collaboration</p>
+            <h2 id="share-page-title" data-i18n="sharing.title">Share this page</h2>
+            <p id="share-page-description" class="muted" data-i18n="sharing.description">Add a BrainVault user by login ID. Shared users can edit this page with you in real time.</p>
+          </div>
+          <button
+            id="share-page-close"
+            class="share-page-close"
+            type="button"
+            aria-label="Close sharing dialog"
+            title="Close sharing dialog"
+            data-i18n-aria-label="sharing.close"
+            data-i18n-title="sharing.close"
+          >×</button>
+        </header>
+        <form id="share-page-form" class="share-page-form">
+          <label for="share-page-username" data-i18n="sharing.usernameLabel">User login ID</label>
+          <div class="share-page-form-row">
+            <input
+              id="share-page-username"
+              type="text"
+              required
+              minlength="3"
+              maxlength="40"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="username"
+              data-i18n-placeholder="sharing.usernamePlaceholder"
+            />
+            <button id="share-page-submit" type="submit" data-i18n="sharing.add">Add user</button>
+          </div>
+        </form>
+        <p id="share-page-message" class="share-page-message" role="status" aria-live="polite"></p>
+        <div class="share-page-list-heading">
+          <strong data-i18n="sharing.peopleWithAccess">People with access</strong>
+          <span id="share-page-count" class="muted"></span>
+        </div>
+        <ul id="share-page-list" class="share-page-list"></ul>
+      </section>
     </div>
 
 

@@ -27,12 +27,18 @@ Most API routes require a bearer token returned by the register or login endpoin
 | `GET` | `/api/pages/:pageId` | Read a page and its block tree |
 | `PATCH` | `/api/pages/:pageId` | Update page metadata |
 | `DELETE` | `/api/pages/:pageId` | Archive or permanently delete a page |
+| `GET` | `/api/pages/:pageId/shares` | List invited editors; owner only |
+| `POST` | `/api/pages/:pageId/shares` | Add an existing user as an editor; owner only |
+| `DELETE` | `/api/pages/:pageId/shares/:userId` | Remove an editor and close that user’s active sockets; owner only |
+| `POST` | `/api/pages/:pageId/collaboration/session` | Issue a short-lived page-scoped WebSocket ticket and canonical snapshot |
+| `PUT` | `/api/pages/:pageId/collaboration/snapshot` | Materialize a synchronized Yjs state into page/block tables |
+| `WS` | `/api/collaboration/:pageId` | Authenticated binary Yjs updates plus JSON presence/control messages |
 | `POST` | `/api/pages/:pageId/blocks` | Add a non-attachment block |
 | `POST` | `/api/bookmarks/preview` | Fetch sanitized OpenGraph metadata for a public web page URL |
 | `POST` | `/api/pages/:pageId/attachments` | Upload a file and create an attachment block |
 | `PATCH` | `/api/blocks/:blockId` | Update a block |
 | `DELETE` | `/api/blocks/:blockId` | Delete a block and its descendants, including stored attachment files |
-| `GET` | `/api/blocks/:blockId/attachment` | Download an attachment after ownership verification |
+| `GET` | `/api/blocks/:blockId/attachment` | Download an attachment after current page-access verification |
 | `GET` | `/api/data/export` | Stream a complete ZIP backup of the authenticated workspace |
 | `POST` | `/api/data/import` | Validate and restore a BrainVault backup ZIP |
 | `POST` | `/api/pages/:pageId/blocks/reorder` | Move or reorder blocks |
@@ -54,3 +60,7 @@ The health endpoint is available without authentication:
 ```bash
 curl http://localhost:4000/health
 ```
+
+## WebSocket details
+
+The collaboration session response supplies the socket path and two required subprotocol values: `brainvault-yjs-v1` and a short-lived `brainvault-ticket.<token>` credential. Binary messages carry ordered Yjs updates; JSON messages carry readiness acknowledgements, presence, access changes, and canonical attachment notifications. See [Collaboration](collaboration.md) for the protocol and deployment requirements.

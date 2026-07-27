@@ -15,6 +15,7 @@ The preview is captured from the real browser UI. See [Development guide](docs/d
 - Block editor with slash commands, nested content, drag-and-drop ordering, tables, databases, and Kanban boards
 - Rich text, Markdown, code, callouts, bookmarks, file attachments, AI conversation blocks, and KaTeX formulas
 - Crash-resilient browser drafts, automatic title saving, and search across page titles and block content
+- Owner-managed page sharing with Yjs-based simultaneous title/block editing, live presence, reconnect recovery, and MariaDB persistence
 - Page collections, nesting, archiving, permanent deletion, PDF export, and complete ZIP backup/restore
 - JWT authentication, profile settings, TOTP authenticator support, and multiple WebAuthn/FIDO2 passkeys
 - Seven interface languages: English, Japanese, Korean, French, German, Spanish, and Portuguese
@@ -27,7 +28,7 @@ The preview is captured from the real browser UI. See [Development guide](docs/d
 | --- | --- |
 | Runtime | Node.js 22.13+, Express 5, TypeScript |
 | Database | MariaDB |
-| Frontend | Vanilla HTML, CSS, and JavaScript |
+| Frontend | Vanilla HTML, CSS, and JavaScript, with Yjs 13.6.31 for shared documents |
 | Auth | JWT, bcrypt, TOTP, and WebAuthn/FIDO2 |
 | Validation and rendering | Zod, markdown-it, sanitize-html, and KaTeX |
 | Testing | Vitest and Supertest |
@@ -52,7 +53,9 @@ For database permissions, demo data, alternative environment setup, and producti
 | --- | --- |
 | [Documentation index](docs/README.md) | Entry point for all project documentation |
 | [Getting started](docs/getting-started.md) | Requirements, setup, database bootstrap, demo data, and production |
-| [Features](docs/features.md) | Editor behavior, block types, backup/restore, PDF export, and languages |
+| [Features](docs/features.md) | Editor behavior, sharing, block types, backup/restore, PDF export, and languages |
+| [Collaboration](docs/collaboration.md) | Sharing permissions, Yjs/WebSocket flow, persistence, proxy setup, and verification |
+| [Collaboration verification](docs/collaboration-verification.md) | Delivery checks, integrity-proof scope, and reproducible deployment validation |
 | [Configuration](docs/configuration.md) | Environment variables and runtime configuration |
 | [Security](docs/security.md) | MFA, production secrets, attachment safety, and security defaults |
 | [API](docs/api.md) | Route overview, authentication, health check, and OpenAPI access |
@@ -65,6 +68,7 @@ For database permissions, demo data, alternative environment setup, and producti
 npm run dev       # Start the development server
 npm test          # Run the test suite
 npm run build     # Compile TypeScript
+npm run verify:collaboration # Check collaboration wiring, protocol behavior, and source syntax
 npm start         # Run the compiled server
 ```
 

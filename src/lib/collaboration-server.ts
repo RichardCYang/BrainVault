@@ -1,0 +1,764 @@
+import type { IncomingMessage, Server as HttpServer } from "node:http";
+import type { Socket } from "node:net";
+import { createId } from "./id.js";
+import { corsOrigins, env } from "../config/env.js";
+import { db, transaction } from "./db.js";
+import { getPageAccess } from "./page-access.js";
+import { verifyCollaborationToken } from "./collaboration-token.js";
+import { ApiError } from "./http.js";
+import {
+  acceptWebSocketUpgrade,
+  parseWebSocketProtocols,
+  rejectWebSocketUpgrade,
+  type WebSocketConnection,
+  type WebSocketMessage
+} from "./websocket.js";
+import type { UserRow } from "../types/domain.js";
+import type * as Y from "yjs";
+import {
+  applyValidatedYjsUpdate,
+  createValidatedYjsDocument,
+  InvalidYjsUpdateError
+} from "./yjs-validation.js";
+
+export const collaborationWebSocketProtocol = "brainvault-yjs-v1";
+export const collaborationTicketProtocolPrefix = "brainvault-ticket.";
+
+const maxYjsUpdateBytes = 16 * 1024 * 1024;
+const maxYjsDocumentBytes = 16 * 1024 * 1024;
+const maxTextMessageBytes = 16 * 1024;
+const maxFramesPerMinute = 600;
+const maxBytesPerMinute = 64 * 1024 * 1024;
+const heartbeatIntervalMs = 25_000;
+const heartbeatTimeoutMs = 75_000;
+const accessRecheckIntervalMs = 30_000;
+
+type YjsUpdateRow = {
+  id: number;
+  update_data: Buffer;
+  is_snapshot: 0 | 1;
+};
+
+type CollaborationProfile = Pick<UserRow, "id" | "username" | "name" | "avatar_data">;
+
+type AwarenessState = {
+  blockId: string | null;
+  field: string | null;
+  selection: { anchor: number; head: number } | null;
+};
+
+type ClientContext = {
+  id: string;
+  socket: WebSocketConnection;
+  user: CollaborationProfile;
+  synced: boolean;
+  awareness: AwarenessState;
+  rateWindowStartedAt: number;
+  frameCount: number;
+  byteCount: number;
+};
+
+type Room = {
+  pageId: string;
+  clients: Map<string, ClientContext>;
+  history: YjsUpdateRow[];
+  maxUpdateId: number;
+  loaded: boolean;
+  loadFailed: boolean;
+  invalidated: boolean;
+  loadPromise: Promise<void>;
+  bootstrapLeaderId: string | null;
+  waitingForBootstrap: Set<string>;
+  writeQueue: Promise<void>;
+  pendingWrites: number;
+  bootstrapWritePending: boolean;
+  document: Y.Doc;
+};
+
+const activeHubs = new Set<PageCollaborationHub>();
+
+function normalizeOrigin(origin: string) {
+  try {
+    return new URL(origin).origin;
+  } catch {
+    return origin.trim();
+  }
+}
+
+const explicitOrigins = new Set(corsOrigins.map(normalizeOrigin));
+
+function firstHeaderValue(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value.at(0) : value;
+}
+
+function isLoopback(hostname: string) {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+}
+
+function isAllowedOrigin(request: IncomingMessage) {
+  const originHeader = request.headers.origin;
+  if (typeof originHeader !== "string" || !originHeader) return false;
+  const origin = normalizeOrigin(originHeader);
+  if (explicitOrigins.has(origin)) return true;
+
+  try {
+    const url = new URL(origin);
+    // Never derive the expected browser host from X-Forwarded-Host: a direct
+    // client can forge that header. Reverse proxies should preserve Host or
+    // configure the public origin explicitly through CORS_ORIGINS.
+    const host = request.headers.host;
+    const forwardedProtoValue = firstHeaderValue(request.headers["x-forwarded-proto"])
+      ?.split(",").at(0)?.trim().toLowerCase();
+    const forwardedProtocol = forwardedProtoValue === "http" || forwardedProtoValue === "https"
+      ? forwardedProtoValue
+      : null;
+    const protocol = forwardedProtocol
+      || ((request.socket as Socket & { encrypted?: boolean }).encrypted ? "https" : "http");
+    if (host && url.host === host && url.protocol === `${protocol}:`) return true;
+    return env.NODE_ENV !== "production" && ["http:", "https:"].includes(url.protocol) && isLoopback(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function parsePageId(request: IncomingMessage) {
+  try {
+    const url = new URL(request.url ?? "/", "http://brainvault.invalid");
+    const match = /^\/api\/collaboration\/([^/]+)$/.exec(url.pathname);
+    if (!match) return null;
+    const pageId = decodeURIComponent(match[1]);
+    return pageId && pageId.length <= 64 ? pageId : null;
+  } catch {
+    return null;
+  }
+}
+
+function updateEnvelope(updateId: number, update: Buffer) {
+  const envelope = Buffer.allocUnsafe(9 + update.length);
+  envelope[0] = 1;
+  envelope.writeBigUInt64BE(BigInt(updateId), 1);
+  update.copy(envelope, 9);
+  return envelope;
+}
+
+function toSafeUpdateId(value: unknown) {
+  const id = Number(value ?? 0);
+  if (!Number.isSafeInteger(id) || id < 0) {
+    throw new ApiError(500, "INVALID_COLLABORATION_STATE", "Collaboration update id exceeded the supported range");
+  }
+  return id;
+}
+
+function normalizeAwareness(value: unknown): AwarenessState {
+  const source = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const selectionSource = source.selection && typeof source.selection === "object" && !Array.isArray(source.selection)
+    ? source.selection as Record<string, unknown>
+    : null;
+  const anchor = selectionSource ? Number(selectionSource.anchor) : NaN;
+  const head = selectionSource ? Number(selectionSource.head) : NaN;
+  return {
+    blockId: typeof source.blockId === "string" && source.blockId.length <= 64 ? source.blockId : null,
+    field: typeof source.field === "string" && source.field.length <= 32 ? source.field : null,
+    selection: Number.isSafeInteger(anchor) && anchor >= 0 && Number.isSafeInteger(head) && head >= 0
+      ? { anchor, head }
+      : null
+  };
+}
+
+function publicPresence(client: ClientContext) {
+  return {
+    connectionId: client.id,
+    user: {
+      id: client.user.id,
+      username: client.user.username,
+      name: client.user.name,
+      avatarData: client.user.avatar_data ?? null
+    },
+    state: client.awareness,
+    synced: client.synced
+  };
+}
+
+export class PageCollaborationHub {
+  private readonly server: HttpServer;
+  private readonly rooms = new Map<string, Room>();
+  private readonly heartbeatTimer: NodeJS.Timeout;
+  private readonly accessTimer: NodeJS.Timeout;
+  private closed = false;
+  private readonly upgradeHandler: (request: IncomingMessage, socket: Socket, head: Buffer) => void;
+
+  constructor(server: HttpServer) {
+    this.server = server;
+    this.upgradeHandler = (request, socket, head) => {
+      void this.handleUpgrade(request, socket, head).catch((error) => {
+        console.error("Collaboration WebSocket upgrade failed", error);
+        rejectWebSocketUpgrade(socket, error instanceof ApiError ? error.statusCode : 500, "Collaboration connection failed");
+      });
+    };
+    server.on("upgrade", this.upgradeHandler);
+    this.heartbeatTimer = setInterval(() => this.runHeartbeat(), heartbeatIntervalMs);
+    this.heartbeatTimer.unref();
+    this.accessTimer = setInterval(() => void this.recheckAccess(), accessRecheckIntervalMs);
+    this.accessTimer.unref();
+    activeHubs.add(this);
+  }
+
+  async close() {
+    if (this.closed) return;
+    this.closed = true;
+    activeHubs.delete(this);
+    clearInterval(this.heartbeatTimer);
+    clearInterval(this.accessTimer);
+    this.server.off("upgrade", this.upgradeHandler);
+
+    const rooms = [...this.rooms.values()];
+    for (const room of rooms) {
+      for (const client of room.clients.values()) client.socket.close(1001, "Server is shutting down");
+    }
+    await Promise.allSettled(rooms.map((room) => room.writeQueue));
+    for (const room of rooms) {
+      room.invalidated = true;
+      room.document.destroy();
+    }
+    this.rooms.clear();
+  }
+
+  disconnectUser(pageId: string, userId: string, reason = "Page access was removed") {
+    const room = this.rooms.get(pageId);
+    if (!room) return;
+    for (const client of room.clients.values()) {
+      if (client.user.id === userId) client.socket.close(4003, reason);
+    }
+  }
+
+  disconnectPage(pageId: string, reason = "Collaboration is no longer available") {
+    const room = this.rooms.get(pageId);
+    if (!room) return;
+    room.invalidated = true;
+    this.rooms.delete(pageId);
+    room.bootstrapLeaderId = null;
+    room.waitingForBootstrap.clear();
+    for (const client of room.clients.values()) client.socket.close(4010, reason);
+    void room.writeQueue.finally(() => room.document.destroy());
+  }
+
+  notifyCanonicalAttachment(pageId: string, block: unknown) {
+    const room = this.rooms.get(pageId);
+    if (!room || room.invalidated || this.rooms.get(pageId) !== room) return;
+    for (const client of room.clients.values()) {
+      if (client.socket.isOpen) client.socket.sendJson({ type: "canonical-attachment", block });
+    }
+  }
+
+  private async handleUpgrade(request: IncomingMessage, socket: Socket, head: Buffer) {
+    const pageId = parsePageId(request);
+    if (!pageId) {
+      rejectWebSocketUpgrade(socket, 404, "WebSocket endpoint not found");
+      return;
+    }
+    if (!isAllowedOrigin(request)) {
+      rejectWebSocketUpgrade(socket, 403, "WebSocket origin is not allowed");
+      return;
+    }
+
+    const protocols = parseWebSocketProtocols(request.headers["sec-websocket-protocol"]);
+    const ticketProtocol = protocols.find((value) => value.startsWith(collaborationTicketProtocolPrefix));
+    if (!protocols.includes(collaborationWebSocketProtocol) || !ticketProtocol) {
+      rejectWebSocketUpgrade(socket, 401, "A collaboration ticket is required");
+      return;
+    }
+
+    const ticket = ticketProtocol.slice(collaborationTicketProtocolPrefix.length);
+    const payload = verifyCollaborationToken(ticket);
+    if (payload.pageId !== pageId) {
+      rejectWebSocketUpgrade(socket, 401, "The collaboration ticket does not match this page");
+      return;
+    }
+
+    const access = await getPageAccess(pageId, payload.sub);
+    if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
+      rejectWebSocketUpgrade(socket, 403, "Collaboration is not enabled for this page");
+      return;
+    }
+    const user = await db.queryOne<CollaborationProfile>(
+      "SELECT id, username, name, avatar_data FROM users WHERE id = ?",
+      [payload.sub]
+    );
+    if (!user) {
+      rejectWebSocketUpgrade(socket, 401, "User no longer exists");
+      return;
+    }
+
+    const connection = acceptWebSocketUpgrade(request, socket, {
+      selectedProtocol: collaborationWebSocketProtocol,
+      maxMessageBytes: maxYjsUpdateBytes + 64 * 1024
+    });
+    if (!connection) return;
+
+    const room = this.getOrCreateRoom(pageId);
+    const client: ClientContext = {
+      id: createId("con"),
+      socket: connection,
+      user,
+      synced: false,
+      awareness: { blockId: null, field: null, selection: null },
+      rateWindowStartedAt: Date.now(),
+      frameCount: 0,
+      byteCount: 0
+    };
+    room.clients.set(client.id, client);
+    connection.onMessage((message) => this.handleMessage(room, client, message));
+    connection.onClose(() => this.handleClientClose(room, client));
+    connection.start(head);
+
+    await room.loadPromise;
+    if (
+      room.loadFailed
+      || room.invalidated
+      || this.rooms.get(pageId) !== room
+      || !connection.isOpen
+      || !room.clients.has(client.id)
+    ) return;
+
+    try {
+      const currentAccess = await getPageAccess(pageId, payload.sub);
+      if (currentAccess.page.is_collection || currentAccess.page.is_archived || currentAccess.shareCount < 1) {
+        connection.close(4010, "Collaboration is no longer available");
+        return;
+      }
+    } catch (error) {
+      if (error instanceof ApiError && error.statusCode === 404) {
+        connection.close(4003, "Page access was removed");
+        return;
+      }
+      throw error;
+    }
+    if (
+      room.invalidated
+      || this.rooms.get(pageId) !== room
+      || !connection.isOpen
+      || !room.clients.has(client.id)
+    ) return;
+
+    for (const row of room.history) connection.sendBinary(updateEnvelope(toSafeUpdateId(row.id), Buffer.from(row.update_data)));
+    connection.sendJson({
+      type: "presence",
+      clients: [...room.clients.values()].filter((item) => item.id !== client.id).map(publicPresence)
+    });
+
+    if (room.history.length || room.maxUpdateId > 0) {
+      client.synced = true;
+      connection.sendJson({
+        type: "sync-complete",
+        connectionId: client.id,
+        bootstrap: false,
+        lastUpdateId: room.maxUpdateId
+      });
+    } else if (!room.bootstrapLeaderId) {
+      room.bootstrapLeaderId = client.id;
+      client.synced = true;
+      connection.sendJson({
+        type: "sync-complete",
+        connectionId: client.id,
+        bootstrap: true,
+        lastUpdateId: 0
+      });
+    } else {
+      room.waitingForBootstrap.add(client.id);
+      connection.sendJson({ type: "bootstrap-wait", connectionId: client.id });
+    }
+    this.broadcastPresenceUpdate(room, client);
+  }
+
+  private getOrCreateRoom(pageId: string) {
+    const existing = this.rooms.get(pageId);
+    if (existing && !existing.invalidated) return existing;
+    if (existing) {
+      this.rooms.delete(pageId);
+      void existing.writeQueue.finally(() => existing.document.destroy());
+    }
+
+    const room = {} as Room;
+    Object.assign(room, {
+      pageId,
+      clients: new Map<string, ClientContext>(),
+      history: [],
+      maxUpdateId: 0,
+      loaded: false,
+      loadFailed: false,
+      invalidated: false,
+      bootstrapLeaderId: null,
+      waitingForBootstrap: new Set<string>(),
+      writeQueue: Promise.resolve(),
+      pendingWrites: 0,
+      bootstrapWritePending: false,
+      document: createValidatedYjsDocument([], maxYjsDocumentBytes)
+    });
+    room.loadPromise = db.query<YjsUpdateRow>(
+      `SELECT id, update_data, is_snapshot
+       FROM page_yjs_updates
+       WHERE page_id = ?
+       ORDER BY id ASC`,
+      [pageId]
+    ).then((rows) => {
+      if (room.invalidated || this.rooms.get(pageId) !== room) return;
+      room.history = rows.map((row) => ({
+        id: toSafeUpdateId(row.id),
+        update_data: Buffer.from(row.update_data),
+        is_snapshot: row.is_snapshot
+      }));
+      const loadedDocument = createValidatedYjsDocument(
+        room.history.map((row) => row.update_data),
+        maxYjsDocumentBytes
+      );
+      room.document.destroy();
+      room.document = loadedDocument;
+      room.maxUpdateId = room.history.length ? room.history[room.history.length - 1].id : 0;
+      room.loaded = true;
+    }).catch((error) => {
+      room.loadFailed = true;
+      room.invalidated = true;
+      if (this.rooms.get(pageId) === room) this.rooms.delete(pageId);
+      room.document.destroy();
+      for (const client of room.clients.values()) client.socket.close(1011, "Unable to load collaboration history");
+      console.error("Failed to load collaboration history", { pageId, error });
+    });
+    this.rooms.set(pageId, room);
+    return room;
+  }
+
+  private checkRate(client: ClientContext, bytes: number) {
+    const now = Date.now();
+    if (now - client.rateWindowStartedAt >= 60_000) {
+      client.rateWindowStartedAt = now;
+      client.frameCount = 0;
+      client.byteCount = 0;
+    }
+    client.frameCount += 1;
+    client.byteCount += bytes;
+    if (client.frameCount > maxFramesPerMinute || client.byteCount > maxBytesPerMinute) {
+      client.socket.close(1008, "Collaboration rate limit exceeded");
+      return false;
+    }
+    return true;
+  }
+
+  private async handleMessage(room: Room, client: ClientContext, message: WebSocketMessage) {
+    if (this.closed || room.invalidated || this.rooms.get(room.pageId) !== room || !room.clients.has(client.id)) return;
+    const bytes = message.type === "binary" ? message.data.length : Buffer.byteLength(message.text, "utf8");
+    if (!this.checkRate(client, bytes)) return;
+
+    if (message.type === "text") {
+      if (bytes > maxTextMessageBytes) {
+        client.socket.close(1009, "Collaboration control message is too large");
+        return;
+      }
+      this.handleTextMessage(room, client, message.text);
+      return;
+    }
+
+    if (!client.synced) {
+      client.socket.sendJson({ type: "error", code: "COLLABORATION_NOT_SYNCED", message: "Wait for document synchronization" });
+      return;
+    }
+    if (message.data.length < 2) {
+      client.socket.close(1003, "Invalid collaboration update");
+      return;
+    }
+
+    const kind = message.data[0];
+    if (kind === 1) {
+      const update = message.data.subarray(1);
+      if (!update.length || update.length > maxYjsUpdateBytes) {
+        client.socket.close(1009, "Yjs update is too large");
+        return;
+      }
+      if (room.bootstrapLeaderId === client.id && room.maxUpdateId === 0) {
+        room.bootstrapWritePending = true;
+      }
+      this.enqueueRoomWrite(room, client, async () => this.persistUpdate(room, client, Buffer.from(update), false, null));
+      return;
+    }
+    if (kind === 2) {
+      if (message.data.length < 10) {
+        client.socket.close(1003, "Invalid collaboration snapshot");
+        return;
+      }
+      const baseUpdateId = toSafeUpdateId(message.data.readBigUInt64BE(1));
+      const update = message.data.subarray(9);
+      if (!update.length || update.length > maxYjsUpdateBytes) {
+        client.socket.close(1009, "Yjs snapshot is too large");
+        return;
+      }
+      if (room.bootstrapLeaderId === client.id && room.maxUpdateId === 0) {
+        room.bootstrapWritePending = true;
+      }
+      this.enqueueRoomWrite(room, client, async () => this.persistUpdate(room, client, Buffer.from(update), true, baseUpdateId));
+      return;
+    }
+    client.socket.close(1003, "Unknown collaboration update type");
+  }
+
+  private handleTextMessage(room: Room, client: ClientContext, text: string) {
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      client.socket.close(1007, "Invalid collaboration control message");
+      return;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const body = value as Record<string, unknown>;
+    if (body.type !== "awareness" || !client.synced) return;
+    client.awareness = normalizeAwareness(body.state);
+    this.broadcastPresenceUpdate(room, client);
+  }
+
+  private enqueueRoomWrite(room: Room, client: ClientContext, action: () => Promise<void>) {
+    room.pendingWrites += 1;
+    room.writeQueue = room.writeQueue.then(async () => {
+      try {
+        await action();
+      } catch (error) {
+        if (error instanceof InvalidYjsUpdateError) {
+          console.warn("Rejected an invalid Yjs update", { pageId: room.pageId, userId: client.user.id, error });
+          if (client.socket.isOpen) client.socket.close(1003, error.message);
+        } else {
+          console.error("Failed to persist a Yjs update", { pageId: room.pageId, error });
+          if (client.socket.isOpen) client.socket.close(1011, "Unable to save collaboration update");
+        }
+      } finally {
+        room.pendingWrites = Math.max(0, room.pendingWrites - 1);
+        if (
+          room.bootstrapWritePending
+          && room.bootstrapLeaderId === client.id
+          && room.maxUpdateId === 0
+          && room.pendingWrites === 0
+        ) {
+          room.bootstrapWritePending = false;
+          room.bootstrapLeaderId = null;
+          this.promoteBootstrapLeader(room);
+        }
+        this.removeRoomWhenIdle(room);
+      }
+    });
+  }
+
+  private async persistUpdate(
+    room: Room,
+    client: ClientContext,
+    update: Buffer,
+    snapshot: boolean,
+    baseUpdateId: number | null
+  ) {
+    if (room.invalidated || this.rooms.get(room.pageId) !== room) return;
+
+    const candidate = applyValidatedYjsUpdate(room.document, update, maxYjsDocumentBytes);
+    const persistedUpdate = snapshot ? Buffer.from(candidate.stateUpdate) : update;
+    let result: { accepted: true; updateId: number } | { accepted: false; currentUpdateId: number } | null;
+
+    try {
+      result = await transaction(async (dbClient) => {
+        const access = await getPageAccess(room.pageId, client.user.id, dbClient, { lockPage: true });
+        if (room.invalidated || this.rooms.get(room.pageId) !== room) return null;
+        if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
+          throw new ApiError(403, "COLLABORATION_DISABLED", "Collaboration is not enabled for this page");
+        }
+
+        if (snapshot) {
+          const currentRow = await dbClient.queryOne<{ max_update_id: number | null }>(
+            "SELECT MAX(id) AS max_update_id FROM page_yjs_updates WHERE page_id = ?",
+            [room.pageId]
+          );
+          const currentUpdateId = toSafeUpdateId(currentRow?.max_update_id ?? 0);
+          if (baseUpdateId !== currentUpdateId) return { accepted: false as const, currentUpdateId };
+        }
+
+        const insert = await dbClient.execute<{ insertId: number | bigint }>(
+          `INSERT INTO page_yjs_updates (page_id, user_id, update_data, is_snapshot)
+           VALUES (?, ?, ?, ?)`,
+          [room.pageId, client.user.id, persistedUpdate, snapshot ? 1 : 0]
+        );
+        const updateId = toSafeUpdateId(insert.insertId);
+        if (snapshot) {
+          await dbClient.execute("DELETE FROM page_yjs_updates WHERE page_id = ? AND id < ?", [room.pageId, updateId]);
+        }
+        return { accepted: true as const, updateId };
+      }).catch((error) => {
+        if (error instanceof ApiError && [403, 404].includes(error.statusCode)) {
+          client.socket.close(error.statusCode === 404 ? 4003 : 4010, error.message);
+          return null;
+        }
+        throw error;
+      });
+    } catch (error) {
+      candidate.document.destroy();
+      throw error;
+    }
+
+    if (!result || room.invalidated || this.rooms.get(room.pageId) !== room) {
+      candidate.document.destroy();
+      return;
+    }
+    if (!result.accepted) {
+      candidate.document.destroy();
+      if (room.clients.has(client.id) && client.socket.isOpen) {
+        client.socket.sendJson({ type: "snapshot-rejected", lastUpdateId: result.currentUpdateId });
+      }
+      return;
+    }
+
+    const previousDocument = room.document;
+    room.document = candidate.document;
+    previousDocument.destroy();
+
+    const row: YjsUpdateRow = {
+      id: result.updateId,
+      update_data: persistedUpdate,
+      is_snapshot: snapshot ? 1 : 0
+    };
+    room.maxUpdateId = result.updateId;
+    room.history = snapshot ? [row] : [...room.history, row];
+    const envelope = updateEnvelope(result.updateId, persistedUpdate);
+    for (const target of room.clients.values()) target.socket.sendBinary(envelope);
+    if (room.clients.has(client.id) && client.socket.isOpen) {
+      client.socket.sendJson({ type: "update-ack", updateId: result.updateId, snapshot });
+    }
+
+    if (room.bootstrapLeaderId === client.id) {
+      room.bootstrapWritePending = false;
+      room.bootstrapLeaderId = null;
+      for (const waitingId of room.waitingForBootstrap) {
+        const waiting = room.clients.get(waitingId);
+        if (!waiting?.socket.isOpen) continue;
+        waiting.synced = true;
+        waiting.socket.sendJson({
+          type: "sync-complete",
+          connectionId: waiting.id,
+          bootstrap: false,
+          lastUpdateId: room.maxUpdateId
+        });
+        this.broadcastPresenceUpdate(room, waiting);
+      }
+      room.waitingForBootstrap.clear();
+    }
+  }
+
+  private broadcastPresenceUpdate(room: Room, client: ClientContext, removed = false) {
+    const message = removed
+      ? { type: "awareness-update", connectionId: client.id, state: null }
+      : { type: "awareness-update", ...publicPresence(client) };
+    for (const target of room.clients.values()) {
+      if (target.id !== client.id) target.socket.sendJson(message);
+    }
+  }
+
+  private promoteBootstrapLeader(room: Room) {
+    if (
+      this.closed
+      || room.invalidated
+      || this.rooms.get(room.pageId) !== room
+      || room.maxUpdateId > 0
+      || room.bootstrapLeaderId
+      || room.bootstrapWritePending
+    ) return;
+
+    while (room.waitingForBootstrap.size) {
+      const nextId = room.waitingForBootstrap.values().next().value as string | undefined;
+      if (!nextId) return;
+      room.waitingForBootstrap.delete(nextId);
+      const next = room.clients.get(nextId);
+      if (!next?.socket.isOpen) continue;
+      room.bootstrapLeaderId = next.id;
+      next.synced = true;
+      next.socket.sendJson({
+        type: "sync-complete",
+        connectionId: next.id,
+        bootstrap: true,
+        lastUpdateId: 0
+      });
+      this.broadcastPresenceUpdate(room, next);
+      return;
+    }
+  }
+
+  private removeRoomWhenIdle(room: Room) {
+    if (
+      !room.clients.size
+      && room.pendingWrites === 0
+      && !room.bootstrapWritePending
+      && this.rooms.get(room.pageId) === room
+    ) {
+      this.rooms.delete(room.pageId);
+      room.document.destroy();
+    }
+  }
+
+  private handleClientClose(room: Room, client: ClientContext) {
+    if (!room.clients.delete(client.id)) return;
+    room.waitingForBootstrap.delete(client.id);
+    this.broadcastPresenceUpdate(room, client, true);
+
+    if (
+      room.bootstrapLeaderId === client.id
+      && room.maxUpdateId === 0
+      && !room.bootstrapWritePending
+    ) {
+      room.bootstrapLeaderId = null;
+      this.promoteBootstrapLeader(room);
+    }
+
+    this.removeRoomWhenIdle(room);
+  }
+
+  private runHeartbeat() {
+    const now = Date.now();
+    for (const room of this.rooms.values()) {
+      for (const client of room.clients.values()) {
+        if (now - client.socket.lastPongAt > heartbeatTimeoutMs) client.socket.terminate();
+        else client.socket.ping();
+      }
+    }
+  }
+
+  private async recheckAccess() {
+    const checks: Promise<void>[] = [];
+    for (const room of this.rooms.values()) {
+      for (const client of room.clients.values()) {
+        checks.push((async () => {
+          try {
+            const access = await getPageAccess(room.pageId, client.user.id);
+            if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
+              client.socket.close(4010, "Collaboration is no longer available");
+            }
+          } catch (error) {
+            if (error instanceof ApiError && error.statusCode === 404) {
+              client.socket.close(4003, "Page access was removed");
+              return;
+            }
+            console.error("Failed to recheck collaboration access", { pageId: room.pageId, error });
+          }
+        })());
+      }
+    }
+    await Promise.allSettled(checks);
+  }
+}
+
+export function attachPageCollaborationServer(server: HttpServer) {
+  return new PageCollaborationHub(server);
+}
+
+export function disconnectSharedUser(pageId: string, userId: string, reason?: string) {
+  for (const hub of activeHubs) hub.disconnectUser(pageId, userId, reason);
+}
+
+export function disconnectPageCollaborators(pageId: string, reason?: string) {
+  for (const hub of activeHubs) hub.disconnectPage(pageId, reason);
+}
+
+export function broadcastCanonicalAttachment(pageId: string, block: unknown) {
+  for (const hub of activeHubs) hub.notifyCanonicalAttachment(pageId, block);
+}

@@ -56,3 +56,13 @@ CORS_ORIGIN="https://notes.example.com"
 ```
 
 Do not change `MFA_ENCRYPTION_KEY` casually after users enroll TOTP. Existing encrypted authenticator secrets depend on that key and become unusable when it changes.
+
+## WebSocket proxying and Yjs delivery
+
+Real-time collaboration uses the same `PORT`, `CORS_ORIGIN`, and JWT signing secret as the HTTP API. No separate collaboration process or port is required. A production reverse proxy must support HTTP/1.1 WebSocket upgrades for `/api/collaboration/` and forward the browser origin and original host/protocol headers.
+
+The included collaboration hub is process-local and is intended to run as a single application process. Horizontal scaling requires a shared pub/sub and distributed update coordinator so every instance observes the same room history and presence events.
+
+The browser imports the exact `yjs@13.6.31` ESM build from jsDelivr. The built-in Content Security Policy allows that script source and `ws:`/`wss:` connections. Deployments that vendor scripts locally must update both `public/collaboration.js` and the CSP in `src/app.ts` as one reviewed change.
+
+See [Collaboration](collaboration.md#authentication-and-network-requirements) for an Nginx example.

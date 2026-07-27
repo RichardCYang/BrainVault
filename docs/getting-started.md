@@ -33,7 +33,7 @@ Never commit a real `.env` file. The repository ignores it; keep shareable defau
 npm run dev
 ```
 
-With `AUTO_BOOTSTRAP_DATABASE=true`, startup creates the database when permitted, reconciles the baseline schema, and applies pending migrations. After MariaDB is ready and the HTTP server is listening, the development command opens the app once in the system default browser's normal profile so crash-recovery drafts remain available across browser restarts.
+With `AUTO_BOOTSTRAP_DATABASE=true`, startup creates the database when permitted, reconciles the baseline schema, and applies pending migrations, including migration `020_page_sharing_yjs_collaboration.sql` for page grants and persistent Yjs updates. After MariaDB is ready and the HTTP server is listening, the development command opens the app once in the system default browser's normal profile so crash-recovery drafts remain available across browser restarts.
 
 The app is available at:
 
@@ -114,5 +114,7 @@ Before using production mode:
 - Set unique `JWT_SECRET` and `MFA_ENCRYPTION_KEY` values with at least 32 characters.
 - Set `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGIN` to the production relying-party domain and exact browser origin.
 - Use HTTPS, managed secret storage, database backups, and normal production monitoring.
+
+For real-time collaboration behind a reverse proxy, enable WebSocket upgrades for `/api/collaboration/` and preserve the original origin, host, and protocol headers. See [Collaboration](collaboration.md#authentication-and-network-requirements).
 
 The server refuses to start in production when either bundled development secret is still in use. See [Security](security.md) and [Configuration](configuration.md) for details.

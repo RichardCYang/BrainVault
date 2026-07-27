@@ -7,7 +7,9 @@ The root [README](../README.md) is intentionally short. Detailed setup, operatio
 | Document | Use it for |
 | --- | --- |
 | [Getting started](getting-started.md) | Installing dependencies, preparing MariaDB, running locally, loading demo data, and building for production |
-| [Features](features.md) | Learning the editor controls, block types, backup/restore flow, languages, and PDF export |
+| [Features](features.md) | Learning the editor controls, page sharing, block types, backup/restore flow, languages, and PDF export |
+| [Collaboration](collaboration.md) | Understanding sharing permissions, Yjs/WebSocket synchronization, persistence, proxy requirements, and verification |
+| [Collaboration verification](collaboration-verification.md) | Reviewing completed source/protocol checks, the package-fetch limitation, and deployment validation commands |
 | [Configuration](configuration.md) | Reviewing every supported environment variable and its default behavior |
 | [Security](security.md) | Configuring MFA and understanding the project security boundaries and production requirements |
 | [API](api.md) | Finding route summaries, authentication expectations, the health endpoint, and the OpenAPI document |

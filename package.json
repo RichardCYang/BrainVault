@@ -10,6 +10,7 @@
   },
   "scripts": {
     "lockfile:check": "node scripts/lockfile-registry.mjs",
+    "verify:collaboration": "node --experimental-strip-types scripts/verify-collaboration.mjs",
     "lockfile:repair": "node scripts/lockfile-registry.mjs --fix",
     "preinstall": "npm run lockfile:check",
     "env:init": "tsx scripts/env-init.ts",
@@ -40,6 +41,7 @@
     "multer": "^2.2.0",
     "qrcode": "^1.5.4",
     "sanitize-html": "^2.14.0",
+    "yjs": "13.6.31",
     "zod": "^3.25.0"
   },
   "devDependencies": {

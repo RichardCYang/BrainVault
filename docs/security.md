@@ -29,11 +29,21 @@ The fetcher:
 
 Use `BOOKMARK_FETCH_TIMEOUT_MS` and `BOOKMARK_FETCH_MAX_BYTES` to control fetch limits.
 
+## Shared-page collaboration safety
+
+Only a page owner can create or remove editor grants. Session issuance, WebSocket upgrade, periodic live-connection checks, relational materialization, attachment access, and normal page reads each re-check the authenticated user’s owner/editor access. Removing a grant closes that user’s sockets immediately; archiving or deleting the page closes the room.
+
+Collaboration tickets are short-lived, page-scoped JWTs sent in the WebSocket subprotocol rather than the URL. The server validates browser origin, RFC 6455 framing and masking, frame/message size, update rate, current page state, and the ticket’s user/page scope. Accepted binary updates are committed to MariaDB before acknowledgement and broadcast.
+
+A client cannot create an attachment merely by inserting Yjs metadata. New attachment blocks must come from the authenticated upload endpoint, and relational materialization preserves or validates canonical file metadata. Snapshot validation also rejects duplicate/global block IDs, missing parents, cycles, excessive nesting, stale update markers, and title/block limits.
+
+See [Collaboration](collaboration.md) for the complete access and persistence model.
+
 ## Attachment safety
 
 Uploaded bytes are stored under `ATTACHMENT_UPLOAD_DIR`, which defaults to `uploads/` at the project root. This directory is ignored by Git and is never mounted as a public static directory.
 
-Every download goes through `/api/blocks/:blockId/attachment`, re-checks the current user's ownership, and sends the file with download disposition. Deleting an attachment block, a parent block containing attachments, or a permanently deleted page subtree also removes the associated files.
+Every download goes through `/api/blocks/:blockId/attachment`, re-checks the current user's current page access, and sends the file with download disposition. Deleting an attachment block, a parent block containing attachments, or a permanently deleted page subtree also removes the associated files.
 
 Do not point `ATTACHMENT_UPLOAD_DIR` at `public/`, `docs/`, `.git/`, or the project root.
 

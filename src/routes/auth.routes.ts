@@ -12,19 +12,11 @@ import {
 } from "../lib/profile.js";
 import { requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
-import { requireUser } from "../utils/schemas.js";
+import { requireUser, usernameSchema } from "../utils/schemas.js";
 import type { UserRow } from "../types/domain.js";
 import { createMfaLoginSession, getMfaMethods, mfaRouter } from "./mfa.routes.js";
 
 export const authRouter = Router();
-
-const usernameSchema = z
-  .string()
-  .trim()
-  .min(3, "ID must be at least 3 characters")
-  .max(40, "ID must be at most 40 characters")
-  .regex(/^[a-zA-Z0-9._-]+$/, "ID can contain letters, numbers, dots, underscores, and hyphens only")
-  .transform((value) => value.toLowerCase());
 
 const preferredLanguageSchema = z.enum(supportedProfileLanguages);
 

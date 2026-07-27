@@ -1,8 +1,10 @@
+import { createServer } from "node:http";
 import { createApp } from "./app.js";
 import { env } from "./config/env.js";
 import { bootstrapDatabase } from "./lib/db-bootstrap.js";
 import { closeDb } from "./lib/db.js";
 import { recoverInterruptedDataRestores } from "./lib/data-transfer.js";
+import { attachPageCollaborationServer } from "./lib/collaboration-server.js";
 
 async function start() {
   if (env.AUTO_BOOTSTRAP_DATABASE) {
@@ -19,7 +21,9 @@ async function start() {
 
   const app = createApp();
   const appUrl = `http://localhost:${env.PORT}`;
-  const server = app.listen(env.PORT, () => {
+  const server = createServer(app);
+  const collaborationHub = attachPageCollaborationServer(server);
+  server.listen(env.PORT, () => {
     console.log(`BrainVault API listening on ${appUrl}`);
 
     if (env.AUTO_BOOTSTRAP_DATABASE && process.env.BRAINVAULT_DEV_BROWSER_READY_SIGNAL === "1") {
@@ -27,17 +31,27 @@ async function start() {
     }
   });
 
-  function shutdown(signal: string) {
+  let isShuttingDown = false;
+  async function shutdown(signal: string) {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
     console.log(`${signal} received. Closing BrainVault API...`);
-    server.close(() => {
-      closeDb()
-        .catch((error) => console.error("Failed to close MariaDB pool", error))
-        .finally(() => process.exit(0));
+
+    await collaborationHub.close().catch((error) => {
+      console.error("Failed to close collaboration server", error);
     });
+    await new Promise<void>((resolve) => {
+      server.close((error) => {
+        if (error) console.error("Failed to close HTTP server", error);
+        resolve();
+      });
+    });
+    await closeDb().catch((error) => console.error("Failed to close MariaDB pool", error));
+    process.exit(0);
   }
 
-  process.on("SIGINT", () => shutdown("SIGINT"));
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
 start().catch(async (error) => {

@@ -31,21 +31,25 @@ searchRouter.get("/", validate({ query: searchQuerySchema }), async (req, res, n
     const search = `%${query.q}%`;
 
     const pages = await db.query<PageRow>(
-      `SELECT * FROM pages
-       WHERE owner_id = ? AND is_archived = 0 AND title LIKE ?
-       ORDER BY updated_at DESC
+      `SELECT p.* FROM pages p
+       WHERE (p.owner_id = ? OR EXISTS (
+         SELECT 1 FROM page_shares ps WHERE ps.page_id = p.id AND ps.user_id = ?
+       )) AND p.is_archived = 0 AND p.title LIKE ?
+       ORDER BY p.updated_at DESC
        LIMIT ?`,
-      [user.id, search, query.limit]
+      [user.id, user.id, search, query.limit]
     );
 
     const blocks = await db.query<BlockRow & { page_title: string; page_icon: string | null }>(
       `SELECT b.*, p.title AS page_title, p.icon AS page_icon
        FROM blocks b
        INNER JOIN pages p ON p.id = b.page_id
-       WHERE p.owner_id = ? AND p.is_archived = 0 AND b.markdown LIKE ?
+       WHERE (p.owner_id = ? OR EXISTS (
+         SELECT 1 FROM page_shares ps WHERE ps.page_id = p.id AND ps.user_id = ?
+       )) AND p.is_archived = 0 AND b.markdown LIKE ?
        ORDER BY b.updated_at DESC
        LIMIT ?`,
-      [user.id, search, query.limit]
+      [user.id, user.id, search, query.limit]
     );
 
     res.json({

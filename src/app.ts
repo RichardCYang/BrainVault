@@ -11,6 +11,7 @@ import { pageRouter } from "./routes/page.routes.js";
 import { blockRouter } from "./routes/block.routes.js";
 import { searchRouter } from "./routes/search.routes.js";
 import { dataRouter } from "./routes/data.routes.js";
+import { collaborationRouter } from "./routes/collaboration.routes.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.js";
 
 export function createApp() {
@@ -24,13 +25,14 @@ export function createApp() {
           imgSrc: ["'self'", "data:", "http:", "https:"],
           scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
           styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
-          fontSrc: ["'self'", "data:", "https://cdn.jsdelivr.net"]
+          fontSrc: ["'self'", "data:", "https://cdn.jsdelivr.net"],
+          connectSrc: ["'self'", "ws:", "wss:"]
         }
       }
     })
   );
   app.use(cors(corsOptionsDelegate));
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({ limit: "5mb" }));
   app.use(express.urlencoded({ extended: false }));
   app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
   app.use(
@@ -56,6 +58,7 @@ export function createApp() {
   });
 
   app.use("/api/auth", authRouter);
+  app.use("/api", collaborationRouter);
   app.use("/api/pages", pageRouter);
   app.use("/api", blockRouter);
   app.use("/api/search", searchRouter);

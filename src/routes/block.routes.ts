@@ -27,6 +27,8 @@ import {
 } from "../lib/bookmark.js";
 import { getAiChatData, normalizeAiChatMetadata, summarizeAiChatData } from "../lib/ai-chat.js";
 import { toBlock } from "../lib/mappers.js";
+import { getBlockAccess, getPageAccess, type PageAccess } from "../lib/page-access.js";
+import { broadcastCanonicalAttachment } from "../lib/collaboration-server.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
@@ -146,33 +148,31 @@ blockRouter.post("/bookmarks/preview", validate({ body: bookmarkPreviewSchema })
   }
 });
 
-async function assertOwnedPage(pageId: string, ownerId: string, client: DbClient = db) {
-  const page = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ? AND owner_id = ?", [pageId, ownerId]);
-  if (!page) throw notFound("Page");
-  return page;
+async function assertAccessiblePage(pageId: string, userId: string, client: DbClient = db) {
+  return getPageAccess(pageId, userId, client);
 }
 
-async function assertOwnedBlock(blockId: string, ownerId: string, client: DbClient = db) {
-  const block = await client.queryOne<BlockRow>(
-    `SELECT b.* FROM blocks b
-     INNER JOIN pages p ON p.id = b.page_id
-     WHERE b.id = ? AND p.owner_id = ?`,
-    [blockId, ownerId]
-  );
-  if (!block) throw notFound("Block");
-  return block;
+async function assertAccessibleBlock(blockId: string, userId: string, client: DbClient = db) {
+  return getBlockAccess(blockId, userId, client);
 }
 
-async function advancePageContentVersion(client: DbClient, pageId: string, ownerId: string) {
+function assertDirectBlockMutationAllowed(access: Pick<PageAccess, "shareCount">) {
+  if (access.shareCount > 0) {
+    throw new ApiError(
+      409,
+      "COLLABORATION_REQUIRED",
+      "This shared page must be edited through its real-time collaboration session"
+    );
+  }
+}
+
+async function advancePageContentVersion(client: DbClient, pageId: string, _userId: string) {
   const result = await client.execute<{ affectedRows: number }>(
-    "UPDATE pages SET content_version = content_version + 1 WHERE id = ? AND owner_id = ?",
-    [pageId, ownerId]
+    "UPDATE pages SET content_version = content_version + 1 WHERE id = ?",
+    [pageId]
   );
   if (Number(result.affectedRows) === 0) throw notFound("Page");
-  const page = await client.queryOne<PageRow>(
-    "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
-    [pageId, ownerId]
-  );
+  const page = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
   if (!page) throw notFound("Page");
   return Number(page.content_version ?? 1);
 }
@@ -272,7 +272,7 @@ blockRouter.post(
       if (!file) throw new ApiError(400, "ATTACHMENT_FILE_REQUIRED", "Select a file to attach");
 
       const body = attachmentFormSchema.parse(req.body);
-      await assertOwnedPage(pageId, user.id);
+      await assertAccessiblePage(pageId, user.id);
       await assertParentBlock(body.parentBlockId, pageId);
 
       const id = createId("blk");
@@ -288,22 +288,21 @@ blockRouter.post(
       let pageContentVersion = 1;
       try {
         await transaction(async (client) => {
+          const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
+          if (lockedAccess.page.is_archived) {
+            throw new ApiError(409, "PAGE_ARCHIVED", "Restore the page before adding an attachment");
+          }
           const lockedUser = await client.queryOne<{ id: string }>(
             "SELECT id FROM users WHERE id = ? FOR UPDATE",
-            [user.id]
+            [lockedAccess.page.owner_id]
           );
-          if (!lockedUser) throw notFound("User");
-          const lockedPage = await client.queryOne<PageRow>(
-            "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
-            [pageId, user.id]
-          );
-          if (!lockedPage) throw notFound("Page");
+          if (!lockedUser) throw notFound("Page owner");
           await assertParentBlock(body.parentBlockId, pageId, client);
           const lastBlock = await client.queryOne<{ sort_order: number }>(
             "SELECT sort_order FROM blocks WHERE page_id = ? AND parent_block_id <=> ? ORDER BY sort_order DESC LIMIT 1",
             [pageId, body.parentBlockId]
           );
-          movedPath = await moveAttachmentFile(file.path, user.id, id);
+          movedPath = await moveAttachmentFile(file.path, lockedAccess.page.owner_id, id);
           cleanupPath = null;
           await client.execute(
             `INSERT INTO blocks (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata)
@@ -349,7 +348,9 @@ blockRouter.post(
 
       const block = await db.queryOne<BlockRow>("SELECT * FROM blocks WHERE id = ?", [id]);
       if (!block) throw new ApiError(500, "BLOCK_CREATE_FAILED", "Attachment block was not created");
-      res.status(201).json({ block: toBlock(block), pageContentVersion });
+      const payload = toBlock(block);
+      broadcastCanonicalAttachment(pageId, payload);
+      res.status(201).json({ block: payload, pageContentVersion });
     } catch (error) {
       if (cleanupPath) await removeAttachmentPath(cleanupPath);
       if (movedPath) {
@@ -364,16 +365,17 @@ blockRouter.get("/blocks/:blockId/attachment", validate({ params: idParamSchema 
   try {
     const user = requireUser(req.user);
     const blockId = String(req.params.blockId);
-    const block = await assertOwnedBlock(blockId, user.id);
+    const { block, access } = await assertAccessibleBlock(blockId, user.id);
     if (block.type !== "ATTACHMENT") throw notFound("Attachment");
 
+    const ownerId = access.page.owner_id;
     const info = getAttachmentInfo(toBlock(block).metadata);
-    if (!info || !(await attachmentFileExists(user.id, blockId))) throw notFound("Attachment file");
+    if (!info || !(await attachmentFileExists(ownerId, blockId))) throw notFound("Attachment file");
 
     res.setHeader("Cache-Control", "private, no-store");
     res.setHeader("Content-Type", info.mimeType);
     res.setHeader("X-Content-Type-Options", "nosniff");
-    res.download(getAttachmentFilePath(user.id, blockId), info.originalName, (error) => {
+    res.download(getAttachmentFilePath(ownerId, blockId), info.originalName, (error) => {
       if (!error) return;
       if (!res.headersSent) next(error);
       else console.error("Attachment download failed", error);
@@ -396,11 +398,8 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
     const id = createId("blk");
     const prepared = prepareBlockContent(body.type, body.markdown, body.metadata);
     const result = await transaction(async (client) => {
-      const lockedPage = await client.queryOne<PageRow>(
-        "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
-        [pageId, user.id]
-      );
-      if (!lockedPage) throw notFound("Page");
+      const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
+      assertDirectBlockMutationAllowed(lockedAccess);
       await assertParentBlock(body.parentBlockId, pageId, client);
       const lastBlock = await client.queryOne<{ sort_order: number }>(
         "SELECT sort_order FROM blocks WHERE page_id = ? AND parent_block_id <=> ? ORDER BY sort_order DESC LIMIT 1",
@@ -443,12 +442,10 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
 
     const result = await transaction(async (client) => {
       const hierarchyChanged = body.parentBlockId !== undefined || body.sortOrder !== undefined;
-      const identity = await assertOwnedBlock(blockId, user.id, client);
-      const lockedPage = await client.queryOne<PageRow>(
-        "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
-        [identity.page_id, user.id]
-      );
-      if (!lockedPage) throw notFound("Page");
+      const { block: identity } = await assertAccessibleBlock(blockId, user.id, client);
+      const lockedAccess = await getPageAccess(identity.page_id, user.id, client, { lockPage: true });
+      assertDirectBlockMutationAllowed(lockedAccess);
+      const lockedPage = lockedAccess.page;
       let existing: BlockRow;
 
       if (hierarchyChanged) {
@@ -603,22 +600,20 @@ blockRouter.delete(
     }
     const expectedVersions = body.expectedVersions;
     const deletion = await transaction(async (client) => {
-      const block = await assertOwnedBlock(blockId, user.id, client);
-      const lockedPage = await client.queryOne<PageRow>(
-        "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
-        [block.page_id, user.id]
-      );
-      if (!lockedPage) throw notFound("Page");
+      const { block } = await assertAccessibleBlock(blockId, user.id, client);
+      const lockedAccess = await getPageAccess(block.page_id, user.id, client, { lockPage: true });
+      assertDirectBlockMutationAllowed(lockedAccess);
       const subtreeRows = await getBlockSubtreeRows(blockId, block.page_id, client, true);
       assertBlockVersionSnapshot(subtreeRows, expectedVersions);
       await client.execute("DELETE FROM blocks WHERE id = ?", [blockId]);
       await advancePageContentVersion(client, block.page_id, user.id);
       return {
         pageId: block.page_id,
+        ownerId: lockedAccess.page.owner_id,
         attachmentIds: subtreeRows.filter((row) => row.type === "ATTACHMENT").map((row) => row.id)
       };
     });
-    await removeDeletedAttachmentFiles(user.id, deletion.attachmentIds);
+    await removeDeletedAttachmentFiles(deletion.ownerId, deletion.attachmentIds);
     res.status(204).send();
   } catch (error) {
     next(error);
@@ -637,11 +632,9 @@ blockRouter.post(
       const mutationHash = mutationId ? createMutationRequestHash({ pageId, items }) : undefined;
 
       const result = await transaction(async (client) => {
-        const lockedPage = await client.queryOne<PageRow>(
-          "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
-          [pageId, user.id]
-        );
-        if (!lockedPage) throw notFound("Page");
+        const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
+        assertDirectBlockMutationAllowed(lockedAccess);
+        const lockedPage = lockedAccess.page;
 
         if (mutationId) {
           const receipt = await client.queryOne<{ page_id: string; request_hash: string | null }>(

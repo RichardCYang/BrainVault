@@ -64,9 +64,15 @@ components:
       properties:
         username:
           type: string
+          minLength: 3
+          maxLength: 40
+          pattern: '^[a-zA-Z0-9._-]+$'
+          description: Login IDs are trimmed and normalized to lowercase before lookup.
           example: demo
         password:
           type: string
+          minLength: 8
+          maxLength: 128
           example: brainvault123
     AuthResponse:
       type: object
@@ -661,6 +667,115 @@ components:
       properties:
         attachment:
           $ref: '#/components/schemas/AttachmentInfo'
+    SharePageInput:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 40
+          pattern: '^[a-zA-Z0-9._-]+$'
+          description: Existing BrainVault login ID. The owner cannot share a page with itself.
+    PageShare:
+      type: object
+      required: [user, permission, sharedAt]
+      properties:
+        user:
+          $ref: '#/components/schemas/PublicUser'
+        permission:
+          type: string
+          const: EDIT
+        sharedAt:
+          type: string
+          format: date-time
+    CollaborationBlock:
+      type: object
+      required: [id, type, markdown, checked, parentBlockId, sortOrder]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        type:
+          type: string
+          enum: [MARKDOWN, HEADING_1, HEADING_2, HEADING_3, TODO, QUOTE, CALLOUT, TABLE, KANBAN, DATABASE, BOOKMARK, AI_CHAT, MATH, CODE, DIVIDER, IMAGE, ATTACHMENT]
+        markdown:
+          type: string
+          maxLength: 20000
+        checked:
+          type: boolean
+        parentBlockId:
+          type: [string, 'null']
+          maxLength: 64
+        sortOrder:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        metadata:
+          type: [object, 'null']
+          additionalProperties: true
+    CollaborationSnapshotInput:
+      type: object
+      required: [title, blocks, updateId]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 160
+          description: Must contain at least one non-whitespace character.
+        blocks:
+          type: array
+          maxItems: 10000
+          items:
+            $ref: '#/components/schemas/CollaborationBlock'
+        deletedAttachmentIds:
+          type: array
+          maxItems: 10000
+          default: []
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+        updateId:
+          type: integer
+          minimum: 1
+          description: Exact latest persisted Yjs update ID applied by the client.
+    CollaborationSession:
+      type: object
+      required: [pageId, protocol, ticketProtocol, path, expiresIn, access, collaboration, document]
+      properties:
+        pageId:
+          type: string
+        protocol:
+          type: string
+          const: brainvault-yjs-v1
+        ticketProtocol:
+          type: string
+          description: Short-lived page-scoped credential in the form brainvault-ticket.<JWT>. Send it as a WebSocket subprotocol, never as a query parameter.
+        path:
+          type: string
+          example: /api/collaboration/page_123
+        expiresIn:
+          type: integer
+          description: Ticket lifetime in seconds.
+        access:
+          type: object
+          additionalProperties: true
+        collaboration:
+          type: object
+          additionalProperties: true
+        document:
+          type: object
+          required: [title, blocks]
+          properties:
+            title:
+              type: string
+            blocks:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
 paths:
   /:
     get:
@@ -916,8 +1031,8 @@ paths:
           description: Password changed
   /api/pages:
     get:
-      summary: List pages
-      description: Returns summaries in a stable creation-time and ID scan order. Follow nextCursor until it is null to enumerate every matching page; consumers that need recency ordering should sort the complete result by updatedAt.
+      summary: List owned and shared pages
+      description: Returns accessible page summaries in a stable creation-time and ID scan order. Shared pages include owner/access metadata. Follow nextCursor until it is null to enumerate every matching page; consumers that need recency ordering should sort the complete result by updatedAt.
       parameters:
         - in: query
           name: q
@@ -974,7 +1089,7 @@ paths:
           description: Created page
   /api/pages/{pageId}:
     get:
-      summary: Read a page with block tree
+      summary: Read an owned or shared page with its block tree
       parameters:
         - in: path
           name: pageId
@@ -986,7 +1101,7 @@ paths:
           description: Page with blocks
     patch:
       summary: Update page metadata
-      description: Requires the last observed page version; stale writes are rejected with 409.
+      description: Owner only. Requires the last observed page version; stale writes are rejected with 409. Once a page has editor grants, title/block content changes must use the collaboration session instead of direct REST mutation.
       parameters:
         - in: path
           name: pageId
@@ -1077,9 +1192,177 @@ paths:
                     $ref: '#/components/schemas/BookmarkPreviewWarning'
         '400':
           description: Invalid, local, or private-network URL
+  /api/pages/{pageId}/shares:
+    get:
+      summary: List users invited to edit a page
+      description: Owner only. Collections and archived pages cannot be shared.
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Current editor grants
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [shares, count]
+                properties:
+                  shares:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PageShare'
+                  count:
+                    type: integer
+                    minimum: 0
+        '404':
+          description: Page not owned by the authenticated user
+    post:
+      summary: Invite an existing BrainVault user as a page editor
+      description: Owner only. Creating the first grant initializes a fresh collaboration history from the current canonical page snapshot.
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SharePageInput'
+      responses:
+        '201':
+          description: Editor grant created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [share, count]
+                properties:
+                  share:
+                    $ref: '#/components/schemas/PageShare'
+                  count:
+                    type: integer
+                    minimum: 1
+        '400':
+          description: Invalid account, self-share, collection, or archived page
+        '409':
+          description: The user already has access
+  /api/pages/{pageId}/shares/{userId}:
+    delete:
+      summary: Remove a page editor
+      description: Owner only. Active sockets for the removed user are closed immediately. Removing the final grant requires every accepted Yjs update to have been materialized.
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Grant removed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [removed, count]
+                properties:
+                  removed:
+                    type: boolean
+                    const: true
+                  count:
+                    type: integer
+                    minimum: 0
+        '409':
+          description: Accepted collaboration updates are still pending materialization
+  /api/pages/{pageId}/collaboration/session:
+    post:
+      summary: Create a short-lived authenticated collaboration session
+      description: Available to the owner and invited editors while the page has at least one editor grant. The response contains the canonical relational snapshot and the required WebSocket subprotocols for WS /api/collaboration/{pageId}.
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Collaboration ticket and canonical document
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollaborationSession'
+        '403':
+          description: Authenticated user has no access to this page
+        '409':
+          description: Collaboration is disabled, archived, or unsupported for a collection
+  /api/pages/{pageId}/collaboration/snapshot:
+    put:
+      summary: Materialize a consistent Yjs document into the relational page and block tables
+      description: Available to the owner and invited editors. The server locks the page, requires updateId to equal the latest persisted update, validates hierarchy and attachment provenance, and applies the snapshot atomically.
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollaborationSnapshotInput'
+      responses:
+        '200':
+          description: Materialization state and canonical blocks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [applied, materializedUpdateId, pageVersion, pageContentVersion, pageUpdatedAt, blocks]
+                properties:
+                  applied:
+                    type: boolean
+                  materializedUpdateId:
+                    type: integer
+                    minimum: 1
+                  pageVersion:
+                    type: integer
+                    minimum: 1
+                  pageContentVersion:
+                    type: integer
+                    minimum: 1
+                  pageUpdatedAt:
+                    type: string
+                    format: date-time
+                  blocks:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '400':
+          description: Invalid title, block hierarchy, attachment operation, or document size
+        '409':
+          description: Snapshot update ID is stale, a block ID conflicts globally, or collaboration is disabled
   /api/pages/{pageId}/blocks:
     post:
-      summary: Create a block on a page
+      summary: Create a block on an unshared owned page
+      description: Direct non-attachment block creation is rejected while Yjs collaboration is enabled.
       parameters:
         - in: path
           name: pageId
@@ -1091,8 +1374,8 @@ paths:
           description: Created block
   /api/pages/{pageId}/attachments:
     post:
-      summary: Upload a file and create an attachment block
-      description: Stores the file outside the public web root. The configured maximum size defaults to 25 MB.
+      summary: Upload a file and create a canonical attachment block
+      description: Available to the owner and invited editors. Stores the file outside the public web root; the configured maximum size defaults to 25 MB. For a shared page, the server publishes the canonical attachment block to the active Yjs room.
       parameters:
         - in: path
           name: pageId
@@ -1124,7 +1407,7 @@ paths:
           description: Attachment exceeds MAX_ATTACHMENT_SIZE_MB
   /api/blocks/{blockId}/attachment:
     get:
-      summary: Download an attachment after ownership verification
+      summary: Download an attachment after current page-access verification
       parameters:
         - in: path
           name: blockId
@@ -1149,7 +1432,7 @@ paths:
   /api/blocks/{blockId}:
     patch:
       summary: Update a block
-      description: Requires the last observed block version; stale writes are rejected with 409.
+      description: Owner only for unshared pages. Direct mutation is rejected while Yjs collaboration is enabled; shared title/block edits use the collaboration WebSocket and snapshot endpoint.
       parameters:
         - in: path
           name: blockId
@@ -1169,7 +1452,7 @@ paths:
           description: Block changed in another session
     delete:
       summary: Delete block and nested children
-      description: Requires an exact version snapshot of the block subtree.
+      description: Owner only for unshared pages. Requires an exact version snapshot of the block subtree; shared document deletion is represented in Yjs and materialized atomically.
       parameters:
         - in: path
           name: blockId
@@ -1190,7 +1473,7 @@ paths:
   /api/pages/{pageId}/blocks/reorder:
     post:
       summary: Reorder blocks or move blocks under another block
-      description: Locks the page's block set and rejects stale per-block versions. Successful reorder operations increment every affected block version.
+      description: Owner only for unshared pages. Locks the page's block set and rejects stale per-block versions. While collaboration is enabled, reordering is synchronized through Yjs instead.
       parameters:
         - in: path
           name: pageId

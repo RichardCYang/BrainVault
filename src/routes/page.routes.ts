@@ -7,6 +7,8 @@ import { removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { renderBlockHtml } from "../lib/markdown.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
 import { toBlock, toPage, toTag } from "../lib/mappers.js";
+import { getOwnedPage, getPageAccess, toAccessPayload, toCollaborationPayload } from "../lib/page-access.js";
+import { disconnectPageCollaborators } from "../lib/collaboration-server.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { requireAuth } from "../middleware/auth.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
@@ -87,9 +89,7 @@ const deletePageBodySchema = z
   .default({});
 
 async function assertOwnedPage(pageId: string, ownerId: string, client: DbClient = db) {
-  const page = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ? AND owner_id = ?", [pageId, ownerId]);
-  if (!page) throw notFound("Page");
-  return page;
+  return getOwnedPage(pageId, ownerId, client);
 }
 
 type PageDeletionPageRow = {
@@ -214,6 +214,37 @@ function assertPageDeletionSnapshot(
   );
 }
 
+async function assertCollaborationMaterialized(client: DbClient, pageIds: string[]) {
+  for (const pageId of pageIds) {
+    const state = await client.queryOne<{
+      latest_update_id: number | bigint | null;
+      materialized_update_id: number | bigint | null;
+    }>(
+      `SELECT
+         (SELECT MAX(id) FROM page_yjs_updates WHERE page_id = ?) AS latest_update_id,
+         (SELECT materialized_update_id FROM page_collaboration_state WHERE page_id = ?) AS materialized_update_id`,
+      [pageId, pageId]
+    );
+    const latestUpdateId = Number(state?.latest_update_id ?? 0);
+    const materializedUpdateId = Number(state?.materialized_update_id ?? 0);
+    if (!Number.isSafeInteger(latestUpdateId) || !Number.isSafeInteger(materializedUpdateId)) {
+      throw new ApiError(
+        500,
+        "INVALID_COLLABORATION_STATE",
+        "Collaboration update id exceeded the supported range"
+      );
+    }
+    if (latestUpdateId > materializedUpdateId) {
+      throw new ApiError(
+        409,
+        "COLLABORATION_CHANGES_PENDING",
+        "Synchronize the latest collaborative edits before archiving or deleting this page",
+        { pageId, latestUpdateId, materializedUpdateId }
+      );
+    }
+  }
+}
+
 async function assertOwnedParentPage(parentPageId: string | null | undefined, ownerId: string, client: DbClient = db) {
   if (!parentPageId) return;
   const parent = await client.queryOne("SELECT id FROM pages WHERE id = ? AND owner_id = ?", [parentPageId, ownerId]);
@@ -252,18 +283,32 @@ async function getBlocks(pageId: string, client: DbClient = db) {
   return rows.map(toBlock);
 }
 
-async function getPageResponse(pageId: string, ownerId: string, client: DbClient = db) {
-  const page = await assertOwnedPage(pageId, ownerId, client);
+async function getPageResponse(pageId: string, userId: string, client: DbClient = db) {
+  const access = await getPageAccess(pageId, userId, client);
   const childRows = await client.query<PageRow>(
-    "SELECT * FROM pages WHERE parent_page_id = ? AND owner_id = ? ORDER BY updated_at DESC",
-    [pageId, ownerId]
+    `SELECT c.* FROM pages c
+     WHERE c.parent_page_id = ?
+       AND (c.owner_id = ? OR EXISTS (
+         SELECT 1 FROM page_shares child_share WHERE child_share.page_id = c.id AND child_share.user_id = ?
+       ))
+     ORDER BY c.updated_at DESC`,
+    [pageId, userId, userId]
   );
+  const page = toPage(access.page);
+  if (access.role !== "OWNER") page.parentPageId = null;
 
   return {
-    ...toPage(page),
+    ...page,
+    owner: access.owner,
+    access: toAccessPayload(access),
+    collaboration: toCollaborationPayload(access),
     tags: await getPageTags(pageId, client),
     blocks: buildBlockTree(await getBlocks(pageId, client)),
-    children: childRows.map(toPage)
+    children: childRows.map((row) => {
+      const child = toPage(row);
+      if (row.owner_id !== userId) child.parentPageId = null;
+      return child;
+    })
   };
 }
 
@@ -271,8 +316,11 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
   try {
     const user = requireUser(req.user);
     const query = getValidatedQuery<z.infer<typeof listPagesQuerySchema>>(req);
-    const where = ["p.owner_id = ?", "p.is_archived = ?"];
-    const params: DbValue[] = [user.id, query.archived ? 1 : 0];
+    const where = [
+      "(p.owner_id = ? OR EXISTS (SELECT 1 FROM page_shares current_share WHERE current_share.page_id = p.id AND current_share.user_id = ?))",
+      "p.is_archived = ?"
+    ];
+    const whereParams: DbValue[] = [user.id, user.id, query.archived ? 1 : 0];
 
     if (query.q) {
       where.push(
@@ -280,7 +328,7 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
           SELECT 1 FROM blocks b WHERE b.page_id = p.id AND b.markdown LIKE ?
         ))`
       );
-      params.push(`%${query.q}%`, `%${query.q}%`);
+      whereParams.push(`%${query.q}%`, `%${query.q}%`);
     }
 
     if (query.tag) {
@@ -291,40 +339,49 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
           WHERE pt.page_id = p.id AND t.name = ?
         )`
       );
-      params.push(query.tag.toLowerCase());
+      whereParams.push(query.tag.toLowerCase());
     }
 
-    // updated_at changes on every note save. Using it as a keyset cursor can
-    // skip an unread page when that page is edited between requests and moves
-    // ahead of the cursor. created_at and id are immutable scan keys.
     if (query.cursor) {
       const cursor = decodePageListCursor(query.cursor);
       where.push("(p.created_at < ? OR (p.created_at = ? AND p.id < ?))");
-      params.push(cursor.createdAt, cursor.createdAt, cursor.id);
+      whereParams.push(cursor.createdAt, cursor.createdAt, cursor.id);
     }
 
-    params.push(query.limit + 1);
     const rows = await db.query<
       PageRow & { block_count: number; child_count: number; cursor_created_at: string }
     >(
       `SELECT p.*,
         DATE_FORMAT(p.created_at, '%Y-%m-%d %H:%i:%s.%f') AS cursor_created_at,
         (SELECT COUNT(*) FROM blocks b WHERE b.page_id = p.id) AS block_count,
-        (SELECT COUNT(*) FROM pages c WHERE c.parent_page_id = p.id) AS child_count
+        (SELECT COUNT(*) FROM pages c
+          WHERE c.parent_page_id = p.id
+            AND (c.owner_id = ? OR EXISTS (
+              SELECT 1 FROM page_shares child_share
+              WHERE child_share.page_id = c.id AND child_share.user_id = ?
+            ))) AS child_count
        FROM pages p
        WHERE ${where.join(" AND ")}
        ORDER BY p.created_at DESC, p.id DESC
        LIMIT ?`,
-      params
+      [user.id, user.id, ...whereParams, query.limit + 1]
     );
 
     const pageRows = rows.slice(0, query.limit);
     const pages = await Promise.all(
-      pageRows.map(async (row) => ({
-        ...toPage(row),
-        tags: await getPageTags(row.id),
-        counts: { blocks: row.block_count, children: row.child_count }
-      }))
+      pageRows.map(async (row) => {
+        const access = await getPageAccess(row.id, user.id);
+        const page = toPage(row);
+        if (access.role !== "OWNER") page.parentPageId = null;
+        return {
+          ...page,
+          owner: access.owner,
+          access: toAccessPayload(access),
+          collaboration: toCollaborationPayload(access),
+          tags: await getPageTags(row.id),
+          counts: { blocks: row.block_count, children: row.child_count }
+        };
+      })
     );
     const nextCursor = rows.length > query.limit
       ? encodePageListCursor(pageRows[pageRows.length - 1])
@@ -484,6 +541,24 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
         )
       ) return;
 
+      if (updates.title !== undefined) {
+        const shareCountRow = await client.queryOne<{ share_count: number }>(
+          "SELECT COUNT(*) AS share_count FROM page_shares WHERE page_id = ?",
+          [pageId]
+        );
+        if (Number(shareCountRow?.share_count ?? 0) > 0) {
+          throw new ApiError(
+            409,
+            "COLLABORATION_REQUIRED",
+            "Shared page titles must be changed through the live collaboration session"
+          );
+        }
+      }
+
+      if (updates.isArchived === true) {
+        await assertCollaborationMaterialized(client, [pageId]);
+      }
+
       if (existingPage.is_collection && updates.parentPageId) {
         throw new ApiError(400, "INVALID_COLLECTION_PARENT", "A collection cannot have a parent page");
       }
@@ -510,6 +585,7 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
       if (tags !== undefined) await replaceTags(client, pageId, tags);
     });
 
+    if (updates.isArchived === true) disconnectPageCollaborators(pageId, "Page was archived");
     res.json({ page: await getPageResponse(pageId, user.id) });
   } catch (error) {
     next(error);
@@ -536,19 +612,24 @@ pageRouter.delete(
           );
         }
         const expectedSnapshot = body.expectedSnapshot;
-        const attachmentIds = await transaction(async (client) => {
+        const deletion = await transaction(async (client) => {
           const treeRows = await getOwnedPageTreeRows(user.id, client, true);
           const subtreeRows = getPageSubtreeRows(pageId, treeRows);
+          await assertCollaborationMaterialized(client, subtreeRows.map((page) => page.id));
           const blockRows = await getPageDeletionBlocks(client, subtreeRows, true);
           assertPageDeletionSnapshot(expectedSnapshot, subtreeRows, blockRows);
 
           for (const page of [...subtreeRows].reverse()) {
             await client.execute("DELETE FROM pages WHERE id = ? AND owner_id = ?", [page.id, user.id]);
           }
-          return blockRows.filter((row) => row.type === "ATTACHMENT").map((row) => row.id);
+          return {
+            attachmentIds: blockRows.filter((row) => row.type === "ATTACHMENT").map((row) => row.id),
+            pageIds: subtreeRows.map((row) => row.id)
+          };
         });
 
-        await removeDeletedAttachmentFiles(user.id, attachmentIds);
+        for (const deletedPageId of deletion.pageIds) disconnectPageCollaborators(deletedPageId, "Page was deleted");
+        await removeDeletedAttachmentFiles(user.id, deletion.attachmentIds);
         res.status(204).send();
         return;
       }
@@ -560,12 +641,20 @@ pageRouter.delete(
           "The last observed page version is required before archiving this page."
         );
       }
-      const result = await db.execute<{ affectedRows: number }>(
-        `UPDATE pages
-         SET is_archived = 1, edit_version = edit_version + 1
-         WHERE id = ? AND owner_id = ? AND edit_version = ?`,
-        [pageId, user.id, body.expectedVersion]
-      );
+      const result = await transaction(async (client) => {
+        const page = await client.queryOne<PageRow>(
+          "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
+          [pageId, user.id]
+        );
+        if (!page) throw notFound("Page");
+        await assertCollaborationMaterialized(client, [pageId]);
+        return client.execute<{ affectedRows: number }>(
+          `UPDATE pages
+           SET is_archived = 1, edit_version = edit_version + 1
+           WHERE id = ? AND owner_id = ? AND edit_version = ?`,
+          [pageId, user.id, body.expectedVersion]
+        );
+      });
       if (Number(result.affectedRows) === 0) {
         throw new ApiError(
           409,
@@ -573,6 +662,7 @@ pageRouter.delete(
           "This page was changed in another session. It was not archived."
         );
       }
+      disconnectPageCollaborators(pageId, "Page was archived");
       const page = await assertOwnedPage(pageId, user.id);
       res.json({ page: toPage(page) });
     } catch (error) {
@@ -612,7 +702,7 @@ pageRouter.get("/:pageId/render", validate({ params: idParamSchema }), async (re
   try {
     const user = requireUser(req.user);
     const pageId = String(req.params.pageId);
-    await assertOwnedPage(pageId, user.id);
+    await getPageAccess(pageId, user.id);
     const rows = await db.query<BlockRow>(
       "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
       [pageId]
