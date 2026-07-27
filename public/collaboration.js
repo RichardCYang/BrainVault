@@ -715,9 +715,23 @@ class PageCollaborationSession {
       if (message.bootstrap) this.initializeFromPage();
       else this.mergeCanonicalAttachments(mustSendFullState ? BOOTSTRAP_ORIGIN : LOCAL_ORIGIN);
       if (mustSendFullState) {
-        this.needsRecovery = false;
+        let fullStateUpdate;
+        try {
+          fullStateUpdate = this.Y.encodeStateAsUpdate(this.doc);
+        } catch (error) {
+          this.needsRecovery = true;
+          this.startupUpdatePending = false;
+          this.onError(new Error(`The collaboration recovery state could not be encoded for synchronization: ${error?.message || error}`));
+          try {
+            this.socket?.close(1011, "Unable to encode collaboration recovery state");
+          } catch {
+            // A later connection attempt can retry without clearing the durable copy.
+          }
+          return;
+        }
         this.startupUpdatePending = true;
-        this.sendDocumentUpdate(this.Y.encodeStateAsUpdate(this.doc));
+        if (this.sendDocumentUpdate(fullStateUpdate)) this.needsRecovery = false;
+        else this.startupUpdatePending = false;
       } else if (this.pendingLocalUpdates > 0) {
         this.startupUpdatePending = true;
       } else {
@@ -824,11 +838,12 @@ class PageCollaborationSession {
     const socket = this.socket;
     if (!this.synced || socket?.readyState !== WebSocket.OPEN) {
       this.needsRecovery = true;
-      return;
+      return false;
     }
     this.pendingLocalUpdates += 1;
     try {
       socket.send(createBinaryMessage(1, update));
+      return true;
     } catch (error) {
       this.pendingLocalUpdates = Math.max(0, this.pendingLocalUpdates - 1);
       this.needsRecovery = true;
@@ -839,14 +854,37 @@ class PageCollaborationSession {
       } catch {
         // The reconnect path will resend the durable recovery snapshot.
       }
+      return false;
     }
   }
 
   requestCompaction() {
     if (this.compactionPending || !this.isReady || this.pendingLocalUpdates) return;
+    const socket = this.socket;
+    if (socket?.readyState !== WebSocket.OPEN) return;
+    let message;
+    try {
+      message = createBinaryMessage(2, this.Y.encodeStateAsUpdate(this.doc), this.lastUpdateId);
+    } catch (error) {
+      this.onError(new Error(`The collaboration snapshot could not be encoded: ${error?.message || error}`));
+      return;
+    }
+
     this.compactionPending = true;
     this.pendingLocalUpdates += 1;
-    this.socket.send(createBinaryMessage(2, this.Y.encodeStateAsUpdate(this.doc), this.lastUpdateId));
+    try {
+      socket.send(message);
+    } catch (error) {
+      this.compactionPending = false;
+      this.pendingLocalUpdates = Math.max(0, this.pendingLocalUpdates - 1);
+      if (this.pendingLocalUpdates === 0) this.resolvePendingWaiters();
+      this.onError(new Error(`The collaboration snapshot could not be queued: ${error?.message || error}`));
+      try {
+        socket.close(1011, "Unable to queue collaboration snapshot");
+      } catch {
+        // The next materialization can retry compaction on a healthy connection.
+      }
+    }
   }
 
   waitForPendingUpdates() {

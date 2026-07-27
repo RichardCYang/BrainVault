@@ -12,11 +12,22 @@ const store = vi.hoisted(() => ({
   blocks: new Map<string, Record<string, unknown>>(),
   tags: new Map<string, Record<string, unknown>>(),
   pageTags: [] as Array<{ page_id: string; tag_id: string }>,
+  shares: [] as Array<{
+    page_id: string;
+    user_id: string;
+    permission: string;
+    shared_by: string;
+    shared_at: string;
+  }>,
   collaborationUpdates: new Map<string, number>(),
   collaborationMaterialized: new Map<string, number>(),
   restoreMarker: null as string | null,
   transactionHooks: [] as Array<() => void | Promise<void>>,
   failTransactionAfterCallback: false,
+  restoreEvents: [] as string[],
+  disconnectPageCollaborators: vi.fn(),
+  disconnectSharedUser: vi.fn(),
+  broadcastCanonicalAttachment: vi.fn(),
   query: vi.fn(),
   queryOne: vi.fn(),
   execute: vi.fn()
@@ -33,6 +44,17 @@ vi.mock("../src/lib/db.js", () => ({
     }
     return result;
   }
+}));
+
+vi.mock("../src/lib/collaboration-server.js", () => ({
+  collaborationTicketProtocolPrefix: "brainvault-ticket.",
+  collaborationWebSocketProtocol: "brainvault-yjs-v1",
+  disconnectPageCollaborators: (pageId: string, reason?: string) => {
+    store.restoreEvents.push(`disconnect:${pageId}`);
+    return store.disconnectPageCollaborators(pageId, reason);
+  },
+  disconnectSharedUser: store.disconnectSharedUser,
+  broadcastCanonicalAttachment: store.broadcastCanonicalAttachment
 }));
 
 import { createApp } from "../src/app.js";
@@ -97,11 +119,16 @@ beforeEach(async () => {
   }]]);
   store.tags = new Map([[tagId, { id: tagId, name: "backup", created_at: "2026-07-17 00:00:00.000000" }]]);
   store.pageTags = [{ page_id: pageId, tag_id: tagId }];
+  store.shares = [];
   store.collaborationUpdates = new Map();
   store.collaborationMaterialized = new Map();
   store.restoreMarker = null;
   store.transactionHooks = [];
   store.failTransactionAfterCallback = false;
+  store.restoreEvents = [];
+  store.disconnectPageCollaborators.mockReset();
+  store.disconnectSharedUser.mockReset();
+  store.broadcastCanonicalAttachment.mockReset();
   store.query.mockReset();
   store.queryOne.mockReset();
   store.execute.mockReset();
@@ -137,6 +164,11 @@ beforeEach(async () => {
     if (sql.includes("FROM blocks b INNER JOIN pages p") && sql.includes("WHERE p.owner_id = ? ORDER BY")) {
       return [...store.blocks.values()].filter((block) => store.pages.get(String(block.page_id))?.owner_id === params[0]).map((block) => ({ ...block }));
     }
+    if (sql.includes("FROM page_shares ps INNER JOIN pages p")) {
+      return store.shares
+        .filter((share) => store.pages.get(share.page_id)?.owner_id === params[0])
+        .map((share) => ({ ...share }));
+    }
     if (sql.includes("SELECT DISTINCT t.id")) return [...store.tags.values()].map((tag) => ({ ...tag }));
     if (sql.includes("SELECT pt.page_id")) return store.pageTags.map((relation) => ({ ...relation }));
     if (sql.startsWith("SELECT id, owner_id FROM pages WHERE id IN")) {
@@ -160,8 +192,10 @@ beforeEach(async () => {
     if (sql === "DELETE FROM pages WHERE owner_id = ?") {
       const pageIds = new Set([...store.pages.values()].filter((page) => page.owner_id === params[0]).map((page) => String(page.id)));
       for (const id of pageIds) store.pages.delete(id);
+      store.restoreEvents.push("delete-pages");
       for (const [id, block] of store.blocks) if (pageIds.has(String(block.page_id))) store.blocks.delete(id);
       store.pageTags = store.pageTags.filter((relation) => !pageIds.has(relation.page_id));
+      store.shares = store.shares.filter((share) => !pageIds.has(share.page_id));
     } else if (sql.startsWith("UPDATE users SET name = ?")) {
       [store.user.name, store.user.avatar_data, store.user.preferred_language, store.user.default_collection_icon] = params;
     } else if (sql.includes("INSERT INTO pages")) {
@@ -298,6 +332,42 @@ describe("Complete data transfer routes", () => {
     expect(store.pages.get(pageId)?.edit_version).toBe(store.blocks.get(blockId)?.edit_version);
     expect(store.pages.get(pageId)?.content_version).toBe(store.blocks.get(blockId)?.edit_version);
     expect(store.user.name).toBe("Original User");
+    expect(store.disconnectPageCollaborators).toHaveBeenCalledWith(pageId, "Workspace data is being restored");
+    expect(store.restoreEvents.indexOf(`disconnect:${pageId}`)).toBeLessThan(store.restoreEvents.indexOf("delete-pages"));
+    await expect(readFile(getAttachmentFilePath(userId, blockId))).resolves.toEqual(originalBytes);
+  });
+
+  it("aborts when sharing access changes while a restore is being staged", async () => {
+    const exported = await request(createApp())
+      .get("/api/data/export")
+      .set("Authorization", `Bearer ${token}`)
+      .buffer(true)
+      .parse(binaryParser)
+      .expect(200);
+
+    store.transactionHooks = [
+      () => undefined,
+      () => {
+        store.shares.push({
+          page_id: pageId,
+          user_id: "usr_new_collaborator",
+          permission: "EDIT",
+          shared_by: userId,
+          shared_at: "2026-07-27 12:34:56.123000"
+        });
+      }
+    ];
+
+    const response = await request(createApp())
+      .post("/api/data/import")
+      .set("Authorization", `Bearer ${token}`)
+      .attach("backup", exported.body as Buffer, { filename: "BrainVault-backup.zip", contentType: "application/zip" })
+      .expect(409);
+
+    expect(response.body.error.code).toBe("DATA_RESTORE_CONFLICT");
+    expect(store.shares).toHaveLength(1);
+    expect(store.disconnectPageCollaborators).not.toHaveBeenCalled();
+    expect(store.restoreEvents).not.toContain("delete-pages");
     await expect(readFile(getAttachmentFilePath(userId, blockId))).resolves.toEqual(originalBytes);
   });
 

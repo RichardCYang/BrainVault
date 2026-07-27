@@ -6,6 +6,7 @@ import { access, copyFile, link, mkdir, open, readFile, readdir, rename, rm, sta
 import { z } from "zod";
 import { env } from "../config/env.js";
 import { attachmentUploadRoot, getAttachmentFilePath, withUserAttachmentLock } from "./attachments.js";
+import { disconnectPageCollaborators } from "./collaboration-server.js";
 import { db, transaction, type DbClient } from "./db.js";
 import { ApiError } from "./http.js";
 import { createId } from "./id.js";
@@ -151,6 +152,14 @@ type WorkspaceRestoreBlockRow = {
   edit_version: number;
 };
 
+type WorkspaceRestoreShareRow = {
+  page_id: string;
+  user_id: string;
+  permission: string;
+  shared_by: string;
+  shared_at: string;
+};
+
 type WorkspaceCollaborationStateRow = {
   page_id: string;
   latest_update_id: number | bigint | null;
@@ -271,6 +280,14 @@ async function createWorkspaceRestoreSnapshot(userId: string, client: DbClient =
      WHERE p.owner_id = ? ORDER BY b.id ASC${lockClause}`,
     [userId]
   );
+  const shares = await client.query<WorkspaceRestoreShareRow>(
+    `SELECT ps.page_id, ps.user_id, ps.permission, ps.shared_by,
+            DATE_FORMAT(ps.created_at, '%Y-%m-%d %H:%i:%s.%f') AS shared_at
+     FROM page_shares ps INNER JOIN pages p ON p.id = ps.page_id
+     WHERE p.owner_id = ?
+     ORDER BY ps.page_id ASC, ps.user_id ASC${lockClause}`,
+    [userId]
+  );
 
   const hash = createHash("sha256");
   hash.update(`account\0${JSON.stringify(account)}\n`);
@@ -284,7 +301,15 @@ async function createWorkspaceRestoreSnapshot(userId: string, client: DbClient =
       `block\0${block.id}\0${block.page_id}\0${block.parent_block_id ?? ""}\0${block.type}\0${Number(block.edit_version ?? 1)}\n`
     );
   }
-  return hash.digest("hex");
+  for (const share of shares) {
+    hash.update(
+      `share\0${share.page_id}\0${share.user_id}\0${share.permission}\0${share.shared_by}\0${share.shared_at}\n`
+    );
+  }
+  return {
+    fingerprint: hash.digest("hex"),
+    pageIds: pages.map((page) => page.id)
+  };
 }
 
 function invalidBackup(message: string, details?: unknown): never {
@@ -1217,12 +1242,18 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
     try {
       await transaction(async (client) => {
         const lockedWorkspaceSnapshot = await createWorkspaceRestoreSnapshot(userId, client, true);
-        if (lockedWorkspaceSnapshot !== initialWorkspaceSnapshot) {
+        if (lockedWorkspaceSnapshot.fingerprint !== initialWorkspaceSnapshot.fingerprint) {
           throw new ApiError(
             409,
             "DATA_RESTORE_CONFLICT",
             "The workspace changed while the backup was being prepared. No data was replaced."
           );
+        }
+        // Invalidate every live in-memory Yjs room while the owned page rows are
+        // still locked. Otherwise an old owner session can append its pre-restore
+        // document after commit and later materialize it over the restored backup.
+        for (const pageId of lockedWorkspaceSnapshot.pageIds) {
+          disconnectPageCollaborators(pageId, "Workspace data is being restored");
         }
         // Record the live attachment generation only after the user row is locked.
         // Otherwise an attachment created between the check and the lock could be

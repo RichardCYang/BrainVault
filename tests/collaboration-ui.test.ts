@@ -45,6 +45,9 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(collaboration).toContain("persistLocalRecovery");
     expect(collaboration).toContain("restoreLocalRecovery");
     expect(collaboration).toContain("clearLocalRecovery");
+    expect(collaboration).toContain("The collaboration recovery state could not be encoded for synchronization");
+    expect(collaboration).toContain("The collaboration snapshot could not be queued");
+    expect(collaboration).toContain("if (this.sendDocumentUpdate(fullStateUpdate)) this.needsRecovery = false");
     expect(collaboration).toContain("if (flush && this.hasUnconfirmedLocalChanges && !this.isReady)");
     expect(app).toContain('assertCollaborationExitSafe(session, t("sharing.syncRequired"))');
     expect(app).toContain("recoverySourceId: pageDraftSourceId");

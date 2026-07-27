@@ -307,6 +307,16 @@ function verifySourceWiring() {
     "broadcastCanonicalAttachment",
     "PAGE_ARCHIVED"
   ]);
+  assertContains("src/lib/data-transfer.ts", [
+    "FROM page_shares ps INNER JOIN pages p",
+    'disconnectPageCollaborators(pageId, "Workspace data is being restored")'
+  ]);
+  const dataTransferSource = read("src/lib/data-transfer.ts");
+  assert.ok(
+    dataTransferSource.indexOf('disconnectPageCollaborators(pageId, "Workspace data is being restored")')
+      < dataTransferSource.indexOf("await importRows(client, userId, manifest, restoreVersion);"),
+    "live collaboration rooms must be invalidated before restored rows replace the workspace"
+  );
   assertContains("public/collaboration.js", [
     "https://cdn.jsdelivr.net/npm/yjs@13.6.31/+esm",
     'const RECOVERY_ORIGIN = Object.freeze({ kind: "recovery" });',
@@ -316,6 +326,9 @@ function verifySourceWiring() {
     "persistLocalRecovery",
     "restoreLocalRecovery",
     "clearLocalRecovery",
+    "The collaboration recovery state could not be encoded for synchronization",
+    "The collaboration snapshot could not be queued",
+    "if (this.sendDocumentUpdate(fullStateUpdate)) this.needsRecovery = false",
     "if (flush && this.hasUnconfirmedLocalChanges && !this.isReady)",
     "canonical-attachment",
     "clearMaterializedAttachmentTombstones",
