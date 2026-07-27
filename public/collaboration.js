@@ -1,7 +1,9 @@
+// @ts-check
 const YJS_MODULE_URL = "https://cdn.jsdelivr.net/npm/yjs@13.6.31/+esm";
 const REMOTE_ORIGIN = Object.freeze({ kind: "remote" });
 const BOOTSTRAP_ORIGIN = Object.freeze({ kind: "bootstrap" });
 const LOCAL_ORIGIN = Object.freeze({ kind: "local" });
+const RECOVERY_ORIGIN = Object.freeze({ kind: "recovery" });
 const COMPACTION_UPDATE_THRESHOLD = 200;
 const MATERIALIZE_DELAY_MS = 900;
 const AWARENESS_DELAY_MS = 80;
@@ -449,6 +451,10 @@ class PageCollaborationSession {
     return this.upsertBlock(block, { allowDisconnected: true });
   }
 
+  /**
+   * @param {unknown[]} blocks
+   * @param {{ origin?: unknown }} [options]
+   */
   reconcileServerAttachments(blocks, { origin = LOCAL_ORIGIN } = {}) {
     if (this.destroyed) return 0;
     const candidates = flattenBlocks(blocks ?? [])
@@ -625,6 +631,7 @@ class PageCollaborationSession {
     }, BOOTSTRAP_ORIGIN);
   }
 
+  /** @param {unknown} origin */
   mergeCanonicalAttachments(origin = LOCAL_ORIGIN) {
     const page = this.bootstrapPage ?? this.page;
     return this.reconcileServerAttachments(page.blocks ?? [], { origin }) > 0;

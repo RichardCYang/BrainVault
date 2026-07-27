@@ -309,6 +309,7 @@ function verifySourceWiring() {
   ]);
   assertContains("public/collaboration.js", [
     "https://cdn.jsdelivr.net/npm/yjs@13.6.31/+esm",
+    'const RECOVERY_ORIGIN = Object.freeze({ kind: "recovery" });',
     "Y.applyUpdate",
     "Y.encodeStateAsUpdate",
     "get hasUnconfirmedLocalChanges()",

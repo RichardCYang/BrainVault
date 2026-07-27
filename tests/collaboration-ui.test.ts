@@ -31,6 +31,10 @@ describe("page sharing and Yjs collaboration wiring", () => {
 
   it("pins Yjs and supports persisted updates, reconnect recovery, awareness, and attachment reconciliation", () => {
     expect(collaboration).toContain("https://cdn.jsdelivr.net/npm/yjs@13.6.31/+esm");
+    expect(collaboration).toContain('const RECOVERY_ORIGIN = Object.freeze({ kind: "recovery" });');
+    expect(collaboration.indexOf("const RECOVERY_ORIGIN")).toBeLessThan(
+      collaboration.indexOf("origin !== RECOVERY_ORIGIN")
+    );
     expect(collaboration).toContain("Y.applyUpdate");
     expect(collaboration).toContain("Y.encodeStateAsUpdate");
     expect(collaboration).toContain("needsRecovery");

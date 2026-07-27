@@ -35,6 +35,19 @@ describe("collaboration recovery store", () => {
     expect(store.loadAll("user-2", "page-1")).toEqual([]);
   });
 
+  it("does not skip a valid recovery record after removing a corrupt neighbor", () => {
+    const storage = createMemoryStorage();
+    storage.setItem(
+      "brainvault.collaborationRecovery.v1:user-1:page-1:corrupt",
+      "{not-json"
+    );
+    const store = createCollaborationRecoveryStore(storage);
+    store.save("user-1", "page-1", "tab-1", new Uint8Array([4, 5, 6]));
+
+    expect(store.loadAll("user-1", "page-1").map((record) => [...record.update])).toEqual([[4, 5, 6]]);
+    expect(storage.getItem("brainvault.collaborationRecovery.v1:user-1:page-1:corrupt")).toBeNull();
+  });
+
   it("does not delete a newer record written by another live tab", () => {
     const store = createCollaborationRecoveryStore(createMemoryStorage());
     const oldGeneration = store.save("user-1", "page-1", "tab-1", new Uint8Array([1]));

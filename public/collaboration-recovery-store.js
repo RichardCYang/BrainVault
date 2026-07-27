@@ -77,10 +77,16 @@ export function createCollaborationRecoveryStore(
     if (!storage || !isNonEmptyString(accountId) || !isNonEmptyString(pageId)) return [];
     const pagePrefix = getPagePrefix(accountId, pageId);
     try {
-      const records = [];
+      const keys = [];
       for (let index = 0; index < storage.length; index += 1) {
         const key = storage.key(index);
-        if (!key?.startsWith(pagePrefix)) continue;
+        if (key?.startsWith(pagePrefix)) keys.push(key);
+      }
+
+      const records = [];
+      // readRecord may remove corrupt entries. Iterate a stable key snapshot so
+      // deleting one entry cannot shift and hide the next recoverable record.
+      for (const key of keys) {
         const record = readRecord(key, accountId, pageId);
         if (record) records.push(record);
       }
