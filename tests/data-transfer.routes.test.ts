@@ -12,6 +12,8 @@ const store = vi.hoisted(() => ({
   blocks: new Map<string, Record<string, unknown>>(),
   tags: new Map<string, Record<string, unknown>>(),
   pageTags: [] as Array<{ page_id: string; tag_id: string }>,
+  collaborationUpdates: new Map<string, number>(),
+  collaborationMaterialized: new Map<string, number>(),
   restoreMarker: null as string | null,
   transactionHooks: [] as Array<() => void | Promise<void>>,
   failTransactionAfterCallback: false,
@@ -95,6 +97,8 @@ beforeEach(async () => {
   }]]);
   store.tags = new Map([[tagId, { id: tagId, name: "backup", created_at: "2026-07-17 00:00:00.000000" }]]);
   store.pageTags = [{ page_id: pageId, tag_id: tagId }];
+  store.collaborationUpdates = new Map();
+  store.collaborationMaterialized = new Map();
   store.restoreMarker = null;
   store.transactionHooks = [];
   store.failTransactionAfterCallback = false;
@@ -120,6 +124,13 @@ beforeEach(async () => {
   });
 
   store.query.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
+    if (sql.includes("LEFT JOIN page_yjs_updates")) {
+      return params.map((id) => ({
+        page_id: String(id),
+        latest_update_id: store.collaborationUpdates.get(String(id)) ?? 0,
+        materialized_update_id: store.collaborationMaterialized.get(String(id)) ?? 0
+      }));
+    }
     if (sql.includes("FROM pages WHERE owner_id = ? ORDER BY")) {
       return [...store.pages.values()].filter((page) => page.owner_id === params[0]).map(({ owner_id: _owner, ...page }) => ({ ...page }));
     }
@@ -183,6 +194,49 @@ afterAll(async () => {
 });
 
 describe("Complete data transfer routes", () => {
+  it("refuses to export a workspace with persisted collaboration updates that are not materialized", async () => {
+    store.collaborationUpdates.set(pageId, 12);
+    store.collaborationMaterialized.set(pageId, 11);
+
+    const response = await request(createApp())
+      .get("/api/data/export")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(409);
+
+    expect(response.body.error.code).toBe("COLLABORATION_CHANGES_PENDING");
+    expect(response.body.error.details).toMatchObject({
+      pendingPageCount: 1,
+      pages: [{ pageId, latestUpdateId: 12, materializedUpdateId: 11 }]
+    });
+  });
+
+  it("refuses to restore over collaboration updates that become pending before the final lock", async () => {
+    const exported = await request(createApp())
+      .get("/api/data/export")
+      .set("Authorization", `Bearer ${token}`)
+      .buffer(true)
+      .parse(binaryParser)
+      .expect(200);
+
+    store.pages.get(pageId)!.title = "Must survive";
+    store.transactionHooks = [
+      () => undefined,
+      () => {
+        store.collaborationUpdates.set(pageId, 13);
+        store.collaborationMaterialized.set(pageId, 12);
+      }
+    ];
+
+    const response = await request(createApp())
+      .post("/api/data/import")
+      .set("Authorization", `Bearer ${token}`)
+      .attach("backup", exported.body as Buffer, { filename: "BrainVault-backup.zip", contentType: "application/zip" })
+      .expect(409);
+
+    expect(response.body.error.code).toBe("COLLABORATION_CHANGES_PENDING");
+    expect(store.pages.get(pageId)?.title).toBe("Must survive");
+    await expect(readFile(getAttachmentFilePath(userId, blockId))).resolves.toEqual(originalBytes);
+  });
 
   it("exports the staged attachment snapshot even if the live file changes", async () => {
     const plan = await prepareUserDataBackup(userId);

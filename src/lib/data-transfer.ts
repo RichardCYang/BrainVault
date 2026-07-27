@@ -151,6 +151,12 @@ type WorkspaceRestoreBlockRow = {
   edit_version: number;
 };
 
+type WorkspaceCollaborationStateRow = {
+  page_id: string;
+  latest_update_id: number | bigint | null;
+  materialized_update_id: number | bigint | null;
+};
+
 type RawAccountRow = {
   id: string;
   username: string;
@@ -192,6 +198,58 @@ async function syncDirectoryIfPresent(value: string) {
   if (await pathExists(value)) await syncPath(value);
 }
 
+function parseCollaborationUpdateId(value: number | bigint | null | undefined) {
+  const updateId = Number(value ?? 0);
+  if (!Number.isSafeInteger(updateId) || updateId < 0) {
+    throw new ApiError(
+      500,
+      "INVALID_COLLABORATION_STATE",
+      "Collaboration update id exceeded the supported range"
+    );
+  }
+  return updateId;
+}
+
+async function assertWorkspaceCollaborationMaterialized(client: DbClient, pageIds: string[], lock = false) {
+  const lockClause = lock ? " FOR UPDATE" : "";
+  const pending: Array<{ pageId: string; latestUpdateId: number; materializedUpdateId: number }> = [];
+  for (let index = 0; index < pageIds.length; index += 500) {
+    const group = pageIds.slice(index, index + 500);
+    if (!group.length) continue;
+    const rows = await client.query<WorkspaceCollaborationStateRow>(
+      `SELECT p.id AS page_id, MAX(y.id) AS latest_update_id,
+         COALESCE(s.materialized_update_id, 0) AS materialized_update_id
+       FROM pages p
+       LEFT JOIN page_yjs_updates y ON y.page_id = p.id
+       LEFT JOIN page_collaboration_state s ON s.page_id = p.id
+       WHERE p.id IN (${group.map(() => "?").join(",")})
+       GROUP BY p.id, s.materialized_update_id
+       ORDER BY p.id ASC${lockClause}`,
+      group
+    );
+    for (const row of rows) {
+      const latestUpdateId = parseCollaborationUpdateId(row.latest_update_id);
+      const materializedUpdateId = parseCollaborationUpdateId(row.materialized_update_id);
+      if (latestUpdateId > materializedUpdateId) {
+        pending.push({ pageId: row.page_id, latestUpdateId, materializedUpdateId });
+      }
+    }
+  }
+
+  if (pending.length) {
+    throw new ApiError(
+      409,
+      "COLLABORATION_CHANGES_PENDING",
+      "Synchronize every collaborative page before exporting or replacing workspace data. No data was replaced.",
+      {
+        pendingPageCount: pending.length,
+        pages: pending.slice(0, 100),
+        truncated: pending.length > 100
+      }
+    );
+  }
+}
+
 async function createWorkspaceRestoreSnapshot(userId: string, client: DbClient = db, lock = false) {
   const lockClause = lock ? " FOR UPDATE" : "";
   const account = await client.queryOne<WorkspaceRestoreAccountRow>(
@@ -206,6 +264,7 @@ async function createWorkspaceRestoreSnapshot(userId: string, client: DbClient =
      FROM pages WHERE owner_id = ? ORDER BY id ASC${lockClause}`,
     [userId]
   );
+  await assertWorkspaceCollaborationMaterialized(client, pages.map((page) => page.id), lock);
   const blocks = await client.query<WorkspaceRestoreBlockRow>(
     `SELECT b.id, b.page_id, b.parent_block_id, b.type, b.edit_version
      FROM blocks b INNER JOIN pages p ON p.id = b.page_id
@@ -344,9 +403,10 @@ export async function prepareUserDataBackup(userId: string) {
         `SELECT id, title, icon, cover_url, is_archived, is_collection, parent_page_id, edit_version, content_version,
            DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at,
            DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at
-         FROM pages WHERE owner_id = ? ORDER BY created_at ASC, id ASC`,
+         FROM pages WHERE owner_id = ? ORDER BY created_at ASC, id ASC FOR UPDATE`,
         [userId]
       );
+      await assertWorkspaceCollaborationMaterialized(client, pages.map((page) => page.id), true);
       const blocks = await client.query<BackupBlock>(
         `SELECT b.id, b.page_id, b.parent_block_id, b.type, b.markdown, b.html_cache, b.checked, b.sort_order,
            CAST(b.metadata AS CHAR CHARACTER SET utf8mb4) AS metadata, b.edit_version,

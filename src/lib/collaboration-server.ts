@@ -244,6 +244,20 @@ export class PageCollaborationHub {
     void room.writeQueue.finally(() => room.document.destroy());
   }
 
+  private invalidateRoomForReload(room: Room, reason: string) {
+    if (room.invalidated || this.rooms.get(room.pageId) !== room) return;
+    room.invalidated = true;
+    this.rooms.delete(room.pageId);
+    room.bootstrapLeaderId = null;
+    room.waitingForBootstrap.clear();
+    for (const client of room.clients.values()) {
+      if (client.socket.isOpen) client.socket.close(1011, reason);
+    }
+    // Wait for every already-queued writer to stop before destroying the shared
+    // document. Reconnecting clients will build a fresh room from durable rows.
+    void room.writeQueue.finally(() => room.document.destroy());
+  }
+
   notifyCanonicalAttachment(pageId: string, block: unknown) {
     const room = this.rooms.get(pageId);
     if (!room || room.invalidated || this.rooms.get(pageId) !== room) return;
@@ -525,6 +539,20 @@ export class PageCollaborationHub {
         if (error instanceof InvalidYjsUpdateError) {
           console.warn("Rejected an invalid Yjs update", { pageId: room.pageId, userId: client.user.id, error });
           if (client.socket.isOpen) client.socket.close(1003, error.message);
+        } else if (
+          error
+          && typeof error === "object"
+          && "commitOutcomeUnknown" in error
+          && error.commitOutcomeUnknown === true
+        ) {
+          console.error("Yjs update commit outcome is unknown; reloading the collaboration room", {
+            pageId: room.pageId,
+            error
+          });
+          this.invalidateRoomForReload(
+            room,
+            "Collaboration state is reloading after an uncertain database commit"
+          );
         } else {
           console.error("Failed to persist a Yjs update", { pageId: room.pageId, error });
           if (client.socket.isOpen) client.socket.close(1011, "Unable to save collaboration update");
