@@ -311,13 +311,28 @@ function verifySourceWiring() {
     "https://cdn.jsdelivr.net/npm/yjs@13.6.31/+esm",
     "Y.applyUpdate",
     "Y.encodeStateAsUpdate",
+    "get hasUnconfirmedLocalChanges()",
+    "persistLocalRecovery",
+    "restoreLocalRecovery",
+    "clearLocalRecovery",
+    "if (flush && this.hasUnconfirmedLocalChanges && !this.isReady)",
     "canonical-attachment",
     "clearMaterializedAttachmentTombstones",
     "The document kept changing while it was being materialized"
   ]);
+  assertContains("public/collaboration-exit-guard.js", ["assertCollaborationExitSafe"]);
+  assertContains("public/collaboration-recovery-store.js", [
+    "brainvault.collaborationRecovery.v1",
+    "bytesToBase64",
+    "base64ToBytes"
+  ]);
   assertContains("public/app.js", [
     "createPageCollaboration",
-    "flushMaterialization({ compact: false })",
+    "assertCollaborationExitSafe",
+    "recoverySourceId: pageDraftSourceId",
+    "recoveryStore: collaborationRecoveryStore",
+    "flushMaterialization({ compact: collaborationCompact })",
+    "flushPendingPageEdits({ collaborationCompact: false })",
     "adoptAttachment",
     "sharing.syncRequired"
   ]);

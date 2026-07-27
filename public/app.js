@@ -28,6 +28,8 @@ import { createLatestWriteQueue } from "./save-queue.js";
 import { createMutationId, submitWithFreshMutationIdOnReuse } from "./mutation-id.js";
 import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-rebase.js";
 import { createPageCollaboration } from "./collaboration.js";
+import { assertCollaborationExitSafe } from "./collaboration-exit-guard.js";
+import { createCollaborationRecoveryStore } from "./collaboration-recovery-store.js";
 
 const tokenKey = "brainvault.token";
 const rootParentKey = "__root__";
@@ -49,6 +51,7 @@ function createPageDraftSourceId() {
 const pageDraftStoragePrefix = "brainvault.pageDraft.v2:";
 const pageDraftSourceId = createPageDraftSourceId();
 const pageDraftStore = createPageDraftStore(window.localStorage, { sourceId: pageDraftSourceId });
+const collaborationRecoveryStore = createCollaborationRecoveryStore(window.localStorage);
 
 const emojiSearchIndex = emojiRecords.map((record) =>
   `${record[0]} ${record[2]} ${record[3]} ${record[4]} ${record[5]}`.toLocaleLowerCase()
@@ -2883,10 +2886,11 @@ function getPendingSavePayloadBytes({ saveTitle, rowsToSave }) {
   return totalBytes;
 }
 
-async function flushPendingPageEdits({ keepalive = false, allowLocked = false } = {}) {
+async function flushPendingPageEdits({ keepalive = false, allowLocked = false, collaborationCompact = true } = {}) {
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
-    if (session?.isReady) await session.flushMaterialization();
+    assertCollaborationExitSafe(session, t("sharing.syncRequired"));
+    if (session?.isReady) await session.flushMaterialization({ compact: collaborationCompact });
     syncBeforeUnloadProtection();
     return;
   }
@@ -3582,6 +3586,9 @@ async function startPageCollaboration(page = state.selectedPage) {
   try {
     const session = await createPageCollaboration({
       page,
+      accountId: state.user?.id,
+      recoverySourceId: pageDraftSourceId,
+      recoveryStore: collaborationRecoveryStore,
       api,
       onSnapshot: (snapshot, context) => {
         if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) return;
@@ -8565,9 +8572,9 @@ elements.sharePageList.addEventListener("click", async (event) => {
   button.disabled = true;
   setSharePageMessage(t("sharing.removing", { username }));
   try {
-    if (state.sharePageEntries.length === 1 && state.collaborationSession?.isReady) {
-      await state.collaborationSession.flushMaterialization({ compact: false });
-      await destroyPageCollaboration({ flush: false });
+    if (state.sharePageEntries.length === 1) {
+      await flushPendingPageEdits({ collaborationCompact: false });
+      if (state.collaborationSession) await destroyPageCollaboration({ flush: false });
     }
     const data = await api(
       `/api/pages/${encodeURIComponent(pageId)}/shares/${encodeURIComponent(userId)}`,

@@ -5,6 +5,8 @@ const index = readFileSync(new URL("../public/index.html", import.meta.url), "ut
 const styles = readFileSync(new URL("../public/styles.css", import.meta.url), "utf8");
 const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const collaboration = readFileSync(new URL("../public/collaboration.js", import.meta.url), "utf8");
+const exitGuard = readFileSync(new URL("../public/collaboration-exit-guard.js", import.meta.url), "utf8");
+const recoveryStore = readFileSync(new URL("../public/collaboration-recovery-store.js", import.meta.url), "utf8");
 const i18n = readFileSync(new URL("../public/i18n.js", import.meta.url), "utf8");
 const migration = readFileSync(
   new URL("../migrations/020_page_sharing_yjs_collaboration.sql", import.meta.url),
@@ -32,12 +34,25 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(collaboration).toContain("Y.applyUpdate");
     expect(collaboration).toContain("Y.encodeStateAsUpdate");
     expect(collaboration).toContain("needsRecovery");
+    expect(collaboration).toContain("get hasUnconfirmedLocalChanges()");
+    expect(collaboration).toContain("this.startupUpdatePending");
+    expect(exitGuard).toContain("assertCollaborationExitSafe");
+    expect(recoveryStore).toContain("brainvault.collaborationRecovery.v1");
+    expect(collaboration).toContain("persistLocalRecovery");
+    expect(collaboration).toContain("restoreLocalRecovery");
+    expect(collaboration).toContain("clearLocalRecovery");
+    expect(collaboration).toContain("if (flush && this.hasUnconfirmedLocalChanges && !this.isReady)");
+    expect(app).toContain('assertCollaborationExitSafe(session, t("sharing.syncRequired"))');
+    expect(app).toContain("recoverySourceId: pageDraftSourceId");
+    expect(app).toContain("recoveryStore: collaborationRecoveryStore");
     expect(collaboration).toContain("canonical-attachment");
     expect(collaboration).toContain("deletedAttachments");
     expect(collaboration).toContain("A tombstone wins over a concurrently retained/re-created block");
     expect(collaboration).toContain("sendAwareness");
     expect(app).toContain("createPageCollaboration");
     expect(app).toContain("flushMaterialization");
+    expect(app).toContain("if (state.sharePageEntries.length === 1) {");
+    expect(app).toContain("await flushPendingPageEdits();");
     expect(app).toContain("adoptAttachment");
   });
 

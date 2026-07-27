@@ -213,6 +213,11 @@ class PageCollaborationSession {
     this.Y = Y;
     this.page = options.page;
     this.bootstrapPage = options.page;
+    this.accountId = typeof options.accountId === "string" ? options.accountId : "";
+    this.recoverySourceId = typeof options.recoverySourceId === "string" ? options.recoverySourceId : "";
+    this.recoveryStore = options.recoveryStore ?? null;
+    this.recoveredLocalRecords = [];
+    this.recoveryStorageWarningShown = false;
     this.api = options.api;
     this.onSnapshot = options.onSnapshot ?? (() => undefined);
     this.onPresence = options.onPresence ?? (() => undefined);
@@ -249,7 +254,8 @@ class PageCollaborationSession {
     this.doc.on("update", (update, origin) => {
       const source = origin === REMOTE_ORIGIN ? "remote" : origin === BOOTSTRAP_ORIGIN ? "bootstrap" : "local";
       this.emitSnapshot(source);
-      if (origin !== REMOTE_ORIGIN && origin !== BOOTSTRAP_ORIGIN) {
+      if (origin !== REMOTE_ORIGIN && origin !== BOOTSTRAP_ORIGIN && origin !== RECOVERY_ORIGIN) {
+        this.persistLocalRecovery();
         if (this.synced) this.sendDocumentUpdate(update);
         else this.needsRecovery = true;
       }
@@ -258,8 +264,61 @@ class PageCollaborationSession {
   }
 
   async start() {
+    this.restoreLocalRecovery();
     await this.connect();
     return this;
+  }
+
+  restoreLocalRecovery() {
+    const records = this.recoveryStore?.loadAll?.(this.accountId, this.page.id) ?? [];
+    if (!records.length) return false;
+    const recovered = [];
+    for (const record of records) {
+      try {
+        this.Y.applyUpdate(this.doc, record.update, RECOVERY_ORIGIN);
+        recovered.push({ sourceId: record.sourceId, generation: record.generation });
+      } catch (error) {
+        this.recoveryStore?.remove?.(this.accountId, this.page.id, record.sourceId, record.generation);
+        this.onError(new Error(`A local collaboration recovery record is invalid: ${error?.message || error}`));
+      }
+    }
+    if (!recovered.length) return false;
+    this.recoveredLocalRecords = recovered;
+    this.needsRecovery = true;
+    return true;
+  }
+
+  persistLocalRecovery() {
+    if (!this.recoveryStore || !this.accountId || !this.recoverySourceId) return false;
+    let stateUpdate;
+    try {
+      stateUpdate = this.Y.encodeStateAsUpdate(this.doc);
+    } catch (error) {
+      this.onError(new Error(`The collaboration recovery state could not be encoded: ${error?.message || error}`));
+      return false;
+    }
+    const generation = this.recoveryStore.save(
+      this.accountId,
+      this.page.id,
+      this.recoverySourceId,
+      stateUpdate
+    );
+    if (!generation && !this.recoveryStorageWarningShown) {
+      this.recoveryStorageWarningShown = true;
+      this.onError(new Error("The browser could not save a local collaboration recovery copy"));
+    }
+    return Boolean(generation);
+  }
+
+  clearLocalRecovery() {
+    if (!this.recoveryStore || !this.accountId) return;
+    if (this.recoverySourceId) {
+      this.recoveryStore.remove(this.accountId, this.page.id, this.recoverySourceId);
+    }
+    for (const record of this.recoveredLocalRecords) {
+      this.recoveryStore.remove(this.accountId, this.page.id, record.sourceId, record.generation);
+    }
+    this.recoveredLocalRecords = [];
   }
 
   get isReady() {
@@ -270,8 +329,12 @@ class PageCollaborationSession {
     return this.destroyed;
   }
 
+  get hasUnconfirmedLocalChanges() {
+    return Boolean(this.pendingLocalUpdates || this.needsRecovery || this.startupUpdatePending);
+  }
+
   get hasPendingChanges() {
-    return Boolean(this.pendingLocalUpdates || this.materializeTimer || this.needsRecovery);
+    return Boolean(this.hasUnconfirmedLocalChanges || this.materializeTimer);
   }
 
   getSnapshot() {
@@ -522,7 +585,10 @@ class PageCollaborationSession {
 
   async destroy({ flush = true } = {}) {
     if (this.destroyed) return;
-    if (flush && this.isReady) await this.flushMaterialization().catch(() => undefined);
+    if (flush && this.hasUnconfirmedLocalChanges && !this.isReady) {
+      throw new Error("Wait for real-time synchronization before closing the document");
+    }
+    if (flush && this.isReady) await this.flushMaterialization();
     this.destroyed = true;
     clearTimeout(this.reconnectTimer);
     clearTimeout(this.materializeTimer);
@@ -665,6 +731,7 @@ class PageCollaborationSession {
         this.scheduleMaterialization();
       }
       if (this.pendingLocalUpdates === 0) {
+        this.clearLocalRecovery();
         this.resolvePendingWaiters();
         if (this.startupUpdatePending) {
           this.startupUpdatePending = false;
@@ -747,12 +814,25 @@ class PageCollaborationSession {
   }
 
   sendDocumentUpdate(update) {
-    if (!this.synced || this.socket?.readyState !== WebSocket.OPEN) {
+    const socket = this.socket;
+    if (!this.synced || socket?.readyState !== WebSocket.OPEN) {
       this.needsRecovery = true;
       return;
     }
     this.pendingLocalUpdates += 1;
-    this.socket.send(createBinaryMessage(1, update));
+    try {
+      socket.send(createBinaryMessage(1, update));
+    } catch (error) {
+      this.pendingLocalUpdates = Math.max(0, this.pendingLocalUpdates - 1);
+      this.needsRecovery = true;
+      if (this.pendingLocalUpdates === 0) this.resolvePendingWaiters();
+      this.onError(new Error(`The collaboration update could not be queued: ${error?.message || error}`));
+      try {
+        socket.close(1011, "Unable to queue collaboration update");
+      } catch {
+        // The reconnect path will resend the durable recovery snapshot.
+      }
+    }
   }
 
   requestCompaction() {
