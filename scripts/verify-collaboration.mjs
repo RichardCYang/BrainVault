@@ -341,7 +341,14 @@ function verifySourceWiring() {
   assertContains("public/collaboration-recovery-store.js", [
     "brainvault.collaborationRecovery.v1",
     "bytesToBase64",
-    "base64ToBytes"
+    "base64ToBytes",
+    "loadPageRecords"
+  ]);
+  assertContains("public/page-transition-lock.js", [
+    "brainvault.pageTransition.v1",
+    "function acquire(pageId, kind)",
+    "async function runExclusive(pageId, action)",
+    "ifAvailable: true"
   ]);
   assertContains("public/app.js", [
     "createPageCollaboration",
@@ -349,7 +356,11 @@ function verifySourceWiring() {
     "recoverySourceId: pageDraftSourceId",
     "recoveryStore: collaborationRecoveryStore",
     "flushMaterialization({ compact: collaborationCompact })",
-    "flushPendingPageEdits({ collaborationCompact: false })",
+    "flushPendingPageEdits({ allowLocked: true, collaborationCompact: false })",
+    "pageTransitionLock.runExclusive(pageId",
+    "assertNoPendingLocalPageDrafts(pageId)",
+    "assertNoPendingLocalCollaborationRecovery(pageId)",
+    "refreshCollaborativePageDraftRecovery",
     "adoptAttachment",
     "sharing.syncRequired"
   ]);

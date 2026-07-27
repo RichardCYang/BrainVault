@@ -35,6 +35,21 @@ describe("collaboration recovery store", () => {
     expect(store.loadAll("user-2", "page-1")).toEqual([]);
   });
 
+  it("finds unconfirmed page recovery across accounts in the same browser", () => {
+    const store = createCollaborationRecoveryStore(createMemoryStorage());
+    store.save("owner", "page-1", "owner-tab", new Uint8Array([1, 2]));
+    store.save("collaborator", "page-1", "collaborator-tab", new Uint8Array([3, 4]));
+    store.save("collaborator", "page-2", "other-page-tab", new Uint8Array([5]));
+
+    expect(store.loadPageRecords("page-1").map(({ accountId, sourceId }) => ({ accountId, sourceId }))).toEqual(
+      expect.arrayContaining([
+        { accountId: "owner", sourceId: "owner-tab" },
+        { accountId: "collaborator", sourceId: "collaborator-tab" }
+      ])
+    );
+    expect(store.loadPageRecords("page-1")).toHaveLength(2);
+  });
+
   it("does not skip a valid recovery record after removing a corrupt neighbor", () => {
     const storage = createMemoryStorage();
     storage.setItem(

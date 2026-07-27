@@ -30,6 +30,7 @@ import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-re
 import { createPageCollaboration } from "./collaboration.js";
 import { assertCollaborationExitSafe } from "./collaboration-exit-guard.js";
 import { createCollaborationRecoveryStore } from "./collaboration-recovery-store.js";
+import { createPageTransitionLock } from "./page-transition-lock.js";
 
 const tokenKey = "brainvault.token";
 const rootParentKey = "__root__";
@@ -49,9 +50,17 @@ function createPageDraftSourceId() {
 // Generate this in memory instead of sessionStorage. Browsers may clone sessionStorage
 // when a tab is duplicated, which would let two live tabs overwrite the same draft.
 const pageDraftStoragePrefix = "brainvault.pageDraft.v2:";
+const pageTransitionStoragePrefix = "brainvault.pageTransition.v1";
 const pageDraftSourceId = createPageDraftSourceId();
 const pageDraftStore = createPageDraftStore(window.localStorage, { sourceId: pageDraftSourceId });
 const collaborationRecoveryStore = createCollaborationRecoveryStore(window.localStorage);
+const pageTransitionLock = createPageTransitionLock(window.localStorage, {
+  prefix: pageTransitionStoragePrefix,
+  sourceId: pageDraftSourceId,
+  lockManager: window.navigator.locks
+});
+let activePageTransitionLease = null;
+let pageTransitionUnlockTimer = null;
 
 const emojiSearchIndex = emojiRecords.map((record) =>
   `${record[0]} ${record[2]} ${record[3]} ${record[4]} ${record[5]}`.toLocaleLowerCase()
@@ -2437,11 +2446,31 @@ function isCollaborationReady() {
   return !isCollaborativePage() || Boolean(state.collaborationSession?.isReady);
 }
 
+function schedulePageTransitionUnlock(transition) {
+  window.clearTimeout(pageTransitionUnlockTimer);
+  pageTransitionUnlockTimer = null;
+  if (!transition?.expiresAt) return;
+  const delay = Math.max(0, transition.expiresAt - Date.now() + 25);
+  pageTransitionUnlockTimer = window.setTimeout(() => {
+    pageTransitionUnlockTimer = null;
+    syncPageModeUi();
+  }, delay);
+}
+
+function isPagePersistenceTransitionLocked(page = state.selectedPage) {
+  if (!page?.id) return false;
+  if (activePageTransitionLease?.pageId === page.id) return true;
+  const transition = pageTransitionLock.read(page.id);
+  schedulePageTransitionUnlock(transition);
+  return Boolean(transition);
+}
+
 function isPageInteractionLocked() {
   return (
     state.pageModeChanging ||
     state.pageEditLockDepth > 0 ||
     blockOrderSaving ||
+    isPagePersistenceTransitionLocked() ||
     (isCollaborativePage() && !isCollaborationReady())
   );
 }
@@ -2562,7 +2591,7 @@ function syncPageModeUi() {
   elements.archivePageButton.disabled = controlsReadOnly || !owner;
   elements.archivePageButton.classList.toggle("hidden", !owner);
   elements.sharePageButton.classList.toggle("hidden", !state.selectedPage || !owner);
-  elements.sharePageButton.disabled = state.pageModeChanging || state.pageEditLockDepth > 0;
+  elements.sharePageButton.disabled = interactionLocked;
   elements.blockList.setAttribute("aria-readonly", String(controlsReadOnly));
   elements.blockList.setAttribute("aria-label", t(readOnly ? "page.readerAria" : "page.editorAria"));
   elements.blockEditorHelp.innerHTML = t(readOnly ? "page.readOnlyHelp" : "page.editorHelp");
@@ -2857,6 +2886,41 @@ async function withPageEditLock(action, { flush = true } = {}) {
   } finally {
     unlockPageEdits();
   }
+}
+
+function waitForPageTransitionPropagation() {
+  return new Promise((resolve) => window.setTimeout(resolve, 50));
+}
+
+async function withPagePersistenceTransition(pageId, kind, action) {
+  if (activePageTransitionLease) throw new Error(t("sharing.transitionBusy"));
+  const result = await pageTransitionLock.runExclusive(pageId, async () => {
+    const lease = pageTransitionLock.acquire(pageId, kind);
+    if (!lease) throw new Error(t("sharing.transitionBusy"));
+    let currentLease = lease;
+    activePageTransitionLease = currentLease;
+    const renewalTimer = window.setInterval(() => {
+      const renewed = pageTransitionLock.renew(currentLease);
+      if (!renewed) return;
+      currentLease = renewed;
+      if (activePageTransitionLease?.token === lease.token) activePageTransitionLease = renewed;
+    }, Math.max(1_000, Math.floor(pageTransitionLock.ttlMs / 3)));
+    syncPageModeUi();
+    try {
+      // Give other same-origin tabs a storage event turn. They lock their editor
+      // and flush any durable draft before this tab validates the transition.
+      await waitForPageTransitionPropagation();
+      if (!pageTransitionLock.owns(currentLease)) throw new Error(t("sharing.transitionBusy"));
+      return await action();
+    } finally {
+      window.clearInterval(renewalTimer);
+      pageTransitionLock.release(currentLease);
+      if (activePageTransitionLease?.token === lease.token) activePageTransitionLease = null;
+      syncPageModeUi();
+    }
+  });
+  if (!result?.acquired) throw new Error(t("sharing.transitionBusy"));
+  return result.value;
 }
 
 function getJsonPayloadByteLength(payload) {
@@ -3199,28 +3263,66 @@ function renderCollectionView() {
   }
 }
 
-function getOrphanedPageDrafts() {
-  if (!state.user?.id) return [];
-  const availablePageIds = new Set(state.allPages.map((page) => page.id));
-  return pageDraftStore
-    .loadUserDrafts(state.user.id)
-    .filter((record) => !availablePageIds.has(record.pageId))
-    .map((record) => ({
-      pageId: record.pageId,
-      sourceId: record.sourceId,
-      updatedAt: new Date(record.updatedAt).toISOString(),
-      title: record.title,
-      blocks: record.blocks,
-      blockOrder: record.blockOrder
-    }));
+function getLocalPageDraftRecords(pageId) {
+  if (!state.user?.id || !pageId) return [];
+  return pageDraftStore.loadPageDrafts(state.user.id, pageId);
 }
 
-function appendOrphanedPageDraftRecovery() {
-  const drafts = getOrphanedPageDrafts();
-  if (!drafts.length) return;
+function assertNoPendingLocalPageDrafts(pageId) {
+  const records = getLocalPageDraftRecords(pageId);
+  if (!records.length) return;
+  throw new Error(t("sharing.localDraftsPending", { count: formatNumber(records.length) }));
+}
 
+function assertNoPendingLocalCollaborationRecovery(pageId) {
+  if (!pageId) return;
+  // Final access removal can strand edits from a collaborator logged into a
+  // different same-origin tab, so inspect every account represented locally.
+  const records = collaborationRecoveryStore.loadPageRecords(pageId);
+  if (!records.length) return;
+  throw new Error(
+    t("sharing.localCollaborationRecoveryPending", { count: formatNumber(records.length) })
+  );
+}
+
+function serializePageDraftRecord(record, reason) {
+  return {
+    reason,
+    pageId: record.pageId,
+    sourceId: record.sourceId,
+    updatedAt: new Date(record.updatedAt).toISOString(),
+    title: record.title,
+    blocks: record.blocks,
+    blockOrder: record.blockOrder
+  };
+}
+
+function getCollaborativePageDrafts(pageId) {
+  return getLocalPageDraftRecords(pageId).map((record) =>
+    serializePageDraftRecord(record, "collaboration-enabled")
+  );
+}
+
+function getOrphanedPageDrafts() {
+  if (!state.user?.id) return [];
+  const pageById = new Map(state.allPages.map((page) => [page.id, page]));
+  return pageDraftStore
+    .loadUserDrafts(state.user.id)
+    .flatMap((record) => {
+      const page = pageById.get(record.pageId);
+      if (page && !isCollaborativePage(page)) return [];
+      return [serializePageDraftRecord(record, page ? "collaboration-enabled" : "unavailable")];
+    });
+}
+
+function appendPageDraftRecoveryPanel(container, drafts, { home = false, collaborative = false } = {}) {
+  if (!drafts.length) return;
   const panel = document.createElement("section");
-  panel.className = "local-draft-recovery-panel home-local-draft-recovery-panel";
+  panel.className = [
+    "local-draft-recovery-panel",
+    home ? "home-local-draft-recovery-panel" : "",
+    collaborative ? "collaboration-local-draft-recovery-panel" : ""
+  ].filter(Boolean).join(" ");
   panel.setAttribute("role", "alert");
 
   const heading = document.createElement("strong");
@@ -3230,7 +3332,18 @@ function appendOrphanedPageDraftRecovery() {
   details.tabIndex = 0;
   details.textContent = JSON.stringify(drafts, null, 2);
   panel.append(heading, details);
-  elements.homeDocumentList.append(panel);
+  container.append(panel);
+}
+
+function appendOrphanedPageDraftRecovery() {
+  appendPageDraftRecoveryPanel(elements.homeDocumentList, getOrphanedPageDrafts(), { home: true });
+}
+
+function refreshCollaborativePageDraftRecovery() {
+  elements.blockList.querySelector(".collaboration-local-draft-recovery-panel")?.remove();
+  const page = state.selectedPage;
+  if (state.workspaceView !== "page" || !isCollaborativePage(page)) return;
+  appendPageDraftRecoveryPanel(elements.blockList, getCollaborativePageDrafts(page.id), { collaborative: true });
 }
 
 function renderHome() {
@@ -7212,6 +7325,7 @@ function renderSelectedPage() {
       );
     }
   }
+  if (isCollaborativePage(page)) refreshCollaborativePageDraftRecovery();
 
   syncPageModeUi();
   renderPages();
@@ -8545,16 +8659,23 @@ elements.sharePageForm.addEventListener("submit", async (event) => {
   setSharePageMessage(t("sharing.adding"));
   try {
     const pageId = state.selectedPage.id;
-    const data = await api(`/api/pages/${encodeURIComponent(pageId)}/shares`, {
-      method: "POST",
-      body: { username }
+    await withPagePersistenceTransition(pageId, "share-add", async () => {
+      // The durable page-draft store is shared by same-origin tabs. Recheck it
+      // immediately before changing persistence modes so another tab's direct-edit
+      // recovery copy cannot become invisible behind the collaboration editor.
+      await flushPendingPageEdits({ allowLocked: true });
+      assertNoPendingLocalPageDrafts(pageId);
+      const data = await api(`/api/pages/${encodeURIComponent(pageId)}/shares`, {
+        method: "POST",
+        body: { username }
+      });
+      if (state.selectedPage?.id !== pageId) return;
+      state.sharePageEntries.push(data.share);
+      elements.sharePageForm.reset();
+      renderSharePageList();
+      await setSelectedPageShareCount(Number(data.count ?? state.sharePageEntries.length));
+      setSharePageMessage(t("sharing.added", { username: data.share?.user?.username ?? username }));
     });
-    if (state.selectedPage?.id !== pageId) return;
-    state.sharePageEntries.push(data.share);
-    elements.sharePageForm.reset();
-    renderSharePageList();
-    await setSelectedPageShareCount(Number(data.count ?? state.sharePageEntries.length));
-    setSharePageMessage(t("sharing.added", { username: data.share?.user?.username ?? username }));
   } catch (error) {
     setSharePageMessage(error.message, true);
   } finally {
@@ -8572,19 +8693,28 @@ elements.sharePageList.addEventListener("click", async (event) => {
   button.disabled = true;
   setSharePageMessage(t("sharing.removing", { username }));
   try {
-    if (state.sharePageEntries.length === 1) {
-      await flushPendingPageEdits({ collaborationCompact: false });
-      if (state.collaborationSession) await destroyPageCollaboration({ flush: false });
-    }
-    const data = await api(
-      `/api/pages/${encodeURIComponent(pageId)}/shares/${encodeURIComponent(userId)}`,
-      { method: "DELETE" }
-    );
-    if (state.selectedPage?.id !== pageId) return;
-    state.sharePageEntries = state.sharePageEntries.filter((share) => share.user?.id !== userId);
-    renderSharePageList();
-    await setSelectedPageShareCount(Number(data.count ?? state.sharePageEntries.length));
-    setSharePageMessage(t("sharing.removed", { username }));
+    await withPagePersistenceTransition(pageId, "share-remove", async () => {
+      // A recovery record from this or another same-origin tab represents a Yjs
+      // state that has not been acknowledged by the server. Never remove access
+      // while one is present; final removal would make that state unreachable.
+      await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false });
+      assertNoPendingLocalCollaborationRecovery(pageId);
+      if (state.sharePageEntries.length === 1) {
+        if (state.collaborationSession) await destroyPageCollaboration({ flush: false });
+        // Closing the current session is asynchronous. Check once more before the
+        // destructive request so a concurrent tab update cannot slip past the guard.
+        assertNoPendingLocalCollaborationRecovery(pageId);
+      }
+      const data = await api(
+        `/api/pages/${encodeURIComponent(pageId)}/shares/${encodeURIComponent(userId)}`,
+        { method: "DELETE" }
+      );
+      if (state.selectedPage?.id !== pageId) return;
+      state.sharePageEntries = state.sharePageEntries.filter((share) => share.user?.id !== userId);
+      renderSharePageList();
+      await setSelectedPageShareCount(Number(data.count ?? state.sharePageEntries.length));
+      setSharePageMessage(t("sharing.removed", { username }));
+    });
   } catch (error) {
     button.disabled = false;
     if (isCollaborativePage() && !state.collaborationSession) {
@@ -9155,8 +9285,26 @@ window.addEventListener("online", () => {
 });
 
 window.addEventListener("storage", (event) => {
+  if (event.key?.startsWith(`${pageTransitionStoragePrefix}:`)) {
+    syncPageModeUi();
+    const pageId = state.selectedPage?.id;
+    const transition = pageId ? pageTransitionLock.read(pageId) : null;
+    if (transition && transition.sourceId !== pageDraftSourceId && canPersistSelectedPage()) {
+      flushPendingPageEdits({ allowLocked: true, collaborationCompact: false }).catch((error) =>
+        setStatus(error.message, true)
+      );
+    }
+    return;
+  }
   if (!event.key?.startsWith(pageDraftStoragePrefix)) return;
   if (state.workspaceView === "home") renderHome();
+  const page = state.selectedPage;
+  const selectedPageDraftPrefix = state.user?.id && page?.id
+    ? `${pageDraftStoragePrefix}${encodeURIComponent(state.user.id)}:${encodeURIComponent(page.id)}:`
+    : null;
+  if (selectedPageDraftPrefix && event.key.startsWith(selectedPageDraftPrefix)) {
+    refreshCollaborativePageDraftRecovery();
+  }
 });
 
 elements.blockContextMenu.addEventListener("keydown", (event) => {

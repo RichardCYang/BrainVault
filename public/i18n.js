@@ -280,7 +280,10 @@ export const translationCatalogs = {
       activeEditors: "{count} active collaborator(s)",
       remoteEditing: "{name} is editing",
       syncRequired: "Wait for the real-time document to finish syncing.",
-      accessChanged: "Your access to this shared page changed."
+      accessChanged: "Your access to this shared page changed.",
+      localDraftsPending: "Collaboration is blocked because {count} unsaved local draft record(s) remain in this or another tab. Let every tab finish saving or copy the recovery panel, then try again.",
+      localCollaborationRecoveryPending: "Sharing cannot be changed because {count} unconfirmed real-time recovery record(s) remain in this browser. Reconnect every tab and let synchronization finish, then try again.",
+      transitionBusy: "Another tab is already changing this page's sharing mode. Try again after that operation finishes."
     },
     menu: {
       slashAria: "Choose block type",
@@ -605,7 +608,7 @@ export const translationCatalogs = {
       localDraftOverwriteCancelled: "The recovered content remains only in this browser and was not saved over the newer server version.",
       resolveRecoveredDraftConflict: "Resolve the recovered draft conflict before saving, archiving, deleting, or replacing content. Use the block menu’s Save block action, or edit the page title and confirm the overwrite.",
       localDraftStorageFailed: "Unsaved changes could not be stored for crash recovery. Keep this page open until saving succeeds.",
-      orphanedLocalDrafts: "Unsaved changes for a deleted or unavailable page were preserved from another tab or earlier session. Copy the recovery data below before clearing browser storage.",
+      orphanedLocalDrafts: "Unsaved changes for a deleted, unavailable, or collaboration-enabled page were preserved from another tab or earlier session. Copy the recovery data below before clearing browser storage.",
       ready: "Ready.",
       getStarted: "Log in or sign up to get started.",
       loginRequired: "Please log in.",
@@ -1262,7 +1265,10 @@ export const translationCatalogs = {
       activeEditors: "현재 공동 편집자 {count}명",
       remoteEditing: "{name} 편집 중",
       syncRequired: "실시간 문서 동기화가 끝날 때까지 기다려 주세요.",
-      accessChanged: "이 공유 페이지에 대한 접근 권한이 변경되었습니다."
+      accessChanged: "이 공유 페이지에 대한 접근 권한이 변경되었습니다.",
+      localDraftsPending: "이 탭 또는 다른 탭에 미저장 로컬 초안 {count}개가 남아 있어 공동 편집을 시작할 수 없습니다. 모든 탭의 저장을 완료하거나 복구 패널의 내용을 복사한 뒤 다시 시도하세요.",
+      localCollaborationRecoveryPending: "이 브라우저에 서버가 확인하지 않은 실시간 편집 복구본 {count}개가 남아 있어 공유 설정을 변경할 수 없습니다. 모든 탭을 다시 연결해 동기화를 완료한 뒤 다시 시도하세요.",
+      transitionBusy: "다른 탭에서 이 페이지의 공유 모드를 변경하고 있습니다. 해당 작업이 끝난 뒤 다시 시도하세요."
     },
     menu: {
       slashAria: "블록 타입 선택",
@@ -1568,7 +1574,7 @@ export const translationCatalogs = {
       localDraftOverwriteCancelled: "복구한 내용은 이 브라우저에만 보존했으며 최신 서버 버전 위에 저장하지 않았습니다.",
       resolveRecoveredDraftConflict: "저장·보관·삭제·내용 교체 전에 복구 초안 충돌을 해결하세요. 블록 메뉴의 ‘블록 저장’을 사용하거나 페이지 제목을 편집한 뒤 덮어쓰기를 확인하세요.",
       localDraftStorageFailed: "장애 복구용 로컬 저장소에 미저장 변경사항을 기록하지 못했습니다. 저장이 완료될 때까지 이 페이지를 열어 두세요.",
-      orphanedLocalDrafts: "다른 탭이나 이전 세션에 남아 있던, 삭제되었거나 현재 열 수 없는 페이지의 미저장 변경사항을 보존했습니다. 브라우저 저장소를 지우기 전에 아래 복구 데이터를 복사하세요.",
+      orphanedLocalDrafts: "다른 탭이나 이전 세션에 남아 있던, 삭제되었거나 현재 열 수 없거나 공동 편집으로 전환된 페이지의 미저장 변경사항을 보존했습니다. 브라우저 저장소를 지우기 전에 아래 복구 데이터를 복사하세요.",
       ready: "준비되었습니다.",
       getStarted: "로그인하거나 회원가입해서 시작하세요.",
       loginRequired: "로그인이 필요합니다.",

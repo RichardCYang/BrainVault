@@ -7,6 +7,7 @@ const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const collaboration = readFileSync(new URL("../public/collaboration.js", import.meta.url), "utf8");
 const exitGuard = readFileSync(new URL("../public/collaboration-exit-guard.js", import.meta.url), "utf8");
 const recoveryStore = readFileSync(new URL("../public/collaboration-recovery-store.js", import.meta.url), "utf8");
+const transitionLock = readFileSync(new URL("../public/page-transition-lock.js", import.meta.url), "utf8");
 const i18n = readFileSync(new URL("../public/i18n.js", import.meta.url), "utf8");
 const migration = readFileSync(
   new URL("../migrations/020_page_sharing_yjs_collaboration.sql", import.meta.url),
@@ -42,6 +43,12 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(collaboration).toContain("this.startupUpdatePending");
     expect(exitGuard).toContain("assertCollaborationExitSafe");
     expect(recoveryStore).toContain("brainvault.collaborationRecovery.v1");
+    expect(recoveryStore).toContain("loadPageRecords");
+    expect(transitionLock).toContain("brainvault.pageTransition.v1");
+    expect(transitionLock).toContain("function acquire(pageId, kind)");
+    expect(transitionLock).toContain("async function runExclusive(pageId, action)");
+    expect(app).toContain("lockManager: window.navigator.locks");
+    expect(app).toContain("withPagePersistenceTransition");
     expect(collaboration).toContain("persistLocalRecovery");
     expect(collaboration).toContain("restoreLocalRecovery");
     expect(collaboration).toContain("clearLocalRecovery");

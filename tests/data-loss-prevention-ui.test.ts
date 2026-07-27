@@ -86,6 +86,48 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("if (!activatePersistedPageDraft(recovery)) setStatus(t(\"status.documentOpened\"));");
   });
 
+  it("blocks collaboration transitions while another tab still owns durable recovery data", () => {
+    expect(client).toContain('import { createPageTransitionLock } from "./page-transition-lock.js"');
+    expect(client).toContain("function withPagePersistenceTransition(pageId, kind, action)");
+    expect(client).toContain("pageTransitionLock.runExclusive(pageId");
+    expect(client).toContain("lockManager: window.navigator.locks");
+    expect(client).toContain("if (!pageTransitionLock.owns(currentLease))");
+    expect(client).toContain("isPagePersistenceTransitionLocked()");
+    expect(client).toContain('event.key?.startsWith(`${pageTransitionStoragePrefix}:`)');
+    expect(client).toContain("flushPendingPageEdits({ allowLocked: true, collaborationCompact: false })");
+    expect(client).toContain("function assertNoPendingLocalPageDrafts(pageId)");
+    expect(client).toContain("pageDraftStore.loadPageDrafts(state.user.id, pageId)");
+    expect(client).toContain("function assertNoPendingLocalCollaborationRecovery(pageId)");
+    expect(client).toContain("collaborationRecoveryStore.loadPageRecords(pageId)");
+    expect(client).toContain('page ? "collaboration-enabled" : "unavailable"');
+    expect(client).toContain("if (page && !isCollaborativePage(page)) return [];");
+    expect(client).toContain("function refreshCollaborativePageDraftRecovery()");
+    expect(client).toContain("appendPageDraftRecoveryPanel(elements.blockList, getCollaborativePageDrafts(page.id), { collaborative: true })");
+    expect(client).toContain("refreshCollaborativePageDraftRecovery();");
+
+    const shareStart = client.indexOf('elements.sharePageForm.addEventListener("submit"');
+    const shareEnd = client.indexOf('elements.sharePageList.addEventListener("click"', shareStart);
+    const shareBody = client.slice(shareStart, shareEnd);
+    expect(shareBody).toContain('withPagePersistenceTransition(pageId, "share-add"');
+    expect(shareBody).toContain("await flushPendingPageEdits({ allowLocked: true });");
+    expect(shareBody).toContain("assertNoPendingLocalPageDrafts(pageId);");
+    expect(shareBody.indexOf("assertNoPendingLocalPageDrafts(pageId);")).toBeLessThan(
+      shareBody.indexOf("const data = await api")
+    );
+
+    const removeStart = shareEnd;
+    const removeEnd = client.indexOf('document.addEventListener("keydown"', removeStart);
+    const removeBody = client.slice(removeStart, removeEnd);
+    expect(removeBody).toContain('withPagePersistenceTransition(pageId, "share-remove"');
+    expect(removeBody).toContain(
+      "await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false });"
+    );
+    expect(removeBody.match(/assertNoPendingLocalCollaborationRecovery\(pageId\);/g)).toHaveLength(2);
+    expect(removeBody.indexOf("assertNoPendingLocalCollaborationRecovery(pageId);")).toBeLessThan(
+      removeBody.indexOf("const data = await api")
+    );
+  });
+
   it("keeps failed callout style edits durable instead of rolling them back", () => {
     const changeStart = client.indexOf("async function changeCalloutType");
     const changeEnd = client.indexOf("function closeBlockContextMenu", changeStart);

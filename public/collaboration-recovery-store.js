@@ -96,6 +96,35 @@ export function createCollaborationRecoveryStore(
     }
   }
 
+  function loadPageRecords(pageId) {
+    if (!storage || !isNonEmptyString(pageId)) return [];
+    const storagePrefix = `${prefix}:`;
+    try {
+      const keys = [];
+      for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index);
+        if (key?.startsWith(storagePrefix)) keys.push(key);
+      }
+
+      const records = [];
+      for (const key of keys) {
+        try {
+          const raw = storage.getItem(key);
+          if (!raw) continue;
+          const value = JSON.parse(raw);
+          if (!isNonEmptyString(value?.accountId) || value?.pageId !== pageId) continue;
+          const record = readRecord(key, value.accountId, pageId);
+          if (record) records.push({ accountId: value.accountId, ...record });
+        } catch {
+          // A corrupt record for another account must not hide valid page recovery.
+        }
+      }
+      return records.sort((left, right) => left.updatedAt - right.updatedAt);
+    } catch {
+      return [];
+    }
+  }
+
   function save(accountId, pageId, sourceId, update) {
     if (
       !storage
@@ -147,5 +176,5 @@ export function createCollaborationRecoveryStore(
     }
   }
 
-  return { loadAll, save, remove };
+  return { loadAll, loadPageRecords, save, remove };
 }
