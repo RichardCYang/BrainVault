@@ -13,6 +13,7 @@ import {
   CollaborationDocumentError,
   validateCollaborationBlockHierarchy
 } from "../src/lib/collaboration-document.ts";
+import { shouldClearLocalRecoveryAfterAck } from "../public/collaboration.js";
 
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -329,6 +330,8 @@ function verifySourceWiring() {
     "The collaboration recovery state could not be encoded for synchronization",
     "The collaboration snapshot could not be queued",
     "if (this.sendDocumentUpdate(fullStateUpdate)) this.needsRecovery = false",
+    "shouldClearLocalRecoveryAfterAck(this.pendingLocalUpdates, this.needsRecovery)",
+    "if (this.startupUpdatePending && !this.needsRecovery)",
     "if (flush && this.hasUnconfirmedLocalChanges && !this.isReady)",
     "canonical-attachment",
     "clearMaterializedAttachmentTombstones",
@@ -353,6 +356,12 @@ function verifySourceWiring() {
   assertContains("public/index.html", ["id=\"share-page-layer\"", "id=\"collaboration-indicator\""]);
 }
 
+
+function verifyRecoveryAcknowledgementSafety() {
+  assert.equal(shouldClearLocalRecoveryAfterAck(0, true), false);
+  assert.equal(shouldClearLocalRecoveryAfterAck(1, false), false);
+  assert.equal(shouldClearLocalRecoveryAfterAck(0, false), true);
+}
 
 function verifyDependencyPins() {
   const packageJson = JSON.parse(read("package.json"));
@@ -385,10 +394,11 @@ function verifySyntax() {
 async function main() {
   verifySourceWiring();
   verifyDependencyPins();
+  verifyRecoveryAcknowledgementSafety();
   verifyCollaborationHierarchy();
   await verifyWebSocketProtocol();
   const checkedFiles = verifySyntax();
-  console.log(`[verify-collaboration] OK: source wiring, exact Yjs dependency pins, hierarchy invariants, RFC 6455 protocol behavior, and syntax for ${checkedFiles} file(s).`);
+  console.log(`[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, hierarchy invariants, RFC 6455 protocol behavior, and syntax for ${checkedFiles} file(s).`);
 }
 
 main().catch((error) => {

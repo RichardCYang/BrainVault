@@ -752,9 +752,14 @@ class PageCollaborationSession {
         this.scheduleMaterialization();
       }
       if (this.pendingLocalUpdates === 0) {
-        this.clearLocalRecovery();
+        // A different update may have failed to queue while this acknowledgement
+        // was in flight. Keep the durable full-document recovery copy until every
+        // local change is known to have reached the server.
+        if (shouldClearLocalRecoveryAfterAck(this.pendingLocalUpdates, this.needsRecovery)) {
+          this.clearLocalRecovery();
+        }
         this.resolvePendingWaiters();
-        if (this.startupUpdatePending) {
+        if (this.startupUpdatePending && !this.needsRecovery) {
           this.startupUpdatePending = false;
           this.markReady();
         }
@@ -924,6 +929,14 @@ class PageCollaborationSession {
       void this.flushMaterialization().catch(() => undefined);
     }, MATERIALIZE_DELAY_MS);
   }
+}
+
+/**
+ * @param {number} pendingLocalUpdates
+ * @param {boolean} needsRecovery
+ */
+export function shouldClearLocalRecoveryAfterAck(pendingLocalUpdates, needsRecovery) {
+  return pendingLocalUpdates === 0 && needsRecovery !== true;
 }
 
 export async function createPageCollaboration(options) {
