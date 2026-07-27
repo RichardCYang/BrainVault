@@ -228,6 +228,26 @@ afterAll(async () => {
 });
 
 describe("Complete data transfer routes", () => {
+  it("locks workspace pages before establishing the export snapshot", async () => {
+    const plan = await prepareUserDataBackup(userId);
+    try {
+      const pageLockCall = store.query.mock.calls.findIndex(([sql]) =>
+        typeof sql === "string" && sql.includes("FROM pages WHERE owner_id = ? ORDER BY") && sql.includes("FOR UPDATE")
+      );
+      const accountSnapshotCall = store.queryOne.mock.calls.findIndex(([sql]) =>
+        typeof sql === "string" && sql.includes("SELECT id, username, name") && sql.includes("FROM users WHERE id = ?")
+      );
+
+      expect(pageLockCall).toBeGreaterThanOrEqual(0);
+      expect(accountSnapshotCall).toBeGreaterThanOrEqual(0);
+      expect(store.query.mock.invocationCallOrder[pageLockCall]).toBeLessThan(
+        store.queryOne.mock.invocationCallOrder[accountSnapshotCall]
+      );
+    } finally {
+      await rm(plan.operationRoot, { recursive: true, force: true });
+    }
+  });
+
   it("refuses to export a workspace with persisted collaboration updates that are not materialized", async () => {
     store.collaborationUpdates.set(pageId, 12);
     store.collaborationMaterialized.set(pageId, 11);

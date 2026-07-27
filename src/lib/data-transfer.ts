@@ -417,13 +417,10 @@ export async function prepareUserDataBackup(userId: string) {
 
   try {
     const { snapshot, attachmentFiles } = await withUserAttachmentLock(userId, async (client) => {
-      const account = await client.queryOne<RawAccountRow>(
-        `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon
-         FROM users WHERE id = ?`,
-        [userId]
-      );
-      if (!account) throw new ApiError(404, "NOT_FOUND", "User not found");
-
+      // Lock the complete page set before the first consistent read establishes the
+      // REPEATABLE READ snapshot. Otherwise a concurrent commit can make this locking
+      // read observe newer page versions while later non-locking reads still return
+      // older blocks and tag relations from an earlier snapshot.
       const pages = await client.query<BackupPage>(
         `SELECT id, title, icon, cover_url, is_archived, is_collection, parent_page_id, edit_version, content_version,
            DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at,
@@ -431,6 +428,13 @@ export async function prepareUserDataBackup(userId: string) {
          FROM pages WHERE owner_id = ? ORDER BY created_at ASC, id ASC FOR UPDATE`,
         [userId]
       );
+
+      const account = await client.queryOne<RawAccountRow>(
+        `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon
+         FROM users WHERE id = ?`,
+        [userId]
+      );
+      if (!account) throw new ApiError(404, "NOT_FOUND", "User not found");
       await assertWorkspaceCollaborationMaterialized(client, pages.map((page) => page.id), true);
       const blocks = await client.query<BackupBlock>(
         `SELECT b.id, b.page_id, b.parent_block_id, b.type, b.markdown, b.html_cache, b.checked, b.sort_order,
