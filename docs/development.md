@@ -14,7 +14,10 @@
 | `npm run setup` | Run environment, database, migration, and seed tasks |
 | `npm run dev` | Start the server and open the default browser after database readiness |
 | `npm run build` | Compile TypeScript into `dist/` |
-| `npm run verify:collaboration` | Check exact Yjs pins, collaboration wiring, hierarchy invariants, RFC 6455 behavior, and all executable JS/TS syntax without MariaDB |
+| `npm run reproduce:materialization-loss` | Reproduce the old browser-payload materialization loss and verify the server-authoritative fix from preserved Git history |
+| `npm run reproduce:cross-instance-loss` | Reproduce stale cross-process room compaction loss and verify the durable-tip fence |
+| `npm run verify:collaboration` | Check exact Yjs pins, collaboration wiring, durable-room freshness, hierarchy invariants, RFC 6455 behavior, and all executable JS/TS syntax without MariaDB |
+| `npm run verify:data-loss` | Execute dependency-free persistence, recovery, destructive-transition, and collaboration integrity guards |
 | `npm start` | Run the compiled server |
 | `npm test` | Validate the lockfile and run the test suite once |
 | `npm run test:watch` | Run tests in watch mode |

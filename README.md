@@ -56,6 +56,7 @@ For database permissions, demo data, alternative environment setup, and producti
 | [Features](docs/features.md) | Editor behavior, sharing, block types, backup/restore, PDF export, and languages |
 | [Collaboration](docs/collaboration.md) | Sharing permissions, Yjs/WebSocket flow, persistence, proxy setup, and verification |
 | [Collaboration verification](docs/collaboration-verification.md) | Delivery checks, integrity-proof scope, and reproducible deployment validation |
+| [데이터 손실 감사 보고서](docs/data-loss-audit-2026-07-28-ko.md) | 치명적 무결성 취약점 재현, 수정, 검증, 배포 경계 |
 | [Configuration](docs/configuration.md) | Environment variables and runtime configuration |
 | [Security](docs/security.md) | MFA, production secrets, attachment safety, and security defaults |
 | [API](docs/api.md) | Route overview, authentication, health check, and OpenAPI access |
@@ -68,7 +69,9 @@ For database permissions, demo data, alternative environment setup, and producti
 npm run dev       # Start the development server
 npm test          # Run the test suite
 npm run build     # Compile TypeScript
+npm run reproduce:cross-instance-loss # Reproduce the stale-room compaction loss and fixed behavior
 npm run verify:collaboration # Check collaboration wiring, protocol behavior, and source syntax
+npm run verify:data-loss # Check persistence and recovery integrity guards
 npm start         # Run the compiled server
 ```
 

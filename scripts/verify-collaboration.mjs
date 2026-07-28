@@ -14,6 +14,7 @@ import {
   validateCollaborationBlockHierarchy
 } from "../src/lib/collaboration-document.ts";
 import {
+  assessCollaborationWriteCheckpoint,
   currentCollaborationMaterializationVersion,
   needsCollaborationMaterialization
 } from "../src/lib/collaboration-protocol.ts";
@@ -293,6 +294,9 @@ function verifySourceWiring() {
     "maxCollaborationDocumentBytes",
     "applyValidatedYjsUpdate",
     "candidate.stateUpdate",
+    "assessCollaborationWriteCheckpoint",
+    "roomUpdateId: room.maxUpdateId",
+    'result.reason === "room-stale"',
     "broadcastCanonicalAttachment",
     "bootstrapWritePending",
     "pendingWrites",
@@ -316,7 +320,10 @@ function verifySourceWiring() {
   assertContains("src/lib/collaboration-protocol.ts", [
     "currentCollaborationMaterializationVersion = 1",
     "latestUpdateId !== state.materializedUpdateId",
-    "state.materializationVersion !== currentCollaborationMaterializationVersion"
+    "state.materializationVersion !== currentCollaborationMaterializationVersion",
+    "roomUpdateId !== durableUpdateId",
+    'reason: "room-stale"',
+    'reason: "snapshot-base-mismatch"'
   ]);
   assertContains("src/lib/collaboration-materialization.ts", [
     "materializeCollaborationUpdates",
@@ -487,6 +494,46 @@ function verifyMaterializationProvenance() {
 }
 
 
+function verifyCrossInstanceWriteFence() {
+  assert.deepEqual(assessCollaborationWriteCheckpoint({
+    durableUpdateId: 10,
+    roomUpdateId: 9,
+    snapshot: false,
+    snapshotBaseUpdateId: null
+  }), {
+    accepted: false,
+    currentUpdateId: 10,
+    reason: "room-stale"
+  });
+  assert.deepEqual(assessCollaborationWriteCheckpoint({
+    durableUpdateId: 10,
+    roomUpdateId: 10,
+    snapshot: true,
+    snapshotBaseUpdateId: 9
+  }), {
+    accepted: false,
+    currentUpdateId: 10,
+    reason: "snapshot-base-mismatch"
+  });
+  assert.deepEqual(assessCollaborationWriteCheckpoint({
+    durableUpdateId: 10,
+    roomUpdateId: 10,
+    snapshot: true,
+    snapshotBaseUpdateId: 10
+  }), { accepted: true });
+
+  const reproduction = JSON.parse(execFileSync(
+    process.execPath,
+    [join(rootDir, "scripts/reproduce-cross-instance-compaction-loss.mjs")],
+    { cwd: rootDir, encoding: "utf8" }
+  ));
+  assert.equal(reproduction.vulnerable.permanentLossWindowReproduced, true);
+  assert.equal(reproduction.fixed.staleNormalWriteRejected, true);
+  assert.equal(reproduction.fixed.staleRoomInvalidated, true);
+  assert.equal(reproduction.fixed.permanentLossWindowClosed, true);
+}
+
+
 function createMemoryStorage() {
   const values = new Map();
   return {
@@ -587,9 +634,10 @@ async function main() {
   verifyRecoveryLineageIsolation();
   verifyCollaborationHierarchy();
   verifyMaterializationProvenance();
+  verifyCrossInstanceWriteFence();
   await verifyWebSocketProtocol();
   const checkedFiles = verifySyntax();
-  console.log(`[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, server-authoritative materialization provenance, hierarchy invariants, RFC 6455 protocol behavior, and syntax for ${checkedFiles} file(s).`);
+  console.log(`[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, server-authoritative materialization provenance, cross-instance durable-room freshness, hierarchy invariants, RFC 6455 protocol behavior, and syntax for ${checkedFiles} file(s).`);
 }
 
 main().catch((error) => {

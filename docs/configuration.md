@@ -67,7 +67,7 @@ Serve production over HTTPS and use a browser that supports Web Locks. Local dev
 
 Real-time collaboration uses the same `PORT`, `CORS_ORIGIN`, and JWT signing secret as the HTTP API. No separate collaboration process or port is required. A production reverse proxy must support HTTP/1.1 WebSocket upgrades for `/api/collaboration/` and forward the browser origin and original host/protocol headers.
 
-The included collaboration hub is process-local and is intended to run as a single application process. Horizontal scaling requires a shared pub/sub and distributed update coordinator so every instance observes the same room history and presence events.
+The included collaboration hub is process-local and is intended to run as one active application process. Patched writers compare every room tip with the locked durable tip and invalidate a stale room before it can insert or compact, which prevents silent loss during accidental overlap but does not provide cross-process broadcasts. Horizontal scaling requires a shared pub/sub and distributed update coordinator so every instance observes the same room history and presence events. Drain all pre-fix collaboration writers before starting this version.
 
 The browser imports the exact `yjs@13.6.31` ESM build from jsDelivr. The built-in Content Security Policy allows that script source and `ws:`/`wss:` connections. Deployments that vendor scripts locally must update both `public/collaboration.js` and the CSP in `src/app.ts` as one reviewed change.
 

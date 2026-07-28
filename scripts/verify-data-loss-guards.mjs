@@ -138,6 +138,10 @@ const collaborationRouteSource = readFileSync(
   new URL("../src/routes/collaboration.routes.ts", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const collaborationServerSource = readFileSync(
+  new URL("../src/lib/collaboration-server.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const pageRouteSource = readFileSync(
   new URL("../src/routes/page.routes.ts", import.meta.url),
   "utf8"
@@ -184,6 +188,14 @@ assert(
   "Final-share, page, export, or restore paths are missing the materialization provenance guard"
 );
 
+assert(
+  collaborationServerSource.includes("assessCollaborationWriteCheckpoint")
+    && collaborationServerSource.includes("roomUpdateId: room.maxUpdateId")
+    && collaborationServerSource.includes('result.reason === "room-stale"')
+    && collaborationProtocolSource.includes("roomUpdateId !== durableUpdateId"),
+  "A stale process-local collaboration room can still append or compact remote durable updates"
+);
+
 const materializationReproduction = JSON.parse(execFileSync(
   process.execPath,
   [fileURLToPath(new URL("./reproduce-collaboration-materialization-loss.mjs", import.meta.url))],
@@ -194,6 +206,19 @@ assert(
     && materializationReproduction.fixed.legacyCheckpointRequiresRematerialization
     && materializationReproduction.fixed.permanentLossWindowClosed,
   "The collaboration materialization loss reproduction did not prove both vulnerable and fixed states"
+);
+
+const crossInstanceReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL("./reproduce-cross-instance-compaction-loss.mjs", import.meta.url))],
+  { encoding: "utf8" }
+));
+assert(
+  crossInstanceReproduction.vulnerable.permanentLossWindowReproduced
+    && crossInstanceReproduction.fixed.staleNormalWriteRejected
+    && crossInstanceReproduction.fixed.staleRoomInvalidated
+    && crossInstanceReproduction.fixed.permanentLossWindowClosed,
+  "The cross-instance compaction reproduction did not prove both vulnerable and fixed states"
 );
 
 const recoveredDraftActivation = section(
@@ -713,5 +738,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: destructive ordering, server-authoritative collaboration materialization, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: destructive ordering, server-authoritative collaboration materialization, cross-instance durable-room freshness fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection."
 );

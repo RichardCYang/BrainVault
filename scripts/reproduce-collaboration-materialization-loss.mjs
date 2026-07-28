@@ -7,15 +7,40 @@ import { fileURLToPath } from "node:url";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const normalize = (value) => value.replace(/\r\n/g, "\n");
 const read = (relativePath) => normalize(readFileSync(join(root, relativePath), "utf8"));
-const vulnerableCommit = execFileSync("git", ["rev-parse", "HEAD"], {
-  cwd: root,
-  encoding: "utf8"
-}).trim();
-const vulnerableRoute = normalize(execFileSync(
-  "git",
-  ["show", "HEAD:src/routes/collaboration.routes.ts"],
-  { cwd: root, encoding: "utf8" }
-));
+function readGitFile(revision, relativePath) {
+  try {
+    return normalize(execFileSync(
+      "git",
+      ["show", `${revision}:${relativePath}`],
+      { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+    ));
+  } catch {
+    return null;
+  }
+}
+
+function findVulnerableRevision() {
+  const revisions = execFileSync("git", ["rev-list", "HEAD"], {
+    cwd: root,
+    encoding: "utf8"
+  }).trim().split(/\s+/).filter(Boolean);
+  for (const revision of revisions) {
+    const route = readGitFile(revision, "src/routes/collaboration.routes.ts");
+    if (
+      route
+      && /validateCollaborationBlockHierarchy\(body\.blocks\)/.test(route)
+      && /\[body\.title, pageId\]/.test(route)
+      && /materialized_update_id = \?/.test(route)
+    ) {
+      return { revision, route };
+    }
+  }
+  throw new Error("Unable to find the vulnerable materialization implementation in Git history");
+}
+
+const vulnerableBaseline = findVulnerableRevision();
+const vulnerableCommit = vulnerableBaseline.revision;
+const vulnerableRoute = vulnerableBaseline.route;
 const fixedRoute = read("src/routes/collaboration.routes.ts");
 const fixedMigration = read("migrations/022_server_authoritative_collaboration_materialization.sql");
 const fixedProtocol = read("src/lib/collaboration-protocol.ts");

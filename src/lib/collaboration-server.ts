@@ -25,8 +25,10 @@ import {
   InvalidYjsUpdateError
 } from "./yjs-validation.js";
 import {
+  assessCollaborationWriteCheckpoint,
   maxCollaborationDocumentBytes,
-  maxCollaborationUpdateBytes
+  maxCollaborationUpdateBytes,
+  type CollaborationWriteRejectionReason
 } from "./collaboration-protocol.js";
 
 export const collaborationWebSocketProtocol = "brainvault-yjs-v1";
@@ -613,7 +615,14 @@ export class PageCollaborationHub {
 
     const candidate = applyValidatedYjsUpdate(room.document, update, maxCollaborationDocumentBytes);
     const persistedUpdate = snapshot ? Buffer.from(candidate.stateUpdate) : update;
-    let result: { accepted: true; updateId: number } | { accepted: false; currentUpdateId: number } | null;
+    let result:
+      | { accepted: true; updateId: number }
+      | {
+          accepted: false;
+          currentUpdateId: number;
+          reason: CollaborationWriteRejectionReason;
+        }
+      | null;
 
     try {
       result = await transaction(async (dbClient) => {
@@ -625,14 +634,18 @@ export class PageCollaborationHub {
         const collaborationState = await getCollaborationState(room.pageId, dbClient, { lock: true });
         assertCollaborationDocumentEpoch(collaborationState, client.documentEpoch);
 
-        if (snapshot) {
-          const currentRow = await dbClient.queryOne<{ max_update_id: number | null }>(
-            "SELECT MAX(id) AS max_update_id FROM page_yjs_updates WHERE page_id = ?",
-            [room.pageId]
-          );
-          const currentUpdateId = toSafeUpdateId(currentRow?.max_update_id ?? 0);
-          if (baseUpdateId !== currentUpdateId) return { accepted: false as const, currentUpdateId };
-        }
+        const currentRow = await dbClient.queryOne<{ max_update_id: number | null }>(
+          "SELECT MAX(id) AS max_update_id FROM page_yjs_updates WHERE page_id = ?",
+          [room.pageId]
+        );
+        const currentUpdateId = toSafeUpdateId(currentRow?.max_update_id ?? 0);
+        const checkpoint = assessCollaborationWriteCheckpoint({
+          durableUpdateId: currentUpdateId,
+          roomUpdateId: room.maxUpdateId,
+          snapshot,
+          snapshotBaseUpdateId: baseUpdateId
+        });
+        if (!checkpoint.accepted) return checkpoint;
 
         const insert = await dbClient.execute<{ insertId: number | bigint }>(
           `INSERT INTO page_yjs_updates (page_id, user_id, update_data, is_snapshot)
@@ -666,7 +679,17 @@ export class PageCollaborationHub {
     }
     if (!result.accepted) {
       candidate.document.destroy();
-      if (room.clients.has(client.id) && client.socket.isOpen) {
+      if (result.reason === "room-stale") {
+        console.warn("Invalidating a stale process-local collaboration room", {
+          pageId: room.pageId,
+          roomUpdateId: room.maxUpdateId,
+          durableUpdateId: result.currentUpdateId
+        });
+        this.invalidateRoomForReload(
+          room,
+          "Collaboration state changed on another server; reloading durable history"
+        );
+      } else if (room.clients.has(client.id) && client.socket.isOpen) {
         client.socket.sendJson({ type: "snapshot-rejected", lastUpdateId: result.currentUpdateId });
       }
       return;

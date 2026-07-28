@@ -20,6 +20,8 @@ A further expiry-focused review reproduced a separate fence-loss path even when 
 
 A final server-integrity review found an independent relational-materialization flaw. The server treated the latest Yjs update number as if it authenticated a second browser-supplied title/block payload. An authorized buggy or hostile editor could submit the correct latest number with an empty or partial payload; the server would delete canonical SQL blocks, advance the materialization marker, and allow later archive, deletion, final-share removal, export, or restore logic to discard the still-correct Yjs history. The eighth critical finding replaces the duplicate client payload with server-side Yjs-log reconstruction and adds a provenance version that forces every legacy non-empty checkpoint through safe rematerialization.
 
+A final cross-process review found a separate durable-history compaction flaw. Room fan-out was process-local, but ordinary writes did not verify that their in-memory Yjs document included the latest durable update. A stale second process could append its own edit, thereby acquiring the newest numeric update ID without acquiring the first process's document state; its next full-state snapshot then passed the old ID-only check and deleted the first edit from durable history. The ninth critical finding adds a page-lock-scoped durable-room freshness fence to every write and invalidates stale rooms before insertion or compaction.
+
 ## Reproduction before the fix
 
 1. Page `P` is collaborative. Browser/device B edits while disconnected and retains a local full-document recovery update.
@@ -300,9 +302,66 @@ npm run reproduce:materialization-loss
 
 Severity: **Critical**
 
+## Ninth critical finding: a process-local room could outrun its document state
+
+The WebSocket hub stores each room's Yjs document and `maxUpdateId` in process memory. That is safe only while every durable update observed by the database is also applied to that exact in-memory document. The previous implementation checked the database tip for snapshot frames, but ordinary update frames inserted without comparing the room tip with durable history.
+
+### Reproduction before the fix
+
+1. Application processes A and B both load page `P` at durable update ID `0` and create independent in-memory rooms.
+2. A receives `edit-A`, applies it to A's room, and commits update row `1`.
+3. B does not receive A's process-local broadcast. B applies `edit-B` to its stale room and the old server commits row `2` without checking that B's room still points at durable ID `0`.
+4. Durable incremental history now contains both edits, but B's in-memory document contains only `edit-B` while its numeric `maxUpdateId` is `2`.
+5. B submits a full-state snapshot with base ID `2`. The old snapshot-only check sees durable max `2`, accepts B's incomplete full state as row `3`, and deletes rows `1` and `2`.
+6. The only durable collaboration history now contains `edit-B`; `edit-A` is permanently gone and later relational materialization can make the truncated state canonical.
+
+The dependency-free reproduction walks preserved Git history to find the vulnerable writer and executes that exact state schedule:
+
+```json
+{
+  "baselineCommit": "741dcc1a650e253f4556948a94a233f6fe1bf60e",
+  "vulnerable": {
+    "processAUpdateId": 1,
+    "staleProcessBUpdateAccepted": true,
+    "processBRoomMaxAfterWrite": 2,
+    "processBRoomContainsEditA": false,
+    "durableBeforeCompaction": ["edit-A", "edit-B"],
+    "staleSnapshotAccepted": true,
+    "durableAfterCompaction": ["edit-B"],
+    "permanentLossWindowReproduced": true
+  },
+  "fixed": {
+    "staleNormalWriteRejected": true,
+    "staleRoomInvalidated": true,
+    "durableAfterRejectedWrite": ["edit-A"],
+    "retryAfterReloadAccepted": true,
+    "snapshotAfterReloadAccepted": true,
+    "durableAfterCompaction": ["edit-A", "edit-B"],
+    "permanentLossWindowClosed": true
+  }
+}
+```
+
+Run it with:
+
+```bash
+npm run reproduce:cross-instance-loss
+```
+
+### Implemented correction
+
+- `assessCollaborationWriteCheckpoint()` requires `room.maxUpdateId === durable MAX(id)` for every ordinary update and snapshot, not only for compaction.
+- The comparison runs in the same transaction after the page row and collaboration-state row are locked and before any update insert or old-history deletion. Patched WebSocket writers therefore serialize on the page lock and cannot turn an incomplete document into the newest accepted room state.
+- A stale room destroys its candidate document, performs no database write, invalidates the whole process-local room, and closes connected clients with code `1011`. The existing reconnect path keeps unacknowledged local full-document recovery, replays the durable server log, and resends the merged state.
+- A fresh room's snapshot must still carry an exact `baseUpdateId`; a stale snapshot base is rejected without invalidating an otherwise current room.
+- The deterministic collaboration and data-loss verifiers execute the vulnerable and fixed schedules, and a Vitest unit test covers accepted, stale-room, stale-base, matching-base, and missing-base checkpoints.
+- The fence prevents silent durable loss during accidental overlap of patched processes, but it is not a shared fan-out implementation. Normal production should still use one active application process unless a distributed pub/sub/update coordinator is added. Upgrade rollout must drain all pre-fix collaboration writers before patched instances start, because an old process cannot enforce the new check.
+
+Severity: **Critical**
+
 ## Other audited data-loss surfaces
 
-No further critical defect beyond the eight findings documented above was identified in the following paths during this review:
+No further critical defect beyond the nine findings documented above was identified in the following paths during this review:
 
 - Direct title/block saves: durable per-tab drafts are written before network submission; recovered drafts are cloned to the current source before editing; optimistic versions and mutation request hashes prevent stale or ambiguous retries from silently overwriting newer content.
 - Save coalescing: a failed/ambiguous write remains ahead of newer queued edits, so a newer edit is not sent against an unknown server version.
@@ -321,15 +380,23 @@ npm run lockfile:check
 [lockfile-registry] OK: 347 resolved URL(s) use approved portable registry hosts.
 
 npm run reproduce:materialization-loss
+baselineCommit: 54e22e141308c394006b1c23ab34aa22b63e8097
 vulnerable.permanentLossWindowReproduced=true
 fixed.legacyCheckpointRequiresRematerialization=true
 fixed.permanentLossWindowClosed=true
 
+npm run reproduce:cross-instance-loss
+baselineCommit: 741dcc1a650e253f4556948a94a233f6fe1bf60e
+vulnerable.permanentLossWindowReproduced=true
+fixed.staleNormalWriteRejected=true
+fixed.staleRoomInvalidated=true
+fixed.permanentLossWindowClosed=true
+
 npm run verify:collaboration
-[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, server-authoritative materialization provenance, hierarchy invariants, RFC 6455 protocol behavior, and syntax for 129 file(s).
+[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, server-authoritative materialization provenance, cross-instance durable-room freshness, hierarchy invariants, RFC 6455 protocol behavior, and syntax for 131 file(s).
 
 npm run verify:data-loss
-[verify-data-loss-guards] OK: destructive ordering, server-authoritative collaboration materialization, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection.
+[verify-data-loss-guards] OK: destructive ordering, server-authoritative collaboration materialization, cross-instance durable-room freshness fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection.
 
 ```
 
@@ -363,8 +430,11 @@ The verifier now asserts:
 - partially malformed direct-draft records being rejected without dropping valid or invalid fragments;
 - empty-string direct-draft, Yjs recovery, and transition records being treated as present and unsafe;
 - exact recovery-key identity matching encoded account/user, page, epoch, and source values;
-- the vulnerable Git `HEAD` route accepting same-ID browser content and the fixed route rejecting that trust boundary;
+- the vulnerable Git-history route accepting same-ID browser content and the fixed route rejecting that trust boundary;
 - ordered, locked Yjs-log reconstruction as the sole relational content source;
+- every WebSocket write comparing the process-local room tip with the locked durable tip before insertion;
+- the exact two-process schedule where an ordinary stale write made an incomplete room numerically current and compaction deleted the missing edit;
+- stale-room invalidation and reconnect/recovery preserving both concurrent edits before safe compaction;
 - migration-022 provenance defaulting legacy checkpoints to version 0 without deleting history;
 - exact update-ID plus current-version gates on final-share removal, archive, permanent delete, export, and restore;
 - malformed persisted collaboration documents failing closed instead of silently dropping blocks; and
@@ -374,7 +444,7 @@ The verifier now asserts:
 
 A clean dependency installation was attempted again after the final patch. The configured package gateway returned HTTP 503 for the existing locked dependency `zod-3.25.76.tgz`, and the local npm cache did not contain it. Consequently this environment could not run the full TypeScript build, complete Vitest suite, or MariaDB integration suite after a clean install.
 
-The dependency-free collaboration and data-loss verifiers completed successfully and parsed all 129 scanned JavaScript/TypeScript files. The new Vitest materialization tests are included for execution in a normal dependency environment, but are not claimed as executed here. No dependency version or lockfile entry was changed; `package.json` only gained the deterministic reproduction command. Run the following with registry and MariaDB access before production deployment:
+The dependency-free collaboration and data-loss verifiers completed successfully and parsed all 131 scanned JavaScript/TypeScript files. The new Vitest materialization and collaboration write-checkpoint tests are included for execution in a normal dependency environment, but are not claimed as executed here. No dependency version or lockfile entry changed; `package.json` gained only the dependency-free `reproduce:cross-instance-loss` command in this follow-up. Run the following with registry and MariaDB access before production deployment:
 
 ```bash
 npm ci
@@ -388,5 +458,7 @@ npm run db:migrate
 Apply migrations 021 and 022 before serving the updated application. Migration 022 is non-destructive: existing non-empty histories remain provenance version 0 until the updated server rematerializes them from `page_yjs_updates`. Archive, permanent deletion, final-share removal, export, and workspace restore intentionally fail closed until that succeeds.
 
 Force a full refresh or close/reopen every pre-fix browser tab during rollout: an already-running tab still has the old expiry behavior in memory even after the server files are replaced. Extra title/block fields sent by such a tab are ignored by the updated endpoint, and a pre-fix tab is still denied a new epoch-aware session until refreshed. Do not delete browser recovery storage during rollout; legacy and undecodable records are intentionally retained for manual recovery.
+
+Drain and stop every pre-fix application process before starting patched collaboration writers. Do not use a rolling overlap between old and new server versions: a pre-fix process can still accept a stale ordinary write and compact an incomplete room. After all writers are patched, the durable-tip fence fails closed during accidental process overlap, but room broadcasts remain process-local; retain a single active process until shared pub/sub and distributed room coordination are implemented.
 
 Serve production over HTTPS in a browser that exposes the Web Locks API. Safety-critical destructive transitions intentionally fail closed when that API is unavailable; normal direct editing and recovery storage remain available. Do not manually delete a transition record merely because its timestamp has expired: the updated client retains it until a contender obtains the recorded authoritative Web Lock and proves the original callback is no longer running.

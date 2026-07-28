@@ -30,6 +30,8 @@ Migration `022_server_authoritative_collaboration_materialization.sql` adds `mat
 
 A materialization request includes only the server-issued document epoch and the last received update ID as meaningful inputs. The update ID is a checkpoint, not proof that independently supplied title or block data belongs to that update. The server locks the page and Yjs history, rejects a replaced generation or stale checkpoint, replays ordered `page_yjs_updates`, decodes and validates the reconstructed document, gives attachment-deletion tombstones precedence over concurrent stale attachment maps, prevents forged attachment blocks, writes the title and blocks in one transaction, and finally records update ID plus provenance version. Legacy browser fields are ignored. Compaction persists a full state update re-encoded by the server-side Yjs document and removes older update rows only after the replacement update is committed.
 
+Every normal update and compaction write also holds the page and collaboration-state row locks while comparing the room's in-memory `maxUpdateId` with the durable `MAX(page_yjs_updates.id)`. A process-local room that missed an update committed by another application process is invalidated before any insert or history deletion. Connected clients receive close code `1011`, reconnect, replay durable history, and resend their still-unacknowledged full-document recovery state. Snapshot writes retain the additional exact `baseUpdateId` check. This is a fail-closed integrity fence; it does not provide cross-process live fan-out.
+
 When the last editor grant is removed, BrainVault requires the latest accepted Yjs update to be materialized by the current server implementation before deleting collaboration history. The same provenance gate protects archive, permanent deletion, export, and workspace restore. Removing a collaborator immediately closes that user's active sockets. Archiving or deleting a page closes the entire room.
 
 ## Document replacement and offline recovery
@@ -57,7 +59,7 @@ The WebSocket ticket is a short-lived JWT with the authenticated user ID, page I
 
 Production reverse proxies must forward WebSocket upgrades for `/api/collaboration/` and preserve `Origin`, `Host`/`X-Forwarded-Host`, and `X-Forwarded-Proto`.
 
-The built-in room fan-out is process-local. Run one BrainVault application process for this implementation. A multi-process or multi-host deployment requires a shared pub/sub backplane and distributed room/update coordination before enabling collaboration across instances.
+The built-in room fan-out is process-local. The durable-tip fence prevents an accidentally overlapping patched instance from appending or compacting a room that missed another instance's update, but users on different instances do not receive immediate cross-process broadcasts and may reconnect when their room is detected as stale. Run one active BrainVault application process for normal operation. A multi-process or multi-host deployment requires a shared pub/sub backplane and distributed room/update coordination for full real-time behavior. During this security upgrade, drain every pre-fix collaboration writer before starting patched writers; a still-running old instance does not contain the new fence.
 
 Example Nginx location:
 
@@ -81,11 +83,12 @@ Run the collaboration-specific deterministic checks with Node.js 22.13 or newer:
 
 ```bash
 npm run reproduce:materialization-loss
+npm run reproduce:cross-instance-loss
 npm run verify:collaboration
 npm run verify:data-loss
 ```
 
-The reproduction reads the vulnerable route from the preserved Git `HEAD`, demonstrates how a same-ID forged empty body could become SQL truth and authorize history deletion, and then verifies the working tree's server-derived path and legacy-checkpoint fence. The collaboration verifier checks source wiring, exact Yjs dependency pins and integrity, materialization provenance, all executable project JavaScript/TypeScript syntax, block hierarchy invariants, the RFC 6455 handshake accept value, masked text and binary frames, fragmented messages, Ping/Pong behavior, JSON server frames, and rejection of an unmasked client frame. The Vitest suite also contains server-side Yjs merge, materialization, isolation, malformed-update, and size-limit tests.
+The materialization reproduction walks the preserved Git history to find the vulnerable route, demonstrates how a same-ID forged empty body could become SQL truth and authorize history deletion, and then verifies the working tree's server-derived path and legacy-checkpoint fence. The cross-instance reproduction similarly finds the vulnerable writer revision, models two process-local rooms missing each other's update, proves that the old snapshot compaction permanently removed one edit, and proves that the fixed ordinary-write fence forces a durable reload before retry and compaction. The collaboration verifier checks both reproductions, source wiring, exact Yjs dependency pins and integrity, materialization provenance, durable-room freshness, all executable project JavaScript/TypeScript syntax, block hierarchy invariants, the RFC 6455 handshake accept value, masked text and binary frames, fragmented messages, Ping/Pong behavior, JSON server frames, and rejection of an unmasked client frame. The Vitest suite also contains server-side Yjs merge, materialization, isolation, malformed-update, size-limit, and write-checkpoint tests.
 
 The normal project checks remain:
 
