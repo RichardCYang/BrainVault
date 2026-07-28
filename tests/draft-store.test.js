@@ -179,6 +179,59 @@ describe("page draft store", () => {
     expect(records[0].blocks["block-2"]?.payload.markdown).toBe("must remain visible");
   });
 
+  it("keeps scanning until repeated key shifts expose the final surviving draft", () => {
+    class RepeatedShiftingStorage extends MemoryStorage {
+      shiftsRemaining = 0;
+
+      key(index) {
+        const keys = [...this.values.keys()];
+        const key = keys[index] ?? null;
+        if (this.shiftsRemaining > 0 && keys.length > 1 && index === keys.length - 2) {
+          this.values.delete(keys[0]);
+          this.shiftsRemaining -= 1;
+        }
+        return key;
+      }
+    }
+
+    const storage = new RepeatedShiftingStorage();
+    for (const sourceId of ["tab-a", "tab-b", "tab-c", "tab-survivor"]) {
+      createPageDraftStore(storage, { sourceId }).saveBlock({
+        ...blockDraft,
+        blockId: sourceId,
+        payload: { ...blockDraft.payload, markdown: sourceId }
+      });
+    }
+
+    storage.shiftsRemaining = 3;
+    const inspection = createPageDraftStore(storage, { sourceId: "reader" })
+      .inspectUserDrafts("user-1");
+    expect(inspection.reliable).toBe(true);
+    expect(inspection.unreadableKeys).toEqual([]);
+    expect(inspection.records.map((record) => record.sourceId)).toEqual(["tab-survivor"]);
+  });
+
+  it("marks enumeration and corrupt target records as unsafe for destructive guards", () => {
+    const brokenStorage = {
+      get length() { throw new Error("disabled"); },
+      key() { throw new Error("disabled"); },
+      getItem() { throw new Error("disabled"); },
+      setItem() { throw new Error("disabled"); },
+      removeItem() { throw new Error("disabled"); }
+    };
+    expect(
+      createPageDraftStore(brokenStorage, { sourceId: "reader" }).inspectUserDrafts("user-1").reliable
+    ).toBe(false);
+
+    const storage = new MemoryStorage();
+    storage.setItem("brainvault.pageDraft.v2:user-1:page-1:tab-corrupt", "{not-json");
+    const inspection = createPageDraftStore(storage, { sourceId: "reader" })
+      .inspectPageDrafts("user-1", "page-1");
+    expect(inspection.reliable).toBe(true);
+    expect(inspection.records).toEqual([]);
+    expect(inspection.unreadableKeys).toHaveLength(1);
+  });
+
   it("keeps another tab's order retry and clears an order that references a deleted block", () => {
     const storage = new MemoryStorage();
     const tabA = createPageDraftStore(storage, { sourceId: "tab-a" });

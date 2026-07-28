@@ -142,6 +142,57 @@ describe("page persistence transition lock", () => {
     expect(first.loadActive().map((record) => record.pageId)).toEqual(["__workspace__:user-1"]);
   });
 
+  it("keeps scanning until repeated key shifts expose the final surviving lease", () => {
+    const values = new Map();
+    let shiftsRemaining = 0;
+    const storage = {
+      get length() { return values.size; },
+      key(index) {
+        const keys = [...values.keys()];
+        const key = keys[index] ?? null;
+        if (shiftsRemaining > 0 && keys.length > 1 && index === keys.length - 2) {
+          values.delete(keys[0]);
+          shiftsRemaining -= 1;
+        }
+        return key;
+      },
+      getItem(key) { return values.get(key) ?? null; },
+      setItem(key, value) { values.set(key, value); },
+      removeItem(key) { values.delete(key); }
+    };
+    const lock = createPageTransitionLock(storage, { sourceId: "tab-a" });
+    for (const pageId of ["page-a", "page-b", "page-c", "page-survivor"]) {
+      expect(lock.acquire(pageId, "delete")).not.toBeNull();
+    }
+
+    shiftsRemaining = 3;
+    const inspection = lock.inspectActive();
+    expect(inspection.reliable).toBe(true);
+    expect(inspection.unreadableKeys).toEqual([]);
+    expect(inspection.records.map((record) => record.pageId)).toEqual(["page-survivor"]);
+  });
+
+  it("does not overwrite an undecodable lease and reports unsafe enumeration", () => {
+    const storage = createMemoryStorage();
+    storage.setItem("brainvault.pageTransition.v1:page-1", "{not-json");
+    const lock = createPageTransitionLock(storage, { sourceId: "tab-a" });
+    expect(lock.inspect("page-1").status).toBe("invalid");
+    expect(lock.acquire("page-1", "delete")).toBeNull();
+    const activeInspection = lock.inspectActive();
+    expect(activeInspection.reliable).toBe(true);
+    expect(activeInspection.unreadableKeys).toHaveLength(1);
+    expect(storage.getItem("brainvault.pageTransition.v1:page-1")).toBe("{not-json");
+
+    const brokenStorage = {
+      get length() { throw new Error("disabled"); },
+      key() { throw new Error("disabled"); },
+      getItem() { throw new Error("disabled"); },
+      setItem() { throw new Error("disabled"); },
+      removeItem() { throw new Error("disabled"); }
+    };
+    expect(createPageTransitionLock(brokenStorage, { sourceId: "tab-b" }).inspectActive().reliable).toBe(false);
+  });
+
   it("uses the browser lock manager for atomic cross-tab exclusion when available", async () => {
     const storage = createMemoryStorage();
     const lockManager = createMemoryLockManager();

@@ -2488,6 +2488,19 @@ function getPageTransitionBusyMessage(pageId) {
     : t("sharing.transitionBusy");
 }
 
+function assertBrowserRecoveryInspectionSafe(inspection) {
+  if (inspection?.reliable && !(inspection.unreadableKeys?.length > 0)) return;
+  throw new Error(t("status.localRecoveryInspectionFailed"));
+}
+
+function inspectPageTransitionSafely(pageId) {
+  const inspection = pageTransitionLock.inspect(pageId);
+  if (inspection.status === "invalid" || inspection.status === "error") {
+    throw new Error(t("status.localRecoveryInspectionFailed"));
+  }
+  return inspection.status === "active" ? inspection.record : null;
+}
+
 function schedulePageTransitionUnlock(transition) {
   window.clearTimeout(pageTransitionUnlockTimer);
   pageTransitionUnlockTimer = null;
@@ -2524,7 +2537,9 @@ function isWorkspacePersistenceTransitionLocked() {
 }
 
 function assertWorkspacePersistenceUnlocked() {
-  if (isWorkspacePersistenceTransitionLocked()) {
+  const workspaceTransitionId = getWorkspaceTransitionId();
+  if (!workspaceTransitionId) return;
+  if (inspectPageTransitionSafely(workspaceTransitionId)) {
     throw new Error(t("status.workspaceTransitionBusy"));
   }
 }
@@ -2964,10 +2979,12 @@ async function withPagePersistenceTransition(pageId, kind, action) {
   const workspaceTransitionId = isWorkspaceTransitionId(pageId)
     ? null
     : getPageWorkspaceTransitionId(page);
-  if (
-    activePageTransitionLease
-    || (workspaceTransitionId && pageId !== workspaceTransitionId && isWorkspacePersistenceTransitionLocked())
-  ) throw new Error(busyMessage);
+  const currentTransition = inspectPageTransitionSafely(pageId);
+  const workspaceTransition = workspaceTransitionId && pageId !== workspaceTransitionId
+    ? inspectPageTransitionSafely(workspaceTransitionId)
+    : null;
+  if (activePageTransitionLease || currentTransition || workspaceTransition) throw new Error(busyMessage);
+
   const result = await pageTransitionLock.runExclusive(pageId, async () => {
     const lease = pageTransitionLock.acquire(pageId, kind);
     if (!lease) throw new Error(busyMessage);
@@ -2984,6 +3001,10 @@ async function withPagePersistenceTransition(pageId, kind, action) {
       // Give other same-origin tabs a storage event turn. They lock their editor
       // and flush any durable draft before this tab validates the transition.
       await waitForPageTransitionPropagation();
+      if (workspaceTransitionId && pageId !== workspaceTransitionId) {
+        const propagatedWorkspaceTransition = inspectPageTransitionSafely(workspaceTransitionId);
+        if (propagatedWorkspaceTransition) throw new Error(busyMessage);
+      }
       if (!pageTransitionLock.owns(currentLease)) throw new Error(busyMessage);
       return await action();
     } finally {
@@ -3004,8 +3025,9 @@ async function withWorkspacePersistenceTransition(kind, action) {
     // A page-level share transition may already have passed its preflight check
     // before this workspace lease was published. Refuse to overlap it; any page
     // transition that starts after the lease is visible will fail its own check.
-    const competingTransitions = pageTransitionLock
-      .loadActive()
+    const transitionInspection = pageTransitionLock.inspectActive();
+    assertBrowserRecoveryInspectionSafe(transitionInspection);
+    const competingTransitions = transitionInspection.records
       .filter((transition) => transition.pageId !== workspaceTransitionId);
     if (competingTransitions.length) throw new Error(t("status.workspaceTransitionBusy"));
     return action();
@@ -3359,75 +3381,106 @@ function renderCollectionView() {
   }
 }
 
+function inspectLocalPageDraftRecords(pageId) {
+  if (!state.user?.id || !pageId) {
+    return { records: [], reliable: false, unreadableKeys: [] };
+  }
+  return pageDraftStore.inspectPageDrafts(state.user.id, pageId);
+}
+
 function getLocalPageDraftRecords(pageId) {
-  if (!state.user?.id || !pageId) return [];
-  return pageDraftStore.loadPageDrafts(state.user.id, pageId);
+  return inspectLocalPageDraftRecords(pageId).records;
 }
 
 function assertNoPendingLocalPageDrafts(pageId, messageKey = "sharing.localDraftsPending") {
-  const records = getLocalPageDraftRecords(pageId);
-  if (!records.length) return;
-  throw new Error(t(messageKey, { count: formatNumber(records.length) }));
+  const inspection = inspectLocalPageDraftRecords(pageId);
+  assertBrowserRecoveryInspectionSafe(inspection);
+  if (!inspection.records.length) return;
+  throw new Error(t(messageKey, { count: formatNumber(inspection.records.length) }));
+}
+
+function inspectLocalPageDraftRecordsForPages(pageIds) {
+  if (!state.user?.id) return { records: [], reliable: false, unreadableKeys: [] };
+  const targetPageIds = new Set(pageIds ?? []);
+  if (!targetPageIds.size) return { records: [], reliable: true, unreadableKeys: [] };
+  const inspection = pageDraftStore.inspectUserDrafts(state.user.id);
+  return {
+    ...inspection,
+    records: inspection.records.filter((record) => targetPageIds.has(record.pageId))
+  };
 }
 
 function getLocalPageDraftRecordsForPages(pageIds) {
-  if (!state.user?.id) return [];
-  const targetPageIds = new Set(pageIds ?? []);
-  if (!targetPageIds.size) return [];
-  return pageDraftStore
-    .loadUserDrafts(state.user.id)
-    .filter((record) => targetPageIds.has(record.pageId));
+  return inspectLocalPageDraftRecordsForPages(pageIds).records;
 }
 
 function assertNoPendingLocalPageDraftsForPages(
   pageIds,
   messageKey = "status.workspaceLocalDraftsPending"
 ) {
-  const records = getLocalPageDraftRecordsForPages(pageIds);
-  if (!records.length) return;
-  throw new Error(t(messageKey, { count: formatNumber(records.length) }));
+  const inspection = inspectLocalPageDraftRecordsForPages(pageIds);
+  assertBrowserRecoveryInspectionSafe(inspection);
+  if (!inspection.records.length) return;
+  throw new Error(t(messageKey, { count: formatNumber(inspection.records.length) }));
 }
 
-function getLocalBlockDraftRecords(pageId, blockIds, { excludeSourceId = null } = {}) {
+function getLocalBlockDraftRecordsFromRecords(records, blockIds, { excludeSourceId = null } = {}) {
   const targetBlockIds = new Set(blockIds ?? []);
   if (!targetBlockIds.size) return [];
-  return getLocalPageDraftRecords(pageId).filter((record) => {
+  return records.filter((record) => {
     if (excludeSourceId && record.sourceId === excludeSourceId) return false;
     if (Object.keys(record.blocks ?? {}).some((blockId) => targetBlockIds.has(blockId))) return true;
     return (record.blockOrder?.orderedIds ?? []).some((blockId) => targetBlockIds.has(blockId));
   });
 }
 
+function getLocalBlockDraftRecords(pageId, blockIds, options = {}) {
+  return getLocalBlockDraftRecordsFromRecords(getLocalPageDraftRecords(pageId), blockIds, options);
+}
+
 function assertNoPendingLocalBlockDrafts(pageId, blockIds, options = {}) {
-  const records = getLocalBlockDraftRecords(pageId, blockIds, options);
+  const inspection = inspectLocalPageDraftRecords(pageId);
+  assertBrowserRecoveryInspectionSafe(inspection);
+  const records = getLocalBlockDraftRecordsFromRecords(inspection.records, blockIds, options);
   if (!records.length) return;
   throw new Error(t("status.destructiveLocalDraftsPending", { count: formatNumber(records.length) }));
 }
 
-function getLocalCollaborationRecoveryRecordsForPages(pageIds) {
+function inspectLocalCollaborationRecoveryRecordsForPages(pageIds) {
   const records = [];
+  const unreadableKeys = [];
+  let reliable = true;
   for (const pageId of [...new Set(pageIds ?? [])]) {
     if (!pageId) continue;
     // A collaborator can be logged into a different same-origin tab/account, so
     // inspect every locally represented account for every destructive target.
-    records.push(...collaborationRecoveryStore.loadPageRecords(pageId));
+    const inspection = collaborationRecoveryStore.inspectPageRecords(pageId);
+    records.push(...inspection.records);
+    unreadableKeys.push(...inspection.unreadableKeys);
+    reliable = inspection.reliable && reliable;
   }
-  return records;
+  return { records, reliable, unreadableKeys: [...new Set(unreadableKeys)] };
+}
+
+function getLocalCollaborationRecoveryRecordsForPages(pageIds) {
+  return inspectLocalCollaborationRecoveryRecordsForPages(pageIds).records;
 }
 
 function assertNoPendingLocalCollaborationRecovery(pageId) {
-  const records = getLocalCollaborationRecoveryRecordsForPages([pageId]);
-  if (!records.length) return;
+  const inspection = inspectLocalCollaborationRecoveryRecordsForPages([pageId]);
+  assertBrowserRecoveryInspectionSafe(inspection);
+  if (!inspection.records.length) return;
   throw new Error(
-    t("sharing.localCollaborationRecoveryPending", { count: formatNumber(records.length) })
+    t("sharing.localCollaborationRecoveryPending", { count: formatNumber(inspection.records.length) })
   );
 }
 
 function assertNoPendingLocalCollaborationRecoveryForPages(pageIds) {
-  const records = getLocalCollaborationRecoveryRecordsForPages(pageIds);
-  if (!records.length) return;
+  const inspection = inspectLocalCollaborationRecoveryRecordsForPages(pageIds);
+  assertBrowserRecoveryInspectionSafe(inspection);
+  if (!inspection.records.length) return;
   throw new Error(
-    t("status.destructiveCollaborationRecoveryPending", { count: formatNumber(records.length) })
+    t("status.destructiveCollaborationRecoveryPending", { count: formatNumber(inspection.records.length) })
   );
 }
 

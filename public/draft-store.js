@@ -1,3 +1,5 @@
+import { inspectStorageKeys } from "./storage-snapshot.js";
+
 const draftSchemaVersion = 2;
 
 function isNonEmptyString(value) {
@@ -137,36 +139,23 @@ export function createPageDraftStore(
   const getUserPrefix = (userId) => `${prefix}:${encodeURIComponent(userId)}:`;
 
   function snapshotStorageKeys() {
-    if (!storage) return [];
-    const keys = new Set();
+    return inspectStorageKeys(storage);
+  }
+
+  function inspectRecordByKey(key, userId, pageId, expectedSourceId = null) {
+    if (!storage) return { record: null, unreadable: true };
     try {
-      // Another tab can remove an acknowledged draft while this tab enumerates
-      // Storage by numeric index. That shifts later keys and can otherwise make
-      // one still-pending draft invisible to a destructive-operation guard.
-      // Re-scan a bounded number of times; stable remaining keys are collected
-      // on the next pass, while removed keys are harmless when read below.
-      for (let pass = 0; pass < 3; pass += 1) {
-        const length = storage.length;
-        for (let index = 0; index < length; index += 1) {
-          const key = storage.key(index);
-          if (key) keys.add(key);
-        }
-      }
-      return [...keys];
+      const raw = storage.getItem(key);
+      if (!raw) return { record: null, unreadable: false };
+      const record = normalizeRecord(JSON.parse(raw), userId, pageId, expectedSourceId);
+      return { record, unreadable: !record };
     } catch {
-      return [];
+      return { record: null, unreadable: true };
     }
   }
 
   function readRecordByKey(key, userId, pageId, expectedSourceId = null) {
-    if (!storage) return null;
-    try {
-      const raw = storage.getItem(key);
-      if (!raw) return null;
-      return normalizeRecord(JSON.parse(raw), userId, pageId, expectedSourceId);
-    } catch {
-      return null;
-    }
+    return inspectRecordByKey(key, userId, pageId, expectedSourceId).record;
   }
 
   function loadPage(userId, pageId, recordSourceId = sourceId) {
@@ -176,45 +165,76 @@ export function createPageDraftStore(
     return readRecordByKey(getKey(userId, pageId, recordSourceId), userId, pageId, recordSourceId);
   }
 
-  function loadPageDrafts(userId, pageId) {
-    if (!storage || !isNonEmptyString(userId) || !isNonEmptyString(pageId)) return [];
-    const pagePrefix = getPagePrefix(userId, pageId);
+  function parseUserDraftKey(key, userId) {
+    const userPrefix = getUserPrefix(userId);
+    if (!key.startsWith(userPrefix)) return null;
+    const remainder = key.slice(userPrefix.length);
+    const separatorIndex = remainder.indexOf(":");
+    if (separatorIndex <= 0 || separatorIndex === remainder.length - 1) return null;
     try {
-      const records = [];
-      for (const key of snapshotStorageKeys()) {
-        if (!key.startsWith(pagePrefix)) continue;
-        const record = readRecordByKey(key, userId, pageId);
-        if (record) records.push(record);
-      }
-      return records.sort((left, right) => right.updatedAt - left.updatedAt);
+      const pageId = decodeURIComponent(remainder.slice(0, separatorIndex));
+      const recordSourceId = decodeURIComponent(remainder.slice(separatorIndex + 1));
+      return isNonEmptyString(pageId) && isNonEmptyString(recordSourceId)
+        ? { pageId, sourceId: recordSourceId }
+        : null;
     } catch {
-      return [];
+      return null;
     }
   }
 
-  function loadUserDrafts(userId) {
-    if (!storage || !isNonEmptyString(userId)) return [];
-    const userPrefix = getUserPrefix(userId);
-    try {
-      const records = [];
-      for (const key of snapshotStorageKeys()) {
-        if (!key.startsWith(userPrefix)) continue;
-        try {
-          const raw = storage.getItem(key);
-          if (!raw) continue;
-          const value = JSON.parse(raw);
-          const pageId = value?.pageId;
-          if (!isNonEmptyString(pageId)) continue;
-          const record = normalizeRecord(value, userId, pageId);
-          if (record) records.push(record);
-        } catch {
-          // One corrupt record must not hide every other recoverable draft.
-        }
-      }
-      return records.sort((left, right) => right.updatedAt - left.updatedAt);
-    } catch {
-      return [];
+  function inspectPageDrafts(userId, pageId) {
+    if (!storage || !isNonEmptyString(userId) || !isNonEmptyString(pageId)) {
+      return { records: [], reliable: false, unreadableKeys: [] };
     }
+    const pagePrefix = getPagePrefix(userId, pageId);
+    const snapshot = snapshotStorageKeys();
+    const records = [];
+    const unreadableKeys = [];
+    for (const key of snapshot.keys) {
+      if (!key.startsWith(pagePrefix)) continue;
+      const inspection = inspectRecordByKey(key, userId, pageId);
+      if (inspection.record) records.push(inspection.record);
+      else if (inspection.unreadable) unreadableKeys.push(key);
+    }
+    return {
+      records: records.sort((left, right) => right.updatedAt - left.updatedAt),
+      reliable: snapshot.reliable,
+      unreadableKeys
+    };
+  }
+
+  function loadPageDrafts(userId, pageId) {
+    return inspectPageDrafts(userId, pageId).records;
+  }
+
+  function inspectUserDrafts(userId) {
+    if (!storage || !isNonEmptyString(userId)) {
+      return { records: [], reliable: false, unreadableKeys: [] };
+    }
+    const userPrefix = getUserPrefix(userId);
+    const snapshot = snapshotStorageKeys();
+    const records = [];
+    const unreadableKeys = [];
+    for (const key of snapshot.keys) {
+      if (!key.startsWith(userPrefix)) continue;
+      const parsedKey = parseUserDraftKey(key, userId);
+      if (!parsedKey) {
+        unreadableKeys.push(key);
+        continue;
+      }
+      const inspection = inspectRecordByKey(key, userId, parsedKey.pageId, parsedKey.sourceId);
+      if (inspection.record) records.push(inspection.record);
+      else if (inspection.unreadable) unreadableKeys.push(key);
+    }
+    return {
+      records: records.sort((left, right) => right.updatedAt - left.updatedAt),
+      reliable: snapshot.reliable,
+      unreadableKeys
+    };
+  }
+
+  function loadUserDrafts(userId) {
+    return inspectUserDrafts(userId).records;
   }
 
   function writePage(record) {
@@ -493,9 +513,11 @@ export function createPageDraftStore(
   }
 
   function clearBlocks(userId, pageId, blockIds) {
+    const inspection = inspectPageDrafts(userId, pageId);
+    if (!inspection.reliable || inspection.unreadableKeys.length) return false;
     let succeeded = true;
     const removedIds = new Set(blockIds ?? []);
-    for (const record of loadPageDrafts(userId, pageId)) {
+    for (const record of inspection.records) {
       for (const blockId of removedIds) delete record.blocks[blockId];
       if (record.blockOrder?.orderedIds.some((blockId) => removedIds.has(blockId))) record.blockOrder = null;
       succeeded = writePage(record) && succeeded;
@@ -507,7 +529,9 @@ export function createPageDraftStore(
     if (!storage || !isNonEmptyString(userId) || !isNonEmptyString(pageId)) return false;
     const pagePrefix = getPagePrefix(userId, pageId);
     try {
-      const keys = snapshotStorageKeys().filter((key) => key.startsWith(pagePrefix));
+      const snapshot = snapshotStorageKeys();
+      if (!snapshot.reliable) return false;
+      const keys = snapshot.keys.filter((key) => key.startsWith(pagePrefix));
       for (const key of keys) storage.removeItem(key);
       return true;
     } catch {
@@ -525,7 +549,9 @@ export function createPageDraftStore(
     if (!storage || !isNonEmptyString(userId)) return false;
     const userPrefix = getUserPrefix(userId);
     try {
-      const keys = snapshotStorageKeys().filter((key) => key.startsWith(userPrefix));
+      const snapshot = snapshotStorageKeys();
+      if (!snapshot.reliable) return false;
+      const keys = snapshot.keys.filter((key) => key.startsWith(userPrefix));
       for (const key of keys) storage.removeItem(key);
       return true;
     } catch {
@@ -536,7 +562,9 @@ export function createPageDraftStore(
   return {
     sourceId,
     loadPage,
+    inspectPageDrafts,
     loadPageDrafts,
+    inspectUserDrafts,
     loadUserDrafts,
     saveTitle,
     saveBlock,

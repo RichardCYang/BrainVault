@@ -150,6 +150,57 @@ describe("collaboration recovery store", () => {
     expect(store.loadPageRecords("page-1").map((record) => record.sourceId)).toEqual(["tab-b"]);
   });
 
+  it("keeps scanning until repeated key shifts expose the final surviving recovery", () => {
+    const values = new Map();
+    let shiftsRemaining = 0;
+    const storage = {
+      get length() { return values.size; },
+      key(index) {
+        const keys = [...values.keys()];
+        const key = keys[index] ?? null;
+        if (shiftsRemaining > 0 && keys.length > 1 && index === keys.length - 2) {
+          values.delete(keys[0]);
+          shiftsRemaining -= 1;
+        }
+        return key;
+      },
+      getItem(key) { return values.get(key) ?? null; },
+      setItem(key, value) { values.set(key, value); },
+      removeItem(key) { values.delete(key); }
+    };
+    const store = createCollaborationRecoveryStore(storage);
+    for (const sourceId of ["tab-a", "tab-b", "tab-c", "tab-survivor"]) {
+      store.save("user-1", "page-1", sourceId, epochA, new Uint8Array([sourceId.length]));
+    }
+
+    shiftsRemaining = 3;
+    const inspection = store.inspectPageRecords("page-1");
+    expect(inspection.reliable).toBe(true);
+    expect(inspection.unreadableKeys).toEqual([]);
+    expect(inspection.records.map((record) => record.sourceId)).toEqual(["tab-survivor"]);
+  });
+
+  it("marks storage failures and undecodable target recovery as unsafe", () => {
+    const brokenStorage = {
+      get length() { throw new Error("disabled"); },
+      key() { throw new Error("disabled"); },
+      getItem() { throw new Error("disabled"); },
+      setItem() { throw new Error("disabled"); },
+      removeItem() { throw new Error("disabled"); }
+    };
+    expect(createCollaborationRecoveryStore(brokenStorage).inspectPageRecords("page-1").reliable).toBe(false);
+
+    const storage = createMemoryStorage();
+    storage.setItem(
+      "brainvault.collaborationRecovery.v1:user-1:page-1:epoch_a:tab-corrupt",
+      "{not-json"
+    );
+    const inspection = createCollaborationRecoveryStore(storage).inspectPageRecords("page-1");
+    expect(inspection.reliable).toBe(true);
+    expect(inspection.records).toEqual([]);
+    expect(inspection.unreadableKeys).toHaveLength(1);
+  });
+
   it("does not delete a newer record written by another live tab", () => {
     const store = createCollaborationRecoveryStore(createMemoryStorage());
     const oldGeneration = store.save("user-1", "page-1", "tab-1", epochA, new Uint8Array([1]));

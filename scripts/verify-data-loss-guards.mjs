@@ -54,6 +54,32 @@ class MemoryStorage {
   }
 }
 
+class RepeatedShiftingStorage extends MemoryStorage {
+  shiftsRemaining = 0;
+
+  key(index) {
+    const keys = [...this.values.keys()];
+    const key = keys[index] ?? null;
+    if (this.shiftsRemaining > 0 && keys.length > 1 && index === keys.length - 2) {
+      this.values.delete(keys[0]);
+      this.shiftsRemaining -= 1;
+    }
+    return key;
+  }
+}
+
+function oldThreePassForwardSnapshot(storage) {
+  const keys = new Set();
+  for (let pass = 0; pass < 3; pass += 1) {
+    const length = storage.length;
+    for (let index = 0; index < length; index += 1) {
+      const key = storage.key(index);
+      if (key) keys.add(key);
+    }
+  }
+  return [...keys];
+}
+
 const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 for (const [locale, catalog] of Object.entries(translationCatalogs)) {
@@ -62,7 +88,20 @@ for (const [locale, catalog] of Object.entries(translationCatalogs)) {
     typeof message === "string" && message.includes("{count}"),
     `Missing destructiveLocalDraftsPending translation for ${locale}`
   );
+  assert(
+    typeof catalog?.status?.localRecoveryInspectionFailed === "string",
+    `Missing localRecoveryInspectionFailed translation for ${locale}`
+  );
 }
+
+assert(
+  client.includes("assertBrowserRecoveryInspectionSafe(inspection)"),
+  "Destructive guards do not fail closed when browser recovery inspection is uncertain"
+);
+assert(
+  client.includes("const transitionInspection = pageTransitionLock.inspectActive()"),
+  "Workspace transitions do not inspect every durable lease safely"
+);
 
 const permanentDelete = section(client, "async function deleteNavigationTarget()", "function renderCollectionView");
 assertBefore(
@@ -162,6 +201,91 @@ assert(
   "A surviving transition lease was skipped after a key shift"
 );
 
+const repeatedShiftProbe = new RepeatedShiftingStorage();
+for (const key of ["draft-a", "draft-b", "draft-c", "draft-survivor"]) {
+  repeatedShiftProbe.setItem(key, key);
+}
+repeatedShiftProbe.shiftsRemaining = 3;
+const oldSnapshot = oldThreePassForwardSnapshot(repeatedShiftProbe);
+assert(
+  !oldSnapshot.includes("draft-survivor") && repeatedShiftProbe.getItem("draft-survivor"),
+  "The adversarial storage probe no longer reproduces the bounded forward-scan omission"
+);
+
+const repeatedDraftStorage = new RepeatedShiftingStorage();
+for (const sourceId of ["tab-a", "tab-b", "tab-c", "tab-survivor"]) {
+  createPageDraftStore(repeatedDraftStorage, { sourceId }).saveBlock({
+    ...draftBase,
+    blockId: sourceId,
+    payload: { type: "MARKDOWN", markdown: sourceId }
+  });
+}
+repeatedDraftStorage.shiftsRemaining = 3;
+const draftInspection = createPageDraftStore(repeatedDraftStorage, { sourceId: "reader" })
+  .inspectUserDrafts("user");
+assert(
+  draftInspection.reliable
+  && draftInspection.records.length === 1
+  && draftInspection.records[0].sourceId === "tab-survivor",
+  "Repeated key shifts can still hide a surviving direct draft"
+);
+
+const repeatedRecoveryStorage = new RepeatedShiftingStorage();
+const repeatedRecoveryStore = createCollaborationRecoveryStore(repeatedRecoveryStorage);
+for (const sourceId of ["tab-a", "tab-b", "tab-c", "tab-survivor"]) {
+  repeatedRecoveryStore.save("user", "page", sourceId, "epoch", new Uint8Array([sourceId.length]));
+}
+repeatedRecoveryStorage.shiftsRemaining = 3;
+const recoveryInspection = repeatedRecoveryStore.inspectPageRecords("page");
+assert(
+  recoveryInspection.reliable
+  && recoveryInspection.records.length === 1
+  && recoveryInspection.records[0].sourceId === "tab-survivor",
+  "Repeated key shifts can still hide a surviving collaboration recovery"
+);
+
+const repeatedTransitionStorage = new RepeatedShiftingStorage();
+const repeatedLock = createPageTransitionLock(repeatedTransitionStorage, { sourceId: "tab" });
+for (const pageId of ["page-a", "page-b", "page-c", "page-survivor"]) {
+  repeatedLock.acquire(pageId, "delete");
+}
+repeatedTransitionStorage.shiftsRemaining = 3;
+const transitionInspection = repeatedLock.inspectActive();
+assert(
+  transitionInspection.reliable
+  && transitionInspection.records.length === 1
+  && transitionInspection.records[0].pageId === "page-survivor",
+  "Repeated key shifts can still hide a surviving transition lease"
+);
+
+const corruptDraftStorage = new MemoryStorage();
+corruptDraftStorage.setItem("brainvault.pageDraft.v2:user:page:tab-corrupt", "{not-json");
+assert(
+  createPageDraftStore(corruptDraftStorage, { sourceId: "reader" })
+    .inspectPageDrafts("user", "page").unreadableKeys.length === 1,
+  "An undecodable target draft is still treated as safely absent"
+);
+
+const brokenStorage = {
+  get length() { throw new Error("disabled"); },
+  key() { throw new Error("disabled"); },
+  getItem() { throw new Error("disabled"); },
+  setItem() { throw new Error("disabled"); },
+  removeItem() { throw new Error("disabled"); }
+};
+assert(
+  !createPageDraftStore(brokenStorage, { sourceId: "reader" }).inspectUserDrafts("user").reliable,
+  "Storage enumeration failure is still treated as a reliable empty draft set"
+);
+assert(
+  !createCollaborationRecoveryStore(brokenStorage).inspectPageRecords("page").reliable,
+  "Storage enumeration failure is still treated as a reliable empty collaboration recovery set"
+);
+assert(
+  !createPageTransitionLock(brokenStorage, { sourceId: "reader" }).inspectActive().reliable,
+  "Storage enumeration failure is still treated as a reliable empty transition set"
+);
+
 console.log(
-  "[verify-data-loss-guards] OK: destructive transition ordering, seven locale messages, and cross-tab storage enumeration."
+  "[verify-data-loss-guards] OK: destructive ordering, seven locale messages, convergent storage snapshots, and fail-closed recovery inspection."
 );

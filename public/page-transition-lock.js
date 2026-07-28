@@ -1,3 +1,5 @@
+import { inspectStorageKeys } from "./storage-snapshot.js";
+
 const transitionSchemaVersion = 1;
 const defaultTtlMs = 120_000;
 
@@ -22,23 +24,19 @@ export function createPageTransitionLock(
 ) {
   if (!isNonEmptyString(sourceId)) throw new TypeError("A non-empty transition sourceId is required");
   const normalizedTtlMs = Number.isFinite(ttlMs) && ttlMs >= 1_000 ? Math.floor(ttlMs) : defaultTtlMs;
+  const storagePrefix = `${prefix}:`;
   const getKey = (pageId) => `${prefix}:${encodeURIComponent(pageId)}`;
   const getExclusiveLockName = (pageId) => `${prefix}.exclusive:${encodeURIComponent(pageId)}`;
 
-  function snapshotStorageKeys() {
-    if (!storage) return [];
-    const keys = new Set();
+  function parsePageIdFromKey(key) {
+    if (!key.startsWith(storagePrefix)) return null;
+    const encodedPageId = key.slice(storagePrefix.length);
+    if (!encodedPageId) return null;
     try {
-      for (let pass = 0; pass < 3; pass += 1) {
-        const length = storage.length;
-        for (let index = 0; index < length; index += 1) {
-          const key = storage.key(index);
-          if (key) keys.add(key);
-        }
-      }
-      return [...keys];
+      const pageId = decodeURIComponent(encodedPageId);
+      return isNonEmptyString(pageId) ? pageId : null;
     } catch {
-      return [];
+      return null;
     }
   }
 
@@ -55,37 +53,53 @@ export function createPageTransitionLock(
     }
   }
 
-  function read(pageId) {
-    if (!storage || !isNonEmptyString(pageId)) return null;
-    const key = getKey(pageId);
-    try {
-      const raw = storage.getItem(key);
-      if (!raw) return null;
-      const record = JSON.parse(raw);
-      if (
-        record?.schemaVersion !== transitionSchemaVersion
-        || record.pageId !== pageId
-        || !isNonEmptyString(record.sourceId)
-        || !isNonEmptyString(record.token)
-        || !isNonEmptyString(record.kind)
-        || !Number.isFinite(record.expiresAt)
-      ) {
-        storage.removeItem(key);
-        return null;
-      }
-      if (record.expiresAt <= now()) {
-        removeIfOwned(pageId, record.token);
-        return null;
-      }
-      return record;
-    } catch {
-      return null;
+  function inspect(pageId) {
+    if (!storage || !isNonEmptyString(pageId)) {
+      return { status: "error", record: null };
     }
+    const key = getKey(pageId);
+    let raw;
+    try {
+      raw = storage.getItem(key);
+    } catch {
+      return { status: "error", record: null };
+    }
+    if (!raw) return { status: "missing", record: null };
+
+    let record;
+    try {
+      record = JSON.parse(raw);
+    } catch {
+      return { status: "invalid", record: null };
+    }
+    if (
+      record?.schemaVersion !== transitionSchemaVersion
+      || record.pageId !== pageId
+      || !isNonEmptyString(record.sourceId)
+      || !isNonEmptyString(record.token)
+      || !isNonEmptyString(record.kind)
+      || !Number.isFinite(record.expiresAt)
+    ) {
+      // Do not delete an undecodable lease. Overwriting an unknown active
+      // transition could let two destructive operations run concurrently.
+      return { status: "invalid", record: null };
+    }
+    if (record.expiresAt <= now()) {
+      return removeIfOwned(pageId, record.token)
+        ? { status: "missing", record: null }
+        : { status: "error", record: null };
+    }
+    return { status: "active", record };
+  }
+
+  function read(pageId) {
+    const inspection = inspect(pageId);
+    return inspection.status === "active" ? inspection.record : null;
   }
 
   function acquire(pageId, kind) {
     if (!storage || !isNonEmptyString(pageId) || !isNonEmptyString(kind)) return null;
-    if (read(pageId)) return null;
+    if (inspect(pageId).status !== "missing") return null;
     const record = {
       schemaVersion: transitionSchemaVersion,
       pageId,
@@ -96,41 +110,48 @@ export function createPageTransitionLock(
     };
     try {
       storage.setItem(getKey(pageId), JSON.stringify(record));
-      const verified = read(pageId);
-      return verified?.token === record.token ? verified : null;
+      const verified = inspect(pageId);
+      return verified.status === "active" && verified.record?.token === record.token
+        ? verified.record
+        : null;
     } catch {
       return null;
     }
   }
 
-  function loadActive() {
-    if (!storage) return [];
-    const storagePrefix = `${prefix}:`;
-    try {
-      const keys = snapshotStorageKeys().filter((key) => key.startsWith(storagePrefix));
+  function inspectActive() {
+    if (!storage) return { records: [], reliable: false, unreadableKeys: [] };
+    const snapshot = inspectStorageKeys(storage);
+    const records = [];
+    const unreadableKeys = [];
 
-      const records = [];
-      for (const key of keys) {
-        try {
-          const raw = storage.getItem(key);
-          if (!raw) continue;
-          const value = JSON.parse(raw);
-          if (!isNonEmptyString(value?.pageId)) continue;
-          const record = read(value.pageId);
-          if (record) records.push(record);
-        } catch {
-          // One malformed transition record must not hide another active lease.
-        }
+    for (const key of snapshot.keys) {
+      if (!key.startsWith(storagePrefix)) continue;
+      const pageId = parsePageIdFromKey(key);
+      if (!pageId) {
+        unreadableKeys.push(key);
+        continue;
       }
-      return records.sort((left, right) => left.expiresAt - right.expiresAt);
-    } catch {
-      return [];
+      const inspection = inspect(pageId);
+      if (inspection.status === "active") records.push(inspection.record);
+      else if (inspection.status === "invalid" || inspection.status === "error") unreadableKeys.push(key);
     }
+
+    return {
+      records: records.sort((left, right) => left.expiresAt - right.expiresAt),
+      reliable: snapshot.reliable,
+      unreadableKeys
+    };
+  }
+
+  function loadActive() {
+    return inspectActive().records;
   }
 
   function owns(record) {
     if (!record?.pageId || !record?.token) return false;
-    return read(record.pageId)?.token === record.token;
+    const inspection = inspect(record.pageId);
+    return inspection.status === "active" && inspection.record?.token === record.token;
   }
 
   function renew(record) {
@@ -165,5 +186,17 @@ export function createPageTransitionLock(
     );
   }
 
-  return { prefix, ttlMs: normalizedTtlMs, read, loadActive, acquire, owns, renew, release, runExclusive };
+  return {
+    prefix,
+    ttlMs: normalizedTtlMs,
+    inspect,
+    read,
+    inspectActive,
+    loadActive,
+    acquire,
+    owns,
+    renew,
+    release,
+    runExclusive
+  };
 }

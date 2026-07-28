@@ -1,4 +1,4 @@
-# Data-loss audit: collaboration document lineage
+# Data-loss audit: critical persistence and recovery paths
 
 Audit date: 2026-07-28 (Asia/Seoul)
 
@@ -75,8 +75,35 @@ The client now:
 - checks all source-tab direct drafts for every page in a permanent deletion scope before issuing the destructive API call;
 - checks direct drafts before archiving a page or replacing the workspace from a backup;
 - performs direct block deletion inside the existing page transition lease, lets other tabs flush, and rejects deletion while another source still has a draft or order record for the affected block subtree; and
-- preflights empty-block deletion and attachment replacement before their preparatory structural work; and
-- snapshots browser-storage keys across bounded repeated passes so concurrent acknowledgement/removal in another tab cannot shift numeric indexes and hide a still-pending direct draft, Yjs recovery record, or active transition lease from the guard.
+- preflights empty-block deletion and attachment replacement before their preparatory structural work.
+
+Severity: **Critical**
+
+## Third critical finding: browser recovery inspection failed open
+
+The direct-draft, collaboration-recovery, and page-transition stores enumerated `localStorage` by numeric index three times and merged the keys they observed. That reduced a simple one-removal index-shift race, but it was still a bounded, non-atomic scan. A reproducible four-record schedule can remove one earlier key near the end of each pass, shift the final surviving record into an index already visited, and leave that survivor unseen after all three passes.
+
+The same code returned an empty key list when `storage.length` or `storage.key()` threw, and record loaders silently skipped JSON/schema/decode failures. Destructive guards therefore could not distinguish “there are no unsaved bytes” from “the browser recovery store could not be inspected.” Permanent deletion, archive, workspace restore, sharing transitions, or direct block deletion could proceed while a surviving or undecodable recovery record still existed. The transition lock had an additional failure-open edge: an unreadable lease was treated as absent and could be overwritten by a new destructive transition.
+
+### Reproduction before the fix
+
+1. Store four records in insertion order: `A`, `B`, `C`, and `survivor`.
+2. During pass 1, remove `A` after index 2 is returned; `survivor` shifts from index 3 to index 2, which has already been visited.
+3. During pass 2, remove `B` after index 1 is returned; `survivor` again shifts into a visited index.
+4. During pass 3, remove `C` after index 0 is returned; `survivor` remains stored but is never returned by the three-pass forward-only snapshot.
+5. The old guard receives `[]` after it tries to read the now-removed observed keys and incorrectly permits the destructive operation.
+
+A separate deterministic probe makes `storage.length` throw. The old implementation catches that exception and also returns `[]`, producing the same unsafe decision.
+
+### Implemented correction
+
+- Added a shared `public/storage-snapshot.js` implementation used by all three browser durability stores.
+- Each pass scans both forward and reverse, retains the union of every observed key, and only marks the snapshot reliable after three consecutive complete, identical passes. It makes up to 64 passes; failure to converge is an explicit unreliable result rather than an empty set.
+- Added inspection APIs that return `{ records, reliable, unreadableKeys }` for direct drafts, Yjs recovery records, and active transitions.
+- Destructive application guards now reject the operation whenever enumeration is unreliable or a target recovery record is present but undecodable.
+- Workspace and page transition preflight now inspects durable leases safely before and after propagation. An invalid lease is preserved for diagnosis, treated as occupied/unsafe, and never overwritten by `acquire()`.
+- Direct draft cleanup and collaboration recovery acknowledgement no longer report success when their key snapshot cannot be proven stable.
+- Added localized user-facing fail-closed messages for all seven supported languages.
 
 Severity: **Critical**
 
@@ -101,10 +128,12 @@ npm run lockfile:check
 [lockfile-registry] OK: 347 resolved URL(s) use approved portable registry hosts.
 
 npm run verify:collaboration
-[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, hierarchy invariants, RFC 6455 protocol behavior, and syntax for 121 file(s).
+[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, hierarchy invariants, RFC 6455 protocol behavior, and syntax for 123 file(s).
 
 npm run verify:data-loss
-[verify-data-loss-guards] OK: destructive transition ordering, seven locale messages, and cross-tab storage enumeration.
+[verify-data-loss-guards] OK: destructive ordering, seven locale messages, convergent storage snapshots, and fail-closed recovery inspection.
+
+[targeted-store-tests] passed=37 failed=0
 
 [recovery-lineage-smoke] OK
 [openapi-yaml] OK
@@ -122,11 +151,15 @@ The verifier now asserts:
 - undecodable recovery-record preservation;
 - generation-safe deletion;
 - close code `4011` handling; and
-- JavaScript/TypeScript syntax for all scanned sources.
+- JavaScript/TypeScript syntax for all scanned sources;
+- the exact repeated-index-shift counterexample that defeats the old three-pass forward scan;
+- convergence and survivor visibility for direct drafts, Yjs recovery, and transition leases;
+- unreliable storage enumeration being surfaced instead of converted to an empty result; and
+- undecodable target records and leases remaining preserved while destructive operations fail closed.
 
 ## Environment limitation
 
-A clean dependency installation was attempted repeatedly, including offline mode. The configured package gateway returned HTTP 503 for the existing locked dependency `zod-3.25.76.tgz`, and the local npm cache did not contain it. Consequently the audit environment could not run the full TypeScript build, Vitest suite, or MariaDB integration suite after a clean install. No lockfile or dependency version was changed. Run the following in an environment with registry and MariaDB access before production deployment:
+A clean dependency installation was attempted repeatedly. The configured package gateway returned HTTP 503 for the existing locked dependency `zod-3.25.76.tgz`, and the local npm cache did not contain it. Consequently the audit environment could not run the full TypeScript build, complete Vitest suite, or MariaDB integration suite after a clean install. The 37 direct-draft/recovery/transition tests were executed with a temporary dependency-free compatibility runner and all passed. No lockfile or dependency version was changed. Run the following in an environment with registry and MariaDB access before production deployment:
 
 ```bash
 npm ci
