@@ -18,10 +18,22 @@ const lineageMigration = readFileSync(
   new URL("../migrations/021_collaboration_document_epoch.sql", import.meta.url),
   "utf8"
 );
+const materializationMigration = readFileSync(
+  new URL("../migrations/022_server_authoritative_collaboration_materialization.sql", import.meta.url),
+  "utf8"
+);
 const lineage = readFileSync(new URL("../src/lib/collaboration-lineage.ts", import.meta.url), "utf8");
 const token = readFileSync(new URL("../src/lib/collaboration-token.ts", import.meta.url), "utf8");
 const server = readFileSync(new URL("../src/lib/collaboration-server.ts", import.meta.url), "utf8");
 const yjsValidation = readFileSync(new URL("../src/lib/yjs-validation.ts", import.meta.url), "utf8");
+const materialization = readFileSync(
+  new URL("../src/lib/collaboration-materialization.ts", import.meta.url),
+  "utf8"
+);
+const collaborationProtocol = readFileSync(
+  new URL("../src/lib/collaboration-protocol.ts", import.meta.url),
+  "utf8"
+);
 const routes = readFileSync(new URL("../src/routes/collaboration.routes.ts", import.meta.url), "utf8");
 
 describe("page sharing and Yjs collaboration wiring", () => {
@@ -89,6 +101,9 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(collaboration).toContain("sendAwareness");
     expect(app).toContain("createPageCollaboration");
     expect(app).toContain("flushMaterialization");
+    expect(collaboration).toContain("documentEpoch: snapshot.documentEpoch");
+    expect(collaboration).toContain("updateId: snapshot.updateId");
+    expect(collaboration).not.toContain("body: snapshot");
     expect(app).toContain("if (state.sharePageEntries.length === 1) {");
     expect(app).toContain("await flushPendingPageEdits();");
     expect(app).toContain("adoptAttachment");
@@ -120,6 +135,8 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(migration).toContain("ON DELETE CASCADE");
     expect(lineageMigration).toContain("ADD COLUMN IF NOT EXISTS document_epoch");
     expect(lineageMigration).toContain("MODIFY COLUMN document_epoch VARCHAR(64) NOT NULL");
+    expect(materializationMigration).toContain("ADD COLUMN IF NOT EXISTS materialization_version");
+    expect(materializationMigration).toContain("NOT NULL DEFAULT 0");
     expect(lineage).toContain("ensureCollaborationState");
     expect(lineage).toContain("COLLABORATION_LINEAGE_CHANGED");
     expect(token).toContain("documentEpoch: string");
@@ -129,12 +146,23 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(server).toContain("candidate.stateUpdate");
     expect(yjsValidation).toContain('import * as Y from "yjs"');
     expect(yjsValidation).toContain("Y.encodeStateAsUpdate");
+    expect(materialization).toContain("materializeCollaborationUpdates");
+    expect(materialization).toContain("createValidatedYjsDocument");
+    expect(materialization).toContain("INVALID_COLLABORATION_DOCUMENT");
+    expect(collaborationProtocol).toContain("currentCollaborationMaterializationVersion = 1");
+    expect(collaborationProtocol).toContain("latestUpdateId !== state.materializedUpdateId");
     expect(server).toContain("room.writeQueue");
     expect(server).toContain("currentAccess = await getPageAccess");
     expect(server).toContain("assertCollaborationDocumentEpoch(collaborationState, client.documentEpoch)");
     expect(server).toContain("invalidateRoomForLineageChange");
     expect(server).toContain("4011");
     expect(routes).toContain("COLLABORATION_SNAPSHOT_STALE");
+    expect(routes).toContain("SELECT id, update_data");
+    expect(routes).toContain("materializeCollaborationUpdates");
+    expect(routes).toContain("currentCollaborationMaterializationVersion");
+    expect(routes).not.toContain("body.title");
+    expect(routes).not.toContain("body.blocks");
+    expect(routes).not.toContain("body.deletedAttachmentIds");
     expect(routes).toContain("BLOCK_ID_CONFLICT");
     expect(routes).toContain("USE_ATTACHMENT_UPLOAD");
     expect(routes).toContain("COLLABORATION_CHANGES_PENDING");

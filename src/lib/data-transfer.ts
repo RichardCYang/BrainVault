@@ -7,6 +7,7 @@ import { z } from "zod";
 import { env } from "../config/env.js";
 import { attachmentUploadRoot, getAttachmentFilePath, withUserAttachmentLock } from "./attachments.js";
 import { disconnectPageCollaborators } from "./collaboration-server.js";
+import { needsCollaborationMaterialization } from "./collaboration-protocol.js";
 import { db, transaction, type DbClient } from "./db.js";
 import { ApiError } from "./http.js";
 import { createId } from "./id.js";
@@ -164,6 +165,7 @@ type WorkspaceCollaborationStateRow = {
   page_id: string;
   latest_update_id: number | bigint | null;
   materialized_update_id: number | bigint | null;
+  materialization_version: number | bigint | null;
 };
 
 type RawAccountRow = {
@@ -221,26 +223,42 @@ function parseCollaborationUpdateId(value: number | bigint | null | undefined) {
 
 async function assertWorkspaceCollaborationMaterialized(client: DbClient, pageIds: string[], lock = false) {
   const lockClause = lock ? " FOR UPDATE" : "";
-  const pending: Array<{ pageId: string; latestUpdateId: number; materializedUpdateId: number }> = [];
+  const pending: Array<{
+    pageId: string;
+    latestUpdateId: number;
+    materializedUpdateId: number;
+    materializationVersion: number;
+  }> = [];
   for (let index = 0; index < pageIds.length; index += 500) {
     const group = pageIds.slice(index, index + 500);
     if (!group.length) continue;
     const rows = await client.query<WorkspaceCollaborationStateRow>(
       `SELECT p.id AS page_id, MAX(y.id) AS latest_update_id,
-         COALESCE(s.materialized_update_id, 0) AS materialized_update_id
+         COALESCE(s.materialized_update_id, 0) AS materialized_update_id,
+         COALESCE(s.materialization_version, 0) AS materialization_version
        FROM pages p
        LEFT JOIN page_yjs_updates y ON y.page_id = p.id
        LEFT JOIN page_collaboration_state s ON s.page_id = p.id
        WHERE p.id IN (${group.map(() => "?").join(",")})
-       GROUP BY p.id, s.materialized_update_id
+       GROUP BY p.id, s.materialized_update_id, s.materialization_version
        ORDER BY p.id ASC${lockClause}`,
       group
     );
     for (const row of rows) {
       const latestUpdateId = parseCollaborationUpdateId(row.latest_update_id);
       const materializedUpdateId = parseCollaborationUpdateId(row.materialized_update_id);
-      if (latestUpdateId > materializedUpdateId) {
-        pending.push({ pageId: row.page_id, latestUpdateId, materializedUpdateId });
+      const materializationVersion = parseCollaborationUpdateId(row.materialization_version);
+      if (needsCollaborationMaterialization({
+        latestUpdateId,
+        materializedUpdateId,
+        materializationVersion
+      })) {
+        pending.push({
+          pageId: row.page_id,
+          latestUpdateId,
+          materializedUpdateId,
+          materializationVersion
+        });
       }
     }
   }

@@ -6,6 +6,7 @@ export type CollaborationStateRow = {
   page_id: string;
   document_epoch: string;
   materialized_update_id: number;
+  materialization_version: number;
 };
 
 export function createCollaborationDocumentEpoch() {
@@ -26,6 +27,7 @@ function validateCollaborationState(row: CollaborationStateRow | undefined) {
     );
   }
   const materializedUpdateId = Number(row.materialized_update_id ?? 0);
+  const materializationVersion = Number(row.materialization_version ?? 0);
   if (!Number.isSafeInteger(materializedUpdateId) || materializedUpdateId < 0) {
     throw new ApiError(
       500,
@@ -33,7 +35,18 @@ function validateCollaborationState(row: CollaborationStateRow | undefined) {
       "Collaboration update id exceeded the supported range"
     );
   }
-  return { ...row, materialized_update_id: materializedUpdateId };
+  if (!Number.isSafeInteger(materializationVersion) || materializationVersion < 0) {
+    throw new ApiError(
+      500,
+      "INVALID_COLLABORATION_STATE",
+      "Collaboration materialization provenance is invalid"
+    );
+  }
+  return {
+    ...row,
+    materialized_update_id: materializedUpdateId,
+    materialization_version: materializationVersion
+  };
 }
 
 export async function getCollaborationState(
@@ -42,7 +55,7 @@ export async function getCollaborationState(
   { lock = false }: { lock?: boolean } = {}
 ) {
   const row = await client.queryOne<CollaborationStateRow>(
-    `SELECT page_id, document_epoch, materialized_update_id
+    `SELECT page_id, document_epoch, materialized_update_id, materialization_version
      FROM page_collaboration_state
      WHERE page_id = ?${lock ? " FOR UPDATE" : ""}`,
     [pageId]
@@ -57,8 +70,8 @@ export async function ensureCollaborationState(pageId: string, client: DbClient)
   const documentEpoch = createCollaborationDocumentEpoch();
   await client.execute(
     `INSERT IGNORE INTO page_collaboration_state
-       (page_id, document_epoch, materialized_update_id)
-     VALUES (?, ?, 0)`,
+       (page_id, document_epoch, materialized_update_id, materialization_version)
+     VALUES (?, ?, 0, 0)`,
     [pageId, documentEpoch]
   );
   const created = await getCollaborationState(pageId, client, { lock: true });

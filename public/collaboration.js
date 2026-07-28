@@ -584,7 +584,10 @@ class PageCollaborationSession {
             try {
               const result = await this.api(`/api/pages/${encodeURIComponent(this.page.id)}/collaboration/snapshot`, {
                 method: "PUT",
-                body: snapshot
+                body: {
+                  documentEpoch: snapshot.documentEpoch,
+                  updateId: snapshot.updateId
+                }
               });
               return { result, snapshot };
             } catch (error) {

@@ -26,9 +26,11 @@ Migration `020_page_sharing_yjs_collaboration.sql` adds:
 
 Migration `021_collaboration_document_epoch.sql` adds a non-null `document_epoch` to `page_collaboration_state`. The epoch is renewed whenever collaboration history is intentionally reset, including disabling and re-enabling sharing. Session tickets, WebSocket rooms, persisted updates, relational snapshots, and browser recovery records are all bound to that epoch.
 
-A materialization request includes the server-issued document epoch and the last received update ID. The server locks the page, rejects a replaced document generation or stale snapshot, validates block IDs and hierarchy, gives attachment-deletion tombstones precedence over concurrent stale attachment maps, prevents forged attachment blocks, writes the title and blocks in one transaction, and then records the materialized update ID. Compaction persists a full state update re-encoded by the server-side Yjs document and removes older update rows only after the replacement update is committed.
+Migration `022_server_authoritative_collaboration_materialization.sql` adds `materialization_version`. Existing rows default to version `0`, which means an older build may have advanced the update marker from a browser-supplied duplicate snapshot. Version `1` is written only after the updated server reconstructs the relational state from the durable Yjs log. For any non-empty history, destructive and replacement operations require both an exact latest update marker and the current provenance version.
 
-When the last editor grant is removed, BrainVault requires the latest accepted Yjs update to be materialized before deleting collaboration history. Removing a collaborator immediately closes that user's active sockets. Archiving or deleting a page closes the entire room.
+A materialization request includes only the server-issued document epoch and the last received update ID as meaningful inputs. The update ID is a checkpoint, not proof that independently supplied title or block data belongs to that update. The server locks the page and Yjs history, rejects a replaced generation or stale checkpoint, replays ordered `page_yjs_updates`, decodes and validates the reconstructed document, gives attachment-deletion tombstones precedence over concurrent stale attachment maps, prevents forged attachment blocks, writes the title and blocks in one transaction, and finally records update ID plus provenance version. Legacy browser fields are ignored. Compaction persists a full state update re-encoded by the server-side Yjs document and removes older update rows only after the replacement update is committed.
+
+When the last editor grant is removed, BrainVault requires the latest accepted Yjs update to be materialized by the current server implementation before deleting collaboration history. The same provenance gate protects archive, permanent deletion, export, and workspace restore. Removing a collaborator immediately closes that user's active sockets. Archiving or deleting a page closes the entire room.
 
 ## Document replacement and offline recovery
 
@@ -78,10 +80,12 @@ The browser module imports the pinned Yjs ESM build at `yjs@13.6.31` from jsDeli
 Run the collaboration-specific deterministic checks with Node.js 22.13 or newer:
 
 ```bash
+npm run reproduce:materialization-loss
 npm run verify:collaboration
+npm run verify:data-loss
 ```
 
-The script checks source wiring, exact Yjs dependency pins and integrity, all executable project JavaScript/TypeScript syntax, block hierarchy invariants, the RFC 6455 handshake accept value, masked text and binary frames, fragmented messages, Ping/Pong behavior, JSON server frames, and rejection of an unmasked client frame. The Vitest suite also contains server-side Yjs merge, isolation, malformed-update, and size-limit tests.
+The reproduction reads the vulnerable route from the preserved Git `HEAD`, demonstrates how a same-ID forged empty body could become SQL truth and authorize history deletion, and then verifies the working tree's server-derived path and legacy-checkpoint fence. The collaboration verifier checks source wiring, exact Yjs dependency pins and integrity, materialization provenance, all executable project JavaScript/TypeScript syntax, block hierarchy invariants, the RFC 6455 handshake accept value, masked text and binary frames, fragmented messages, Ping/Pong behavior, JSON server frames, and rejection of an unmasked client frame. The Vitest suite also contains server-side Yjs merge, materialization, isolation, malformed-update, and size-limit tests.
 
 The normal project checks remain:
 

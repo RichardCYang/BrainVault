@@ -24,12 +24,14 @@ import {
   createValidatedYjsDocument,
   InvalidYjsUpdateError
 } from "./yjs-validation.js";
+import {
+  maxCollaborationDocumentBytes,
+  maxCollaborationUpdateBytes
+} from "./collaboration-protocol.js";
 
 export const collaborationWebSocketProtocol = "brainvault-yjs-v1";
 export const collaborationTicketProtocolPrefix = "brainvault-ticket.";
 
-const maxYjsUpdateBytes = 16 * 1024 * 1024;
-const maxYjsDocumentBytes = 16 * 1024 * 1024;
 const maxTextMessageBytes = 16 * 1024;
 const maxFramesPerMinute = 600;
 const maxBytesPerMinute = 64 * 1024 * 1024;
@@ -323,7 +325,7 @@ export class PageCollaborationHub {
 
     const connection = acceptWebSocketUpgrade(request, socket, {
       selectedProtocol: collaborationWebSocketProtocol,
-      maxMessageBytes: maxYjsUpdateBytes + 64 * 1024
+      maxMessageBytes: maxCollaborationUpdateBytes + 64 * 1024
     });
     if (!connection) return;
 
@@ -434,7 +436,7 @@ export class PageCollaborationHub {
       writeQueue: Promise.resolve(),
       pendingWrites: 0,
       bootstrapWritePending: false,
-      document: createValidatedYjsDocument([], maxYjsDocumentBytes)
+      document: createValidatedYjsDocument([], maxCollaborationDocumentBytes)
     });
     room.loadPromise = db.query<YjsUpdateRow>(
       `SELECT id, update_data, is_snapshot
@@ -451,7 +453,7 @@ export class PageCollaborationHub {
       }));
       const loadedDocument = createValidatedYjsDocument(
         room.history.map((row) => row.update_data),
-        maxYjsDocumentBytes
+        maxCollaborationDocumentBytes
       );
       room.document.destroy();
       room.document = loadedDocument;
@@ -511,7 +513,7 @@ export class PageCollaborationHub {
     const kind = message.data[0];
     if (kind === 1) {
       const update = message.data.subarray(1);
-      if (!update.length || update.length > maxYjsUpdateBytes) {
+      if (!update.length || update.length > maxCollaborationUpdateBytes) {
         client.socket.close(1009, "Yjs update is too large");
         return;
       }
@@ -528,7 +530,7 @@ export class PageCollaborationHub {
       }
       const baseUpdateId = toSafeUpdateId(message.data.readBigUInt64BE(1));
       const update = message.data.subarray(9);
-      if (!update.length || update.length > maxYjsUpdateBytes) {
+      if (!update.length || update.length > maxCollaborationUpdateBytes) {
         client.socket.close(1009, "Yjs snapshot is too large");
         return;
       }
@@ -609,7 +611,7 @@ export class PageCollaborationHub {
   ) {
     if (room.invalidated || this.rooms.get(room.pageId) !== room) return;
 
-    const candidate = applyValidatedYjsUpdate(room.document, update, maxYjsDocumentBytes);
+    const candidate = applyValidatedYjsUpdate(room.document, update, maxCollaborationDocumentBytes);
     const persistedUpdate = snapshot ? Buffer.from(candidate.stateUpdate) : update;
     let result: { accepted: true; updateId: number } | { accepted: false; currentUpdateId: number } | null;
 

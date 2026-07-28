@@ -62,6 +62,17 @@ describe("migration replay data safety", () => {
     expect(sql).not.toMatch(/DELETE\s+FROM\s+page_(?:collaboration_state|yjs_updates)/i);
   });
 
+  it("marks legacy collaboration checkpoints as untrusted without deleting durable history", () => {
+    const sql = fs.readFileSync(
+      path.join(migrationsDir, "022_server_authoritative_collaboration_materialization.sql"),
+      "utf8"
+    );
+
+    expect(sql).toMatch(/ADD COLUMN IF NOT EXISTS materialization_version SMALLINT UNSIGNED NOT NULL DEFAULT 0/i);
+    expect(sql).not.toMatch(/DELETE\s+FROM\s+page_(?:collaboration_state|yjs_updates)/i);
+    expect(sql).not.toMatch(/UPDATE\s+page_collaboration_state/i);
+  });
+
   it("persists and consumes a crash-safe marker for the legacy collection backfill", () => {
     const sql = fs.readFileSync(
       path.join(migrationsDir, "009_pages_collection_kind.sql"),

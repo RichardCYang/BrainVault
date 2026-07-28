@@ -9,6 +9,7 @@ import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/muta
 import { toBlock, toPage, toTag } from "../lib/mappers.js";
 import { getOwnedPage, getPageAccess, toAccessPayload, toCollaborationPayload } from "../lib/page-access.js";
 import { disconnectPageCollaborators } from "../lib/collaboration-server.js";
+import { needsCollaborationMaterialization } from "../lib/collaboration-protocol.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { requireAuth } from "../middleware/auth.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
@@ -219,27 +220,41 @@ async function assertCollaborationMaterialized(client: DbClient, pageIds: string
     const state = await client.queryOne<{
       latest_update_id: number | bigint | null;
       materialized_update_id: number | bigint | null;
+      materialization_version: number | bigint | null;
     }>(
       `SELECT
          (SELECT MAX(id) FROM page_yjs_updates WHERE page_id = ?) AS latest_update_id,
-         (SELECT materialized_update_id FROM page_collaboration_state WHERE page_id = ?) AS materialized_update_id`,
-      [pageId, pageId]
+         (SELECT materialized_update_id FROM page_collaboration_state WHERE page_id = ?) AS materialized_update_id,
+         (SELECT materialization_version FROM page_collaboration_state WHERE page_id = ?) AS materialization_version`,
+      [pageId, pageId, pageId]
     );
     const latestUpdateId = Number(state?.latest_update_id ?? 0);
     const materializedUpdateId = Number(state?.materialized_update_id ?? 0);
-    if (!Number.isSafeInteger(latestUpdateId) || !Number.isSafeInteger(materializedUpdateId)) {
+    const materializationVersion = Number(state?.materialization_version ?? 0);
+    if (
+      !Number.isSafeInteger(latestUpdateId)
+      || latestUpdateId < 0
+      || !Number.isSafeInteger(materializedUpdateId)
+      || materializedUpdateId < 0
+      || !Number.isSafeInteger(materializationVersion)
+      || materializationVersion < 0
+    ) {
       throw new ApiError(
         500,
         "INVALID_COLLABORATION_STATE",
         "Collaboration update id exceeded the supported range"
       );
     }
-    if (latestUpdateId > materializedUpdateId) {
+    if (needsCollaborationMaterialization({
+      latestUpdateId,
+      materializedUpdateId,
+      materializationVersion
+    })) {
       throw new ApiError(
         409,
         "COLLABORATION_CHANGES_PENDING",
         "Synchronize the latest collaborative edits before archiving or deleting this page",
-        { pageId, latestUpdateId, materializedUpdateId }
+        { pageId, latestUpdateId, materializedUpdateId, materializationVersion }
       );
     }
   }

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db, transaction, type DbClient } from "../lib/db.js";
 import { requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
-import { blockTypeSchema, idParamSchema, requireUser, usernameSchema } from "../utils/schemas.js";
+import { idParamSchema, requireUser, usernameSchema } from "../utils/schemas.js";
 import { ApiError, notFound } from "../lib/http.js";
 import {
   assertCollaborationDocumentEpoch,
@@ -30,10 +30,12 @@ import {
 } from "../lib/bookmark.js";
 import { getAiChatData, normalizeAiChatMetadata, summarizeAiChatData } from "../lib/ai-chat.js";
 import { removeDeletedAttachmentFiles } from "../lib/attachments.js";
+import { CollaborationDocumentError } from "../lib/collaboration-document.js";
+import { materializeCollaborationUpdates } from "../lib/collaboration-materialization.js";
 import {
-  CollaborationDocumentError,
-  validateCollaborationBlockHierarchy
-} from "../lib/collaboration-document.js";
+  currentCollaborationMaterializationVersion,
+  needsCollaborationMaterialization
+} from "../lib/collaboration-protocol.js";
 import type { BlockRow, PageRow, UserRow } from "../types/domain.js";
 
 export const collaborationRouter = Router();
@@ -48,29 +50,16 @@ const shareParamsSchema = z.object({
   userId: z.string().min(1)
 });
 
-const materializedBlockSchema = z.object({
-  id: z.string().min(1).max(64),
-  type: blockTypeSchema,
-  markdown: z.string().max(20_000).default(""),
-  checked: z.boolean().default(false),
-  parentBlockId: z.string().min(1).max(64).nullable().default(null),
-  sortOrder: z.number().int().min(0).max(2_147_483_647),
-  metadata: z.record(z.string(), z.unknown()).nullable().default(null)
+// Pre-fix tabs may still send title/blocks/deletedAttachmentIds. Zod strips
+// those unknown fields, but the server never trusts or materializes them.
+const materializeSchema = z.object({
+  documentEpoch: z.string().min(1).max(64),
+  updateId: z.number().int().min(1)
 });
 
 const collaborationSessionSchema = z.object({
   documentEpochProtocol: z.literal(1)
 }).strict();
-
-const materializeSchema = z.object({
-  documentEpoch: z.string().min(1).max(64),
-  title: z.string().max(160).refine((value) => value.trim().length > 0, {
-    message: "Page title cannot be blank"
-  }),
-  blocks: z.array(materializedBlockSchema).max(10_000),
-  deletedAttachmentIds: z.array(z.string().min(1).max(64)).max(10_000).default([]),
-  updateId: z.number().int().min(1)
-});
 
 type ShareUserRow = Pick<
   UserRow,
@@ -83,6 +72,11 @@ type ShareUserRow = Pick<
   | "created_at"
   | "updated_at"
 > & { permission: "EDIT"; shared_at: string };
+
+type CollaborationUpdateRow = {
+  id: number | bigint;
+  update_data: Buffer;
+};
 
 function assertShareablePage(page: PageRow) {
   if (page.is_collection) {
@@ -250,18 +244,27 @@ collaborationRouter.delete(
             "SELECT MAX(id) AS max_update_id FROM page_yjs_updates WHERE page_id = ?",
             [pageId]
           );
-          const collaborationState = await client.queryOne<{ materialized_update_id: number }>(
-            "SELECT materialized_update_id FROM page_collaboration_state WHERE page_id = ?",
-            [pageId]
-          );
+          const collaborationState = await getCollaborationState(pageId, client, { lock: true });
           const latestUpdateId = Number(latestUpdateRow?.max_update_id ?? 0);
           const materializedUpdateId = Number(collaborationState?.materialized_update_id ?? 0);
-          if (latestUpdateId > materializedUpdateId) {
+          const materializationVersion = Number(collaborationState?.materialization_version ?? 0);
+          if (!Number.isSafeInteger(latestUpdateId) || latestUpdateId < 0) {
+            throw new ApiError(
+              500,
+              "INVALID_COLLABORATION_STATE",
+              "Collaboration update id exceeded the supported range"
+            );
+          }
+          if (needsCollaborationMaterialization({
+            latestUpdateId,
+            materializedUpdateId,
+            materializationVersion
+          })) {
             throw new ApiError(
               409,
               "COLLABORATION_CHANGES_PENDING",
               "Synchronize the latest collaborative edits before removing the final shared user",
-              { latestUpdateId, materializedUpdateId }
+              { latestUpdateId, materializedUpdateId, materializationVersion }
             );
           }
           await client.execute("DELETE FROM page_yjs_updates WHERE page_id = ?", [pageId]);
@@ -342,26 +345,6 @@ collaborationRouter.put(
       const user = requireUser(req.user);
       const pageId = String(req.params.pageId);
       const body = req.body as z.infer<typeof materializeSchema>;
-      let orderedBlocks: z.infer<typeof materializedBlockSchema>[];
-      try {
-        orderedBlocks = validateCollaborationBlockHierarchy(body.blocks);
-      } catch (error) {
-        if (error instanceof CollaborationDocumentError) {
-          throw new ApiError(400, error.code, error.message);
-        }
-        throw error;
-      }
-      const activeIds = new Set(orderedBlocks.map((block) => block.id));
-      const deletedAttachmentIds = new Set(body.deletedAttachmentIds);
-      for (const blockId of deletedAttachmentIds) {
-        if (activeIds.has(blockId)) {
-          throw new ApiError(
-            400,
-            "ATTACHMENT_DELETE_CONFLICT",
-            "An attachment cannot be active and deleted in the same collaboration snapshot"
-          );
-        }
-      }
       const deletedFiles: string[] = [];
 
       const result = await transaction(async (client) => {
@@ -371,11 +354,17 @@ collaborationRouter.put(
           throw new ApiError(409, "COLLABORATION_DISABLED", "Collaboration is no longer enabled");
         }
 
-        const latestUpdateRow = await client.queryOne<{ max_update_id: number | null }>(
-          "SELECT MAX(id) AS max_update_id FROM page_yjs_updates WHERE page_id = ?",
+        // Every Yjs writer first locks the page row. Holding the same lock makes
+        // this ordered history immutable until the relational transaction ends.
+        const updateRows = await client.query<CollaborationUpdateRow>(
+          `SELECT id, update_data
+           FROM page_yjs_updates
+           WHERE page_id = ?
+           ORDER BY id ASC
+           FOR UPDATE`,
           [pageId]
         );
-        const latestUpdateId = Number(latestUpdateRow?.max_update_id ?? 0);
+        const latestUpdateId = Number(updateRows.at(-1)?.id ?? 0);
         if (!Number.isSafeInteger(latestUpdateId) || latestUpdateId !== body.updateId) {
           throw new ApiError(
             409,
@@ -388,7 +377,20 @@ collaborationRouter.put(
         const state = await getCollaborationState(pageId, client, { lock: true });
         assertCollaborationDocumentEpoch(state, body.documentEpoch);
         const materializedUpdateId = Number(state.materialized_update_id ?? 0);
-        if (body.updateId <= materializedUpdateId) {
+        const materializationVersion = Number(state.materialization_version ?? 0);
+        if (materializedUpdateId > latestUpdateId) {
+          throw new ApiError(
+            500,
+            "INVALID_COLLABORATION_STATE",
+            "The collaboration materialization checkpoint is ahead of durable history"
+          );
+        }
+
+        if (!needsCollaborationMaterialization({
+          latestUpdateId,
+          materializedUpdateId,
+          materializationVersion
+        })) {
           const currentPage = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
           const currentBlocks = await client.query<BlockRow>(
             "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
@@ -402,6 +404,33 @@ collaborationRouter.put(
             ownerId: currentPage.owner_id,
             materializedUpdateId
           };
+        }
+
+        let materialization: ReturnType<typeof materializeCollaborationUpdates>;
+        try {
+          // The durable Yjs log is the sole content authority. updateId is only
+          // a checkpoint; browser-supplied relational content is never accepted.
+          materialization = materializeCollaborationUpdates(
+            updateRows.map((row) => row.update_data)
+          );
+        } catch (error) {
+          if (error instanceof CollaborationDocumentError) {
+            throw new ApiError(409, error.code, error.message);
+          }
+          throw error;
+        }
+
+        const orderedBlocks = materialization.blocks;
+        const activeIds = new Set(orderedBlocks.map((block) => block.id));
+        const deletedAttachmentIds = new Set(materialization.deletedAttachmentIds);
+        for (const blockId of deletedAttachmentIds) {
+          if (activeIds.has(blockId)) {
+            throw new ApiError(
+              409,
+              "ATTACHMENT_DELETE_CONFLICT",
+              "An attachment cannot be active and deleted in the same collaboration document"
+            );
+          }
         }
 
         const existingRows = await client.query<BlockRow>(
@@ -448,7 +477,7 @@ collaborationRouter.put(
 
         // The block parent FK uses ON DELETE CASCADE. Detach every row that must survive
         // before deleting an obsolete ancestor, otherwise a legitimate moved child (or a
-        // canonical attachment omitted from the Yjs payload) could be deleted implicitly.
+        // canonical attachment omitted from the Yjs document) could be deleted implicitly.
         const deletedExistingIds = new Set(
           existingRows
             .filter((row) => row.type === "ATTACHMENT"
@@ -536,14 +565,27 @@ collaborationRouter.put(
           `UPDATE pages
            SET title = ?, edit_version = edit_version + 1, content_version = content_version + 1
            WHERE id = ?`,
-          [body.title, pageId]
+          [materialization.title, pageId]
         );
-        await client.execute(
+        const checkpoint = await client.execute<{ affectedRows: number }>(
           `UPDATE page_collaboration_state
-           SET materialized_update_id = ?, materialized_at = CURRENT_TIMESTAMP(3)
+           SET materialized_update_id = ?, materialization_version = ?,
+               materialized_at = CURRENT_TIMESTAMP(3)
            WHERE page_id = ? AND document_epoch = ?`,
-          [body.updateId, pageId, body.documentEpoch]
+          [
+            latestUpdateId,
+            currentCollaborationMaterializationVersion,
+            pageId,
+            body.documentEpoch
+          ]
         );
+        if (Number(checkpoint.affectedRows) !== 1) {
+          throw new ApiError(
+            409,
+            "COLLABORATION_LINEAGE_CHANGED",
+            "The collaboration document was replaced before materialization completed"
+          );
+        }
 
         const currentPage = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
         const currentBlocks = await client.query<BlockRow>(
@@ -556,7 +598,7 @@ collaborationRouter.put(
           page: currentPage,
           blocks: currentBlocks,
           ownerId: currentPage.owner_id,
-          materializedUpdateId: body.updateId
+          materializedUpdateId: latestUpdateId
         };
       });
 

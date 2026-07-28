@@ -18,6 +18,8 @@ The same review found that destructive cross-tab transitions still executed when
 
 A further expiry-focused review reproduced a separate fence-loss path even when Web Locks were available. If lease renewal failed or a background timer was delayed, any reader treated the expired `localStorage` record as stale, deleted it, and reopened ordinary editing while the destructive callback still held its authoritative Web Lock. The seventh critical finding documents the expiry-safe correction: expiry remains a visible editor fence until a contender proves the authoritative Web Lock is free. Storage read and decode failures now also keep editing locked instead of being interpreted as an absent transition.
 
+A final server-integrity review found an independent relational-materialization flaw. The server treated the latest Yjs update number as if it authenticated a second browser-supplied title/block payload. An authorized buggy or hostile editor could submit the correct latest number with an empty or partial payload; the server would delete canonical SQL blocks, advance the materialization marker, and allow later archive, deletion, final-share removal, export, or restore logic to discard the still-correct Yjs history. The eighth critical finding replaces the duplicate client payload with server-side Yjs-log reconstruction and adds a provenance version that forces every legacy non-empty checkpoint through safe rematerialization.
+
 ## Reproduction before the fix
 
 1. Page `P` is collaborative. Browser/device B edits while disconnected and retains a local full-document recovery update.
@@ -247,9 +249,60 @@ The same schedule after the correction produced:
 
 Severity: **Critical**
 
+## Eighth critical finding: update ID did not authenticate materialized content
+
+The collaboration snapshot endpoint accepted two independent claims from the browser: an `updateId` and a complete relational duplicate containing `title`, `blocks`, and `deletedAttachmentIds`. The server verified that the number equaled `MAX(page_yjs_updates.id)`, but it never proved that the duplicate content was the state represented by that durable Yjs history. This is an insufficient data-authenticity boundary, not merely a stale-UI issue.
+
+### Reproduction before the fix
+
+1. Durable Yjs history for a shared page contains update ID `73`, a title, and two live blocks.
+2. An authorized editor sends the same `documentEpoch` and `updateId: 73`, but supplies `title: "Truncated"`, `blocks: []`, and no attachment tombstones. This can be intentional or the result of a partial/buggy browser state.
+3. The old route validates the empty array, sees that `73` is the latest persisted number, deletes every non-attachment SQL block omitted from the request, updates the page title, and sets `materialized_update_id = 73`.
+4. ID-only guards now report no pending collaboration changes. Final-share removal can delete `page_yjs_updates`; archive/permanent delete can proceed; export can capture the truncated SQL state; or restore can replace the workspace. Once the Yjs rows are removed or replaced, the correct two-block document is no longer recoverable from the server.
+
+The deterministic reproduction reads the vulnerable implementation from preserved Git `HEAD` and the fixed implementation from the working tree:
+
+```json
+{
+  "baselineCommit": "54e22e141308c394006b1c23ab34aa22b63e8097",
+  "vulnerable": {
+    "latestDurableUpdateId": 73,
+    "forgedRequestAcceptedAtSameUpdateId": true,
+    "relationalBlockCountAfterMaterialization": 0,
+    "destructiveGuardAllowsHistoryDeletion": true,
+    "permanentLossWindowReproduced": true
+  },
+  "fixed": {
+    "requestCarriesContent": false,
+    "materializationSource": "ordered page_yjs_updates",
+    "relationalBlockCountAfterMaterialization": 2,
+    "legacyCheckpointRequiresRematerialization": true,
+    "authoritativeCheckpointAllowsDestruction": true,
+    "permanentLossWindowClosed": true
+  }
+}
+```
+
+Run it with:
+
+```bash
+npm run reproduce:materialization-loss
+```
+
+### Implemented correction
+
+- The HTTP materialization schema now treats only `documentEpoch` and `updateId` as meaningful. Extra content fields from already-open older tabs are stripped and never reach SQL.
+- The route first locks the page, then reads `page_yjs_updates` in ID order under `FOR UPDATE`. WebSocket writers use the same page-row lock, so the durable history cannot change between checkpoint verification, reconstruction, and relational commit.
+- `materializeCollaborationUpdates()` rebuilds a Yjs document from persistent updates and strictly decodes title, blocks, hierarchy, JSON-safe metadata, and attachment tombstones. Malformed entries, non-finite numbers, unsafe object keys, excessive nesting/counts, and invalid hierarchy fail closed instead of being silently dropped.
+- Migration `022_server_authoritative_collaboration_materialization.sql` adds `materialization_version SMALLINT UNSIGNED NOT NULL DEFAULT 0`. Version `1` is written only by the new server after log-derived materialization.
+- For any non-empty history, final-share removal, archive, permanent deletion, export, and workspace restore now require both `latest_update_id === materialized_update_id` and the current materialization version. A legacy equal-ID marker therefore cannot authorize history destruction until safe rematerialization succeeds.
+- The existing document-epoch check, attachment provenance rules, global block-ID collision checks, hierarchy handling, and transaction boundaries remain in force.
+
+Severity: **Critical**
+
 ## Other audited data-loss surfaces
 
-No further critical defect was identified in the following paths during this review:
+No further critical defect beyond the eight findings documented above was identified in the following paths during this review:
 
 - Direct title/block saves: durable per-tab drafts are written before network submission; recovered drafts are cloned to the current source before editing; optimistic versions and mutation request hashes prevent stale or ambiguous retries from silently overwriting newer content.
 - Save coalescing: a failed/ambiguous write remains ahead of newer queued edits, so a newer edit is not sent against an unknown server version.
@@ -267,18 +320,17 @@ Successful checks in the audit environment:
 npm run lockfile:check
 [lockfile-registry] OK: 347 resolved URL(s) use approved portable registry hosts.
 
+npm run reproduce:materialization-loss
+vulnerable.permanentLossWindowReproduced=true
+fixed.legacyCheckpointRequiresRematerialization=true
+fixed.permanentLossWindowClosed=true
+
 npm run verify:collaboration
-[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, hierarchy invariants, RFC 6455 protocol behavior, and syntax for 124 file(s).
+[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, server-authoritative materialization provenance, hierarchy invariants, RFC 6455 protocol behavior, and syntax for 129 file(s).
 
 npm run verify:data-loss
-[verify-data-loss-guards] OK: destructive ordering, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection.
+[verify-data-loss-guards] OK: destructive ordering, server-authoritative collaboration materialization, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection.
 
-[dependency-free-js] passed=73 failed=0
-[dependency-free-static-ui] passed=79 failed=0
-
-[recovery-lineage-smoke] OK
-[openapi-yaml] OK
-[migration-021-safety] OK
 ```
 
 The verifier now asserts:
@@ -310,12 +362,19 @@ The verifier now asserts:
 - current-tab edits leaving the origin tab's title, block, and order records unchanged;
 - partially malformed direct-draft records being rejected without dropping valid or invalid fragments;
 - empty-string direct-draft, Yjs recovery, and transition records being treated as present and unsafe;
-- exact recovery-key identity matching encoded account/user, page, epoch, and source values; and
+- exact recovery-key identity matching encoded account/user, page, epoch, and source values;
+- the vulnerable Git `HEAD` route accepting same-ID browser content and the fixed route rejecting that trust boundary;
+- ordered, locked Yjs-log reconstruction as the sole relational content source;
+- migration-022 provenance defaulting legacy checkpoints to version 0 without deleting history;
+- exact update-ID plus current-version gates on final-share removal, archive, permanent delete, export, and restore;
+- malformed persisted collaboration documents failing closed instead of silently dropping blocks; and
 - failed writes, acknowledgements, and cleanup preserving the original raw bytes byte-for-byte.
 
 ## Environment limitation
 
-A clean dependency installation was attempted repeatedly, including after the final patch. The configured package gateway returned HTTP 503 for the existing locked dependency `zod-3.25.76.tgz`, and the local npm cache did not contain it. Consequently the audit environment could not run the full TypeScript build, complete Vitest suite, or MariaDB integration suite after a clean install. A temporary dependency-free Vitest-compatible runner executed all 73 JavaScript unit tests across 10 files and 79 dependency-free TypeScript UI tests across 15 files; all 152 passed. The source verifiers additionally parsed all 124 scanned JavaScript/TypeScript files. No lockfile or dependency version was changed, and the temporary test shim was removed before packaging. Run the following in an environment with registry and MariaDB access before production deployment:
+A clean dependency installation was attempted again after the final patch. The configured package gateway returned HTTP 503 for the existing locked dependency `zod-3.25.76.tgz`, and the local npm cache did not contain it. Consequently this environment could not run the full TypeScript build, complete Vitest suite, or MariaDB integration suite after a clean install.
+
+The dependency-free collaboration and data-loss verifiers completed successfully and parsed all 129 scanned JavaScript/TypeScript files. The new Vitest materialization tests are included for execution in a normal dependency environment, but are not claimed as executed here. No dependency version or lockfile entry was changed; `package.json` only gained the deterministic reproduction command. Run the following with registry and MariaDB access before production deployment:
 
 ```bash
 npm ci
@@ -326,6 +385,8 @@ npm run db:migrate
 
 ## Deployment note
 
-Apply migration 021 before serving the updated application. Force a full refresh or close/reopen every pre-fix browser tab during rollout: an already-running tab still has the old expiry behavior in memory even after the server files are replaced. A pre-fix browser tab will also be denied a new collaboration session until refreshed. Do not delete browser recovery storage during rollout; legacy and undecodable records are intentionally retained for manual recovery.
+Apply migrations 021 and 022 before serving the updated application. Migration 022 is non-destructive: existing non-empty histories remain provenance version 0 until the updated server rematerializes them from `page_yjs_updates`. Archive, permanent deletion, final-share removal, export, and workspace restore intentionally fail closed until that succeeds.
+
+Force a full refresh or close/reopen every pre-fix browser tab during rollout: an already-running tab still has the old expiry behavior in memory even after the server files are replaced. Extra title/block fields sent by such a tab are ignored by the updated endpoint, and a pre-fix tab is still denied a new epoch-aware session until refreshed. Do not delete browser recovery storage during rollout; legacy and undecodable records are intentionally retained for manual recovery.
 
 Serve production over HTTPS in a browser that exposes the Web Locks API. Safety-critical destructive transitions intentionally fail closed when that API is unavailable; normal direct editing and recovery storage remain available. Do not manually delete a transition record merely because its timestamp has expired: the updated client retains it until a contender obtains the recorded authoritative Web Lock and proves the original callback is no longer running.

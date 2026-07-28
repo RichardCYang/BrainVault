@@ -31,7 +31,7 @@ Most API routes require a bearer token returned by the register or login endpoin
 | `POST` | `/api/pages/:pageId/shares` | Add an existing user as an editor; owner only |
 | `DELETE` | `/api/pages/:pageId/shares/:userId` | Remove an editor and close that user’s active sockets; owner only |
 | `POST` | `/api/pages/:pageId/collaboration/session` | Issue a short-lived page-scoped WebSocket ticket and canonical snapshot; requires `{ "documentEpochProtocol": 1 }` |
-| `PUT` | `/api/pages/:pageId/collaboration/snapshot` | Materialize a synchronized Yjs state into page/block tables |
+| `PUT` | `/api/pages/:pageId/collaboration/snapshot` | Materialize the locked durable Yjs log into page/block tables; request content is not trusted |
 | `WS` | `/api/collaboration/:pageId` | Authenticated binary Yjs updates plus JSON presence/control messages |
 | `POST` | `/api/pages/:pageId/blocks` | Add a non-attachment block |
 | `POST` | `/api/bookmarks/preview` | Fetch sanitized OpenGraph metadata for a public web page URL |
@@ -44,6 +44,13 @@ Most API routes require a bearer token returned by the register or login endpoin
 | `POST` | `/api/pages/:pageId/blocks/reorder` | Move or reorder blocks |
 | `GET` | `/api/pages/:pageId/render` | Render sanitized page HTML |
 | `GET` | `/api/search?q=...` | Search titles and block Markdown |
+
+
+## Collaboration materialization integrity
+
+`PUT /api/pages/:pageId/collaboration/snapshot` accepts only the current `documentEpoch` and exact latest `updateId` as meaningful inputs. The update ID is a synchronization checkpoint, not a binding between the request body and the document contents. While holding the same page lock used by WebSocket writers, the server reads `page_yjs_updates` in update order, reconstructs the Yjs document, validates its title, blocks, hierarchy, JSON-safe metadata, and attachment tombstones, and writes only that server-derived state to `pages` and `blocks`.
+
+For rollout compatibility, older tabs may still send `title`, `blocks`, or `deletedAttachmentIds`; those unknown fields are stripped and ignored. Migration `022_server_authoritative_collaboration_materialization.sql` marks pre-fix materialization checkpoints as provenance version `0`. A non-empty collaboration history must be rematerialized by the updated server before final-share removal, archive, permanent deletion, export, or workspace restore can proceed.
 
 ## OpenAPI
 

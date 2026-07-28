@@ -12,6 +12,7 @@
     "lockfile:check": "node scripts/lockfile-registry.mjs",
     "verify:collaboration": "node --experimental-strip-types scripts/verify-collaboration.mjs",
     "verify:data-loss": "node scripts/verify-data-loss-guards.mjs",
+    "reproduce:materialization-loss": "node scripts/reproduce-collaboration-materialization-loss.mjs",
     "lockfile:repair": "node scripts/lockfile-registry.mjs --fix",
     "preinstall": "npm run lockfile:check",
     "env:init": "tsx scripts/env-init.ts",

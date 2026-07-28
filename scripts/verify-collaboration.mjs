@@ -13,6 +13,10 @@ import {
   CollaborationDocumentError,
   validateCollaborationBlockHierarchy
 } from "../src/lib/collaboration-document.ts";
+import {
+  currentCollaborationMaterializationVersion,
+  needsCollaborationMaterialization
+} from "../src/lib/collaboration-protocol.ts";
 import { shouldClearLocalRecoveryAfterAck } from "../public/collaboration.js";
 import { createCollaborationRecoveryStore } from "../public/collaboration-recovery-store.js";
 
@@ -256,11 +260,15 @@ function verifySourceWiring() {
     "WHERE document_epoch IS NULL OR document_epoch = ''",
     "MODIFY COLUMN document_epoch VARCHAR(64) NOT NULL"
   ]);
+  assertContains("migrations/022_server_authoritative_collaboration_materialization.sql", [
+    "ADD COLUMN IF NOT EXISTS materialization_version",
+    "SMALLINT UNSIGNED NOT NULL DEFAULT 0"
+  ]);
   assertContains("src/lib/collaboration-lineage.ts", [
     "ensureCollaborationState",
     "assertCollaborationDocumentEpoch",
     "COLLABORATION_LINEAGE_CHANGED",
-    "SELECT page_id, document_epoch, materialized_update_id"
+    "SELECT page_id, document_epoch, materialized_update_id, materialization_version"
   ]);
   assertContains("src/lib/collaboration-token.ts", [
     "documentEpoch: string",
@@ -281,7 +289,8 @@ function verifySourceWiring() {
     "isAllowedOrigin(request)",
     "Never derive the expected browser host from X-Forwarded-Host",
     "currentAccess = await getPageAccess",
-    "maxYjsUpdateBytes",
+    "maxCollaborationUpdateBytes",
+    "maxCollaborationDocumentBytes",
     "applyValidatedYjsUpdate",
     "candidate.stateUpdate",
     "broadcastCanonicalAttachment",
@@ -304,14 +313,30 @@ function verifySourceWiring() {
     "Y.encodeStateAsUpdate",
     "Y.applyUpdate"
   ]);
+  assertContains("src/lib/collaboration-protocol.ts", [
+    "currentCollaborationMaterializationVersion = 1",
+    "latestUpdateId !== state.materializedUpdateId",
+    "state.materializationVersion !== currentCollaborationMaterializationVersion"
+  ]);
+  assertContains("src/lib/collaboration-materialization.ts", [
+    "materializeCollaborationUpdates",
+    "createValidatedYjsDocument",
+    "INVALID_COLLABORATION_DOCUMENT",
+    "unsafeObjectKeys",
+    "validateCollaborationBlockHierarchy"
+  ]);
   assertContains("src/routes/collaboration.routes.ts", [
     "COLLABORATION_SNAPSHOT_STALE",
-    "validateCollaborationBlockHierarchy",
+    "SELECT id, update_data",
+    "ORDER BY id ASC",
+    "FOR UPDATE",
+    "materializeCollaborationUpdates",
+    "currentCollaborationMaterializationVersion",
+    "needsCollaborationMaterialization",
     "USE_ATTACHMENT_UPLOAD",
     "COLLABORATION_CHANGES_PENDING",
     "deletedExistingIds",
     "The block parent FK uses ON DELETE CASCADE",
-    "Page title cannot be blank",
     "documentEpochProtocol: z.literal(1)",
     "COLLABORATION_CLIENT_REFRESH_REQUIRED",
     "documentEpoch: session.collaborationState.document_epoch",
@@ -320,12 +345,18 @@ function verifySourceWiring() {
   ]);
   const collaborationRouteSource = read("src/routes/collaboration.routes.ts");
   assert.ok(
+    !/body\.(?:title|blocks|deletedAttachmentIds)/.test(collaborationRouteSource),
+    "relational materialization must not consume duplicate browser content"
+  );
+  assert.ok(
     collaborationRouteSource.indexOf("const deletedExistingIds")
       < collaborationRouteSource.indexOf('DELETE FROM blocks WHERE id = ? AND page_id = ?'),
     "surviving children must be detached before obsolete parent rows are deleted"
   );
   assertContains("src/routes/page.routes.ts", [
     "assertCollaborationMaterialized",
+    "materialization_version",
+    "needsCollaborationMaterialization",
     "COLLABORATION_REQUIRED",
     "COLLABORATION_CHANGES_PENDING"
   ]);
@@ -336,6 +367,8 @@ function verifySourceWiring() {
   ]);
   assertContains("src/lib/data-transfer.ts", [
     "FROM page_shares ps INNER JOIN pages p",
+    "materialization_version",
+    "needsCollaborationMaterialization",
     'disconnectPageCollaborators(pageId, "Workspace data is being restored")'
   ]);
   const dataTransferSource = read("src/lib/data-transfer.ts");
@@ -362,6 +395,8 @@ function verifySourceWiring() {
     "canonical-attachment",
     "clearMaterializedAttachmentTombstones",
     "The document kept changing while it was being materialized",
+    "documentEpoch: snapshot.documentEpoch",
+    "updateId: snapshot.updateId",
     "body: { documentEpochProtocol: 1 }",
     "this.documentEpoch = documentEpoch",
     "this.restoreLocalRecovery(documentEpoch)",
@@ -372,6 +407,10 @@ function verifySourceWiring() {
     "Collaboration recovery records from different document versions cannot be merged"
   ]);
   const collaborationClientSource = read("public/collaboration.js");
+  assert.ok(
+    !collaborationClientSource.includes("body: snapshot"),
+    "the browser must not submit a second, independently trusted content snapshot"
+  );
   assert.ok(
     collaborationClientSource.indexOf("this.documentEpoch = documentEpoch")
       < collaborationClientSource.indexOf("this.restoreLocalRecovery(documentEpoch)"),
@@ -413,6 +452,39 @@ function verifySourceWiring() {
   assertContains("public/index.html", ["id=\"share-page-layer\"", "id=\"collaboration-indicator\""]);
 }
 
+
+function verifyMaterializationProvenance() {
+  assert.equal(needsCollaborationMaterialization({
+    latestUpdateId: 0,
+    materializedUpdateId: 0,
+    materializationVersion: 0
+  }), false);
+  assert.equal(needsCollaborationMaterialization({
+    latestUpdateId: 9,
+    materializedUpdateId: 9,
+    materializationVersion: 0
+  }), true);
+  assert.equal(needsCollaborationMaterialization({
+    latestUpdateId: 9,
+    materializedUpdateId: 9,
+    materializationVersion: currentCollaborationMaterializationVersion
+  }), false);
+  assert.equal(needsCollaborationMaterialization({
+    latestUpdateId: 9,
+    materializedUpdateId: 10,
+    materializationVersion: currentCollaborationMaterializationVersion
+  }), true);
+
+  const reproduction = JSON.parse(execFileSync(
+    process.execPath,
+    [join(rootDir, "scripts/reproduce-collaboration-materialization-loss.mjs")],
+    { cwd: rootDir, encoding: "utf8" }
+  ));
+  assert.equal(reproduction.vulnerable.permanentLossWindowReproduced, true);
+  assert.equal(reproduction.fixed.requestCarriesContent, false);
+  assert.equal(reproduction.fixed.legacyCheckpointRequiresRematerialization, true);
+  assert.equal(reproduction.fixed.permanentLossWindowClosed, true);
+}
 
 
 function createMemoryStorage() {
@@ -514,9 +586,10 @@ async function main() {
   verifyRecoveryAcknowledgementSafety();
   verifyRecoveryLineageIsolation();
   verifyCollaborationHierarchy();
+  verifyMaterializationProvenance();
   await verifyWebSocketProtocol();
   const checkedFiles = verifySyntax();
-  console.log(`[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, hierarchy invariants, RFC 6455 protocol behavior, and syntax for ${checkedFiles} file(s).`);
+  console.log(`[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, server-authoritative materialization provenance, hierarchy invariants, RFC 6455 protocol behavior, and syntax for ${checkedFiles} file(s).`);
 }
 
 main().catch((error) => {

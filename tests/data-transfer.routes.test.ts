@@ -21,6 +21,7 @@ const store = vi.hoisted(() => ({
   }>,
   collaborationUpdates: new Map<string, number>(),
   collaborationMaterialized: new Map<string, number>(),
+  collaborationMaterializationVersion: new Map<string, number>(),
   restoreMarker: null as string | null,
   transactionHooks: [] as Array<() => void | Promise<void>>,
   failTransactionAfterCallback: false,
@@ -122,6 +123,7 @@ beforeEach(async () => {
   store.shares = [];
   store.collaborationUpdates = new Map();
   store.collaborationMaterialized = new Map();
+  store.collaborationMaterializationVersion = new Map();
   store.restoreMarker = null;
   store.transactionHooks = [];
   store.failTransactionAfterCallback = false;
@@ -155,7 +157,8 @@ beforeEach(async () => {
       return params.map((id) => ({
         page_id: String(id),
         latest_update_id: store.collaborationUpdates.get(String(id)) ?? 0,
-        materialized_update_id: store.collaborationMaterialized.get(String(id)) ?? 0
+        materialized_update_id: store.collaborationMaterialized.get(String(id)) ?? 0,
+        materialization_version: store.collaborationMaterializationVersion.get(String(id)) ?? 0
       }));
     }
     if (sql.includes("FROM pages WHERE owner_id = ? ORDER BY")) {
@@ -251,6 +254,7 @@ describe("Complete data transfer routes", () => {
   it("refuses to export a workspace with persisted collaboration updates that are not materialized", async () => {
     store.collaborationUpdates.set(pageId, 12);
     store.collaborationMaterialized.set(pageId, 11);
+    store.collaborationMaterializationVersion.set(pageId, 1);
 
     const response = await request(createApp())
       .get("/api/data/export")
@@ -261,6 +265,28 @@ describe("Complete data transfer routes", () => {
     expect(response.body.error.details).toMatchObject({
       pendingPageCount: 1,
       pages: [{ pageId, latestUpdateId: 12, materializedUpdateId: 11 }]
+    });
+  });
+
+  it("refuses an equal-ID legacy checkpoint that was not derived by the current server", async () => {
+    store.collaborationUpdates.set(pageId, 12);
+    store.collaborationMaterialized.set(pageId, 12);
+    store.collaborationMaterializationVersion.set(pageId, 0);
+
+    const response = await request(createApp())
+      .get("/api/data/export")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(409);
+
+    expect(response.body.error.code).toBe("COLLABORATION_CHANGES_PENDING");
+    expect(response.body.error.details).toMatchObject({
+      pendingPageCount: 1,
+      pages: [{
+        pageId,
+        latestUpdateId: 12,
+        materializedUpdateId: 12,
+        materializationVersion: 0
+      }]
     });
   });
 
@@ -278,6 +304,7 @@ describe("Complete data transfer routes", () => {
       () => {
         store.collaborationUpdates.set(pageId, 13);
         store.collaborationMaterialized.set(pageId, 12);
+        store.collaborationMaterializationVersion.set(pageId, 1);
       }
     ];
 

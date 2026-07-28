@@ -726,35 +726,19 @@ components:
           description: Confirms that the browser isolates local recovery records by the server-issued document epoch.
     CollaborationSnapshotInput:
       type: object
-      required: [documentEpoch, title, blocks, updateId]
+      additionalProperties: true
+      required: [documentEpoch, updateId]
+      description: Only the document generation and durable update checkpoint are authoritative request inputs. Duplicate title, block, or attachment-tombstone fields sent by an older browser are ignored; the server reconstructs content from page_yjs_updates.
       properties:
         documentEpoch:
           type: string
           minLength: 1
           maxLength: 64
-          description: Server-issued collaboration document generation. A snapshot from an earlier generation is rejected.
-        title:
-          type: string
-          minLength: 1
-          maxLength: 160
-          description: Must contain at least one non-whitespace character.
-        blocks:
-          type: array
-          maxItems: 10000
-          items:
-            $ref: '#/components/schemas/CollaborationBlock'
-        deletedAttachmentIds:
-          type: array
-          maxItems: 10000
-          default: []
-          items:
-            type: string
-            minLength: 1
-            maxLength: 64
+          description: Server-issued collaboration document generation. A request from an earlier generation is rejected.
         updateId:
           type: integer
           minimum: 1
-          description: Exact latest persisted Yjs update ID applied by the client.
+          description: Exact latest persisted Yjs update ID observed by the client. It is a checkpoint, not proof of request-body content.
     CollaborationSession:
       type: object
       required: [pageId, documentEpoch, protocol, ticketProtocol, path, expiresIn, access, collaboration, document]
@@ -1339,7 +1323,7 @@ paths:
   /api/pages/{pageId}/collaboration/snapshot:
     put:
       summary: Materialize a consistent Yjs document into the relational page and block tables
-      description: Available to the owner and invited editors. The server locks the page, requires documentEpoch to match the current Yjs generation and updateId to equal the latest persisted update, validates hierarchy and attachment provenance, and applies the snapshot atomically.
+      description: Available to the owner and invited editors. The server locks the page and durable Yjs rows, requires documentEpoch to match the current generation and updateId to equal the latest persisted update, rebuilds the canonical Yjs document from ordered page_yjs_updates, validates hierarchy and attachment provenance, and atomically writes that server-derived state to the relational tables. Browser-supplied duplicate content is never trusted.
       parameters:
         - in: path
           name: pageId
@@ -1385,9 +1369,9 @@ paths:
                       type: object
                       additionalProperties: true
         '400':
-          description: Invalid title, block hierarchy, attachment operation, or document size
+          description: Invalid request shape or unsupported attachment operation
         '409':
-          description: Document generation changed, snapshot update ID is stale, a block ID conflicts globally, or collaboration is disabled
+          description: Document generation changed, update ID is stale, durable Yjs history cannot be safely materialized, a block ID conflicts globally, or collaboration is disabled
   /api/pages/{pageId}/blocks:
     post:
       summary: Create a block on an unshared owned page

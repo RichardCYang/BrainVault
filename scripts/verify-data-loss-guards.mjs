@@ -1,4 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createCollaborationRecoveryStore } from "../public/collaboration-recovery-store.js";
 import { createPageDraftStore } from "../public/draft-store.js";
 import { translationCatalogs } from "../public/i18n.js";
@@ -132,6 +134,67 @@ const transitionLockSource = readFileSync(
   new URL("../public/page-transition-lock.js", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const collaborationRouteSource = readFileSync(
+  new URL("../src/routes/collaboration.routes.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
+const pageRouteSource = readFileSync(
+  new URL("../src/routes/page.routes.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
+const dataTransferSource = readFileSync(
+  new URL("../src/lib/data-transfer.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
+const collaborationProtocolSource = readFileSync(
+  new URL("../src/lib/collaboration-protocol.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
+const materializationMigrationSource = readFileSync(
+  new URL("../migrations/022_server_authoritative_collaboration_materialization.sql", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
+
+assert(
+  collaborationRouteSource.includes("materializeCollaborationUpdates")
+    && collaborationRouteSource.includes("SELECT id, update_data")
+    && collaborationRouteSource.includes("FOR UPDATE"),
+  "Collaboration SQL state is not rebuilt from the locked durable Yjs log"
+);
+assert(
+  !/body\.(?:title|blocks|deletedAttachmentIds)/.test(collaborationRouteSource),
+  "A browser-supplied duplicate snapshot can still become relational truth"
+);
+assert(
+  materializationMigrationSource.includes("materialization_version")
+    && materializationMigrationSource.includes("NOT NULL DEFAULT 0"),
+  "Legacy unbound materialization checkpoints are not fenced by provenance"
+);
+assert(
+  collaborationProtocolSource.includes("latestUpdateId !== state.materializedUpdateId")
+    && collaborationProtocolSource.includes(
+      "state.materializationVersion !== currentCollaborationMaterializationVersion"
+    ),
+  "Destructive guards do not require an exact server-authoritative checkpoint"
+);
+assert(
+  collaborationRouteSource.includes("needsCollaborationMaterialization")
+    && pageRouteSource.includes("needsCollaborationMaterialization")
+    && dataTransferSource.includes("needsCollaborationMaterialization"),
+  "Final-share, page, export, or restore paths are missing the materialization provenance guard"
+);
+
+const materializationReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL("./reproduce-collaboration-materialization-loss.mjs", import.meta.url))],
+  { encoding: "utf8" }
+));
+assert(
+  materializationReproduction.vulnerable.permanentLossWindowReproduced
+    && materializationReproduction.fixed.legacyCheckpointRequiresRematerialization
+    && materializationReproduction.fixed.permanentLossWindowClosed,
+  "The collaboration materialization loss reproduction did not prove both vulnerable and fixed states"
+);
 
 const recoveredDraftActivation = section(
   client,
@@ -650,5 +713,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: destructive ordering, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: destructive ordering, server-authoritative collaboration materialization, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection."
 );
