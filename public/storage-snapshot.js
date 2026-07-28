@@ -7,7 +7,10 @@ function normalizePositiveInteger(value, fallback) {
 }
 
 function getSignature(keys) {
-  return [...keys].sort().join("\u0000");
+  // Storage keys are strings and may themselves contain NUL. JSON encoding
+  // preserves item boundaries, so different key sets cannot share a
+  // delimiter-colliding stability signature.
+  return JSON.stringify([...keys].sort());
 }
 
 export function inspectStorageKeys(

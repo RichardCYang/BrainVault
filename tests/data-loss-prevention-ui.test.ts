@@ -94,7 +94,9 @@ describe("Data-loss prevention integration", () => {
   it("blocks collaboration transitions while another tab still owns durable recovery data", () => {
     expect(client).toContain('import { createPageTransitionLock } from "./page-transition-lock.js"');
     expect(client).toContain("function withPagePersistenceTransition(pageId, kind, action)");
-    expect(client).toContain("pageTransitionLock.runExclusive(pageId");
+    expect(client).toContain("const exclusiveTransitionId = workspaceTransitionId ?? pageId;");
+    expect(client).toContain("pageTransitionLock.runExclusive(exclusiveTransitionId");
+    expect(client).toContain("status.exclusiveTransitionLockUnavailable");
     expect(client).toContain("lockManager: window.navigator.locks");
     expect(client).toContain("if (!pageTransitionLock.owns(currentLease))");
     expect(client).toContain("isPagePersistenceTransitionLocked()");

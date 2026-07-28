@@ -57,6 +57,12 @@ CORS_ORIGIN="https://notes.example.com"
 
 Do not change `MFA_ENCRYPTION_KEY` casually after users enroll TOTP. Existing encrypted authenticator secrets depend on that key and become unusable when it changes.
 
+## Browser lock and secure-context requirement
+
+Safety-critical cross-tab transitions—permanent deletion, archive, sharing changes, direct block deletion, and complete workspace restore—require the browser Web Locks API. BrainVault intentionally does not substitute a `localStorage` lease for atomic exclusion. If `navigator.locks` is unavailable, the operation is blocked before any destructive request is sent.
+
+Serve production over HTTPS and use a browser that supports Web Locks. Local development on `localhost` can continue to use the documented HTTP URL. Normal editing remains available when the API is absent, but safety-critical persistence-mode transitions fail closed.
+
 ## WebSocket proxying and Yjs delivery
 
 Real-time collaboration uses the same `PORT`, `CORS_ORIGIN`, and JWT signing secret as the HTTP API. No separate collaboration process or port is required. A production reverse proxy must support HTTP/1.1 WebSocket upgrades for `/api/collaboration/` and forward the browser origin and original host/protocol headers.

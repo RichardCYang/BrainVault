@@ -14,6 +14,8 @@ A follow-up review of the direct-draft recovery path also found that a recoverin
 
 A final browser-durability review found a separate destructive-overwrite path: the direct-draft parser silently discarded malformed title, block, or order fragments while accepting the rest of the record, and the next edit rewrote the shortened record over the original bytes. All three durability stores also treated an existing empty-string value as if the key were absent. The fifth critical finding documents the lossless, fail-closed correction.
 
+The same review found that destructive cross-tab transitions still executed when the browser Web Locks API was unavailable, relying on a non-atomic `localStorage` lease as the only exclusion mechanism. A delayed contender could overwrite the active lease, later remove it while the first destructive operation was still running, and reopen editing after the first operation had already completed its recovery preflight. The sixth critical finding documents the fail-closed, owner-scoped lock correction and a related storage-snapshot signature collision.
+
 ## Reproduction before the fix
 
 1. Page `P` is collaborative. Browser/device B edits while disconnected and retains a local full-document recovery update.
@@ -162,13 +164,40 @@ A fully undecodable exact-source record had a second overwrite path: the save fu
 
 Severity: **Critical**
 
+## Sixth critical finding: a durable localStorage lease was mistaken for atomic cross-tab exclusion
+
+The page-transition helper used the browser Web Locks API when available, but its fallback executed the destructive action immediately and relied only on a `localStorage` lease. Lease acquisition was a multi-step read/check/write/verify sequence. Web Storage provides no compare-and-set operation or cross-tab lock around that sequence, so two tabs could both observe a missing lease and later verify different writes to the same key. The existing 50 ms propagation delay and one-time ownership check reduced common races but could not close a delayed-contender schedule.
+
+This affected safety-critical persistence-mode transitions including permanent deletion, page archive, sharing enable/disable, direct block deletion, and full workspace restore. The server-side optimistic and transaction guards still protect many row-level conflicts, but they cannot represent a direct edit that is created in another tab after the destructive operation's local recovery preflight.
+
+### Reproduction before the fix
+
+1. Tabs A and B both complete the outer preflight while the transition key is absent.
+2. Inside `acquire()`, both tabs read the key as missing. Tab B is then suspended before its write.
+3. Tab A writes and verifies lease A, waits for propagation, verifies ownership, and starts a slow destructive operation such as workspace restore or permanent deletion.
+4. Tab B resumes from its stale read, overwrites the key with lease B, verifies it, waits, and starts its own transition. Tab A is not re-fenced while its action is in progress.
+5. Tab B finishes first and removes lease B. Other tabs now observe no transition and can resume editing or create new durable drafts even though tab A is still running and has already completed its draft/recovery checks.
+6. Tab A later commits deletion or replacement. The newly created local draft is detached from the live page/workspace and survives only as orphan recovery data rather than as a successful save.
+
+A related fail-closed defect existed in storage snapshot stabilization. Key sets were joined with NUL to form a signature, so the distinct legal key sets `["a\u0000b"]` and `["a", "b"]` produced the same signature. Concurrently changing storage could therefore be declared stable after three delimiter-colliding complete passes.
+
+### Implemented correction
+
+- `runExclusive()` now refuses to call the action when `navigator.locks.request` is unavailable and returns the explicit reason `lock-manager-unavailable`. No destructive network or database mutation is attempted.
+- Page-level and workspace-level transitions for one owner now use the same owner-scoped Web Lock resource. Page-specific durable leases remain in place for propagation, editor locking, crash expiry, and recovery visibility, but are no longer treated as the authority for mutual exclusion.
+- The client surfaces a localized fail-closed explanation in all seven interface languages.
+- Storage snapshot signatures now JSON-encode the sorted key array, preserving string boundaries for every key value.
+- Regression coverage proves that the destructive callback is not invoked without Web Locks, owner-scoped lock wiring is present, and alternating delimiter-colliding key sets never produce a reliable snapshot.
+
+Severity: **Critical**
+
 ## Other audited data-loss surfaces
 
 No further critical defect was identified in the following paths during this review:
 
 - Direct title/block saves: durable per-tab drafts are written before network submission; recovered drafts are cloned to the current source before editing; optimistic versions and mutation request hashes prevent stale or ambiguous retries from silently overwriting newer content.
 - Save coalescing: a failed/ambiguous write remains ahead of newer queued edits, so a newer edit is not sent against an unknown server version.
-- Destructive transitions: archive, permanent delete, direct block deletion, final-share removal, and workspace replacement check pending local/collaboration state and use page/workspace transition locks.
+- Destructive transitions: archive, permanent delete, direct block deletion, final-share removal, and workspace replacement check pending local/collaboration state, use one owner-scoped authoritative Web Lock, and retain page/workspace leases only for propagation and crash recovery.
 - Workspace restore and attachments: database replacement is transactionally fingerprinted; live collaboration rooms are invalidated before replacement; attachment generations use journals, checksums, fsync, and commit-outcome recovery.
 - Block deletion/reordering: version snapshots, hierarchy locks, cycle validation, and idempotent mutation receipts prevent stale structure changes from being silently applied.
 
@@ -183,12 +212,12 @@ npm run lockfile:check
 [lockfile-registry] OK: 347 resolved URL(s) use approved portable registry hosts.
 
 npm run verify:collaboration
-[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, hierarchy invariants, RFC 6455 protocol behavior, and syntax for 123 file(s).
+[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, hierarchy invariants, RFC 6455 protocol behavior, and syntax for 124 file(s).
 
 npm run verify:data-loss
-[verify-data-loss-guards] OK: destructive ordering, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, convergent storage snapshots, and fail-closed recovery inspection.
+[verify-data-loss-guards] OK: destructive ordering, owner-scoped atomic browser exclusion, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection.
 
-[browser-durability-compat] passed=43 failed=0
+[browser-durability-compat] passed=44 failed=0
 
 [recovery-lineage-smoke] OK
 [openapi-yaml] OK
@@ -207,6 +236,9 @@ The verifier now asserts:
 - generation-safe deletion;
 - close code `4011` handling;
 - JavaScript/TypeScript syntax for all scanned sources;
+- destructive callbacks never running when the browser lock manager is unavailable;
+- page and workspace transitions sharing one owner-scoped authoritative Web Lock;
+- delimiter-colliding storage key sets being rejected as unstable;
 - the exact repeated-index-shift counterexample that defeats the old three-pass forward scan;
 - convergence and survivor visibility for direct drafts, Yjs recovery, and transition leases;
 - unreliable storage enumeration being surfaced instead of converted to an empty result;
@@ -221,7 +253,7 @@ The verifier now asserts:
 
 ## Environment limitation
 
-A clean dependency installation was attempted repeatedly. The configured package gateway returned HTTP 503 for the existing locked dependency `zod-3.25.76.tgz`, and the local npm cache did not contain it. Consequently the audit environment could not run the full TypeScript build, complete Vitest suite, or MariaDB integration suite after a clean install. All 43 browser-durability tests from the direct-draft, collaboration-recovery, and transition-lock suites were executed with a temporary dependency-free Vitest-compatible runner and passed. No lockfile or dependency version was changed. Run the following in an environment with registry and MariaDB access before production deployment:
+A clean dependency installation was attempted repeatedly. The configured package gateway returned HTTP 503 for the existing locked dependency `zod-3.25.76.tgz`, and the local npm cache did not contain it. Consequently the audit environment could not run the full TypeScript build, complete Vitest suite, or MariaDB integration suite after a clean install. All 44 browser-durability tests from the direct-draft, collaboration-recovery, transition-lock, and storage-snapshot suites were executed with a temporary dependency-free Vitest-compatible runner and passed. No lockfile or dependency version was changed. Run the following in an environment with registry and MariaDB access before production deployment:
 
 ```bash
 npm ci
@@ -233,3 +265,5 @@ npm run db:migrate
 ## Deployment note
 
 Apply migration 021 before serving the updated application. A pre-fix browser tab will be denied a new collaboration session until refreshed. Do not delete browser recovery storage during rollout; legacy and undecodable records are intentionally retained for manual recovery.
+
+Serve production over HTTPS in a browser that exposes the Web Locks API. Safety-critical destructive transitions intentionally fail closed when that API is unavailable; normal direct editing and recovery storage remain available.

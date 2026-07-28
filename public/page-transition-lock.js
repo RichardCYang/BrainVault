@@ -175,7 +175,14 @@ export function createPageTransitionLock(
       throw new TypeError("A pageId and transition action are required");
     }
     if (typeof lockManager?.request !== "function") {
-      return { acquired: true, value: await action() };
+      // Web Storage has no atomic compare-and-set primitive. A durable
+      // lease is useful for propagation, crash recovery, and UI state, but
+      // it cannot safely replace Web Locks for a destructive transition.
+      return {
+        acquired: false,
+        value: undefined,
+        reason: "lock-manager-unavailable"
+      };
     }
     return lockManager.request(
       getExclusiveLockName(pageId),

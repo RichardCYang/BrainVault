@@ -72,4 +72,4 @@ npm run verify:collaboration # Check collaboration wiring, protocol behavior, an
 npm start         # Run the compiled server
 ```
 
-Before a production deployment, replace the bundled development secrets and configure the WebAuthn relying-party values. See [Security](docs/security.md) and [Configuration](docs/configuration.md).
+Before a production deployment, replace the bundled development secrets, configure the WebAuthn relying-party values, and serve the app over HTTPS in a browser that supports Web Locks so safety-critical cross-tab transitions can run. See [Security](docs/security.md) and [Configuration](docs/configuration.md).

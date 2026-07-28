@@ -2952,13 +2952,17 @@ async function withPagePersistenceTransition(pageId, kind, action) {
   const workspaceTransitionId = isWorkspaceTransitionId(pageId)
     ? null
     : getPageWorkspaceTransitionId(page);
+  // Page-level and workspace-level destructive transitions for the same
+  // owner must share one authoritative browser lock. Page-specific durable
+  // leases remain separate so other tabs can flush the affected editor.
+  const exclusiveTransitionId = workspaceTransitionId ?? pageId;
   const currentTransition = inspectPageTransitionSafely(pageId);
   const workspaceTransition = workspaceTransitionId && pageId !== workspaceTransitionId
     ? inspectPageTransitionSafely(workspaceTransitionId)
     : null;
   if (activePageTransitionLease || currentTransition || workspaceTransition) throw new Error(busyMessage);
 
-  const result = await pageTransitionLock.runExclusive(pageId, async () => {
+  const result = await pageTransitionLock.runExclusive(exclusiveTransitionId, async () => {
     const lease = pageTransitionLock.acquire(pageId, kind);
     if (!lease) throw new Error(busyMessage);
     let currentLease = lease;
@@ -2987,7 +2991,13 @@ async function withPagePersistenceTransition(pageId, kind, action) {
       syncPageModeUi();
     }
   });
-  if (!result?.acquired) throw new Error(busyMessage);
+  if (!result?.acquired) {
+    throw new Error(
+      result?.reason === "lock-manager-unavailable"
+        ? t("status.exclusiveTransitionLockUnavailable")
+        : busyMessage
+    );
+  }
   return result.value;
 }
 

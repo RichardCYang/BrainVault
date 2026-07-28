@@ -3,6 +3,7 @@ import { createCollaborationRecoveryStore } from "../public/collaboration-recove
 import { createPageDraftStore } from "../public/draft-store.js";
 import { translationCatalogs } from "../public/i18n.js";
 import { createPageTransitionLock } from "../public/page-transition-lock.js";
+import { inspectStorageKeys } from "../public/storage-snapshot.js";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -65,6 +66,28 @@ class RepeatedShiftingStorage extends MemoryStorage {
       this.shiftsRemaining -= 1;
     }
     return key;
+  }
+}
+
+class AlternatingDelimiterCollisionStorage {
+  pass = -1;
+  lengthReadInPass = 0;
+  currentKeys = [];
+
+  get length() {
+    if (this.lengthReadInPass === 0) {
+      this.pass += 1;
+      this.currentKeys = this.pass % 2 === 0
+        ? ["draft\u0000survivor"]
+        : ["draft", "survivor"];
+    }
+    const length = this.currentKeys.length;
+    this.lengthReadInPass = (this.lengthReadInPass + 1) % 3;
+    return length;
+  }
+
+  key(index) {
+    return this.currentKeys[index] ?? null;
   }
 }
 
@@ -132,6 +155,10 @@ for (const [locale, catalog] of Object.entries(translationCatalogs)) {
     typeof catalog?.status?.localRecoveryInspectionFailed === "string",
     `Missing localRecoveryInspectionFailed translation for ${locale}`
   );
+  assert(
+    typeof catalog?.status?.exclusiveTransitionLockUnavailable === "string",
+    `Missing exclusiveTransitionLockUnavailable translation for ${locale}`
+  );
 }
 
 assert(
@@ -141,6 +168,15 @@ assert(
 assert(
   client.includes("const transitionInspection = pageTransitionLock.inspectActive()"),
   "Workspace transitions do not inspect every durable lease safely"
+);
+assert(
+  client.includes("const exclusiveTransitionId = workspaceTransitionId ?? pageId;")
+    && client.includes("pageTransitionLock.runExclusive(exclusiveTransitionId"),
+  "Page and workspace transitions do not share one owner-scoped browser lock"
+);
+assert(
+  client.includes("status.exclusiveTransitionLockUnavailable"),
+  "Unsupported browser locking does not surface a fail-closed explanation"
 );
 
 const permanentDelete = section(client, "async function deleteNavigationTarget()", "function renderCollectionView");
@@ -289,6 +325,33 @@ const recovery = recoveryStore.loadPageRecords("page");
 assert(
   recovery.length === 1 && recovery[0].sourceId === "tab-b",
   "A surviving collaboration recovery record was skipped after a key shift"
+);
+
+let unsupportedLockActionExecuted = false;
+const unsupportedLockResult = await createPageTransitionLock(
+  new MemoryStorage(),
+  { sourceId: "unsupported-browser" }
+).runExclusive("__workspace__:user", async () => {
+  unsupportedLockActionExecuted = true;
+  return "unsafe";
+});
+assert(
+  !unsupportedLockResult.acquired
+    && unsupportedLockResult.reason === "lock-manager-unavailable"
+    && !unsupportedLockActionExecuted,
+  "A destructive transition still runs without an atomic browser lock manager"
+);
+
+const delimiterCollisionInspection = inspectStorageKeys(
+  new AlternatingDelimiterCollisionStorage(),
+  { maxPasses: 6, stablePasses: 3 }
+);
+assert(
+  !delimiterCollisionInspection.reliable
+    && delimiterCollisionInspection.keys.includes("draft\u0000survivor")
+    && delimiterCollisionInspection.keys.includes("draft")
+    && delimiterCollisionInspection.keys.includes("survivor"),
+  "Delimiter-colliding storage key sets can still be mistaken for one stable snapshot"
 );
 
 const transitionStorage = new MemoryStorage();
@@ -460,5 +523,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: destructive ordering, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, convergent storage snapshots, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: destructive ordering, owner-scoped atomic browser exclusion, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection."
 );

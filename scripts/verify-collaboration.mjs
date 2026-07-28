@@ -400,7 +400,7 @@ function verifySourceWiring() {
     "recoveryStore: collaborationRecoveryStore",
     "flushMaterialization({ compact: collaborationCompact })",
     "flushPendingPageEdits({ allowLocked: true, collaborationCompact: false })",
-    "pageTransitionLock.runExclusive(pageId",
+    "pageTransitionLock.runExclusive(exclusiveTransitionId",
     "assertNoPendingLocalPageDrafts(pageId)",
     "assertNoPendingLocalCollaborationRecovery(pageId)",
     "refreshCollaborativePageDraftRecovery",

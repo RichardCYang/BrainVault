@@ -224,13 +224,19 @@ describe("page persistence transition lock", () => {
     await expect(firstRun).resolves.toEqual({ acquired: true, value: "first" });
   });
 
-  it("falls back to the durable lease when the browser lock API is unavailable", async () => {
+  it("fails closed when the browser lock API is unavailable", async () => {
     const storage = createMemoryStorage();
     const lock = createPageTransitionLock(storage, { sourceId: "tab-a" });
-    await expect(lock.runExclusive("page-1", async () => "saved")).resolves.toEqual({
-      acquired: true,
-      value: "saved"
+    let actionExecuted = false;
+    await expect(lock.runExclusive("page-1", async () => {
+      actionExecuted = true;
+      return "unsafe";
+    })).resolves.toEqual({
+      acquired: false,
+      value: undefined,
+      reason: "lock-manager-unavailable"
     });
+    expect(actionExecuted).toBe(false);
   });
 
 });
