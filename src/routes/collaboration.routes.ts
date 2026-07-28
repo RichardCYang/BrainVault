@@ -5,6 +5,11 @@ import { requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { blockTypeSchema, idParamSchema, requireUser, usernameSchema } from "../utils/schemas.js";
 import { ApiError, notFound } from "../lib/http.js";
+import {
+  assertCollaborationDocumentEpoch,
+  ensureCollaborationState,
+  getCollaborationState
+} from "../lib/collaboration-lineage.js";
 import { getOwnedPage, getPageAccess, toAccessPayload, toCollaborationPayload } from "../lib/page-access.js";
 import {
   collaborationTicketTtlSeconds,
@@ -53,7 +58,12 @@ const materializedBlockSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).nullable().default(null)
 });
 
+const collaborationSessionSchema = z.object({
+  documentEpochProtocol: z.literal(1)
+}).strict();
+
 const materializeSchema = z.object({
+  documentEpoch: z.string().min(1).max(64),
   title: z.string().max(160).refine((value) => value.trim().length > 0, {
     message: "Page title cannot be blank"
   }),
@@ -184,6 +194,7 @@ collaborationRouter.post(
         if (firstShare) {
           await client.execute("DELETE FROM page_yjs_updates WHERE page_id = ?", [pageId]);
           await client.execute("DELETE FROM page_collaboration_state WHERE page_id = ?", [pageId]);
+          await ensureCollaborationState(pageId, client);
         }
         await client.execute(
           `INSERT INTO page_shares (page_id, user_id, permission, shared_by)
@@ -275,33 +286,46 @@ collaborationRouter.post(
     try {
       const user = requireUser(req.user);
       const pageId = String(req.params.pageId);
-      const access = await getPageAccess(pageId, user.id);
-      assertShareablePage(access.page);
-      if (access.shareCount < 1) {
-        throw new ApiError(409, "COLLABORATION_DISABLED", "Add at least one shared user to enable collaboration");
+      if (!collaborationSessionSchema.safeParse(req.body).success) {
+        throw new ApiError(
+          409,
+          "COLLABORATION_CLIENT_REFRESH_REQUIRED",
+          "Refresh BrainVault before reconnecting to this collaboration document"
+        );
       }
-      const documentBlocks = await db.query<BlockRow>(
-        "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
-        [pageId]
-      );
+      const session = await transaction(async (client) => {
+        const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
+        assertShareablePage(access.page);
+        if (access.shareCount < 1) {
+          throw new ApiError(409, "COLLABORATION_DISABLED", "Add at least one shared user to enable collaboration");
+        }
+        const collaborationState = await ensureCollaborationState(pageId, client);
+        const documentBlocks = await client.query<BlockRow>(
+          "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
+          [pageId]
+        );
+        return { access, collaborationState, documentBlocks };
+      });
       const ticket = signCollaborationToken({
         sub: user.id,
         username: user.username,
         pageId,
+        documentEpoch: session.collaborationState.document_epoch,
         scope: "page:collaborate"
       });
       res.setHeader("Cache-Control", "private, no-store");
       res.json({
         pageId,
+        documentEpoch: session.collaborationState.document_epoch,
         protocol: collaborationWebSocketProtocol,
         ticketProtocol: `${collaborationTicketProtocolPrefix}${ticket}`,
         path: `/api/collaboration/${encodeURIComponent(pageId)}`,
         expiresIn: collaborationTicketTtlSeconds,
-        access: toAccessPayload(access),
-        collaboration: toCollaborationPayload(access),
+        access: toAccessPayload(session.access),
+        collaboration: toCollaborationPayload(session.access),
         document: {
-          title: access.page.title,
-          blocks: documentBlocks.map(toBlock)
+          title: session.access.page.title,
+          blocks: session.documentBlocks.map(toBlock)
         }
       });
     } catch (error) {
@@ -361,15 +385,9 @@ collaborationRouter.put(
           );
         }
 
-        await client.execute(
-          "INSERT IGNORE INTO page_collaboration_state (page_id, materialized_update_id) VALUES (?, 0)",
-          [pageId]
-        );
-        const state = await client.queryOne<{ materialized_update_id: number }>(
-          "SELECT materialized_update_id FROM page_collaboration_state WHERE page_id = ? FOR UPDATE",
-          [pageId]
-        );
-        const materializedUpdateId = Number(state?.materialized_update_id ?? 0);
+        const state = await getCollaborationState(pageId, client, { lock: true });
+        assertCollaborationDocumentEpoch(state, body.documentEpoch);
+        const materializedUpdateId = Number(state.materialized_update_id ?? 0);
         if (body.updateId <= materializedUpdateId) {
           const currentPage = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
           const currentBlocks = await client.query<BlockRow>(
@@ -523,8 +541,8 @@ collaborationRouter.put(
         await client.execute(
           `UPDATE page_collaboration_state
            SET materialized_update_id = ?, materialized_at = CURRENT_TIMESTAMP(3)
-           WHERE page_id = ?`,
-          [body.updateId, pageId]
+           WHERE page_id = ? AND document_epoch = ?`,
+          [body.updateId, pageId, body.documentEpoch]
         );
 
         const currentPage = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
@@ -545,6 +563,7 @@ collaborationRouter.put(
       if (deletedFiles.length) await removeDeletedAttachmentFiles(result.ownerId, deletedFiles);
       res.json({
         applied: result.applied,
+        documentEpoch: body.documentEpoch,
         materializedUpdateId: result.materializedUpdateId,
         pageVersion: Number(result.page.edit_version ?? 1),
         pageContentVersion: Number(result.page.content_version ?? 1),

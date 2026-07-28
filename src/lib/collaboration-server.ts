@@ -5,6 +5,10 @@ import { corsOrigins, env } from "../config/env.js";
 import { db, transaction } from "./db.js";
 import { getPageAccess } from "./page-access.js";
 import { verifyCollaborationToken } from "./collaboration-token.js";
+import {
+  assertCollaborationDocumentEpoch,
+  getCollaborationState
+} from "./collaboration-lineage.js";
 import { ApiError } from "./http.js";
 import {
   acceptWebSocketUpgrade,
@@ -51,6 +55,7 @@ type ClientContext = {
   id: string;
   socket: WebSocketConnection;
   user: CollaborationProfile;
+  documentEpoch: string;
   synced: boolean;
   awareness: AwarenessState;
   rateWindowStartedAt: number;
@@ -60,6 +65,7 @@ type ClientContext = {
 
 type Room = {
   pageId: string;
+  documentEpoch: string;
   clients: Map<string, ClientContext>;
   history: YjsUpdateRow[];
   maxUpdateId: number;
@@ -244,18 +250,26 @@ export class PageCollaborationHub {
     void room.writeQueue.finally(() => room.document.destroy());
   }
 
-  private invalidateRoomForReload(room: Room, reason: string) {
+  private invalidateRoom(room: Room, code: number, reason: string) {
     if (room.invalidated || this.rooms.get(room.pageId) !== room) return;
     room.invalidated = true;
     this.rooms.delete(room.pageId);
     room.bootstrapLeaderId = null;
     room.waitingForBootstrap.clear();
     for (const client of room.clients.values()) {
-      if (client.socket.isOpen) client.socket.close(1011, reason);
+      if (client.socket.isOpen) client.socket.close(code, reason);
     }
     // Wait for every already-queued writer to stop before destroying the shared
     // document. Reconnecting clients will build a fresh room from durable rows.
     void room.writeQueue.finally(() => room.document.destroy());
+  }
+
+  private invalidateRoomForReload(room: Room, reason: string) {
+    this.invalidateRoom(room, 1011, reason);
+  }
+
+  private invalidateRoomForLineageChange(room: Room) {
+    this.invalidateRoom(room, 4011, "The collaboration document was replaced");
   }
 
   notifyCanonicalAttachment(pageId: string, block: unknown) {
@@ -296,6 +310,8 @@ export class PageCollaborationHub {
       rejectWebSocketUpgrade(socket, 403, "Collaboration is not enabled for this page");
       return;
     }
+    const collaborationState = await getCollaborationState(pageId);
+    assertCollaborationDocumentEpoch(collaborationState, payload.documentEpoch);
     const user = await db.queryOne<CollaborationProfile>(
       "SELECT id, username, name, avatar_data FROM users WHERE id = ?",
       [payload.sub]
@@ -311,11 +327,12 @@ export class PageCollaborationHub {
     });
     if (!connection) return;
 
-    const room = this.getOrCreateRoom(pageId);
+    const room = this.getOrCreateRoom(pageId, payload.documentEpoch);
     const client: ClientContext = {
       id: createId("con"),
       socket: connection,
       user,
+      documentEpoch: payload.documentEpoch,
       synced: false,
       awareness: { blockId: null, field: null, selection: null },
       rateWindowStartedAt: Date.now(),
@@ -342,7 +359,13 @@ export class PageCollaborationHub {
         connection.close(4010, "Collaboration is no longer available");
         return;
       }
+      const currentState = await getCollaborationState(pageId);
+      assertCollaborationDocumentEpoch(currentState, payload.documentEpoch);
     } catch (error) {
+      if (error instanceof ApiError && error.code === "COLLABORATION_LINEAGE_CHANGED") {
+        connection.close(4011, "The collaboration document was replaced");
+        return;
+      }
       if (error instanceof ApiError && error.statusCode === 404) {
         connection.close(4003, "Page access was removed");
         return;
@@ -386,10 +409,12 @@ export class PageCollaborationHub {
     this.broadcastPresenceUpdate(room, client);
   }
 
-  private getOrCreateRoom(pageId: string) {
+  private getOrCreateRoom(pageId: string, documentEpoch: string) {
     const existing = this.rooms.get(pageId);
-    if (existing && !existing.invalidated) return existing;
-    if (existing) {
+    if (existing && !existing.invalidated && existing.documentEpoch === documentEpoch) return existing;
+    if (existing && !existing.invalidated) {
+      this.invalidateRoomForLineageChange(existing);
+    } else if (existing) {
       this.rooms.delete(pageId);
       void existing.writeQueue.finally(() => existing.document.destroy());
     }
@@ -397,6 +422,7 @@ export class PageCollaborationHub {
     const room = {} as Room;
     Object.assign(room, {
       pageId,
+      documentEpoch,
       clients: new Map<string, ClientContext>(),
       history: [],
       maxUpdateId: 0,
@@ -594,6 +620,8 @@ export class PageCollaborationHub {
         if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
           throw new ApiError(403, "COLLABORATION_DISABLED", "Collaboration is not enabled for this page");
         }
+        const collaborationState = await getCollaborationState(room.pageId, dbClient, { lock: true });
+        assertCollaborationDocumentEpoch(collaborationState, client.documentEpoch);
 
         if (snapshot) {
           const currentRow = await dbClient.queryOne<{ max_update_id: number | null }>(
@@ -615,6 +643,10 @@ export class PageCollaborationHub {
         }
         return { accepted: true as const, updateId };
       }).catch((error) => {
+        if (error instanceof ApiError && error.code === "COLLABORATION_LINEAGE_CHANGED") {
+          this.invalidateRoomForLineageChange(room);
+          return null;
+        }
         if (error instanceof ApiError && [403, 404].includes(error.statusCode)) {
           client.socket.close(error.statusCode === 404 ? 4003 : 4010, error.message);
           return null;
@@ -760,6 +792,11 @@ export class PageCollaborationHub {
             const access = await getPageAccess(room.pageId, client.user.id);
             if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
               client.socket.close(4010, "Collaboration is no longer available");
+              return;
+            }
+            const collaborationState = await getCollaborationState(room.pageId);
+            if (!collaborationState || collaborationState.document_epoch !== client.documentEpoch) {
+              this.invalidateRoomForLineageChange(room);
             }
           } catch (error) {
             if (error instanceof ApiError && error.statusCode === 404) {

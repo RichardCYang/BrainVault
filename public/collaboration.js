@@ -251,6 +251,9 @@ class PageCollaborationSession {
     this.recoveryStore = options.recoveryStore ?? null;
     this.recoveredLocalRecords = [];
     this.recoveryStorageWarningShown = false;
+    this.recoveryLineageWarningShown = false;
+    this.documentEpoch = null;
+    this.recoveryLoadedEpoch = null;
     this.api = options.api;
     this.onSnapshot = options.onSnapshot ?? (() => undefined);
     this.onPresence = options.onPresence ?? (() => undefined);
@@ -297,22 +300,37 @@ class PageCollaborationSession {
   }
 
   async start() {
-    this.restoreLocalRecovery();
     await this.connect();
     return this;
   }
 
-  restoreLocalRecovery() {
+  restoreLocalRecovery(documentEpoch) {
     const records = this.recoveryStore?.loadAll?.(this.accountId, this.page.id) ?? [];
     if (!records.length) return false;
+    const matchingRecords = records.filter((record) => record.documentEpoch === documentEpoch);
+    const preservedRecords = records.filter((record) => record.documentEpoch !== documentEpoch);
+    if (preservedRecords.length && !this.recoveryLineageWarningShown) {
+      this.recoveryLineageWarningShown = true;
+      this.onError(new Error(
+        `Preserved ${preservedRecords.length} local collaboration recovery record(s) from an earlier document version without merging them`
+      ));
+    }
+
     const recovered = [];
-    for (const record of records) {
+    for (const record of matchingRecords) {
       try {
         this.Y.applyUpdate(this.doc, record.update, RECOVERY_ORIGIN);
-        recovered.push({ sourceId: record.sourceId, generation: record.generation });
+        recovered.push({
+          sourceId: record.sourceId,
+          documentEpoch: record.documentEpoch,
+          generation: record.generation
+        });
       } catch (error) {
-        this.recoveryStore?.remove?.(this.accountId, this.page.id, record.sourceId, record.generation);
-        this.onError(new Error(`A local collaboration recovery record is invalid: ${error?.message || error}`));
+        // Preserve undecodable bytes for manual recovery. A newer application
+        // or a forensic export may still be able to recover part of the state.
+        this.onError(new Error(
+          `A local collaboration recovery record could not be decoded and was preserved: ${error?.message || error}`
+        ));
       }
     }
     if (!recovered.length) return false;
@@ -322,7 +340,7 @@ class PageCollaborationSession {
   }
 
   persistLocalRecovery() {
-    if (!this.recoveryStore || !this.accountId || !this.recoverySourceId) return false;
+    if (!this.recoveryStore || !this.accountId || !this.recoverySourceId || !this.documentEpoch) return false;
     let stateUpdate;
     try {
       stateUpdate = this.Y.encodeStateAsUpdate(this.doc);
@@ -334,6 +352,7 @@ class PageCollaborationSession {
       this.accountId,
       this.page.id,
       this.recoverySourceId,
+      this.documentEpoch,
       stateUpdate
     );
     if (!generation && !this.recoveryStorageWarningShown) {
@@ -345,11 +364,22 @@ class PageCollaborationSession {
 
   clearLocalRecovery() {
     if (!this.recoveryStore || !this.accountId) return;
-    if (this.recoverySourceId) {
-      this.recoveryStore.remove(this.accountId, this.page.id, this.recoverySourceId);
+    if (this.recoverySourceId && this.documentEpoch) {
+      this.recoveryStore.remove(
+        this.accountId,
+        this.page.id,
+        this.recoverySourceId,
+        this.documentEpoch
+      );
     }
     for (const record of this.recoveredLocalRecords) {
-      this.recoveryStore.remove(this.accountId, this.page.id, record.sourceId, record.generation);
+      this.recoveryStore.remove(
+        this.accountId,
+        this.page.id,
+        record.sourceId,
+        record.documentEpoch,
+        record.generation
+      );
     }
     this.recoveredLocalRecords = [];
   }
@@ -371,13 +401,16 @@ class PageCollaborationSession {
   }
 
   getSnapshot() {
-    return readDocumentSnapshot(
-      this.Y,
-      this.title,
-      this.blocks,
-      this.deletedAttachments,
-      this.lastUpdateId
-    );
+    return {
+      ...readDocumentSnapshot(
+        this.Y,
+        this.title,
+        this.blocks,
+        this.deletedAttachments,
+        this.lastUpdateId
+      ),
+      documentEpoch: this.documentEpoch
+    };
   }
 
   setTitle(value) {
@@ -623,7 +656,7 @@ class PageCollaborationSession {
   }
 
   initializeFromPage() {
-    if (this.title.length || this.blocks.size) return;
+    if (this.recoveredLocalRecords.length || this.title.length || this.blocks.size) return;
     const page = this.bootstrapPage ?? this.page;
     this.doc.transact(() => {
       replaceYText(this.title, String(page.title ?? "").slice(0, 160));
@@ -657,9 +690,26 @@ class PageCollaborationSession {
     this.onStatus("connecting");
     try {
       const session = await this.api(`/api/pages/${encodeURIComponent(this.page.id)}/collaboration/session`, {
-        method: "POST"
+        method: "POST",
+        body: { documentEpochProtocol: 1 }
       });
       if (this.destroyed) return;
+      const documentEpoch = typeof session?.documentEpoch === "string"
+        ? session.documentEpoch
+        : "";
+      if (!documentEpoch || documentEpoch.length > 64) {
+        throw new Error("The collaboration server returned an invalid document version");
+      }
+      if (this.documentEpoch && this.documentEpoch !== documentEpoch) {
+        if (this.hasUnconfirmedLocalChanges) this.persistLocalRecovery();
+        this.onAccessChanged({ code: 4011, reason: "The collaboration document was replaced" });
+        return;
+      }
+      this.documentEpoch = documentEpoch;
+      if (this.recoveryLoadedEpoch !== documentEpoch) {
+        this.restoreLocalRecovery(documentEpoch);
+        this.recoveryLoadedEpoch = documentEpoch;
+      }
       if (session?.document && typeof session.document === "object") {
         this.bootstrapPage = {
           ...this.page,
@@ -822,7 +872,7 @@ class PageCollaborationSession {
       this.resolvePendingWaiters();
     }
     if (this.destroyed) return;
-    if (event.code === 4003 || event.code === 4010) {
+    if (event.code === 4003 || event.code === 4010 || event.code === 4011) {
       this.onStatus("offline");
       this.onAccessChanged({ code: event.code, reason: event.reason });
       return;
@@ -952,10 +1002,19 @@ export function shouldClearLocalRecoveryAfterAck(pendingLocalUpdates, needsRecov
 }
 
 export async function decodeCollaborationRecoveryRecords(records) {
+  const normalizedRecords = [...(records ?? [])];
+  const documentEpochs = new Set(
+    normalizedRecords.map((record) => record?.documentEpoch == null
+      ? "legacy:"
+      : `epoch:${record.documentEpoch}`)
+  );
+  if (documentEpochs.size > 1) {
+    throw new Error("Collaboration recovery records from different document versions cannot be merged");
+  }
   const Y = await loadYjs();
   const doc = new Y.Doc();
   try {
-    for (const record of [...(records ?? [])].sort(
+    for (const record of normalizedRecords.sort(
       (left, right) => Number(left?.updatedAt ?? 0) - Number(right?.updatedAt ?? 0)
     )) {
       const update = record?.update instanceof Uint8Array

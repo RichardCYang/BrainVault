@@ -22,24 +22,42 @@ function createMemoryStorage() {
   };
 }
 
+const epochA = "epoch_a";
+const epochB = "epoch_b";
+
 describe("collaboration recovery store", () => {
-  it("keeps independent recovery states for concurrent tabs", () => {
+  it("keeps independent recovery states for concurrent tabs in one document epoch", () => {
     const store = createCollaborationRecoveryStore(createMemoryStorage());
     const first = new Uint8Array([0, 1, 2, 127, 128, 255]);
     const second = new Uint8Array([9, 8, 7]);
-    expect(store.save("user-1", "page-1", "tab-1", first)).toBeTypeOf("string");
-    expect(store.save("user-1", "page-1", "tab-2", second)).toBeTypeOf("string");
+    expect(store.save("user-1", "page-1", "tab-1", epochA, first)).toBeTypeOf("string");
+    expect(store.save("user-1", "page-1", "tab-2", epochA, second)).toBeTypeOf("string");
     const records = store.loadAll("user-1", "page-1");
     expect(records.map((record) => record.sourceId).sort()).toEqual(["tab-1", "tab-2"]);
+    expect(records.every((record) => record.documentEpoch === epochA)).toBe(true);
     expect(records.map((record) => [...record.update])).toEqual(expect.arrayContaining([[...first], [...second]]));
     expect(store.loadAll("user-2", "page-1")).toEqual([]);
   });
 
+  it("keeps an earlier document recovery when the same tab edits a replacement document", () => {
+    const store = createCollaborationRecoveryStore(createMemoryStorage());
+    const firstGeneration = store.save("user-1", "page-1", "tab-1", epochA, new Uint8Array([1]));
+    const secondGeneration = store.save("user-1", "page-1", "tab-1", epochB, new Uint8Array([2]));
+
+    expect(store.loadAll("user-1", "page-1").map(({ documentEpoch, generation }) => ({
+      documentEpoch,
+      generation
+    }))).toEqual(expect.arrayContaining([
+      { documentEpoch: epochA, generation: firstGeneration },
+      { documentEpoch: epochB, generation: secondGeneration }
+    ]));
+  });
+
   it("enumerates one account's recoveries across pages with an encoded fallback", () => {
     const store = createCollaborationRecoveryStore(createMemoryStorage());
-    store.save("user-1", "page-2", "tab-2", new Uint8Array([9, 8]));
-    store.save("user-1", "page-1", "tab-1", new Uint8Array([1, 2, 3]));
-    store.save("user-2", "page-3", "other-account", new Uint8Array([7]));
+    store.save("user-1", "page-2", "tab-2", epochA, new Uint8Array([9, 8]));
+    store.save("user-1", "page-1", "tab-1", epochB, new Uint8Array([1, 2, 3]));
+    store.save("user-2", "page-3", "other-account", epochA, new Uint8Array([7]));
 
     const records = store.loadAccountRecords("user-1");
     expect(records.map(({ pageId, sourceId }) => ({ pageId, sourceId }))).toEqual(
@@ -55,9 +73,9 @@ describe("collaboration recovery store", () => {
 
   it("finds unconfirmed page recovery across accounts in the same browser", () => {
     const store = createCollaborationRecoveryStore(createMemoryStorage());
-    store.save("owner", "page-1", "owner-tab", new Uint8Array([1, 2]));
-    store.save("collaborator", "page-1", "collaborator-tab", new Uint8Array([3, 4]));
-    store.save("collaborator", "page-2", "other-page-tab", new Uint8Array([5]));
+    store.save("owner", "page-1", "owner-tab", epochA, new Uint8Array([1, 2]));
+    store.save("collaborator", "page-1", "collaborator-tab", epochA, new Uint8Array([3, 4]));
+    store.save("collaborator", "page-2", "other-page-tab", epochB, new Uint8Array([5]));
 
     expect(store.loadPageRecords("page-1").map(({ accountId, sourceId }) => ({ accountId, sourceId }))).toEqual(
       expect.arrayContaining([
@@ -68,30 +86,56 @@ describe("collaboration recovery store", () => {
     expect(store.loadPageRecords("page-1")).toHaveLength(2);
   });
 
-  it("does not skip a valid recovery record after removing a corrupt neighbor", () => {
+  it("preserves schema-v1 recovery as legacy instead of deleting or auto-upgrading it", () => {
+    const storage = createMemoryStorage();
+    storage.setItem(
+      "brainvault.collaborationRecovery.v1:user-1:page-1:tab-legacy",
+      JSON.stringify({
+        schemaVersion: 1,
+        accountId: "user-1",
+        pageId: "page-1",
+        sourceId: "tab-legacy",
+        generation: "legacy-generation",
+        updatedAt: 1,
+        update: btoa(String.fromCharCode(1, 2, 3))
+      })
+    );
+    const store = createCollaborationRecoveryStore(storage);
+
+    expect(store.loadAll("user-1", "page-1")).toEqual([
+      expect.objectContaining({
+        sourceId: "tab-legacy",
+        documentEpoch: null,
+        legacy: true,
+        generation: "legacy-generation"
+      })
+    ]);
+  });
+
+  it("does not skip a valid recovery record and preserves a corrupt neighbor", () => {
     const storage = createMemoryStorage();
     storage.setItem(
       "brainvault.collaborationRecovery.v1:user-1:page-1:corrupt",
       "{not-json"
     );
     const store = createCollaborationRecoveryStore(storage);
-    store.save("user-1", "page-1", "tab-1", new Uint8Array([4, 5, 6]));
+    store.save("user-1", "page-1", "tab-1", epochA, new Uint8Array([4, 5, 6]));
 
     expect(store.loadAll("user-1", "page-1").map((record) => [...record.update])).toEqual([[4, 5, 6]]);
-    expect(storage.getItem("brainvault.collaborationRecovery.v1:user-1:page-1:corrupt")).toBeNull();
+    expect(storage.getItem("brainvault.collaborationRecovery.v1:user-1:page-1:corrupt")).toBe("{not-json");
   });
 
   it("does not delete a newer record written by another live tab", () => {
     const store = createCollaborationRecoveryStore(createMemoryStorage());
-    const oldGeneration = store.save("user-1", "page-1", "tab-1", new Uint8Array([1]));
-    const newGeneration = store.save("user-1", "page-1", "tab-1", new Uint8Array([2]));
-    expect(store.remove("user-1", "page-1", "tab-1", oldGeneration)).toBe(false);
+    const oldGeneration = store.save("user-1", "page-1", "tab-1", epochA, new Uint8Array([1]));
+    const newGeneration = store.save("user-1", "page-1", "tab-1", epochA, new Uint8Array([2]));
+    expect(store.remove("user-1", "page-1", "tab-1", epochA, oldGeneration)).toBe(false);
     expect(store.loadAll("user-1", "page-1")[0]?.generation).toBe(newGeneration);
-    expect(store.remove("user-1", "page-1", "tab-1", newGeneration)).toBe(true);
+    expect(store.remove("user-1", "page-1", "tab-1", epochA, newGeneration)).toBe(true);
     expect(store.loadAll("user-1", "page-1")).toEqual([]);
   });
 
-  it("fails closed when browser storage is unavailable", () => {
+  it("fails closed when browser storage or the document epoch is unavailable", () => {
     const brokenStorage = {
       get length() { throw new Error("disabled"); },
       key() { throw new Error("disabled"); },
@@ -100,8 +144,11 @@ describe("collaboration recovery store", () => {
       removeItem() { throw new Error("disabled"); }
     };
     const store = createCollaborationRecoveryStore(brokenStorage);
-    expect(store.save("user-1", "page-1", "tab-1", new Uint8Array([1]))).toBeNull();
+    expect(store.save("user-1", "page-1", "tab-1", epochA, new Uint8Array([1]))).toBeNull();
     expect(store.loadAll("user-1", "page-1")).toEqual([]);
-    expect(store.remove("user-1", "page-1", "tab-1")).toBe(false);
+    expect(store.remove("user-1", "page-1", "tab-1", epochA)).toBe(false);
+
+    const healthyStore = createCollaborationRecoveryStore(createMemoryStorage());
+    expect(healthyStore.save("user-1", "page-1", "tab-1", "", new Uint8Array([1]))).toBeNull();
   });
 });

@@ -3470,14 +3470,19 @@ function getOrphanedCollaborationRecoveryGroups() {
   const groups = new Map();
   for (const record of collaborationRecoveryStore.loadAccountRecords(state.user.id)) {
     const page = pageById.get(record.pageId);
-    if (page && isCollaborativePage(page)) continue;
-    const group = groups.get(record.pageId) ?? {
+    const documentEpoch = record.documentEpoch ?? null;
+    const epochGroupKey = documentEpoch === null ? "legacy:" : `epoch:${documentEpoch}`;
+    const groupKey = `${record.pageId}\u0000${epochGroupKey}`;
+    const group = groups.get(groupKey) ?? {
       pageId: record.pageId,
-      reason: page ? "collaboration-disabled" : "unavailable",
+      documentEpoch,
+      reason: page
+        ? (isCollaborativePage(page) ? "collaboration-active-or-stale" : "collaboration-disabled")
+        : "unavailable",
       records: []
     };
     group.records.push(record);
-    groups.set(record.pageId, group);
+    groups.set(groupKey, group);
   }
   return [...groups.values()].sort((left, right) => {
     const leftUpdatedAt = Math.max(...left.records.map((record) => record.updatedAt));
@@ -3491,6 +3496,7 @@ async function decodeOrphanedCollaborationRecoveryGroups(groups) {
   for (const group of groups) {
     const sources = group.records.map((record) => ({
       sourceId: record.sourceId,
+      documentEpoch: record.documentEpoch,
       generation: record.generation,
       updatedAt: new Date(record.updatedAt).toISOString()
     }));
@@ -3500,6 +3506,7 @@ async function decodeOrphanedCollaborationRecoveryGroups(groups) {
       recoveries.push({
         reason: group.reason,
         pageId: group.pageId,
+        documentEpoch: group.documentEpoch,
         updatedAt,
         sources,
         title: snapshot.title,
@@ -3512,11 +3519,13 @@ async function decodeOrphanedCollaborationRecoveryGroups(groups) {
       recoveries.push({
         reason: group.reason,
         pageId: group.pageId,
+        documentEpoch: group.documentEpoch,
         updatedAt,
         sources,
         decodeError: error?.message || String(error),
         encodedUpdates: group.records.map((record) => ({
           sourceId: record.sourceId,
+          documentEpoch: record.documentEpoch,
           update: record.encodedUpdate
         }))
       });

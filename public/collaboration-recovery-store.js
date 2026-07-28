@@ -1,4 +1,5 @@
-const recoverySchemaVersion = 1;
+const recoverySchemaVersion = 2;
+const legacyRecoverySchemaVersion = 1;
 let generationSequence = 0;
 
 function isNonEmptyString(value) {
@@ -32,34 +33,38 @@ export function createCollaborationRecoveryStore(
 ) {
   const getPagePrefix = (accountId, pageId) =>
     `${prefix}:${encodeURIComponent(accountId)}:${encodeURIComponent(pageId)}:`;
-  const getKey = (accountId, pageId, sourceId) =>
-    `${getPagePrefix(accountId, pageId)}${encodeURIComponent(sourceId)}`;
+  const getKey = (accountId, pageId, documentEpoch, sourceId) =>
+    `${getPagePrefix(accountId, pageId)}${encodeURIComponent(documentEpoch)}:${encodeURIComponent(sourceId)}`;
 
   function readRecord(key, accountId, pageId) {
     try {
       const raw = storage.getItem(key);
       if (!raw) return null;
       const record = JSON.parse(raw);
+      const isLegacy = record?.schemaVersion === legacyRecoverySchemaVersion;
+      const isCurrent = record?.schemaVersion === recoverySchemaVersion;
       if (
-        record?.schemaVersion !== recoverySchemaVersion
+        (!isLegacy && !isCurrent)
         || record.accountId !== accountId
         || record.pageId !== pageId
         || !isNonEmptyString(record.sourceId)
         || !isNonEmptyString(record.generation)
+        || (isCurrent && !isNonEmptyString(record.documentEpoch))
         || typeof record.update !== "string"
         || !record.update
       ) {
-        storage.removeItem(key);
+        // Never destroy an unconfirmed recovery payload merely because this
+        // application version cannot decode it. Keep the raw browser record
+        // available for forensic/manual recovery.
         return null;
       }
       const update = base64ToBytes(record.update);
-      if (!update.byteLength) {
-        storage.removeItem(key);
-        return null;
-      }
+      if (!update.byteLength) return null;
       const updatedAt = Number(record.updatedAt);
       return {
         sourceId: record.sourceId,
+        documentEpoch: isCurrent ? record.documentEpoch : null,
+        legacy: isLegacy,
         generation: record.generation,
         updatedAt: Number.isFinite(updatedAt) && updatedAt >= 0 && updatedAt <= 8_640_000_000_000_000
           ? updatedAt
@@ -68,33 +73,37 @@ export function createCollaborationRecoveryStore(
         update
       };
     } catch {
-      try {
-        storage.removeItem(key);
-      } catch {
-        // A disabled storage backend must not prevent the editor from opening.
-      }
+      // A malformed or temporarily unreadable record is skipped but retained.
+      // Automatic cleanup would turn a decode problem into irreversible loss.
       return null;
     }
   }
 
+  function listPageKeys(accountId, pageId) {
+    const pagePrefix = getPagePrefix(accountId, pageId);
+    const keys = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key?.startsWith(pagePrefix)) keys.push(key);
+    }
+    return keys;
+  }
+
   function loadAll(accountId, pageId) {
     if (!storage || !isNonEmptyString(accountId) || !isNonEmptyString(pageId)) return [];
-    const pagePrefix = getPagePrefix(accountId, pageId);
     try {
-      const keys = [];
-      for (let index = 0; index < storage.length; index += 1) {
-        const key = storage.key(index);
-        if (key?.startsWith(pagePrefix)) keys.push(key);
-      }
-
       const records = [];
-      // readRecord may remove corrupt entries. Iterate a stable key snapshot so
-      // deleting one entry cannot shift and hide the next recoverable record.
-      for (const key of keys) {
+      // Iterate a stable key snapshot so a storage implementation changing
+      // during inspection cannot shift and hide another recoverable record.
+      for (const key of listPageKeys(accountId, pageId)) {
         const record = readRecord(key, accountId, pageId);
         if (record) records.push(record);
       }
-      return records.sort((left, right) => left.updatedAt - right.updatedAt);
+      return records.sort((left, right) =>
+        left.updatedAt - right.updatedAt
+        || String(left.documentEpoch ?? "").localeCompare(String(right.documentEpoch ?? ""))
+        || left.sourceId.localeCompare(right.sourceId)
+      );
     } catch {
       return [];
     }
@@ -158,24 +167,26 @@ export function createCollaborationRecoveryStore(
     }
   }
 
-  function save(accountId, pageId, sourceId, update) {
+  function save(accountId, pageId, sourceId, documentEpoch, update) {
     if (
       !storage
       || !isNonEmptyString(accountId)
       || !isNonEmptyString(pageId)
       || !isNonEmptyString(sourceId)
+      || !isNonEmptyString(documentEpoch)
     ) return null;
     const bytes = update instanceof Uint8Array ? update : new Uint8Array(update ?? 0);
     if (!bytes.byteLength) return null;
     const generation = createGeneration();
     try {
       storage.setItem(
-        getKey(accountId, pageId, sourceId),
+        getKey(accountId, pageId, documentEpoch, sourceId),
         JSON.stringify({
           schemaVersion: recoverySchemaVersion,
           accountId,
           pageId,
           sourceId,
+          documentEpoch,
           generation,
           updatedAt: Date.now(),
           update: bytesToBase64(bytes)
@@ -187,22 +198,22 @@ export function createCollaborationRecoveryStore(
     }
   }
 
-  function remove(accountId, pageId, sourceId, expectedGeneration = null) {
+  function remove(accountId, pageId, sourceId, documentEpoch, expectedGeneration = null) {
     if (
       !storage
       || !isNonEmptyString(accountId)
       || !isNonEmptyString(pageId)
       || !isNonEmptyString(sourceId)
+      || !(documentEpoch === null || isNonEmptyString(documentEpoch))
     ) return false;
-    const key = getKey(accountId, pageId, sourceId);
     try {
-      if (isNonEmptyString(expectedGeneration)) {
-        const raw = storage.getItem(key);
-        if (!raw) return true;
-        const record = JSON.parse(raw);
-        if (record?.generation !== expectedGeneration) return false;
+      for (const key of listPageKeys(accountId, pageId)) {
+        const record = readRecord(key, accountId, pageId);
+        if (!record || record.sourceId !== sourceId || record.documentEpoch !== documentEpoch) continue;
+        if (isNonEmptyString(expectedGeneration) && record.generation !== expectedGeneration) return false;
+        storage.removeItem(key);
+        return true;
       }
-      storage.removeItem(key);
       return true;
     } catch {
       return false;

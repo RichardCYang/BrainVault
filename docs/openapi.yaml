@@ -715,10 +715,24 @@ components:
         metadata:
           type: [object, 'null']
           additionalProperties: true
+    CollaborationSessionInput:
+      type: object
+      additionalProperties: false
+      required: [documentEpochProtocol]
+      properties:
+        documentEpochProtocol:
+          type: integer
+          const: 1
+          description: Confirms that the browser isolates local recovery records by the server-issued document epoch.
     CollaborationSnapshotInput:
       type: object
-      required: [title, blocks, updateId]
+      required: [documentEpoch, title, blocks, updateId]
       properties:
+        documentEpoch:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Server-issued collaboration document generation. A snapshot from an earlier generation is rejected.
         title:
           type: string
           minLength: 1
@@ -743,10 +757,15 @@ components:
           description: Exact latest persisted Yjs update ID applied by the client.
     CollaborationSession:
       type: object
-      required: [pageId, protocol, ticketProtocol, path, expiresIn, access, collaboration, document]
+      required: [pageId, documentEpoch, protocol, ticketProtocol, path, expiresIn, access, collaboration, document]
       properties:
         pageId:
           type: string
+        documentEpoch:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Stable identifier for the current Yjs document generation.
         protocol:
           type: string
           const: brainvault-yjs-v1
@@ -1288,13 +1307,19 @@ paths:
   /api/pages/{pageId}/collaboration/session:
     post:
       summary: Create a short-lived authenticated collaboration session
-      description: Available to the owner and invited editors while the page has at least one editor grant. The response contains the canonical relational snapshot and the required WebSocket subprotocols for WS /api/collaboration/{pageId}.
+      description: Available to the owner and invited editors while the page has at least one editor grant. The response contains the canonical relational snapshot, the current document generation, and the required WebSocket subprotocols for WS /api/collaboration/{pageId}.
       parameters:
         - in: path
           name: pageId
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollaborationSessionInput'
       responses:
         '200':
           description: Collaboration ticket and canonical document
@@ -1310,11 +1335,11 @@ paths:
         '403':
           description: Authenticated user has no access to this page
         '409':
-          description: Collaboration is disabled, archived, or unsupported for a collection
+          description: Collaboration is disabled/archived/unsupported, or the browser must refresh to use the document-epoch protocol
   /api/pages/{pageId}/collaboration/snapshot:
     put:
       summary: Materialize a consistent Yjs document into the relational page and block tables
-      description: Available to the owner and invited editors. The server locks the page, requires updateId to equal the latest persisted update, validates hierarchy and attachment provenance, and applies the snapshot atomically.
+      description: Available to the owner and invited editors. The server locks the page, requires documentEpoch to match the current Yjs generation and updateId to equal the latest persisted update, validates hierarchy and attachment provenance, and applies the snapshot atomically.
       parameters:
         - in: path
           name: pageId
@@ -1334,10 +1359,14 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [applied, materializedUpdateId, pageVersion, pageContentVersion, pageUpdatedAt, blocks]
+                required: [applied, documentEpoch, materializedUpdateId, pageVersion, pageContentVersion, pageUpdatedAt, blocks]
                 properties:
                   applied:
                     type: boolean
+                  documentEpoch:
+                    type: string
+                    minLength: 1
+                    maxLength: 64
                   materializedUpdateId:
                     type: integer
                     minimum: 1
@@ -1358,7 +1387,7 @@ paths:
         '400':
           description: Invalid title, block hierarchy, attachment operation, or document size
         '409':
-          description: Snapshot update ID is stale, a block ID conflicts globally, or collaboration is disabled
+          description: Document generation changed, snapshot update ID is stale, a block ID conflicts globally, or collaboration is disabled
   /api/pages/{pageId}/blocks:
     post:
       summary: Create a block on an unshared owned page

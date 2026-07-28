@@ -48,6 +48,20 @@ describe("migration replay data safety", () => {
     }
   });
 
+  it("adds a non-destructive collaboration document epoch fence", () => {
+    const sql = fs.readFileSync(
+      path.join(migrationsDir, "021_collaboration_document_epoch.sql"),
+      "utf8"
+    );
+
+    expect(sql).toMatch(/ADD COLUMN IF NOT EXISTS document_epoch VARCHAR\(64\) NULL/i);
+    expect(sql).toMatch(
+      /UPDATE\s+page_collaboration_state[\s\S]*WHERE document_epoch IS NULL OR document_epoch = ''/i
+    );
+    expect(sql).toMatch(/MODIFY COLUMN document_epoch VARCHAR\(64\) NOT NULL/i);
+    expect(sql).not.toMatch(/DELETE\s+FROM\s+page_(?:collaboration_state|yjs_updates)/i);
+  });
+
   it("persists and consumes a crash-safe marker for the legacy collection backfill", () => {
     const sql = fs.readFileSync(
       path.join(migrationsDir, "009_pages_collection_kind.sql"),

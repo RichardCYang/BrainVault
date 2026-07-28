@@ -14,6 +14,7 @@ import {
   validateCollaborationBlockHierarchy
 } from "../src/lib/collaboration-document.ts";
 import { shouldClearLocalRecoveryAfterAck } from "../public/collaboration.js";
+import { createCollaborationRecoveryStore } from "../public/collaboration-recovery-store.js";
 
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -250,6 +251,22 @@ function verifySourceWiring() {
     "CREATE TABLE IF NOT EXISTS page_collaboration_state",
     "FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE"
   ]);
+  assertContains("migrations/021_collaboration_document_epoch.sql", [
+    "ADD COLUMN IF NOT EXISTS document_epoch",
+    "WHERE document_epoch IS NULL OR document_epoch = ''",
+    "MODIFY COLUMN document_epoch VARCHAR(64) NOT NULL"
+  ]);
+  assertContains("src/lib/collaboration-lineage.ts", [
+    "ensureCollaborationState",
+    "assertCollaborationDocumentEpoch",
+    "COLLABORATION_LINEAGE_CHANGED",
+    "SELECT page_id, document_epoch, materialized_update_id"
+  ]);
+  assertContains("src/lib/collaboration-token.ts", [
+    "documentEpoch: string",
+    "decoded.documentEpoch",
+    "documentEpoch: decoded.documentEpoch"
+  ]);
   assertContains("src/server.ts", [
     "attachPageCollaborationServer",
     "createServer(app)",
@@ -269,7 +286,11 @@ function verifySourceWiring() {
     "candidate.stateUpdate",
     "broadcastCanonicalAttachment",
     "bootstrapWritePending",
-    "pendingWrites"
+    "pendingWrites",
+    "assertCollaborationDocumentEpoch(collaborationState, payload.documentEpoch)",
+    "assertCollaborationDocumentEpoch(collaborationState, client.documentEpoch)",
+    "invalidateRoomForLineageChange",
+    "4011"
   ]);
   const collaborationServerSource = read("src/lib/collaboration-server.ts");
   assert.ok(
@@ -290,7 +311,12 @@ function verifySourceWiring() {
     "COLLABORATION_CHANGES_PENDING",
     "deletedExistingIds",
     "The block parent FK uses ON DELETE CASCADE",
-    "Page title cannot be blank"
+    "Page title cannot be blank",
+    "documentEpochProtocol: z.literal(1)",
+    "COLLABORATION_CLIENT_REFRESH_REQUIRED",
+    "documentEpoch: session.collaborationState.document_epoch",
+    "assertCollaborationDocumentEpoch(state, body.documentEpoch)",
+    "WHERE page_id = ? AND document_epoch = ?"
   ]);
   const collaborationRouteSource = read("src/routes/collaboration.routes.ts");
   assert.ok(
@@ -335,11 +361,28 @@ function verifySourceWiring() {
     "if (flush && this.hasUnconfirmedLocalChanges && !this.isReady)",
     "canonical-attachment",
     "clearMaterializedAttachmentTombstones",
-    "The document kept changing while it was being materialized"
+    "The document kept changing while it was being materialized",
+    "body: { documentEpochProtocol: 1 }",
+    "this.documentEpoch = documentEpoch",
+    "this.restoreLocalRecovery(documentEpoch)",
+    "record.documentEpoch === documentEpoch",
+    "if (this.recoveredLocalRecords.length || this.title.length || this.blocks.size) return",
+    "event.code === 4003 || event.code === 4010 || event.code === 4011",
+    "could not be decoded and was preserved",
+    "Collaboration recovery records from different document versions cannot be merged"
   ]);
+  const collaborationClientSource = read("public/collaboration.js");
+  assert.ok(
+    collaborationClientSource.indexOf("this.documentEpoch = documentEpoch")
+      < collaborationClientSource.indexOf("this.restoreLocalRecovery(documentEpoch)"),
+    "browser recovery must not be read until the server-issued document epoch is known"
+  );
   assertContains("public/collaboration-exit-guard.js", ["assertCollaborationExitSafe"]);
   assertContains("public/collaboration-recovery-store.js", [
     "brainvault.collaborationRecovery.v1",
+    "const recoverySchemaVersion = 2",
+    "legacyRecoverySchemaVersion",
+    "encodeURIComponent(documentEpoch)",
     "bytesToBase64",
     "base64ToBytes",
     "loadPageRecords"
@@ -362,11 +405,74 @@ function verifySourceWiring() {
     "assertNoPendingLocalCollaborationRecovery(pageId)",
     "refreshCollaborativePageDraftRecovery",
     "adoptAttachment",
-    "sharing.syncRequired"
+    "sharing.syncRequired",
+    "collaboration-active-or-stale",
+    "documentEpoch: group.documentEpoch",
+    "documentEpoch: record.documentEpoch"
   ]);
   assertContains("public/index.html", ["id=\"share-page-layer\"", "id=\"collaboration-indicator\""]);
 }
 
+
+
+function createMemoryStorage() {
+  const values = new Map();
+  return {
+    get length() {
+      return values.size;
+    },
+    key(index) {
+      return [...values.keys()][index] ?? null;
+    },
+    getItem(key) {
+      return values.get(key) ?? null;
+    },
+    setItem(key, value) {
+      values.set(key, value);
+    },
+    removeItem(key) {
+      values.delete(key);
+    }
+  };
+}
+
+function verifyRecoveryLineageIsolation() {
+  const storage = createMemoryStorage();
+  const store = createCollaborationRecoveryStore(storage);
+  const oldGeneration = store.save("user", "page", "tab", "epoch_old", new Uint8Array([1]));
+  const newGeneration = store.save("user", "page", "tab", "epoch_new", new Uint8Array([2]));
+  assert.ok(oldGeneration && newGeneration && oldGeneration !== newGeneration);
+
+  const recordsByEpoch = new Map(
+    store.loadAll("user", "page").map((record) => [record.documentEpoch, [...record.update]])
+  );
+  assert.deepEqual(recordsByEpoch.get("epoch_old"), [1]);
+  assert.deepEqual(recordsByEpoch.get("epoch_new"), [2]);
+  assert.equal(store.remove("user", "page", "tab", "epoch_old", oldGeneration), true);
+  assert.deepEqual(store.loadAll("user", "page").map((record) => record.documentEpoch), ["epoch_new"]);
+
+  storage.setItem(
+    "brainvault.collaborationRecovery.v1:user:legacy-page:tab",
+    JSON.stringify({
+      schemaVersion: 1,
+      accountId: "user",
+      pageId: "legacy-page",
+      sourceId: "tab",
+      generation: "legacy-generation",
+      updatedAt: 1,
+      update: btoa(String.fromCharCode(9))
+    })
+  );
+  assert.deepEqual(
+    store.loadAll("user", "legacy-page").map(({ documentEpoch, legacy }) => ({ documentEpoch, legacy })),
+    [{ documentEpoch: null, legacy: true }]
+  );
+
+  const corruptKey = "brainvault.collaborationRecovery.v1:user:page:corrupt";
+  storage.setItem(corruptKey, "{not-json");
+  assert.deepEqual(store.loadAll("user", "page").map((record) => record.documentEpoch), ["epoch_new"]);
+  assert.equal(storage.getItem(corruptKey), "{not-json", "undecodable recovery bytes must be preserved");
+}
 
 function verifyRecoveryAcknowledgementSafety() {
   assert.equal(shouldClearLocalRecoveryAfterAck(0, true), false);
@@ -406,10 +512,11 @@ async function main() {
   verifySourceWiring();
   verifyDependencyPins();
   verifyRecoveryAcknowledgementSafety();
+  verifyRecoveryLineageIsolation();
   verifyCollaborationHierarchy();
   await verifyWebSocketProtocol();
   const checkedFiles = verifySyntax();
-  console.log(`[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, hierarchy invariants, RFC 6455 protocol behavior, and syntax for ${checkedFiles} file(s).`);
+  console.log(`[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, hierarchy invariants, RFC 6455 protocol behavior, and syntax for ${checkedFiles} file(s).`);
 }
 
 main().catch((error) => {

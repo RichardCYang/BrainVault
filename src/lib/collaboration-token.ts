@@ -10,6 +10,7 @@ export type CollaborationTokenPayload = {
   sub: string;
   username: string;
   pageId: string;
+  documentEpoch: string;
   scope: "page:collaborate";
 };
 
@@ -33,6 +34,9 @@ export function verifyCollaborationToken(token: string): CollaborationTokenPaylo
       !decoded.sub ||
       !decoded.username ||
       !decoded.pageId ||
+      typeof decoded.documentEpoch !== "string" ||
+      !decoded.documentEpoch ||
+      decoded.documentEpoch.length > 64 ||
       decoded.scope !== "page:collaborate"
     ) {
       throw new ApiError(401, "INVALID_COLLABORATION_TICKET", "Invalid collaboration ticket");
@@ -41,6 +45,7 @@ export function verifyCollaborationToken(token: string): CollaborationTokenPaylo
       sub: String(decoded.sub),
       username: String(decoded.username),
       pageId: String(decoded.pageId),
+      documentEpoch: decoded.documentEpoch,
       scope: "page:collaborate"
     };
   } catch (error) {

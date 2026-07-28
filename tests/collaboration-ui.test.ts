@@ -14,6 +14,12 @@ const migration = readFileSync(
   new URL("../migrations/020_page_sharing_yjs_collaboration.sql", import.meta.url),
   "utf8"
 );
+const lineageMigration = readFileSync(
+  new URL("../migrations/021_collaboration_document_epoch.sql", import.meta.url),
+  "utf8"
+);
+const lineage = readFileSync(new URL("../src/lib/collaboration-lineage.ts", import.meta.url), "utf8");
+const token = readFileSync(new URL("../src/lib/collaboration-token.ts", import.meta.url), "utf8");
 const server = readFileSync(new URL("../src/lib/collaboration-server.ts", import.meta.url), "utf8");
 const yjsValidation = readFileSync(new URL("../src/lib/yjs-validation.ts", import.meta.url), "utf8");
 const routes = readFileSync(new URL("../src/routes/collaboration.routes.ts", import.meta.url), "utf8");
@@ -45,6 +51,9 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(collaboration).toContain("this.startupUpdatePending");
     expect(exitGuard).toContain("assertCollaborationExitSafe");
     expect(recoveryStore).toContain("brainvault.collaborationRecovery.v1");
+    expect(recoveryStore).toContain("const recoverySchemaVersion = 2");
+    expect(recoveryStore).toContain("documentEpoch");
+    expect(recoveryStore).toContain("legacyRecoverySchemaVersion");
     expect(recoveryStore).toContain("loadPageRecords");
     expect(recoveryStore).toContain("loadAccountRecords");
     expect(recoveryStore).toContain("encodedUpdate");
@@ -58,6 +67,12 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(app).toContain("refreshOrphanedCollaborationRecovery");
     expect(collaboration).toContain("persistLocalRecovery");
     expect(collaboration).toContain("restoreLocalRecovery");
+    expect(collaboration.indexOf("const session = await this.api")).toBeLessThan(
+      collaboration.indexOf("this.restoreLocalRecovery(documentEpoch)")
+    );
+    expect(collaboration).toContain("body: { documentEpochProtocol: 1 }");
+    expect(collaboration).toContain("record.documentEpoch === documentEpoch");
+    expect(collaboration).toContain("different document versions cannot be merged");
     expect(collaboration).toContain("clearLocalRecovery");
     expect(collaboration).toContain("The collaboration recovery state could not be encoded for synchronization");
     expect(collaboration).toContain("The collaboration snapshot could not be queued");
@@ -103,6 +118,11 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS page_yjs_updates");
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS page_collaboration_state");
     expect(migration).toContain("ON DELETE CASCADE");
+    expect(lineageMigration).toContain("ADD COLUMN IF NOT EXISTS document_epoch");
+    expect(lineageMigration).toContain("MODIFY COLUMN document_epoch VARCHAR(64) NOT NULL");
+    expect(lineage).toContain("ensureCollaborationState");
+    expect(lineage).toContain("COLLABORATION_LINEAGE_CHANGED");
+    expect(token).toContain("documentEpoch: string");
     expect(server).toContain("bootstrapWritePending");
     expect(server).toContain("pendingWrites");
     expect(server).toContain("applyValidatedYjsUpdate");
@@ -111,9 +131,16 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(yjsValidation).toContain("Y.encodeStateAsUpdate");
     expect(server).toContain("room.writeQueue");
     expect(server).toContain("currentAccess = await getPageAccess");
+    expect(server).toContain("assertCollaborationDocumentEpoch(collaborationState, client.documentEpoch)");
+    expect(server).toContain("invalidateRoomForLineageChange");
+    expect(server).toContain("4011");
     expect(routes).toContain("COLLABORATION_SNAPSHOT_STALE");
     expect(routes).toContain("BLOCK_ID_CONFLICT");
     expect(routes).toContain("USE_ATTACHMENT_UPLOAD");
     expect(routes).toContain("COLLABORATION_CHANGES_PENDING");
+    expect(routes).toContain("documentEpochProtocol: z.literal(1)");
+    expect(routes).toContain("COLLABORATION_CLIENT_REFRESH_REQUIRED");
+    expect(routes).toContain("documentEpoch: session.collaborationState.document_epoch");
+    expect(routes).toContain("assertCollaborationDocumentEpoch(state, body.documentEpoch)");
   });
 });

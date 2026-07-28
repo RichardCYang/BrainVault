@@ -30,7 +30,7 @@ Most API routes require a bearer token returned by the register or login endpoin
 | `GET` | `/api/pages/:pageId/shares` | List invited editors; owner only |
 | `POST` | `/api/pages/:pageId/shares` | Add an existing user as an editor; owner only |
 | `DELETE` | `/api/pages/:pageId/shares/:userId` | Remove an editor and close that user’s active sockets; owner only |
-| `POST` | `/api/pages/:pageId/collaboration/session` | Issue a short-lived page-scoped WebSocket ticket and canonical snapshot |
+| `POST` | `/api/pages/:pageId/collaboration/session` | Issue a short-lived page-scoped WebSocket ticket and canonical snapshot; requires `{ "documentEpochProtocol": 1 }` |
 | `PUT` | `/api/pages/:pageId/collaboration/snapshot` | Materialize a synchronized Yjs state into page/block tables |
 | `WS` | `/api/collaboration/:pageId` | Authenticated binary Yjs updates plus JSON presence/control messages |
 | `POST` | `/api/pages/:pageId/blocks` | Add a non-attachment block |

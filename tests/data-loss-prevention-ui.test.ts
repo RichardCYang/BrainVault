@@ -101,8 +101,10 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("pageDraftStore.loadPageDrafts(state.user.id, pageId)");
     expect(client).toContain("function assertNoPendingLocalCollaborationRecovery(pageId)");
     expect(client).toContain("collaborationRecoveryStore.loadPageRecords(pageId)");
-    expect(client).toContain('page ? "collaboration-enabled" : "unavailable"');
-    expect(client).toContain("if (page && !isCollaborativePage(page)) return [];");
+    expect(client).toContain('isCollaborativePage(page) ? "collaboration-active-or-stale" : "collaboration-disabled"');
+    expect(client).toContain('const groupKey = `${record.pageId}\u0000${documentEpoch ?? "legacy"}`;');
+    expect(client).toContain("documentEpoch: group.documentEpoch");
+    expect(client).not.toContain("if (page && !isCollaborativePage(page)) return [];");
     expect(client).toContain("function refreshCollaborativePageDraftRecovery()");
     expect(client).toContain("appendPageDraftRecoveryPanel(elements.blockList, getCollaborativePageDrafts(page.id), { collaborative: true })");
     expect(client).toContain("refreshCollaborativePageDraftRecovery();");

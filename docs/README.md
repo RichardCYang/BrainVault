@@ -10,6 +10,7 @@ The root [README](../README.md) is intentionally short. Detailed setup, operatio
 | [Features](features.md) | Learning the editor controls, page sharing, block types, backup/restore flow, languages, and PDF export |
 | [Collaboration](collaboration.md) | Understanding sharing permissions, Yjs/WebSocket synchronization, persistence, proxy requirements, and verification |
 | [Collaboration verification](collaboration-verification.md) | Reviewing completed source/protocol checks, the package-fetch limitation, and deployment validation commands |
+| [Data-loss audit (2026-07-28)](data-loss-audit-2026-07-28.md) | Reviewing the critical cross-generation recovery finding, reproduction, correction, and validation evidence |
 | [Configuration](configuration.md) | Reviewing every supported environment variable and its default behavior |
 | [Security](security.md) | Configuring MFA and understanding the project security boundaries and production requirements |
 | [API](api.md) | Finding route summaries, authentication expectations, the health endpoint, and the OpenAPI document |
