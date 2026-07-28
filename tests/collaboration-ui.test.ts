@@ -58,7 +58,7 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(recoveryStore).toContain("loadAccountRecords");
     expect(recoveryStore).toContain("encodedUpdate");
     expect(transitionLock).toContain("brainvault.pageTransition.v1");
-    expect(transitionLock).toContain("function acquire(pageId, kind)");
+    expect(transitionLock).toContain("function acquire(pageId, kind, exclusiveId = pageId)");
     expect(transitionLock).toContain("function loadActive()");
     expect(transitionLock).toContain("async function runExclusive(pageId, action)");
     expect(app).toContain("lockManager: window.navigator.locks");

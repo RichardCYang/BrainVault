@@ -16,6 +16,8 @@ A final browser-durability review found a separate destructive-overwrite path: t
 
 The same review found that destructive cross-tab transitions still executed when the browser Web Locks API was unavailable, relying on a non-atomic `localStorage` lease as the only exclusion mechanism. A delayed contender could overwrite the active lease, later remove it while the first destructive operation was still running, and reopen editing after the first operation had already completed its recovery preflight. The sixth critical finding documents the fail-closed, owner-scoped lock correction and a related storage-snapshot signature collision.
 
+A further expiry-focused review reproduced a separate fence-loss path even when Web Locks were available. If lease renewal failed or a background timer was delayed, any reader treated the expired `localStorage` record as stale, deleted it, and reopened ordinary editing while the destructive callback still held its authoritative Web Lock. The seventh critical finding documents the expiry-safe correction: expiry remains a visible editor fence until a contender proves the authoritative Web Lock is free. Storage read and decode failures now also keep editing locked instead of being interpreted as an absent transition.
+
 ## Reproduction before the fix
 
 1. Page `P` is collaborative. Browser/device B edits while disconnected and retains a local full-document recovery update.
@@ -191,13 +193,67 @@ A related fail-closed defect existed in storage snapshot stabilization. Key sets
 
 Severity: **Critical**
 
+## Seventh critical finding: an expired propagation lease could disappear while its destructive Web Lock was still held
+
+The owner-scoped Web Lock fixed atomic destructive-transition exclusion, but the durable propagation lease still had an unsafe expiry rule. `inspect()` automatically removed a valid lease as soon as `expiresAt` passed. A destructive callback can legitimately outlive that timestamp when a renewal write fails, a tab is background-throttled, the main thread is stalled, or the storage operation is temporarily unavailable. The Web Lock remains held until the callback settles, but ordinary editor input does not acquire that lock; it relies on the durable lease to know that editing must remain fenced.
+
+### Reproduction before the fix
+
+1. Tab A acquires the owner-scoped Web Lock and writes a page-transition lease with a one-second test TTL.
+2. The destructive callback remains pending. At 400 ms, a simulated `localStorage.setItem()` failure makes the renewal return `null`; the original lease bytes remain present.
+3. At 1,001 ms, tab B reads the transition. The old `inspect()` path sees `expiresAt <= now()`, removes the record, and reports the transition as missing.
+4. Tab B still cannot start another destructive transition because tab A holds the Web Lock, proving that the destructive callback is active. However, the ordinary editor now sees no lease and can accept a new title, block, or order draft.
+5. Tab A later commits deletion, archive, sharing-mode replacement, or workspace restore. The new draft was created after preflight and is detached from the live data.
+
+The dependency-free reproduction produced this pre-fix result:
+
+```json
+{
+  "initialLease": true,
+  "renewalAfterStorageFailure": null,
+  "rawLeaseSurvivedFailedRenewal": true,
+  "destructiveWebLockStillHeld": true,
+  "ordinaryEditorSeesTransition": false,
+  "rawLeasePreservedForFence": false,
+  "dataLossWindowReproduced": true
+}
+```
+
+### Implemented correction
+
+- Expiry is now a stale-candidate state, not permission for an uncoordinated reader to delete the record. `inspect()`, `read()`, and transition enumeration retain both active and expired valid leases as editor fences.
+- Every new lease records its authoritative `exclusiveId`. Lease acquisition is rejected unless the helper is currently inside the matching Web Lock callback.
+- `releaseExpired()` removes only an expired lease and only while the caller holds its authoritative Web Lock. A legacy lease without `exclusiveId` requires the page-scoped lock.
+- Page transitions acquire both the page and owner-workspace Web Lock names in deterministic order. This preserves compatibility with earlier builds that used either scope and avoids deadlock.
+- Renewal may extend the same expired token while its authoritative Web Lock is still held, covering delayed timers without briefly reopening the editor.
+- The UI treats active and expired records as locked. Storage read/decode errors also fail closed. Expired records are reaped by a timed contender only after it obtains every required Web Lock; a blocked reaper retries instead of unlocking.
+- Workspace transitions safely reap only expired page leases that explicitly identify the same owner scope. Ambiguous legacy records remain fail-closed rather than being guessed away.
+- The storage-event path uses the same fail-closed inspection and flushes pending edits even when a transition record is unreadable.
+
+The same schedule after the correction produced:
+
+```json
+{
+  "initialLease": true,
+  "renewalAfterStorageFailure": null,
+  "expiredLeaseRemainsClassified": true,
+  "ordinaryEditorSeesTransition": true,
+  "rawLeasePreservedForFence": true,
+  "unsafeReaperBlockedWhileWebLockHeld": true,
+  "safeReaperSucceededAfterWebLockReleased": true,
+  "dataLossWindowClosed": true
+}
+```
+
+Severity: **Critical**
+
 ## Other audited data-loss surfaces
 
 No further critical defect was identified in the following paths during this review:
 
 - Direct title/block saves: durable per-tab drafts are written before network submission; recovered drafts are cloned to the current source before editing; optimistic versions and mutation request hashes prevent stale or ambiguous retries from silently overwriting newer content.
 - Save coalescing: a failed/ambiguous write remains ahead of newer queued edits, so a newer edit is not sent against an unknown server version.
-- Destructive transitions: archive, permanent delete, direct block deletion, final-share removal, and workspace replacement check pending local/collaboration state, use one owner-scoped authoritative Web Lock, and retain page/workspace leases only for propagation and crash recovery.
+- Destructive transitions: archive, permanent delete, direct block deletion, final-share removal, and workspace replacement check pending local/collaboration state, use owner-scoped authoritative Web Locks, retain active or expired page/workspace leases as propagation fences, and reap expiry only after proving the corresponding Web Lock is free.
 - Workspace restore and attachments: database replacement is transactionally fingerprinted; live collaboration rooms are invalidated before replacement; attachment generations use journals, checksums, fsync, and commit-outcome recovery.
 - Block deletion/reordering: version snapshots, hierarchy locks, cycle validation, and idempotent mutation receipts prevent stale structure changes from being silently applied.
 
@@ -215,9 +271,10 @@ npm run verify:collaboration
 [verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, hierarchy invariants, RFC 6455 protocol behavior, and syntax for 124 file(s).
 
 npm run verify:data-loss
-[verify-data-loss-guards] OK: destructive ordering, owner-scoped atomic browser exclusion, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection.
+[verify-data-loss-guards] OK: destructive ordering, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection.
 
-[browser-durability-compat] passed=44 failed=0
+[dependency-free-js] passed=73 failed=0
+[dependency-free-static-ui] passed=79 failed=0
 
 [recovery-lineage-smoke] OK
 [openapi-yaml] OK
@@ -237,14 +294,19 @@ The verifier now asserts:
 - close code `4011` handling;
 - JavaScript/TypeScript syntax for all scanned sources;
 - destructive callbacks never running when the browser lock manager is unavailable;
-- page and workspace transitions sharing one owner-scoped authoritative Web Lock;
+- expired transition records remaining visible while the authoritative Web Lock is held;
+- failed renewal preserving the raw lease and blocking an unsafe expiry reaper;
+- expiry cleanup succeeding only after the authoritative Web Lock is released;
+- delayed renewal extending the same expired token while its Web Lock remains held;
+- page and workspace transitions sharing owner/page authoritative Web Locks in deterministic order;
+- storage read or decode failures keeping the editor fail-closed;
 - delimiter-colliding storage key sets being rejected as unstable;
 - the exact repeated-index-shift counterexample that defeats the old three-pass forward scan;
 - convergence and survivor visibility for direct drafts, Yjs recovery, and transition leases;
 - unreliable storage enumeration being surfaced instead of converted to an empty result;
 - undecodable target records and leases remaining preserved while destructive operations fail closed;
 - recovered title and block activation always writing through the current tab's source;
-- recovered block-order retries retaining an exact origin mutation token; and
+- recovered block-order retries retaining an exact origin mutation token;
 - current-tab edits leaving the origin tab's title, block, and order records unchanged;
 - partially malformed direct-draft records being rejected without dropping valid or invalid fragments;
 - empty-string direct-draft, Yjs recovery, and transition records being treated as present and unsafe;
@@ -253,7 +315,7 @@ The verifier now asserts:
 
 ## Environment limitation
 
-A clean dependency installation was attempted repeatedly. The configured package gateway returned HTTP 503 for the existing locked dependency `zod-3.25.76.tgz`, and the local npm cache did not contain it. Consequently the audit environment could not run the full TypeScript build, complete Vitest suite, or MariaDB integration suite after a clean install. All 44 browser-durability tests from the direct-draft, collaboration-recovery, transition-lock, and storage-snapshot suites were executed with a temporary dependency-free Vitest-compatible runner and passed. No lockfile or dependency version was changed. Run the following in an environment with registry and MariaDB access before production deployment:
+A clean dependency installation was attempted repeatedly, including after the final patch. The configured package gateway returned HTTP 503 for the existing locked dependency `zod-3.25.76.tgz`, and the local npm cache did not contain it. Consequently the audit environment could not run the full TypeScript build, complete Vitest suite, or MariaDB integration suite after a clean install. A temporary dependency-free Vitest-compatible runner executed all 73 JavaScript unit tests across 10 files and 79 dependency-free TypeScript UI tests across 15 files; all 152 passed. The source verifiers additionally parsed all 124 scanned JavaScript/TypeScript files. No lockfile or dependency version was changed, and the temporary test shim was removed before packaging. Run the following in an environment with registry and MariaDB access before production deployment:
 
 ```bash
 npm ci
@@ -264,6 +326,6 @@ npm run db:migrate
 
 ## Deployment note
 
-Apply migration 021 before serving the updated application. A pre-fix browser tab will be denied a new collaboration session until refreshed. Do not delete browser recovery storage during rollout; legacy and undecodable records are intentionally retained for manual recovery.
+Apply migration 021 before serving the updated application. Force a full refresh or close/reopen every pre-fix browser tab during rollout: an already-running tab still has the old expiry behavior in memory even after the server files are replaced. A pre-fix browser tab will also be denied a new collaboration session until refreshed. Do not delete browser recovery storage during rollout; legacy and undecodable records are intentionally retained for manual recovery.
 
-Serve production over HTTPS in a browser that exposes the Web Locks API. Safety-critical destructive transitions intentionally fail closed when that API is unavailable; normal direct editing and recovery storage remain available.
+Serve production over HTTPS in a browser that exposes the Web Locks API. Safety-critical destructive transitions intentionally fail closed when that API is unavailable; normal direct editing and recovery storage remain available. Do not manually delete a transition record merely because its timestamp has expired: the updated client retains it until a contender obtains the recorded authoritative Web Lock and proves the original callback is no longer running.

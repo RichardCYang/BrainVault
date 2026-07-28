@@ -2498,17 +2498,78 @@ function inspectPageTransitionSafely(pageId) {
   if (inspection.status === "invalid" || inspection.status === "error") {
     throw new Error(t("status.localRecoveryInspectionFailed"));
   }
+  return inspection.status === "active" || inspection.status === "expired"
+    ? inspection.record
+    : null;
+}
+
+function inspectPageTransitionForStart(pageId) {
+  const inspection = pageTransitionLock.inspect(pageId);
+  if (inspection.status === "invalid" || inspection.status === "error") {
+    throw new Error(t("status.localRecoveryInspectionFailed"));
+  }
+  // An expired lease is still an editor fence, but it may be reaped only after
+  // this contender acquires every authoritative Web Lock used by old/new tabs.
   return inspection.status === "active" ? inspection.record : null;
+}
+
+function inspectPageTransitionForUi(pageId) {
+  const inspection = pageTransitionLock.inspect(pageId);
+  if (inspection.status === "active" || inspection.status === "expired") {
+    return { locked: true, record: inspection.record };
+  }
+  if (inspection.status === "missing") return { locked: false, record: null };
+  // A storage read or decode failure must never be interpreted as an unlocked
+  // editor while a destructive operation may still be running in another tab.
+  return { locked: true, record: null };
+}
+
+function getPageTransitionExclusiveIds(transition, page = null) {
+  if (!transition?.pageId) return [];
+  const transitionPage = page
+    ?? (state.selectedPage?.id === transition.pageId ? state.selectedPage : null)
+    ?? state.allPages.find((candidate) => candidate.id === transition.pageId)
+    ?? null;
+  const inferredWorkspaceId = isWorkspaceTransitionId(transition.pageId)
+    ? transition.pageId
+    : getPageWorkspaceTransitionId(transitionPage);
+  const exclusiveId = transition.exclusiveId ?? inferredWorkspaceId;
+  if (!exclusiveId) return [];
+  // New page transitions intentionally hold both scopes. This also permits
+  // safe cleanup of a pre-fix lease: older builds used either the page lock or
+  // the owner workspace lock, so both must be observed free before deletion.
+  return [...new Set([transition.pageId, exclusiveId])];
+}
+
+async function reapExpiredPageTransition(transition, page = null) {
+  if (!transition?.pageId || !Number.isFinite(transition.expiresAt) || transition.expiresAt > Date.now()) {
+    return false;
+  }
+  const exclusiveIds = getPageTransitionExclusiveIds(transition, page);
+  if (!exclusiveIds.length) return false;
+  const result = await pageTransitionLock.runExclusive(exclusiveIds, async () => {
+    const current = pageTransitionLock.inspect(transition.pageId);
+    if (current.status === "missing") return true;
+    if (current.status !== "expired") return false;
+    return pageTransitionLock.releaseExpired(transition.pageId);
+  });
+  return Boolean(result?.acquired && result.value);
 }
 
 function schedulePageTransitionUnlock(transition) {
   window.clearTimeout(pageTransitionUnlockTimer);
   pageTransitionUnlockTimer = null;
   if (!transition?.expiresAt) return;
-  const delay = Math.max(0, transition.expiresAt - Date.now() + 25);
+  const isExpired = transition.expiresAt <= Date.now();
+  const delay = isExpired
+    ? 1_000
+    : Math.max(0, transition.expiresAt - Date.now() + 25);
   pageTransitionUnlockTimer = window.setTimeout(() => {
     pageTransitionUnlockTimer = null;
-    syncPageModeUi();
+    const cleanup = transition.expiresAt <= Date.now()
+      ? reapExpiredPageTransition(transition)
+      : Promise.resolve(false);
+    void cleanup.catch(() => false).finally(() => syncPageModeUi());
   }, delay);
 }
 
@@ -2518,30 +2579,34 @@ function isPagePersistenceTransitionLocked(page = state.selectedPage) {
     activePageTransitionLease?.pageId === page?.id
     || (workspaceTransitionId && activePageTransitionLease?.pageId === workspaceTransitionId)
   ) return true;
-  const transitions = [
-    page?.id ? pageTransitionLock.read(page.id) : null,
-    workspaceTransitionId ? pageTransitionLock.read(workspaceTransitionId) : null
+  const states = [
+    page?.id ? inspectPageTransitionForUi(page.id) : null,
+    workspaceTransitionId ? inspectPageTransitionForUi(workspaceTransitionId) : null
   ].filter(Boolean);
+  const transitions = states.map((transitionState) => transitionState.record).filter(Boolean);
   const earliestExpiry = transitions.sort((left, right) => left.expiresAt - right.expiresAt)[0] ?? null;
   schedulePageTransitionUnlock(earliestExpiry);
-  return transitions.length > 0;
+  return states.some((transitionState) => transitionState.locked);
 }
 
 function isWorkspacePersistenceTransitionLocked() {
   const workspaceTransitionId = getWorkspaceTransitionId();
   if (!workspaceTransitionId) return false;
   if (activePageTransitionLease?.pageId === workspaceTransitionId) return true;
-  const transition = pageTransitionLock.read(workspaceTransitionId);
-  schedulePageTransitionUnlock(transition);
-  return Boolean(transition);
+  const transitionState = inspectPageTransitionForUi(workspaceTransitionId);
+  schedulePageTransitionUnlock(transitionState.record);
+  return transitionState.locked;
 }
 
-function assertWorkspacePersistenceUnlocked() {
+async function assertWorkspacePersistenceUnlocked() {
   const workspaceTransitionId = getWorkspaceTransitionId();
   if (!workspaceTransitionId) return;
-  if (inspectPageTransitionSafely(workspaceTransitionId)) {
-    throw new Error(t("status.workspaceTransitionBusy"));
+  let transition = inspectPageTransitionSafely(workspaceTransitionId);
+  if (transition?.expiresAt <= Date.now()) {
+    await reapExpiredPageTransition(transition);
+    transition = inspectPageTransitionSafely(workspaceTransitionId);
   }
+  if (transition) throw new Error(t("status.workspaceTransitionBusy"));
 }
 
 function isPageInteractionLocked() {
@@ -2952,18 +3017,41 @@ async function withPagePersistenceTransition(pageId, kind, action) {
   const workspaceTransitionId = isWorkspaceTransitionId(pageId)
     ? null
     : getPageWorkspaceTransitionId(page);
-  // Page-level and workspace-level destructive transitions for the same
-  // owner must share one authoritative browser lock. Page-specific durable
-  // leases remain separate so other tabs can flush the affected editor.
+  // Page-level and workspace-level destructive transitions for the same owner
+  // share the owner Web Lock. Page transitions also retain the page lock so an
+  // expired lease written by a pre-owner-scope build can be reaped safely.
   const exclusiveTransitionId = workspaceTransitionId ?? pageId;
-  const currentTransition = inspectPageTransitionSafely(pageId);
+  const exclusiveTransitionIds = [...new Set([pageId, exclusiveTransitionId])];
+  const currentTransition = inspectPageTransitionForStart(pageId);
   const workspaceTransition = workspaceTransitionId && pageId !== workspaceTransitionId
-    ? inspectPageTransitionSafely(workspaceTransitionId)
+    ? inspectPageTransitionForStart(workspaceTransitionId)
     : null;
   if (activePageTransitionLease || currentTransition || workspaceTransition) throw new Error(busyMessage);
 
-  const result = await pageTransitionLock.runExclusive(exclusiveTransitionId, async () => {
-    const lease = pageTransitionLock.acquire(pageId, kind);
+  const result = await pageTransitionLock.runExclusive(exclusiveTransitionIds, async () => {
+    const transitionIds = [
+      pageId,
+      ...(workspaceTransitionId && pageId !== workspaceTransitionId ? [workspaceTransitionId] : [])
+    ];
+    for (const transitionId of transitionIds) {
+      const inspection = pageTransitionLock.inspect(transitionId);
+      if (inspection.status === "invalid" || inspection.status === "error") {
+        throw new Error(t("status.localRecoveryInspectionFailed"));
+      }
+      if (inspection.status === "active") throw new Error(busyMessage);
+      if (inspection.status === "expired" && !pageTransitionLock.releaseExpired(transitionId)) {
+        throw new Error(busyMessage);
+      }
+      const verified = pageTransitionLock.inspect(transitionId);
+      if (verified.status !== "missing") {
+        if (verified.status === "invalid" || verified.status === "error") {
+          throw new Error(t("status.localRecoveryInspectionFailed"));
+        }
+        throw new Error(busyMessage);
+      }
+    }
+
+    const lease = pageTransitionLock.acquire(pageId, kind, exclusiveTransitionId);
     if (!lease) throw new Error(busyMessage);
     let currentLease = lease;
     activePageTransitionLease = currentLease;
@@ -3005,10 +3093,22 @@ async function withWorkspacePersistenceTransition(kind, action) {
   const workspaceTransitionId = getWorkspaceTransitionId();
   if (!workspaceTransitionId) throw new Error(t("status.workspaceTransitionBusy"));
   return withPagePersistenceTransition(workspaceTransitionId, kind, async () => {
-    // A page-level share transition may already have passed its preflight check
-    // before this workspace lease was published. Refuse to overlap it; any page
-    // transition that starts after the lease is visible will fail its own check.
-    const transitionInspection = pageTransitionLock.inspectActive();
+    // The owner lock proves that no current page transition for this workspace
+    // is running. Remove only expired leases that explicitly name this owner
+    // scope; legacy page leases stay fail-closed because their authority is
+    // ambiguous without also acquiring each historical page lock.
+    let transitionInspection = pageTransitionLock.inspectActive();
+    assertBrowserRecoveryInspectionSafe(transitionInspection);
+    for (const transition of transitionInspection.records) {
+      if (
+        transition.pageId !== workspaceTransitionId
+        && transition.expiresAt <= Date.now()
+        && transition.exclusiveId === workspaceTransitionId
+      ) {
+        pageTransitionLock.releaseExpired(transition.pageId);
+      }
+    }
+    transitionInspection = pageTransitionLock.inspectActive();
     assertBrowserRecoveryInspectionSafe(transitionInspection);
     const competingTransitions = transitionInspection.records
       .filter((transition) => transition.pageId !== workspaceTransitionId);
@@ -3253,7 +3353,7 @@ function openNavigationContextMenu(trigger, { focusFirst = false } = {}) {
 async function deleteNavigationTarget() {
   const target = state.activeNavigationMenuTarget;
   if (!target) return;
-  assertWorkspacePersistenceUnlocked();
+  await assertWorkspacePersistenceUnlocked();
 
   const subtreeIds = getPageSubtreeIds(target.id);
   if (isPageReadOnly() && state.selectedPage?.id && subtreeIds.has(state.selectedPage.id)) {
@@ -8139,7 +8239,7 @@ function activatePersistedPageDraft(recovery) {
 }
 
 async function createCollection() {
-  assertWorkspacePersistenceUnlocked();
+  await assertWorkspacePersistenceUnlocked();
   const requestedName = window.prompt(t("collection.createPrompt"), t("collection.defaultName"));
   if (requestedName === null) return;
 
@@ -8150,7 +8250,7 @@ async function createCollection() {
   }
 
   await flushPendingPageEdits();
-  assertWorkspacePersistenceUnlocked();
+  await assertWorkspacePersistenceUnlocked();
   setStatus(t("status.creatingCollection"));
   elements.searchInput.value = "";
   state.searchQuery = "";
@@ -8171,9 +8271,9 @@ async function createCollection() {
 }
 
 async function createUntitledPage() {
-  assertWorkspacePersistenceUnlocked();
+  await assertWorkspacePersistenceUnlocked();
   await flushPendingPageEdits();
-  assertWorkspacePersistenceUnlocked();
+  await assertWorkspacePersistenceUnlocked();
   setStatus(t("status.creatingDocument"));
   elements.searchInput.value = "";
   state.searchQuery = "";
@@ -9626,9 +9726,12 @@ window.addEventListener("storage", (event) => {
     const pageId = state.selectedPage?.id;
     const workspaceTransitionId = getPageWorkspaceTransitionId();
     const transitions = [
-      pageId ? pageTransitionLock.read(pageId) : null,
-      workspaceTransitionId ? pageTransitionLock.read(workspaceTransitionId) : null
-    ].filter((transition) => transition && transition.sourceId !== pageDraftSourceId);
+      pageId ? inspectPageTransitionForUi(pageId) : null,
+      workspaceTransitionId ? inspectPageTransitionForUi(workspaceTransitionId) : null
+    ]
+      .filter((transitionState) => transitionState?.locked)
+      .map((transitionState) => transitionState.record ?? { sourceId: null })
+      .filter((transition) => transition.sourceId !== pageDraftSourceId);
     const canFlushTransitionPage = Boolean(
       state.selectedPage
       && state.workspaceView === "page"

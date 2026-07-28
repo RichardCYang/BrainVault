@@ -25,6 +25,7 @@ export function createPageTransitionLock(
   if (!isNonEmptyString(sourceId)) throw new TypeError("A non-empty transition sourceId is required");
   const normalizedTtlMs = Number.isFinite(ttlMs) && ttlMs >= 1_000 ? Math.floor(ttlMs) : defaultTtlMs;
   const storagePrefix = `${prefix}:`;
+  const heldExclusiveIds = new Map();
   const getKey = (pageId) => `${prefix}:${encodeURIComponent(pageId)}`;
   const getExclusiveLockName = (pageId) => `${prefix}.exclusive:${encodeURIComponent(pageId)}`;
 
@@ -79,26 +80,40 @@ export function createPageTransitionLock(
       || !isNonEmptyString(record.token)
       || !isNonEmptyString(record.kind)
       || !Number.isFinite(record.expiresAt)
+      || (record.exclusiveId !== undefined && !isNonEmptyString(record.exclusiveId))
     ) {
       // Do not delete an undecodable lease. Overwriting an unknown active
       // transition could let two destructive operations run concurrently.
       return { status: "invalid", record: null };
     }
-    if (record.expiresAt <= now()) {
-      return removeIfOwned(pageId, record.token)
-        ? { status: "missing", record: null }
-        : { status: "error", record: null };
-    }
-    return { status: "active", record };
+    // Expiry is only a signal that a lease may be stale. A reader cannot know
+    // whether the destructive callback still holds its authoritative Web Lock
+    // (for example after a throttled timer or a failed localStorage renewal).
+    // Keep the record as a fence until a contender proves the Web Lock is free.
+    return record.expiresAt <= now()
+      ? { status: "expired", record }
+      : { status: "active", record };
   }
 
   function read(pageId) {
     const inspection = inspect(pageId);
-    return inspection.status === "active" ? inspection.record : null;
+    return inspection.status === "active" || inspection.status === "expired"
+      ? inspection.record
+      : null;
   }
 
-  function acquire(pageId, kind) {
-    if (!storage || !isNonEmptyString(pageId) || !isNonEmptyString(kind)) return null;
+  function isExclusiveHeld(exclusiveId) {
+    return (heldExclusiveIds.get(exclusiveId) ?? 0) > 0;
+  }
+
+  function acquire(pageId, kind, exclusiveId = pageId) {
+    if (
+      !storage
+      || !isNonEmptyString(pageId)
+      || !isNonEmptyString(kind)
+      || !isNonEmptyString(exclusiveId)
+      || !isExclusiveHeld(exclusiveId)
+    ) return null;
     if (inspect(pageId).status !== "missing") return null;
     const record = {
       schemaVersion: transitionSchemaVersion,
@@ -106,6 +121,7 @@ export function createPageTransitionLock(
       sourceId,
       token: createToken(sourceId),
       kind,
+      exclusiveId,
       expiresAt: now() + normalizedTtlMs
     };
     try {
@@ -133,7 +149,7 @@ export function createPageTransitionLock(
         continue;
       }
       const inspection = inspect(pageId);
-      if (inspection.status === "active") records.push(inspection.record);
+      if (inspection.status === "active" || inspection.status === "expired") records.push(inspection.record);
       else if (inspection.status === "invalid" || inspection.status === "error") unreadableKeys.push(key);
     }
 
@@ -151,11 +167,15 @@ export function createPageTransitionLock(
   function owns(record) {
     if (!record?.pageId || !record?.token) return false;
     const inspection = inspect(record.pageId);
-    return inspection.status === "active" && inspection.record?.token === record.token;
+    return (
+      (inspection.status === "active" || inspection.status === "expired")
+      && inspection.record?.token === record.token
+    );
   }
 
   function renew(record) {
-    if (!owns(record)) return null;
+    const exclusiveId = record?.exclusiveId ?? record?.pageId;
+    if (!isExclusiveHeld(exclusiveId) || !owns(record)) return null;
     const renewed = { ...record, expiresAt: now() + normalizedTtlMs };
     try {
       storage.setItem(getKey(record.pageId), JSON.stringify(renewed));
@@ -170,10 +190,28 @@ export function createPageTransitionLock(
     return removeIfOwned(record.pageId, record.token);
   }
 
+  function releaseExpired(pageId) {
+    const inspection = inspect(pageId);
+    if (inspection.status === "missing") return true;
+    if (inspection.status !== "expired") return false;
+    const exclusiveId = inspection.record.exclusiveId;
+    // New leases name their authoritative lock. Legacy leases did not, so a
+    // caller must hold the page-scoped lock as well as any inferred owner lock
+    // before cleaning one up. runExclusive() tracks these scopes per instance.
+    if (exclusiveId ? !isExclusiveHeld(exclusiveId) : !isExclusiveHeld(pageId)) return false;
+    return removeIfOwned(pageId, inspection.record.token);
+  }
+
   async function runExclusive(pageId, action) {
-    if (!isNonEmptyString(pageId) || typeof action !== "function") {
-      throw new TypeError("A pageId and transition action are required");
+    const requestedIds = Array.isArray(pageId) ? pageId : [pageId];
+    if (
+      !requestedIds.length
+      || requestedIds.some((exclusiveId) => !isNonEmptyString(exclusiveId))
+      || typeof action !== "function"
+    ) {
+      throw new TypeError("One or more pageIds and a transition action are required");
     }
+    const exclusiveIds = [...new Set(requestedIds)].sort();
     if (typeof lockManager?.request !== "function") {
       // Web Storage has no atomic compare-and-set primitive. A durable
       // lease is useful for propagation, crash recovery, and UI state, but
@@ -184,13 +222,30 @@ export function createPageTransitionLock(
         reason: "lock-manager-unavailable"
       };
     }
-    return lockManager.request(
-      getExclusiveLockName(pageId),
-      { mode: "exclusive", ifAvailable: true },
-      async (lock) => lock
-        ? { acquired: true, value: await action() }
-        : { acquired: false, value: undefined }
-    );
+
+    async function requestAt(index) {
+      if (index >= exclusiveIds.length) {
+        return { acquired: true, value: await action() };
+      }
+      const exclusiveId = exclusiveIds[index];
+      return lockManager.request(
+        getExclusiveLockName(exclusiveId),
+        { mode: "exclusive", ifAvailable: true },
+        async (lock) => {
+          if (!lock) return { acquired: false, value: undefined };
+          heldExclusiveIds.set(exclusiveId, (heldExclusiveIds.get(exclusiveId) ?? 0) + 1);
+          try {
+            return await requestAt(index + 1);
+          } finally {
+            const remaining = (heldExclusiveIds.get(exclusiveId) ?? 1) - 1;
+            if (remaining > 0) heldExclusiveIds.set(exclusiveId, remaining);
+            else heldExclusiveIds.delete(exclusiveId);
+          }
+        }
+      );
+    }
+
+    return requestAt(0);
   }
 
   return {
@@ -204,6 +259,7 @@ export function createPageTransitionLock(
     owns,
     renew,
     release,
+    releaseExpired,
     runExclusive
   };
 }

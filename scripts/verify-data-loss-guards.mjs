@@ -28,6 +28,7 @@ function assertBefore(source, guard, mutation, label) {
 class MemoryStorage {
   values = new Map();
   shiftOnNextKey = false;
+  failWrites = false;
 
   get length() {
     return this.values.size;
@@ -47,12 +48,35 @@ class MemoryStorage {
   }
 
   setItem(key, value) {
+    if (this.failWrites) throw new Error("simulated storage write failure");
     this.values.set(key, value);
   }
 
   removeItem(key) {
     this.values.delete(key);
   }
+}
+
+class MemoryLockManager {
+  held = new Set();
+
+  async request(name, options, callback) {
+    if (options?.ifAvailable && this.held.has(name)) return callback(null);
+    this.held.add(name);
+    try {
+      return await callback({ name, mode: options?.mode ?? "exclusive" });
+    } finally {
+      this.held.delete(name);
+    }
+  }
+}
+
+async function acquireTransitionLease(lock, pageId, kind, exclusiveId = pageId) {
+  const result = await lock.runExclusive([pageId, exclusiveId], async () =>
+    lock.acquire(pageId, kind, exclusiveId)
+  );
+  assert(result.acquired && result.value, `Could not acquire transition lease for ${pageId}`);
+  return result.value;
 }
 
 class RepeatedShiftingStorage extends MemoryStorage {
@@ -104,6 +128,10 @@ function oldThreePassForwardSnapshot(storage) {
 }
 
 const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const transitionLockSource = readFileSync(
+  new URL("../public/page-transition-lock.js", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 
 const recoveredDraftActivation = section(
   client,
@@ -166,13 +194,30 @@ assert(
   "Destructive guards do not fail closed when browser recovery inspection is uncertain"
 );
 assert(
-  client.includes("const transitionInspection = pageTransitionLock.inspectActive()"),
-  "Workspace transitions do not inspect every durable lease safely"
+  client.includes("let transitionInspection = pageTransitionLock.inspectActive()")
+    && client.includes("transition.expiresAt <= Date.now()")
+    && client.includes("pageTransitionLock.releaseExpired(transition.pageId)"),
+  "Workspace transitions do not inspect and safely reap durable leases"
 );
 assert(
   client.includes("const exclusiveTransitionId = workspaceTransitionId ?? pageId;")
-    && client.includes("pageTransitionLock.runExclusive(exclusiveTransitionId"),
-  "Page and workspace transitions do not share one owner-scoped browser lock"
+    && client.includes("const exclusiveTransitionIds = [...new Set([pageId, exclusiveTransitionId])];")
+    && client.includes("pageTransitionLock.runExclusive(exclusiveTransitionIds")
+    && client.includes("pageTransitionLock.acquire(pageId, kind, exclusiveTransitionId)"),
+  "Page and workspace transitions do not share owner/page authoritative browser locks"
+);
+assert(
+  transitionLockSource.includes('? { status: "expired", record }')
+    && transitionLockSource.includes("function releaseExpired(pageId)")
+    && transitionLockSource.includes("|| !isExclusiveHeld(exclusiveId)")
+    && !transitionLockSource.includes("record.expiresAt <= now()) {\n      return removeIfOwned"),
+  "Expired durable leases can still be deleted by an uncoordinated reader"
+);
+assert(
+  client.includes("function inspectPageTransitionForUi(pageId)")
+    && client.includes("return { locked: true, record: null };")
+    && client.includes("async function reapExpiredPageTransition(transition, page = null)"),
+  "Transition storage failures or expiry can still reopen editing without authoritative cleanup"
 );
 assert(
   client.includes("status.exclusiveTransitionLockUnavailable"),
@@ -342,6 +387,70 @@ assert(
   "A destructive transition still runs without an atomic browser lock manager"
 );
 
+const expiryFenceStorage = new MemoryStorage();
+const expiryFenceLockManager = new MemoryLockManager();
+let expiryFenceClock = 1_000;
+const expiryFenceOwner = createPageTransitionLock(expiryFenceStorage, {
+  sourceId: "tab-owner",
+  ttlMs: 1_000,
+  now: () => expiryFenceClock,
+  lockManager: expiryFenceLockManager
+});
+const expiryFenceContender = createPageTransitionLock(expiryFenceStorage, {
+  sourceId: "tab-contender",
+  ttlMs: 1_000,
+  now: () => expiryFenceClock,
+  lockManager: expiryFenceLockManager
+});
+let releaseExpiryFenceAction;
+let expiryFenceLease = null;
+const expiryFenceAction = expiryFenceOwner.runExclusive(
+  ["page", "__workspace__:user"],
+  async () => {
+    expiryFenceLease = expiryFenceOwner.acquire(
+      "page",
+      "page-delete",
+      "__workspace__:user"
+    );
+    await new Promise((resolve) => { releaseExpiryFenceAction = resolve; });
+    return "deleted";
+  }
+);
+await Promise.resolve();
+assert(expiryFenceLease, "The expiry-fence reproduction could not acquire its initial lease");
+expiryFenceStorage.failWrites = true;
+expiryFenceClock = 1_400;
+assert(
+  expiryFenceOwner.renew(expiryFenceLease) === null,
+  "The expiry-fence reproduction did not simulate a failed renewal"
+);
+expiryFenceClock = 2_001;
+const expiredFence = expiryFenceContender.inspect("page");
+const blockedExpiryReaper = await expiryFenceContender.runExclusive(
+  ["page", "__workspace__:user"],
+  async () => expiryFenceContender.releaseExpired("page")
+);
+assert(
+  expiredFence.status === "expired"
+    && expiryFenceContender.read("page")?.token === expiryFenceLease.token
+    && expiryFenceStorage.getItem("brainvault.pageTransition.v1:page") !== null
+    && !blockedExpiryReaper.acquired,
+  "An expired lease can still disappear while its destructive Web Lock is held"
+);
+expiryFenceStorage.failWrites = false;
+releaseExpiryFenceAction();
+await expiryFenceAction;
+const recoveredExpiryFence = await expiryFenceContender.runExclusive(
+  ["page", "__workspace__:user"],
+  async () => expiryFenceContender.releaseExpired("page")
+);
+assert(
+  recoveredExpiryFence.acquired
+    && recoveredExpiryFence.value
+    && expiryFenceContender.inspect("page").status === "missing",
+  "An expired lease cannot be safely recovered after its authoritative Web Lock is released"
+);
+
 const delimiterCollisionInspection = inspectStorageKeys(
   new AlternatingDelimiterCollisionStorage(),
   { maxPasses: 6, stablePasses: 3 }
@@ -355,10 +464,17 @@ assert(
 );
 
 const transitionStorage = new MemoryStorage();
-const firstLock = createPageTransitionLock(transitionStorage, { sourceId: "tab-a" });
-const secondLock = createPageTransitionLock(transitionStorage, { sourceId: "tab-b" });
-firstLock.acquire("page", "share-add");
-secondLock.acquire("__workspace__:user", "data-restore");
+const transitionLockManager = new MemoryLockManager();
+const firstLock = createPageTransitionLock(transitionStorage, {
+  sourceId: "tab-a",
+  lockManager: transitionLockManager
+});
+const secondLock = createPageTransitionLock(transitionStorage, {
+  sourceId: "tab-b",
+  lockManager: transitionLockManager
+});
+await acquireTransitionLease(firstLock, "page", "share-add");
+await acquireTransitionLease(secondLock, "__workspace__:user", "data-restore");
 transitionStorage.shiftOnNextKey = true;
 const activeTransitions = firstLock.loadActive();
 assert(
@@ -410,9 +526,13 @@ assert(
 );
 
 const repeatedTransitionStorage = new RepeatedShiftingStorage();
-const repeatedLock = createPageTransitionLock(repeatedTransitionStorage, { sourceId: "tab" });
+const repeatedTransitionLockManager = new MemoryLockManager();
+const repeatedLock = createPageTransitionLock(repeatedTransitionStorage, {
+  sourceId: "tab",
+  lockManager: repeatedTransitionLockManager
+});
 for (const pageId of ["page-a", "page-b", "page-c", "page-survivor"]) {
-  repeatedLock.acquire(pageId, "delete");
+  await acquireTransitionLease(repeatedLock, pageId, "delete");
 }
 repeatedTransitionStorage.shiftsRemaining = 3;
 const transitionInspection = repeatedLock.inspectActive();
@@ -494,10 +614,17 @@ assert(
 const emptyTransitionStorage = new MemoryStorage();
 const emptyTransitionKey = "brainvault.pageTransition.v1:page";
 emptyTransitionStorage.setItem(emptyTransitionKey, "");
-const emptyTransitionLock = createPageTransitionLock(emptyTransitionStorage, { sourceId: "tab" });
+const emptyTransitionLock = createPageTransitionLock(emptyTransitionStorage, {
+  sourceId: "tab",
+  lockManager: new MemoryLockManager()
+});
+const emptyTransitionAttempt = await emptyTransitionLock.runExclusive("page", async () =>
+  emptyTransitionLock.acquire("page", "delete")
+);
 assert(
   emptyTransitionLock.inspect("page").status === "invalid"
-  && emptyTransitionLock.acquire("page", "delete") === null
+  && emptyTransitionAttempt.acquired
+  && emptyTransitionAttempt.value === null
   && emptyTransitionStorage.getItem(emptyTransitionKey) === "",
   "An empty-string transition lease is still treated as safely missing"
 );
@@ -523,5 +650,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: destructive ordering, owner-scoped atomic browser exclusion, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: destructive ordering, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection."
 );

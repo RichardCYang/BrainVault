@@ -95,21 +95,31 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain('import { createPageTransitionLock } from "./page-transition-lock.js"');
     expect(client).toContain("function withPagePersistenceTransition(pageId, kind, action)");
     expect(client).toContain("const exclusiveTransitionId = workspaceTransitionId ?? pageId;");
-    expect(client).toContain("pageTransitionLock.runExclusive(exclusiveTransitionId");
+    expect(client).toContain("pageTransitionLock.runExclusive(exclusiveTransitionIds");
     expect(client).toContain("status.exclusiveTransitionLockUnavailable");
     expect(client).toContain("lockManager: window.navigator.locks");
     expect(client).toContain("if (!pageTransitionLock.owns(currentLease))");
     expect(client).toContain("isPagePersistenceTransitionLocked()");
     expect(client).toContain('event.key?.startsWith(`${pageTransitionStoragePrefix}:`)');
     expect(client).toContain("flushPendingPageEdits({ allowLocked: true, collaborationCompact: false })");
-    expect(client).toContain("function assertNoPendingLocalPageDrafts(pageId)");
-    expect(client).toContain("pageDraftStore.loadPageDrafts(state.user.id, pageId)");
+    expect(client).toContain(
+      'function assertNoPendingLocalPageDrafts(pageId, messageKey = "sharing.localDraftsPending")'
+    );
+    expect(client).toContain("pageDraftStore.inspectPageDrafts(state.user.id, pageId)");
     expect(client).toContain("function assertNoPendingLocalCollaborationRecovery(pageId)");
-    expect(client).toContain("collaborationRecoveryStore.loadPageRecords(pageId)");
+    expect(client).toContain("collaborationRecoveryStore.inspectPageRecords(pageId)");
     expect(client).toContain('isCollaborativePage(page) ? "collaboration-active-or-stale" : "collaboration-disabled"');
-    expect(client).toContain('const groupKey = `${record.pageId}\u0000${documentEpoch ?? "legacy"}`;');
+    expect(client).toContain('const epochGroupKey = documentEpoch === null ? "legacy:" : `epoch:${documentEpoch}`;');
+    expect(client).toContain('const groupKey = `${record.pageId}\\u0000${epochGroupKey}`;');
     expect(client).toContain("documentEpoch: group.documentEpoch");
-    expect(client).not.toContain("if (page && !isCollaborativePage(page)) return [];");
+    const orphanedCollaborationStart = client.indexOf("function getOrphanedCollaborationRecoveryGroups()");
+    const orphanedCollaborationEnd = client.indexOf(
+      "async function decodeOrphanedCollaborationRecoveryGroups",
+      orphanedCollaborationStart
+    );
+    expect(client.slice(orphanedCollaborationStart, orphanedCollaborationEnd)).not.toContain(
+      "if (page && !isCollaborativePage(page)) return [];"
+    );
     expect(client).toContain("function refreshCollaborativePageDraftRecovery()");
     expect(client).toContain("appendPageDraftRecoveryPanel(elements.blockList, getCollaborativePageDrafts(page.id), { collaborative: true })");
     expect(client).toContain("refreshCollaborativePageDraftRecovery();");
@@ -141,7 +151,7 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain('const workspaceTransitionPagePrefix = "__workspace__"');
     expect(client).toContain("function getPageWorkspaceTransitionId(page = state.selectedPage)");
     expect(client).toContain("function withWorkspacePersistenceTransition(kind, action)");
-    expect(client).toContain("pageTransitionLock\n      .loadActive()");
+    expect(client).toContain("pageTransitionLock.inspectActive()");
     expect(client).toContain("function assertNoPendingLocalPageDraftsForPages(");
     expect(client).toContain("function assertNoPendingLocalBlockDrafts(pageId, blockIds, options = {})");
     expect(client).toContain("function assertNoPendingLocalCollaborationRecoveryForPages(pageIds)");

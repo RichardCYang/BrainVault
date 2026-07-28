@@ -389,7 +389,7 @@ function verifySourceWiring() {
   ]);
   assertContains("public/page-transition-lock.js", [
     "brainvault.pageTransition.v1",
-    "function acquire(pageId, kind)",
+    "function acquire(pageId, kind, exclusiveId = pageId)",
     "async function runExclusive(pageId, action)",
     "ifAvailable: true"
   ]);
@@ -400,7 +400,7 @@ function verifySourceWiring() {
     "recoveryStore: collaborationRecoveryStore",
     "flushMaterialization({ compact: collaborationCompact })",
     "flushPendingPageEdits({ allowLocked: true, collaborationCompact: false })",
-    "pageTransitionLock.runExclusive(exclusiveTransitionId",
+    "pageTransitionLock.runExclusive(exclusiveTransitionIds",
     "assertNoPendingLocalPageDrafts(pageId)",
     "assertNoPendingLocalCollaborationRecovery(pageId)",
     "refreshCollaborativePageDraftRecovery",
