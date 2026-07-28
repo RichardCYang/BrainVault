@@ -150,6 +150,35 @@ describe("page draft store", () => {
     expect(first.loadPage("user-1", "page-1")).toBeNull();
   });
 
+  it("does not skip a remaining draft when another tab removes a storage key during enumeration", () => {
+    class ShiftingStorage extends MemoryStorage {
+      shiftOnNextKey = false;
+
+      key(index) {
+        const key = super.key(index);
+        if (this.shiftOnNextKey && index === 0 && key) {
+          this.shiftOnNextKey = false;
+          this.values.delete(key);
+        }
+        return key;
+      }
+    }
+
+    const storage = new ShiftingStorage();
+    createPageDraftStore(storage, { sourceId: "tab-a" }).saveBlock(blockDraft);
+    createPageDraftStore(storage, { sourceId: "tab-b" }).saveBlock({
+      ...blockDraft,
+      blockId: "block-2",
+      payload: { ...blockDraft.payload, markdown: "must remain visible" }
+    });
+
+    storage.shiftOnNextKey = true;
+    const records = createPageDraftStore(storage, { sourceId: "reader" }).loadUserDrafts("user-1");
+    expect(records).toHaveLength(1);
+    expect(records[0].sourceId).toBe("tab-b");
+    expect(records[0].blocks["block-2"]?.payload.markdown).toBe("must remain visible");
+  });
+
   it("keeps another tab's order retry and clears an order that references a deleted block", () => {
     const storage = new MemoryStorage();
     const tabA = createPageDraftStore(storage, { sourceId: "tab-a" });

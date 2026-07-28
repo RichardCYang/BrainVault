@@ -132,11 +132,13 @@ describe("Data-loss prevention integration", () => {
     );
   });
 
-  it("blocks destructive workspace transitions while any tab holds unconfirmed Yjs recovery", () => {
+  it("blocks destructive transitions while any tab holds unconfirmed direct or Yjs recovery", () => {
     expect(client).toContain('const workspaceTransitionPagePrefix = "__workspace__"');
     expect(client).toContain("function getPageWorkspaceTransitionId(page = state.selectedPage)");
     expect(client).toContain("function withWorkspacePersistenceTransition(kind, action)");
     expect(client).toContain("pageTransitionLock\n      .loadActive()");
+    expect(client).toContain("function assertNoPendingLocalPageDraftsForPages(");
+    expect(client).toContain("function assertNoPendingLocalBlockDrafts(pageId, blockIds, options = {})");
     expect(client).toContain("function assertNoPendingLocalCollaborationRecoveryForPages(pageIds)");
     expect(client).toContain("collaborationRecoveryStore.loadAccountRecords(state.user.id)");
     expect(client).toContain("decodeCollaborationRecoveryRecords(group.records)");
@@ -156,7 +158,13 @@ describe("Data-loss prevention integration", () => {
     const deleteEnd = client.indexOf("function renderCollectionView", deleteStart);
     const deleteBody = client.slice(deleteStart, deleteEnd);
     expect(deleteBody).toContain('withWorkspacePersistenceTransition("page-delete"');
+    expect(deleteBody).toContain(
+      'assertNoPendingLocalPageDraftsForPages(serverPageIds, "status.destructiveLocalDraftsPending")'
+    );
     expect(deleteBody).toContain("assertNoPendingLocalCollaborationRecoveryForPages(serverPageIds)");
+    expect(deleteBody.indexOf("assertNoPendingLocalPageDraftsForPages(serverPageIds")).toBeLessThan(
+      deleteBody.indexOf('await api(`/api/pages/${target.id}?permanent=true`')
+    );
     expect(deleteBody.indexOf("assertNoPendingLocalCollaborationRecoveryForPages(serverPageIds)")).toBeLessThan(
       deleteBody.indexOf('await api(`/api/pages/${target.id}?permanent=true`')
     );
@@ -166,7 +174,13 @@ describe("Data-loss prevention integration", () => {
     const restoreBody = client.slice(restoreStart, restoreEnd);
     expect(restoreBody).toContain('withWorkspacePersistenceTransition("data-restore"');
     expect(restoreBody).toContain("const ownedPageIds = await fetchOwnedWorkspacePageIds()");
+    expect(restoreBody).toContain(
+      'assertNoPendingLocalPageDraftsForPages(ownedPageIds, "status.destructiveLocalDraftsPending")'
+    );
     expect(restoreBody).toContain("assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds)");
+    expect(restoreBody.indexOf("assertNoPendingLocalPageDraftsForPages(ownedPageIds")).toBeLessThan(
+      restoreBody.indexOf('await api("/api/data/import"')
+    );
     expect(restoreBody.indexOf("assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds)")).toBeLessThan(
       restoreBody.indexOf('await api("/api/data/import"')
     );
@@ -184,9 +198,24 @@ describe("Data-loss prevention integration", () => {
     const archiveEnd = client.indexOf('for (const eventName of ["focusin"', archiveStart);
     const archiveBody = client.slice(archiveStart, archiveEnd);
     expect(archiveBody).toContain('withPagePersistenceTransition(pageId, "page-archive"');
+    expect(archiveBody).toContain(
+      'assertNoPendingLocalPageDrafts(pageId, "status.destructiveLocalDraftsPending")'
+    );
     expect(archiveBody).toContain("assertNoPendingLocalCollaborationRecovery(pageId)");
+    expect(archiveBody.indexOf("assertNoPendingLocalPageDrafts(pageId")).toBeLessThan(
+      archiveBody.indexOf('await api(`/api/pages/${pageId}`')
+    );
     expect(archiveBody.indexOf("assertNoPendingLocalCollaborationRecovery(pageId)")).toBeLessThan(
       archiveBody.indexOf('await api(`/api/pages/${pageId}`')
+    );
+
+    const blockDeleteStart = client.indexOf("async function deleteBlockWithVersionCheck");
+    const blockDeleteEnd = client.indexOf("function updateBlockInState", blockDeleteStart);
+    const blockDeleteBody = client.slice(blockDeleteStart, blockDeleteEnd);
+    expect(blockDeleteBody).toContain('withPagePersistenceTransition(pageId, "block-delete"');
+    expect(blockDeleteBody).toContain("assertNoPendingLocalBlockDrafts(");
+    expect(blockDeleteBody.indexOf("assertNoPendingLocalBlockDrafts(")).toBeLessThan(
+      blockDeleteBody.indexOf('await api(`/api/blocks/${blockId}`')
     );
   });
 

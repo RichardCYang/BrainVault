@@ -1233,9 +1233,10 @@ async function restoreUserDataBackup(file) {
     withWorkspacePersistenceTransition("data-restore", async () => {
       const ownedPageIds = await fetchOwnedWorkspacePageIds();
       // The server detects changes that reached SQL/Yjs persistence, but it cannot
-      // see a full-document recovery snapshot that exists only in another tab's
-      // localStorage. Recheck after every same-origin editor has had a chance to
-      // flush, before replacing the owned workspace.
+      // see direct drafts or a full-document recovery snapshot that exists only in
+      // another tab's localStorage. Recheck after every same-origin editor has had
+      // a chance to flush, before replacing the owned workspace.
+      assertNoPendingLocalPageDraftsForPages(ownedPageIds, "status.destructiveLocalDraftsPending");
       assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds);
 
       const formData = new FormData();
@@ -3306,8 +3307,9 @@ async function deleteNavigationTarget() {
     setStatus(t(isCollection ? "status.deletingCollection" : "status.deletingPage"));
 
     await withWorkspacePersistenceTransition("page-delete", async () => {
-      // A different tab may hold a newer Yjs document that has not reached the
-      // server and therefore is not represented by the deletion snapshot.
+      // Another tab may hold direct-mode drafts or a newer Yjs document that
+      // has not reached the server and is absent from the deletion snapshot.
+      assertNoPendingLocalPageDraftsForPages(serverPageIds, "status.destructiveLocalDraftsPending");
       assertNoPendingLocalCollaborationRecoveryForPages(serverPageIds);
       await api(`/api/pages/${target.id}?permanent=true`, {
         method: "DELETE",
@@ -3362,10 +3364,10 @@ function getLocalPageDraftRecords(pageId) {
   return pageDraftStore.loadPageDrafts(state.user.id, pageId);
 }
 
-function assertNoPendingLocalPageDrafts(pageId) {
+function assertNoPendingLocalPageDrafts(pageId, messageKey = "sharing.localDraftsPending") {
   const records = getLocalPageDraftRecords(pageId);
   if (!records.length) return;
-  throw new Error(t("sharing.localDraftsPending", { count: formatNumber(records.length) }));
+  throw new Error(t(messageKey, { count: formatNumber(records.length) }));
 }
 
 function getLocalPageDraftRecordsForPages(pageIds) {
@@ -3377,10 +3379,29 @@ function getLocalPageDraftRecordsForPages(pageIds) {
     .filter((record) => targetPageIds.has(record.pageId));
 }
 
-function assertNoPendingLocalPageDraftsForPages(pageIds) {
+function assertNoPendingLocalPageDraftsForPages(
+  pageIds,
+  messageKey = "status.workspaceLocalDraftsPending"
+) {
   const records = getLocalPageDraftRecordsForPages(pageIds);
   if (!records.length) return;
-  throw new Error(t("status.workspaceLocalDraftsPending", { count: formatNumber(records.length) }));
+  throw new Error(t(messageKey, { count: formatNumber(records.length) }));
+}
+
+function getLocalBlockDraftRecords(pageId, blockIds, { excludeSourceId = null } = {}) {
+  const targetBlockIds = new Set(blockIds ?? []);
+  if (!targetBlockIds.size) return [];
+  return getLocalPageDraftRecords(pageId).filter((record) => {
+    if (excludeSourceId && record.sourceId === excludeSourceId) return false;
+    if (Object.keys(record.blocks ?? {}).some((blockId) => targetBlockIds.has(blockId))) return true;
+    return (record.blockOrder?.orderedIds ?? []).some((blockId) => targetBlockIds.has(blockId));
+  });
+}
+
+function assertNoPendingLocalBlockDrafts(pageId, blockIds, options = {}) {
+  const records = getLocalBlockDraftRecords(pageId, blockIds, options);
+  if (!records.length) return;
+  throw new Error(t("status.destructiveLocalDraftsPending", { count: formatNumber(records.length) }));
 }
 
 function getLocalCollaborationRecoveryRecordsForPages(pageIds) {
@@ -4217,6 +4238,7 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
     if (!session?.isReady) throw new Error(t("sharing.syncRequired"));
     return { deletedIds: session.deleteBlock(blockId, { cascade: options.includeDescendants !== false }) };
   }
+  const pageId = state.selectedPage.id;
   const expectedVersions = getBlockVersionSnapshot(blockId, options);
   if (blockSnapshotHasUnresolvedDraftConflict(expectedVersions)) {
     throw new Error(t("status.resolveRecoveredDraftConflict"));
@@ -4225,35 +4247,45 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
     .map(({ id }) => ({ blockId: id, origin: blockDraftConflictOrigins.get(id) }))
     .filter(({ origin }) => Boolean(origin));
   const scope = getDraftScope();
-  const data = await api(`/api/blocks/${blockId}`, {
-    method: "DELETE",
-    body: { expectedVersions }
-  });
-  for (const { id } of expectedVersions) blockDraftRenderSources.delete(id);
-  if (scope) {
-    checkDraftStoreWrite(
-      pageDraftStore.removeBlocks(
-        scope.userId,
-        scope.pageId,
-        expectedVersions.map(({ id }) => id),
-        pageDraftSourceId
-      )
+  return withPagePersistenceTransition(pageId, "block-delete", async () => {
+    // The server version snapshot cannot observe a draft that only exists in a
+    // different tab. Keep that draft attached to its live block instead of
+    // deleting the block and relegating the edit to manual orphan recovery.
+    assertNoPendingLocalBlockDrafts(
+      pageId,
+      expectedVersions.map(({ id }) => id),
+      { excludeSourceId: pageDraftSourceId }
     );
-    for (const { blockId: deletedBlockId, origin } of recoveredConflictOrigins) {
-      const removed = checkDraftStoreWrite(
-        pageDraftStore.removeBlockIfUnchanged({
-          userId: scope.userId,
-          pageId: scope.pageId,
-          blockId: deletedBlockId,
-          ...origin
-        })
+    const data = await api(`/api/blocks/${blockId}`, {
+      method: "DELETE",
+      body: { expectedVersions }
+    });
+    for (const { id } of expectedVersions) blockDraftRenderSources.delete(id);
+    if (scope) {
+      checkDraftStoreWrite(
+        pageDraftStore.removeBlocks(
+          scope.userId,
+          scope.pageId,
+          expectedVersions.map(({ id }) => id),
+          pageDraftSourceId
+        )
       );
-      if (removed && blockDraftConflictOrigins.get(deletedBlockId) === origin) {
-        blockDraftConflictOrigins.delete(deletedBlockId);
+      for (const { blockId: deletedBlockId, origin } of recoveredConflictOrigins) {
+        const removed = checkDraftStoreWrite(
+          pageDraftStore.removeBlockIfUnchanged({
+            userId: scope.userId,
+            pageId: scope.pageId,
+            blockId: deletedBlockId,
+            ...origin
+          })
+        );
+        if (removed && blockDraftConflictOrigins.get(deletedBlockId) === origin) {
+          blockDraftConflictOrigins.delete(deletedBlockId);
+        }
       }
     }
-  }
-  return data;
+    return data;
+  });
 }
 
 function updateBlockInState(updatedBlock, blocks = state.selectedPage?.blocks ?? []) {
@@ -6819,6 +6851,9 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
     const sourceType = row.dataset.blockType ?? block?.type ?? "MARKDOWN";
     const replaceCurrentBlock =
       !isStructuredBlockType(sourceType) && !remainingMarkdown.trim() && !(block?.children?.length);
+    if (replaceCurrentBlock && !isCollaborativePage()) {
+      assertNoPendingLocalBlockDrafts(pageId, [blockId], { excludeSourceId: pageDraftSourceId });
+    }
     let sourceNeedsSave = row.classList.contains("is-dirty");
     if (!replaceCurrentBlock && textarea && textarea.value !== remainingMarkdown) {
       textarea.value = remainingMarkdown;
@@ -7283,6 +7318,11 @@ async function deleteEmptyBlock(row) {
 
   return withPageEditLock(async () => {
     const blockId = row.dataset.blockId;
+    if (!isCollaborativePage()) {
+      assertNoPendingLocalBlockDrafts(state.selectedPage.id, [blockId], {
+        excludeSourceId: pageDraftSourceId
+      });
+    }
     const block = getBlockById(blockId);
     const parentBlockId = normalizeParentBlockId(row.dataset.parentBlockId);
     const siblingIds = getBlockSiblings(parentBlockId).map((item) => item.id);
@@ -9046,6 +9086,7 @@ elements.archivePageButton.addEventListener("click", async () => {
         // Archiving disconnects every collaborator and makes the page unavailable
         // to them. Do not create an orphaned local Yjs state in another tab.
         await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false });
+        assertNoPendingLocalPageDrafts(pageId, "status.destructiveLocalDraftsPending");
         assertNoPendingLocalCollaborationRecovery(pageId);
         await api(`/api/pages/${pageId}`, {
           method: "PATCH",

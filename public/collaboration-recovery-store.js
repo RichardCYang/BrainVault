@@ -36,6 +36,23 @@ export function createCollaborationRecoveryStore(
   const getKey = (accountId, pageId, documentEpoch, sourceId) =>
     `${getPagePrefix(accountId, pageId)}${encodeURIComponent(documentEpoch)}:${encodeURIComponent(sourceId)}`;
 
+  function snapshotStorageKeys() {
+    if (!storage) return [];
+    const keys = new Set();
+    try {
+      for (let pass = 0; pass < 3; pass += 1) {
+        const length = storage.length;
+        for (let index = 0; index < length; index += 1) {
+          const key = storage.key(index);
+          if (key) keys.add(key);
+        }
+      }
+      return [...keys];
+    } catch {
+      return [];
+    }
+  }
+
   function readRecord(key, accountId, pageId) {
     try {
       const raw = storage.getItem(key);
@@ -81,12 +98,7 @@ export function createCollaborationRecoveryStore(
 
   function listPageKeys(accountId, pageId) {
     const pagePrefix = getPagePrefix(accountId, pageId);
-    const keys = [];
-    for (let index = 0; index < storage.length; index += 1) {
-      const key = storage.key(index);
-      if (key?.startsWith(pagePrefix)) keys.push(key);
-    }
-    return keys;
+    return snapshotStorageKeys().filter((key) => key.startsWith(pagePrefix));
   }
 
   function loadAll(accountId, pageId) {
@@ -113,11 +125,7 @@ export function createCollaborationRecoveryStore(
     if (!storage || !isNonEmptyString(pageId)) return [];
     const storagePrefix = `${prefix}:`;
     try {
-      const keys = [];
-      for (let index = 0; index < storage.length; index += 1) {
-        const key = storage.key(index);
-        if (key?.startsWith(storagePrefix)) keys.push(key);
-      }
+      const keys = snapshotStorageKeys().filter((key) => key.startsWith(storagePrefix));
 
       const records = [];
       for (const key of keys) {
@@ -142,11 +150,7 @@ export function createCollaborationRecoveryStore(
     if (!storage || !isNonEmptyString(accountId)) return [];
     const accountPrefix = `${prefix}:${encodeURIComponent(accountId)}:`;
     try {
-      const keys = [];
-      for (let index = 0; index < storage.length; index += 1) {
-        const key = storage.key(index);
-        if (key?.startsWith(accountPrefix)) keys.push(key);
-      }
+      const keys = snapshotStorageKeys().filter((key) => key.startsWith(accountPrefix));
 
       const records = [];
       for (const key of keys) {

@@ -25,6 +25,23 @@ export function createPageTransitionLock(
   const getKey = (pageId) => `${prefix}:${encodeURIComponent(pageId)}`;
   const getExclusiveLockName = (pageId) => `${prefix}.exclusive:${encodeURIComponent(pageId)}`;
 
+  function snapshotStorageKeys() {
+    if (!storage) return [];
+    const keys = new Set();
+    try {
+      for (let pass = 0; pass < 3; pass += 1) {
+        const length = storage.length;
+        for (let index = 0; index < length; index += 1) {
+          const key = storage.key(index);
+          if (key) keys.add(key);
+        }
+      }
+      return [...keys];
+    } catch {
+      return [];
+    }
+  }
+
   function removeIfOwned(pageId, token) {
     try {
       const raw = storage?.getItem(getKey(pageId));
@@ -90,11 +107,7 @@ export function createPageTransitionLock(
     if (!storage) return [];
     const storagePrefix = `${prefix}:`;
     try {
-      const keys = [];
-      for (let index = 0; index < storage.length; index += 1) {
-        const key = storage.key(index);
-        if (key?.startsWith(storagePrefix)) keys.push(key);
-      }
+      const keys = snapshotStorageKeys().filter((key) => key.startsWith(storagePrefix));
 
       const records = [];
       for (const key of keys) {

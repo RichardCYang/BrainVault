@@ -66,13 +66,27 @@ The previous safety controls correctly handled update acknowledgements, commit a
 - Manual recovery output groups records by page and epoch and refuses to merge mixed generations.
 - Records that cannot currently be parsed or applied are skipped but not automatically deleted, preserving their raw bytes for manual or future-version recovery.
 
+## Second critical finding: destructive direct-mode transitions
+
+A separate cross-tab defect was found in the direct (non-Yjs) editor path. Permanent page/collection deletion, page archiving, and full workspace restore waited for the transition lease and rejected pending Yjs recovery, but did not reject durable per-tab direct-edit drafts. Server deletion snapshots, restore fingerprints, and optimistic row versions cannot represent an edit that has only reached another tab's `localStorage`. On a slow or offline connection, one tab could therefore delete, archive, or replace workspace data while another tab still held an unsaved title/block/order draft. The bytes remained available only through manual conflict/orphan-recovery JSON after the live page or block disappeared or was replaced, which is not a safe successful-save outcome. Direct block deletion had the same detach-to-orphan failure mode.
+
+The client now:
+
+- checks all source-tab direct drafts for every page in a permanent deletion scope before issuing the destructive API call;
+- checks direct drafts before archiving a page or replacing the workspace from a backup;
+- performs direct block deletion inside the existing page transition lease, lets other tabs flush, and rejects deletion while another source still has a draft or order record for the affected block subtree; and
+- preflights empty-block deletion and attachment replacement before their preparatory structural work; and
+- snapshots browser-storage keys across bounded repeated passes so concurrent acknowledgement/removal in another tab cannot shift numeric indexes and hide a still-pending direct draft, Yjs recovery record, or active transition lease from the guard.
+
+Severity: **Critical**
+
 ## Other audited data-loss surfaces
 
-No additional critical defect was identified in the following paths during this review:
+No further critical defect was identified in the following paths during this review:
 
 - Direct title/block saves: durable per-tab drafts are written before network submission; optimistic versions and mutation request hashes prevent stale or ambiguous retries from silently overwriting newer content.
 - Save coalescing: a failed/ambiguous write remains ahead of newer queued edits, so a newer edit is not sent against an unknown server version.
-- Destructive transitions: archive, permanent delete, final-share removal, and workspace replacement check pending local/collaboration state and use page/workspace transition locks.
+- Destructive transitions: archive, permanent delete, direct block deletion, final-share removal, and workspace replacement check pending local/collaboration state and use page/workspace transition locks.
 - Workspace restore and attachments: database replacement is transactionally fingerprinted; live collaboration rooms are invalidated before replacement; attachment generations use journals, checksums, fsync, and commit-outcome recovery.
 - Block deletion/reordering: version snapshots, hierarchy locks, cycle validation, and idempotent mutation receipts prevent stale structure changes from being silently applied.
 
@@ -88,6 +102,9 @@ npm run lockfile:check
 
 npm run verify:collaboration
 [verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, hierarchy invariants, RFC 6455 protocol behavior, and syntax for 121 file(s).
+
+npm run verify:data-loss
+[verify-data-loss-guards] OK: destructive transition ordering, seven locale messages, and cross-tab storage enumeration.
 
 [recovery-lineage-smoke] OK
 [openapi-yaml] OK

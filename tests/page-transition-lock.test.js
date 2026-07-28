@@ -116,6 +116,32 @@ describe("page persistence transition lock", () => {
     expect(first.loadActive()).toEqual([]);
   });
 
+  it("does not skip a surviving lease when another tab removes a key during enumeration", () => {
+    const values = new Map();
+    let shiftOnNextKey = false;
+    const storage = {
+      get length() { return values.size; },
+      key(index) {
+        const key = [...values.keys()][index] ?? null;
+        if (shiftOnNextKey && index === 0 && key) {
+          shiftOnNextKey = false;
+          values.delete(key);
+        }
+        return key;
+      },
+      getItem(key) { return values.get(key) ?? null; },
+      setItem(key, value) { values.set(key, value); },
+      removeItem(key) { values.delete(key); }
+    };
+    const first = createPageTransitionLock(storage, { sourceId: "tab-a" });
+    const second = createPageTransitionLock(storage, { sourceId: "tab-b" });
+    first.acquire("page-1", "share-add");
+    second.acquire("__workspace__:user-1", "data-restore");
+
+    shiftOnNextKey = true;
+    expect(first.loadActive().map((record) => record.pageId)).toEqual(["__workspace__:user-1"]);
+  });
+
   it("uses the browser lock manager for atomic cross-tab exclusion when available", async () => {
     const storage = createMemoryStorage();
     const lockManager = createMemoryLockManager();

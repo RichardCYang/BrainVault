@@ -136,6 +136,28 @@ export function createPageDraftStore(
     `${getPagePrefix(userId, pageId)}${encodeURIComponent(recordSourceId)}`;
   const getUserPrefix = (userId) => `${prefix}:${encodeURIComponent(userId)}:`;
 
+  function snapshotStorageKeys() {
+    if (!storage) return [];
+    const keys = new Set();
+    try {
+      // Another tab can remove an acknowledged draft while this tab enumerates
+      // Storage by numeric index. That shifts later keys and can otherwise make
+      // one still-pending draft invisible to a destructive-operation guard.
+      // Re-scan a bounded number of times; stable remaining keys are collected
+      // on the next pass, while removed keys are harmless when read below.
+      for (let pass = 0; pass < 3; pass += 1) {
+        const length = storage.length;
+        for (let index = 0; index < length; index += 1) {
+          const key = storage.key(index);
+          if (key) keys.add(key);
+        }
+      }
+      return [...keys];
+    } catch {
+      return [];
+    }
+  }
+
   function readRecordByKey(key, userId, pageId, expectedSourceId = null) {
     if (!storage) return null;
     try {
@@ -159,9 +181,8 @@ export function createPageDraftStore(
     const pagePrefix = getPagePrefix(userId, pageId);
     try {
       const records = [];
-      for (let index = 0; index < storage.length; index += 1) {
-        const key = storage.key(index);
-        if (!key?.startsWith(pagePrefix)) continue;
+      for (const key of snapshotStorageKeys()) {
+        if (!key.startsWith(pagePrefix)) continue;
         const record = readRecordByKey(key, userId, pageId);
         if (record) records.push(record);
       }
@@ -176,9 +197,8 @@ export function createPageDraftStore(
     const userPrefix = getUserPrefix(userId);
     try {
       const records = [];
-      for (let index = 0; index < storage.length; index += 1) {
-        const key = storage.key(index);
-        if (!key?.startsWith(userPrefix)) continue;
+      for (const key of snapshotStorageKeys()) {
+        if (!key.startsWith(userPrefix)) continue;
         try {
           const raw = storage.getItem(key);
           if (!raw) continue;
@@ -487,11 +507,7 @@ export function createPageDraftStore(
     if (!storage || !isNonEmptyString(userId) || !isNonEmptyString(pageId)) return false;
     const pagePrefix = getPagePrefix(userId, pageId);
     try {
-      const keys = [];
-      for (let index = 0; index < storage.length; index += 1) {
-        const key = storage.key(index);
-        if (key?.startsWith(pagePrefix)) keys.push(key);
-      }
+      const keys = snapshotStorageKeys().filter((key) => key.startsWith(pagePrefix));
       for (const key of keys) storage.removeItem(key);
       return true;
     } catch {
@@ -509,11 +525,7 @@ export function createPageDraftStore(
     if (!storage || !isNonEmptyString(userId)) return false;
     const userPrefix = getUserPrefix(userId);
     try {
-      const keys = [];
-      for (let index = 0; index < storage.length; index += 1) {
-        const key = storage.key(index);
-        if (key?.startsWith(userPrefix)) keys.push(key);
-      }
+      const keys = snapshotStorageKeys().filter((key) => key.startsWith(userPrefix));
       for (const key of keys) storage.removeItem(key);
       return true;
     } catch {

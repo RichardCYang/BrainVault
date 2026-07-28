@@ -125,6 +125,31 @@ describe("collaboration recovery store", () => {
     expect(storage.getItem("brainvault.collaborationRecovery.v1:user-1:page-1:corrupt")).toBe("{not-json");
   });
 
+  it("does not skip a surviving recovery when another tab removes a key during enumeration", () => {
+    const values = new Map();
+    let shiftOnNextKey = false;
+    const storage = {
+      get length() { return values.size; },
+      key(index) {
+        const key = [...values.keys()][index] ?? null;
+        if (shiftOnNextKey && index === 0 && key) {
+          shiftOnNextKey = false;
+          values.delete(key);
+        }
+        return key;
+      },
+      getItem(key) { return values.get(key) ?? null; },
+      setItem(key, value) { values.set(key, value); },
+      removeItem(key) { values.delete(key); }
+    };
+    const store = createCollaborationRecoveryStore(storage);
+    store.save("user-1", "page-1", "tab-a", epochA, new Uint8Array([1]));
+    store.save("user-1", "page-1", "tab-b", epochA, new Uint8Array([2]));
+
+    shiftOnNextKey = true;
+    expect(store.loadPageRecords("page-1").map((record) => record.sourceId)).toEqual(["tab-b"]);
+  });
+
   it("does not delete a newer record written by another live tab", () => {
     const store = createCollaborationRecoveryStore(createMemoryStorage());
     const oldGeneration = store.save("user-1", "page-1", "tab-1", epochA, new Uint8Array([1]));
