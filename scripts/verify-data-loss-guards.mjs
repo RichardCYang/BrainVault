@@ -368,6 +368,77 @@ assert(
   "An undecodable target draft is still treated as safely absent"
 );
 
+const partialDraftStorage = new MemoryStorage();
+const partialDraftKey = "brainvault.pageDraft.v2:user:page:tab-corrupt";
+const partialDraftRaw = JSON.stringify({
+  schemaVersion: 2,
+  userId: "user",
+  pageId: "page",
+  sourceId: "tab-corrupt",
+  updatedAt: 1,
+  title: { value: "recoverable", expectedVersion: 1, revision: 1, updatedAt: 1 },
+  blocks: { broken: { payload: "not-an-object", expectedVersion: 1, revision: 1, updatedAt: 1 } },
+  blockOrder: null
+});
+partialDraftStorage.setItem(partialDraftKey, partialDraftRaw);
+const partialDraftStore = createPageDraftStore(partialDraftStorage, { sourceId: "tab-corrupt" });
+assert(
+  partialDraftStore.inspectPageDrafts("user", "page").unreadableKeys.includes(partialDraftKey),
+  "A partially malformed draft is still accepted after silently dropping one component"
+);
+assert(
+  !partialDraftStore.saveTitle({
+    userId: "user",
+    pageId: "page",
+    sourceId: "tab-corrupt",
+    value: "replacement",
+    expectedVersion: 1,
+    revision: 2
+  }) && partialDraftStorage.getItem(partialDraftKey) === partialDraftRaw,
+  "A partially malformed draft can still be overwritten by the next title save"
+);
+
+const emptyDraftStorage = new MemoryStorage();
+const emptyDraftKey = "brainvault.pageDraft.v2:user:page:tab-empty";
+emptyDraftStorage.setItem(emptyDraftKey, "");
+const emptyDraftStore = createPageDraftStore(emptyDraftStorage, { sourceId: "tab-empty" });
+assert(
+  emptyDraftStore.inspectPageDrafts("user", "page").unreadableKeys.includes(emptyDraftKey)
+  && !emptyDraftStore.saveBlock({
+    userId: "user",
+    pageId: "page",
+    sourceId: "tab-empty",
+    blockId: "block",
+    payload: { type: "MARKDOWN", markdown: "replacement" },
+    expectedVersion: 1,
+    revision: 1
+  })
+  && emptyDraftStorage.getItem(emptyDraftKey) === "",
+  "An empty-string draft value is still treated as an absent, overwritable key"
+);
+
+const emptyRecoveryStorage = new MemoryStorage();
+const emptyRecoveryKey = "brainvault.collaborationRecovery.v1:user:page:epoch:tab";
+emptyRecoveryStorage.setItem(emptyRecoveryKey, "");
+const emptyRecoveryStore = createCollaborationRecoveryStore(emptyRecoveryStorage);
+assert(
+  emptyRecoveryStore.inspectPageRecords("page").unreadableKeys.includes(emptyRecoveryKey)
+  && emptyRecoveryStore.save("user", "page", "tab", "epoch", new Uint8Array([1])) === null
+  && emptyRecoveryStorage.getItem(emptyRecoveryKey) === "",
+  "An empty-string collaboration recovery can still be overwritten"
+);
+
+const emptyTransitionStorage = new MemoryStorage();
+const emptyTransitionKey = "brainvault.pageTransition.v1:page";
+emptyTransitionStorage.setItem(emptyTransitionKey, "");
+const emptyTransitionLock = createPageTransitionLock(emptyTransitionStorage, { sourceId: "tab" });
+assert(
+  emptyTransitionLock.inspect("page").status === "invalid"
+  && emptyTransitionLock.acquire("page", "delete") === null
+  && emptyTransitionStorage.getItem(emptyTransitionKey) === "",
+  "An empty-string transition lease is still treated as safely missing"
+);
+
 const brokenStorage = {
   get length() { throw new Error("disabled"); },
   key() { throw new Error("disabled"); },
@@ -389,5 +460,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: destructive ordering, cross-tab recovery isolation, seven locale messages, convergent storage snapshots, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: destructive ordering, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, convergent storage snapshots, and fail-closed recovery inspection."
 );

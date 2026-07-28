@@ -102,14 +102,32 @@ function normalizeRecord(value, userId, pageId, expectedSourceId = null) {
     return null;
   }
 
-  const title = normalizeTitleDraft(value.title);
-  const blockOrder = normalizeBlockOrderDraft(value.blockOrder);
+  let title = null;
+  if (value.title !== null && value.title !== undefined) {
+    title = normalizeTitleDraft(value.title);
+    if (!title) return null;
+  }
+
+  let blockOrder = null;
+  if (value.blockOrder !== null && value.blockOrder !== undefined) {
+    blockOrder = normalizeBlockOrderDraft(value.blockOrder);
+    if (!blockOrder) return null;
+  }
+
   const blocks = {};
-  if (value.blocks && typeof value.blocks === "object" && !Array.isArray(value.blocks)) {
+  if (value.blocks !== null && value.blocks !== undefined) {
+    if (typeof value.blocks !== "object" || Array.isArray(value.blocks)) return null;
     for (const [blockId, blockDraft] of Object.entries(value.blocks)) {
-      if (!isNonEmptyString(blockId)) continue;
       const normalized = normalizeBlockDraft(blockDraft);
-      if (normalized) blocks[blockId] = normalized;
+      // A recovery record must be parsed losslessly. Silently dropping one bad
+      // component would let the next save overwrite its last recoverable bytes.
+      if (!isNonEmptyString(blockId) || !normalized) return null;
+      Object.defineProperty(blocks, blockId, {
+        value: normalized,
+        enumerable: true,
+        configurable: true,
+        writable: true
+      });
     }
   }
 
@@ -146,9 +164,21 @@ export function createPageDraftStore(
     if (!storage) return { record: null, unreadable: true };
     try {
       const raw = storage.getItem(key);
-      if (!raw) return { record: null, unreadable: false };
+      // Storage.getItem() uses null, not an empty string, to signal absence.
+      // Preserve every present but undecodable value instead of overwriting it.
+      if (raw === null) return { record: null, unreadable: false };
       const record = normalizeRecord(JSON.parse(raw), userId, pageId, expectedSourceId);
-      return { record, unreadable: !record };
+      const parsedKey = parseUserDraftKey(key, userId);
+      if (
+        !record ||
+        !parsedKey ||
+        parsedKey.pageId !== pageId ||
+        parsedKey.sourceId !== record.sourceId ||
+        (expectedSourceId && parsedKey.sourceId !== expectedSourceId)
+      ) {
+        return { record: null, unreadable: true };
+      }
+      return { record, unreadable: false };
     } catch {
       return { record: null, unreadable: true };
     }
@@ -243,6 +273,9 @@ export function createPageDraftStore(
     const hasBlocks = Object.keys(record.blocks ?? {}).length > 0;
     const hasBlockOrder = Boolean(record.blockOrder);
     const key = getKey(record.userId, record.pageId, record.sourceId);
+    // Re-check immediately before every write/removal. A present unreadable
+    // record is potentially the only recovery copy and must never be replaced.
+    if (inspectRecordByKey(key, record.userId, record.pageId, record.sourceId).unreadable) return false;
     try {
       if (!hasTitle && !hasBlocks && !hasBlockOrder) storage.removeItem(key);
       else storage.setItem(key, JSON.stringify({ ...record, updatedAt: Date.now() }));
@@ -265,6 +298,27 @@ export function createPageDraftStore(
     };
   }
 
+  function prepareRecordMutation(userId, pageId, recordSourceId, { createIfMissing = false } = {}) {
+    if (
+      !isNonEmptyString(userId) ||
+      !isNonEmptyString(pageId) ||
+      !isNonEmptyString(recordSourceId)
+    ) {
+      return { record: null, writable: false };
+    }
+    const inspection = inspectRecordByKey(
+      getKey(userId, pageId, recordSourceId),
+      userId,
+      pageId,
+      recordSourceId
+    );
+    if (inspection.unreadable) return { record: null, writable: false };
+    return {
+      record: inspection.record ?? (createIfMissing ? createRecord(userId, pageId, recordSourceId) : null),
+      writable: true
+    };
+  }
+
   function saveTitle({ userId, pageId, value, expectedVersion, revision, sourceId: recordSourceId = sourceId }) {
     const normalizedVersion = normalizeVersion(expectedVersion);
     const normalizedRevision = normalizeRevision(revision);
@@ -277,7 +331,9 @@ export function createPageDraftStore(
       return false;
     }
     if (normalizedVersion === null || normalizedRevision === null) return false;
-    const record = loadPage(userId, pageId, recordSourceId) ?? createRecord(userId, pageId, recordSourceId);
+    const prepared = prepareRecordMutation(userId, pageId, recordSourceId, { createIfMissing: true });
+    if (!prepared.writable || !prepared.record) return false;
+    const record = prepared.record;
     const updatedAt = Date.now();
     record.title = { value, expectedVersion: normalizedVersion, revision: normalizedRevision, updatedAt };
     record.updatedAt = updatedAt;
@@ -305,7 +361,9 @@ export function createPageDraftStore(
     }
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
     if (normalizedVersion === null || normalizedRevision === null) return false;
-    const record = loadPage(userId, pageId, recordSourceId) ?? createRecord(userId, pageId, recordSourceId);
+    const prepared = prepareRecordMutation(userId, pageId, recordSourceId, { createIfMissing: true });
+    if (!prepared.writable || !prepared.record) return false;
+    const record = prepared.record;
     const updatedAt = Date.now();
     record.blocks[blockId] = {
       payload,
@@ -339,7 +397,9 @@ export function createPageDraftStore(
       updatedAt: Date.now()
     });
     if (!normalized) return false;
-    const record = loadPage(userId, pageId, recordSourceId) ?? createRecord(userId, pageId, recordSourceId);
+    const prepared = prepareRecordMutation(userId, pageId, recordSourceId, { createIfMissing: true });
+    if (!prepared.writable || !prepared.record) return false;
+    const record = prepared.record;
     record.blockOrder = normalized;
     record.updatedAt = normalized.updatedAt;
     return writePage(record);
@@ -352,10 +412,12 @@ export function createPageDraftStore(
     nextExpectedVersion,
     sourceId: recordSourceId = sourceId
   }) {
-    const record = loadPage(userId, pageId, recordSourceId);
+    const prepared = prepareRecordMutation(userId, pageId, recordSourceId);
     const acknowledgedRevision = normalizeRevision(revision);
     const nextVersion = normalizeVersion(nextExpectedVersion);
-    if (!record?.title || acknowledgedRevision === null || nextVersion === null) return true;
+    if (!prepared.writable || acknowledgedRevision === null || nextVersion === null) return false;
+    const record = prepared.record;
+    if (!record?.title) return true;
     if (record.title.revision <= acknowledgedRevision) record.title = null;
     else record.title.expectedVersion = nextVersion;
     return writePage(record);
@@ -369,11 +431,13 @@ export function createPageDraftStore(
     nextExpectedVersion,
     sourceId: recordSourceId = sourceId
   }) {
-    const record = loadPage(userId, pageId, recordSourceId);
+    const prepared = prepareRecordMutation(userId, pageId, recordSourceId);
     const acknowledgedRevision = normalizeRevision(revision);
     const nextVersion = normalizeVersion(nextExpectedVersion);
+    if (!prepared.writable || acknowledgedRevision === null || nextVersion === null) return false;
+    const record = prepared.record;
     const draft = record?.blocks?.[blockId];
-    if (!record || !draft || acknowledgedRevision === null || nextVersion === null) return true;
+    if (!record || !draft) return true;
     if (draft.revision <= acknowledgedRevision) delete record.blocks[blockId];
     else draft.expectedVersion = nextVersion;
     return writePage(record);
@@ -393,7 +457,9 @@ export function createPageDraftStore(
     ) {
       return false;
     }
-    const record = loadPage(userId, pageId, recordSourceId);
+    const prepared = prepareRecordMutation(userId, pageId, recordSourceId);
+    if (!prepared.writable) return false;
+    const record = prepared.record;
     if (!record?.blockOrder || record.blockOrder.mutationId !== mutationId) return true;
     record.blockOrder = null;
     return writePage(record);
@@ -412,7 +478,9 @@ export function createPageDraftStore(
     ) {
       return false;
     }
-    const record = loadPage(userId, pageId, recordSourceId);
+    const prepared = prepareRecordMutation(userId, pageId, recordSourceId);
+    if (!prepared.writable) return false;
+    const record = prepared.record;
     if (!record?.title) return true;
     if (
       record.title.value !== value ||
@@ -449,7 +517,9 @@ export function createPageDraftStore(
     ) {
       return false;
     }
-    const record = loadPage(userId, pageId, recordSourceId);
+    const prepared = prepareRecordMutation(userId, pageId, recordSourceId);
+    if (!prepared.writable) return false;
+    const record = prepared.record;
     const draft = record?.blocks?.[blockId];
     if (!record || !draft) return true;
     if (
@@ -464,14 +534,18 @@ export function createPageDraftStore(
   }
 
   function removeTitle(userId, pageId, recordSourceId) {
-    const record = loadPage(userId, pageId, recordSourceId);
+    const prepared = prepareRecordMutation(userId, pageId, recordSourceId);
+    if (!prepared.writable) return false;
+    const record = prepared.record;
     if (!record) return true;
     record.title = null;
     return writePage(record);
   }
 
   function removeBlock(userId, pageId, blockId, recordSourceId) {
-    const record = loadPage(userId, pageId, recordSourceId);
+    const prepared = prepareRecordMutation(userId, pageId, recordSourceId);
+    if (!prepared.writable) return false;
+    const record = prepared.record;
     if (!record) return true;
     delete record.blocks[blockId];
     if (record.blockOrder?.orderedIds.includes(blockId)) record.blockOrder = null;
@@ -496,6 +570,9 @@ export function createPageDraftStore(
     ) {
       return false;
     }
+    const prepared = prepareRecordMutation(userId, pageId, recordSourceId);
+    if (!prepared.writable) return false;
+    if (!prepared.record) return true;
     try {
       storage.removeItem(getKey(userId, pageId, recordSourceId));
       return true;
@@ -527,16 +604,13 @@ export function createPageDraftStore(
 
   function clearPage(userId, pageId) {
     if (!storage || !isNonEmptyString(userId) || !isNonEmptyString(pageId)) return false;
-    const pagePrefix = getPagePrefix(userId, pageId);
-    try {
-      const snapshot = snapshotStorageKeys();
-      if (!snapshot.reliable) return false;
-      const keys = snapshot.keys.filter((key) => key.startsWith(pagePrefix));
-      for (const key of keys) storage.removeItem(key);
-      return true;
-    } catch {
-      return false;
+    const inspection = inspectPageDrafts(userId, pageId);
+    if (!inspection.reliable || inspection.unreadableKeys.length) return false;
+    let succeeded = true;
+    for (const record of inspection.records) {
+      succeeded = removePage(userId, pageId, record.sourceId) && succeeded;
     }
+    return succeeded;
   }
 
   function clearPages(userId, pageIds) {
@@ -547,16 +621,13 @@ export function createPageDraftStore(
 
   function clearUser(userId) {
     if (!storage || !isNonEmptyString(userId)) return false;
-    const userPrefix = getUserPrefix(userId);
-    try {
-      const snapshot = snapshotStorageKeys();
-      if (!snapshot.reliable) return false;
-      const keys = snapshot.keys.filter((key) => key.startsWith(userPrefix));
-      for (const key of keys) storage.removeItem(key);
-      return true;
-    } catch {
-      return false;
+    const inspection = inspectUserDrafts(userId);
+    if (!inspection.reliable || inspection.unreadableKeys.length) return false;
+    let succeeded = true;
+    for (const record of inspection.records) {
+      succeeded = removePage(userId, record.pageId, record.sourceId) && succeeded;
     }
+    return succeeded;
   }
 
   return {

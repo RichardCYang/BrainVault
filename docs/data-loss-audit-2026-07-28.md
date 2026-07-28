@@ -12,6 +12,8 @@ Severity: **Critical**
 
 A follow-up review of the direct-draft recovery path also found that a recovering tab could edit through the original tab's `localStorage` source key before the user confirmed a conflict. That defect and its correction are documented as the fourth critical finding below.
 
+A final browser-durability review found a separate destructive-overwrite path: the direct-draft parser silently discarded malformed title, block, or order fragments while accepting the rest of the record, and the next edit rewrote the shortened record over the original bytes. All three durability stores also treated an existing empty-string value as if the key were absent. The fifth critical finding documents the lossless, fail-closed correction.
+
 ## Reproduction before the fix
 
 1. Page `P` is collaborative. Browser/device B edits while disconnected and retains a local full-document recovery update.
@@ -134,6 +136,32 @@ Recovered block-order retries had the same ownership flaw: the retry task retain
 
 Severity: **Critical**
 
+## Fifth critical finding: malformed browser recovery was silently shortened or overwritten
+
+The direct-draft store used a permissive normalizer. If one title, block, or block-order fragment failed validation while another fragment remained valid, the record was returned as readable with only the valid pieces. `saveTitle`, `saveBlock`, and `saveBlockOrder` then serialized that shortened object back to the same `localStorage` key. A single partially written, future-schema, or otherwise damaged component could therefore be permanently removed from the browser's last recovery copy by an unrelated next edit.
+
+A fully undecodable exact-source record had a second overwrite path: the save functions used `loadPage(...) ?? createRecord(...)`, so a parse failure looked identical to a missing record and the newly created record replaced the raw value. In addition, the direct-draft, collaboration-recovery, and transition-lock stores checked `if (!raw)`. The Web Storage contract reserves `null` for a missing key; an existing empty string is still a present value. The old checks consequently treated an empty recovery record as safely absent. Direct and Yjs recovery saves could overwrite it, while a destructive transition could overwrite an empty but unknown lease.
+
+### Reproduction before the fix
+
+1. Write a schema-v2 direct-draft record containing a valid title and a malformed block payload under the current tab's source key.
+2. Load the page. The old parser accepted the title, silently omitted the malformed block, and reported no unreadable key.
+3. Edit the title or another block. The normal pre-network durability save serialized the shortened record to the same key.
+4. The original malformed block bytes, which may still have been recoverable by a newer build or forensic inspection, were destroyed.
+5. The same overwrite was reproducible by storing `""` at an exact direct-draft or Yjs recovery key. For transition locks, `""` was treated as no lease and allowed a second destructive operation to acquire the key.
+
+### Implemented correction
+
+- Direct-draft parsing is now lossless for payload-bearing fields: any present but invalid title, block, or block-order component makes the whole raw record unreadable. No fragment is silently dropped.
+- Parsed record identity must match the encoded user/page/source key. Yjs recovery identity must likewise match account/page/epoch/source and legacy/current key shape.
+- Only `raw === null` means a key is absent. Empty strings and every other undecodable present value are preserved and reported as unsafe.
+- Every direct-draft mutation, acknowledgement, exact-match cleanup, page removal, and bulk clear refuses to modify an unreadable target. `writePage` re-inspects the key immediately before replacement or removal.
+- Yjs recovery saves preflight their exact target key and refuse to overwrite unreadable or identity-mismatched bytes.
+- Transition inspection and owner release treat an empty value as invalid rather than missing, so `acquire()` cannot replace it.
+- Added regression coverage for partial component damage, empty-string values, key/content identity mismatch, failed cleanup, and byte-for-byte preservation.
+
+Severity: **Critical**
+
 ## Other audited data-loss surfaces
 
 No further critical defect was identified in the following paths during this review:
@@ -158,9 +186,9 @@ npm run verify:collaboration
 [verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, hierarchy invariants, RFC 6455 protocol behavior, and syntax for 123 file(s).
 
 npm run verify:data-loss
-[verify-data-loss-guards] OK: destructive ordering, cross-tab recovery isolation, seven locale messages, convergent storage snapshots, and fail-closed recovery inspection.
+[verify-data-loss-guards] OK: destructive ordering, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, convergent storage snapshots, and fail-closed recovery inspection.
 
-[draft-store-compat] passed=19 failed=0
+[browser-durability-compat] passed=43 failed=0
 
 [recovery-lineage-smoke] OK
 [openapi-yaml] OK
@@ -185,11 +213,15 @@ The verifier now asserts:
 - undecodable target records and leases remaining preserved while destructive operations fail closed;
 - recovered title and block activation always writing through the current tab's source;
 - recovered block-order retries retaining an exact origin mutation token; and
-- current-tab edits leaving the origin tab's title, block, and order records unchanged.
+- current-tab edits leaving the origin tab's title, block, and order records unchanged;
+- partially malformed direct-draft records being rejected without dropping valid or invalid fragments;
+- empty-string direct-draft, Yjs recovery, and transition records being treated as present and unsafe;
+- exact recovery-key identity matching encoded account/user, page, epoch, and source values; and
+- failed writes, acknowledgements, and cleanup preserving the original raw bytes byte-for-byte.
 
 ## Environment limitation
 
-A clean dependency installation was attempted repeatedly. The configured package gateway returned HTTP 503 for the existing locked dependency `zod-3.25.76.tgz`, and the local npm cache did not contain it. Consequently the audit environment could not run the full TypeScript build, complete Vitest suite, or MariaDB integration suite after a clean install. The 19 direct-draft store tests, including the new source-isolation cases, were executed with a temporary dependency-free compatibility runner and all passed. No lockfile or dependency version was changed. Run the following in an environment with registry and MariaDB access before production deployment:
+A clean dependency installation was attempted repeatedly. The configured package gateway returned HTTP 503 for the existing locked dependency `zod-3.25.76.tgz`, and the local npm cache did not contain it. Consequently the audit environment could not run the full TypeScript build, complete Vitest suite, or MariaDB integration suite after a clean install. All 43 browser-durability tests from the direct-draft, collaboration-recovery, and transition-lock suites were executed with a temporary dependency-free Vitest-compatible runner and passed. No lockfile or dependency version was changed. Run the following in an environment with registry and MariaDB access before production deployment:
 
 ```bash
 npm ci

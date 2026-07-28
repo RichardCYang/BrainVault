@@ -43,7 +43,7 @@ export function createPageTransitionLock(
   function removeIfOwned(pageId, token) {
     try {
       const raw = storage?.getItem(getKey(pageId));
-      if (!raw) return true;
+      if (raw === null) return true;
       const record = JSON.parse(raw);
       if (record?.token !== token) return false;
       storage.removeItem(getKey(pageId));
@@ -64,7 +64,7 @@ export function createPageTransitionLock(
     } catch {
       return { status: "error", record: null };
     }
-    if (!raw) return { status: "missing", record: null };
+    if (raw === null) return { status: "missing", record: null };
 
     let record;
     try {

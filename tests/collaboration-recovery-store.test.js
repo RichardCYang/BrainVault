@@ -125,6 +125,34 @@ describe("collaboration recovery store", () => {
     expect(storage.getItem("brainvault.collaborationRecovery.v1:user-1:page-1:corrupt")).toBe("{not-json");
   });
 
+  it("preserves an empty or key-mismatched recovery record instead of overwriting it", () => {
+    const emptyStorage = createMemoryStorage();
+    const emptyKey = "brainvault.collaborationRecovery.v1:user-1:page-1:epoch_a:tab-1";
+    emptyStorage.setItem(emptyKey, "");
+    const emptyStore = createCollaborationRecoveryStore(emptyStorage);
+    expect(emptyStore.inspectPageRecords("page-1").unreadableKeys).toEqual([emptyKey]);
+    expect(emptyStore.save("user-1", "page-1", "tab-1", epochA, new Uint8Array([1]))).toBeNull();
+    expect(emptyStorage.getItem(emptyKey)).toBe("");
+
+    const mismatchedStorage = createMemoryStorage();
+    const mismatchedKey = "brainvault.collaborationRecovery.v1:user-1:page-1:epoch_a:tab-1";
+    const mismatchedRaw = JSON.stringify({
+      schemaVersion: 2,
+      accountId: "user-1",
+      pageId: "page-1",
+      sourceId: "other-tab",
+      documentEpoch: epochA,
+      generation: "preserved-generation",
+      updatedAt: 1,
+      update: btoa(String.fromCharCode(1))
+    });
+    mismatchedStorage.setItem(mismatchedKey, mismatchedRaw);
+    const mismatchedStore = createCollaborationRecoveryStore(mismatchedStorage);
+    expect(mismatchedStore.inspectPageRecords("page-1").unreadableKeys).toEqual([mismatchedKey]);
+    expect(mismatchedStore.save("user-1", "page-1", "tab-1", epochA, new Uint8Array([2]))).toBeNull();
+    expect(mismatchedStorage.getItem(mismatchedKey)).toBe(mismatchedRaw);
+  });
+
   it("does not skip a surviving recovery when another tab removes a key during enumeration", () => {
     const values = new Map();
     let shiftOnNextKey = false;

@@ -193,6 +193,19 @@ describe("page persistence transition lock", () => {
     expect(createPageTransitionLock(brokenStorage, { sourceId: "tab-b" }).inspectActive().reliable).toBe(false);
   });
 
+  it("treats an empty-string lease as occupied and preserves it", () => {
+    const storage = createMemoryStorage();
+    const key = "brainvault.pageTransition.v1:page-1";
+    storage.setItem(key, "");
+    const lock = createPageTransitionLock(storage, { sourceId: "tab-a" });
+
+    expect(lock.inspect("page-1").status).toBe("invalid");
+    expect(lock.acquire("page-1", "delete")).toBeNull();
+    expect(lock.release({ pageId: "page-1", token: "unknown" })).toBe(false);
+    expect(lock.inspectActive().unreadableKeys).toEqual([key]);
+    expect(storage.getItem(key)).toBe("");
+  });
+
   it("uses the browser lock manager for atomic cross-tab exclusion when available", async () => {
     const storage = createMemoryStorage();
     const lockManager = createMemoryLockManager();

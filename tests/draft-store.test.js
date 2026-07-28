@@ -300,6 +300,55 @@ describe("page draft store", () => {
     expect(inspection.unreadableKeys).toHaveLength(1);
   });
 
+  it("preserves partially malformed draft bytes instead of silently dropping one component", () => {
+    const storage = new MemoryStorage();
+    const key = "brainvault.pageDraft.v2:user-1:page-1:tab-corrupt";
+    const original = JSON.stringify({
+      schemaVersion: 2,
+      userId: "user-1",
+      pageId: "page-1",
+      sourceId: "tab-corrupt",
+      updatedAt: 10,
+      title: { value: "still recoverable", expectedVersion: 4, revision: 2, updatedAt: 10 },
+      blocks: {
+        "block-corrupt": { payload: "not-an-object", expectedVersion: 7, revision: 3, updatedAt: 10 }
+      },
+      blockOrder: null
+    });
+    storage.setItem(key, original);
+    const store = createPageDraftStore(storage, { sourceId: "tab-corrupt" });
+
+    const inspection = store.inspectPageDrafts("user-1", "page-1");
+    expect(inspection.records).toEqual([]);
+    expect(inspection.unreadableKeys).toEqual([key]);
+    expect(store.saveTitle({ ...titleDraft, sourceId: "tab-corrupt", value: "new title" })).toBe(false);
+    expect(store.saveBlock({ ...blockDraft, sourceId: "tab-corrupt" })).toBe(false);
+    expect(store.saveBlockOrder({ ...blockOrderDraft, sourceId: "tab-corrupt" })).toBe(false);
+    expect(store.acknowledgeTitle({
+      userId: "user-1",
+      pageId: "page-1",
+      sourceId: "tab-corrupt",
+      revision: 2,
+      nextExpectedVersion: 5
+    })).toBe(false);
+    expect(store.removePage("user-1", "page-1", "tab-corrupt")).toBe(false);
+    expect(store.clearPage("user-1", "page-1")).toBe(false);
+    expect(storage.getItem(key)).toBe(original);
+  });
+
+  it("treats an empty-string draft value as present, unreadable, and non-overwritable", () => {
+    const storage = new MemoryStorage();
+    const key = "brainvault.pageDraft.v2:user-1:page-1:tab-empty";
+    storage.setItem(key, "");
+    const store = createPageDraftStore(storage, { sourceId: "tab-empty" });
+
+    expect(store.inspectPageDrafts("user-1", "page-1").unreadableKeys).toEqual([key]);
+    expect(store.saveTitle({ ...titleDraft, sourceId: "tab-empty" })).toBe(false);
+    expect(store.removePage("user-1", "page-1", "tab-empty")).toBe(false);
+    expect(store.clearUser("user-1")).toBe(false);
+    expect(storage.getItem(key)).toBe("");
+  });
+
   it("keeps another tab's order retry and clears an order that references a deleted block", () => {
     const storage = new MemoryStorage();
     const tabA = createPageDraftStore(storage, { sourceId: "tab-a" });

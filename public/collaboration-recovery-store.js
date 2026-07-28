@@ -68,15 +68,22 @@ export function createCollaborationRecoveryStore(
     if (!storage) return { record: null, unreadable: true };
     try {
       const raw = storage.getItem(key);
-      if (!raw) return { record: null, unreadable: false };
+      if (raw === null) return { record: null, unreadable: false };
       const record = JSON.parse(raw);
+      const parsedKey = parseStorageKey(key);
       const isLegacy = record?.schemaVersion === legacyRecoverySchemaVersion;
       const isCurrent = record?.schemaVersion === recoverySchemaVersion;
       if (
         (!isLegacy && !isCurrent)
+        || !parsedKey
+        || parsedKey.accountId !== accountId
+        || parsedKey.pageId !== pageId
         || record.accountId !== accountId
         || record.pageId !== pageId
         || !isNonEmptyString(record.sourceId)
+        || parsedKey.sourceId !== record.sourceId
+        || parsedKey.documentEpoch !== (isCurrent ? record.documentEpoch : null)
+        || parsedKey.legacyKey !== isLegacy
         || !isNonEmptyString(record.generation)
         || (isCurrent && !isNonEmptyString(record.documentEpoch))
         || typeof record.update !== "string"
@@ -216,10 +223,20 @@ export function createCollaborationRecoveryStore(
     ) return null;
     const bytes = update instanceof Uint8Array ? update : new Uint8Array(update ?? 0);
     if (!bytes.byteLength) return null;
+    const key = getKey(accountId, pageId, documentEpoch, sourceId);
+    const existing = inspectRecord(key, accountId, pageId);
+    if (
+      existing.unreadable
+      || (existing.record && (
+        existing.record.legacy
+        || existing.record.sourceId !== sourceId
+        || existing.record.documentEpoch !== documentEpoch
+      ))
+    ) return null;
     const generation = createGeneration();
     try {
       storage.setItem(
-        getKey(accountId, pageId, documentEpoch, sourceId),
+        key,
         JSON.stringify({
           schemaVersion: recoverySchemaVersion,
           accountId,
