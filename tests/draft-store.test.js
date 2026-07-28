@@ -52,6 +52,74 @@ const blockOrderDraft = {
 };
 
 describe("page draft store", () => {
+  it("keeps the recovered origin immutable while the current tab edits its clone", () => {
+    const storage = new MemoryStorage();
+    const origin = createPageDraftStore(storage, { sourceId: "tab-origin" });
+    const current = createPageDraftStore(storage, { sourceId: "tab-current" });
+
+    origin.saveTitle({ ...titleDraft, value: "origin title" });
+    origin.saveBlock({ ...blockDraft, payload: { ...blockDraft.payload, markdown: "origin block" } });
+    origin.saveBlockOrder(blockOrderDraft);
+
+    current.saveTitle({ ...titleDraft, value: "edited title", revision: 3 });
+    current.saveBlock({
+      ...blockDraft,
+      revision: 4,
+      payload: { ...blockDraft.payload, markdown: "edited block" }
+    });
+    current.saveBlockOrder(blockOrderDraft);
+
+    expect(origin.loadPage("user-1", "page-1", "tab-origin")?.title?.value).toBe("origin title");
+    expect(origin.loadPage("user-1", "page-1", "tab-origin")?.blocks["block-1"]?.payload.markdown).toBe(
+      "origin block"
+    );
+    expect(origin.loadPage("user-1", "page-1", "tab-origin")?.blockOrder?.mutationId).toBe("mut-order-1");
+
+    expect(current.loadPage("user-1", "page-1", "tab-current")?.title?.value).toBe("edited title");
+    expect(current.loadPage("user-1", "page-1", "tab-current")?.blocks["block-1"]?.payload.markdown).toBe(
+      "edited block"
+    );
+  });
+
+  it("cleans a recovered order origin only when its exact mutation is unchanged", () => {
+    const storage = new MemoryStorage();
+    const origin = createPageDraftStore(storage, { sourceId: "tab-origin" });
+    const current = createPageDraftStore(storage, { sourceId: "tab-current" });
+    origin.saveBlockOrder(blockOrderDraft);
+    current.saveBlockOrder(blockOrderDraft);
+
+    expect(
+      current.acknowledgeBlockOrder({
+        userId: "user-1",
+        pageId: "page-1",
+        sourceId: "tab-current",
+        mutationId: "mut-order-1"
+      })
+    ).toBe(true);
+    expect(
+      origin.acknowledgeBlockOrder({
+        userId: "user-1",
+        pageId: "page-1",
+        sourceId: "tab-origin",
+        mutationId: "mut-order-1"
+      })
+    ).toBe(true);
+    expect(origin.loadPage("user-1", "page-1", "tab-origin")).toBeNull();
+
+    origin.saveBlockOrder({ ...blockOrderDraft, mutationId: "newer-origin-order" });
+    expect(
+      origin.acknowledgeBlockOrder({
+        userId: "user-1",
+        pageId: "page-1",
+        sourceId: "tab-origin",
+        mutationId: "mut-order-1"
+      })
+    ).toBe(true);
+    expect(origin.loadPage("user-1", "page-1", "tab-origin")?.blockOrder?.mutationId).toBe(
+      "newer-origin-order"
+    );
+  });
+
   it("cleans up only the exact recovered conflict and preserves concurrent tab changes", () => {
     const storage = new MemoryStorage();
     const recovered = createPageDraftStore(storage, { sourceId: "tab-recovered" });

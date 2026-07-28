@@ -10,6 +10,8 @@ The fix introduces a server-issued `documentEpoch` as a generation fence and app
 
 Severity: **Critical**
 
+A follow-up review of the direct-draft recovery path also found that a recovering tab could edit through the original tab's `localStorage` source key before the user confirmed a conflict. That defect and its correction are documented as the fourth critical finding below.
+
 ## Reproduction before the fix
 
 1. Page `P` is collaborative. Browser/device B edits while disconnected and retains a local full-document recovery update.
@@ -107,11 +109,36 @@ A separate deterministic probe makes `storage.length` throw. The old implementat
 
 Severity: **Critical**
 
+## Fourth critical finding: recovered drafts overwrote the origin tab's recovery key
+
+The direct editor correctly generated an in-memory source ID per live tab, but conflict recovery bypassed that isolation. When tab B selected a title or block draft written by tab A, the recovered editor row used tab A's `sourceId` as its live write target. Title input handling and block dirty tracking persist a draft before displaying or completing the overwrite confirmation. As a result, merely typing in tab B could replace tab A's durable recovery record with tab B's content. Cancelling the overwrite prompt did not restore the original bytes.
+
+Recovered block-order retries had the same ownership flaw: the retry task retained the origin source key. A fresh mutation ID issued after a server mutation-ID collision could therefore rewrite the origin tab's order-recovery record.
+
+### Reproduction before the fix
+
+1. Tab A edits a page while its network save is pending or unavailable. Its title or block draft is stored under source `A`.
+2. Tab B opens the page, selects A's recovery record, and encounters an optimistic-version conflict.
+3. The recovered title or block is activated with source `A` instead of B's source.
+4. Tab B types. The normal pre-network durability write updates source `A` before conflict confirmation finishes.
+5. If the user cancels, closes tab B, or tab A remains active, A's last independent recovery copy has already been silently replaced.
+
+### Implemented correction
+
+- Every recovered title, block, and block-order retry is first cloned to the current tab's source ID. Live editing and retry mutation-ID changes only touch that clone.
+- The origin title/block record is retained as an immutable exact-match cleanup snapshot. It is never refreshed from storage, because doing so could absorb a concurrent edit made by the origin tab and later delete that newer edit.
+- Conflict rendering prefers the current-tab clone and uses origin content only as a read-only fallback while keeping the live write source assigned to the current tab.
+- Successful title/block saves remove the origin record only when value/payload, expected version, and revision still match the activation snapshot.
+- Successful block-order replay acknowledges the current clone and then removes the origin only when its original mutation ID is unchanged.
+- Added static guards and store-level regression cases for title, block, and order source isolation.
+
+Severity: **Critical**
+
 ## Other audited data-loss surfaces
 
 No further critical defect was identified in the following paths during this review:
 
-- Direct title/block saves: durable per-tab drafts are written before network submission; optimistic versions and mutation request hashes prevent stale or ambiguous retries from silently overwriting newer content.
+- Direct title/block saves: durable per-tab drafts are written before network submission; recovered drafts are cloned to the current source before editing; optimistic versions and mutation request hashes prevent stale or ambiguous retries from silently overwriting newer content.
 - Save coalescing: a failed/ambiguous write remains ahead of newer queued edits, so a newer edit is not sent against an unknown server version.
 - Destructive transitions: archive, permanent delete, direct block deletion, final-share removal, and workspace replacement check pending local/collaboration state and use page/workspace transition locks.
 - Workspace restore and attachments: database replacement is transactionally fingerprinted; live collaboration rooms are invalidated before replacement; attachment generations use journals, checksums, fsync, and commit-outcome recovery.
@@ -131,9 +158,9 @@ npm run verify:collaboration
 [verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, hierarchy invariants, RFC 6455 protocol behavior, and syntax for 123 file(s).
 
 npm run verify:data-loss
-[verify-data-loss-guards] OK: destructive ordering, seven locale messages, convergent storage snapshots, and fail-closed recovery inspection.
+[verify-data-loss-guards] OK: destructive ordering, cross-tab recovery isolation, seven locale messages, convergent storage snapshots, and fail-closed recovery inspection.
 
-[targeted-store-tests] passed=37 failed=0
+[draft-store-compat] passed=19 failed=0
 
 [recovery-lineage-smoke] OK
 [openapi-yaml] OK
@@ -150,16 +177,19 @@ The verifier now asserts:
 - legacy schema-v1 preservation;
 - undecodable recovery-record preservation;
 - generation-safe deletion;
-- close code `4011` handling; and
+- close code `4011` handling;
 - JavaScript/TypeScript syntax for all scanned sources;
 - the exact repeated-index-shift counterexample that defeats the old three-pass forward scan;
 - convergence and survivor visibility for direct drafts, Yjs recovery, and transition leases;
-- unreliable storage enumeration being surfaced instead of converted to an empty result; and
-- undecodable target records and leases remaining preserved while destructive operations fail closed.
+- unreliable storage enumeration being surfaced instead of converted to an empty result;
+- undecodable target records and leases remaining preserved while destructive operations fail closed;
+- recovered title and block activation always writing through the current tab's source;
+- recovered block-order retries retaining an exact origin mutation token; and
+- current-tab edits leaving the origin tab's title, block, and order records unchanged.
 
 ## Environment limitation
 
-A clean dependency installation was attempted repeatedly. The configured package gateway returned HTTP 503 for the existing locked dependency `zod-3.25.76.tgz`, and the local npm cache did not contain it. Consequently the audit environment could not run the full TypeScript build, complete Vitest suite, or MariaDB integration suite after a clean install. The 37 direct-draft/recovery/transition tests were executed with a temporary dependency-free compatibility runner and all passed. No lockfile or dependency version was changed. Run the following in an environment with registry and MariaDB access before production deployment:
+A clean dependency installation was attempted repeatedly. The configured package gateway returned HTTP 503 for the existing locked dependency `zod-3.25.76.tgz`, and the local npm cache did not contain it. Consequently the audit environment could not run the full TypeScript build, complete Vitest suite, or MariaDB integration suite after a clean install. The 19 direct-draft store tests, including the new source-isolation cases, were executed with a temporary dependency-free compatibility runner and all passed. No lockfile or dependency version was changed. Run the following in an environment with registry and MariaDB access before production deployment:
 
 ```bash
 npm ci

@@ -82,6 +82,46 @@ function oldThreePassForwardSnapshot(storage) {
 
 const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
+const recoveredDraftActivation = section(
+  client,
+  "function activatePersistedPageDraft(recovery)",
+  "async function createCollection()"
+);
+assert(
+  recoveredDraftActivation.includes("pageTitleDraftSourceId = pageDraftSourceId;"),
+  "Recovered titles are still edited through the origin tab's storage source"
+);
+assert(
+  recoveredDraftActivation.includes("row.dataset.draftSourceId = pageDraftSourceId;"),
+  "Recovered blocks are still edited through the origin tab's storage source"
+);
+assert(
+  recoveredDraftActivation.includes("persistPageTitleDraft();")
+    && recoveredDraftActivation.includes("persistBlockDraft(row);"),
+  "Recovered title/block content is not cloned into the current tab before editing"
+);
+assert(
+  recoveredDraftActivation.includes("sourceId: pageDraftSourceId,")
+    && recoveredDraftActivation.includes("recoveredOrigin: { sourceId, mutationId: draft.mutationId }"),
+  "Recovered block-order retries are not isolated from the origin tab"
+);
+assert(
+  !recoveredDraftActivation.includes("recovery.title.conflict ? recovery.title.sourceId")
+    && !recoveredDraftActivation.includes("recovered.conflict ? recovered.sourceId"),
+  "Conflict recovery can still alias another tab's durable draft key"
+);
+
+const blockOrderAcknowledgement = section(
+  client,
+  "function acknowledgeBlockOrderDraft(task)",
+  "async function submitBlockOrderTask"
+);
+assert(
+  blockOrderAcknowledgement.includes("sourceId: task.recoveredOrigin.sourceId")
+    && blockOrderAcknowledgement.includes("mutationId: task.recoveredOrigin.mutationId"),
+  "Recovered block-order origin is not cleaned up with an exact mutation guard"
+);
+
 for (const [locale, catalog] of Object.entries(translationCatalogs)) {
   const message = catalog?.status?.destructiveLocalDraftsPending;
   assert(
@@ -177,6 +217,68 @@ createPageDraftStore(draftStorage, { sourceId: "tab-b" }).saveBlock({
 draftStorage.shiftOnNextKey = true;
 const drafts = createPageDraftStore(draftStorage, { sourceId: "reader" }).loadUserDrafts("user");
 assert(drafts.length === 1 && drafts[0].sourceId === "tab-b", "A surviving direct draft was skipped after a key shift");
+
+const recoveryIsolationStorage = new MemoryStorage();
+const recoveryOriginStore = createPageDraftStore(recoveryIsolationStorage, { sourceId: "tab-origin" });
+const recoveryCurrentStore = createPageDraftStore(recoveryIsolationStorage, { sourceId: "tab-current" });
+recoveryOriginStore.saveTitle({
+  userId: "user",
+  pageId: "page",
+  value: "origin title",
+  expectedVersion: 1,
+  revision: 1
+});
+recoveryOriginStore.saveBlock({
+  userId: "user",
+  pageId: "page",
+  blockId: "block",
+  payload: { type: "MARKDOWN", markdown: "origin block" },
+  expectedVersion: 1,
+  revision: 1
+});
+recoveryOriginStore.saveBlockOrder({
+  userId: "user",
+  pageId: "page",
+  parentBlockId: null,
+  orderedIds: ["block"],
+  previousIds: ["block"],
+  mutationId: "origin-order",
+  items: [{ id: "block", sortOrder: 0, parentBlockId: null, expectedVersion: 1 }]
+});
+recoveryCurrentStore.saveTitle({
+  userId: "user",
+  pageId: "page",
+  value: "edited in current tab",
+  expectedVersion: 1,
+  revision: 2
+});
+recoveryCurrentStore.saveBlock({
+  userId: "user",
+  pageId: "page",
+  blockId: "block",
+  payload: { type: "MARKDOWN", markdown: "edited in current tab" },
+  expectedVersion: 1,
+  revision: 2
+});
+recoveryCurrentStore.saveBlockOrder({
+  userId: "user",
+  pageId: "page",
+  parentBlockId: null,
+  orderedIds: ["block"],
+  previousIds: ["block"],
+  mutationId: "origin-order",
+  items: [{ id: "block", sortOrder: 0, parentBlockId: null, expectedVersion: 1 }]
+});
+const untouchedOrigin = recoveryOriginStore.loadPage("user", "page", "tab-origin");
+assert(untouchedOrigin?.title?.value === "origin title", "Current-tab title edits overwrite the recovery origin");
+assert(
+  untouchedOrigin?.blocks?.block?.payload?.markdown === "origin block",
+  "Current-tab block edits overwrite the recovery origin"
+);
+assert(
+  untouchedOrigin?.blockOrder?.mutationId === "origin-order",
+  "Current-tab order retries overwrite the recovery origin"
+);
 
 const recoveryStorage = new MemoryStorage();
 const recoveryStore = createCollaborationRecoveryStore(recoveryStorage);
@@ -287,5 +389,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: destructive ordering, seven locale messages, convergent storage snapshots, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: destructive ordering, cross-tab recovery isolation, seven locale messages, convergent storage snapshots, and fail-closed recovery inspection."
 );

@@ -2796,42 +2796,12 @@ function persistBlockDraft(row, payload = null) {
   return saved;
 }
 
-function refreshPageTitleConflictOrigin() {
-  const scope = getDraftScope();
-  if (!scope || !pageTitleDraftConflict || !pageTitleDraftSourceId) return;
-  const storedDraft = pageDraftStore.loadPage(scope.userId, scope.pageId, pageTitleDraftSourceId)?.title;
-  if (!storedDraft) return;
-  pageTitleConflictOrigin = {
-    sourceId: pageTitleDraftSourceId,
-    value: storedDraft.value,
-    expectedVersion: storedDraft.expectedVersion,
-    revision: storedDraft.revision
-  };
-}
-
-function refreshBlockDraftConflictOrigin(row) {
-  const scope = getDraftScope();
-  const blockId = row?.dataset.blockId;
-  const draftSourceId = row?.dataset.draftSourceId;
-  if (!scope || !blockId || !draftSourceId || row.dataset.draftConflict !== "true") return;
-  const storedDraft = pageDraftStore.loadPage(scope.userId, scope.pageId, draftSourceId)?.blocks?.[blockId];
-  if (!storedDraft) return;
-  blockDraftConflictOrigins.set(blockId, {
-    sourceId: draftSourceId,
-    payload: storedDraft.payload,
-    expectedVersion: storedDraft.expectedVersion,
-    revision: storedDraft.revision,
-    resolved: false
-  });
-}
-
 function confirmRecoveredDraftOverwrite() {
   return window.confirm(t("confirm.overwriteRecoveredDraft"));
 }
 
 function promotePageTitleDraftConflict() {
   if (!pageTitleDraftConflict) return true;
-  refreshPageTitleConflictOrigin();
   if (!confirmRecoveredDraftOverwrite()) {
     setStatus(t("status.localDraftOverwriteCancelled"), true);
     return false;
@@ -2851,13 +2821,16 @@ function promoteBlockDraftConflict(row) {
   if (row?.dataset.draftConflict !== "true" && !hasStoredConflict) return true;
 
   if (row.dataset.draftConflict !== "true" && storedOrigin) {
+    const scope = getDraftScope();
+    const currentDraft = scope
+      ? pageDraftStore.loadPage(scope.userId, scope.pageId, pageDraftSourceId)?.blocks?.[blockId]
+      : null;
     row.dataset.draftConflict = "true";
-    row.dataset.draftSourceId = storedOrigin.sourceId;
-    row.dataset.draftExpectedVersion = String(storedOrigin.expectedVersion);
-    row.dataset.editRevision = String(storedOrigin.revision);
+    row.dataset.draftSourceId = pageDraftSourceId;
+    row.dataset.draftExpectedVersion = String(currentDraft?.expectedVersion ?? storedOrigin.expectedVersion);
+    row.dataset.editRevision = String(currentDraft?.revision ?? storedOrigin.revision);
     row.classList.add("is-dirty", "save-error");
   }
-  refreshBlockDraftConflictOrigin(row);
   if (!confirmRecoveredDraftOverwrite()) {
     setStatus(t("status.localDraftOverwriteCancelled"), true);
     return false;
@@ -5573,11 +5546,11 @@ function mountBlockEditor(row, block) {
 function getBlockRenderDraft(pageId, blockId) {
   const conflictOrigin = blockDraftConflictOrigins.get(blockId);
   const hasUnresolvedConflict = Boolean(conflictOrigin && conflictOrigin.resolved !== true);
-  const sourceId = hasUnresolvedConflict ? conflictOrigin.sourceId : blockDraftRenderSources.get(blockId);
+  const sourceId = blockDraftRenderSources.get(blockId) ?? (conflictOrigin ? pageDraftSourceId : null);
   if (!state.user?.id || !sourceId) return null;
 
   const storedDraft = pageDraftStore.loadPage(state.user.id, pageId, sourceId)?.blocks?.[blockId];
-  const draft = storedDraft ?? (hasUnresolvedConflict ? conflictOrigin : null);
+  const draft = storedDraft ?? conflictOrigin;
   if (!draft) return null;
   return { ...draft, sourceId, conflict: hasUnresolvedConflict };
 }
@@ -6313,7 +6286,6 @@ function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
   persistBlockDraft(row);
 
   if (row.dataset.draftConflict === "true") {
-    refreshBlockDraftConflictOrigin(row);
     row.classList.add("save-error");
     if (!allowConflictPrompt || !promoteBlockDraftConflict(row)) {
       syncBeforeUnloadProtection();
@@ -6459,7 +6431,6 @@ async function saveBlockRow(
     row.dataset.editRevision = String(Math.max(1, conflictRevision));
     row.classList.add("is-dirty", "save-error");
     persistBlockDraft(row, payload);
-    refreshBlockDraftConflictOrigin(row);
     syncBeforeUnloadProtection();
     return null;
   }
@@ -7117,7 +7088,8 @@ function createBlockOrderTask(
     sourceId = pageDraftSourceId,
     mutationId = createMutationId(),
     previousIds = null,
-    recovered = false
+    recovered = false,
+    recoveredOrigin = null
   } = {}
 ) {
   if (!pageId || !userId || !sourceId || !orderedIds.length) throw new Error(t("errors.currentBlockOrder"));
@@ -7137,7 +7109,8 @@ function createBlockOrderTask(
     previousIds: previousIds ? [...previousIds] : null,
     mutationId,
     items,
-    recovered
+    recovered,
+    recoveredOrigin
   };
 }
 
@@ -7159,12 +7132,21 @@ function persistBlockOrderDraft(task) {
 }
 
 function acknowledgeBlockOrderDraft(task) {
-  return checkDraftStoreWrite(
+  const currentAcknowledged = checkDraftStoreWrite(
     pageDraftStore.acknowledgeBlockOrder({
       userId: task.userId,
       pageId: task.pageId,
       sourceId: task.sourceId,
       mutationId: task.mutationId
+    })
+  );
+  if (!currentAcknowledged || !task.recoveredOrigin) return currentAcknowledged;
+  return checkDraftStoreWrite(
+    pageDraftStore.acknowledgeBlockOrder({
+      userId: task.userId,
+      pageId: task.pageId,
+      sourceId: task.recoveredOrigin.sourceId,
+      mutationId: task.recoveredOrigin.mutationId
     })
   );
 }
@@ -7765,7 +7747,6 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
   persistPageTitleDraft();
 
   if (pageTitleDraftConflict) {
-    refreshPageTitleConflictOrigin();
     if (!allowConflictPrompt || !promotePageTitleDraftConflict()) {
       window.clearTimeout(pageTitleSaveTimer);
       pageTitleSaveTimer = null;
@@ -8060,16 +8041,17 @@ function activatePersistedPageDraft(recovery) {
     pageTitleSavedRevision = Math.max(0, pageTitleEditRevision - 1);
     pageTitleDraftExpectedVersion = recovery.title.expectedVersion;
     pageTitleDraftConflict = recovery.title.conflict;
-    pageTitleConflictOrigin = recovery.title.conflict
-      ? {
-          sourceId: recovery.title.sourceId,
-          value: recovery.title.value,
-          expectedVersion: recovery.title.expectedVersion,
-          revision: recovery.title.revision
-        }
-      : null;
-    pageTitleDraftSourceId = recovery.title.conflict ? recovery.title.sourceId : pageDraftSourceId;
-    if (!recovery.title.conflict) persistPageTitleDraft();
+    pageTitleConflictOrigin = {
+      sourceId: recovery.title.sourceId,
+      value: recovery.title.value,
+      expectedVersion: recovery.title.expectedVersion,
+      revision: recovery.title.revision
+    };
+    // Never edit through another tab's durable recovery key. Clone the selected
+    // recovery into this tab's source and retain the origin only for exact-match
+    // cleanup after a confirmed server save.
+    pageTitleDraftSourceId = pageDraftSourceId;
+    persistPageTitleDraft();
     elements.pageTitle.classList.add("local-draft-recovered");
     if (recovery.title.conflict) {
       elements.pageTitle.classList.add("save-error");
@@ -8086,21 +8068,19 @@ function activatePersistedPageDraft(recovery) {
     if (!row) continue;
     row.dataset.editRevision = String(Math.max(1, recovered.draft.revision));
     row.dataset.draftExpectedVersion = String(recovered.draft.expectedVersion);
-    row.dataset.draftSourceId = recovered.conflict ? recovered.sourceId : pageDraftSourceId;
+    row.dataset.draftSourceId = pageDraftSourceId;
+    blockDraftConflictOrigins.set(recovered.blockId, {
+      sourceId: recovered.sourceId,
+      payload: recovered.draft.payload,
+      expectedVersion: recovered.draft.expectedVersion,
+      revision: recovered.draft.revision,
+      resolved: !recovered.conflict
+    });
     if (recovered.conflict) {
       row.dataset.draftConflict = "true";
-      blockDraftConflictOrigins.set(recovered.blockId, {
-        sourceId: recovered.sourceId,
-        payload: recovered.draft.payload,
-        expectedVersion: recovered.draft.expectedVersion,
-        revision: recovered.draft.revision,
-        resolved: false
-      });
-    } else {
-      blockDraftConflictOrigins.delete(recovered.blockId);
     }
     blockDraftRenderSources.set(recovered.blockId, row.dataset.draftSourceId);
-    if (!recovered.conflict) persistBlockDraft(row);
+    persistBlockDraft(row);
     row.classList.add("is-dirty", "local-draft-recovered");
     if (recovered.conflict) {
       row.classList.add("save-error");
@@ -8118,15 +8098,18 @@ function activatePersistedPageDraft(recovery) {
 
   if (recovery.blockOrder) {
     const { sourceId, draft } = recovery.blockOrder;
-    pendingBlockOrderTask = createBlockOrderTask(draft.parentBlockId, draft.orderedIds, {}, {
+    const recoveredOrderTask = createBlockOrderTask(draft.parentBlockId, draft.orderedIds, {}, {
       pageId: recovery.scope.pageId,
       userId: recovery.scope.userId,
-      sourceId,
+      sourceId: pageDraftSourceId,
       mutationId: draft.mutationId,
       previousIds: draft.previousIds ?? recovery.blockOrder.serverIds,
-      recovered: true
+      recovered: true,
+      recoveredOrigin: { sourceId, mutationId: draft.mutationId }
     });
-    pendingBlockOrderTask.items = draft.items.map((item) => ({ ...item }));
+    recoveredOrderTask.items = draft.items.map((item) => ({ ...item }));
+    persistBlockOrderDraft(recoveredOrderTask);
+    pendingBlockOrderTask = recoveredOrderTask;
     blockOrderSaving = true;
     window.setTimeout(() => {
       if (pendingBlockOrderTask?.mutationId !== draft.mutationId) return;

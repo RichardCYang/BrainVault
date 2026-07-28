@@ -74,11 +74,14 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("pageDraftStore.loadPageDrafts(scope.userId, scope.pageId)");
     expect(client).toContain('if (!writable || pageTitleDraftConflict) return null;');
     expect(client).toContain('if (row.dataset.draftConflict === "true" && (!resolveConflict || !promoteBlockDraftConflict(row)))');
-    expect(client).toContain("pageTitleDraftSourceId = recovery.title.conflict ? recovery.title.sourceId : pageDraftSourceId");
-    expect(client).toContain("if (!recovery.title.conflict) persistPageTitleDraft()");
-    expect(client).toContain("row.dataset.draftSourceId = recovered.conflict ? recovered.sourceId : pageDraftSourceId");
+    expect(client).toContain("pageTitleDraftSourceId = pageDraftSourceId;");
+    expect(client).toContain("pageTitleConflictOrigin = {");
+    expect(client).toContain("row.dataset.draftSourceId = pageDraftSourceId;");
     expect(client).toContain('row.dataset.draftConflict = "true";');
-    expect(client).toContain("if (!recovered.conflict) persistBlockDraft(row)");
+    expect(client).toContain("resolved: !recovered.conflict");
+    expect(client).toContain("persistBlockDraft(row);");
+    expect(client).not.toContain("recovery.title.conflict ? recovery.title.sourceId : pageDraftSourceId");
+    expect(client).not.toContain("recovered.conflict ? recovered.sourceId : pageDraftSourceId");
     expect(client).toContain('if (row.dataset.draftConflict === "true") {');
     expect(client).toContain("pageDraftStore.removeTitleIfUnchanged");
     expect(client).toContain("pageDraftStore.removeBlockIfUnchanged");
@@ -442,6 +445,9 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("serverIds: siblingIds");
     expect(client).toContain("previousIds: draft.previousIds ?? recovery.blockOrder.serverIds");
     expect(client).toContain("recovered: true");
+    expect(client).toContain("recoveredOrigin: { sourceId, mutationId: draft.mutationId }");
+    expect(client).toContain("sourceId: task.recoveredOrigin.sourceId");
+    expect(client).toContain("mutationId: task.recoveredOrigin.mutationId");
     expect(client).toContain("if (isDefinitiveApiError(error) && pendingBlockOrderTask === task)");
     expect(client).toContain("retryPendingBlockOrder().catch((error) => setStatus(error.message, true));");
   });
