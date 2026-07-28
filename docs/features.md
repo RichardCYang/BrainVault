@@ -14,6 +14,8 @@ While at least one collaborator is configured, the page title and block document
 
 Attachment bytes continue to use the authenticated upload/download API. The server publishes the canonical attachment block into the Yjs room so collaborators receive it without allowing clients to forge file metadata. Yjs updates are persisted in MariaDB and periodically materialized into the normal page/block tables for search, render, export, and backup compatibility.
 
+Archiving a shared page, permanently deleting a page subtree, and restoring the full workspace coordinate same-origin tabs before changing persistence. They stop when any affected page still has a browser-only, server-unconfirmed Yjs recovery record. If an older recovery record belongs to a page that was already deleted, became unavailable, or left collaboration mode, the workspace home decodes and exposes its readable title and block data, with the original encoded update retained as a fallback.
+
 See [Page sharing and real-time collaboration](collaboration.md) for the access model, protocol, persistence, reverse-proxy setup, and verification commands.
 
 ### Keyboard and block controls
@@ -94,7 +96,7 @@ Attachment storage and deletion rules are documented in [Security](security.md#a
 
 Open **Settings → Data** to download a complete BrainVault backup or restore an archive exported by BrainVault.
 
-The ZIP contains the account workspace graph: normal and archived pages, collections, nested blocks, block metadata, page/tag relationships, supported profile preferences, and every attachment as its original byte sequence.
+The ZIP contains the account workspace graph: normal and archived pages, collections, nested blocks, block metadata, page/tag relationships, supported profile preferences, and every attachment as its original byte sequence. Before export, BrainVault coordinates same-origin tabs and refuses to create an incomplete archive while an owned page still has an unsaved direct draft or an unconfirmed real-time recovery snapshot in browser storage.
 
 Restore replaces the current account's workspace content. The login username, password hash, authenticator secret, passkeys, and other security credentials are not exported and remain unchanged.
 

@@ -56,8 +56,10 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain('if (normalizedMode === pageModes.READ) await flushPendingPageEdits({ allowLocked: true });');
     expect(client).toContain('async function openPage(pageId, { skipFlush = false } = {})');
     expect(client).toContain('return withPageEditLock(\n    async () => {');
-    expect(client).toContain('async function downloadUserDataBackup() {\n  return withPageEditLock(async () => {');
-    expect(client).toContain('async function restoreUserDataBackup(file) {\n  return withPageEditLock(async () => {');
+    expect(client).toContain("async function downloadUserDataBackup()");
+    expect(client).toContain('withWorkspacePersistenceTransition("data-export"');
+    expect(client).toContain("async function restoreUserDataBackup(file)");
+    expect(client).toContain('withWorkspacePersistenceTransition("data-restore"');
     expect(client).toContain('applyPageContentVersion(task.pageId, data.pageContentVersion)');
     expect(client).toContain('Math.max(Number(page.contentVersion ?? 1), version)');
     expect(client).toContain('const keepaliveSaveBudgetBytes = 60 * 1024;');
@@ -83,7 +85,7 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("recoveredConflictOrigin: pageTitleConflictOrigin");
     expect(client).toContain("recoveredConflictOrigin: blockDraftConflictOrigins.get(blockId) ?? null");
     expect(client).toContain("expectedVersion: getPositiveVersion(row.dataset.draftExpectedVersion)");
-    expect(client).toContain("if (!activatePersistedPageDraft(recovery)) setStatus(t(\"status.documentOpened\"));");
+    expect(client).toContain("} else if (!activatePersistedPageDraft(recovery)) {");
   });
 
   it("blocks collaboration transitions while another tab still owns durable recovery data", () => {
@@ -125,6 +127,64 @@ describe("Data-loss prevention integration", () => {
     expect(removeBody.match(/assertNoPendingLocalCollaborationRecovery\(pageId\);/g)).toHaveLength(2);
     expect(removeBody.indexOf("assertNoPendingLocalCollaborationRecovery(pageId);")).toBeLessThan(
       removeBody.indexOf("const data = await api")
+    );
+  });
+
+  it("blocks destructive workspace transitions while any tab holds unconfirmed Yjs recovery", () => {
+    expect(client).toContain('const workspaceTransitionPagePrefix = "__workspace__"');
+    expect(client).toContain("function getPageWorkspaceTransitionId(page = state.selectedPage)");
+    expect(client).toContain("function withWorkspacePersistenceTransition(kind, action)");
+    expect(client).toContain("pageTransitionLock\n      .loadActive()");
+    expect(client).toContain("function assertNoPendingLocalCollaborationRecoveryForPages(pageIds)");
+    expect(client).toContain("collaborationRecoveryStore.loadAccountRecords(state.user.id)");
+    expect(client).toContain("decodeCollaborationRecoveryRecords(group.records)");
+    expect(client).toContain('heading.textContent = t("status.orphanedCollaborationRecovery")');
+
+    const exportStart = client.indexOf("async function downloadUserDataBackup()");
+    const exportEnd = client.indexOf("function resetDataImportSelection", exportStart);
+    const exportBody = client.slice(exportStart, exportEnd);
+    expect(exportBody).toContain('withWorkspacePersistenceTransition("data-export"');
+    expect(exportBody).toContain("assertNoPendingLocalPageDraftsForPages(ownedPageIds)");
+    expect(exportBody).toContain("assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds)");
+    expect(exportBody.indexOf("assertNoPendingLocalPageDraftsForPages(ownedPageIds)")).toBeLessThan(
+      exportBody.indexOf('await fetch("/api/data/export"')
+    );
+
+    const deleteStart = client.indexOf("async function deleteNavigationTarget()");
+    const deleteEnd = client.indexOf("function renderCollectionView", deleteStart);
+    const deleteBody = client.slice(deleteStart, deleteEnd);
+    expect(deleteBody).toContain('withWorkspacePersistenceTransition("page-delete"');
+    expect(deleteBody).toContain("assertNoPendingLocalCollaborationRecoveryForPages(serverPageIds)");
+    expect(deleteBody.indexOf("assertNoPendingLocalCollaborationRecoveryForPages(serverPageIds)")).toBeLessThan(
+      deleteBody.indexOf('await api(`/api/pages/${target.id}?permanent=true`')
+    );
+
+    const restoreStart = client.indexOf("async function restoreUserDataBackup(file)");
+    const restoreEnd = client.indexOf("function getUserInitials", restoreStart);
+    const restoreBody = client.slice(restoreStart, restoreEnd);
+    expect(restoreBody).toContain('withWorkspacePersistenceTransition("data-restore"');
+    expect(restoreBody).toContain("const ownedPageIds = await fetchOwnedWorkspacePageIds()");
+    expect(restoreBody).toContain("assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds)");
+    expect(restoreBody.indexOf("assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds)")).toBeLessThan(
+      restoreBody.indexOf('await api("/api/data/import"')
+    );
+    expect(client).toContain('fetchAllPageSummaries({ archived: true })');
+
+    const createCollectionStart = client.indexOf("async function createCollection()");
+    const createCollectionEnd = client.indexOf("async function createUntitledPage()", createCollectionStart);
+    expect(client.slice(createCollectionStart, createCollectionEnd).match(/assertWorkspacePersistenceUnlocked\(\);/g)).toHaveLength(2);
+
+    const createPageStart = createCollectionEnd;
+    const createPageEnd = client.indexOf("async function loadMe()", createPageStart);
+    expect(client.slice(createPageStart, createPageEnd).match(/assertWorkspacePersistenceUnlocked\(\);/g)).toHaveLength(2);
+
+    const archiveStart = client.indexOf('elements.archivePageButton.addEventListener("click"');
+    const archiveEnd = client.indexOf('for (const eventName of ["focusin"', archiveStart);
+    const archiveBody = client.slice(archiveStart, archiveEnd);
+    expect(archiveBody).toContain('withPagePersistenceTransition(pageId, "page-archive"');
+    expect(archiveBody).toContain("assertNoPendingLocalCollaborationRecovery(pageId)");
+    expect(archiveBody.indexOf("assertNoPendingLocalCollaborationRecovery(pageId)")).toBeLessThan(
+      archiveBody.indexOf('await api(`/api/pages/${pageId}`')
     );
   });
 
@@ -273,7 +333,7 @@ describe("Data-loss prevention integration", () => {
   it("keeps reorder responses scoped to the page that started the request", () => {
     expect(client).toContain('const data = await api(`/api/pages/${task.pageId}/blocks/reorder`');
     expect(client).toContain('applyPageContentVersion(task.pageId, data.pageContentVersion);');
-    expect(client).toContain(`if (state.selectedPage?.id === pageId) {\n    for (const block of data.blocks ?? []) updateBlockInState(block);`);
+    expect(client).toContain(`if (state.selectedPage?.id === task.pageId) {\n    for (const block of data.blocks ?? []) updateBlockInState(block);`);
   });
 
   it("preserves other-tab drafts during block and page deletion and surfaces orphaned pages", () => {
@@ -321,7 +381,7 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("body: { mutationId: task.mutationId, items: task.items }");
     expect(client).toContain("if (!isAmbiguousApiError(error)) throw error;");
     expect(client).toContain("if (pendingBlockOrderTask) return true;");
-    expect(client).toContain("state.pageEditLockDepth > 0 || blockOrderSaving");
+    expect(client).toMatch(/state\.pageEditLockDepth > 0 \|\|\s+blockOrderSaving/);
     expect(client).toContain('window.addEventListener("online", () => {');
 
     const dragStart = client.indexOf("async function finishBlockDrag");
@@ -388,7 +448,7 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("row.dataset.draftExpectedVersion = String(renderedDraft.expectedVersion);");
     expect(client).toContain('row.dataset.draftConflict = "true";');
     expect(client).toContain(
-      "elements.blockList.append(renderBlock(block, getBlockRenderDraft(page.id, block.id)));"
+      "renderBlock(block, isCollaborativePage(page) ? null : getBlockRenderDraft(page.id, block.id))"
     );
     expect(client).toContain("const latestStoredTitle = task.userId");
     expect(client).toContain("const hasNewerLocalTitle =");

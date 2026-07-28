@@ -91,6 +91,31 @@ describe("page persistence transition lock", () => {
     expect(second.owns(currentLease)).toBe(true);
   });
 
+  it("enumerates every active page and workspace lease without returning expired entries", () => {
+    const storage = createMemoryStorage();
+    let clock = 1_000;
+    const first = createPageTransitionLock(storage, {
+      sourceId: "tab-a",
+      ttlMs: 1_000,
+      now: () => clock
+    });
+    const second = createPageTransitionLock(storage, {
+      sourceId: "tab-b",
+      ttlMs: 1_000,
+      now: () => clock
+    });
+    first.acquire("page-1", "share-add");
+    second.acquire("__workspace__:user-1", "data-restore");
+
+    expect(first.loadActive().map((record) => record.pageId).sort()).toEqual([
+      "__workspace__:user-1",
+      "page-1"
+    ]);
+
+    clock = 2_001;
+    expect(first.loadActive()).toEqual([]);
+  });
+
   it("uses the browser lock manager for atomic cross-tab exclusion when available", async () => {
     const storage = createMemoryStorage();
     const lockManager = createMemoryLockManager();

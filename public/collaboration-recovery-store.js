@@ -57,10 +57,14 @@ export function createCollaborationRecoveryStore(
         storage.removeItem(key);
         return null;
       }
+      const updatedAt = Number(record.updatedAt);
       return {
         sourceId: record.sourceId,
         generation: record.generation,
-        updatedAt: Number(record.updatedAt) || 0,
+        updatedAt: Number.isFinite(updatedAt) && updatedAt >= 0 && updatedAt <= 8_640_000_000_000_000
+          ? updatedAt
+          : 0,
+        encodedUpdate: record.update,
         update
       };
     } catch {
@@ -125,6 +129,35 @@ export function createCollaborationRecoveryStore(
     }
   }
 
+  function loadAccountRecords(accountId) {
+    if (!storage || !isNonEmptyString(accountId)) return [];
+    const accountPrefix = `${prefix}:${encodeURIComponent(accountId)}:`;
+    try {
+      const keys = [];
+      for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index);
+        if (key?.startsWith(accountPrefix)) keys.push(key);
+      }
+
+      const records = [];
+      for (const key of keys) {
+        try {
+          const raw = storage.getItem(key);
+          if (!raw) continue;
+          const value = JSON.parse(raw);
+          if (value?.accountId !== accountId || !isNonEmptyString(value?.pageId)) continue;
+          const record = readRecord(key, accountId, value.pageId);
+          if (record) records.push({ accountId, pageId: value.pageId, ...record });
+        } catch {
+          // A corrupt record for one page must not hide another recoverable page.
+        }
+      }
+      return records.sort((left, right) => left.updatedAt - right.updatedAt);
+    } catch {
+      return [];
+    }
+  }
+
   function save(accountId, pageId, sourceId, update) {
     if (
       !storage
@@ -176,5 +209,5 @@ export function createCollaborationRecoveryStore(
     }
   }
 
-  return { loadAll, loadPageRecords, save, remove };
+  return { loadAll, loadPageRecords, loadAccountRecords, save, remove };
 }

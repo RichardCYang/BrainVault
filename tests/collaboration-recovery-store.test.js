@@ -35,6 +35,24 @@ describe("collaboration recovery store", () => {
     expect(store.loadAll("user-2", "page-1")).toEqual([]);
   });
 
+  it("enumerates one account's recoveries across pages with an encoded fallback", () => {
+    const store = createCollaborationRecoveryStore(createMemoryStorage());
+    store.save("user-1", "page-2", "tab-2", new Uint8Array([9, 8]));
+    store.save("user-1", "page-1", "tab-1", new Uint8Array([1, 2, 3]));
+    store.save("user-2", "page-3", "other-account", new Uint8Array([7]));
+
+    const records = store.loadAccountRecords("user-1");
+    expect(records.map(({ pageId, sourceId }) => ({ pageId, sourceId }))).toEqual(
+      expect.arrayContaining([
+        { pageId: "page-1", sourceId: "tab-1" },
+        { pageId: "page-2", sourceId: "tab-2" }
+      ])
+    );
+    expect(records).toHaveLength(2);
+    expect(records.every((record) => typeof record.encodedUpdate === "string" && record.encodedUpdate)).toBe(true);
+    expect(store.loadAccountRecords("user-2")).toHaveLength(1);
+  });
+
   it("finds unconfirmed page recovery across accounts in the same browser", () => {
     const store = createCollaborationRecoveryStore(createMemoryStorage());
     store.save("owner", "page-1", "owner-tab", new Uint8Array([1, 2]));

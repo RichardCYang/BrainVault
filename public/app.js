@@ -27,7 +27,7 @@ import { createPageDraftStore } from "./draft-store.js";
 import { createLatestWriteQueue } from "./save-queue.js";
 import { createMutationId, submitWithFreshMutationIdOnReuse } from "./mutation-id.js";
 import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-rebase.js";
-import { createPageCollaboration } from "./collaboration.js";
+import { createPageCollaboration, decodeCollaborationRecoveryRecords } from "./collaboration.js";
 import { assertCollaborationExitSafe } from "./collaboration-exit-guard.js";
 import { createCollaborationRecoveryStore } from "./collaboration-recovery-store.js";
 import { createPageTransitionLock } from "./page-transition-lock.js";
@@ -51,9 +51,13 @@ function createPageDraftSourceId() {
 // when a tab is duplicated, which would let two live tabs overwrite the same draft.
 const pageDraftStoragePrefix = "brainvault.pageDraft.v2:";
 const pageTransitionStoragePrefix = "brainvault.pageTransition.v1";
+const collaborationRecoveryStoragePrefix = "brainvault.collaborationRecovery.v1";
+const workspaceTransitionPagePrefix = "__workspace__";
 const pageDraftSourceId = createPageDraftSourceId();
 const pageDraftStore = createPageDraftStore(window.localStorage, { sourceId: pageDraftSourceId });
-const collaborationRecoveryStore = createCollaborationRecoveryStore(window.localStorage);
+const collaborationRecoveryStore = createCollaborationRecoveryStore(window.localStorage, {
+  prefix: collaborationRecoveryStoragePrefix
+});
 const pageTransitionLock = createPageTransitionLock(window.localStorage, {
   prefix: pageTransitionStoragePrefix,
   sourceId: pageDraftSourceId,
@@ -61,6 +65,7 @@ const pageTransitionLock = createPageTransitionLock(window.localStorage, {
 });
 let activePageTransitionLease = null;
 let pageTransitionUnlockTimer = null;
+let collaborationRecoveryPanelGeneration = 0;
 
 const emojiSearchIndex = emojiRecords.map((record) =>
   `${record[0]} ${record[2]} ${record[3]} ${record[4]} ${record[5]}`.toLocaleLowerCase()
@@ -1172,40 +1177,49 @@ function getResponseFilename(response, fallback) {
 }
 
 async function downloadUserDataBackup() {
-  return withPageEditLock(async () => {
-    const headers = new Headers();
-    if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
-    let response;
-    try {
-      response = await fetch("/api/data/export", { headers });
-    } catch {
-      throw new Error(t("errors.network"));
-    }
+  return withPageEditLock(async () =>
+    withWorkspacePersistenceTransition("data-export", async () => {
+      const ownedPageIds = await fetchOwnedWorkspacePageIds();
+      // A successful server export is still incomplete when another tab has a
+      // browser-only direct draft or Yjs recovery snapshot. Require every local
+      // editor to finish synchronization before generating the archive.
+      assertNoPendingLocalPageDraftsForPages(ownedPageIds);
+      assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds);
 
-    if (!response.ok) {
-      let data = null;
+      const headers = new Headers();
+      if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
+      let response;
       try {
-        data = await response.json();
+        response = await fetch("/api/data/export", { headers });
       } catch {
-        // Use the localized fallback below when the response is not JSON.
+        throw new Error(t("errors.network"));
       }
-      if (response.status === 401) {
-        resetAuthenticationSessionState();
-      }
-      throw new Error(translateApiError(data, response.status));
-    }
 
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = objectUrl;
-    link.download = getResponseFilename(response, `BrainVault-backup-${new Date().toISOString().slice(0, 10)}.zip`);
-    link.rel = "noopener";
-    document.body.append(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-  });
+      if (!response.ok) {
+        let data = null;
+        try {
+          data = await response.json();
+        } catch {
+          // Use the localized fallback below when the response is not JSON.
+        }
+        if (response.status === 401) {
+          resetAuthenticationSessionState();
+        }
+        throw new Error(translateApiError(data, response.status));
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = getResponseFilename(response, `BrainVault-backup-${new Date().toISOString().slice(0, 10)}.zip`);
+      link.rel = "noopener";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    })
+  );
 }
 
 function resetDataImportSelection() {
@@ -1215,22 +1229,31 @@ function resetDataImportSelection() {
 }
 
 async function restoreUserDataBackup(file) {
-  return withPageEditLock(async () => {
-    const formData = new FormData();
-    formData.append("backup", file, file.name);
-    const data = await api("/api/data/import", { method: "POST", body: formData });
-    // Preserve durable drafts from every tab. Restored rows receive fresh edit versions,
-    // so pre-restore drafts are recovered as explicit conflicts instead of overwriting data.
-    state.user = data.user;
-    await applyUserPreferredLanguage();
-    fillAccountSettings();
-    elements.searchInput.value = "";
-    state.searchQuery = "";
-    state.activeTag = "";
-    await loadPages("", "");
-    await showHome({ skipFlush: true });
-    return data.counts;
-  });
+  return withPageEditLock(async () =>
+    withWorkspacePersistenceTransition("data-restore", async () => {
+      const ownedPageIds = await fetchOwnedWorkspacePageIds();
+      // The server detects changes that reached SQL/Yjs persistence, but it cannot
+      // see a full-document recovery snapshot that exists only in another tab's
+      // localStorage. Recheck after every same-origin editor has had a chance to
+      // flush, before replacing the owned workspace.
+      assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds);
+
+      const formData = new FormData();
+      formData.append("backup", file, file.name);
+      const data = await api("/api/data/import", { method: "POST", body: formData });
+      // Preserve durable drafts from every tab. Restored rows receive fresh edit versions,
+      // so pre-restore drafts are recovered as explicit conflicts instead of overwriting data.
+      state.user = data.user;
+      await applyUserPreferredLanguage();
+      fillAccountSettings();
+      elements.searchInput.value = "";
+      state.searchQuery = "";
+      state.activeTag = "";
+      await loadPages("", "");
+      await showHome({ skipFlush: true });
+      return data.counts;
+    })
+  );
 }
 
 function getUserInitials(user = state.user) {
@@ -2446,6 +2469,24 @@ function isCollaborationReady() {
   return !isCollaborativePage() || Boolean(state.collaborationSession?.isReady);
 }
 
+function getWorkspaceTransitionId(userId = state.user?.id) {
+  return userId ? `${workspaceTransitionPagePrefix}:${userId}` : null;
+}
+
+function getPageWorkspaceTransitionId(page = state.selectedPage) {
+  return getWorkspaceTransitionId(page?.ownerId ?? (isPageOwner(page) ? state.user?.id : null));
+}
+
+function isWorkspaceTransitionId(pageId) {
+  return typeof pageId === "string" && pageId.startsWith(`${workspaceTransitionPagePrefix}:`);
+}
+
+function getPageTransitionBusyMessage(pageId) {
+  return isWorkspaceTransitionId(pageId)
+    ? t("status.workspaceTransitionBusy")
+    : t("sharing.transitionBusy");
+}
+
 function schedulePageTransitionUnlock(transition) {
   window.clearTimeout(pageTransitionUnlockTimer);
   pageTransitionUnlockTimer = null;
@@ -2458,11 +2499,33 @@ function schedulePageTransitionUnlock(transition) {
 }
 
 function isPagePersistenceTransitionLocked(page = state.selectedPage) {
-  if (!page?.id) return false;
-  if (activePageTransitionLease?.pageId === page.id) return true;
-  const transition = pageTransitionLock.read(page.id);
+  const workspaceTransitionId = getPageWorkspaceTransitionId(page);
+  if (
+    activePageTransitionLease?.pageId === page?.id
+    || (workspaceTransitionId && activePageTransitionLease?.pageId === workspaceTransitionId)
+  ) return true;
+  const transitions = [
+    page?.id ? pageTransitionLock.read(page.id) : null,
+    workspaceTransitionId ? pageTransitionLock.read(workspaceTransitionId) : null
+  ].filter(Boolean);
+  const earliestExpiry = transitions.sort((left, right) => left.expiresAt - right.expiresAt)[0] ?? null;
+  schedulePageTransitionUnlock(earliestExpiry);
+  return transitions.length > 0;
+}
+
+function isWorkspacePersistenceTransitionLocked() {
+  const workspaceTransitionId = getWorkspaceTransitionId();
+  if (!workspaceTransitionId) return false;
+  if (activePageTransitionLease?.pageId === workspaceTransitionId) return true;
+  const transition = pageTransitionLock.read(workspaceTransitionId);
   schedulePageTransitionUnlock(transition);
   return Boolean(transition);
+}
+
+function assertWorkspacePersistenceUnlocked() {
+  if (isWorkspacePersistenceTransitionLocked()) {
+    throw new Error(t("status.workspaceTransitionBusy"));
+  }
 }
 
 function isPageInteractionLocked() {
@@ -2893,10 +2956,20 @@ function waitForPageTransitionPropagation() {
 }
 
 async function withPagePersistenceTransition(pageId, kind, action) {
-  if (activePageTransitionLease) throw new Error(t("sharing.transitionBusy"));
+  const busyMessage = getPageTransitionBusyMessage(pageId);
+  const page = state.selectedPage?.id === pageId
+    ? state.selectedPage
+    : state.allPages.find((candidate) => candidate.id === pageId) ?? null;
+  const workspaceTransitionId = isWorkspaceTransitionId(pageId)
+    ? null
+    : getPageWorkspaceTransitionId(page);
+  if (
+    activePageTransitionLease
+    || (workspaceTransitionId && pageId !== workspaceTransitionId && isWorkspacePersistenceTransitionLocked())
+  ) throw new Error(busyMessage);
   const result = await pageTransitionLock.runExclusive(pageId, async () => {
     const lease = pageTransitionLock.acquire(pageId, kind);
-    if (!lease) throw new Error(t("sharing.transitionBusy"));
+    if (!lease) throw new Error(busyMessage);
     let currentLease = lease;
     activePageTransitionLease = currentLease;
     const renewalTimer = window.setInterval(() => {
@@ -2910,7 +2983,7 @@ async function withPagePersistenceTransition(pageId, kind, action) {
       // Give other same-origin tabs a storage event turn. They lock their editor
       // and flush any durable draft before this tab validates the transition.
       await waitForPageTransitionPropagation();
-      if (!pageTransitionLock.owns(currentLease)) throw new Error(t("sharing.transitionBusy"));
+      if (!pageTransitionLock.owns(currentLease)) throw new Error(busyMessage);
       return await action();
     } finally {
       window.clearInterval(renewalTimer);
@@ -2919,8 +2992,23 @@ async function withPagePersistenceTransition(pageId, kind, action) {
       syncPageModeUi();
     }
   });
-  if (!result?.acquired) throw new Error(t("sharing.transitionBusy"));
+  if (!result?.acquired) throw new Error(busyMessage);
   return result.value;
+}
+
+async function withWorkspacePersistenceTransition(kind, action) {
+  const workspaceTransitionId = getWorkspaceTransitionId();
+  if (!workspaceTransitionId) throw new Error(t("status.workspaceTransitionBusy"));
+  return withPagePersistenceTransition(workspaceTransitionId, kind, async () => {
+    // A page-level share transition may already have passed its preflight check
+    // before this workspace lease was published. Refuse to overlap it; any page
+    // transition that starts after the lease is visible will fail its own check.
+    const competingTransitions = pageTransitionLock
+      .loadActive()
+      .filter((transition) => transition.pageId !== workspaceTransitionId);
+    if (competingTransitions.length) throw new Error(t("status.workspaceTransitionBusy"));
+    return action();
+  });
 }
 
 function getJsonPayloadByteLength(payload) {
@@ -3159,6 +3247,7 @@ function openNavigationContextMenu(trigger, { focusFirst = false } = {}) {
 async function deleteNavigationTarget() {
   const target = state.activeNavigationMenuTarget;
   if (!target) return;
+  assertWorkspacePersistenceUnlocked();
 
   const subtreeIds = getPageSubtreeIds(target.id);
   if (isPageReadOnly() && state.selectedPage?.id && subtreeIds.has(state.selectedPage.id)) {
@@ -3216,9 +3305,14 @@ async function deleteNavigationTarget() {
     closeNavigationContextMenu();
     setStatus(t(isCollection ? "status.deletingCollection" : "status.deletingPage"));
 
-    await api(`/api/pages/${target.id}?permanent=true`, {
-      method: "DELETE",
-      body: { expectedSnapshot: deletionSnapshot.snapshot }
+    await withWorkspacePersistenceTransition("page-delete", async () => {
+      // A different tab may hold a newer Yjs document that has not reached the
+      // server and therefore is not represented by the deletion snapshot.
+      assertNoPendingLocalCollaborationRecoveryForPages(serverPageIds);
+      await api(`/api/pages/${target.id}?permanent=true`, {
+        method: "DELETE",
+        body: { expectedSnapshot: deletionSnapshot.snapshot }
+      });
     });
     if (state.user?.id) {
       checkDraftStoreWrite(pageDraftStore.removePages(state.user.id, serverPageIds, pageDraftSourceId));
@@ -3274,14 +3368,45 @@ function assertNoPendingLocalPageDrafts(pageId) {
   throw new Error(t("sharing.localDraftsPending", { count: formatNumber(records.length) }));
 }
 
+function getLocalPageDraftRecordsForPages(pageIds) {
+  if (!state.user?.id) return [];
+  const targetPageIds = new Set(pageIds ?? []);
+  if (!targetPageIds.size) return [];
+  return pageDraftStore
+    .loadUserDrafts(state.user.id)
+    .filter((record) => targetPageIds.has(record.pageId));
+}
+
+function assertNoPendingLocalPageDraftsForPages(pageIds) {
+  const records = getLocalPageDraftRecordsForPages(pageIds);
+  if (!records.length) return;
+  throw new Error(t("status.workspaceLocalDraftsPending", { count: formatNumber(records.length) }));
+}
+
+function getLocalCollaborationRecoveryRecordsForPages(pageIds) {
+  const records = [];
+  for (const pageId of [...new Set(pageIds ?? [])]) {
+    if (!pageId) continue;
+    // A collaborator can be logged into a different same-origin tab/account, so
+    // inspect every locally represented account for every destructive target.
+    records.push(...collaborationRecoveryStore.loadPageRecords(pageId));
+  }
+  return records;
+}
+
 function assertNoPendingLocalCollaborationRecovery(pageId) {
-  if (!pageId) return;
-  // Final access removal can strand edits from a collaborator logged into a
-  // different same-origin tab, so inspect every account represented locally.
-  const records = collaborationRecoveryStore.loadPageRecords(pageId);
+  const records = getLocalCollaborationRecoveryRecordsForPages([pageId]);
   if (!records.length) return;
   throw new Error(
     t("sharing.localCollaborationRecoveryPending", { count: formatNumber(records.length) })
+  );
+}
+
+function assertNoPendingLocalCollaborationRecoveryForPages(pageIds) {
+  const records = getLocalCollaborationRecoveryRecordsForPages(pageIds);
+  if (!records.length) return;
+  throw new Error(
+    t("status.destructiveCollaborationRecoveryPending", { count: formatNumber(records.length) })
   );
 }
 
@@ -3339,6 +3464,98 @@ function appendOrphanedPageDraftRecovery() {
   appendPageDraftRecoveryPanel(elements.homeDocumentList, getOrphanedPageDrafts(), { home: true });
 }
 
+function getOrphanedCollaborationRecoveryGroups() {
+  if (!state.user?.id) return [];
+  const pageById = new Map(state.allPages.map((page) => [page.id, page]));
+  const groups = new Map();
+  for (const record of collaborationRecoveryStore.loadAccountRecords(state.user.id)) {
+    const page = pageById.get(record.pageId);
+    if (page && isCollaborativePage(page)) continue;
+    const group = groups.get(record.pageId) ?? {
+      pageId: record.pageId,
+      reason: page ? "collaboration-disabled" : "unavailable",
+      records: []
+    };
+    group.records.push(record);
+    groups.set(record.pageId, group);
+  }
+  return [...groups.values()].sort((left, right) => {
+    const leftUpdatedAt = Math.max(...left.records.map((record) => record.updatedAt));
+    const rightUpdatedAt = Math.max(...right.records.map((record) => record.updatedAt));
+    return rightUpdatedAt - leftUpdatedAt || left.pageId.localeCompare(right.pageId);
+  });
+}
+
+async function decodeOrphanedCollaborationRecoveryGroups(groups) {
+  const recoveries = [];
+  for (const group of groups) {
+    const sources = group.records.map((record) => ({
+      sourceId: record.sourceId,
+      generation: record.generation,
+      updatedAt: new Date(record.updatedAt).toISOString()
+    }));
+    const updatedAt = sources.map((source) => source.updatedAt).sort().at(-1) ?? new Date(0).toISOString();
+    try {
+      const snapshot = await decodeCollaborationRecoveryRecords(group.records);
+      recoveries.push({
+        reason: group.reason,
+        pageId: group.pageId,
+        updatedAt,
+        sources,
+        title: snapshot.title,
+        blocks: snapshot.blocks,
+        deletedAttachmentIds: snapshot.deletedAttachmentIds
+      });
+    } catch (error) {
+      // Keep an exact encoded fallback even if a future/incompatible Yjs payload
+      // cannot be decoded by the currently loaded client.
+      recoveries.push({
+        reason: group.reason,
+        pageId: group.pageId,
+        updatedAt,
+        sources,
+        decodeError: error?.message || String(error),
+        encodedUpdates: group.records.map((record) => ({
+          sourceId: record.sourceId,
+          update: record.encodedUpdate
+        }))
+      });
+    }
+  }
+  return recoveries;
+}
+
+function appendOrphanedCollaborationRecoveryPanel(recoveries) {
+  if (!recoveries.length) return;
+  const panel = document.createElement("section");
+  panel.className = "local-draft-recovery-panel home-collaboration-recovery-panel";
+  panel.setAttribute("role", "alert");
+
+  const heading = document.createElement("strong");
+  heading.textContent = t("status.orphanedCollaborationRecovery");
+
+  const details = document.createElement("pre");
+  details.tabIndex = 0;
+  details.textContent = JSON.stringify(recoveries, null, 2);
+  panel.append(heading, details);
+  elements.homeDocumentList.prepend(panel);
+}
+
+async function refreshOrphanedCollaborationRecovery() {
+  const generation = ++collaborationRecoveryPanelGeneration;
+  elements.homeDocumentList.querySelector(".home-collaboration-recovery-panel")?.remove();
+  if (state.workspaceView !== "home" || !state.user) return;
+  const groups = getOrphanedCollaborationRecoveryGroups();
+  if (!groups.length) return;
+  const recoveries = await decodeOrphanedCollaborationRecoveryGroups(groups);
+  if (
+    generation !== collaborationRecoveryPanelGeneration
+    || state.workspaceView !== "home"
+    || !state.user
+  ) return;
+  appendOrphanedCollaborationRecoveryPanel(recoveries);
+}
+
 function refreshCollaborativePageDraftRecovery() {
   elements.blockList.querySelector(".collaboration-local-draft-recovery-panel")?.remove();
   const page = state.selectedPage;
@@ -3347,6 +3564,7 @@ function refreshCollaborativePageDraftRecovery() {
 }
 
 function renderHome() {
+  collaborationRecoveryPanelGeneration += 1;
   elements.homeDocumentCount.textContent = t("counts.documents", { count: formatNumber(state.allPages.length) });
   elements.homeDocumentList.replaceChildren();
   elements.homeCollectionList.replaceChildren();
@@ -3365,6 +3583,7 @@ function renderHome() {
     makeHomeGuideRow(t("home.guide2Title"), t("home.guide2Description")),
     makeHomeGuideRow(t("home.guide3Title"), t("home.guide3Description"))
   );
+  if (state.workspaceView === "home") void refreshOrphanedCollaborationRecovery();
 }
 
 
@@ -7825,6 +8044,7 @@ function activatePersistedPageDraft(recovery) {
 }
 
 async function createCollection() {
+  assertWorkspacePersistenceUnlocked();
   const requestedName = window.prompt(t("collection.createPrompt"), t("collection.defaultName"));
   if (requestedName === null) return;
 
@@ -7835,6 +8055,7 @@ async function createCollection() {
   }
 
   await flushPendingPageEdits();
+  assertWorkspacePersistenceUnlocked();
   setStatus(t("status.creatingCollection"));
   elements.searchInput.value = "";
   state.searchQuery = "";
@@ -7855,7 +8076,9 @@ async function createCollection() {
 }
 
 async function createUntitledPage() {
+  assertWorkspacePersistenceUnlocked();
   await flushPendingPageEdits();
+  assertWorkspacePersistenceUnlocked();
   setStatus(t("status.creatingDocument"));
   elements.searchInput.value = "";
   state.searchQuery = "";
@@ -7881,7 +8104,7 @@ async function loadMe() {
   state.user = data.user;
 }
 
-async function fetchAllPageSummaries({ query = "", tag = "" } = {}) {
+async function fetchAllPageSummaries({ query = "", tag = "", archived = false } = {}) {
   const pages = [];
   const seenPageIds = new Set();
   const seenCursors = new Set();
@@ -7891,6 +8114,7 @@ async function fetchAllPageSummaries({ query = "", tag = "" } = {}) {
     const params = new URLSearchParams({ limit: "100" });
     if (query) params.set("q", query);
     if (tag) params.set("tag", tag);
+    if (archived) params.set("archived", "true");
     if (cursor) params.set("cursor", cursor);
 
     const data = await api(`/api/pages?${params.toString()}`);
@@ -7910,6 +8134,16 @@ async function fetchAllPageSummaries({ query = "", tag = "" } = {}) {
   // The API scans with immutable creation keys so edits cannot cross the
   // pagination frontier. Restore the existing recent-first UI after the full scan.
   return sortByRecent(pages);
+}
+
+async function fetchOwnedWorkspacePageIds() {
+  const [activePages, archivedPages] = await Promise.all([
+    fetchAllPageSummaries(),
+    fetchAllPageSummaries({ archived: true })
+  ]);
+  return [...new Set([...activePages, ...archivedPages]
+    .filter((page) => isPageOwner(page))
+    .map((page) => page.id))].sort();
 }
 
 async function loadAllPages() {
@@ -8799,9 +9033,15 @@ elements.archivePageButton.addEventListener("click", async () => {
   const parentCollectionId = getCollectionRootId(pageId) ?? defaultCollectionKey;
   try {
     await withPageEditLock(async () => {
-      await api(`/api/pages/${pageId}`, {
-        method: "PATCH",
-        body: { isArchived: true, expectedVersion: state.selectedPage.version }
+      await withPagePersistenceTransition(pageId, "page-archive", async () => {
+        // Archiving disconnects every collaborator and makes the page unavailable
+        // to them. Do not create an orphaned local Yjs state in another tab.
+        await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false });
+        assertNoPendingLocalCollaborationRecovery(pageId);
+        await api(`/api/pages/${pageId}`, {
+          method: "PATCH",
+          body: { isArchived: true, expectedVersion: state.selectedPage.version }
+        });
       });
       resetPageEditTracking();
       state.selectedPage = null;
@@ -9288,12 +9528,25 @@ window.addEventListener("storage", (event) => {
   if (event.key?.startsWith(`${pageTransitionStoragePrefix}:`)) {
     syncPageModeUi();
     const pageId = state.selectedPage?.id;
-    const transition = pageId ? pageTransitionLock.read(pageId) : null;
-    if (transition && transition.sourceId !== pageDraftSourceId && canPersistSelectedPage()) {
+    const workspaceTransitionId = getPageWorkspaceTransitionId();
+    const transitions = [
+      pageId ? pageTransitionLock.read(pageId) : null,
+      workspaceTransitionId ? pageTransitionLock.read(workspaceTransitionId) : null
+    ].filter((transition) => transition && transition.sourceId !== pageDraftSourceId);
+    const canFlushTransitionPage = Boolean(
+      state.selectedPage
+      && state.workspaceView === "page"
+      && (isCollaborativePage() ? state.collaborationSession : canPersistSelectedPage())
+    );
+    if (transitions.length && canFlushTransitionPage) {
       flushPendingPageEdits({ allowLocked: true, collaborationCompact: false }).catch((error) =>
         setStatus(error.message, true)
       );
     }
+    return;
+  }
+  if (event.key?.startsWith(`${collaborationRecoveryStoragePrefix}:`)) {
+    if (state.workspaceView === "home") void refreshOrphanedCollaborationRecovery();
     return;
   }
   if (!event.key?.startsWith(pageDraftStoragePrefix)) return;

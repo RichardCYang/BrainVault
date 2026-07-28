@@ -86,6 +86,35 @@ export function createPageTransitionLock(
     }
   }
 
+  function loadActive() {
+    if (!storage) return [];
+    const storagePrefix = `${prefix}:`;
+    try {
+      const keys = [];
+      for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index);
+        if (key?.startsWith(storagePrefix)) keys.push(key);
+      }
+
+      const records = [];
+      for (const key of keys) {
+        try {
+          const raw = storage.getItem(key);
+          if (!raw) continue;
+          const value = JSON.parse(raw);
+          if (!isNonEmptyString(value?.pageId)) continue;
+          const record = read(value.pageId);
+          if (record) records.push(record);
+        } catch {
+          // One malformed transition record must not hide another active lease.
+        }
+      }
+      return records.sort((left, right) => left.expiresAt - right.expiresAt);
+    } catch {
+      return [];
+    }
+  }
+
   function owns(record) {
     if (!record?.pageId || !record?.token) return false;
     return read(record.pageId)?.token === record.token;
@@ -123,5 +152,5 @@ export function createPageTransitionLock(
     );
   }
 
-  return { prefix, ttlMs: normalizedTtlMs, read, acquire, owns, renew, release, runExclusive };
+  return { prefix, ttlMs: normalizedTtlMs, read, loadActive, acquire, owns, renew, release, runExclusive };
 }

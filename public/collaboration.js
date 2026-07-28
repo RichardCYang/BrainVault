@@ -186,6 +186,37 @@ function normalizeBlock(block) {
   };
 }
 
+function readDocumentSnapshot(Y, title, blocks, deletedAttachments, updateId = 0) {
+  const normalizedBlocks = [];
+  const blockIds = new Set();
+  const deletedAttachmentIds = new Set(deletedAttachments.keys());
+  for (const [id, value] of blocks.entries()) {
+    if (!(value instanceof Y.Map)) continue;
+    const plain = readYValue(Y, value);
+    const normalized = normalizeBlock({ id, ...plain });
+    // A tombstone wins over a concurrently retained/re-created block. This
+    // keeps the SQL materialization payload internally consistent and avoids
+    // resurrecting an attachment after its file has been removed.
+    if (deletedAttachmentIds.has(normalized.id)) continue;
+    if (!normalized.id || blockIds.has(normalized.id)) continue;
+    blockIds.add(normalized.id);
+    normalizedBlocks.push(normalized);
+  }
+  normalizedBlocks.sort((left, right) => {
+    const leftParent = left.parentBlockId ?? "";
+    const rightParent = right.parentBlockId ?? "";
+    return leftParent.localeCompare(rightParent)
+      || left.sortOrder - right.sortOrder
+      || left.id.localeCompare(right.id);
+  });
+  return {
+    title: title.toString().slice(0, 160),
+    blocks: normalizedBlocks,
+    deletedAttachmentIds: [...deletedAttachmentIds].sort(),
+    updateId
+  };
+}
+
 function createBinaryMessage(kind, update, baseUpdateId = 0) {
   const bytes = update instanceof Uint8Array ? update : new Uint8Array(update);
   if (kind === 1) {
@@ -340,32 +371,13 @@ class PageCollaborationSession {
   }
 
   getSnapshot() {
-    const blocks = [];
-    const blockIds = new Set();
-    const deletedAttachmentIds = new Set(this.deletedAttachments.keys());
-    for (const [id, value] of this.blocks.entries()) {
-      if (!(value instanceof this.Y.Map)) continue;
-      const plain = readYValue(this.Y, value);
-      const normalized = normalizeBlock({ id, ...plain });
-      // A tombstone wins over a concurrently retained/re-created block. This
-      // keeps the SQL materialization payload internally consistent and avoids
-      // resurrecting an attachment after its file has been removed.
-      if (deletedAttachmentIds.has(normalized.id)) continue;
-      if (!normalized.id || blockIds.has(normalized.id)) continue;
-      blockIds.add(normalized.id);
-      blocks.push(normalized);
-    }
-    blocks.sort((left, right) => {
-      const leftParent = left.parentBlockId ?? "";
-      const rightParent = right.parentBlockId ?? "";
-      return leftParent.localeCompare(rightParent) || left.sortOrder - right.sortOrder || left.id.localeCompare(right.id);
-    });
-    return {
-      title: this.title.toString().slice(0, 160),
-      blocks,
-      deletedAttachmentIds: [...deletedAttachmentIds].sort(),
-      updateId: this.lastUpdateId
-    };
+    return readDocumentSnapshot(
+      this.Y,
+      this.title,
+      this.blocks,
+      this.deletedAttachments,
+      this.lastUpdateId
+    );
   }
 
   setTitle(value) {
@@ -937,6 +949,30 @@ class PageCollaborationSession {
  */
 export function shouldClearLocalRecoveryAfterAck(pendingLocalUpdates, needsRecovery) {
   return pendingLocalUpdates === 0 && needsRecovery !== true;
+}
+
+export async function decodeCollaborationRecoveryRecords(records) {
+  const Y = await loadYjs();
+  const doc = new Y.Doc();
+  try {
+    for (const record of [...(records ?? [])].sort(
+      (left, right) => Number(left?.updatedAt ?? 0) - Number(right?.updatedAt ?? 0)
+    )) {
+      const update = record?.update instanceof Uint8Array
+        ? record.update
+        : new Uint8Array(record?.update ?? 0);
+      if (!update.byteLength) continue;
+      Y.applyUpdate(doc, update, RECOVERY_ORIGIN);
+    }
+    return readDocumentSnapshot(
+      Y,
+      doc.getText("title"),
+      doc.getMap("blocks"),
+      doc.getMap("deletedAttachments")
+    );
+  } finally {
+    doc.destroy();
+  }
 }
 
 export async function createPageCollaboration(options) {

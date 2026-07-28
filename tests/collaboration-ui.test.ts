@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { translationCatalogs } from "../public/i18n.js";
 
 const index = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../public/styles.css", import.meta.url), "utf8");
@@ -21,8 +22,8 @@ describe("page sharing and Yjs collaboration wiring", () => {
   it("ships owner sharing controls, live status, and collaborator presence surfaces", () => {
     expect(index).toContain('id="share-page-button"');
     expect(index).toContain('id="share-page-layer"');
-    expect(index).toContain('id="share-username"');
-    expect(index).toContain('id="share-user-list"');
+    expect(index).toContain('id="share-page-username"');
+    expect(index).toContain('id="share-page-list"');
     expect(index).toContain('id="collaboration-indicator"');
     expect(index).toContain('id="collaboration-presence"');
     expect(styles).toContain(".share-page-layer");
@@ -38,17 +39,23 @@ describe("page sharing and Yjs collaboration wiring", () => {
     );
     expect(collaboration).toContain("Y.applyUpdate");
     expect(collaboration).toContain("Y.encodeStateAsUpdate");
+    expect(collaboration).toContain("export async function decodeCollaborationRecoveryRecords");
     expect(collaboration).toContain("needsRecovery");
     expect(collaboration).toContain("get hasUnconfirmedLocalChanges()");
     expect(collaboration).toContain("this.startupUpdatePending");
     expect(exitGuard).toContain("assertCollaborationExitSafe");
     expect(recoveryStore).toContain("brainvault.collaborationRecovery.v1");
     expect(recoveryStore).toContain("loadPageRecords");
+    expect(recoveryStore).toContain("loadAccountRecords");
+    expect(recoveryStore).toContain("encodedUpdate");
     expect(transitionLock).toContain("brainvault.pageTransition.v1");
     expect(transitionLock).toContain("function acquire(pageId, kind)");
+    expect(transitionLock).toContain("function loadActive()");
     expect(transitionLock).toContain("async function runExclusive(pageId, action)");
     expect(app).toContain("lockManager: window.navigator.locks");
     expect(app).toContain("withPagePersistenceTransition");
+    expect(app).toContain("withWorkspacePersistenceTransition");
+    expect(app).toContain("refreshOrphanedCollaborationRecovery");
     expect(collaboration).toContain("persistLocalRecovery");
     expect(collaboration).toContain("restoreLocalRecovery");
     expect(collaboration).toContain("clearLocalRecovery");
@@ -74,8 +81,20 @@ describe("page sharing and Yjs collaboration wiring", () => {
 
   it("provides all sharing strings in every supported catalog", () => {
     expect(i18n.match(/^[ \t]*sharing: \{/gm)).toHaveLength(7);
-    for (const key of ["button", "title", "usernameLabel", "peopleWithAccess", "activeEditors", "syncRequired"]) {
-      expect(i18n.match(new RegExp(`^[ \\t]*${key}:`, "gm"))).toHaveLength(7);
+    expect(Object.keys(translationCatalogs)).toHaveLength(7);
+    for (const catalog of Object.values(translationCatalogs)) {
+      for (const key of ["button", "title", "usernameLabel", "peopleWithAccess", "activeEditors", "syncRequired"]) {
+        expect(catalog.sharing[key]).toBeTypeOf("string");
+      }
+
+      for (const key of [
+        "orphanedCollaborationRecovery",
+        "destructiveCollaborationRecoveryPending",
+        "workspaceTransitionBusy",
+        "workspaceLocalDraftsPending"
+      ]) {
+        expect(catalog.status[key]).toBeTypeOf("string");
+      }
     }
   });
 
