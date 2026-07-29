@@ -138,6 +138,10 @@ const collaborationClientSource = readFileSync(
   new URL("../public/collaboration.js", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const attachmentReconcileSource = readFileSync(
+  new URL("../public/collaboration-attachment-reconcile.js", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const transitionLockSource = readFileSync(
   new URL("../public/page-transition-lock.js", import.meta.url),
   "utf8"
@@ -202,6 +206,29 @@ assert(
     && collaborationServerSource.includes('result.reason === "room-stale"')
     && collaborationProtocolSource.includes("roomUpdateId !== durableUpdateId"),
   "A stale process-local collaboration room can still append or compact remote durable updates"
+);
+
+const attachmentReconciliationSource = section(
+  collaborationClientSource,
+  "  reconcileServerAttachments(blocks",
+  "  clearMaterializedAttachmentTombstones(ids)"
+);
+assert(
+  collaborationClientSource.includes('from "./collaboration-attachment-reconcile.js"')
+    && attachmentReconciliationSource.includes("normalizeBlock({ id: candidate.id, ...readYValue(this.Y, map) })")
+    && attachmentReconciliationSource.includes("reconcileCanonicalAttachment(candidate, current, availableIds)"),
+  "A reconnect can still replace an acknowledged Yjs attachment location with stale relational fields"
+);
+assert(
+  attachmentReconciliationSource.includes("!this.deletedAttachments.has(id)")
+    && attachmentReconciliationSource.includes("!this.deletedAttachments.has(block.id)"),
+  "Attachment reconciliation can still treat a tombstoned parent as available"
+);
+assert(
+  attachmentReconcileSource.includes("Existing Yjs location wins")
+    && attachmentReconcileSource.includes("currentMatchesCanonical ? currentAttachment : canonicalAttachment")
+    && attachmentReconcileSource.includes("...canonicalAttachment"),
+  "The attachment merge does not preserve Yjs location while retaining canonical server content"
 );
 
 const preparedMutationSource = section(
@@ -313,6 +340,21 @@ assert(
     && crossInstanceReproduction.fixed.staleRoomInvalidated
     && crossInstanceReproduction.fixed.permanentLossWindowClosed,
   "The cross-instance compaction reproduction did not prove both vulnerable and fixed states"
+);
+
+const attachmentPositionReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL("./reproduce-attachment-position-loss.mjs", import.meta.url))],
+  { encoding: "utf8" }
+));
+assert(
+  attachmentPositionReproduction.vulnerable.permanentLossWindowReproduced
+    && !attachmentPositionReproduction.vulnerable.acknowledgedMoveSurvived
+    && attachmentPositionReproduction.fixed.acknowledgedMoveSurvived
+    && attachmentPositionReproduction.fixed.canonicalImmutableContentPreserved
+    && attachmentPositionReproduction.fixed.missingAttachmentUsesSqlLocation
+    && attachmentPositionReproduction.fixed.permanentLossWindowClosed,
+  "The attachment-position loss reproduction did not prove both vulnerable and fixed states"
 );
 
 const recoveryWriteReproduction = JSON.parse(execFileSync(
@@ -846,5 +888,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, cross-instance durable-room freshness fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection."
 );

@@ -60,8 +60,8 @@ function serverFrame(frame: Buffer) {
 
 describe("dependency-free RFC 6455 transport", () => {
   it("parses offered protocols and produces the RFC handshake accept value", () => {
-    expect(parseWebSocketProtocols(["brainvault-yjs-v1", " brainvault-ticket.jwt "])).toEqual([
-      "brainvault-yjs-v1",
+    expect(parseWebSocketProtocols(["brainvault-yjs-v2", " brainvault-ticket.jwt "])).toEqual([
+      "brainvault-yjs-v2",
       "brainvault-ticket.jwt"
     ]);
 
@@ -76,14 +76,14 @@ describe("dependency-free RFC 6455 transport", () => {
         }
       } as never,
       socket as never,
-      { selectedProtocol: "brainvault-yjs-v1", maxMessageBytes: 1024 }
+      { selectedProtocol: "brainvault-yjs-v2", maxMessageBytes: 1024 }
     );
 
     expect(connection).toBeInstanceOf(WebSocketConnection);
     const response = Buffer.concat(socket.writes).toString("utf8");
     expect(response).toContain("HTTP/1.1 101 Switching Protocols");
     expect(response).toContain("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
-    expect(response).toContain("Sec-WebSocket-Protocol: brainvault-yjs-v1");
+    expect(response).toContain("Sec-WebSocket-Protocol: brainvault-yjs-v2");
     connection?.terminate();
   });
 

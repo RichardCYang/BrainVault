@@ -20,6 +20,7 @@ import {
 } from "../src/lib/collaboration-protocol.ts";
 import { shouldClearLocalRecoveryAfterAck } from "../public/collaboration.js";
 import { createCollaborationRecoveryStore } from "../public/collaboration-recovery-store.js";
+import { reconcileCanonicalAttachment } from "../public/collaboration-attachment-reconcile.js";
 
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -143,8 +144,8 @@ function nextTurn() {
 
 async function verifyWebSocketProtocol() {
   assert.deepEqual(
-    parseWebSocketProtocols(["brainvault-yjs-v1", " brainvault-ticket.token , secondary"]),
-    ["brainvault-yjs-v1", "brainvault-ticket.token", "secondary"]
+    parseWebSocketProtocols(["brainvault-yjs-v2", " brainvault-ticket.token , secondary"]),
+    ["brainvault-yjs-v2", "brainvault-ticket.token", "secondary"]
   );
 
   const handshakeSocket = new FakeSocket();
@@ -157,14 +158,14 @@ async function verifyWebSocketProtocol() {
     }
   };
   const upgraded = acceptWebSocketUpgrade(request, handshakeSocket, {
-    selectedProtocol: "brainvault-yjs-v1",
+    selectedProtocol: "brainvault-yjs-v2",
     maxMessageBytes: 1024
   });
   assert.ok(upgraded instanceof WebSocketConnection);
   const response = Buffer.concat(handshakeSocket.writes).toString("utf8");
   assert.match(response, /^HTTP\/1\.1 101 Switching Protocols\r\n/);
   assert.match(response, /Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK\+xOo=\r\n/);
-  assert.match(response, /Sec-WebSocket-Protocol: brainvault-yjs-v1\r\n/);
+  assert.match(response, /Sec-WebSocket-Protocol: brainvault-yjs-v2\r\n/);
 
   const socket = new FakeSocket();
   const connection = new WebSocketConnection(socket, 1024);
@@ -286,6 +287,7 @@ function verifySourceWiring() {
     "app.use(\"/api\", collaborationRouter)"
   ]);
   assertContains("src/lib/collaboration-server.ts", [
+    'collaborationWebSocketProtocol = "brainvault-yjs-v2"',
     "verifyCollaborationToken",
     "isAllowedOrigin(request)",
     "Never derive the expected browser host from X-Forwarded-Host",
@@ -344,7 +346,7 @@ function verifySourceWiring() {
     "COLLABORATION_CHANGES_PENDING",
     "deletedExistingIds",
     "The block parent FK uses ON DELETE CASCADE",
-    "documentEpochProtocol: z.literal(1)",
+    "documentEpochProtocol: z.literal(2)",
     "COLLABORATION_CLIENT_REFRESH_REQUIRED",
     "documentEpoch: session.collaborationState.document_epoch",
     "assertCollaborationDocumentEpoch(state, body.documentEpoch)",
@@ -400,11 +402,13 @@ function verifySourceWiring() {
     "if (this.startupUpdatePending && !this.needsRecovery)",
     "if (flush && this.hasUnconfirmedLocalChanges && !this.isReady)",
     "canonical-attachment",
+    'from "./collaboration-attachment-reconcile.js"',
+    "reconcileCanonicalAttachment(candidate, current, availableIds)",
     "clearMaterializedAttachmentTombstones",
     "The document kept changing while it was being materialized",
     "documentEpoch: snapshot.documentEpoch",
     "updateId: snapshot.updateId",
-    "body: { documentEpochProtocol: 1 }",
+    "body: { documentEpochProtocol: 2 }",
     "this.documentEpoch = documentEpoch",
     "this.restoreLocalRecovery(documentEpoch)",
     "record.documentEpoch === documentEpoch",
@@ -534,6 +538,46 @@ function verifyCrossInstanceWriteFence() {
 }
 
 
+function verifyAttachmentPositionReconciliation() {
+  const canonical = {
+    id: "att_1",
+    type: "ATTACHMENT",
+    markdown: "canonical.pdf",
+    checked: false,
+    parentBlockId: "old_parent",
+    sortOrder: 8,
+    metadata: { attachment: { originalName: "canonical.pdf", size: 10 } }
+  };
+  const current = {
+    ...canonical,
+    markdown: "untrusted-name.txt",
+    parentBlockId: "new_parent",
+    sortOrder: 2,
+    metadata: { attachment: { originalName: "untrusted-name.txt", size: 1 } }
+  };
+  const reconciled = reconcileCanonicalAttachment(
+    canonical,
+    current,
+    new Set(["att_1", "old_parent", "new_parent"])
+  );
+  assert.equal(reconciled.parentBlockId, "new_parent");
+  assert.equal(reconciled.sortOrder, 2);
+  assert.equal(reconciled.markdown, "canonical.pdf");
+  assert.deepEqual(reconciled.metadata, canonical.metadata);
+
+  const reproduction = JSON.parse(execFileSync(
+    process.execPath,
+    [join(rootDir, "scripts/reproduce-attachment-position-loss.mjs")],
+    { cwd: rootDir, encoding: "utf8" }
+  ));
+  assert.equal(reproduction.vulnerable.permanentLossWindowReproduced, true);
+  assert.equal(reproduction.fixed.acknowledgedMoveSurvived, true);
+  assert.equal(reproduction.fixed.canonicalImmutableContentPreserved, true);
+  assert.equal(reproduction.fixed.missingAttachmentUsesSqlLocation, true);
+  assert.equal(reproduction.fixed.permanentLossWindowClosed, true);
+}
+
+
 function createMemoryStorage() {
   const values = new Map();
   return {
@@ -635,9 +679,10 @@ async function main() {
   verifyCollaborationHierarchy();
   verifyMaterializationProvenance();
   verifyCrossInstanceWriteFence();
+  verifyAttachmentPositionReconciliation();
   await verifyWebSocketProtocol();
   const checkedFiles = verifySyntax();
-  console.log(`[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, server-authoritative materialization provenance, cross-instance durable-room freshness, hierarchy invariants, RFC 6455 protocol behavior, and syntax for ${checkedFiles} file(s).`);
+  console.log(`[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, server-authoritative materialization provenance, cross-instance durable-room freshness, stale-SQL attachment-position fencing, hierarchy invariants, RFC 6455 protocol behavior, and syntax for ${checkedFiles} file(s).`);
 }
 
 main().catch((error) => {

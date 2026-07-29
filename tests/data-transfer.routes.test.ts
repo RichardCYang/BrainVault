@@ -49,7 +49,7 @@ vi.mock("../src/lib/db.js", () => ({
 
 vi.mock("../src/lib/collaboration-server.js", () => ({
   collaborationTicketProtocolPrefix: "brainvault-ticket.",
-  collaborationWebSocketProtocol: "brainvault-yjs-v1",
+  collaborationWebSocketProtocol: "brainvault-yjs-v2",
   disconnectPageCollaborators: (pageId: string, reason?: string) => {
     store.restoreEvents.push(`disconnect:${pageId}`);
     return store.disconnectPageCollaborators(pageId, reason);

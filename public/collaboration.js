@@ -3,6 +3,7 @@ import {
   CollaborationRecoveryWriteError,
   commitPreparedCollaborationMutation
 } from "./collaboration-durability.js";
+import { reconcileCanonicalAttachment } from "./collaboration-attachment-reconcile.js";
 
 const YJS_MODULE_URL = "https://cdn.jsdelivr.net/npm/yjs@13.6.31/+esm";
 const REMOTE_ORIGIN = Object.freeze({ kind: "remote" });
@@ -611,7 +612,9 @@ class PageCollaborationSession {
 
   adoptAttachment(block) {
     if (this.destroyed || String(block?.type) !== "ATTACHMENT") return null;
-    return this.upsertBlock(block, { allowDisconnected: true });
+    const normalized = normalizeBlock(block);
+    this.reconcileServerAttachments([normalized]);
+    return normalized;
   }
 
   /**
@@ -623,18 +626,21 @@ class PageCollaborationSession {
     const candidates = flattenBlocks(blocks ?? [])
       .map(normalizeBlock)
       .filter((block) => block.type === "ATTACHMENT");
-    const availableIds = new Set([...this.blocks.keys(), ...candidates.map((block) => block.id)]);
+    const availableIds = new Set([
+      ...[...this.blocks.keys()].filter((id) => !this.deletedAttachments.has(id)),
+      ...candidates
+        .filter((block) => !this.deletedAttachments.has(block.id))
+        .map((block) => block.id)
+    ]);
     let reconciled = 0;
     this.doc.transact(() => {
       for (const candidate of candidates) {
         if (this.deletedAttachments.has(candidate.id)) continue;
-        const normalized = {
-          ...candidate,
-          parentBlockId: candidate.parentBlockId && availableIds.has(candidate.parentBlockId)
-            ? candidate.parentBlockId
-            : null
-        };
-        let map = this.blocks.get(normalized.id);
+        let map = this.blocks.get(candidate.id);
+        const current = map instanceof this.Y.Map
+          ? normalizeBlock({ id: candidate.id, ...readYValue(this.Y, map) })
+          : null;
+        const normalized = reconcileCanonicalAttachment(candidate, current, availableIds);
         if (!(map instanceof this.Y.Map)) {
           map = new this.Y.Map();
           this.blocks.set(normalized.id, map);
@@ -813,7 +819,7 @@ class PageCollaborationSession {
     try {
       const session = await this.api(`/api/pages/${encodeURIComponent(this.page.id)}/collaboration/session`, {
         method: "POST",
-        body: { documentEpochProtocol: 1 }
+        body: { documentEpochProtocol: 2 }
       });
       if (this.destroyed) return;
       const documentEpoch = typeof session?.documentEpoch === "string"

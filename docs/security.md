@@ -37,6 +37,8 @@ Collaboration tickets are short-lived, page-scoped JWTs sent in the WebSocket su
 
 A client cannot create an attachment merely by inserting Yjs metadata. New attachment blocks must come from the authenticated upload endpoint, and relational materialization preserves or validates canonical file metadata. Snapshot validation also rejects duplicate/global block IDs, missing parents, cycles, excessive nesting, stale update markers, replaced document epochs, and title/block limits. Session tickets, WebSocket rooms, database writes, and browser recovery records carry the same epoch so an offline pre-restore Yjs document cannot be replayed into a newly initialized page with the same page ID. Session issuance requires the generation-aware client protocol marker, which prevents already-open pre-fix tabs from reconnecting with legacy recovery behavior after a deployment.
 
+For an attachment that already exists in the collaboration document, its parent and order come from the acknowledged Yjs state rather than the potentially lagging relational session snapshot. The SQL snapshot remains authoritative for immutable file identity and metadata, and is used for position only when the attachment is genuinely missing from Yjs. Collaboration protocol version 2 and WebSocket subprotocol `brainvault-yjs-v2` reject cached pre-fix writers during deployment.
+
 See [Collaboration](collaboration.md) for the complete access and persistence model.
 
 ## Attachment safety

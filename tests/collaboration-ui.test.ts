@@ -82,7 +82,10 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(collaboration.indexOf("const session = await this.api")).toBeLessThan(
       collaboration.indexOf("this.restoreLocalRecovery(documentEpoch)")
     );
-    expect(collaboration).toContain("body: { documentEpochProtocol: 1 }");
+    expect(collaboration).toContain("body: { documentEpochProtocol: 2 }");
+    expect(collaboration).toContain('from "./collaboration-attachment-reconcile.js"');
+    expect(collaboration).toContain("reconcileCanonicalAttachment(candidate, current, availableIds)");
+    expect(collaboration).toContain("!this.deletedAttachments.has(id)");
     expect(collaboration).toContain("record.documentEpoch === documentEpoch");
     expect(collaboration).toContain("different document versions cannot be merged");
     expect(collaboration).toContain("clearLocalRecovery");
@@ -155,6 +158,7 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(server).toContain("currentAccess = await getPageAccess");
     expect(server).toContain("assertCollaborationDocumentEpoch(collaborationState, client.documentEpoch)");
     expect(server).toContain("invalidateRoomForLineageChange");
+    expect(server).toContain('collaborationWebSocketProtocol = "brainvault-yjs-v2"');
     expect(server).toContain("4011");
     expect(routes).toContain("COLLABORATION_SNAPSHOT_STALE");
     expect(routes).toContain("SELECT id, update_data");
@@ -166,7 +170,7 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(routes).toContain("BLOCK_ID_CONFLICT");
     expect(routes).toContain("USE_ATTACHMENT_UPLOAD");
     expect(routes).toContain("COLLABORATION_CHANGES_PENDING");
-    expect(routes).toContain("documentEpochProtocol: z.literal(1)");
+    expect(routes).toContain("documentEpochProtocol: z.literal(2)");
     expect(routes).toContain("COLLABORATION_CLIENT_REFRESH_REQUIRED");
     expect(routes).toContain("documentEpoch: session.collaborationState.document_epoch");
     expect(routes).toContain("assertCollaborationDocumentEpoch(state, body.documentEpoch)");

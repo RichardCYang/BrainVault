@@ -58,7 +58,7 @@ const materializeSchema = z.object({
 });
 
 const collaborationSessionSchema = z.object({
-  documentEpochProtocol: z.literal(1)
+  documentEpochProtocol: z.literal(2)
 }).strict();
 
 type ShareUserRow = Pick<

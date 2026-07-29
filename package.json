@@ -15,7 +15,7 @@
     "reproduce:materialization-loss": "node scripts/reproduce-collaboration-materialization-loss.mjs",
     "reproduce:cross-instance-loss": "node scripts/reproduce-cross-instance-compaction-loss.mjs",
     "reproduce:recovery-write-loss": "node scripts/reproduce-collaboration-recovery-write-loss.mjs",
-    "test:durability": "node --test tests/collaboration-durability.node.test.mjs",
+    "test:durability": "node --test tests/*.node.test.mjs",
     "lockfile:repair": "node scripts/lockfile-registry.mjs --fix",
     "preinstall": "npm run lockfile:check",
     "env:init": "tsx scripts/env-init.ts",
@@ -29,7 +29,8 @@
     "start": "node dist/src/server.js",
     "test": "npm run lockfile:check && vitest run",
     "test:watch": "vitest",
-    "preview:capture": "node scripts/capture-preview.mjs"
+    "preview:capture": "node scripts/capture-preview.mjs",
+    "reproduce:attachment-position-loss": "node scripts/reproduce-attachment-position-loss.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.2",

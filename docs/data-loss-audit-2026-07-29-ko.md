@@ -1,5 +1,7 @@
 # BrainVault 데이터 손실 무결성 심층 감사 및 수정 보고서
 
+> **후속 감사 알림:** 추가 독립 검토에서 ACK된 첨부 위치가 stale SQL snapshot으로 되돌아가는 11번째 Critical 결함을 확인·수정했다. 최신 결론은 [후속 첨부 위치 감사 보고서](data-loss-audit-2026-07-29-attachment-position-ko.md)를 기준으로 한다.
+
 감사일: 2026-07-29 (Asia/Seoul)  
 감사 대상 기준 커밋: `3b2cc823a20e092ecb4258d93347d9232c48f072`  
 대상: 업로드된 `BrainVault.zip` 전체 소스와 보존된 Git 메타데이터

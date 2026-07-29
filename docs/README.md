@@ -13,6 +13,7 @@ The root [README](../README.md) is intentionally short. Detailed setup, operatio
 | [Data-loss audit (2026-07-28)](data-loss-audit-2026-07-28.md) | Reviewing all nine critical persistence/recovery findings, reproductions, corrections, and validation evidence |
 | [데이터 손실 감사 보고서 (한국어)](data-loss-audit-2026-07-28-ko.md) | 9번째 cross-process compaction 취약점, 수정, 검증, 배포 조건을 한국어로 검토 |
 | [데이터 손실 감사 보고서 2026-07-29 (한국어)](data-loss-audit-2026-07-29-ko.md) | 10번째 browser recovery write 실패 취약점, durable-before-visible 수정, 재현 및 검증을 검토 |
+| [데이터 손실 후속 감사 2026-07-29: 첨부 위치 (한국어)](data-loss-audit-2026-07-29-attachment-position-ko.md) | ACK된 Yjs 첨부 위치를 stale SQL snapshot이 되돌리는 11번째 결함, 수정, protocol fence, 재현 및 검증 |
 | [Configuration](configuration.md) | Reviewing every supported environment variable and its default behavior |
 | [Security](security.md) | Configuring MFA and understanding the project security boundaries and production requirements |
 | [API](api.md) | Finding route summaries, authentication expectations, the health endpoint, and the OpenAPI document |

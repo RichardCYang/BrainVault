@@ -722,8 +722,8 @@ components:
       properties:
         documentEpochProtocol:
           type: integer
-          const: 1
-          description: Confirms that the browser isolates local recovery records by the server-issued document epoch.
+          const: 2
+          description: Confirms support for document-epoch recovery isolation and Yjs-authoritative attachment-position reconciliation.
     CollaborationSnapshotInput:
       type: object
       additionalProperties: true
@@ -752,7 +752,7 @@ components:
           description: Stable identifier for the current Yjs document generation.
         protocol:
           type: string
-          const: brainvault-yjs-v1
+          const: brainvault-yjs-v2
         ticketProtocol:
           type: string
           description: Short-lived page-scoped credential in the form brainvault-ticket.<JWT>. Send it as a WebSocket subprotocol, never as a query parameter.

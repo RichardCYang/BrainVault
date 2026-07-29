@@ -30,7 +30,7 @@ Most API routes require a bearer token returned by the register or login endpoin
 | `GET` | `/api/pages/:pageId/shares` | List invited editors; owner only |
 | `POST` | `/api/pages/:pageId/shares` | Add an existing user as an editor; owner only |
 | `DELETE` | `/api/pages/:pageId/shares/:userId` | Remove an editor and close that user’s active sockets; owner only |
-| `POST` | `/api/pages/:pageId/collaboration/session` | Issue a short-lived page-scoped WebSocket ticket and canonical snapshot; requires `{ "documentEpochProtocol": 1 }` |
+| `POST` | `/api/pages/:pageId/collaboration/session` | Issue a short-lived page-scoped WebSocket ticket and canonical snapshot; requires `{ "documentEpochProtocol": 2 }` |
 | `PUT` | `/api/pages/:pageId/collaboration/snapshot` | Materialize the locked durable Yjs log into page/block tables; request content is not trusted |
 | `WS` | `/api/collaboration/:pageId` | Authenticated binary Yjs updates plus JSON presence/control messages |
 | `POST` | `/api/pages/:pageId/blocks` | Add a non-attachment block |
@@ -70,4 +70,4 @@ curl http://localhost:4000/health
 
 ## WebSocket details
 
-The collaboration session response supplies the socket path and two required subprotocol values: `brainvault-yjs-v1` and a short-lived `brainvault-ticket.<token>` credential. Binary messages carry ordered Yjs updates; JSON messages carry readiness acknowledgements, presence, access changes, and canonical attachment notifications. See [Collaboration](collaboration.md) for the protocol and deployment requirements.
+The collaboration session response supplies the socket path and two required subprotocol values: `brainvault-yjs-v2` and a short-lived `brainvault-ticket.<token>` credential. Binary messages carry ordered Yjs updates; JSON messages carry readiness acknowledgements, presence, access changes, and canonical attachment notifications. See [Collaboration](collaboration.md) for the protocol and deployment requirements.

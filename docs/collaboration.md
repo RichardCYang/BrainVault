@@ -7,8 +7,8 @@ Collections and archived pages cannot be shared. Only the page owner can add or 
 ## Collaboration flow
 
 1. The owner opens **Share**, enters an existing login ID, and creates an `EDIT` grant in `page_shares`.
-2. An authorized owner or invited editor requests `POST /api/pages/:pageId/collaboration/session` with `{ "documentEpochProtocol": 1 }`.
-3. The server returns a short-lived, page-scoped WebSocket ticket, the canonical database snapshot, the current `documentEpoch`, the socket path, and the required subprotocol names.
+2. An authorized owner or invited editor requests `POST /api/pages/:pageId/collaboration/session` with `{ "documentEpochProtocol": 2 }`.
+3. The server returns a short-lived, page-scoped WebSocket ticket, the canonical database snapshot, the current `documentEpoch`, the socket path, and the required `brainvault-yjs-v2` subprotocol.
 4. The browser loads only local recovery updates carrying that exact `documentEpoch`, then creates the Yjs document containing the page title, blocks, block ordering, metadata, and attachment-deletion tombstones. Recovery updates from an older or unknown generation remain in browser storage for manual recovery and are never merged automatically.
 5. Binary Yjs updates are sent through the authenticated `/api/collaboration/:pageId` WebSocket endpoint. The server applies each untrusted update to an isolated Yjs document, rejects malformed or over-sized state, stores the accepted update in MariaDB, and only then swaps the live room state, acknowledges, and broadcasts it.
 6. Presence messages show active collaborators and the block/field they are editing. Presence is ephemeral and is not written to the database.
@@ -45,7 +45,7 @@ A full workspace restore, the final share removal, or a later first share can re
 - local browser recovery keys contain both epoch and source tab ID; and
 - legacy or mismatched recovery records remain visible as separate recovery groups instead of being merged or overwritten.
 
-A connected client receives WebSocket close code `4011` when the document generation changes. Its unacknowledged local state remains in the generation-specific browser recovery record before the page reloads. Session creation also requires `documentEpochProtocol: 1`; a tab running pre-fix JavaScript cannot obtain a new ticket and replay an unversioned recovery copy after deployment. Refreshing that tab loads the generation-aware client while preserving its legacy browser recovery record for manual inspection.
+A connected client receives WebSocket close code `4011` when the document generation changes. Its unacknowledged local state remains in the generation-specific browser recovery record before the page reloads. Session creation requires `documentEpochProtocol: 2`, and the WebSocket upgrade requires `brainvault-yjs-v2`. Together these version fences prevent a cached pre-fix tab—or a ticket issued immediately before a rolling restart—from reconnecting to the patched writer and republishing stale SQL attachment positions. Refreshing loads the compatible client while preserving older browser recovery records for manual inspection.
 
 ## Authentication and network requirements
 
@@ -84,11 +84,14 @@ Run the collaboration-specific deterministic checks with Node.js 22.13 or newer:
 ```bash
 npm run reproduce:materialization-loss
 npm run reproduce:cross-instance-loss
+npm run reproduce:recovery-write-loss
+npm run reproduce:attachment-position-loss
+npm run test:durability
 npm run verify:collaboration
 npm run verify:data-loss
 ```
 
-The materialization reproduction walks the preserved Git history to find the vulnerable route, demonstrates how a same-ID forged empty body could become SQL truth and authorize history deletion, and then verifies the working tree's server-derived path and legacy-checkpoint fence. The cross-instance reproduction similarly finds the vulnerable writer revision, models two process-local rooms missing each other's update, proves that the old snapshot compaction permanently removed one edit, and proves that the fixed ordinary-write fence forces a durable reload before retry and compaction. The collaboration verifier checks both reproductions, source wiring, exact Yjs dependency pins and integrity, materialization provenance, durable-room freshness, all executable project JavaScript/TypeScript syntax, block hierarchy invariants, the RFC 6455 handshake accept value, masked text and binary frames, fragmented messages, Ping/Pong behavior, JSON server frames, and rejection of an unmasked client frame. The Vitest suite also contains server-side Yjs merge, materialization, isolation, malformed-update, size-limit, and write-checkpoint tests.
+The materialization reproduction proves that relational truth is rebuilt from locked durable Yjs history. The cross-instance reproduction proves that a stale process-local room cannot append or compact over a newer durable tip. The recovery-write reproduction verifies durable-before-visible browser edits. The attachment-position reproduction proves that reconnecting before relational materialization no longer republishes stale SQL parent/order fields over an acknowledged Yjs move, while canonical file metadata remains server-owned. The collaboration verifier checks all four loss schedules, protocol-version fencing, source wiring, exact Yjs dependency pins and integrity, materialization provenance, durable-room freshness, all executable project JavaScript/TypeScript syntax, block hierarchy invariants, the RFC 6455 handshake accept value, masked text and binary frames, fragmented messages, Ping/Pong behavior, JSON server frames, and rejection of an unmasked client frame. The Vitest suite also contains server-side Yjs merge, materialization, isolation, malformed-update, size-limit, and write-checkpoint tests.
 
 The normal project checks remain:
 

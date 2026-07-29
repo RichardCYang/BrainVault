@@ -31,7 +31,7 @@ import {
   type CollaborationWriteRejectionReason
 } from "./collaboration-protocol.js";
 
-export const collaborationWebSocketProtocol = "brainvault-yjs-v1";
+export const collaborationWebSocketProtocol = "brainvault-yjs-v2";
 export const collaborationTicketProtocolPrefix = "brainvault-ticket.";
 
 const maxTextMessageBytes = 16 * 1024;
