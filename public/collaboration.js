@@ -1,8 +1,14 @@
 // @ts-check
+import {
+  CollaborationRecoveryWriteError,
+  commitPreparedCollaborationMutation
+} from "./collaboration-durability.js";
+
 const YJS_MODULE_URL = "https://cdn.jsdelivr.net/npm/yjs@13.6.31/+esm";
 const REMOTE_ORIGIN = Object.freeze({ kind: "remote" });
 const BOOTSTRAP_ORIGIN = Object.freeze({ kind: "bootstrap" });
 const LOCAL_ORIGIN = Object.freeze({ kind: "local" });
+const PREPARED_LOCAL_ORIGIN = Object.freeze({ kind: "prepared-local" });
 const RECOVERY_ORIGIN = Object.freeze({ kind: "recovery" });
 const COMPACTION_UPDATE_THRESHOLD = 200;
 const MATERIALIZE_DELAY_MS = 900;
@@ -262,6 +268,7 @@ class PageCollaborationSession {
     this.onAccessChanged = options.onAccessChanged ?? (() => undefined);
     this.onMaterialized = options.onMaterialized ?? (() => undefined);
     this.doc = new Y.Doc();
+    this.localMutationDoc = null;
     this.title = this.doc.getText("title");
     this.blocks = this.doc.getMap("blocks");
     this.deletedAttachments = this.doc.getMap("deletedAttachments");
@@ -291,7 +298,11 @@ class PageCollaborationSession {
       const source = origin === REMOTE_ORIGIN ? "remote" : origin === BOOTSTRAP_ORIGIN ? "bootstrap" : "local";
       this.emitSnapshot(source);
       if (origin !== REMOTE_ORIGIN && origin !== BOOTSTRAP_ORIGIN && origin !== RECOVERY_ORIGIN) {
-        this.persistLocalRecovery();
+        // PREPARED_LOCAL_ORIGIN was persisted from an isolated staging document
+        // before this live update became visible. Every other local-origin update
+        // keeps the older best-effort persistence path because it is derived from
+        // already durable server state (for example canonical attachments).
+        if (origin !== PREPARED_LOCAL_ORIGIN) this.persistLocalRecovery();
         if (this.synced) this.sendDocumentUpdate(update);
         else this.needsRecovery = true;
       }
@@ -339,8 +350,28 @@ class PageCollaborationSession {
     return true;
   }
 
+  persistRecoveryState(stateUpdate) {
+    if (!this.recoveryStore || !this.accountId || !this.recoverySourceId || !this.documentEpoch) return null;
+    return this.recoveryStore.save(
+      this.accountId,
+      this.page.id,
+      this.recoverySourceId,
+      this.documentEpoch,
+      stateUpdate
+    );
+  }
+
+  reportRecoveryStorageFailure(error = null) {
+    if (this.recoveryStorageWarningShown) return;
+    this.recoveryStorageWarningShown = true;
+    this.onError(
+      error instanceof Error
+        ? error
+        : new CollaborationRecoveryWriteError()
+    );
+  }
+
   persistLocalRecovery() {
-    if (!this.recoveryStore || !this.accountId || !this.recoverySourceId || !this.documentEpoch) return false;
     let stateUpdate;
     try {
       stateUpdate = this.Y.encodeStateAsUpdate(this.doc);
@@ -348,18 +379,106 @@ class PageCollaborationSession {
       this.onError(new Error(`The collaboration recovery state could not be encoded: ${error?.message || error}`));
       return false;
     }
-    const generation = this.recoveryStore.save(
-      this.accountId,
-      this.page.id,
-      this.recoverySourceId,
-      this.documentEpoch,
-      stateUpdate
-    );
-    if (!generation && !this.recoveryStorageWarningShown) {
-      this.recoveryStorageWarningShown = true;
-      this.onError(new Error("The browser could not save a local collaboration recovery copy"));
+    try {
+      const generation = this.persistRecoveryState(stateUpdate);
+      if (!generation) this.reportRecoveryStorageFailure();
+      return Boolean(generation);
+    } catch (error) {
+      this.reportRecoveryStorageFailure(new CollaborationRecoveryWriteError(undefined, { cause: error }));
+      return false;
     }
-    return Boolean(generation);
+  }
+
+  resetLocalMutationDoc() {
+    this.localMutationDoc?.destroy();
+    this.localMutationDoc = null;
+  }
+
+  prepareLocalMutationDoc() {
+    try {
+      if (!this.localMutationDoc) this.localMutationDoc = new this.Y.Doc();
+      const stateVector = this.Y.encodeStateVector(this.localMutationDoc);
+      const missingLiveState = this.Y.encodeStateAsUpdate(this.doc, stateVector);
+      this.Y.applyUpdate(this.localMutationDoc, missingLiveState, BOOTSTRAP_ORIGIN);
+      return {
+        doc: this.localMutationDoc,
+        title: this.localMutationDoc.getText("title"),
+        blocks: this.localMutationDoc.getMap("blocks"),
+        deletedAttachments: this.localMutationDoc.getMap("deletedAttachments")
+      };
+    } catch (error) {
+      this.resetLocalMutationDoc();
+      throw new Error(`The collaboration draft could not be prepared safely: ${error?.message || error}`);
+    }
+  }
+
+  commitLocalMutation(mutator, { allowDisconnected = false } = {}) {
+    this.assertWritable({ allowDisconnected });
+    const prepared = this.prepareLocalMutationDoc();
+    const updates = [];
+    const captureUpdate = (update, origin) => {
+      if (origin === PREPARED_LOCAL_ORIGIN) updates.push(update);
+    };
+    prepared.doc.on("update", captureUpdate);
+    try {
+      prepared.doc.transact(() => mutator(prepared), PREPARED_LOCAL_ORIGIN);
+    } catch (error) {
+      // A Yjs transaction is not an application-level rollback boundary. Throw
+      // away the staging document so a failed mutator can never leak into a
+      // later successful edit.
+      this.resetLocalMutationDoc();
+      throw error;
+    } finally {
+      prepared.doc.off("update", captureUpdate);
+    }
+    if (!updates.length) return false;
+
+    let recoveryUpdate;
+    let liveUpdate;
+    try {
+      recoveryUpdate = this.Y.encodeStateAsUpdate(prepared.doc);
+      liveUpdate = updates.length === 1 ? updates[0] : this.Y.mergeUpdates(updates);
+    } catch (error) {
+      this.resetLocalMutationDoc();
+      throw new Error(`The collaboration draft could not be encoded safely: ${error?.message || error}`);
+    }
+
+    try {
+      commitPreparedCollaborationMutation({
+        recoveryUpdate,
+        liveUpdate,
+        persistRecovery: (update) => this.persistRecoveryState(update),
+        applyLiveUpdate: (update) => this.Y.applyUpdate(this.doc, update, PREPARED_LOCAL_ORIGIN)
+      });
+      return true;
+    } catch (error) {
+      if (error instanceof CollaborationRecoveryWriteError) {
+        this.resetLocalMutationDoc();
+        this.reportRecoveryStorageFailure(error);
+        throw error;
+      }
+
+      // The recovery snapshot is already durable at this point. Force the next
+      // connection to reload it rather than continuing with an uncertain live
+      // document after an unexpected local apply failure.
+      this.resetLocalMutationDoc();
+      this.needsRecovery = true;
+      this.ready = false;
+      this.synced = false;
+      this.recoveryLoadedEpoch = null;
+      const failure = new Error(
+        `A durable collaboration draft could not be applied to the live document: ${error?.message || error}`
+      );
+      failure.code = "COLLABORATION_LOCAL_APPLY_FAILED";
+      failure.cause = error;
+      this.onError(failure);
+      try {
+        this.socket?.close(1011, "Unable to apply durable collaboration draft");
+      } catch {
+        this.scheduleReconnect();
+      }
+      throw failure;
+    }
   }
 
   clearLocalRecovery() {
@@ -414,18 +533,18 @@ class PageCollaborationSession {
   }
 
   setTitle(value) {
-    this.assertWritable();
-    this.doc.transact(() => replaceYText(this.title, String(value ?? "").slice(0, 160)), LOCAL_ORIGIN);
+    this.commitLocalMutation(({ title }) => {
+      replaceYText(title, String(value ?? "").slice(0, 160));
+    });
   }
 
   upsertBlock(block, { allowDisconnected = false } = {}) {
-    this.assertWritable({ allowDisconnected });
     const normalized = normalizeBlock(block);
-    this.doc.transact(() => {
-      let map = this.blocks.get(normalized.id);
+    this.commitLocalMutation(({ blocks, deletedAttachments }) => {
+      let map = blocks.get(normalized.id);
       if (!(map instanceof this.Y.Map)) {
         map = new this.Y.Map();
-        this.blocks.set(normalized.id, map);
+        blocks.set(normalized.id, map);
       }
       reconcileYMap(this.Y, map, {
         type: normalized.type,
@@ -435,20 +554,19 @@ class PageCollaborationSession {
         sortOrder: normalized.sortOrder,
         metadata: normalized.metadata
       });
-      if (normalized.type === "ATTACHMENT") this.deletedAttachments.delete(normalized.id);
-    }, LOCAL_ORIGIN);
+      if (normalized.type === "ATTACHMENT") deletedAttachments.delete(normalized.id);
+    }, { allowDisconnected });
     return normalized;
   }
 
   upsertBlocks(blocks, { allowDisconnected = false } = {}) {
-    this.assertWritable({ allowDisconnected });
     const normalized = blocks.map(normalizeBlock);
-    this.doc.transact(() => {
+    this.commitLocalMutation(({ blocks: stagedBlocks, deletedAttachments }) => {
       for (const block of normalized) {
-        let map = this.blocks.get(block.id);
+        let map = stagedBlocks.get(block.id);
         if (!(map instanceof this.Y.Map)) {
           map = new this.Y.Map();
-          this.blocks.set(block.id, map);
+          stagedBlocks.set(block.id, map);
         }
         reconcileYMap(this.Y, map, {
           type: block.type,
@@ -458,9 +576,9 @@ class PageCollaborationSession {
           sortOrder: block.sortOrder,
           metadata: block.metadata
         });
-        if (block.type === "ATTACHMENT") this.deletedAttachments.delete(block.id);
+        if (block.type === "ATTACHMENT") deletedAttachments.delete(block.id);
       }
-    }, LOCAL_ORIGIN);
+    }, { allowDisconnected });
     return normalized;
   }
 
@@ -479,15 +597,15 @@ class PageCollaborationSession {
         }
       }
     }
-    this.doc.transact(() => {
+    this.commitLocalMutation(({ blocks, deletedAttachments }) => {
       for (const id of ids) {
-        const value = this.blocks.get(id);
+        const value = blocks.get(id);
         if (value instanceof this.Y.Map && readYValue(this.Y, value.get("type")) === "ATTACHMENT") {
-          this.deletedAttachments.set(id, true);
+          deletedAttachments.set(id, true);
         }
-        this.blocks.delete(id);
+        blocks.delete(id);
       }
-    }, LOCAL_ORIGIN);
+    }, { allowDisconnected });
     return [...ids];
   }
 
@@ -649,6 +767,7 @@ class PageCollaborationSession {
     clearTimeout(this.awarenessTimer);
     this.socket?.close(1000, "Page closed");
     this.socket = null;
+    this.resetLocalMutationDoc();
     this.doc.destroy();
     this.resolvePendingWaiters();
   }

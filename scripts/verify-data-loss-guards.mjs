@@ -6,6 +6,10 @@ import { createPageDraftStore } from "../public/draft-store.js";
 import { translationCatalogs } from "../public/i18n.js";
 import { createPageTransitionLock } from "../public/page-transition-lock.js";
 import { inspectStorageKeys } from "../public/storage-snapshot.js";
+import {
+  CollaborationRecoveryWriteError,
+  commitPreparedCollaborationMutation
+} from "../public/collaboration-durability.js";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -130,6 +134,10 @@ function oldThreePassForwardSnapshot(storage) {
 }
 
 const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const collaborationClientSource = readFileSync(
+  new URL("../public/collaboration.js", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const transitionLockSource = readFileSync(
   new URL("../public/page-transition-lock.js", import.meta.url),
   "utf8"
@@ -196,6 +204,92 @@ assert(
   "A stale process-local collaboration room can still append or compact remote durable updates"
 );
 
+const preparedMutationSource = section(
+  collaborationClientSource,
+  "  commitLocalMutation(mutator",
+  "  clearLocalRecovery()"
+);
+assert(
+  collaborationClientSource.includes('from "./collaboration-durability.js"')
+    && collaborationClientSource.includes("PREPARED_LOCAL_ORIGIN")
+    && collaborationClientSource.includes("if (origin !== PREPARED_LOCAL_ORIGIN) this.persistLocalRecovery()"),
+  "Prepared collaboration updates can still be persisted only after they are exposed to the live document"
+);
+assert(
+  preparedMutationSource.includes("this.Y.encodeStateAsUpdate(prepared.doc)")
+    && preparedMutationSource.includes("commitPreparedCollaborationMutation({")
+    && preparedMutationSource.includes("persistRecovery: (update) => this.persistRecoveryState(update)")
+    && preparedMutationSource.includes("applyLiveUpdate: (update) => this.Y.applyUpdate(this.doc, update, PREPARED_LOCAL_ORIGIN)"),
+  "Collaboration edits are not staged as a full recovery candidate before live application"
+);
+assertBefore(
+  preparedMutationSource,
+  "persistRecovery: (update) => this.persistRecoveryState(update)",
+  "applyLiveUpdate: (update) => this.Y.applyUpdate(this.doc, update, PREPARED_LOCAL_ORIGIN)",
+  "prepared collaboration durability"
+);
+const collaborationMutationSections = [
+  ["setTitle(value)", section(collaborationClientSource, "  setTitle(value)", "  upsertBlock(block")],
+  ["upsertBlock(block)", section(collaborationClientSource, "  upsertBlock(block", "  upsertBlocks(blocks")],
+  ["upsertBlocks(blocks)", section(collaborationClientSource, "  upsertBlocks(blocks", "  deleteBlock(blockId")],
+  ["deleteBlock(blockId)", section(collaborationClientSource, "  deleteBlock(blockId", "  adoptAttachment(block")]
+];
+for (const [methodName, methodSource] of collaborationMutationSections) {
+  assert(
+    methodSource.includes("this.commitLocalMutation("),
+    `${methodName} bypasses the durable staging path`
+  );
+}
+
+const markBlockDirtySource = section(client, "function markBlockDirty(", "function getBlockSaveQueue(");
+assert(
+  markBlockDirtySource.includes("if (!persistBlockDraft(row))")
+    && markBlockDirtySource.includes("rejectLocalBlockMutation(row, error)"),
+  "Block edits can still remain visible when their browser recovery write fails"
+);
+const durableBlockRestoreSource = section(
+  client,
+  "function cancelScheduledBlockSave(",
+  "function rejectLocalBlockMutation("
+);
+assert(
+  durableBlockRestoreSource.includes("cancelScheduledBlockSave(blockId);")
+    && durableBlockRestoreSource.includes("blockSaveTimers.delete(blockId)")
+    && durableBlockRestoreSource.includes("blockSaveRows.delete(blockId)"),
+  "A rejected block mutation can still be committed later by a stale autosave timer"
+);
+const saveBlockRowSource = section(client, "async function saveBlockRow(", "function scheduleBlockSave(");
+assertBefore(
+  saveBlockRowSource,
+  "if (!persistBlockDraft(row, payload))",
+  "const data = await queue.enqueue(task)",
+  "direct block durability"
+);
+const scheduleTitleSource = section(client, "function schedulePageTitleSave(", "function normalizeRecoveredBlockPayload(");
+assertBefore(
+  scheduleTitleSource,
+  "if (!persistPageTitleDraft())",
+  "applyPageSummaryUpdate(state.selectedPage.id, { title })",
+  "direct title durability"
+);
+
+let helperAppliedAfterRejectedWrite = false;
+let helperRejectedWithDurabilityError = false;
+try {
+  commitPreparedCollaborationMutation({
+    recoveryUpdate: new Uint8Array([1]),
+    liveUpdate: new Uint8Array([2]),
+    persistRecovery: () => null,
+    applyLiveUpdate: () => { helperAppliedAfterRejectedWrite = true; }
+  });
+} catch (error) {
+  helperRejectedWithDurabilityError = error instanceof CollaborationRecoveryWriteError;
+}
+assert(
+  helperRejectedWithDurabilityError && !helperAppliedAfterRejectedWrite,
+  "A failed collaboration recovery write can still expose an unprotected live edit"
+);
+
 const materializationReproduction = JSON.parse(execFileSync(
   process.execPath,
   [fileURLToPath(new URL("./reproduce-collaboration-materialization-loss.mjs", import.meta.url))],
@@ -219,6 +313,20 @@ assert(
     && crossInstanceReproduction.fixed.staleRoomInvalidated
     && crossInstanceReproduction.fixed.permanentLossWindowClosed,
   "The cross-instance compaction reproduction did not prove both vulnerable and fixed states"
+);
+
+const recoveryWriteReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL("./reproduce-collaboration-recovery-write-loss.mjs", import.meta.url))],
+  { encoding: "utf8" }
+));
+assert(
+  recoveryWriteReproduction.vulnerable.permanentLossWindowReproduced
+    && recoveryWriteReproduction.fixed.storageFailure.rejectedWithDurabilityError
+    && !recoveryWriteReproduction.fixed.storageFailure.unprotectedEditBecameVisible
+    && recoveryWriteReproduction.fixed.success.durableBeforeVisible
+    && recoveryWriteReproduction.fixed.permanentLossWindowClosed,
+  "The recovery-write loss reproduction did not prove both vulnerable and fixed states"
 );
 
 const recoveredDraftActivation = section(
@@ -738,5 +846,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: destructive ordering, server-authoritative collaboration materialization, cross-instance durable-room freshness fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, cross-instance durable-room freshness fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection."
 );
