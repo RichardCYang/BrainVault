@@ -4,6 +4,10 @@ import {
   commitPreparedCollaborationMutation
 } from "./collaboration-durability.js";
 import { reconcileCanonicalAttachment } from "./collaboration-attachment-reconcile.js";
+import {
+  requireBlockMarkdownWithinLimit,
+  requirePageTitleWithinLimit
+} from "./editor-content-limits.js";
 
 const YJS_MODULE_URL = "https://cdn.jsdelivr.net/npm/yjs@13.6.31/+esm";
 const REMOTE_ORIGIN = Object.freeze({ kind: "remote" });
@@ -183,7 +187,7 @@ function normalizeBlock(block) {
   return {
     id: String(block?.id || createClientId("blk")).slice(0, 64),
     type: COLLABORATIVE_BLOCK_TYPES.has(type) ? type : "MARKDOWN",
-    markdown: String(block?.markdown ?? "").slice(0, 20_000),
+    markdown: requireBlockMarkdownWithinLimit(block?.markdown),
     checked: Boolean(block?.checked),
     parentBlockId: block?.parentBlockId ? String(block.parentBlockId).slice(0, 64) : null,
     sortOrder: Number.isFinite(numericSortOrder)
@@ -217,7 +221,7 @@ function readDocumentSnapshot(Y, title, blocks, deletedAttachments, updateId = 0
       || left.id.localeCompare(right.id);
   });
   return {
-    title: title.toString().slice(0, 160),
+    title: requirePageTitleWithinLimit(title.toString()),
     blocks: normalizedBlocks,
     deletedAttachmentIds: [...deletedAttachmentIds].sort(),
     updateId
@@ -534,8 +538,9 @@ class PageCollaborationSession {
   }
 
   setTitle(value) {
+    const normalized = requirePageTitleWithinLimit(value);
     this.commitLocalMutation(({ title }) => {
-      replaceYText(title, String(value ?? "").slice(0, 160));
+      replaceYText(title, normalized);
     });
   }
 
@@ -787,7 +792,7 @@ class PageCollaborationSession {
     if (this.recoveredLocalRecords.length || this.title.length || this.blocks.size) return;
     const page = this.bootstrapPage ?? this.page;
     this.doc.transact(() => {
-      replaceYText(this.title, String(page.title ?? "").slice(0, 160));
+      replaceYText(this.title, requirePageTitleWithinLimit(page.title));
       for (const block of flattenBlocks(page.blocks ?? [])) {
         const normalized = normalizeBlock(block);
         const map = new this.Y.Map();
@@ -841,7 +846,7 @@ class PageCollaborationSession {
       if (session?.document && typeof session.document === "object") {
         this.bootstrapPage = {
           ...this.page,
-          title: String(session.document.title ?? this.page.title ?? "").slice(0, 160),
+          title: requirePageTitleWithinLimit(session.document.title ?? this.page.title),
           blocks: Array.isArray(session.document.blocks) ? session.document.blocks : this.page.blocks
         };
       }

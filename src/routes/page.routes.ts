@@ -656,6 +656,7 @@ pageRouter.delete(
           "The last observed page version is required before archiving this page."
         );
       }
+      const expectedVersion = body.expectedVersion;
       const result = await transaction(async (client) => {
         const page = await client.queryOne<PageRow>(
           "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
@@ -667,7 +668,7 @@ pageRouter.delete(
           `UPDATE pages
            SET is_archived = 1, edit_version = edit_version + 1
            WHERE id = ? AND owner_id = ? AND edit_version = ?`,
-          [pageId, user.id, body.expectedVersion]
+          [pageId, user.id, expectedVersion]
         );
       });
       if (Number(result.affectedRows) === 0) {

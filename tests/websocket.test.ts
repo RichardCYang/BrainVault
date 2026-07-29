@@ -91,7 +91,9 @@ describe("dependency-free RFC 6455 transport", () => {
     const socket = new FakeSocket();
     const connection = new WebSocketConnection(socket as never, 1024);
     const messages: unknown[] = [];
-    connection.onMessage((message) => messages.push(message));
+    connection.onMessage((message) => {
+      messages.push(message);
+    });
     connection.start();
     socket.emit("data", clientFrame(0x1, Buffer.from("hello")));
     socket.emit("data", clientFrame(0x2, Buffer.from([1, 2, 3])));

@@ -31,6 +31,10 @@ import { createPageCollaboration, decodeCollaborationRecoveryRecords } from "./c
 import { assertCollaborationExitSafe } from "./collaboration-exit-guard.js";
 import { createCollaborationRecoveryStore } from "./collaboration-recovery-store.js";
 import { createPageTransitionLock } from "./page-transition-lock.js";
+import {
+  BLOCK_MARKDOWN_MAX_LENGTH,
+  requirePageTitleWithinLimit
+} from "./editor-content-limits.js";
 
 const tokenKey = "brainvault.token";
 const rootParentKey = "__root__";
@@ -3921,7 +3925,7 @@ function applyCollaborationSnapshot(snapshot, { source = "remote" } = {}) {
   const previousBlockSignature = getCollaborationBlockSignature(state.selectedPage.blocks);
   const nextBlocks = buildCollaborationBlockTree(snapshot.blocks ?? []);
   const nextBlockSignature = getCollaborationBlockSignature(nextBlocks);
-  const nextTitle = String(snapshot.title ?? "").slice(0, 160);
+  const nextTitle = requirePageTitleWithinLimit(snapshot.title);
 
   state.selectedPage.title = nextTitle;
   state.selectedPage.blocks = nextBlocks;
@@ -5308,6 +5312,7 @@ function createTextBlockEditor(block) {
   textarea.name = "markdown";
   textarea.className = "block-row-input";
   textarea.rows = block.type === "MATH" ? 2 : 1;
+  textarea.maxLength = BLOCK_MARKDOWN_MAX_LENGTH;
   textarea.spellcheck = block.type !== "MATH";
   textarea.placeholder = block.type === "DIVIDER"
     ? t("block.dividerPlaceholder")
@@ -7921,7 +7926,7 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
     if (!session?.isReady) return;
-    const title = elements.pageTitle.value.slice(0, 160);
+    const title = elements.pageTitle.value;
     // Keep an empty in-progress field local. The materialized document requires
     // a non-blank title, and the blur handler restores the localized default.
     if (!title.trim()) {

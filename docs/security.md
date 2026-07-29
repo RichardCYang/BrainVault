@@ -59,6 +59,8 @@ The browser also acquires renewable page/workspace transition leases across same
 
 Restore is intentionally destructive for workspace content: current pages, collections, blocks, tag links, and the attachment directory are replaced by the backup state. Login credentials and MFA/passkey security material are not exported and remain unchanged.
 
+The user backup stores the latest materialized note content, not access-control grants or the historical Yjs update log. Restoring an owned page removes its previous sharing grants; invite editors again after verifying the restored content.
+
 `DATA_TRANSFER_MAX_SIZE_MB` limits one uploaded backup ZIP and defaults to 4096 MB. Export streams the archive instead of buffering the complete backup in memory. Only ZIP files produced by BrainVault's data export are accepted.
 
 ## Security defaults

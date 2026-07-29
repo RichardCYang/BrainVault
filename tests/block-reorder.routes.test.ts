@@ -83,6 +83,7 @@ beforeEach(() => {
   database.queryOne.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
     if (sql.includes("FROM users WHERE id = ?")) return user;
     if (sql.includes("FROM pages WHERE id = ? AND owner_id = ?")) return page;
+    if (sql.includes("SELECT * FROM pages WHERE id = ?")) return page;
     if (sql.includes("FROM block_order_mutations")) {
       return database.receipts.get(`${String(params[0])}:${String(params[1])}`);
     }

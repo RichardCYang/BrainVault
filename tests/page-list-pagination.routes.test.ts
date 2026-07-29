@@ -52,9 +52,13 @@ beforeEach(() => {
   database.query.mockReset();
   database.queryOne.mockReset();
   database.execute.mockReset();
-  database.queryOne.mockImplementation(async (sql: string) =>
-    sql.includes("FROM users WHERE id = ?") ? user : undefined
-  );
+  database.queryOne.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
+    if (sql.includes("FROM users WHERE id = ?")) return user;
+    if (sql.includes("FROM pages WHERE id = ? AND owner_id = ?")) {
+      return page(String(params[0]), "2026-07-18 00:00:00.000000");
+    }
+    return undefined;
+  });
   database.query.mockImplementation(async (sql: string) => {
     if (sql.includes("SELECT p.*") && sql.includes("FROM pages p")) return database.pageBatches.shift() ?? [];
     if (sql.includes("FROM page_tags")) return [];
@@ -85,7 +89,7 @@ describe("Page-list pagination", () => {
     const firstListCall = database.query.mock.calls.find(([sql]) => String(sql).includes("SELECT p.*"));
     expect(firstListCall?.[0]).toContain("ORDER BY p.created_at DESC, p.id DESC");
     expect(firstListCall?.[0]).not.toContain("ORDER BY p.updated_at DESC, p.id DESC");
-    expect(firstListCall?.[1]).toEqual([user.id, 0, 3]);
+    expect(firstListCall?.[1]).toEqual([user.id, user.id, user.id, user.id, 0, 3]);
 
     database.query.mockClear();
     // pag_a was edited after the first request. Its updated_at now sorts ahead
@@ -104,6 +108,9 @@ describe("Page-list pagination", () => {
     expect(secondListCall?.[0]).toContain("p.created_at < ?");
     expect(secondListCall?.[0]).not.toContain("p.updated_at < ?");
     expect(secondListCall?.[1]).toEqual([
+      user.id,
+      user.id,
+      user.id,
       user.id,
       0,
       "2026-07-18 11:00:00.000000",

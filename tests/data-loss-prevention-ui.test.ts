@@ -239,7 +239,7 @@ describe("Data-loss prevention integration", () => {
     const changeEnd = client.indexOf("function closeBlockContextMenu", changeStart);
     const changeBody = client.slice(changeStart, changeEnd);
 
-    expect(changeBody).toContain("markBlockDirty(row);");
+    expect(changeBody).toContain("if (!markBlockDirty(row)) return;");
     expect(changeBody).toContain("await saveBlockRow(row, { quiet: true });");
     expect(changeBody).not.toContain("block.metadata = previousMetadata");
     expect(changeBody).not.toContain("setRowCalloutType(row, previousType)");
@@ -434,7 +434,10 @@ describe("Data-loss prevention integration", () => {
     const dragEnd = client.indexOf("function setRowType", dragStart);
     const dragBody = client.slice(dragStart, dragEnd);
     const definitiveBranch = dragBody.indexOf("if (isDefinitiveApiError(error))");
-    const rollback = dragBody.indexOf("reorderBlockSiblingsInState(drag.parentBlockId, previousIds)");
+    const rollback = dragBody.indexOf(
+      "reorderBlockSiblingsInState(drag.parentBlockId, previousIds)",
+      definitiveBranch
+    );
 
     expect(client).toContain('if (!succeeded) throw new Error(t("status.localDraftStorageFailed"));');
     expect(dragBody).toContain("persistBlockOrderDraft(task);");

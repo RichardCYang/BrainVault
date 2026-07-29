@@ -58,6 +58,7 @@ beforeEach(async () => {
   database.queryOne.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
     if (sql.includes("FROM users WHERE id = ?")) return user;
     if (sql.includes("FROM pages WHERE id = ? AND owner_id = ?")) return page;
+    if (sql.includes("SELECT * FROM pages WHERE id = ?")) return page;
     if (sql.includes("SELECT sort_order FROM blocks")) return undefined;
     if (sql.includes("INNER JOIN pages p") || sql.includes("SELECT * FROM blocks WHERE id = ?")) {
       return database.blocks.get(String(params[0]));

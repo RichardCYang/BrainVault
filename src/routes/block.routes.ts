@@ -272,7 +272,8 @@ blockRouter.post(
       if (!file) throw new ApiError(400, "ATTACHMENT_FILE_REQUIRED", "Select a file to attach");
 
       const body = attachmentFormSchema.parse(req.body);
-      await assertAccessiblePage(pageId, user.id);
+      const access = await assertAccessiblePage(pageId, user.id);
+      const ownerId = access.page.owner_id;
       await assertParentBlock(body.parentBlockId, pageId);
 
       const id = createId("blk");
@@ -288,21 +289,27 @@ blockRouter.post(
       let pageContentVersion = 1;
       try {
         await transaction(async (client) => {
+          // Export/restore and attachment cleanup lock the owner before page rows.
+          // Keep the same global order here so an upload cannot deadlock against
+          // a workspace snapshot while its temporary file is waiting to commit.
+          const lockedUser = await client.queryOne<{ id: string }>(
+            "SELECT id FROM users WHERE id = ? FOR UPDATE",
+            [ownerId]
+          );
+          if (!lockedUser) throw notFound("Page owner");
           const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
+          if (lockedAccess.page.owner_id !== ownerId) {
+            throw new ApiError(409, "PAGE_OWNER_CHANGED", "The page owner changed while the attachment was uploading");
+          }
           if (lockedAccess.page.is_archived) {
             throw new ApiError(409, "PAGE_ARCHIVED", "Restore the page before adding an attachment");
           }
-          const lockedUser = await client.queryOne<{ id: string }>(
-            "SELECT id FROM users WHERE id = ? FOR UPDATE",
-            [lockedAccess.page.owner_id]
-          );
-          if (!lockedUser) throw notFound("Page owner");
           await assertParentBlock(body.parentBlockId, pageId, client);
           const lastBlock = await client.queryOne<{ sort_order: number }>(
             "SELECT sort_order FROM blocks WHERE page_id = ? AND parent_block_id <=> ? ORDER BY sort_order DESC LIMIT 1",
             [pageId, body.parentBlockId]
           );
-          movedPath = await moveAttachmentFile(file.path, lockedAccess.page.owner_id, id);
+          movedPath = await moveAttachmentFile(file.path, ownerId, id);
           cleanupPath = null;
           await client.execute(
             `INSERT INTO blocks (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata)

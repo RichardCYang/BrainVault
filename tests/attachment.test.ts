@@ -80,8 +80,22 @@ describe("Attachment integration surface", () => {
 
     expect(routeSource).toContain('attachmentUpload.single("file")');
     expect(routeSource).toContain('"/blocks/:blockId/attachment"');
-    expect(routeSource).toContain("removeDeletedAttachmentFiles(user.id, deletion.attachmentIds)");
-    expect(pageRouteSource).toContain("removeDeletedAttachmentFiles(user.id, attachmentIds)");
+    expect(routeSource).toContain("removeDeletedAttachmentFiles(deletion.ownerId, deletion.attachmentIds)");
+    expect(pageRouteSource).toContain("removeDeletedAttachmentFiles(user.id, deletion.attachmentIds)");
+    const uploadStart = routeSource.indexOf('"/pages/:pageId/attachments"');
+    const uploadEnd = routeSource.indexOf('"/blocks/:blockId/attachment"', uploadStart);
+    const uploadSource = routeSource.slice(uploadStart, uploadEnd);
+    const userLock = uploadSource.indexOf('"SELECT id FROM users WHERE id = ? FOR UPDATE"');
+    const pageLock = uploadSource.indexOf(
+      "const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true })"
+    );
+    const fileMove = uploadSource.indexOf("movedPath = await moveAttachmentFile");
+    const blockInsert = uploadSource.indexOf("INSERT INTO blocks");
+    expect(userLock).toBeGreaterThanOrEqual(0);
+    expect(pageLock).toBeGreaterThan(userLock);
+    expect(fileMove).toBeGreaterThan(pageLock);
+    expect(blockInsert).toBeGreaterThan(fileMove);
+    expect(uploadSource).toContain("lockedAccess.page.owner_id !== ownerId");
     expect(await readFile("src/lib/attachments.ts", "utf8")).toContain("await handle.sync()");
     expect(pageRouteSource).toContain('row.type === "ATTACHMENT"');
     expect(appSource).toContain('{ type: "ATTACHMENT", command: "/file", icon: "attachment" }');

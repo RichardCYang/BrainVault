@@ -81,7 +81,7 @@ const blockSchema = z.object({
   page_id: idSchema,
   parent_block_id: idSchema.nullable(),
   type: z.enum(blockTypes),
-  markdown: z.string(),
+  markdown: z.string().max(20_000),
   html_cache: z.string().nullable(),
   checked: z.union([z.literal(0), z.literal(1)]),
   sort_order: z.number().int(),

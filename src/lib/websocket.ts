@@ -51,7 +51,7 @@ function truncateCloseReason(reason: string) {
 export class WebSocketConnection {
   private readonly socket: Socket;
   private readonly maxMessageBytes: number;
-  private readBuffer = Buffer.alloc(0);
+  private readBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   private fragmentOpcode: 1 | 2 | null = null;
   private fragmentParts: Buffer[] = [];
   private fragmentBytes = 0;

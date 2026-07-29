@@ -100,6 +100,8 @@ The ZIP contains the account workspace graph: normal and archived pages, collect
 
 Restore replaces the current account's workspace content. The login username, password hash, authenticator secret, passkeys, and other security credentials are not exported and remain unchanged.
 
+Sharing grants and the historical Yjs update log are not part of the user backup. Collaborative content must be materialized before export, and restored owned pages start without invited editors.
+
 Validation, staging, digest checks, transaction behavior, and archive limits are documented in [Security](security.md#backup-and-restore-safety).
 
 ## PDF export

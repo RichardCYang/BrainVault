@@ -80,6 +80,9 @@ beforeEach(() => {
     if (sql.includes("FROM pages WHERE id = ? AND owner_id = ?")) {
       return params[0] === database.page.id ? database.page : undefined;
     }
+    if (sql.includes("SELECT * FROM pages WHERE id = ?")) {
+      return params[0] === database.page.id ? database.page : undefined;
+    }
     if (sql.includes("INNER JOIN pages p") && sql.includes("WHERE b.id = ?")) {
       return params[0] === database.block.id ? database.block : undefined;
     }
