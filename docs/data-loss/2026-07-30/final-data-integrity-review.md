@@ -6,6 +6,8 @@
 - Original archive: `BrainVault.zip`
 - Scope: MariaDB writes, deletion and transactions; page/block hierarchy; Yjs persistence, compaction and materialization; browser recovery; attachment lifecycle; full backup/restore; and migration rerun safety
 
+> **Current-workspace addendum:** A later pass over the attached working tree found and corrected a second High-severity recovery defect involving archived-page sharing grants. See [Archived-page sharing backup round-trip integrity](archived-share-backup-roundtrip-integrity.md). That later finding supersedes the original statement below that no other High defect had been reproduced.
+
 ## 1. Final conclusion
 
 The review found and corrected one new reproducible data-integrity defect.
@@ -22,7 +24,7 @@ Even when attachment bytes, size, CRC32, and SHA-256 in the backup ZIP were all 
 
 After a successful restore, the old workspace was replaced and the file was imported to disk, but the download API treated it as `Attachment file not found` because `metadata.attachment` could not be interpreted. The bytes remained on the server yet could not be opened or downloaded through BrainVault. A later normal block or page deletion could then clean up the file and remove the remaining recovery opportunity.
 
-No other new Critical or High defect was reproduced that bypassed the existing server SQL, Yjs, attachment, restore, or browser-storage defenses.
+At the end of this attachment-focused pass, no other new Critical or High defect had been reproduced. The later current-workspace addendum above records the subsequently discovered archived-share backup round-trip defect.
 
 ## 2. Reproduction
 

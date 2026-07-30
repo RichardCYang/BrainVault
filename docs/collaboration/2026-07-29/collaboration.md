@@ -2,7 +2,7 @@
 
 BrainVault page owners can share an ordinary page with another existing BrainVault account by login ID. The owner and every invited editor can then edit the page title and block document at the same time.
 
-Collections and archived pages cannot be shared. Only the page owner can add or remove collaborators, archive the page, change page-level navigation metadata, or permanently delete the page. Invited editors can read and edit the shared page and use its authenticated attachment upload/download flow, but they cannot manage access.
+Collections cannot be shared. Archived pages cannot open live collaboration or accept a new grant, but archiving preserves any existing grant while live collaboration is suspended so restoring the page reactivates the prior access list. Only the page owner can add or remove collaborators, archive the page, change page-level navigation metadata, or permanently delete the page. Invited editors can read and edit the shared page and use its authenticated attachment upload/download flow, but they cannot manage access.
 
 ## Collaboration flow
 
@@ -32,7 +32,7 @@ A materialization request includes only the server-issued document epoch and the
 
 Every normal update and compaction write also holds the page and collaboration-state row locks while comparing the room's in-memory `maxUpdateId` with the durable `MAX(page_yjs_updates.id)`. A process-local room that missed an update committed by another application process is invalidated before any insert or history deletion. Connected clients receive close code `1011`, reconnect, replay durable history, and resend their still-unacknowledged full-document recovery state. Snapshot writes retain the additional exact `baseUpdateId` check. This is a fail-closed integrity fence; it does not provide cross-process live fan-out.
 
-When the last editor grant is removed, BrainVault requires the latest accepted Yjs update to be materialized by the current server implementation before deleting collaboration history. The same provenance gate protects archive, permanent deletion, export, and workspace restore. Removing a collaborator immediately closes that user's active sockets. Archiving or deleting a page closes the entire room.
+When the last editor grant is removed, BrainVault requires the latest accepted Yjs update to be materialized by the current server implementation before deleting collaboration history. The same provenance gate protects archive, permanent deletion, export, and workspace restore. Removing a collaborator immediately closes that user's active sockets. Archiving closes the entire room but preserves the grants while live collaboration is suspended; permanent deletion removes the page and its grants.
 
 ## Document replacement and offline recovery
 

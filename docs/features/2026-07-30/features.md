@@ -8,7 +8,7 @@ Pages and collections support Unicode Emoji 17 icons with Korean/English search,
 
 ## Page sharing and simultaneous editing
 
-Open an ordinary page and select **Share** to add an existing BrainVault account by login ID. The page owner controls the access list; invited users receive edit access to that page but cannot add/remove collaborators, move it in the owner’s hierarchy, archive it, or permanently delete it. Collections and archived pages are not shareable.
+Open an ordinary page and select **Share** to add an existing BrainVault account by login ID. The page owner controls the access list; invited users receive edit access to that page but cannot add/remove collaborators, move it in the owner’s hierarchy, archive it, or permanently delete it. Collections cannot be shared. Archived pages cannot start or use live collaboration, but an existing access list is retained and live collaboration becomes available again after the owner restores the page.
 
 While at least one collaborator is configured, the page title and block document are synchronized through a Yjs shared document over an authenticated WebSocket connection. Concurrent text and structural changes merge automatically, active collaborators and their current editing location are shown in the page header, and edits made during a temporary disconnect are merged after reconnection.
 
@@ -98,7 +98,7 @@ Open **Settings → Data** to download a complete BrainVault backup or restore a
 
 The ZIP contains the account workspace graph: normal and archived pages, collections, nested blocks, block metadata, page/tag relationships, page sharing grants identified by collaborator login ID, supported profile preferences, and every attachment as its original byte sequence. Before export, BrainVault coordinates same-origin tabs and refuses to create an incomplete archive while an owned page still has an unsaved direct draft or an unconfirmed real-time recovery snapshot in browser storage.
 
-Restore replaces the current account's workspace content. The login username, password hash, authenticator secret, passkeys, and other security credentials are not exported and remain unchanged. Every collaborator referenced by a current-format backup must already exist on the destination server; otherwise restore fails before any workspace data is replaced. For legacy backups that predate sharing export, grants already present on matching page IDs are preserved instead of being silently removed.
+Restore replaces the current account's workspace content. The login username, password hash, authenticator secret, passkeys, and other security credentials are not exported and remain unchanged. Every collaborator referenced by a current-format backup must already exist on the destination server; otherwise restore fails before any workspace data is replaced. For legacy backups that predate sharing export, grants already present on matching ordinary page IDs, including retained grants on archived pages, are preserved instead of being silently removed.
 
 The historical Yjs update log is not included. Collaborative content must be fully materialized before export, and the restored pages receive a fresh collaboration generation while their exported sharing grants are recreated.
 

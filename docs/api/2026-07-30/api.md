@@ -48,9 +48,9 @@ Most API routes require a bearer token returned by the register or login endpoin
 
 ## Backup sharing integrity
 
-Current-format manifests include `data.pageShares` entries containing the page ID, normalized collaborator login ID, `EDIT` permission, and creation timestamp. Import resolves every collaborator under a database lock before destructive replacement. A missing account, self-share, duplicate grant, archived/collection target, or unknown page causes a validation failure with no data replacement.
+Current-format manifests include `data.pageShares` entries containing the page ID, normalized collaborator login ID, `EDIT` permission, and creation timestamp. Import resolves every collaborator under a database lock before destructive replacement. A missing account, self-share, duplicate grant, collection target, or unknown page causes a validation failure with no data replacement. An archived ordinary page may carry a retained grant because archiving suspends live collaboration without deleting the access list; restore preserves that grant for a later unarchive.
 
-Backups created before `pageShares` was added remain accepted. During those legacy restores, BrainVault snapshots the existing grants and reinserts the ones whose page IDs survive as shareable pages, rather than losing them through the `pages` → `page_shares` cascade. The import response reports `counts.shares` and `sharing.mode` (`backup` or `legacy-preserved`).
+Backups created before `pageShares` was added remain accepted. During those legacy restores, BrainVault snapshots the existing grants and reinserts the ones whose ordinary page IDs survive, including archived pages with retained grants, rather than losing them through the `pages` → `page_shares` cascade. The import response reports `counts.shares` and `sharing.mode` (`backup` or `legacy-preserved`).
 
 ## Collaboration materialization integrity
 

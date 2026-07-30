@@ -436,6 +436,44 @@ describe("Complete data transfer routes", () => {
     await expect(readFile(getAttachmentFilePath(userId, blockId))).resolves.toEqual(originalBytes);
   });
 
+  it("round-trips retained sharing grants on archived ordinary pages", async () => {
+    store.pages.get(pageId)!.is_archived = 1;
+    store.shares.push({
+      page_id: pageId,
+      user_id: "usr_collaborator",
+      permission: "EDIT",
+      shared_by: userId,
+      shared_at: "2026-07-17 00:00:20.000000"
+    });
+
+    const exported = await request(createApp())
+      .get("/api/data/export")
+      .set("Authorization", `Bearer ${token}`)
+      .buffer(true)
+      .parse(binaryParser)
+      .expect(200);
+
+    store.shares = [];
+    const restored = await request(createApp())
+      .post("/api/data/import")
+      .set("Authorization", `Bearer ${token}`)
+      .attach("backup", exported.body as Buffer, {
+        filename: "BrainVault-backup.zip",
+        contentType: "application/zip"
+      })
+      .expect(200);
+
+    expect(restored.body.sharing).toEqual({ mode: "backup", count: 1 });
+    expect(store.pages.get(pageId)?.is_archived).toBe(1);
+    expect(store.shares).toEqual([{
+      page_id: pageId,
+      user_id: "usr_collaborator",
+      permission: "EDIT",
+      shared_by: userId,
+      shared_at: "2026-07-17 00:00:20.000000"
+    }]);
+  });
+
   it("aborts when sharing access changes while a restore is being staged", async () => {
     const exported = await request(createApp())
       .get("/api/data/export")

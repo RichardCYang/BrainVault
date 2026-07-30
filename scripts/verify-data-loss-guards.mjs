@@ -305,6 +305,32 @@ assert(
   "The backup page-share loss reproduction did not prove both vulnerable and fixed states"
 );
 
+assert(
+  dataTransferSource.includes('import { isRestorablePageShareTarget } from "./page-share-integrity.js";')
+    && dataTransferSource.includes("if (!isRestorablePageShareTarget(page))")
+    && dataTransferSource.includes("return isRestorablePageShareTarget(page);")
+    && !dataTransferSource.includes("page.is_collection || page.is_archived")
+    && !dataTransferSource.includes("!page.is_collection && !page.is_archived"),
+  "A backup exported after archiving a shared page can still reject its own retained grant during restore"
+);
+
+const archivedShareBackupLossReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [
+    "--experimental-strip-types",
+    fileURLToPath(new URL("./reproduce-archived-share-backup-loss.mjs", import.meta.url))
+  ],
+  { encoding: "utf8" }
+));
+assert(
+  archivedShareBackupLossReproduction.vulnerability.recoveryFalseSuccessReproduced
+    && archivedShareBackupLossReproduction.fixed.importerAcceptsRetainedArchivedGrant
+    && archivedShareBackupLossReproduction.fixed.collectionShareStillRejected
+    && archivedShareBackupLossReproduction.fixed.currentAndLegacyRestoreUseSamePolicy
+    && archivedShareBackupLossReproduction.fixed.recoveryFalseSuccessClosed,
+  "The archived-share backup reproduction did not prove both vulnerable and fixed states"
+);
+
 const backupMetadataLossReproduction = JSON.parse(execFileSync(
   process.execPath,
   [
@@ -1249,5 +1275,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified backup ZIP integrity, lossless page-share backup/restore, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified backup ZIP integrity, lossless page-share backup/restore, archived-share backup round-trip integrity, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, and fail-closed recovery inspection."
 );

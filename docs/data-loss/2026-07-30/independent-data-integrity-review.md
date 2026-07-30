@@ -6,6 +6,8 @@
 - Scope: complete attached source, migrations, browser recovery stores, Yjs collaboration server, attachment storage, backup/restore, and verification/reproduction scripts
 - Baseline `.git` manifest SHA-256: `9723dd233f0a9d8b1394bce225f62b04a81f1c12731c6a448e74ef450da9fec9`
 
+> **Historical review note:** This report describes the audited Git HEAD above. A later review of the attached working tree found and corrected a High-severity archived-share backup round-trip defect; see [Archived-page sharing backup round-trip integrity](archived-share-backup-roundtrip-integrity.md).
+
 ## 1. Conclusion
 
 No new **Critical** data-loss path—defined here as immediate permanent loss through remote or normal use—was reproduced. The current code already includes strong defenses such as serialized page/block writes, optimistic version checks, a durable Yjs log, server-authoritative materialization, restore journals and generation markers, and per-user attachment locks.

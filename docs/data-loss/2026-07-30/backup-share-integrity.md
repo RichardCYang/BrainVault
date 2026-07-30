@@ -89,7 +89,8 @@ Manifest relationship validation now enforces:
 
 - No duplicate `(page_id, lower(shared_username))` pairs
 - The shared page must exist in the manifest
-- Collections and archived pages cannot receive sharing relationships
+- Collections cannot receive sharing relationships
+- Archived ordinary pages may retain sharing relationships while live collaboration is suspended so an export can be restored losslessly
 - Permission must be `EDIT`
 
 ### 3. Collaborator resolution and locking before destructive deletion
@@ -110,8 +111,8 @@ A backup without `pageShares` cannot reveal the sharing state that existed when 
 
 - The backup contains the same page ID
 - The page is not a collection
-- The page is not archived
 - The collaborator account still exists
+- Archived ordinary pages remain eligible because their grants are retained rather than deleted
 
 The restore response reports `sharing.mode` as `legacy-preserved` for this path.
 
@@ -133,7 +134,7 @@ Dependency-independent verification completed after the correction:
 
 ```text
 node --experimental-strip-types --test tests/*.node.test.mjs
-36 tests passed, 0 failed
+50 tests passed, 0 failed
 ```
 
 ```text
@@ -143,7 +144,7 @@ OK
 
 ```text
 node --experimental-strip-types scripts/verify-collaboration.mjs
-OK — source/protocol checks and syntax for 156 files
+OK — source/protocol checks and syntax for 166 files
 ```
 
 ```text
@@ -154,7 +155,17 @@ vulnerable state reproduced; fixed new/legacy paths preserved shares
 Added tests:
 
 - `tests/backup-share-integrity.node.test.mjs`
-- Sharing-relationship ZIP round-trip coverage in `tests/data-transfer.routes.test.ts`
+- `tests/archived-share-backup-integrity.node.test.mjs`
+- Sharing-relationship ZIP round-trip coverage in `tests/data-transfer.routes.test.ts`, including archived ordinary pages
+
+## Archived-page round-trip addendum
+
+A later review found that the exporter could include a retained grant for an archived ordinary page while the importer rejected the same relationship. This made an application-generated ZIP self-unrestorable and caused legacy restore to drop the retained grant through the page foreign-key cascade.
+
+The corrected policy treats archive as a collaboration suspension rather than grant deletion. Both current-format validation and legacy-grant preservation now accept ordinary archived pages while continuing to reject collections. The dedicated report and reproducer are:
+
+- [Archived-page sharing backup round-trip integrity](archived-share-backup-roundtrip-integrity.md)
+- `npm run reproduce:archived-share-backup-loss`
 
 ## Existing major defenses rechecked during the audit
 
@@ -198,13 +209,15 @@ At minimum, verify these scenarios against a MariaDB test account:
 2. Failure before deletion when the destination lacks a collaborator account
 3. Preservation of the current grant when restoring a legacy manifest with `pageShares` removed
 4. Journal recovery after server termination during restore, with database, attachment, and share state remaining consistent
-5. Restore-generation fencing of stale Yjs documents with two server instances and open collaboration tabs
+5. Export/import round-trip for an archived ordinary page with a retained editor grant
+6. Restore-generation fencing of stale Yjs documents with two server instances and open collaboration tabs
 
 ## Changed files
 
 Core code:
 
 - `src/lib/data-transfer.ts`
+- `src/lib/page-share-integrity.ts`
 - `src/routes/data.routes.ts`
 - `public/app.js`
 - `public/i18n.js`
@@ -212,9 +225,11 @@ Core code:
 Tests and reproduction:
 
 - `scripts/reproduce-backup-share-loss.mjs`
+- `scripts/reproduce-archived-share-backup-loss.mjs`
 - `scripts/verify-data-loss-guards.mjs`
 - `scripts/verify-collaboration.mjs`
 - `tests/backup-share-integrity.node.test.mjs`
+- `tests/archived-share-backup-integrity.node.test.mjs`
 - `tests/data-transfer.routes.test.ts`
 - `package.json`
 

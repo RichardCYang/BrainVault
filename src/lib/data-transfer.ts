@@ -15,6 +15,7 @@ import { needsCollaborationMaterialization } from "./collaboration-protocol.js";
 import { db, transaction, type DbClient } from "./db.js";
 import { ApiError } from "./http.js";
 import { createId } from "./id.js";
+import { isRestorablePageShareTarget } from "./page-share-integrity.js";
 import { renderBlockHtml } from "./markdown.js";
 import { blockSortOrderLimits } from "./block-order-integrity.js";
 import {
@@ -456,8 +457,8 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
   for (const share of pageShares) {
     const page = pageById.get(share.page_id);
     if (!page) invalidBackup(`Shared page is missing: ${share.page_id}`);
-    if (page.is_collection || page.is_archived) {
-      invalidBackup(`Shared page cannot be a collection or archived: ${share.page_id}`);
+    if (!isRestorablePageShareTarget(page)) {
+      invalidBackup(`Shared page cannot be a collection: ${share.page_id}`);
     }
   }
 
@@ -728,12 +729,13 @@ async function prepareRestoreSharingPlan(
 
   if (!backupShares) {
     // Legacy backup manifests did not contain page_shares. Preserve the current
-    // grants for page IDs that survive the restore instead of silently deleting
-    // them through the pages -> page_shares ON DELETE CASCADE relationship.
+    // grants for ordinary page IDs that survive the restore, including retained
+    // grants on archived pages, instead of silently deleting them through the
+    // pages -> page_shares ON DELETE CASCADE relationship.
     const shares = currentShares
       .filter((share) => {
         const page = pageById.get(share.page_id);
-        return Boolean(page && !page.is_collection && !page.is_archived);
+        return isRestorablePageShareTarget(page);
       })
       .map((share) => ({
         pageId: share.page_id,
