@@ -198,6 +198,14 @@ const materializationMigrationSource = readFileSync(
   new URL("../migrations/022_server_authoritative_collaboration_materialization.sql", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const baselineSchemaSource = readFileSync(
+  new URL("../migrations/001_init.sql", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
+const blockParentIntegrityMigrationSource = readFileSync(
+  new URL("../migrations/023_blocks_parent_page_integrity.sql", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 
 assert(
   blockOrderIntegritySource.includes("max: 2_147_483_647")
@@ -218,6 +226,33 @@ assert(
     && zipSource.includes("ZIP source SHA-256 changed while exporting")
     && dataTransferSource.includes("sha256: item.inspection.sha256"),
   "Backup ZIP creation can still trust stale pre-stream attachment checksums"
+);
+
+assert(
+  baselineSchemaSource.includes("CONSTRAINT uq_blocks_id_page UNIQUE (id, page_id)")
+    && baselineSchemaSource.includes(
+      "CONSTRAINT fk_blocks_parent_page FOREIGN KEY (parent_block_id, page_id) REFERENCES blocks(id, page_id) ON DELETE CASCADE"
+    )
+    && !baselineSchemaSource.includes(
+      "FOREIGN KEY (parent_block_id) REFERENCES blocks(id) ON DELETE CASCADE"
+    )
+    && blockParentIntegrityMigrationSource.indexOf("ADD CONSTRAINT fk_blocks_parent_page")
+      < blockParentIntegrityMigrationSource.indexOf("DROP FOREIGN KEY fk_blocks_parent")
+    && blockParentIntegrityMigrationSource.includes("information_schema.TABLE_CONSTRAINTS"),
+  "A corrupted cross-page block parent can still cascade-delete unrelated page data"
+);
+
+const crossPageParentReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL("./reproduce-cross-page-parent-cascade-loss.mjs", import.meta.url))],
+  { encoding: "utf8" }
+));
+assert(
+  crossPageParentReproduction.vulnerability.permanentCrossPageLossReproduced
+    && crossPageParentReproduction.fixed.crossPageParentRejected
+    && crossPageParentReproduction.fixed.validSamePageCascadePreserved
+    && crossPageParentReproduction.fixed.permanentCrossPageLossClosed,
+  "The cross-page parent cascade reproduction did not prove both vulnerable and fixed states"
 );
 
 const backupStreamIntegrityReproduction = JSON.parse(execFileSync(
@@ -1068,5 +1103,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified backup ZIP integrity, fail-closed structured metadata preservation, database fallback reference integrity, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified backup ZIP integrity, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, and fail-closed recovery inspection."
 );

@@ -18,6 +18,7 @@ The root [README](../README.md) is intentionally short. Detailed setup, operatio
 | [구조화 블록 데이터 무결성 감사 2026-07-30 (한국어)](data-loss-audit-2026-07-30-structured-metadata-ko.md) | BOOKMARK/AI_CHAT 원본 metadata 자동 축약, DATABASE fallback 참조 불일치, 재현·수정·회귀 검증 |
 | [백업 스트림 무결성 감사 2026-07-30 (한국어)](data-loss-audit-2026-07-30-backup-stream-integrity-ko.md) | 동일 크기 첨부파일 변경으로 완성되지만 복원 불가능한 ZIP이 생성되는 결함, 스트리밍 CRC32·SHA-256 재검증, 재현·회귀 검증 |
 | [독립 데이터 무결성 심층 감사 2026-07-30 (한국어)](data-loss-audit-2026-07-30-independent-review-ko.md) | 데이터베이스·Yjs·첨부·백업/복원·마이그레이션·브라우저 복구의 전체 검토 범위, 신규 결함, 수정 및 검증 제한 |
+| [교차 페이지 블록 부모 무결성 재감사 2026-07-30 (한국어)](data-loss-audit-2026-07-30-cross-page-parent-ko.md) | 단일 열 부모 FK가 손상 상태에서 다른 페이지 블록까지 cascade 삭제할 수 있는 방어 공백, 복합 FK 수정, 재현·회귀 검증 |
 | [Configuration](configuration.md) | Reviewing every supported environment variable and its default behavior |
 | [Security](security.md) | Configuring MFA and understanding the project security boundaries and production requirements |
 | [API](api.md) | Finding route summaries, authentication expectations, the health endpoint, and the OpenAPI document |
