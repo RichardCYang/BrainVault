@@ -1,0 +1,252 @@
+TAP version 13
+# Subtest: complete backup includes and restores page sharing relationships
+ok 1 - complete backup includes and restores page sharing relationships
+  ---
+  duration_ms: 6.951822
+  type: 'test'
+  ...
+# Subtest: legacy backup cannot silently erase surviving current shares
+ok 2 - legacy backup cannot silently erase surviving current shares
+  ---
+  duration_ms: 0.616407
+  type: 'test'
+  ...
+# Subtest: new backup round-trip restores the backed-up collaborator
+ok 3 - new backup round-trip restores the backed-up collaborator
+  ---
+  duration_ms: 0.153789
+  type: 'test'
+  ...
+# (node:3788) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: ZIP export rejects a same-size staged-file mutation before finalization
+ok 4 - ZIP export rejects a same-size staged-file mutation before finalization
+  ---
+  duration_ms: 20.183085
+  type: 'test'
+  ...
+# Subtest: ZIP export accepts and finalizes bytes matching the inspected CRC32 and SHA-256
+ok 5 - ZIP export accepts and finalizes bytes matching the inspected CRC32 and SHA-256
+  ---
+  duration_ms: 0.641454
+  type: 'test'
+  ...
+# Subtest: ZIP export rejects a SHA-256 mismatch even when the CRC32 matches the streamed bytes
+ok 6 - ZIP export rejects a SHA-256 mismatch even when the CRC32 matches the streamed bytes
+  ---
+  duration_ms: 0.302019
+  type: 'test'
+  ...
+# Subtest: ZIP export validates caller-provided buffer CRC32 instead of trusting it
+ok 7 - ZIP export validates caller-provided buffer CRC32 instead of trusting it
+  ---
+  duration_ms: 0.278074
+  type: 'test'
+  ...
+# (node:3789) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: block sort-order boundaries match MariaDB signed INT storage
+ok 8 - block sort-order boundaries match MariaDB signed INT storage
+  ---
+  duration_ms: 0.897555
+  type: 'test'
+  ...
+# Subtest: automatic append fails closed instead of overflowing INT
+ok 9 - automatic append fails closed instead of overflowing INT
+  ---
+  duration_ms: 0.14789
+  type: 'test'
+  ...
+# Subtest: non-strict endpoint coercion can erase intended block order
+ok 10 - non-strict endpoint coercion can erase intended block order
+  ---
+  duration_ms: 6.485719
+  type: 'test'
+  ...
+# Subtest: every block-order write surface shares the bounded contract
+ok 11 - every block-order write surface shares the bounded contract
+  ---
+  duration_ms: 16.858539
+  type: 'test'
+  ...
+# Subtest: an existing attachment keeps its durable Yjs position while canonical content wins
+ok 12 - an existing attachment keeps its durable Yjs position while canonical content wins
+  ---
+  duration_ms: 0.755493
+  type: 'test'
+  ...
+# Subtest: a genuinely missing attachment adopts the relational server position
+ok 13 - a genuinely missing attachment adopts the relational server position
+  ---
+  duration_ms: 0.110784
+  type: 'test'
+  ...
+# Subtest: an existing attachment never falls back to a stale SQL parent
+ok 14 - an existing attachment never falls back to a stale SQL parent
+  ---
+  duration_ms: 0.095042
+  type: 'test'
+  ...
+# Subtest: self-parenting and invalid sort values are normalized fail-closed
+ok 15 - self-parenting and invalid sort values are normalized fail-closed
+  ---
+  duration_ms: 0.20147
+  type: 'test'
+  ...
+# (node:3831) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: an exact first Yjs document is accepted independent of block and metadata key order
+ok 16 - an exact first Yjs document is accepted independent of block and metadata key order
+  ---
+  duration_ms: 1.291772
+  type: 'test'
+  ...
+# Subtest: a syntactically valid but incomplete bootstrap is rejected before durability
+ok 17 - a syntactically valid but incomplete bootstrap is rejected before durability
+  ---
+  duration_ms: 0.243382
+  type: 'test'
+  ...
+# Subtest: changed content, extra blocks, and bootstrap attachment tombstones are rejected
+ok 18 - changed content, extra blocks, and bootstrap attachment tombstones are rejected
+  ---
+  duration_ms: 0.174289
+  type: 'test'
+  ...
+# Subtest: a changed title is rejected even when every block matches
+ok 19 - a changed title is rejected even when every block matches
+  ---
+  duration_ms: 0.142382
+  type: 'test'
+  ...
+# Subtest: invalid relational metadata fails closed instead of being normalized away
+ok 20 - invalid relational metadata fails closed instead of being normalized away
+  ---
+  duration_ms: 0.495036
+  type: 'test'
+  ...
+# Subtest: collaborative block deletion is fenced by cross-tab recovery and durable materialization
+ok 21 - collaborative block deletion is fenced by cross-tab recovery and durable materialization
+  ---
+  duration_ms: 3.034564
+  type: 'test'
+  ...
+# Subtest: attachment replacement cannot bypass the collaborative deletion fence
+ok 22 - attachment replacement cannot bypass the collaborative deletion fence
+  ---
+  duration_ms: 0.1946
+  type: 'test'
+  ...
+# Subtest: the recovery guard closes the deterministic delete-before-ack loss window
+ok 23 - the recovery guard closes the deterministic delete-before-ack loss window
+  ---
+  duration_ms: 0.690657
+  type: 'test'
+  ...
+# Subtest: a rejected recovery write prevents the live mutation
+ok 24 - a rejected recovery write prevents the live mutation
+  ---
+  duration_ms: 0.9006
+  type: 'test'
+  ...
+# Subtest: a thrown storage error is preserved as the recovery failure cause
+ok 25 - a thrown storage error is preserved as the recovery failure cause
+  ---
+  duration_ms: 0.17481
+  type: 'test'
+  ...
+# Subtest: the full recovery candidate becomes durable before the live update is exposed
+ok 26 - the full recovery candidate becomes durable before the live update is exposed
+  ---
+  duration_ms: 1.219704
+  type: 'test'
+  ...
+# Subtest: an unexpected live-apply failure occurs only after recovery is durable
+ok 27 - an unexpected live-apply failure occurs only after recovery is durable
+  ---
+  duration_ms: 0.165315
+  type: 'test'
+  ...
+# Subtest: empty updates are rejected before storage or live state is touched
+ok 28 - empty updates are rejected before storage or live state is touched
+  ---
+  duration_ms: 0.138296
+  type: 'test'
+  ...
+# Subtest: block parent foreign key is page-scoped and migration is replay-safe
+ok 29 - block parent foreign key is page-scoped and migration is replay-safe
+  ---
+  duration_ms: 36.156733
+  type: 'test'
+  ...
+# Subtest: collaboration title validation preserves an exact-limit value
+ok 30 - collaboration title validation preserves an exact-limit value
+  ---
+  duration_ms: 1.040909
+  type: 'test'
+  ...
+# Subtest: collaboration title validation rejects rather than truncates an over-limit value
+ok 31 - collaboration title validation rejects rather than truncates an over-limit value
+  ---
+  duration_ms: 0.380115
+  type: 'test'
+  ...
+# Subtest: collaboration block validation rejects rather than truncates an over-limit value
+ok 32 - collaboration block validation rejects rather than truncates an over-limit value
+  ---
+  duration_ms: 0.135331
+  type: 'test'
+  ...
+# Subtest: collaboration block validation preserves an exact-limit value
+ok 33 - collaboration block validation preserves an exact-limit value
+  ---
+  duration_ms: 1.015431
+  type: 'test'
+  ...
+# (node:3893) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: normalized structured metadata remains accepted at exact limits
+ok 34 - normalized structured metadata remains accepted at exact limits
+  ---
+  duration_ms: 2.710593
+  type: 'test'
+  ...
+# Subtest: JSON text metadata is decoded and serialized exactly once
+ok 35 - JSON text metadata is decoded and serialized exactly once
+  ---
+  duration_ms: 0.844196
+  type: 'test'
+  ...
+# Subtest: database fallback views never retain references to missing properties
+ok 36 - database fallback views never retain references to missing properties
+  ---
+  duration_ms: 1.611267
+  type: 'test'
+  ...
+# Subtest: AI metadata that the old save path silently truncated is rejected atomically
+ok 37 - AI metadata that the old save path silently truncated is rejected atomically
+  ---
+  duration_ms: 0.532882
+  type: 'test'
+  ...
+# Subtest: collection overflows that editor normalizers would discard fail closed
+ok 38 - collection overflows that editor normalizers would discard fail closed
+  ---
+  duration_ms: 0.521666
+  type: 'test'
+  ...
+# Subtest: save routes preserve authoritative metadata instead of storing normalized projections
+ok 39 - save routes preserve authoritative metadata instead of storing normalized projections
+  ---
+  duration_ms: 8.107982
+  type: 'test'
+  ...
+1..39
+# tests 39
+# suites 0
+# pass 39
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 345.726607

@@ -1,0 +1,20 @@
+BrainVault collaboration block-delete integrity audit
+Date: 2026-07-30
+Baseline HEAD: 46f8d825449c29ede71500391cb706e7046141d5
+
+Finding
+- High: collaborative block deletion and empty-block attachment replacement could bypass same-origin peer Yjs recovery inspection.
+- Fix: owner/page cross-tab transition, peer flush, fail-closed recovery check, and materialization-before-unlock.
+
+Validation
+- npm run lockfile:check: PASS (347 approved registry URLs)
+- node --experimental-strip-types --test tests/*.node.test.mjs: PASS (39/39)
+- node scripts/verify-data-loss-guards.mjs: PASS
+- node --experimental-strip-types scripts/verify-collaboration.mjs: PASS (158 files)
+- node scripts/reproduce-collaboration-block-delete-recovery-loss.mjs: PASS
+- public/app.js syntax: PASS
+- reproduction script syntax: PASS
+
+Environment limitation
+- npm ci could not complete because the execution environment's internal npm mirror returned 404 for zod-3.25.76.tgz.
+- Therefore the full Vitest suite, tsc build, MariaDB integration tests, browser multi-tab E2E, and installed-Yjs runtime reproduction were not executed here.

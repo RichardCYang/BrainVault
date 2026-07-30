@@ -757,8 +757,40 @@ assertBefore(
   "page archive Yjs recovery"
 );
 
+const collaborativeDestructiveTransition = section(
+  client,
+  "async function withCollaborativeDestructiveTransition",
+  "async function deleteBlockWithVersionCheck"
+);
+assert(
+  collaborativeDestructiveTransition.includes("withPagePersistenceTransition(pageId, kind"),
+  "Collaborative block deletion lacks owner-scoped cross-tab exclusion"
+);
+assertBefore(
+  collaborativeDestructiveTransition,
+  "await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false })",
+  "assertNoPendingLocalCollaborationRecovery(pageId)",
+  "collaborative block deletion peer flush"
+);
+assertBefore(
+  collaborativeDestructiveTransition,
+  "assertNoPendingLocalCollaborationRecovery(pageId)",
+  "const result = await action(session)",
+  "collaborative block deletion recovery guard"
+);
+assertBefore(
+  collaborativeDestructiveTransition,
+  "const result = await action(session)",
+  "await session.flushMaterialization({ compact: false })",
+  "collaborative block deletion durable completion"
+);
+
 const blockDelete = section(client, "async function deleteBlockWithVersionCheck", "function updateBlockInState");
 assert(blockDelete.includes('withPagePersistenceTransition(pageId, "block-delete"'), "Block deletion lacks a page transition");
+assert(
+  blockDelete.includes('withCollaborativeDestructiveTransition(pageId, "block-delete"'),
+  "Collaborative block deletion can still bypass the browser recovery fence"
+);
 assertBefore(
   blockDelete,
   "assertNoPendingLocalBlockDrafts(",
@@ -768,6 +800,34 @@ assertBefore(
 assert(
   blockDelete.includes("{ excludeSourceId: pageDraftSourceId }"),
   "Block deletion must exclude only the deleting tab's own source"
+);
+
+const attachmentUpload = section(
+  client,
+  "async function uploadAttachmentFromRow",
+  "function requestAttachmentUpload"
+);
+assert(
+  attachmentUpload.includes("await deleteBlockWithVersionCheck(blockId, { includeDescendants: false })")
+    && !attachmentUpload.includes("session.deleteBlock("),
+  "Attachment replacement can still bypass the collaborative block-deletion recovery fence"
+);
+
+const collaborationBlockDeleteReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL("./reproduce-collaboration-block-delete-recovery-loss.mjs", import.meta.url))],
+  { encoding: "utf8" }
+));
+assert(
+  collaborationBlockDeleteReproduction.vulnerable.permanentLossWindowReproduced
+    && collaborationBlockDeleteReproduction.fixed.permanentLossWindowClosed
+    && collaborationBlockDeleteReproduction.sourceVerification.crossTabTransitionPresent
+    && collaborationBlockDeleteReproduction.sourceVerification.peerRecoveryCheckedBeforeDelete
+    && collaborationBlockDeleteReproduction.sourceVerification.deleteMaterializedBeforeUnlock
+    && collaborationBlockDeleteReproduction.sourceVerification.collaborativeDeleteUsesGuard
+    && collaborationBlockDeleteReproduction.sourceVerification.attachmentReplacementUsesGuardedDelete
+    && collaborationBlockDeleteReproduction.verified,
+  "The collaborative block-delete recovery reproduction did not prove both vulnerable and fixed states"
 );
 
 const draftStorage = new MemoryStorage();
@@ -1137,5 +1197,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified backup ZIP integrity, lossless page-share backup/restore, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified backup ZIP integrity, lossless page-share backup/restore, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, and fail-closed recovery inspection."
 );

@@ -1,0 +1,30 @@
+{
+  "scenario": "same-origin peer has an unacknowledged collaboration recovery while another tab deletes the block",
+  "vulnerable": {
+    "directDeleteIgnoredPendingRecovery": true,
+    "recoveryAcknowledged": true,
+    "editedBlockVisible": false,
+    "explicitRecoveryStillAvailable": false,
+    "permanentLossWindowReproduced": true
+  },
+  "fixed": {
+    "pendingRecoveryDetected": true,
+    "deleteBlocked": true,
+    "editedBlockVisible": true,
+    "explicitRecoveryStillAvailable": true,
+    "transitionHeldUntilMaterialized": false,
+    "permanentLossWindowClosed": true
+  },
+  "yjsRuntime": {
+    "available": false,
+    "reason": "The installed yjs dependency is unavailable in this audit environment"
+  },
+  "sourceVerification": {
+    "crossTabTransitionPresent": true,
+    "peerRecoveryCheckedBeforeDelete": true,
+    "deleteMaterializedBeforeUnlock": true,
+    "collaborativeDeleteUsesGuard": true,
+    "attachmentReplacementUsesGuardedDelete": true
+  },
+  "verified": true
+}

@@ -20,6 +20,7 @@ The root [README](../README.md) is intentionally short. Detailed setup, operatio
 | [독립 데이터 무결성 심층 감사 2026-07-30 (한국어)](data-loss-audit-2026-07-30-independent-review-ko.md) | 데이터베이스·Yjs·첨부·백업/복원·마이그레이션·브라우저 복구의 전체 검토 범위, 신규 결함, 수정 및 검증 제한 |
 | [교차 페이지 블록 부모 무결성 재감사 2026-07-30 (한국어)](data-loss-audit-2026-07-30-cross-page-parent-ko.md) | 단일 열 부모 FK가 손상 상태에서 다른 페이지 블록까지 cascade 삭제할 수 있는 방어 공백, 복합 FK 수정, 재현·회귀 검증 |
 | [백업 공유 권한 무결성 감사 2026-07-30 (한국어)](data-loss-audit-2026-07-30-backup-share-integrity-ko.md) | 전체 백업이 `page_shares`를 누락해 정상 복원 뒤 공유 권한을 영구 손실하던 결함, 재현, 수정, 레거시 호환성 및 회귀 검증 |
+| [협업 블록 삭제 데이터 무결성 감사 2026-07-30 (한국어)](data-loss-audit-2026-07-30-collaboration-block-delete-ko.md) | 다른 탭의 미확인 Yjs recovery를 무시한 협업 블록 삭제·첨부 교체 경합, cross-tab fence 수정과 재현 검증 |
 | [Configuration](configuration.md) | Reviewing every supported environment variable and its default behavior |
 | [Security](security.md) | Configuring MFA and understanding the project security boundaries and production requirements |
 | [API](api.md) | Finding route summaries, authentication expectations, the health endpoint, and the OpenAPI document |

@@ -4388,13 +4388,34 @@ function blockDeletionHasUnresolvedDraftConflict(blockId, options) {
   return blockSnapshotHasUnresolvedDraftConflict(getBlockVersionSnapshot(blockId, options));
 }
 
-async function deleteBlockWithVersionCheck(blockId, options = {}) {
-  if (isCollaborativePage()) {
-    const session = state.collaborationSession;
+async function withCollaborativeDestructiveTransition(pageId, kind, action) {
+  return withPagePersistenceTransition(pageId, kind, async () => {
+    // A different same-origin tab can hold a durable Yjs recovery snapshot that
+    // has not reached the server yet. Flush the current tab, wait for the
+    // transition storage event to flush peer tabs, then fail closed if any
+    // unacknowledged collaboration state remains before deleting shared data.
+    await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false });
+    assertNoPendingLocalCollaborationRecovery(pageId);
+
+    const session = state.selectedPage?.id === pageId ? state.collaborationSession : null;
     if (!session?.isReady) throw new Error(t("sharing.syncRequired"));
-    return { deletedIds: session.deleteBlock(blockId, { cascade: options.includeDescendants !== false }) };
-  }
+    const result = await action(session);
+
+    // Keep the cross-tab exclusion lease until the destructive update is both
+    // acknowledged and materialized. Otherwise a peer can resume from a stale
+    // block while the delete is still only browser-local.
+    await session.flushMaterialization({ compact: false });
+    return result;
+  });
+}
+
+async function deleteBlockWithVersionCheck(blockId, options = {}) {
   const pageId = state.selectedPage.id;
+  if (isCollaborativePage()) {
+    return withCollaborativeDestructiveTransition(pageId, "block-delete", async (session) => ({
+      deletedIds: session.deleteBlock(blockId, { cascade: options.includeDescendants !== false })
+    }));
+  }
   const expectedVersions = getBlockVersionSnapshot(blockId, options);
   if (blockSnapshotHasUnresolvedDraftConflict(expectedVersions)) {
     throw new Error(t("status.resolveRecoveredDraftConflict"));
@@ -7118,7 +7139,7 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
       const orderedIds = [...siblingIds];
       if (shouldReplaceCurrentBlock) {
         orderedIds.splice(referenceIndex, 1, data.block.id);
-        session.deleteBlock(blockId, { cascade: false, allowDisconnected: true });
+        await deleteBlockWithVersionCheck(blockId, { includeDescendants: false });
         row.dataset.deleting = "true";
       } else {
         orderedIds.splice(effectiveInsertionIndex, 0, data.block.id);

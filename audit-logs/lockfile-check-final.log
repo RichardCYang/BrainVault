@@ -1,0 +1,5 @@
+
+> brainvault@1.0.0 lockfile:check
+> node scripts/lockfile-registry.mjs
+
+[lockfile-registry] OK: 347 resolved URL(s) use approved portable registry hosts.
