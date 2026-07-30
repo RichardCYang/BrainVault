@@ -1212,7 +1212,14 @@ async function downloadUserDataBackup() {
         throw new Error(translateApiError(data, response.status));
       }
 
+      const expectedLength = response.headers.get("content-length");
+      if (!expectedLength || !/^\d+$/.test(expectedLength)) {
+        throw new Error(t("errors.invalidResponse"));
+      }
       const blob = await response.blob();
+      if (BigInt(blob.size) !== BigInt(expectedLength)) {
+        throw new Error(t("errors.invalidResponse"));
+      }
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = objectUrl;

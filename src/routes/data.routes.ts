@@ -49,8 +49,10 @@ dataRouter.get("/export", async (req, res, next) => {
     res.status(200);
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("Content-Length", plan.archiveSize.toString());
+    res.setHeader("Cache-Control", "private, no-store, no-transform");
     res.setHeader("X-Content-Type-Options", "nosniff");
+    res.strictContentLength = true;
     await writeUserDataBackup(plan, res);
     res.end();
   } catch (error) {

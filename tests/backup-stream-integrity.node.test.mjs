@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { Writable } from "node:stream";
-import { crc32, ZipWriter } from "../src/lib/zip.ts";
+import { calculateZipArchiveSize, crc32, ZipWriter } from "../src/lib/zip.ts";
 
 function collectingWritable() {
   const chunks = [];
@@ -101,4 +101,36 @@ test("ZIP export validates caller-provided buffer CRC32 instead of trusting it",
     }),
     /ZIP source checksum changed while exporting/
   );
+});
+
+test("ZIP export calculates the exact regular archive byte length before streaming", async () => {
+  const first = Buffer.from("manifest", "utf8");
+  const second = Buffer.from("attachment", "utf8");
+  const entries = [
+    {
+      name: "brainvault-backup.json",
+      size: BigInt(first.length),
+      crc32: crc32(first),
+      source: { kind: "buffer", data: first }
+    },
+    {
+      name: "attachments/block_demo",
+      size: BigInt(second.length),
+      crc32: crc32(second),
+      source: { kind: "buffer", data: second }
+    }
+  ];
+  const { output, chunks } = collectingWritable();
+  const writer = new ZipWriter(output);
+  for (const entry of entries) await writer.add(entry);
+  await writer.finalize();
+
+  assert.equal(calculateZipArchiveSize(entries), BigInt(Buffer.concat(chunks).length));
+});
+
+test("ZIP export size calculation includes ZIP64 records at the sentinel boundary", () => {
+  const name = "large.bin";
+  const size = 0xffffffffn;
+  const expected = size + BigInt(30 + name.length + 20) + BigInt(46 + name.length + 20) + 56n + 20n + 22n;
+  assert.equal(calculateZipArchiveSize([{ name, size }]), expected);
 });

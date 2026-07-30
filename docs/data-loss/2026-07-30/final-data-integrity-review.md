@@ -8,6 +8,8 @@
 
 > **Current-workspace addendum:** A later pass over the attached working tree found and corrected a second High-severity recovery defect involving archived-page sharing grants. See [Archived-page sharing backup round-trip integrity](archived-share-backup-roundtrip-integrity.md). That later finding supersedes the original statement below that no other High defect had been reproduced.
 
+> **Latest attached-workspace addendum (Git HEAD `ecbc72365b769b3c8d021a9dba512992b95f9a1e`):** The current deep pass did not reproduce another Critical or High normal-use data-loss path. It reproduced and corrected one Medium backup-recovery integrity defect: a gracefully shortened and reframed export response could be accepted as a completed download because the response did not declare and the browser did not verify the exact ZIP representation length. The correction calculates the complete regular/ZIP64 archive length, sends `Content-Length`, enables Node.js strict length enforcement, forbids intermediary transformations, and checks the downloaded Blob length before saving. See [Backup stream and transport integrity](backup-stream-integrity.md). Current dependency-independent verification: 58 tests passed, `verify:data-loss` passed, and collaboration/source/protocol/syntax verification passed for 169 files. The full dependency-backed suite remains subject to the npm-proxy limitation described below.
+
 ## 1. Final conclusion
 
 The review found and corrected one new reproducible data-integrity defect.

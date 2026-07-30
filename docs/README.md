@@ -43,7 +43,7 @@ docs/<topic>/<YYYY-MM-DD>/<document>
 - [Backup sharing-permission integrity](data-loss/2026-07-30/backup-share-integrity.md)
 - [Backup collaborator identity integrity](data-loss/2026-07-30/backup-share-identity-integrity.md)
 - [Archived-page sharing backup round-trip integrity](data-loss/2026-07-30/archived-share-backup-roundtrip-integrity.md)
-- [Backup stream integrity](data-loss/2026-07-30/backup-stream-integrity.md)
+- [Backup stream and transport integrity](data-loss/2026-07-30/backup-stream-integrity.md)
 - [Block-order range integrity](data-loss/2026-07-30/block-order-integrity.md)
 - [Collaborative block-deletion integrity](data-loss/2026-07-30/collaboration-block-delete-integrity.md)
 - [Initial collaboration-bootstrap integrity](data-loss/2026-07-30/collaboration-bootstrap-integrity.md)

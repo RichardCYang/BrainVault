@@ -38,6 +38,7 @@
     "reproduce:block-order-loss": "node --experimental-strip-types scripts/reproduce-block-sort-order-overflow-loss.mjs",
     "reproduce:cross-page-parent-loss": "node scripts/reproduce-cross-page-parent-cascade-loss.mjs",
     "reproduce:backup-stream-integrity-loss": "node --experimental-strip-types scripts/reproduce-backup-stream-integrity-loss.mjs",
+    "reproduce:backup-transport-truncation": "node --experimental-strip-types scripts/reproduce-backup-transport-truncation.mjs",
     "reproduce:backup-share-loss": "node scripts/reproduce-backup-share-loss.mjs",
     "reproduce:backup-share-identity-rebinding": "node --experimental-strip-types scripts/reproduce-backup-share-identity-rebinding.mjs",
     "reproduce:archived-share-backup-loss": "node --experimental-strip-types scripts/reproduce-archived-share-backup-loss.mjs",

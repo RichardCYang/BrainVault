@@ -82,6 +82,46 @@ export type ZipWriteEntry = {
   modifiedAt?: Date;
 };
 
+export type ZipSizeEntry = Pick<ZipWriteEntry, "name" | "size">;
+
+function getZipEntryName(name: string) {
+  const normalized = Buffer.from(name.replace(/\\/g, "/"), "utf8");
+  if (!normalized.length || normalized.length > UINT16_MAX) throw new Error("ZIP entry name is invalid");
+  return normalized;
+}
+
+function getZip64ExtraLength(valueCount: number) {
+  return valueCount ? 4 + valueCount * 8 : 0;
+}
+
+export function calculateZipArchiveSize(entries: ZipSizeEntry[]) {
+  let localSize = 0n;
+  let centralSize = 0n;
+  let requiresZip64 = false;
+
+  for (const entry of entries) {
+    const name = getZipEntryName(entry.name);
+    if (entry.size < 0n) throw new Error("ZIP entry size is invalid");
+
+    const localOffset = localSize;
+    const sizeZip64 = entry.size >= BigInt(UINT32_MAX);
+    const offsetZip64 = localOffset >= BigInt(UINT32_MAX);
+    const localExtraLength = getZip64ExtraLength(sizeZip64 ? 2 : 0);
+    const centralExtraLength = getZip64ExtraLength((sizeZip64 ? 2 : 0) + (offsetZip64 ? 1 : 0));
+
+    localSize += BigInt(30 + name.length + localExtraLength) + entry.size;
+    centralSize += BigInt(46 + name.length + centralExtraLength);
+    requiresZip64 ||= sizeZip64 || offsetZip64;
+  }
+
+  requiresZip64 ||=
+    entries.length >= UINT16_MAX ||
+    localSize >= BigInt(UINT32_MAX) ||
+    centralSize >= BigInt(UINT32_MAX);
+
+  return localSize + centralSize + (requiresZip64 ? 56n + 20n : 0n) + 22n;
+}
+
 type CentralEntry = {
   name: Buffer;
   crc32: number;
@@ -105,8 +145,7 @@ export class ZipWriter {
   }
 
   async add(entry: ZipWriteEntry) {
-    const name = Buffer.from(entry.name.replace(/\\/g, "/"), "utf8");
-    if (!name.length || name.length > UINT16_MAX) throw new Error("ZIP entry name is invalid");
+    const name = getZipEntryName(entry.name);
     if (entry.size < 0n) throw new Error("ZIP entry size is invalid");
     const expectedSha256 = entry.sha256?.toLowerCase() ?? null;
     if (expectedSha256 !== null && !/^[0-9a-f]{64}$/.test(expectedSha256)) {

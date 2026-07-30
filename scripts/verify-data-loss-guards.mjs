@@ -281,6 +281,35 @@ assert(
 );
 
 assert(
+  zipSource.includes("export function calculateZipArchiveSize")
+    && dataTransferSource.includes("const archiveSize = calculateZipArchiveSize")
+    && dataTransferSource.includes("attachmentFiles, archiveSize, operationRoot")
+    && dataRouteSource.includes('res.setHeader("Content-Length", plan.archiveSize.toString())')
+    && dataRouteSource.includes('res.setHeader("Cache-Control", "private, no-store, no-transform")')
+    && dataRouteSource.includes("res.strictContentLength = true")
+    && client.includes('const expectedLength = response.headers.get("content-length")')
+    && client.includes("BigInt(blob.size) !== BigInt(expectedLength)"),
+  "Backup export can still report success without end-to-end archive-length verification"
+);
+
+const backupTransportTruncationReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [
+    "--experimental-strip-types",
+    fileURLToPath(new URL("./reproduce-backup-transport-truncation.mjs", import.meta.url))
+  ],
+  { encoding: "utf8" }
+));
+assert(
+  backupTransportTruncationReproduction.vulnerable.truncatedBytesAcceptedAsComplete
+    && backupTransportTruncationReproduction.vulnerable.unusableBackupFalseSuccessReproduced
+    && backupTransportTruncationReproduction.fixed.exactArchiveLengthCalculated
+    && backupTransportTruncationReproduction.fixed.truncatedTransferRejected
+    && backupTransportTruncationReproduction.fixed.unusableBackupFalseSuccessClosed,
+  "The backup transport-truncation reproduction did not prove both vulnerable and fixed states"
+);
+
+assert(
   dataTransferSource.includes("ps.user_id AS shared_user_id")
     && dataTransferSource.includes("u.username AS shared_username")
     && dataTransferSource.includes("pageShares: snapshot.pageShares")
@@ -1307,5 +1336,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified backup ZIP integrity, identity-bound page-share backup/restore, archived-share backup round-trip integrity, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified and length-framed backup ZIP integrity, identity-bound page-share backup/restore, archived-share backup round-trip integrity, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, and fail-closed recovery inspection."
 );

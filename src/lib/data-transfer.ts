@@ -27,7 +27,15 @@ import {
   assertLosslessBackupBlockMetadata,
   BackupMetadataIntegrityError
 } from "./structured-metadata-integrity.js";
-import { copyZipEntryToFile, crc32, readZipDirectory, readZipEntryBuffer, updateCrc32, ZipWriter } from "./zip.js";
+import {
+  calculateZipArchiveSize,
+  copyZipEntryToFile,
+  crc32,
+  readZipDirectory,
+  readZipEntryBuffer,
+  updateCrc32,
+  ZipWriter
+} from "./zip.js";
 import type { BlockType, UserRow } from "../types/domain.js";
 
 export const dataTransferTempDir = path.join(attachmentUploadRoot, ".data-transfer");
@@ -643,7 +651,11 @@ export async function prepareUserDataBackup(userId: string) {
     if (totalUncompressedSize > maxTransferBytes) {
       throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
     }
-    return { account: snapshot.account, manifest, manifestBuffer, attachmentFiles, operationRoot };
+    const archiveSize = calculateZipArchiveSize([
+      { name: manifestName, size: BigInt(manifestBuffer.length) },
+      ...attachmentFiles.map((item) => ({ name: item.path, size: item.inspection.size }))
+    ]);
+    return { account: snapshot.account, manifest, manifestBuffer, attachmentFiles, archiveSize, operationRoot };
   } catch (error) {
     await rm(operationRoot, { recursive: true, force: true }).catch(() => undefined);
     throw error;

@@ -8,6 +8,8 @@
 
 > **Historical review note:** This report describes the audited Git HEAD above. A later review of the attached working tree found and corrected a High-severity archived-share backup round-trip defect; see [Archived-page sharing backup round-trip integrity](archived-share-backup-roundtrip-integrity.md).
 
+> **Latest attached-workspace note:** A subsequent review of Git HEAD `ecbc72365b769b3c8d021a9dba512992b95f9a1e` found no additional Critical or High normal-use data-loss path. It corrected a Medium false-success recovery risk caused by missing exact-length verification on streamed backup downloads. See [Backup stream and transport integrity](backup-stream-integrity.md).
+
 ## 1. Conclusion
 
 No new **Critical** data-loss path—defined here as immediate permanent loss through remote or normal use—was reproduced. The current code already includes strong defenses such as serialized page/block writes, optimistic version checks, a durable Yjs log, server-authoritative materialization, restore journals and generation markers, and per-user attachment locks.
