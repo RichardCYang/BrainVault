@@ -73,7 +73,7 @@ dataRouter.post("/import", backupUpload.single("backup"), async (req, res, next)
     }
 
     const result = await importUserDataBackup(user.id, uploadPath);
-    res.json({ user: toPublicUser(result.user), counts: result.counts });
+    res.json({ user: toPublicUser(result.user), counts: result.counts, sharing: result.sharing });
   } catch (error) {
     next(error);
   } finally {

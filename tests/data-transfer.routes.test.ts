@@ -8,6 +8,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const store = vi.hoisted(() => ({
   user: {} as Record<string, unknown>,
+  users: new Map<string, { id: string; username: string }>(),
   pages: new Map<string, Record<string, unknown>>(),
   blocks: new Map<string, Record<string, unknown>>(),
   tags: new Map<string, Record<string, unknown>>(),
@@ -90,6 +91,10 @@ beforeEach(async () => {
     created_at: "2026-07-17 00:00:00.000000",
     updated_at: "2026-07-17 00:00:00.000000"
   };
+  store.users = new Map([
+    [userId, { id: userId, username: "backup-user" }],
+    ["usr_collaborator", { id: "usr_collaborator", username: "collaborator" }]
+  ]);
   store.pages = new Map([[pageId, {
     id: pageId,
     title: "Original Page",
@@ -167,10 +172,27 @@ beforeEach(async () => {
     if (sql.includes("FROM blocks b INNER JOIN pages p") && sql.includes("WHERE p.owner_id = ? ORDER BY")) {
       return [...store.blocks.values()].filter((block) => store.pages.get(String(block.page_id))?.owner_id === params[0]).map((block) => ({ ...block }));
     }
+    if (sql.includes("u.username AS shared_username")) {
+      return store.shares
+        .filter((share) => store.pages.get(share.page_id)?.owner_id === params[0])
+        .map((share) => ({
+          page_id: share.page_id,
+          shared_username: store.users.get(share.user_id)?.username,
+          permission: share.permission,
+          created_at: share.shared_at
+        }));
+    }
     if (sql.includes("FROM page_shares ps INNER JOIN pages p")) {
       return store.shares
         .filter((share) => store.pages.get(share.page_id)?.owner_id === params[0])
         .map((share) => ({ ...share }));
+    }
+    if (sql.startsWith("SELECT id, username FROM users WHERE username IN")) {
+      const requested = new Set(params.map((value) => String(value).toLowerCase()));
+      return [...store.users.values()].filter((user) => requested.has(user.username.toLowerCase()));
+    }
+    if (sql.startsWith("SELECT id FROM users WHERE id IN")) {
+      return params.flatMap((id) => store.users.has(String(id)) ? [{ id: String(id) }] : []);
     }
     if (sql.includes("SELECT DISTINCT t.id")) return [...store.tags.values()].map((tag) => ({ ...tag }));
     if (sql.includes("SELECT pt.page_id")) return store.pageTags.map((relation) => ({ ...relation }));
@@ -212,6 +234,14 @@ beforeEach(async () => {
       store.tags.set(String(id), { id, name, created_at: createdAt });
     } else if (sql.startsWith("INSERT INTO page_tags")) {
       store.pageTags.push({ page_id: String(params[0]), tag_id: String(params[1]) });
+    } else if (sql.includes("INSERT INTO page_shares")) {
+      store.shares.push({
+        page_id: String(params[0]),
+        user_id: String(params[1]),
+        permission: String(params[2]),
+        shared_by: String(params[3]),
+        shared_at: String(params[4])
+      });
     } else if (sql.includes("INSERT INTO data_restore_markers")) {
       store.restoreMarker = String(params[1]);
     } else if (sql.startsWith("DELETE FROM data_restore_markers")) {
@@ -336,7 +366,14 @@ describe("Complete data transfer routes", () => {
     await rm(zipPath, { force: true });
   });
 
-  it("exports and restores database rows and exact attachment bytes", async () => {
+  it("exports and restores database rows, page shares, and exact attachment bytes", async () => {
+    store.shares.push({
+      page_id: pageId,
+      user_id: "usr_collaborator",
+      permission: "EDIT",
+      shared_by: userId,
+      shared_at: "2026-07-17 00:00:20.000000"
+    });
     const exported = await request(createApp())
       .get("/api/data/export")
       .set("Authorization", `Bearer ${token}`)
@@ -356,6 +393,12 @@ describe("Complete data transfer routes", () => {
     expect(manifest.data.pages[0].edit_version).toBe(7);
     expect(manifest.data.pages[0].content_version).toBe(11);
     expect(manifest.data.blocks[0].edit_version).toBe(9);
+    expect(manifest.data.pageShares).toEqual([{
+      page_id: pageId,
+      shared_username: "collaborator",
+      permission: "EDIT",
+      created_at: "2026-07-17 00:00:20.000000"
+    }]);
     expect(manifest.attachments[0].sha256).toMatch(/^[a-f0-9]{64}$/);
 
     const stalePageVersion = Number(store.pages.get(pageId)!.edit_version);
@@ -363,6 +406,7 @@ describe("Complete data transfer routes", () => {
     const staleContentVersion = Number(store.pages.get(pageId)!.content_version);
     store.pages.get(pageId)!.title = "Changed Page";
     store.user.name = "Changed User";
+    store.shares = [];
     await writeFile(getAttachmentFilePath(userId, blockId), Buffer.from("changed bytes"));
 
     const restored = await request(createApp())
@@ -371,7 +415,8 @@ describe("Complete data transfer routes", () => {
       .attach("backup", exported.body as Buffer, { filename: "BrainVault-backup.zip", contentType: "application/zip" })
       .expect(200);
 
-    expect(restored.body.counts).toEqual({ pages: 1, blocks: 1, attachments: 1, tags: 1 });
+    expect(restored.body.counts).toEqual({ pages: 1, blocks: 1, attachments: 1, tags: 1, shares: 1 });
+    expect(restored.body.sharing).toEqual({ mode: "backup", count: 1 });
     expect(store.pages.get(pageId)?.title).toBe("Original Page");
     expect(Number(store.pages.get(pageId)?.edit_version)).toBeGreaterThan(stalePageVersion);
     expect(Number(store.blocks.get(blockId)?.edit_version)).toBeGreaterThan(staleBlockVersion);
@@ -379,6 +424,13 @@ describe("Complete data transfer routes", () => {
     expect(store.pages.get(pageId)?.edit_version).toBe(store.blocks.get(blockId)?.edit_version);
     expect(store.pages.get(pageId)?.content_version).toBe(store.blocks.get(blockId)?.edit_version);
     expect(store.user.name).toBe("Original User");
+    expect(store.shares).toEqual([{
+      page_id: pageId,
+      user_id: "usr_collaborator",
+      permission: "EDIT",
+      shared_by: userId,
+      shared_at: "2026-07-17 00:00:20.000000"
+    }]);
     expect(store.disconnectPageCollaborators).toHaveBeenCalledWith(pageId, "Workspace data is being restored");
     expect(store.restoreEvents.indexOf(`disconnect:${pageId}`)).toBeLessThan(store.restoreEvents.indexOf("delete-pages"));
     await expect(readFile(getAttachmentFilePath(userId, blockId))).resolves.toEqual(originalBytes);

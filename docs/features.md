@@ -96,11 +96,11 @@ Attachment storage and deletion rules are documented in [Security](security.md#a
 
 Open **Settings → Data** to download a complete BrainVault backup or restore an archive exported by BrainVault.
 
-The ZIP contains the account workspace graph: normal and archived pages, collections, nested blocks, block metadata, page/tag relationships, supported profile preferences, and every attachment as its original byte sequence. Before export, BrainVault coordinates same-origin tabs and refuses to create an incomplete archive while an owned page still has an unsaved direct draft or an unconfirmed real-time recovery snapshot in browser storage.
+The ZIP contains the account workspace graph: normal and archived pages, collections, nested blocks, block metadata, page/tag relationships, page sharing grants identified by collaborator login ID, supported profile preferences, and every attachment as its original byte sequence. Before export, BrainVault coordinates same-origin tabs and refuses to create an incomplete archive while an owned page still has an unsaved direct draft or an unconfirmed real-time recovery snapshot in browser storage.
 
-Restore replaces the current account's workspace content. The login username, password hash, authenticator secret, passkeys, and other security credentials are not exported and remain unchanged.
+Restore replaces the current account's workspace content. The login username, password hash, authenticator secret, passkeys, and other security credentials are not exported and remain unchanged. Every collaborator referenced by a current-format backup must already exist on the destination server; otherwise restore fails before any workspace data is replaced. For legacy backups that predate sharing export, grants already present on matching page IDs are preserved instead of being silently removed.
 
-Sharing grants and the historical Yjs update log are not part of the user backup. Collaborative content must be materialized before export, and restored owned pages start without invited editors.
+The historical Yjs update log is not included. Collaborative content must be fully materialized before export, and the restored pages receive a fresh collaboration generation while their exported sharing grants are recreated.
 
 Validation, staging, digest checks, transaction behavior, and archive limits are documented in [Security](security.md#backup-and-restore-safety).
 

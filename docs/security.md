@@ -57,9 +57,9 @@ Files are staged first, and the database replacement runs inside a transaction s
 
 The browser also acquires renewable page/workspace transition leases across same-origin tabs. Each open editor is given a chance to flush. Export is blocked while an owned active or archived page has an unsaved direct draft or unacknowledged local Yjs recovery snapshot, restore is blocked by the Yjs recovery condition, permanent subtree deletion applies the same Yjs guard to every page in the server-validated deletion scope, and archiving refuses to disconnect collaborators while the page has a local recovery record. This closes the gap between server-side version checks and edits that exist only in browser storage.
 
-Restore is intentionally destructive for workspace content: current pages, collections, blocks, tag links, and the attachment directory are replaced by the backup state. Login credentials and MFA/passkey security material are not exported and remain unchanged.
+Restore is intentionally destructive for workspace content: current pages, collections, blocks, tag links, page sharing grants, and the attachment directory are replaced by the backup state. Login credentials and MFA/passkey security material are not exported and remain unchanged.
 
-The user backup stores the latest materialized note content, not access-control grants or the historical Yjs update log. Restoring an owned page removes its previous sharing grants; invite editors again after verifying the restored content.
+Current-format backups store page sharing grants by the collaborator's normalized login ID. Restore resolves and locks those accounts before deleting any page; if a referenced collaborator does not exist, the operation fails closed and no workspace data is replaced. Legacy backups without a `pageShares` field preserve the account's current grants for matching imported page IDs, preventing the page deletion cascade from silently erasing them. The historical Yjs update log is still excluded; the backup stores the latest server-materialized document state and restore creates a fresh collaboration generation.
 
 `DATA_TRANSFER_MAX_SIZE_MB` limits one uploaded backup ZIP and defaults to 4096 MB. Export streams the archive instead of buffering the complete backup in memory. Only ZIP files produced by BrainVault's data export are accepted.
 

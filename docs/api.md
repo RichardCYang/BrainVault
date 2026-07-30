@@ -39,12 +39,18 @@ Most API routes require a bearer token returned by the register or login endpoin
 | `PATCH` | `/api/blocks/:blockId` | Update a block |
 | `DELETE` | `/api/blocks/:blockId` | Delete a block and its descendants, including stored attachment files |
 | `GET` | `/api/blocks/:blockId/attachment` | Download an attachment after current page-access verification |
-| `GET` | `/api/data/export` | Stream a complete ZIP backup of the authenticated workspace |
-| `POST` | `/api/data/import` | Validate and restore a BrainVault backup ZIP |
+| `GET` | `/api/data/export` | Stream a complete ZIP backup of the authenticated workspace, including page sharing grants by collaborator login ID |
+| `POST` | `/api/data/import` | Validate and restore a BrainVault backup ZIP; current-format grants are recreated and legacy grants for matching page IDs are preserved |
 | `POST` | `/api/pages/:pageId/blocks/reorder` | Move or reorder blocks |
 | `GET` | `/api/pages/:pageId/render` | Render sanitized page HTML |
 | `GET` | `/api/search?q=...` | Search titles and block Markdown |
 
+
+## Backup sharing integrity
+
+Current-format manifests include `data.pageShares` entries containing the page ID, normalized collaborator login ID, `EDIT` permission, and creation timestamp. Import resolves every collaborator under a database lock before destructive replacement. A missing account, self-share, duplicate grant, archived/collection target, or unknown page causes a validation failure with no data replacement.
+
+Backups created before `pageShares` was added remain accepted. During those legacy restores, BrainVault snapshots the existing grants and reinserts the ones whose page IDs survive as shareable pages, rather than losing them through the `pages` → `page_shares` cascade. The import response reports `counts.shares` and `sharing.mode` (`backup` or `legacy-preserved`).
 
 ## Collaboration materialization integrity
 

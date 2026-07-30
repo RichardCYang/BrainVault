@@ -8741,7 +8741,8 @@ elements.accountDataImport.addEventListener("click", async () => {
     const message = t("account.importComplete", {
       pages: formatNumber(counts.pages),
       blocks: formatNumber(counts.blocks),
-      attachments: formatNumber(counts.attachments)
+      attachments: formatNumber(counts.attachments),
+      shares: formatNumber(counts.shares ?? 0)
     });
     setAccountMessage(message);
     setStatus(message);

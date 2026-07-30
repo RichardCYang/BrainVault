@@ -16,7 +16,7 @@ The preview is captured from the real browser UI. See [Development guide](docs/d
 - Rich text, Markdown, code, callouts, bookmarks, file attachments, AI conversation blocks, and KaTeX formulas
 - Crash-resilient browser drafts, automatic title saving, and search across page titles and block content
 - Owner-managed page sharing with Yjs-based simultaneous title/block editing, live presence, reconnect recovery, and MariaDB persistence
-- Page collections, nesting, archiving, permanent deletion, PDF export, and complete ZIP backup/restore
+- Page collections, nesting, archiving, permanent deletion, PDF export, and complete ZIP backup/restore including sharing grants
 - JWT authentication, profile settings, TOTP authenticator support, and multiple WebAuthn/FIDO2 passkeys
 - Seven interface languages: English, Japanese, Korean, French, German, Spanish, and Portuguese
 - Private attachment storage, sanitized Markdown rendering, rate limiting, and validated bookmark previews
@@ -56,7 +56,7 @@ For database permissions, demo data, alternative environment setup, and producti
 | [Features](docs/features.md) | Editor behavior, sharing, block types, backup/restore, PDF export, and languages |
 | [Collaboration](docs/collaboration.md) | Sharing permissions, Yjs/WebSocket flow, persistence, proxy setup, and verification |
 | [Collaboration verification](docs/collaboration-verification.md) | Delivery checks, integrity-proof scope, and reproducible deployment validation |
-| [데이터 손실 후속 감사 보고서](docs/data-loss-audit-2026-07-29-attachment-position-ko.md) | 11번째 치명적 첨부 위치 무결성 취약점 재현, 수정, protocol fence, 검증 |
+| [백업 공유 권한 무결성 감사](docs/data-loss-audit-2026-07-30-backup-share-integrity-ko.md) | 전체 백업 복원 시 공유 권한이 cascade 삭제되던 결함의 재현, 수정, 레거시 호환성 및 검증 |
 | [Configuration](docs/configuration.md) | Environment variables and runtime configuration |
 | [Security](docs/security.md) | MFA, production secrets, attachment safety, and security defaults |
 | [API](docs/api.md) | Route overview, authentication, health check, and OpenAPI access |

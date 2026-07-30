@@ -261,7 +261,7 @@ components:
           maxLength: 128
     DataTransferCounts:
       type: object
-      required: [pages, blocks, attachments, tags]
+      required: [pages, blocks, attachments, tags, shares]
       properties:
         pages:
           type: integer
@@ -275,14 +275,31 @@ components:
         tags:
           type: integer
           minimum: 0
+        shares:
+          type: integer
+          minimum: 0
+          description: Page sharing grants recreated or preserved by the restore.
+    DataImportSharing:
+      type: object
+      required: [mode, count]
+      properties:
+        mode:
+          type: string
+          enum: [backup, legacy-preserved]
+          description: Whether grants came from the backup manifest or were preserved for a legacy manifest without pageShares.
+        count:
+          type: integer
+          minimum: 0
     DataImportResponse:
       type: object
-      required: [user, counts]
+      required: [user, counts, sharing]
       properties:
         user:
           $ref: '#/components/schemas/PublicUser'
         counts:
           $ref: '#/components/schemas/DataTransferCounts'
+        sharing:
+          $ref: '#/components/schemas/DataImportSharing'
     PageInput:
       type: object
       required: [title]
@@ -1519,9 +1536,10 @@ paths:
   /api/data/export:
     get:
       summary: Export the authenticated account workspace as a complete BrainVault ZIP backup
+      description: Includes page sharing grants by normalized collaborator login ID. Security credentials and the historical Yjs update log are excluded.
       responses:
         '200':
-          description: Lossless workspace backup containing the manifest and original attachment bytes
+          description: Lossless workspace backup containing the manifest, sharing grants, and original attachment bytes
           headers:
             Content-Disposition:
               schema:
@@ -1536,7 +1554,7 @@ paths:
   /api/data/import:
     post:
       summary: Replace the authenticated account workspace from a BrainVault backup ZIP
-      description: Restored rows receive a new edit-version generation, and a durable restore journal automatically reconciles database and attachment state after an interrupted process.
+      description: Restored rows receive a new edit-version generation, and a durable restore journal automatically reconciles database and attachment state after an interrupted process. Current-format sharing grants are resolved before destructive replacement; a missing collaborator fails closed. Legacy backups preserve current grants for matching shareable page IDs.
       requestBody:
         required: true
         content:

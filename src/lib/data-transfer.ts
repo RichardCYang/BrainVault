@@ -101,6 +101,12 @@ const tagSchema = z.object({
 }).strict();
 
 const pageTagSchema = z.object({ page_id: idSchema, tag_id: idSchema }).strict();
+const pageShareSchema = z.object({
+  page_id: idSchema,
+  shared_username: z.string().min(3).max(50).regex(/^[a-zA-Z0-9._-]+$/),
+  permission: z.literal("EDIT"),
+  created_at: timestampSchema
+}).strict();
 const attachmentSchema = z.object({
   blockId: idSchema,
   path: z.string().min(1).max(160),
@@ -124,7 +130,10 @@ const manifestSchema = z.object({
     pages: z.array(pageSchema).max(1_000_000),
     blocks: z.array(blockSchema).max(2_000_000),
     tags: z.array(tagSchema).max(1_000_000),
-    pageTags: z.array(pageTagSchema).max(5_000_000)
+    pageTags: z.array(pageTagSchema).max(5_000_000),
+    // Optional only for backward compatibility with backups exported before
+    // page sharing relationships became part of the complete workspace format.
+    pageShares: z.array(pageShareSchema).max(5_000_000).optional()
   }).strict(),
   attachments: z.array(attachmentSchema).max(1_000_000)
 }).strict();
@@ -133,6 +142,7 @@ export type BrainVaultBackup = z.infer<typeof manifestSchema>;
 type BackupPage = BrainVaultBackup["data"]["pages"][number];
 type BackupBlock = BrainVaultBackup["data"]["blocks"][number];
 type BackupTag = BrainVaultBackup["data"]["tags"][number];
+type BackupPageShare = z.infer<typeof pageShareSchema>;
 
 type WorkspaceRestoreAccountRow = {
   name: string | null;
@@ -159,9 +169,21 @@ type WorkspaceRestoreBlockRow = {
 type WorkspaceRestoreShareRow = {
   page_id: string;
   user_id: string;
-  permission: string;
+  permission: "EDIT";
   shared_by: string;
   shared_at: string;
+};
+
+type RestoredPageShare = {
+  pageId: string;
+  userId: string;
+  permission: "EDIT";
+  createdAt: string;
+};
+
+type RestoreSharingPlan = {
+  mode: "backup" | "legacy-preserved";
+  shares: RestoredPageShare[];
 };
 
 type WorkspaceCollaborationStateRow = {
@@ -329,7 +351,8 @@ async function createWorkspaceRestoreSnapshot(userId: string, client: DbClient =
   }
   return {
     fingerprint: hash.digest("hex"),
-    pageIds: pages.map((page) => page.id)
+    pageIds: pages.map((page) => page.id),
+    shares
   };
 }
 
@@ -379,12 +402,17 @@ function orderByParent<T>(items: T[], getId: (item: T) => string, getParent: (it
 
 function validateManifestRelations(manifest: BrainVaultBackup) {
   const { pages, blocks, tags, pageTags } = manifest.data;
+  const pageShares = manifest.data.pageShares ?? [];
   assertUnique(pages.map((item) => item.id), "page ID");
   assertUnique(blocks.map((item) => item.id), "block ID");
   assertUnique(tags.map((item) => item.id), "tag ID");
   assertUnique(tags.map((item) => item.name.toLowerCase()), "tag name");
   assertUnique(manifest.attachments.map((item) => item.blockId), "attachment block ID");
   assertUnique(manifest.attachments.map((item) => item.path), "attachment path");
+  assertUnique(
+    pageShares.map((item) => `${item.page_id}\u0000${item.shared_username.toLowerCase()}`),
+    "page share"
+  );
 
   const pageById = new Map(pages.map((item) => [item.id, item]));
   const blockById = new Map(blocks.map((item) => [item.id, item]));
@@ -412,6 +440,14 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
     }
   }
   orderByParent(blocks, (item) => item.id, (item) => item.parent_block_id);
+
+  for (const share of pageShares) {
+    const page = pageById.get(share.page_id);
+    if (!page) invalidBackup(`Shared page is missing: ${share.page_id}`);
+    if (page.is_collection || page.is_archived) {
+      invalidBackup(`Shared page cannot be a collection or archived: ${share.page_id}`);
+    }
+  }
 
   const pageTagKeys = new Set<string>();
   for (const relation of pageTags) {
@@ -477,7 +513,17 @@ export async function prepareUserDataBackup(userId: string) {
          WHERE p.owner_id = ? ORDER BY pt.page_id ASC, pt.tag_id ASC`,
         [userId]
       );
-      const snapshot = { account, pages, blocks, tags, pageTags };
+      const pageShares = await client.query<BackupPageShare>(
+        `SELECT ps.page_id, u.username AS shared_username, ps.permission,
+                DATE_FORMAT(ps.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
+         FROM page_shares ps
+         INNER JOIN pages p ON p.id = ps.page_id
+         INNER JOIN users u ON u.id = ps.user_id
+         WHERE p.owner_id = ?
+         ORDER BY ps.page_id ASC, u.username ASC`,
+        [userId]
+      );
+      const snapshot = { account, pages, blocks, tags, pageTags, pageShares };
       const attachmentFiles = [] as Array<{ blockId: string; path: string; filePath: string; inspection: FileInspection }>;
       for (const block of blocks.filter((item) => item.type === "ATTACHMENT")) {
         const sourcePath = getAttachmentFilePath(userId, block.id);
@@ -514,7 +560,8 @@ export async function prepareUserDataBackup(userId: string) {
         pages: snapshot.pages,
         blocks: snapshot.blocks,
         tags: snapshot.tags,
-        pageTags: snapshot.pageTags
+        pageTags: snapshot.pageTags,
+        pageShares: snapshot.pageShares
       },
       attachments: attachmentFiles.map((item) => ({
         blockId: item.blockId,
@@ -632,6 +679,74 @@ async function getExistingTags(client: DbClient, tags: BackupTag[]) {
 
 const restoreVersionGap = 1_000_000;
 
+async function prepareRestoreSharingPlan(
+  client: DbClient,
+  userId: string,
+  manifest: BrainVaultBackup,
+  currentShares: WorkspaceRestoreShareRow[]
+): Promise<RestoreSharingPlan> {
+  const pageById = new Map(manifest.data.pages.map((page) => [page.id, page]));
+  const backupShares = manifest.data.pageShares;
+
+  if (!backupShares) {
+    // Legacy backup manifests did not contain page_shares. Preserve the current
+    // grants for page IDs that survive the restore instead of silently deleting
+    // them through the pages -> page_shares ON DELETE CASCADE relationship.
+    const shares = currentShares
+      .filter((share) => {
+        const page = pageById.get(share.page_id);
+        return Boolean(page && !page.is_collection && !page.is_archived);
+      })
+      .map((share) => ({
+        pageId: share.page_id,
+        userId: share.user_id,
+        permission: share.permission,
+        createdAt: share.shared_at
+      }));
+
+    for (const group of batch([...new Set(shares.map((share) => share.userId))])) {
+      if (!group.length) continue;
+      const rows = await client.query<{ id: string }>(
+        `SELECT id FROM users WHERE id IN (${group.map(() => "?").join(",")}) FOR UPDATE`,
+        group
+      );
+      const found = new Set(rows.map((row) => row.id));
+      const missing = group.find((id) => !found.has(id));
+      if (missing) invalidBackup(`A preserved shared account no longer exists: ${missing}`);
+    }
+    return { mode: "legacy-preserved", shares };
+  }
+
+  const usernames = [...new Set(backupShares.map((share) => share.shared_username.toLowerCase()))];
+  const usersByUsername = new Map<string, { id: string; username: string }>();
+  for (const group of batch(usernames)) {
+    if (!group.length) continue;
+    const rows = await client.query<{ id: string; username: string }>(
+      `SELECT id, username FROM users WHERE username IN (${group.map(() => "?").join(",")}) FOR UPDATE`,
+      group
+    );
+    for (const row of rows) usersByUsername.set(row.username.toLowerCase(), row);
+  }
+
+  const shares = backupShares.map((share) => {
+    const sharedUser = usersByUsername.get(share.shared_username.toLowerCase());
+    if (!sharedUser) {
+      invalidBackup(`Shared account does not exist on this server: ${share.shared_username}`);
+    }
+    if (sharedUser.id === userId) {
+      invalidBackup(`The page owner cannot be restored as its own collaborator: ${share.shared_username}`);
+    }
+    return {
+      pageId: share.page_id,
+      userId: sharedUser.id,
+      permission: share.permission,
+      createdAt: share.created_at
+    };
+  });
+
+  return { mode: "backup", shares };
+}
+
 function getManifestMaxEditVersion(manifest: BrainVaultBackup) {
   let maximum = 0;
   for (const page of manifest.data.pages) {
@@ -676,7 +791,8 @@ async function importRows(
   client: DbClient,
   userId: string,
   manifest: BrainVaultBackup,
-  restoreVersion: number
+  restoreVersion: number,
+  pageShares: RestoredPageShare[]
 ) {
   await client.execute("DELETE FROM pages WHERE owner_id = ?", [userId]);
   await client.execute(
@@ -741,6 +857,14 @@ async function importRows(
     const targetTagId = tagIdMap.get(relation.tag_id);
     if (!targetTagId) invalidBackup(`Tag mapping is missing: ${relation.tag_id}`);
     await client.execute("INSERT INTO page_tags (page_id, tag_id) VALUES (?, ?)", [relation.page_id, targetTagId]);
+  }
+
+  for (const share of pageShares) {
+    await client.execute(
+      `INSERT INTO page_shares (page_id, user_id, permission, shared_by, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [share.pageId, share.userId, share.permission, userId, share.createdAt]
+    );
   }
 }
 
@@ -1240,6 +1364,7 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
   const { operationRoot, stagedAttachmentDir, oldAttachmentDir, targetAttachmentDir, journalPath } = derivedPaths;
   let journalWritten = false;
   let restoreJournal: RestoreJournal | null = null;
+  let restoreSharingPlan: RestoreSharingPlan = { mode: "backup", shares: [] };
   await mkdir(stagedAttachmentDir, { recursive: true });
 
   try {
@@ -1275,6 +1400,12 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
             "The workspace changed while the backup was being prepared. No data was replaced."
           );
         }
+        restoreSharingPlan = await prepareRestoreSharingPlan(
+          client,
+          userId,
+          manifest,
+          lockedWorkspaceSnapshot.shares
+        );
         // Invalidate every live in-memory Yjs room while the owned page rows are
         // still locked. Otherwise an old owner session can append its pre-restore
         // document after commit and later materialize it over the restored backup.
@@ -1291,7 +1422,7 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
         await writeRestoreJournal(restoreJournal);
         journalWritten = true;
         const restoreVersion = await createRestoreEditVersion(client, userId, manifest);
-        await importRows(client, userId, manifest, restoreVersion);
+        await importRows(client, userId, manifest, restoreVersion, restoreSharingPlan.shares);
         await mkdir(path.dirname(targetAttachmentDir), { recursive: true });
         if (await pathExists(targetAttachmentDir)) {
           await rename(targetAttachmentDir, oldAttachmentDir);
@@ -1368,7 +1499,12 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
         pages: manifest.data.pages.length,
         blocks: manifest.data.blocks.length,
         attachments: manifest.attachments.length,
-        tags: manifest.data.tags.length
+        tags: manifest.data.tags.length,
+        shares: restoreSharingPlan.shares.length
+      },
+      sharing: {
+        mode: restoreSharingPlan.mode,
+        count: restoreSharingPlan.shares.length
       }
     };
   } finally {

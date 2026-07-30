@@ -1,0 +1,6 @@
+{
+  "foreignKeysEnabled": true,
+  "sharesBeforePageDelete": 1,
+  "sharesAfterPageDeleteCascade": 0,
+  "lossReproduced": true
+}

@@ -154,6 +154,10 @@ const blockRouteSource = readFileSync(
   new URL("../src/routes/block.routes.ts", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const dataRouteSource = readFileSync(
+  new URL("../src/routes/data.routes.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const structuredMetadataIntegritySource = readFileSync(
   new URL("../src/lib/structured-metadata-integrity.ts", import.meta.url),
   "utf8"
@@ -270,6 +274,31 @@ assert(
     && backupStreamIntegrityReproduction.fixed.writerRejectedBeforeCentralDirectoryFinalization
     && backupStreamIntegrityReproduction.fixed.unusableBackupFalseSuccessClosed,
   "The backup stream-integrity reproduction did not prove both vulnerable and fixed states"
+);
+
+assert(
+  dataTransferSource.includes("u.username AS shared_username")
+    && dataTransferSource.includes("pageShares: snapshot.pageShares")
+    && dataTransferSource.includes("INSERT INTO page_shares")
+    && dataTransferSource.includes('mode: "legacy-preserved"')
+    && dataTransferSource.includes("Shared account does not exist on this server")
+    && dataRouteSource.includes("sharing: result.sharing")
+    && client.includes("shares: formatNumber(counts.shares ?? 0)"),
+  "Complete backup/restore can still silently erase or hide page sharing relationships"
+);
+
+const backupShareLossReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL("./reproduce-backup-share-loss.mjs", import.meta.url))],
+  { encoding: "utf8" }
+));
+assert(
+  backupShareLossReproduction.vulnerability.permanentSharingLossReproduced
+    && backupShareLossReproduction.fixed.manifestExportsPageShares
+    && backupShareLossReproduction.fixed.restoreReinsertsPageShares
+    && backupShareLossReproduction.fixed.legacyManifestPreservesCurrentShares
+    && backupShareLossReproduction.fixed.permanentSharingLossClosed,
+  "The backup page-share loss reproduction did not prove both vulnerable and fixed states"
 );
 
 const blockOrderReproduction = JSON.parse(execFileSync(
@@ -639,6 +668,11 @@ for (const [locale, catalog] of Object.entries(translationCatalogs)) {
   assert(
     typeof catalog?.status?.exclusiveTransitionLockUnavailable === "string",
     `Missing exclusiveTransitionLockUnavailable translation for ${locale}`
+  );
+  assert(
+    typeof catalog?.account?.importComplete === "string"
+      && catalog.account.importComplete.includes("{shares}"),
+    `Missing restored sharing-count translation for ${locale}`
   );
 }
 
@@ -1103,5 +1137,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified backup ZIP integrity, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified backup ZIP integrity, lossless page-share backup/restore, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, and fail-closed recovery inspection."
 );

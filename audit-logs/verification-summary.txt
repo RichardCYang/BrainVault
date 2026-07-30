@@ -1,0 +1,28 @@
+BrainVault data-integrity audit verification summary
+Date: 2026-07-30
+Baseline Git commit: 69610238d9e0686b2546619edcfa4ffe194c48f9
+
+New finding:
+- Complete backup omitted page_shares while restore deleted owned pages under ON DELETE CASCADE.
+- A successful restore therefore permanently removed page sharing relationships.
+
+Fixed behavior:
+- New manifests export pageShares by collaborator login ID.
+- Restore resolves/locks collaborators before destructive replacement.
+- Missing collaborators fail closed before page deletion.
+- Current-format grants are reinserted transactionally.
+- Legacy manifests preserve current grants for surviving shareable page IDs.
+- API/UI report restored share counts.
+
+Verification completed:
+- 36/36 dependency-free durability tests passed.
+- Backup-share focused tests: 3/3 passed.
+- verify-data-loss-guards: passed.
+- verify-collaboration: passed; syntax/protocol coverage for 156 files.
+- TypeScript transpile diagnostics for changed TS files: 0 errors.
+- Deterministic vulnerable/fixed reproduction: passed.
+- Independent SQL ON DELETE CASCADE reproduction: 1 share -> 0 shares.
+
+Environment limitation:
+- npm ci could not complete because the execution environment's internal npm mirror returned 404 for zod-3.25.76.tgz.
+- Full Vitest, full TypeScript project build, browser E2E, and live MariaDB integration were therefore not executed here.
