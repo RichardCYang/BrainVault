@@ -33,7 +33,8 @@
     "check": "npm run build && npm test && npm run verify:data-loss && npm run verify:collaboration",
     "preview:capture": "node scripts/capture-preview.mjs",
     "reproduce:attachment-position-loss": "node scripts/reproduce-attachment-position-loss.mjs",
-    "reproduce:structured-metadata-loss": "node --experimental-strip-types scripts/reproduce-structured-metadata-truncation.mjs"
+    "reproduce:structured-metadata-loss": "node --experimental-strip-types scripts/reproduce-structured-metadata-truncation.mjs",
+    "reproduce:block-order-loss": "node --experimental-strip-types scripts/reproduce-block-sort-order-overflow-loss.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.2",

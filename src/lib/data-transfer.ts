@@ -12,6 +12,7 @@ import { db, transaction, type DbClient } from "./db.js";
 import { ApiError } from "./http.js";
 import { createId } from "./id.js";
 import { renderBlockHtml } from "./markdown.js";
+import { blockSortOrderLimits } from "./block-order-integrity.js";
 import { copyZipEntryToFile, crc32, readZipDirectory, readZipEntryBuffer, updateCrc32, ZipWriter } from "./zip.js";
 import type { BlockType, UserRow } from "../types/domain.js";
 
@@ -84,7 +85,9 @@ const blockSchema = z.object({
   markdown: z.string().max(20_000),
   html_cache: z.string().nullable(),
   checked: z.union([z.literal(0), z.literal(1)]),
-  sort_order: z.number().int(),
+  sort_order: z.number().int()
+    .min(blockSortOrderLimits.min)
+    .max(blockSortOrderLimits.max),
   metadata: z.string().nullable(),
   edit_version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   created_at: timestampSchema,

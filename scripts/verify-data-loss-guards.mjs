@@ -162,6 +162,14 @@ const databaseSource = readFileSync(
   new URL("../src/lib/database.ts", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const dbConnectionSource = readFileSync(
+  new URL("../src/lib/db.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
+const blockOrderIntegritySource = readFileSync(
+  new URL("../src/lib/block-order-integrity.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const collaborationServerSource = readFileSync(
   new URL("../src/lib/collaboration-server.ts", import.meta.url),
   "utf8"
@@ -182,6 +190,37 @@ const materializationMigrationSource = readFileSync(
   new URL("../migrations/022_server_authoritative_collaboration_materialization.sql", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+
+assert(
+  blockOrderIntegritySource.includes("max: 2_147_483_647")
+    && blockRouteSource.includes(".max(blockSortOrderLimits.max)")
+    && blockRouteSource.includes("getNextBlockSortOrder(lastBlock?.sort_order)")
+    && dataTransferSource.includes(".max(blockSortOrderLimits.max)"),
+  "A direct write, automatic append, or backup restore can exceed the blocks.sort_order INT range"
+);
+assert(
+  dbConnectionSource.includes("initSql: strictTransactionalSqlMode")
+    && dbConnectionSource.includes("STRICT_TRANS_TABLES"),
+  "Database sessions can still inherit a permissive SQL mode that silently coerces invalid writes"
+);
+
+const blockOrderReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [
+    "--experimental-strip-types",
+    fileURLToPath(new URL("./reproduce-block-sort-order-overflow-loss.mjs", import.meta.url))
+  ],
+  { encoding: "utf8" }
+));
+assert(
+  blockOrderReproduction.vulnerability.silentOrderingLossReproduced
+    && blockOrderReproduction.fixedBehavior.directApiRejectsOutOfRangeBeforeSql
+    && blockOrderReproduction.fixedBehavior.backupRestoreRejectsOutOfRangeBeforeSql
+    && blockOrderReproduction.fixedBehavior.automaticAppendFailsClosedAtIntMax
+    && blockOrderReproduction.fixedBehavior.pooledConnectionsForceStrictTransactionalWrites
+    && blockOrderReproduction.fixedBehavior.silentOrderingLossClosed,
+  "The block sort-order overflow reproduction did not prove both vulnerable and fixed states"
+);
 
 const structuredSaveSources = [blockRouteSource, collaborationRouteSource];
 for (const source of structuredSaveSources) {
@@ -962,5 +1001,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed structured metadata preservation, database fallback reference integrity, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, fail-closed structured metadata preservation, database fallback reference integrity, and fail-closed recovery inspection."
 );

@@ -30,6 +30,11 @@ import {
   StructuredMetadataIntegrityError
 } from "../lib/structured-metadata-integrity.js";
 import { toBlock } from "../lib/mappers.js";
+import {
+  BlockSortOrderIntegrityError,
+  blockSortOrderLimits,
+  nextBlockSortOrder
+} from "../lib/block-order-integrity.js";
 import { getBlockAccess, getPageAccess, type PageAccess } from "../lib/page-access.js";
 import { broadcastCanonicalAttachment } from "../lib/collaboration-server.js";
 import { ApiError, notFound } from "../lib/http.js";
@@ -42,12 +47,16 @@ export const blockRouter = Router();
 
 blockRouter.use(requireAuth);
 
+const blockSortOrderSchema = z.number().int()
+  .min(blockSortOrderLimits.min)
+  .max(blockSortOrderLimits.max);
+
 const createBlockSchema = z.object({
   type: blockTypeSchema.default("MARKDOWN"),
   markdown: z.string().max(20_000).default(""),
   checked: z.boolean().optional(),
   parentBlockId: z.string().min(1).nullable().optional(),
-  sortOrder: z.number().int().min(0).optional(),
+  sortOrder: blockSortOrderSchema.optional(),
   metadata: metadataSchema
 });
 
@@ -56,7 +65,7 @@ const updateBlockSchema = z.object({
   markdown: z.string().max(20_000).optional(),
   checked: z.boolean().optional(),
   parentBlockId: z.string().min(1).nullable().optional(),
-  sortOrder: z.number().int().min(0).optional(),
+  sortOrder: blockSortOrderSchema.optional(),
   metadata: metadataSchema.nullable().optional(),
   expectedVersion: z.number().int().min(1),
   mutationId: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/).optional()
@@ -120,7 +129,7 @@ const reorderSchema = z.object({
     .array(
       z.object({
         id: z.string().min(1),
-        sortOrder: z.number().int().min(0),
+        sortOrder: blockSortOrderSchema,
         parentBlockId: z.string().min(1).nullable().optional(),
         expectedVersion: z.number().int().min(1)
       })
@@ -136,7 +145,7 @@ const attachmentFormSchema = z.object({
   ),
   sortOrder: z.preprocess(
     (value) => (value === undefined || value === "" ? undefined : Number(value)),
-    z.number().int().min(0).optional()
+    blockSortOrderSchema.optional()
   )
 });
 
@@ -167,6 +176,22 @@ blockRouter.post("/bookmarks/preview", validate({ body: bookmarkPreviewSchema })
     next(error);
   }
 });
+
+function getNextBlockSortOrder(lastSortOrder: number | null | undefined) {
+  try {
+    return nextBlockSortOrder(lastSortOrder);
+  } catch (error) {
+    if (error instanceof BlockSortOrderIntegrityError) {
+      throw new ApiError(
+        409,
+        "BLOCK_ORDER_RANGE_EXHAUSTED",
+        "The block list cannot accept another automatically positioned block until it is reordered. Nothing was saved.",
+        { reason: error.code, sortOrder: error.value }
+      );
+    }
+    throw error;
+  }
+}
 
 async function assertAccessiblePage(pageId: string, userId: string, client: DbClient = db) {
   return getPageAccess(pageId, userId, client);
@@ -340,7 +365,7 @@ blockRouter.post(
               body.parentBlockId,
               originalName,
               renderBlockHtml("ATTACHMENT", originalName, false, metadata),
-              body.sortOrder ?? (lastBlock ? lastBlock.sort_order + 1 : 0),
+              body.sortOrder ?? getNextBlockSortOrder(lastBlock?.sort_order),
               JSON.stringify(metadata)
             ]
           );
@@ -444,7 +469,7 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
           prepared.markdown,
           renderBlockHtml(body.type, prepared.markdown, Boolean(body.checked), prepared.metadata),
           body.checked ? 1 : 0,
-          body.sortOrder ?? (lastBlock ? lastBlock.sort_order + 1 : 0),
+          body.sortOrder ?? getNextBlockSortOrder(lastBlock?.sort_order),
           prepared.metadata ? JSON.stringify(prepared.metadata) : null
         ]
       );

@@ -17,13 +17,22 @@ export type DbClient = {
 };
 
 const databaseConfig = parseDatabaseUrl(env.DATABASE_URL, { requireDatabase: true });
+const strictTransactionalSqlMode =
+  "SET SESSION sql_mode = IF(" +
+  "FIND_IN_SET('STRICT_TRANS_TABLES', @@SESSION.sql_mode) > 0 " +
+  "OR FIND_IN_SET('STRICT_ALL_TABLES', @@SESSION.sql_mode) > 0, " +
+  "@@SESSION.sql_mode, " +
+  "CONCAT_WS(',', NULLIF(@@SESSION.sql_mode, ''), 'STRICT_TRANS_TABLES'))";
 
 export const pool: Pool = mariadb.createPool({
   ...databaseOptionsWithSchema(databaseConfig),
   connectionLimit: env.DATABASE_CONNECTION_LIMIT,
   insertIdAsNumber: true,
   bigIntAsNumber: true,
-  namedPlaceholders: false
+  namedPlaceholders: false,
+  // Never let an operator's permissive server default turn an invalid write
+  // into a warning plus silent truncation/coercion.
+  initSql: strictTransactionalSqlMode
 });
 
 function createClient(target: Pool | PoolConnection): DbClient {
