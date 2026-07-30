@@ -3,15 +3,13 @@ import { link, mkdir, open, rm, stat } from "node:fs/promises";
 import { env } from "../config/env.js";
 import { transaction, type DbClient } from "./db.js";
 
-export type AttachmentInfo = {
-  originalName: string;
-  mimeType: string;
-  size: number;
-};
-
-export type AttachmentMetadata = {
-  attachment: AttachmentInfo;
-};
+export {
+  getAttachmentInfo,
+  normalizeAttachmentMimeType,
+  sanitizeAttachmentFilename,
+  type AttachmentInfo,
+  type AttachmentMetadata
+} from "./attachment-metadata-integrity.js";
 
 const projectRoot = path.resolve(process.cwd());
 export const attachmentUploadRoot = path.resolve(projectRoot, env.ATTACHMENT_UPLOAD_DIR);
@@ -32,25 +30,6 @@ function safeStorageSegment(value: string) {
   return normalized;
 }
 
-export function sanitizeAttachmentFilename(value: string) {
-  const basename = String(value ?? "")
-    .replaceAll("\\", "/")
-    .split("/")
-    .pop()
-    ?.replace(/[\u0000-\u001f\u007f]/g, "_")
-    .trim();
-
-  const safeName = !basename || basename === "." || basename === ".." ? "attachment" : basename;
-  return safeName.slice(0, 255);
-}
-
-export function normalizeAttachmentMimeType(value: string) {
-  const mimeType = String(value ?? "").trim().toLowerCase();
-  return /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(mimeType)
-    ? mimeType.slice(0, 255)
-    : "application/octet-stream";
-}
-
 export function formatAttachmentSize(size: number) {
   const bytes = Number.isFinite(size) && size > 0 ? size : 0;
   if (bytes < 1024) return `${bytes} B`;
@@ -63,29 +42,6 @@ export function formatAttachmentSize(size: number) {
   }
   const digits = value >= 10 ? 0 : 1;
   return `${value.toFixed(digits)} ${units[unitIndex]}`;
-}
-
-export function getAttachmentInfo(metadata: unknown): AttachmentInfo | null {
-  let parsedMetadata = metadata;
-  if (typeof metadata === "string") {
-    try {
-      parsedMetadata = JSON.parse(metadata) as unknown;
-    } catch {
-      parsedMetadata = null;
-    }
-  }
-
-  const source = parsedMetadata && typeof parsedMetadata === "object" && !Array.isArray(parsedMetadata)
-    ? (parsedMetadata as Record<string, unknown>)
-    : null;
-  const attachment = source?.attachment;
-  if (!attachment || typeof attachment !== "object" || Array.isArray(attachment)) return null;
-
-  const value = attachment as Record<string, unknown>;
-  const originalName = sanitizeAttachmentFilename(typeof value.originalName === "string" ? value.originalName : "");
-  const mimeType = normalizeAttachmentMimeType(typeof value.mimeType === "string" ? value.mimeType : "");
-  const size = typeof value.size === "number" && Number.isSafeInteger(value.size) && value.size >= 0 ? value.size : 0;
-  return { originalName, mimeType, size };
 }
 
 export async function ensureAttachmentDirectories() {

@@ -1,0 +1,420 @@
+src/routes/mfa.routes.ts:458:mfaRouter.delete(
+src/routes/mfa.routes.ts:610:mfaRouter.delete(
+public/collaboration-durability.js:7:    message = "The browser could not save a local collaboration recovery copy",
+public/collaboration-durability.js:24: * Makes a prepared browser recovery snapshot durable before exposing its
+public/collaboration-durability.js:28: *   recoveryUpdate: Uint8Array | ArrayBuffer | ArrayLike<number>,
+public/collaboration-durability.js:36:  recoveryUpdate,
+public/collaboration-durability.js:44:  const durableUpdate = asNonEmptyUpdate(recoveryUpdate, "recoveryUpdate");
+public/collaboration-durability.js:57:  // after the full-document recovery candidate is known to be durable.
+public/save-queue.js:3:  let pendingTask = null;
+public/save-queue.js:9:    while (retryTask !== null || pendingTask !== null) {
+public/save-queue.js:11:      const task = isRetry ? retryTask : pendingTask;
+public/save-queue.js:14:      else pendingTask = null;
+public/save-queue.js:40:      pendingTask = task;
+public/save-queue.js:44:      while (retryTask !== null || pendingTask !== null || runningPromise) {
+public/save-queue.js:52:      pendingTask = null;
+public/save-queue.js:55:      return retryTask !== null || pendingTask !== null || Boolean(runningPromise);
+src/routes/block.routes.ts:271:  const pending = [rootBlockId];
+src/routes/block.routes.ts:274:  while (pending.length) {
+src/routes/block.routes.ts:275:    const id = pending.pop();
+src/routes/block.routes.ts:280:    pending.push(...(children.get(id) ?? []));
+src/routes/block.routes.ts:643:blockRouter.delete(
+src/routes/collaboration.routes.ts:236:collaborationRouter.delete(
+src/routes/collaboration.routes.ts:523:          existingById.delete(row.id);
+src/routes/collaboration.routes.ts:529:          existingById.delete(row.id);
+src/routes/page.routes.ts:133:  const pending = [pageId];
+src/routes/page.routes.ts:135:  while (pending.length) {
+src/routes/page.routes.ts:136:    const currentId = pending.pop();
+src/routes/page.routes.ts:143:    for (let index = childIds.length - 1; index >= 0; index -= 1) pending.push(childIds[index]);
+src/routes/page.routes.ts:610:pageRouter.delete(
+src/app.ts:42:      standardHeaders: "draft-8",
+public/i18n.js:284:      localDraftsPending: "Collaboration is blocked because {count} unsaved local draft record(s) remain in this or another tab. Let every tab finish saving or copy the recovery panel, then try again.",
+public/i18n.js:285:      localCollaborationRecoveryPending: "Sharing cannot be changed because {count} unconfirmed real-time recovery record(s) remain in this browser. Reconnect every tab and let synchronization finish, then try again.",
+public/i18n.js:286:      transitionBusy: "Another tab is already changing this page's sharing mode. Try again after that operation finishes."
+public/i18n.js:575:      overwriteRecoveredDraft: "A newer server version exists. Overwrite it with this recovered local draft? Newer server changes may be lost.",
+public/i18n.js:609:      resolveRecoveredDraftConflict: "Resolve the recovered draft conflict before saving, archiving, deleting, or replacing content. Use the block menu’s Save block action, or edit the page title and confirm the overwrite.",
+public/i18n.js:610:      localDraftStorageFailed: "Unsaved changes could not be stored for crash recovery. Keep this page open until saving succeeds.",
+public/i18n.js:611:      localRecoveryInspectionFailed: "Browser recovery storage could not be inspected safely. No destructive change was made. Keep every related tab open and try again.",
+public/i18n.js:613:      orphanedLocalDrafts: "Unsaved changes for a deleted, unavailable, or collaboration-enabled page were preserved from another tab or earlier session. Copy the recovery data below before clearing browser storage.",
+public/i18n.js:614:      orphanedCollaborationRecovery: "Unconfirmed real-time edits for a deleted, unavailable, or no-longer-collaborative page were preserved. Copy the readable recovery data below before clearing browser storage.",
+public/i18n.js:615:      destructiveCollaborationRecoveryPending: "This operation is blocked because {count} unconfirmed real-time recovery record(s) for affected pages remain in this browser. Reconnect every related tab and finish synchronization first.",
+public/i18n.js:616:      workspaceLocalDraftsPending: "The backup is blocked because {count} unsaved local draft record(s) for owned pages remain in this browser. Let every related tab finish saving first.",
+public/i18n.js:617:      destructiveLocalDraftsPending: "This operation is blocked because {count} unsaved local draft record(s) for affected pages remain in this browser. Let every related tab finish saving first.",
+public/i18n.js:687:      DATA_RESTORE_OUTCOME_UNKNOWN: "The restore outcome could not be verified. Restart the server so automatic recovery can finish safely.",
+public/i18n.js:688:      DATA_RESTORE_RECOVERY_FAILED: "The restore state needs manual attachment recovery. Check the server log before retrying.",
+public/i18n.js:1285:      transitionBusy: "다른 탭에서 이 페이지의 공유 모드를 변경하고 있습니다. 해당 작업이 끝난 뒤 다시 시도하세요."
+public/i18n.js:3210:    return globalThis.localStorage?.getItem(key) ?? null;
+public/i18n.js:3218:    globalThis.localStorage?.setItem(key, value);
+public/styles.css:88:  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, opacity 120ms ease;
+public/styles.css:653:  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+public/styles.css:1155:  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+public/styles.css:1306:  transition: opacity 120ms ease, transform 120ms ease;
+public/styles.css:1520:  transition: opacity 120ms ease;
+public/styles.css:1558:.page-title-input.local-draft-recovered {
+public/styles.css:1629:  transition:
+public/styles.css:1663:.local-draft-recovery-panel {
+public/styles.css:1673:.local-draft-recovery-panel pre {
+public/styles.css:1711:  transition: width 120ms ease, opacity 90ms ease, transform 120ms ease, background-color 100ms ease;
+public/styles.css:1799:  transition: opacity 100ms ease;
+public/styles.css:2057:  transition: background 140ms ease, border-color 140ms ease;
+public/styles.css:2234:  transition: opacity 110ms ease;
+public/styles.css:2321:  transition: background 120ms ease, color 120ms ease, opacity 120ms ease;
+public/styles.css:2750:  transition: border-color 100ms ease, background-color 100ms ease;
+public/styles.css:2782:  transition: background-color 100ms ease, border-color 100ms ease, box-shadow 100ms ease, opacity 100ms ease, transform 100ms ease;
+public/styles.css:3136:  transition: opacity 100ms ease;
+public/styles.css:3336:  transition: background 150ms ease;
+public/styles.css:3348:  transition: transform 150ms ease;
+public/styles.css:4129:    transition: transform 220ms ease, visibility 0s linear 220ms;
+public/styles.css:4140:    transition-delay: 0s;
+public/styles.css:4143:  body.app-mode.mobile-sidebar-no-transition .sidebar,
+public/styles.css:4144:  body.app-mode.mobile-sidebar-no-transition .mobile-sidebar-backdrop {
+public/styles.css:4145:    transition: none;
+public/styles.css:4258:    transition: opacity 180ms ease, visibility 0s linear 180ms;
+public/styles.css:4269:    transition-delay: 0s;
+public/styles.css:4643:    transition-duration: 0.01ms !important;
+public/styles.css:5997:  transition: opacity 120ms ease;
+public/styles.css:6029:  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+public/styles.css:7856:  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+public/styles.css:8074:  transition: background-color 100ms ease, transform 100ms ease;
+public/styles.css:8233:    transition: background-color 120ms ease, border-color 120ms ease;
+public/styles.css:8320:    transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+public/styles.css:9388:    transition: background-color 120ms ease, box-shadow 120ms ease;
+public/styles.css:10183:  transition: border-color 100ms ease, box-shadow 100ms ease;
+public/page-transition-lock.js:3:const transitionSchemaVersion = 1;
+public/page-transition-lock.js:25:  if (!isNonEmptyString(sourceId)) throw new TypeError("A non-empty transition sourceId is required");
+public/page-transition-lock.js:50:      storage.removeItem(getKey(pageId));
+public/page-transition-lock.js:77:      record?.schemaVersion !== transitionSchemaVersion
+public/page-transition-lock.js:86:      // transition could let two destructive operations run concurrently.
+public/page-transition-lock.js:91:    // (for example after a throttled timer or a failed localStorage renewal).
+public/page-transition-lock.js:119:      schemaVersion: transitionSchemaVersion,
+public/page-transition-lock.js:212:      throw new TypeError("One or more pageIds and a transition action are required");
+public/page-transition-lock.js:217:      // lease is useful for propagation, crash recovery, and UI state, but
+public/page-transition-lock.js:218:      // it cannot safely replace Web Locks for a destructive transition.
+public/page-transition-lock.js:242:            else heldExclusiveIds.delete(exclusiveId);
+src/lib/data-transfer.ts:255:  const pending: Array<{
+src/lib/data-transfer.ts:285:        pending.push({
+src/lib/data-transfer.ts:295:  if (pending.length) {
+src/lib/data-transfer.ts:301:        pendingPageCount: pending.length,
+src/lib/data-transfer.ts:302:        pages: pending.slice(0, 100),
+src/lib/data-transfer.ts:303:        truncated: pending.length > 100
+src/lib/data-transfer.ts:977:        `Restore recovery found an unsupported attachment entry: ${path.join(directory, entry.name)}`
+src/lib/data-transfer.ts:990:    // also makes this merge restart-safe if recovery is interrupted midway.
+src/lib/data-transfer.ts:1002:        // A prior recovery attempt created the hard link and crashed before
+src/lib/data-transfer.ts:1009:        `Restore recovery found conflicting attachment files at ${source} and ${destination}; preserving both generations for manual recovery`
+src/lib/data-transfer.ts:1047:    // original recovery behavior for backwards compatibility.
+src/lib/data-transfer.ts:1081:        `Committed restore ${journal.operationId} found ${describeRestoreGeneration(targetGeneration)}; preserving all attachment generations for manual recovery`
+src/lib/data-transfer.ts:1095:            `Restore ${journal.operationId} found ${describeRestoreGeneration(targetGeneration)} after a failed rollback; preserving both attachment generations for manual recovery`
+src/lib/data-transfer.ts:1117:    // generation replaced it after an earlier recovery attempt. Never delete it.
+src/lib/data-transfer.ts:1129:    // This is a later attachment generation created after a partial recovery.
+src/lib/data-transfer.ts:1134:    `Restore ${journal.operationId} found ${describeRestoreGeneration(targetGeneration)}; preserving it for manual recovery`
+src/lib/data-transfer.ts:1166:        `Committed restore ${journal.operationId} found ${describeRestoreGeneration(targetGeneration)}; preserving all attachment generations for manual recovery`
+src/lib/data-transfer.ts:1182:            `Restore ${journal.operationId} found ${describeRestoreGeneration(targetGeneration)} after a failed rollback; preserving both attachment generations for manual recovery`
+src/lib/data-transfer.ts:1187:        // its row lock but before recovery reacquires it. Preserve every file not
+src/lib/data-transfer.ts:1227:    // Remove the ownership marker last. If recovery crashes earlier, a retry can
+src/lib/data-transfer.ts:1241:    `Restore ${journal.operationId} found ${describeRestoreGeneration(targetGeneration)}; preserving it for manual recovery`
+src/lib/data-transfer.ts:1274:      // future recovery can mistake a later attachment generation for this one.
+src/lib/data-transfer.ts:1315:      console.error("Interrupted data restore requires manual recovery", { journalPath, error });
+src/lib/data-transfer.ts:1425:        // mistaken for failed-restore output and deleted during conflict recovery.
+src/lib/data-transfer.ts:1468:          "The restore outcome could not be verified. Attachment generations were preserved for startup recovery."
+src/lib/data-transfer.ts:1473:      await recoverRestoreJournal(restoreJournal).catch((recoveryError) => {
+src/lib/data-transfer.ts:1474:        console.error("Attachment restore reconciliation requires manual recovery", {
+src/lib/data-transfer.ts:1481:          recoveryError
+src/lib/data-transfer.ts:1486:          "The restore outcome was identified, but attachment reconciliation requires manual recovery."
+public/draft-store.js:3:const draftSchemaVersion = 2;
+public/draft-store.js:96:    value.schemaVersion !== draftSchemaVersion ||
+public/draft-store.js:122:      // A recovery record must be parsed losslessly. Silently dropping one bad
+public/draft-store.js:136:    schemaVersion: draftSchemaVersion,
+public/draft-store.js:151:  if (!isNonEmptyString(sourceId)) throw new TypeError("A non-empty draft sourceId is required");
+public/draft-store.js:277:    // record is potentially the only recovery copy and must never be replaced.
+public/draft-store.js:280:      if (!hasTitle && !hasBlocks && !hasBlockOrder) storage.removeItem(key);
+public/draft-store.js:290:      schemaVersion: draftSchemaVersion,
+public/draft-store.js:439:    const draft = record?.blocks?.[blockId];
+public/draft-store.js:440:    if (!record || !draft) return true;
+public/draft-store.js:441:    if (draft.revision <= acknowledgedRevision) delete record.blocks[blockId];
+public/draft-store.js:442:    else draft.expectedVersion = nextVersion;
+public/draft-store.js:523:    const draft = record?.blocks?.[blockId];
+public/draft-store.js:524:    if (!record || !draft) return true;
+public/draft-store.js:526:      draft.expectedVersion !== normalizedVersion ||
+public/draft-store.js:527:      draft.revision !== normalizedRevision ||
+public/draft-store.js:528:      JSON.stringify(draft.payload) !== JSON.stringify(payload)
+public/draft-store.js:577:      storage.removeItem(getKey(userId, pageId, recordSourceId));
+src/lib/collaboration-lineage.ts:96:      "The collaboration document was replaced. The browser recovery copy was preserved."
+public/collaboration-recovery-store.js:3:const recoverySchemaVersion = 2;
+public/collaboration-recovery-store.js:75:      const isCurrent = record?.schemaVersion === recoverySchemaVersion;
+public/collaboration-recovery-store.js:112:      // Never destroy an unconfirmed recovery payload merely because this
+public/collaboration-recovery-store.js:162:        // The key belongs to this recovery namespace but its page cannot be
+public/collaboration-recovery-store.js:241:          schemaVersion: recoverySchemaVersion,
+public/collaboration-recovery-store.js:274:        storage.removeItem(key);
+src/lib/websocket.ts:60:  private pendingMessages: WebSocketMessage[] = [];
+src/lib/websocket.ts:82:    if (this.pendingMessages.length) {
+src/lib/websocket.ts:83:      const pending = this.pendingMessages.splice(0);
+src/lib/websocket.ts:84:      for (const message of pending) this.enqueueMessage(message);
+src/lib/websocket.ts:273:      this.pendingMessages.push(message);
+src/lib/collaboration-server.ts:93:  pendingWrites: number;
+src/lib/collaboration-server.ts:231:    activeHubs.delete(this);
+src/lib/collaboration-server.ts:245:    this.rooms.clear();
+src/lib/collaboration-server.ts:260:    this.rooms.delete(pageId);
+src/lib/collaboration-server.ts:262:    room.waitingForBootstrap.clear();
+src/lib/collaboration-server.ts:270:    this.rooms.delete(room.pageId);
+src/lib/collaboration-server.ts:272:    room.waitingForBootstrap.clear();
+src/lib/collaboration-server.ts:432:      this.rooms.delete(pageId);
+src/lib/collaboration-server.ts:449:      pendingWrites: 0,
+src/lib/collaboration-server.ts:477:      if (this.rooms.get(pageId) === room) this.rooms.delete(pageId);
+src/lib/collaboration-server.ts:574:    room.pendingWrites += 1;
+src/lib/collaboration-server.ts:601:        room.pendingWrites = Math.max(0, room.pendingWrites - 1);
+src/lib/collaboration-server.ts:606:          && room.pendingWrites === 0
+src/lib/collaboration-server.ts:798:      room.waitingForBootstrap.clear();
+src/lib/collaboration-server.ts:824:      room.waitingForBootstrap.delete(nextId);
+src/lib/collaboration-server.ts:843:      && room.pendingWrites === 0
+src/lib/collaboration-server.ts:847:      this.rooms.delete(room.pageId);
+src/lib/collaboration-server.ts:853:    if (!room.clients.delete(client.id)) return;
+src/lib/collaboration-server.ts:854:    room.waitingForBootstrap.delete(client.id);
+public/collaboration.js:17:const RECOVERY_ORIGIN = Object.freeze({ kind: "recovery" });
+public/collaboration.js:76:  if (deleteLength) text.delete(prefix, deleteLength);
+public/collaboration.js:112:  while (array.length > next.length) array.delete(next.length, array.length - next.length);
+public/collaboration.js:120:      array.delete(index, 1);
+public/collaboration.js:125:      array.delete(index, 1);
+public/collaboration.js:134:    if (!Object.prototype.hasOwnProperty.call(source, key)) map.delete(key);
+public/collaboration.js:261:    this.recoverySourceId = typeof options.recoverySourceId === "string" ? options.recoverySourceId : "";
+public/collaboration.js:262:    this.recoveryStore = options.recoveryStore ?? null;
+public/collaboration.js:264:    this.recoveryStorageWarningShown = false;
+public/collaboration.js:265:    this.recoveryLineageWarningShown = false;
+public/collaboration.js:267:    this.recoveryLoadedEpoch = null;
+public/collaboration.js:293:    this.pendingLocalUpdates = 0;
+public/collaboration.js:294:    this.pendingWaiters = [];
+public/collaboration.js:325:    const records = this.recoveryStore?.loadAll?.(this.accountId, this.page.id) ?? [];
+public/collaboration.js:329:    if (preservedRecords.length && !this.recoveryLineageWarningShown) {
+public/collaboration.js:330:      this.recoveryLineageWarningShown = true;
+public/collaboration.js:332:        `Preserved ${preservedRecords.length} local collaboration recovery record(s) from an earlier document version without merging them`
+public/collaboration.js:346:        // Preserve undecodable bytes for manual recovery. A newer application
+public/collaboration.js:349:          `A local collaboration recovery record could not be decoded and was preserved: ${error?.message || error}`
+public/collaboration.js:360:    if (!this.recoveryStore || !this.accountId || !this.recoverySourceId || !this.documentEpoch) return null;
+public/collaboration.js:361:    return this.recoveryStore.save(
+public/collaboration.js:364:      this.recoverySourceId,
+public/collaboration.js:371:    if (this.recoveryStorageWarningShown) return;
+public/collaboration.js:372:    this.recoveryStorageWarningShown = true;
+public/collaboration.js:385:      this.onError(new Error(`The collaboration recovery state could not be encoded: ${error?.message || error}`));
+public/collaboration.js:439:      throw new Error(`The collaboration draft could not be prepared safely: ${error?.message || error}`);
+public/collaboration.js:464:    let recoveryUpdate;
+public/collaboration.js:467:      recoveryUpdate = this.Y.encodeStateAsUpdate(prepared.doc);
+public/collaboration.js:471:      throw new Error(`The collaboration draft could not be encoded safely: ${error?.message || error}`);
+public/collaboration.js:476:        recoveryUpdate,
+public/collaboration.js:489:      // The recovery snapshot is already durable at this point. Force the next
+public/collaboration.js:496:      this.recoveryLoadedEpoch = null;
+public/collaboration.js:498:        `A durable collaboration draft could not be applied to the live document: ${error?.message || error}`
+public/collaboration.js:504:        this.socket?.close(1011, "Unable to apply durable collaboration draft");
+public/collaboration.js:513:    if (!this.recoveryStore || !this.accountId) return;
+public/collaboration.js:514:    if (this.recoverySourceId && this.documentEpoch) {
+public/collaboration.js:515:      this.recoveryStore.remove(
+public/collaboration.js:518:        this.recoverySourceId,
+public/collaboration.js:523:      this.recoveryStore.remove(
+public/collaboration.js:543:    return Boolean(this.pendingLocalUpdates || this.needsRecovery || this.startupUpdatePending);
+public/collaboration.js:586:      if (normalized.type === "ATTACHMENT") deletedAttachments.delete(normalized.id);
+public/collaboration.js:608:        if (block.type === "ATTACHMENT") deletedAttachments.delete(block.id);
+public/collaboration.js:635:        blocks.delete(id);
+public/collaboration.js:698:        if (this.blocks.has(id)) this.blocks.delete(id);
+public/collaboration.js:700:        this.deletedAttachments.delete(id);
+public/collaboration.js:776:            && this.pendingLocalUpdates === 0
+public/collaboration.js:866:      if (this.recoveryLoadedEpoch !== documentEpoch) {
+public/collaboration.js:868:        this.recoveryLoadedEpoch = documentEpoch;
+public/collaboration.js:943:          this.onError(new Error(`The collaboration recovery state could not be encoded for synchronization: ${error?.message || error}`));
+public/collaboration.js:945:            this.socket?.close(1011, "Unable to encode collaboration recovery state");
+public/collaboration.js:954:      } else if (this.pendingLocalUpdates > 0) {
+public/collaboration.js:967:      this.pendingLocalUpdates = Math.max(0, this.pendingLocalUpdates - 1);
+public/collaboration.js:973:      if (this.pendingLocalUpdates === 0) {
+public/collaboration.js:975:        // was in flight. Keep the durable full-document recovery copy until every
+public/collaboration.js:977:        if (shouldClearLocalRecoveryAfterAck(this.pendingLocalUpdates, this.needsRecovery)) {
+public/collaboration.js:991:      this.pendingLocalUpdates = Math.max(0, this.pendingLocalUpdates - 1);
+public/collaboration.js:992:      if (this.pendingLocalUpdates === 0) this.resolvePendingWaiters();
+public/collaboration.js:1004:      this.presence.clear();
+public/collaboration.js:1010:      if (message.state === null) this.presence.delete(message.connectionId);
+public/collaboration.js:1023:    this.presence.clear();
+public/collaboration.js:1034:      this.pendingLocalUpdates = 0;
+public/collaboration.js:1039:    } else if (this.pendingLocalUpdates > 0 || this.startupUpdatePending) {
+public/collaboration.js:1041:      this.pendingLocalUpdates = 0;
+public/collaboration.js:1053:        "The initial collaboration state did not match the saved page. Local recovery data was preserved instead of being overwritten."
+public/collaboration.js:1090:    this.pendingLocalUpdates += 1;
+public/collaboration.js:1095:      this.pendingLocalUpdates = Math.max(0, this.pendingLocalUpdates - 1);
+public/collaboration.js:1097:      if (this.pendingLocalUpdates === 0) this.resolvePendingWaiters();
+public/collaboration.js:1102:        // The reconnect path will resend the durable recovery snapshot.
+public/collaboration.js:1109:    if (this.compactionPending || !this.isReady || this.pendingLocalUpdates) return;
+public/collaboration.js:1121:    this.pendingLocalUpdates += 1;
+public/collaboration.js:1126:      this.pendingLocalUpdates = Math.max(0, this.pendingLocalUpdates - 1);
+public/collaboration.js:1127:      if (this.pendingLocalUpdates === 0) this.resolvePendingWaiters();
+public/collaboration.js:1138:    if (this.pendingLocalUpdates === 0) return Promise.resolve();
+public/collaboration.js:1139:    return new Promise((resolve, reject) => this.pendingWaiters.push({ resolve, reject }));
+public/collaboration.js:1143:    const waiters = this.pendingWaiters.splice(0);
+public/collaboration.js:1177: * @param {number} pendingLocalUpdates
+public/collaboration.js:1180:export function shouldClearLocalRecoveryAfterAck(pendingLocalUpdates, needsRecovery) {
+public/collaboration.js:1181:  return pendingLocalUpdates === 0 && needsRecovery !== true;
+public/collaboration.js:1192:    throw new Error("Collaboration recovery records from different document versions cannot be merged");
+public/app.js:26:import { createPageDraftStore } from "./draft-store.js";
+public/app.js:32:import { createCollaborationRecoveryStore } from "./collaboration-recovery-store.js";
+public/app.js:33:import { createPageTransitionLock } from "./page-transition-lock.js";
+public/app.js:54:// Generate this in memory instead of sessionStorage. Browsers may clone sessionStorage
+public/app.js:55:// when a tab is duplicated, which would let two live tabs overwrite the same draft.
+public/app.js:61:const pageDraftStore = createPageDraftStore(window.localStorage, { sourceId: pageDraftSourceId });
+public/app.js:62:const collaborationRecoveryStore = createCollaborationRecoveryStore(window.localStorage, {
+public/app.js:65:const pageTransitionLock = createPageTransitionLock(window.localStorage, {
+public/app.js:81:  token: localStorage.getItem(tokenKey),
+public/app.js:102:  pendingFocusBlockId: null,
+public/app.js:105:  pendingAvatarData: null,
+public/app.js:562:let pendingBlockOrderTask = null;
+public/app.js:746:  document.body.classList.add("mobile-sidebar-no-transition");
+public/app.js:748:    window.requestAnimationFrame(() => document.body.classList.remove("mobile-sidebar-no-transition"));
+public/app.js:867:  if (token) localStorage.setItem(tokenKey, token);
+public/app.js:868:  else localStorage.removeItem(tokenKey);
+public/app.js:1063:    ? pageDraftStore.loadPage(task.userId, task.pageId, task.draftSourceId)?.title?.expectedVersion
+public/app.js:1084:        sourceId: task.draftSourceId,
+public/app.js:1102:    ? pageDraftStore.loadPage(task.userId, task.pageId, task.draftSourceId)?.title
+public/app.js:1188:      // browser-only direct draft or Yjs recovery snapshot. Require every local
+public/app.js:1240:      // see direct drafts or a full-document recovery snapshot that exists only in
+public/app.js:1241:      // another tab's localStorage. Recheck after every same-origin editor has had
+public/app.js:1249:      // Preserve durable drafts from every tab. Restored rows receive fresh edit versions,
+public/app.js:1250:      // so pre-restore drafts are recovered as explicit conflicts instead of overwriting data.
+public/app.js:1308:  // Input handlers persist durable per-account drafts before enqueueing writes. Keep those
+public/app.js:1332:  state.pendingFocusBlockId = null;
+public/app.js:1333:  state.pendingAvatarData = null;
+public/app.js:1493:  state.pendingAvatarData = state.user.avatarData ?? null;
+public/app.js:1500:    state.pendingAvatarData,
+public/app.js:1503:  elements.accountAvatarRemove.disabled = !state.pendingAvatarData;
+public/app.js:1888:    const value = JSON.parse(localStorage.getItem(key) ?? "null");
+public/app.js:1897:    localStorage.setItem(key, JSON.stringify(value));
+public/app.js:2492:    : t("sharing.transitionBusy");
+public/app.js:2531:function getPageTransitionExclusiveIds(transition, page = null) {
+public/app.js:2532:  if (!transition?.pageId) return [];
+public/app.js:2533:  const transitionPage = page
+public/app.js:2534:    ?? (state.selectedPage?.id === transition.pageId ? state.selectedPage : null)
+public/app.js:2535:    ?? state.allPages.find((candidate) => candidate.id === transition.pageId)
+public/app.js:2537:  const inferredWorkspaceId = isWorkspaceTransitionId(transition.pageId)
+public/app.js:2538:    ? transition.pageId
+public/app.js:2539:    : getPageWorkspaceTransitionId(transitionPage);
+public/app.js:2540:  const exclusiveId = transition.exclusiveId ?? inferredWorkspaceId;
+public/app.js:2542:  // New page transitions intentionally hold both scopes. This also permits
+public/app.js:2545:  return [...new Set([transition.pageId, exclusiveId])];
+public/app.js:2548:async function reapExpiredPageTransition(transition, page = null) {
+public/app.js:2549:  if (!transition?.pageId || !Number.isFinite(transition.expiresAt) || transition.expiresAt > Date.now()) {
+public/app.js:2552:  const exclusiveIds = getPageTransitionExclusiveIds(transition, page);
+public/app.js:2555:    const current = pageTransitionLock.inspect(transition.pageId);
+public/app.js:2558:    return pageTransitionLock.releaseExpired(transition.pageId);
+public/app.js:2563:function schedulePageTransitionUnlock(transition) {
+public/app.js:2566:  if (!transition?.expiresAt) return;
+public/app.js:2567:  const isExpired = transition.expiresAt <= Date.now();
+public/app.js:2570:    : Math.max(0, transition.expiresAt - Date.now() + 25);
+public/app.js:2573:    const cleanup = transition.expiresAt <= Date.now()
+public/app.js:2574:      ? reapExpiredPageTransition(transition)
+public/app.js:2590:  const transitions = states.map((transitionState) => transitionState.record).filter(Boolean);
+public/app.js:2591:  const earliestExpiry = transitions.sort((left, right) => left.expiresAt - right.expiresAt)[0] ?? null;
+public/app.js:2593:  return states.some((transitionState) => transitionState.locked);
+public/app.js:2600:  const transitionState = inspectPageTransitionForUi(workspaceTransitionId);
+public/app.js:2601:  schedulePageTransitionUnlock(transitionState.record);
+public/app.js:2602:  return transitionState.locked;
+public/app.js:2608:  let transition = inspectPageTransitionSafely(workspaceTransitionId);
+public/app.js:2609:  if (transition?.expiresAt <= Date.now()) {
+public/app.js:2610:    await reapExpiredPageTransition(transition);
+public/app.js:2611:    transition = inspectPageTransitionSafely(workspaceTransitionId);
+public/app.js:2613:  if (transition) throw new Error(t("status.workspaceTransitionBusy"));
+public/app.js:2776:  if (pendingBlockOrderTask) return true;
+public/app.js:2790:  if (shouldProtect) window.addEventListener("beforeunload", handleBeforeUnload);
+public/app.js:2791:  else window.removeEventListener("beforeunload", handleBeforeUnload);
+public/app.js:2823:  const draftSourceId = pageTitleDraftSourceId || pageDraftSourceId;
+public/app.js:2824:  const storedDraft = pageDraftStore.loadPage(scope.userId, scope.pageId, draftSourceId)?.title;
+public/app.js:2833:      sourceId: draftSourceId,
+public/app.js:2846:  const draftSourceId = row.dataset.draftSourceId || pageDraftSourceId;
+public/app.js:2847:  const storedDraft = pageDraftStore.loadPage(scope.userId, scope.pageId, draftSourceId)?.blocks?.[blockId];
+public/app.js:2848:  const expectedVersion = row.dataset.draftConflict === "true"
+public/app.js:2849:    ? getLatestKnownVersion(row.dataset.draftExpectedVersion, storedDraft?.expectedVersion)
+public/app.js:2850:    : getLatestKnownVersion(row.dataset.draftExpectedVersion, storedDraft?.expectedVersion, getBlockById(blockId)?.version);
+public/app.js:2852:  row.dataset.draftExpectedVersion = String(expectedVersion);
+public/app.js:2853:  row.dataset.draftSourceId = draftSourceId;
+public/app.js:2857:      sourceId: draftSourceId,
+public/app.js:2864:  if (saved) blockDraftRenderSources.set(blockId, draftSourceId);
+public/app.js:2898:  if (row?.dataset.draftConflict !== "true" && !hasStoredConflict) return true;
+public/app.js:2900:  if (row.dataset.draftConflict !== "true" && storedOrigin) {
+public/app.js:2905:    row.dataset.draftConflict = "true";
+public/app.js:2906:    row.dataset.draftSourceId = pageDraftSourceId;
+public/app.js:2907:    row.dataset.draftExpectedVersion = String(currentDraft?.expectedVersion ?? storedOrigin.expectedVersion);
+public/app.js:2918:  delete row.dataset.draftConflict;
+public/app.js:2919:  row.dataset.draftSourceId = pageDraftSourceId;
+public/app.js:2921:  if (serverVersion !== null) row.dataset.draftExpectedVersion = String(serverVersion);
+public/app.js:2935:    Boolean(elements.blockList.querySelector('.editor-block-row[data-draft-conflict="true"]'))
+public/app.js:2944:  window.removeEventListener("beforeunload", handleBeforeUnload);
+public/app.js:2958:  blockDraftConflictOrigins.clear();
+public/app.js:2959:  blockDraftRenderSources.clear();
+public/app.js:2961:  blockSaveTimers.clear();
+public/app.js:2962:  blockSaveRows.clear();
+public/app.js:2963:  blockSaveQueues.clear();
+public/app.js:2964:  blockSaveTaskIds.clear();
+public/app.js:2965:  pendingBlockOrderTask = null;
+public/app.js:2967:  elements.pageTitle.classList.remove("local-draft-recovered", "save-error");
+public/app.js:2976:  blockSaveTimers.clear();
+public/app.js:2977:  blockSaveRows.clear();
+public/app.js:2979:  blockSaveQueues.clear();
+public/app.js:2980:  blockSaveTaskIds.clear();
+public/app.js:2981:  pendingBlockOrderTask = null;
+public/app.js:2990:  blockDraftConflictOrigins.clear();
+public/app.js:2991:  blockDraftRenderSources.clear();
+public/app.js:2997:  blockSaveTimers.delete(blockId);
+public/app.js:2998:  blockSaveRows.delete(blockId);
+public/app.js:3000:  blockSaveQueues.delete(blockId);
+public/app.js:3001:  blockSaveTaskIds.delete(blockId);
+public/app.js:3037:  // Page-level and workspace-level destructive transitions for the same owner
+public/app.js:3038:  // share the owner Web Lock. Page transitions also retain the page lock so an
+public/app.js:3049:    const transitionIds = [
+public/app.js:3053:    for (const transitionId of transitionIds) {
+public/app.js:3054:      const inspection = pageTransitionLock.inspect(transitionId);
+public/app.js:3059:      if (inspection.status === "expired" && !pageTransitionLock.releaseExpired(transitionId)) {
+public/app.js:3062:      const verified = pageTransitionLock.inspect(transitionId);
+public/app.js:3084:      // and flush any durable draft before this tab validates the transition.
+public/app.js:3113:    // The owner lock proves that no current page transition for this workspace
+public/app.js:3117:    let transitionInspection = pageTransitionLock.inspectActive();
+public/app.js:3118:    assertBrowserRecoveryInspectionSafe(transitionInspection);
+public/app.js:3119:    for (const transition of transitionInspection.records) {
+public/app.js:3121:        transition.pageId !== workspaceTransitionId
+public/app.js:3122:        && transition.expiresAt <= Date.now()
+public/app.js:3123:        && transition.exclusiveId === workspaceTransitionId
+public/app.js:3125:        pageTransitionLock.releaseExpired(transition.pageId);
+public/app.js:3128:    transitionInspection = pageTransitionLock.inspectActive();
+public/app.js:3129:    assertBrowserRecoveryInspectionSafe(transitionInspection);
+public/app.js:3130:    const competingTransitions = transitionInspection.records
+public/app.js:3131:      .filter((transition) => transition.pageId !== workspaceTransitionId);
+public/app.js:3158:      expectedVersion: getPositiveVersion(row.dataset.draftExpectedVersion) ?? getBlockById(blockId)?.version
+public/app.js:3172:  if (pendingBlockOrderTask && canPersistSelectedPage()) {
+public/app.js:3186:  const pendingSavePayloadBytes = keepalive ? getPendingSavePayloadBytes({ saveTitle: shouldSaveTitle, rowsToSave }) : 0;
+public/app.js:3187:  const useKeepalive = keepalive && pendingSavePayloadBytes <= keepaliveSaveBudgetBytes;
+public/app.js:3198:      blockSaveTimers.delete(blockId);
+public/app.js:3199:      blockSaveRows.delete(blockId);
+public/app.js:3225:    state.pendingFocusBlockId = null;
+public/app.js:3233:      state.pendingFocusBlockId = data.block.id;
+public/app.js:3432:      // Another tab may hold direct-mode drafts or a newer Yjs document that
+public/app.js:3617:function appendPageDraftRecoveryPanel(container, drafts, { home = false, collaborative = false } = {}) {
+public/app.js:3618:  if (!drafts.length) return;
+public/app.js:3621:    "local-draft-recovery-panel",
+public/app.js:3622:    home ? "home-local-draft-recovery-panel" : "",
+public/app.js:3623:    collaborative ? "collaboration-local-draft-recovery-panel" : ""
+public/app.js:3632:  details.textContent = JSON.stringify(drafts, null, 2);
+public/app.js:3714:  panel.className = "local-draft-recovery-panel home-collaboration-recovery-panel";
+public/app.js:3729:  elements.homeDocumentList.querySelector(".home-collaboration-recovery-panel")?.remove();
+public/app.js:3743:  elements.blockList.querySelector(".collaboration-local-draft-recovery-panel")?.remove();
+public/app.js:4105:      recoverySourceId: pageDraftSourceId,
+public/app.js:4106:      recoveryStore: collaborationRecoveryStore,
+public/app.js:4382:      findRenderedBlockRow(id)?.dataset.draftConflict === "true"
+public/app.js:4393:    // A different same-origin tab can hold a durable Yjs recovery snapshot that
+public/app.js:4395:    // transition storage event to flush peer tabs, then fail closed if any
+public/app.js:4428:    // The server version snapshot cannot observe a draft that only exists in a
+public/app.js:4429:    // different tab. Keep that draft attached to its live block instead of
+public/app.js:4430:    // deleting the block and relegating the edit to manual orphan recovery.
+public/app.js:4440:    for (const { id } of expectedVersions) blockDraftRenderSources.delete(id);
+public/app.js:4460:          blockDraftConflictOrigins.delete(deletedBlockId);
+public/app.js:5705:  const draft = storedDraft ?? conflictOrigin;
+public/app.js:5706:  if (!draft) return null;
+public/app.js:5707:  return { ...draft, sourceId, conflict: hasUnresolvedConflict };
+public/app.js:5711:  const draftPayload = normalizeRecoveredBlockPayload(renderedDraft?.payload, block);
+public/app.js:5712:  const renderedBlock = draftPayload ? { ...block, ...draftPayload, htmlCache: null } : block;
+public/app.js:5719:    row.dataset.draftExpectedVersion = String(renderedDraft.expectedVersion);
+public/app.js:5720:    row.dataset.draftSourceId = renderedDraft.sourceId;
+public/app.js:5723:      row.dataset.draftConflict = "true";
+public/app.js:6038:    // Keep the optimistic value: the durable draft and retry queue already contain it.
+public/app.js:6234:    pendingBlockOrderTask = task;
+public/app.js:6244:      pendingBlockOrderTask = null;
+public/app.js:6248:        pendingBlockOrderTask = null;

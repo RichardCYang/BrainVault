@@ -6,6 +6,10 @@ import { access, copyFile, link, mkdir, open, readFile, readdir, rename, rm, sta
 import { z } from "zod";
 import { env } from "../config/env.js";
 import { attachmentUploadRoot, getAttachmentFilePath, withUserAttachmentLock } from "./attachments.js";
+import {
+  assertLosslessAttachmentMetadata,
+  AttachmentMetadataIntegrityError
+} from "./attachment-metadata-integrity.js";
 import { disconnectPageCollaborators } from "./collaboration-server.js";
 import { needsCollaborationMaterialization } from "./collaboration-protocol.js";
 import { db, transaction, type DbClient } from "./db.js";
@@ -469,8 +473,20 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
   const describedAttachmentIds = new Set(manifest.attachments.map((item) => item.blockId));
   if (attachmentBlockIds.size !== describedAttachmentIds.size) invalidBackup("Attachment files do not match attachment blocks");
   for (const attachment of manifest.attachments) {
-    if (!attachmentBlockIds.has(attachment.blockId)) invalidBackup(`Attachment block is missing: ${attachment.blockId}`);
+    const block = blockById.get(attachment.blockId);
+    if (!block || block.type !== "ATTACHMENT") invalidBackup(`Attachment block is missing: ${attachment.blockId}`);
     if (attachment.path !== `attachments/${attachment.blockId}`) invalidBackup(`Attachment path is invalid: ${attachment.path}`);
+    try {
+      assertLosslessAttachmentMetadata(block.metadata, attachment.size);
+    } catch (error) {
+      if (error instanceof AttachmentMetadataIntegrityError) {
+        invalidBackup(`Attachment metadata cannot be restored without data loss: ${attachment.blockId}`, {
+          path: error.path,
+          reason: error.reason
+        });
+      }
+      throw error;
+    }
   }
 }
 
@@ -543,11 +559,25 @@ export async function prepareUserDataBackup(userId: string) {
         } catch {
           throw new ApiError(409, "BACKUP_ATTACHMENT_MISSING", `Attachment file is missing for block ${block.id}`);
         }
+        const inspection = await inspectFile(stagedPath);
+        try {
+          assertLosslessAttachmentMetadata(block.metadata, inspection.size);
+        } catch (error) {
+          if (error instanceof AttachmentMetadataIntegrityError) {
+            throw new ApiError(
+              409,
+              "BACKUP_ATTACHMENT_METADATA_INVALID",
+              `Attachment metadata does not match the stored file for block ${block.id}`,
+              { path: error.path, reason: error.reason }
+            );
+          }
+          throw error;
+        }
         attachmentFiles.push({
           blockId: block.id,
           path: `attachments/${block.id}`,
           filePath: stagedPath,
-          inspection: await inspectFile(stagedPath)
+          inspection
         });
       }
       return { snapshot, attachmentFiles };

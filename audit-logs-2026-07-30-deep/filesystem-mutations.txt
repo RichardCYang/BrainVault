@@ -1,0 +1,81 @@
+src/utils/schemas.ts:9:  .transform((value) => value.toLowerCase());
+public/database-block.js:1190:      if (!property || property.type === "title" || !window.confirm(t("database.confirmDeleteProperty", { property: property.name }))) return;
+public/database-block.js:1213:      if (!window.confirm(t("database.confirmDeleteRow"))) return;
+public/database-block.js:1223:      if (database.views.length <= 1 || !window.confirm(t("database.confirmDeleteView", { view: activeView.name }))) return;
+scripts/reproduce-backup-stream-integrity-loss.mjs:38:  await writeFile(stagedPath, changed);
+scripts/reproduce-backup-stream-integrity-loss.mjs:77:  await rm(directory, { recursive: true, force: true });
+scripts/capture-preview.mjs:119:      localStorage.setItem("brainvault.token", "preview-token");
+scripts/capture-preview.mjs:120:      localStorage.setItem("brainvault.language", "en");
+scripts/capture-preview.mjs:202:await mkdir(join(projectRoot, "docs"), { recursive: true });
+scripts/capture-preview.mjs:207:await rm(outputPath, { force: true });
+scripts/capture-preview.mjs:273:  await rm(browserProfilePath, { recursive: true, force: true });
+src/config/env.ts:10:  .transform((value) => ["true", "1", "yes", "on"].includes(value));
+scripts/clean-dist.mjs:12:await rm(outputDirectory, { recursive: true, force: true });
+scripts/lockfile-registry.mjs:101:    await writeFile(lockfileUrl, updatedSource, 'utf8');
+src/routes/data.routes.ts:80:    if (uploadPath) await rm(uploadPath, { force: true }).catch(() => undefined);
+src/lib/attachments.ts:92:  await mkdir(attachmentTempDir, { recursive: true });
+src/lib/attachments.ts:116:  await mkdir(targetDirectory, { recursive: true });
+src/lib/attachments.ts:120:    // rename() replaces an existing destination on POSIX. Claim the final path with
+src/lib/attachments.ts:122:    await link(temporaryPath, target);
+src/lib/attachments.ts:126:    await rm(temporaryPath);
+src/lib/attachments.ts:136:      await rm(target, { force: true }).catch(() => undefined);
+src/lib/attachments.ts:144:  await rm(filePath, { force: true }).catch(() => undefined);
+src/lib/data-transfer.ts:212:  await mkdir(dataTransferTempDir, { recursive: true });
+src/lib/data-transfer.ts:481:  await mkdir(stagedAttachmentDir, { recursive: true });
+src/lib/data-transfer.ts:542:          await copyFile(sourcePath, stagedPath);
+src/lib/data-transfer.ts:600:    await rm(operationRoot, { recursive: true, force: true }).catch(() => undefined);
+src/lib/data-transfer.ts:635:    await rm(plan.operationRoot, { recursive: true, force: true }).catch(() => undefined);
+src/lib/data-transfer.ts:897:      await handle.writeFile(`${JSON.stringify(journal)}\n`, "utf8");
+src/lib/data-transfer.ts:902:    await rename(temporaryPath, journalPath);
+src/lib/data-transfer.ts:905:    await rm(temporaryPath, { force: true }).catch(() => undefined);
+src/lib/data-transfer.ts:934:    await handle.writeFile(`${JSON.stringify({ version: 1, operationId })}\n`, "utf8");
+src/lib/data-transfer.ts:985:  await mkdir(path.dirname(destination), { recursive: true });
+src/lib/data-transfer.ts:991:    await link(source, destination);
+src/lib/data-transfer.ts:995:    await rm(source);
+src/lib/data-transfer.ts:1004:        await rm(source);
+src/lib/data-transfer.ts:1015:      await rm(destination, { force: true }).catch(() => undefined);
+src/lib/data-transfer.ts:1029:      await mkdir(path.dirname(paths.targetAttachmentDir), { recursive: true });
+src/lib/data-transfer.ts:1030:      await rename(paths.stagedAttachmentDir, paths.targetAttachmentDir);
+src/lib/data-transfer.ts:1037:    await rm(paths.oldAttachmentDir, { recursive: true, force: true });
+src/lib/data-transfer.ts:1041:      await rm(paths.targetAttachmentDir, { recursive: true, force: true });
+src/lib/data-transfer.ts:1042:      await rename(paths.oldAttachmentDir, paths.targetAttachmentDir);
+src/lib/data-transfer.ts:1048:    await rm(paths.targetAttachmentDir, { recursive: true, force: true });
+src/lib/data-transfer.ts:1069:      await mkdir(path.dirname(paths.targetAttachmentDir), { recursive: true });
+src/lib/data-transfer.ts:1070:      await rename(paths.stagedAttachmentDir, paths.targetAttachmentDir);
+src/lib/data-transfer.ts:1084:    await rm(paths.oldAttachmentDir, { recursive: true, force: true });
+src/lib/data-transfer.ts:1098:        await rm(paths.targetAttachmentDir, { recursive: true, force: true });
+src/lib/data-transfer.ts:1100:      await rename(paths.oldAttachmentDir, paths.targetAttachmentDir);
+src/lib/data-transfer.ts:1124:    await rm(paths.targetAttachmentDir, { recursive: true, force: true });
+src/lib/data-transfer.ts:1154:      await mkdir(path.dirname(paths.targetAttachmentDir), { recursive: true });
+src/lib/data-transfer.ts:1155:      await rename(paths.stagedAttachmentDir, paths.targetAttachmentDir);
+src/lib/data-transfer.ts:1169:    await rm(paths.oldAttachmentDir, { recursive: true, force: true });
+src/lib/data-transfer.ts:1197:        await rm(paths.targetAttachmentDir, { recursive: true, force: true });
+src/lib/data-transfer.ts:1199:      await rename(paths.oldAttachmentDir, paths.targetAttachmentDir);
+src/lib/data-transfer.ts:1224:        await rm(path.join(paths.targetAttachmentDir, entry.name), { force: true });
+src/lib/data-transfer.ts:1229:    await rm(restoreGenerationMarkerPath(paths.targetAttachmentDir), { force: true });
+src/lib/data-transfer.ts:1232:      await rm(paths.targetAttachmentDir, { recursive: true, force: true });
+src/lib/data-transfer.ts:1267:    await rm(paths.operationRoot, { recursive: true, force: true });
+src/lib/data-transfer.ts:1268:    await rm(paths.journalPath, { force: true });
+src/lib/data-transfer.ts:1276:        await rm(restoreGenerationMarkerPath(paths.targetAttachmentDir), { force: true });
+src/lib/data-transfer.ts:1376:  await mkdir(stagedAttachmentDir, { recursive: true });
+src/lib/data-transfer.ts:1434:        await mkdir(path.dirname(targetAttachmentDir), { recursive: true });
+src/lib/data-transfer.ts:1436:          await rename(targetAttachmentDir, oldAttachmentDir);
+src/lib/data-transfer.ts:1439:        await rename(stagedAttachmentDir, targetAttachmentDir);
+src/lib/data-transfer.ts:1520:      await rm(operationRoot, { recursive: true, force: true }).catch(() => undefined);
+public/app.js:54:// Generate this in memory instead of sessionStorage. Browsers may clone sessionStorage
+public/app.js:867:  if (token) localStorage.setItem(tokenKey, token);
+public/app.js:868:  else localStorage.removeItem(tokenKey);
+public/app.js:1434:        if (!window.confirm(t("mfa.removePasskeyConfirm", { name: passkey.name }))) return;
+public/app.js:1897:    localStorage.setItem(key, JSON.stringify(value));
+public/app.js:2869:  return window.confirm(t("confirm.overwriteRecoveredDraft"));
+public/app.js:3423:    const ok = window.confirm(
+public/app.js:5045:    if (!window.confirm(message)) return;
+public/app.js:5073:    if (!window.confirm(t("confirm.deleteKanbanCard"))) return;
+public/app.js:8753:  if (!window.confirm(t("account.importConfirm"))) return;
+public/app.js:8913:  if (!window.confirm(t("mfa.disableTotpConfirm"))) return;
+public/app.js:9354:  const ok = window.confirm(t("confirm.archivePage"));
+public/app.js:9819:      const ok = window.confirm(t("confirm.deleteBlock"));
+src/lib/markdown.ts:175:    a: sanitizeHtml.simpleTransform("a", { rel: "noopener noreferrer", target: "_blank" }),
+src/lib/markdown.ts:176:    img: sanitizeHtml.simpleTransform("img", { loading: "lazy", referrerpolicy: "no-referrer" })
+src/routes/page.routes.ts:34:    .transform((value) => (value ? value === "true" : false)),
+src/routes/page.routes.ts:82:    .transform((value) => value === "true")

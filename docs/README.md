@@ -22,6 +22,7 @@ The root [README](../README.md) is intentionally short. Detailed setup, operatio
 | [백업 공유 권한 무결성 감사 2026-07-30 (한국어)](data-loss-audit-2026-07-30-backup-share-integrity-ko.md) | 전체 백업이 `page_shares`를 누락해 정상 복원 뒤 공유 권한을 영구 손실하던 결함, 재현, 수정, 레거시 호환성 및 회귀 검증 |
 | [협업 블록 삭제 데이터 무결성 감사 2026-07-30 (한국어)](data-loss-audit-2026-07-30-collaboration-block-delete-ko.md) | 다른 탭의 미확인 Yjs recovery를 무시한 협업 블록 삭제·첨부 교체 경합, cross-tab fence 수정과 재현 검증 |
 | [백업 복원 구조화 metadata 무결성 감사 2026-07-30 (한국어)](data-loss-audit-2026-07-30-backup-restore-metadata-ko.md) | JSON 문법만 검사하던 복원 경로가 편집기 한도 초과·이중 인코딩 metadata를 받아 다음 저장에서 데이터를 잃는 결함, fail-closed 수정과 재현 검증 |
+| [데이터 무결성 최종 심층 감사 2026-07-30 (한국어)](data-loss-audit-2026-07-30-final-review-ko.md) | 첨부 metadata와 실제 파일이 분리되어 정상 복원 뒤 앱에서 파일이 접근 불가능해지는 신규 결함, 전체 저장 경로 재감사, 수정·재현·검증·`.git` 보존 |
 | [Configuration](configuration.md) | Reviewing every supported environment variable and its default behavior |
 | [Security](security.md) | Configuring MFA and understanding the project security boundaries and production requirements |
 | [API](api.md) | Finding route summaries, authentication expectations, the health endpoint, and the OpenAPI document |

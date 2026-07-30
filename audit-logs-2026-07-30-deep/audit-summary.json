@@ -1,0 +1,40 @@
+{
+  "auditDate": "2026-07-30",
+  "originalGitHead": "9dabd0133d2488bbc666772154d64407b078b716",
+  "inputZipSha256": "dccd962fe88c46594b5798b50a06d99737befb8c7b5ecb1b1bb14dd22c2020c5",
+  "finding": {
+    "id": "BV-DI-2026-07-30-ATT-01",
+    "severity": "High",
+    "status": "fixed",
+    "summary": "Backup restore accepted attachment files whose block metadata made the bytes unreachable through the application."
+  },
+  "validation": {
+    "dependencyFreeNodeTests": {
+      "passed": 48,
+      "failed": 0
+    },
+    "dataLossVerifier": "passed",
+    "collaborationVerifier": {
+      "status": "passed",
+      "filesChecked": 163
+    },
+    "focusedTypeScriptCheck": "passed",
+    "attachmentModuleCompileHarness": "passed",
+    "fullDependencySuite": "not run: internal npm proxy returned 404 for zod-3.25.76.tgz"
+  },
+  "modifiedTrackedFiles": [
+    "docs/README.md",
+    "package.json",
+    "scripts/verify-data-loss-guards.mjs",
+    "src/lib/attachments.ts",
+    "src/lib/data-transfer.ts"
+  ],
+  "newCoreFiles": [
+    "docs/data-loss-audit-2026-07-30-final-review-ko.md",
+    "scripts/reproduce-backup-attachment-metadata-loss.mjs",
+    "src/lib/attachment-metadata-integrity.ts",
+    "tests/backup-attachment-metadata-integrity.node.test.mjs"
+  ],
+  "auditEvidenceDirectory": "audit-logs-2026-07-30-deep",
+  "gitDirectoryPolicy": "Preserve every .git file byte-for-byte from the uploaded ZIP."
+}

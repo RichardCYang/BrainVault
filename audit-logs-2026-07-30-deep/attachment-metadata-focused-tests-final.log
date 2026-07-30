@@ -1,0 +1,42 @@
+TAP version 13
+# (node:11385) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a checksummed attachment with missing metadata was accepted but is unavailable to downloads
+ok 1 - a checksummed attachment with missing metadata was accepted but is unavailable to downloads
+  ---
+  duration_ms: 1.483818
+  type: 'test'
+  ...
+# Subtest: valid canonical attachment metadata is accepted and remains readable
+ok 2 - valid canonical attachment metadata is accepted and remains readable
+  ---
+  duration_ms: 1.410296
+  type: 'test'
+  ...
+# Subtest: restore rejects missing, double-encoded, or normalizing attachment metadata
+ok 3 - restore rejects missing, double-encoded, or normalizing attachment metadata
+  ---
+  duration_ms: 0.420672
+  type: 'test'
+  ...
+# Subtest: restore and export reject metadata whose size disagrees with stored bytes
+ok 4 - restore and export reject metadata whose size disagrees with stored bytes
+  ---
+  duration_ms: 0.282035
+  type: 'test'
+  ...
+# Subtest: integration validates attachment metadata before restore identity checks and before backup completion
+ok 5 - integration validates attachment metadata before restore identity checks and before backup completion
+  ---
+  duration_ms: 9.577672
+  type: 'test'
+  ...
+1..5
+# tests 5
+# suites 0
+# pass 5
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 304.836098

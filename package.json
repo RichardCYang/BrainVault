@@ -40,7 +40,8 @@
     "reproduce:backup-stream-integrity-loss": "node --experimental-strip-types scripts/reproduce-backup-stream-integrity-loss.mjs",
     "reproduce:backup-share-loss": "node scripts/reproduce-backup-share-loss.mjs",
     "reproduce:backup-metadata-loss": "node --experimental-strip-types scripts/reproduce-backup-metadata-loss.mjs",
-    "reproduce:collaboration-block-delete-loss": "node scripts/reproduce-collaboration-block-delete-recovery-loss.mjs"
+    "reproduce:collaboration-block-delete-loss": "node scripts/reproduce-collaboration-block-delete-recovery-loss.mjs",
+    "reproduce:backup-attachment-metadata-loss": "node --experimental-strip-types scripts/reproduce-backup-attachment-metadata-loss.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.2",

@@ -162,6 +162,10 @@ const structuredMetadataIntegritySource = readFileSync(
   new URL("../src/lib/structured-metadata-integrity.ts", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const attachmentMetadataIntegritySource = readFileSync(
+  new URL("../src/lib/attachment-metadata-integrity.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const databaseSource = readFileSync(
   new URL("../src/lib/database.ts", import.meta.url),
   "utf8"
@@ -314,6 +318,32 @@ assert(
     && backupMetadataLossReproduction.fixed.rejectedBeforeRestoreDatabaseWork
     && backupMetadataLossReproduction.fixed.lossClosed,
   "The backup structured-metadata loss reproduction did not prove both vulnerable and fixed states"
+);
+
+const backupAttachmentMetadataLossReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [
+    "--experimental-strip-types",
+    fileURLToPath(new URL("./reproduce-backup-attachment-metadata-loss.mjs", import.meta.url))
+  ],
+  { encoding: "utf8" }
+));
+assert(
+  backupAttachmentMetadataLossReproduction.vulnerability.effectiveDataLossReproduced
+    && backupAttachmentMetadataLossReproduction.fixed.malformedMetadataRejectedBeforeDatabaseWork
+    && backupAttachmentMetadataLossReproduction.fixed.metadataFileSizeMismatchRejected
+    && backupAttachmentMetadataLossReproduction.fixed.corruptExistingAttachmentCannotBeExportedAsHealthyBackup
+    && backupAttachmentMetadataLossReproduction.fixed.failClosed,
+  "The backup attachment-metadata loss reproduction did not prove both vulnerable and fixed states"
+);
+assert(
+  attachmentMetadataIntegritySource.includes("assertLosslessAttachmentMetadata")
+    && attachmentMetadataIntegritySource.includes("does not match the attachment file byte count")
+    && dataTransferSource.includes("assertLosslessAttachmentMetadata(block.metadata, attachment.size)")
+    && dataTransferSource.includes("assertLosslessAttachmentMetadata(block.metadata, inspection.size)")
+    && dataTransferSource.indexOf("assertLosslessAttachmentMetadata(block.metadata, attachment.size)")
+      < dataTransferSource.indexOf("await assertNoForeignIdConflicts(userId, manifest)"),
+  "Backup restore or export can still accept attachment metadata that makes stored bytes unreachable"
 );
 
 const blockOrderReproduction = JSON.parse(execFileSync(
@@ -1219,5 +1249,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified backup ZIP integrity, lossless page-share backup/restore, fail-closed backup metadata restoration, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified backup ZIP integrity, lossless page-share backup/restore, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, and fail-closed recovery inspection."
 );

@@ -1,0 +1,3 @@
+Input .git files: 28
+Filesystem .git bytes equal uploaded ZIP: YES
+.git directory deleted or reinitialized: NO
