@@ -39,8 +39,8 @@ Most API routes require a bearer token returned by the register or login endpoin
 | `PATCH` | `/api/blocks/:blockId` | Update a block |
 | `DELETE` | `/api/blocks/:blockId` | Delete a block and its descendants, including stored attachment files |
 | `GET` | `/api/blocks/:blockId/attachment` | Download an attachment after current page-access verification |
-| `GET` | `/api/data/export` | Stream a complete ZIP backup of the authenticated workspace, including page sharing grants by collaborator login ID |
-| `POST` | `/api/data/import` | Validate and restore a BrainVault backup ZIP; current-format grants are recreated and legacy grants for matching page IDs are preserved |
+| `GET` | `/api/data/export` | Stream a complete ZIP backup of the authenticated workspace, including page sharing grants bound to collaborator account ID and username |
+| `POST` | `/api/data/import` | Validate and restore a BrainVault backup ZIP; ID-bound grants are recreated; legacy grants are preserved only through verified current identities |
 | `POST` | `/api/pages/:pageId/blocks/reorder` | Move or reorder blocks |
 | `GET` | `/api/pages/:pageId/render` | Render sanitized page HTML |
 | `GET` | `/api/search?q=...` | Search titles and block Markdown |
@@ -48,9 +48,9 @@ Most API routes require a bearer token returned by the register or login endpoin
 
 ## Backup sharing integrity
 
-Current-format manifests include `data.pageShares` entries containing the page ID, normalized collaborator login ID, `EDIT` permission, and creation timestamp. Import resolves every collaborator under a database lock before destructive replacement. A missing account, self-share, duplicate grant, collection target, or unknown page causes a validation failure with no data replacement. An archived ordinary page may carry a retained grant because archiving suspends live collaboration without deleting the access list; restore preserves that grant for a later unarchive.
+Current-format manifests include `data.pageShares` entries containing the page ID, stable collaborator account ID, collaborator username, `EDIT` permission, and creation timestamp. Import locks destination accounts by ID and requires the ID-and-username pair to match before destructive replacement. A missing or mismatched account, self-share, duplicate grant, mixed identity generation, collection target, or unknown page causes a validation failure with no data replacement. An archived ordinary page may carry a retained grant because archiving suspends live collaboration without deleting the access list; restore preserves that grant for a later unarchive.
 
-Backups created before `pageShares` was added remain accepted. During those legacy restores, BrainVault snapshots the existing grants and reinserts the ones whose ordinary page IDs survive, including archived pages with retained grants, rather than losing them through the `pages` → `page_shares` cascade. The import response reports `counts.shares` and `sharing.mode` (`backup` or `legacy-preserved`).
+Username-only `pageShares` records from the earlier format are accepted only when each record matches a currently locked page-to-account grant in the destination workspace; the importer never discovers a legacy collaborator by username alone. Backups created before `pageShares` existed remain accepted through the separate `legacy-preserved` path: BrainVault snapshots current grants and reinserts those whose ordinary page IDs survive, including archived pages with retained grants, rather than losing them through the `pages` → `page_shares` cascade. The import response reports `counts.shares` and `sharing.mode` (`backup` or `legacy-preserved`).
 
 ## Collaboration materialization integrity
 

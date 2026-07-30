@@ -15,7 +15,12 @@ import { needsCollaborationMaterialization } from "./collaboration-protocol.js";
 import { db, transaction, type DbClient } from "./db.js";
 import { ApiError } from "./http.js";
 import { createId } from "./id.js";
-import { isRestorablePageShareTarget } from "./page-share-integrity.js";
+import {
+  getBackupPageShareIdentityMode,
+  isExactBackupPageShareIdentityMatch,
+  isLegacyBackupPageShareCurrentMatch,
+  isRestorablePageShareTarget
+} from "./page-share-integrity.js";
 import { renderBlockHtml } from "./markdown.js";
 import { blockSortOrderLimits } from "./block-order-integrity.js";
 import {
@@ -112,6 +117,9 @@ const tagSchema = z.object({
 const pageTagSchema = z.object({ page_id: idSchema, tag_id: idSchema }).strict();
 const pageShareSchema = z.object({
   page_id: idSchema,
+  // Optional only for backups exported before collaborator account IDs were
+  // bound to sharing grants. New exports always include this field.
+  shared_user_id: idSchema.optional(),
   shared_username: z.string().min(3).max(50).regex(/^[a-zA-Z0-9._-]+$/),
   permission: z.literal("EDIT"),
   created_at: timestampSchema
@@ -420,8 +428,17 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
   assertUnique(manifest.attachments.map((item) => item.path), "attachment path");
   assertUnique(
     pageShares.map((item) => `${item.page_id}\u0000${item.shared_username.toLowerCase()}`),
-    "page share"
+    "page share username"
   );
+  assertUnique(
+    pageShares
+      .filter((item) => item.shared_user_id)
+      .map((item) => `${item.page_id}\u0000${item.shared_user_id}`),
+    "page share account ID"
+  );
+  if (getBackupPageShareIdentityMode(pageShares) === "mixed") {
+    invalidBackup("The backup mixes ID-bound and legacy username-only sharing grants");
+  }
 
   const pageById = new Map(pages.map((item) => [item.id, item]));
   const blockById = new Map(blocks.map((item) => [item.id, item]));
@@ -539,7 +556,7 @@ export async function prepareUserDataBackup(userId: string) {
         [userId]
       );
       const pageShares = await client.query<BackupPageShare>(
-        `SELECT ps.page_id, u.username AS shared_username, ps.permission,
+        `SELECT ps.page_id, ps.user_id AS shared_user_id, u.username AS shared_username, ps.permission,
                 DATE_FORMAT(ps.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
          FROM page_shares ps
          INNER JOIN pages p ON p.id = ps.page_id
@@ -757,21 +774,84 @@ async function prepareRestoreSharingPlan(
     return { mode: "legacy-preserved", shares };
   }
 
-  const usernames = [...new Set(backupShares.map((share) => share.shared_username.toLowerCase()))];
-  const usersByUsername = new Map<string, { id: string; username: string }>();
-  for (const group of batch(usernames)) {
+  const identityMode = getBackupPageShareIdentityMode(backupShares);
+  if (identityMode === "mixed") {
+    invalidBackup("The backup mixes ID-bound and legacy username-only sharing grants");
+  }
+
+  if (identityMode === "legacy" && backupShares.length) {
+    const currentUserIds = [...new Set(currentShares.map((share) => share.user_id))];
+    const currentUsersById = new Map<string, { id: string; username: string }>();
+    for (const group of batch(currentUserIds)) {
+      if (!group.length) continue;
+      const rows = await client.query<{ id: string; username: string }>(
+        `SELECT id, username FROM users WHERE id IN (${group.map(() => "?").join(",")}) FOR UPDATE`,
+        group
+      );
+      for (const row of rows) currentUsersById.set(row.id, row);
+    }
+
+    const currentGrantByPageAndUsername = new Map<string, {
+      share: WorkspaceRestoreShareRow;
+      user: { id: string; username: string };
+    }>();
+    for (const currentShare of currentShares) {
+      const page = pageById.get(currentShare.page_id);
+      if (!isRestorablePageShareTarget(page)) continue;
+      const currentUser = currentUsersById.get(currentShare.user_id);
+      if (!currentUser) {
+        invalidBackup(`A current shared account no longer exists: ${currentShare.user_id}`);
+      }
+      currentGrantByPageAndUsername.set(
+        `${currentShare.page_id}\u0000${currentUser.username.toLowerCase()}`,
+        { share: currentShare, user: currentUser }
+      );
+    }
+
+    const shares = backupShares.map((backupShare) => {
+      const currentGrant = currentGrantByPageAndUsername.get(
+        `${backupShare.page_id}\u0000${backupShare.shared_username.toLowerCase()}`
+      );
+      if (!currentGrant || !isLegacyBackupPageShareCurrentMatch(
+        backupShare,
+        currentGrant.share,
+        currentGrant.user
+      )) {
+        invalidBackup(
+          `Legacy sharing grant cannot be verified against a current exact account grant: ${backupShare.shared_username}`
+        );
+      }
+      if (currentGrant.user.id === userId) {
+        invalidBackup(`The page owner cannot be restored as its own collaborator: ${backupShare.shared_username}`);
+      }
+      return {
+        pageId: backupShare.page_id,
+        userId: currentGrant.user.id,
+        permission: backupShare.permission,
+        createdAt: currentGrant.share.shared_at
+      };
+    });
+
+    return { mode: "legacy-preserved", shares };
+  }
+
+  const userIds = [...new Set(backupShares.map((share) => share.shared_user_id!))];
+  const usersById = new Map<string, { id: string; username: string }>();
+  for (const group of batch(userIds)) {
     if (!group.length) continue;
     const rows = await client.query<{ id: string; username: string }>(
-      `SELECT id, username FROM users WHERE username IN (${group.map(() => "?").join(",")}) FOR UPDATE`,
+      `SELECT id, username FROM users WHERE id IN (${group.map(() => "?").join(",")}) FOR UPDATE`,
       group
     );
-    for (const row of rows) usersByUsername.set(row.username.toLowerCase(), row);
+    for (const row of rows) usersById.set(row.id, row);
   }
 
   const shares = backupShares.map((share) => {
-    const sharedUser = usersByUsername.get(share.shared_username.toLowerCase());
-    if (!sharedUser) {
-      invalidBackup(`Shared account does not exist on this server: ${share.shared_username}`);
+    const sharedUser = usersById.get(share.shared_user_id!);
+    if (!sharedUser || !isExactBackupPageShareIdentityMatch(share, sharedUser)) {
+      invalidBackup(
+        `Shared account identity does not match this server: ${share.shared_username}`
+      );
     }
     if (sharedUser.id === userId) {
       invalidBackup(`The page owner cannot be restored as its own collaborator: ${share.shared_username}`);

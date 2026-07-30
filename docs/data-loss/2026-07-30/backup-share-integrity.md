@@ -13,12 +13,16 @@ The defect did not delete note text or attachment bytes directly, but `page_shar
 
 The corrected implementation guarantees:
 
-1. New backups store page-sharing relationships using the collaborator's login ID.
-2. Restore resolves every collaborator account and acquires row locks before destructive deletion.
-3. A missing account, self-share, duplicate share, nonexistent page, or share on a collection/archived page causes failure **before any data is replaced**.
+1. New backups store page-sharing relationships using the collaborator's stable account ID and username.
+2. Restore resolves every collaborator by account ID, verifies the exact ID-and-username pair, and acquires row locks before destructive deletion.
+3. A missing or mismatched account, self-share, duplicate share, nonexistent page, mixed identity generation, or share on a collection causes failure **before any data is replaced**.
 4. A valid current-format backup reinserts `page_shares` inside the restore transaction.
 5. For legacy backups without `pageShares`, existing grants for the same restorable page IDs are preserved.
 6. The API and all seven UI languages report the number of restored sharing grants.
+
+## 2026-07-30 identity-binding addendum
+
+A subsequent review found a separate High-severity flaw in the first sharing-backup correction: `shared_username` alone could bind an exported editor grant to an unrelated same-named account on another server. New exports now include `shared_user_id` and `shared_username`; restore requires the exact pair under row locks before destructive replacement. Username-only `pageShares` records are accepted only when they match currently locked page-to-account grants, and mixed identity generations are rejected. See [Backup collaborator identity integrity](backup-share-identity-integrity.md).
 
 ## New defect: permanent sharing-permission loss after full restore
 
@@ -77,6 +81,7 @@ An independent SQL foreign-key reproduction also confirmed that deleting the par
 Stored fields:
 
 - `page_id`
+- `shared_user_id` (present in all new exports)
 - `shared_username`
 - `permission` (only `EDIT` is accepted)
 - `created_at`
@@ -95,7 +100,7 @@ Manifest relationship validation now enforces:
 
 ### 3. Collaborator resolution and locking before destructive deletion
 
-For a current-format backup, collaborator login IDs are resolved to `users` rows and locked with `FOR UPDATE`.
+For a current-format backup, collaborator account IDs are resolved to `users` rows and locked with `FOR UPDATE`; the stored username must also match the locked account.
 
 The restore fails with `INVALID_DATA_BACKUP` before `DELETE FROM pages` when:
 

@@ -177,6 +177,7 @@ beforeEach(async () => {
         .filter((share) => store.pages.get(share.page_id)?.owner_id === params[0])
         .map((share) => ({
           page_id: share.page_id,
+          shared_user_id: share.user_id,
           shared_username: store.users.get(share.user_id)?.username,
           permission: share.permission,
           created_at: share.shared_at
@@ -190,6 +191,10 @@ beforeEach(async () => {
     if (sql.startsWith("SELECT id, username FROM users WHERE username IN")) {
       const requested = new Set(params.map((value) => String(value).toLowerCase()));
       return [...store.users.values()].filter((user) => requested.has(user.username.toLowerCase()));
+    }
+    if (sql.startsWith("SELECT id, username FROM users WHERE id IN")) {
+      const requested = new Set(params.map((value) => String(value)));
+      return [...store.users.values()].filter((user) => requested.has(user.id));
     }
     if (sql.startsWith("SELECT id FROM users WHERE id IN")) {
       return params.flatMap((id) => store.users.has(String(id)) ? [{ id: String(id) }] : []);
@@ -395,6 +400,7 @@ describe("Complete data transfer routes", () => {
     expect(manifest.data.blocks[0].edit_version).toBe(9);
     expect(manifest.data.pageShares).toEqual([{
       page_id: pageId,
+      shared_user_id: "usr_collaborator",
       shared_username: "collaborator",
       permission: "EDIT",
       created_at: "2026-07-17 00:00:20.000000"
@@ -433,6 +439,47 @@ describe("Complete data transfer routes", () => {
     }]);
     expect(store.disconnectPageCollaborators).toHaveBeenCalledWith(pageId, "Workspace data is being restored");
     expect(store.restoreEvents.indexOf(`disconnect:${pageId}`)).toBeLessThan(store.restoreEvents.indexOf("delete-pages"));
+    await expect(readFile(getAttachmentFilePath(userId, blockId))).resolves.toEqual(originalBytes);
+  });
+
+  it("rejects a same-named unrelated collaborator before destructive restore", async () => {
+    store.shares.push({
+      page_id: pageId,
+      user_id: "usr_collaborator",
+      permission: "EDIT",
+      shared_by: userId,
+      shared_at: "2026-07-17 00:00:20.000000"
+    });
+    const exported = await request(createApp())
+      .get("/api/data/export")
+      .set("Authorization", `Bearer ${token}`)
+      .buffer(true)
+      .parse(binaryParser)
+      .expect(200);
+
+    store.users.delete("usr_collaborator");
+    store.users.set("usr_unrelated_collaborator", {
+      id: "usr_unrelated_collaborator",
+      username: "collaborator"
+    });
+    store.shares = [];
+    store.pages.get(pageId)!.title = "Must survive identity validation";
+
+    const response = await request(createApp())
+      .post("/api/data/import")
+      .set("Authorization", `Bearer ${token}`)
+      .attach("backup", exported.body as Buffer, {
+        filename: "BrainVault-backup.zip",
+        contentType: "application/zip"
+      })
+      .expect(400);
+
+    expect(response.body.error.code).toBe("INVALID_DATA_BACKUP");
+    expect(response.body.error.message).toContain("Shared account identity does not match this server");
+    expect(store.pages.get(pageId)?.title).toBe("Must survive identity validation");
+    expect(store.shares).toEqual([]);
+    expect(store.disconnectPageCollaborators).not.toHaveBeenCalled();
+    expect(store.restoreEvents).not.toContain("delete-pages");
     await expect(readFile(getAttachmentFilePath(userId, blockId))).resolves.toEqual(originalBytes);
   });
 

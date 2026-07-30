@@ -1536,7 +1536,7 @@ paths:
   /api/data/export:
     get:
       summary: Export the authenticated account workspace as a complete BrainVault ZIP backup
-      description: Includes page sharing grants by normalized collaborator login ID. Security credentials and the historical Yjs update log are excluded.
+      description: Includes page sharing grants bound to collaborator account ID and username. Security credentials and the historical Yjs update log are excluded.
       responses:
         '200':
           description: Lossless workspace backup containing the manifest, sharing grants, and original attachment bytes

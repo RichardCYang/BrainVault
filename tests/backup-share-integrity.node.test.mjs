@@ -17,10 +17,12 @@ test("complete backup includes and restores page sharing relationships", async (
     .replace(/\r\n/g, "\n");
 
   assert.match(source, /const pageShareSchema = z\.object\(/);
+  assert.match(source, /ps\.user_id AS shared_user_id/);
   assert.match(source, /u\.username AS shared_username/);
   assert.match(source, /pageShares: snapshot\.pageShares/);
   assert.match(source, /INSERT INTO page_shares \(page_id, user_id, permission, shared_by, created_at\)/);
-  assert.match(source, /Shared account does not exist on this server/);
+  assert.match(source, /Shared account identity does not match this server/);
+  assert.match(source, /Legacy sharing grant cannot be verified against a current exact account grant/);
   assert.match(routeSource, /sharing: result\.sharing/);
   assert.match(clientSource, /shares: formatNumber\(counts\.shares \?\? 0\)/);
 });
@@ -45,6 +47,7 @@ test("legacy backup cannot silently erase surviving current shares", () => {
 test("new backup round-trip restores the backed-up collaborator", () => {
   const share = {
     pageId: "pag_shared",
+    userId: "usr_editor",
     username: "editor",
     permission: "EDIT"
   };

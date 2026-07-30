@@ -281,14 +281,19 @@ assert(
 );
 
 assert(
-  dataTransferSource.includes("u.username AS shared_username")
+  dataTransferSource.includes("ps.user_id AS shared_user_id")
+    && dataTransferSource.includes("u.username AS shared_username")
     && dataTransferSource.includes("pageShares: snapshot.pageShares")
+    && dataTransferSource.includes("SELECT id, username FROM users WHERE id IN")
+    && dataTransferSource.includes("isExactBackupPageShareIdentityMatch")
+    && dataTransferSource.includes("isLegacyBackupPageShareCurrentMatch")
+    && dataTransferSource.includes("Legacy sharing grant cannot be verified against a current exact account grant")
+    && dataTransferSource.includes("The backup mixes ID-bound and legacy username-only sharing grants")
     && dataTransferSource.includes("INSERT INTO page_shares")
     && dataTransferSource.includes('mode: "legacy-preserved"')
-    && dataTransferSource.includes("Shared account does not exist on this server")
     && dataRouteSource.includes("sharing: result.sharing")
     && client.includes("shares: formatNumber(counts.shares ?? 0)"),
-  "Complete backup/restore can still silently erase or hide page sharing relationships"
+  "Complete backup/restore can still erase shares or rebind them to an unrelated same-named account"
 );
 
 const backupShareLossReproduction = JSON.parse(execFileSync(
@@ -305,8 +310,35 @@ assert(
   "The backup page-share loss reproduction did not prove both vulnerable and fixed states"
 );
 
+const backupShareIdentityReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [
+    "--experimental-strip-types",
+    fileURLToPath(new URL("./reproduce-backup-share-identity-rebinding.mjs", import.meta.url))
+  ],
+  { encoding: "utf8" }
+));
 assert(
-  dataTransferSource.includes('import { isRestorablePageShareTarget } from "./page-share-integrity.js";')
+  backupShareIdentityReproduction.vulnerable.noteDataDeletedByWrongAccount
+    && backupShareIdentityReproduction.vulnerable.integrityRiskReproduced
+    && backupShareIdentityReproduction.fixed.newBackupBindsAccountId
+    && backupShareIdentityReproduction.fixed.restoreLocksAccountsById
+    && backupShareIdentityReproduction.fixed.unrelatedSameUsernameRejected
+    && backupShareIdentityReproduction.fixed.exactIdentityAccepted
+    && backupShareIdentityReproduction.fixed.legacyWithoutCurrentExactGrantRejected
+    && backupShareIdentityReproduction.fixed.legacyCurrentExactGrantAccepted
+    && backupShareIdentityReproduction.fixed.deletedAndReregisteredUsernameRejected
+    && backupShareIdentityReproduction.fixed.mixedIdentityManifestRejected
+    && backupShareIdentityReproduction.fixed.legacyRequiresCurrentExactGrant
+    && backupShareIdentityReproduction.fixed.editorGrantCarriesWriteAuthority
+    && backupShareIdentityReproduction.fixed.unrelatedAccountCannotDeleteAfterFix
+    && backupShareIdentityReproduction.fixed.identityRebindingClosed,
+  "The backup share identity-rebinding reproduction did not prove both vulnerable and fixed states"
+);
+
+assert(
+  dataTransferSource.includes("isRestorablePageShareTarget")
+    && dataTransferSource.includes('from "./page-share-integrity.js";')
     && dataTransferSource.includes("if (!isRestorablePageShareTarget(page))")
     && dataTransferSource.includes("return isRestorablePageShareTarget(page);")
     && !dataTransferSource.includes("page.is_collection || page.is_archived")
@@ -1275,5 +1307,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified backup ZIP integrity, lossless page-share backup/restore, archived-share backup round-trip integrity, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified backup ZIP integrity, identity-bound page-share backup/restore, archived-share backup round-trip integrity, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, and fail-closed recovery inspection."
 );

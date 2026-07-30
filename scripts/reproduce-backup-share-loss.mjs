@@ -26,6 +26,7 @@ function modelRestore({ currentShares, backupShares, legacy = false }) {
 
 const originalShare = {
   pageId: "pag_shared",
+  userId: "usr_collaborator",
   username: "collaborator",
   permission: "EDIT",
   pageSurvives: true
@@ -48,9 +49,10 @@ const result = {
   },
   fixed: {
     manifestExportsPageShares: currentSource.includes("pageShares: snapshot.pageShares"),
-    collaboratorIdentityIsPortable: currentSource.includes("u.username AS shared_username"),
+    collaboratorIdentityIsBound: currentSource.includes("ps.user_id AS shared_user_id")
+      && currentSource.includes("u.username AS shared_username"),
     restoreReinsertsPageShares: currentSource.includes("INSERT INTO page_shares"),
-    missingCollaboratorFailsClosed: currentSource.includes("Shared account does not exist on this server"),
+    missingCollaboratorFailsClosed: currentSource.includes("Shared account identity does not match this server"),
     legacyManifestPreservesCurrentShares: currentSource.includes('mode: "legacy-preserved"')
       && legacyAfter.length === 1,
     successfulRoundTripPreservesShare: fixedAfter.length === 1
