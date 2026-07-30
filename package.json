@@ -15,7 +15,7 @@
     "reproduce:materialization-loss": "node scripts/reproduce-collaboration-materialization-loss.mjs",
     "reproduce:cross-instance-loss": "node scripts/reproduce-cross-instance-compaction-loss.mjs",
     "reproduce:recovery-write-loss": "node scripts/reproduce-collaboration-recovery-write-loss.mjs",
-    "test:durability": "node --test tests/*.node.test.mjs",
+    "test:durability": "node --experimental-strip-types --test tests/*.node.test.mjs",
     "lockfile:repair": "node scripts/lockfile-registry.mjs --fix",
     "preinstall": "npm run lockfile:check",
     "env:init": "tsx scripts/env-init.ts",
@@ -32,7 +32,8 @@
     "test:watch": "vitest --exclude 'tests/*.node.test.mjs'",
     "check": "npm run build && npm test && npm run verify:data-loss && npm run verify:collaboration",
     "preview:capture": "node scripts/capture-preview.mjs",
-    "reproduce:attachment-position-loss": "node scripts/reproduce-attachment-position-loss.mjs"
+    "reproduce:attachment-position-loss": "node scripts/reproduce-attachment-position-loss.mjs",
+    "reproduce:structured-metadata-loss": "node --experimental-strip-types scripts/reproduce-structured-metadata-truncation.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.2",

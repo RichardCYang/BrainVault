@@ -1,0 +1,186 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import { getDatabaseData } from "../src/lib/database.ts";
+import {
+  assertStructuredBlockMetadataIntegrity,
+  StructuredMetadataIntegrityError
+} from "../src/lib/structured-metadata-integrity.ts";
+
+function expectIntegrityFailure(type, metadata, expectedPath) {
+  assert.throws(
+    () => assertStructuredBlockMetadataIntegrity(type, metadata),
+    (error) => error instanceof StructuredMetadataIntegrityError && error.path === expectedPath
+  );
+}
+
+test("normalized structured metadata remains accepted at exact limits", () => {
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("TABLE", {
+    table: { rows: [["x".repeat(4_000)]], headerRow: true, headerColumn: false }
+  }));
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("KANBAN", {
+    kanban: {
+      title: "Project board",
+      columns: [{
+        id: "todo",
+        title: "To do",
+        color: "gray",
+        cards: [{ id: "card-1", title: "Task", description: "", icon: "", color: "default", tags: [] }]
+      }]
+    }
+  }));
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("DATABASE", {
+    database: {
+      title: "Database",
+      properties: [{ id: "title", name: "Name", type: "title", options: [] }],
+      rows: [{ id: "row-1", values: { title: "" } }],
+      views: [{
+        id: "table-view",
+        name: "Table",
+        type: "table",
+        filters: [],
+        sorts: [],
+        groupPropertyId: null,
+        hiddenPropertyIds: []
+      }],
+      activeViewId: "table-view"
+    }
+  }));
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("BOOKMARK", {
+    bookmark: {
+      view: "gallery",
+      items: [{
+        id: "bookmark-1",
+        url: "https://example.com/",
+        title: "Example",
+        description: "",
+        imageUrl: "https://example.com/image.png",
+        faviconUrl: "https://example.com/favicon.ico",
+        siteName: "example.com"
+      }]
+    }
+  }));
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("AI_CHAT", {
+    aiChat: {
+      provider: "chatgpt",
+      model: "gpt-test",
+      answeredAt: "2026-07-30T09:28",
+      question: "q".repeat(8_000),
+      answer: "a".repeat(12_000)
+    }
+  }));
+});
+
+
+test("JSON text metadata is decoded and serialized exactly once", () => {
+  const metadata = {
+    aiChat: {
+      provider: "chatgpt",
+      model: "gpt-test",
+      answeredAt: "2026-07-30T09:28",
+      question: "Question",
+      answer: "Answer"
+    }
+  };
+  const encoded = JSON.stringify(metadata);
+  const validated = assertStructuredBlockMetadataIntegrity("AI_CHAT", encoded);
+  assert.deepEqual(validated, metadata);
+  assert.equal(JSON.stringify(validated), encoded);
+  assert.notEqual(JSON.stringify(validated), JSON.stringify(encoded));
+});
+
+test("database fallback views never retain references to missing properties", () => {
+  const normalized = getDatabaseData({ database: {} });
+  const propertyIds = new Set(normalized.properties.map((property) => property.id));
+  for (const view of normalized.views) {
+    assert.ok(!view.groupPropertyId || propertyIds.has(view.groupPropertyId));
+    assert.ok(view.hiddenPropertyIds.every((propertyId) => propertyIds.has(propertyId)));
+  }
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("DATABASE", { database: normalized }));
+});
+
+test("AI metadata that the old save path silently truncated is rejected atomically", () => {
+  expectIntegrityFailure("AI_CHAT", {
+    aiChat: { provider: "chatgpt", model: "", answeredAt: "", question: "", answer: "a".repeat(12_001) }
+  }, "metadata.aiChat.answer");
+});
+
+test("collection overflows that editor normalizers would discard fail closed", () => {
+  expectIntegrityFailure("TABLE", {
+    table: { rows: Array.from({ length: 51 }, () => [""]), headerRow: false, headerColumn: false }
+  }, "metadata.table.rows");
+
+  expectIntegrityFailure("KANBAN", {
+    kanban: {
+      title: "board",
+      columns: Array.from({ length: 13 }, (_, index) => ({
+        id: `column-${index}`,
+        title: "column",
+        color: "gray",
+        cards: []
+      }))
+    }
+  }, "metadata.kanban.columns");
+
+  expectIntegrityFailure("DATABASE", {
+    database: {
+      properties: [{ id: "title", name: "Name", type: "title", options: [] }],
+      rows: Array.from({ length: 201 }, (_, index) => ({ id: `row-${index}`, values: { title: "" } })),
+      views: []
+    }
+  }, "metadata.database.rows");
+
+  expectIntegrityFailure("BOOKMARK", {
+    bookmark: {
+      view: "gallery",
+      items: Array.from({ length: 51 }, (_, index) => ({
+        id: `bookmark-${index}`,
+        url: `https://example.com/${index}`,
+        title: `Example ${index}`,
+        description: "",
+        imageUrl: "",
+        faviconUrl: "",
+        siteName: "example.com"
+      }))
+    }
+  }, "metadata.bookmark.items");
+});
+
+test("save routes preserve authoritative metadata instead of storing normalized projections", async () => {
+  const blockRoute = (await readFile(new URL("../src/routes/block.routes.ts", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
+  const collaborationRoute = (await readFile(new URL("../src/routes/collaboration.routes.ts", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
+
+  for (const [label, source] of [["block", blockRoute], ["collaboration", collaborationRoute]]) {
+    assert.doesNotMatch(source, /normalizeBookmarkMetadata\(metadata\)/, `${label} route still stores normalized bookmark metadata`);
+    assert.doesNotMatch(source, /normalizeAiChatMetadata\(metadata\)/, `${label} route still stores normalized AI metadata`);
+    assert.match(source, /summarizeBookmarkData\(getBookmarkData\(metadata\)\)/);
+    assert.match(source, /summarizeAiChatData\(getAiChatData\(metadata\)\)/);
+    assert.match(source, /assertLosslessStructuredMetadata/);
+  }
+
+  const createStart = blockRoute.indexOf('blockRouter.post("/pages/:pageId/blocks"');
+  const createEnd = blockRoute.indexOf('blockRouter.patch("/blocks/:blockId"', createStart);
+  const createRoute = blockRoute.slice(createStart, createEnd);
+  assert.ok(
+    createRoute.indexOf("assertLosslessStructuredMetadata(body.type, body.metadata)")
+      < createRoute.indexOf("INSERT INTO blocks"),
+    "direct-create integrity guard must run before the database insert"
+  );
+  assert.ok(
+    blockRoute.includes('if (body.metadata !== undefined) {\n        fields.push("metadata = ?")'),
+    "metadata must only be rewritten when the request supplied metadata"
+  );
+  assert.doesNotMatch(
+    blockRoute,
+    /body\.metadata !== undefined \|\| \(contentChanged && \(nextType === "BOOKMARK" \|\| nextType === "AI_CHAT"\)\)/,
+    "metadata that was read as JSON text must not be serialized again during an unrelated content update"
+  );
+
+  const materializeStart = collaborationRoute.indexOf('"/pages/:pageId/collaboration/snapshot"');
+  const materializeRoute = collaborationRoute.slice(materializeStart);
+  assert.ok(
+    materializeRoute.indexOf("assertLosslessStructuredMetadata(block.type, block.metadata)")
+      < materializeRoute.indexOf("DELETE FROM blocks"),
+    "collaboration integrity guard must run before destructive materialization"
+  );
+});

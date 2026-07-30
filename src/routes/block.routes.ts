@@ -22,10 +22,13 @@ import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/muta
 import {
   fetchBookmarkPreviewWithFallback,
   getBookmarkData,
-  normalizeBookmarkMetadata,
   summarizeBookmarkData
 } from "../lib/bookmark.js";
-import { getAiChatData, normalizeAiChatMetadata, summarizeAiChatData } from "../lib/ai-chat.js";
+import { getAiChatData, summarizeAiChatData } from "../lib/ai-chat.js";
+import {
+  assertStructuredBlockMetadataIntegrity,
+  StructuredMetadataIntegrityError
+} from "../lib/structured-metadata-integrity.js";
 import { toBlock } from "../lib/mappers.js";
 import { getBlockAccess, getPageAccess, type PageAccess } from "../lib/page-access.js";
 import { broadcastCanonicalAttachment } from "../lib/collaboration-server.js";
@@ -74,20 +77,37 @@ const bookmarkPreviewSchema = z.object({
   url: z.string().trim().min(1).max(2_048)
 });
 
+function assertLosslessStructuredMetadata(type: BlockRow["type"], metadata: unknown) {
+  try {
+    const validated = assertStructuredBlockMetadataIntegrity(type, metadata);
+    return validated === undefined ? metadata : validated;
+  } catch (error) {
+    if (error instanceof StructuredMetadataIntegrityError) {
+      throw new ApiError(
+        400,
+        "BLOCK_METADATA_WOULD_TRUNCATE",
+        "Structured block data exceeds the lossless storage limits. Nothing was saved.",
+        { path: error.path, reason: error.message }
+      );
+    }
+    throw error;
+  }
+}
+
 function prepareBlockContent(type: BlockRow["type"], markdown: string, metadata: unknown) {
   if (type === "BOOKMARK") {
-    const normalizedMetadata = normalizeBookmarkMetadata(metadata);
     return {
-      markdown: summarizeBookmarkData(getBookmarkData(normalizedMetadata)),
-      metadata: normalizedMetadata
+      markdown: summarizeBookmarkData(getBookmarkData(metadata)),
+      // Never replace the source payload with a display-normalized projection.
+      metadata
     };
   }
 
   if (type === "AI_CHAT") {
-    const normalizedMetadata = normalizeAiChatMetadata(metadata);
     return {
-      markdown: summarizeAiChatData(getAiChatData(normalizedMetadata)),
-      metadata: normalizedMetadata
+      markdown: summarizeAiChatData(getAiChatData(metadata)),
+      // Derived markdown may be bounded; the authoritative metadata must remain exact.
+      metadata
     };
   }
 
@@ -403,7 +423,8 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
     }
 
     const id = createId("blk");
-    const prepared = prepareBlockContent(body.type, body.markdown, body.metadata);
+    const losslessMetadata = assertLosslessStructuredMetadata(body.type, body.metadata);
+    const prepared = prepareBlockContent(body.type, body.markdown, losslessMetadata);
     const result = await transaction(async (client) => {
       const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
       assertDirectBlockMutationAllowed(lockedAccess);
@@ -522,10 +543,14 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
         body.checked !== undefined ||
         body.metadata !== undefined;
       const nextType = body.type ?? existing.type;
+      const sourceMetadata = body.metadata !== undefined ? body.metadata : existing.metadata;
+      const nextMetadata = contentChanged
+        ? assertLosslessStructuredMetadata(nextType, sourceMetadata)
+        : sourceMetadata;
       const prepared = prepareBlockContent(
         nextType,
         body.markdown ?? existing.markdown,
-        body.metadata !== undefined ? body.metadata : existing.metadata
+        nextMetadata
       );
       const nextChecked = body.checked ?? Boolean(existing.checked);
 
@@ -553,7 +578,7 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
         fields.push("sort_order = ?");
         values.push(body.sortOrder);
       }
-      if (body.metadata !== undefined || (contentChanged && (nextType === "BOOKMARK" || nextType === "AI_CHAT"))) {
+      if (body.metadata !== undefined) {
         fields.push("metadata = ?");
         values.push(prepared.metadata ? JSON.stringify(prepared.metadata) : null);
       }

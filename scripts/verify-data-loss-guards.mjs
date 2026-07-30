@@ -150,6 +150,18 @@ const collaborationRouteSource = readFileSync(
   new URL("../src/routes/collaboration.routes.ts", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const blockRouteSource = readFileSync(
+  new URL("../src/routes/block.routes.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
+const structuredMetadataIntegritySource = readFileSync(
+  new URL("../src/lib/structured-metadata-integrity.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
+const databaseSource = readFileSync(
+  new URL("../src/lib/database.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const collaborationServerSource = readFileSync(
   new URL("../src/lib/collaboration-server.ts", import.meta.url),
   "utf8"
@@ -170,6 +182,68 @@ const materializationMigrationSource = readFileSync(
   new URL("../migrations/022_server_authoritative_collaboration_materialization.sql", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+
+const structuredSaveSources = [blockRouteSource, collaborationRouteSource];
+for (const source of structuredSaveSources) {
+  assert(
+    source.includes("assertLosslessStructuredMetadata")
+      && source.includes("summarizeBookmarkData(getBookmarkData(metadata))")
+      && source.includes("summarizeAiChatData(getAiChatData(metadata))"),
+    "Structured block saves are missing the lossless pre-write guard or source-preserving derivation"
+  );
+  assert(
+    !source.includes("normalizeBookmarkMetadata(metadata)")
+      && !source.includes("normalizeAiChatMetadata(metadata)"),
+    "A structured block save can still replace authoritative metadata with a truncating projection"
+  );
+}
+assert(
+  structuredMetadataIntegritySource.includes("return root;")
+    && blockRouteSource.includes("return validated === undefined ? metadata : validated")
+    && collaborationRouteSource.includes("return validated === undefined ? metadata : validated"),
+  "Structured JSON metadata can be double-encoded instead of serialized exactly once"
+);
+assert(
+  blockRouteSource.includes('if (body.metadata !== undefined) {\n        fields.push("metadata = ?")')
+    && !blockRouteSource.includes('body.metadata !== undefined || (contentChanged && (nextType === "BOOKMARK" || nextType === "AI_CHAT"))'),
+  "A direct content update can rewrite unchanged JSON metadata through a second serialization"
+);
+assert(
+  structuredMetadataIntegritySource.includes("answerLength: 12_000")
+    && structuredMetadataIntegritySource.includes("rows: 50")
+    && structuredMetadataIntegritySource.includes("columns: 12")
+    && structuredMetadataIntegritySource.includes("rows: 200")
+    && structuredMetadataIntegritySource.includes("items: 50"),
+  "Structured metadata integrity limits are missing or incomplete"
+);
+assert(
+  databaseSource.includes("const fallbackViews = fallback.views.map")
+    && databaseSource.includes("propertyById.has(propertyId)")
+    && databaseSource.includes("const normalizedViews = views.length ? views : fallbackViews"),
+  "Database fallback views can retain references to properties that do not exist"
+);
+const directStructuredCreate = section(
+  blockRouteSource,
+  'blockRouter.post("/pages/:pageId/blocks"',
+  'blockRouter.patch("/blocks/:blockId"'
+);
+assertBefore(
+  directStructuredCreate,
+  "assertLosslessStructuredMetadata(body.type, body.metadata)",
+  "INSERT INTO blocks",
+  "direct structured block create"
+);
+const collaborationSnapshotStart = collaborationRouteSource.indexOf(
+  '"/pages/:pageId/collaboration/snapshot"'
+);
+assert(collaborationSnapshotStart >= 0, "Missing collaboration snapshot route");
+const collaborationSnapshotSource = collaborationRouteSource.slice(collaborationSnapshotStart);
+assertBefore(
+  collaborationSnapshotSource,
+  "assertLosslessStructuredMetadata(block.type, block.metadata)",
+  "DELETE FROM blocks",
+  "collaboration structured materialization"
+);
 
 assert(
   collaborationRouteSource.includes("materializeCollaborationUpdates")
@@ -888,5 +962,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed structured metadata preservation, database fallback reference integrity, and fail-closed recovery inspection."
 );

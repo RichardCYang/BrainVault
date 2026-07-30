@@ -388,7 +388,23 @@ export function getDatabaseData(metadata: unknown): DatabaseData {
     });
 
   const fallback = createDefaultDatabaseData();
-  const normalizedViews = views.length ? views : fallback.views;
+  const fallbackViews = fallback.views.map((view) => {
+    const requestedGroupProperty = view.groupPropertyId
+      ? propertyById.get(view.groupPropertyId)
+      : null;
+    return {
+      ...view,
+      groupPropertyId: view.type === "board"
+        && requestedGroupProperty
+        && ["select", "checkbox"].includes(requestedGroupProperty.type)
+        ? requestedGroupProperty.id
+        : null,
+      hiddenPropertyIds: view.hiddenPropertyIds.filter(
+        (propertyId) => propertyById.has(propertyId) && propertyById.get(propertyId)?.type !== "title"
+      )
+    };
+  });
+  const normalizedViews = views.length ? views : fallbackViews;
   const activeViewId = normalizedViews.some((view) => view.id === source.activeViewId)
     ? String(source.activeViewId)
     : normalizedViews[0].id;

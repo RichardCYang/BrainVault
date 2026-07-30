@@ -25,10 +25,13 @@ import { toBlock, toPublicUser } from "../lib/mappers.js";
 import { renderBlockHtml } from "../lib/markdown.js";
 import {
   getBookmarkData,
-  normalizeBookmarkMetadata,
   summarizeBookmarkData
 } from "../lib/bookmark.js";
-import { getAiChatData, normalizeAiChatMetadata, summarizeAiChatData } from "../lib/ai-chat.js";
+import { getAiChatData, summarizeAiChatData } from "../lib/ai-chat.js";
+import {
+  assertStructuredBlockMetadataIntegrity,
+  StructuredMetadataIntegrityError
+} from "../lib/structured-metadata-integrity.js";
 import { removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { CollaborationDocumentError } from "../lib/collaboration-document.js";
 import { materializeCollaborationUpdates } from "../lib/collaboration-materialization.js";
@@ -107,19 +110,34 @@ function toSharePayload(row: ShareUserRow) {
   };
 }
 
+function assertLosslessStructuredMetadata(type: BlockRow["type"], metadata: unknown) {
+  try {
+    const validated = assertStructuredBlockMetadataIntegrity(type, metadata);
+    return validated === undefined ? metadata : validated;
+  } catch (error) {
+    if (error instanceof StructuredMetadataIntegrityError) {
+      throw new ApiError(
+        409,
+        "COLLABORATION_METADATA_WOULD_TRUNCATE",
+        "The collaboration snapshot contains structured data that cannot be materialized losslessly.",
+        { path: error.path, reason: error.message }
+      );
+    }
+    throw error;
+  }
+}
+
 function prepareBlockContent(type: BlockRow["type"], markdown: string, metadata: unknown) {
   if (type === "BOOKMARK") {
-    const normalizedMetadata = normalizeBookmarkMetadata(metadata);
     return {
-      markdown: summarizeBookmarkData(getBookmarkData(normalizedMetadata)),
-      metadata: normalizedMetadata
+      markdown: summarizeBookmarkData(getBookmarkData(metadata)),
+      metadata
     };
   }
   if (type === "AI_CHAT") {
-    const normalizedMetadata = normalizeAiChatMetadata(metadata);
     return {
-      markdown: summarizeAiChatData(getAiChatData(normalizedMetadata)),
-      metadata: normalizedMetadata
+      markdown: summarizeAiChatData(getAiChatData(metadata)),
+      metadata
     };
   }
   return { markdown, metadata };
@@ -420,7 +438,10 @@ collaborationRouter.put(
           throw error;
         }
 
-        const orderedBlocks = materialization.blocks;
+        const orderedBlocks = materialization.blocks.map((block) => ({
+          ...block,
+          metadata: assertLosslessStructuredMetadata(block.type, block.metadata) as Record<string, unknown> | null
+        }));
         const activeIds = new Set(orderedBlocks.map((block) => block.id));
         const deletedAttachmentIds = new Set(materialization.deletedAttachmentIds);
         for (const blockId of deletedAttachmentIds) {
