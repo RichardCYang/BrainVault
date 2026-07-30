@@ -455,3 +455,47 @@ export function assertStructuredBlockMetadataIntegrity(type: BlockType, metadata
   // callers serialize it exactly once instead of storing a JSON string value.
   return root;
 }
+
+export type BackupBlockMetadataRecord = {
+  id: string;
+  type: BlockType;
+  metadata: string | null;
+};
+
+export class BackupMetadataIntegrityError extends Error {
+  readonly blockId: string;
+  readonly path: string;
+  readonly reason: string;
+
+  constructor(blockId: string, path: string, reason: string) {
+    super(`${blockId} ${path}: ${reason}`);
+    this.name = "BackupMetadataIntegrityError";
+    this.blockId = blockId;
+    this.path = path;
+    this.reason = reason;
+  }
+}
+
+export function assertLosslessBackupBlockMetadata(block: BackupBlockMetadataRecord) {
+  if (block.metadata !== null) {
+    try {
+      JSON.parse(block.metadata);
+    } catch {
+      throw new BackupMetadataIntegrityError(block.id, "metadata", "must contain valid JSON");
+    }
+  }
+
+  try {
+    // Validate the serialized backup value directly. Passing the already-decoded
+    // value would accidentally accept double-encoded JSON strings and restore a
+    // representation that the editor only decodes once.
+    assertStructuredBlockMetadataIntegrity(block.type, block.metadata);
+  } catch (error) {
+    if (error instanceof StructuredMetadataIntegrityError) {
+      const prefix = `${error.path}: `;
+      const reason = error.message.startsWith(prefix) ? error.message.slice(prefix.length) : error.message;
+      throw new BackupMetadataIntegrityError(block.id, error.path, reason);
+    }
+    throw error;
+  }
+}

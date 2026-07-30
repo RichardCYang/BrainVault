@@ -13,6 +13,10 @@ import { ApiError } from "./http.js";
 import { createId } from "./id.js";
 import { renderBlockHtml } from "./markdown.js";
 import { blockSortOrderLimits } from "./block-order-integrity.js";
+import {
+  assertLosslessBackupBlockMetadata,
+  BackupMetadataIntegrityError
+} from "./structured-metadata-integrity.js";
 import { copyZipEntryToFile, crc32, readZipDirectory, readZipEntryBuffer, updateCrc32, ZipWriter } from "./zip.js";
 import type { BlockType, UserRow } from "../types/domain.js";
 
@@ -431,12 +435,16 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
       if (!parent || parent.page_id !== block.page_id) invalidBackup(`Block parent is invalid: ${block.id}`);
     }
     if (block.parent_block_id === block.id) invalidBackup(`Block cannot parent itself: ${block.id}`);
-    if (block.metadata !== null) {
-      try {
-        JSON.parse(block.metadata);
-      } catch {
-        invalidBackup(`Block metadata is invalid JSON: ${block.id}`);
+    try {
+      assertLosslessBackupBlockMetadata(block);
+    } catch (error) {
+      if (error instanceof BackupMetadataIntegrityError) {
+        invalidBackup(`Block metadata cannot be restored without data loss: ${block.id}`, {
+          path: error.path,
+          reason: error.reason
+        });
       }
+      throw error;
     }
   }
   orderByParent(blocks, (item) => item.id, (item) => item.parent_block_id);
