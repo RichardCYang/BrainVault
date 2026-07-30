@@ -34,7 +34,10 @@ function listMigrationFiles() {
 async function executeSqlFile(client: DbClient, filename: string) {
   const sql = fs.readFileSync(path.join(migrationsDir, filename), "utf8");
   for (const statement of splitSqlStatements(sql)) {
-    await client.execute(statement);
+    // Migration files are trusted SQL scripts and may include SQL-level
+    // PREPARE/EXECUTE/DEALLOCATE statements. Using execute() here would ask
+    // the connector to prepare PREPARE itself and fail with ER_UNSUPPORTED_PS.
+    await client.executeText(statement);
   }
 }
 

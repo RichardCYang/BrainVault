@@ -13,6 +13,7 @@ export type DbClient = {
     sql: string,
     params?: readonly DbValue[]
   ): Promise<T | undefined>;
+  executeText(sql: string): Promise<void>;
   execute<T = UpsertResult>(sql: string, params?: readonly DbValue[]): Promise<T>;
 };
 
@@ -52,6 +53,12 @@ function createClient(target: Pool | PoolConnection): DbClient {
     ): Promise<T | undefined> {
       const rows = await runQuery<T>(sql, params);
       return rows.at(0);
+    },
+    async executeText(sql: string): Promise<void> {
+      // SQL migration scripts can contain SQL-level PREPARE/EXECUTE commands.
+      // Send those trusted statements over COM_QUERY instead of nesting them
+      // inside the connector's binary prepared-statement protocol.
+      await target.query(sql);
     },
     async execute<T = UpsertResult>(sql: string, params: readonly DbValue[] = []): Promise<T> {
       return target.execute<T, readonly DbValue[]>(sql, params);

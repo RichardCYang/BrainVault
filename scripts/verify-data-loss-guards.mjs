@@ -174,6 +174,10 @@ const dbConnectionSource = readFileSync(
   new URL("../src/lib/db.ts", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const schemaSource = readFileSync(
+  new URL("../src/lib/schema.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const blockOrderIntegritySource = readFileSync(
   new URL("../src/lib/block-order-integrity.ts", import.meta.url),
   "utf8"
@@ -226,6 +230,13 @@ assert(
   dbConnectionSource.includes("initSql: strictTransactionalSqlMode")
     && dbConnectionSource.includes("STRICT_TRANS_TABLES"),
   "Database sessions can still inherit a permissive SQL mode that silently coerces invalid writes"
+);
+assert(
+  dbConnectionSource.includes("executeText(sql: string): Promise<void>")
+    && dbConnectionSource.includes("await target.query(sql);")
+    && schemaSource.includes("await client.executeText(statement);")
+    && !schemaSource.includes("await client.execute(statement);"),
+  "Migration SQL can still nest SQL-level PREPARE inside the connector prepared-statement protocol"
 );
 assert(
   zipSource.includes('createHash("sha256")')

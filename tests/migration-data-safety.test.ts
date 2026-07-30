@@ -34,6 +34,18 @@ describe("migration replay data safety", () => {
     }
   });
 
+  it("runs SQL-level PREPARE through the connector text protocol", () => {
+    const schemaSource = fs.readFileSync(path.resolve(process.cwd(), "src/lib/schema.ts"), "utf8");
+    const migration = fs.readFileSync(
+      path.join(migrationsDir, "023_blocks_parent_page_integrity.sql"),
+      "utf8"
+    );
+
+    expect(migration).toMatch(/\bPREPARE\s+brainvault_add_parent_page_fk_statement/i);
+    expect(schemaSource).toContain("await client.executeText(statement);");
+    expect(schemaSource).not.toContain("await client.execute(statement);");
+  });
+
   it("keeps a composite index for the immutable page-list scan", () => {
     const baseline = fs.readFileSync(path.join(migrationsDir, "001_init.sql"), "utf8");
     const migration = fs.readFileSync(

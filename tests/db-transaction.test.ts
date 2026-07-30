@@ -24,7 +24,7 @@ vi.mock("mariadb", () => ({
   }
 }));
 
-import { TransactionCommitOutcomeUnknownError, transaction } from "../src/lib/db.js";
+import { db, TransactionCommitOutcomeUnknownError, transaction } from "../src/lib/db.js";
 
 describe("database transaction outcome handling", () => {
   beforeEach(() => {
@@ -45,6 +45,15 @@ describe("database transaction outcome handling", () => {
     expect(mocks.connection.query.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.connection.beginTransaction.mock.invocationCallOrder[0]
     );
+  });
+
+  it("uses the text protocol for trusted SQL script statements", async () => {
+    const statement = "PREPARE brainvault_test_statement FROM @brainvault_test_sql";
+
+    await db.executeText(statement);
+
+    expect(mocks.pool.query).toHaveBeenCalledWith(statement);
+    expect(mocks.pool.execute).not.toHaveBeenCalled();
   });
 
   it("keeps callback failures distinguishable from commit ambiguity", async () => {
