@@ -8,13 +8,38 @@ import { assessInitialCollaborationBootstrap } from "../src/lib/collaboration-bo
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const normalize = (value) => value.replace(/\r\n/g, "\n");
 const read = (relativePath) => normalize(readFileSync(join(root, relativePath), "utf8"));
-const readHead = (relativePath) => normalize(execFileSync(
-  "git",
-  ["show", `HEAD:${relativePath}`],
-  { cwd: root, encoding: "utf8" }
-));
+function readGitFile(revision, relativePath) {
+  try {
+    return normalize(execFileSync(
+      "git",
+      ["show", `${revision}:${relativePath}`],
+      { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+    ));
+  } catch {
+    return null;
+  }
+}
 
-const vulnerableServer = readHead("src/lib/collaboration-server.ts");
+function findVulnerableRevision() {
+  const revisions = execFileSync("git", ["rev-list", "HEAD"], {
+    cwd: root,
+    encoding: "utf8"
+  }).trim().split(/\s+/).filter(Boolean);
+  for (const revision of revisions) {
+    const server = readGitFile(revision, "src/lib/collaboration-server.ts");
+    if (
+      server
+      && !server.includes("assessInitialCollaborationBootstrap")
+      && /currentUpdateId = toSafeUpdateId[\s\S]*INSERT INTO page_yjs_updates/.test(server)
+    ) {
+      return { revision, server };
+    }
+  }
+  throw new Error("Unable to find the vulnerable collaboration bootstrap implementation in Git history");
+}
+
+const vulnerableBaseline = findVulnerableRevision();
+const vulnerableServer = vulnerableBaseline.server;
 const fixedServer = read("src/lib/collaboration-server.ts");
 const materializationRoute = read("src/routes/collaboration.routes.ts");
 
@@ -85,7 +110,8 @@ assert.equal(fixedDurableHistoryAccepted, false);
 assert.equal(fixedBlocksAfterRejectedBootstrap.length, 2);
 
 console.log(JSON.stringify({
-  baselineCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
+  baselineCommit: vulnerableBaseline.revision,
+  fixedCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   vulnerable: {
     firstYjsUpdateSemanticallyComparedWithSql: false,
     incompleteCandidateIsSyntacticallyValid: true,

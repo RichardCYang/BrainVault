@@ -186,6 +186,10 @@ const dataTransferSource = readFileSync(
   new URL("../src/lib/data-transfer.ts", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const zipSource = readFileSync(
+  new URL("../src/lib/zip.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const collaborationProtocolSource = readFileSync(
   new URL("../src/lib/collaboration-protocol.ts", import.meta.url),
   "utf8"
@@ -206,6 +210,31 @@ assert(
   dbConnectionSource.includes("initSql: strictTransactionalSqlMode")
     && dbConnectionSource.includes("STRICT_TRANS_TABLES"),
   "Database sessions can still inherit a permissive SQL mode that silently coerces invalid writes"
+);
+assert(
+  zipSource.includes('createHash("sha256")')
+    && zipSource.includes("sourceCrc32 = updateCrc32(sourceCrc32, data)")
+    && zipSource.includes("ZIP source checksum changed while exporting")
+    && zipSource.includes("ZIP source SHA-256 changed while exporting")
+    && dataTransferSource.includes("sha256: item.inspection.sha256"),
+  "Backup ZIP creation can still trust stale pre-stream attachment checksums"
+);
+
+const backupStreamIntegrityReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [
+    "--experimental-strip-types",
+    fileURLToPath(new URL("./reproduce-backup-stream-integrity-loss.mjs", import.meta.url))
+  ],
+  { encoding: "utf8" }
+));
+assert(
+  backupStreamIntegrityReproduction.vulnerable.unusableBackupFalseSuccessReproduced
+    && backupStreamIntegrityReproduction.fixed.streamTimeCrc32Verified
+    && backupStreamIntegrityReproduction.fixed.streamTimeSha256Verified
+    && backupStreamIntegrityReproduction.fixed.writerRejectedBeforeCentralDirectoryFinalization
+    && backupStreamIntegrityReproduction.fixed.unusableBackupFalseSuccessClosed,
+  "The backup stream-integrity reproduction did not prove both vulnerable and fixed states"
 );
 
 const blockOrderReproduction = JSON.parse(execFileSync(
@@ -1039,5 +1068,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, fail-closed structured metadata preservation, database fallback reference integrity, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified backup ZIP integrity, fail-closed structured metadata preservation, database fallback reference integrity, and fail-closed recovery inspection."
 );

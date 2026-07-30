@@ -1,4 +1,5 @@
 import { createReadStream, createWriteStream } from "node:fs";
+import { createHash } from "node:crypto";
 import { open, stat } from "node:fs/promises";
 import { once } from "node:events";
 import type { Writable } from "node:stream";
@@ -76,6 +77,7 @@ export type ZipWriteEntry = {
   name: string;
   size: bigint;
   crc32: number;
+  sha256?: string;
   source: ZipSource;
   modifiedAt?: Date;
 };
@@ -91,8 +93,11 @@ type CentralEntry = {
 export class ZipWriter {
   private offset = 0n;
   private readonly entries: CentralEntry[] = [];
+  private readonly output: Writable;
 
-  constructor(private readonly output: Writable) {}
+  constructor(output: Writable) {
+    this.output = output;
+  }
 
   private async write(data: Buffer) {
     await writeBuffer(this.output, data);
@@ -103,6 +108,10 @@ export class ZipWriter {
     const name = Buffer.from(entry.name.replace(/\\/g, "/"), "utf8");
     if (!name.length || name.length > UINT16_MAX) throw new Error("ZIP entry name is invalid");
     if (entry.size < 0n) throw new Error("ZIP entry size is invalid");
+    const expectedSha256 = entry.sha256?.toLowerCase() ?? null;
+    if (expectedSha256 !== null && !/^[0-9a-f]{64}$/.test(expectedSha256)) {
+      throw new Error("ZIP entry SHA-256 is invalid");
+    }
 
     const localOffset = this.offset;
     const zip64 = entry.size >= BigInt(UINT32_MAX);
@@ -123,17 +132,30 @@ export class ZipWriter {
     await this.write(Buffer.concat([header, name, extra]));
 
     let written = 0n;
+    let sourceCrc32 = 0;
+    const sourceSha256 = expectedSha256 === null ? null : createHash("sha256");
+    const writeSourceChunk = async (data: Buffer) => {
+      sourceCrc32 = updateCrc32(sourceCrc32, data);
+      sourceSha256?.update(data);
+      await this.write(data);
+      written += BigInt(data.length);
+    };
+
     if (entry.source.kind === "buffer") {
-      await this.write(entry.source.data);
-      written = BigInt(entry.source.data.length);
+      await writeSourceChunk(entry.source.data);
     } else {
       for await (const chunk of createReadStream(entry.source.path)) {
         const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        await this.write(data);
-        written += BigInt(data.length);
+        await writeSourceChunk(data);
       }
     }
     if (written !== entry.size) throw new Error(`ZIP source size changed while exporting: ${entry.name}`);
+    if (sourceCrc32 !== (entry.crc32 >>> 0)) {
+      throw new Error(`ZIP source checksum changed while exporting: ${entry.name}`);
+    }
+    if (expectedSha256 !== null && sourceSha256?.digest("hex") !== expectedSha256) {
+      throw new Error(`ZIP source SHA-256 changed while exporting: ${entry.name}`);
+    }
 
     this.entries.push({
       name,

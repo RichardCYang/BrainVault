@@ -565,6 +565,7 @@ export async function writeUserDataBackup(
         name: item.path,
         size: item.inspection.size,
         crc32: item.inspection.crc32,
+        sha256: item.inspection.sha256,
         source: { kind: "file", path: item.filePath }
       });
     }
