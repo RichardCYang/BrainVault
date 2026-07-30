@@ -1,5 +1,0 @@
-(node:4064) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
-(Use `node --trace-warnings ...` to show where the warning was created)
-(node:4076) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
-(Use `node --trace-warnings ...` to show where the warning was created)
-[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, server-authoritative materialization provenance, SQL-fenced first-document bootstrap, cross-instance durable-room freshness, stale-SQL attachment-position fencing, hierarchy invariants, RFC 6455 protocol behavior, and syntax for 158 file(s).

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const publicRoot = join(projectRoot, "public");
-const outputPath = join(projectRoot, "docs", "preview.png");
+const outputPath = join(projectRoot, "docs", "assets", "2026-07-17", "preview.png");
 const fixture = JSON.parse(await readFile(new URL("./demo-workspace.json", import.meta.url), "utf8"));
 const now = "2026-07-17T06:30:00.000Z";
 const previewPageId = "preview-page";
@@ -199,7 +199,7 @@ function findChromium() {
   return null;
 }
 
-await mkdir(join(projectRoot, "docs"), { recursive: true });
+await mkdir(join(projectRoot, "docs", "assets", "2026-07-17"), { recursive: true });
 const chromiumPath = findChromium();
 if (!chromiumPath) {
   throw new Error("Chromium/Chrome was not found. Set BRAINVAULT_CHROMIUM_PATH and retry.");

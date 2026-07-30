@@ -6,9 +6,9 @@ Every row on a page is an editable block that can be formatted, moved, nested, o
 
 ## Preview
 
-![BrainVault main workspace preview with Kanban and database blocks](docs/preview.png)
+![BrainVault main workspace preview with Kanban and database blocks](docs/assets/2026-07-17/preview.png)
 
-The preview is captured from the real browser UI. See [Development guide](docs/development.md#preview-capture) to regenerate it.
+The preview is captured from the real browser UI. See [Development guide](docs/development/2026-07-28/development.md#preview-capture) to regenerate it.
 
 ## Key features
 
@@ -45,23 +45,23 @@ npm run dev
 
 Open `http://localhost:4000` after the server starts.
 
-For database permissions, demo data, alternative environment setup, and production instructions, see the [Getting started guide](docs/getting-started.md).
+For database permissions, demo data, alternative environment setup, and production instructions, see the [Getting started guide](docs/getting-started/2026-07-27/getting-started.md).
 
 ## Documentation
 
 | Guide | Contents |
 | --- | --- |
 | [Documentation index](docs/README.md) | Entry point for all project documentation |
-| [Getting started](docs/getting-started.md) | Requirements, setup, database bootstrap, demo data, and production |
-| [Features](docs/features.md) | Editor behavior, sharing, block types, backup/restore, PDF export, and languages |
-| [Collaboration](docs/collaboration.md) | Sharing permissions, Yjs/WebSocket flow, persistence, proxy setup, and verification |
-| [Collaboration verification](docs/collaboration-verification.md) | Delivery checks, integrity-proof scope, and reproducible deployment validation |
-| [백업 공유 권한 무결성 감사](docs/data-loss-audit-2026-07-30-backup-share-integrity-ko.md) | 전체 백업 복원 시 공유 권한이 cascade 삭제되던 결함의 재현, 수정, 레거시 호환성 및 검증 |
-| [Configuration](docs/configuration.md) | Environment variables and runtime configuration |
-| [Security](docs/security.md) | MFA, production secrets, attachment safety, and security defaults |
-| [API](docs/api.md) | Route overview, authentication, health check, and OpenAPI access |
-| [Development](docs/development.md) | Scripts, lockfile policy, project structure, translations, and preview capture |
-| [OpenAPI specification](docs/openapi.yaml) | Full OpenAPI 3.1 document |
+| [Getting started](docs/getting-started/2026-07-27/getting-started.md) | Requirements, setup, database bootstrap, demo data, and production |
+| [Features](docs/features/2026-07-30/features.md) | Editor behavior, sharing, block types, backup/restore, PDF export, and languages |
+| [Collaboration](docs/collaboration/2026-07-29/collaboration.md) | Sharing permissions, Yjs/WebSocket flow, persistence, proxy setup, and verification |
+| [Collaboration verification](docs/data-loss/2026-07-29/collaboration-verification.md) | Delivery checks, integrity-proof scope, and reproducible deployment validation |
+| [Data-loss and integrity reports](docs/README.md#data-loss-and-integrity-reports) | Dated audits, reproductions, corrections, and verification evidence |
+| [Configuration](docs/configuration/2026-07-28/configuration.md) | Environment variables and runtime configuration |
+| [Security](docs/security/2026-07-30/security.md) | MFA, production secrets, attachment safety, and security defaults |
+| [API](docs/api/2026-07-30/api.md) | Route overview, authentication, health check, and OpenAPI access |
+| [Development](docs/development/2026-07-28/development.md) | Scripts, lockfile policy, project structure, translations, and preview capture |
+| [OpenAPI specification](docs/api/2026-07-30/openapi.yaml) | Full OpenAPI 3.1 document |
 
 ## Common commands
 
@@ -76,4 +76,4 @@ npm run verify:data-loss # Check persistence and recovery integrity guards
 npm start         # Run the compiled server
 ```
 
-Before a production deployment, replace the bundled development secrets, configure the WebAuthn relying-party values, and serve the app over HTTPS in a browser that supports Web Locks so safety-critical cross-tab transitions can run. See [Security](docs/security.md) and [Configuration](docs/configuration.md).
+Before a production deployment, replace the bundled development secrets, configure the WebAuthn relying-party values, and serve the app over HTTPS in a browser that supports Web Locks so safety-critical cross-tab transitions can run. See [Security](docs/security/2026-07-30/security.md) and [Configuration](docs/configuration/2026-07-28/configuration.md).
