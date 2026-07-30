@@ -299,7 +299,7 @@ class PageCollaborationSession {
     this.materializeQueue = Promise.resolve(null);
     this.snapshotScheduledByUpdate = false;
 
-    this.doc.on("update", (update, origin) => {
+    this.handleDocumentUpdate = (update, origin) => {
       const source = origin === REMOTE_ORIGIN ? "remote" : origin === BOOTSTRAP_ORIGIN ? "bootstrap" : "local";
       this.emitSnapshot(source);
       if (origin !== REMOTE_ORIGIN && origin !== BOOTSTRAP_ORIGIN && origin !== RECOVERY_ORIGIN) {
@@ -312,7 +312,8 @@ class PageCollaborationSession {
         else this.needsRecovery = true;
       }
       if (origin !== REMOTE_ORIGIN) this.scheduleMaterialization();
-    });
+    };
+    this.doc.on("update", this.handleDocumentUpdate);
   }
 
   async start() {
@@ -397,6 +398,28 @@ class PageCollaborationSession {
   resetLocalMutationDoc() {
     this.localMutationDoc?.destroy();
     this.localMutationDoc = null;
+  }
+
+  replaceLiveDocument(document) {
+    const previous = this.doc;
+    previous.off("update", this.handleDocumentUpdate);
+    this.resetLocalMutationDoc();
+    this.doc = document;
+    this.title = document.getText("title");
+    this.blocks = document.getMap("blocks");
+    this.deletedAttachments = document.getMap("deletedAttachments");
+    document.on("update", this.handleDocumentUpdate);
+    previous.destroy();
+  }
+
+  resetForCanonicalBootstrapRetry() {
+    clearTimeout(this.materializeTimer);
+    this.materializeTimer = null;
+    this.replaceLiveDocument(new this.Y.Doc());
+    this.lastUpdateId = 0;
+    this.updatesSinceCompaction = 0;
+    this.compactionPending = false;
+    this.snapshotScheduledByUpdate = false;
   }
 
   prepareLocalMutationDoc() {
@@ -779,6 +802,7 @@ class PageCollaborationSession {
     this.socket?.close(1000, "Page closed");
     this.socket = null;
     this.resetLocalMutationDoc();
+    this.doc.off("update", this.handleDocumentUpdate);
     this.doc.destroy();
     this.resolvePendingWaiters();
   }
@@ -998,7 +1022,21 @@ class PageCollaborationSession {
     this.synced = false;
     this.presence.clear();
     this.emitPresence();
-    if (this.pendingLocalUpdates > 0 || this.startupUpdatePending) {
+
+    const retryCanonicalBootstrap = event.code === 4012
+      && this.startupUpdatePending
+      && !this.needsRecovery
+      && this.recoveredLocalRecords.length === 0;
+    if (retryCanonicalBootstrap) {
+      // The server proved that this first Yjs state was not an exact copy of
+      // SQL. Discard only the unacknowledged startup document, fetch a fresh
+      // locked snapshot, and rebuild instead of ever persisting truncation.
+      this.pendingLocalUpdates = 0;
+      this.startupUpdatePending = false;
+      this.needsRecovery = false;
+      this.resetForCanonicalBootstrapRetry();
+      this.resolvePendingWaiters();
+    } else if (this.pendingLocalUpdates > 0 || this.startupUpdatePending) {
       this.needsRecovery = true;
       this.pendingLocalUpdates = 0;
       this.startupUpdatePending = false;
@@ -1008,6 +1046,15 @@ class PageCollaborationSession {
     if (event.code === 4003 || event.code === 4010 || event.code === 4011) {
       this.onStatus("offline");
       this.onAccessChanged({ code: event.code, reason: event.reason });
+      return;
+    }
+    if (event.code === 4012 && !retryCanonicalBootstrap) {
+      const error = new Error(
+        "The initial collaboration state did not match the saved page. Local recovery data was preserved instead of being overwritten."
+      );
+      error.code = "COLLABORATION_BOOTSTRAP_MISMATCH";
+      this.onError(error);
+      this.onStatus("offline");
       return;
     }
     this.onStatus("reconnecting");

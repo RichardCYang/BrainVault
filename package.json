@@ -13,6 +13,7 @@
     "verify:collaboration": "node --experimental-strip-types scripts/verify-collaboration.mjs",
     "verify:data-loss": "node scripts/verify-data-loss-guards.mjs",
     "reproduce:materialization-loss": "node scripts/reproduce-collaboration-materialization-loss.mjs",
+    "reproduce:bootstrap-loss": "node --experimental-strip-types scripts/reproduce-collaboration-bootstrap-loss.mjs",
     "reproduce:cross-instance-loss": "node scripts/reproduce-cross-instance-compaction-loss.mjs",
     "reproduce:recovery-write-loss": "node scripts/reproduce-collaboration-recovery-write-loss.mjs",
     "test:durability": "node --experimental-strip-types --test tests/*.node.test.mjs",

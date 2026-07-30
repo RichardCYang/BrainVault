@@ -18,6 +18,7 @@ import {
   currentCollaborationMaterializationVersion,
   needsCollaborationMaterialization
 } from "../src/lib/collaboration-protocol.ts";
+import { assessInitialCollaborationBootstrap } from "../src/lib/collaboration-bootstrap.ts";
 import { shouldClearLocalRecoveryAfterAck } from "../public/collaboration.js";
 import { createCollaborationRecoveryStore } from "../public/collaboration-recovery-store.js";
 import { reconcileCanonicalAttachment } from "../public/collaboration-attachment-reconcile.js";
@@ -305,6 +306,10 @@ function verifySourceWiring() {
     "assertCollaborationDocumentEpoch(collaborationState, payload.documentEpoch)",
     "assertCollaborationDocumentEpoch(collaborationState, client.documentEpoch)",
     "invalidateRoomForLineageChange",
+    "assessInitialCollaborationBootstrap",
+    "currentUpdateId === 0",
+    'reason: "bootstrap-mismatch"',
+    "client.socket.close(4012",
     "4011"
   ]);
   const collaborationServerSource = read("src/lib/collaboration-server.ts");
@@ -333,6 +338,14 @@ function verifySourceWiring() {
     "INVALID_COLLABORATION_DOCUMENT",
     "unsafeObjectKeys",
     "validateCollaborationBlockHierarchy"
+  ]);
+  assertContains("src/lib/collaboration-bootstrap.ts", [
+    "assessInitialCollaborationBootstrap",
+    "candidate.title !== pageTitle",
+    "missingBlockCount",
+    "extraBlockCount",
+    "changedBlockCount",
+    "candidate.deletedAttachmentIds.length"
   ]);
   assertContains("src/routes/collaboration.routes.ts", [
     "COLLABORATION_SNAPSHOT_STALE",
@@ -414,6 +427,9 @@ function verifySourceWiring() {
     "record.documentEpoch === documentEpoch",
     "if (this.recoveredLocalRecords.length || this.title.length || this.blocks.size) return",
     "event.code === 4003 || event.code === 4010 || event.code === 4011",
+    "event.code === 4012",
+    "resetForCanonicalBootstrapRetry",
+    "replaceLiveDocument(new this.Y.Doc())",
     "could not be decoded and was preserved",
     "Collaboration recovery records from different document versions cannot be merged"
   ]);
@@ -461,6 +477,65 @@ function verifySourceWiring() {
     "documentEpoch: record.documentEpoch"
   ]);
   assertContains("public/index.html", ["id=\"share-page-layer\"", "id=\"collaboration-indicator\""]);
+}
+
+
+function verifyInitialBootstrapFence() {
+  const storedBlocks = [
+    {
+      id: "important",
+      page_id: "page",
+      parent_block_id: null,
+      type: "MARKDOWN",
+      markdown: "must survive",
+      html_cache: "<p>must survive</p>",
+      checked: 0,
+      sort_order: 0,
+      metadata: JSON.stringify({ nested: { z: 2, a: 1 } }),
+      created_at: "2026-07-30 00:00:00",
+      updated_at: "2026-07-30 00:00:00"
+    }
+  ];
+  const exact = assessInitialCollaborationBootstrap({
+    pageTitle: "Canonical page",
+    storedBlocks,
+    candidate: {
+      title: "Canonical page",
+      blocks: [{
+        id: "important",
+        type: "MARKDOWN",
+        markdown: "must survive",
+        checked: false,
+        parentBlockId: null,
+        sortOrder: 0,
+        metadata: { nested: { a: 1, z: 2 } }
+      }],
+      deletedAttachmentIds: []
+    }
+  });
+  assert.deepEqual(exact, { accepted: true });
+
+  const incomplete = assessInitialCollaborationBootstrap({
+    pageTitle: "Canonical page",
+    storedBlocks,
+    candidate: {
+      title: "Canonical page",
+      blocks: [],
+      deletedAttachmentIds: []
+    }
+  });
+  assert.equal(incomplete.accepted, false);
+  assert.equal(incomplete.summary.missingBlockCount, 1);
+
+  const reproduction = JSON.parse(execFileSync(
+    process.execPath,
+    ["--experimental-strip-types", join(rootDir, "scripts/reproduce-collaboration-bootstrap-loss.mjs")],
+    { cwd: rootDir, encoding: "utf8" }
+  ));
+  assert.equal(reproduction.vulnerable.permanentLossWindowReproduced, true);
+  assert.equal(reproduction.fixed.bootstrapAccepted, false);
+  assert.equal(reproduction.fixed.relationalBlockCountAfterRejectedBootstrap, 2);
+  assert.equal(reproduction.fixed.permanentLossWindowClosed, true);
 }
 
 
@@ -677,12 +752,13 @@ async function main() {
   verifyRecoveryAcknowledgementSafety();
   verifyRecoveryLineageIsolation();
   verifyCollaborationHierarchy();
+  verifyInitialBootstrapFence();
   verifyMaterializationProvenance();
   verifyCrossInstanceWriteFence();
   verifyAttachmentPositionReconciliation();
   await verifyWebSocketProtocol();
   const checkedFiles = verifySyntax();
-  console.log(`[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, server-authoritative materialization provenance, cross-instance durable-room freshness, stale-SQL attachment-position fencing, hierarchy invariants, RFC 6455 protocol behavior, and syntax for ${checkedFiles} file(s).`);
+  console.log(`[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, server-authoritative materialization provenance, SQL-fenced first-document bootstrap, cross-instance durable-room freshness, stale-SQL attachment-position fencing, hierarchy invariants, RFC 6455 protocol behavior, and syntax for ${checkedFiles} file(s).`);
 }
 
 main().catch((error) => {

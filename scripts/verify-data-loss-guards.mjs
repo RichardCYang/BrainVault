@@ -174,6 +174,10 @@ const collaborationServerSource = readFileSync(
   new URL("../src/lib/collaboration-server.ts", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const collaborationBootstrapSource = readFileSync(
+  new URL("../src/lib/collaboration-bootstrap.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const pageRouteSource = readFileSync(
   new URL("../src/routes/page.routes.ts", import.meta.url),
   "utf8"
@@ -344,6 +348,24 @@ assert(
   "The attachment merge does not preserve Yjs location while retaining canonical server content"
 );
 
+assert(
+  collaborationServerSource.includes("if (currentUpdateId === 0)")
+    && collaborationServerSource.includes("assessInitialCollaborationBootstrap({")
+    && collaborationServerSource.includes('reason: "bootstrap-mismatch"')
+    && collaborationServerSource.includes("client.socket.close(4012")
+    && collaborationBootstrapSource.includes("candidate.title !== pageTitle")
+    && collaborationBootstrapSource.includes("missingBlockCount")
+    && collaborationBootstrapSource.includes("changedBlockCount")
+    && collaborationBootstrapSource.includes("candidate.deletedAttachmentIds.length"),
+  "The first Yjs document can still become durable without matching the locked SQL page"
+);
+assert(
+  collaborationClientSource.includes("resetForCanonicalBootstrapRetry")
+    && collaborationClientSource.includes("replaceLiveDocument(new this.Y.Doc())")
+    && collaborationClientSource.includes("event.code === 4012"),
+  "A rejected bootstrap can still loop on the same incomplete process-local Yjs document"
+);
+
 const preparedMutationSource = section(
   collaborationClientSource,
   "  commitLocalMutation(mutator",
@@ -440,6 +462,22 @@ assert(
     && materializationReproduction.fixed.legacyCheckpointRequiresRematerialization
     && materializationReproduction.fixed.permanentLossWindowClosed,
   "The collaboration materialization loss reproduction did not prove both vulnerable and fixed states"
+);
+
+const bootstrapReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [
+    "--experimental-strip-types",
+    fileURLToPath(new URL("./reproduce-collaboration-bootstrap-loss.mjs", import.meta.url))
+  ],
+  { encoding: "utf8" }
+));
+assert(
+  bootstrapReproduction.vulnerable.permanentLossWindowReproduced
+    && bootstrapReproduction.fixed.bootstrapAccepted === false
+    && bootstrapReproduction.fixed.relationalBlockCountAfterRejectedBootstrap === 2
+    && bootstrapReproduction.fixed.permanentLossWindowClosed,
+  "The first-document bootstrap loss reproduction did not prove both vulnerable and fixed states"
 );
 
 const crossInstanceReproduction = JSON.parse(execFileSync(
@@ -1001,5 +1039,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, fail-closed structured metadata preservation, database fallback reference integrity, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, fail-closed structured metadata preservation, database fallback reference integrity, and fail-closed recovery inspection."
 );

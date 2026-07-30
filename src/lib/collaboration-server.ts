@@ -17,7 +17,7 @@ import {
   type WebSocketConnection,
   type WebSocketMessage
 } from "./websocket.js";
-import type { UserRow } from "../types/domain.js";
+import type { BlockRow, UserRow } from "../types/domain.js";
 import type * as Y from "yjs";
 import {
   applyValidatedYjsUpdate,
@@ -30,6 +30,16 @@ import {
   maxCollaborationUpdateBytes,
   type CollaborationWriteRejectionReason
 } from "./collaboration-protocol.js";
+import {
+  readCollaborationMaterialization
+} from "./collaboration-materialization.js";
+import { CollaborationDocumentError } from "./collaboration-document.js";
+import {
+  assessInitialCollaborationBootstrap,
+  invalidInitialCollaborationBootstrapSummary,
+  type CollaborationBootstrapAssessment,
+  type CollaborationBootstrapMismatchSummary
+} from "./collaboration-bootstrap.js";
 
 export const collaborationWebSocketProtocol = "brainvault-yjs-v2";
 export const collaborationTicketProtocolPrefix = "brainvault-ticket.";
@@ -622,6 +632,12 @@ export class PageCollaborationHub {
           currentUpdateId: number;
           reason: CollaborationWriteRejectionReason;
         }
+      | {
+          accepted: false;
+          currentUpdateId: 0;
+          reason: "bootstrap-mismatch";
+          summary: CollaborationBootstrapMismatchSummary;
+        }
       | null;
 
     try {
@@ -646,6 +662,43 @@ export class PageCollaborationHub {
           snapshotBaseUpdateId: baseUpdateId
         });
         if (!checkpoint.accepted) return checkpoint;
+
+        if (currentUpdateId === 0) {
+          // The first durable Yjs state initializes collaboration from SQL. It
+          // must be an exact semantic copy, never a partial client document that
+          // later materialization could interpret as intentional block deletion.
+          const storedBlocks = await dbClient.query<BlockRow>(
+            "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",
+            [room.pageId]
+          );
+          let bootstrapAssessment: CollaborationBootstrapAssessment;
+          try {
+            bootstrapAssessment = assessInitialCollaborationBootstrap({
+              pageTitle: access.page.title,
+              storedBlocks,
+              candidate: readCollaborationMaterialization(candidate.document)
+            });
+          } catch (error) {
+            if (error instanceof CollaborationDocumentError) {
+              bootstrapAssessment = {
+                accepted: false as const,
+                summary: invalidInitialCollaborationBootstrapSummary({
+                  storedBlockCount: storedBlocks.length
+                })
+              };
+            } else {
+              throw error;
+            }
+          }
+          if (!bootstrapAssessment.accepted) {
+            return {
+              accepted: false as const,
+              currentUpdateId: 0 as const,
+              reason: "bootstrap-mismatch" as const,
+              summary: bootstrapAssessment.summary
+            };
+          }
+        }
 
         const insert = await dbClient.execute<{ insertId: number | bigint }>(
           `INSERT INTO page_yjs_updates (page_id, user_id, update_data, is_snapshot)
@@ -689,6 +742,21 @@ export class PageCollaborationHub {
           room,
           "Collaboration state changed on another server; reloading durable history"
         );
+      } else if (result.reason === "bootstrap-mismatch") {
+        console.warn("Rejected a collaboration bootstrap that did not match canonical SQL state", {
+          pageId: room.pageId,
+          userId: client.user.id,
+          ...result.summary
+        });
+        room.bootstrapWritePending = false;
+        client.synced = false;
+        if (room.bootstrapLeaderId === client.id) {
+          room.bootstrapLeaderId = null;
+          this.promoteBootstrapLeader(room);
+        }
+        if (room.clients.has(client.id) && client.socket.isOpen) {
+          client.socket.close(4012, "Initial collaboration state did not match the saved page");
+        }
       } else if (room.clients.has(client.id) && client.socket.isOpen) {
         client.socket.sendJson({ type: "snapshot-rejected", lastUpdateId: result.currentUpdateId });
       }
