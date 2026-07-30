@@ -33,7 +33,7 @@ Never commit a real `.env` file. The repository ignores it; keep shareable defau
 npm run dev
 ```
 
-With `AUTO_BOOTSTRAP_DATABASE=true`, startup creates the database when permitted, reconciles the baseline schema, and applies pending migrations, including migration `020_page_sharing_yjs_collaboration.sql` for page grants and persistent Yjs updates. After MariaDB is ready and the HTTP server is listening, the development command opens the app once in the system default browser's normal profile so crash-recovery drafts remain available across browser restarts.
+With `AUTO_BOOTSTRAP_DATABASE=true`, startup creates the database when permitted, reconciles the baseline schema, and applies pending migrations, including migration `020_page_sharing_yjs_collaboration.sql` for page grants and persistent Yjs updates. After MariaDB is ready and the HTTP server is listening, the development command opens the app once in a private/incognito browser window.
 
 The app is available at:
 
@@ -41,7 +41,7 @@ The app is available at:
 http://localhost:4000
 ```
 
-Set `BRAINVAULT_DEV_BROWSER_PRIVATE=true` only when ephemeral private/incognito storage is intentional. Private-mode launch supports Chrome, Edge, Firefox, and Brave. When the requested private window cannot be opened, BrainVault reports the issue instead of silently falling back to a normal window.
+Private-mode launch supports Chrome, Edge, Firefox, and Brave. BrainVault first asks the system default browser for a private window, then retries installed supported browsers with their browser-specific private-mode command-line switch. If no private window can be launched, it reports the issue and deliberately does not open a normal browser window. Safari cannot be launched directly in private mode from the command line, so a supported installed browser is required for automatic launch on macOS.
 
 ## Optional demo data
 

@@ -43,7 +43,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:4000` after the server starts.
+`npm run dev` opens `http://localhost:4000` automatically in a private/incognito window after the server is ready. It never falls back to a normal browser profile.
 
 For database permissions, demo data, alternative environment setup, and production instructions, see the [Getting started guide](docs/getting-started/2026-07-27/getting-started.md).
 
@@ -66,7 +66,7 @@ For database permissions, demo data, alternative environment setup, and producti
 ## Common commands
 
 ```bash
-npm run dev       # Start the development server
+npm run dev       # Start the server and open a private/incognito browser window
 npm test          # Run the test suite
 npm run build     # Compile TypeScript
 npm run reproduce:cross-instance-loss # Reproduce the stale-room compaction loss and fixed behavior

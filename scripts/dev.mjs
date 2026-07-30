@@ -4,11 +4,9 @@ import { fileURLToPath } from "node:url";
 import "dotenv/config";
 import {
   createServerOutputInspector,
-  isPrivateBrowserRequested,
   openDevelopmentBrowser
 } from "./dev-browser.mjs";
 
-const privateBrowserRequested = isPrivateBrowserRequested();
 const inspectServerOutput = createServerOutputInspector((url) => {
   void launchDevelopmentBrowser(url);
 });
@@ -26,17 +24,14 @@ const serverProcess = spawn(process.execPath, [tsxCliPath, "watch", "src/server.
 
 async function launchDevelopmentBrowser(url) {
   try {
-    const mode = await openDevelopmentBrowser(url, { privateMode: privateBrowserRequested });
-    console.log(`[dev] Opened the default browser in ${mode} mode: ${url}`);
+    await openDevelopmentBrowser(url);
+    console.log(`[dev] Opened a private/incognito browser window: ${url}`);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    const mode = privateBrowserRequested ? "private" : "normal";
-    console.error(`[dev] Could not open the default browser in ${mode} mode: ${reason}`);
-    if (privateBrowserRequested) {
-      console.error(
-        "[dev] Private-mode launch supports Chrome, Edge, Firefox, and Brave. Set BRAINVAULT_DEV_BROWSER_PRIVATE=false to use a durable normal browser profile."
-      );
-    }
+    console.error(`[dev] Could not open a private/incognito browser window: ${reason}`);
+    console.error(
+      "[dev] Chrome, Edge, Firefox, or Brave is required for automatic private-mode launch. BrainVault will not fall back to a normal browser profile."
+    );
   }
 }
 

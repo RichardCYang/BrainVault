@@ -12,7 +12,7 @@
 | `npm run db:migrate` | Reconcile the schema and apply migrations |
 | `npm run db:seed` | Add the demo account and starter content |
 | `npm run setup` | Run environment, database, migration, and seed tasks |
-| `npm run dev` | Start the server and open the default browser after database readiness |
+| `npm run dev` | Start the server and open a private/incognito browser window after database readiness; normal-profile fallback is disabled |
 | `npm run build` | Compile TypeScript into `dist/` |
 | `npm run reproduce:materialization-loss` | Reproduce the old browser-payload materialization loss and verify the server-authoritative fix from preserved Git history |
 | `npm run reproduce:cross-instance-loss` | Reproduce stale cross-process room compaction loss and verify the durable-tip fence |

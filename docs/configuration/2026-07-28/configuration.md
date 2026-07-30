@@ -13,7 +13,6 @@ Never commit a real `.env` file.
 | `DATABASE_URL` | Local BrainVault database | MariaDB connection used by the app |
 | `MARIADB_ADMIN_URL` | Not set | Optional admin connection for database and user creation |
 | `AUTO_BOOTSTRAP_DATABASE` | `true` | Run database bootstrap before listening |
-| `BRAINVAULT_DEV_BROWSER_PRIVATE` | `false` | Open a supported private/incognito browser window during `npm run dev` |
 | `DATABASE_CONNECTION_LIMIT` | `10` | Maximum database pool size |
 | `JWT_SECRET` | Development-only value | Secret used to sign access tokens; minimum 32 characters |
 | `JWT_EXPIRES_IN` | `7d` | Access-token lifetime |
@@ -29,6 +28,10 @@ Never commit a real `.env` file.
 | `ATTACHMENT_UPLOAD_DIR` | `uploads` | Private on-disk directory for attachment bytes |
 | `MAX_ATTACHMENT_SIZE_MB` | `25` | Maximum size of one uploaded attachment in megabytes |
 | `DATA_TRANSFER_MAX_SIZE_MB` | `4096` | Maximum size of one uploaded complete-data backup ZIP in megabytes |
+
+## Development browser launch
+
+`npm run dev` always opens the local application in a private/incognito browser window after server readiness. This behavior is not controlled by an environment variable, and the launcher never falls back to a normal browser profile. Chrome, Edge, Firefox, and Brave are supported for automatic launch. The former `BRAINVAULT_DEV_BROWSER_PRIVATE` variable is ignored and can be removed from existing local `.env` files.
 
 ## Database behavior
 
