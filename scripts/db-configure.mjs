@@ -4,7 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
 import { parseEnv } from "node:util";
 
-const DEFAULT_DATABASE_URL = "mariadb://brainvault:brainvault_password@127.0.0.1:3306/brainvault";
+const DEFAULT_DATABASE_URL = "mariadb://brainvault:GENERATED_DATABASE_PASSWORD@127.0.0.1:3306/brainvault";
 
 class PromptOutput extends Writable {
   muted = false;
@@ -76,6 +76,9 @@ async function main() {
     if (!username) {
       throw new Error("Database username cannot be empty.");
     }
+    if (!password) {
+      throw new Error("Database password cannot be empty.");
+    }
 
     console.log("Database credentials read from standard input.");
   } else {
@@ -95,13 +98,19 @@ async function main() {
         }
       }
 
-      process.stdout.write("Database password (hidden): ");
-      promptOutput.muted = true;
-      try {
-        password = await prompt.question("");
-      } finally {
-        promptOutput.muted = false;
-        process.stdout.write("\n");
+      password = "";
+      while (!password) {
+        process.stdout.write("Database password (hidden): ");
+        promptOutput.muted = true;
+        try {
+          password = await prompt.question("");
+        } finally {
+          promptOutput.muted = false;
+          process.stdout.write("\n");
+        }
+        if (!password) {
+          console.log("Database password cannot be empty.");
+        }
       }
     } finally {
       prompt.close();

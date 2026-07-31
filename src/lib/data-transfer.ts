@@ -733,7 +733,7 @@ async function assertNoForeignIdConflicts(userId: string, manifest: BrainVaultBa
       ids
     );
     const conflict = rows.find((row) => row.owner_id !== userId);
-    if (conflict) throw new ApiError(409, "BACKUP_ID_CONFLICT", `Page ID belongs to another account: ${conflict.id}`);
+    if (conflict) throw new ApiError(409, "BACKUP_ID_CONFLICT", "The backup contains an identifier owned by another account");
   }
   for (const ids of batch(manifest.data.blocks.map((item) => item.id))) {
     if (!ids.length) continue;
@@ -743,7 +743,7 @@ async function assertNoForeignIdConflicts(userId: string, manifest: BrainVaultBa
       ids
     );
     const conflict = rows.find((row) => row.owner_id !== userId);
-    if (conflict) throw new ApiError(409, "BACKUP_ID_CONFLICT", `Block ID belongs to another account: ${conflict.id}`);
+    if (conflict) throw new ApiError(409, "BACKUP_ID_CONFLICT", "The backup contains an identifier owned by another account");
   }
 }
 

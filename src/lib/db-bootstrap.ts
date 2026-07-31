@@ -1,5 +1,5 @@
 import mariadb, { type Pool } from "mariadb";
-import { env } from "../config/env.js";
+import { databaseUserHosts, env } from "../config/env.js";
 import {
   databaseOptionsWithSchema,
   databaseOptionsWithoutSchema,
@@ -34,11 +34,21 @@ async function ensureDatabase() {
     );
 
     if (usingAdminUrl) {
+      for (const accountHost of databaseUserHosts) {
+        const account = `${quoteString(target.user)}@${quoteString(accountHost)}`;
+        await bootstrapPool.query(
+          `CREATE USER IF NOT EXISTS ${account} IDENTIFIED BY ${quoteString(target.password)}`
+        );
+        await bootstrapPool.query(
+          `ALTER USER ${account} IDENTIFIED BY ${quoteString(target.password)}`
+        );
+        await bootstrapPool.query(
+          `GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, REFERENCES ` +
+          `ON ${quoteIdentifier(target.database!)}.* TO ${account}`
+        );
+      }
       await bootstrapPool.query(
-        `CREATE USER IF NOT EXISTS ${quoteString(target.user)}@'%' IDENTIFIED BY ${quoteString(target.password)}`
-      );
-      await bootstrapPool.query(
-        `GRANT ALL PRIVILEGES ON ${quoteIdentifier(target.database!)}.* TO ${quoteString(target.user)}@'%'`
+        `DROP USER IF EXISTS ${quoteString(target.user)}@'%'`
       );
     }
 

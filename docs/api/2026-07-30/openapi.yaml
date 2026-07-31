@@ -7,7 +7,6 @@ servers:
   - url: http://localhost:4000
 security:
   - cookieAuth: []
-  - bearerAuth: []
 components:
   securitySchemes:
     cookieAuth:
@@ -15,10 +14,6 @@ components:
       in: cookie
       name: brainvault_session
       description: HttpOnly SameSite=Strict browser session cookie.
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
   schemas:
     PublicUser:
       type: object
@@ -82,13 +77,10 @@ components:
           example: use-a-unique-password
     AuthResponse:
       type: object
-      required: [user, token]
+      required: [user]
       properties:
         user:
           $ref: '#/components/schemas/PublicUser'
-        token:
-          type: string
-          description: Bearer token for API clients. Browser clients also receive an HttpOnly session cookie.
     MfaMethods:
       type: object
       required: [totp, passkey]
@@ -861,7 +853,7 @@ paths:
               $ref: '#/components/schemas/LoginInput'
       responses:
         '200':
-          description: User plus API JWT/browser session cookie, or a temporary MFA session when two-step verification is configured
+          description: User plus an HttpOnly session cookie, or a temporary MFA session when two-step verification is configured
           content:
             application/json:
               schema:
@@ -870,11 +862,10 @@ paths:
                   - $ref: '#/components/schemas/MfaRequiredResponse'
   /api/auth/logout:
     post:
-      security: []
-      summary: Clear the browser session cookie
+      summary: Revoke all current account sessions and clear the browser session cookie
       responses:
         '204':
-          description: Session cookie cleared
+          description: Authentication generation revoked and session cookie cleared
   /api/auth/mfa/status:
     get:
       summary: Read the current user's TOTP and passkey configuration
@@ -1001,7 +992,7 @@ paths:
               $ref: '#/components/schemas/MfaTotpLoginInput'
       responses:
         '200':
-          description: User and JWT
+          description: User plus an HttpOnly session cookie
           content:
             application/json:
               schema:
@@ -1035,7 +1026,7 @@ paths:
               $ref: '#/components/schemas/WebAuthnLoginVerifyInput'
       responses:
         '200':
-          description: User and JWT
+          description: User plus an HttpOnly session cookie
           content:
             application/json:
               schema:

@@ -1,14 +1,14 @@
 # API
 
-Most API routes accept a bearer token returned by the login endpoint. The built-in browser client instead uses the same JWT in an `HttpOnly`, `SameSite=Strict` cookie and never stores it in `localStorage`. Accounts with MFA enabled receive a temporary MFA session during login and obtain the normal access token after completing a TOTP or passkey challenge.
+Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cookie. Login and MFA completion never return the JWT in JSON, and the built-in browser client never stores it in `localStorage`. Accounts with MFA enabled receive a temporary opaque MFA session during login and receive the normal authentication cookie only after completing a TOTP or passkey challenge.
 
 ## Route overview
 
 | Method | Route | Description |
 | --- | --- | --- |
 | `POST` | `/api/auth/register` | Submit account creation; always returns the same accepted response for valid new or existing IDs |
-| `POST` | `/api/auth/login` | Sign in; returns either a JWT/session cookie or a temporary MFA session |
-| `POST` | `/api/auth/logout` | Clear the browser session cookie |
+| `POST` | `/api/auth/login` | Sign in; returns either a cookie-authenticated user response or a temporary MFA session |
+| `POST` | `/api/auth/logout` | Revoke the account authentication generation and clear the browser session cookie |
 | `GET` | `/api/auth/mfa/status` | Read configured TOTP and passkey methods |
 | `POST` | `/api/auth/mfa/totp/setup` | Begin current-password-protected TOTP enrollment |
 | `POST` | `/api/auth/mfa/totp/verify` | Confirm and enable a pending TOTP enrollment |
@@ -61,7 +61,7 @@ For rollout compatibility, older tabs may still send `title`, `blocks`, or `dele
 
 ## OpenAPI
 
-The complete OpenAPI 3.1 document is stored at [`docs/api/2026-07-30/openapi.yaml`](openapi.yaml). Runtime serving of the repository documentation is disabled by default. Set `SERVE_INTERNAL_DOCS=true` only when deliberate HTTP access to `/docs` is required.
+The complete OpenAPI 3.1 document is stored at [`docs/api/2026-07-30/openapi.yaml`](openapi.yaml). Runtime serving of the repository documentation is disabled by default. Setting `SERVE_INTERNAL_DOCS=true` enables `/docs`, but those routes still require an authenticated session.
 
 ## Health check
 

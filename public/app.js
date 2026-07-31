@@ -6862,7 +6862,7 @@ function updateInlineToolbarForTextarea(textarea) {
 
 function getActiveInlineTextarea() {
   if (!state.activeInlineBlockId) return null;
-  const row = elements.blockList.querySelector(`[data-block-id="${state.activeInlineBlockId}"]`);
+  const row = elements.blockList.querySelector(`[data-block-id="${CSS.escape(state.activeInlineBlockId)}"]`);
   return getBlockTextarea(row);
 }
 
@@ -7620,7 +7620,7 @@ async function deleteEmptyBlock(row) {
 
 function focusPendingBlock() {
   if (isPageReadOnly() || !state.pendingFocusBlockId) return;
-  const row = elements.blockList.querySelector(`[data-block-id="${state.pendingFocusBlockId}"]`);
+  const row = elements.blockList.querySelector(`[data-block-id="${CSS.escape(state.pendingFocusBlockId)}"]`);
   const textarea = getBlockTextarea(row);
   if (textarea) {
     textarea.focus();
@@ -9065,7 +9065,7 @@ function refreshLocalizedUi() {
   if (!elements.emojiPickerLayer.classList.contains("hidden")) renderEmojiPicker();
 
   if (!elements.slashMenu.classList.contains("hidden") && state.activeSlashBlockId) {
-    const row = elements.blockList.querySelector(`[data-block-id="${state.activeSlashBlockId}"]`);
+    const row = elements.blockList.querySelector(`[data-block-id="${CSS.escape(state.activeSlashBlockId)}"]`);
     const textarea = getBlockTextarea(row);
     if (row) renderSlashMenu(row, textarea ? getSlashContext(textarea)?.query ?? "" : "");
   }
@@ -9792,7 +9792,7 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
   const blockId = state.activeBlockMenuId;
   if (!button || !blockId || !state.selectedPage) return;
 
-  const row = elements.blockList.querySelector(`[data-block-id="${blockId}"]`);
+  const row = elements.blockList.querySelector(`[data-block-id="${CSS.escape(blockId)}"]`);
   if (!row) return closeBlockContextMenu();
 
   try {
@@ -9985,7 +9985,7 @@ elements.slashMenu.addEventListener("click", async (event) => {
   if (!requireWritablePage()) return;
   const item = event.target.closest(".slash-menu-item");
   if (!item || !state.activeSlashBlockId) return;
-  const row = elements.blockList.querySelector(`[data-block-id="${state.activeSlashBlockId}"]`);
+  const row = elements.blockList.querySelector(`[data-block-id="${CSS.escape(state.activeSlashBlockId)}"]`);
   if (!row) return;
   try {
     await applySlashCommand(row, item.dataset.type);

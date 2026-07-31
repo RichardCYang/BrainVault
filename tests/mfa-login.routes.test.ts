@@ -26,6 +26,7 @@ beforeEach(async () => {
     preferred_language: "ko",
     default_collection_icon: null,
     password_hash: await hashPassword("correct-password-123"),
+    auth_version: 1,
     created_at: "2026-07-17T00:00:00.000Z",
     updated_at: "2026-07-17T00:00:00.000Z"
   };
@@ -41,6 +42,8 @@ describe("MFA login gate", () => {
       if (sql.includes("EXISTS(SELECT 1 FROM user_totp_credentials")) {
         return { totp_enabled: 1, passkey_count: 2 };
       }
+      if (sql.includes("SELECT id FROM users WHERE id = ? FOR UPDATE")) return { id: user.id };
+      if (sql.includes("MAX(failed_attempts)")) return { failed_attempts: 0 };
       return undefined;
     });
 
@@ -62,7 +65,7 @@ describe("MFA login gate", () => {
     );
   });
 
-  it("continues to issue a JWT when no MFA method is configured", async () => {
+  it("issues a cookie-only session when no MFA method is configured", async () => {
     database.queryOne.mockImplementation(async (sql: string) => {
       if (sql.includes("FROM users WHERE username = ?")) return user;
       if (sql.includes("EXISTS(SELECT 1 FROM user_totp_credentials")) {
@@ -77,7 +80,7 @@ describe("MFA login gate", () => {
       .expect(200);
 
     expect(response.body.mfaRequired).toBeUndefined();
-    expect(response.body.token).toEqual(expect.any(String));
+    expect(response.body.token).toBeUndefined();
     expect(response.body.user.username).toBe("mfa-user");
     expect(response.headers["set-cookie"]?.join(";")).toContain("brainvault_session=");
     expect(response.headers["set-cookie"]?.join(";")).toContain("HttpOnly");

@@ -15,7 +15,15 @@ async function closePool(pool: Pool | undefined) {
 }
 
 async function main() {
-  const databaseUrl = process.env.DATABASE_URL ?? "mariadb://brainvault:brainvault_password@127.0.0.1:3306/brainvault";
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) throw new Error("DATABASE_URL must be configured");
+  const databaseUserHosts = (process.env.DB_USER_HOSTS ?? "localhost,127.0.0.1,::1")
+    .split(",")
+    .map((host) => host.trim())
+    .filter(Boolean);
+  if (!databaseUserHosts.length || databaseUserHosts.some((host) => host.includes("%") || host.includes("_"))) {
+    throw new Error("DB_USER_HOSTS must contain exact MariaDB account hosts without wildcards");
+  }
   const target = parseDatabaseUrl(databaseUrl, { requireDatabase: true });
   const admin = parseDatabaseUrl(process.env.MARIADB_ADMIN_URL ?? databaseUrl, { requireDatabase: false });
   const usingAdminUrl = Boolean(process.env.MARIADB_ADMIN_URL);
@@ -34,13 +42,21 @@ async function main() {
     console.log(`Database ready: ${target.database}`);
 
     if (usingAdminUrl) {
-      await adminPool.query(
-        `CREATE USER IF NOT EXISTS ${quoteString(target.user)}@'%' IDENTIFIED BY ${quoteString(target.password)}`
-      );
-      await adminPool.query(
-        `GRANT ALL PRIVILEGES ON ${quoteIdentifier(target.database!)}.* TO ${quoteString(target.user)}@'%'`
-      );
-      console.log(`User ready: ${target.user}@%`);
+      for (const accountHost of databaseUserHosts) {
+        const account = `${quoteString(target.user)}@${quoteString(accountHost)}`;
+        await adminPool.query(
+          `CREATE USER IF NOT EXISTS ${account} IDENTIFIED BY ${quoteString(target.password)}`
+        );
+        await adminPool.query(
+          `ALTER USER ${account} IDENTIFIED BY ${quoteString(target.password)}`
+        );
+        await adminPool.query(
+          `GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, REFERENCES ` +
+          `ON ${quoteIdentifier(target.database!)}.* TO ${account}`
+        );
+      }
+      await adminPool.query(`DROP USER IF EXISTS ${quoteString(target.user)}@'%'`);
+      console.log(`User ready on exact hosts: ${databaseUserHosts.join(", ")}`);
     } else {
       console.log("MARIADB_ADMIN_URL is not set. Skipped user creation/grants and used DATABASE_URL credentials.");
     }

@@ -13,6 +13,12 @@ const knownInsecureSecrets = new Set(
   ].map((value) => value.toLowerCase())
 );
 
+const knownInsecureDatabasePasswords = new Set(
+  ["brainvault_password", "generated_database_password", "password", "change-me", "changeme"].map(
+    (value) => value.toLowerCase()
+  )
+);
+
 const booleanValue = z
   .enum(["true", "false", "1", "0", "yes", "no", "on", "off"])
   .transform((value) => ["true", "1", "yes", "on"].includes(value));
@@ -23,11 +29,9 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   HOST: z.string().trim().min(1).max(255).default("127.0.0.1"),
   PORT: z.coerce.number().int().positive().default(4000),
-  DATABASE_URL: z
-    .string()
-    .min(1)
-    .default("mariadb://brainvault:brainvault_password@localhost:3306/brainvault"),
-  MARIADB_ADMIN_URL: z.string().min(1).optional(),
+  DATABASE_URL: z.string().trim().min(1, "DATABASE_URL must be configured"),
+  MARIADB_ADMIN_URL: z.string().trim().min(1).optional(),
+  DB_USER_HOSTS: z.string().trim().min(1).default("localhost,127.0.0.1,::1"),
   AUTO_BOOTSTRAP_DATABASE: enabledByDefault,
   DATABASE_CONNECTION_LIMIT: z.coerce.number().int().min(1).max(50).default(10),
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters long").optional(),
@@ -45,16 +49,27 @@ const envSchema = z.object({
   AUTH_LOGIN_IP_MAX: z.coerce.number().int().positive().default(20),
   AUTH_LOGIN_ACCOUNT_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60_000),
   AUTH_LOGIN_ACCOUNT_MAX: z.coerce.number().int().positive().default(30),
+  AUTH_MFA_IP_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60_000),
+  AUTH_MFA_IP_MAX: z.coerce.number().int().positive().default(15),
+  AUTH_MFA_ACCOUNT_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60_000),
+  AUTH_MFA_ACCOUNT_MAX: z.coerce.number().int().positive().default(20),
+  AUTH_MFA_SETUP_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60_000),
+  AUTH_MFA_SETUP_MAX: z.coerce.number().int().positive().default(10),
   AUTH_REGISTER_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60_000),
   AUTH_REGISTER_MAX: z.coerce.number().int().positive().default(5),
   BOOKMARK_FETCH_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(8_000),
   BOOKMARK_FETCH_MAX_BYTES: z.coerce.number().int().min(64 * 1024).max(768 * 1024).default(512 * 1024),
   ATTACHMENT_UPLOAD_DIR: z.string().min(1).default("uploads"),
   MAX_ATTACHMENT_SIZE_MB: z.coerce.number().int().min(1).max(500).default(25),
-  DATA_TRANSFER_MAX_SIZE_MB: z.coerce.number().int().min(1).max(102_400).default(4096)
+  DATA_TRANSFER_MAX_SIZE_MB: z.coerce.number().int().min(1).max(102_400).default(4096),
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0)
 });
 
-const parsedEnv = envSchema.parse(process.env);
+const inputEnv: NodeJS.ProcessEnv = { ...process.env };
+if (!inputEnv.DATABASE_URL && inputEnv.NODE_ENV === "test") {
+  inputEnv.DATABASE_URL = "mariadb://brainvault:test-only-password@127.0.0.1:3306/brainvault_test";
+}
+const parsedEnv = envSchema.parse(inputEnv);
 
 function generateEphemeralSecret() {
   return randomBytes(48).toString("base64url");
@@ -65,6 +80,25 @@ function assertSecretIsNotKnown(name: string, value: string) {
     throw new Error(`${name} uses a public placeholder or legacy development value`);
   }
 }
+
+function assertDatabasePasswordIsSecure(databaseUrl: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(databaseUrl);
+  } catch {
+    throw new Error("DATABASE_URL must be a valid MariaDB URL");
+  }
+
+  const password = decodeURIComponent(parsed.password).trim();
+  if (!password) {
+    throw new Error("DATABASE_URL must include a non-empty database password");
+  }
+  if (knownInsecureDatabasePasswords.has(password.toLowerCase())) {
+    throw new Error("DATABASE_URL uses a public placeholder or known default database password");
+  }
+}
+
+assertDatabasePasswordIsSecure(parsedEnv.DATABASE_URL);
 
 if (parsedEnv.NODE_ENV === "production" && !parsedEnv.JWT_SECRET) {
   throw new Error("JWT_SECRET must be explicitly configured in production");
@@ -87,6 +121,19 @@ export const env = {
   MFA_ENCRYPTION_KEY: mfaEncryptionKey,
   REGISTRATION_ENABLED: parsedEnv.REGISTRATION_ENABLED ?? parsedEnv.NODE_ENV !== "production"
 };
+
+export const databaseUserHosts = env.DB_USER_HOSTS.split(",")
+  .map((host) => host.trim())
+  .filter(Boolean);
+
+if (!databaseUserHosts.length) {
+  throw new Error("DB_USER_HOSTS must include at least one exact MariaDB account host");
+}
+for (const host of databaseUserHosts) {
+  if (host.length > 255 || host.includes("%") || host.includes("_")) {
+    throw new Error(`DB_USER_HOSTS must not contain wildcard hosts: ${host}`);
+  }
+}
 
 const webAuthnOrigins = env.WEBAUTHN_ORIGIN.split(",")
   .map((origin) => origin.trim().replace(/\/$/, ""))

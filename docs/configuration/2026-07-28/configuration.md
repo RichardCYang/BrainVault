@@ -11,8 +11,9 @@ Never commit a real `.env` file.
 | `NODE_ENV` | `development` | Runtime environment |
 | `HOST` | `127.0.0.1` | Network address to bind; set `0.0.0.0` or `::` only when external access is intentional |
 | `PORT` | `4000` | HTTP port |
-| `DATABASE_URL` | Local BrainVault database | MariaDB connection used by the app |
-| `MARIADB_ADMIN_URL` | Not set | Optional admin connection for database and user creation |
+| `DATABASE_URL` | Required; `env:init` generates the password | MariaDB connection used by the app; a non-empty, non-default password is required |
+| `MARIADB_ADMIN_URL` | Not set | Optional admin connection for database and exact-host user creation |
+| `DB_USER_HOSTS` | `localhost,127.0.0.1,::1` | Comma-separated exact MariaDB account hosts; `%` and `_` wildcards are rejected |
 | `AUTO_BOOTSTRAP_DATABASE` | `true` | Run database bootstrap before listening |
 | `DATABASE_CONNECTION_LIMIT` | `10` | Maximum database pool size |
 | `JWT_SECRET` | Random ephemeral value outside production | Secret used to sign access tokens; `env:init` writes a persistent random value and production requires an explicit non-placeholder value |
@@ -23,15 +24,22 @@ Never commit a real `.env` file.
 | `WEBAUTHN_ORIGIN` | `http://localhost:4000` | Comma-separated exact browser origins accepted for WebAuthn responses |
 | `CORS_ORIGIN` | Local development origins | Comma-separated browser origins allowed to call the API |
 | `REGISTRATION_ENABLED` | Enabled outside production; disabled in production | Allow unauthenticated account creation |
-| `SERVE_INTERNAL_DOCS` | `false` | Serve the repository `docs/` directory at `/docs` |
+| `SERVE_INTERNAL_DOCS` | `false` | Serve the repository `docs/` directory at authenticated `/docs` routes |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window in milliseconds |
 | `RATE_LIMIT_MAX` | `120` | Maximum requests per global window |
 | `AUTH_LOGIN_IP_WINDOW_MS` | `900000` | Login IP throttling window |
 | `AUTH_LOGIN_IP_MAX` | `20` | Failed login requests allowed per IP window |
 | `AUTH_LOGIN_ACCOUNT_WINDOW_MS` | `3600000` | Account-keyed login throttling window |
-| `AUTH_LOGIN_ACCOUNT_MAX` | `30` | Failed login requests allowed per normalized account window |
+| `AUTH_LOGIN_ACCOUNT_MAX` | `30` | Failed or MFA-pending login requests allowed per normalized account window |
+| `AUTH_MFA_IP_WINDOW_MS` | `900000` | MFA login verification IP window |
+| `AUTH_MFA_IP_MAX` | `15` | Failed MFA login verifications allowed per IP window |
+| `AUTH_MFA_ACCOUNT_WINDOW_MS` | `3600000` | MFA login account window and failure-carry interval |
+| `AUTH_MFA_ACCOUNT_MAX` | `20` | Failed MFA login verifications allowed per account window |
+| `AUTH_MFA_SETUP_WINDOW_MS` | `900000` | TOTP enrollment verification account window |
+| `AUTH_MFA_SETUP_MAX` | `10` | Failed TOTP enrollment verifications allowed per account window |
 | `AUTH_REGISTER_WINDOW_MS` | `3600000` | Registration throttling window |
 | `AUTH_REGISTER_MAX` | `5` | Registration requests allowed per IP window |
+| `TRUST_PROXY_HOPS` | `0` | Exact number of trusted reverse-proxy hops; never an unrestricted boolean trust setting |
 | `BOOKMARK_FETCH_TIMEOUT_MS` | `8000` | Maximum duration of one OpenGraph page fetch |
 | `BOOKMARK_FETCH_MAX_BYTES` | `524288` | Maximum document-head bytes inspected for one bookmark preview |
 | `ATTACHMENT_UPLOAD_DIR` | `uploads` | Private on-disk directory for attachment bytes |
@@ -46,7 +54,7 @@ Never commit a real `.env` file.
 
 With `AUTO_BOOTSTRAP_DATABASE=true`, application startup attempts to prepare the target database, reconcile the baseline schema, and apply migrations before listening.
 
-Use `MARIADB_ADMIN_URL` when the application account does not yet exist or cannot create the database/user itself. To move schema management outside the application, set:
+Use `MARIADB_ADMIN_URL` when the application account does not yet exist or cannot create the database/user itself. Bootstrap creates or updates the application account on each exact `DB_USER_HOSTS` entry, grants only `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `INDEX`, `DROP`, and `REFERENCES` on the target schema, and removes the same username at the wildcard host `%`. To move schema management outside the application, set:
 
 ```env
 AUTO_BOOTSTRAP_DATABASE=false
@@ -61,6 +69,8 @@ At minimum, production deployments should provide unique values for:
 ```env
 NODE_ENV=production
 HOST="127.0.0.1"
+DATABASE_URL="mariadb://brainvault:use-a-unique-database-password@127.0.0.1:3306/brainvault"
+DB_USER_HOSTS="localhost,127.0.0.1"
 JWT_SECRET="replace-with-a-unique-secret-of-at-least-32-characters"
 MFA_ENCRYPTION_KEY="replace-with-a-different-secret-of-at-least-32-characters"
 WEBAUTHN_RP_ID="notes.example.com"
@@ -68,6 +78,7 @@ WEBAUTHN_ORIGIN="https://notes.example.com"
 CORS_ORIGIN="https://notes.example.com"
 REGISTRATION_ENABLED=false
 SERVE_INTERNAL_DOCS=false
+TRUST_PROXY_HOPS=1
 ```
 
 `JWT_SECRET` and `MFA_ENCRYPTION_KEY` must be different. Known example values and legacy development defaults are rejected even outside production. Do not change `MFA_ENCRYPTION_KEY` casually after users enroll TOTP. Existing encrypted authenticator secrets depend on that key and become unusable when it changes.
@@ -84,6 +95,6 @@ Real-time collaboration uses the same `PORT`, `CORS_ORIGIN`, and JWT signing sec
 
 The included collaboration hub is process-local and is intended to run as one active application process. Patched writers compare every room tip with the locked durable tip and invalidate a stale room before it can insert or compact, which prevents silent loss during accidental overlap but does not provide cross-process broadcasts. Horizontal scaling requires a shared pub/sub and distributed update coordinator so every instance observes the same room history and presence events. Drain all pre-fix collaboration writers before starting this version.
 
-The browser imports the exact `yjs@13.6.31` ESM build from jsDelivr. The built-in Content Security Policy allows that script source and `ws:`/`wss:` connections. Deployments that vendor scripts locally must update both `public/collaboration.js` and the CSP in `src/app.ts` as one reviewed change.
+The browser imports the exact `yjs@13.6.31` ESM build and exact `katex@0.17.0` assets from versioned jsDelivr paths. The Content Security Policy allows only those resource paths and exact WebSocket origins derived from `CORS_ORIGIN`; it does not allow the complete CDN host or arbitrary `ws:`/`wss:` destinations. Deployments that vendor scripts locally must update the public asset references and `src/app.ts` as one reviewed change.
 
 See [Collaboration](../../collaboration/2026-07-29/collaboration.md#authentication-and-network-requirements) for an Nginx example.

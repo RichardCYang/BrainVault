@@ -17,10 +17,10 @@ function getBearerToken(req: Request) {
   return token;
 }
 
-function assertCookieRequestOrigin(req: Request) {
+function assertBrowserRequestOrigin(req: Request) {
   const fetchSite = req.header("sec-fetch-site")?.toLowerCase();
   if (fetchSite === "cross-site") {
-    throw new ApiError(403, "CROSS_SITE_REQUEST_BLOCKED", "Cross-site cookie authentication is not allowed");
+    throw new ApiError(403, "CROSS_SITE_REQUEST_BLOCKED", "Cross-site browser authentication is not allowed");
   }
 
   const origin = req.header("origin");
@@ -41,7 +41,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       next(new ApiError(401, "UNAUTHENTICATED", "Authentication required"));
       return;
     }
-    if (source === "cookie") assertCookieRequestOrigin(req);
+    assertBrowserRequestOrigin(req);
 
     const payload = verifyAuthToken(token);
     const user = await db.queryOne<UserRow>(

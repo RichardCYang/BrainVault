@@ -111,7 +111,7 @@ describe("Account settings routes", () => {
       .expect(200);
 
     expect(changed.body).toMatchObject({ ok: true });
-    expect(changed.body.token).toEqual(expect.any(String));
+    expect(changed.body.token).toBeUndefined();
     await expect(verifyPassword("new-password-456", String(user.password_hash))).resolves.toBe(true);
 
     const revoked = await request(createApp())
@@ -120,9 +120,24 @@ describe("Account settings routes", () => {
       .expect(401);
     expect(revoked.body.error.code).toBe("SESSION_REVOKED");
 
+    const sessionCookie = changed.headers["set-cookie"]?.[0]?.split(";")[0];
+    expect(sessionCookie).toContain("brainvault_session=");
     await request(createApp())
       .get("/api/auth/me")
-      .set("Authorization", `Bearer ${changed.body.token}`)
+      .set("Cookie", sessionCookie as string)
       .expect(200);
+  });
+
+  it("revokes the current token on logout", async () => {
+    await request(createApp())
+      .post("/api/auth/logout")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(204);
+
+    const revoked = await request(createApp())
+      .get("/api/auth/me")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(401);
+    expect(revoked.body.error.code).toBe("SESSION_REVOKED");
   });
 });

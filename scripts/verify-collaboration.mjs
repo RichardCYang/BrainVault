@@ -284,7 +284,7 @@ function verifySourceWiring() {
     "await collaborationHub.close()"
   ]);
   assertContains("src/app.ts", [
-    "connectSrc: [\"'self'\", \"ws:\", \"wss:\"]",
+    "connectSrc: [\"'self'\", ...configuredWebSocketOrigins]",
     "app.use(\"/api\", collaborationRouter)"
   ]);
   assertContains("src/lib/collaboration-server.ts", [

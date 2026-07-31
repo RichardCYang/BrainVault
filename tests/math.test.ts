@@ -47,7 +47,8 @@ describe("LaTeX editor integration", () => {
     expect(index).toContain("katex@0.17.0/dist/katex.min.css");
     expect(index).toContain('data-format="math-inline"');
     expect(styles).toContain(".math-block-preview");
-    expect(server).toContain("https://cdn.jsdelivr.net");
+    expect(server).toContain("https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js");
+    expect(server).not.toContain('scriptSrc: ["\'self\'", "https://cdn.jsdelivr.net"]');
     expect(migration).toContain("'MATH'");
     expect(dataTransfer).toContain("renderBlockHtml(block.type, block.markdown");
     expect(dataTransfer).not.toContain("block.markdown, block.html_cache,");

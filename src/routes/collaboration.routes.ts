@@ -181,22 +181,17 @@ collaborationRouter.post(
         assertShareablePage(page);
 
         const target = await client.queryOne<ShareUserRow>(
-          `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon,
-                  created_at, updated_at, 'EDIT' AS permission, created_at AS shared_at
-           FROM users WHERE username = ?`,
-          [username]
+          `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language, u.default_collection_icon,
+                  u.created_at, u.updated_at, 'EDIT' AS permission, u.created_at AS shared_at
+           FROM users u
+           WHERE u.username = ? AND u.id <> ?
+             AND NOT EXISTS (
+               SELECT 1 FROM page_shares ps WHERE ps.page_id = ? AND ps.user_id = u.id
+             )`,
+          [username, owner.id, pageId]
         );
-        if (!target) throw notFound("User");
-        if (target.id === owner.id) {
-          throw new ApiError(400, "CANNOT_SHARE_WITH_SELF", "The page owner already has access");
-        }
-
-        const existing = await client.queryOne<{ user_id: string }>(
-          "SELECT user_id FROM page_shares WHERE page_id = ? AND user_id = ?",
-          [pageId, target.id]
-        );
-        if (existing) {
-          throw new ApiError(409, "PAGE_ALREADY_SHARED", "This user already has access to the page");
+        if (!target) {
+          throw new ApiError(400, "SHARE_TARGET_UNAVAILABLE", "The requested account cannot be added");
         }
         const count = await client.queryOne<{ share_count: number }>(
           "SELECT COUNT(*) AS share_count FROM page_shares WHERE page_id = ?",

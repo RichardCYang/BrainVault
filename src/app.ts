@@ -4,7 +4,7 @@ import helmet from "helmet";
 import cors from "cors";
 import morgan from "morgan";
 import rateLimit from "express-rate-limit";
-import { env } from "./config/env.js";
+import { corsOrigins, env } from "./config/env.js";
 import { corsOptionsDelegate } from "./middleware/cors.js";
 import { authRouter } from "./routes/auth.routes.js";
 import { pageRouter } from "./routes/page.routes.js";
@@ -13,21 +13,32 @@ import { searchRouter } from "./routes/search.routes.js";
 import { dataRouter } from "./routes/data.routes.js";
 import { collaborationRouter } from "./routes/collaboration.routes.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.js";
+import { requireAuth } from "./middleware/auth.js";
+
+const configuredWebSocketOrigins = corsOrigins.map((origin) => {
+  const parsed = new URL(origin);
+  parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
+  return parsed.origin;
+});
 
 export function createApp() {
   const app = express();
 
   app.disable("x-powered-by");
-  app.set("trust proxy", false);
+  app.set("trust proxy", env.TRUST_PROXY_HOPS === 0 ? false : env.TRUST_PROXY_HOPS);
   app.use(
     helmet({
       contentSecurityPolicy: {
         directives: {
           imgSrc: ["'self'", "data:", "http:", "https:"],
-          scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
-          styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
-          fontSrc: ["'self'", "data:", "https://cdn.jsdelivr.net"],
-          connectSrc: ["'self'", "ws:", "wss:"]
+          scriptSrc: [
+            "'self'",
+            "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js",
+            "https://cdn.jsdelivr.net/npm/yjs@13.6.31/+esm"
+          ],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.css"],
+          fontSrc: ["'self'", "data:", "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/fonts/"],
+          connectSrc: ["'self'", ...configuredWebSocketOrigins]
         }
       }
     })
@@ -49,7 +60,7 @@ export function createApp() {
   const docsDir = path.resolve(process.cwd(), "docs");
   app.use(express.static(publicDir, { index: false }));
   if (env.SERVE_INTERNAL_DOCS) {
-    app.use("/docs", express.static(docsDir, { index: false }));
+    app.use("/docs", requireAuth, express.static(docsDir, { index: false }));
   }
 
   app.get("/", (_req, res) => {

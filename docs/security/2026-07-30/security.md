@@ -7,7 +7,7 @@ Open **Settings → Security** to configure either verification method:
 - **Authenticator app (TOTP):** BrainVault displays a QR code and manual setup key, then enables the method only after a valid six-digit code is confirmed. The stored TOTP secret is encrypted with AES-256-GCM, and a code cannot be replayed within the same time step.
 - **Passkeys (WebAuthn/FIDO2):** Add, name, rename, and remove multiple platform passkeys or external hardware security keys. Each credential is stored separately so a primary device and recovery keys can coexist.
 
-After the password is accepted, accounts with at least one configured method receive a short-lived, one-time MFA session instead of a JWT. Completing an available TOTP or passkey challenge issues the normal access token. The built-in browser client receives the token in an `HttpOnly`, `SameSite=Strict` session cookie and does not persist the JWT in Web Storage. Bearer tokens remain available for non-browser API clients.
+After the password is accepted, accounts with at least one configured method receive a short-lived, one-time MFA session instead of a JWT response. Completing an available TOTP or passkey challenge creates the normal `HttpOnly`, `SameSite=Strict` session cookie. Authentication responses do not include the JWT in JSON, and the built-in browser client does not persist session credentials in Web Storage. Browser-origin checks also apply when a compatibility bearer token is presented.
 
 Local WebAuthn development works at `http://localhost:4000`. Production deployments should use HTTPS and set `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGIN` to the exact relying-party domain and browser origin.
 
@@ -15,23 +15,30 @@ Changing `MFA_ENCRYPTION_KEY` after users enroll TOTP invalidates their encrypte
 
 ## Secret generation and startup guards
 
-`npm run env:init` generates independent cryptographically random values for `JWT_SECRET` and `MFA_ENCRYPTION_KEY`; it never copies usable public secrets from the example file. Production requires both variables explicitly. Known placeholders, legacy development values, and reuse of one value for both purposes are rejected at startup. When no secret is configured outside production, BrainVault uses per-process ephemeral values rather than a shared repository constant.
+`npm run env:init` generates independent cryptographically random values for the MariaDB application password, `JWT_SECRET`, and `MFA_ENCRYPTION_KEY`; it never copies usable public secrets from the example file. `DATABASE_URL` must contain a non-empty password and known public/default values are rejected. Production requires both cryptographic variables explicitly. Known placeholders, legacy development values, and reuse of one cryptographic value for both purposes are rejected at startup. When no cryptographic secret is configured outside production, BrainVault uses per-process ephemeral values rather than a shared repository constant.
 
 The HTTP server binds to `127.0.0.1` by default. External binding requires an explicit `HOST` setting.
 
+When `MARIADB_ADMIN_URL` is used, bootstrap creates application accounts only for the exact hosts in `DB_USER_HOSTS`, refreshes their passwords with `ALTER USER`, grants only the schema privileges needed by BrainVault, and removes the legacy `brainvault@'%'`-style wildcard account. Existing deployments should rerun `npm run db:init` with an administrator connection after choosing a new database password and exact account hosts.
+
 ## Authentication abuse controls
 
-Login is protected by both IP-keyed and normalized-account-keyed failed-attempt limits. Registration has a separate IP limit, defaults to disabled in production, and returns a generic duplicate-account error. The in-memory limiter is suitable for one process; multi-instance deployments should use a shared rate-limit store.
+Login is protected by both IP-keyed and normalized-account-keyed limits. A password-valid response that still requires MFA is counted rather than treated as a completed successful login. TOTP and passkey login verification have separate IP and account limits, and TOTP enrollment verification has its own account limit. MFA failures are carried into replacement login sessions under a user-row lock, so signing in again cannot reset the eight-attempt session budget. Successful MFA completion clears the carried state. Registration has a separate IP limit, defaults to disabled in production, and returns a generic duplicate-account response. The in-memory limiter is suitable for one process; multi-instance deployments should use a shared rate-limit store.
 
 ## Credential-change session revocation
 
-API access tokens and page-scoped collaboration tickets use separate JWT audiences, a fixed HS256 algorithm, and the `brainvault` issuer. Tokens also carry the account's current authentication generation. Changing the password increments that generation, deletes unfinished MFA and WebAuthn login state, immediately closes local collaboration sockets, and returns a replacement access token for the browser that completed the change. Older API tokens, collaboration tickets, and periodically rechecked sockets fail closed.
+API access tokens and page-scoped collaboration tickets use separate JWT audiences, a fixed HS256 algorithm, and the `brainvault` issuer. Tokens also carry the account's current authentication generation. Changing the password or logging out increments that generation, deletes unfinished MFA and WebAuthn login state, and immediately closes local collaboration sockets. The initiating browser receives a replacement cookie after a password change; logout clears the cookie. Older API tokens, collaboration tickets, and periodically rechecked sockets fail closed.
 
 The `024_auth_session_revocation.sql` migration adds the non-secret `users.auth_version` generation counter. Deploying this version invalidates legacy JWTs that do not contain the strict issuer, audience, and generation claims, so users should expect to sign in again once after the upgrade.
 
 ## Browser origin policy
 
-Production browser origins must be listed explicitly in `CORS_ORIGIN`. API CORS and collaboration WebSocket origin checks never derive authorization from `X-Forwarded-Host` or `X-Forwarded-Proto`, because those headers can be supplied by a direct client unless every network path is constrained by a trusted proxy. Loopback HTTP(S) origins remain available automatically only outside production.
+Every browser origin, including development loopback origins and ports, must be listed explicitly in `CORS_ORIGIN`. API CORS and collaboration WebSocket origin checks never derive authorization from `X-Forwarded-Host` or `X-Forwarded-Proto`, because those headers can be supplied by a direct client unless every network path is constrained by a trusted proxy. `TRUST_PROXY_HOPS` accepts only an exact hop count; an unrestricted proxy-trust setting is not used.
+
+
+## Content Security Policy
+
+The Content Security Policy allows only same-origin application scripts plus the exact versioned KaTeX and Yjs resources used by the current client. It does not trust the complete jsDelivr host. WebSocket destinations are derived from the exact configured browser origins rather than allowing every `ws:` or `wss:` endpoint. Dynamic page-render attributes are escaped, collaboration block IDs use the same restricted identifier alphabet as backup data, and client-side attribute selectors use `CSS.escape()`.
 
 ## Bookmark preview safety
 
@@ -85,14 +92,14 @@ Current-format backups bind page sharing grants to both the collaborator's stabl
 
 ## Metadata, URL, and restore validation
 
-The unauthenticated health response contains only `{ "ok": true }`. Internal repository documentation is not served unless `SERVE_INTERNAL_DOCS=true` is explicitly configured. Page cover URLs accept only `http:` and `https:` schemes, including during backup restore. Restored profile avatars are revalidated for MIME type, image signature, and size before account data is replaced.
+The unauthenticated health response contains only `{ "ok": true }`. Internal repository documentation is not served unless `SERVE_INTERNAL_DOCS=true` is explicitly configured, and enabled documentation routes still require an authenticated session. Invalid JSON is reported as a client error, database constraint responses use a stable application error code, and backup conflicts do not disclose identifiers owned by another account. Page cover URLs accept only `http:` and `https:` schemes, including during backup restore. Restored profile avatars are revalidated for MIME type, image signature, and size before account data is replaced.
 
 ## Security defaults
 
 The server includes:
 
-- Helmet security headers and an explicit production CORS/WebSocket origin allowlist
-- Request rate limiting
+- Helmet security headers, exact versioned external resources, and explicit CORS/WebSocket origin allowlists in every environment
+- Global, login, MFA-login, MFA-enrollment, and registration rate limiting
 - Password hashing and current-password verification for password/MFA changes
 - Encrypted TOTP secrets with replay protection
 - One-time, expiring MFA and WebAuthn challenges

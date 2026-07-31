@@ -22,6 +22,7 @@ import { createMfaLoginSession, getMfaMethods, mfaRouter } from "./mfa.routes.js
 
 export const authRouter = Router();
 
+const dummyPasswordHash = hashPassword("brainvault-invalid-user-password");
 const preferredLanguageSchema = z.enum(supportedProfileLanguages);
 
 const registerSchema = z.object({
@@ -99,15 +100,18 @@ authRouter.post("/login", loginIpRateLimit, loginAccountRateLimit, validate({ bo
   try {
     const { username, password } = req.body as z.infer<typeof loginSchema>;
     const user = await db.queryOne<UserRow>("SELECT * FROM users WHERE username = ?", [username]);
+    const passwordMatches = await verifyPassword(password, user?.password_hash ?? (await dummyPasswordHash));
 
-    if (!user || !(await verifyPassword(password, user.password_hash))) {
+    if (!user || !passwordMatches) {
       throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid ID or password");
     }
 
     const methods = await getMfaMethods(user.id);
     if (methods.totp || methods.passkey) {
       const mfaToken = await createMfaLoginSession(user.id);
+      res.locals.authenticationPending = true;
       clearAuthSessionCookie(res);
+      res.setHeader("Cache-Control", "private, no-store");
       res.json({
         mfaRequired: true,
         mfaToken,
@@ -119,15 +123,33 @@ authRouter.post("/login", loginIpRateLimit, loginAccountRateLimit, validate({ bo
 
     const token = signAuthToken({ sub: user.id, username: user.username, authVersion: normalizeAuthVersion(user.auth_version) });
     setAuthSessionCookie(res, token);
-    res.json({ user: toPublicUser(user), token });
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json({ user: toPublicUser(user) });
   } catch (error) {
     next(error);
   }
 });
 
-authRouter.post("/logout", (_req, res) => {
-  clearAuthSessionCookie(res);
-  res.status(204).end();
+authRouter.post("/logout", requireAuth, async (req, res, next) => {
+  try {
+    const currentUser = requireUser(req.user);
+    const revokedUser = await transaction(async (client) => {
+      const user = await client.queryOne<UserRow>("SELECT * FROM users WHERE id = ? FOR UPDATE", [currentUser.id]);
+      if (!user) throw new ApiError(401, "UNAUTHENTICATED", "User no longer exists");
+
+      const authVersion = normalizeAuthVersion(user.auth_version) + 1;
+      await client.execute("UPDATE users SET auth_version = ? WHERE id = ?", [authVersion, user.id]);
+      await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [user.id]);
+      await client.execute("DELETE FROM webauthn_challenges WHERE user_id = ?", [user.id]);
+      return { ...user, auth_version: authVersion };
+    });
+
+    disconnectUserCollaborators(revokedUser.id, "User logged out");
+    clearAuthSessionCookie(res);
+    res.status(204).end();
+  } catch (error) {
+    next(error);
+  }
 });
 
 authRouter.get("/me", requireAuth, async (req, res) => {
@@ -204,7 +226,8 @@ authRouter.post("/password", requireAuth, validate({ body: passwordSchema }), as
       authVersion: normalizeAuthVersion(updatedUser.auth_version)
     });
     setAuthSessionCookie(res, token);
-    res.json({ ok: true, token });
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json({ ok: true });
   } catch (error) {
     next(error);
   }

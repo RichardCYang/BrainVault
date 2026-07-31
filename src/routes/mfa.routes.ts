@@ -10,6 +10,7 @@ import {
   type AuthenticatorTransportFuture,
   type RegistrationResponseJSON
 } from "@simplewebauthn/server";
+import { env } from "../config/env.js";
 import { db, transaction, type DbClient } from "../lib/db.js";
 import { normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
@@ -29,6 +30,7 @@ import {
 import { toPublicUser } from "../lib/mappers.js";
 import { setAuthSessionCookie } from "../lib/session-cookie.js";
 import { requireAuth } from "../middleware/auth.js";
+import { mfaLoginAccountRateLimit, mfaLoginIpRateLimit, mfaSetupRateLimit } from "../middleware/auth-rate-limit.js";
 import { validate } from "../middleware/validate.js";
 import type { UserRow } from "../types/domain.js";
 import { requireUser } from "../utils/schemas.js";
@@ -39,6 +41,7 @@ const mfaSessionLifetimeMs = 5 * 60_000;
 const challengeLifetimeMs = 5 * 60_000;
 const totpSetupLifetimeMs = 10 * 60_000;
 const maxMfaAttempts = 8;
+const mfaFailureCarryWindowMs = env.AUTH_MFA_ACCOUNT_WINDOW_MS;
 
 const currentPasswordSchema = z.object({
   currentPassword: z.string().min(1).max(128)
@@ -233,15 +236,41 @@ export async function getMfaMethods(userId: string): Promise<MfaMethods> {
 
 export async function createMfaLoginSession(userId: string) {
   const token = createOpaqueToken();
-  await db.execute(
-    "DELETE FROM mfa_login_sessions WHERE user_id = ? OR expires_at <= CURRENT_TIMESTAMP(3) OR used_at IS NOT NULL",
-    [userId]
-  );
-  await db.execute(
-    `INSERT INTO mfa_login_sessions (token_hash, user_id, expires_at)
-     VALUES (?, ?, ?)`,
-    [hashOpaqueToken(token), userId, expiresAt(mfaSessionLifetimeMs)]
-  );
+  const tokenHash = hashOpaqueToken(token);
+  const carryCutoff = new Date(Date.now() - mfaFailureCarryWindowMs);
+
+  await transaction(async (client) => {
+    const user = await client.queryOne<{ id: string }>("SELECT id FROM users WHERE id = ? FOR UPDATE", [userId]);
+    if (!user) throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid ID or password");
+
+    const previous = await client.queryOne<{ failed_attempts: number | null }>(
+      `SELECT MAX(failed_attempts) AS failed_attempts
+       FROM mfa_login_sessions
+       WHERE user_id = ? AND created_at > ?`,
+      [userId, carryCutoff]
+    );
+    const carriedAttempts = Number(previous?.failed_attempts ?? 0);
+    if (carriedAttempts >= maxMfaAttempts) {
+      throw new ApiError(429, "MFA_TEMPORARILY_LOCKED", "Too many two-step verification attempts. Try again later.");
+    }
+
+    await client.execute(
+      `UPDATE mfa_login_sessions
+       SET used_at = COALESCE(used_at, CURRENT_TIMESTAMP(3))
+       WHERE user_id = ? AND used_at IS NULL`,
+      [userId]
+    );
+    await client.execute(
+      "DELETE FROM mfa_login_sessions WHERE user_id = ? AND created_at <= ?",
+      [userId, carryCutoff]
+    );
+    await client.execute(
+      `INSERT INTO mfa_login_sessions (token_hash, user_id, failed_attempts, expires_at)
+       VALUES (?, ?, ?, ?)`,
+      [tokenHash, userId, carriedAttempts, expiresAt(mfaSessionLifetimeMs)]
+    );
+  });
+
   return token;
 }
 
@@ -270,7 +299,7 @@ async function recordMfaFailure(mfaToken: string) {
 async function completeMfaSession(client: DbClient, mfaToken: string, userId: string) {
   const result = await client.execute<{ affectedRows: number }>(
     `UPDATE mfa_login_sessions
-     SET used_at = CURRENT_TIMESTAMP(3)
+     SET used_at = CURRENT_TIMESTAMP(3), failed_attempts = 0
      WHERE token_hash = ? AND user_id = ? AND used_at IS NULL
        AND expires_at > CURRENT_TIMESTAMP(3) AND failed_attempts < ?`,
     [hashOpaqueToken(mfaToken), userId, maxMfaAttempts]
@@ -278,6 +307,7 @@ async function completeMfaSession(client: DbClient, mfaToken: string, userId: st
   if (Number(result.affectedRows) !== 1) {
     throw new ApiError(401, "MFA_SESSION_EXPIRED", "The two-step verification session expired");
   }
+  await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [userId]);
 }
 
 async function createChallenge(
@@ -412,6 +442,7 @@ mfaRouter.post(
 mfaRouter.post(
   "/totp/verify",
   requireAuth,
+  mfaSetupRateLimit,
   validate({ body: totpVerifySchema }),
   async (req, res, next) => {
     try {
@@ -632,6 +663,8 @@ mfaRouter.delete(
 
 mfaRouter.post(
   "/login/totp",
+  mfaLoginIpRateLimit,
+  mfaLoginAccountRateLimit,
   validate({ body: mfaLoginTotpSchema }),
   async (req, res, next) => {
     const { mfaToken, code } = req.body as z.infer<typeof mfaLoginTotpSchema>;
@@ -670,7 +703,8 @@ mfaRouter.post(
 
       const result = await finishLogin(session.user_id);
       setAuthSessionCookie(res, result.token);
-      res.json(result);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json({ user: result.user });
     } catch (error) {
       next(error);
     }
@@ -717,6 +751,8 @@ mfaRouter.post(
 
 mfaRouter.post(
   "/login/passkey/verify",
+  mfaLoginIpRateLimit,
+  mfaLoginAccountRateLimit,
   validate({ body: passkeyLoginVerifySchema }),
   async (req, res, next) => {
     const { mfaToken, challengeToken, response } = req.body as z.infer<typeof passkeyLoginVerifySchema>;
@@ -760,25 +796,37 @@ mfaRouter.post(
         throw new ApiError(401, "PASSKEY_AUTHENTICATION_FAILED", "The passkey could not be verified");
       }
 
+      const previousCounter = Number(passkey.counter);
+      const newCounter = Number(verification.authenticationInfo.newCounter);
+      if (previousCounter > 0 && newCounter <= previousCounter) {
+        await recordMfaFailure(mfaToken);
+        throw new ApiError(401, "PASSKEY_COUNTER_REGRESSION", "The passkey counter did not advance");
+      }
+
       await transaction(async (client) => {
-        await client.execute(
+        const updated = await client.execute<{ affectedRows: number }>(
           `UPDATE user_passkeys
            SET counter = ?, device_type = ?, backed_up = ?, last_used_at = CURRENT_TIMESTAMP(3)
-           WHERE id = ? AND user_id = ?`,
+           WHERE id = ? AND user_id = ? AND counter = ?`,
           [
-            verification.authenticationInfo.newCounter,
+            newCounter,
             verification.authenticationInfo.credentialDeviceType,
             verification.authenticationInfo.credentialBackedUp,
             passkey.id,
-            session.user_id
+            session.user_id,
+            previousCounter
           ]
         );
+        if (Number(updated.affectedRows) !== 1) {
+          throw new ApiError(401, "PASSKEY_AUTHENTICATION_FAILED", "The passkey state changed during verification");
+        }
         await completeMfaSession(client, mfaToken, session.user_id);
       });
 
       const result = await finishLogin(session.user_id);
       setAuthSessionCookie(res, result.token);
-      res.json(result);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json({ user: result.user });
     } catch (error) {
       next(error);
     }

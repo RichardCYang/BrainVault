@@ -34,6 +34,16 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
     });
     return;
   }
+  if (error instanceof SyntaxError && "body" in error) {
+    res.status(400).json({
+      error: {
+        code: "INVALID_JSON",
+        message: "Request body contains invalid JSON"
+      }
+    });
+    return;
+  }
+
   if (error instanceof ZodError) {
     res.status(400).json({
       error: {
@@ -75,7 +85,7 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
   if (dbError?.sqlState === "23000" || dbError?.code === "ER_DUP_ENTRY") {
     res.status(409).json({
       error: {
-        code: dbError.code ?? "DATABASE_CONSTRAINT_FAILED",
+        code: "DATABASE_CONSTRAINT_FAILED",
         message: "Database constraint failed"
       }
     });

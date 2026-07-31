@@ -43,7 +43,7 @@ const collaborationBlockKeys = new Set([
 // object clone can trigger prototype setters or ambiguous downstream behavior.
 // Collaboration metadata fails closed instead of risking a semantic rewrite.
 const unsafeObjectKeys = new Set(["__proto__", "prototype", "constructor"]);
-const collaborationBlockIdSchema = z.string().min(1).max(64);
+const collaborationBlockIdSchema = z.string().regex(/^[a-zA-Z0-9_-]+$/).min(1).max(64);
 
 export type MaterializedCollaborationBlock = z.infer<typeof collaborationBlockSchema> & {
   metadata: Record<string, unknown> | null;

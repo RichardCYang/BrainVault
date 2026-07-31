@@ -1,5 +1,5 @@
 import { db, type DbClient } from "./db.js";
-import { notFound } from "./http.js";
+import { ApiError, notFound } from "./http.js";
 import { toPublicUser } from "./mappers.js";
 import type { BlockRow, PageRow, UserRow } from "../types/domain.js";
 
@@ -78,8 +78,13 @@ export async function getOwnedPage(pageId: string, ownerId: string, client: DbCl
 export async function getBlockAccess(blockId: string, userId: string, client: DbClient = db) {
   const block = await client.queryOne<BlockRow>("SELECT * FROM blocks WHERE id = ?", [blockId]);
   if (!block) throw notFound("Block");
-  const access = await getPageAccess(block.page_id, userId, client);
-  return { block, access };
+  try {
+    const access = await getPageAccess(block.page_id, userId, client);
+    return { block, access };
+  } catch (error) {
+    if (error instanceof ApiError && error.statusCode === 404) throw notFound("Block");
+    throw error;
+  }
 }
 
 export function toAccessPayload(access: Pick<PageAccess, "role" | "shareCount">) {

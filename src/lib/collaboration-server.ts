@@ -1,7 +1,7 @@
 import type { IncomingMessage, Server as HttpServer } from "node:http";
 import type { Socket } from "node:net";
 import { createId } from "./id.js";
-import { corsOrigins, env } from "../config/env.js";
+import { corsOrigins } from "../config/env.js";
 import { db, transaction } from "./db.js";
 import { getPageAccess } from "./page-access.js";
 import { verifyCollaborationToken } from "./collaboration-token.js";
@@ -108,23 +108,11 @@ function normalizeOrigin(origin: string) {
 
 const explicitOrigins = new Set(corsOrigins.map(normalizeOrigin));
 
-function isLoopback(hostname: string) {
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
-}
-
 // Never derive the expected browser host from X-Forwarded-Host or other client-controlled forwarding headers.
 function isAllowedOrigin(request: IncomingMessage) {
   const originHeader = request.headers.origin;
   if (typeof originHeader !== "string" || !originHeader) return false;
-  const origin = normalizeOrigin(originHeader);
-  if (explicitOrigins.has(origin)) return true;
-
-  try {
-    const url = new URL(origin);
-    return env.NODE_ENV !== "production" && ["http:", "https:"].includes(url.protocol) && isLoopback(url.hostname);
-  } catch {
-    return false;
-  }
+  return explicitOrigins.has(normalizeOrigin(originHeader));
 }
 
 function parsePageId(request: IncomingMessage) {

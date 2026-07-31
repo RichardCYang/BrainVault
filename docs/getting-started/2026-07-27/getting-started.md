@@ -19,7 +19,7 @@ npm install
 
 `db:configure` uses only Node.js built-ins, so it can run before `npm install`. It asks for the database username and password, hides the password in an interactive terminal, and updates `DATABASE_URL` in `.env`. It preserves the current protocol, host, port, and database name. When `.env` does not exist, it creates one from `.env.example` before applying the credentials.
 
-To create an unchanged local environment file from the example instead, run:
+To create a local environment file with random database, JWT, and MFA secrets instead, run:
 
 ```bash
 npm run env:init
@@ -69,10 +69,11 @@ MARIADB_ADMIN_URL="mariadb://root:your-root-password@127.0.0.1:3306"
 The bootstrap process can then:
 
 1. Create the database when it is missing.
-2. Create the application user when necessary.
-3. Grant access to the target database.
-4. Reconcile the baseline schema.
-5. Apply migrations that have not run yet.
+2. Create or update the application user on each exact host in `DB_USER_HOSTS`.
+3. Remove the legacy wildcard-host account for the same username.
+4. Grant only the application and migration privileges required on the target database.
+5. Reconcile the baseline schema.
+6. Apply migrations that have not run yet.
 
 To manage schema changes outside the application, disable startup bootstrap:
 
@@ -94,7 +95,7 @@ For a complete first-time schema setup, run:
 npm run setup
 ```
 
-The setup command creates `.env` with separate cryptographically random JWT and MFA secrets, initializes the database, and applies migrations. It does not create a shared demo account.
+The setup command creates `.env` with separate cryptographically random database, JWT, and MFA secrets, initializes the database, and applies migrations. When the application database account does not already exist, configure `MARIADB_ADMIN_URL` first so bootstrap can create the exact-host account. It does not create a shared demo account.
 
 ## Production build
 
@@ -113,9 +114,11 @@ Before using production mode:
 - Set unique `JWT_SECRET` and `MFA_ENCRYPTION_KEY` values with at least 32 characters; production refuses missing, placeholder, legacy, or identical values.
 - Set `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGIN` to the production relying-party domain and exact browser origin.
 - Keep `REGISTRATION_ENABLED` unset or `false` unless public sign-up is intentional.
-- Keep `SERVE_INTERNAL_DOCS=false` unless the project documentation must be exposed deliberately.
+- Keep `SERVE_INTERNAL_DOCS=false` unless authenticated project documentation must be exposed deliberately.
+- Set `DB_USER_HOSTS` to the exact application client hosts and rerun `npm run db:init` to remove any legacy wildcard account.
+- Set `TRUST_PROXY_HOPS` to the exact proxy hop count; leave it at `0` without a trusted reverse proxy.
 - Use HTTPS, managed secret storage, database backups, and normal production monitoring.
 
 For real-time collaboration behind a reverse proxy, enable WebSocket upgrades for `/api/collaboration/` and preserve the original origin, host, and protocol headers. See [Collaboration](../../collaboration/2026-07-29/collaboration.md#authentication-and-network-requirements).
 
-The server refuses to start in production when either secret is missing or known to be a public placeholder. Development without a `.env` uses per-process ephemeral secrets, while `npm run env:init` writes persistent random values. See [Security](../../security/2026-07-30/security.md) and [Configuration](../../configuration/2026-07-28/configuration.md) for details.
+The server refuses to start when `DATABASE_URL` contains a missing or known default password, and production also refuses either cryptographic secret when missing or known to be a public placeholder. Development without configured cryptographic secrets uses per-process ephemeral values, while `npm run env:init` writes persistent random values. See [Security](../../security/2026-07-30/security.md) and [Configuration](../../configuration/2026-07-28/configuration.md) for details.

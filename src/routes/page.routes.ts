@@ -714,6 +714,15 @@ pageRouter.put("/:pageId/tags", validate({ params: idParamSchema, body: tagSchem
   }
 });
 
+function escapeHtmlAttribute(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
 pageRouter.get("/:pageId/render", validate({ params: idParamSchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
@@ -730,7 +739,7 @@ pageRouter.get("/:pageId/render", validate({ params: idParamSchema }), async (re
           block.type === "CALLOUT"
             ? renderBlockHtml(block.type, block.markdown, Boolean(block.checked), block.metadata)
             : block.html_cache ?? renderBlockHtml(block.type, block.markdown, Boolean(block.checked), block.metadata);
-        return `<section data-block-id="${block.id}" data-block-type="${block.type}">${blockHtml}</section>`;
+        return `<section data-block-id="${escapeHtmlAttribute(block.id)}" data-block-type="${escapeHtmlAttribute(block.type)}">${blockHtml}</section>`;
       })
       .join("\n");
 
