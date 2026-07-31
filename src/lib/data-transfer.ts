@@ -23,6 +23,7 @@ import {
 } from "./page-share-integrity.js";
 import { renderBlockHtml } from "./markdown.js";
 import { blockSortOrderLimits } from "./block-order-integrity.js";
+import { maxAvatarBytes, normalizeAvatarDataUrl } from "./profile.js";
 import {
   assertLosslessBackupBlockMetadata,
   BackupMetadataIntegrityError
@@ -46,6 +47,28 @@ const maxManifestBytes = 128 * 1024 * 1024;
 const idSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
 const timestampSchema = z.string().min(1).max(40);
 const nullableString = (max: number) => z.string().max(max).nullable();
+const nullableHttpUrl = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .url()
+    .refine((value) => {
+      const protocol = new URL(value).protocol;
+      return protocol === "http:" || protocol === "https:";
+    }, "URL must use HTTP or HTTPS")
+    .nullable();
+const backupAvatarSchema = z
+  .string()
+  .max(Math.ceil((maxAvatarBytes * 4) / 3) + 128)
+  .nullable()
+  .refine((value) => {
+    try {
+      normalizeAvatarDataUrl(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }, "Backup avatar is invalid");
 const restoreJournalPrefix = "restore-journal-";
 export const dataRestoreGenerationMarkerName = ".brainvault-restore-generation.json";
 const restoreGenerationMarkerSchema = z.object({
@@ -84,7 +107,7 @@ const pageSchema = z.object({
   id: idSchema,
   title: z.string().max(160),
   icon: nullableString(32),
-  cover_url: nullableString(500),
+  cover_url: nullableHttpUrl(500),
   is_archived: z.union([z.literal(0), z.literal(1)]),
   is_collection: z.union([z.literal(0), z.literal(1)]),
   parent_page_id: idSchema.nullable(),
@@ -147,7 +170,7 @@ const manifestSchema = z.object({
   source: z.object({ userId: idSchema, username: z.string().min(1).max(50) }).strict(),
   account: z.object({
     name: nullableString(80),
-    avatar_data: z.string().nullable(),
+    avatar_data: backupAvatarSchema,
     preferred_language: nullableString(10),
     default_collection_icon: nullableString(32)
   }).strict(),
@@ -931,7 +954,7 @@ async function importRows(
     `UPDATE users SET name = ?, avatar_data = ?, preferred_language = ?, default_collection_icon = ? WHERE id = ?`,
     [
       manifest.account.name,
-      manifest.account.avatar_data,
+      normalizeAvatarDataUrl(manifest.account.avatar_data),
       manifest.account.preferred_language,
       manifest.account.default_collection_icon,
       userId

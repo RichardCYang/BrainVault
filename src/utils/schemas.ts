@@ -1,5 +1,17 @@
 import { z } from "zod";
 
+export function httpUrlSchema(maxLength: number) {
+  return z
+    .string()
+    .trim()
+    .max(maxLength)
+    .url()
+    .refine((value) => {
+      const protocol = new URL(value).protocol;
+      return protocol === "http:" || protocol === "https:";
+    }, "URL must use HTTP or HTTPS");
+}
+
 export const usernameSchema = z
   .string()
   .trim()

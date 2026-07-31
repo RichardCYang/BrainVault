@@ -36,7 +36,6 @@ import {
   requirePageTitleWithinLimit
 } from "./editor-content-limits.js";
 
-const tokenKey = "brainvault.token";
 const rootParentKey = "__root__";
 const defaultCollectionKey = "__default_collection__";
 const recentEmojiStorageKey = "brainvault.recentEmojis";
@@ -78,7 +77,7 @@ const emojiRecordByValue = new Map(emojiRecords.map((record, index) => [record[0
 const emojiCategoryById = new Map(emojiCategoryDefinitions.map((category) => [category.id, category]));
 
 const state = {
-  token: localStorage.getItem(tokenKey),
+  authenticated: false,
   user: null,
   pages: [],
   allPages: [],
@@ -862,10 +861,8 @@ function setStatus(message, isError = false, { dismissAfter } = {}) {
   }
 }
 
-function setToken(token) {
-  state.token = token;
-  if (token) localStorage.setItem(tokenKey, token);
-  else localStorage.removeItem(tokenKey);
+function setAuthenticated(value) {
+  state.authenticated = Boolean(value);
 }
 
 function isWebAuthnSupported() {
@@ -1014,7 +1011,6 @@ function isDefinitiveApiError(error) {
 async function api(path, options = {}) {
   const { skipAuthReset = false, ...requestOptions } = options;
   const headers = new Headers(requestOptions.headers ?? {});
-  if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
 
   let body = requestOptions.body;
   if (body && typeof body === "object" && !(body instanceof FormData)) {
@@ -1024,7 +1020,7 @@ async function api(path, options = {}) {
 
   let response;
   try {
-    response = await fetch(path, { ...requestOptions, headers, body });
+    response = await fetch(path, { ...requestOptions, credentials: "include", headers, body });
   } catch {
     throw createApiRequestError(t("errors.network"), { ambiguous: true });
   }
@@ -1132,11 +1128,10 @@ const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
 async function downloadAttachment(block) {
   const attachment = getBlockAttachmentData(block);
   const headers = new Headers();
-  if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
 
   let response;
   try {
-    response = await fetch(`/api/blocks/${block.id}/attachment`, { headers });
+    response = await fetch(`/api/blocks/${block.id}/attachment`, { headers, credentials: "include" });
   } catch {
     throw new Error(t("errors.network"));
   }
@@ -1191,10 +1186,9 @@ async function downloadUserDataBackup() {
       assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds);
 
       const headers = new Headers();
-      if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
       let response;
       try {
-        response = await fetch("/api/data/export", { headers });
+        response = await fetch("/api/data/export", { headers, credentials: "include" });
       } catch {
         throw new Error(t("errors.network"));
       }
@@ -1297,7 +1291,7 @@ function updateUserIdentityUi() {
 }
 
 function renderShell() {
-  const authenticated = Boolean(state.token && state.user);
+  const authenticated = Boolean(state.authenticated && state.user);
   const enteringMobileApp = authenticated && mobileSidebarMedia.matches && !document.body.classList.contains("app-mode");
   if (enteringMobileApp) suppressMobileSidebarTransition();
   if (!authenticated && state.accountSettingsOpen) closeAccountSettings({ restoreFocus: false });
@@ -1324,7 +1318,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   closeSlashMenu();
   closeMobileSidebar();
   resetMfaLogin();
-  setToken(null);
+  setAuthenticated(false);
   state.user = null;
   state.pages = [];
   state.allPages = [];
@@ -1680,7 +1674,7 @@ function showMfaLogin(data) {
 
 async function completeAuthenticatedLogin(data) {
   resetAuthenticationSessionState({ render: false });
-  setToken(data.token);
+  setAuthenticated(true);
   state.user = data.user;
   elements.password.value = "";
   resetMfaLogin();
@@ -1692,8 +1686,12 @@ async function completeAuthenticatedLogin(data) {
 
 async function logout() {
   return withPageEditLock(async () => {
-    resetAuthenticationSessionState();
-    setStatus(t("status.loggedOut"));
+    try {
+      await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    } finally {
+      resetAuthenticationSessionState();
+      setStatus(t("status.loggedOut"));
+    }
   });
 }
 
@@ -8429,8 +8427,7 @@ async function createUntitledPage() {
 
 
 async function loadMe() {
-  if (!state.token) return;
-  const data = await api("/api/auth/me");
+  const data = await api("/api/auth/me", { skipAuthReset: true });
   state.user = data.user;
 }
 
@@ -8850,7 +8847,7 @@ elements.accountPasswordForm.addEventListener("submit", async (event) => {
   try {
     setAccountMessage(t("account.changingPassword"));
     const data = await api("/api/auth/password", { method: "POST", body: { currentPassword, newPassword } });
-    setToken(data.token);
+    setAuthenticated(true);
     elements.accountPasswordForm.reset();
     setAccountMessage(t("account.passwordChanged"));
     setStatus(t("account.passwordChanged"));
@@ -9109,7 +9106,14 @@ elements.authForm.addEventListener("submit", async (event) => {
   try {
     setStatus(t(mode === "login" ? "status.loggingIn" : "status.registering"));
     const data = await api(`/api/auth/${mode}`, { method: "POST", body });
-    if (mode === "login" && data?.mfaRequired) {
+    if (mode === "register") {
+      setAuthMode("login");
+      elements.username.value = body.username;
+      elements.password.value = "";
+      setStatus(t("status.loginPrompt"));
+      return;
+    }
+    if (data?.mfaRequired) {
       showMfaLogin(data);
       return;
     }

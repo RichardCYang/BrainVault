@@ -7,11 +7,21 @@ Open **Settings → Security** to configure either verification method:
 - **Authenticator app (TOTP):** BrainVault displays a QR code and manual setup key, then enables the method only after a valid six-digit code is confirmed. The stored TOTP secret is encrypted with AES-256-GCM, and a code cannot be replayed within the same time step.
 - **Passkeys (WebAuthn/FIDO2):** Add, name, rename, and remove multiple platform passkeys or external hardware security keys. Each credential is stored separately so a primary device and recovery keys can coexist.
 
-After the password is accepted, accounts with at least one configured method receive a short-lived, one-time MFA session instead of a JWT. Completing an available TOTP or passkey challenge issues the normal access token.
+After the password is accepted, accounts with at least one configured method receive a short-lived, one-time MFA session instead of a JWT. Completing an available TOTP or passkey challenge issues the normal access token. The built-in browser client receives the token in an `HttpOnly`, `SameSite=Strict` session cookie and does not persist the JWT in Web Storage. Bearer tokens remain available for non-browser API clients.
 
 Local WebAuthn development works at `http://localhost:4000`. Production deployments should use HTTPS and set `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGIN` to the exact relying-party domain and browser origin.
 
 Changing `MFA_ENCRYPTION_KEY` after users enroll TOTP invalidates their encrypted authenticator secrets. Store and rotate it through a managed secret process.
+
+## Secret generation and startup guards
+
+`npm run env:init` generates independent cryptographically random values for `JWT_SECRET` and `MFA_ENCRYPTION_KEY`; it never copies usable public secrets from the example file. Production requires both variables explicitly. Known placeholders, legacy development values, and reuse of one value for both purposes are rejected at startup. When no secret is configured outside production, BrainVault uses per-process ephemeral values rather than a shared repository constant.
+
+The HTTP server binds to `127.0.0.1` by default. External binding requires an explicit `HOST` setting.
+
+## Authentication abuse controls
+
+Login is protected by both IP-keyed and normalized-account-keyed failed-attempt limits. Registration has a separate IP limit, defaults to disabled in production, and returns a generic duplicate-account error. The in-memory limiter is suitable for one process; multi-instance deployments should use a shared rate-limit store.
 
 ## Credential-change session revocation
 
@@ -72,6 +82,10 @@ Restore is intentionally destructive for workspace content: current pages, colle
 Current-format backups bind page sharing grants to both the collaborator's stable account ID and username. Restore locks accounts by ID and requires the exact pair to match before deleting any page; an unrelated destination account with the same username is not accepted. Username-only sharing records from the earlier backup format are accepted only when each record matches a currently locked page-to-account grant; username lookup alone is never used, and mixed legacy/current records fail closed. Archived ordinary pages may retain grants: archive blocks live collaboration, while backup and restore preserve the access list so unarchiving does not silently lose collaborators. Legacy backups without a `pageShares` field preserve the account's current grants for matching imported ordinary page IDs, including archived pages, preventing the page deletion cascade from silently erasing them. The historical Yjs update log is still excluded; the backup stores the latest server-materialized document state and restore creates a fresh collaboration generation.
 
 `DATA_TRANSFER_MAX_SIZE_MB` limits one uploaded backup ZIP and defaults to 4096 MB. Export streams the archive instead of buffering the complete backup in memory. Only ZIP files produced by BrainVault's data export are accepted.
+
+## Metadata, URL, and restore validation
+
+The unauthenticated health response contains only `{ "ok": true }`. Internal repository documentation is not served unless `SERVE_INTERNAL_DOCS=true` is explicitly configured. Page cover URLs accept only `http:` and `https:` schemes, including during backup restore. Restored profile avatars are revalidated for MIME type, image signature, and size before account data is replaced.
 
 ## Security defaults
 

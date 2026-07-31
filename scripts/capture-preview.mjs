@@ -116,7 +116,6 @@ function previewInjection() {
       body.preview-capture-ready * { caret-color: transparent !important; }
     </style>
     <script>
-      localStorage.setItem("brainvault.token", "preview-token");
       localStorage.setItem("brainvault.language", "en");
       window.addEventListener("DOMContentLoaded", () => {
         let opened = false;

@@ -17,7 +17,7 @@ The preview is captured from the real browser UI. See [Development guide](docs/d
 - Crash-resilient browser drafts, automatic title saving, and search across page titles and block content
 - Owner-managed page sharing with Yjs-based simultaneous title/block editing, live presence, reconnect recovery, and MariaDB persistence
 - Page collections, nesting, archiving, permanent deletion, PDF export, and complete ZIP backup/restore including sharing grants
-- JWT authentication, profile settings, TOTP authenticator support, and multiple WebAuthn/FIDO2 passkeys
+- JWT authentication with an HttpOnly browser session cookie, profile settings, TOTP authenticator support, and multiple WebAuthn/FIDO2 passkeys
 - Seven interface languages: English, Japanese, Korean, French, German, Spanish, and Portuguese
 - Private attachment storage, sanitized Markdown rendering, rate limiting, and validated bookmark previews
 - Automatic MariaDB bootstrap and migrations, plus an included OpenAPI 3.1 specification
@@ -40,19 +40,20 @@ Requirements: Node.js 22.13 or newer, npm 10.9 or newer, and a reachable MariaDB
 ```bash
 npm run db:configure
 npm install
+npm run setup
 npm run dev
 ```
 
 `npm run dev` opens `http://localhost:4000` automatically in a private/incognito window after the server is ready. It never falls back to a normal browser profile.
 
-For database permissions, demo data, alternative environment setup, and production instructions, see the [Getting started guide](docs/getting-started/2026-07-27/getting-started.md).
+For database permissions, opt-in demo data, alternative environment setup, and production instructions, see the [Getting started guide](docs/getting-started/2026-07-27/getting-started.md).
 
 ## Documentation
 
 | Guide | Contents |
 | --- | --- |
 | [Documentation index](docs/README.md) | Entry point for all project documentation |
-| [Getting started](docs/getting-started/2026-07-27/getting-started.md) | Requirements, setup, database bootstrap, demo data, and production |
+| [Getting started](docs/getting-started/2026-07-27/getting-started.md) | Requirements, secure setup, database bootstrap, opt-in demo data, and production |
 | [Features](docs/features/2026-07-30/features.md) | Editor behavior, sharing, block types, backup/restore, PDF export, and languages |
 | [Collaboration](docs/collaboration/2026-07-29/collaboration.md) | Sharing permissions, Yjs/WebSocket flow, persistence, proxy setup, and verification |
 | [Collaboration verification](docs/data-loss/2026-07-29/collaboration-verification.md) | Delivery checks, integrity-proof scope, and reproducible deployment validation |
@@ -76,4 +77,4 @@ npm run verify:data-loss # Check persistence and recovery integrity guards
 npm start         # Run the compiled server
 ```
 
-Before a production deployment, replace the bundled development secrets, configure the WebAuthn relying-party values, and serve the app over HTTPS in a browser that supports Web Locks so safety-critical cross-tab transitions can run. See [Security](docs/security/2026-07-30/security.md) and [Configuration](docs/configuration/2026-07-28/configuration.md).
+Before a production deployment, provide explicit unique secrets, configure the public bind address and browser origins, leave registration disabled unless it is intentionally required, and serve the app over HTTPS in a browser that supports Web Locks so safety-critical cross-tab transitions can run. See [Security](docs/security/2026-07-30/security.md) and [Configuration](docs/configuration/2026-07-28/configuration.md).

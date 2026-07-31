@@ -6,9 +6,15 @@ info:
 servers:
   - url: http://localhost:4000
 security:
+  - cookieAuth: []
   - bearerAuth: []
 components:
   securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: brainvault_session
+      description: HttpOnly SameSite=Strict browser session cookie.
     bearerAuth:
       type: http
       scheme: bearer
@@ -73,7 +79,7 @@ components:
           type: string
           minLength: 8
           maxLength: 128
-          example: brainvault123
+          example: use-a-unique-password
     AuthResponse:
       type: object
       required: [user, token]
@@ -82,6 +88,7 @@ components:
           $ref: '#/components/schemas/PublicUser'
         token:
           type: string
+          description: Bearer token for API clients. Browser clients also receive an HttpOnly session cookie.
     MfaMethods:
       type: object
       required: [totp, passkey]
@@ -810,7 +817,16 @@ paths:
       summary: Check API status
       responses:
         '200':
-          description: Service status
+          description: Minimal service status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
   /api/auth/register:
     post:
       security: []
@@ -822,12 +838,17 @@ paths:
             schema:
               $ref: '#/components/schemas/RegisterInput'
       responses:
-        '201':
-          description: Created user and JWT
+        '202':
+          description: Generic accepted response for both newly created and already existing IDs
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AuthResponse'
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
   /api/auth/login:
     post:
       security: []
@@ -840,13 +861,20 @@ paths:
               $ref: '#/components/schemas/LoginInput'
       responses:
         '200':
-          description: User and JWT, or a temporary MFA session when two-step verification is configured
+          description: User plus API JWT/browser session cookie, or a temporary MFA session when two-step verification is configured
           content:
             application/json:
               schema:
                 oneOf:
                   - $ref: '#/components/schemas/AuthResponse'
                   - $ref: '#/components/schemas/MfaRequiredResponse'
+  /api/auth/logout:
+    post:
+      security: []
+      summary: Clear the browser session cookie
+      responses:
+        '204':
+          description: Session cookie cleared
   /api/auth/mfa/status:
     get:
       summary: Read the current user's TOTP and passkey configuration

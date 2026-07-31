@@ -45,20 +45,16 @@ Private-mode launch supports Chrome, Edge, Firefox, and Brave. BrainVault first 
 
 ## Optional demo data
 
-After the database is ready, seed a sample account and starter page:
+Demo seeding is disabled by default and never uses a repository-defined password. To create the sample workspace, provide an explicit password of 12-128 characters:
 
 ```bash
+BRAINVAULT_SEED_DEMO=true \
+BRAINVAULT_DEMO_USERNAME=demo \
+BRAINVAULT_DEMO_PASSWORD="use-a-unique-local-password" \
 npm run db:seed
 ```
 
-Development credentials:
-
-```text
-Username: demo
-Password: brainvault123
-```
-
-These credentials are for local development only.
+Do not reuse a real account password. The seed command prints the username but never prints or stores the plaintext password outside the database hash.
 
 ## Database bootstrap
 
@@ -92,11 +88,13 @@ npm run db:migrate
 npm run db:seed
 ```
 
-For a complete first-time setup, including demo data, run:
+For a complete first-time schema setup, run:
 
 ```bash
 npm run setup
 ```
+
+The setup command creates `.env` with separate cryptographically random JWT and MFA secrets, initializes the database, and applies migrations. It does not create a shared demo account.
 
 ## Production build
 
@@ -111,10 +109,13 @@ Automatic browser launch belongs exclusively to `npm run dev`; production execut
 
 Before using production mode:
 
-- Set unique `JWT_SECRET` and `MFA_ENCRYPTION_KEY` values with at least 32 characters.
+- Set `HOST` to the intended bind address. The default `127.0.0.1` is loopback-only.
+- Set unique `JWT_SECRET` and `MFA_ENCRYPTION_KEY` values with at least 32 characters; production refuses missing, placeholder, legacy, or identical values.
 - Set `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGIN` to the production relying-party domain and exact browser origin.
+- Keep `REGISTRATION_ENABLED` unset or `false` unless public sign-up is intentional.
+- Keep `SERVE_INTERNAL_DOCS=false` unless the project documentation must be exposed deliberately.
 - Use HTTPS, managed secret storage, database backups, and normal production monitoring.
 
 For real-time collaboration behind a reverse proxy, enable WebSocket upgrades for `/api/collaboration/` and preserve the original origin, host, and protocol headers. See [Collaboration](../../collaboration/2026-07-29/collaboration.md#authentication-and-network-requirements).
 
-The server refuses to start in production when either bundled development secret is still in use. See [Security](../../security/2026-07-30/security.md) and [Configuration](../../configuration/2026-07-28/configuration.md) for details.
+The server refuses to start in production when either secret is missing or known to be a public placeholder. Development without a `.env` uses per-process ephemeral secrets, while `npm run env:init` writes persistent random values. See [Security](../../security/2026-07-30/security.md) and [Configuration](../../configuration/2026-07-28/configuration.md) for details.

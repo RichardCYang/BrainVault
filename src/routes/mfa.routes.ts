@@ -27,6 +27,7 @@ import {
   webAuthnConfig
 } from "../lib/mfa.js";
 import { toPublicUser } from "../lib/mappers.js";
+import { setAuthSessionCookie } from "../lib/session-cookie.js";
 import { requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import type { UserRow } from "../types/domain.js";
@@ -667,7 +668,9 @@ mfaRouter.post(
         await completeMfaSession(client, mfaToken, session.user_id);
       });
 
-      res.json(await finishLogin(session.user_id));
+      const result = await finishLogin(session.user_id);
+      setAuthSessionCookie(res, result.token);
+      res.json(result);
     } catch (error) {
       next(error);
     }
@@ -773,7 +776,9 @@ mfaRouter.post(
         await completeMfaSession(client, mfaToken, session.user_id);
       });
 
-      res.json(await finishLogin(session.user_id));
+      const result = await finishLogin(session.user_id);
+      setAuthSessionCookie(res, result.token);
+      res.json(result);
     } catch (error) {
       next(error);
     }

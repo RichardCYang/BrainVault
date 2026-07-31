@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { signAuthToken, verifyAuthToken } from "../src/lib/auth.js";
 import { signCollaborationToken, verifyCollaborationToken } from "../src/lib/collaboration-token.js";
 import { isAllowedCorsOrigin } from "../src/middleware/cors.js";
+import { readAuthSessionCookie } from "../src/lib/session-cookie.js";
+import { httpUrlSchema } from "../src/utils/schemas.js";
 
 function mockRequest(headers: Record<string, string>): Request {
   return {
@@ -61,5 +63,20 @@ describe("CORS proxy-header hardening", () => {
 
   it("continues to allow explicitly configured origins", () => {
     expect(isAllowedCorsOrigin(mockRequest({}), "http://localhost:4000")).toBe(true);
+  });
+});
+
+
+describe("reported security hardening", () => {
+  it("accepts only HTTP(S) page cover URLs", () => {
+    const schema = httpUrlSchema(500);
+    expect(schema.parse("https://example.com/cover.png")).toBe("https://example.com/cover.png");
+    expect(() => schema.parse("javascript:alert(1)")).toThrow();
+    expect(() => schema.parse("data:text/html,unsafe")).toThrow();
+  });
+
+  it("reads the HttpOnly session value from the Cookie header", () => {
+    const request = mockRequest({ cookie: "theme=light; brainvault_session=header.payload.signature" });
+    expect(readAuthSessionCookie(request)).toBe("header.payload.signature");
   });
 });

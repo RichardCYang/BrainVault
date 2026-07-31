@@ -1,13 +1,14 @@
 # API
 
-Most API routes require a bearer token returned by the register or login endpoint. Accounts with MFA enabled receive a temporary MFA session during login and obtain the normal access token after completing a TOTP or passkey challenge.
+Most API routes accept a bearer token returned by the login endpoint. The built-in browser client instead uses the same JWT in an `HttpOnly`, `SameSite=Strict` cookie and never stores it in `localStorage`. Accounts with MFA enabled receive a temporary MFA session during login and obtain the normal access token after completing a TOTP or passkey challenge.
 
 ## Route overview
 
 | Method | Route | Description |
 | --- | --- | --- |
-| `POST` | `/api/auth/register` | Create an account |
-| `POST` | `/api/auth/login` | Sign in; returns either a JWT or a temporary MFA session |
+| `POST` | `/api/auth/register` | Submit account creation; always returns the same accepted response for valid new or existing IDs |
+| `POST` | `/api/auth/login` | Sign in; returns either a JWT/session cookie or a temporary MFA session |
+| `POST` | `/api/auth/logout` | Clear the browser session cookie |
 | `GET` | `/api/auth/mfa/status` | Read configured TOTP and passkey methods |
 | `POST` | `/api/auth/mfa/totp/setup` | Begin current-password-protected TOTP enrollment |
 | `POST` | `/api/auth/mfa/totp/verify` | Confirm and enable a pending TOTP enrollment |
@@ -60,15 +61,11 @@ For rollout compatibility, older tabs may still send `title`, `blocks`, or `dele
 
 ## OpenAPI
 
-The complete OpenAPI 3.1 document is stored at [`docs/api/2026-07-30/openapi.yaml`](openapi.yaml) and served by a running application at:
-
-```text
-http://localhost:4000/docs/api/2026-07-30/openapi.yaml
-```
+The complete OpenAPI 3.1 document is stored at [`docs/api/2026-07-30/openapi.yaml`](openapi.yaml). Runtime serving of the repository documentation is disabled by default. Set `SERVE_INTERNAL_DOCS=true` only when deliberate HTTP access to `/docs` is required.
 
 ## Health check
 
-The health endpoint is available without authentication:
+The health endpoint is available without authentication and returns only `{ "ok": true }`:
 
 ```bash
 curl http://localhost:4000/health

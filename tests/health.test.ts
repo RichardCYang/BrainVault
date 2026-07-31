@@ -140,7 +140,8 @@ describe("BrainVault web shell and health endpoint", () => {
     const response = await request(createApp()).get("/app.js").expect(200);
 
     expect(response.headers["content-type"]).toContain("javascript");
-    expect(response.text).toContain("brainvault.token");
+    expect(response.text).not.toContain("brainvault.token");
+    expect(response.text).toContain('credentials: "include"');
     expect(response.text).toContain("username:");
     expect(response.text).toContain("setAuthMode");
     expect(response.text).toContain('window.location.hash === "#signup"');
@@ -359,9 +360,13 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(html).not.toContain("script");
   });
 
-  it("returns service metadata", async () => {
+  it("does not expose internal project documentation by default", async () => {
+    await request(createApp()).get("/docs/api/2026-07-30/openapi.yaml").expect(404);
+  });
+
+  it("returns minimal service status", async () => {
     const response = await request(createApp()).get("/health").expect(200);
 
-    expect(response.body).toEqual({ ok: true, name: "BrainVault", version: "1.0.0" });
+    expect(response.body).toEqual({ ok: true });
   });
 });

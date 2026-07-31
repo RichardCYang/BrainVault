@@ -43,7 +43,8 @@ contains("src/routes/auth.routes.ts", [
   "SELECT * FROM users WHERE id = ? FOR UPDATE",
   "UPDATE users SET password_hash = ?, auth_version = ? WHERE id = ?",
   "disconnectUserCollaborators(updatedUser.id",
-  "res.json({ ok: true, token })"
+  "res.status(202).json({ ok: true })",
+  "same status and response shape"
 ]);
 contains("src/lib/collaboration-server.ts", [
   "currentAuthVersion !== payload.authVersion",
@@ -55,10 +56,33 @@ contains("migrations/024_auth_session_revocation.sql", [
 ]);
 
 contains("src/config/env.ts", [
+  'HOST: z.string().trim().min(1).max(255).default("127.0.0.1")',
+  "JWT_SECRET must be explicitly configured in production",
+  "MFA_ENCRYPTION_KEY must be explicitly configured in production",
+  "uses a public placeholder or legacy development value",
+  "JWT_SECRET and MFA_ENCRYPTION_KEY must be different values",
   "CORS_ORIGIN must include at least one browser origin",
   "CORS_ORIGIN must contain exact HTTP(S) origins without paths",
   "CORS_ORIGIN must use HTTPS in production"
 ]);
+contains("scripts/env-init.ts", [
+  'randomBytes(48).toString("base64url")',
+  "exactly two generated-secret placeholders",
+  "Created .env with unique JWT and MFA secrets"
+]);
+contains("scripts/seed.ts", [
+  "BRAINVAULT_SEED_DEMO",
+  "BRAINVAULT_DEMO_PASSWORD must contain 12-128 characters"
+]);
+const browserSource = read("public/app.js");
+assert.ok(!browserSource.includes("brainvault.token"), "The browser must not persist the JWT in localStorage");
+assert.ok(!browserSource.includes('Authorization", `Bearer'), "The built-in browser must use the HttpOnly session cookie");
+contains("src/lib/session-cookie.ts", ["httpOnly: true", 'sameSite: "strict"', 'secure: env.NODE_ENV === "production"']);
+contains("src/middleware/auth-rate-limit.ts", ["loginIpRateLimit", "loginAccountRateLimit", "registrationRateLimit"]);
+contains("src/app.ts", ["if (env.SERVE_INTERNAL_DOCS)", "res.json({ ok: true })"]);
+contains("src/server.ts", ["server.listen(env.PORT, env.HOST"]);
+contains("src/routes/page.routes.ts", ["coverUrl: httpUrlSchema(500)"]);
+contains("src/lib/data-transfer.ts", ["cover_url: nullableHttpUrl(500)", "normalizeAvatarDataUrl(manifest.account.avatar_data)"]);
 
 const corsSource = contains("src/middleware/cors.ts", [
   "explicitCorsOrigins.has(normalizedOrigin)",
@@ -102,4 +126,4 @@ assert.equal(acceptsSession(1, 1), true, "A current session must be accepted bef
 assert.equal(acceptsSession(1, 2), false, "An old session must be rejected after credential rotation");
 assert.equal(acceptsSession(2, 2), true, "The replacement session must remain usable");
 
-console.log("[security-hardening] PASS: session revocation, JWT separation, origin policy, multipart limits, and SSRF ranges");
+console.log("[security-hardening] PASS: secret generation, session cookies, auth throttling, metadata exposure, URL/restore validation, JWT separation, origin policy, multipart limits, and SSRF ranges");

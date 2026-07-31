@@ -20,10 +20,11 @@ async function start() {
   await recoverInterruptedDataRestores();
 
   const app = createApp();
-  const appUrl = `http://localhost:${env.PORT}`;
+  const displayHost = env.HOST === "0.0.0.0" || env.HOST === "::" ? "localhost" : env.HOST;
+  const appUrl = `http://${displayHost}:${env.PORT}`;
   const server = createServer(app);
   const collaborationHub = attachPageCollaborationServer(server);
-  server.listen(env.PORT, () => {
+  server.listen(env.PORT, env.HOST, () => {
     console.log(`BrainVault API listening on ${appUrl}`);
 
     if (env.AUTO_BOOTSTRAP_DATABASE && process.env.BRAINVAULT_DEV_BROWSER_READY_SIGNAL === "1") {

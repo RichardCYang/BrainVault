@@ -18,6 +18,7 @@ export function createApp() {
   const app = express();
 
   app.disable("x-powered-by");
+  app.set("trust proxy", false);
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -47,14 +48,16 @@ export function createApp() {
   const publicDir = path.resolve(process.cwd(), "public");
   const docsDir = path.resolve(process.cwd(), "docs");
   app.use(express.static(publicDir, { index: false }));
-  app.use("/docs", express.static(docsDir, { index: false }));
+  if (env.SERVE_INTERNAL_DOCS) {
+    app.use("/docs", express.static(docsDir, { index: false }));
+  }
 
   app.get("/", (_req, res) => {
     res.sendFile(path.join(publicDir, "index.html"));
   });
 
   app.get("/health", (_req, res) => {
-    res.json({ ok: true, name: "BrainVault", version: "1.0.0" });
+    res.json({ ok: true });
   });
 
   app.use("/api/auth", authRouter);

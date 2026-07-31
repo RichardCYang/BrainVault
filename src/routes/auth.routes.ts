@@ -1,17 +1,20 @@
 import { Router } from "express";
 import { z } from "zod";
+import { env } from "../config/env.js";
 import { db, transaction, type DbValue } from "../lib/db.js";
 import { createId } from "../lib/id.js";
 import { hashPassword, normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { ApiError } from "../lib/http.js";
 import { toPublicUser } from "../lib/mappers.js";
+import { clearAuthSessionCookie, setAuthSessionCookie } from "../lib/session-cookie.js";
 import {
   maxAvatarBytes,
   normalizeAvatarDataUrl,
   supportedProfileLanguages
 } from "../lib/profile.js";
 import { requireAuth } from "../middleware/auth.js";
+import { loginAccountRateLimit, loginIpRateLimit, registrationRateLimit } from "../middleware/auth-rate-limit.js";
 import { validate } from "../middleware/validate.js";
 import { requireUser, usernameSchema } from "../utils/schemas.js";
 import type { UserRow } from "../types/domain.js";
@@ -54,33 +57,45 @@ const passwordSchema = z
     message: "New password must differ from the current password"
   });
 
-authRouter.post("/register", validate({ body: registerSchema }), async (req, res, next) => {
-  try {
-    const { username, password, name, preferredLanguage } = req.body as z.infer<typeof registerSchema>;
+function isDuplicateEntryError(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ER_DUP_ENTRY";
+}
 
-    const exists = await db.queryOne("SELECT id FROM users WHERE username = ?", [username]);
-    if (exists) {
-      throw new ApiError(409, "ID_TAKEN", "A user with that ID already exists");
+authRouter.post(
+  "/register",
+  registrationRateLimit,
+  validate({ body: registerSchema }),
+  async (req, res, next) => {
+    try {
+      if (!env.REGISTRATION_ENABLED) {
+        throw new ApiError(403, "REGISTRATION_DISABLED", "Account registration is disabled");
+      }
+
+      const { username, password, name, preferredLanguage } = req.body as z.infer<typeof registerSchema>;
+      const passwordHash = await hashPassword(password);
+      const id = createId("usr");
+
+      try {
+        await db.execute(
+          `INSERT INTO users (id, username, name, preferred_language, password_hash)
+           VALUES (?, ?, ?, ?, ?)`,
+          [id, username, name ?? null, preferredLanguage ?? null, passwordHash]
+        );
+      } catch (error) {
+        if (!isDuplicateEntryError(error)) throw error;
+      }
+
+      // Use the same status and response shape for new and existing usernames.
+      // The client signs in separately, preventing this endpoint from becoming a username oracle.
+      res.setHeader("Cache-Control", "private, no-store");
+      res.status(202).json({ ok: true });
+    } catch (error) {
+      next(error);
     }
-
-    const id = createId("usr");
-    await db.execute(
-      `INSERT INTO users (id, username, name, preferred_language, password_hash)
-       VALUES (?, ?, ?, ?, ?)`,
-      [id, username, name ?? null, preferredLanguage ?? null, await hashPassword(password)]
-    );
-
-    const user = await db.queryOne<UserRow>("SELECT * FROM users WHERE id = ?", [id]);
-    if (!user) throw new ApiError(500, "USER_CREATE_FAILED", "User was not created");
-
-    const token = signAuthToken({ sub: user.id, username: user.username, authVersion: normalizeAuthVersion(user.auth_version) });
-    res.status(201).json({ user: toPublicUser(user), token });
-  } catch (error) {
-    next(error);
   }
-});
+);
 
-authRouter.post("/login", validate({ body: loginSchema }), async (req, res, next) => {
+authRouter.post("/login", loginIpRateLimit, loginAccountRateLimit, validate({ body: loginSchema }), async (req, res, next) => {
   try {
     const { username, password } = req.body as z.infer<typeof loginSchema>;
     const user = await db.queryOne<UserRow>("SELECT * FROM users WHERE username = ?", [username]);
@@ -92,6 +107,7 @@ authRouter.post("/login", validate({ body: loginSchema }), async (req, res, next
     const methods = await getMfaMethods(user.id);
     if (methods.totp || methods.passkey) {
       const mfaToken = await createMfaLoginSession(user.id);
+      clearAuthSessionCookie(res);
       res.json({
         mfaRequired: true,
         mfaToken,
@@ -102,14 +118,21 @@ authRouter.post("/login", validate({ body: loginSchema }), async (req, res, next
     }
 
     const token = signAuthToken({ sub: user.id, username: user.username, authVersion: normalizeAuthVersion(user.auth_version) });
+    setAuthSessionCookie(res, token);
     res.json({ user: toPublicUser(user), token });
   } catch (error) {
     next(error);
   }
 });
 
+authRouter.post("/logout", (_req, res) => {
+  clearAuthSessionCookie(res);
+  res.status(204).end();
+});
+
 authRouter.get("/me", requireAuth, async (req, res) => {
   const user = requireUser(req.user);
+  res.setHeader("Cache-Control", "private, no-store");
   res.json({ user });
 });
 
@@ -180,7 +203,7 @@ authRouter.post("/password", requireAuth, validate({ body: passwordSchema }), as
       username: updatedUser.username,
       authVersion: normalizeAuthVersion(updatedUser.auth_version)
     });
-    res.setHeader("Cache-Control", "private, no-store");
+    setAuthSessionCookie(res, token);
     res.json({ ok: true, token });
   } catch (error) {
     next(error);

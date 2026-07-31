@@ -83,8 +83,23 @@ async function createPageIfMissing(
 }
 
 async function main() {
-  const username = "demo";
-  const password = "brainvault123";
+  const enabled = ["true", "1", "yes", "on"].includes(
+    String(process.env.BRAINVAULT_SEED_DEMO ?? "").trim().toLowerCase()
+  );
+  if (!enabled) {
+    console.log("Demo seed skipped. Set BRAINVAULT_SEED_DEMO=true and BRAINVAULT_DEMO_PASSWORD to opt in.");
+    return;
+  }
+
+  const username = String(process.env.BRAINVAULT_DEMO_USERNAME ?? "demo").trim().toLowerCase();
+  const password = String(process.env.BRAINVAULT_DEMO_PASSWORD ?? "");
+  if (!/^[a-zA-Z0-9._-]{3,40}$/.test(username)) {
+    throw new Error("BRAINVAULT_DEMO_USERNAME must contain 3-40 letters, numbers, dots, underscores, or hyphens");
+  }
+  if (password.length < 12 || password.length > 128) {
+    throw new Error("BRAINVAULT_DEMO_PASSWORD must contain 12-128 characters");
+  }
+
   const demoWorkspace = await loadDemoWorkspace();
 
   let user = await db.queryOne<UserRow>("SELECT * FROM users WHERE username = ?", [username]);
@@ -114,7 +129,7 @@ async function main() {
   const createdWorkspace = await createPageIfMissing(user.id, demoWorkspace.page, demoWorkspace.blocks);
   const createdCount = Number(createdStarter) + Number(createdWorkspace);
   const action = createdCount ? `${createdCount} demo page(s) created` : "demo pages already exist";
-  console.log(`Seed complete (${action}). Demo account: ${username} / ${password}`);
+  console.log(`Seed complete (${action}). Demo account username: ${username}`);
 }
 
 main()

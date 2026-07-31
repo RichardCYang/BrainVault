@@ -14,7 +14,7 @@ import { ApiError, notFound } from "../lib/http.js";
 import { requireAuth } from "../middleware/auth.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { buildBlockTree } from "../utils/blockTree.js";
-import { idParamSchema, requireUser } from "../utils/schemas.js";
+import { httpUrlSchema, idParamSchema, requireUser } from "../utils/schemas.js";
 import type { BlockRow, PageRow, TagRow } from "../types/domain.js";
 
 export const pageRouter = Router();
@@ -52,7 +52,7 @@ function encodePageListCursor(row: { id: string; cursor_created_at: string }) {
 const createPageSchema = z.object({
   title: z.string().trim().min(1).max(160),
   icon: z.string().trim().max(32).optional(),
-  coverUrl: z.string().url().max(500).optional(),
+  coverUrl: httpUrlSchema(500).optional(),
   parentPageId: z.string().min(1).optional(),
   isCollection: z.boolean().optional().default(false),
   initialMarkdown: z.string().max(20_000).optional(),
@@ -62,7 +62,7 @@ const createPageSchema = z.object({
 const updatePageSchema = z.object({
   title: z.string().trim().min(1).max(160).optional(),
   icon: z.string().trim().max(32).nullable().optional(),
-  coverUrl: z.string().url().max(500).nullable().optional(),
+  coverUrl: httpUrlSchema(500).nullable().optional(),
   isArchived: z.boolean().optional(),
   parentPageId: z.string().min(1).nullable().optional(),
   tags: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
