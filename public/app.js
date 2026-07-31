@@ -3605,7 +3605,9 @@ async function setPageMode(nextMode, { announce = true } = {}) {
     if (!hasBlocks) renderSelectedPage();
 
     if (normalizedMode === pageModes.WRITE && !hasBlocks) {
-      const data = await createEmptyBlock(state.selectedPage.id);
+      // The mode transition intentionally holds pageModeChanging until the first editor block is ready.
+      // Bypass only that self-owned interaction lock; createEmptyBlock still requires active write mode.
+      const data = await createEmptyBlock(state.selectedPage.id, { allowLocked: true });
       state.pendingFocusBlockId = data.block.id;
       await openPage(state.selectedPage.id);
     }

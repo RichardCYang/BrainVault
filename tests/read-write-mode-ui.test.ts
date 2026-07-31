@@ -57,6 +57,11 @@ describe("Page read/write mode", () => {
     expect(client).toMatch(/elements\.archivePageButton[\s\S]*requireWritablePage/);
   });
 
+  it("allows the write-mode transition to create the first block while its own transition lock is active", () => {
+    const setPageMode = client.match(/async function setPageMode\(nextMode, \{ announce = true \} = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(setPageMode).toContain("createEmptyBlock(state.selectedPage.id, { allowLocked: true })");
+  });
+
   it("does not create a block merely by opening an empty page", () => {
     const openPage = client.match(/async function openPage\(pageId, \{ skipFlush = false \} = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? "";
     expect(openPage).not.toContain('createEmptyBlock(pageId)');
