@@ -101,6 +101,14 @@ contains("scripts/env-init.ts", [
   "exactly one generated database-password placeholder",
   "Created .env with unique database, JWT, and MFA secrets"
 ]);
+contains("package.json", ['"secrets:generate": "node scripts/generate-secrets.mjs"']);
+contains("scripts/generate-secrets.mjs", [
+  'const SECRET_BYTES = 32',
+  'randomBytes(SECRET_BYTES).toString("base64url")',
+  'const SECRET_NAMES = ["JWT_SECRET", "MFA_ENCRYPTION_KEY"]',
+  "Refusing to overwrite existing secrets without --force",
+  "Rotating MFA_ENCRYPTION_KEY can invalidate enrolled TOTP authenticators"
+]);
 contains("scripts/seed.ts", [
   "BRAINVAULT_SEED_DEMO",
   "BRAINVAULT_DEMO_PASSWORD must contain 12-128 characters"

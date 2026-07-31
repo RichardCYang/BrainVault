@@ -68,6 +68,7 @@ For database permissions, opt-in demo data, alternative environment setup, and p
 
 ```bash
 npm run dev       # Start the server and open a private/incognito browser window
+npm run secrets:generate # Print independent 32-byte JWT and MFA secrets
 npm test          # Run the test suite
 npm run build     # Compile TypeScript
 npm run reproduce:cross-instance-loss # Reproduce the stale-room compaction loss and fixed behavior

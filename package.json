@@ -22,6 +22,7 @@
     "lockfile:repair": "node scripts/lockfile-registry.mjs --fix",
     "preinstall": "npm run lockfile:check",
     "env:init": "tsx scripts/env-init.ts",
+    "secrets:generate": "node scripts/generate-secrets.mjs",
     "db:configure": "node scripts/db-configure.mjs",
     "db:init": "tsx scripts/db-init.ts",
     "db:migrate": "tsx scripts/migrate.ts",

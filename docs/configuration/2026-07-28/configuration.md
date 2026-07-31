@@ -1,6 +1,6 @@
 # Configuration
 
-BrainVault reads runtime settings from environment variables. For local development, copy [`.env.example`](../../../.env.example) to `.env` with `npm run env:init`, or use `npm run db:configure` to create/update `.env` interactively.
+BrainVault reads runtime settings from environment variables. For local development, copy [`.env.example`](../../../.env.example) to `.env` with `npm run env:init`, or use `npm run db:configure` to create/update `.env` interactively. To generate fresh 32-byte values without changing files, run `npm run secrets:generate`; pass `-- --write` to fill empty or generated placeholders in an existing `.env`.
 
 Never commit a real `.env` file.
 

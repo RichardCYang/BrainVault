@@ -7,6 +7,7 @@
 | `npm run lockfile:check` | Reject machine-specific registry URLs in `package-lock.json` |
 | `npm run lockfile:repair` | Normalize registry tarball URLs to the configured public registry |
 | `npm run env:init` | Create `.env` from `.env.example` when needed |
+| `npm run secrets:generate` | Print independent 32-byte JWT and MFA secrets; pass `-- --write` to fill placeholders in an existing `.env` |
 | `npm run db:configure` | Prompt for database credentials and update/create `.env` |
 | `npm run db:init` | Prepare the database and verify connectivity |
 | `npm run db:migrate` | Reconcile the schema and apply migrations |
