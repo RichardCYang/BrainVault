@@ -60,6 +60,16 @@ describe("migration replay data safety", () => {
     }
   });
 
+  it("adds a non-destructive account authentication generation", () => {
+    const sql = fs.readFileSync(
+      path.join(migrationsDir, "024_auth_session_revocation.sql"),
+      "utf8"
+    );
+
+    expect(sql).toMatch(/ADD COLUMN IF NOT EXISTS auth_version BIGINT UNSIGNED NOT NULL DEFAULT 1/i);
+    expect(sql).not.toMatch(/DELETE\s+FROM\s+users/i);
+  });
+
   it("adds a non-destructive collaboration document epoch fence", () => {
     const sql = fs.readFileSync(
       path.join(migrationsDir, "021_collaboration_document_epoch.sql"),

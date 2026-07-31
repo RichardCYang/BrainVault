@@ -2,7 +2,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { db, transaction, type DbValue } from "../lib/db.js";
 import { createId } from "../lib/id.js";
-import { hashPassword, signAuthToken, verifyPassword } from "../lib/auth.js";
+import { hashPassword, normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
+import { disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { ApiError } from "../lib/http.js";
 import { toPublicUser } from "../lib/mappers.js";
 import {
@@ -72,7 +73,7 @@ authRouter.post("/register", validate({ body: registerSchema }), async (req, res
     const user = await db.queryOne<UserRow>("SELECT * FROM users WHERE id = ?", [id]);
     if (!user) throw new ApiError(500, "USER_CREATE_FAILED", "User was not created");
 
-    const token = signAuthToken({ sub: user.id, username: user.username });
+    const token = signAuthToken({ sub: user.id, username: user.username, authVersion: normalizeAuthVersion(user.auth_version) });
     res.status(201).json({ user: toPublicUser(user), token });
   } catch (error) {
     next(error);
@@ -100,7 +101,7 @@ authRouter.post("/login", validate({ body: loginSchema }), async (req, res, next
       return;
     }
 
-    const token = signAuthToken({ sub: user.id, username: user.username });
+    const token = signAuthToken({ sub: user.id, username: user.username, authVersion: normalizeAuthVersion(user.auth_version) });
     res.json({ user: toPublicUser(user), token });
   } catch (error) {
     next(error);
@@ -150,22 +151,37 @@ authRouter.post("/password", requireAuth, validate({ body: passwordSchema }), as
   try {
     const currentUser = requireUser(req.user);
     const { currentPassword, newPassword } = req.body as z.infer<typeof passwordSchema>;
-    const user = await db.queryOne<UserRow>("SELECT * FROM users WHERE id = ?", [currentUser.id]);
-
-    if (!user || !(await verifyPassword(currentPassword, user.password_hash))) {
-      throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
-    }
-    if (await verifyPassword(newPassword, user.password_hash)) {
-      throw new ApiError(400, "NEW_PASSWORD_SAME", "New password must differ from the current password");
-    }
-
     const passwordHash = await hashPassword(newPassword);
-    await transaction(async (client) => {
-      await client.execute("UPDATE users SET password_hash = ? WHERE id = ?", [passwordHash, user.id]);
+    const updatedUser = await transaction(async (client) => {
+      const user = await client.queryOne<UserRow>(
+        "SELECT * FROM users WHERE id = ? FOR UPDATE",
+        [currentUser.id]
+      );
+      if (!user || !(await verifyPassword(currentPassword, user.password_hash))) {
+        throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
+      }
+      if (await verifyPassword(newPassword, user.password_hash)) {
+        throw new ApiError(400, "NEW_PASSWORD_SAME", "New password must differ from the current password");
+      }
+
+      const authVersion = normalizeAuthVersion(user.auth_version) + 1;
+      await client.execute(
+        "UPDATE users SET password_hash = ?, auth_version = ? WHERE id = ?",
+        [passwordHash, authVersion, user.id]
+      );
       await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [user.id]);
       await client.execute("DELETE FROM webauthn_challenges WHERE user_id = ?", [user.id]);
+      return { ...user, password_hash: passwordHash, auth_version: authVersion };
     });
-    res.json({ ok: true });
+
+    disconnectUserCollaborators(updatedUser.id, "Authentication credentials changed");
+    const token = signAuthToken({
+      sub: updatedUser.id,
+      username: updatedUser.username,
+      authVersion: normalizeAuthVersion(updatedUser.auth_version)
+    });
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json({ ok: true, token });
   } catch (error) {
     next(error);
   }

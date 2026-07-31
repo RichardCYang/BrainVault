@@ -72,5 +72,24 @@ for (const origin of webAuthnOrigins) {
 }
 
 export const corsOrigins = env.CORS_ORIGIN.split(",")
-  .map((origin) => origin.trim())
+  .map((origin) => origin.trim().replace(/\/$/, ""))
   .filter(Boolean);
+
+if (!corsOrigins.length) {
+  throw new Error("CORS_ORIGIN must include at least one browser origin");
+}
+
+for (const origin of corsOrigins) {
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    throw new Error(`CORS_ORIGIN contains an invalid origin: ${origin}`);
+  }
+  if (!["http:", "https:"].includes(parsed.protocol) || parsed.origin !== origin) {
+    throw new Error(`CORS_ORIGIN must contain exact HTTP(S) origins without paths: ${origin}`);
+  }
+  if (env.NODE_ENV === "production" && parsed.protocol !== "https:") {
+    throw new Error("CORS_ORIGIN must use HTTPS in production");
+  }
+}

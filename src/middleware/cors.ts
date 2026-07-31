@@ -25,49 +25,12 @@ function isLocalDevelopmentOrigin(origin: string) {
   }
 }
 
-function firstHeaderValue(value: string | string[] | undefined) {
-  if (Array.isArray(value)) return value.at(0);
-  return value;
-}
-
-function isSameRequestOrigin(req: Request, origin: string) {
-  try {
-    const originUrl = new URL(origin);
-    const forwardedHost = firstHeaderValue(req.headers["x-forwarded-host"]);
-    const host = forwardedHost?.split(",").at(0)?.trim() || req.get("host");
-
-    if (!host || originUrl.host !== host) {
-      return false;
-    }
-
-    const forwardedProto = firstHeaderValue(req.headers["x-forwarded-proto"]);
-    const protocol = (forwardedProto?.split(",").at(0)?.trim() || req.protocol).replace(/:$/, "");
-    return originUrl.protocol === `${protocol}:`;
-  } catch {
-    return false;
-  }
-}
-
-export function isAllowedCorsOrigin(req: Request, origin?: string) {
-  if (!origin) {
-    return true;
-  }
+export function isAllowedCorsOrigin(_req: Request, origin?: string) {
+  if (!origin) return true;
 
   const normalizedOrigin = normalizeOrigin(origin);
-
-  if (explicitCorsOrigins.has(normalizedOrigin)) {
-    return true;
-  }
-
-  if (isSameRequestOrigin(req, normalizedOrigin)) {
-    return true;
-  }
-
-  if (env.NODE_ENV !== "production" && isLocalDevelopmentOrigin(normalizedOrigin)) {
-    return true;
-  }
-
-  return false;
+  if (explicitCorsOrigins.has(normalizedOrigin)) return true;
+  return env.NODE_ENV !== "production" && isLocalDevelopmentOrigin(normalizedOrigin);
 }
 
 export const corsOptionsDelegate: CorsOptionsDelegate<Request> = (req, callback) => {

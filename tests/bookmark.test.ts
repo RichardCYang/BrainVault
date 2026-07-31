@@ -120,7 +120,16 @@ describe("bookmark SSRF address filtering", () => {
     "172.16.10.4",
     "192.168.1.10",
     "169.254.169.254",
+    "192.88.99.1",
+    "240.0.0.1",
     "::1",
+    "::127.0.0.1",
+    "64:ff9b::7f00:1",
+    "100::1",
+    "100:0:0:1::1",
+    "2002:7f00:1::",
+    "3fff::1",
+    "5f00::1",
     "fc00::1",
     "fe80::1",
     "::ffff:127.0.0.1"
@@ -128,7 +137,7 @@ describe("bookmark SSRF address filtering", () => {
     expect(isPrivateAddress(address)).toBe(true);
   });
 
-  it.each(["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"])("allows public address %s", (address) => {
+  it.each(["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111", "2001:4860:4860::8888"])("allows public address %s", (address) => {
     expect(isPrivateAddress(address)).toBe(false);
   });
 });

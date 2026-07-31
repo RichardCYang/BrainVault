@@ -327,11 +327,14 @@ collaborationRouter.post(
         );
         return { access, collaborationState, documentBlocks };
       });
+      const authVersion = req.auth?.authVersion;
+      if (!authVersion) throw new ApiError(401, "UNAUTHENTICATED", "Authentication context is missing");
       const ticket = signCollaborationToken({
         sub: user.id,
         username: user.username,
         pageId,
         documentEpoch: session.collaborationState.document_epoch,
+        authVersion,
         scope: "page:collaborate"
       });
       res.setHeader("Cache-Control", "private, no-store");

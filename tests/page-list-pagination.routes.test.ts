@@ -25,7 +25,7 @@ const user = {
   created_at: "2026-07-18T00:00:00.000Z",
   updated_at: "2026-07-18T00:00:00.000Z"
 };
-const token = signAuthToken({ sub: user.id, username: user.username });
+const token = signAuthToken({ sub: user.id, username: user.username, authVersion: 1 });
 
 function page(id: string, createdAt: string, updatedAt = createdAt) {
   return {

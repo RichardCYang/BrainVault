@@ -8849,7 +8849,8 @@ elements.accountPasswordForm.addEventListener("submit", async (event) => {
   elements.accountPasswordSave.disabled = true;
   try {
     setAccountMessage(t("account.changingPassword"));
-    await api("/api/auth/password", { method: "POST", body: { currentPassword, newPassword } });
+    const data = await api("/api/auth/password", { method: "POST", body: { currentPassword, newPassword } });
+    setToken(data.token);
     elements.accountPasswordForm.reset();
     setAccountMessage(t("account.passwordChanged"));
     setStatus(t("account.passwordChanged"));

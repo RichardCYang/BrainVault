@@ -13,6 +13,16 @@ Local WebAuthn development works at `http://localhost:4000`. Production deployme
 
 Changing `MFA_ENCRYPTION_KEY` after users enroll TOTP invalidates their encrypted authenticator secrets. Store and rotate it through a managed secret process.
 
+## Credential-change session revocation
+
+API access tokens and page-scoped collaboration tickets use separate JWT audiences, a fixed HS256 algorithm, and the `brainvault` issuer. Tokens also carry the account's current authentication generation. Changing the password increments that generation, deletes unfinished MFA and WebAuthn login state, immediately closes local collaboration sockets, and returns a replacement access token for the browser that completed the change. Older API tokens, collaboration tickets, and periodically rechecked sockets fail closed.
+
+The `024_auth_session_revocation.sql` migration adds the non-secret `users.auth_version` generation counter. Deploying this version invalidates legacy JWTs that do not contain the strict issuer, audience, and generation claims, so users should expect to sign in again once after the upgrade.
+
+## Browser origin policy
+
+Production browser origins must be listed explicitly in `CORS_ORIGIN`. API CORS and collaboration WebSocket origin checks never derive authorization from `X-Forwarded-Host` or `X-Forwarded-Proto`, because those headers can be supplied by a direct client unless every network path is constrained by a trusted proxy. Loopback HTTP(S) origins remain available automatically only outside production.
+
 ## Bookmark preview safety
 
 Browser cross-origin rules prevent the editor from reading arbitrary page HTML directly, so OpenGraph retrieval uses the authenticated `/api/bookmarks/preview` server endpoint.
@@ -67,12 +77,12 @@ Current-format backups bind page sharing grants to both the collaborator's stabl
 
 The server includes:
 
-- Helmet security headers and a configurable CORS allowlist
+- Helmet security headers and an explicit production CORS/WebSocket origin allowlist
 - Request rate limiting
 - Password hashing and current-password verification for password/MFA changes
 - Encrypted TOTP secrets with replay protection
 - One-time, expiring MFA and WebAuthn challenges
-- WebAuthn user verification and JWT verification
+- WebAuthn user verification, strict JWT audience separation, and credential-change session revocation
 - Zod input validation and validated profile-image data
 - Private attachment storage with authenticated downloads and upload-size limits
 - Sanitized Markdown/HTML output

@@ -69,6 +69,7 @@ type ClientContext = {
   id: string;
   socket: WebSocketConnection;
   user: CollaborationProfile;
+  authVersion: number;
   documentEpoch: string;
   synced: boolean;
   awareness: AwarenessState;
@@ -107,14 +108,11 @@ function normalizeOrigin(origin: string) {
 
 const explicitOrigins = new Set(corsOrigins.map(normalizeOrigin));
 
-function firstHeaderValue(value: string | string[] | undefined) {
-  return Array.isArray(value) ? value.at(0) : value;
-}
-
 function isLoopback(hostname: string) {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
 }
 
+// Never derive the expected browser host from X-Forwarded-Host or other client-controlled forwarding headers.
 function isAllowedOrigin(request: IncomingMessage) {
   const originHeader = request.headers.origin;
   if (typeof originHeader !== "string" || !originHeader) return false;
@@ -123,18 +121,6 @@ function isAllowedOrigin(request: IncomingMessage) {
 
   try {
     const url = new URL(origin);
-    // Never derive the expected browser host from X-Forwarded-Host: a direct
-    // client can forge that header. Reverse proxies should preserve Host or
-    // configure the public origin explicitly through CORS_ORIGINS.
-    const host = request.headers.host;
-    const forwardedProtoValue = firstHeaderValue(request.headers["x-forwarded-proto"])
-      ?.split(",").at(0)?.trim().toLowerCase();
-    const forwardedProtocol = forwardedProtoValue === "http" || forwardedProtoValue === "https"
-      ? forwardedProtoValue
-      : null;
-    const protocol = forwardedProtocol
-      || ((request.socket as Socket & { encrypted?: boolean }).encrypted ? "https" : "http");
-    if (host && url.host === host && url.protocol === `${protocol}:`) return true;
     return env.NODE_ENV !== "production" && ["http:", "https:"].includes(url.protocol) && isLoopback(url.hostname);
   } catch {
     return false;
@@ -253,6 +239,14 @@ export class PageCollaborationHub {
     }
   }
 
+  disconnectUserEverywhere(userId: string, reason = "Authentication session was revoked") {
+    for (const room of this.rooms.values()) {
+      for (const client of room.clients.values()) {
+        if (client.user.id === userId) client.socket.close(4003, reason);
+      }
+    }
+  }
+
   disconnectPage(pageId: string, reason = "Collaboration is no longer available") {
     const room = this.rooms.get(pageId);
     if (!room) return;
@@ -326,12 +320,17 @@ export class PageCollaborationHub {
     }
     const collaborationState = await getCollaborationState(pageId);
     assertCollaborationDocumentEpoch(collaborationState, payload.documentEpoch);
-    const user = await db.queryOne<CollaborationProfile>(
-      "SELECT id, username, name, avatar_data FROM users WHERE id = ?",
+    const user = await db.queryOne<CollaborationProfile & { auth_version?: number }>(
+      "SELECT id, username, name, avatar_data, auth_version FROM users WHERE id = ?",
       [payload.sub]
     );
     if (!user) {
       rejectWebSocketUpgrade(socket, 401, "User no longer exists");
+      return;
+    }
+    const currentAuthVersion = Number(user.auth_version ?? 1);
+    if (!Number.isSafeInteger(currentAuthVersion) || currentAuthVersion < 1 || currentAuthVersion !== payload.authVersion) {
+      rejectWebSocketUpgrade(socket, 401, "Authentication session was revoked");
       return;
     }
 
@@ -346,6 +345,7 @@ export class PageCollaborationHub {
       id: createId("con"),
       socket: connection,
       user,
+      authVersion: payload.authVersion,
       documentEpoch: payload.documentEpoch,
       synced: false,
       awareness: { blockId: null, field: null, selection: null },
@@ -368,6 +368,14 @@ export class PageCollaborationHub {
     ) return;
 
     try {
+      const currentUser = await db.queryOne<{ auth_version?: number }>(
+        "SELECT auth_version FROM users WHERE id = ?",
+        [payload.sub]
+      );
+      if (!currentUser || Number(currentUser.auth_version ?? 1) !== payload.authVersion) {
+        connection.close(4003, "Authentication session was revoked");
+        return;
+      }
       const currentAccess = await getPageAccess(pageId, payload.sub);
       if (currentAccess.page.is_collection || currentAccess.page.is_archived || currentAccess.shareCount < 1) {
         connection.close(4010, "Collaboration is no longer available");
@@ -882,6 +890,14 @@ export class PageCollaborationHub {
       for (const client of room.clients.values()) {
         checks.push((async () => {
           try {
+            const currentUser = await db.queryOne<{ auth_version?: number }>(
+              "SELECT auth_version FROM users WHERE id = ?",
+              [client.user.id]
+            );
+            if (!currentUser || Number(currentUser.auth_version ?? 1) !== client.authVersion) {
+              client.socket.close(4003, "Authentication session was revoked");
+              return;
+            }
             const access = await getPageAccess(room.pageId, client.user.id);
             if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
               client.socket.close(4010, "Collaboration is no longer available");
@@ -915,6 +931,10 @@ export function disconnectSharedUser(pageId: string, userId: string, reason?: st
 
 export function disconnectPageCollaborators(pageId: string, reason?: string) {
   for (const hub of activeHubs) hub.disconnectPage(pageId, reason);
+}
+
+export function disconnectUserCollaborators(userId: string, reason?: string) {
+  for (const hub of activeHubs) hub.disconnectUserEverywhere(userId, reason);
 }
 
 export function broadcastCanonicalAttachment(pageId: string, block: unknown) {

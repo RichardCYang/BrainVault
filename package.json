@@ -12,6 +12,8 @@
     "lockfile:check": "node scripts/lockfile-registry.mjs",
     "verify:collaboration": "node --experimental-strip-types scripts/verify-collaboration.mjs",
     "verify:data-loss": "node scripts/verify-data-loss-guards.mjs",
+    "verify:security": "node --experimental-strip-types scripts/verify-security-hardening.mjs",
+    "test:security": "vitest run tests/security-hardening.test.ts tests/auth-settings.routes.test.ts tests/bookmark.test.ts tests/migration-data-safety.test.ts",
     "reproduce:materialization-loss": "node scripts/reproduce-collaboration-materialization-loss.mjs",
     "reproduce:bootstrap-loss": "node --experimental-strip-types scripts/reproduce-collaboration-bootstrap-loss.mjs",
     "reproduce:cross-instance-loss": "node scripts/reproduce-cross-instance-compaction-loss.mjs",

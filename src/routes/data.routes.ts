@@ -32,7 +32,10 @@ const backupUpload = multer({
     fileSize: env.DATA_TRANSFER_MAX_SIZE_MB * 1024 * 1024,
     files: 1,
     fields: 0,
-    parts: 2
+    parts: 2,
+    fieldNameSize: 64,
+    headerPairs: 32,
+    fieldNestingDepth: 1
   },
   preservePath: false,
   defParamCharset: "utf8"

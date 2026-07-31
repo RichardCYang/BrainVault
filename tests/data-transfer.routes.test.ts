@@ -70,7 +70,7 @@ const pageId = "pag_data_transfer";
 const blockId = "blk_data_transfer";
 const tagId = "tag_data_transfer";
 const originalBytes = Buffer.from([0, 255, 1, 2, 3, 10, 13, 200]);
-const token = signAuthToken({ sub: userId, username: "backup-user" });
+const token = signAuthToken({ sub: userId, username: "backup-user", authVersion: 1 });
 
 function binaryParser(response: Response, callback: (error: Error | null, body?: Buffer) => void) {
   const chunks: Buffer[] = [];

@@ -30,10 +30,11 @@ beforeEach(async () => {
     preferred_language: null,
     default_collection_icon: null,
     password_hash: await hashPassword("old-password-123"),
+    auth_version: 1,
     created_at: "2026-07-16T00:00:00.000Z",
     updated_at: "2026-07-16T00:00:00.000Z"
   };
-  token = signAuthToken({ sub: String(user.id), username: String(user.username) });
+  token = signAuthToken({ sub: String(user.id), username: String(user.username), authVersion: Number(user.auth_version) });
   database.queryOne.mockReset();
   database.execute.mockReset();
 
@@ -43,8 +44,9 @@ beforeEach(async () => {
   });
 
   database.execute.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
-    if (sql.startsWith("UPDATE users SET password_hash = ?")) {
+    if (sql.startsWith("UPDATE users SET password_hash = ?, auth_version = ?")) {
       user.password_hash = params[0];
+      user.auth_version = params[1];
     } else if (sql.startsWith("UPDATE users SET ")) {
       const assignments = sql.slice("UPDATE users SET ".length, sql.indexOf(" WHERE id = ?")).split(", ");
       assignments.forEach((assignment, index) => {
@@ -102,12 +104,25 @@ describe("Account settings routes", () => {
       .expect(400);
     expect(rejected.body.error.code).toBe("CURRENT_PASSWORD_INCORRECT");
 
-    await request(createApp())
+    const changed = await request(createApp())
       .post("/api/auth/password")
       .set("Authorization", `Bearer ${token}`)
       .send({ currentPassword: "old-password-123", newPassword: "new-password-456" })
-      .expect(200, { ok: true });
+      .expect(200);
 
+    expect(changed.body).toMatchObject({ ok: true });
+    expect(changed.body.token).toEqual(expect.any(String));
     await expect(verifyPassword("new-password-456", String(user.password_hash))).resolves.toBe(true);
+
+    const revoked = await request(createApp())
+      .get("/api/auth/me")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(401);
+    expect(revoked.body.error.code).toBe("SESSION_REVOKED");
+
+    await request(createApp())
+      .get("/api/auth/me")
+      .set("Authorization", `Bearer ${changed.body.token}`)
+      .expect(200);
   });
 });

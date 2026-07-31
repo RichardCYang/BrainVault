@@ -6,6 +6,7 @@ export type UserRow = {
   preferred_language: string | null;
   default_collection_icon: string | null;
   password_hash: string;
+  auth_version?: number;
   created_at: string;
   updated_at: string;
 };

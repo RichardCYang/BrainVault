@@ -11,11 +11,13 @@ export type CollaborationTokenPayload = {
   username: string;
   pageId: string;
   documentEpoch: string;
+  authVersion: number;
   scope: "page:collaborate";
 };
 
 export function signCollaborationToken(payload: CollaborationTokenPayload) {
   const options: SignOptions = {
+    algorithm: "HS256",
     audience: collaborationAudience,
     issuer: collaborationIssuer,
     expiresIn: collaborationExpiresInSeconds
@@ -26,6 +28,7 @@ export function signCollaborationToken(payload: CollaborationTokenPayload) {
 export function verifyCollaborationToken(token: string): CollaborationTokenPayload {
   try {
     const decoded = jwt.verify(token, env.JWT_SECRET as Secret, {
+      algorithms: ["HS256"],
       audience: collaborationAudience,
       issuer: collaborationIssuer
     });
@@ -37,6 +40,8 @@ export function verifyCollaborationToken(token: string): CollaborationTokenPaylo
       typeof decoded.documentEpoch !== "string" ||
       !decoded.documentEpoch ||
       decoded.documentEpoch.length > 64 ||
+      !Number.isSafeInteger(Number(decoded.authVersion)) ||
+      Number(decoded.authVersion) < 1 ||
       decoded.scope !== "page:collaborate"
     ) {
       throw new ApiError(401, "INVALID_COLLABORATION_TICKET", "Invalid collaboration ticket");
@@ -46,6 +51,7 @@ export function verifyCollaborationToken(token: string): CollaborationTokenPaylo
       username: String(decoded.username),
       pageId: String(decoded.pageId),
       documentEpoch: decoded.documentEpoch,
+      authVersion: Number(decoded.authVersion),
       scope: "page:collaborate"
     };
   } catch (error) {

@@ -162,7 +162,11 @@ const attachmentUpload = multer({
     fileSize: env.MAX_ATTACHMENT_SIZE_MB * 1024 * 1024,
     files: 1,
     fields: 4,
-    fieldSize: 16 * 1024
+    parts: 6,
+    fieldNameSize: 64,
+    fieldSize: 16 * 1024,
+    headerPairs: 32,
+    fieldNestingDepth: 1
   },
   preservePath: false,
   defParamCharset: "utf8"

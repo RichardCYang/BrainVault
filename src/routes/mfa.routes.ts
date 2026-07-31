@@ -11,7 +11,7 @@ import {
   type RegistrationResponseJSON
 } from "@simplewebauthn/server";
 import { db, transaction, type DbClient } from "../lib/db.js";
-import { signAuthToken, verifyPassword } from "../lib/auth.js";
+import { normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
 import { createId } from "../lib/id.js";
 import {
@@ -340,7 +340,7 @@ async function finishLogin(userId: string) {
   if (!user) throw new ApiError(401, "UNAUTHENTICATED", "User no longer exists");
   return {
     user: toPublicUser(user),
-    token: signAuthToken({ sub: user.id, username: user.username })
+    token: signAuthToken({ sub: user.id, username: user.username, authVersion: normalizeAuthVersion(user.auth_version) })
   };
 }
 
