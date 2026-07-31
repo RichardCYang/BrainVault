@@ -104,6 +104,38 @@ components:
         expiresInSeconds:
           type: integer
           example: 300
+    LoginAttempt:
+      type: object
+      required: [id, ipAddress, outcome, attemptedAt]
+      properties:
+        id:
+          type: string
+        ipAddress:
+          type: string
+          description: Normalized IPv4 or IPv6 address, or unknown when no valid address is available.
+        outcome:
+          type: string
+          enum: [SUCCESS, FAILURE]
+        attemptedAt:
+          type: string
+          format: date-time
+    LoginHistoryResponse:
+      type: object
+      required: [months, truncated, attempts]
+      properties:
+        months:
+          type: integer
+          minimum: 1
+          maximum: 12
+          default: 3
+        truncated:
+          type: boolean
+          description: True when more than the latest 500 matching attempts exist.
+        attempts:
+          type: array
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/LoginAttempt'
     CurrentPasswordInput:
       type: object
       required: [currentPassword]
@@ -1037,6 +1069,30 @@ paths:
       responses:
         '200':
           description: Current user
+  /api/auth/login-history:
+    get:
+      summary: Read recent login attempts for the current account
+      description: Returns successful and failed password or MFA login attempts in newest-first order.
+      parameters:
+        - in: query
+          name: months
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 12
+            default: 3
+      responses:
+        '200':
+          description: Login history for the requested period
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginHistoryResponse'
   /api/auth/profile:
     patch:
       summary: Update the current user profile and account preferences

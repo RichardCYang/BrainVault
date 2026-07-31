@@ -6,6 +6,13 @@ import { createId } from "../lib/id.js";
 import { hashPassword, normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { ApiError } from "../lib/http.js";
+import {
+  defaultLoginHistoryMonths,
+  getClientIpAddress,
+  listLoginAttempts,
+  maxLoginHistoryMonths,
+  recordLoginAttempt
+} from "../lib/login-history.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { clearAuthSessionCookie, setAuthSessionCookie } from "../lib/session-cookie.js";
 import {
@@ -15,7 +22,7 @@ import {
 } from "../lib/profile.js";
 import { requireAuth } from "../middleware/auth.js";
 import { loginAccountRateLimit, loginIpRateLimit, registrationRateLimit } from "../middleware/auth-rate-limit.js";
-import { validate } from "../middleware/validate.js";
+import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { requireUser, usernameSchema } from "../utils/schemas.js";
 import type { UserRow } from "../types/domain.js";
 import { createMfaLoginSession, getMfaMethods, mfaRouter } from "./mfa.routes.js";
@@ -47,6 +54,10 @@ const profileSchema = z
   .refine((value) => Object.values(value).some((item) => item !== undefined), {
     message: "At least one profile field is required"
   });
+
+const loginHistoryQuerySchema = z.object({
+  months: z.coerce.number().int().min(1).max(maxLoginHistoryMonths).default(defaultLoginHistoryMonths)
+});
 
 const passwordSchema = z
   .object({
@@ -99,16 +110,18 @@ authRouter.post(
 authRouter.post("/login", loginIpRateLimit, loginAccountRateLimit, validate({ body: loginSchema }), async (req, res, next) => {
   try {
     const { username, password } = req.body as z.infer<typeof loginSchema>;
+    const sourceIp = getClientIpAddress(req);
     const user = await db.queryOne<UserRow>("SELECT * FROM users WHERE username = ?", [username]);
     const passwordMatches = await verifyPassword(password, user?.password_hash ?? (await dummyPasswordHash));
 
     if (!user || !passwordMatches) {
+      if (user) await recordLoginAttempt(user.id, sourceIp, "FAILURE");
       throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid ID or password");
     }
 
     const methods = await getMfaMethods(user.id);
     if (methods.totp || methods.passkey) {
-      const mfaToken = await createMfaLoginSession(user.id);
+      const mfaToken = await createMfaLoginSession(user.id, sourceIp);
       res.locals.authenticationPending = true;
       clearAuthSessionCookie(res);
       res.setHeader("Cache-Control", "private, no-store");
@@ -121,6 +134,7 @@ authRouter.post("/login", loginIpRateLimit, loginAccountRateLimit, validate({ bo
       return;
     }
 
+    await recordLoginAttempt(user.id, sourceIp, "SUCCESS");
     const token = signAuthToken({ sub: user.id, username: user.username, authVersion: normalizeAuthVersion(user.auth_version) });
     setAuthSessionCookie(res, token);
     res.setHeader("Cache-Control", "private, no-store");
@@ -157,6 +171,23 @@ authRouter.get("/me", requireAuth, async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
   res.json({ user });
 });
+
+authRouter.get(
+  "/login-history",
+  requireAuth,
+  validate({ query: loginHistoryQuerySchema }),
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req.user);
+      const { months } = getValidatedQuery<z.infer<typeof loginHistoryQuerySchema>>(req);
+      const history = await listLoginAttempts(user.id, months);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json(history);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 authRouter.patch("/profile", requireAuth, validate({ body: profileSchema }), async (req, res, next) => {
   try {

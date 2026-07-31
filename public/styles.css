@@ -9726,6 +9726,181 @@ body.account-settings-open {
   background: transparent;
 }
 
+.account-security-tabs {
+  display: flex;
+  gap: 0.3rem;
+  margin: -0.35rem 0 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.account-security-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 7px 7px 0 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.58rem 0.75rem 0.52rem;
+  box-shadow: none;
+  font-size: 0.74rem;
+  font-weight: 720;
+}
+
+.account-security-tabs button:hover {
+  background: var(--hover);
+  color: var(--ink-strong);
+}
+
+.account-security-tabs button[aria-selected="true"] {
+  border-bottom-color: var(--accent-text);
+  color: var(--accent-text);
+}
+
+.account-security-panel {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.login-history-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.login-history-heading > div {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.login-history-heading h4 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: 0.96rem;
+  letter-spacing: -0.02em;
+}
+
+.login-history-heading p,
+.login-history-summary,
+.login-history-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.55;
+}
+
+.login-history-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(247, 251, 253, 0.74);
+  padding: 0.72rem 0.8rem;
+}
+
+.login-history-toolbar label {
+  color: var(--ink-strong);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.login-history-toolbar select {
+  width: min(11rem, 48%);
+}
+
+.login-history-summary {
+  min-height: 1.15rem;
+  color: var(--accent-text);
+  font-weight: 650;
+}
+
+.login-history-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+}
+
+.login-history-table {
+  width: 100%;
+  min-width: 31rem;
+  border-collapse: collapse;
+  font-size: 0.73rem;
+}
+
+.login-history-table th,
+.login-history-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.72rem 0.8rem;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.login-history-table th {
+  background: rgba(236, 246, 252, 0.72);
+  color: var(--muted);
+  font-size: 0.67rem;
+  font-weight: 760;
+  letter-spacing: 0.02em;
+}
+
+.login-history-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.login-history-table td:first-child,
+.login-history-table td:nth-child(2) {
+  font-variant-numeric: tabular-nums;
+}
+
+.login-history-table td:nth-child(2) {
+  color: var(--ink-strong);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.login-history-result {
+  display: inline-flex;
+  min-width: 3.7rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.27rem 0.48rem;
+  font-size: 0.66rem;
+  font-weight: 760;
+}
+
+.login-history-result.success {
+  border-color: rgba(32, 139, 98, 0.22);
+  background: rgba(32, 139, 98, 0.08);
+  color: #16704d;
+}
+
+.login-history-result.failure {
+  border-color: rgba(210, 66, 66, 0.22);
+  background: rgba(210, 66, 66, 0.08);
+  color: var(--danger);
+}
+
+.login-history-loading td {
+  color: var(--muted);
+  text-align: center;
+}
+
+.login-history-empty {
+  margin: 0;
+  color: var(--muted);
+  padding: 1.1rem;
+  font-size: 0.74rem;
+  text-align: center;
+}
+
+.login-history-note {
+  text-align: right;
+}
+
 .account-security-section {
   display: grid;
   gap: 1rem;
@@ -9964,7 +10139,8 @@ button.danger {
 @media (max-width: 620px) {
   .account-security-section-heading,
   .mfa-method-card-header,
-  .passkey-list-item {
+  .passkey-list-item,
+  .login-history-heading {
     align-items: stretch;
     flex-direction: column;
   }
@@ -9984,6 +10160,15 @@ button.danger {
   }
 
   .passkey-register-form > button {
+    width: 100%;
+  }
+
+  .login-history-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .login-history-toolbar select {
     width: 100%;
   }
 }

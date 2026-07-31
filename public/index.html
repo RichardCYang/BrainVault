@@ -683,7 +683,17 @@
                 <p data-i18n="account.securityDescription">Manage your password and two-step verification methods.</p>
               </div>
 
-              <section class="account-security-section mfa-settings-section" aria-labelledby="account-mfa-title">
+              <div class="account-security-tabs" role="tablist" aria-label="Security sections" data-i18n-aria-label="account.securityTabsAria">
+                <button id="account-security-tab-settings" type="button" role="tab" aria-selected="true" aria-controls="account-security-panel-settings" data-security-panel="settings">
+                  <span data-i18n="account.securitySettingsTab">Security settings</span>
+                </button>
+                <button id="account-security-tab-history" type="button" role="tab" aria-selected="false" aria-controls="account-security-panel-history" data-security-panel="history" tabindex="-1">
+                  <span data-i18n="account.loginHistoryTab">Login history</span>
+                </button>
+              </div>
+
+              <div id="account-security-panel-settings" class="account-security-panel" role="tabpanel" aria-labelledby="account-security-tab-settings" data-security-panel-content="settings">
+                <section class="account-security-section mfa-settings-section" aria-labelledby="account-mfa-title">
                 <div class="account-security-section-heading">
                   <div>
                     <h4 id="account-mfa-title" data-i18n="mfa.settingsTitle">Two-step verification</h4>
@@ -750,16 +760,16 @@
                   <div id="account-passkey-support" class="field-help"></div>
                   <div id="account-passkey-list" class="passkey-list" aria-live="polite"></div>
                 </article>
-              </section>
+                </section>
 
-              <section class="account-security-section" aria-labelledby="account-password-title">
+                <section class="account-security-section" aria-labelledby="account-password-title">
                 <div class="account-security-section-heading">
                   <div>
                     <h4 id="account-password-title" data-i18n="account.passwordTitle">Password</h4>
                     <p data-i18n="account.passwordDescription">Confirm your current password before choosing a new one.</p>
                   </div>
                 </div>
-              <form id="account-password-form" class="account-settings-form">
+                  <form id="account-password-form" class="account-settings-form">
                 <div class="form-field">
                   <label for="account-current-password" data-i18n="account.currentPassword">Current password</label>
                   <input id="account-current-password" type="password" autocomplete="current-password" maxlength="128" required />
@@ -776,7 +786,41 @@
                 <div class="account-form-actions">
                   <button id="account-password-save" type="submit" data-i18n="account.changePassword">Change password</button>
                 </div>
-              </form>
+                  </form>
+                </section>
+              </div>
+
+              <section id="account-security-panel-history" class="account-security-panel hidden" role="tabpanel" aria-labelledby="account-security-tab-history" data-security-panel-content="history">
+                <div class="login-history-heading">
+                  <div>
+                    <h4 data-i18n="account.loginHistoryTitle">Login history</h4>
+                    <p data-i18n="account.loginHistoryDescription">Review recent successful and failed sign-in attempts for your account.</p>
+                  </div>
+                  <button id="account-login-history-refresh" class="secondary compact" type="button" data-i18n="account.loginHistoryRefresh">Refresh</button>
+                </div>
+
+                <div class="login-history-toolbar">
+                  <label for="account-login-history-months" data-i18n="account.loginHistoryPeriod">History period</label>
+                  <select id="account-login-history-months" aria-label="History period" data-i18n-aria-label="account.loginHistoryPeriod"></select>
+                </div>
+
+                <p id="account-login-history-summary" class="login-history-summary" aria-live="polite"></p>
+
+                <div class="login-history-table-wrap">
+                  <table class="login-history-table">
+                    <caption class="visually-hidden" data-i18n="account.loginHistoryTableCaption">Recent account login attempts</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col" data-i18n="account.loginHistoryTime">Time</th>
+                        <th scope="col" data-i18n="account.loginHistoryIp">IP address</th>
+                        <th scope="col" data-i18n="account.loginHistoryResult">Result</th>
+                      </tr>
+                    </thead>
+                    <tbody id="account-login-history-body"></tbody>
+                  </table>
+                  <p id="account-login-history-empty" class="login-history-empty hidden" data-i18n="account.loginHistoryEmpty">No login attempts were recorded during this period.</p>
+                </div>
+                <p id="account-login-history-truncated" class="login-history-note hidden" data-i18n="account.loginHistoryTruncated">Only the latest 500 attempts are shown.</p>
               </section>
             </section>
           </div>

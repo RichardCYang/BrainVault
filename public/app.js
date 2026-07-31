@@ -101,6 +101,8 @@ const state = {
   pendingFocusBlockId: null,
   accountSettingsOpen: false,
   activeAccountPanel: "profile",
+  activeSecurityPanel: "settings",
+  loginHistory: { months: 3, attempts: [], truncated: false, loading: false, loadedMonths: null },
   pendingAvatarData: null,
   mfaLogin: null,
   mfaStatus: { totpEnabled: false, passkeys: [] },
@@ -582,6 +584,14 @@ const elements = {
   accountSettingsMessage: $("#account-settings-message"),
   accountSettingsTabs: [...document.querySelectorAll("[data-account-panel]")],
   accountSettingsPanels: [...document.querySelectorAll("[data-account-panel-content]")],
+  accountSecurityTabs: [...document.querySelectorAll("[data-security-panel]")],
+  accountSecurityPanels: [...document.querySelectorAll("[data-security-panel-content]")],
+  accountLoginHistoryMonths: $("#account-login-history-months"),
+  accountLoginHistoryRefresh: $("#account-login-history-refresh"),
+  accountLoginHistorySummary: $("#account-login-history-summary"),
+  accountLoginHistoryBody: $("#account-login-history-body"),
+  accountLoginHistoryEmpty: $("#account-login-history-empty"),
+  accountLoginHistoryTruncated: $("#account-login-history-truncated"),
   sidebarUserAvatar: $("#sidebar-user-avatar"),
   sidebarUserAvatarFallback: $("#sidebar-user-avatar-fallback"),
   userUsername: $("#user-username"),
@@ -1332,6 +1342,8 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   state.searchQuery = "";
   state.pendingFocusBlockId = null;
   state.pendingAvatarData = null;
+  state.activeSecurityPanel = "settings";
+  state.loginHistory = { months: 3, attempts: [], truncated: false, loading: false, loadedMonths: null };
   elements.searchInput.value = "";
 
   if (render) {
@@ -1343,6 +1355,124 @@ function resetAuthenticationSessionState({ render = true } = {}) {
 function setAccountMessage(message = "", isError = false) {
   elements.accountSettingsMessage.textContent = message;
   elements.accountSettingsMessage.classList.toggle("error", isError);
+}
+
+function populateLoginHistoryMonths() {
+  const selectedMonths = Number(elements.accountLoginHistoryMonths.value) || state.loginHistory.months || 3;
+  elements.accountLoginHistoryMonths.replaceChildren(
+    ...Array.from({ length: 12 }, (_, index) => {
+      const option = document.createElement("option");
+      option.value = String(index + 1);
+      option.textContent = t("account.loginHistoryMonths", { count: formatNumber(index + 1) });
+      return option;
+    })
+  );
+  elements.accountLoginHistoryMonths.value = String(Math.min(12, Math.max(1, selectedMonths)));
+}
+
+function renderLoginHistory() {
+  const { attempts, truncated, loading, months } = state.loginHistory;
+  elements.accountLoginHistoryBody.replaceChildren();
+  elements.accountLoginHistoryEmpty.classList.add("hidden");
+  elements.accountLoginHistoryTruncated.classList.toggle("hidden", !truncated || loading);
+  elements.accountLoginHistoryMonths.disabled = loading;
+  elements.accountLoginHistoryRefresh.disabled = loading;
+
+  if (loading) {
+    const row = document.createElement("tr");
+    row.className = "login-history-loading";
+    const cell = document.createElement("td");
+    cell.colSpan = 3;
+    cell.textContent = t("account.loginHistoryLoading");
+    row.append(cell);
+    elements.accountLoginHistoryBody.append(row);
+    elements.accountLoginHistorySummary.textContent = t("account.loginHistoryLoading");
+    return;
+  }
+
+  attempts.forEach((attempt) => {
+    const row = document.createElement("tr");
+    const timeCell = document.createElement("td");
+    timeCell.textContent = formatDate(attempt.attemptedAt);
+    const ipCell = document.createElement("td");
+    ipCell.textContent = attempt.ipAddress === "unknown" ? t("account.loginHistoryUnknownIp") : attempt.ipAddress;
+    const resultCell = document.createElement("td");
+    const result = document.createElement("span");
+    const succeeded = attempt.outcome === "SUCCESS";
+    result.className = `login-history-result ${succeeded ? "success" : "failure"}`;
+    result.textContent = t(succeeded ? "account.loginHistorySuccess" : "account.loginHistoryFailure");
+    resultCell.append(result);
+    row.append(timeCell, ipCell, resultCell);
+    elements.accountLoginHistoryBody.append(row);
+  });
+
+  elements.accountLoginHistoryEmpty.classList.toggle("hidden", attempts.length > 0);
+  elements.accountLoginHistorySummary.textContent = t("account.loginHistorySummary", {
+    count: formatNumber(attempts.length),
+    months: formatNumber(months)
+  });
+}
+
+async function loadLoginHistory({ force = false } = {}) {
+  if (!state.user || state.loginHistory.loading) return;
+  const months = Math.min(12, Math.max(1, Number(elements.accountLoginHistoryMonths.value) || 3));
+  state.loginHistory.months = months;
+  if (!force && state.loginHistory.loadedMonths === months) {
+    renderLoginHistory();
+    return;
+  }
+
+  state.loginHistory.loading = true;
+  renderLoginHistory();
+  setAccountMessage();
+  try {
+    const data = await api(`/api/auth/login-history?months=${encodeURIComponent(months)}`);
+    state.loginHistory.attempts = Array.isArray(data?.attempts) ? data.attempts : [];
+    state.loginHistory.truncated = Boolean(data?.truncated);
+    state.loginHistory.loadedMonths = months;
+  } catch (error) {
+    state.loginHistory.attempts = [];
+    state.loginHistory.truncated = false;
+    state.loginHistory.loadedMonths = null;
+    setAccountMessage(error.message, true);
+  } finally {
+    state.loginHistory.loading = false;
+    renderLoginHistory();
+  }
+}
+
+function loadActiveSecurityPanel() {
+  if (state.activeSecurityPanel === "history") void loadLoginHistory();
+  else void loadMfaSettings();
+}
+
+function setSecurityPanel(panel, { focusTab = false, load = true } = {}) {
+  const nextPanel = panel === "history" ? "history" : "settings";
+  state.activeSecurityPanel = nextPanel;
+  elements.accountSecurityTabs.forEach((tab) => {
+    const selected = tab.dataset.securityPanel === nextPanel;
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+    if (selected && focusTab) tab.focus();
+  });
+  elements.accountSecurityPanels.forEach((panelElement) => {
+    panelElement.classList.toggle("hidden", panelElement.dataset.securityPanelContent !== nextPanel);
+  });
+  setAccountMessage();
+  if (load && state.accountSettingsOpen && state.activeAccountPanel === "security") loadActiveSecurityPanel();
+}
+
+function handleSecurityTabKeydown(event) {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const tabs = elements.accountSecurityTabs;
+  const currentIndex = Math.max(0, tabs.indexOf(event.currentTarget));
+  const nextIndex = event.key === "Home"
+    ? 0
+    : event.key === "End"
+      ? tabs.length - 1
+      : (currentIndex + (event.key === "ArrowLeft" ? -1 : 1) + tabs.length) % tabs.length;
+  setSecurityPanel(tabs[nextIndex].dataset.securityPanel, { focusTab: true });
 }
 
 function setAccountPanel(panel, { focusTab = false } = {}) {
@@ -1358,7 +1488,7 @@ function setAccountPanel(panel, { focusTab = false } = {}) {
     panelElement.classList.toggle("hidden", panelElement.dataset.accountPanelContent !== nextPanel);
   });
   setAccountMessage();
-  if (nextPanel === "security" && state.accountSettingsOpen) void loadMfaSettings();
+  if (nextPanel === "security" && state.accountSettingsOpen) loadActiveSecurityPanel();
 }
 
 function hideTotpSetup() {
@@ -1507,7 +1637,10 @@ function fillAccountSettings() {
   elements.accountMfaPassword.value = "";
   elements.accountPasskeyRegisterForm.reset();
   hideTotpSetup();
+  populateLoginHistoryMonths();
+  setSecurityPanel(state.activeSecurityPanel, { load: false });
   renderMfaSettings();
+  renderLoginHistory();
   updateUserIdentityUi();
 }
 
@@ -8579,6 +8712,8 @@ async function openPage(pageId, { skipFlush = false } = {}) {
 async function boot() {
   applyDocumentTranslations();
   populateLanguageSelect(elements.languageSelect);
+  populateLoginHistoryMonths();
+  renderLoginHistory();
   setAuthMode(state.authMode, false);
 
   try {
@@ -8729,6 +8864,21 @@ document.addEventListener("keydown", handleAccountSettingsKeydown);
 elements.accountSettingsTabs.forEach((tab) => {
   tab.addEventListener("click", () => setAccountPanel(tab.dataset.accountPanel));
   tab.addEventListener("keydown", handleAccountTabKeydown);
+});
+
+elements.accountSecurityTabs.forEach((tab) => {
+  tab.addEventListener("click", () => setSecurityPanel(tab.dataset.securityPanel));
+  tab.addEventListener("keydown", handleSecurityTabKeydown);
+});
+
+elements.accountLoginHistoryMonths.addEventListener("change", () => {
+  state.loginHistory.loadedMonths = null;
+  void loadLoginHistory({ force: true });
+});
+
+elements.accountLoginHistoryRefresh.addEventListener("click", () => {
+  state.loginHistory.loadedMonths = null;
+  void loadLoginHistory({ force: true });
 });
 
 elements.accountDataExport.addEventListener("click", async () => {
@@ -9058,7 +9208,11 @@ function refreshLocalizedUi() {
   renderSelectedPage();
   syncPageModeUi();
   if (state.user) updateUserIdentityUi();
-  if (state.accountSettingsOpen) renderMfaSettings();
+  populateLoginHistoryMonths();
+  if (state.accountSettingsOpen) {
+    if (state.activeSecurityPanel === "history") renderLoginHistory();
+    else renderMfaSettings();
+  }
   if (state.mfaLogin?.methods?.passkey) {
     elements.mfaLoginPasskey.disabled = !isWebAuthnSupported();
   }

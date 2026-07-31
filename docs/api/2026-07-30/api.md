@@ -21,6 +21,7 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `POST` | `/api/auth/mfa/login/passkey/options` | Create a passkey authentication challenge |
 | `POST` | `/api/auth/mfa/login/passkey/verify` | Verify a passkey and complete login |
 | `GET` | `/api/auth/me` | Read the current user |
+| `GET` | `/api/auth/login-history?months=3` | Read the current user’s successful and failed login attempts, newest first; accepts 1–12 months |
 | `PATCH` | `/api/auth/profile` | Update display name, profile image, or preferred language |
 | `POST` | `/api/auth/password` | Change the password after verifying the current password |
 | `GET` | `/api/pages` | List pages |

@@ -14,6 +14,7 @@ import { env } from "../config/env.js";
 import { db, transaction, type DbClient } from "../lib/db.js";
 import { normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
+import { recordLoginAttempt } from "../lib/login-history.js";
 import { createId } from "../lib/id.js";
 import {
   buildTotpUri,
@@ -157,6 +158,7 @@ type PasskeyRow = {
 type MfaSessionRow = {
   token_hash: string;
   user_id: string;
+  source_ip: string;
   failed_attempts: number;
   expires_at: string;
   used_at: string | null;
@@ -234,7 +236,7 @@ export async function getMfaMethods(userId: string): Promise<MfaMethods> {
   };
 }
 
-export async function createMfaLoginSession(userId: string) {
+export async function createMfaLoginSession(userId: string, sourceIp: string) {
   const token = createOpaqueToken();
   const tokenHash = hashOpaqueToken(token);
   const carryCutoff = new Date(Date.now() - mfaFailureCarryWindowMs);
@@ -265,9 +267,9 @@ export async function createMfaLoginSession(userId: string) {
       [userId, carryCutoff]
     );
     await client.execute(
-      `INSERT INTO mfa_login_sessions (token_hash, user_id, failed_attempts, expires_at)
-       VALUES (?, ?, ?, ?)`,
-      [tokenHash, userId, carriedAttempts, expiresAt(mfaSessionLifetimeMs)]
+      `INSERT INTO mfa_login_sessions (token_hash, user_id, source_ip, failed_attempts, expires_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [tokenHash, userId, sourceIp, carriedAttempts, expiresAt(mfaSessionLifetimeMs)]
     );
   });
 
@@ -276,7 +278,7 @@ export async function createMfaLoginSession(userId: string) {
 
 async function getActiveMfaSession(mfaToken: string, client: DbClient = db) {
   const row = await client.queryOne<MfaSessionRow>(
-    `SELECT token_hash, user_id, failed_attempts, expires_at, used_at
+    `SELECT token_hash, user_id, source_ip, failed_attempts, expires_at, used_at
      FROM mfa_login_sessions
      WHERE token_hash = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)`,
     [hashOpaqueToken(mfaToken)]
@@ -287,13 +289,16 @@ async function getActiveMfaSession(mfaToken: string, client: DbClient = db) {
   return row;
 }
 
-async function recordMfaFailure(mfaToken: string) {
-  await db.execute(
+async function recordMfaFailure(mfaToken: string, session: MfaSessionRow) {
+  const result = await db.execute<{ affectedRows: number }>(
     `UPDATE mfa_login_sessions
      SET failed_attempts = failed_attempts + 1
      WHERE token_hash = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)`,
     [hashOpaqueToken(mfaToken)]
   );
+  if (Number(result.affectedRows) === 1) {
+    await recordLoginAttempt(session.user_id, session.source_ip, "FAILURE");
+  }
 }
 
 async function completeMfaSession(client: DbClient, mfaToken: string, userId: string) {
@@ -684,7 +689,7 @@ mfaRouter.post(
       });
       const matchedStep = findMatchingTotpStep(secret, code);
       if (matchedStep === null) {
-        await recordMfaFailure(mfaToken);
+        await recordMfaFailure(mfaToken, session);
         throw new ApiError(401, "INVALID_MFA_CODE", "The verification code is invalid");
       }
 
@@ -698,6 +703,7 @@ mfaRouter.post(
         if (Number(updated.affectedRows) !== 1) {
           throw new ApiError(401, "MFA_CODE_REUSED", "The verification code was already used");
         }
+        await recordLoginAttempt(session.user_id, session.source_ip, "SUCCESS", client);
         await completeMfaSession(client, mfaToken, session.user_id);
       });
 
@@ -768,7 +774,7 @@ mfaRouter.post(
         [session.user_id, credentialId]
       );
       if (!passkey) {
-        await recordMfaFailure(mfaToken);
+        await recordMfaFailure(mfaToken, session);
         throw new ApiError(401, "PASSKEY_NOT_FOUND", "The passkey is not registered for this account");
       }
 
@@ -788,18 +794,18 @@ mfaRouter.post(
           requireUserVerification: true
         });
       } catch {
-        await recordMfaFailure(mfaToken);
+        await recordMfaFailure(mfaToken, session);
         throw new ApiError(401, "PASSKEY_AUTHENTICATION_FAILED", "The passkey could not be verified");
       }
       if (!verification.verified) {
-        await recordMfaFailure(mfaToken);
+        await recordMfaFailure(mfaToken, session);
         throw new ApiError(401, "PASSKEY_AUTHENTICATION_FAILED", "The passkey could not be verified");
       }
 
       const previousCounter = Number(passkey.counter);
       const newCounter = Number(verification.authenticationInfo.newCounter);
       if (previousCounter > 0 && newCounter <= previousCounter) {
-        await recordMfaFailure(mfaToken);
+        await recordMfaFailure(mfaToken, session);
         throw new ApiError(401, "PASSKEY_COUNTER_REGRESSION", "The passkey counter did not advance");
       }
 
@@ -820,6 +826,7 @@ mfaRouter.post(
         if (Number(updated.affectedRows) !== 1) {
           throw new ApiError(401, "PASSKEY_AUTHENTICATION_FAILED", "The passkey state changed during verification");
         }
+        await recordLoginAttempt(session.user_id, session.source_ip, "SUCCESS", client);
         await completeMfaSession(client, mfaToken, session.user_id);
       });
 
