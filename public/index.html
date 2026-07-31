@@ -248,11 +248,21 @@
           </button>
 
           <div class="sidebar-primary-actions" role="group" aria-label="Workspace shortcuts" data-i18n-aria-label="workspace.shortcutsAria">
-            <form id="search-form" class="search-form" role="search">
-              <label class="visually-hidden" for="search-input" data-i18n="search.label">Search pages and blocks</label>
-              <input id="search-input" type="search" placeholder="Quick Find" data-i18n-placeholder="search.placeholder" />
-              <button type="submit" class="secondary" aria-label="Search" title="Search" data-i18n-aria-label="search.button" data-i18n-title="search.button"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg></button>
-            </form>
+            <button
+              id="sidebar-search-shortcut"
+              type="button"
+              class="sidebar-utility-button"
+              aria-haspopup="dialog"
+              aria-controls="search-dialog"
+              aria-expanded="false"
+              data-i18n-aria-label="search.open"
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <circle cx="11" cy="11" r="6.5"></circle>
+                <path d="m16 16 4 4"></path>
+              </svg>
+              <span data-i18n="search.button">Search</span>
+            </button>
 
             <button id="sidebar-home-shortcut" type="button" class="sidebar-utility-button">
               <svg aria-hidden="true" viewBox="0 0 24 24">
@@ -510,6 +520,85 @@
           <span id="share-page-count" class="muted"></span>
         </div>
         <ul id="share-page-list" class="share-page-list"></ul>
+      </section>
+    </div>
+
+
+    <div id="search-layer" class="account-settings-layer search-layer hidden" aria-hidden="true">
+      <button
+        id="search-backdrop"
+        class="account-settings-backdrop search-backdrop"
+        type="button"
+        aria-label="Close search"
+        data-i18n-aria-label="search.close"
+        tabindex="-1"
+      ></button>
+      <section
+        id="search-dialog"
+        class="account-settings-dialog search-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="search-dialog-title"
+        tabindex="-1"
+      >
+        <header class="account-settings-header search-dialog-header">
+          <div>
+            <p class="account-settings-kicker">BrainVault</p>
+            <h2 id="search-dialog-title" data-i18n="search.title">Search</h2>
+          </div>
+          <button
+            id="search-dialog-close"
+            class="account-settings-close"
+            type="button"
+            aria-label="Close search"
+            title="Close search"
+            data-i18n-aria-label="search.close"
+            data-i18n-title="search.close"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+          </button>
+        </header>
+
+        <div class="search-dialog-body">
+          <form id="search-form" class="search-dialog-form" role="search">
+            <label class="visually-hidden" for="search-input" data-i18n="search.label">Search pages and blocks</label>
+            <div class="search-dialog-input-wrap">
+              <svg class="search-dialog-input-icon" aria-hidden="true" viewBox="0 0 24 24">
+                <circle cx="11" cy="11" r="6.5"></circle>
+                <path d="m16 16 4 4"></path>
+              </svg>
+              <input
+                id="search-input"
+                type="search"
+                maxlength="120"
+                autocomplete="off"
+                placeholder="Quick Find"
+                data-i18n-placeholder="search.placeholder"
+              />
+              <button
+                id="search-clear"
+                class="search-dialog-clear"
+                type="button"
+                aria-label="Clear search"
+                title="Clear search"
+                data-i18n-aria-label="search.clear"
+                data-i18n-title="search.clear"
+                hidden
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"></path></svg>
+              </button>
+            </div>
+            <button class="search-dialog-submit" type="submit" data-i18n="search.button">Search</button>
+          </form>
+
+          <p id="search-dialog-help" class="search-dialog-help" data-i18n="search.help">Search page titles and block content.</p>
+          <div class="search-dialog-results-header">
+            <strong data-i18n="search.results">Search results</strong>
+            <span id="search-result-count" aria-live="polite"></span>
+          </div>
+          <div id="search-results" class="search-results" role="list" aria-label="Search results" data-i18n-aria-label="search.results"></div>
+          <p id="search-message" class="search-dialog-message" role="status" aria-live="polite" data-i18n="search.start">Enter a keyword to search your workspace.</p>
+        </div>
       </section>
     </div>
 

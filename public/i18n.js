@@ -179,7 +179,10 @@ export const translationCatalogs = {
       backedUp: "Backed up",
       notBackedUp: "Not backed up"
     },
-    search: { label: "Search pages and blocks", placeholder: "Quick Find", button: "Search" },
+    search: {
+      open: "Open search", title: "Search", close: "Close search", label: "Search pages and blocks", placeholder: "Quick Find", button: "Search", clear: "Clear search",
+      help: "Search page titles and block content.", start: "Enter a keyword to search your workspace.", loading: "Searching...", results: "Search results", resultCount: "{count} result(s)", empty: "No matching pages or blocks.", pageResult: "Page", blockResult: "Block"
+    },
     navigation: { aria: "Default collection and page list" },
     navigationMenu: {
       aria: "Page or collection actions",
@@ -783,7 +786,10 @@ export const translationCatalogs = {
       importConfirm: "このバックアップを復元しますか？現在のワークスペースデータ、共有権限、添付ファイルはすべて置き換わります。",
       importComplete: "復元完了: ページ{pages}件、ブロック{blocks}件、添付{attachments}件、共有権限{shares}件。"
     },
-    search: { label: "ページとブロックを検索", placeholder: "クイック検索", button: "検索" },
+    search: {
+      open: "検索を開く", title: "検索", close: "検索を閉じる", label: "ページとブロックを検索", placeholder: "クイック検索", button: "検索", clear: "検索をクリア",
+      help: "ページのタイトルとブロック内容を検索します。", start: "キーワードを入力してワークスペースを検索してください。", loading: "検索しています...", results: "検索結果", resultCount: "{count}件", empty: "一致するページまたはブロックがありません。", pageResult: "ページ", blockResult: "ブロック"
+    },
     navigation: { aria: "デフォルトコレクションとページ一覧" },
     navigationMenu: {
       aria: "ページまたはコレクションの操作",
@@ -1178,7 +1184,10 @@ export const translationCatalogs = {
       disableTotpConfirm: "이 계정의 인증 앱 인증을 사용 중지할까요?", removePasskeyConfirm: "‘{name}’ 패스키를 삭제할까요?", renamePrompt: "패스키의 새 이름을 입력하세요.",
       singleDevice: "기기 종속 자격 증명", multiDevice: "다중 기기 자격 증명", backedUp: "백업됨", notBackedUp: "백업되지 않음"
     },
-    search: { label: "문서와 블록 검색", placeholder: "빠른 찾기", button: "검색" },
+    search: {
+      open: "검색 열기", title: "검색", close: "검색 닫기", label: "문서와 블록 검색", placeholder: "빠른 찾기", button: "검색", clear: "검색어 지우기",
+      help: "페이지 제목과 블록 내용을 검색합니다.", start: "키워드를 입력해 워크스페이스를 검색하세요.", loading: "검색 중...", results: "검색 결과", resultCount: "결과 {count}개", empty: "일치하는 페이지나 블록이 없습니다.", pageResult: "페이지", blockResult: "블록"
+    },
     navigation: { aria: "기본 컬렉션과 문서 목록" },
     navigationMenu: {
       aria: "페이지 또는 컬렉션 작업",
@@ -1763,7 +1772,10 @@ export const translationCatalogs = {
       importConfirm: "Restaurer cette sauvegarde ? Toutes les données, autorisations de partage et pièces jointes actuelles seront remplacées.",
       importComplete: "Restauration terminée : {pages} pages, {blocks} blocs, {attachments} pièces jointes et {shares} autorisations de partage."
     },
-    search: { label: "Rechercher des pages et des blocs", placeholder: "Recherche rapide", button: "Rechercher" },
+    search: {
+      open: "Ouvrir la recherche", title: "Recherche", close: "Fermer la recherche", label: "Rechercher des pages et des blocs", placeholder: "Recherche rapide", button: "Rechercher", clear: "Effacer la recherche",
+      help: "Recherchez dans les titres de pages et le contenu des blocs.", start: "Saisissez un mot-clé pour rechercher dans votre espace.", loading: "Recherche en cours...", results: "Résultats de recherche", resultCount: "{count} résultat(s)", empty: "Aucune page ni aucun bloc correspondant.", pageResult: "Page", blockResult: "Bloc"
+    },
     navigation: { aria: "Collection par défaut et liste des pages" },
     navigationMenu: {
       aria: "Actions de page ou de collection",
@@ -2140,7 +2152,10 @@ export const translationCatalogs = {
       importConfirm: "Diese Sicherung wiederherstellen? Alle aktuellen Arbeitsbereichsdaten, Freigabeberechtigungen und Anhänge werden ersetzt.",
       importComplete: "Wiederherstellung abgeschlossen: {pages} Seiten, {blocks} Blöcke, {attachments} Anhänge und {shares} Freigabeberechtigungen."
     },
-    search: { label: "Seiten und Blöcke durchsuchen", placeholder: "Schnellsuche", button: "Suchen" },
+    search: {
+      open: "Suche öffnen", title: "Suche", close: "Suche schließen", label: "Seiten und Blöcke durchsuchen", placeholder: "Schnellsuche", button: "Suchen", clear: "Suche leeren",
+      help: "Durchsucht Seitentitel und Blockinhalte.", start: "Geben Sie ein Stichwort ein, um den Arbeitsbereich zu durchsuchen.", loading: "Suche läuft...", results: "Suchergebnisse", resultCount: "{count} Ergebnis(se)", empty: "Keine passenden Seiten oder Blöcke.", pageResult: "Seite", blockResult: "Block"
+    },
     navigation: { aria: "Standardsammlung und Seitenliste" },
     navigationMenu: {
       aria: "Seiten- oder Sammlungsaktionen",
@@ -2517,7 +2532,10 @@ export const translationCatalogs = {
       importConfirm: "¿Restaurar esta copia? Se reemplazarán todos los datos, permisos de uso compartido y archivos adjuntos actuales.",
       importComplete: "Restauración completada: {pages} páginas, {blocks} bloques, {attachments} archivos adjuntos y {shares} permisos de uso compartido."
     },
-    search: { label: "Buscar páginas y bloques", placeholder: "Búsqueda rápida", button: "Buscar" },
+    search: {
+      open: "Abrir búsqueda", title: "Buscar", close: "Cerrar búsqueda", label: "Buscar páginas y bloques", placeholder: "Búsqueda rápida", button: "Buscar", clear: "Borrar búsqueda",
+      help: "Busca en títulos de páginas y contenido de bloques.", start: "Escribe una palabra clave para buscar en tu espacio.", loading: "Buscando...", results: "Resultados de búsqueda", resultCount: "{count} resultado(s)", empty: "No hay páginas ni bloques coincidentes.", pageResult: "Página", blockResult: "Bloque"
+    },
     navigation: { aria: "Colección predeterminada y lista de páginas" },
     navigationMenu: {
       aria: "Acciones de página o colección",
@@ -2894,7 +2912,10 @@ export const translationCatalogs = {
       importConfirm: "Restaurar este backup? Todos os dados, permissões de compartilhamento e anexos atuais serão substituídos.",
       importComplete: "Restauração concluída: {pages} páginas, {blocks} blocos, {attachments} anexos e {shares} permissões de compartilhamento."
     },
-    search: { label: "Pesquisar páginas e blocos", placeholder: "Busca rápida", button: "Pesquisar" },
+    search: {
+      open: "Abrir pesquisa", title: "Pesquisar", close: "Fechar pesquisa", label: "Pesquisar páginas e blocos", placeholder: "Busca rápida", button: "Pesquisar", clear: "Limpar pesquisa",
+      help: "Pesquise títulos de páginas e conteúdo de blocos.", start: "Digite uma palavra-chave para pesquisar no espaço de trabalho.", loading: "Pesquisando...", results: "Resultados da pesquisa", resultCount: "{count} resultado(s)", empty: "Nenhuma página ou bloco correspondente.", pageResult: "Página", blockResult: "Bloco"
+    },
     navigation: { aria: "Coleção padrão e lista de páginas" },
     navigationMenu: {
       aria: "Ações da página ou coleção",

@@ -89,6 +89,11 @@ const state = {
   activeCollectionId: null,
   activeTag: "",
   searchQuery: "",
+  searchDialogOpen: false,
+  searchResults: [],
+  searchLoading: false,
+  searchSubmittedQuery: "",
+  searchRequestId: 0,
   authMode: window.location.hash === "#signup" ? "register" : "login",
   activeSlashBlockId: null,
   activeSlashIndex: 0,
@@ -571,6 +576,7 @@ const elements = {
   homeBrandButton: $("#home-brand-button"),
   mobileHomeBrandButton: $("#mobile-home-brand-button"),
   sidebarHomeShortcut: $("#sidebar-home-shortcut"),
+  sidebarSearchShortcut: $("#sidebar-search-shortcut"),
   sidebarSettingsShortcut: $("#sidebar-settings-shortcut"),
   mobileSidebarToggle: $("#mobile-sidebar-toggle"),
   mobileSidebarClose: $("#mobile-sidebar-close"),
@@ -658,8 +664,16 @@ const elements = {
   userLabel: $("#user-label"),
   addCollectionButton: $("#add-collection-button"),
   logoutButton: $("#logout-button"),
+  searchLayer: $("#search-layer"),
+  searchBackdrop: $("#search-backdrop"),
+  searchDialog: $("#search-dialog"),
+  searchDialogClose: $("#search-dialog-close"),
   searchForm: $("#search-form"),
   searchInput: $("#search-input"),
+  searchClear: $("#search-clear"),
+  searchResults: $("#search-results"),
+  searchResultCount: $("#search-result-count"),
+  searchMessage: $("#search-message"),
   defaultCollectionButton: $("#default-collection-button"),
   defaultCollectionHeading: $("#default-collection-heading"),
   addDocumentButton: $("#add-document-button"),
@@ -1262,7 +1276,7 @@ async function restoreUserDataBackup(file) {
       state.user = data.user;
       await applyUserPreferredLanguage();
       fillAccountSettings();
-      elements.searchInput.value = "";
+      resetSearchDialogState();
       state.searchQuery = "";
       state.activeTag = "";
       await loadPages("", "");
@@ -1304,6 +1318,7 @@ function renderShell() {
   const authenticated = Boolean(state.authenticated && state.user);
   const enteringMobileApp = authenticated && mobileSidebarMedia.matches && !document.body.classList.contains("app-mode");
   if (enteringMobileApp) suppressMobileSidebarTransition();
+  if (!authenticated && state.searchDialogOpen) closeSearchDialog({ restoreFocus: false });
   if (!authenticated && state.accountSettingsOpen) closeAccountSettings({ restoreFocus: false });
   document.body.classList.toggle("auth-mode", !authenticated);
   document.body.classList.toggle("app-mode", authenticated);
@@ -1316,6 +1331,7 @@ function renderShell() {
 function resetAuthenticationSessionState({ render = true } = {}) {
   void destroyPageCollaboration({ flush: false });
   closeSharePageDialog({ restoreFocus: false });
+  closeSearchDialog({ restoreFocus: false });
   // Input handlers persist durable per-account drafts before enqueueing writes. Keep those
   // records, but never carry live editor state or retry queues across an auth boundary.
   discardPendingPageEdits();
@@ -1340,6 +1356,10 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   state.activeCollectionId = null;
   state.activeTag = "";
   state.searchQuery = "";
+  state.searchResults = [];
+  state.searchLoading = false;
+  state.searchSubmittedQuery = "";
+  state.searchRequestId += 1;
   state.pendingFocusBlockId = null;
   state.pendingAvatarData = null;
   state.activeSecurityPanel = "settings";
@@ -1616,6 +1636,224 @@ async function loadMfaSettings({ showLoading = true } = {}) {
     if (showLoading) setAccountMessage();
   } catch (error) {
     setAccountMessage(error.message, true);
+  }
+}
+
+
+function setSearchDialogMessage(message = "", isError = false) {
+  elements.searchMessage.textContent = message;
+  elements.searchMessage.classList.toggle("error", isError);
+  elements.searchMessage.classList.toggle("hidden", !message);
+}
+
+function syncSearchClearButton() {
+  elements.searchClear.hidden = !elements.searchInput.value;
+}
+
+function makeSearchResultItem(result, index) {
+  const item = document.createElement("div");
+  item.className = "search-result-entry";
+  item.setAttribute("role", "listitem");
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "search-result-item";
+  button.dataset.searchResultIndex = String(index);
+
+  const icon = document.createElement("span");
+  icon.className = "search-result-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.textContent = result.kind === "page" ? result.icon || "📄" : result.pageIcon || "▤";
+
+  const copy = document.createElement("span");
+  copy.className = "search-result-copy";
+
+  const title = document.createElement("strong");
+  title.textContent = result.kind === "page" ? result.title : result.pageTitle;
+
+  const meta = document.createElement("small");
+  meta.textContent = result.kind === "page"
+    ? t("search.pageResult")
+    : `${t("search.blockResult")}${result.type ? ` · ${result.type}` : ""}`;
+
+  copy.append(title, meta);
+  if (result.kind === "block" && result.snippet) {
+    const snippet = document.createElement("span");
+    snippet.className = "search-result-snippet";
+    snippet.textContent = result.snippet;
+    copy.append(snippet);
+  }
+
+  button.append(icon, copy);
+  item.append(button);
+  return item;
+}
+
+function renderSearchDialog() {
+  if (!elements.searchResults) return;
+  elements.searchResults.replaceChildren();
+  elements.searchResults.setAttribute("aria-busy", String(state.searchLoading));
+  elements.searchResultCount.textContent = "";
+  syncSearchClearButton();
+
+  if (state.searchLoading) {
+    setSearchDialogMessage(t("search.loading"));
+    return;
+  }
+
+  const query = elements.searchInput.value.trim();
+  if (!query || state.searchSubmittedQuery !== query) {
+    setSearchDialogMessage(t("search.start"));
+    return;
+  }
+
+  elements.searchResultCount.textContent = t("search.resultCount", { count: formatNumber(state.searchResults.length) });
+  if (!state.searchResults.length) {
+    setSearchDialogMessage(t("search.empty"));
+    return;
+  }
+
+  setSearchDialogMessage();
+  state.searchResults.forEach((result, index) => {
+    elements.searchResults.append(makeSearchResultItem(result, index));
+  });
+}
+
+function resetSearchDialogState({ clearInput = true } = {}) {
+  state.searchRequestId += 1;
+  state.searchLoading = false;
+  state.searchResults = [];
+  state.searchSubmittedQuery = "";
+  if (clearInput) elements.searchInput.value = "";
+  renderSearchDialog();
+}
+
+function getSearchDialogFocusableElements() {
+  return [...elements.searchDialog.querySelectorAll(mobileSidebarFocusableSelector)].filter((element) => {
+    return !element.disabled && !element.hidden && element.getAttribute("aria-hidden") !== "true" && element.getClientRects().length > 0;
+  });
+}
+
+function openSearchDialog() {
+  if (!state.user || state.searchDialogOpen) return;
+  closeMobileSidebar();
+  state.searchDialogOpen = true;
+  elements.searchLayer.classList.remove("hidden");
+  elements.searchLayer.setAttribute("aria-hidden", "false");
+  elements.sidebarSearchShortcut.setAttribute("aria-expanded", "true");
+  document.body.classList.add("search-dialog-open");
+  elements.shell.inert = true;
+  renderSearchDialog();
+  window.requestAnimationFrame(() => {
+    elements.searchInput.focus();
+    elements.searchInput.select();
+  });
+}
+
+function closeSearchDialog({ restoreFocus = true } = {}) {
+  if (!state.searchDialogOpen) return;
+  state.searchDialogOpen = false;
+  state.searchRequestId += 1;
+  if (state.searchLoading) {
+    state.searchResults = [];
+    state.searchSubmittedQuery = "";
+  }
+  state.searchLoading = false;
+  elements.searchLayer.classList.add("hidden");
+  elements.searchLayer.setAttribute("aria-hidden", "true");
+  elements.sidebarSearchShortcut.setAttribute("aria-expanded", "false");
+  document.body.classList.remove("search-dialog-open");
+  elements.shell.inert = false;
+  renderSearchDialog();
+  syncMobileSidebarAccessibility();
+  if (restoreFocus && state.user) elements.sidebarSearchShortcut.focus();
+}
+
+function handleSearchDialogKeydown(event) {
+  if (!state.searchDialogOpen) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeSearchDialog();
+    return;
+  }
+  if (event.key !== "Tab") return;
+
+  const focusableElements = getSearchDialogFocusableElements();
+  if (!focusableElements.length) {
+    event.preventDefault();
+    elements.searchDialog.focus();
+    return;
+  }
+  const first = focusableElements[0];
+  const last = focusableElements.at(-1);
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+async function performWorkspaceSearch() {
+  const query = elements.searchInput.value.trim();
+  elements.searchInput.value = query;
+  syncSearchClearButton();
+
+  if (!query) {
+    resetSearchDialogState({ clearInput: false });
+    elements.searchInput.focus();
+    return;
+  }
+
+  const requestId = ++state.searchRequestId;
+  state.searchSubmittedQuery = query;
+  state.searchLoading = true;
+  state.searchResults = [];
+  renderSearchDialog();
+
+  try {
+    const params = new URLSearchParams({ q: query, limit: "30" });
+    const data = await api(`/api/search?${params.toString()}`);
+    if (requestId !== state.searchRequestId || !state.searchDialogOpen) return;
+    state.searchResults = Array.isArray(data?.results) ? data.results : [];
+    state.searchLoading = false;
+    renderSearchDialog();
+    setStatus(t("status.searchLoaded"));
+  } catch (error) {
+    if (requestId !== state.searchRequestId || !state.searchDialogOpen) return;
+    state.searchLoading = false;
+    state.searchResults = [];
+    elements.searchResults.replaceChildren();
+    elements.searchResults.setAttribute("aria-busy", "false");
+    elements.searchResultCount.textContent = "";
+    setSearchDialogMessage(error.message, true);
+  }
+}
+
+function revealSearchResultBlock(blockId) {
+  window.requestAnimationFrame(() => {
+    const row = elements.blockList.querySelector(`[data-block-id="${CSS.escape(blockId)}"]`);
+    if (!row) return;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    row.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "center" });
+    row.classList.add("search-result-target");
+    window.setTimeout(() => row.classList.remove("search-result-target"), 1800);
+  });
+}
+
+async function openSearchResult(index) {
+  const result = state.searchResults[index];
+  if (!result?.pageId) return;
+
+  try {
+    await openPage(result.pageId);
+    closeSearchDialog({ restoreFocus: false });
+    if (result.kind === "block" && result.blockId) revealSearchResultBlock(result.blockId);
+    else elements.pageTitle.focus({ preventScroll: true });
+  } catch (error) {
+    setSearchDialogMessage(error.message, true);
   }
 }
 
@@ -8518,7 +8756,7 @@ async function createCollection() {
   await flushPendingPageEdits();
   await assertWorkspacePersistenceUnlocked();
   setStatus(t("status.creatingCollection"));
-  elements.searchInput.value = "";
+  resetSearchDialogState();
   state.searchQuery = "";
   state.activeTag = "";
 
@@ -8541,7 +8779,7 @@ async function createUntitledPage() {
   await flushPendingPageEdits();
   await assertWorkspacePersistenceUnlocked();
   setStatus(t("status.creatingDocument"));
-  elements.searchInput.value = "";
+  resetSearchDialogState();
   state.searchQuery = "";
   state.activeTag = "";
 
@@ -8731,7 +8969,7 @@ async function boot() {
 async function openHomeFromBrand() {
   if (!state.user) return;
   closeMobileSidebar({ restoreFocus: false });
-  elements.searchInput.value = "";
+  resetSearchDialogState();
   try {
     await flushPendingPageEdits();
     await loadPages("", "");
@@ -8744,6 +8982,7 @@ async function openHomeFromBrand() {
 
 elements.homeBrandButton.addEventListener("click", openHomeFromBrand);
 elements.sidebarHomeShortcut.addEventListener("click", openHomeFromBrand);
+elements.sidebarSearchShortcut.addEventListener("click", openSearchDialog);
 elements.sidebarSettingsShortcut.addEventListener("click", () => openAccountSettings("profile"));
 elements.mobileHomeBrandButton.addEventListener("click", openHomeFromBrand);
 elements.mobileSidebarToggle.addEventListener("click", toggleMobileSidebar);
@@ -9209,6 +9448,7 @@ function refreshLocalizedUi() {
   syncPageModeUi();
   if (state.user) updateUserIdentityUi();
   populateLoginHistoryMonths();
+  if (state.searchDialogOpen) renderSearchDialog();
   if (state.accountSettingsOpen) {
     if (state.activeSecurityPanel === "history") renderLoginHistory();
     else renderMfaSettings();
@@ -9299,21 +9539,33 @@ elements.homeNewPageButton.addEventListener("click", async () => {
   }
 });
 
-elements.searchForm.addEventListener("submit", async (event) => {
+elements.searchForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  closeMobileSidebar({ restoreFocus: true });
-  try {
-    await loadPages(elements.searchInput.value.trim(), state.activeTag);
-    setStatus(t("status.searchLoaded"));
-  } catch (error) {
-    setStatus(error.message, true);
-  }
+  void performWorkspaceSearch();
 });
+
+elements.searchInput.addEventListener("input", () => {
+  resetSearchDialogState({ clearInput: false });
+});
+
+elements.searchClear.addEventListener("click", () => {
+  resetSearchDialogState();
+  elements.searchInput.focus();
+});
+
+elements.searchDialogClose.addEventListener("click", () => closeSearchDialog());
+elements.searchBackdrop.addEventListener("click", () => closeSearchDialog());
+elements.searchResults.addEventListener("click", (event) => {
+  const target = event.target.closest("button[data-search-result-index]");
+  if (!target) return;
+  void openSearchResult(Number.parseInt(target.dataset.searchResultIndex, 10));
+});
+document.addEventListener("keydown", handleSearchDialogKeydown);
 
 elements.defaultCollectionButton.addEventListener("click", async () => {
   closeMobileSidebar({ restoreFocus: true });
   try {
-    elements.searchInput.value = "";
+    resetSearchDialogState();
     await flushPendingPageEdits();
     await loadPages("", "");
     await showCollection(defaultCollectionKey, { skipFlush: true });
@@ -9339,7 +9591,7 @@ async function handleSidebarPageClick(event) {
   closeMobileSidebar({ restoreFocus: true });
   try {
     if (item.dataset.collectionId) {
-      elements.searchInput.value = "";
+      resetSearchDialogState();
       await flushPendingPageEdits();
       await loadPages("", "");
       await showCollection(item.dataset.collectionId, { skipFlush: true });
