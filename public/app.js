@@ -138,7 +138,17 @@ const state = {
   collaborationGeneration: 0,
   applyingCollaborationSnapshot: false,
   sharePageOpen: false,
-  sharePageEntries: []
+  sharePageEntries: [],
+  pageVersionHistory: {
+    pageId: null,
+    versions: [],
+    nextCursor: null,
+    current: null,
+    selectedId: null,
+    requestId: 0,
+    detailRequestId: 0,
+    loading: false
+  }
 };
 
 const blockTypeLabels = {
@@ -711,6 +721,17 @@ const elements = {
   pageModeToggleIcon: $("#page-mode-toggle-icon"),
   pageModeToggleLabel: $("#page-mode-toggle-label"),
   pageModeToggleDescription: $("#page-mode-toggle-description"),
+  pageVersionHistoryButton: $("#page-version-history-button"),
+  pageVersionHistoryDialog: $("#page-version-history-dialog"),
+  pageVersionHistoryClose: $("#page-version-history-close"),
+  pageVersionHistoryCurrent: $("#page-version-history-current"),
+  pageVersionHistoryPageTitle: $("#page-version-history-page-title"),
+  pageVersionHistoryMessage: $("#page-version-history-message"),
+  pageVersionHistoryList: $("#page-version-history-list"),
+  pageVersionHistoryMore: $("#page-version-history-more"),
+  pageVersionHistoryDetailPanel: $("#page-version-history-detail-panel"),
+  pageVersionHistoryDetailEmpty: $("#page-version-history-detail-empty"),
+  pageVersionHistoryDetail: $("#page-version-history-detail"),
   pageModeBadge: $("#page-mode-badge"),
   pageModeBadgeLabel: $("#page-mode-badge-label"),
   pageView: $("#page-view"),
@@ -3948,6 +3969,337 @@ function openPageActionsMenu({ focusFirst = false } = {}) {
   );
   positionPageActionsMenu();
   if (focusFirst) getPageActionsMenuItems()[0]?.focus();
+}
+
+const pageVersionFieldTranslationKeys = Object.freeze({
+  title: "versions.fieldTitle",
+  icon: "versions.fieldIcon",
+  coverUrl: "versions.fieldCoverUrl",
+  isArchived: "versions.fieldIsArchived",
+  isCollection: "versions.fieldIsCollection",
+  parentPageId: "versions.fieldParentPageId",
+  tags: "versions.fieldTags",
+  parentBlockId: "versions.fieldParentBlockId",
+  type: "versions.fieldType",
+  markdown: "versions.fieldMarkdown",
+  checked: "versions.fieldChecked",
+  sortOrder: "versions.fieldSortOrder",
+  metadata: "versions.fieldMetadata"
+});
+
+function getPageVersionFieldLabel(field) {
+  return t(pageVersionFieldTranslationKeys[field] ?? field);
+}
+
+function getPageVersionActorName(actor) {
+  if (!actor) return t("versions.unknownActor");
+  const name = String(actor.name ?? "").trim();
+  if (name) return name;
+  const username = String(actor.username ?? "").trim();
+  return username ? `@${username}` : t("versions.unknownActor");
+}
+
+function getPageVersionActorLabel(actors = []) {
+  if (!actors.length) return t("versions.unknownActor");
+  const first = getPageVersionActorName(actors[0]);
+  if (actors.length === 1) return first;
+  return t("versions.actorsMore", { first, count: actors.length - 1 });
+}
+
+function getPageVersionInitials(actors = []) {
+  const label = getPageVersionActorName(actors[0]);
+  const normalized = label.replace(/^@/, "").trim();
+  if (!normalized) return "?";
+  return normalized.split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("") || "?";
+}
+
+function summarizePageVersion(version) {
+  const summary = version?.summary ?? {};
+  const parts = [];
+  if (Number(summary.baseline ?? 0) > 0) parts.push(t("versions.historyStarted"));
+  if (Number(summary.pageCreated ?? 0) > 0) parts.push(t("versions.summaryPageCreated"));
+  const pageFields = Array.isArray(summary.pageFields) ? summary.pageFields : [];
+  if (pageFields.length) {
+    parts.push(t("versions.summaryPageFields", {
+      fields: pageFields.map(getPageVersionFieldLabel).join(", ")
+    }));
+  }
+
+  const created = Number(summary.blocksCreated ?? 0);
+  const updated = Number(summary.blocksUpdated ?? 0);
+  const deleted = Number(summary.blocksDeleted ?? 0);
+  const moved = Math.min(updated, Number(summary.blocksMoved ?? 0));
+  const contentUpdated = Math.max(0, updated - moved);
+  if (created) parts.push(t("versions.summaryBlocksCreated", { count: formatNumber(created) }));
+  if (contentUpdated) parts.push(t("versions.summaryBlocksUpdated", { count: formatNumber(contentUpdated) }));
+  if (moved) parts.push(t("versions.summaryBlocksMoved", { count: formatNumber(moved) }));
+  if (deleted) parts.push(t("versions.summaryBlocksDeleted", { count: formatNumber(deleted) }));
+  return parts.join(" · ") || t("versions.noChanges");
+}
+
+function formatPageVersionValue(field, value) {
+  if (value === null || value === undefined || value === "") return t("versions.emptyValue");
+  if (typeof value === "boolean") return t(value ? "versions.yes" : "versions.no");
+  if (field === "type") return t(blockTypeLabels[value] ?? String(value));
+  if (Array.isArray(value)) return value.length ? value.join(", ") : t("versions.emptyValue");
+  if (typeof value === "object") return JSON.stringify(value, null, 2);
+  return String(value);
+}
+
+function createPageVersionValuePane(label, value, field) {
+  const pane = document.createElement("div");
+  pane.className = "page-version-value-pane";
+  const heading = document.createElement("span");
+  heading.textContent = label;
+  const content = document.createElement("pre");
+  content.textContent = formatPageVersionValue(field, value);
+  pane.append(heading, content);
+  return pane;
+}
+
+function createPageVersionFieldChange(fieldChange) {
+  const row = document.createElement("div");
+  row.className = "page-version-field-change";
+  const label = document.createElement("div");
+  label.className = "page-version-field-name";
+  label.textContent = getPageVersionFieldLabel(fieldChange.field);
+  const values = document.createElement("div");
+  values.className = "page-version-before-after";
+  values.append(
+    createPageVersionValuePane(t("versions.before"), fieldChange.before, fieldChange.field),
+    createPageVersionValuePane(t("versions.after"), fieldChange.after, fieldChange.field)
+  );
+  row.append(label, values);
+  return row;
+}
+
+function createPageVersionChangeCard(change) {
+  const card = document.createElement("article");
+  card.className = "page-version-change-card";
+  const header = document.createElement("div");
+  header.className = "page-version-change-card-header";
+  const title = document.createElement("strong");
+  const meta = document.createElement("span");
+  const fields = document.createElement("div");
+  fields.className = "page-version-field-list";
+
+  if (change.kind === "history-started") {
+    title.textContent = t("versions.historyStarted");
+    meta.textContent = t("versions.baselineDescription");
+    for (const [field, after] of Object.entries(change.page ?? {})) {
+      fields.append(createPageVersionFieldChange({ field, before: null, after }));
+    }
+  } else if (change.kind === "page-created") {
+    title.textContent = t("versions.pageCreated");
+    meta.textContent = t("versions.pageUpdated");
+    for (const [field, after] of Object.entries(change.page ?? {})) {
+      fields.append(createPageVersionFieldChange({ field, before: null, after }));
+    }
+  } else if (change.kind === "page-updated") {
+    title.textContent = t("versions.pageUpdated");
+    meta.textContent = t("versions.changesCount", { count: change.fields?.length ?? 0 });
+    for (const fieldChange of change.fields ?? []) fields.append(createPageVersionFieldChange(fieldChange));
+  } else if (change.kind === "block-created" || change.kind === "block-deleted") {
+    const created = change.kind === "block-created";
+    title.textContent = t(created ? "versions.blockCreated" : "versions.blockDeleted");
+    meta.textContent = t("versions.blockLabel", {
+      type: t(blockTypeLabels[change.block?.type] ?? String(change.block?.type ?? ""))
+    });
+    for (const field of ["type", "markdown", "checked", "parentBlockId", "sortOrder", "metadata"]) {
+      const value = change.block?.[field];
+      fields.append(createPageVersionFieldChange({
+        field,
+        before: created ? null : value,
+        after: created ? value : null
+      }));
+    }
+  } else if (change.kind === "block-updated") {
+    title.textContent = t("versions.blockUpdated");
+    meta.textContent = t("versions.blockLabel", {
+      type: t(blockTypeLabels[change.blockType] ?? String(change.blockType ?? ""))
+    });
+    for (const fieldChange of change.fields ?? []) fields.append(createPageVersionFieldChange(fieldChange));
+  }
+
+  header.append(title, meta);
+  card.append(header, fields);
+  return card;
+}
+
+function renderPageVersionHistoryList() {
+  const history = state.pageVersionHistory;
+  elements.pageVersionHistoryList.replaceChildren();
+  for (const version of history.versions) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "page-version-history-item";
+    button.dataset.versionId = String(version.id);
+    button.classList.toggle("is-selected", String(history.selectedId) === String(version.id));
+
+    const avatar = document.createElement("span");
+    avatar.className = "page-version-history-avatar";
+    avatar.setAttribute("aria-hidden", "true");
+    avatar.textContent = getPageVersionInitials(version.actors);
+
+    const copy = document.createElement("span");
+    copy.className = "page-version-history-item-copy";
+    const title = document.createElement("strong");
+    title.textContent = summarizePageVersion(version);
+    const byline = document.createElement("span");
+    byline.textContent = t("versions.actorDate", {
+      actors: getPageVersionActorLabel(version.actors),
+      date: formatDate(version.createdAt)
+    });
+    const count = document.createElement("small");
+    count.textContent = `${t("versions.pageVersion", { version: version.pageVersion })} · ${t("versions.contentVersion", { version: version.contentVersion })}`;
+    copy.append(title, byline, count);
+
+    const revision = document.createElement("span");
+    revision.className = "page-version-history-revision";
+    revision.textContent = `v${version.revision}`;
+    button.append(avatar, copy, revision);
+    elements.pageVersionHistoryList.append(button);
+  }
+
+  elements.pageVersionHistoryMore.classList.toggle("hidden", !history.nextCursor);
+  elements.pageVersionHistoryMore.disabled = history.loading;
+}
+
+function renderPageVersionHistoryDetail(version) {
+  elements.pageVersionHistoryDetailEmpty.classList.add("hidden");
+  elements.pageVersionHistoryDetail.classList.remove("hidden");
+  elements.pageVersionHistoryDetail.replaceChildren();
+
+  const header = document.createElement("header");
+  header.className = "page-version-detail-header";
+  const copy = document.createElement("div");
+  const title = document.createElement("h3");
+  title.textContent = summarizePageVersion(version);
+  const byline = document.createElement("p");
+  byline.textContent = t("versions.actorDate", {
+    actors: getPageVersionActorLabel(version.actors),
+    date: formatDate(version.createdAt)
+  });
+  copy.append(title, byline);
+
+  const versionStack = document.createElement("div");
+  versionStack.className = "page-version-detail-version-stack";
+  for (const text of [
+    t("versions.revision", { revision: version.revision }),
+    t("versions.pageVersion", { version: version.pageVersion }),
+    t("versions.contentVersion", { version: version.contentVersion })
+  ]) {
+    const badge = document.createElement("span");
+    badge.textContent = text;
+    versionStack.append(badge);
+  }
+  header.append(copy, versionStack);
+
+  const changeList = document.createElement("div");
+  changeList.className = "page-version-change-list";
+  const changes = Array.isArray(version.changes) ? version.changes : [];
+  if (changes.length) {
+    for (const change of changes) changeList.append(createPageVersionChangeCard(change));
+  } else {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = t("versions.noChanges");
+    changeList.append(empty);
+  }
+  elements.pageVersionHistoryDetail.append(header, changeList);
+}
+
+function resetPageVersionHistoryDetail() {
+  state.pageVersionHistory.selectedId = null;
+  elements.pageVersionHistoryDetail.classList.add("hidden");
+  elements.pageVersionHistoryDetail.replaceChildren();
+  elements.pageVersionHistoryDetailEmpty.classList.remove("hidden");
+}
+
+async function loadPageVersionHistory({ append = false } = {}) {
+  const pageId = state.pageVersionHistory.pageId;
+  if (!pageId) return;
+  const requestId = ++state.pageVersionHistory.requestId;
+  state.pageVersionHistory.loading = true;
+  elements.pageVersionHistoryMessage.classList.remove("error");
+  elements.pageVersionHistoryMessage.textContent = t("versions.loading");
+  elements.pageVersionHistoryMore.disabled = true;
+
+  try {
+    const cursor = append ? state.pageVersionHistory.nextCursor : null;
+    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}&limit=50` : "?limit=50";
+    const data = await api(`/api/pages/${encodeURIComponent(pageId)}/versions${query}`);
+    if (requestId !== state.pageVersionHistory.requestId || pageId !== state.pageVersionHistory.pageId) return;
+    state.pageVersionHistory.current = data.current ?? null;
+    state.pageVersionHistory.versions = append
+      ? [...state.pageVersionHistory.versions, ...(data.versions ?? [])]
+      : (data.versions ?? []);
+    state.pageVersionHistory.nextCursor = data.nextCursor ?? null;
+    elements.pageVersionHistoryCurrent.textContent = t("versions.current", {
+      revision: data.current?.revision ?? 0
+    });
+    elements.pageVersionHistoryMessage.textContent = state.pageVersionHistory.versions.length
+      ? ""
+      : t("versions.empty");
+    renderPageVersionHistoryList();
+  } catch (error) {
+    if (requestId !== state.pageVersionHistory.requestId) return;
+    elements.pageVersionHistoryMessage.classList.add("error");
+    elements.pageVersionHistoryMessage.textContent = error?.message || t("versions.loadError");
+  } finally {
+    if (requestId === state.pageVersionHistory.requestId) {
+      state.pageVersionHistory.loading = false;
+      elements.pageVersionHistoryMore.disabled = false;
+    }
+  }
+}
+
+async function loadPageVersionDetail(versionId) {
+  const pageId = state.pageVersionHistory.pageId;
+  if (!pageId || !versionId) return;
+  const requestId = ++state.pageVersionHistory.detailRequestId;
+  state.pageVersionHistory.selectedId = String(versionId);
+  renderPageVersionHistoryList();
+  elements.pageVersionHistoryDetailEmpty.classList.add("hidden");
+  elements.pageVersionHistoryDetail.classList.remove("hidden");
+  elements.pageVersionHistoryDetail.textContent = t("versions.detailsLoading");
+
+  try {
+    const data = await api(`/api/pages/${encodeURIComponent(pageId)}/versions/${encodeURIComponent(versionId)}`);
+    if (requestId !== state.pageVersionHistory.detailRequestId || pageId !== state.pageVersionHistory.pageId) return;
+    renderPageVersionHistoryDetail(data.version);
+  } catch (error) {
+    if (requestId !== state.pageVersionHistory.detailRequestId) return;
+    elements.pageVersionHistoryDetail.textContent = error?.message || t("versions.loadError");
+  }
+}
+
+function openPageVersionHistory() {
+  const page = state.selectedPage;
+  if (!page) return;
+  closePageActionsMenu();
+  state.pageVersionHistory.pageId = page.id;
+  state.pageVersionHistory.versions = [];
+  state.pageVersionHistory.nextCursor = null;
+  state.pageVersionHistory.current = null;
+  state.pageVersionHistory.requestId += 1;
+  state.pageVersionHistory.detailRequestId += 1;
+  elements.pageVersionHistoryPageTitle.textContent = page.title || t("newDocumentTitle");
+  elements.pageVersionHistoryCurrent.textContent = "";
+  elements.pageVersionHistoryMessage.textContent = "";
+  elements.pageVersionHistoryList.replaceChildren();
+  resetPageVersionHistoryDetail();
+  if (!elements.pageVersionHistoryDialog.open) elements.pageVersionHistoryDialog.showModal();
+  requestAnimationFrame(() => elements.pageVersionHistoryClose.focus());
+  void loadPageVersionHistory();
+}
+
+function closePageVersionHistory({ restoreFocus = true } = {}) {
+  state.pageVersionHistory.requestId += 1;
+  state.pageVersionHistory.detailRequestId += 1;
+  state.pageVersionHistory.pageId = null;
+  if (elements.pageVersionHistoryDialog.open) elements.pageVersionHistoryDialog.close();
+  if (restoreFocus && elements.pageActionsButton.isConnected) elements.pageActionsButton.focus();
 }
 
 function getNavigationContextMenuItems() {
@@ -10107,6 +10459,41 @@ elements.pageModeToggle.addEventListener("click", async () => {
   } finally {
     elements.pageActionsButton.focus();
   }
+});
+
+elements.pageVersionHistoryButton.addEventListener("click", () => {
+  openPageVersionHistory();
+});
+
+elements.pageVersionHistoryClose.addEventListener("click", () => {
+  closePageVersionHistory();
+});
+
+elements.pageVersionHistoryMore.addEventListener("click", () => {
+  if (!state.pageVersionHistory.loading && state.pageVersionHistory.nextCursor) {
+    void loadPageVersionHistory({ append: true });
+  }
+});
+
+elements.pageVersionHistoryList.addEventListener("click", (event) => {
+  const item = event.target.closest("button[data-version-id]");
+  if (!item) return;
+  void loadPageVersionDetail(item.dataset.versionId);
+});
+
+elements.pageVersionHistoryDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closePageVersionHistory();
+});
+
+elements.pageVersionHistoryDialog.addEventListener("click", (event) => {
+  if (event.target === elements.pageVersionHistoryDialog) closePageVersionHistory();
+});
+
+elements.pageVersionHistoryDialog.addEventListener("close", () => {
+  state.pageVersionHistory.requestId += 1;
+  state.pageVersionHistory.detailRequestId += 1;
+  state.pageVersionHistory.pageId = null;
 });
 
 elements.exportPdfButton.addEventListener("click", () => {

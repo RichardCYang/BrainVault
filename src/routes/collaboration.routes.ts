@@ -36,6 +36,13 @@ import { removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { CollaborationDocumentError } from "../lib/collaboration-document.js";
 import { materializeCollaborationUpdates } from "../lib/collaboration-materialization.js";
 import {
+  diffPageVersionBlocks,
+  diffPageVersionPage,
+  loadPageVersionActors,
+  recordPageVersion,
+  toPageVersionActor
+} from "../lib/page-version-history.js";
+import {
   currentCollaborationMaterializationVersion,
   needsCollaborationMaterialization
 } from "../lib/collaboration-protocol.js";
@@ -78,6 +85,7 @@ type ShareUserRow = Pick<
 
 type CollaborationUpdateRow = {
   id: number | bigint;
+  user_id: string;
   update_data: Buffer;
 };
 
@@ -373,7 +381,7 @@ collaborationRouter.put(
         // Every Yjs writer first locks the page row. Holding the same lock makes
         // this ordered history immutable until the relational transaction ends.
         const updateRows = await client.query<CollaborationUpdateRow>(
-          `SELECT id, update_data
+          `SELECT id, update_data, user_id
            FROM page_yjs_updates
            WHERE page_id = ?
            ORDER BY id ASC
@@ -456,6 +464,8 @@ collaborationRouter.put(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",
           [pageId]
         );
+        const versionBeforePage = { ...access.page };
+        const versionBeforeRows = existingRows.map((row) => ({ ...row }));
         const existingById = new Map(existingRows.map((row) => [row.id, row]));
         const newBlockIds = orderedBlocks
           .map((block) => block.id)
@@ -612,6 +622,21 @@ collaborationRouter.put(
           [pageId]
         );
         if (!currentPage) throw notFound("Page");
+        const versionActors = await loadPageVersionActors(
+          client,
+          updateRows
+            .filter((row) => Number(row.id) > materializedUpdateId)
+            .map((row) => row.user_id)
+        );
+        await recordPageVersion(client, {
+          pageId,
+          actors: versionActors.length ? versionActors : [toPageVersionActor(user)],
+          source: "COLLABORATION",
+          changes: [
+            ...diffPageVersionPage(versionBeforePage, currentPage),
+            ...diffPageVersionBlocks(versionBeforeRows, currentBlocks)
+          ]
+        });
         return {
           applied: true,
           page: currentPage,

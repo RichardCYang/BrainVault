@@ -955,6 +955,22 @@
       </button>
       <div class="page-action-menu-separator" role="separator"></div>
       <button
+        id="page-version-history-button"
+        type="button"
+        class="page-action-menu-item page-version-history-menu-item"
+        role="menuitem"
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M12 8v4l2.6 1.7"></path>
+          <path d="M4.8 8.2A8 8 0 1 1 4 12"></path>
+          <path d="M4 5v3.5h3.5"></path>
+        </svg>
+        <span class="page-version-history-menu-copy">
+          <strong data-i18n="versions.menu">Version history</strong>
+          <small data-i18n="versions.menuDescription">See who changed this page and what changed.</small>
+        </span>
+      </button>
+      <button
         id="export-pdf-button"
         type="button"
         class="page-action-menu-item"
@@ -980,6 +996,57 @@
         <span data-i18n="page.archive">Archive</span>
       </button>
     </div>
+    <dialog
+      id="page-version-history-dialog"
+      class="page-version-history-dialog"
+      aria-labelledby="page-version-history-title"
+      aria-describedby="page-version-history-description"
+    >
+      <div class="page-version-history-shell">
+        <header class="page-version-history-header">
+          <div>
+            <p class="page-version-history-kicker" data-i18n="versions.kicker">Page activity</p>
+            <h2 id="page-version-history-title" data-i18n="versions.title">Version history</h2>
+            <p id="page-version-history-description" data-i18n="versions.description">Review who edited this page, when it happened, and exactly what changed.</p>
+          </div>
+          <div class="page-version-history-header-actions">
+            <span id="page-version-history-current" class="page-version-history-current"></span>
+            <button
+              id="page-version-history-close"
+              type="button"
+              class="page-version-history-close"
+              aria-label="Close version history"
+              title="Close version history"
+              data-i18n-aria-label="versions.close"
+              data-i18n-title="versions.close"
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+            </button>
+          </div>
+        </header>
+        <div class="page-version-history-content">
+          <section class="page-version-history-list-panel" aria-labelledby="page-version-history-list-title">
+            <div class="page-version-history-panel-heading">
+              <div>
+                <h3 id="page-version-history-list-title" data-i18n="versions.listTitle">All versions</h3>
+                <p id="page-version-history-page-title" class="muted"></p>
+              </div>
+            </div>
+            <div id="page-version-history-message" class="page-version-history-message" role="status"></div>
+            <div id="page-version-history-list" class="page-version-history-list"></div>
+            <button id="page-version-history-more" type="button" class="page-version-history-more hidden" data-i18n="versions.loadMore">Load older versions</button>
+          </section>
+          <section id="page-version-history-detail-panel" class="page-version-history-detail-panel" aria-labelledby="page-version-history-detail-title">
+            <div class="page-version-history-detail-empty" id="page-version-history-detail-empty">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 3.5h7l3 3V20.5H7z"></path><path d="M14 3.5v3h3M9 11h6M9 15h4"></path></svg>
+              <h3 id="page-version-history-detail-title" data-i18n="versions.selectTitle">Select a version</h3>
+              <p data-i18n="versions.selectDescription">Choose an item to see the exact before and after values.</p>
+            </div>
+            <div id="page-version-history-detail" class="page-version-history-detail hidden"></div>
+          </section>
+        </div>
+      </div>
+    </dialog>
     <div id="block-context-menu" class="block-context-menu hidden" role="menu" aria-label="Block actions" data-i18n-aria-label="menu.blockAria">
       <div class="block-insert-group" role="group" aria-labelledby="block-insert-label">
         <div id="block-insert-label" class="block-menu-section-label" data-i18n="menu.addBlock">Add block</div>

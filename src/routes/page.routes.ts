@@ -12,6 +12,15 @@ import { disconnectPageCollaborators } from "../lib/collaboration-server.js";
 import { needsCollaborationMaterialization } from "../lib/collaboration-protocol.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { iconValueSchema, normalizeIconValue } from "../lib/icon-value.js";
+import {
+  diffPageVersionBlocks,
+  diffPageVersionPage,
+  mapPageVersionDetailRow,
+  mapPageVersionListRow,
+  recordPageVersion,
+  toPageVersionActor,
+  type PageVersionRow
+} from "../lib/page-version-history.js";
 import { requireAuth } from "../middleware/auth.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { buildBlockTree } from "../utils/blockTree.js";
@@ -89,6 +98,16 @@ const deletePageBodySchema = z
     expectedVersion: z.number().int().min(1).optional()
   })
   .default({});
+
+const pageVersionListQuerySchema = z.object({
+  cursor: z.string().regex(/^\d+$/).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50)
+});
+
+const pageVersionParamsSchema = z.object({
+  pageId: z.string().min(1).max(64),
+  versionId: z.string().regex(/^\d+$/)
+});
 
 async function assertOwnedPage(pageId: string, ownerId: string, client: DbClient = db) {
   return getOwnedPage(pageId, ownerId, client);
@@ -444,6 +463,22 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
       }
 
       if (body.tags?.length) await replaceTags(client, id, body.tags);
+      const createdPage = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [id]);
+      if (!createdPage) throw new ApiError(500, "PAGE_CREATE_FAILED", "Page was not created");
+      const createdTags = (await getPageTags(id, client)).map((tag) => tag.name);
+      const createdBlocks = await client.query<BlockRow>(
+        "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC",
+        [id]
+      );
+      await recordPageVersion(client, {
+        pageId: id,
+        actors: [toPageVersionActor(user)],
+        source: "CREATE",
+        changes: [
+          ...diffPageVersionPage(null, createdPage, [], createdTags),
+          ...diffPageVersionBlocks([], createdBlocks)
+        ]
+      });
       return id;
     });
 
@@ -462,6 +497,70 @@ pageRouter.get("/:pageId", validate({ params: idParamSchema }), async (req, res,
     next(error);
   }
 });
+
+pageRouter.get(
+  "/:pageId/versions",
+  validate({ params: idParamSchema, query: pageVersionListQuerySchema }),
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req.user);
+      const pageId = String(req.params.pageId);
+      const query = getValidatedQuery<z.infer<typeof pageVersionListQuerySchema>>(req);
+      const access = await getPageAccess(pageId, user.id);
+      const rows = await db.query<PageVersionRow>(
+        `SELECT id, page_id, revision, page_edit_version, page_content_version,
+                actors, source, change_count, change_summary, created_at
+         FROM page_versions
+         WHERE page_id = ?${query.cursor ? " AND id < ?" : ""}
+         ORDER BY id DESC
+         LIMIT ?`,
+        query.cursor ? [pageId, query.cursor, query.limit + 1] : [pageId, query.limit + 1]
+      );
+      const pageRows = rows.slice(0, query.limit);
+      const latest = await db.queryOne<{ revision: number | bigint | null }>(
+        "SELECT MAX(revision) AS revision FROM page_versions WHERE page_id = ?",
+        [pageId]
+      );
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json({
+        current: {
+          revision: Number(latest?.revision ?? 0),
+          pageVersion: Number(access.page.edit_version ?? 1),
+          contentVersion: Number(access.page.content_version ?? 1)
+        },
+        versions: pageRows.map(mapPageVersionListRow),
+        nextCursor: rows.length > query.limit ? String(pageRows.at(-1)?.id ?? "") : null
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+pageRouter.get(
+  "/:pageId/versions/:versionId",
+  validate({ params: pageVersionParamsSchema }),
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req.user);
+      const pageId = String(req.params.pageId);
+      const versionId = String(req.params.versionId);
+      await getPageAccess(pageId, user.id);
+      const row = await db.queryOne<PageVersionRow>(
+        `SELECT id, page_id, revision, page_edit_version, page_content_version,
+                actors, source, change_count, change_summary, changes, created_at
+         FROM page_versions
+         WHERE page_id = ? AND id = ?`,
+        [pageId, versionId]
+      );
+      if (!row) throw notFound("Page version");
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json({ version: mapPageVersionDetailRow(row) });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 pageRouter.get(
   "/:pageId/deletion-snapshot",
@@ -557,6 +656,8 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
         )
       ) return;
 
+      const beforeTags = (await getPageTags(pageId, client)).map((tag) => tag.name);
+
       if (updates.title !== undefined) {
         const shareCountRow = await client.queryOne<{ share_count: number }>(
           "SELECT COUNT(*) AS share_count FROM page_shares WHERE page_id = ?",
@@ -599,6 +700,15 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
         }
       }
       if (tags !== undefined) await replaceTags(client, pageId, tags);
+      const updatedPage = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
+      if (!updatedPage) throw notFound("Page");
+      const afterTags = (await getPageTags(pageId, client)).map((tag) => tag.name);
+      await recordPageVersion(client, {
+        pageId,
+        actors: [toPageVersionActor(user)],
+        source: updates.isArchived === true ? "ARCHIVE" : "PAGE_UPDATE",
+        changes: diffPageVersionPage(existingPage, updatedPage, beforeTags, afterTags)
+      });
     });
 
     if (updates.isArchived === true) disconnectPageCollaborators(pageId, "Page was archived");
@@ -665,12 +775,23 @@ pageRouter.delete(
         );
         if (!page) throw notFound("Page");
         await assertCollaborationMaterialized(client, [pageId]);
-        return client.execute<{ affectedRows: number }>(
+        const updateResult = await client.execute<{ affectedRows: number }>(
           `UPDATE pages
            SET is_archived = 1, edit_version = edit_version + 1
            WHERE id = ? AND owner_id = ? AND edit_version = ?`,
           [pageId, user.id, expectedVersion]
         );
+        if (Number(updateResult.affectedRows) === 1) {
+          const updatedPage = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
+          if (!updatedPage) throw notFound("Page");
+          await recordPageVersion(client, {
+            pageId,
+            actors: [toPageVersionActor(user)],
+            source: "ARCHIVE",
+            changes: diffPageVersionPage(page, updatedPage)
+          });
+        }
+        return updateResult;
       });
       if (Number(result.affectedRows) === 0) {
         throw new ApiError(
@@ -695,6 +816,12 @@ pageRouter.put("/:pageId/tags", validate({ params: idParamSchema, body: tagSchem
     await assertOwnedPage(pageId, user.id);
     const { tags, expectedVersion } = req.body as z.infer<typeof tagSchema>;
     await transaction(async (client) => {
+      const existingPage = await client.queryOne<PageRow>(
+        "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
+        [pageId, user.id]
+      );
+      if (!existingPage) throw notFound("Page");
+      const beforeTags = (await getPageTags(pageId, client)).map((tag) => tag.name);
       const result = await client.execute<{ affectedRows: number }>(
         "UPDATE pages SET edit_version = edit_version + 1 WHERE id = ? AND owner_id = ? AND edit_version = ?",
         [pageId, user.id, expectedVersion]
@@ -707,6 +834,15 @@ pageRouter.put("/:pageId/tags", validate({ params: idParamSchema, body: tagSchem
         );
       }
       await replaceTags(client, pageId, tags);
+      const updatedPage = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
+      if (!updatedPage) throw notFound("Page");
+      const afterTags = (await getPageTags(pageId, client)).map((tag) => tag.name);
+      await recordPageVersion(client, {
+        pageId,
+        actors: [toPageVersionActor(user)],
+        source: "TAGS",
+        changes: diffPageVersionPage(existingPage, updatedPage, beforeTags, afterTags)
+      });
     });
     const page = await assertOwnedPage(pageId, user.id);
     res.json({ tags: await getPageTags(pageId), version: Number(page.edit_version ?? 1) });

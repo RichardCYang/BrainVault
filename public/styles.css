@@ -3212,6 +3212,492 @@ kbd {
   color: var(--danger);
 }
 
+.page-version-history-menu-item {
+  align-items: start !important;
+}
+
+.page-version-history-menu-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+}
+
+.page-version-history-menu-copy strong {
+  font: inherit;
+  font-weight: 650;
+}
+
+.page-version-history-menu-copy small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 480;
+  line-height: 1.35;
+}
+
+.page-version-history-dialog {
+  width: min(68rem, calc(100vw - 2rem));
+  height: min(48rem, calc(100vh - 2rem));
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  border: 1px solid rgba(38, 38, 37, 0.14);
+  border-radius: 18px;
+  background: #ffffff;
+  color: var(--ink);
+  box-shadow: 0 32px 110px rgba(20, 20, 18, 0.3);
+  padding: 0;
+  overflow: hidden;
+}
+
+.page-version-history-dialog::backdrop {
+  background: rgba(24, 26, 29, 0.48);
+  backdrop-filter: blur(6px);
+}
+
+.page-version-history-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+}
+
+.page-version-history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1.5rem;
+  border-bottom: 1px solid rgba(38, 38, 37, 0.1);
+  padding: 1.25rem 1.4rem 1.1rem;
+}
+
+.page-version-history-header h2,
+.page-version-history-header p,
+.page-version-history-panel-heading h3,
+.page-version-history-panel-heading p,
+.page-version-history-detail-empty h3,
+.page-version-history-detail-empty p {
+  margin: 0;
+}
+
+.page-version-history-kicker {
+  color: #0877a9;
+  font-size: 0.7rem;
+  font-weight: 760;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.page-version-history-header h2 {
+  margin-top: 0.2rem;
+  color: var(--ink-strong);
+  font-size: clamp(1.25rem, 2vw, 1.6rem);
+}
+
+#page-version-history-description {
+  max-width: 42rem;
+  margin-top: 0.28rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.page-version-history-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.page-version-history-current {
+  display: inline-flex;
+  min-height: 1.9rem;
+  align-items: center;
+  border: 1px solid rgba(8, 119, 169, 0.18);
+  border-radius: 999px;
+  background: rgba(8, 119, 169, 0.08);
+  color: #086c98;
+  padding: 0.28rem 0.62rem;
+  font-size: 0.7rem;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
+.page-version-history-close {
+  display: inline-grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.page-version-history-close:hover,
+.page-version-history-close:focus-visible {
+  background: var(--active);
+  color: var(--ink-strong);
+}
+
+.page-version-history-close svg {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.page-version-history-content {
+  display: grid;
+  grid-template-columns: minmax(18rem, 22rem) minmax(0, 1fr);
+  min-height: 0;
+}
+
+.page-version-history-list-panel,
+.page-version-history-detail-panel {
+  min-height: 0;
+  overflow: auto;
+}
+
+.page-version-history-list-panel {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  border-right: 1px solid rgba(38, 38, 37, 0.1);
+  background: rgba(248, 249, 250, 0.72);
+  padding: 1rem;
+}
+
+.page-version-history-panel-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0 0.2rem 0.75rem;
+}
+
+.page-version-history-panel-heading h3 {
+  color: var(--ink-strong);
+  font-size: 0.9rem;
+}
+
+#page-version-history-page-title {
+  max-width: 17rem;
+  margin-top: 0.18rem;
+  overflow: hidden;
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-version-history-message {
+  min-height: 1.15rem;
+  padding: 0 0.2rem 0.55rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.page-version-history-message.error {
+  color: var(--danger);
+}
+
+.page-version-history-list {
+  display: grid;
+  align-content: start;
+  gap: 0.45rem;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 0.16rem;
+}
+
+.page-version-history-item {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.62rem;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  padding: 0.66rem;
+  text-align: left;
+}
+
+.page-version-history-item:hover,
+.page-version-history-item:focus-visible {
+  border-color: rgba(8, 119, 169, 0.18);
+  background: #ffffff;
+  box-shadow: 0 7px 24px rgba(31, 41, 50, 0.07);
+}
+
+.page-version-history-item.is-selected {
+  border-color: rgba(8, 119, 169, 0.28);
+  background: rgba(8, 119, 169, 0.08);
+}
+
+.page-version-history-avatar {
+  display: inline-grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(8, 119, 169, 0.12);
+  color: #086c98;
+  font-size: 0.68rem;
+  font-weight: 780;
+}
+
+.page-version-history-item-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.15rem;
+}
+
+.page-version-history-item-copy strong {
+  overflow: hidden;
+  color: var(--ink-strong);
+  font-size: 0.78rem;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-version-history-item-copy span,
+.page-version-history-item-copy small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.42;
+}
+
+.page-version-history-revision {
+  display: inline-flex;
+  min-height: 1.45rem;
+  align-items: center;
+  border-radius: 999px;
+  background: rgba(78, 91, 105, 0.08);
+  color: var(--muted);
+  padding: 0.2rem 0.46rem;
+  font-size: 0.62rem;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.page-version-history-more {
+  width: 100%;
+  margin-top: 0.7rem;
+  border: 1px solid rgba(38, 38, 37, 0.12);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  padding: 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.page-version-history-more:hover,
+.page-version-history-more:focus-visible {
+  border-color: rgba(8, 119, 169, 0.28);
+  background: rgba(8, 119, 169, 0.06);
+}
+
+.page-version-history-detail-panel {
+  background: #ffffff;
+  padding: 1.2rem 1.35rem 1.5rem;
+}
+
+.page-version-history-detail-empty {
+  display: grid;
+  min-height: 100%;
+  place-content: center;
+  justify-items: center;
+  gap: 0.55rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.page-version-history-detail-empty svg {
+  width: 2.4rem;
+  height: 2.4rem;
+  fill: none;
+  stroke: rgba(8, 119, 169, 0.62);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.page-version-history-detail-empty h3 {
+  color: var(--ink-strong);
+  font-size: 0.95rem;
+}
+
+.page-version-history-detail-empty p {
+  max-width: 22rem;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.page-version-history-detail {
+  display: grid;
+  align-content: start;
+  gap: 1rem;
+}
+
+.page-version-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  border-bottom: 1px solid rgba(38, 38, 37, 0.1);
+  padding-bottom: 0.9rem;
+}
+
+.page-version-detail-header h3,
+.page-version-detail-header p {
+  margin: 0;
+}
+
+.page-version-detail-header h3 {
+  color: var(--ink-strong);
+  font-size: 1rem;
+}
+
+.page-version-detail-header p {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.page-version-detail-version-stack {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.page-version-detail-version-stack span {
+  border-radius: 999px;
+  background: rgba(78, 91, 105, 0.08);
+  color: var(--muted);
+  padding: 0.24rem 0.5rem;
+  font-size: 0.64rem;
+  font-weight: 690;
+}
+
+.page-version-change-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.page-version-change-card {
+  display: grid;
+  gap: 0.65rem;
+  border: 1px solid rgba(38, 38, 37, 0.1);
+  border-radius: 12px;
+  background: rgba(248, 249, 250, 0.68);
+  padding: 0.85rem;
+}
+
+.page-version-change-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.page-version-change-card-header strong {
+  color: var(--ink-strong);
+  font-size: 0.78rem;
+}
+
+.page-version-change-card-header span {
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.page-version-field-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.page-version-field-change {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.page-version-field-name {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 720;
+}
+
+.page-version-before-after {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.55rem;
+}
+
+.page-version-value-pane {
+  min-width: 0;
+  border: 1px solid rgba(38, 38, 37, 0.1);
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.page-version-value-pane > span {
+  display: block;
+  border-bottom: 1px solid rgba(38, 38, 37, 0.08);
+  background: rgba(78, 91, 105, 0.05);
+  color: var(--muted);
+  padding: 0.3rem 0.45rem;
+  font-size: 0.6rem;
+  font-weight: 720;
+}
+
+.page-version-value-pane pre {
+  max-height: 16rem;
+  margin: 0;
+  overflow: auto;
+  padding: 0.55rem;
+  color: var(--ink);
+  font: 0.7rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 760px) {
+  .page-version-history-dialog {
+    width: calc(100vw - 1rem);
+    height: calc(100vh - 1rem);
+    border-radius: 14px;
+  }
+
+  .page-version-history-header {
+    gap: 0.75rem;
+    padding: 1rem;
+  }
+
+  .page-version-history-current {
+    display: none;
+  }
+
+  .page-version-history-content {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(14rem, 42%) minmax(0, 1fr);
+  }
+
+  .page-version-history-list-panel {
+    border-right: 0;
+    border-bottom: 1px solid rgba(38, 38, 37, 0.1);
+    padding: 0.8rem;
+  }
+
+  .page-version-history-detail-panel {
+    padding: 0.9rem;
+  }
+
+  .page-version-before-after {
+    grid-template-columns: 1fr;
+  }
+}
+
 
 .page-mode-badge {
   display: inline-flex;

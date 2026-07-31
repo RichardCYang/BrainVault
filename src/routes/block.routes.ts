@@ -37,6 +37,11 @@ import {
 } from "../lib/block-order-integrity.js";
 import { getBlockAccess, getPageAccess, type PageAccess } from "../lib/page-access.js";
 import { broadcastCanonicalAttachment } from "../lib/collaboration-server.js";
+import {
+  diffPageVersionBlocks,
+  recordPageVersion,
+  toPageVersionActor
+} from "../lib/page-version-history.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
@@ -374,6 +379,14 @@ blockRouter.post(
             ]
           );
           pageContentVersion = await advancePageContentVersion(client, pageId, user.id);
+          const createdBlock = await client.queryOne<BlockRow>("SELECT * FROM blocks WHERE id = ?", [id]);
+          if (!createdBlock) throw new ApiError(500, "BLOCK_CREATE_FAILED", "Attachment block was not created");
+          await recordPageVersion(client, {
+            pageId,
+            actors: [toPageVersionActor(user)],
+            source: "ATTACHMENT_CREATE",
+            changes: diffPageVersionBlocks([], [createdBlock])
+          });
         });
         movedPath = null;
       } catch (error) {
@@ -480,6 +493,12 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
       const pageContentVersion = await advancePageContentVersion(client, pageId, user.id);
       const block = await client.queryOne<BlockRow>("SELECT * FROM blocks WHERE id = ?", [id]);
       if (!block) throw new ApiError(500, "BLOCK_CREATE_FAILED", "Block was not created");
+      await recordPageVersion(client, {
+        pageId,
+        actors: [toPageVersionActor(user)],
+        source: "BLOCK_CREATE",
+        changes: diffPageVersionBlocks([], [block])
+      });
       return { block, pageContentVersion };
     });
 
@@ -635,6 +654,12 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
 
       const updated = await client.queryOne<BlockRow>("SELECT * FROM blocks WHERE id = ?", [blockId]);
       if (!updated) throw notFound("Block");
+      await recordPageVersion(client, {
+        pageId: existing.page_id,
+        actors: [toPageVersionActor(user)],
+        source: "BLOCK_UPDATE",
+        changes: diffPageVersionBlocks([existing], [updated])
+      });
       return { block: updated, pageContentVersion };
     });
 
@@ -666,8 +691,19 @@ blockRouter.delete(
       assertDirectBlockMutationAllowed(lockedAccess);
       const subtreeRows = await getBlockSubtreeRows(blockId, block.page_id, client, true);
       assertBlockVersionSnapshot(subtreeRows, expectedVersions);
+      const subtreeIds = new Set(subtreeRows.map((row) => row.id));
+      const versionRows = (await client.query<BlockRow>(
+        "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC",
+        [block.page_id]
+      )).filter((row) => subtreeIds.has(row.id));
       await client.execute("DELETE FROM blocks WHERE id = ?", [blockId]);
       await advancePageContentVersion(client, block.page_id, user.id);
+      await recordPageVersion(client, {
+        pageId: block.page_id,
+        actors: [toPageVersionActor(user)],
+        source: "BLOCK_DELETE",
+        changes: diffPageVersionBlocks(versionRows, [])
+      });
       return {
         pageId: block.page_id,
         ownerId: lockedAccess.page.owner_id,
@@ -721,12 +757,8 @@ blockRouter.post(
           }
         }
 
-        const hierarchyRows = await client.query<{
-          id: string;
-          parent_block_id: string | null;
-          edit_version: number;
-        }>(
-          "SELECT id, parent_block_id, edit_version FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",
+        const hierarchyRows = await client.query<BlockRow>(
+          "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",
           [pageId]
         );
         const rowById = new Map(hierarchyRows.map((row) => [row.id, row]));
@@ -788,6 +820,12 @@ blockRouter.post(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC",
           [pageId]
         );
+        await recordPageVersion(client, {
+          pageId,
+          actors: [toPageVersionActor(user)],
+          source: "BLOCK_REORDER",
+          changes: diffPageVersionBlocks(hierarchyRows, rows)
+        });
         return { rows, pageContentVersion };
       });
 
