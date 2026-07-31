@@ -1,0 +1,5 @@
+ALTER TABLE users
+  MODIFY COLUMN default_collection_icon MEDIUMTEXT NULL;
+
+ALTER TABLE pages
+  MODIFY COLUMN icon MEDIUMTEXT NULL;

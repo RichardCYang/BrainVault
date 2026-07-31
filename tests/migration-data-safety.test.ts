@@ -115,4 +115,15 @@ describe("migration replay data safety", () => {
     expect(sql).toMatch(/INSERT IGNORE[\s\S]*WHERE NOT EXISTS[\s\S]*is_collection/i);
     expect(sql).toMatch(/UPDATE\s+pages[\s\S]*WHERE EXISTS[\s\S]*schema_migrations/i);
   });
+  it("widens page icon storage without deleting existing data", () => {
+    const sql = fs.readFileSync(
+      path.join(migrationsDir, "026_page_custom_icons.sql"),
+      "utf8"
+    );
+
+    expect(sql).toMatch(/ALTER TABLE users[\s\S]*default_collection_icon MEDIUMTEXT NULL/i);
+    expect(sql).toMatch(/ALTER TABLE pages[\s\S]*icon MEDIUMTEXT NULL/i);
+    expect(sql).not.toMatch(/\b(?:DELETE|DROP|TRUNCATE)\b/i);
+  });
+
 });

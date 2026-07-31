@@ -6,6 +6,7 @@ import { createId } from "../lib/id.js";
 import { hashPassword, normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { ApiError } from "../lib/http.js";
+import { iconValueSchema, normalizeIconValue } from "../lib/icon-value.js";
 import {
   defaultLoginHistoryMonths,
   getClientIpAddress,
@@ -49,7 +50,7 @@ const profileSchema = z
     name: z.string().trim().max(80).nullable().optional(),
     avatarData: z.string().max(Math.ceil((maxAvatarBytes * 4) / 3) + 128).nullable().optional(),
     preferredLanguage: preferredLanguageSchema.nullable().optional(),
-    defaultCollectionIcon: z.string().trim().min(1).max(32).nullable().optional()
+    defaultCollectionIcon: iconValueSchema.nullable().optional()
   })
   .refine((value) => Object.values(value).some((item) => item !== undefined), {
     message: "At least one profile field is required"
@@ -210,7 +211,7 @@ authRouter.patch("/profile", requireAuth, validate({ body: profileSchema }), asy
     }
     if (body.defaultCollectionIcon !== undefined) {
       fields.push("default_collection_icon = ?");
-      values.push(body.defaultCollectionIcon);
+      values.push(normalizeIconValue(body.defaultCollectionIcon));
     }
 
     await db.execute(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`, [...values, currentUser.id]);

@@ -11,6 +11,7 @@ import { getOwnedPage, getPageAccess, toAccessPayload, toCollaborationPayload } 
 import { disconnectPageCollaborators } from "../lib/collaboration-server.js";
 import { needsCollaborationMaterialization } from "../lib/collaboration-protocol.js";
 import { ApiError, notFound } from "../lib/http.js";
+import { iconValueSchema, normalizeIconValue } from "../lib/icon-value.js";
 import { requireAuth } from "../middleware/auth.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { buildBlockTree } from "../utils/blockTree.js";
@@ -51,7 +52,7 @@ function encodePageListCursor(row: { id: string; cursor_created_at: string }) {
 
 const createPageSchema = z.object({
   title: z.string().trim().min(1).max(160),
-  icon: z.string().trim().max(32).optional(),
+  icon: iconValueSchema.optional(),
   coverUrl: httpUrlSchema(500).optional(),
   parentPageId: z.string().min(1).optional(),
   isCollection: z.boolean().optional().default(false),
@@ -61,7 +62,7 @@ const createPageSchema = z.object({
 
 const updatePageSchema = z.object({
   title: z.string().trim().min(1).max(160).optional(),
-  icon: z.string().trim().max(32).nullable().optional(),
+  icon: iconValueSchema.nullable().optional(),
   coverUrl: httpUrlSchema(500).nullable().optional(),
   isArchived: z.boolean().optional(),
   parentPageId: z.string().min(1).nullable().optional(),
@@ -426,7 +427,7 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
         [
           id,
           body.title,
-          body.icon ?? null,
+          normalizeIconValue(body.icon ?? null),
           body.coverUrl ?? null,
           body.isCollection ? 1 : 0,
           user.id,
@@ -512,7 +513,7 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
     }
     if (updates.icon !== undefined) {
       fields.push("icon = ?");
-      values.push(updates.icon);
+      values.push(normalizeIconValue(updates.icon));
     }
     if (updates.coverUrl !== undefined) {
       fields.push("cover_url = ?");

@@ -15,7 +15,7 @@ describe("Page view header and actions menu", () => {
     expect(index).toContain('aria-controls="page-actions-menu"');
     expect(client).toContain("function getPagePathSegments");
     expect(client).toContain("function renderPagePath");
-    expect(client).toContain('emoji.textContent = segment.icon');
+    expect(client).toContain('renderIconValue(emoji, segment.icon');
   });
 
   it("stacks the page icon above a large, full-width title like a Notion page", () => {

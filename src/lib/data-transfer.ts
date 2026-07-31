@@ -14,6 +14,7 @@ import { disconnectPageCollaborators } from "./collaboration-server.js";
 import { needsCollaborationMaterialization } from "./collaboration-protocol.js";
 import { db, transaction, type DbClient } from "./db.js";
 import { ApiError } from "./http.js";
+import { iconValueSchema, normalizeIconValue } from "./icon-value.js";
 import { createId } from "./id.js";
 import {
   getBackupPageShareIdentityMode,
@@ -106,7 +107,7 @@ type RestoreJournalV3 = z.infer<typeof restoreJournalV3Schema>;
 const pageSchema = z.object({
   id: idSchema,
   title: z.string().max(160),
-  icon: nullableString(32),
+  icon: iconValueSchema.nullable(),
   cover_url: nullableHttpUrl(500),
   is_archived: z.union([z.literal(0), z.literal(1)]),
   is_collection: z.union([z.literal(0), z.literal(1)]),
@@ -172,7 +173,7 @@ const manifestSchema = z.object({
     name: nullableString(80),
     avatar_data: backupAvatarSchema,
     preferred_language: nullableString(10),
-    default_collection_icon: nullableString(32)
+    default_collection_icon: iconValueSchema.nullable()
   }).strict(),
   data: z.object({
     pages: z.array(pageSchema).max(1_000_000),
@@ -641,10 +642,13 @@ export async function prepareUserDataBackup(userId: string) {
         name: snapshot.account.name,
         avatar_data: snapshot.account.avatar_data,
         preferred_language: snapshot.account.preferred_language,
-        default_collection_icon: snapshot.account.default_collection_icon
+        default_collection_icon: normalizeIconValue(snapshot.account.default_collection_icon)
       },
       data: {
-        pages: snapshot.pages,
+        pages: snapshot.pages.map((page) => ({
+          ...page,
+          icon: normalizeIconValue(page.icon)
+        })),
         blocks: snapshot.blocks,
         tags: snapshot.tags,
         pageTags: snapshot.pageTags,
@@ -956,7 +960,7 @@ async function importRows(
       manifest.account.name,
       normalizeAvatarDataUrl(manifest.account.avatar_data),
       manifest.account.preferred_language,
-      manifest.account.default_collection_icon,
+      normalizeIconValue(manifest.account.default_collection_icon),
       userId
     ]
   );
@@ -968,7 +972,7 @@ async function importRows(
        (id, title, icon, cover_url, is_archived, is_collection, owner_id, parent_page_id, edit_version, content_version, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        page.id, page.title, page.icon, page.cover_url, page.is_archived, page.is_collection, userId,
+        page.id, page.title, normalizeIconValue(page.icon), page.cover_url, page.is_archived, page.is_collection, userId,
         page.parent_page_id, restoreVersion, restoreVersion, page.created_at, page.updated_at
       ]
     );

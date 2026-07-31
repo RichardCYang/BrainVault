@@ -86,6 +86,27 @@ describe("Account settings routes", () => {
     expect(user.default_collection_icon).toBe("🧠");
   });
 
+  it("persists built-in and uploaded custom collection icons", async () => {
+    const builtIn = await request(createApp())
+      .patch("/api/auth/profile")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ defaultCollectionIcon: "icon:folder" })
+      .expect(200);
+
+    expect(builtIn.body.user.defaultCollectionIcon).toBe("icon:folder");
+    expect(user.default_collection_icon).toBe("icon:folder");
+
+    const imageData = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlR0y8AAAAASUVORK5CYII=";
+    const custom = await request(createApp())
+      .patch("/api/auth/profile")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ defaultCollectionIcon: `image:${imageData}` })
+      .expect(200);
+
+    expect(custom.body.user.defaultCollectionIcon).toBe(`image:${imageData}`);
+    expect(user.default_collection_icon).toBe(`image:${imageData}`);
+  });
+
   it("rejects an invalid profile image", async () => {
     const response = await request(createApp())
       .patch("/api/auth/profile")
