@@ -7144,15 +7144,16 @@ body.auth-mode * {
   min-width: 0;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
   background: var(--panel);
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
 }
 
 .search-dialog-input-wrap:focus-within {
-  border-color: rgba(14, 165, 233, 0.62);
-  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.12);
+  border-color: #65afe8;
+  background: #fbfdff;
+  box-shadow: 0 0 0 3px rgba(82, 166, 230, 0.22);
 }
 
 .search-dialog-input-icon,
@@ -7180,6 +7181,8 @@ body.auth-mode * {
 }
 
 .search-dialog-input-wrap input:focus {
+  border: 0;
+  outline: none;
   box-shadow: none;
 }
 
@@ -9174,7 +9177,17 @@ body.search-dialog-open {
     width: min(44rem, 100%);
   }
 
-  .app-mode .search-dialog-input-wrap,
+  .app-mode .search-dialog-input-wrap {
+    border-color: var(--chrome-line-strong);
+    background: #ffffff;
+  }
+
+  .app-mode .search-dialog-input-wrap:focus-within {
+    border-color: rgba(14, 165, 233, 0.6);
+    background: #ffffff;
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.13);
+  }
+
   .app-mode .search-result-icon,
   .app-mode .search-dialog-message {
     border-color: var(--chrome-line);
