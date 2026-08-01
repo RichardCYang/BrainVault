@@ -92,7 +92,19 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
     return;
   }
 
-  console.error(error);
+  const descriptor = typeof error === "object" && error !== null
+    ? {
+      name: "name" in error ? String(error.name) : error.constructor?.name ?? "Error",
+      code: "code" in error ? String(error.code) : dbError?.code,
+      errno: dbError?.errno,
+      sqlState: dbError?.sqlState
+    }
+    : { name: typeof error, code: null, errno: null, sqlState: null };
+  console.error("Unexpected request failure", {
+    method: req.method,
+    path: req.path,
+    ...descriptor
+  });
   res.status(500).json({
     error: {
       code: "INTERNAL_SERVER_ERROR",

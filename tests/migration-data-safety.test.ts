@@ -70,6 +70,21 @@ describe("migration replay data safety", () => {
     expect(sql).not.toMatch(/DELETE\s+FROM\s+users/i);
   });
 
+  it("adds non-destructive persisted account login backoff", () => {
+    const baseline = fs.readFileSync(path.join(migrationsDir, "001_init.sql"), "utf8");
+    const sql = fs.readFileSync(
+      path.join(migrationsDir, "030_account_login_lockout.sql"),
+      "utf8"
+    );
+
+    for (const source of [baseline, sql]) {
+      expect(source).toMatch(/failed_login_attempts INT UNSIGNED NOT NULL DEFAULT 0/i);
+      expect(source).toMatch(/last_failed_login_at DATETIME\(3\) NULL/i);
+      expect(source).toMatch(/login_locked_until DATETIME\(3\) NULL/i);
+    }
+    expect(sql).not.toMatch(/\b(?:DELETE|DROP|TRUNCATE)\b/i);
+  });
+
   it("adds a non-destructive collaboration document epoch fence", () => {
     const sql = fs.readFileSync(
       path.join(migrationsDir, "021_collaboration_document_epoch.sql"),

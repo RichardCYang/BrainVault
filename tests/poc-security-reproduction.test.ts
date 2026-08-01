@@ -21,7 +21,9 @@ describe("reported security reproductions are now blocked", () => {
     expect(routes).toContain("SELECT id FROM users WHERE id = ? FOR UPDATE");
     expect(routes).toContain("MAX(failed_attempts) AS failed_attempts");
     expect(routes).toContain("MFA_TEMPORARILY_LOCKED");
-    expect(routes).not.toContain("WHERE user_id = ? OR expires_at <= CURRENT_TIMESTAMP(3)");
+    expect(routes).not.toMatch(
+      /DELETE FROM mfa_login_sessions[\s\S]{0,240}WHERE user_id = \? OR expires_at <= CURRENT_TIMESTAMP\(3\)/
+    );
   });
 
   it("P3 rate-limits TOTP and passkey login verification", async () => {

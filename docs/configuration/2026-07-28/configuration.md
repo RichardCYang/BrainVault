@@ -17,7 +17,8 @@ Never commit a real `.env` file.
 | `AUTO_BOOTSTRAP_DATABASE` | `true` | Run database bootstrap before listening |
 | `DATABASE_CONNECTION_LIMIT` | `10` | Maximum database pool size |
 | `JWT_SECRET` | Random ephemeral value outside production | Secret used to sign access tokens; `env:init` writes a persistent random value and production requires an explicit non-placeholder value |
-| `JWT_EXPIRES_IN` | `7d` | Access-token lifetime |
+| `JWT_EXPIRES_IN` | `12h` | Session-token lifetime; must be between 5 minutes and 24 hours |
+| `AUTH_ALLOW_BEARER_TOKENS` | Enabled outside production, disabled in production | Permit compatibility `Authorization: Bearer` sessions; the browser client uses the `HttpOnly` cookie |
 | `MFA_ENCRYPTION_KEY` | Random ephemeral value outside production | Independent key material used to encrypt TOTP secrets; `env:init` writes a persistent random value |
 | `WEBAUTHN_RP_NAME` | `BrainVault` | Name shown during passkey registration |
 | `WEBAUTHN_RP_ID` | `localhost` | WebAuthn relying-party domain without scheme or port |
@@ -37,16 +38,24 @@ Never commit a real `.env` file.
 | `AUTH_LOGIN_IP_MAX` | `20` | Failed login requests allowed per IP window |
 | `AUTH_LOGIN_ACCOUNT_WINDOW_MS` | `3600000` | Account-keyed login throttling window |
 | `AUTH_LOGIN_ACCOUNT_MAX` | `30` | Failed or MFA-pending login requests allowed per normalized account window |
+| `AUTH_LOGIN_LOCK_THRESHOLD` | `8` | Password failures before persisted account backoff begins |
+| `AUTH_LOGIN_LOCK_BASE_MS` | `30000` | Initial account lock duration |
+| `AUTH_LOGIN_LOCK_MAX_MS` | `900000` | Maximum exponential account lock duration |
+| `AUTH_LOGIN_FAILURE_RESET_MS` | `3600000` | Idle interval after which the password-failure count restarts |
 | `AUTH_MFA_IP_WINDOW_MS` | `900000` | MFA login verification IP window |
 | `AUTH_MFA_IP_MAX` | `15` | Failed MFA login verifications allowed per IP window |
 | `AUTH_MFA_ACCOUNT_WINDOW_MS` | `3600000` | MFA login account window and failure-carry interval |
 | `AUTH_MFA_ACCOUNT_MAX` | `20` | Failed MFA login verifications allowed per account window |
 | `AUTH_MFA_SETUP_WINDOW_MS` | `900000` | TOTP enrollment verification account window |
 | `AUTH_MFA_SETUP_MAX` | `10` | Failed TOTP enrollment verifications allowed per account window |
+| `MFA_TOTP_WINDOW_STEPS` | `0` | Additional TOTP steps accepted on either side of the current step; `0` prevents adjacent-step reuse |
 | `AUTH_REGISTER_WINDOW_MS` | `3600000` | Registration throttling window |
 | `AUTH_REGISTER_MAX` | `5` | Registration requests allowed per IP window |
+| `AUTH_REGISTER_GLOBAL_MAX` | `20` | Registration requests allowed per process-wide window |
 | `TRUST_PROXY_ADDRESSES` | Empty | Comma-separated proxy IPs, CIDRs, or `loopback`/`linklocal`/`uniquelocal`; recommended over hop trust |
 | `TRUST_PROXY_HOPS` | `0` | Exact trusted reverse-proxy hop count; cannot be combined with `TRUST_PROXY_ADDRESSES` |
+| `BOOKMARK_PREVIEW_WINDOW_MS` | `60000` | Dedicated authenticated-user bookmark-preview limit window |
+| `BOOKMARK_PREVIEW_MAX` | `12` | Bookmark-preview requests allowed per authenticated user and window |
 | `BOOKMARK_FETCH_TIMEOUT_MS` | `8000` | Maximum duration of one OpenGraph page fetch |
 | `BOOKMARK_FETCH_MAX_BYTES` | `524288` | Maximum document-head bytes inspected for one bookmark preview |
 | `ATTACHMENT_UPLOAD_DIR` | `uploads` | Private on-disk directory for attachment bytes |
@@ -88,6 +97,8 @@ HTTPS_MODE=proxy
 HTTPS_REDIRECT=true
 HTTPS_HEALTHCHECK_BYPASS=true
 REGISTRATION_ENABLED=false
+AUTH_ALLOW_BEARER_TOKENS=false
+JWT_EXPIRES_IN="12h"
 SERVE_INTERNAL_DOCS=false
 TRUST_PROXY_ADDRESSES="loopback"
 TRUST_PROXY_HOPS=0

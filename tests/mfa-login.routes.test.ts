@@ -39,6 +39,8 @@ describe("MFA login gate", () => {
   it("returns a temporary MFA session instead of a JWT when a method is configured", async () => {
     database.queryOne.mockImplementation(async (sql: string) => {
       if (sql.includes("FROM users WHERE username = ?")) return user;
+      if (sql.includes("SELECT * FROM users WHERE id = ? FOR UPDATE")) return user;
+      if (sql.includes("SELECT failed_login_attempts")) return user;
       if (sql.includes("EXISTS(SELECT 1 FROM user_totp_credentials")) {
         return { totp_enabled: 1, passkey_count: 2 };
       }
@@ -68,6 +70,8 @@ describe("MFA login gate", () => {
   it("issues a cookie-only session when no MFA method is configured", async () => {
     database.queryOne.mockImplementation(async (sql: string) => {
       if (sql.includes("FROM users WHERE username = ?")) return user;
+      if (sql.includes("SELECT * FROM users WHERE id = ? FOR UPDATE")) return user;
+      if (sql.includes("SELECT failed_login_attempts")) return user;
       if (sql.includes("EXISTS(SELECT 1 FROM user_totp_credentials")) {
         return { totp_enabled: 0, passkey_count: 0 };
       }

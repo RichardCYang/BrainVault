@@ -49,7 +49,7 @@ const authRoutesSource = contains("src/routes/auth.routes.ts", [
   "disconnectUserCollaborators(updatedUser.id",
   "res.locals.authenticationPending = true",
   "res.status(202).json({ ok: true })",
-  "same status and response shape"
+  "same status, response shape"
 ]);
 assert.doesNotMatch(authRoutesSource, /res\.json\(\{[^}]*token/, "Authentication responses must not expose JWTs");
 
@@ -85,6 +85,12 @@ contains("src/config/env.ts", [
   "AUTH_MFA_IP_MAX",
   "AUTH_MFA_ACCOUNT_MAX",
   "AUTH_MFA_SETUP_MAX",
+  "AUTH_LOGIN_LOCK_THRESHOLD",
+  "AUTH_REGISTER_GLOBAL_MAX",
+  "BOOKMARK_PREVIEW_MAX",
+  "MFA_TOTP_WINDOW_STEPS",
+  "JWT_EXPIRES_IN must be between 5 minutes and 24 hours",
+  "AUTH_ALLOW_BEARER_TOKENS",
   "TRUST_PROXY_HOPS",
   "TRUST_PROXY_ADDRESSES",
   'HTTPS_MODE: z.enum(["off", "proxy", "posh-acme"])',
@@ -121,7 +127,7 @@ const browserSource = read("public/app.js");
 assert.ok(!browserSource.includes("brainvault.token"), "The browser must not persist the JWT in localStorage");
 assert.ok(!browserSource.includes('Authorization", `Bearer'), "The built-in browser must use the HttpOnly session cookie");
 assert.ok(browserSource.includes("CSS.escape(blockId)"), "Dynamic block selectors must escape block IDs");
-contains("src/lib/session-cookie.ts", ["httpOnly: true", 'sameSite: "strict"', 'secure: env.NODE_ENV === "production"']);
+contains("src/lib/session-cookie.ts", ["httpOnly: true", 'sameSite: "strict"', "secure: secureSessionCookie"]);
 contains("src/middleware/auth-rate-limit.ts", [
   "loginIpRateLimit",
   "loginAccountRateLimit",
@@ -129,6 +135,7 @@ contains("src/middleware/auth-rate-limit.ts", [
   "mfaLoginAccountRateLimit",
   "mfaSetupRateLimit",
   "requestWasSuccessful: authenticationRequestSucceeded",
+  "registrationGlobalRateLimit",
   "registrationRateLimit"
 ]);
 const appSource = contains("src/app.ts", [
@@ -160,7 +167,11 @@ contains("src/lib/posh-acme-https.ts", [
 ]);
 contains("src/middleware/https.ts", ["req.secure", "buildHttpsRedirectUrl", "HTTPS_REQUIRED", "res.redirect(308"]);
 contains("src/lib/reverse-proxy.ts", ["createExpressTrustProxySetting", "trustedProxyAddresses"]);
-contains("src/routes/page.routes.ts", ["coverUrl: httpUrlSchema(500)", "escapeHtmlAttribute(block.id)"]);
+contains("src/routes/page.routes.ts", [
+  "coverUrl: httpUrlSchema(500)",
+  "escapeHtmlAttribute(block.id)",
+  'res.setHeader("Cache-Control", "private, no-store")'
+]);
 contains("src/lib/collaboration-materialization.ts", ["z.string().regex(/^[a-zA-Z0-9_-]+$/).min(1).max(64)"]);
 contains("src/lib/data-transfer.ts", [
   "cover_url: nullableHttpUrl(500)",
@@ -168,7 +179,12 @@ contains("src/lib/data-transfer.ts", [
   "The backup contains an identifier owned by another account"
 ]);
 contains("src/routes/collaboration.routes.ts", ["SHARE_TARGET_UNAVAILABLE"]);
-contains("src/middleware/error.ts", ["INVALID_JSON", 'code: "DATABASE_CONSTRAINT_FAILED"']);
+const errorSource = contains("src/middleware/error.ts", [
+  "INVALID_JSON",
+  'code: "DATABASE_CONSTRAINT_FAILED"',
+  'console.error("Unexpected request failure"'
+]);
+assert.ok(!errorSource.includes("console.error(error)"), "Unexpected errors must not be logged as complete objects");
 
 const corsSource = contains("src/middleware/cors.ts", [
   "explicitCorsOrigins.has(normalizeOrigin(origin))"
@@ -190,7 +206,26 @@ const bootstrapSource = contains("src/lib/db-bootstrap.ts", [
 assert.ok(!bootstrapSource.includes("GRANT ALL PRIVILEGES"), "Application DB accounts must not receive ALL PRIVILEGES");
 assert.doesNotMatch(bootstrapSource, /CREATE USER IF NOT EXISTS[^\n]+@'%' /, "Application DB accounts must not be created for wildcard hosts");
 
-contains("src/routes/block.routes.ts", ["parts: 6", "fieldNestingDepth: 1", "headerPairs: 32"]);
+contains("src/routes/block.routes.ts", [
+  "parts: 6",
+  "fieldNestingDepth: 1",
+  "headerPairs: 32",
+  "bookmarkPreviewRateLimit",
+  "inspectAttachmentUpload",
+  "assertDirectBlockMutationAllowed(access)",
+  "assertDirectBlockMutationAllowed(lockedAccess)",
+  "sanitizeAttachmentDownloadFilename",
+  "Content-Security-Policy",
+  "Cross-Origin-Resource-Policy"
+]);
+contains("src/lib/attachment-metadata-integrity.ts", [
+  "safeAttachmentMimeTypes",
+  "activeAttachmentMimeTypes",
+  "isBlockedAttachmentFilename",
+  "sanitizeAttachmentDownloadFilename"
+]);
+contains("src/lib/login-lockout.ts", ["AUTH_LOGIN_LOCK_THRESHOLD", "login_locked_until", "FOR UPDATE"]);
+contains("migrations/030_account_login_lockout.sql", ["failed_login_attempts", "login_locked_until"]);
 contains("src/routes/data.routes.ts", ["parts: 2", "fieldNestingDepth: 1", "headerPairs: 32"]);
 
 for (const address of [
@@ -222,4 +257,4 @@ assert.equal(acceptsSession(1, 1), true, "A current session must be accepted bef
 assert.equal(acceptsSession(1, 2), false, "An old session must be rejected after credential rotation");
 assert.equal(acceptsSession(2, 2), true, "The replacement session must remain usable");
 
-console.log("[security-hardening] PASS: MFA throttling, cookie-only login, logout revocation, database accounts, CSP/origins, injection guards, error hygiene, JWT separation, multipart limits, and SSRF ranges");
+console.log("[security-hardening] PASS: account backoff, strict session defaults, MFA throttling, cookie-only browser login, logout revocation, bookmark limits, attachment screening, collaboration write gates, cache controls, database accounts, CSP/origins, error hygiene, JWT separation, multipart limits, and SSRF ranges");

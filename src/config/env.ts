@@ -25,6 +25,12 @@ const booleanValue = z
   .transform((value) => ["true", "1", "yes", "on"].includes(value));
 const enabledByDefault = booleanValue.default("true");
 const disabledByDefault = booleanValue.default("false");
+const jwtExpirySchema = z.string().trim().regex(/^\d+[smhd]$/, "JWT_EXPIRES_IN must use s, m, h, or d units")
+  .refine((value) => {
+    const unitMs = { s: 1_000, m: 60_000, h: 60 * 60_000, d: 24 * 60 * 60_000 } as const;
+    const durationMs = Number(value.slice(0, -1)) * unitMs[value.at(-1) as keyof typeof unitMs];
+    return Number.isSafeInteger(durationMs) && durationMs >= 5 * 60_000 && durationMs <= 24 * 60 * 60_000;
+  }, "JWT_EXPIRES_IN must be between 5 minutes and 24 hours");
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -36,7 +42,8 @@ const envSchema = z.object({
   AUTO_BOOTSTRAP_DATABASE: enabledByDefault,
   DATABASE_CONNECTION_LIMIT: z.coerce.number().int().min(1).max(50).default(10),
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters long").optional(),
-  JWT_EXPIRES_IN: z.string().default("7d"),
+  JWT_EXPIRES_IN: jwtExpirySchema.default("12h"),
+  AUTH_ALLOW_BEARER_TOKENS: booleanValue.optional(),
   MFA_ENCRYPTION_KEY: z.string().min(32, "MFA_ENCRYPTION_KEY must be at least 32 characters long").optional(),
   WEBAUTHN_RP_NAME: z.string().trim().min(1).max(100).default("BrainVault"),
   WEBAUTHN_RP_ID: z.string().trim().min(1).default("localhost"),
@@ -56,14 +63,22 @@ const envSchema = z.object({
   AUTH_LOGIN_IP_MAX: z.coerce.number().int().positive().default(20),
   AUTH_LOGIN_ACCOUNT_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60_000),
   AUTH_LOGIN_ACCOUNT_MAX: z.coerce.number().int().positive().default(30),
+  AUTH_LOGIN_LOCK_THRESHOLD: z.coerce.number().int().min(3).max(50).default(8),
+  AUTH_LOGIN_LOCK_BASE_MS: z.coerce.number().int().min(1_000).max(60 * 60_000).default(30_000),
+  AUTH_LOGIN_LOCK_MAX_MS: z.coerce.number().int().min(1_000).max(24 * 60 * 60_000).default(15 * 60_000),
+  AUTH_LOGIN_FAILURE_RESET_MS: z.coerce.number().int().min(60_000).max(7 * 24 * 60 * 60_000).default(60 * 60_000),
   AUTH_MFA_IP_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60_000),
   AUTH_MFA_IP_MAX: z.coerce.number().int().positive().default(15),
   AUTH_MFA_ACCOUNT_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60_000),
   AUTH_MFA_ACCOUNT_MAX: z.coerce.number().int().positive().default(20),
   AUTH_MFA_SETUP_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60_000),
   AUTH_MFA_SETUP_MAX: z.coerce.number().int().positive().default(10),
+  MFA_TOTP_WINDOW_STEPS: z.coerce.number().int().min(0).max(1).default(0),
   AUTH_REGISTER_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60_000),
   AUTH_REGISTER_MAX: z.coerce.number().int().positive().default(5),
+  AUTH_REGISTER_GLOBAL_MAX: z.coerce.number().int().positive().default(20),
+  BOOKMARK_PREVIEW_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+  BOOKMARK_PREVIEW_MAX: z.coerce.number().int().positive().default(12),
   BOOKMARK_FETCH_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(8_000),
   BOOKMARK_FETCH_MAX_BYTES: z.coerce.number().int().min(64 * 1024).max(768 * 1024).default(512 * 1024),
   ATTACHMENT_UPLOAD_DIR: z.string().min(1).default("uploads"),
@@ -235,6 +250,7 @@ export const env = {
   PUBLIC_ORIGIN: publicOrigin,
   HTTPS_REDIRECT: httpsRedirect,
   TRUST_PROXY_ADDRESSES: trustedProxyAddresses,
+  AUTH_ALLOW_BEARER_TOKENS: parsedEnv.AUTH_ALLOW_BEARER_TOKENS ?? parsedEnv.NODE_ENV !== "production",
   REGISTRATION_ENABLED: parsedEnv.REGISTRATION_ENABLED ?? parsedEnv.NODE_ENV !== "production"
 };
 

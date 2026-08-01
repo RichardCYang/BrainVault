@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS users (
   preferred_language VARCHAR(10) NULL,
   default_collection_icon VARCHAR(32) NULL,
   password_hash VARCHAR(255) NOT NULL,
+  failed_login_attempts INT UNSIGNED NOT NULL DEFAULT 0,
+  last_failed_login_at DATETIME(3) NULL,
+  login_locked_until DATETIME(3) NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   CONSTRAINT uq_users_username UNIQUE (username)

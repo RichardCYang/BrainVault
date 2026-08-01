@@ -7,7 +7,7 @@ Open **Settings → Security** to configure either verification method:
 - **Authenticator app (TOTP):** BrainVault displays a QR code and manual setup key, then enables the method only after a valid six-digit code is confirmed. The stored TOTP secret is encrypted with AES-256-GCM, and a code cannot be replayed within the same time step.
 - **Passkeys (WebAuthn/FIDO2):** Add, name, rename, and remove multiple platform passkeys or external hardware security keys. Each credential is stored separately so a primary device and recovery keys can coexist.
 
-After the password is accepted, accounts with at least one configured method receive a short-lived, one-time MFA session instead of a JWT response. Completing an available TOTP or passkey challenge creates the normal `HttpOnly`, `SameSite=Strict` session cookie. Authentication responses do not include the JWT in JSON, and the built-in browser client does not persist session credentials in Web Storage. Browser-origin checks also apply when a compatibility bearer token is presented.
+After the password is accepted, accounts with at least one configured method receive a short-lived, one-time MFA session instead of a JWT response. Completing an available TOTP or passkey challenge creates the normal `HttpOnly`, `SameSite=Strict` session cookie. The cookie is marked `Secure` whenever the configured public origin or HTTPS mode uses TLS. Authentication responses do not include the JWT in JSON, and the built-in browser client does not persist session credentials in Web Storage. Compatibility bearer sessions are disabled by default in production and remain subject to browser-origin checks when explicitly enabled.
 
 Local WebAuthn development works at `http://localhost:4000`. Production deployments should use HTTPS and set `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGIN` to the exact relying-party domain and browser origin.
 
@@ -23,11 +23,11 @@ When `MARIADB_ADMIN_URL` is used, bootstrap creates application accounts only fo
 
 ## Authentication abuse controls
 
-Login is protected by both IP-keyed and normalized-account-keyed limits. A password-valid response that still requires MFA is counted rather than treated as a completed successful login. TOTP and passkey login verification have separate IP and account limits, and TOTP enrollment verification has its own account limit. MFA failures are carried into replacement login sessions under a user-row lock, so signing in again cannot reset the eight-attempt session budget. Successful MFA completion clears the carried state. Registration has a separate IP limit, defaults to disabled in production, and returns a generic duplicate-account response. The in-memory limiter is suitable for one process; multi-instance deployments should use a shared rate-limit store.
+Login is protected by IP-keyed and normalized-account-keyed request limits plus a database-persisted account backoff. Password failures are updated under a user-row lock; after the configured threshold, the lock duration grows exponentially up to the configured maximum, so distributed source IPs cannot reset the account state. A password-valid response that still requires MFA is counted rather than treated as a completed successful login. TOTP and passkey login verification have separate IP and account limits, and TOTP enrollment verification has its own account limit. MFA failures are carried into replacement login sessions under a user-row lock, so signing in again cannot reset the eight-attempt session budget. Successful MFA completion clears the carried state. Registration has per-IP and process-wide limits, defaults to disabled in production, avoids repeated password hashing for an existing username, and returns the same padded accepted response. The in-memory request limiters are suitable for one process; multi-instance deployments should use a shared rate-limit store, while the password backoff remains shared through MariaDB.
 
 ## Credential-change session revocation
 
-API access tokens and page-scoped collaboration tickets use separate JWT audiences, a fixed HS256 algorithm, and the `brainvault` issuer. Tokens also carry the account's current authentication generation. Changing the password or logging out increments that generation, deletes unfinished MFA and WebAuthn login state, and immediately closes local collaboration sockets. The initiating browser receives a replacement cookie after a password change; logout clears the cookie. Older API tokens, collaboration tickets, and periodically rechecked sockets fail closed.
+API access tokens and page-scoped collaboration tickets use separate JWT audiences, a fixed HS256 algorithm, and the `brainvault` issuer. Session tokens default to 12 hours and configuration rejects lifetimes longer than 24 hours. Tokens also carry the account's current authentication generation. Changing the password or logging out increments that generation, deletes unfinished MFA and WebAuthn login state, and immediately closes local collaboration sockets. The initiating browser receives a replacement cookie after a password change; logout clears the cookie. Older API tokens, collaboration tickets, and periodically rechecked sockets fail closed.
 
 The `024_auth_session_revocation.sql` migration adds the non-secret `users.auth_version` generation counter. Deploying this version invalidates legacy JWTs that do not contain the strict issuer, audience, and generation claims, so users should expect to sign in again once after the upgrade.
 
@@ -54,11 +54,11 @@ The fetcher:
 - Reads only the document head up to the configured byte limit
 - Supports common legacy page character sets
 
-Use `BOOKMARK_FETCH_TIMEOUT_MS` and `BOOKMARK_FETCH_MAX_BYTES` to control fetch limits.
+A dedicated authenticated-user limiter bounds how often this server-side fetch path can be invoked. Use `BOOKMARK_PREVIEW_WINDOW_MS` and `BOOKMARK_PREVIEW_MAX` for that limit, and `BOOKMARK_FETCH_TIMEOUT_MS` and `BOOKMARK_FETCH_MAX_BYTES` for each fetch.
 
 ## Shared-page collaboration safety
 
-Only a page owner can create or remove editor grants. Session issuance, WebSocket upgrade, periodic live-connection checks, relational materialization, attachment access, and normal page reads each re-check the authenticated user’s owner/editor access. Removing a grant closes that user’s sockets immediately; archiving or deleting the page closes the room.
+Only a page owner can create or remove editor grants. Session issuance, WebSocket upgrade, periodic live-connection checks, relational materialization, attachment access, and normal page reads each re-check the authenticated user’s owner/editor access. Direct REST attachment creation is rejected after a page enters collaboration, matching the direct block-mutation invariant and preventing an out-of-band relational write. Removing a grant closes that user’s sockets immediately; archiving or deleting the page closes the room.
 
 Collaboration tickets are short-lived, page-scoped JWTs sent in the WebSocket subprotocol rather than the URL. The server validates browser origin, RFC 6455 framing and masking, frame/message size, update rate, current page state, and the ticket’s user/page scope. Accepted binary updates are committed to MariaDB before acknowledgement and broadcast. Every write also compares the process-local room tip with the locked durable update tip; a room that missed another process's update is invalidated before insertion or compaction.
 
@@ -72,7 +72,9 @@ See [Collaboration](../../collaboration/2026-07-29/collaboration.md) for the com
 
 Uploaded bytes are stored under `ATTACHMENT_UPLOAD_DIR`, which defaults to `uploads/` at the project root. This directory is ignored by Git and is never mounted as a public static directory.
 
-Every download goes through `/api/blocks/:blockId/attachment`, re-checks the current user's current page access, and sends the file with download disposition. Deleting an attachment block, a parent block containing attachments, or a permanently deleted page subtree also removes the associated files.
+Upload validation rejects active web and executable extensions and media types, detects executable signatures, verifies signatures for formats that have stable magic bytes, and downgrades unrecognized client-declared media types to `application/octet-stream`. Client `Content-Type` is never accepted as the only trust signal. Existing legacy metadata is also normalized at download time, and active legacy filenames receive a neutral `.download` suffix.
+
+Every download goes through `/api/blocks/:blockId/attachment`, re-checks the current user's current page access, forces download disposition, applies `nosniff`, a sandboxing Content Security Policy, and a same-origin resource policy. Deleting an attachment block, a parent block containing attachments, or a permanently deleted page subtree also removes the associated files.
 
 Do not point `ATTACHMENT_UPLOAD_DIR` at `public/`, `docs/`, `.git/`, or the project root.
 
@@ -99,13 +101,14 @@ The unauthenticated health response contains only `{ "ok": true }`. Internal rep
 The server includes:
 
 - Helmet security headers, exact versioned external resources, and explicit CORS/WebSocket origin allowlists in every environment
-- Global, login, MFA-login, MFA-enrollment, and registration rate limiting
-- Password hashing and current-password verification for password/MFA changes
-- Encrypted TOTP secrets with replay protection
+- Global, bookmark-preview, login, MFA-login, MFA-enrollment, and registration rate limiting
+- Persisted exponential password-failure backoff and current-password verification for password/MFA changes
+- Encrypted TOTP secrets with current-step replay protection by default
 - One-time, expiring MFA and WebAuthn challenges
 - WebAuthn user verification, strict JWT audience separation, and credential-change session revocation
 - Zod input validation and validated profile-image data
-- Private attachment storage with authenticated downloads and upload-size limits
+- Private attachment storage with filename, media-type, signature, authenticated-download, and upload-size controls
+- `private, no-store` caching on authenticated page, rendered-page, session, and attachment responses
 - Sanitized Markdown/HTML output
 
 These defaults are a starting point, not a substitute for HTTPS, secure secret storage, database and attachment backups, dependency updates, and production monitoring.

@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { env } from "../config/env.js";
 import { db } from "../lib/db.js";
 import { normalizeAuthVersion, verifyAuthToken } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
@@ -10,6 +11,9 @@ import type { UserRow } from "../types/domain.js";
 function getBearerToken(req: Request) {
   const authorization = req.header("authorization");
   if (!authorization) return null;
+  if (!env.AUTH_ALLOW_BEARER_TOKENS) {
+    throw new ApiError(401, "BEARER_AUTH_DISABLED", "Bearer authentication is disabled for this deployment");
+  }
   const [scheme, token, ...extra] = authorization.trim().split(/\s+/);
   if (scheme?.toLowerCase() !== "bearer" || !token || extra.length) {
     throw new ApiError(401, "UNAUTHENTICATED", "Invalid Authorization header");

@@ -7,6 +7,9 @@ export type UserRow = {
   default_collection_icon: string | null;
   password_hash: string;
   auth_version?: number;
+  failed_login_attempts?: number | bigint | string;
+  last_failed_login_at?: string | Date | null;
+  login_locked_until?: string | Date | null;
   created_at: string;
   updated_at: string;
 };

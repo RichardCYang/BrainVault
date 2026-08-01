@@ -1260,7 +1260,7 @@ paths:
   /api/bookmarks/preview:
     post:
       summary: Fetch OpenGraph metadata for a bookmark URL
-      description: Fetches a public HTTP(S) page from the server, validates redirects and every resolved address, and returns title, description, image, favicon, and site information. Local and private network destinations are rejected. Recoverable remote fetch failures return a basic bookmark plus a warning instead of failing the request.
+      description: Fetches a public HTTP(S) page from the server under a dedicated authenticated-user rate limit, validates redirects and every resolved address, and returns title, description, image, favicon, and site information. Local and private network destinations are rejected. Recoverable remote fetch failures return a basic bookmark plus a warning instead of failing the request.
       requestBody:
         required: true
         content:
@@ -1287,6 +1287,8 @@ paths:
                     $ref: '#/components/schemas/BookmarkPreviewWarning'
         '400':
           description: Invalid, local, or private-network URL
+        '429':
+          description: Authenticated user exceeded the bookmark-preview request limit
   /api/pages/{pageId}/shares:
     get:
       summary: List users invited to edit a page
@@ -1480,7 +1482,7 @@ paths:
   /api/pages/{pageId}/attachments:
     post:
       summary: Upload a file and create a canonical attachment block
-      description: Available to the owner and invited editors. Stores the file outside the public web root; the configured maximum size defaults to 25 MB. For a shared page, the server publishes the canonical attachment block to the active Yjs room.
+      description: Available only while the page is not participating in collaboration. Stores the file outside the public web root, rejects active web or executable filenames and media types, validates stable file signatures, and applies the configured size limit (25 MB by default). Direct attachment creation on a shared page is rejected to preserve the collaboration write invariant.
       parameters:
         - in: path
           name: pageId
@@ -1508,11 +1510,16 @@ paths:
           description: Attachment block created
         '400':
           description: Missing file, invalid parent block, or malformed multipart input
+        '409':
+          description: Page is archived, changed ownership, or requires collaboration-aware mutation
         '413':
           description: Attachment exceeds MAX_ATTACHMENT_SIZE_MB
+        '415':
+          description: Attachment filename, media type, executable signature, or declared-type signature is not allowed
   /api/blocks/{blockId}/attachment:
     get:
       summary: Download an attachment after current page-access verification
+      description: Forces download disposition, normalizes legacy active media types, neutralizes risky legacy filename extensions, and sends nosniff, sandboxing CSP, same-origin resource policy, and private no-store caching headers.
       parameters:
         - in: path
           name: blockId

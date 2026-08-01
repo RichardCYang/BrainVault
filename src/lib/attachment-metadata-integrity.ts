@@ -20,6 +20,84 @@ export class AttachmentMetadataIntegrityError extends Error {
   }
 }
 
+const safeAttachmentMimeTypes = new Set([
+  "application/epub+zip",
+  "application/gzip",
+  "application/json",
+  "application/msword",
+  "application/octet-stream",
+  "application/pdf",
+  "application/rtf",
+  "application/vnd.apple.keynote",
+  "application/vnd.apple.numbers",
+  "application/vnd.apple.pages",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.oasis.opendocument.presentation",
+  "application/vnd.oasis.opendocument.spreadsheet",
+  "application/vnd.oasis.opendocument.text",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/x-7z-compressed",
+  "application/x-rar-compressed",
+  "application/x-tar",
+  "application/zip",
+  "audio/aac",
+  "audio/flac",
+  "audio/mp4",
+  "audio/mpeg",
+  "audio/ogg",
+  "audio/wav",
+  "audio/webm",
+  "image/avif",
+  "image/bmp",
+  "image/gif",
+  "image/heic",
+  "image/heif",
+  "image/jpeg",
+  "image/png",
+  "image/tiff",
+  "image/webp",
+  "text/csv",
+  "text/markdown",
+  "text/plain",
+  "video/mp4",
+  "video/mpeg",
+  "video/ogg",
+  "video/quicktime",
+  "video/webm",
+  "video/x-msvideo"
+]);
+
+const activeAttachmentMimeTypes = new Set([
+  "application/hta",
+  "application/java-archive",
+  "application/javascript",
+  "application/vnd.microsoft.portable-executable",
+  "application/wasm",
+  "application/x-httpd-php",
+  "application/x-msdos-program",
+  "application/x-msdownload",
+  "application/x-sh",
+  "application/x-shockwave-flash",
+  "application/xhtml+xml",
+  "application/xml",
+  "image/svg+xml",
+  "text/html",
+  "text/javascript",
+  "text/xml",
+  "text/x-shellscript"
+]);
+
+const blockedAttachmentExtensions = new Set([
+  "apk", "app", "appinstaller", "asp", "aspx", "bat", "bash", "cgi", "cmd", "com", "cpl",
+  "crt", "desktop", "dll", "dmg", "exe", "gadget", "hta", "htm", "html", "iso", "jar", "js",
+  "jse", "jsp", "lnk", "mjs", "msi", "msp", "mst", "phtml", "php", "phar", "pl", "ps1", "py",
+  "rb", "reg", "scf", "scr", "shtml", "sh", "svg", "svgz", "swf", "url", "vbs", "vbe", "wasm",
+  "wsf", "wsh", "xhtml", "xml", "xsl", "xslt", "zsh"
+]);
+
 function fail(path: string, reason: string): never {
   throw new AttachmentMetadataIntegrityError(path, reason);
 }
@@ -75,11 +153,35 @@ export function sanitizeAttachmentFilename(value: string) {
   return safeName.slice(0, 255);
 }
 
-export function normalizeAttachmentMimeType(value: string) {
+export function canonicalizeAttachmentMimeType(value: string) {
   const mimeType = String(value ?? "").trim().toLowerCase();
   return /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(mimeType)
     ? mimeType.slice(0, 255)
     : "application/octet-stream";
+}
+
+export function normalizeAttachmentMimeType(value: string) {
+  const mimeType = canonicalizeAttachmentMimeType(value);
+  return safeAttachmentMimeTypes.has(mimeType) ? mimeType : "application/octet-stream";
+}
+
+export function isActiveAttachmentMimeType(value: string) {
+  return activeAttachmentMimeTypes.has(canonicalizeAttachmentMimeType(value));
+}
+
+export function isBlockedAttachmentFilename(value: string) {
+  const filename = sanitizeAttachmentFilename(value).trim().replace(/[. ]+$/g, "").toLowerCase();
+  if (!filename) return true;
+  if ([".htaccess", ".htpasswd", "crossdomain.xml", "clientaccesspolicy.xml"].includes(filename)) return true;
+  const extension = filename.includes(".") ? filename.split(".").pop() ?? "" : "";
+  return blockedAttachmentExtensions.has(extension);
+}
+
+export function sanitizeAttachmentDownloadFilename(value: string) {
+  const filename = sanitizeAttachmentFilename(value);
+  if (!isBlockedAttachmentFilename(filename)) return filename;
+  const suffix = ".download";
+  return `${filename.slice(0, 255 - suffix.length)}${suffix}`;
 }
 
 export function getAttachmentInfo(metadata: unknown): AttachmentInfo | null {
@@ -122,7 +224,7 @@ export function assertLosslessAttachmentMetadata(
   if (typeof attachment.mimeType !== "string") {
     fail("metadata.attachment.mimeType", "must be a string");
   }
-  const mimeType = normalizeAttachmentMimeType(attachment.mimeType);
+  const mimeType = canonicalizeAttachmentMimeType(attachment.mimeType);
   if (mimeType !== attachment.mimeType) {
     fail("metadata.attachment.mimeType", "is not in the canonical lossless MIME type form");
   }

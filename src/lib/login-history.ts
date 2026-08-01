@@ -43,8 +43,11 @@ export async function recordLoginAttempt(
       [createId("lga"), userId, ipAddress, outcome]
     );
   } catch (error) {
-    // Authentication must remain available even when the audit table is temporarily unavailable.
-    console.error("Failed to record a login attempt", error);
+    // Authentication must remain available even when the history table is temporarily unavailable.
+    console.error("Failed to record a login attempt", {
+      errorName: error instanceof Error ? error.name : typeof error,
+      errorCode: typeof error === "object" && error !== null && "code" in error ? String(error.code) : null
+    });
   }
 }
 

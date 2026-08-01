@@ -25,6 +25,9 @@ describe("MFA cryptography helpers", () => {
     );
     expect(findMatchingTotpStep(rfc6238Sha1Secret, "000000", { timestampMs, window: 1 })).toBeNull();
     expect(findMatchingTotpStep(rfc6238Sha1Secret, "not-a-code", { timestampMs, window: 1 })).toBeNull();
+
+    const previousStepCode = generateTotpCode(rfc6238Sha1Secret, timestampMs - 30_000);
+    expect(findMatchingTotpStep(rfc6238Sha1Secret, previousStepCode, { timestampMs })).toBeNull();
   });
 
   it("round-trips Base32 and AES-256-GCM encrypted secrets", () => {

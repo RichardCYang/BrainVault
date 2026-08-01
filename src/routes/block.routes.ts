@@ -10,11 +10,11 @@ import {
   ensureAttachmentDirectories,
   getAttachmentFilePath,
   getAttachmentInfo,
+  inspectAttachmentUpload,
   moveAttachmentFile,
-  normalizeAttachmentMimeType,
   removeDeletedAttachmentFiles,
   removeAttachmentPath,
-  sanitizeAttachmentFilename,
+  sanitizeAttachmentDownloadFilename,
   type AttachmentMetadata
 } from "../lib/attachments.js";
 import { renderBlockHtml } from "../lib/markdown.js";
@@ -44,6 +44,7 @@ import {
 } from "../lib/page-version-history.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { requireAuth } from "../middleware/auth.js";
+import { bookmarkPreviewRateLimit } from "../middleware/bookmark-rate-limit.js";
 import { validate } from "../middleware/validate.js";
 import { blockTypeSchema, idParamSchema, metadataSchema, requireUser } from "../utils/schemas.js";
 import type { BlockRow, PageRow } from "../types/domain.js";
@@ -177,14 +178,19 @@ const attachmentUpload = multer({
   defParamCharset: "utf8"
 });
 
-blockRouter.post("/bookmarks/preview", validate({ body: bookmarkPreviewSchema }), async (req, res, next) => {
-  try {
-    const result = await fetchBookmarkPreviewWithFallback(String(req.body.url));
-    res.json(result);
-  } catch (error) {
-    next(error);
+blockRouter.post(
+  "/bookmarks/preview",
+  bookmarkPreviewRateLimit,
+  validate({ body: bookmarkPreviewSchema }),
+  async (req, res, next) => {
+    try {
+      const result = await fetchBookmarkPreviewWithFallback(String(req.body.url));
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
 function getNextBlockSortOrder(lastSortOrder: number | null | undefined) {
   try {
@@ -327,15 +333,17 @@ blockRouter.post(
 
       const body = attachmentFormSchema.parse(req.body);
       const access = await assertAccessiblePage(pageId, user.id);
+      assertDirectBlockMutationAllowed(access);
       const ownerId = access.page.owner_id;
       await assertParentBlock(body.parentBlockId, pageId);
 
       const id = createId("blk");
-      const originalName = sanitizeAttachmentFilename(file.originalname);
+      const inspectedUpload = await inspectAttachmentUpload(file.path, file.originalname, file.mimetype);
+      const originalName = inspectedUpload.originalName;
       const metadata: AttachmentMetadata = {
         attachment: {
           originalName,
-          mimeType: normalizeAttachmentMimeType(file.mimetype),
+          mimeType: inspectedUpload.mimeType,
           size: file.size
         }
       };
@@ -355,6 +363,7 @@ blockRouter.post(
           if (lockedAccess.page.owner_id !== ownerId) {
             throw new ApiError(409, "PAGE_OWNER_CHANGED", "The page owner changed while the attachment was uploading");
           }
+          assertDirectBlockMutationAllowed(lockedAccess);
           if (lockedAccess.page.is_archived) {
             throw new ApiError(409, "PAGE_ARCHIVED", "Restore the page before adding an attachment");
           }
@@ -394,7 +403,12 @@ blockRouter.post(
           error && typeof error === "object" && "commitOutcomeUnknown" in error && error.commitOutcomeUnknown === true
         );
         if (commitOutcomeUnknown) {
-          console.error("Attachment commit outcome is unknown; preserving the moved file", { id, movedPath, error });
+          console.error("Attachment commit outcome is unknown; preserving the moved file", {
+            id,
+            movedPath,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorCode: typeof error === "object" && error !== null && "code" in error ? String(error.code) : null
+          });
           throw error;
         }
 
@@ -405,7 +419,10 @@ blockRouter.post(
           console.error("Attachment insert outcome is unknown; preserving the moved file", {
             id,
             movedPath,
-            verificationError
+            errorName: verificationError instanceof Error ? verificationError.name : typeof verificationError,
+            errorCode: typeof verificationError === "object" && verificationError !== null && "code" in verificationError
+              ? String(verificationError.code)
+              : null
           });
         }
         if (insertDefinitelyFailed && movedPath) {
@@ -443,12 +460,18 @@ blockRouter.get("/blocks/:blockId/attachment", validate({ params: idParamSchema 
 
     res.setHeader("Cache-Control", "private, no-store");
     res.setHeader("Content-Type", info.mimeType);
+    res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'");
+    res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
     res.setHeader("X-Content-Type-Options", "nosniff");
-    res.download(getAttachmentFilePath(ownerId, blockId), info.originalName, (error) => {
-      if (!error) return;
-      if (!res.headersSent) next(error);
-      else console.error("Attachment download failed", error);
-    });
+    res.download(
+      getAttachmentFilePath(ownerId, blockId),
+      sanitizeAttachmentDownloadFilename(info.originalName),
+      (error) => {
+        if (!error) return;
+        if (!res.headersSent) next(error);
+        else console.error("Attachment download failed", { blockId, errorName: error.name });
+      }
+    );
   } catch (error) {
     next(error);
   }

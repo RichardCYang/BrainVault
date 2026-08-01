@@ -46,8 +46,10 @@ const page = {
   updated_at: "2026-07-14T00:00:00.000Z"
 };
 const token = signAuthToken({ sub: user.id, username: user.username, authVersion: 1 });
+let shareCount = 0;
 
 beforeEach(async () => {
+  shareCount = 0;
   page.content_version = 1;
   database.blocks.clear();
   database.query.mockReset();
@@ -56,6 +58,7 @@ beforeEach(async () => {
   await rm(path.join(attachmentUploadRoot, user.id), { recursive: true, force: true });
 
   database.queryOne.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
+    if (sql.includes("COUNT(*) AS share_count FROM page_shares")) return { share_count: shareCount };
     if (sql.includes("FROM users WHERE id = ?")) return user;
     if (sql.includes("FROM pages WHERE id = ? AND owner_id = ?")) return page;
     if (sql.includes("SELECT * FROM pages WHERE id = ?")) return page;
@@ -144,6 +147,8 @@ describe("Attachment routes", () => {
     expect(download.headers["content-disposition"]).toContain("attachment");
     expect(download.headers["content-disposition"]).toContain("report.txt");
     expect(download.headers["x-content-type-options"]).toBe("nosniff");
+    expect(download.headers["content-security-policy"]).toContain("sandbox");
+    expect(download.headers["cross-origin-resource-policy"]).toBe("same-origin");
     expect(download.text).toBe("private attachment contents");
 
     await request(createApp())
@@ -153,5 +158,49 @@ describe("Attachment routes", () => {
       .expect(204);
 
     await expect(stat(getAttachmentFilePath(user.id, blockId))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects direct attachment writes once a page participates in collaboration", async () => {
+    shareCount = 1;
+
+    const response = await request(createApp())
+      .post(`/api/pages/${page.id}/attachments`)
+      .set("Authorization", `Bearer ${token}`)
+      .attach("file", Buffer.from("blocked collaborative attachment"), {
+        filename: "blocked.txt",
+        contentType: "text/plain"
+      })
+      .expect(409);
+
+    expect(response.body.error.code).toBe("COLLABORATION_REQUIRED");
+    expect(database.blocks.size).toBe(0);
+  });
+
+  it("rejects active web attachment names and media types", async () => {
+    const response = await request(createApp())
+      .post(`/api/pages/${page.id}/attachments`)
+      .set("Authorization", `Bearer ${token}`)
+      .attach("file", Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'), {
+        filename: "payload.svg",
+        contentType: "image/svg+xml"
+      })
+      .expect(415);
+
+    expect(response.body.error.code).toBe("ATTACHMENT_FILENAME_NOT_ALLOWED");
+    expect(database.blocks.size).toBe(0);
+  });
+
+  it("rejects a declared safe media type when the file signature does not match", async () => {
+    const response = await request(createApp())
+      .post(`/api/pages/${page.id}/attachments`)
+      .set("Authorization", `Bearer ${token}`)
+      .attach("file", Buffer.from("not actually a png"), {
+        filename: "fake.png",
+        contentType: "image/png"
+      })
+      .expect(415);
+
+    expect(response.body.error.code).toBe("ATTACHMENT_CONTENT_TYPE_MISMATCH");
+    expect(database.blocks.size).toBe(0);
   });
 });

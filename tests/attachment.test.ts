@@ -7,8 +7,10 @@ import {
   formatAttachmentSize,
   getAttachmentFilePath,
   getAttachmentInfo,
+  isBlockedAttachmentFilename,
   moveAttachmentFile,
   normalizeAttachmentMimeType,
+  sanitizeAttachmentDownloadFilename,
   sanitizeAttachmentFilename
 } from "../src/lib/attachments.js";
 import { renderBlockHtml } from "../src/lib/markdown.js";
@@ -27,6 +29,9 @@ describe("Attachment metadata", () => {
       )
     ).toEqual({ originalName: "계획서.pdf", mimeType: "application/pdf", size: 1536 });
     expect(normalizeAttachmentMimeType("text/html\r\nX-Test: yes")).toBe("application/octet-stream");
+    expect(normalizeAttachmentMimeType("image/svg+xml")).toBe("application/octet-stream");
+    expect(isBlockedAttachmentFilename("payload.svg")).toBe(true);
+    expect(sanitizeAttachmentDownloadFilename("legacy.html")).toBe("legacy.html.download");
     expect(formatAttachmentSize(1536)).toBe("1.5 KB");
   });
 
@@ -96,6 +101,9 @@ describe("Attachment integration surface", () => {
     expect(fileMove).toBeGreaterThan(pageLock);
     expect(blockInsert).toBeGreaterThan(fileMove);
     expect(uploadSource).toContain("lockedAccess.page.owner_id !== ownerId");
+    expect(uploadSource).toContain("assertDirectBlockMutationAllowed(access)");
+    expect(uploadSource).toContain("assertDirectBlockMutationAllowed(lockedAccess)");
+    expect(uploadSource).toContain("inspectAttachmentUpload(file.path, file.originalname, file.mimetype)");
     expect(await readFile("src/lib/attachments.ts", "utf8")).toContain("await handle.sync()");
     expect(pageRouteSource).toContain('row.type === "ATTACHMENT"');
     expect(appSource).toContain('{ type: "ATTACHMENT", command: "/file", icon: "attachment" }');

@@ -1,6 +1,6 @@
 # API
 
-Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cookie. Login and MFA completion never return the JWT in JSON, and the built-in browser client never stores it in `localStorage`. Accounts with MFA enabled receive a temporary opaque MFA session during login and receive the normal authentication cookie only after completing a TOTP or passkey challenge.
+Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cookie. The cookie is `Secure` for configured HTTPS deployments, and compatibility bearer sessions default to disabled in production. Login and MFA completion never return the JWT in JSON, and the built-in browser client never stores it in `localStorage`. Accounts with MFA enabled receive a temporary opaque MFA session during login and receive the normal authentication cookie only after completing a TOTP or passkey challenge.
 
 ## Route overview
 
@@ -36,11 +36,11 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `PUT` | `/api/pages/:pageId/collaboration/snapshot` | Materialize the locked durable Yjs log into page/block tables; request content is not trusted |
 | `WS` | `/api/collaboration/:pageId` | Authenticated binary Yjs updates plus JSON presence/control messages |
 | `POST` | `/api/pages/:pageId/blocks` | Add a non-attachment block |
-| `POST` | `/api/bookmarks/preview` | Fetch sanitized OpenGraph metadata for a public web page URL |
-| `POST` | `/api/pages/:pageId/attachments` | Upload a file and create an attachment block |
+| `POST` | `/api/bookmarks/preview` | Fetch sanitized OpenGraph metadata for a public URL under a dedicated authenticated-user rate limit |
+| `POST` | `/api/pages/:pageId/attachments` | Upload a screened file and create an attachment block on a page that is not in collaboration |
 | `PATCH` | `/api/blocks/:blockId` | Update a block |
 | `DELETE` | `/api/blocks/:blockId` | Delete a block and its descendants, including stored attachment files |
-| `GET` | `/api/blocks/:blockId/attachment` | Download an attachment after current page-access verification |
+| `GET` | `/api/blocks/:blockId/attachment` | Download an attachment after current page-access verification, forced disposition, and active-content response hardening |
 | `GET` | `/api/data/export` | Stream a complete ZIP backup of the authenticated workspace, including page sharing grants bound to collaborator account ID and username |
 | `POST` | `/api/data/import` | Validate and restore a BrainVault backup ZIP; ID-bound grants are recreated; legacy grants are preserved only through verified current identities |
 | `POST` | `/api/pages/:pageId/blocks/reorder` | Move or reorder blocks |

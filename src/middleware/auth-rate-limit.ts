@@ -102,6 +102,15 @@ export const mfaSetupRateLimit = rateLimit({
   handler
 });
 
+export const registrationGlobalRateLimit = rateLimit({
+  windowMs: env.AUTH_REGISTER_WINDOW_MS,
+  limit: env.AUTH_REGISTER_GLOBAL_MAX,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: () => "registration-global",
+  handler
+});
+
 export const registrationRateLimit = rateLimit({
   windowMs: env.AUTH_REGISTER_WINDOW_MS,
   limit: env.AUTH_REGISTER_MAX,

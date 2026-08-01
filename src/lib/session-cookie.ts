@@ -4,9 +4,11 @@ import { env } from "../config/env.js";
 
 export const authSessionCookieName = "brainvault_session";
 
+const secureSessionCookie = env.HTTPS_MODE !== "off" || new URL(env.PUBLIC_ORIGIN).protocol === "https:";
+
 const baseCookieOptions = {
   httpOnly: true,
-  secure: env.NODE_ENV === "production",
+  secure: secureSessionCookie,
   sameSite: "strict" as const,
   path: "/"
 };

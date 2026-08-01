@@ -112,7 +112,7 @@ function generateTotpCodeForStep(secret: string, step: number) {
 export function findMatchingTotpStep(
   secret: string,
   code: string,
-  { timestampMs = Date.now(), window = 1 }: { timestampMs?: number; window?: number } = {}
+  { timestampMs = Date.now(), window = env.MFA_TOTP_WINDOW_STEPS }: { timestampMs?: number; window?: number } = {}
 ) {
   const normalizedCode = code.trim();
   if (!/^\d{6}$/.test(normalizedCode)) return null;

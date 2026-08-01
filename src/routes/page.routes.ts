@@ -493,6 +493,7 @@ pageRouter.get("/:pageId", validate({ params: idParamSchema }), async (req, res,
   try {
     const user = requireUser(req.user);
     const pageId = String(req.params.pageId);
+    res.setHeader("Cache-Control", "private, no-store");
     res.json({ page: await getPageResponse(pageId, user.id) });
   } catch (error) {
     next(error);
@@ -913,6 +914,7 @@ pageRouter.get("/:pageId/render", validate({ params: idParamSchema }), async (re
       })
       .join("\n");
 
+    res.setHeader("Cache-Control", "private, no-store");
     res.json({ html });
   } catch (error) {
     next(error);
