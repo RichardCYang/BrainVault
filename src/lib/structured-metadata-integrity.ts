@@ -35,6 +35,13 @@ const ganttLimits = {
   assigneeLength: 80,
   idLength: 64
 } as const;
+const timetableLimits = {
+  titleLength: 120,
+  entries: 200,
+  entryTitleLength: 160,
+  noteLength: 500,
+  idLength: 64
+} as const;
 const bookmarkLimits = {
   items: 50,
   idLength: 64,
@@ -67,6 +74,7 @@ const kanbanColumnColors = new Set(["gray", "blue", "purple", "green", "yellow",
 const kanbanCardColors = new Set(["default", "pink", "yellow", "blue", "green", "purple", "peach"]);
 const ganttScales = new Set(["week", "month", "quarter"]);
 const ganttStatuses = new Set(["not_started", "in_progress", "review", "done", "blocked"]);
+const timetableIntervals = new Set([1, 15, 30, 60]);
 const aiProviderIds = new Set(["chatgpt", "gemini", "claude", "deepseek", "grok"]);
 
 export class StructuredMetadataIntegrityError extends Error {
@@ -451,6 +459,50 @@ function assertGanttMetadata(root: MetadataRecord) {
   assertUnique(ids, "metadata.gantt.tasks");
 }
 
+function parseExactTime(value: unknown, path: string) {
+  const text = optionalString(value, path, 5);
+  if (text === null) return null;
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(text);
+  if (!match) fail(path, "must be an exact HH:mm value");
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function assertTimetableMetadata(root: MetadataRecord) {
+  const timetable = optionalRecord(root.timetable, "metadata.timetable");
+  if (!timetable) return;
+  optionalString(timetable.title, "metadata.timetable.title", timetableLimits.titleLength);
+  parseExactIsoDay(timetable.date, "metadata.timetable.date");
+  if (
+    timetable.interval !== null
+    && timetable.interval !== undefined
+    && !timetableIntervals.has(timetable.interval as number)
+  ) {
+    fail("metadata.timetable.interval", "must be 1 minute or a legacy 15, 30, or 60 minute value");
+  }
+
+  const entries = optionalArray(timetable.entries, "metadata.timetable.entries", timetableLimits.entries);
+  if (!entries) return;
+  const ids: string[] = [];
+  entries.forEach((rawEntry, entryIndex) => {
+    const path = `metadata.timetable.entries[${entryIndex}]`;
+    const entry = optionalRecord(rawEntry, path);
+    if (!entry) fail(path, "must be an object");
+    const id = assertIdentifier(entry.id, `${path}.id`)!;
+    if (id.length > timetableLimits.idLength) fail(`${path}.id`, `contains more than ${timetableLimits.idLength} characters`);
+    if (id.trim() !== id) fail(`${path}.id`, "must not contain leading or trailing whitespace");
+    ids.push(id);
+    const start = parseExactTime(entry.start, `${path}.start`);
+    const end = parseExactTime(entry.end, `${path}.end`);
+    if (start !== null && end !== null && end <= start) {
+      fail(`${path}.end`, "must be later than the start time");
+    }
+    optionalString(entry.title, `${path}.title`, timetableLimits.entryTitleLength);
+    optionalString(entry.note, `${path}.note`, timetableLimits.noteLength);
+    optionalBoolean(entry.completed, `${path}.completed`);
+  });
+  assertUnique(ids, "metadata.timetable.entries");
+}
+
 function assertBookmarkMetadata(root: MetadataRecord) {
   const bookmark = optionalRecord(root.bookmark, "metadata.bookmark");
   if (!bookmark) return;
@@ -512,12 +564,13 @@ function assertAiChatMetadata(root: MetadataRecord) {
 }
 
 export function assertStructuredBlockMetadataIntegrity(type: BlockType, metadata: unknown) {
-  if (!["TABLE", "KANBAN", "DATABASE", "GANTT", "BOOKMARK", "AI_CHAT"].includes(type)) return undefined;
+  if (!["TABLE", "KANBAN", "DATABASE", "TIMETABLE", "GANTT", "BOOKMARK", "AI_CHAT"].includes(type)) return undefined;
   const root = parseMetadataRoot(metadata);
   if (!root) return null;
   if (type === "TABLE") assertTableMetadata(root);
   else if (type === "KANBAN") assertKanbanMetadata(root);
   else if (type === "DATABASE") assertDatabaseMetadata(root);
+  else if (type === "TIMETABLE") assertTimetableMetadata(root);
   else if (type === "GANTT") assertGanttMetadata(root);
   else if (type === "BOOKMARK") assertBookmarkMetadata(root);
   else assertAiChatMetadata(root);

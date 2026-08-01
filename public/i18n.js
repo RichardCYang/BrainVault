@@ -3761,6 +3761,140 @@ for (const [language, addition] of Object.entries(ganttTranslationAdditions)) {
   catalog.gantt = addition.gantt;
 }
 
+
+const timetableEnglish = {
+  untitledEntry: "Untitled schedule",
+  defaultTitle: "Daily timetable",
+  titlePlaceholder: "Timetable title",
+  titleAria: "Timetable title",
+  entryCount: "{count} time slots",
+  dayView: "Day plan",
+  previousDay: "Previous day",
+  today: "Today",
+  nextDay: "Next day",
+  dateAria: "Timetable date",
+  tableAria: "Editable daily timetable",
+  doneColumn: "Done",
+  timeColumn: "Time",
+  scheduleColumn: "Schedule",
+  notesColumn: "Notes",
+  actionsColumn: "Row actions",
+  startTimeAria: "Start time for {schedule}",
+  endTimeAria: "End time for {schedule}",
+  completedAria: "Mark {schedule} complete",
+  entryPlaceholder: "Add a schedule",
+  entryAria: "Schedule title",
+  notePlaceholder: "Notes",
+  noteAria: "Notes for {schedule}",
+  quickStartAria: "New slot start time",
+  quickEndAria: "New slot end time",
+  addSlot: "Add time slot",
+  inputHint: "Enter start and end times freely in 1-minute increments.",
+  deleteEntry: "Delete time slot",
+  confirmDeleteEntry: "Delete “{schedule}”?",
+  empty: "No time slots yet. Add one below."
+};
+
+const timetableTranslationAdditions = {
+  en: {
+    blockType: "Timetable",
+    slash: {
+      label: "Timetable",
+      hint: "Manage a day with editable time slots",
+      keywords: "timetable schedule calendar day time slots planner agenda"
+    },
+    timetable: timetableEnglish
+  },
+  ja: {
+    blockType: "タイムテーブル",
+    slash: {
+      label: "タイムテーブル",
+      hint: "時間帯ごとに1日の予定を管理",
+      keywords: "タイムテーブル スケジュール カレンダー 時間 予定"
+    }
+  },
+  ko: {
+    blockType: "타임테이블",
+    slash: {
+      label: "타임테이블",
+      hint: "하루 일정을 시간대별로 관리",
+      keywords: "타임테이블 시간표 일정 스케줄 달력 시간대 플래너"
+    },
+    timetable: {
+      untitledEntry: "제목 없는 일정",
+      defaultTitle: "오늘의 타임테이블",
+      titlePlaceholder: "타임테이블 제목",
+      titleAria: "타임테이블 제목",
+      entryCount: "시간대 {count}개",
+      dayView: "하루 일정",
+      previousDay: "이전 날짜",
+      today: "오늘",
+      nextDay: "다음 날짜",
+      dateAria: "타임테이블 날짜",
+      tableAria: "편집 가능한 일일 타임테이블",
+      doneColumn: "완료",
+      timeColumn: "시간",
+      scheduleColumn: "일정",
+      notesColumn: "메모",
+      actionsColumn: "행 작업",
+      startTimeAria: "{schedule} 시작 시간",
+      endTimeAria: "{schedule} 종료 시간",
+      completedAria: "{schedule} 완료 표시",
+      entryPlaceholder: "일정을 입력하세요",
+      entryAria: "일정 제목",
+      notePlaceholder: "메모",
+      noteAria: "{schedule} 메모",
+      quickStartAria: "새 시간대 시작 시간",
+      quickEndAria: "새 시간대 종료 시간",
+      addSlot: "시간대 추가",
+      inputHint: "시작·종료 시간은 1분 단위로 자유롭게 입력할 수 있어요.",
+      deleteEntry: "시간대 삭제",
+      confirmDeleteEntry: "‘{schedule}’ 시간대를 삭제할까요?",
+      empty: "등록된 시간대가 없습니다. 아래에서 추가해 주세요."
+    }
+  },
+  fr: {
+    blockType: "Emploi du temps",
+    slash: {
+      label: "Emploi du temps",
+      hint: "Gérer une journée par créneaux horaires",
+      keywords: "emploi du temps agenda calendrier horaires planning"
+    }
+  },
+  de: {
+    blockType: "Tagesplan",
+    slash: {
+      label: "Tagesplan",
+      hint: "Einen Tag in Zeitfenstern planen",
+      keywords: "tagesplan zeitplan kalender uhrzeit termine"
+    }
+  },
+  es: {
+    blockType: "Horario",
+    slash: {
+      label: "Horario",
+      hint: "Organizar el día por franjas horarias",
+      keywords: "horario agenda calendario tiempo planificación"
+    }
+  },
+  pt: {
+    blockType: "Agenda diária",
+    slash: {
+      label: "Agenda diária",
+      hint: "Organizar o dia por faixas de horário",
+      keywords: "agenda horário calendário tempo planejamento"
+    }
+  }
+};
+
+for (const [language, addition] of Object.entries(timetableTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  catalog.blocks.types.TIMETABLE = addition.blockType;
+  catalog.slash.TIMETABLE = addition.slash;
+  catalog.timetable = addition.timetable ?? timetableEnglish;
+}
+
 function readStorage(key) {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;

@@ -46,6 +46,21 @@ test("normalized structured metadata remains accepted at exact limits", () => {
       activeViewId: "table-view"
     }
   }));
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("TIMETABLE", {
+    timetable: {
+      title: "Workday",
+      date: "2026-08-01",
+      interval: 1,
+      entries: [{
+        id: "slot-1",
+        start: "09:00",
+        end: "10:00",
+        title: "Planning",
+        note: "Bring notes",
+        completed: false
+      }]
+    }
+  }));
   assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("GANTT", {
     gantt: {
       title: "Project timeline",
@@ -147,6 +162,22 @@ test("collection overflows that editor normalizers would discard fail closed", (
     }
   }, "metadata.database.rows");
 
+  expectIntegrityFailure("TIMETABLE", {
+    timetable: {
+      title: "Workday",
+      date: "2026-08-01",
+      interval: 30,
+      entries: Array.from({ length: 201 }, (_, index) => ({
+        id: `slot-${index}`,
+        start: "09:00",
+        end: "10:00",
+        title: "Task",
+        note: "",
+        completed: false
+      }))
+    }
+  }, "metadata.timetable.entries");
+
   expectIntegrityFailure("GANTT", {
     gantt: {
       title: "Timeline",
@@ -181,6 +212,33 @@ test("collection overflows that editor normalizers would discard fail closed", (
   }, "metadata.bookmark.items");
 });
 
+
+test("timetable metadata rejects invalid dates, intervals, time ranges, and duplicate IDs", () => {
+  const baseEntry = {
+    id: "slot-1",
+    start: "09:00",
+    end: "10:00",
+    title: "Task",
+    note: "",
+    completed: false
+  };
+  const root = (entries, overrides = {}) => ({
+    timetable: {
+      title: "Workday",
+      date: "2026-08-01",
+      interval: 30,
+      entries,
+      ...overrides
+    }
+  });
+
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("TIMETABLE", root([baseEntry], { interval: 15 })));
+  expectIntegrityFailure("TIMETABLE", root([baseEntry], { date: "2026-02-30" }), "metadata.timetable.date");
+  expectIntegrityFailure("TIMETABLE", root([baseEntry], { interval: 20 }), "metadata.timetable.interval");
+  expectIntegrityFailure("TIMETABLE", root([{ ...baseEntry, start: "9:00" }]), "metadata.timetable.entries[0].start");
+  expectIntegrityFailure("TIMETABLE", root([{ ...baseEntry, end: "09:00" }]), "metadata.timetable.entries[0].end");
+  expectIntegrityFailure("TIMETABLE", root([baseEntry, { ...baseEntry }]), "metadata.timetable.entries");
+});
 
 test("Gantt metadata rejects invalid dates, progress, statuses, and duplicate task IDs", () => {
   const baseTask = {

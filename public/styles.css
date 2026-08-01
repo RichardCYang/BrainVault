@@ -5036,7 +5036,8 @@ kbd {
   body.pdf-export-mode .rendered-table-wrap,
   body.pdf-export-mode .rendered-kanban-board,
   body.pdf-export-mode .rendered-database-table-wrap,
-  body.pdf-export-mode .rendered-database-board {
+  body.pdf-export-mode .rendered-database-board,
+  body.pdf-export-mode .rendered-timetable-scroll {
     max-width: none !important;
     overflow: visible !important;
   }
@@ -5048,13 +5049,15 @@ kbd {
     opacity: 0 !important;
   }
 
-  body.pdf-export-mode .editor-block-row:not([data-block-type="TABLE"]):not([data-block-type="KANBAN"]):not([data-block-type="DATABASE"]):not([data-block-type="GANTT"]),
+  body.pdf-export-mode .editor-block-row:not([data-block-type="TABLE"]):not([data-block-type="KANBAN"]):not([data-block-type="DATABASE"]):not([data-block-type="TIMETABLE"]):not([data-block-type="GANTT"]),
   body.pdf-export-mode .attachment-block-card,
   body.pdf-export-mode .bookmark-gallery-card,
   body.pdf-export-mode .bookmark-list-item,
   body.pdf-export-mode .kanban-card,
   body.pdf-export-mode .database-board-card,
   body.pdf-export-mode .database-list-row,
+  body.pdf-export-mode .timetable-entry-row,
+  body.pdf-export-mode .rendered-timetable-table tr,
   body.pdf-export-mode .table-block-grid tr,
   body.pdf-export-mode .database-table tr {
     break-inside: avoid;
@@ -12807,5 +12810,529 @@ button.danger {
   .share-page-button,
   .share-page-layer {
     display: none !important;
+  }
+}
+
+/* Borderless timetable block */
+.editor-block-row[data-block-type="TIMETABLE"] {
+  margin-top: 0.7rem;
+  margin-bottom: 0.85rem;
+  padding-right: 0;
+}
+
+.editor-block-row[data-block-type="TIMETABLE"]:hover,
+.editor-block-row[data-block-type="TIMETABLE"]:focus-within,
+.editor-block-row[data-block-type="TIMETABLE"].is-menu-open {
+  background: transparent;
+  box-shadow: none;
+}
+
+.editor-block-row[data-block-type="TIMETABLE"] .block-row-body,
+.editor-block-row[data-block-type="TIMETABLE"] .block-editor-host {
+  min-width: 0;
+}
+
+.timetable-block-editor {
+  --timetable-line: var(--line);
+  --timetable-line-strong: var(--line-strong);
+  --timetable-hover: var(--hover);
+  --timetable-muted: var(--muted);
+  --timetable-muted-light: var(--muted-light);
+  display: grid;
+  min-width: 0;
+  gap: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: 0.28rem 0 0.45rem;
+}
+
+.timetable-heading {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.7rem;
+  margin-bottom: 0.32rem;
+  padding-inline: 0.08rem;
+  background: transparent;
+}
+
+.timetable-title-input {
+  width: min(38rem, 100%);
+  min-width: 8rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink);
+  padding: 0.13rem 0.22rem;
+  font: inherit;
+  font-size: clamp(1.32rem, 2.3vw, 1.72rem);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.22;
+  box-shadow: none;
+}
+
+.timetable-title-input:hover,
+.timetable-title-input:focus {
+  border-color: transparent;
+  background: var(--timetable-hover);
+  outline: none;
+  box-shadow: none;
+}
+
+.timetable-title-input:focus-visible {
+  outline: 2px solid var(--focus-soft);
+  outline-offset: 1px;
+}
+
+.timetable-entry-count {
+  flex: 0 0 auto;
+  color: var(--timetable-muted-light);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.timetable-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--timetable-line-strong);
+  padding: 0.25rem 0.08rem 0.42rem;
+  background: transparent;
+}
+
+.timetable-view-bar,
+.timetable-toolbar-controls,
+.timetable-quick-add {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.28rem;
+}
+
+.timetable-view-tab {
+  display: inline-flex;
+  min-height: 1.9rem;
+  align-items: center;
+  gap: 0.35rem;
+  border-bottom: 2px solid var(--focus);
+  color: var(--ink);
+  padding: 0.28rem 0.4rem 0.22rem;
+  font-size: 0.73rem;
+  font-weight: 620;
+}
+
+.timetable-view-icon {
+  color: var(--timetable-muted);
+  font-size: 0.75rem;
+}
+
+.timetable-date-input,
+.timetable-input,
+.timetable-quick-time {
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+}
+
+.timetable-date-input {
+  min-height: 1.9rem;
+  width: 9.3rem;
+  padding: 0.28rem 0.4rem;
+  color: var(--timetable-muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.timetable-date-input:hover,
+.timetable-date-input:focus,
+.timetable-input:hover,
+.timetable-input:focus,
+.timetable-quick-time:hover,
+.timetable-quick-time:focus {
+  border-color: var(--timetable-line);
+  background: var(--timetable-hover);
+  outline: none;
+}
+
+.timetable-date-input:focus-visible,
+.timetable-input:focus-visible,
+.timetable-quick-time:focus-visible {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--focus-soft);
+}
+
+.timetable-action-button {
+  min-width: 1.75rem;
+  min-height: 1.75rem;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--timetable-muted);
+  padding: 0.24rem 0.42rem;
+  font: inherit;
+  font-size: 0.73rem;
+  font-weight: 560;
+  line-height: 1;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.timetable-action-button:hover,
+.timetable-action-button:focus-visible {
+  background: var(--timetable-hover);
+  color: var(--ink);
+  outline: none;
+}
+
+.timetable-action-button:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus-soft);
+}
+
+.timetable-action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.timetable-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  outline: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--timetable-line-strong) transparent;
+}
+
+.timetable-table-scroll:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus-soft);
+}
+
+.timetable-table {
+  width: 100%;
+  min-width: 48rem;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: transparent;
+}
+
+.timetable-table th,
+.timetable-table td {
+  border-right: 1px solid var(--timetable-line);
+  border-bottom: 1px solid var(--timetable-line);
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.timetable-table th:first-child,
+.timetable-table td:first-child {
+  border-left: 1px solid transparent;
+}
+
+.timetable-table th:last-child,
+.timetable-table td:last-child {
+  border-right-color: transparent;
+}
+
+.timetable-table th {
+  height: 2.15rem;
+  color: var(--timetable-muted);
+  padding: 0.42rem 0.58rem;
+  font-size: 0.71rem;
+  font-weight: 520;
+  white-space: nowrap;
+}
+
+.timetable-table tbody tr:hover td {
+  background: var(--timetable-hover);
+}
+
+.timetable-complete-heading,
+.timetable-complete-cell {
+  width: 2.7rem;
+  min-width: 2.7rem;
+  text-align: center !important;
+}
+
+.timetable-complete-input {
+  width: 0.95rem;
+  height: 0.95rem;
+  margin: 0;
+  accent-color: var(--focus);
+  cursor: pointer;
+}
+
+.timetable-time-cell {
+  display: grid;
+  min-width: 13.2rem;
+  grid-template-columns: minmax(5.6rem, 1fr) auto minmax(5.6rem, 1fr);
+  align-items: center;
+  gap: 0.2rem;
+  padding-inline: 0.18rem !important;
+}
+
+.timetable-time-arrow {
+  color: var(--timetable-muted-light);
+  font-size: 0.68rem;
+}
+
+.timetable-input {
+  width: 100%;
+  min-height: 2.55rem;
+  border-radius: 0;
+  padding: 0.45rem 0.58rem;
+  font-size: 0.8rem;
+}
+
+.timetable-time-input {
+  min-height: 2.1rem;
+  border-radius: 4px;
+  padding: 0.35rem 0.42rem;
+  color: var(--timetable-muted);
+  font-size: 0.73rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.timetable-entry-title {
+  min-width: 14rem;
+  font-weight: 570;
+}
+
+.timetable-entry-note {
+  min-width: 15rem;
+  color: var(--timetable-muted);
+}
+
+.timetable-entry-row.is-complete .timetable-entry-title {
+  color: var(--timetable-muted-light);
+  text-decoration: line-through;
+}
+
+.timetable-entry-row.is-complete .timetable-entry-note,
+.timetable-entry-row.is-complete .timetable-time-input {
+  color: var(--timetable-muted-light);
+}
+
+.timetable-row-actions {
+  width: 2.6rem;
+  min-width: 2.6rem;
+  text-align: center !important;
+}
+
+.timetable-delete-entry {
+  width: 1.5rem;
+  min-width: 1.5rem;
+  min-height: 1.5rem;
+  color: var(--danger);
+  opacity: 0;
+}
+
+.timetable-entry-row:hover .timetable-delete-entry,
+.timetable-delete-entry:focus-visible {
+  opacity: 1;
+}
+
+.timetable-empty-row td {
+  height: 4rem;
+  color: var(--timetable-muted-light);
+  padding: 0.8rem;
+  font-size: 0.76rem;
+  text-align: center;
+}
+
+.timetable-footer {
+  display: flex;
+  min-height: 2.8rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.42rem 0.08rem 0;
+  background: transparent;
+}
+
+.timetable-quick-time {
+  width: 6.1rem;
+  min-height: 1.85rem;
+  padding: 0.3rem 0.38rem;
+  color: var(--timetable-muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.timetable-add-entry {
+  min-height: 1.85rem;
+  margin-left: 0.18rem;
+}
+
+.timetable-input-hint {
+  color: var(--timetable-muted-light);
+  font-size: 0.65rem;
+  text-align: right;
+}
+
+/* Read-only timetable rendering used by cached HTML, exports, and history. */
+.rendered-timetable {
+  display: grid;
+  min-width: 0;
+  gap: 0.48rem;
+  margin: 0.35rem 0 0.8rem;
+  color: var(--ink);
+  background: transparent;
+}
+
+.rendered-timetable > header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.rendered-timetable > header > div {
+  display: grid;
+  gap: 0.08rem;
+}
+
+.rendered-timetable > header h3 {
+  margin: 0;
+  font-size: 1.03rem;
+  font-weight: 690;
+}
+
+.rendered-timetable > header span,
+.rendered-timetable > header > time {
+  color: var(--muted-light);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.rendered-timetable-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  scrollbar-width: thin;
+}
+
+.rendered-timetable-table {
+  width: 100%;
+  min-width: 40rem;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: transparent;
+}
+
+.rendered-timetable-table th,
+.rendered-timetable-table td {
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  padding: 0.48rem 0.58rem;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.rendered-timetable-table th:first-child,
+.rendered-timetable-table td:first-child {
+  border-left: 1px solid transparent;
+}
+
+.rendered-timetable-table th:last-child,
+.rendered-timetable-table td:last-child {
+  border-right-color: transparent;
+}
+
+.rendered-timetable-table th {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 520;
+}
+
+.rendered-timetable-table td {
+  font-size: 0.73rem;
+}
+
+.rendered-timetable-check {
+  width: 2.6rem;
+  color: var(--muted-light);
+  text-align: center !important;
+}
+
+.rendered-timetable-time {
+  width: 10.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rendered-timetable-time span {
+  margin-inline: 0.28rem;
+  color: var(--muted-light);
+}
+
+.rendered-timetable-table strong {
+  font-weight: 590;
+}
+
+.rendered-timetable-table td:last-child,
+.rendered-timetable-empty-note {
+  color: var(--muted-light);
+}
+
+.rendered-timetable-table tr.is-complete strong {
+  color: var(--muted-light);
+  text-decoration: line-through;
+}
+
+.rendered-timetable-empty {
+  height: 3.8rem;
+  color: var(--muted-light);
+  text-align: center !important;
+}
+
+.page-view.is-read-only .timetable-date-nav,
+.page-view.is-read-only .timetable-delete-entry,
+.page-view.is-read-only .timetable-footer {
+  display: none !important;
+}
+
+.page-view.is-read-only .timetable-title-input,
+.page-view.is-read-only .timetable-date-input,
+.page-view.is-read-only .timetable-input,
+.page-view.is-read-only .timetable-time-input {
+  cursor: text;
+  caret-color: transparent;
+}
+
+.page-view.is-read-only .timetable-complete-input {
+  pointer-events: none;
+  opacity: 1;
+}
+
+@media (max-width: 780px) {
+  .timetable-toolbar,
+  .timetable-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .timetable-toolbar-controls,
+  .timetable-quick-add {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .timetable-input-hint {
+    text-align: left;
   }
 }

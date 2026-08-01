@@ -6,6 +6,7 @@ import { formatAttachmentSize, getAttachmentInfo, sanitizeAttachmentFilename } f
 import { getTableData } from "./table.js";
 import { renderKanbanHtml } from "./kanban.js";
 import { renderDatabaseHtml } from "./database.js";
+import { renderTimetableHtml } from "./timetable.js";
 import { renderGanttHtml } from "./gantt.js";
 import { renderBookmarkHtml } from "./bookmark.js";
 import { getAiChatData, getAiProviderLabel } from "./ai-chat.js";
@@ -137,7 +138,8 @@ const allowedTags = sanitizeHtml.defaults.allowedTags.concat([
   "tbody",
   "tr",
   "th",
-  "td"
+  "td",
+  "time"
 ]);
 
 const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
@@ -158,7 +160,8 @@ const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   tbody: ["class"],
   tr: ["class"],
   th: ["class", "scope"],
-  td: ["class"],
+  td: ["class", "colspan"],
+  time: ["class", "datetime"],
   ul: ["class"],
   li: ["class"]
 };
@@ -321,6 +324,8 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
       return sanitizeHtml(renderKanbanHtml(metadata), sanitizeOptions);
     case "DATABASE":
       return sanitizeHtml(renderDatabaseHtml(metadata), sanitizeOptions);
+    case "TIMETABLE":
+      return sanitizeHtml(renderTimetableHtml(metadata), sanitizeOptions);
     case "GANTT":
       return sanitizeHtml(renderGanttHtml(metadata), sanitizeOptions);
     case "BOOKMARK":
