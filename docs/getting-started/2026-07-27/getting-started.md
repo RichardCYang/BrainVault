@@ -116,9 +116,11 @@ Before using production mode:
 - Keep `REGISTRATION_ENABLED` unset or `false` unless public sign-up is intentional.
 - Keep `SERVE_INTERNAL_DOCS=false` unless authenticated project documentation must be exposed deliberately.
 - Set `DB_USER_HOSTS` to the exact application client hosts and rerun `npm run db:init` to remove any legacy wildcard account.
-- Set `TRUST_PROXY_HOPS` to the exact proxy hop count; leave it at `0` without a trusted reverse proxy.
+- Set `PUBLIC_ORIGIN` to the canonical HTTPS origin and set `HTTPS_MODE=proxy` when TLS terminates at Caddy, Synology DSM, NGINX, or Nginx Proxy Manager.
+- Prefer `TRUST_PROXY_ADDRESSES` with the exact proxy IP/CIDR. Use `TRUST_PROXY_HOPS` only when every route has the same exact hop count, and never configure both.
+- Keep the backend HTTP port private; allow only the proxy or local health checker to reach it.
 - Use HTTPS, managed secret storage, database backups, and normal production monitoring.
 
-For real-time collaboration behind a reverse proxy, enable WebSocket upgrades for `/api/collaboration/` and preserve the original origin, host, and protocol headers. See [Collaboration](../../collaboration/2026-07-29/collaboration.md#authentication-and-network-requirements).
+For real-time collaboration behind a reverse proxy, enable WebSocket upgrades for `/api/collaboration/` and preserve the original origin, host, and protocol headers. See [Collaboration](../../collaboration/2026-07-29/collaboration.md#authentication-and-network-requirements) and the repository [reverse-proxy deployment guide](../../../deploy/README.md).
 
 The server refuses to start when `DATABASE_URL` contains a missing or known default password, and production also refuses either cryptographic secret when missing or known to be a public placeholder. Development without configured cryptographic secrets uses per-process ephemeral values, while `npm run env:init` writes persistent random values. See [Security](../../security/2026-07-30/security.md) and [Configuration](../../configuration/2026-07-28/configuration.md) for details.

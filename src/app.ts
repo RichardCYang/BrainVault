@@ -14,6 +14,10 @@ import { dataRouter } from "./routes/data.routes.js";
 import { collaborationRouter } from "./routes/collaboration.routes.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.js";
 import { requireAuth } from "./middleware/auth.js";
+import { createHttpsEnforcementMiddleware } from "./middleware/https.js";
+import { createExpressTrustProxySetting } from "./lib/reverse-proxy.js";
+
+const trustProxySetting = createExpressTrustProxySetting(env.TRUST_PROXY_HOPS, env.TRUST_PROXY_ADDRESSES);
 
 const configuredWebSocketOrigins = corsOrigins.map((origin) => {
   const parsed = new URL(origin);
@@ -25,7 +29,7 @@ export function createApp() {
   const app = express();
 
   app.disable("x-powered-by");
-  app.set("trust proxy", env.TRUST_PROXY_HOPS === 0 ? false : env.TRUST_PROXY_HOPS);
+  app.set("trust proxy", trustProxySetting);
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -41,6 +45,14 @@ export function createApp() {
           connectSrc: ["'self'", ...configuredWebSocketOrigins]
         }
       }
+    })
+  );
+  app.use(
+    createHttpsEnforcementMiddleware({
+      enabled: env.HTTPS_MODE === "proxy",
+      publicOrigin: env.PUBLIC_ORIGIN,
+      redirect: env.HTTPS_REDIRECT,
+      healthcheckBypass: env.HTTPS_HEALTHCHECK_BYPASS
     })
   );
   app.use(cors(corsOptionsDelegate));

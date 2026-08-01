@@ -5,6 +5,7 @@ import { bootstrapDatabase } from "./lib/db-bootstrap.js";
 import { closeDb } from "./lib/db.js";
 import { recoverInterruptedDataRestores } from "./lib/data-transfer.js";
 import { attachPageCollaborationServer } from "./lib/collaboration-server.js";
+import { createExpressTrustProxySetting, describeExpressTrustProxySetting } from "./lib/reverse-proxy.js";
 
 async function start() {
   if (env.AUTO_BOOTSTRAP_DATABASE) {
@@ -22,10 +23,16 @@ async function start() {
   const app = createApp();
   const displayHost = env.HOST === "0.0.0.0" || env.HOST === "::" ? "localhost" : env.HOST;
   const appUrl = `http://${displayHost}:${env.PORT}`;
+  const trustProxySetting = createExpressTrustProxySetting(env.TRUST_PROXY_HOPS, env.TRUST_PROXY_ADDRESSES);
   const server = createServer(app);
   const collaborationHub = attachPageCollaborationServer(server);
   server.listen(env.PORT, env.HOST, () => {
-    console.log(`BrainVault API listening on ${appUrl}`);
+    console.log(`BrainVault API listening internally on ${appUrl}`);
+    if (env.HTTPS_MODE === "proxy") {
+      console.log(
+        `HTTPS reverse-proxy mode enabled: public=${env.PUBLIC_ORIGIN}, trustProxy=${describeExpressTrustProxySetting(trustProxySetting)}, redirect=${env.HTTPS_REDIRECT}`
+      );
+    }
 
     if (env.AUTO_BOOTSTRAP_DATABASE && process.env.BRAINVAULT_DEV_BROWSER_READY_SIGNAL === "1") {
       console.log(`BRAINVAULT_DEV_BROWSER_READY=${appUrl}`);

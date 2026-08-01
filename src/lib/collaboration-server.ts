@@ -1,7 +1,7 @@
 import type { IncomingMessage, Server as HttpServer } from "node:http";
 import type { Socket } from "node:net";
 import { createId } from "./id.js";
-import { corsOrigins } from "../config/env.js";
+import { corsOrigins, env } from "../config/env.js";
 import { db, transaction } from "./db.js";
 import { getPageAccess } from "./page-access.js";
 import { verifyCollaborationToken } from "./collaboration-token.js";
@@ -34,6 +34,7 @@ import {
   readCollaborationMaterialization
 } from "./collaboration-materialization.js";
 import { CollaborationDocumentError } from "./collaboration-document.js";
+import { isHttpsRequestFromTrustedProxy } from "./reverse-proxy.js";
 import {
   assessInitialCollaborationBootstrap,
   invalidInitialCollaborationBootstrapSummary,
@@ -277,6 +278,14 @@ export class PageCollaborationHub {
   }
 
   private async handleUpgrade(request: IncomingMessage, socket: Socket, head: Buffer) {
+    if (
+      env.HTTPS_MODE === "proxy" &&
+      !isHttpsRequestFromTrustedProxy(request, env.TRUST_PROXY_HOPS, env.TRUST_PROXY_ADDRESSES)
+    ) {
+      rejectWebSocketUpgrade(socket, 426, "HTTPS reverse proxy is required");
+      return;
+    }
+
     const pageId = parsePageId(request);
     if (!pageId) {
       rejectWebSocketUpgrade(socket, 404, "WebSocket endpoint not found");

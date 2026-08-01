@@ -23,6 +23,10 @@ Never commit a real `.env` file.
 | `WEBAUTHN_RP_ID` | `localhost` | WebAuthn relying-party domain without scheme or port |
 | `WEBAUTHN_ORIGIN` | `http://localhost:4000` | Comma-separated exact browser origins accepted for WebAuthn responses |
 | `CORS_ORIGIN` | Local development origins | Comma-separated browser origins allowed to call the API |
+| `PUBLIC_ORIGIN` | First `WEBAUTHN_ORIGIN` | Canonical browser-facing origin used for safe HTTPS redirects |
+| `HTTPS_MODE` | `off` | Set `proxy` when a trusted reverse proxy terminates public TLS |
+| `HTTPS_REDIRECT` | Enabled in proxy mode | Redirect unrecognized HTTP requests to `PUBLIC_ORIGIN` with status 308; when false, return HTTP 426 |
+| `HTTPS_HEALTHCHECK_BYPASS` | `true` | Allow `/health` on the private backend HTTP listener |
 | `REGISTRATION_ENABLED` | Enabled outside production; disabled in production | Allow unauthenticated account creation |
 | `SERVE_INTERNAL_DOCS` | `false` | Serve the repository `docs/` directory at authenticated `/docs` routes |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window in milliseconds |
@@ -39,7 +43,8 @@ Never commit a real `.env` file.
 | `AUTH_MFA_SETUP_MAX` | `10` | Failed TOTP enrollment verifications allowed per account window |
 | `AUTH_REGISTER_WINDOW_MS` | `3600000` | Registration throttling window |
 | `AUTH_REGISTER_MAX` | `5` | Registration requests allowed per IP window |
-| `TRUST_PROXY_HOPS` | `0` | Exact number of trusted reverse-proxy hops; never an unrestricted boolean trust setting |
+| `TRUST_PROXY_ADDRESSES` | Empty | Comma-separated proxy IPs, CIDRs, or `loopback`/`linklocal`/`uniquelocal`; recommended over hop trust |
+| `TRUST_PROXY_HOPS` | `0` | Exact trusted reverse-proxy hop count; cannot be combined with `TRUST_PROXY_ADDRESSES` |
 | `BOOKMARK_FETCH_TIMEOUT_MS` | `8000` | Maximum duration of one OpenGraph page fetch |
 | `BOOKMARK_FETCH_MAX_BYTES` | `524288` | Maximum document-head bytes inspected for one bookmark preview |
 | `ATTACHMENT_UPLOAD_DIR` | `uploads` | Private on-disk directory for attachment bytes |
@@ -76,10 +81,17 @@ MFA_ENCRYPTION_KEY="replace-with-a-different-secret-of-at-least-32-characters"
 WEBAUTHN_RP_ID="notes.example.com"
 WEBAUTHN_ORIGIN="https://notes.example.com"
 CORS_ORIGIN="https://notes.example.com"
+PUBLIC_ORIGIN="https://notes.example.com"
+HTTPS_MODE=proxy
+HTTPS_REDIRECT=true
+HTTPS_HEALTHCHECK_BYPASS=true
 REGISTRATION_ENABLED=false
 SERVE_INTERNAL_DOCS=false
-TRUST_PROXY_HOPS=1
+TRUST_PROXY_ADDRESSES="loopback"
+TRUST_PROXY_HOPS=0
 ```
+
+For a proxy in another container or host, replace `loopback` with the exact proxy IP or narrowest practical CIDR. `HTTPS_MODE=proxy` refuses to start without one of the two trust settings, and `PUBLIC_ORIGIN` must be HTTPS and present in both `WEBAUTHN_ORIGIN` and `CORS_ORIGIN`. Keep the backend port private. See the repository [reverse-proxy deployment guide](../../../deploy/README.md) for Caddy, Synology DSM, NGINX, and Nginx Proxy Manager examples.
 
 `JWT_SECRET` and `MFA_ENCRYPTION_KEY` must be different. Known example values and legacy development defaults are rejected even outside production. Do not change `MFA_ENCRYPTION_KEY` casually after users enroll TOTP. Existing encrypted authenticator secrets depend on that key and become unusable when it changes.
 
@@ -91,10 +103,10 @@ Serve production over HTTPS and use a browser that supports Web Locks. Local dev
 
 ## WebSocket proxying and Yjs delivery
 
-Real-time collaboration uses the same `PORT`, `CORS_ORIGIN`, and JWT signing secret as the HTTP API. No separate collaboration process or port is required. A production reverse proxy must support HTTP/1.1 WebSocket upgrades for `/api/collaboration/` and forward the browser origin and original host/protocol headers.
+Real-time collaboration uses the same `PORT`, `CORS_ORIGIN`, and JWT signing secret as the HTTP API. No separate collaboration process or port is required. A production reverse proxy must support HTTP/1.1 WebSocket upgrades for `/api/collaboration/` and forward the browser origin and original host/protocol headers. The application uses the trusted `X-Forwarded-Proto` value to recognize the external HTTPS request; it never uses forwarded host headers to authorize browser origins or construct redirects.
 
 The included collaboration hub is process-local and is intended to run as one active application process. Patched writers compare every room tip with the locked durable tip and invalidate a stale room before it can insert or compact, which prevents silent loss during accidental overlap but does not provide cross-process broadcasts. Horizontal scaling requires a shared pub/sub and distributed update coordinator so every instance observes the same room history and presence events. Drain all pre-fix collaboration writers before starting this version.
 
 The browser imports the exact `yjs@13.6.31` ESM build and exact `katex@0.17.0` assets from versioned jsDelivr paths. The Content Security Policy allows only those resource paths and exact WebSocket origins derived from `CORS_ORIGIN`; it does not allow the complete CDN host or arbitrary `ws:`/`wss:` destinations. Deployments that vendor scripts locally must update the public asset references and `src/app.ts` as one reviewed change.
 
-See [Collaboration](../../collaboration/2026-07-29/collaboration.md#authentication-and-network-requirements) for an Nginx example.
+See [Collaboration](../../collaboration/2026-07-29/collaboration.md#authentication-and-network-requirements) and the [reverse-proxy deployment guide](../../../deploy/README.md) for complete examples.

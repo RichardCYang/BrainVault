@@ -33,7 +33,7 @@ The `024_auth_session_revocation.sql` migration adds the non-secret `users.auth_
 
 ## Browser origin policy
 
-Every browser origin, including development loopback origins and ports, must be listed explicitly in `CORS_ORIGIN`. API CORS and collaboration WebSocket origin checks never derive authorization from `X-Forwarded-Host` or `X-Forwarded-Proto`, because those headers can be supplied by a direct client unless every network path is constrained by a trusted proxy. `TRUST_PROXY_HOPS` accepts only an exact hop count; an unrestricted proxy-trust setting is not used.
+Every browser origin, including development loopback origins and ports, must be listed explicitly in `CORS_ORIGIN`. API CORS and collaboration WebSocket origin checks never derive authorization from `X-Forwarded-Host` or `X-Forwarded-Proto`. In `HTTPS_MODE=proxy`, only the request protocol is taken from forwarding headers, and only after Express verifies that the connecting peer matches `TRUST_PROXY_ADDRESSES` or the exact `TRUST_PROXY_HOPS` topology. Redirect destinations always use fixed `PUBLIC_ORIGIN`, not a request header. The two proxy-trust methods cannot be combined, and unrestricted boolean proxy trust is not used.
 
 
 ## Content Security Policy

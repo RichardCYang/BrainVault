@@ -86,13 +86,16 @@ contains("src/config/env.ts", [
   "AUTH_MFA_ACCOUNT_MAX",
   "AUTH_MFA_SETUP_MAX",
   "TRUST_PROXY_HOPS",
+  "TRUST_PROXY_ADDRESSES",
+  'HTTPS_MODE: z.enum(["off", "proxy"])',
+  "PUBLIC_ORIGIN must use HTTPS when HTTPS_MODE=proxy",
   "JWT_SECRET must be explicitly configured in production",
   "MFA_ENCRYPTION_KEY must be explicitly configured in production",
   "uses a public placeholder or legacy development value",
   "JWT_SECRET and MFA_ENCRYPTION_KEY must be different values",
-  "CORS_ORIGIN must include at least one browser origin",
-  "CORS_ORIGIN must contain exact HTTP(S) origins without paths",
-  "CORS_ORIGIN must use HTTPS in production"
+  "must include at least one browser origin",
+  "must contain exact HTTP(S) origins without paths",
+  "must use HTTPS in production"
 ]);
 contains("scripts/env-init.ts", [
   'randomBytes(48).toString("base64url")',
@@ -130,7 +133,8 @@ contains("src/middleware/auth-rate-limit.ts", [
 const appSource = contains("src/app.ts", [
   "if (env.SERVE_INTERNAL_DOCS)",
   'app.use("/docs", requireAuth',
-  "TRUST_PROXY_HOPS === 0 ? false : env.TRUST_PROXY_HOPS",
+  "createExpressTrustProxySetting",
+  "createHttpsEnforcementMiddleware",
   "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js",
   "https://cdn.jsdelivr.net/npm/yjs@13.6.31/+esm",
   'connectSrc: ["\'self\'", ...configuredWebSocketOrigins]',
@@ -138,7 +142,9 @@ const appSource = contains("src/app.ts", [
 ]);
 assert.ok(!appSource.includes('scriptSrc: ["\'self\'", "https://cdn.jsdelivr.net"]'), "CSP must not trust the entire jsDelivr host");
 assert.ok(!appSource.includes('connectSrc: ["\'self\'", "ws:", "wss:"]'), "CSP must not allow arbitrary WebSocket hosts");
-contains("src/server.ts", ["server.listen(env.PORT, env.HOST"]);
+contains("src/server.ts", ["server.listen(env.PORT, env.HOST", "HTTPS reverse-proxy mode enabled"]);
+contains("src/middleware/https.ts", ["req.secure", "buildHttpsRedirectUrl", "HTTPS_REQUIRED", "res.redirect(308"]);
+contains("src/lib/reverse-proxy.ts", ["createExpressTrustProxySetting", "trustedProxyAddresses"]);
 contains("src/routes/page.routes.ts", ["coverUrl: httpUrlSchema(500)", "escapeHtmlAttribute(block.id)"]);
 contains("src/lib/collaboration-materialization.ts", ["z.string().regex(/^[a-zA-Z0-9_-]+$/).min(1).max(64)"]);
 contains("src/lib/data-transfer.ts", [

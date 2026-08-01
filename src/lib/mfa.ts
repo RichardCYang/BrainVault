@@ -6,7 +6,7 @@ import {
   randomBytes,
   timingSafeEqual
 } from "node:crypto";
-import { env } from "../config/env.js";
+import { env, webAuthnOrigins } from "../config/env.js";
 
 const base32Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 const totpDigits = 6;
@@ -160,5 +160,5 @@ export function fromBase64Url(value: string) {
 export const webAuthnConfig = {
   rpName: env.WEBAUTHN_RP_NAME,
   rpID: env.WEBAUTHN_RP_ID,
-  origins: env.WEBAUTHN_ORIGIN.split(",").map((origin) => origin.trim().replace(/\/$/, "")).filter(Boolean)
+  origins: webAuthnOrigins
 };

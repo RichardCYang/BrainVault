@@ -1,0 +1,137 @@
+import net from "node:net";
+import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
+
+export type ExpressTrustProxySetting = false | number | string[];
+
+export function createExpressTrustProxySetting(
+  trustedProxyHops: number,
+  trustedProxyAddresses: string[]
+): ExpressTrustProxySetting {
+  if (trustedProxyAddresses.length > 0) return [...trustedProxyAddresses];
+  return trustedProxyHops > 0 ? trustedProxyHops : false;
+}
+
+export function describeExpressTrustProxySetting(setting: ExpressTrustProxySetting) {
+  if (setting === false) return "disabled";
+  if (typeof setting === "number") return `${setting} hop${setting === 1 ? "" : "s"}`;
+  return setting.join(", ");
+}
+
+type ParsedAddress = {
+  family: 4 | 6;
+  bits: number;
+  value: bigint;
+};
+
+function normalizeRemoteAddress(address: string) {
+  const withoutZone = address.split("%")[0].toLowerCase();
+  const mappedIpv4 = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(withoutZone);
+  return mappedIpv4 ? mappedIpv4[1] : withoutZone;
+}
+
+function parseIpv4(address: string): ParsedAddress | null {
+  if (!net.isIPv4(address)) return null;
+  const value = address
+    .split(".")
+    .reduce((result, part) => (result << 8n) | BigInt(Number(part)), 0n);
+  return { family: 4, bits: 32, value };
+}
+
+function expandIpv6Parts(address: string) {
+  const normalized = address.toLowerCase().split("%")[0];
+  const sides = normalized.split("::");
+  if (sides.length > 2) return null;
+
+  const expandSide = (side: string) => {
+    if (!side) return [];
+    const parts = side.split(":");
+    const last = parts.at(-1);
+    if (last?.includes(".")) {
+      const ipv4 = parseIpv4(last);
+      if (!ipv4) return null;
+      parts.splice(
+        parts.length - 1,
+        1,
+        Number((ipv4.value >> 16n) & 0xffffn).toString(16),
+        Number(ipv4.value & 0xffffn).toString(16)
+      );
+    }
+    return parts;
+  };
+
+  const left = expandSide(sides[0]);
+  const right = expandSide(sides[1] ?? "");
+  if (!left || !right) return null;
+
+  const hasCompression = sides.length === 2;
+  const missing = 8 - left.length - right.length;
+  if ((!hasCompression && missing !== 0) || (hasCompression && missing < 1)) return null;
+  return [...left, ...Array.from({ length: missing }, () => "0"), ...right];
+}
+
+function parseIpv6(address: string): ParsedAddress | null {
+  if (!net.isIPv6(address)) return null;
+  const parts = expandIpv6Parts(address);
+  if (!parts || parts.length !== 8) return null;
+
+  let value = 0n;
+  for (const part of parts) {
+    if (!/^[0-9a-f]{1,4}$/i.test(part)) return null;
+    value = (value << 16n) | BigInt(Number.parseInt(part, 16));
+  }
+  return { family: 6, bits: 128, value };
+}
+
+function parseAddress(address: string) {
+  const normalized = normalizeRemoteAddress(address);
+  return parseIpv4(normalized) ?? parseIpv6(normalized);
+}
+
+function addressMatchesCidr(address: ParsedAddress, cidr: string) {
+  const slashIndex = cidr.lastIndexOf("/");
+  const baseText = slashIndex === -1 ? cidr : cidr.slice(0, slashIndex);
+  const base = parseAddress(baseText);
+  if (!base || base.family !== address.family) return false;
+
+  const prefix = slashIndex === -1 ? base.bits : Number(cidr.slice(slashIndex + 1));
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > base.bits) return false;
+  if (prefix === 0) return true;
+
+  const shift = BigInt(base.bits - prefix);
+  return (address.value >> shift) === (base.value >> shift);
+}
+
+const namedProxyRanges: Record<string, string[]> = {
+  loopback: ["127.0.0.0/8", "::1/128"],
+  linklocal: ["169.254.0.0/16", "fe80::/10"],
+  uniquelocal: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"]
+};
+
+export function isTrustedProxyRemoteAddress(remoteAddress: string | undefined, trustedProxyAddresses: string[]) {
+  if (!remoteAddress) return false;
+  const address = parseAddress(remoteAddress);
+  if (!address) return false;
+
+  return trustedProxyAddresses.some((rule) => {
+    const namedRanges = namedProxyRanges[rule.toLowerCase()];
+    if (namedRanges) return namedRanges.some((cidr) => addressMatchesCidr(address, cidr));
+    return addressMatchesCidr(address, rule);
+  });
+}
+
+export function forwardedProtocol(headers: IncomingHttpHeaders) {
+  const value = headers["x-forwarded-proto"];
+  const first = Array.isArray(value) ? value[0] : value;
+  return first?.split(",", 1)[0].trim().toLowerCase() ?? null;
+}
+
+export function isHttpsRequestFromTrustedProxy(
+  request: Pick<IncomingMessage, "headers" | "socket">,
+  trustedProxyHops: number,
+  trustedProxyAddresses: string[]
+) {
+  const trusted = trustedProxyAddresses.length > 0
+    ? isTrustedProxyRemoteAddress(request.socket.remoteAddress, trustedProxyAddresses)
+    : trustedProxyHops > 0;
+  return trusted && forwardedProtocol(request.headers) === "https";
+}

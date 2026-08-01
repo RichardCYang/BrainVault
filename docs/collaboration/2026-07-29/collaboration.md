@@ -61,19 +61,9 @@ Production reverse proxies must forward WebSocket upgrades for `/api/collaborati
 
 The built-in room fan-out is process-local. The durable-tip fence prevents an accidentally overlapping patched instance from appending or compacting a room that missed another instance's update, but users on different instances do not receive immediate cross-process broadcasts and may reconnect when their room is detected as stale. Run one active BrainVault application process for normal operation. A multi-process or multi-host deployment requires a shared pub/sub backplane and distributed room/update coordination for full real-time behavior. During this security upgrade, drain every pre-fix collaboration writer before starting patched writers; a still-running old instance does not contain the new fence.
 
-Example Nginx location:
+The proxy must also be one of the peers trusted by `TRUST_PROXY_ADDRESSES` or the exact `TRUST_PROXY_HOPS` topology. BrainVault then recognizes `X-Forwarded-Proto: https`, keeps secure session cookies, and derives `wss:` browser connections from the public page URL. Plain backend HTTP requests are redirected to fixed `PUBLIC_ORIGIN` or rejected, depending on `HTTPS_REDIRECT`.
 
-```nginx
-location /api/collaboration/ {
-    proxy_pass http://127.0.0.1:4000;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-Host $host;
-    proxy_set_header X-Forwarded-Proto $scheme;
-}
-```
+Complete Caddy, NGINX, Nginx Proxy Manager, and Synology DSM configurations are provided in the repository [reverse-proxy deployment guide](../../../deploy/README.md). The included NGINX example forwards WebSocket upgrade headers on the shared location, so both normal API requests and `/api/collaboration/` use the same backend port.
 
 The browser module imports the pinned Yjs ESM build at `yjs@13.6.31` from jsDelivr. A deployment with a restrictive outbound or browser content policy must allow that exact CDN resource, or vendor the same version locally and update the import plus Content Security Policy together.
 

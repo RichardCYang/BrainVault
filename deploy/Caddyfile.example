@@ -1,0 +1,8 @@
+# Replace notes.example.com and the backend address for your deployment.
+# Caddy automatically obtains/renews TLS certificates and forwards the
+# X-Forwarded-* headers required by BrainVault. WebSocket upgrades are handled
+# by reverse_proxy without a separate location block.
+notes.example.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:4000
+}
