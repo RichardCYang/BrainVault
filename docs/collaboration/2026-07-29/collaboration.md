@@ -57,13 +57,13 @@ The WebSocket ticket is a short-lived JWT with the authenticated user ID, page I
 - current page access before upgrade and again at intervals while connected
 - per-connection frame and byte-rate limits
 
-Production reverse proxies must forward WebSocket upgrades for `/api/collaboration/` and preserve `Origin`, `Host`/`X-Forwarded-Host`, and `X-Forwarded-Proto`.
+Direct Posh-ACME mode accepts secure WebSocket upgrades on the native HTTPS listener. Production reverse proxies must forward WebSocket upgrades for `/api/collaboration/` and preserve `Origin`, `Host`/`X-Forwarded-Host`, and `X-Forwarded-Proto`.
 
 The built-in room fan-out is process-local. The durable-tip fence prevents an accidentally overlapping patched instance from appending or compacting a room that missed another instance's update, but users on different instances do not receive immediate cross-process broadcasts and may reconnect when their room is detected as stale. Run one active BrainVault application process for normal operation. A multi-process or multi-host deployment requires a shared pub/sub backplane and distributed room/update coordination for full real-time behavior. During this security upgrade, drain every pre-fix collaboration writer before starting patched writers; a still-running old instance does not contain the new fence.
 
-The proxy must also be one of the peers trusted by `TRUST_PROXY_ADDRESSES` or the exact `TRUST_PROXY_HOPS` topology. BrainVault then recognizes `X-Forwarded-Proto: https`, keeps secure session cookies, and derives `wss:` browser connections from the public page URL. Plain backend HTTP requests are redirected to fixed `PUBLIC_ORIGIN` or rejected, depending on `HTTPS_REDIRECT`.
+In proxy mode, the proxy must also be one of the peers trusted by `TRUST_PROXY_ADDRESSES` or the exact `TRUST_PROXY_HOPS` topology. BrainVault then recognizes `X-Forwarded-Proto: https`, keeps secure session cookies, and derives `wss:` browser connections from the public page URL. Plain backend HTTP requests are redirected to fixed `PUBLIC_ORIGIN` or rejected, depending on `HTTPS_REDIRECT`. In Posh-ACME mode, the listener itself is HTTPS and no forwarded-protocol trust is needed.
 
-Complete Caddy, NGINX, Nginx Proxy Manager, and Synology DSM configurations are provided in the repository [reverse-proxy deployment guide](../../../deploy/README.md). The included NGINX example forwards WebSocket upgrade headers on the shared location, so both normal API requests and `/api/collaboration/` use the same backend port.
+Direct Posh-ACME plus complete Caddy, NGINX, Nginx Proxy Manager, and Synology DSM configurations are provided in the repository [HTTPS deployment guide](../../../deploy/README.md). The included NGINX example forwards WebSocket upgrade headers on the shared location, so both normal API requests and `/api/collaboration/` use the same backend port.
 
 The browser module imports the pinned Yjs ESM build at `yjs@13.6.31` from jsDelivr. A deployment with a restrictive outbound or browser content policy must allow that exact CDN resource, or vendor the same version locally and update the import plus Content Security Policy together.
 

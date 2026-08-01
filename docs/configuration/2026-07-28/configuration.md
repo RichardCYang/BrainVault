@@ -10,7 +10,7 @@ Never commit a real `.env` file.
 | --- | --- | --- |
 | `NODE_ENV` | `development` | Runtime environment |
 | `HOST` | `127.0.0.1` | Network address to bind; set `0.0.0.0` or `::` only when external access is intentional |
-| `PORT` | `4000` | HTTP port |
+| `PORT` | `4000` | HTTP listener port in `off`/`proxy` mode or HTTPS listener port in `posh-acme` mode |
 | `DATABASE_URL` | Required; `env:init` generates the password | MariaDB connection used by the app; a non-empty, non-default password is required |
 | `MARIADB_ADMIN_URL` | Not set | Optional admin connection for database and exact-host user creation |
 | `DB_USER_HOSTS` | `localhost,127.0.0.1,::1` | Comma-separated exact MariaDB account hosts; `%` and `_` wildcards are rejected |
@@ -23,10 +23,12 @@ Never commit a real `.env` file.
 | `WEBAUTHN_RP_ID` | `localhost` | WebAuthn relying-party domain without scheme or port |
 | `WEBAUTHN_ORIGIN` | `http://localhost:4000` | Comma-separated exact browser origins accepted for WebAuthn responses |
 | `CORS_ORIGIN` | Local development origins | Comma-separated browser origins allowed to call the API |
-| `PUBLIC_ORIGIN` | First `WEBAUTHN_ORIGIN` | Canonical browser-facing origin used for safe HTTPS redirects |
-| `HTTPS_MODE` | `off` | Set `proxy` when a trusted reverse proxy terminates public TLS |
-| `HTTPS_REDIRECT` | Enabled in proxy mode | Redirect unrecognized HTTP requests to `PUBLIC_ORIGIN` with status 308; when false, return HTTP 426 |
-| `HTTPS_HEALTHCHECK_BYPASS` | `true` | Allow `/health` on the private backend HTTP listener |
+| `PUBLIC_ORIGIN` | First `WEBAUTHN_ORIGIN` | Canonical browser-facing origin used for redirects and direct-certificate hostname validation |
+| `HTTPS_MODE` | `off` | `off` for HTTP, `proxy` for trusted reverse-proxy TLS, or `posh-acme` for direct HTTPS with Posh-ACME PEM files |
+| `POSH_ACME_CERT_PATH` | Not set | Required in `posh-acme` mode; order directory or `fullchain.cer`/`FullChainFile` path |
+| `POSH_ACME_KEY_PATH` | Sibling `cert.key` | Optional private-key override for `posh-acme` mode |
+| `HTTPS_REDIRECT` | Enabled in proxy mode | Proxy-mode redirect for unrecognized HTTP requests; direct Posh-ACME mode opens HTTPS only |
+| `HTTPS_HEALTHCHECK_BYPASS` | `true` | Allow `/health` on the private backend HTTP listener in proxy mode |
 | `REGISTRATION_ENABLED` | Enabled outside production; disabled in production | Allow unauthenticated account creation |
 | `SERVE_INTERNAL_DOCS` | `false` | Serve the repository `docs/` directory at authenticated `/docs` routes |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window in milliseconds |
@@ -91,7 +93,20 @@ TRUST_PROXY_ADDRESSES="loopback"
 TRUST_PROXY_HOPS=0
 ```
 
-For a proxy in another container or host, replace `loopback` with the exact proxy IP or narrowest practical CIDR. `HTTPS_MODE=proxy` refuses to start without one of the two trust settings, and `PUBLIC_ORIGIN` must be HTTPS and present in both `WEBAUTHN_ORIGIN` and `CORS_ORIGIN`. Keep the backend port private. See the repository [reverse-proxy deployment guide](../../../deploy/README.md) for Caddy, Synology DSM, NGINX, and Nginx Proxy Manager examples.
+For a proxy in another container or host, replace `loopback` with the exact proxy IP or narrowest practical CIDR. `HTTPS_MODE=proxy` refuses to start without one of the two trust settings, and `PUBLIC_ORIGIN` must be HTTPS and present in both `WEBAUTHN_ORIGIN` and `CORS_ORIGIN`. Keep the backend port private.
+
+To terminate TLS in BrainVault with Posh-ACME instead, replace the proxy-specific values with:
+
+```env
+HOST="0.0.0.0"
+PORT=443
+HTTPS_MODE=posh-acme
+POSH_ACME_CERT_PATH="C:/Users/service-account/AppData/Local/Posh-ACME/.../fullchain.cer"
+TRUST_PROXY_ADDRESSES=""
+TRUST_PROXY_HOPS=0
+```
+
+`POSH_ACME_CERT_PATH` may point to the certificate order directory or directly to `fullchain.cer`. BrainVault reads `cert.key` from the same directory unless `POSH_ACME_KEY_PATH` overrides it. The certificate must cover the hostname in `PUBLIC_ORIGIN`, be currently valid, and match the private key. The files are loaded at startup, so restart BrainVault after certificate renewal. See the repository [HTTPS deployment guide](../../../deploy/README.md) for direct Posh-ACME and reverse-proxy examples.
 
 `JWT_SECRET` and `MFA_ENCRYPTION_KEY` must be different. Known example values and legacy development defaults are rejected even outside production. Do not change `MFA_ENCRYPTION_KEY` casually after users enroll TOTP. Existing encrypted authenticator secrets depend on that key and become unusable when it changes.
 
@@ -103,10 +118,10 @@ Serve production over HTTPS and use a browser that supports Web Locks. Local dev
 
 ## WebSocket proxying and Yjs delivery
 
-Real-time collaboration uses the same `PORT`, `CORS_ORIGIN`, and JWT signing secret as the HTTP API. No separate collaboration process or port is required. A production reverse proxy must support HTTP/1.1 WebSocket upgrades for `/api/collaboration/` and forward the browser origin and original host/protocol headers. The application uses the trusted `X-Forwarded-Proto` value to recognize the external HTTPS request; it never uses forwarded host headers to authorize browser origins or construct redirects.
+Real-time collaboration uses the same `PORT`, `CORS_ORIGIN`, and JWT signing secret as the HTTP API. No separate collaboration process or port is required. Direct Posh-ACME mode carries WebSocket upgrades over the same native HTTPS listener. A production reverse proxy must support HTTP/1.1 WebSocket upgrades for `/api/collaboration/` and forward the browser origin and original host/protocol headers. In proxy mode, the application uses the trusted `X-Forwarded-Proto` value to recognize the external HTTPS request; it never uses forwarded host headers to authorize browser origins or construct redirects.
 
 The included collaboration hub is process-local and is intended to run as one active application process. Patched writers compare every room tip with the locked durable tip and invalidate a stale room before it can insert or compact, which prevents silent loss during accidental overlap but does not provide cross-process broadcasts. Horizontal scaling requires a shared pub/sub and distributed update coordinator so every instance observes the same room history and presence events. Drain all pre-fix collaboration writers before starting this version.
 
 The browser imports the exact `yjs@13.6.31` ESM build and exact `katex@0.17.0` assets from versioned jsDelivr paths. The Content Security Policy allows only those resource paths and exact WebSocket origins derived from `CORS_ORIGIN`; it does not allow the complete CDN host or arbitrary `ws:`/`wss:` destinations. Deployments that vendor scripts locally must update the public asset references and `src/app.ts` as one reviewed change.
 
-See [Collaboration](../../collaboration/2026-07-29/collaboration.md#authentication-and-network-requirements) and the [reverse-proxy deployment guide](../../../deploy/README.md) for complete examples.
+See [Collaboration](../../collaboration/2026-07-29/collaboration.md#authentication-and-network-requirements) and the [HTTPS deployment guide](../../../deploy/README.md) for complete examples.

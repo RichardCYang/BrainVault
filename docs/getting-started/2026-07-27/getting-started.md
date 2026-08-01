@@ -116,11 +116,11 @@ Before using production mode:
 - Keep `REGISTRATION_ENABLED` unset or `false` unless public sign-up is intentional.
 - Keep `SERVE_INTERNAL_DOCS=false` unless authenticated project documentation must be exposed deliberately.
 - Set `DB_USER_HOSTS` to the exact application client hosts and rerun `npm run db:init` to remove any legacy wildcard account.
-- Set `PUBLIC_ORIGIN` to the canonical HTTPS origin and set `HTTPS_MODE=proxy` when TLS terminates at Caddy, Synology DSM, NGINX, or Nginx Proxy Manager.
-- Prefer `TRUST_PROXY_ADDRESSES` with the exact proxy IP/CIDR. Use `TRUST_PROXY_HOPS` only when every route has the same exact hop count, and never configure both.
-- Keep the backend HTTP port private; allow only the proxy or local health checker to reach it.
+- Set `PUBLIC_ORIGIN` to the canonical HTTPS origin. Use `HTTPS_MODE=posh-acme` with `POSH_ACME_CERT_PATH` for direct Posh-ACME TLS, or `HTTPS_MODE=proxy` when a trusted reverse proxy terminates TLS.
+- In proxy mode, prefer `TRUST_PROXY_ADDRESSES` with the exact proxy IP/CIDR. Use `TRUST_PROXY_HOPS` only when every route has the same exact hop count, and never configure both.
+- In proxy mode, keep the backend HTTP port private; allow only the proxy or local health checker to reach it. In Posh-ACME mode, expose only the intended HTTPS listener.
 - Use HTTPS, managed secret storage, database backups, and normal production monitoring.
 
-For real-time collaboration behind a reverse proxy, enable WebSocket upgrades for `/api/collaboration/` and preserve the original origin, host, and protocol headers. See [Collaboration](../../collaboration/2026-07-29/collaboration.md#authentication-and-network-requirements) and the repository [reverse-proxy deployment guide](../../../deploy/README.md).
+Direct Posh-ACME mode carries collaboration over the same native HTTPS listener. Behind a reverse proxy, enable WebSocket upgrades for `/api/collaboration/` and preserve the original origin, host, and protocol headers. See [Collaboration](../../collaboration/2026-07-29/collaboration.md#authentication-and-network-requirements) and the repository [HTTPS deployment guide](../../../deploy/README.md).
 
 The server refuses to start when `DATABASE_URL` contains a missing or known default password, and production also refuses either cryptographic secret when missing or known to be a public placeholder. Development without configured cryptographic secrets uses per-process ephemeral values, while `npm run env:init` writes persistent random values. See [Security](../../security/2026-07-30/security.md) and [Configuration](../../configuration/2026-07-28/configuration.md) for details.

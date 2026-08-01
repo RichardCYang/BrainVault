@@ -280,7 +280,8 @@ function verifySourceWiring() {
   ]);
   assertContains("src/server.ts", [
     "attachPageCollaborationServer",
-    "createServer(app)",
+    "createHttpServer(app)",
+    "createHttpsServer(poshAcmeTls.options, app)",
     "await collaborationHub.close()"
   ]);
   assertContains("src/app.ts", [

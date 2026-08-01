@@ -16,7 +16,7 @@ Attachment bytes continue to use the authenticated upload/download API. The serv
 
 Archiving a shared page, permanently deleting a page subtree, and restoring the full workspace coordinate same-origin tabs before changing persistence. They stop when any affected page still has a browser-only, server-unconfirmed Yjs recovery record. Recovery records are keyed by both source tab and server-issued document epoch. Records from a replaced, unknown, or legacy generation are never merged into the current document and are never overwritten by a new generation from the same tab. The workspace home groups every local recovery by epoch, decodes its readable title and block data where possible, and retains the original encoded update as a fallback.
 
-See [Page sharing and real-time collaboration](../../collaboration/2026-07-29/collaboration.md) for the access model, protocol, persistence, reverse-proxy setup, and verification commands.
+See [Page sharing and real-time collaboration](../../collaboration/2026-07-29/collaboration.md) for the access model, protocol, persistence, HTTPS deployment, and verification commands.
 
 ### Keyboard and block controls
 

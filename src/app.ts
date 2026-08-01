@@ -17,7 +17,9 @@ import { requireAuth } from "./middleware/auth.js";
 import { createHttpsEnforcementMiddleware } from "./middleware/https.js";
 import { createExpressTrustProxySetting } from "./lib/reverse-proxy.js";
 
-const trustProxySetting = createExpressTrustProxySetting(env.TRUST_PROXY_HOPS, env.TRUST_PROXY_ADDRESSES);
+const trustProxySetting = env.HTTPS_MODE === "proxy"
+  ? createExpressTrustProxySetting(env.TRUST_PROXY_HOPS, env.TRUST_PROXY_ADDRESSES)
+  : false;
 
 const configuredWebSocketOrigins = corsOrigins.map((origin) => {
   const parsed = new URL(origin);
@@ -49,7 +51,7 @@ export function createApp() {
   );
   app.use(
     createHttpsEnforcementMiddleware({
-      enabled: env.HTTPS_MODE === "proxy",
+      enabled: env.HTTPS_MODE !== "off",
       publicOrigin: env.PUBLIC_ORIGIN,
       redirect: env.HTTPS_REDIRECT,
       healthcheckBypass: env.HTTPS_HEALTHCHECK_BYPASS

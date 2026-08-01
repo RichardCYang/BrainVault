@@ -87,8 +87,9 @@ contains("src/config/env.ts", [
   "AUTH_MFA_SETUP_MAX",
   "TRUST_PROXY_HOPS",
   "TRUST_PROXY_ADDRESSES",
-  'HTTPS_MODE: z.enum(["off", "proxy"])',
-  "PUBLIC_ORIGIN must use HTTPS when HTTPS_MODE=proxy",
+  'HTTPS_MODE: z.enum(["off", "proxy", "posh-acme"])',
+  "HTTPS_MODE=posh-acme requires POSH_ACME_CERT_PATH",
+  "PUBLIC_ORIGIN must use HTTPS when HTTPS_MODE is proxy or posh-acme",
   "JWT_SECRET must be explicitly configured in production",
   "MFA_ENCRYPTION_KEY must be explicitly configured in production",
   "uses a public placeholder or legacy development value",
@@ -135,6 +136,7 @@ const appSource = contains("src/app.ts", [
   'app.use("/docs", requireAuth',
   "createExpressTrustProxySetting",
   "createHttpsEnforcementMiddleware",
+  'enabled: env.HTTPS_MODE !== "off"',
   "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js",
   "https://cdn.jsdelivr.net/npm/yjs@13.6.31/+esm",
   'connectSrc: ["\'self\'", ...configuredWebSocketOrigins]',
@@ -142,7 +144,20 @@ const appSource = contains("src/app.ts", [
 ]);
 assert.ok(!appSource.includes('scriptSrc: ["\'self\'", "https://cdn.jsdelivr.net"]'), "CSP must not trust the entire jsDelivr host");
 assert.ok(!appSource.includes('connectSrc: ["\'self\'", "ws:", "wss:"]'), "CSP must not allow arbitrary WebSocket hosts");
-contains("src/server.ts", ["server.listen(env.PORT, env.HOST", "HTTPS reverse-proxy mode enabled"]);
+contains("src/server.ts", [
+  "createHttpServer(app)",
+  "createHttpsServer(poshAcmeTls.options, app)",
+  "server.listen(env.PORT, env.HOST",
+  "HTTPS reverse-proxy mode enabled",
+  "Posh-ACME HTTPS mode enabled"
+]);
+contains("src/lib/posh-acme-https.ts", [
+  'defaultCertificateFileName = "fullchain.cer"',
+  'defaultPrivateKeyFileName = "cert.key"',
+  "createSecureContext(options)",
+  "certificate.checkHost(hostname)",
+  'minVersion: "TLSv1.2"'
+]);
 contains("src/middleware/https.ts", ["req.secure", "buildHttpsRedirectUrl", "HTTPS_REQUIRED", "res.redirect(308"]);
 contains("src/lib/reverse-proxy.ts", ["createExpressTrustProxySetting", "trustedProxyAddresses"]);
 contains("src/routes/page.routes.ts", ["coverUrl: httpUrlSchema(500)", "escapeHtmlAttribute(block.id)"]);

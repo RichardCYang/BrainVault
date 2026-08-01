@@ -37,7 +37,7 @@ export function createHttpsEnforcementMiddleware(options: HttpsEnforcementOption
     res.status(426).json({
       error: {
         code: "HTTPS_REQUIRED",
-        message: "This BrainVault deployment accepts browser traffic only through its configured HTTPS reverse proxy"
+        message: "This BrainVault deployment accepts browser traffic only over HTTPS"
       }
     });
   };

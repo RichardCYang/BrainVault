@@ -33,7 +33,7 @@ The `024_auth_session_revocation.sql` migration adds the non-secret `users.auth_
 
 ## Browser origin policy
 
-Every browser origin, including development loopback origins and ports, must be listed explicitly in `CORS_ORIGIN`. API CORS and collaboration WebSocket origin checks never derive authorization from `X-Forwarded-Host` or `X-Forwarded-Proto`. In `HTTPS_MODE=proxy`, only the request protocol is taken from forwarding headers, and only after Express verifies that the connecting peer matches `TRUST_PROXY_ADDRESSES` or the exact `TRUST_PROXY_HOPS` topology. Redirect destinations always use fixed `PUBLIC_ORIGIN`, not a request header. The two proxy-trust methods cannot be combined, and unrestricted boolean proxy trust is not used.
+Every browser origin, including development loopback origins and ports, must be listed explicitly in `CORS_ORIGIN`. API CORS and collaboration WebSocket origin checks never derive authorization from `X-Forwarded-Host` or `X-Forwarded-Proto`. In `HTTPS_MODE=proxy`, only the request protocol is taken from forwarding headers, and only after Express verifies that the connecting peer matches `TRUST_PROXY_ADDRESSES` or the exact `TRUST_PROXY_HOPS` topology. In `HTTPS_MODE=posh-acme`, BrainVault validates the configured certificate against `PUBLIC_ORIGIN` and creates a native TLS listener without trusting forwarding headers. Redirect destinations always use fixed `PUBLIC_ORIGIN`, not a request header. The two proxy-trust methods cannot be combined, and unrestricted boolean proxy trust is not used.
 
 
 ## Content Security Policy

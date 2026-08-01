@@ -1,4 +1,5 @@
 import type { IncomingMessage, Server as HttpServer } from "node:http";
+import type { Server as HttpsServer } from "node:https";
 import type { Socket } from "node:net";
 import { createId } from "./id.js";
 import { corsOrigins, env } from "../config/env.js";
@@ -41,6 +42,8 @@ import {
   type CollaborationBootstrapAssessment,
   type CollaborationBootstrapMismatchSummary
 } from "./collaboration-bootstrap.js";
+
+type CollaborationNetworkServer = HttpServer | HttpsServer;
 
 export const collaborationWebSocketProtocol = "brainvault-yjs-v2";
 export const collaborationTicketProtocolPrefix = "brainvault-ticket.";
@@ -177,14 +180,14 @@ function publicPresence(client: ClientContext) {
 }
 
 export class PageCollaborationHub {
-  private readonly server: HttpServer;
+  private readonly server: CollaborationNetworkServer;
   private readonly rooms = new Map<string, Room>();
   private readonly heartbeatTimer: NodeJS.Timeout;
   private readonly accessTimer: NodeJS.Timeout;
   private closed = false;
   private readonly upgradeHandler: (request: IncomingMessage, socket: Socket, head: Buffer) => void;
 
-  constructor(server: HttpServer) {
+  constructor(server: CollaborationNetworkServer) {
     this.server = server;
     this.upgradeHandler = (request, socket, head) => {
       void this.handleUpgrade(request, socket, head).catch((error) => {
@@ -918,7 +921,7 @@ export class PageCollaborationHub {
   }
 }
 
-export function attachPageCollaborationServer(server: HttpServer) {
+export function attachPageCollaborationServer(server: CollaborationNetworkServer) {
   return new PageCollaborationHub(server);
 }
 

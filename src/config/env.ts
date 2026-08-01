@@ -43,7 +43,9 @@ const envSchema = z.object({
   WEBAUTHN_ORIGIN: z.string().trim().min(1).default("http://localhost:4000"),
   CORS_ORIGIN: z.string().default("http://localhost:4000,http://127.0.0.1:4000,http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173"),
   PUBLIC_ORIGIN: z.string().trim().min(1).optional(),
-  HTTPS_MODE: z.enum(["off", "proxy"]).default("off"),
+  HTTPS_MODE: z.enum(["off", "proxy", "posh-acme"]).default("off"),
+  POSH_ACME_CERT_PATH: z.string().trim().min(1).max(4_096).optional(),
+  POSH_ACME_KEY_PATH: z.string().trim().min(1).max(4_096).optional(),
   HTTPS_REDIRECT: booleanValue.optional(),
   HTTPS_HEALTHCHECK_BYPASS: enabledByDefault,
   REGISTRATION_ENABLED: booleanValue.optional(),
@@ -196,6 +198,7 @@ for (const origin of webAuthnOrigins) {
 
 const publicOrigin = parsePublicOrigin(parsedEnv.PUBLIC_ORIGIN ?? webAuthnOrigins[0]);
 const httpsRedirect = parsedEnv.HTTPS_REDIRECT ?? parsedEnv.HTTPS_MODE === "proxy";
+const secureHttpsMode = parsedEnv.HTTPS_MODE !== "off";
 const trustedProxyAddresses = parsedEnv.TRUST_PROXY_ADDRESSES
   .split(",")
   .map((value) => value.trim())
@@ -209,17 +212,20 @@ if (parsedEnv.TRUST_PROXY_HOPS > 0 && trustedProxyAddresses.length > 0) {
 if (parsedEnv.HTTPS_MODE === "proxy" && parsedEnv.TRUST_PROXY_HOPS === 0 && trustedProxyAddresses.length === 0) {
   throw new Error("HTTPS_MODE=proxy requires TRUST_PROXY_HOPS or TRUST_PROXY_ADDRESSES");
 }
-if (parsedEnv.HTTPS_MODE === "off" && httpsRedirect) {
+if (parsedEnv.HTTPS_MODE !== "proxy" && httpsRedirect) {
   throw new Error("HTTPS_REDIRECT=true requires HTTPS_MODE=proxy");
 }
-if (parsedEnv.HTTPS_MODE === "proxy" && new URL(publicOrigin).protocol !== "https:") {
-  throw new Error("PUBLIC_ORIGIN must use HTTPS when HTTPS_MODE=proxy");
+if (secureHttpsMode && new URL(publicOrigin).protocol !== "https:") {
+  throw new Error("PUBLIC_ORIGIN must use HTTPS when HTTPS_MODE is proxy or posh-acme");
 }
-if (parsedEnv.HTTPS_MODE === "proxy" && !webAuthnOrigins.includes(publicOrigin)) {
-  throw new Error("PUBLIC_ORIGIN must also be listed in WEBAUTHN_ORIGIN when HTTPS_MODE=proxy");
+if (secureHttpsMode && !webAuthnOrigins.includes(publicOrigin)) {
+  throw new Error("PUBLIC_ORIGIN must also be listed in WEBAUTHN_ORIGIN when HTTPS is enabled");
 }
-if (parsedEnv.HTTPS_MODE === "proxy" && !corsOrigins.includes(publicOrigin)) {
-  throw new Error("PUBLIC_ORIGIN must also be listed in CORS_ORIGIN when HTTPS_MODE=proxy");
+if (secureHttpsMode && !corsOrigins.includes(publicOrigin)) {
+  throw new Error("PUBLIC_ORIGIN must also be listed in CORS_ORIGIN when HTTPS is enabled");
+}
+if (parsedEnv.HTTPS_MODE === "posh-acme" && !parsedEnv.POSH_ACME_CERT_PATH) {
+  throw new Error("HTTPS_MODE=posh-acme requires POSH_ACME_CERT_PATH");
 }
 
 export const env = {

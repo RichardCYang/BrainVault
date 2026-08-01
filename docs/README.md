@@ -16,7 +16,7 @@ docs/<topic>/<YYYY-MM-DD>/<document>
 | --- | --- | --- |
 | Getting started | 2026-07-27 | [Setup, database bootstrap, and production](getting-started/2026-07-27/getting-started.md) |
 | Configuration | 2026-07-28 | [Environment variables and runtime behavior](configuration/2026-07-28/configuration.md) |
-| Deployment | Current | [HTTPS reverse proxy for Caddy, Synology, NGINX, and Nginx Proxy Manager](../deploy/README.md) |
+| Deployment | Current | [Direct Posh-ACME HTTPS and trusted reverse-proxy setup](../deploy/README.md) |
 | Development | 2026-07-28 | [Scripts, repository structure, translations, and preview capture](development/2026-07-28/development.md) |
 | Collaboration | 2026-07-29 | [Sharing, Yjs/WebSocket synchronization, persistence, and deployment](collaboration/2026-07-29/collaboration.md) |
 | Features | 2026-07-30 | [Editor behavior, blocks, backup/restore, languages, and export](features/2026-07-30/features.md) |

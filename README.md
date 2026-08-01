@@ -21,7 +21,7 @@ The preview is captured from the real browser UI. See [Development guide](docs/d
 - Seven interface languages: English, Japanese, Korean, French, German, Spanish, and Portuguese
 - Private attachment storage, sanitized Markdown rendering, rate limiting, and validated bookmark previews
 - Automatic MariaDB bootstrap and migrations, plus an included OpenAPI 3.1 specification
-- Production HTTPS reverse-proxy mode for Caddy, Synology DSM, NGINX, and Nginx Proxy Manager
+- Production HTTPS via a Posh-ACME certificate directory or a trusted Caddy, Synology DSM, NGINX, or Nginx Proxy Manager reverse proxy
 
 ## Syntax-highlighted code blocks
 
@@ -66,7 +66,7 @@ For database permissions, opt-in demo data, alternative environment setup, and p
 | [Collaboration verification](docs/data-loss/2026-07-29/collaboration-verification.md) | Delivery checks, integrity-proof scope, and reproducible deployment validation |
 | [Data-loss and integrity reports](docs/README.md#data-loss-and-integrity-reports) | Dated audits, reproductions, corrections, and verification evidence |
 | [Configuration](docs/configuration/2026-07-28/configuration.md) | Environment variables and runtime configuration |
-| [Reverse-proxy deployment](deploy/README.md) | Caddy, Synology DSM, NGINX, and Nginx Proxy Manager HTTPS setup |
+| [HTTPS deployment](deploy/README.md) | Direct Posh-ACME TLS plus Caddy, Synology DSM, NGINX, and Nginx Proxy Manager setup |
 | [Security](docs/security/2026-07-30/security.md) | MFA, production secrets, attachment safety, and security defaults |
 | [API](docs/api/2026-07-30/api.md) | Route overview, authentication, health check, and OpenAPI access |
 | [Development](docs/development/2026-07-28/development.md) | Scripts, lockfile policy, project structure, translations, and preview capture |
@@ -86,4 +86,4 @@ npm run verify:data-loss # Check persistence and recovery integrity guards
 npm start         # Run the compiled server
 ```
 
-Before a production deployment, provide explicit unique secrets, configure the browser origins, leave registration disabled unless it is intentionally required, and serve the app over HTTPS in a browser that supports Web Locks so safety-critical cross-tab transitions can run. For TLS termination in Caddy, Synology DSM, NGINX, or Nginx Proxy Manager, enable `HTTPS_MODE=proxy` and follow the [reverse-proxy deployment guide](deploy/README.md). See [Security](docs/security/2026-07-30/security.md) and [Configuration](docs/configuration/2026-07-28/configuration.md).
+Before a production deployment, provide explicit unique secrets, configure the browser origins, leave registration disabled unless it is intentionally required, and serve the app over HTTPS in a browser that supports Web Locks so safety-critical cross-tab transitions can run. To let BrainVault serve Posh-ACME's `fullchain.cer` and `cert.key` directly, use `HTTPS_MODE=posh-acme` and set `POSH_ACME_CERT_PATH`. For TLS termination in Caddy, Synology DSM, NGINX, or Nginx Proxy Manager, use `HTTPS_MODE=proxy`. Follow the [HTTPS deployment guide](deploy/README.md), then see [Security](docs/security/2026-07-30/security.md) and [Configuration](docs/configuration/2026-07-28/configuration.md).
