@@ -18,6 +18,7 @@ import {
   mapPageVersionDetailRow,
   mapPageVersionListRow,
   recordPageVersion,
+  resetPageVersionHistory as resetPageVersionHistoryRecords,
   toPageVersionActor,
   type PageVersionRow
 } from "../lib/page-version-history.js";
@@ -531,6 +532,38 @@ pageRouter.get(
         versions: pageRows.map(mapPageVersionListRow),
         nextCursor: rows.length > query.limit ? String(pageRows.at(-1)?.id ?? "") : null
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+pageRouter.delete(
+  "/:pageId/versions",
+  validate({ params: idParamSchema }),
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req.user);
+      const pageId = String(req.params.pageId);
+      const reset = await transaction(async (client) => {
+        const page = await client.queryOne<PageRow>(
+          "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
+          [pageId, user.id]
+        );
+        if (!page) throw notFound("Page");
+
+        const resetHistory = await resetPageVersionHistoryRecords(client, {
+          page,
+          actor: toPageVersionActor(user)
+        });
+        if (!resetHistory.version || resetHistory.version.revision !== 1) {
+          throw new ApiError(500, "PAGE_VERSION_RESET_FAILED", "Page version history was not reset");
+        }
+        return { revision: resetHistory.version.revision, deletedCount: resetHistory.deletedCount };
+      });
+
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json(reset);
     } catch (error) {
       next(error);
     }

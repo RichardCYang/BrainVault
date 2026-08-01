@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   diffPageVersionBlocks,
-  diffPageVersionPage
+  diffPageVersionPage,
+  resetPageVersionHistory
 } from "../src/lib/page-version-history.js";
 import type { BlockRow, PageRow } from "../src/types/domain.js";
 
@@ -56,14 +57,20 @@ describe("Page version history", () => {
     expect(index).toMatch(/id="page-actions-menu"[\s\S]*id="page-version-history-button"/);
     expect(index).toContain('id="page-version-history-dialog"');
     expect(index).toContain('id="page-version-history-list"');
+    expect(index).toContain('id="page-version-history-reset"');
     expect(index).toContain('id="page-version-history-detail"');
     expect(client).toContain("function openPageVersionHistory");
     expect(client).toContain("function loadPageVersionHistory");
     expect(client).toContain("function loadPageVersionDetail");
+    expect(client).toContain("async function resetPageVersionHistory");
+    expect(client).toContain('method: "DELETE"');
+    expect(client).toContain("window.confirm");
     expect(client).toContain("createPageVersionFieldChange");
     expect(styles).toContain(".page-version-history-dialog");
     expect(styles).toContain(".page-version-before-after");
+    expect(styles).toContain(".page-version-history-reset");
     expect(i18n).toContain('menu: "페이지 버전 정보"');
+    expect(i18n).toContain('reset: "전체 기록 삭제"');
     expect(i18n).toContain('title: "페이지 버전 이력"');
   });
 
@@ -75,11 +82,49 @@ describe("Page version history", () => {
     expect(migration).toContain("changes JSON NOT NULL");
     expect(migration).toContain("uq_page_versions_revision UNIQUE (page_id, revision)");
     expect(pageRoutes).toContain('"/:pageId/versions"');
+    expect(pageRoutes).toContain('pageRouter.delete(');
+    expect(pageRoutes).toContain('source: "RESET"');
+    expect(pageRoutes).toContain('"DELETE FROM page_versions WHERE page_id = ?"');
     expect(pageRoutes).toContain('"/:pageId/versions/:versionId"');
     expect(blockRoutes).toContain('source: "BLOCK_UPDATE"');
     expect(blockRoutes).toContain('source: "BLOCK_DELETE"');
     expect(collaborationRoutes).toContain('source: "COLLABORATION"');
     expect(collaborationRoutes).toContain("loadPageVersionActors");
+  });
+
+  it("deletes prior rows and creates a new revision 1 baseline without resetting edit counters", async () => {
+    let revisions = [1, 2, 3];
+    const client = {
+      execute: async (sql: string, params: readonly unknown[]) => {
+        if (sql.includes("DELETE FROM page_versions")) {
+          const deleted = revisions.length;
+          revisions = [];
+          return { affectedRows: deleted };
+        }
+        if (sql.includes("INSERT INTO page_versions")) {
+          revisions.push(Number(params[1]));
+          return { insertId: 100, affectedRows: 1 };
+        }
+        return { affectedRows: 0 };
+      },
+      queryOne: async (sql: string) => {
+        if (sql.includes("SELECT edit_version, content_version")) {
+          return { edit_version: 7, content_version: 11 };
+        }
+        if (sql.includes("SELECT MAX(revision)")) {
+          return { revision: revisions.length ? Math.max(...revisions) : null };
+        }
+        return undefined;
+      }
+    } as never;
+
+    const reset = await resetPageVersionHistory(client, {
+      page: page({ edit_version: 7, content_version: 11 }),
+      actor: { id: "usr_owner", username: "owner", name: "Owner" }
+    });
+
+    expect(reset).toEqual({ version: { id: 100, revision: 1 }, deletedCount: 3 });
+    expect(revisions).toEqual([1]);
   });
 
   it("detects exact page field and tag changes", () => {

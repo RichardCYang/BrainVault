@@ -285,6 +285,35 @@ export async function recordPageVersion(
   return { id: Number(result.insertId), revision };
 }
 
+export async function resetPageVersionHistory(
+  client: DbClient,
+  input: { page: PageRow; actor: PageVersionActor }
+) {
+  // Keep edit/content versions monotonic because they protect optimistic concurrency.
+  // Only the user-facing history revision sequence is restarted at revision 1.
+  const deletion = await client.execute<{ affectedRows: number }>(
+    "DELETE FROM page_versions WHERE page_id = ?",
+    [input.page.id]
+  );
+  const version = await recordPageVersion(client, {
+    pageId: input.page.id,
+    actors: [input.actor],
+    source: "RESET",
+    changes: [{
+      kind: "history-started",
+      page: {
+        title: input.page.title,
+        icon: input.page.icon,
+        coverUrl: input.page.cover_url,
+        isArchived: Boolean(input.page.is_archived),
+        isCollection: Boolean(input.page.is_collection),
+        parentPageId: input.page.parent_page_id
+      }
+    }]
+  });
+  return { version, deletedCount: Number(deletion.affectedRows ?? 0) };
+}
+
 export function mapPageVersionListRow(row: PageVersionRow) {
   return {
     id: String(row.id),

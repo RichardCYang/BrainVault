@@ -3378,6 +3378,44 @@ kbd {
   font-size: 0.9rem;
 }
 
+.page-version-history-reset {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  gap: 0.36rem;
+  align-self: flex-start;
+  border: 1px solid rgba(181, 42, 42, 0.2);
+  border-radius: 8px;
+  background: rgba(181, 42, 42, 0.06);
+  color: var(--danger);
+  padding: 0.4rem 0.58rem;
+  font-size: 0.66rem;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
+.page-version-history-reset:hover,
+.page-version-history-reset:focus-visible {
+  border-color: rgba(181, 42, 42, 0.34);
+  background: rgba(181, 42, 42, 0.12);
+}
+
+.page-version-history-reset:disabled,
+.page-version-history-item:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.page-version-history-reset svg {
+  width: 0.86rem;
+  height: 0.86rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 #page-version-history-page-title {
   max-width: 17rem;
   margin-top: 0.18rem;
@@ -3687,6 +3725,14 @@ kbd {
     border-right: 0;
     border-bottom: 1px solid rgba(38, 38, 37, 0.1);
     padding: 0.8rem;
+  }
+
+  .page-version-history-panel-heading {
+    align-items: flex-start;
+  }
+
+  .page-version-history-reset span {
+    display: none;
   }
 
   .page-version-history-detail-panel {

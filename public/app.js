@@ -168,7 +168,8 @@ const state = {
     selectedId: null,
     requestId: 0,
     detailRequestId: 0,
-    loading: false
+    loading: false,
+    resetting: false
   }
 };
 
@@ -767,6 +768,7 @@ const elements = {
   pageVersionHistoryClose: $("#page-version-history-close"),
   pageVersionHistoryCurrent: $("#page-version-history-current"),
   pageVersionHistoryPageTitle: $("#page-version-history-page-title"),
+  pageVersionHistoryReset: $("#page-version-history-reset"),
   pageVersionHistoryMessage: $("#page-version-history-message"),
   pageVersionHistoryList: $("#page-version-history-list"),
   pageVersionHistoryMore: $("#page-version-history-more"),
@@ -4179,6 +4181,7 @@ function renderPageVersionHistoryList() {
     button.type = "button";
     button.className = "page-version-history-item";
     button.dataset.versionId = String(version.id);
+    button.disabled = history.resetting;
     button.classList.toggle("is-selected", String(history.selectedId) === String(version.id));
 
     const avatar = document.createElement("span");
@@ -4207,7 +4210,8 @@ function renderPageVersionHistoryList() {
   }
 
   elements.pageVersionHistoryMore.classList.toggle("hidden", !history.nextCursor);
-  elements.pageVersionHistoryMore.disabled = history.loading;
+  elements.pageVersionHistoryMore.disabled = history.loading || history.resetting;
+  elements.pageVersionHistoryReset.disabled = history.loading || history.resetting;
 }
 
 function renderPageVersionHistoryDetail(version) {
@@ -4263,18 +4267,19 @@ function resetPageVersionHistoryDetail() {
 
 async function loadPageVersionHistory({ append = false } = {}) {
   const pageId = state.pageVersionHistory.pageId;
-  if (!pageId) return;
+  if (!pageId) return false;
   const requestId = ++state.pageVersionHistory.requestId;
   state.pageVersionHistory.loading = true;
   elements.pageVersionHistoryMessage.classList.remove("error");
   elements.pageVersionHistoryMessage.textContent = t("versions.loading");
   elements.pageVersionHistoryMore.disabled = true;
+  elements.pageVersionHistoryReset.disabled = true;
 
   try {
     const cursor = append ? state.pageVersionHistory.nextCursor : null;
     const query = cursor ? `?cursor=${encodeURIComponent(cursor)}&limit=50` : "?limit=50";
     const data = await api(`/api/pages/${encodeURIComponent(pageId)}/versions${query}`);
-    if (requestId !== state.pageVersionHistory.requestId || pageId !== state.pageVersionHistory.pageId) return;
+    if (requestId !== state.pageVersionHistory.requestId || pageId !== state.pageVersionHistory.pageId) return false;
     state.pageVersionHistory.current = data.current ?? null;
     state.pageVersionHistory.versions = append
       ? [...state.pageVersionHistory.versions, ...(data.versions ?? [])]
@@ -4287,14 +4292,66 @@ async function loadPageVersionHistory({ append = false } = {}) {
       ? ""
       : t("versions.empty");
     renderPageVersionHistoryList();
+    return true;
   } catch (error) {
-    if (requestId !== state.pageVersionHistory.requestId) return;
+    if (requestId !== state.pageVersionHistory.requestId) return false;
     elements.pageVersionHistoryMessage.classList.add("error");
     elements.pageVersionHistoryMessage.textContent = error?.message || t("versions.loadError");
+    return false;
   } finally {
     if (requestId === state.pageVersionHistory.requestId) {
       state.pageVersionHistory.loading = false;
-      elements.pageVersionHistoryMore.disabled = false;
+      elements.pageVersionHistoryMore.disabled = state.pageVersionHistory.resetting;
+      elements.pageVersionHistoryReset.disabled = state.pageVersionHistory.resetting;
+    }
+  }
+}
+
+async function resetPageVersionHistory() {
+  const history = state.pageVersionHistory;
+  const page = state.selectedPage;
+  const pageId = history.pageId;
+  if (!pageId || !page || page.id !== pageId || !isPageOwner(page) || history.loading || history.resetting) return;
+
+  const title = page.title || t("newDocumentTitle");
+  if (!window.confirm(t("versions.resetConfirm", { title }))) return;
+
+  history.resetting = true;
+  history.requestId += 1;
+  history.detailRequestId += 1;
+  elements.pageVersionHistoryReset.disabled = true;
+  elements.pageVersionHistoryReset.setAttribute("aria-busy", "true");
+  elements.pageVersionHistoryMore.disabled = true;
+  elements.pageVersionHistoryMessage.classList.remove("error");
+  elements.pageVersionHistoryMessage.textContent = t("versions.resetting");
+  renderPageVersionHistoryList();
+
+  try {
+    await api(`/api/pages/${encodeURIComponent(pageId)}/versions`, { method: "DELETE" });
+    if (pageId !== history.pageId) return;
+
+    history.versions = [];
+    history.nextCursor = null;
+    history.current = null;
+    elements.pageVersionHistoryCurrent.textContent = "";
+    resetPageVersionHistoryDetail();
+    renderPageVersionHistoryList();
+    const loaded = await loadPageVersionHistory();
+    if (loaded && pageId === history.pageId) {
+      elements.pageVersionHistoryMessage.classList.remove("error");
+      elements.pageVersionHistoryMessage.textContent = t("versions.resetSuccess");
+    }
+  } catch (error) {
+    if (pageId !== history.pageId) return;
+    elements.pageVersionHistoryMessage.classList.add("error");
+    elements.pageVersionHistoryMessage.textContent = error?.message || t("versions.resetError");
+  } finally {
+    history.resetting = false;
+    if (pageId === history.pageId) {
+      elements.pageVersionHistoryReset.disabled = history.loading;
+      elements.pageVersionHistoryReset.removeAttribute("aria-busy");
+      elements.pageVersionHistoryMore.disabled = history.loading;
+      renderPageVersionHistoryList();
     }
   }
 }
@@ -4327,9 +4384,13 @@ function openPageVersionHistory() {
   state.pageVersionHistory.versions = [];
   state.pageVersionHistory.nextCursor = null;
   state.pageVersionHistory.current = null;
+  state.pageVersionHistory.resetting = false;
   state.pageVersionHistory.requestId += 1;
   state.pageVersionHistory.detailRequestId += 1;
   elements.pageVersionHistoryPageTitle.textContent = page.title || t("newDocumentTitle");
+  elements.pageVersionHistoryReset.classList.toggle("hidden", !isPageOwner(page));
+  elements.pageVersionHistoryReset.disabled = false;
+  elements.pageVersionHistoryReset.removeAttribute("aria-busy");
   elements.pageVersionHistoryCurrent.textContent = "";
   elements.pageVersionHistoryMessage.textContent = "";
   elements.pageVersionHistoryList.replaceChildren();
@@ -4342,6 +4403,7 @@ function openPageVersionHistory() {
 function closePageVersionHistory({ restoreFocus = true } = {}) {
   state.pageVersionHistory.requestId += 1;
   state.pageVersionHistory.detailRequestId += 1;
+  state.pageVersionHistory.resetting = false;
   state.pageVersionHistory.pageId = null;
   if (elements.pageVersionHistoryDialog.open) elements.pageVersionHistoryDialog.close();
   if (restoreFocus && elements.pageActionsButton.isConnected) elements.pageActionsButton.focus();
@@ -10642,6 +10704,10 @@ elements.pageVersionHistoryClose.addEventListener("click", () => {
   closePageVersionHistory();
 });
 
+elements.pageVersionHistoryReset.addEventListener("click", () => {
+  void resetPageVersionHistory();
+});
+
 elements.pageVersionHistoryMore.addEventListener("click", () => {
   if (!state.pageVersionHistory.loading && state.pageVersionHistory.nextCursor) {
     void loadPageVersionHistory({ append: true });
@@ -10666,6 +10732,7 @@ elements.pageVersionHistoryDialog.addEventListener("click", (event) => {
 elements.pageVersionHistoryDialog.addEventListener("close", () => {
   state.pageVersionHistory.requestId += 1;
   state.pageVersionHistory.detailRequestId += 1;
+  state.pageVersionHistory.resetting = false;
   state.pageVersionHistory.pageId = null;
 });
 
