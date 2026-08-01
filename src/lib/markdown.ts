@@ -10,12 +10,14 @@ import { renderTimetableHtml } from "./timetable.js";
 import { renderGanttHtml } from "./gantt.js";
 import { renderBookmarkHtml } from "./bookmark.js";
 import { getAiChatData, getAiProviderLabel } from "./ai-chat.js";
+import { getCodeLanguage, renderHighlightedCode, renderMarkdownCodeFence } from "./code-highlighting.js";
 
 const markdown = new MarkdownIt({
   html: true,
   linkify: true,
   breaks: true,
-  typographer: true
+  typographer: true,
+  highlight: (source, language) => renderMarkdownCodeFence(source, language)
 });
 
 function renderMathPlaceholder(latex: string, displayMode: boolean) {
@@ -152,6 +154,7 @@ const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   small: ["class"],
   p: ["class"],
   img: ["src", "srcset", "alt", "title", "width", "height", "loading", "referrerpolicy"],
+  pre: ["class"],
   code: ["class"],
   span: ["class", "style", "data-latex", "data-math-display"],
   input: ["type", "checked", "disabled"],
@@ -335,7 +338,10 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
     case "MATH":
       return sanitizeHtml(renderMathPlaceholder(markdownValue, true), sanitizeOptions);
     case "CODE":
-      return renderTextAlignment(renderMarkdown(`\`\`\`\n${stripFence(markdownValue)}\n\`\`\``), metadata);
+      return renderTextAlignment(
+        sanitizeHtml(renderHighlightedCode(stripFence(markdownValue), getCodeLanguage(metadata)), sanitizeOptions),
+        metadata
+      );
     case "DIVIDER":
       return sanitizeHtml("<hr>", sanitizeOptions);
     case "IMAGE": {

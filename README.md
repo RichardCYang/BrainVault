@@ -13,7 +13,7 @@ The preview is captured from the real browser UI. See [Development guide](docs/d
 ## Key features
 
 - Block editor with slash commands, nested content, drag-and-drop ordering, tables, databases, Kanban boards, and Gantt timelines
-- Rich text, Markdown, code, callouts, bookmarks, file attachments, AI conversation blocks, and KaTeX formulas
+- Rich text, Markdown, syntax-highlighted code blocks, callouts, bookmarks, file attachments, AI conversation blocks, and KaTeX formulas
 - Crash-resilient browser drafts, automatic title saving, and search across page titles and block content
 - Owner-managed page sharing with Yjs-based simultaneous title/block editing, live presence, reconnect recovery, and MariaDB persistence
 - Page collections, nesting, archiving, permanent deletion, PDF export, and complete ZIP backup/restore including sharing grants
@@ -22,6 +22,12 @@ The preview is captured from the real browser UI. See [Development guide](docs/d
 - Private attachment storage, sanitized Markdown rendering, rate limiting, and validated bookmark previews
 - Automatic MariaDB bootstrap and migrations, plus an included OpenAPI 3.1 specification
 - Production HTTPS reverse-proxy mode for Caddy, Synology DSM, NGINX, and Nginx Proxy Manager
+
+## Syntax-highlighted code blocks
+
+Code blocks include a language selector, a live highlighted preview, persisted language metadata, read-only/PDF rendering, and highlighted fenced code inside Markdown blocks. Highlight.js assets are served locally from `public/vendor/highlight`, so code highlighting does not require a third-party CDN.
+
+Supported selectors include C, C++, C#, Java, Python, Dart, Rust, Lua, Ruby, Perl, Bash, PowerShell, JSON, SQL, XML, YAML, Markdown, HTML, JavaScript, CSS, PHP, VB.NET, BASIC, Assembly, Delphi, Lisp, TypeScript, CoffeeScript, COBOL, Fortran (`POTRAN` is accepted as an alias), MATLAB, Kotlin, Objective-C, Swift, and Haskell.
 
 ## Stack
 

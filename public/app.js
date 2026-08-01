@@ -9,6 +9,13 @@ import {
   t
 } from "./i18n.js";
 import {
+  codeLanguageOptions,
+  getBlockCodeLanguage,
+  hydrateHighlightedCodeBlocks,
+  normalizeCodeLanguage,
+  renderCodePreview
+} from "./code-highlighting.js";
+import {
   createDatabaseEditor,
   createDefaultDatabaseData,
   extractDatabaseData,
@@ -6372,6 +6379,12 @@ function updateMathBlockPreview(row, latex) {
   if (preview) renderLatexInto(preview, latex, true);
 }
 
+function updateCodeBlockPreview(row, value, language = row?.dataset?.codeLanguage) {
+  const preview = row?.querySelector(".block-rendered-preview");
+  if (!preview) return;
+  renderCodePreview(preview, value, language);
+}
+
 function updateRenderedBlockPreview(row, block) {
   const preview = row?.querySelector(".block-rendered-preview");
   if (!preview || !block) return;
@@ -6379,22 +6392,33 @@ function updateRenderedBlockPreview(row, block) {
     renderLatexInto(preview, block.markdown, true);
     return;
   }
+  if (block.type === "CODE") {
+    renderCodePreview(preview, block.markdown, getBlockCodeLanguage(block));
+    return;
+  }
   preview.innerHTML = block.htmlCache ?? "";
   if (!block.htmlCache) preview.textContent = block.markdown ?? "";
   hydrateMathExpressions(preview);
+  hydrateHighlightedCodeBlocks(preview);
 }
 
 function createTextBlockEditor(block) {
   const editor = document.createElement("div");
   editor.className = "text-block-editor";
   if (block.type === "MATH") editor.classList.add("math-block-editor");
+  if (block.type === "CODE") editor.classList.add("code-block-editor");
 
   const textarea = document.createElement("textarea");
   textarea.name = "markdown";
   textarea.className = "block-row-input";
-  textarea.rows = block.type === "MATH" ? 2 : 1;
+  textarea.rows = block.type === "MATH" ? 2 : block.type === "CODE" ? 5 : 1;
   textarea.maxLength = BLOCK_MARKDOWN_MAX_LENGTH;
-  textarea.spellcheck = block.type !== "MATH";
+  textarea.spellcheck = !["MATH", "CODE"].includes(block.type);
+  if (block.type === "CODE") {
+    textarea.wrap = "off";
+    textarea.autocapitalize = "off";
+    textarea.autocomplete = "off";
+  }
   textarea.placeholder = block.type === "DIVIDER"
     ? t("block.dividerPlaceholder")
     : block.type === "MATH"
@@ -6412,6 +6436,34 @@ function createTextBlockEditor(block) {
   if (block.type === "MATH") {
     preview.classList.add("math-block-preview", "math-expression", "math-expression--display");
     preview.setAttribute("aria-label", t("math.previewAria"));
+  }
+  if (block.type === "CODE") {
+    preview.classList.add("code-block-preview");
+    preview.setAttribute("aria-label", t("block.contentAria", { type: getBlockTypeLabel(block.type) }));
+  }
+
+  if (block.type === "CODE") {
+    const toolbar = document.createElement("div");
+    toolbar.className = "code-block-toolbar";
+    const label = document.createElement("label");
+    label.className = "code-language-label";
+    const labelText = document.createElement("span");
+    labelText.textContent = t("language.label");
+    const select = document.createElement("select");
+    select.className = "code-language-select";
+    select.name = "codeLanguage";
+    select.setAttribute("aria-label", t("language.label"));
+    const selectedLanguage = getBlockCodeLanguage(block);
+    for (const language of codeLanguageOptions) {
+      const option = document.createElement("option");
+      option.value = language.id;
+      option.textContent = language.label;
+      option.selected = language.id === selectedLanguage;
+      select.append(option);
+    }
+    label.append(labelText, select);
+    toolbar.append(label);
+    editor.append(toolbar);
   }
 
   editor.append(textarea, preview);
@@ -6790,6 +6842,7 @@ function renderBlock(block, renderedDraft = null) {
   }
   row.dataset.calloutType = getBlockCalloutType(renderedBlock);
   row.dataset.textAlign = getBlockTextAlign(renderedBlock);
+  row.dataset.codeLanguage = getBlockCodeLanguage(renderedBlock);
   row.dataset.parentBlockId = block.parentBlockId ?? "";
   row.dataset.sortOrder = String(block.sortOrder ?? 0);
   row.dataset.depth = String(Math.min(block.depth ?? 0, 5));
@@ -6909,6 +6962,14 @@ function buildBlockPayload(row) {
     else metadata.textAlign = textAlign;
   }
   if (type === "CALLOUT") metadata.calloutType = normalizeCalloutType(row.dataset.calloutType);
+  if (type === "CODE") {
+    const languageSelect = row.querySelector(".code-language-select");
+    const codeLanguage = normalizeCodeLanguage(languageSelect?.value ?? row.dataset.codeLanguage);
+    row.dataset.codeLanguage = codeLanguage;
+    metadata.codeLanguage = codeLanguage;
+  } else if (metadata.codeLanguage) {
+    delete metadata.codeLanguage;
+  }
 
   if (type === "TABLE") {
     const table = extractTableData(row);
@@ -7369,6 +7430,11 @@ function setRowType(row, type, { markdown } = {}) {
   if (previousType === "GANTT") metadata.gantt = extractGanttData(row);
   if (previousType === "BOOKMARK") metadata.bookmark = extractBookmarkData(row);
   if (previousType === "AI_CHAT") metadata.aiChat = extractAiChatData(row);
+  if (previousType === "CODE") {
+    metadata.codeLanguage = normalizeCodeLanguage(
+      row.querySelector(".code-language-select")?.value ?? row.dataset.codeLanguage ?? metadata.codeLanguage
+    );
+  }
   if (type === "TABLE" && !metadata.table) metadata.table = createDefaultTableData();
   if (type === "KANBAN" && !metadata.kanban) metadata.kanban = createDefaultKanbanData();
   if (type === "DATABASE" && !metadata.database) metadata.database = createDefaultDatabaseData();
@@ -7382,6 +7448,10 @@ function setRowType(row, type, { markdown } = {}) {
   }
 
   row.dataset.blockType = type;
+  row.dataset.codeLanguage = type === "CODE"
+    ? normalizeCodeLanguage(metadata.codeLanguage)
+    : "plaintext";
+  if (type === "CODE") metadata.codeLanguage = row.dataset.codeLanguage;
   if (type === "CALLOUT") setRowCalloutType(row, row.dataset.calloutType);
   const typeButton = row.querySelector(".block-type-pill");
   if (typeButton) typeButton.textContent = getBlockTypeLabel(type);
@@ -10829,6 +10899,7 @@ elements.blockList.addEventListener("input", (event) => {
   const row = getBlockRow(textarea);
   if (row) {
     if (row.dataset.blockType === "MATH") updateMathBlockPreview(row, textarea.value);
+    if (row.dataset.blockType === "CODE") updateCodeBlockPreview(row, textarea.value, row.dataset.codeLanguage);
     scheduleBlockSave(row, { allowConflictPrompt: !event.isComposing });
   }
 });
@@ -10857,6 +10928,16 @@ elements.blockList.addEventListener("keyup", (event) => {
 
 elements.blockList.addEventListener("change", (event) => {
   if (!requireWritablePage()) return;
+  const languageSelect = event.target.closest(".code-language-select");
+  if (languageSelect) {
+    const row = getBlockRow(languageSelect);
+    if (!row) return;
+    row.dataset.codeLanguage = normalizeCodeLanguage(languageSelect.value);
+    updateCodeBlockPreview(row, getBlockTextarea(row)?.value ?? "", row.dataset.codeLanguage);
+    scheduleBlockSave(row);
+    return;
+  }
+
   const checkbox = event.target.closest('input[name="checked"]');
   if (!checkbox) return;
   const row = getBlockRow(checkbox);

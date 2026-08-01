@@ -13336,3 +13336,152 @@ button.danger {
     text-align: left;
   }
 }
+
+/* Syntax-highlighted code blocks */
+.code-block-editor {
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid rgba(93, 132, 160, 0.2);
+  border-radius: var(--radius-md);
+  background: #f8fbfd;
+}
+
+.code-block-toolbar {
+  display: flex;
+  min-height: 2.2rem;
+  align-items: center;
+  justify-content: flex-end;
+  border-bottom: 1px solid rgba(93, 132, 160, 0.16);
+  background: #eef5f9;
+  padding: 0.28rem 0.48rem;
+}
+
+.code-language-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.code-language-select {
+  width: auto;
+  min-width: 9.5rem;
+  max-width: min(15rem, 48vw);
+  height: 1.72rem;
+  border: 1px solid rgba(93, 132, 160, 0.25);
+  border-radius: 0.42rem;
+  background: #fff;
+  color: #294357;
+  padding: 0 1.7rem 0 0.48rem;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.editor-block-row[data-block-type="CODE"] .block-row-body {
+  background: transparent;
+}
+
+.editor-block-row[data-block-type="CODE"] .block-row-input {
+  min-height: 7.2rem;
+  overflow: auto;
+  border-radius: 0;
+  background: #fbfdff;
+  padding: 0.72rem 0.86rem;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.editor-block-row[data-block-type="CODE"] .block-rendered-preview {
+  display: block;
+  border-top: 1px solid rgba(93, 132, 160, 0.16);
+  background: #f8fbfd;
+}
+
+.rendered-code-shell {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(93, 132, 160, 0.2);
+  border-radius: var(--radius-md);
+  background: #f8fbfd;
+}
+
+.code-block-preview .rendered-code-shell {
+  border: 0;
+  border-radius: 0;
+}
+
+.rendered-code-header {
+  display: flex;
+  min-height: 1.9rem;
+  align-items: center;
+  justify-content: flex-end;
+  border-bottom: 1px solid rgba(93, 132, 160, 0.14);
+  background: #f0f6fa;
+  padding: 0.22rem 0.62rem;
+}
+
+.rendered-code-language {
+  color: #577187;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+}
+
+.block-rendered-preview .rendered-code-pre,
+.rendered-code-pre {
+  max-width: 100%;
+  min-height: 2.8rem;
+  margin: 0;
+  overflow: auto;
+  border-radius: 0;
+  background: #fbfdff;
+  padding: 0;
+  tab-size: 2;
+}
+
+.block-rendered-preview .rendered-code-pre code.hljs,
+.rendered-code-pre code.hljs {
+  display: block;
+  min-width: max-content;
+  min-height: 2.8rem;
+  overflow: visible;
+  background: transparent;
+  padding: 0.72rem 0.86rem;
+  color: #294357;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.86rem;
+  line-height: 1.62;
+  white-space: pre;
+}
+
+.page-view.is-read-only .code-block-toolbar,
+body.pdf-export-mode .code-block-toolbar {
+  display: none !important;
+}
+
+.page-view.is-read-only .code-block-editor,
+body.pdf-export-mode .code-block-editor {
+  border: 0;
+  background: transparent;
+}
+
+.page-view.is-read-only .editor-block-row[data-block-type="CODE"] .block-rendered-preview,
+body.pdf-export-mode .editor-block-row[data-block-type="CODE"] .block-rendered-preview {
+  border-top: 0;
+  background: transparent;
+}
+
+@media (max-width: 640px) {
+  .code-block-toolbar {
+    justify-content: stretch;
+  }
+
+  .code-language-label,
+  .code-language-select {
+    width: 100%;
+    max-width: none;
+  }
+}
