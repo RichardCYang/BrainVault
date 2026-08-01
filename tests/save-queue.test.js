@@ -60,6 +60,52 @@ describe("Latest write queue", () => {
     expect(queue.busy).toBe(false);
   });
 
+  it("drops a definitive validation failure so it cannot poison newer saves", async () => {
+    const calls = [];
+    const validationError = Object.assign(new Error("invalid structured metadata"), {
+      status: 400,
+      code: "BLOCK_METADATA_WOULD_TRUNCATE"
+    });
+    const queue = createLatestWriteQueue(async (value) => {
+      calls.push(value);
+      if (value === "invalid") throw validationError;
+      return value;
+    }, {
+      shouldRetry: (error) => error?.ambiguous === true
+    });
+
+    await expect(queue.enqueue("invalid")).rejects.toBe(validationError);
+    expect(queue.busy).toBe(false);
+    await expect(queue.enqueue("latest-valid")).resolves.toBe("latest-valid");
+    expect(calls).toEqual(["invalid", "latest-valid"]);
+  });
+
+  it("lets a newer canonical structured payload supersede a rejected stale snapshot", async () => {
+    const firstAttempt = deferred();
+    const calls = [];
+    const validationError = Object.assign(new Error("invalid structured metadata"), {
+      status: 400,
+      code: "BLOCK_METADATA_WOULD_TRUNCATE"
+    });
+    const queue = createLatestWriteQueue(async (value) => {
+      calls.push(value);
+      if (value === "stale-structured-snapshot") await firstAttempt.promise;
+      return value;
+    }, {
+      shouldRetry: () => false,
+      canSupersede: (error) => error?.code === "BLOCK_METADATA_WOULD_TRUNCATE"
+    });
+
+    const saving = queue.enqueue("stale-structured-snapshot");
+    queue.enqueue("canonical-structured-payload");
+    await Promise.resolve();
+    firstAttempt.reject(validationError);
+
+    await expect(saving).resolves.toBe("canonical-structured-payload");
+    expect(calls).toEqual(["stale-structured-snapshot", "canonical-structured-payload"]);
+    expect(queue.busy).toBe(false);
+  });
+
   it("does not resurrect an in-flight task discarded at an authentication boundary", async () => {
     const firstAttempt = deferred();
     const calls = [];

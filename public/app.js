@@ -1096,6 +1096,10 @@ function isDefinitiveApiError(error) {
   return Number.isInteger(status) && status >= 400 && status < 500;
 }
 
+function canSupersedeBlockSaveError(error) {
+  return isDefinitiveApiError(error) && error?.code === "BLOCK_METADATA_WOULD_TRUNCATE";
+}
+
 async function api(path, options = {}) {
   const { skipAuthReset = false, ...requestOptions } = options;
   const headers = new Headers(requestOptions.headers ?? {});
@@ -1211,7 +1215,7 @@ const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
     pageTitleDraftExpectedVersion = getPositiveVersion(data.page.version);
   }
   return { ...data, page: committedPage };
-});
+}, { shouldRetry: isAmbiguousApiError });
 
 async function downloadAttachment(block) {
   const attachment = getBlockAttachmentData(block);
@@ -7645,6 +7649,9 @@ function getBlockSaveQueue(blockId) {
       if (latestStoredDraft) blockDraftRenderSources.set(blockId, task.draftSourceId);
     }
     return { ...data, block: committedBlock };
+  }, {
+    shouldRetry: isAmbiguousApiError,
+    canSupersede: canSupersedeBlockSaveError
   });
   blockSaveQueues.set(blockId, queue);
   return queue;

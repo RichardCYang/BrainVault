@@ -1,4 +1,7 @@
-export function createLatestWriteQueue(writer) {
+export function createLatestWriteQueue(
+  writer,
+  { shouldRetry = () => true, canSupersede = () => false } = {}
+) {
   let retryTask = null;
   let pendingTask = null;
   let runningPromise = null;
@@ -16,9 +19,20 @@ export function createLatestWriteQueue(writer) {
       try {
         lastResult = await writer(task);
       } catch (error) {
-        // A failed write must be retried before any newer coalesced edit. Otherwise an
-        // ambiguous committed write can leave the newer edit stuck on a stale version.
-        if (taskGeneration === discardGeneration) retryTask = task;
+        if (taskGeneration !== discardGeneration) throw error;
+
+        // Only failures with an unknown commit outcome belong in the retry slot. Keeping a
+        // definitive 4xx validation failure here would replay the same rejected payload forever
+        // and prevent every newer edit from reaching the writer.
+        if (shouldRetry(error, task)) {
+          retryTask = task;
+          throw error;
+        }
+
+        // A structured editor can enqueue a canonical payload while an older transient snapshot
+        // is still in flight. When that older snapshot is definitively rejected, allow the newer
+        // snapshot to replace it instead of surfacing a stale error and stopping the drain.
+        if (pendingTask !== null && canSupersede(error, task, pendingTask)) continue;
         throw error;
       }
     }
