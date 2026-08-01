@@ -46,6 +46,23 @@ test("normalized structured metadata remains accepted at exact limits", () => {
       activeViewId: "table-view"
     }
   }));
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("GANTT", {
+    gantt: {
+      title: "Project timeline",
+      scale: "month",
+      viewStart: "2026-08-01",
+      showWeekends: true,
+      tasks: [{
+        id: "task-1",
+        title: "Build",
+        start: "2026-08-03",
+        end: "2026-08-08",
+        progress: 55,
+        status: "in_progress",
+        assignee: "Mina"
+      }]
+    }
+  }));
   assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("BOOKMARK", {
     bookmark: {
       view: "gallery",
@@ -130,6 +147,24 @@ test("collection overflows that editor normalizers would discard fail closed", (
     }
   }, "metadata.database.rows");
 
+  expectIntegrityFailure("GANTT", {
+    gantt: {
+      title: "Timeline",
+      scale: "month",
+      viewStart: "2026-08-01",
+      showWeekends: true,
+      tasks: Array.from({ length: 201 }, (_, index) => ({
+        id: `task-${index}`,
+        title: "Task",
+        start: "2026-08-01",
+        end: "2026-08-01",
+        progress: 0,
+        status: "not_started",
+        assignee: ""
+      }))
+    }
+  }, "metadata.gantt.tasks");
+
   expectIntegrityFailure("BOOKMARK", {
     bookmark: {
       view: "gallery",
@@ -144,6 +179,34 @@ test("collection overflows that editor normalizers would discard fail closed", (
       }))
     }
   }, "metadata.bookmark.items");
+});
+
+
+test("Gantt metadata rejects invalid dates, progress, statuses, and duplicate task IDs", () => {
+  const baseTask = {
+    id: "task-1",
+    title: "Task",
+    start: "2026-08-01",
+    end: "2026-08-05",
+    progress: 25,
+    status: "in_progress",
+    assignee: ""
+  };
+  const root = (tasks) => ({
+    gantt: {
+      title: "Timeline",
+      scale: "month",
+      viewStart: "2026-08-01",
+      showWeekends: true,
+      tasks
+    }
+  });
+
+  expectIntegrityFailure("GANTT", root([{ ...baseTask, start: "2026-02-30" }]), "metadata.gantt.tasks[0].start");
+  expectIntegrityFailure("GANTT", root([{ ...baseTask, end: "2026-07-31" }]), "metadata.gantt.tasks[0].end");
+  expectIntegrityFailure("GANTT", root([{ ...baseTask, progress: 25.5 }]), "metadata.gantt.tasks[0].progress");
+  expectIntegrityFailure("GANTT", root([{ ...baseTask, status: "paused" }]), "metadata.gantt.tasks[0].status");
+  expectIntegrityFailure("GANTT", root([baseTask, { ...baseTask }]), "metadata.gantt.tasks");
 });
 
 test("save routes preserve authoritative metadata instead of storing normalized projections", async () => {

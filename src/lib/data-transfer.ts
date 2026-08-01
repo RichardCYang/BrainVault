@@ -120,7 +120,7 @@ const pageSchema = z.object({
 
 const blockTypes = [
   "MARKDOWN", "HEADING_1", "HEADING_2", "HEADING_3", "TODO", "QUOTE", "CALLOUT", "TABLE",
-  "KANBAN", "DATABASE", "BOOKMARK", "AI_CHAT", "MATH", "CODE", "DIVIDER", "IMAGE", "ATTACHMENT"
+  "KANBAN", "DATABASE", "GANTT", "BOOKMARK", "AI_CHAT", "MATH", "CODE", "DIVIDER", "IMAGE", "ATTACHMENT"
 ] as const satisfies readonly BlockType[];
 
 const blockSchema = z.object({

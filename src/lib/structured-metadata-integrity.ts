@@ -28,6 +28,13 @@ const databaseLimits = {
   urlLength: 2_000,
   idLength: 64
 } as const;
+const ganttLimits = {
+  titleLength: 120,
+  tasks: 200,
+  taskTitleLength: 160,
+  assigneeLength: 80,
+  idLength: 64
+} as const;
 const bookmarkLimits = {
   items: 50,
   idLength: 64,
@@ -58,6 +65,8 @@ const databaseOptionColors = new Set(["gray", "blue", "purple", "green", "yellow
 const databaseFilterOperators = new Set(["contains", "equals", "is_empty", "is_not_empty", "checked", "unchecked"]);
 const kanbanColumnColors = new Set(["gray", "blue", "purple", "green", "yellow", "red"]);
 const kanbanCardColors = new Set(["default", "pink", "yellow", "blue", "green", "purple", "peach"]);
+const ganttScales = new Set(["week", "month", "quarter"]);
+const ganttStatuses = new Set(["not_started", "in_progress", "review", "done", "blocked"]);
 const aiProviderIds = new Set(["chatgpt", "gemini", "claude", "deepseek", "grok"]);
 
 export class StructuredMetadataIntegrityError extends Error {
@@ -382,6 +391,66 @@ function assertDatabaseMetadata(root: MetadataRecord) {
   }
 }
 
+
+function parseExactIsoDay(value: unknown, path: string) {
+  const text = optionalString(value, path, 10);
+  if (text === null) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) fail(path, "must be an exact YYYY-MM-DD value");
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const time = Date.UTC(year, month - 1, day);
+  const date = new Date(time);
+  if (
+    date.getUTCFullYear() !== year
+    || date.getUTCMonth() !== month - 1
+    || date.getUTCDate() !== day
+  ) {
+    fail(path, "must be a valid calendar date");
+  }
+  return Math.trunc(time / 86_400_000);
+}
+
+function assertGanttMetadata(root: MetadataRecord) {
+  const gantt = optionalRecord(root.gantt, "metadata.gantt");
+  if (!gantt) return;
+  optionalString(gantt.title, "metadata.gantt.title", ganttLimits.titleLength);
+  if (gantt.scale !== null && gantt.scale !== undefined && !ganttScales.has(gantt.scale as string)) {
+    fail("metadata.gantt.scale", "is not a supported timeline scale");
+  }
+  parseExactIsoDay(gantt.viewStart, "metadata.gantt.viewStart");
+  optionalBoolean(gantt.showWeekends, "metadata.gantt.showWeekends");
+
+  const tasks = optionalArray(gantt.tasks, "metadata.gantt.tasks", ganttLimits.tasks);
+  if (!tasks) return;
+  const ids: string[] = [];
+  tasks.forEach((rawTask, taskIndex) => {
+    const path = `metadata.gantt.tasks[${taskIndex}]`;
+    const task = optionalRecord(rawTask, path);
+    if (!task) fail(path, "must be an object");
+    const id = assertIdentifier(task.id, `${path}.id`)!;
+    if (id.length > ganttLimits.idLength) fail(`${path}.id`, `contains more than ${ganttLimits.idLength} characters`);
+    if (id.trim() !== id) fail(`${path}.id`, "must not contain leading or trailing whitespace");
+    ids.push(id);
+    optionalString(task.title, `${path}.title`, ganttLimits.taskTitleLength);
+    const start = parseExactIsoDay(task.start, `${path}.start`);
+    const end = parseExactIsoDay(task.end, `${path}.end`);
+    if (start !== null && end !== null && end < start) {
+      fail(`${path}.end`, "must be on or after the start date");
+    }
+    const progress = optionalFiniteNumber(task.progress, `${path}.progress`);
+    if (progress !== null && (!Number.isInteger(progress) || progress < 0 || progress > 100)) {
+      fail(`${path}.progress`, "must be an integer from 0 through 100");
+    }
+    if (task.status !== null && task.status !== undefined && !ganttStatuses.has(task.status as string)) {
+      fail(`${path}.status`, "is not a supported task status");
+    }
+    optionalString(task.assignee, `${path}.assignee`, ganttLimits.assigneeLength);
+  });
+  assertUnique(ids, "metadata.gantt.tasks");
+}
+
 function assertBookmarkMetadata(root: MetadataRecord) {
   const bookmark = optionalRecord(root.bookmark, "metadata.bookmark");
   if (!bookmark) return;
@@ -443,12 +512,13 @@ function assertAiChatMetadata(root: MetadataRecord) {
 }
 
 export function assertStructuredBlockMetadataIntegrity(type: BlockType, metadata: unknown) {
-  if (!["TABLE", "KANBAN", "DATABASE", "BOOKMARK", "AI_CHAT"].includes(type)) return undefined;
+  if (!["TABLE", "KANBAN", "DATABASE", "GANTT", "BOOKMARK", "AI_CHAT"].includes(type)) return undefined;
   const root = parseMetadataRoot(metadata);
   if (!root) return null;
   if (type === "TABLE") assertTableMetadata(root);
   else if (type === "KANBAN") assertKanbanMetadata(root);
   else if (type === "DATABASE") assertDatabaseMetadata(root);
+  else if (type === "GANTT") assertGanttMetadata(root);
   else if (type === "BOOKMARK") assertBookmarkMetadata(root);
   else assertAiChatMetadata(root);
   // MariaDB may return JSON columns as text. Return the validated object so

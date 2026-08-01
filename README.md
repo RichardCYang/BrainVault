@@ -6,13 +6,13 @@ Every row on a page is an editable block that can be formatted, moved, nested, o
 
 ## Preview
 
-![BrainVault main workspace preview with Kanban and database blocks](docs/assets/2026-07-17/preview.png)
+![BrainVault main workspace preview with structured project blocks](docs/assets/2026-07-17/preview.png)
 
 The preview is captured from the real browser UI. See [Development guide](docs/development/2026-07-28/development.md#preview-capture) to regenerate it.
 
 ## Key features
 
-- Block editor with slash commands, nested content, drag-and-drop ordering, tables, databases, and Kanban boards
+- Block editor with slash commands, nested content, drag-and-drop ordering, tables, databases, Kanban boards, and Gantt timelines
 - Rich text, Markdown, code, callouts, bookmarks, file attachments, AI conversation blocks, and KaTeX formulas
 - Crash-resilient browser drafts, automatic title saving, and search across page titles and block content
 - Owner-managed page sharing with Yjs-based simultaneous title/block editing, live presence, reconnect recovery, and MariaDB persistence

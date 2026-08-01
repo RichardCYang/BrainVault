@@ -16,6 +16,13 @@ import {
   summarizeDatabaseData
 } from "./database-block.js";
 import {
+  createGanttEditor,
+  createDefaultGanttData,
+  extractGanttData,
+  normalizeGanttData,
+  summarizeGanttData
+} from "./gantt-block.js";
+import {
   createAiChatEditor,
   createDefaultAiChatData,
   extractAiChatData,
@@ -162,6 +169,7 @@ const blockTypeLabels = {
   TABLE: "blocks.types.TABLE",
   KANBAN: "blocks.types.KANBAN",
   DATABASE: "blocks.types.DATABASE",
+  GANTT: "blocks.types.GANTT",
   BOOKMARK: "blocks.types.BOOKMARK",
   AI_CHAT: "blocks.types.AI_CHAT",
   MATH: "blocks.types.MATH",
@@ -432,6 +440,7 @@ const slashCommands = [
   { type: "CALLOUT", command: "/callout", icon: "callout" },
   { type: "TABLE", command: "/table", icon: "table" },
   { type: "DATABASE", command: "/database", icon: "database" },
+  { type: "GANTT", command: "/gantt", icon: "gantt" },
   { type: "KANBAN", command: "/board", icon: "kanban" },
   { type: "BOOKMARK", command: "/bookmark", icon: "bookmark" },
   { type: "AI_CHAT", command: "/ai", icon: "ai-chat" },
@@ -444,11 +453,11 @@ const slashCommands = [
 
 // These block types cannot retain arbitrary source markdown. When their slash command is
 // used on a later line, insert a new sibling instead of replacing earlier note text.
-const slashInsertAfterTypes = new Set(["TABLE", "DATABASE", "KANBAN", "BOOKMARK", "DIVIDER"]);
+const slashInsertAfterTypes = new Set(["TABLE", "DATABASE", "GANTT", "KANBAN", "BOOKMARK", "DIVIDER"]);
 
 // Structured editors serialize their real content into metadata. Converting one in place
 // would make buildBlockPayload remove the source metadata for the newly selected type.
-const structuredBlockTypes = new Set(["TABLE", "DATABASE", "KANBAN", "BOOKMARK", "AI_CHAT"]);
+const structuredBlockTypes = new Set(["TABLE", "DATABASE", "GANTT", "KANBAN", "BOOKMARK", "AI_CHAT"]);
 
 function isStructuredBlockType(type) {
   return structuredBlockTypes.has(type);
@@ -502,6 +511,14 @@ const slashCommandIconShapes = {
     ["ellipse", { cx: "12", cy: "5", rx: "8", ry: "3" }],
     ["path", { d: "M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5" }],
     ["path", { d: "M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7" }]
+  ],
+  gantt: [
+    ["path", { d: "M4 5h16" }],
+    ["path", { d: "M4 10h7" }],
+    ["path", { d: "M4 15h11" }],
+    ["path", { d: "M4 20h5" }],
+    ["path", { d: "M13 8v4" }],
+    ["path", { d: "M17 13v4" }]
   ],
   kanban: [
     ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
@@ -3337,7 +3354,7 @@ function setControlReadOnlyState(control, readOnly) {
   }
 
   if (control instanceof HTMLInputElement) {
-    if (["checkbox", "radio", "file", "button", "submit", "reset"].includes(control.type)) {
+    if (["checkbox", "radio", "file", "button", "submit", "reset", "range"].includes(control.type)) {
       if (readOnly) {
         if (!control.dataset.pageModeWasDisabled) control.dataset.pageModeWasDisabled = String(control.disabled);
         control.disabled = true;
@@ -5175,6 +5192,7 @@ function getCollaborationField(target) {
   if (target?.classList?.contains("table-cell-input")) return "table";
   if (target?.closest?.(".kanban-block-editor")) return "kanban";
   if (target?.closest?.(".database-block-editor")) return "database";
+  if (target?.closest?.(".gantt-block-editor")) return "gantt";
   if (target?.closest?.(".bookmark-block-editor")) return "bookmark";
   if (target?.closest?.(".ai-chat-block-editor")) return "ai-chat";
   return "block";
@@ -5505,6 +5523,10 @@ function getBlockKanbanData(block) {
 
 function getBlockDatabaseData(block) {
   return normalizeDatabaseData(block?.metadata?.database);
+}
+
+function getBlockGanttData(block) {
+  return normalizeGanttData(block?.metadata?.gantt);
 }
 
 function getBlockBookmarkData(block) {
@@ -6698,7 +6720,9 @@ function mountBlockEditor(row, block) {
         ? createKanbanEditor(row, getBlockKanbanData(block))
         : block.type === "DATABASE"
           ? createDatabaseEditor(row, getBlockDatabaseData(block), { onDirty: () => scheduleBlockSave(row) })
-          : block.type === "BOOKMARK"
+          : block.type === "GANTT"
+            ? createGanttEditor(row, getBlockGanttData(block), { onDirty: () => scheduleBlockSave(row) })
+            : block.type === "BOOKMARK"
             ? createBookmarkEditor(row, getBlockBookmarkData(block))
             : block.type === "AI_CHAT"
               ? createAiChatEditor(row, getBlockAiChatData(block), { onDirty: () => scheduleBlockSave(row) })
@@ -6864,6 +6888,7 @@ function buildBlockPayload(row) {
     metadata.table = table;
     delete metadata.kanban;
     delete metadata.database;
+    delete metadata.gantt;
     delete metadata.bookmark;
     delete metadata.aiChat;
     payload.markdown = table.rows.map((cells) => cells.join("\t")).join("\n").slice(0, 20_000);
@@ -6873,6 +6898,7 @@ function buildBlockPayload(row) {
     metadata.kanban = kanban;
     delete metadata.table;
     delete metadata.database;
+    delete metadata.gantt;
     delete metadata.bookmark;
     delete metadata.aiChat;
     payload.markdown = summarizeKanbanData(kanban);
@@ -6882,9 +6908,20 @@ function buildBlockPayload(row) {
     metadata.database = database;
     delete metadata.table;
     delete metadata.kanban;
+    delete metadata.gantt;
     delete metadata.bookmark;
     delete metadata.aiChat;
     payload.markdown = summarizeDatabaseData(database);
+    payload.metadata = metadata;
+  } else if (type === "GANTT") {
+    const gantt = extractGanttData(row);
+    metadata.gantt = gantt;
+    delete metadata.table;
+    delete metadata.kanban;
+    delete metadata.database;
+    delete metadata.bookmark;
+    delete metadata.aiChat;
+    payload.markdown = summarizeGanttData(gantt);
     payload.metadata = metadata;
   } else if (type === "BOOKMARK") {
     const bookmark = extractBookmarkData(row);
@@ -6892,6 +6929,7 @@ function buildBlockPayload(row) {
     delete metadata.table;
     delete metadata.kanban;
     delete metadata.database;
+    delete metadata.gantt;
     delete metadata.aiChat;
     payload.markdown = summarizeBookmarkData(bookmark);
     payload.metadata = metadata;
@@ -6901,6 +6939,7 @@ function buildBlockPayload(row) {
     delete metadata.table;
     delete metadata.kanban;
     delete metadata.database;
+    delete metadata.gantt;
     delete metadata.bookmark;
     payload.markdown = summarizeAiChatData(aiChat);
     payload.metadata = metadata;
@@ -6908,6 +6947,7 @@ function buildBlockPayload(row) {
     if (metadata.table) delete metadata.table;
     if (metadata.kanban) delete metadata.kanban;
     if (metadata.database) delete metadata.database;
+    if (metadata.gantt) delete metadata.gantt;
     if (metadata.bookmark) delete metadata.bookmark;
     if (metadata.aiChat) delete metadata.aiChat;
     payload.metadata = Object.keys(metadata).length ? metadata : null;
@@ -7280,11 +7320,13 @@ function setRowType(row, type, { markdown } = {}) {
   if (previousType === "TABLE") metadata.table = extractTableData(row);
   if (previousType === "KANBAN") metadata.kanban = extractKanbanData(row);
   if (previousType === "DATABASE") metadata.database = extractDatabaseData(row);
+  if (previousType === "GANTT") metadata.gantt = extractGanttData(row);
   if (previousType === "BOOKMARK") metadata.bookmark = extractBookmarkData(row);
   if (previousType === "AI_CHAT") metadata.aiChat = extractAiChatData(row);
   if (type === "TABLE" && !metadata.table) metadata.table = createDefaultTableData();
   if (type === "KANBAN" && !metadata.kanban) metadata.kanban = createDefaultKanbanData();
   if (type === "DATABASE" && !metadata.database) metadata.database = createDefaultDatabaseData();
+  if (type === "GANTT" && !metadata.gantt) metadata.gantt = createDefaultGanttData();
   if (type === "BOOKMARK" && !metadata.bookmark) metadata.bookmark = createDefaultBookmarkData();
   if (type === "AI_CHAT" && !metadata.aiChat) {
     metadata.aiChat = createDefaultAiChatData({
@@ -7303,7 +7345,7 @@ function setRowType(row, type, { markdown } = {}) {
   mountBlockEditor(row, {
     ...existing,
     type,
-    markdown: type === "TABLE" || type === "KANBAN" || type === "DATABASE" || type === "BOOKMARK" || type === "AI_CHAT" ? "" : markdown ?? previousTextarea?.value ?? existing.markdown ?? "",
+    markdown: type === "TABLE" || type === "KANBAN" || type === "DATABASE" || type === "GANTT" || type === "BOOKMARK" || type === "AI_CHAT" ? "" : markdown ?? previousTextarea?.value ?? existing.markdown ?? "",
     metadata
   });
 }
@@ -8229,6 +8271,7 @@ function createInitialBlockMetadata(type) {
   if (type === "TABLE") return { table: createDefaultTableData() };
   if (type === "KANBAN") return { kanban: createDefaultKanbanData() };
   if (type === "DATABASE") return { database: createDefaultDatabaseData() };
+  if (type === "GANTT") return { gantt: createDefaultGanttData() };
   if (type === "BOOKMARK") return { bookmark: createDefaultBookmarkData() };
   if (type === "AI_CHAT") return { aiChat: createDefaultAiChatData() };
   return undefined;
@@ -8299,6 +8342,8 @@ async function applySlashCommand(row, type) {
     row.querySelector(".kanban-title-input")?.focus();
   } else if (type === "DATABASE") {
     row.querySelector(".database-title-input")?.focus();
+  } else if (type === "GANTT") {
+    row.querySelector(".gantt-title-input")?.focus();
   } else if (type === "BOOKMARK") {
     row.querySelector(".bookmark-url-input")?.focus();
   } else if (type === "AI_CHAT") {
@@ -8635,7 +8680,7 @@ function focusPendingBlock() {
     textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
   } else {
     row?.querySelector(
-      ".table-cell-input, .kanban-title-input, .database-title-input, .bookmark-url-input, .attachment-download-button"
+      ".table-cell-input, .kanban-title-input, .database-title-input, .gantt-title-input, .bookmark-url-input, .attachment-download-button"
     )?.focus();
   }
   state.pendingFocusBlockId = null;
@@ -8696,7 +8741,7 @@ function freezePdfExportComputedStyles() {
     '.editor-block-row[data-block-type="HEADING_1"] .block-row-input, ' +
     '.editor-block-row[data-block-type="HEADING_2"] .block-row-input, ' +
     '.editor-block-row[data-block-type="HEADING_3"] .block-row-input, ' +
-    ".kanban-title-input, .database-title-input"
+    ".kanban-title-input, .database-title-input, .gantt-title-input"
   ).forEach((element) => {
     const computed = remember(element);
     element.style.fontSize = computed.fontSize;
@@ -8710,6 +8755,11 @@ function freezePdfExportComputedStyles() {
     element.style.flexBasis = width;
     element.style.minWidth = computed.minWidth;
     element.style.maxWidth = computed.maxWidth;
+  });
+
+  elements.pageView.querySelectorAll(".gantt-stage, .rendered-gantt-stage").forEach((element) => {
+    remember(element);
+    element.style.width = `${element.scrollWidth}px`;
   });
 
   return () => {

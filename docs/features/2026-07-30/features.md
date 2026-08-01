@@ -34,7 +34,7 @@ See [Page sharing and real-time collaboration](../../collaboration/2026-07-29/co
 Useful slash commands include:
 
 ```text
-/h1  /h2  /h3  /todo  /quote  /callout  /table  /database  /board  /bookmark  /ai  /math  /code  /divider  /image  /file
+/h1  /h2  /h3  /todo  /quote  /callout  /table  /database  /gantt  /board  /bookmark  /ai  /math  /code  /divider  /image  /file
 ```
 
 Inline formatting supports bold, italic, strikethrough, code, formulas, links, text color, and left/center/right/justified block alignment. Drag-and-drop reordering supports nested content.
@@ -50,6 +50,14 @@ Table, board, and list views operate over the same rows. Each view stores its ow
 Property and row changes are stored in `metadata.database`, while a searchable text summary is kept in `markdown`.
 
 Kanban boards support direct title, group, and card editing. Cards can use an emoji and a default, pink, yellow, blue, light-green, purple, or peach pastel theme. Drag the six-dot card handle to reorder cards or move them between groups; arrow controls provide equivalent movement on touch devices and for keyboard users.
+
+## Gantt timeline blocks
+
+Type `/gantt` to create a project timeline that combines a sticky task table with a horizontally scrollable date grid. Each task stores a title, status, assignee, start and end dates, and progress percentage.
+
+Use the week, month, or quarter scale; jump to today or move through adjacent date ranges; and optionally shade weekends. Drag a task bar to move the whole schedule, drag either edge to adjust its duration, or use the left and right arrow keys. Holding `Shift` while pressing an arrow key adjusts the end date instead of moving the task.
+
+Gantt data is stored under `metadata.gantt`, while a bounded plain-text summary is kept in `markdown` so page search can match timeline titles, tasks, statuses, assignees, dates, and progress.
 
 ## LaTeX formulas
 
@@ -108,7 +116,7 @@ Validation, staging, digest checks, transaction behavior, and archive limits are
 
 Open a page and select **Export PDF** in the page toolbar. BrainVault prepares only the current page, removes editor-only controls, preserves backgrounds and colors, expands horizontally scrollable tables and boards, and opens the browser print dialog. Choose **Save as PDF** to create the file.
 
-The print stylesheet uses A4 landscape pages so the default 900 px document layout stays unchanged where possible. Exceptionally wide tables, Kanban boards, and database views are scaled uniformly to prevent horizontal clipping.
+The print stylesheet uses A4 landscape pages so the default 900 px document layout stays unchanged where possible. Exceptionally wide tables, Kanban boards, database views, and Gantt timelines are scaled uniformly to prevent horizontal clipping.
 
 ## Languages
 

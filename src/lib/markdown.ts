@@ -6,6 +6,7 @@ import { formatAttachmentSize, getAttachmentInfo, sanitizeAttachmentFilename } f
 import { getTableData } from "./table.js";
 import { renderKanbanHtml } from "./kanban.js";
 import { renderDatabaseHtml } from "./database.js";
+import { renderGanttHtml } from "./gantt.js";
 import { renderBookmarkHtml } from "./bookmark.js";
 import { getAiChatData, getAiProviderLabel } from "./ai-chat.js";
 
@@ -167,7 +168,9 @@ const sanitizeOptions: sanitizeHtml.IOptions = {
   allowedAttributes,
   allowedStyles: {
     span: {
-      color: [/^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i]
+      color: [/^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i],
+      "grid-column": [/^\d+(?: \/ span \d+)?$/],
+      width: [/^(?:100|[1-9]?\d)%$/]
     }
   },
   allowedSchemes: ["http", "https", "mailto"],
@@ -318,6 +321,8 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
       return sanitizeHtml(renderKanbanHtml(metadata), sanitizeOptions);
     case "DATABASE":
       return sanitizeHtml(renderDatabaseHtml(metadata), sanitizeOptions);
+    case "GANTT":
+      return sanitizeHtml(renderGanttHtml(metadata), sanitizeOptions);
     case "BOOKMARK":
       return sanitizeHtml(renderBookmarkHtml(metadata), sanitizeOptions);
     case "AI_CHAT":

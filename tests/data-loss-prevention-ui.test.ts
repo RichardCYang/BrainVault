@@ -318,7 +318,7 @@ describe("Data-loss prevention integration", () => {
 
   it("preserves earlier note text when a structured slash command is used on a later line", () => {
     expect(client).toContain(
-      'const slashInsertAfterTypes = new Set(["TABLE", "DATABASE", "KANBAN", "BOOKMARK", "DIVIDER"]);'
+      'const slashInsertAfterTypes = new Set(["TABLE", "DATABASE", "GANTT", "KANBAN", "BOOKMARK", "DIVIDER"]);'
     );
 
     const slashStart = client.indexOf("async function applySlashCommand(row, type)");
@@ -338,9 +338,10 @@ describe("Data-loss prevention integration", () => {
 
   it("preserves metadata-backed blocks when their type is changed or an attachment is inserted", () => {
     expect(client).toContain(
-      'const structuredBlockTypes = new Set(["TABLE", "DATABASE", "KANBAN", "BOOKMARK", "AI_CHAT"]);'
+      'const structuredBlockTypes = new Set(["TABLE", "DATABASE", "GANTT", "KANBAN", "BOOKMARK", "AI_CHAT"]);'
     );
     expect(client).toContain("function isStructuredBlockType(type)");
+    expect(client).toContain('if (type === "GANTT") return { gantt: createDefaultGanttData() };');
     expect(client).toContain('if (type === "AI_CHAT") return { aiChat: createDefaultAiChatData() };');
 
     const slashStart = client.indexOf("async function applySlashCommand(row, type)");

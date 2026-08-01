@@ -3399,6 +3399,368 @@ export const translationCatalogs = {
   }
 };
 
+
+const ganttTranslationAdditions = {
+  en: {
+    blockType: "Gantt chart",
+    slash: {
+      label: "Gantt chart",
+      hint: "Plan tasks on a draggable project timeline",
+      keywords: "gantt timeline roadmap schedule project dates planning"
+    },
+    gantt: {
+      untitledTask: "Untitled task",
+      defaultTitle: "Project timeline",
+      defaultTaskPlanning: "Project planning",
+      defaultTaskDelivery: "Delivery",
+      status: {
+        not_started: "Not started",
+        in_progress: "In progress",
+        review: "Review",
+        done: "Done",
+        blocked: "Blocked"
+      },
+      scale: { week: "Weeks", month: "Months", quarter: "Quarter" },
+      statusAria: "Status for {task}",
+      barAria: "{task}, {start} to {end}, {progress}% complete",
+      resizeStart: "Drag to change the start date",
+      resizeEnd: "Drag to change the end date",
+      taskTitlePlaceholder: "Task name",
+      taskTitleAria: "Task name",
+      assigneePlaceholder: "Assignee",
+      assigneeAria: "Assignee for {task}",
+      startDateAria: "Start date for {task}",
+      endDateAria: "End date for {task}",
+      progressAria: "Progress for {task}",
+      titlePlaceholder: "Timeline title",
+      titleAria: "Gantt chart title",
+      taskCount: "{count} tasks",
+      timelineView: "Timeline",
+      scaleAria: "Timeline scale",
+      showWeekends: "Highlight weekend columns",
+      weekends: "Weekends",
+      previousRange: "Previous date range",
+      today: "Today",
+      nextRange: "Next date range",
+      timelineAria: "Editable Gantt timeline",
+      taskColumn: "Task",
+      scheduleColumn: "Schedule · owner · progress",
+      addTask: "New task",
+      interactionHint: "Drag a bar to move it. Drag either edge to resize.",
+      deleteTask: "Delete task",
+      confirmDeleteTask: "Delete “{task}”?"
+    }
+  },
+  ko: {
+    blockType: "간트 차트",
+    slash: {
+      label: "간트 차트",
+      hint: "드래그 가능한 프로젝트 일정표로 작업 계획",
+      keywords: "gantt timeline roadmap schedule 간트 타임라인 로드맵 일정 프로젝트 계획"
+    },
+    gantt: {
+      untitledTask: "제목 없는 작업",
+      defaultTitle: "프로젝트 타임라인",
+      defaultTaskPlanning: "프로젝트 계획",
+      defaultTaskDelivery: "결과물 전달",
+      status: {
+        not_started: "시작 전",
+        in_progress: "진행 중",
+        review: "검토",
+        done: "완료",
+        blocked: "차단됨"
+      },
+      scale: { week: "주", month: "월", quarter: "분기" },
+      statusAria: "{task} 상태",
+      barAria: "{task}, {start}부터 {end}까지, 진행률 {progress}%",
+      resizeStart: "드래그하여 시작일 변경",
+      resizeEnd: "드래그하여 종료일 변경",
+      taskTitlePlaceholder: "작업 이름",
+      taskTitleAria: "작업 이름",
+      assigneePlaceholder: "담당자",
+      assigneeAria: "{task} 담당자",
+      startDateAria: "{task} 시작일",
+      endDateAria: "{task} 종료일",
+      progressAria: "{task} 진행률",
+      titlePlaceholder: "타임라인 제목",
+      titleAria: "간트 차트 제목",
+      taskCount: "작업 {count}개",
+      timelineView: "타임라인",
+      scaleAria: "타임라인 표시 단위",
+      showWeekends: "주말 열 강조",
+      weekends: "주말",
+      previousRange: "이전 기간",
+      today: "오늘",
+      nextRange: "다음 기간",
+      timelineAria: "편집 가능한 간트 타임라인",
+      taskColumn: "작업",
+      scheduleColumn: "일정 · 담당자 · 진행률",
+      addTask: "새 작업",
+      interactionHint: "막대를 드래그해 일정을 옮기고, 양쪽 끝을 드래그해 기간을 조정하세요.",
+      deleteTask: "작업 삭제",
+      confirmDeleteTask: "“{task}” 작업을 삭제할까요?"
+    }
+  },
+  ja: {
+    blockType: "ガントチャート",
+    slash: {
+      label: "ガントチャート",
+      hint: "ドラッグできるプロジェクトタイムラインでタスクを計画",
+      keywords: "gantt timeline roadmap schedule ガント タイムライン 日程 計画"
+    },
+    gantt: {
+      untitledTask: "無題のタスク",
+      defaultTitle: "プロジェクトタイムライン",
+      defaultTaskPlanning: "プロジェクト計画",
+      defaultTaskDelivery: "納品",
+      status: {
+        not_started: "未着手",
+        in_progress: "進行中",
+        review: "レビュー",
+        done: "完了",
+        blocked: "ブロック中"
+      },
+      scale: { week: "週", month: "月", quarter: "四半期" },
+      statusAria: "{task}のステータス",
+      barAria: "{task}、{start}から{end}、進捗{progress}%",
+      resizeStart: "ドラッグして開始日を変更",
+      resizeEnd: "ドラッグして終了日を変更",
+      taskTitlePlaceholder: "タスク名",
+      taskTitleAria: "タスク名",
+      assigneePlaceholder: "担当者",
+      assigneeAria: "{task}の担当者",
+      startDateAria: "{task}の開始日",
+      endDateAria: "{task}の終了日",
+      progressAria: "{task}の進捗",
+      titlePlaceholder: "タイムライン名",
+      titleAria: "ガントチャート名",
+      taskCount: "{count}件のタスク",
+      timelineView: "タイムライン",
+      scaleAria: "タイムラインの表示単位",
+      showWeekends: "週末の列を強調",
+      weekends: "週末",
+      previousRange: "前の期間",
+      today: "今日",
+      nextRange: "次の期間",
+      timelineAria: "編集可能なガントタイムライン",
+      taskColumn: "タスク",
+      scheduleColumn: "日程・担当者・進捗",
+      addTask: "新しいタスク",
+      interactionHint: "バーをドラッグして移動し、端をドラッグして期間を変更します。",
+      deleteTask: "タスクを削除",
+      confirmDeleteTask: "「{task}」を削除しますか？"
+    }
+  },
+  fr: {
+    blockType: "Diagramme de Gantt",
+    slash: {
+      label: "Diagramme de Gantt",
+      hint: "Planifier les tâches sur une chronologie de projet déplaçable",
+      keywords: "gantt chronologie feuille de route planning projet dates"
+    },
+    gantt: {
+      untitledTask: "Tâche sans titre",
+      defaultTitle: "Chronologie du projet",
+      defaultTaskPlanning: "Planification du projet",
+      defaultTaskDelivery: "Livraison",
+      status: {
+        not_started: "Non commencé",
+        in_progress: "En cours",
+        review: "Révision",
+        done: "Terminé",
+        blocked: "Bloqué"
+      },
+      scale: { week: "Semaines", month: "Mois", quarter: "Trimestre" },
+      statusAria: "Statut de {task}",
+      barAria: "{task}, du {start} au {end}, terminé à {progress} %",
+      resizeStart: "Faire glisser pour modifier la date de début",
+      resizeEnd: "Faire glisser pour modifier la date de fin",
+      taskTitlePlaceholder: "Nom de la tâche",
+      taskTitleAria: "Nom de la tâche",
+      assigneePlaceholder: "Responsable",
+      assigneeAria: "Responsable de {task}",
+      startDateAria: "Date de début de {task}",
+      endDateAria: "Date de fin de {task}",
+      progressAria: "Avancement de {task}",
+      titlePlaceholder: "Titre de la chronologie",
+      titleAria: "Titre du diagramme de Gantt",
+      taskCount: "{count} tâches",
+      timelineView: "Chronologie",
+      scaleAria: "Échelle de la chronologie",
+      showWeekends: "Mettre en évidence les colonnes du week-end",
+      weekends: "Week-ends",
+      previousRange: "Période précédente",
+      today: "Aujourd’hui",
+      nextRange: "Période suivante",
+      timelineAria: "Chronologie de Gantt modifiable",
+      taskColumn: "Tâche",
+      scheduleColumn: "Dates · responsable · avancement",
+      addTask: "Nouvelle tâche",
+      interactionHint: "Faites glisser une barre pour la déplacer, ou ses bords pour la redimensionner.",
+      deleteTask: "Supprimer la tâche",
+      confirmDeleteTask: "Supprimer « {task} » ?"
+    }
+  },
+  de: {
+    blockType: "Gantt-Diagramm",
+    slash: {
+      label: "Gantt-Diagramm",
+      hint: "Aufgaben auf einer verschiebbaren Projektzeitleiste planen",
+      keywords: "gantt zeitleiste roadmap terminplan projekt daten planung"
+    },
+    gantt: {
+      untitledTask: "Unbenannte Aufgabe",
+      defaultTitle: "Projektzeitleiste",
+      defaultTaskPlanning: "Projektplanung",
+      defaultTaskDelivery: "Lieferung",
+      status: {
+        not_started: "Nicht begonnen",
+        in_progress: "In Arbeit",
+        review: "Prüfung",
+        done: "Erledigt",
+        blocked: "Blockiert"
+      },
+      scale: { week: "Wochen", month: "Monate", quarter: "Quartal" },
+      statusAria: "Status für {task}",
+      barAria: "{task}, {start} bis {end}, {progress} % abgeschlossen",
+      resizeStart: "Ziehen, um das Startdatum zu ändern",
+      resizeEnd: "Ziehen, um das Enddatum zu ändern",
+      taskTitlePlaceholder: "Aufgabenname",
+      taskTitleAria: "Aufgabenname",
+      assigneePlaceholder: "Verantwortlich",
+      assigneeAria: "Verantwortliche Person für {task}",
+      startDateAria: "Startdatum für {task}",
+      endDateAria: "Enddatum für {task}",
+      progressAria: "Fortschritt für {task}",
+      titlePlaceholder: "Titel der Zeitleiste",
+      titleAria: "Titel des Gantt-Diagramms",
+      taskCount: "{count} Aufgaben",
+      timelineView: "Zeitleiste",
+      scaleAria: "Zeitleistenskala",
+      showWeekends: "Wochenendspalten hervorheben",
+      weekends: "Wochenenden",
+      previousRange: "Vorheriger Zeitraum",
+      today: "Heute",
+      nextRange: "Nächster Zeitraum",
+      timelineAria: "Bearbeitbare Gantt-Zeitleiste",
+      taskColumn: "Aufgabe",
+      scheduleColumn: "Termin · Person · Fortschritt",
+      addTask: "Neue Aufgabe",
+      interactionHint: "Balken zum Verschieben ziehen; Kanten zum Ändern der Dauer ziehen.",
+      deleteTask: "Aufgabe löschen",
+      confirmDeleteTask: "„{task}“ löschen?"
+    }
+  },
+  es: {
+    blockType: "Diagrama de Gantt",
+    slash: {
+      label: "Diagrama de Gantt",
+      hint: "Planificar tareas en una cronología de proyecto arrastrable",
+      keywords: "gantt cronología hoja de ruta calendario proyecto fechas planificación"
+    },
+    gantt: {
+      untitledTask: "Tarea sin título",
+      defaultTitle: "Cronología del proyecto",
+      defaultTaskPlanning: "Planificación del proyecto",
+      defaultTaskDelivery: "Entrega",
+      status: {
+        not_started: "Sin iniciar",
+        in_progress: "En curso",
+        review: "Revisión",
+        done: "Completada",
+        blocked: "Bloqueada"
+      },
+      scale: { week: "Semanas", month: "Meses", quarter: "Trimestre" },
+      statusAria: "Estado de {task}",
+      barAria: "{task}, del {start} al {end}, {progress}% completado",
+      resizeStart: "Arrastra para cambiar la fecha de inicio",
+      resizeEnd: "Arrastra para cambiar la fecha de fin",
+      taskTitlePlaceholder: "Nombre de la tarea",
+      taskTitleAria: "Nombre de la tarea",
+      assigneePlaceholder: "Responsable",
+      assigneeAria: "Responsable de {task}",
+      startDateAria: "Fecha de inicio de {task}",
+      endDateAria: "Fecha de fin de {task}",
+      progressAria: "Progreso de {task}",
+      titlePlaceholder: "Título de la cronología",
+      titleAria: "Título del diagrama de Gantt",
+      taskCount: "{count} tareas",
+      timelineView: "Cronología",
+      scaleAria: "Escala de la cronología",
+      showWeekends: "Resaltar columnas de fin de semana",
+      weekends: "Fines de semana",
+      previousRange: "Periodo anterior",
+      today: "Hoy",
+      nextRange: "Periodo siguiente",
+      timelineAria: "Cronología de Gantt editable",
+      taskColumn: "Tarea",
+      scheduleColumn: "Fechas · responsable · progreso",
+      addTask: "Nueva tarea",
+      interactionHint: "Arrastra una barra para moverla y sus bordes para cambiar la duración.",
+      deleteTask: "Eliminar tarea",
+      confirmDeleteTask: "¿Eliminar «{task}»?"
+    }
+  },
+  pt: {
+    blockType: "Gráfico de Gantt",
+    slash: {
+      label: "Gráfico de Gantt",
+      hint: "Planejar tarefas em uma linha do tempo de projeto arrastável",
+      keywords: "gantt linha do tempo roteiro cronograma projeto datas planejamento"
+    },
+    gantt: {
+      untitledTask: "Tarefa sem título",
+      defaultTitle: "Linha do tempo do projeto",
+      defaultTaskPlanning: "Planejamento do projeto",
+      defaultTaskDelivery: "Entrega",
+      status: {
+        not_started: "Não iniciada",
+        in_progress: "Em andamento",
+        review: "Revisão",
+        done: "Concluída",
+        blocked: "Bloqueada"
+      },
+      scale: { week: "Semanas", month: "Meses", quarter: "Trimestre" },
+      statusAria: "Status de {task}",
+      barAria: "{task}, de {start} a {end}, {progress}% concluído",
+      resizeStart: "Arraste para alterar a data de início",
+      resizeEnd: "Arraste para alterar a data de término",
+      taskTitlePlaceholder: "Nome da tarefa",
+      taskTitleAria: "Nome da tarefa",
+      assigneePlaceholder: "Responsável",
+      assigneeAria: "Responsável por {task}",
+      startDateAria: "Data de início de {task}",
+      endDateAria: "Data de término de {task}",
+      progressAria: "Progresso de {task}",
+      titlePlaceholder: "Título da linha do tempo",
+      titleAria: "Título do gráfico de Gantt",
+      taskCount: "{count} tarefas",
+      timelineView: "Linha do tempo",
+      scaleAria: "Escala da linha do tempo",
+      showWeekends: "Destacar colunas de fim de semana",
+      weekends: "Fins de semana",
+      previousRange: "Período anterior",
+      today: "Hoje",
+      nextRange: "Próximo período",
+      timelineAria: "Linha do tempo de Gantt editável",
+      taskColumn: "Tarefa",
+      scheduleColumn: "Datas · responsável · progresso",
+      addTask: "Nova tarefa",
+      interactionHint: "Arraste a barra para mover e as bordas para alterar a duração.",
+      deleteTask: "Excluir tarefa",
+      confirmDeleteTask: "Excluir “{task}”?"
+    }
+  }
+};
+
+for (const [language, addition] of Object.entries(ganttTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  catalog.blocks.types.GANTT = addition.blockType;
+  catalog.slash.GANTT = addition.slash;
+  catalog.gantt = addition.gantt;
+}
+
 function readStorage(key) {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;

@@ -39,6 +39,7 @@ export type BlockType =
   | "TABLE"
   | "KANBAN"
   | "DATABASE"
+  | "GANTT"
   | "BOOKMARK"
   | "AI_CHAT"
   | "MATH"
