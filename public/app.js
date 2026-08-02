@@ -57,6 +57,11 @@ import {
   BLOCK_MARKDOWN_MAX_LENGTH,
   requirePageTitleWithinLimit
 } from "./editor-content-limits.js";
+import {
+  createYouTubeVideoEditor,
+  parseYouTubeVideoUrl,
+  updateYouTubeVideoPreview
+} from "./youtube-block.js";
 
 const rootParentKey = "__root__";
 const defaultCollectionKey = "__default_collection__";
@@ -192,6 +197,7 @@ const blockTypeLabels = {
   CODE: "blocks.types.CODE",
   DIVIDER: "blocks.types.DIVIDER",
   IMAGE: "blocks.types.IMAGE",
+  VIDEO: "blocks.types.VIDEO",
   ATTACHMENT: "blocks.types.ATTACHMENT"
 };
 
@@ -465,12 +471,13 @@ const slashCommands = [
   { type: "CODE", command: "/code", icon: "code" },
   { type: "DIVIDER", command: "/divider", icon: "divider" },
   { type: "IMAGE", command: "/image", icon: "image" },
+  { type: "VIDEO", command: "/video", icon: "video" },
   { type: "ATTACHMENT", command: "/file", icon: "attachment" }
 ];
 
 // These block types cannot retain arbitrary source markdown. When their slash command is
 // used on a later line, insert a new sibling instead of replacing earlier note text.
-const slashInsertAfterTypes = new Set(["TABLE", "DATABASE", "TIMETABLE", "GANTT", "KANBAN", "BOOKMARK", "DIVIDER"]);
+const slashInsertAfterTypes = new Set(["TABLE", "DATABASE", "TIMETABLE", "GANTT", "KANBAN", "BOOKMARK", "VIDEO", "DIVIDER"]);
 
 // Structured editors serialize their real content into metadata. Converting one in place
 // would make buildBlockPayload remove the source metadata for the newly selected type.
@@ -577,6 +584,10 @@ const slashCommandIconShapes = {
     ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
     ["circle", { cx: "9", cy: "9", r: "2" }],
     ["path", { d: "m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" }]
+  ],
+  video: [
+    ["rect", { width: "18", height: "14", x: "3", y: "5", rx: "2" }],
+    ["path", { d: "m10 9 5 3-5 3Z" }]
   ],
   attachment: [
     ["path", { d: "m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.4-9.4a4 4 0 0 1 5.7 5.7l-9.4 9.4a2 2 0 0 1-2.8-2.8l8.8-8.8" }]
@@ -6867,9 +6878,11 @@ function mountBlockEditor(row, block) {
                 ? createBookmarkEditor(row, getBlockBookmarkData(block))
                 : block.type === "AI_CHAT"
                   ? createAiChatEditor(row, getBlockAiChatData(block), { onDirty: () => scheduleBlockSave(row) })
-                  : block.type === "ATTACHMENT"
-                    ? createAttachmentEditor(block)
-                    : createTextBlockEditor(block)
+                  : block.type === "VIDEO"
+                    ? createYouTubeVideoEditor(block)
+                    : block.type === "ATTACHMENT"
+                      ? createAttachmentEditor(block)
+                      : createTextBlockEditor(block)
   );
 }
 
@@ -8083,7 +8096,7 @@ function updateInlineToolbarForTextarea(textarea) {
   if (!requireWritablePage({ announce: false })) return closeInlineToolbar();
   const row = getBlockRow(textarea);
   const selection = getTextareaSelection(textarea);
-  if (!row || row.dataset.blockType === "MATH" || !selection) return closeInlineToolbar();
+  if (!row || ["MATH", "VIDEO"].includes(row.dataset.blockType) || !selection) return closeInlineToolbar();
 
   closeSlashMenu();
   state.activeInlineBlockId = row.dataset.blockId;
@@ -8493,7 +8506,9 @@ async function applySlashCommand(row, type) {
     return;
   }
 
-  if (slashInsertAfterTypes.has(type) && markdown.trim()) {
+  const canReuseMarkdown = type === "VIDEO" && Boolean(parseYouTubeVideoUrl(markdown));
+
+  if (slashInsertAfterTypes.has(type) && markdown.trim() && !canReuseMarkdown) {
     // Structured blocks store their content in metadata, so converting this block would
     // discard any note text that remains before or after the slash-command line.
     if (previousTextarea && previousTextarea.value !== markdown) {
@@ -8509,7 +8524,7 @@ async function applySlashCommand(row, type) {
     return;
   }
 
-  if (slashInsertAfterTypes.has(type)) markdown = "";
+  if (slashInsertAfterTypes.has(type) && !canReuseMarkdown) markdown = "";
 
   setRowType(row, type, { markdown });
   closeSlashMenu();
@@ -10967,6 +10982,7 @@ elements.blockList.addEventListener("input", (event) => {
   if (row) {
     if (row.dataset.blockType === "MATH") updateMathBlockPreview(row, textarea.value);
     if (row.dataset.blockType === "CODE") updateCodeBlockPreview(row, textarea.value, row.dataset.codeLanguage);
+    if (row.dataset.blockType === "VIDEO") updateYouTubeVideoPreview(row, textarea.value);
     scheduleBlockSave(row, { allowConflictPrompt: !event.isComposing });
   }
 });

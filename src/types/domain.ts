@@ -50,6 +50,7 @@ export type BlockType =
   | "CODE"
   | "DIVIDER"
   | "IMAGE"
+  | "VIDEO"
   | "ATTACHMENT";
 
 export type BlockRow = {

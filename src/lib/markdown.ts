@@ -11,6 +11,7 @@ import { renderGanttHtml } from "./gantt.js";
 import { renderBookmarkHtml } from "./bookmark.js";
 import { getAiChatData, getAiProviderLabel } from "./ai-chat.js";
 import { getCodeLanguage, renderHighlightedCode, renderMarkdownCodeFence } from "./code-highlighting.js";
+import { parseYouTubeVideoUrl } from "./youtube.js";
 
 const markdown = new MarkdownIt({
   html: true,
@@ -141,12 +142,13 @@ const allowedTags = sanitizeHtml.defaults.allowedTags.concat([
   "tr",
   "th",
   "td",
-  "time"
+  "time",
+  "iframe"
 ]);
 
 const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   ...sanitizeHtml.defaults.allowedAttributes,
-  a: ["href", "name", "target", "rel"],
+  a: ["class", "href", "name", "target", "rel"],
   div: ["class", "data-latex", "data-math-display"],
   section: ["class"],
   article: ["class"],
@@ -165,6 +167,7 @@ const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   th: ["class", "scope"],
   td: ["class", "colspan"],
   time: ["class", "datetime"],
+  iframe: ["class", "src", "title", "loading", "allow", "allowfullscreen", "referrerpolicy"],
   ul: ["class"],
   li: ["class"]
 };
@@ -235,6 +238,27 @@ function stripMarkdownImage(raw: string) {
 function renderTableCell(raw: string) {
   return sanitizeHtml(markdown.renderInline(raw ?? ""), sanitizeOptions);
 }
+
+function renderYouTubeVideo(raw: string) {
+  const video = parseYouTubeVideoUrl(raw);
+  if (!video) {
+    return sanitizeHtml(
+      `<div class="rendered-youtube-video rendered-youtube-video--invalid">Paste a valid YouTube video URL.</div>`,
+      sanitizeOptions
+    );
+  }
+
+  return sanitizeHtml(
+    `<section class="rendered-youtube-video">
+      <div class="rendered-youtube-video-frame youtube-video-frame">
+        <iframe class="youtube-video-iframe" src="${video.embedUrl}" title="YouTube video player" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+      </div>
+      <a class="youtube-video-open-link" href="${video.watchUrl}" target="_blank" rel="noopener noreferrer">Watch on YouTube</a>
+    </section>`,
+    sanitizeOptions
+  );
+}
+
 
 function renderAiChat(metadata: unknown) {
   const data = getAiChatData(metadata);
@@ -344,6 +368,8 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
       );
     case "DIVIDER":
       return sanitizeHtml("<hr>", sanitizeOptions);
+    case "VIDEO":
+      return renderYouTubeVideo(markdownValue);
     case "IMAGE": {
       const src = stripMarkdownImage(markdownValue);
       if (/^https?:\/\//i.test(src)) {

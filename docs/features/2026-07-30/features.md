@@ -92,6 +92,12 @@ When a public site blocks automated preview requests, times out, returns a non-H
 
 Security details for server-side preview fetching are documented in [Security](../../security/2026-07-30/security.md#bookmark-preview-safety).
 
+## YouTube video blocks
+
+Type `/video` and paste a standard YouTube, `youtu.be`, Shorts, Live, or embed URL. BrainVault validates the video ID, preserves an optional start time, and renders a responsive privacy-enhanced `youtube-nocookie.com` player without requiring a YouTube API key.
+
+The original URL remains in `markdown` so search, collaboration, version history, backup, and restore continue to use the normal block persistence path.
+
 ## Attachment blocks
 
 Type `/file`, choose **Attachment**, and select a file. When the current block contains only the slash command, it is replaced in place; otherwise the attachment is inserted below it. The card shows the original filename, media type, size, and an authenticated download button.

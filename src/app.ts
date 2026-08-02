@@ -44,7 +44,8 @@ export function createApp() {
           ],
           styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.css"],
           fontSrc: ["'self'", "data:", "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/fonts/"],
-          connectSrc: ["'self'", ...configuredWebSocketOrigins]
+          connectSrc: ["'self'", ...configuredWebSocketOrigins],
+          frameSrc: ["'self'", "https://www.youtube-nocookie.com", "https://www.youtube.com"]
         }
       }
     })

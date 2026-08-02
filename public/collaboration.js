@@ -37,6 +37,7 @@ const COLLABORATIVE_BLOCK_TYPES = new Set([
   "CODE",
   "DIVIDER",
   "IMAGE",
+  "VIDEO",
   "ATTACHMENT"
 ]);
 

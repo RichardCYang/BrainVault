@@ -3905,6 +3905,109 @@ for (const [language, addition] of Object.entries(timetableTranslationAdditions)
   catalog.timetable = addition.timetable ?? timetableEnglish;
 }
 
+
+const youtubeTranslationAdditions = {
+  en: {
+    blockType: "YouTube video",
+    slash: { label: "YouTube video", hint: "Embed a YouTube video from its URL", keywords: "youtube video embed player shorts link" },
+    youtube: {
+      urlPlaceholder: "Paste a YouTube video URL",
+      urlAria: "YouTube video URL",
+      urlHint: "Supports youtube.com, youtu.be, Shorts, Live, and embed URLs.",
+      emptyPreview: "Paste a YouTube URL to display the video.",
+      invalidUrl: "Enter a valid YouTube video URL.",
+      playerTitle: "YouTube video player",
+      openOnYouTube: "Open on YouTube"
+    }
+  },
+  ko: {
+    blockType: "YouTube 동영상",
+    slash: { label: "YouTube 동영상", hint: "YouTube URL로 동영상 삽입", keywords: "youtube 유튜브 동영상 비디오 임베드 embed shorts 쇼츠 링크" },
+    youtube: {
+      urlPlaceholder: "YouTube 동영상 URL을 붙여넣으세요",
+      urlAria: "YouTube 동영상 URL",
+      urlHint: "youtube.com, youtu.be, Shorts, Live, embed URL을 지원합니다.",
+      emptyPreview: "YouTube URL을 입력하면 동영상이 표시됩니다.",
+      invalidUrl: "올바른 YouTube 동영상 URL을 입력하세요.",
+      playerTitle: "YouTube 동영상 플레이어",
+      openOnYouTube: "YouTube에서 열기"
+    }
+  },
+  ja: {
+    blockType: "YouTube動画",
+    slash: { label: "YouTube動画", hint: "YouTube URLから動画を埋め込む", keywords: "youtube 動画 埋め込み shorts リンク" },
+    youtube: {
+      urlPlaceholder: "YouTube動画のURLを貼り付けてください",
+      urlAria: "YouTube動画URL",
+      urlHint: "youtube.com、youtu.be、Shorts、Live、embed URLに対応します。",
+      emptyPreview: "YouTube URLを入力すると動画が表示されます。",
+      invalidUrl: "有効なYouTube動画URLを入力してください。",
+      playerTitle: "YouTube動画プレーヤー",
+      openOnYouTube: "YouTubeで開く"
+    }
+  },
+  fr: {
+    blockType: "Vidéo YouTube",
+    slash: { label: "Vidéo YouTube", hint: "Intégrer une vidéo depuis son URL YouTube", keywords: "youtube vidéo intégrer lecteur shorts lien" },
+    youtube: {
+      urlPlaceholder: "Collez l’URL d’une vidéo YouTube",
+      urlAria: "URL de la vidéo YouTube",
+      urlHint: "Compatible avec youtube.com, youtu.be, Shorts, Live et les URL embed.",
+      emptyPreview: "Collez une URL YouTube pour afficher la vidéo.",
+      invalidUrl: "Saisissez une URL de vidéo YouTube valide.",
+      playerTitle: "Lecteur vidéo YouTube",
+      openOnYouTube: "Ouvrir sur YouTube"
+    }
+  },
+  de: {
+    blockType: "YouTube-Video",
+    slash: { label: "YouTube-Video", hint: "Ein YouTube-Video per URL einbetten", keywords: "youtube video einbetten player shorts link" },
+    youtube: {
+      urlPlaceholder: "YouTube-Video-URL einfügen",
+      urlAria: "YouTube-Video-URL",
+      urlHint: "Unterstützt youtube.com, youtu.be, Shorts, Live und Embed-URLs.",
+      emptyPreview: "Fügen Sie eine YouTube-URL ein, um das Video anzuzeigen.",
+      invalidUrl: "Geben Sie eine gültige YouTube-Video-URL ein.",
+      playerTitle: "YouTube-Videoplayer",
+      openOnYouTube: "Auf YouTube öffnen"
+    }
+  },
+  es: {
+    blockType: "Vídeo de YouTube",
+    slash: { label: "Vídeo de YouTube", hint: "Insertar un vídeo desde su URL de YouTube", keywords: "youtube vídeo insertar reproductor shorts enlace" },
+    youtube: {
+      urlPlaceholder: "Pega la URL de un vídeo de YouTube",
+      urlAria: "URL del vídeo de YouTube",
+      urlHint: "Admite youtube.com, youtu.be, Shorts, Live y URL embed.",
+      emptyPreview: "Pega una URL de YouTube para mostrar el vídeo.",
+      invalidUrl: "Introduce una URL válida de vídeo de YouTube.",
+      playerTitle: "Reproductor de vídeo de YouTube",
+      openOnYouTube: "Abrir en YouTube"
+    }
+  },
+  pt: {
+    blockType: "Vídeo do YouTube",
+    slash: { label: "Vídeo do YouTube", hint: "Incorporar um vídeo pela URL do YouTube", keywords: "youtube vídeo incorporar player shorts link" },
+    youtube: {
+      urlPlaceholder: "Cole a URL de um vídeo do YouTube",
+      urlAria: "URL do vídeo do YouTube",
+      urlHint: "Aceita youtube.com, youtu.be, Shorts, Live e URLs embed.",
+      emptyPreview: "Cole uma URL do YouTube para exibir o vídeo.",
+      invalidUrl: "Digite uma URL válida de vídeo do YouTube.",
+      playerTitle: "Player de vídeo do YouTube",
+      openOnYouTube: "Abrir no YouTube"
+    }
+  }
+};
+
+for (const [language, addition] of Object.entries(youtubeTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  catalog.blocks.types.VIDEO = addition.blockType;
+  catalog.slash.VIDEO = addition.slash;
+  catalog.youtube = addition.youtube;
+}
+
 function readStorage(key) {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;

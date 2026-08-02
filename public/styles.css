@@ -2069,6 +2069,106 @@ kbd {
   color: var(--focus);
 }
 
+
+.editor-block-row[data-block-type="VIDEO"] {
+  margin-top: 0.32rem;
+  margin-bottom: 0.32rem;
+}
+
+.youtube-video-editor,
+.rendered-youtube-video {
+  display: grid;
+  min-width: 0;
+  gap: 0.55rem;
+}
+
+.youtube-video-url-row {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.editor-block-row[data-block-type="VIDEO"] .youtube-video-url-input {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--panel-soft);
+  padding: 0.55rem 0.7rem;
+  color: var(--focus);
+  font-size: 0.9rem;
+}
+
+.editor-block-row[data-block-type="VIDEO"] .youtube-video-url-input::placeholder {
+  color: var(--muted-light);
+  opacity: 1;
+}
+
+.youtube-video-hint {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.youtube-video-preview {
+  display: grid;
+  min-width: 0;
+  gap: 0.48rem;
+}
+
+.youtube-video-preview.is-empty,
+.youtube-video-preview.is-invalid,
+.rendered-youtube-video--invalid {
+  min-height: 10rem;
+  place-items: center;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--panel-soft);
+  color: var(--muted);
+  padding: 1rem;
+  text-align: center;
+}
+
+.youtube-video-preview.is-invalid,
+.rendered-youtube-video--invalid {
+  border-color: rgba(190, 78, 71, 0.3);
+  background: #fff7f6;
+  color: #8a3e39;
+}
+
+.youtube-video-frame,
+.rendered-youtube-video-frame {
+  position: relative;
+  width: 100%;
+  min-height: 200px;
+  overflow: hidden;
+  border: 1px solid rgba(27, 45, 63, 0.16);
+  border-radius: var(--radius-lg);
+  aspect-ratio: 16 / 9;
+  background: #000;
+  box-shadow: var(--shadow-card);
+}
+
+.youtube-video-iframe {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.youtube-video-open-link {
+  width: max-content;
+  max-width: 100%;
+  color: var(--focus);
+  font-size: 0.76rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.youtube-video-open-link:hover,
+.youtube-video-open-link:focus-visible {
+  text-decoration: underline;
+}
+
 .editor-block-row[data-block-type="ATTACHMENT"] {
   margin-top: 0.28rem;
   margin-bottom: 0.28rem;
@@ -3877,7 +3977,8 @@ kbd {
 .page-view.is-read-only .gantt-delete-task,
 .page-view.is-read-only .gantt-add-task,
 .page-view.is-read-only .gantt-resize-handle,
-.page-view.is-read-only .gantt-interaction-hint {
+.page-view.is-read-only .gantt-interaction-hint,
+.page-view.is-read-only .youtube-video-url-row {
   display: none !important;
 }
 

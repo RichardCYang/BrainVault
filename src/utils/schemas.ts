@@ -44,6 +44,7 @@ export const blockTypeSchema = z.enum([
   "CODE",
   "DIVIDER",
   "IMAGE",
+  "VIDEO",
   "ATTACHMENT"
 ]);
 
