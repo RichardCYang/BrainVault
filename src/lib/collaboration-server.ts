@@ -3,6 +3,7 @@ import type { Server as HttpsServer } from "node:https";
 import type { Socket } from "node:net";
 import { createId } from "./id.js";
 import { corsOrigins, env } from "../config/env.js";
+import { createExactHttpOriginSet, parseExactHttpOrigin } from "./request-origin.js";
 import { db, transaction } from "./db.js";
 import { getPageAccess } from "./page-access.js";
 import { verifyCollaborationToken } from "./collaboration-token.js";
@@ -102,21 +103,14 @@ type Room = {
 
 const activeHubs = new Set<PageCollaborationHub>();
 
-function normalizeOrigin(origin: string) {
-  try {
-    return new URL(origin).origin;
-  } catch {
-    return origin.trim();
-  }
-}
-
-const explicitOrigins = new Set(corsOrigins.map(normalizeOrigin));
+const explicitOrigins = createExactHttpOriginSet(corsOrigins);
 
 // Never derive the expected browser host from X-Forwarded-Host or other client-controlled forwarding headers.
 function isAllowedOrigin(request: IncomingMessage) {
   const originHeader = request.headers.origin;
   if (typeof originHeader !== "string" || !originHeader) return false;
-  return explicitOrigins.has(normalizeOrigin(originHeader));
+  const parsedOrigin = parseExactHttpOrigin(originHeader);
+  return parsedOrigin !== null && explicitOrigins.has(parsedOrigin);
 }
 
 function parsePageId(request: IncomingMessage) {

@@ -1,20 +1,14 @@
 import type { Request } from "express";
 import type { CorsOptions, CorsOptionsDelegate } from "cors";
 import { corsOrigins } from "../config/env.js";
+import { createExactHttpOriginSet, parseExactHttpOrigin } from "../lib/request-origin.js";
 
-function normalizeOrigin(origin: string) {
-  try {
-    return new URL(origin).origin;
-  } catch {
-    return origin.trim();
-  }
-}
-
-const explicitCorsOrigins = new Set(corsOrigins.map(normalizeOrigin));
+const explicitCorsOrigins = createExactHttpOriginSet(corsOrigins);
 
 export function isAllowedCorsOrigin(_req: Request, origin?: string) {
   if (!origin) return true;
-  return explicitCorsOrigins.has(normalizeOrigin(origin));
+  const parsedOrigin = parseExactHttpOrigin(origin);
+  return parsedOrigin !== null && explicitCorsOrigins.has(parsedOrigin);
 }
 
 export const corsOptionsDelegate: CorsOptionsDelegate<Request> = (req, callback) => {

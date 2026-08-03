@@ -39,7 +39,10 @@ contains("src/middleware/auth.ts", [
   'new ApiError(401, "SESSION_REVOKED"',
   "req.auth = { authVersion }",
   "assertBrowserRequestOrigin(req)",
-  'fetchSite === "cross-site"'
+  'fetchSite === "cross-site"',
+  "requireSameOriginBrowserRequest",
+  "requireJsonRequestBody",
+  'req.is("application/json")'
 ]);
 const authRoutesSource = contains("src/routes/auth.routes.ts", [
   "SELECT * FROM users WHERE id = ? FOR UPDATE",
@@ -49,7 +52,9 @@ const authRoutesSource = contains("src/routes/auth.routes.ts", [
   "disconnectUserCollaborators(updatedUser.id",
   "res.locals.authenticationPending = true",
   "res.status(202).json({ ok: true })",
-  "same status, response shape"
+  "same status, response shape",
+  /"\/register",\s+requireSameOriginBrowserRequest,\s+requireJsonRequestBody,/,
+  /"\/login",\s+requireSameOriginBrowserRequest,\s+requireJsonRequestBody,/
 ]);
 assert.doesNotMatch(authRoutesSource, /res\.json\(\{[^}]*token/, "Authentication responses must not expose JWTs");
 
@@ -61,15 +66,26 @@ const mfaRoutesSource = contains("src/routes/mfa.routes.ts", [
   "mfaLoginAccountRateLimit",
   "mfaSetupRateLimit",
   "PASSKEY_COUNTER_REGRESSION",
-  "res.json({ user: result.user })"
+  "res.json({ user: result.user })",
+  "async function reserveMfaAttempt",
+  "SET failed_attempts = failed_attempts + 1",
+  "FROM user_totp_credentials WHERE user_id = ? FOR UPDATE",
+  "return createMfaLoginResult(loginUser)",
+  'res.setHeader("Cache-Control", "private, no-store")'
 ]);
 assert.ok(!mfaRoutesSource.includes("DELETE FROM mfa_login_sessions WHERE user_id = ? OR"), "MFA re-login must not reset failures");
+assert.ok(!mfaRoutesSource.includes("async function recordMfaFailure"), "MFA failures must consume a reserved attempt before verification");
+assert.ok(!mfaRoutesSource.includes("failed_attempts < ?"), "A successful final reserved MFA attempt must remain completable");
+assert.ok(!mfaRoutesSource.includes("finishLogin"), "MFA completion must not issue a token after releasing the user lock");
+assert.ok((mfaRoutesSource.match(/requireSameOriginBrowserRequest/g) ?? []).length >= 4, "All unauthenticated MFA login routes must enforce browser-origin checks");
+assert.ok((mfaRoutesSource.match(/requireJsonRequestBody/g) ?? []).length >= 4, "All unauthenticated MFA login routes must reject simple form bodies");
 
 contains("src/lib/collaboration-server.ts", [
   "currentAuthVersion !== payload.authVersion",
   "Number(currentUser.auth_version ?? 1) !== client.authVersion",
   "disconnectUserEverywhere(userId",
-  "explicitOrigins.has(normalizeOrigin(originHeader))"
+  "parseExactHttpOrigin(originHeader)",
+  "explicitOrigins.has(parsedOrigin)"
 ]);
 contains("migrations/024_auth_session_revocation.sql", [
   /ADD COLUMN IF NOT EXISTS auth_version BIGINT UNSIGNED NOT NULL DEFAULT 1/i
@@ -186,8 +202,15 @@ const errorSource = contains("src/middleware/error.ts", [
 ]);
 assert.ok(!errorSource.includes("console.error(error)"), "Unexpected errors must not be logged as complete objects");
 
+contains("src/lib/request-origin.ts", [
+  "parseExactHttpOrigin",
+  "createExactHttpOriginSet",
+  "parsed.origin !== candidate",
+  'candidate === "null"'
+]);
 const corsSource = contains("src/middleware/cors.ts", [
-  "explicitCorsOrigins.has(normalizeOrigin(origin))"
+  "parseExactHttpOrigin(origin)",
+  "explicitCorsOrigins.has(parsedOrigin)"
 ]);
 assert.ok(!corsSource.includes("isLocalDevelopmentOrigin"), "Development CORS must use the explicit allowlist");
 const collaborationSource = read("src/lib/collaboration-server.ts");
@@ -257,4 +280,4 @@ assert.equal(acceptsSession(1, 1), true, "A current session must be accepted bef
 assert.equal(acceptsSession(1, 2), false, "An old session must be rejected after credential rotation");
 assert.equal(acceptsSession(2, 2), true, "The replacement session must remain usable");
 
-console.log("[security-hardening] PASS: account backoff, strict session defaults, MFA throttling, cookie-only browser login, logout revocation, bookmark limits, attachment screening, collaboration write gates, cache controls, database accounts, CSP/origins, error hygiene, JWT separation, multipart limits, and SSRF ranges");
+console.log("[security-hardening] PASS: login CSRF gates, exact origins, atomic MFA attempts, revocation-safe MFA completion, locked TOTP verification, account backoff, strict session defaults, cookie-only browser login, logout revocation, bookmark limits, attachment screening, collaboration write gates, cache controls, database accounts, CSP, error hygiene, JWT separation, multipart limits, and SSRF ranges");

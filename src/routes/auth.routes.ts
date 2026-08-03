@@ -23,7 +23,11 @@ import {
   normalizeAvatarDataUrl,
   supportedProfileLanguages
 } from "../lib/profile.js";
-import { requireAuth } from "../middleware/auth.js";
+import {
+  requireAuth,
+  requireJsonRequestBody,
+  requireSameOriginBrowserRequest
+} from "../middleware/auth.js";
 import {
   loginAccountRateLimit,
   loginIpRateLimit,
@@ -89,6 +93,8 @@ async function padRegistrationResponse(startedAt: number) {
 
 authRouter.post(
   "/register",
+  requireSameOriginBrowserRequest,
+  requireJsonRequestBody,
   registrationGlobalRateLimit,
   registrationRateLimit,
   validate({ body: registerSchema }),
@@ -127,64 +133,72 @@ authRouter.post(
   }
 );
 
-authRouter.post("/login", loginIpRateLimit, loginAccountRateLimit, validate({ body: loginSchema }), async (req, res, next) => {
-  try {
-    const { username, password } = req.body as z.infer<typeof loginSchema>;
-    const sourceIp = getClientIpAddress(req);
-    const candidate = await db.queryOne<UserRow>("SELECT * FROM users WHERE username = ?", [username]);
-    let user: UserRow | undefined;
-    let passwordDecision: "ALLOWED" | "DENIED" = "DENIED";
+authRouter.post(
+  "/login",
+  requireSameOriginBrowserRequest,
+  requireJsonRequestBody,
+  loginIpRateLimit,
+  loginAccountRateLimit,
+  validate({ body: loginSchema }),
+  async (req, res, next) => {
+    try {
+      const { username, password } = req.body as z.infer<typeof loginSchema>;
+      const sourceIp = getClientIpAddress(req);
+      const candidate = await db.queryOne<UserRow>("SELECT * FROM users WHERE username = ?", [username]);
+      let user: UserRow | undefined;
+      let passwordDecision: "ALLOWED" | "DENIED" = "DENIED";
 
-    if (!candidate) {
-      await verifyPassword(password, await dummyPasswordHash);
-    } else {
-      const result = await transaction(async (client) => {
-        const lockedUser = await client.queryOne<UserRow>(
-          "SELECT * FROM users WHERE id = ? FOR UPDATE",
-          [candidate.id]
-        );
-        const passwordMatches = await verifyPassword(
-          password,
-          lockedUser?.password_hash ?? (await dummyPasswordHash)
-        );
-        if (!lockedUser) return { user: undefined, decision: "DENIED" as const };
+      if (!candidate) {
+        await verifyPassword(password, await dummyPasswordHash);
+      } else {
+        const result = await transaction(async (client) => {
+          const lockedUser = await client.queryOne<UserRow>(
+            "SELECT * FROM users WHERE id = ? FOR UPDATE",
+            [candidate.id]
+          );
+          const passwordMatches = await verifyPassword(
+            password,
+            lockedUser?.password_hash ?? (await dummyPasswordHash)
+          );
+          if (!lockedUser) return { user: undefined, decision: "DENIED" as const };
 
-        const decision = await evaluatePasswordLogin(client, lockedUser.id, passwordMatches);
-        if (decision !== "ALLOWED") await recordLoginAttempt(lockedUser.id, sourceIp, "FAILURE", client);
-        return { user: lockedUser, decision };
-      });
-      user = result.user;
-      passwordDecision = result.decision;
-    }
+          const decision = await evaluatePasswordLogin(client, lockedUser.id, passwordMatches);
+          if (decision !== "ALLOWED") await recordLoginAttempt(lockedUser.id, sourceIp, "FAILURE", client);
+          return { user: lockedUser, decision };
+        });
+        user = result.user;
+        passwordDecision = result.decision;
+      }
 
-    if (!user || passwordDecision !== "ALLOWED") {
-      throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid ID or password");
-    }
+      if (!user || passwordDecision !== "ALLOWED") {
+        throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid ID or password");
+      }
 
-    const methods = await getMfaMethods(user.id);
-    if (methods.totp || methods.passkey) {
-      const mfaToken = await createMfaLoginSession(user.id, sourceIp);
-      res.locals.authenticationPending = true;
-      clearAuthSessionCookie(res);
+      const methods = await getMfaMethods(user.id);
+      if (methods.totp || methods.passkey) {
+        const mfaToken = await createMfaLoginSession(user.id, sourceIp);
+        res.locals.authenticationPending = true;
+        clearAuthSessionCookie(res);
+        res.setHeader("Cache-Control", "private, no-store");
+        res.json({
+          mfaRequired: true,
+          mfaToken,
+          methods,
+          expiresInSeconds: 300
+        });
+        return;
+      }
+
+      await recordLoginAttempt(user.id, sourceIp, "SUCCESS");
+      const token = signAuthToken({ sub: user.id, username: user.username, authVersion: normalizeAuthVersion(user.auth_version) });
+      setAuthSessionCookie(res, token);
       res.setHeader("Cache-Control", "private, no-store");
-      res.json({
-        mfaRequired: true,
-        mfaToken,
-        methods,
-        expiresInSeconds: 300
-      });
-      return;
+      res.json({ user: toPublicUser(user) });
+    } catch (error) {
+      next(error);
     }
-
-    await recordLoginAttempt(user.id, sourceIp, "SUCCESS");
-    const token = signAuthToken({ sub: user.id, username: user.username, authVersion: normalizeAuthVersion(user.auth_version) });
-    setAuthSessionCookie(res, token);
-    res.setHeader("Cache-Control", "private, no-store");
-    res.json({ user: toPublicUser(user) });
-  } catch (error) {
-    next(error);
   }
-});
+);
 
 authRouter.post("/logout", requireAuth, async (req, res, next) => {
   try {

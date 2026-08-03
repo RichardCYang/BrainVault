@@ -30,13 +30,22 @@ import {
 } from "../lib/mfa.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { setAuthSessionCookie } from "../lib/session-cookie.js";
-import { requireAuth } from "../middleware/auth.js";
+import {
+  requireAuth,
+  requireJsonRequestBody,
+  requireSameOriginBrowserRequest
+} from "../middleware/auth.js";
 import { mfaLoginAccountRateLimit, mfaLoginIpRateLimit, mfaSetupRateLimit } from "../middleware/auth-rate-limit.js";
 import { validate } from "../middleware/validate.js";
 import type { UserRow } from "../types/domain.js";
 import { requireUser } from "../utils/schemas.js";
 
 export const mfaRouter = Router();
+
+mfaRouter.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  next();
+});
 
 const mfaSessionLifetimeMs = 5 * 60_000;
 const challengeLifetimeMs = 5 * 60_000;
@@ -283,31 +292,52 @@ async function getActiveMfaSession(mfaToken: string, client: DbClient = db) {
      WHERE token_hash = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)`,
     [hashOpaqueToken(mfaToken)]
   );
-  if (!row || row.failed_attempts >= maxMfaAttempts) {
+  if (!row || Number(row.failed_attempts) >= maxMfaAttempts) {
     throw new ApiError(401, "MFA_SESSION_EXPIRED", "The two-step verification session expired");
   }
   return row;
 }
 
-async function recordMfaFailure(mfaToken: string, session: MfaSessionRow) {
-  const result = await db.execute<{ affectedRows: number }>(
-    `UPDATE mfa_login_sessions
-     SET failed_attempts = failed_attempts + 1
-     WHERE token_hash = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)`,
-    [hashOpaqueToken(mfaToken)]
-  );
-  if (Number(result.affectedRows) === 1) {
-    await recordLoginAttempt(session.user_id, session.source_ip, "FAILURE");
-  }
+async function reserveMfaAttempt(mfaToken: string) {
+  const tokenHash = hashOpaqueToken(mfaToken);
+  return transaction(async (client) => {
+    const row = await client.queryOne<MfaSessionRow>(
+      `SELECT token_hash, user_id, source_ip, failed_attempts, expires_at, used_at
+       FROM mfa_login_sessions
+       WHERE token_hash = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)
+       FOR UPDATE`,
+      [tokenHash]
+    );
+    const failedAttempts = Number(row?.failed_attempts ?? maxMfaAttempts);
+    if (!row || failedAttempts >= maxMfaAttempts) {
+      throw new ApiError(401, "MFA_SESSION_EXPIRED", "The two-step verification session expired");
+    }
+
+    const result = await client.execute<{ affectedRows: number }>(
+      `UPDATE mfa_login_sessions
+       SET failed_attempts = failed_attempts + 1
+       WHERE token_hash = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)
+         AND failed_attempts = ?`,
+      [tokenHash, failedAttempts]
+    );
+    if (Number(result.affectedRows) !== 1) {
+      throw new ApiError(401, "MFA_SESSION_EXPIRED", "The two-step verification session expired");
+    }
+    return { ...row, failed_attempts: failedAttempts + 1 };
+  });
+}
+
+async function recordReservedMfaFailure(session: MfaSessionRow) {
+  await recordLoginAttempt(session.user_id, session.source_ip, "FAILURE");
 }
 
 async function completeMfaSession(client: DbClient, mfaToken: string, userId: string) {
   const result = await client.execute<{ affectedRows: number }>(
     `UPDATE mfa_login_sessions
-     SET used_at = CURRENT_TIMESTAMP(3), failed_attempts = 0
+     SET used_at = CURRENT_TIMESTAMP(3)
      WHERE token_hash = ? AND user_id = ? AND used_at IS NULL
-       AND expires_at > CURRENT_TIMESTAMP(3) AND failed_attempts < ?`,
-    [hashOpaqueToken(mfaToken), userId, maxMfaAttempts]
+       AND expires_at > CURRENT_TIMESTAMP(3)`,
+    [hashOpaqueToken(mfaToken), userId]
   );
   if (Number(result.affectedRows) !== 1) {
     throw new ApiError(401, "MFA_SESSION_EXPIRED", "The two-step verification session expired");
@@ -371,9 +401,13 @@ async function consumeChallenge(
   });
 }
 
-async function finishLogin(userId: string) {
-  const user = await getUserById(userId);
+async function getLoginUserForUpdate(client: DbClient, userId: string) {
+  const user = await client.queryOne<UserRow>("SELECT * FROM users WHERE id = ? FOR UPDATE", [userId]);
   if (!user) throw new ApiError(401, "UNAUTHENTICATED", "User no longer exists");
+  return user;
+}
+
+function createMfaLoginResult(user: UserRow) {
   return {
     user: toPublicUser(user),
     token: signAuthToken({ sub: user.id, username: user.username, authVersion: normalizeAuthVersion(user.auth_version) })
@@ -668,50 +702,65 @@ mfaRouter.delete(
 
 mfaRouter.post(
   "/login/totp",
+  requireSameOriginBrowserRequest,
+  requireJsonRequestBody,
   mfaLoginIpRateLimit,
   mfaLoginAccountRateLimit,
   validate({ body: mfaLoginTotpSchema }),
   async (req, res, next) => {
     const { mfaToken, code } = req.body as z.infer<typeof mfaLoginTotpSchema>;
+    let session: MfaSessionRow | undefined;
     try {
-      const session = await getActiveMfaSession(mfaToken);
-      const credential = await db.queryOne<TotpCredentialRow>(
-        `SELECT user_id, secret_ciphertext, secret_iv, secret_tag, last_used_step
-         FROM user_totp_credentials WHERE user_id = ?`,
-        [session.user_id]
-      );
-      if (!credential) throw new ApiError(400, "MFA_METHOD_UNAVAILABLE", "TOTP is not available for this account");
+      const activeSession = await reserveMfaAttempt(mfaToken);
+      session = activeSession;
+      const result = await transaction(async (client) => {
+        const loginUser = await getLoginUserForUpdate(client, activeSession.user_id);
+        const credential = await client.queryOne<TotpCredentialRow>(
+          `SELECT user_id, secret_ciphertext, secret_iv, secret_tag, last_used_step
+           FROM user_totp_credentials WHERE user_id = ? FOR UPDATE`,
+          [activeSession.user_id]
+        );
+        if (!credential) {
+          throw new ApiError(400, "MFA_METHOD_UNAVAILABLE", "TOTP is not available for this account");
+        }
 
-      const secret = decryptMfaSecret({
-        ciphertext: credential.secret_ciphertext,
-        iv: credential.secret_iv,
-        tag: credential.secret_tag
-      });
-      const matchedStep = findMatchingTotpStep(secret, code);
-      if (matchedStep === null) {
-        await recordMfaFailure(mfaToken, session);
-        throw new ApiError(401, "INVALID_MFA_CODE", "The verification code is invalid");
-      }
+        const secret = decryptMfaSecret({
+          ciphertext: credential.secret_ciphertext,
+          iv: credential.secret_iv,
+          tag: credential.secret_tag
+        });
+        const matchedStep = findMatchingTotpStep(secret, code);
+        if (matchedStep === null) {
+          throw new ApiError(401, "INVALID_MFA_CODE", "The verification code is invalid");
+        }
+        if (credential.last_used_step !== null && Number(credential.last_used_step) >= matchedStep) {
+          throw new ApiError(401, "MFA_CODE_REUSED", "The verification code was already used");
+        }
 
-      await transaction(async (client) => {
         const updated = await client.execute<{ affectedRows: number }>(
           `UPDATE user_totp_credentials
            SET last_used_step = ?
            WHERE user_id = ? AND (last_used_step IS NULL OR last_used_step < ?)`,
-          [matchedStep, session.user_id, matchedStep]
+          [matchedStep, activeSession.user_id, matchedStep]
         );
         if (Number(updated.affectedRows) !== 1) {
           throw new ApiError(401, "MFA_CODE_REUSED", "The verification code was already used");
         }
-        await recordLoginAttempt(session.user_id, session.source_ip, "SUCCESS", client);
-        await completeMfaSession(client, mfaToken, session.user_id);
+        await recordLoginAttempt(activeSession.user_id, activeSession.source_ip, "SUCCESS", client);
+        await completeMfaSession(client, mfaToken, activeSession.user_id);
+        return createMfaLoginResult(loginUser);
       });
 
-      const result = await finishLogin(session.user_id);
       setAuthSessionCookie(res, result.token);
-      res.setHeader("Cache-Control", "private, no-store");
       res.json({ user: result.user });
     } catch (error) {
+      if (
+        session
+        && error instanceof ApiError
+        && ["MFA_METHOD_UNAVAILABLE", "INVALID_MFA_CODE", "MFA_CODE_REUSED"].includes(error.code)
+      ) {
+        await recordReservedMfaFailure(session);
+      }
       next(error);
     }
   }
@@ -719,6 +768,8 @@ mfaRouter.post(
 
 mfaRouter.post(
   "/login/passkey/options",
+  requireSameOriginBrowserRequest,
+  requireJsonRequestBody,
   validate({ body: mfaTokenSchema }),
   async (req, res, next) => {
     try {
@@ -757,24 +808,27 @@ mfaRouter.post(
 
 mfaRouter.post(
   "/login/passkey/verify",
+  requireSameOriginBrowserRequest,
+  requireJsonRequestBody,
   mfaLoginIpRateLimit,
   mfaLoginAccountRateLimit,
   validate({ body: passkeyLoginVerifySchema }),
   async (req, res, next) => {
     const { mfaToken, challengeToken, response } = req.body as z.infer<typeof passkeyLoginVerifySchema>;
+    let session: MfaSessionRow | undefined;
     try {
-      const session = await getActiveMfaSession(mfaToken);
+      const activeSession = await reserveMfaAttempt(mfaToken);
+      session = activeSession;
       const contextHash = hashOpaqueToken(mfaToken);
-      const challenge = await consumeChallenge(challengeToken, session.user_id, "authentication", contextHash);
+      const challenge = await consumeChallenge(challengeToken, activeSession.user_id, "authentication", contextHash);
       const credentialId = fromBase64Url(response.id);
       const passkey = await db.queryOne<PasskeyRow>(
         `SELECT id, user_id, credential_id, webauthn_user_id, public_key, counter, transports,
                 device_type, backed_up, aaguid, name, created_at, updated_at, last_used_at
          FROM user_passkeys WHERE user_id = ? AND credential_id = ?`,
-        [session.user_id, credentialId]
+        [activeSession.user_id, credentialId]
       );
       if (!passkey) {
-        await recordMfaFailure(mfaToken, session);
         throw new ApiError(401, "PASSKEY_NOT_FOUND", "The passkey is not registered for this account");
       }
 
@@ -794,22 +848,20 @@ mfaRouter.post(
           requireUserVerification: true
         });
       } catch {
-        await recordMfaFailure(mfaToken, session);
         throw new ApiError(401, "PASSKEY_AUTHENTICATION_FAILED", "The passkey could not be verified");
       }
       if (!verification.verified) {
-        await recordMfaFailure(mfaToken, session);
         throw new ApiError(401, "PASSKEY_AUTHENTICATION_FAILED", "The passkey could not be verified");
       }
 
       const previousCounter = Number(passkey.counter);
       const newCounter = Number(verification.authenticationInfo.newCounter);
       if (previousCounter > 0 && newCounter <= previousCounter) {
-        await recordMfaFailure(mfaToken, session);
         throw new ApiError(401, "PASSKEY_COUNTER_REGRESSION", "The passkey counter did not advance");
       }
 
-      await transaction(async (client) => {
+      const result = await transaction(async (client) => {
+        const loginUser = await getLoginUserForUpdate(client, activeSession.user_id);
         const updated = await client.execute<{ affectedRows: number }>(
           `UPDATE user_passkeys
            SET counter = ?, device_type = ?, backed_up = ?, last_used_at = CURRENT_TIMESTAMP(3)
@@ -819,22 +871,33 @@ mfaRouter.post(
             verification.authenticationInfo.credentialDeviceType,
             verification.authenticationInfo.credentialBackedUp,
             passkey.id,
-            session.user_id,
+            activeSession.user_id,
             previousCounter
           ]
         );
         if (Number(updated.affectedRows) !== 1) {
           throw new ApiError(401, "PASSKEY_AUTHENTICATION_FAILED", "The passkey state changed during verification");
         }
-        await recordLoginAttempt(session.user_id, session.source_ip, "SUCCESS", client);
-        await completeMfaSession(client, mfaToken, session.user_id);
+        await recordLoginAttempt(activeSession.user_id, activeSession.source_ip, "SUCCESS", client);
+        await completeMfaSession(client, mfaToken, activeSession.user_id);
+        return createMfaLoginResult(loginUser);
       });
 
-      const result = await finishLogin(session.user_id);
       setAuthSessionCookie(res, result.token);
-      res.setHeader("Cache-Control", "private, no-store");
       res.json({ user: result.user });
     } catch (error) {
+      if (
+        session
+        && error instanceof ApiError
+        && [
+          "WEBAUTHN_CHALLENGE_EXPIRED",
+          "PASSKEY_NOT_FOUND",
+          "PASSKEY_AUTHENTICATION_FAILED",
+          "PASSKEY_COUNTER_REGRESSION"
+        ].includes(error.code)
+      ) {
+        await recordReservedMfaFailure(session);
+      }
       next(error);
     }
   }

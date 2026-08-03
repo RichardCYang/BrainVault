@@ -64,4 +64,53 @@ describe("reported security reproductions are now blocked", () => {
     expect(limits).toContain("skipSuccessfulRequests: true");
     expect(limits).toContain("authenticationRequestSucceeded");
   });
+
+
+  it("P8 blocks login CSRF with origin and JSON-only request gates", async () => {
+    const [authRoutes, mfaRoutes, authMiddleware] = await Promise.all([
+      source("src/routes/auth.routes.ts"),
+      source("src/routes/mfa.routes.ts"),
+      source("src/middleware/auth.ts")
+    ]);
+    expect(authRoutes).toMatch(/"\/login",\s+requireSameOriginBrowserRequest,\s+requireJsonRequestBody,/);
+    expect(authRoutes).toMatch(/"\/register",\s+requireSameOriginBrowserRequest,\s+requireJsonRequestBody,/);
+    expect(mfaRoutes.match(/requireSameOriginBrowserRequest/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(mfaRoutes.match(/requireJsonRequestBody/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(authMiddleware).toContain('req.is("application/json")');
+  });
+
+  it("P9 reserves MFA attempts atomically before factor verification", async () => {
+    const routes = await source("src/routes/mfa.routes.ts");
+    expect(routes).toContain("async function reserveMfaAttempt");
+    expect(routes).toMatch(/FROM mfa_login_sessions[\s\S]{0,220}FOR UPDATE/);
+    expect(routes).toContain("SET failed_attempts = failed_attempts + 1");
+    expect(routes).not.toContain("async function recordMfaFailure");
+    expect(routes).not.toContain("failed_attempts < ?");
+  });
+
+  it("P10 signs MFA login tokens while holding the revocation lock", async () => {
+    const routes = await source("src/routes/mfa.routes.ts");
+    expect(routes).toContain("SELECT * FROM users WHERE id = ? FOR UPDATE");
+    expect(routes).toContain("return createMfaLoginResult(loginUser)");
+    expect(routes).not.toContain("finishLogin");
+  });
+
+  it("P11 verifies TOTP against the locked current credential", async () => {
+    const routes = await source("src/routes/mfa.routes.ts");
+    expect(routes).toContain("FROM user_totp_credentials WHERE user_id = ? FOR UPDATE");
+    expect(routes).toContain("credential.last_used_step !== null");
+  });
+
+  it("P12 applies no-store caching and exact Origin parsing to sensitive flows", async () => {
+    const [mfaRoutes, originHelper, cors, collaboration] = await Promise.all([
+      source("src/routes/mfa.routes.ts"),
+      source("src/lib/request-origin.ts"),
+      source("src/middleware/cors.ts"),
+      source("src/lib/collaboration-server.ts")
+    ]);
+    expect(mfaRoutes).toMatch(/mfaRouter\.use\([\s\S]{0,180}Cache-Control", "private, no-store"/);
+    expect(originHelper).toContain("parsed.origin !== candidate");
+    expect(cors).toContain("parseExactHttpOrigin(origin)");
+    expect(collaboration).toContain("parseExactHttpOrigin(originHeader)");
+  });
 });

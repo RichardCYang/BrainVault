@@ -22,7 +22,7 @@ function getBearerToken(req: Request) {
 }
 
 function assertBrowserRequestOrigin(req: Request) {
-  const fetchSite = req.header("sec-fetch-site")?.toLowerCase();
+  const fetchSite = req.header("sec-fetch-site")?.trim().toLowerCase();
   if (fetchSite === "cross-site") {
     throw new ApiError(403, "CROSS_SITE_REQUEST_BLOCKED", "Cross-site browser authentication is not allowed");
   }
@@ -31,6 +31,23 @@ function assertBrowserRequestOrigin(req: Request) {
   if (origin && !isAllowedCorsOrigin(req, origin)) {
     throw new ApiError(403, "ORIGIN_NOT_ALLOWED", "Request origin is not allowed");
   }
+}
+
+export function requireSameOriginBrowserRequest(req: Request, _res: Response, next: NextFunction) {
+  try {
+    assertBrowserRequestOrigin(req);
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+export function requireJsonRequestBody(req: Request, _res: Response, next: NextFunction) {
+  if (!req.is("application/json")) {
+    next(new ApiError(415, "JSON_BODY_REQUIRED", "This authentication endpoint requires an application/json body"));
+    return;
+  }
+  next();
 }
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
