@@ -4008,6 +4008,108 @@ for (const [language, addition] of Object.entries(youtubeTranslationAdditions)) 
   catalog.youtube = addition.youtube;
 }
 
+const toggleTranslationAdditions = {
+  en: {
+    blockType: "Toggle",
+    slash: { label: "Toggle", hint: "Hide or reveal supporting content", keywords: "toggle disclosure collapse expand details accordion" },
+    toggle: {
+      titlePlaceholder: "Toggle title",
+      titleAria: "Toggle title",
+      bodyPlaceholder: "Add content inside the toggle…",
+      bodyAria: "Toggle body content",
+      expand: "Expand toggle",
+      collapse: "Collapse toggle",
+      defaultTitle: "Toggle"
+    }
+  },
+  ko: {
+    blockType: "토글",
+    slash: { label: "토글", hint: "내용을 접거나 펼치는 블록", keywords: "toggle 토글 접기 펼치기 세부 내용 아코디언" },
+    toggle: {
+      titlePlaceholder: "토글 제목",
+      titleAria: "토글 제목",
+      bodyPlaceholder: "토글 안에 표시할 내용을 입력하세요…",
+      bodyAria: "토글 본문 내용",
+      expand: "토글 펼치기",
+      collapse: "토글 접기",
+      defaultTitle: "토글"
+    }
+  },
+  ja: {
+    blockType: "トグル",
+    slash: { label: "トグル", hint: "内容を折りたたんだり展開したりするブロック", keywords: "toggle トグル 折りたたみ 展開 詳細 アコーディオン" },
+    toggle: {
+      titlePlaceholder: "トグルのタイトル",
+      titleAria: "トグルのタイトル",
+      bodyPlaceholder: "トグル内の内容を入力…",
+      bodyAria: "トグルの本文",
+      expand: "トグルを展開",
+      collapse: "トグルを折りたたむ",
+      defaultTitle: "トグル"
+    }
+  },
+  fr: {
+    blockType: "Bloc dépliant",
+    slash: { label: "Bloc dépliant", hint: "Masquer ou afficher du contenu complémentaire", keywords: "toggle dépliant replier développer détails accordéon" },
+    toggle: {
+      titlePlaceholder: "Titre du bloc dépliant",
+      titleAria: "Titre du bloc dépliant",
+      bodyPlaceholder: "Ajoutez du contenu dans le bloc…",
+      bodyAria: "Contenu du bloc dépliant",
+      expand: "Développer le bloc",
+      collapse: "Replier le bloc",
+      defaultTitle: "Bloc dépliant"
+    }
+  },
+  de: {
+    blockType: "Aufklappblock",
+    slash: { label: "Aufklappblock", hint: "Zusätzliche Inhalte ein- oder ausblenden", keywords: "toggle aufklappen zuklappen details accordion inhalt" },
+    toggle: {
+      titlePlaceholder: "Titel des Aufklappblocks",
+      titleAria: "Titel des Aufklappblocks",
+      bodyPlaceholder: "Inhalt im Aufklappblock hinzufügen…",
+      bodyAria: "Inhalt des Aufklappblocks",
+      expand: "Aufklappblock öffnen",
+      collapse: "Aufklappblock schließen",
+      defaultTitle: "Aufklappblock"
+    }
+  },
+  es: {
+    blockType: "Bloque desplegable",
+    slash: { label: "Bloque desplegable", hint: "Ocultar o mostrar contenido adicional", keywords: "toggle desplegable contraer expandir detalles acordeón" },
+    toggle: {
+      titlePlaceholder: "Título del bloque desplegable",
+      titleAria: "Título del bloque desplegable",
+      bodyPlaceholder: "Añade contenido dentro del bloque…",
+      bodyAria: "Contenido del bloque desplegable",
+      expand: "Expandir bloque",
+      collapse: "Contraer bloque",
+      defaultTitle: "Bloque desplegable"
+    }
+  },
+  pt: {
+    blockType: "Bloco recolhível",
+    slash: { label: "Bloco recolhível", hint: "Ocultar ou revelar conteúdo adicional", keywords: "toggle recolher expandir detalhes acordeão conteúdo" },
+    toggle: {
+      titlePlaceholder: "Título do bloco recolhível",
+      titleAria: "Título do bloco recolhível",
+      bodyPlaceholder: "Adicione conteúdo dentro do bloco…",
+      bodyAria: "Conteúdo do bloco recolhível",
+      expand: "Expandir bloco",
+      collapse: "Recolher bloco",
+      defaultTitle: "Bloco recolhível"
+    }
+  }
+};
+
+for (const [language, addition] of Object.entries(toggleTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  catalog.blocks.types.TOGGLE = addition.blockType;
+  catalog.slash.TOGGLE = addition.slash;
+  catalog.toggle = addition.toggle;
+}
+
 function readStorage(key) {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;

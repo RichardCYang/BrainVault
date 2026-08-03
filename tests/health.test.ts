@@ -276,7 +276,7 @@ describe("BrainVault web shell and health endpoint", () => {
     const aiChatMigration = await fs.readFile("migrations/011_blocks_ai_chat_type.sql", "utf8");
     const mathMigration = await fs.readFile("migrations/012_blocks_math_type.sql", "utf8");
 
-    expect(baseline).toContain("'CALLOUT', 'TABLE', 'KANBAN', 'DATABASE', 'TIMETABLE', 'GANTT', 'BOOKMARK', 'AI_CHAT', 'MATH', 'CODE'");
+    expect(baseline).toContain("'CALLOUT', 'TOGGLE', 'TABLE', 'KANBAN', 'DATABASE', 'TIMETABLE', 'GANTT', 'BOOKMARK', 'AI_CHAT', 'MATH', 'CODE'");
     expect(tableMigration).toContain("MODIFY COLUMN type ENUM");
     expect(tableMigration).toContain("'TABLE'");
     expect(kanbanMigration).toContain("MODIFY COLUMN type ENUM");

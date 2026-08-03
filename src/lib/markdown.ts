@@ -143,7 +143,9 @@ const allowedTags = sanitizeHtml.defaults.allowedTags.concat([
   "th",
   "td",
   "time",
-  "iframe"
+  "iframe",
+  "details",
+  "summary"
 ]);
 
 const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
@@ -168,6 +170,8 @@ const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   td: ["class", "colspan"],
   time: ["class", "datetime"],
   iframe: ["class", "src", "title", "loading", "allow", "allowfullscreen", "referrerpolicy"],
+  details: ["class", "open"],
+  summary: ["class"],
   ul: ["class"],
   li: ["class"]
 };
@@ -233,6 +237,47 @@ function stripFence(raw: string) {
 function stripMarkdownImage(raw: string) {
   const match = raw.trim().match(/^!?\[[^\]]*\]\(([^)]+)\)$/);
   return match?.[1]?.trim() ?? raw.trim();
+}
+
+function parseMetadataRecord(metadata: unknown) {
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    return metadata as Record<string, unknown>;
+  }
+  if (typeof metadata === "string") {
+    try {
+      const parsed = JSON.parse(metadata) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Invalid legacy metadata is ignored instead of affecting rendering.
+    }
+  }
+  return {};
+}
+
+function splitToggleMarkdown(raw: string) {
+  const normalized = String(raw ?? "").replace(/\r\n?/g, "\n");
+  const newlineIndex = normalized.indexOf("\n");
+  if (newlineIndex < 0) return { title: normalized.trim(), body: "" };
+  return {
+    title: normalized.slice(0, newlineIndex).trim(),
+    body: normalized.slice(newlineIndex + 1)
+  };
+}
+
+function renderToggle(raw: string, metadata: unknown) {
+  const { title, body } = splitToggleMarkdown(raw);
+  const summarySource = title || "Toggle";
+  const summary = sanitizeHtml(markdown.renderInline(summarySource), sanitizeOptions);
+  const content = body.trim()
+    ? renderMarkdown(body)
+    : '<p class="rendered-toggle-empty"></p>';
+  const open = parseMetadataRecord(metadata).toggleOpen !== false ? " open" : "";
+  return sanitizeHtml(
+    `<details class="rendered-toggle"${open}><summary class="rendered-toggle-summary">${summary}</summary><div class="rendered-toggle-content">${content}</div></details>`,
+    sanitizeOptions
+  );
 }
 
 function renderTableCell(raw: string) {
@@ -345,6 +390,8 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
         metadata
       );
     }
+    case "TOGGLE":
+      return renderToggle(markdownValue, metadata);
     case "TABLE":
       return renderTable(metadata);
     case "KANBAN":

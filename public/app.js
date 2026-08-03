@@ -186,6 +186,7 @@ const blockTypeLabels = {
   TODO: "blocks.types.TODO",
   QUOTE: "blocks.types.QUOTE",
   CALLOUT: "blocks.types.CALLOUT",
+  TOGGLE: "blocks.types.TOGGLE",
   TABLE: "blocks.types.TABLE",
   KANBAN: "blocks.types.KANBAN",
   DATABASE: "blocks.types.DATABASE",
@@ -210,6 +211,8 @@ const calloutTypePresets = [
 ];
 const calloutTypeIds = new Set(calloutTypePresets.map((item) => item.id));
 
+const toggleTitleMaxLength = 300;
+const toggleBodyMaxLength = BLOCK_MARKDOWN_MAX_LENGTH - toggleTitleMaxLength - 1;
 const tableLimits = { rows: 50, columns: 20, cellLength: 4000 };
 const textAlignments = new Set(["left", "center", "right", "justify"]);
 const textAlignableBlockTypes = new Set([
@@ -460,6 +463,7 @@ const slashCommands = [
   { type: "TODO", command: "/todo", icon: "todo" },
   { type: "QUOTE", command: "/quote", icon: "quote" },
   { type: "CALLOUT", command: "/callout", icon: "callout" },
+  { type: "TOGGLE", command: "/toggle", icon: "toggle" },
   { type: "TABLE", command: "/table", icon: "table" },
   { type: "DATABASE", command: "/database", icon: "database" },
   { type: "TIMETABLE", command: "/timetable", icon: "timetable" },
@@ -525,6 +529,11 @@ const slashCommandIconShapes = {
     ["path", { d: "M9 18h6" }],
     ["path", { d: "M10 22h4" }],
     ["path", { d: "M15.1 14c.2-.6.6-1.1 1.1-1.6A6 6 0 1 0 7.8 12.4c.5.5.9 1 1.1 1.6.2.5.2 1.2.2 2h6c0-.8 0-1.5.2-2Z" }]
+  ],
+  toggle: [
+    ["path", { d: "m8 9 4 4 4-4" }],
+    ["path", { d: "M4 5h16" }],
+    ["path", { d: "M4 19h16" }]
   ],
   table: [
     ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
@@ -3448,7 +3457,7 @@ function syncBlockReadOnlyState(row, readOnly = isPageReadOnly() || isPageIntera
     }
   }
 
-  for (const details of row.querySelectorAll("details")) {
+  for (const details of row.querySelectorAll("details:not(.rendered-toggle)")) {
     if (readOnly) details.removeAttribute("open");
   }
 }
@@ -5444,6 +5453,57 @@ function getBlockMetadata(block) {
     : {};
 }
 
+function parseToggleMarkdown(value) {
+  const normalized = String(value ?? "").replace(/\r\n?/g, "\n");
+  const newlineIndex = normalized.indexOf("\n");
+  if (newlineIndex < 0) return { title: normalized.slice(0, toggleTitleMaxLength), body: "" };
+  return {
+    title: normalized.slice(0, newlineIndex).slice(0, toggleTitleMaxLength),
+    body: normalized.slice(newlineIndex + 1)
+  };
+}
+
+function serializeToggleMarkdown(title, body) {
+  const safeTitle = String(title ?? "")
+    .replace(/[\r\n]+/g, " ")
+    .slice(0, toggleTitleMaxLength);
+  const safeBody = String(body ?? "").replace(/\r\n?/g, "\n");
+  return safeBody ? `${safeTitle}\n${safeBody}` : safeTitle;
+}
+
+function getBlockToggleOpen(block) {
+  return block?.metadata?.toggleOpen !== false;
+}
+
+function getToggleMarkdownFromRow(row, fallback = "") {
+  if (!row || row.dataset.blockType !== "TOGGLE") return fallback;
+  const title = row.querySelector(".toggle-title-input")?.value ?? parseToggleMarkdown(fallback).title;
+  const body = getBlockTextarea(row)?.value ?? parseToggleMarkdown(fallback).body;
+  return serializeToggleMarkdown(title, body);
+}
+
+function isBlockMarkdownEmpty(row, textarea) {
+  if (row?.dataset.blockType === "TOGGLE") {
+    return !row.querySelector(".toggle-title-input")?.value.trim() && !textarea?.value.trim();
+  }
+  return !textarea?.value.trim();
+}
+
+function setToggleBlockOpen(row, open, { persist = true } = {}) {
+  if (!row || row.dataset.blockType !== "TOGGLE") return;
+  const expanded = Boolean(open);
+  row.dataset.toggleOpen = String(expanded);
+  const button = row.querySelector('[data-action="toggle-block"]');
+  const content = row.querySelector(".toggle-block-content");
+  const indicator = row.querySelector(".toggle-block-indicator");
+  button?.setAttribute("aria-expanded", String(expanded));
+  if (button) button.title = t(expanded ? "toggle.collapse" : "toggle.expand");
+  if (content) content.hidden = !expanded;
+  if (indicator) indicator.textContent = expanded ? "⌄" : "›";
+  row.querySelector(".toggle-block-surface")?.classList.toggle("is-open", expanded);
+  if (persist) scheduleBlockSave(row);
+}
+
 function normalizeTextAlign(value) {
   return textAlignments.has(value) ? value : "left";
 }
@@ -6545,6 +6605,82 @@ function createTextBlockEditor(block) {
   return editor;
 }
 
+function createToggleBlockEditor(row, block) {
+  const { title, body } = parseToggleMarkdown(block.markdown);
+  const editor = document.createElement("div");
+  editor.className = "toggle-block-editor";
+
+  const surface = document.createElement("div");
+  surface.className = "toggle-block-surface";
+
+  const header = document.createElement("div");
+  header.className = "toggle-block-header";
+
+  const toggleButton = document.createElement("button");
+  toggleButton.type = "button";
+  toggleButton.className = "toggle-block-button";
+  toggleButton.dataset.action = "toggle-block";
+  toggleButton.setAttribute("aria-controls", `toggle-content-${block.id}`);
+
+  const indicator = document.createElement("span");
+  indicator.className = "toggle-block-indicator";
+  indicator.setAttribute("aria-hidden", "true");
+  toggleButton.append(indicator);
+
+  const titleInput = document.createElement("input");
+  titleInput.type = "text";
+  titleInput.className = "toggle-title-input";
+  titleInput.maxLength = toggleTitleMaxLength;
+  titleInput.value = title;
+  titleInput.placeholder = t("toggle.titlePlaceholder");
+  titleInput.setAttribute("aria-label", t("toggle.titleAria"));
+
+  const content = document.createElement("div");
+  content.id = `toggle-content-${block.id}`;
+  content.className = "toggle-block-content";
+
+  const textarea = document.createElement("textarea");
+  textarea.name = "markdown";
+  textarea.className = "block-row-input toggle-body-input";
+  textarea.rows = 3;
+  textarea.maxLength = toggleBodyMaxLength;
+  textarea.value = body;
+  textarea.placeholder = t("toggle.bodyPlaceholder");
+  textarea.setAttribute("aria-label", t("toggle.bodyAria"));
+  content.append(textarea);
+
+  header.append(toggleButton, titleInput);
+  surface.append(header, content);
+
+  const preview = document.createElement("div");
+  preview.className = "block-rendered-preview toggle-block-preview";
+  preview.innerHTML = block.htmlCache ?? "";
+  if (!block.htmlCache) {
+    const details = document.createElement("details");
+    details.className = "rendered-toggle";
+    details.open = getBlockToggleOpen(block);
+    const summary = document.createElement("summary");
+    summary.className = "rendered-toggle-summary";
+    summary.textContent = title || t("toggle.defaultTitle");
+    const fallbackContent = document.createElement("div");
+    fallbackContent.className = "rendered-toggle-content";
+    fallbackContent.textContent = body;
+    details.append(summary, fallbackContent);
+    preview.append(details);
+  }
+
+  const expanded = getBlockToggleOpen(block);
+  toggleButton.setAttribute("aria-expanded", String(expanded));
+  toggleButton.title = t(expanded ? "toggle.collapse" : "toggle.expand");
+  content.hidden = !expanded;
+  indicator.textContent = expanded ? "⌄" : "›";
+  surface.classList.toggle("is-open", expanded);
+
+  editor.append(surface, preview);
+  requestAnimationFrame(() => autoGrowTextarea(textarea));
+  return editor;
+}
+
 function createAttachmentEditor(block) {
   const attachment = getBlockAttachmentData(block);
   const card = document.createElement("div");
@@ -6880,9 +7016,11 @@ function mountBlockEditor(row, block) {
                   ? createAiChatEditor(row, getBlockAiChatData(block), { onDirty: () => scheduleBlockSave(row) })
                   : block.type === "VIDEO"
                     ? createYouTubeVideoEditor(block)
-                    : block.type === "ATTACHMENT"
-                      ? createAttachmentEditor(block)
-                      : createTextBlockEditor(block)
+                    : block.type === "TOGGLE"
+                      ? createToggleBlockEditor(row, block)
+                      : block.type === "ATTACHMENT"
+                        ? createAttachmentEditor(block)
+                        : createTextBlockEditor(block)
   );
 }
 
@@ -6916,6 +7054,7 @@ function renderBlock(block, renderedDraft = null) {
     }
   }
   row.dataset.calloutType = getBlockCalloutType(renderedBlock);
+  row.dataset.toggleOpen = String(getBlockToggleOpen(renderedBlock));
   row.dataset.textAlign = getBlockTextAlign(renderedBlock);
   row.dataset.codeLanguage = getBlockCodeLanguage(renderedBlock);
   row.dataset.parentBlockId = block.parentBlockId ?? "";
@@ -7027,10 +7166,14 @@ function buildBlockPayload(row) {
 
   const payload = {
     type,
-    markdown: textarea?.value ?? "",
+    markdown: type === "TOGGLE"
+      ? getToggleMarkdownFromRow(row, block?.markdown ?? "")
+      : textarea?.value ?? "",
     checked: checked ? checked.checked : false
   };
   const metadata = getBlockMetadata(block);
+  if (type === "TOGGLE") metadata.toggleOpen = row.dataset.toggleOpen !== "false";
+  else if (metadata.toggleOpen !== undefined) delete metadata.toggleOpen;
   if (isTextAlignableBlockType(type)) {
     const textAlign = normalizeTextAlign(row.dataset.textAlign);
     if (textAlign === "left") delete metadata.textAlign;
@@ -7496,6 +7639,9 @@ function setRowType(row, type, { markdown } = {}) {
   const existing = getBlockById(row.dataset.blockId) ?? {};
   const previousType = row.dataset.blockType ?? existing.type ?? "MARKDOWN";
   const previousTextarea = getBlockTextarea(row);
+  const previousMarkdown = previousType === "TOGGLE"
+    ? getToggleMarkdownFromRow(row, existing.markdown ?? "")
+    : previousTextarea?.value ?? existing.markdown ?? "";
   const metadata = getBlockMetadata(existing);
 
   if (previousType === "TABLE") metadata.table = extractTableData(row);
@@ -7518,11 +7664,13 @@ function setRowType(row, type, { markdown } = {}) {
   if (type === "BOOKMARK" && !metadata.bookmark) metadata.bookmark = createDefaultBookmarkData();
   if (type === "AI_CHAT" && !metadata.aiChat) {
     metadata.aiChat = createDefaultAiChatData({
-      question: markdown ?? previousTextarea?.value ?? existing.markdown ?? ""
+      question: markdown ?? previousMarkdown
     });
   }
+  if (type === "TOGGLE" && metadata.toggleOpen === undefined) metadata.toggleOpen = true;
 
   row.dataset.blockType = type;
+  row.dataset.toggleOpen = String(type === "TOGGLE" ? metadata.toggleOpen !== false : true);
   row.dataset.codeLanguage = type === "CODE"
     ? normalizeCodeLanguage(metadata.codeLanguage)
     : "plaintext";
@@ -7537,7 +7685,7 @@ function setRowType(row, type, { markdown } = {}) {
   mountBlockEditor(row, {
     ...existing,
     type,
-    markdown: type === "TABLE" || type === "KANBAN" || type === "DATABASE" || type === "TIMETABLE" || type === "GANTT" || type === "BOOKMARK" || type === "AI_CHAT" ? "" : markdown ?? previousTextarea?.value ?? existing.markdown ?? "",
+    markdown: type === "TABLE" || type === "KANBAN" || type === "DATABASE" || type === "TIMETABLE" || type === "GANTT" || type === "BOOKMARK" || type === "AI_CHAT" ? "" : markdown ?? previousMarkdown,
     metadata
   });
 }
@@ -8463,6 +8611,7 @@ function requestAttachmentUpload(row, slashContext = null) {
 }
 
 function createInitialBlockMetadata(type) {
+  if (type === "TOGGLE") return { toggleOpen: true };
   if (type === "TABLE") return { table: createDefaultTableData() };
   if (type === "KANBAN") return { kanban: createDefaultKanbanData() };
   if (type === "DATABASE") return { database: createDefaultDatabaseData() };
@@ -8478,7 +8627,9 @@ async function applySlashCommand(row, type) {
   const previousType = row.dataset.blockType ?? getBlockById(row.dataset.blockId)?.type ?? "MARKDOWN";
   const previousTextarea = getBlockTextarea(row);
   const context = previousTextarea ? getSlashContext(previousTextarea) : null;
-  let markdown = previousTextarea?.value ?? "";
+  let markdown = previousType === "TOGGLE"
+    ? getToggleMarkdownFromRow(row, getBlockById(row.dataset.blockId)?.markdown ?? "")
+    : previousTextarea?.value ?? "";
 
   if (type === "ATTACHMENT") {
     closeSlashMenu();
@@ -8487,7 +8638,16 @@ async function applySlashCommand(row, type) {
   }
   if (!promoteBlockDraftConflict(row)) return;
 
-  if (context) markdown = `${markdown.slice(0, context.start)}${markdown.slice(context.end)}`;
+  if (context) {
+    const editedBody = `${previousTextarea.value.slice(0, context.start)}${previousTextarea.value.slice(context.end)}`;
+    if (previousType === "TOGGLE") {
+      previousTextarea.value = editedBody;
+      autoGrowTextarea(previousTextarea);
+      markdown = serializeToggleMarkdown(row.querySelector(".toggle-title-input")?.value ?? "", editedBody);
+    } else {
+      markdown = editedBody;
+    }
+  }
 
   if (!context && previousType === type) {
     closeSlashMenu();
@@ -8511,7 +8671,7 @@ async function applySlashCommand(row, type) {
   if (slashInsertAfterTypes.has(type) && markdown.trim() && !canReuseMarkdown) {
     // Structured blocks store their content in metadata, so converting this block would
     // discard any note text that remains before or after the slash-command line.
-    if (previousTextarea && previousTextarea.value !== markdown) {
+    if (previousType !== "TOGGLE" && previousTextarea && previousTextarea.value !== markdown) {
       previousTextarea.value = markdown;
       autoGrowTextarea(previousTextarea);
     }
@@ -8531,7 +8691,11 @@ async function applySlashCommand(row, type) {
   await saveBlockRow(row);
 
   const nextTextarea = getBlockTextarea(row);
-  if (nextTextarea) {
+  if (type === "TOGGLE") {
+    const titleInput = row.querySelector(".toggle-title-input");
+    titleInput?.focus();
+    titleInput?.select();
+  } else if (nextTextarea) {
     autoGrowTextarea(nextTextarea);
     nextTextarea.focus();
     const cursor = context ? Math.min(context.start, nextTextarea.value.length) : nextTextarea.value.length;
@@ -8874,8 +9038,12 @@ async function deleteEmptyBlock(row) {
 function focusPendingBlock() {
   if (isPageReadOnly() || !state.pendingFocusBlockId) return;
   const row = elements.blockList.querySelector(`[data-block-id="${CSS.escape(state.pendingFocusBlockId)}"]`);
+  const toggleTitle = row?.dataset.blockType === "TOGGLE" ? row.querySelector(".toggle-title-input") : null;
   const textarea = getBlockTextarea(row);
-  if (textarea) {
+  if (toggleTitle) {
+    toggleTitle.focus();
+    toggleTitle.select();
+  } else if (textarea) {
     textarea.focus();
     textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
   } else {
@@ -8989,6 +9157,20 @@ function clearPdfExportLayout() {
   document.documentElement.style.removeProperty("--pdf-export-scale");
 }
 
+function expandToggleDetailsForPdf() {
+  const snapshots = [...elements.pageView.querySelectorAll("details.rendered-toggle")].map((details) => [
+    details,
+    details.hasAttribute("open")
+  ]);
+  for (const [details] of snapshots) details.setAttribute("open", "");
+  return () => {
+    for (const [details, wasOpen] of snapshots) {
+      if (wasOpen) details.setAttribute("open", "");
+      else details.removeAttribute("open");
+    }
+  };
+}
+
 async function waitForPdfExportAssets() {
   const imagePromises = [...elements.pageView.querySelectorAll("img")].map((image) => {
     if (image.complete) return image.decode?.().catch(() => {}) ?? Promise.resolve();
@@ -9010,6 +9192,7 @@ async function exportCurrentPageToPdf() {
 
   const originalDocumentTitle = document.title;
   let restoreComputedStyles = () => {};
+  let restoreToggleDetails = () => {};
   elements.exportPdfButton.disabled = true;
   setStatus(t("status.preparingPdf"));
 
@@ -9022,6 +9205,7 @@ async function exportCurrentPageToPdf() {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     elements.blockList.querySelectorAll("textarea").forEach(autoGrowTextarea);
     hydrateMathExpressions(elements.pageView);
+    restoreToggleDetails = expandToggleDetailsForPdf();
     restoreComputedStyles = freezePdfExportComputedStyles();
 
     await waitForPdfExportAssets();
@@ -9041,6 +9225,7 @@ async function exportCurrentPageToPdf() {
     document.title = originalDocumentTitle;
     clearPdfExportLayout();
     restoreComputedStyles();
+    restoreToggleDetails();
     elements.exportPdfButton.disabled = false;
   }
 }
@@ -10936,10 +11121,8 @@ elements.blockList.addEventListener("beforeinput", (event) => {
   }
   const textarea = event.target.closest('textarea[name="markdown"]');
   if (!textarea || event.inputType !== "deleteContentBackward" || event.isComposing) return;
-  if (textarea.value.trim()) return;
-
   const row = getBlockRow(textarea);
-  if (!row || row.dataset.deleting === "true") return;
+  if (!row || row.dataset.deleting === "true" || !isBlockMarkdownEmpty(row, textarea)) return;
 
   event.preventDefault();
   deleteEmptyBlock(row).catch((error) => {
@@ -10950,6 +11133,13 @@ elements.blockList.addEventListener("beforeinput", (event) => {
 
 elements.blockList.addEventListener("input", (event) => {
   if (!requireWritablePage({ announce: false })) return;
+  const toggleTitle = event.target.closest(".toggle-title-input");
+  if (toggleTitle) {
+    const row = getBlockRow(toggleTitle);
+    if (row) scheduleBlockSave(row, { allowConflictPrompt: !event.isComposing });
+    return;
+  }
+
   const kanbanField = event.target.closest(
     ".kanban-title-input, .kanban-column-title, .kanban-card-title, .kanban-card-description, .kanban-card-tags, .kanban-card-emoji-input"
   );
@@ -11032,6 +11222,18 @@ elements.blockList.addEventListener("change", (event) => {
 
 elements.blockList.addEventListener("keydown", async (event) => {
   if (!requireWritablePage({ announce: false })) return;
+  const toggleTitle = event.target.closest(".toggle-title-input");
+  if (toggleTitle) {
+    const row = getBlockRow(toggleTitle);
+    if (!row) return;
+    if (event.key === "Enter" && !event.isComposing) {
+      event.preventDefault();
+      setToggleBlockOpen(row, true);
+      getBlockTextarea(row)?.focus();
+    }
+    return;
+  }
+
   const bookmarkInput = event.target.closest(".bookmark-url-input");
   if (bookmarkInput) {
     if (event.key === "Enter" && !event.isComposing) {
@@ -11097,7 +11299,7 @@ elements.blockList.addEventListener("keydown", async (event) => {
     }
   }
 
-  if (event.key === "Backspace" && !event.isComposing && !event.repeat && !textarea.value.trim()) {
+  if (event.key === "Backspace" && !event.isComposing && !event.repeat && isBlockMarkdownEmpty(row, textarea)) {
     event.preventDefault();
     try {
       await deleteEmptyBlock(row);
@@ -11122,6 +11324,15 @@ elements.blockList.addEventListener("keydown", async (event) => {
 
 elements.blockList.addEventListener("focusout", (event) => {
   if (!requireWritablePage({ announce: false })) return;
+  const toggleTitle = event.target.closest(".toggle-title-input");
+  if (toggleTitle) {
+    const row = getBlockRow(toggleTitle);
+    if (row && !row.contains(event.relatedTarget) && row.dataset.deleting !== "true") {
+      saveBlockRow(row, { quiet: true }).catch((error) => setStatus(error.message, true));
+    }
+    return;
+  }
+
   const kanbanField = event.target.closest(
     ".kanban-title-input, .kanban-column-title, .kanban-card-title, .kanban-card-description, .kanban-card-tags, .kanban-card-emoji-input"
   );
@@ -11156,7 +11367,9 @@ elements.blockList.addEventListener("focusout", (event) => {
 
 elements.blockList.addEventListener("click", async (event) => {
   const downloadButton = event.target.closest('button[data-action="download-attachment"]');
+  const renderedToggleSummary = event.target.closest(".rendered-toggle-summary");
   if (isPageReadOnly() && !downloadButton) {
+    if (renderedToggleSummary) return;
     if (event.target.closest("button, summary, input, textarea, select")) reportReadOnlyBlocked();
     return;
   }
@@ -11186,6 +11399,11 @@ elements.blockList.addEventListener("click", async (event) => {
       setStatus(t("status.attachmentDownloading", { name: getBlockAttachmentData(block).originalName }));
       await downloadAttachment(block);
       setStatus(t("status.attachmentDownloaded", { name: getBlockAttachmentData(block).originalName }));
+      return;
+    }
+
+    if (button.dataset.action === "toggle-block") {
+      setToggleBlockOpen(row, button.getAttribute("aria-expanded") !== "true");
       return;
     }
 
