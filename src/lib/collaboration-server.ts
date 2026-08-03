@@ -43,6 +43,11 @@ import {
   type CollaborationBootstrapAssessment,
   type CollaborationBootstrapMismatchSummary
 } from "./collaboration-bootstrap.js";
+import {
+  assessCollaborationConnectionAdmission,
+  assessCollaborationUpgradeAdmission,
+  assessCollaborationWriteAdmission
+} from "./collaboration-resource-limits.js";
 
 type CollaborationNetworkServer = HttpServer | HttpsServer;
 
@@ -97,6 +102,7 @@ type Room = {
   waitingForBootstrap: Set<string>;
   writeQueue: Promise<void>;
   pendingWrites: number;
+  pendingWriteBytes: number;
   bootstrapWritePending: boolean;
   document: Y.Doc;
 };
@@ -179,6 +185,13 @@ export class PageCollaborationHub {
   private readonly heartbeatTimer: NodeJS.Timeout;
   private readonly accessTimer: NodeJS.Timeout;
   private closed = false;
+  private accessRecheckRunning = false;
+  private activeConnectionCount = 0;
+  private readonly pageConnectionCounts = new Map<string, number>();
+  private readonly userConnectionCounts = new Map<string, number>();
+  private pendingUpgradeCount = 0;
+  private readonly pendingUpgradeUserCounts = new Map<string, number>();
+  private readonly upgradedSockets = new WeakSet<Socket>();
   private readonly upgradeHandler: (request: IncomingMessage, socket: Socket, head: Buffer) => void;
 
   constructor(server: CollaborationNetworkServer) {
@@ -186,7 +199,8 @@ export class PageCollaborationHub {
     this.upgradeHandler = (request, socket, head) => {
       void this.handleUpgrade(request, socket, head).catch((error) => {
         console.error("Collaboration WebSocket upgrade failed", error);
-        rejectWebSocketUpgrade(socket, error instanceof ApiError ? error.statusCode : 500, "Collaboration connection failed");
+        if (this.upgradedSockets.has(socket)) socket.destroy();
+        else rejectWebSocketUpgrade(socket, error instanceof ApiError ? error.statusCode : 500, "Collaboration connection failed");
       });
     };
     server.on("upgrade", this.upgradeHandler);
@@ -274,7 +288,59 @@ export class PageCollaborationHub {
     }
   }
 
+  private reserveUpgrade(userId: string, pageId: string) {
+    const connectionAdmission = assessCollaborationConnectionAdmission({
+      activeConnections: this.activeConnectionCount,
+      pageConnections: this.pageConnectionCounts.get(pageId) ?? 0,
+      userConnections: this.userConnectionCounts.get(userId) ?? 0
+    });
+    const upgradeAdmission = assessCollaborationUpgradeAdmission({
+      pendingUpgrades: this.pendingUpgradeCount,
+      pendingUserUpgrades: this.pendingUpgradeUserCounts.get(userId) ?? 0
+    });
+    if (!connectionAdmission.accepted || !upgradeAdmission.accepted) return false;
+
+    this.pendingUpgradeCount += 1;
+    this.pendingUpgradeUserCounts.set(
+      userId,
+      (this.pendingUpgradeUserCounts.get(userId) ?? 0) + 1
+    );
+    return true;
+  }
+
+  private releaseUpgrade(userId: string) {
+    this.pendingUpgradeCount = Math.max(0, this.pendingUpgradeCount - 1);
+    const next = Math.max(0, (this.pendingUpgradeUserCounts.get(userId) ?? 0) - 1);
+    if (next) this.pendingUpgradeUserCounts.set(userId, next);
+    else this.pendingUpgradeUserCounts.delete(userId);
+  }
+
+  private trackClient(pageId: string, userId: string) {
+    this.activeConnectionCount += 1;
+    this.pageConnectionCounts.set(pageId, (this.pageConnectionCounts.get(pageId) ?? 0) + 1);
+    this.userConnectionCounts.set(userId, (this.userConnectionCounts.get(userId) ?? 0) + 1);
+  }
+
+  private untrackClient(pageId: string, userId: string) {
+    this.activeConnectionCount = Math.max(0, this.activeConnectionCount - 1);
+    const nextPageCount = Math.max(0, (this.pageConnectionCounts.get(pageId) ?? 0) - 1);
+    if (nextPageCount) this.pageConnectionCounts.set(pageId, nextPageCount);
+    else this.pageConnectionCounts.delete(pageId);
+    const nextUserCount = Math.max(0, (this.userConnectionCounts.get(userId) ?? 0) - 1);
+    if (nextUserCount) this.userConnectionCounts.set(userId, nextUserCount);
+    else this.userConnectionCounts.delete(userId);
+  }
+
+  private rejectConnectionLimit(socket: Socket) {
+    rejectWebSocketUpgrade(socket, 429, "Collaboration connection limit exceeded");
+  }
+
   private async handleUpgrade(request: IncomingMessage, socket: Socket, head: Buffer) {
+    if (this.closed) {
+      rejectWebSocketUpgrade(socket, 503, "Collaboration server is shutting down");
+      return;
+    }
+
     if (
       env.HTTPS_MODE === "proxy" &&
       !isHttpsRequestFromTrustedProxy(request, env.TRUST_PROXY_HOPS, env.TRUST_PROXY_ADDRESSES)
@@ -306,123 +372,151 @@ export class PageCollaborationHub {
       rejectWebSocketUpgrade(socket, 401, "The collaboration ticket does not match this page");
       return;
     }
-
-    const access = await getPageAccess(pageId, payload.sub);
-    if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
-      rejectWebSocketUpgrade(socket, 403, "Collaboration is not enabled for this page");
-      return;
-    }
-    const collaborationState = await getCollaborationState(pageId);
-    assertCollaborationDocumentEpoch(collaborationState, payload.documentEpoch);
-    const user = await db.queryOne<CollaborationProfile & { auth_version?: number }>(
-      "SELECT id, username, name, avatar_data, auth_version FROM users WHERE id = ?",
-      [payload.sub]
-    );
-    if (!user) {
-      rejectWebSocketUpgrade(socket, 401, "User no longer exists");
-      return;
-    }
-    const currentAuthVersion = Number(user.auth_version ?? 1);
-    if (!Number.isSafeInteger(currentAuthVersion) || currentAuthVersion < 1 || currentAuthVersion !== payload.authVersion) {
-      rejectWebSocketUpgrade(socket, 401, "Authentication session was revoked");
+    if (!this.reserveUpgrade(payload.sub, pageId)) {
+      this.rejectConnectionLimit(socket);
       return;
     }
 
-    const connection = acceptWebSocketUpgrade(request, socket, {
-      selectedProtocol: collaborationWebSocketProtocol,
-      maxMessageBytes: maxCollaborationUpdateBytes + 64 * 1024
-    });
-    if (!connection) return;
-
-    const room = this.getOrCreateRoom(pageId, payload.documentEpoch);
-    const client: ClientContext = {
-      id: createId("con"),
-      socket: connection,
-      user,
-      authVersion: payload.authVersion,
-      documentEpoch: payload.documentEpoch,
-      synced: false,
-      awareness: { blockId: null, field: null, selection: null },
-      rateWindowStartedAt: Date.now(),
-      frameCount: 0,
-      byteCount: 0
-    };
-    room.clients.set(client.id, client);
-    connection.onMessage((message) => this.handleMessage(room, client, message));
-    connection.onClose(() => this.handleClientClose(room, client));
-    connection.start(head);
-
-    await room.loadPromise;
-    if (
-      room.loadFailed
-      || room.invalidated
-      || this.rooms.get(pageId) !== room
-      || !connection.isOpen
-      || !room.clients.has(client.id)
-    ) return;
-
+    let upgradeReserved = true;
     try {
-      const currentUser = await db.queryOne<{ auth_version?: number }>(
-        "SELECT auth_version FROM users WHERE id = ?",
+      const access = await getPageAccess(pageId, payload.sub);
+      if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
+        rejectWebSocketUpgrade(socket, 403, "Collaboration is not enabled for this page");
+        return;
+      }
+      const collaborationState = await getCollaborationState(pageId);
+      assertCollaborationDocumentEpoch(collaborationState, payload.documentEpoch);
+      const user = await db.queryOne<CollaborationProfile & { auth_version?: number }>(
+        "SELECT id, username, name, avatar_data, auth_version FROM users WHERE id = ?",
         [payload.sub]
       );
-      if (!currentUser || Number(currentUser.auth_version ?? 1) !== payload.authVersion) {
-        connection.close(4003, "Authentication session was revoked");
+      if (!user) {
+        rejectWebSocketUpgrade(socket, 401, "User no longer exists");
         return;
       }
-      const currentAccess = await getPageAccess(pageId, payload.sub);
-      if (currentAccess.page.is_collection || currentAccess.page.is_archived || currentAccess.shareCount < 1) {
-        connection.close(4010, "Collaboration is no longer available");
+      const currentAuthVersion = Number(user.auth_version ?? 1);
+      if (!Number.isSafeInteger(currentAuthVersion) || currentAuthVersion < 1 || currentAuthVersion !== payload.authVersion) {
+        rejectWebSocketUpgrade(socket, 401, "Authentication session was revoked");
         return;
       }
-      const currentState = await getCollaborationState(pageId);
-      assertCollaborationDocumentEpoch(currentState, payload.documentEpoch);
-    } catch (error) {
-      if (error instanceof ApiError && error.code === "COLLABORATION_LINEAGE_CHANGED") {
-        connection.close(4011, "The collaboration document was replaced");
-        return;
-      }
-      if (error instanceof ApiError && error.statusCode === 404) {
-        connection.close(4003, "Page access was removed");
-        return;
-      }
-      throw error;
-    }
-    if (
-      room.invalidated
-      || this.rooms.get(pageId) !== room
-      || !connection.isOpen
-      || !room.clients.has(client.id)
-    ) return;
 
-    for (const row of room.history) connection.sendBinary(updateEnvelope(toSafeUpdateId(row.id), Buffer.from(row.update_data)));
-    connection.sendJson({
-      type: "presence",
-      clients: [...room.clients.values()].filter((item) => item.id !== client.id).map(publicPresence)
-    });
+      if (this.closed) {
+        rejectWebSocketUpgrade(socket, 503, "Collaboration server is shutting down");
+        return;
+      }
 
-    if (room.history.length || room.maxUpdateId > 0) {
-      client.synced = true;
-      connection.sendJson({
-        type: "sync-complete",
-        connectionId: client.id,
-        bootstrap: false,
-        lastUpdateId: room.maxUpdateId
+      const connectionAdmission = assessCollaborationConnectionAdmission({
+        activeConnections: this.activeConnectionCount,
+        pageConnections: this.pageConnectionCounts.get(pageId) ?? 0,
+        userConnections: this.userConnectionCounts.get(payload.sub) ?? 0
       });
-    } else if (!room.bootstrapLeaderId) {
-      room.bootstrapLeaderId = client.id;
-      client.synced = true;
-      connection.sendJson({
-        type: "sync-complete",
-        connectionId: client.id,
-        bootstrap: true,
-        lastUpdateId: 0
+      if (!connectionAdmission.accepted) {
+        this.rejectConnectionLimit(socket);
+        return;
+      }
+
+      const connection = acceptWebSocketUpgrade(request, socket, {
+        selectedProtocol: collaborationWebSocketProtocol,
+        maxMessageBytes: maxCollaborationUpdateBytes + 64 * 1024
       });
-    } else {
-      room.waitingForBootstrap.add(client.id);
-      connection.sendJson({ type: "bootstrap-wait", connectionId: client.id });
+      if (!connection) return;
+      this.upgradedSockets.add(socket);
+
+      const room = this.getOrCreateRoom(pageId, payload.documentEpoch);
+      const client: ClientContext = {
+        id: createId("con"),
+        socket: connection,
+        user,
+        authVersion: payload.authVersion,
+        documentEpoch: payload.documentEpoch,
+        synced: false,
+        awareness: { blockId: null, field: null, selection: null },
+        rateWindowStartedAt: Date.now(),
+        frameCount: 0,
+        byteCount: 0
+      };
+      room.clients.set(client.id, client);
+      this.trackClient(room.pageId, client.user.id);
+      connection.onMessage((message) => this.handleMessage(room, client, message));
+      connection.onClose(() => this.handleClientClose(room, client));
+      connection.start(head);
+      this.releaseUpgrade(payload.sub);
+      upgradeReserved = false;
+
+      await room.loadPromise;
+      if (
+        room.loadFailed
+        || room.invalidated
+        || this.rooms.get(pageId) !== room
+        || !connection.isOpen
+        || !room.clients.has(client.id)
+      ) return;
+
+      try {
+        const currentUser = await db.queryOne<{ auth_version?: number }>(
+          "SELECT auth_version FROM users WHERE id = ?",
+          [payload.sub]
+        );
+        if (!currentUser || Number(currentUser.auth_version ?? 1) !== payload.authVersion) {
+          connection.close(4003, "Authentication session was revoked");
+          return;
+        }
+        const currentAccess = await getPageAccess(pageId, payload.sub);
+        if (currentAccess.page.is_collection || currentAccess.page.is_archived || currentAccess.shareCount < 1) {
+          connection.close(4010, "Collaboration is no longer available");
+          return;
+        }
+        const currentState = await getCollaborationState(pageId);
+        assertCollaborationDocumentEpoch(currentState, payload.documentEpoch);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === "COLLABORATION_LINEAGE_CHANGED") {
+          connection.close(4011, "The collaboration document was replaced");
+          return;
+        }
+        if (error instanceof ApiError && error.statusCode === 404) {
+          connection.close(4003, "Page access was removed");
+          return;
+        }
+        throw error;
+      }
+      if (
+        room.invalidated
+        || this.rooms.get(pageId) !== room
+        || !connection.isOpen
+        || !room.clients.has(client.id)
+      ) return;
+
+      for (const row of room.history) connection.sendBinary(updateEnvelope(toSafeUpdateId(row.id), Buffer.from(row.update_data)));
+      connection.sendJson({
+        type: "presence",
+        clients: [...room.clients.values()].filter((item) => item.id !== client.id).map(publicPresence)
+      });
+
+      if (room.history.length || room.maxUpdateId > 0) {
+        client.synced = true;
+        connection.sendJson({
+          type: "sync-complete",
+          connectionId: client.id,
+          bootstrap: false,
+          lastUpdateId: room.maxUpdateId
+        });
+      } else if (!room.bootstrapLeaderId) {
+        room.bootstrapLeaderId = client.id;
+        client.synced = true;
+        connection.sendJson({
+          type: "sync-complete",
+          connectionId: client.id,
+          bootstrap: true,
+          lastUpdateId: 0
+        });
+      } else {
+        room.waitingForBootstrap.add(client.id);
+        connection.sendJson({ type: "bootstrap-wait", connectionId: client.id });
+      }
+      this.broadcastPresenceUpdate(room, client);
+    } finally {
+      if (upgradeReserved) this.releaseUpgrade(payload.sub);
     }
-    this.broadcastPresenceUpdate(room, client);
   }
 
   private getOrCreateRoom(pageId: string, documentEpoch: string) {
@@ -449,6 +543,7 @@ export class PageCollaborationHub {
       waitingForBootstrap: new Set<string>(),
       writeQueue: Promise.resolve(),
       pendingWrites: 0,
+      pendingWriteBytes: 0,
       bootstrapWritePending: false,
       document: createValidatedYjsDocument([], maxCollaborationDocumentBytes)
     });
@@ -531,10 +626,17 @@ export class PageCollaborationHub {
         client.socket.close(1009, "Yjs update is too large");
         return;
       }
+      const write = this.enqueueRoomWrite(
+        room,
+        client,
+        update.length,
+        async () => this.persistUpdate(room, client, Buffer.from(update), false, null)
+      );
+      if (!write) return;
       if (room.bootstrapLeaderId === client.id && room.maxUpdateId === 0) {
         room.bootstrapWritePending = true;
       }
-      this.enqueueRoomWrite(room, client, async () => this.persistUpdate(room, client, Buffer.from(update), false, null));
+      await write;
       return;
     }
     if (kind === 2) {
@@ -548,10 +650,17 @@ export class PageCollaborationHub {
         client.socket.close(1009, "Yjs snapshot is too large");
         return;
       }
+      const write = this.enqueueRoomWrite(
+        room,
+        client,
+        update.length,
+        async () => this.persistUpdate(room, client, Buffer.from(update), true, baseUpdateId)
+      );
+      if (!write) return;
       if (room.bootstrapLeaderId === client.id && room.maxUpdateId === 0) {
         room.bootstrapWritePending = true;
       }
-      this.enqueueRoomWrite(room, client, async () => this.persistUpdate(room, client, Buffer.from(update), true, baseUpdateId));
+      await write;
       return;
     }
     client.socket.close(1003, "Unknown collaboration update type");
@@ -572,9 +681,25 @@ export class PageCollaborationHub {
     this.broadcastPresenceUpdate(room, client);
   }
 
-  private enqueueRoomWrite(room: Room, client: ClientContext, action: () => Promise<void>) {
+  private enqueueRoomWrite(
+    room: Room,
+    client: ClientContext,
+    writeBytes: number,
+    action: () => Promise<void>
+  ) {
+    const admission = assessCollaborationWriteAdmission({
+      pendingWrites: room.pendingWrites,
+      pendingWriteBytes: room.pendingWriteBytes,
+      nextWriteBytes: writeBytes
+    });
+    if (!admission.accepted) {
+      client.socket.close(1008, "Collaboration write backlog exceeded");
+      return null;
+    }
+
     room.pendingWrites += 1;
-    room.writeQueue = room.writeQueue.then(async () => {
+    room.pendingWriteBytes += writeBytes;
+    const queuedWrite = room.writeQueue.then(async () => {
       try {
         await action();
       } catch (error) {
@@ -601,6 +726,7 @@ export class PageCollaborationHub {
         }
       } finally {
         room.pendingWrites = Math.max(0, room.pendingWrites - 1);
+        room.pendingWriteBytes = Math.max(0, room.pendingWriteBytes - writeBytes);
         if (
           room.bootstrapWritePending
           && room.bootstrapLeaderId === client.id
@@ -614,6 +740,8 @@ export class PageCollaborationHub {
         this.removeRoomWhenIdle(room);
       }
     });
+    room.writeQueue = queuedWrite;
+    return queuedWrite;
   }
 
   private async persistUpdate(
@@ -853,6 +981,7 @@ export class PageCollaborationHub {
 
   private handleClientClose(room: Room, client: ClientContext) {
     if (!room.clients.delete(client.id)) return;
+    this.untrackClient(room.pageId, client.user.id);
     room.waitingForBootstrap.delete(client.id);
     this.broadcastPresenceUpdate(room, client, true);
 
@@ -879,39 +1008,45 @@ export class PageCollaborationHub {
   }
 
   private async recheckAccess() {
-    const checks: Promise<void>[] = [];
-    for (const room of this.rooms.values()) {
-      for (const client of room.clients.values()) {
-        checks.push((async () => {
-          try {
-            const currentUser = await db.queryOne<{ auth_version?: number }>(
-              "SELECT auth_version FROM users WHERE id = ?",
-              [client.user.id]
-            );
-            if (!currentUser || Number(currentUser.auth_version ?? 1) !== client.authVersion) {
-              client.socket.close(4003, "Authentication session was revoked");
-              return;
+    if (this.closed || this.accessRecheckRunning) return;
+    this.accessRecheckRunning = true;
+    try {
+      const checks: Promise<void>[] = [];
+      for (const room of this.rooms.values()) {
+        for (const client of room.clients.values()) {
+          checks.push((async () => {
+            try {
+              const currentUser = await db.queryOne<{ auth_version?: number }>(
+                "SELECT auth_version FROM users WHERE id = ?",
+                [client.user.id]
+              );
+              if (!currentUser || Number(currentUser.auth_version ?? 1) !== client.authVersion) {
+                client.socket.close(4003, "Authentication session was revoked");
+                return;
+              }
+              const access = await getPageAccess(room.pageId, client.user.id);
+              if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
+                client.socket.close(4010, "Collaboration is no longer available");
+                return;
+              }
+              const collaborationState = await getCollaborationState(room.pageId);
+              if (!collaborationState || collaborationState.document_epoch !== client.documentEpoch) {
+                this.invalidateRoomForLineageChange(room);
+              }
+            } catch (error) {
+              if (error instanceof ApiError && error.statusCode === 404) {
+                client.socket.close(4003, "Page access was removed");
+                return;
+              }
+              console.error("Failed to recheck collaboration access", { pageId: room.pageId, error });
             }
-            const access = await getPageAccess(room.pageId, client.user.id);
-            if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
-              client.socket.close(4010, "Collaboration is no longer available");
-              return;
-            }
-            const collaborationState = await getCollaborationState(room.pageId);
-            if (!collaborationState || collaborationState.document_epoch !== client.documentEpoch) {
-              this.invalidateRoomForLineageChange(room);
-            }
-          } catch (error) {
-            if (error instanceof ApiError && error.statusCode === 404) {
-              client.socket.close(4003, "Page access was removed");
-              return;
-            }
-            console.error("Failed to recheck collaboration access", { pageId: room.pageId, error });
-          }
-        })());
+          })());
+        }
       }
+      await Promise.allSettled(checks);
+    } finally {
+      this.accessRecheckRunning = false;
     }
-    await Promise.allSettled(checks);
   }
 }
 

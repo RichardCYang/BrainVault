@@ -80,12 +80,42 @@ assert.ok(!mfaRoutesSource.includes("finishLogin"), "MFA completion must not iss
 assert.ok((mfaRoutesSource.match(/requireSameOriginBrowserRequest/g) ?? []).length >= 4, "All unauthenticated MFA login routes must enforce browser-origin checks");
 assert.ok((mfaRoutesSource.match(/requireJsonRequestBody/g) ?? []).length >= 4, "All unauthenticated MFA login routes must reject simple form bodies");
 
+contains("src/lib/websocket.ts", [
+  "const defaultMaxQueuedMessages = 64",
+  "WebSocket message backlog exceeded",
+  "this.socket.writableLength",
+  "WebSocket output backlog exceeded"
+]);
+contains("src/lib/request-deadline.ts", [
+  "timer.unref()",
+  'request.once("close", () => clearTimeout(timer))'
+]);
+contains("src/lib/bookmark.ts", [
+  "enforceRequestDeadline(request, timeoutMs, createBookmarkFetchTimeoutError)",
+  "enforceAbsoluteRequestDeadline(request, remainingTime)"
+]);
+contains("src/lib/collaboration-resource-limits.ts", [
+  "connectionsPerServer: 512",
+  "connectionsPerPage: 64",
+  "connectionsPerUser: 8",
+  "pendingUpgradesPerServer: 64",
+  "pendingUpgradesPerUser: 4",
+  "pendingWritesPerRoom: 64",
+  "pendingWriteBytesPerRoom: 32 * 1024 * 1024"
+]);
 contains("src/lib/collaboration-server.ts", [
   "currentAuthVersion !== payload.authVersion",
   "Number(currentUser.auth_version ?? 1) !== client.authVersion",
   "disconnectUserEverywhere(userId",
   "parseExactHttpOrigin(originHeader)",
-  "explicitOrigins.has(parsedOrigin)"
+  "explicitOrigins.has(parsedOrigin)",
+  "this.pageConnectionCounts.get(pageId) ?? 0",
+  "this.upgradedSockets.add(socket)",
+  "this.trackClient(room.pageId, client.user.id)",
+  "pendingWriteBytes",
+  "await write",
+  "Collaboration write backlog exceeded",
+  "this.accessRecheckRunning"
 ]);
 contains("migrations/024_auth_session_revocation.sql", [
   /ADD COLUMN IF NOT EXISTS auth_version BIGINT UNSIGNED NOT NULL DEFAULT 1/i
@@ -280,4 +310,4 @@ assert.equal(acceptsSession(1, 1), true, "A current session must be accepted bef
 assert.equal(acceptsSession(1, 2), false, "An old session must be rejected after credential rotation");
 assert.equal(acceptsSession(2, 2), true, "The replacement session must remain usable");
 
-console.log("[security-hardening] PASS: login CSRF gates, exact origins, atomic MFA attempts, revocation-safe MFA completion, locked TOTP verification, account backoff, strict session defaults, cookie-only browser login, logout revocation, bookmark limits, attachment screening, collaboration write gates, cache controls, database accounts, CSP, error hygiene, JWT separation, multipart limits, and SSRF ranges");
+console.log("[security-hardening] PASS: login CSRF gates, exact origins, atomic MFA attempts, revocation-safe MFA completion, locked TOTP verification, account backoff, strict session defaults, cookie-only browser login, logout revocation, absolute bookmark deadlines, attachment screening, bounded WebSocket and collaboration queues, collaboration connection limits, cache controls, database accounts, CSP, error hygiene, JWT separation, multipart limits, and SSRF ranges");

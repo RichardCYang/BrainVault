@@ -4,6 +4,9 @@ import type { Socket } from "node:net";
 
 const websocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const fatalUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const defaultMaxQueuedMessages = 64;
+const maxQueuedExtraBytes = 1024 * 1024;
+const maxFrameHeaderBytes = 10;
 
 export type WebSocketMessage =
   | { type: "text"; text: string }
@@ -57,8 +60,13 @@ export class WebSocketConnection {
   private fragmentBytes = 0;
   private messageHandler: MessageHandler | null = null;
   private closeHandler: CloseHandler | null = null;
-  private pendingMessages: WebSocketMessage[] = [];
-  private messageQueue: Promise<void> = Promise.resolve();
+  private messageQueue: WebSocketMessage[] = [];
+  private queuedMessageBytes = 0;
+  private activeMessageBytes = 0;
+  private processingMessages = false;
+  private acceptingMessages = true;
+  private readonly maxQueuedMessageBytes: number;
+  private readonly maxBufferedOutputBytes: number;
   private started = false;
   private closeSent = false;
   private closeNotified = false;
@@ -71,6 +79,14 @@ export class WebSocketConnection {
   constructor(socket: Socket, maxMessageBytes: number) {
     this.socket = socket;
     this.maxMessageBytes = maxMessageBytes;
+    this.maxQueuedMessageBytes = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      maxMessageBytes + Math.min(maxMessageBytes, maxQueuedExtraBytes)
+    );
+    this.maxBufferedOutputBytes = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      this.maxQueuedMessageBytes + maxFrameHeaderBytes
+    );
   }
 
   get isOpen() {
@@ -79,10 +95,7 @@ export class WebSocketConnection {
 
   onMessage(handler: MessageHandler) {
     this.messageHandler = handler;
-    if (this.pendingMessages.length) {
-      const pending = this.pendingMessages.splice(0);
-      for (const message of pending) this.enqueueMessage(message);
-    }
+    void this.drainMessages();
   }
 
   onClose(handler: CloseHandler) {
@@ -97,19 +110,22 @@ export class WebSocketConnection {
     this.socket.on("end", () => this.finishClose(this.receivedCloseCode, this.receivedCloseReason));
     this.socket.on("close", () => this.finishClose(this.receivedCloseCode, this.receivedCloseReason));
     if (head.length) this.consume(head);
-    this.socket.resume();
+    if (this.acceptingMessages && this.isOpen) this.socket.resume();
   }
 
   sendText(value: string) {
+    if (!this.isOpen || this.closeSent) return;
     this.writeFrame(0x1, Buffer.from(value, "utf8"));
   }
 
   sendJson(value: unknown) {
+    if (!this.isOpen || this.closeSent) return;
     this.sendText(JSON.stringify(value));
   }
 
   sendBinary(value: Uint8Array | Buffer) {
-    this.writeFrame(0x2, Buffer.from(value));
+    if (!this.isOpen || this.closeSent) return;
+    this.writeFrame(0x2, Buffer.isBuffer(value) ? value : Buffer.from(value));
   }
 
   ping(value: Uint8Array | Buffer = Buffer.alloc(0)) {
@@ -120,6 +136,7 @@ export class WebSocketConnection {
 
   close(code = 1000, reason = "") {
     if (this.closeSent || !this.isOpen) return;
+    this.stopAcceptingMessages();
     const safeCode = isValidCloseCode(code) ? code : 1000;
     const safeReason = truncateCloseReason(reason);
     const payload = Buffer.allocUnsafe(2 + Buffer.byteLength(safeReason, "utf8"));
@@ -133,6 +150,7 @@ export class WebSocketConnection {
 
   terminate() {
     if (!this.open) return;
+    this.stopAcceptingMessages();
     this.open = false;
     this.socket.destroy();
     this.finishClose(this.receivedCloseCode, this.receivedCloseReason);
@@ -140,6 +158,16 @@ export class WebSocketConnection {
 
   private writeFrame(opcode: number, payload: Buffer, allowAfterClose = false) {
     if (!this.isOpen || (this.closeSent && !allowAfterClose && opcode !== 0x8)) return;
+    const headerBytes = payload.length < 126 ? 2 : payload.length <= 0xffff ? 4 : 10;
+    const frameBytes = headerBytes + payload.length;
+    const writableLength = Number(this.socket.writableLength);
+    const bufferedBytes = Number.isFinite(writableLength) && writableLength > 0 ? writableLength : 0;
+    if (frameBytes > this.maxBufferedOutputBytes - bufferedBytes) {
+      this.receivedCloseCode = 1008;
+      this.receivedCloseReason = "WebSocket output backlog exceeded";
+      this.terminate();
+      return;
+    }
     this.socket.write(encodeFrame(opcode, payload));
   }
 
@@ -150,14 +178,14 @@ export class WebSocketConnection {
   }
 
   private consume(chunk: Buffer) {
-    if (!this.isOpen || !chunk.length) return;
+    if (!this.isOpen || !this.acceptingMessages || !chunk.length) return;
     if (this.readBuffer.length + chunk.length > this.maxMessageBytes + 64 * 1024) {
       this.protocolError("WebSocket message is too large", 1009);
       return;
     }
     this.readBuffer = this.readBuffer.length ? Buffer.concat([this.readBuffer, chunk]) : chunk;
 
-    while (this.readBuffer.length >= 2 && this.isOpen) {
+    while (this.readBuffer.length >= 2 && this.isOpen && this.acceptingMessages) {
       const first = this.readBuffer[0];
       const second = this.readBuffer[1];
       const fin = Boolean(first & 0x80);
@@ -269,22 +297,85 @@ export class WebSocketConnection {
       message = { type: "binary", data: payload };
     }
 
-    if (!this.messageHandler) {
-      this.pendingMessages.push(message);
-      return;
-    }
     this.enqueueMessage(message);
   }
 
+  private messageByteLength(message: WebSocketMessage) {
+    return message.type === "text" ? Buffer.byteLength(message.text, "utf8") : message.data.length;
+  }
+
   private enqueueMessage(message: WebSocketMessage) {
-    this.messageQueue = this.messageQueue
-      .then(async () => {
-        if (this.isOpen) await this.messageHandler?.(message);
-      })
-      .catch((error) => {
-        console.error("WebSocket message handler failed", error);
-        this.close(1011, "WebSocket message handling failed");
-      });
+    if (!this.acceptingMessages || !this.isOpen) return;
+    const messageBytes = this.messageByteLength(message);
+    const backlogCount = this.messageQueue.length + (this.processingMessages ? 1 : 0);
+    const backlogBytes = this.queuedMessageBytes + this.activeMessageBytes;
+    if (
+      backlogCount >= defaultMaxQueuedMessages ||
+      messageBytes > this.maxQueuedMessageBytes - backlogBytes
+    ) {
+      this.rejectMessageBacklog();
+      return;
+    }
+
+    this.messageQueue.push(message);
+    this.queuedMessageBytes += messageBytes;
+    void this.drainMessages();
+  }
+
+  private async drainMessages() {
+    if (
+      this.processingMessages ||
+      !this.messageHandler ||
+      !this.acceptingMessages ||
+      !this.isOpen
+    ) return;
+
+    this.processingMessages = true;
+    try {
+      while (
+        this.acceptingMessages &&
+        this.isOpen &&
+        this.messageHandler &&
+        this.messageQueue.length
+      ) {
+        const message = this.messageQueue.shift()!;
+        const messageBytes = this.messageByteLength(message);
+        this.queuedMessageBytes -= messageBytes;
+        this.activeMessageBytes = messageBytes;
+        await this.messageHandler(message);
+        this.activeMessageBytes = 0;
+      }
+    } catch (error) {
+      console.error("WebSocket message handler failed", error);
+      this.close(1011, "WebSocket message handling failed");
+    } finally {
+      this.activeMessageBytes = 0;
+      this.processingMessages = false;
+      if (
+        this.acceptingMessages &&
+        this.isOpen &&
+        this.messageHandler &&
+        this.messageQueue.length
+      ) void this.drainMessages();
+    }
+  }
+
+  private rejectMessageBacklog() {
+    if (!this.acceptingMessages) return;
+    this.receivedCloseCode = 1008;
+    this.receivedCloseReason = "WebSocket message backlog exceeded";
+    this.close(1008, this.receivedCloseReason);
+  }
+
+  private stopAcceptingMessages() {
+    this.acceptingMessages = false;
+    this.messageQueue = [];
+    this.queuedMessageBytes = 0;
+    this.readBuffer = Buffer.alloc(0);
+    this.fragmentOpcode = null;
+    this.fragmentParts = [];
+    this.fragmentBytes = 0;
+    this.socket.pause();
   }
 
   private handleCloseFrame(payload: Buffer) {
@@ -310,6 +401,7 @@ export class WebSocketConnection {
 
     this.receivedCloseCode = code;
     this.receivedCloseReason = reason;
+    this.stopAcceptingMessages();
     if (!this.closeSent) {
       this.closeSent = true;
       this.writeFrame(0x8, payload, true);
@@ -320,6 +412,7 @@ export class WebSocketConnection {
   private finishClose(code: number, reason: string) {
     if (this.closeNotified) return;
     this.closeNotified = true;
+    this.stopAcceptingMessages();
     this.open = false;
     this.closeHandler?.(code, reason);
   }
@@ -345,7 +438,13 @@ export function rejectWebSocketUpgrade(socket: Socket, statusCode: number, messa
         ? "Not Found"
         : statusCode === 426
           ? "Upgrade Required"
-          : "Bad Request";
+          : statusCode === 429
+            ? "Too Many Requests"
+            : statusCode === 500
+              ? "Internal Server Error"
+              : statusCode === 503
+                ? "Service Unavailable"
+                : "Bad Request";
   socket.end(
     `HTTP/1.1 ${statusCode} ${statusText}\r\n` +
       "Connection: close\r\n" +

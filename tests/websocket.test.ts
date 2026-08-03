@@ -10,6 +10,7 @@ class FakeSocket extends EventEmitter {
   destroyed = false;
   writes: Buffer[] = [];
   paused = false;
+  writableLength = 0;
 
   write(value: string | Uint8Array) {
     this.writes.push(Buffer.isBuffer(value) ? Buffer.from(value) : Buffer.from(value));
@@ -111,5 +112,49 @@ describe("dependency-free RFC 6455 transport", () => {
     expect(close.payload.readUInt16BE(0)).toBe(1002);
     connection.terminate();
     invalid.terminate();
+  });
+
+  it("terminates a slow consumer before socket output buffering can grow without bound", () => {
+    const socket = new FakeSocket();
+    const connection = new WebSocketConnection(socket as never, 1024);
+    socket.writableLength = 1_900;
+
+    connection.sendBinary(Buffer.alloc(200));
+
+    expect(socket.destroyed).toBe(true);
+    expect(connection.isOpen).toBe(false);
+  });
+
+  it("bounds the async message backlog before application handlers can be overwhelmed", async () => {
+    const socket = new FakeSocket();
+    const connection = new WebSocketConnection(socket as never, 1024);
+    let releaseHandler!: () => void;
+    const handlerBlocked = new Promise<void>((resolve) => {
+      releaseHandler = resolve;
+    });
+    let handledMessages = 0;
+
+    connection.onMessage(async () => {
+      handledMessages += 1;
+      await handlerBlocked;
+    });
+    connection.start();
+
+    for (let index = 0; index < 100; index += 1) {
+      socket.emit("data", clientFrame(0x2, Buffer.from([index])));
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const close = serverFrame(socket.writes.at(-1)!);
+    expect(close.opcode).toBe(0x8);
+    expect(close.payload.readUInt16BE(0)).toBe(1008);
+    expect(close.payload.subarray(2).toString("utf8")).toBe(
+      "WebSocket message backlog exceeded"
+    );
+    expect(socket.paused).toBe(true);
+    expect(handledMessages).toBe(1);
+
+    releaseHandler();
+    connection.terminate();
   });
 });

@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
+import { describe, expect, it, vi } from "vitest";
 import {
   createFallbackBookmarkPreview,
   createPinnedLookup,
+  enforceAbsoluteRequestDeadline,
   getBookmarkData,
   isPrivateAddress,
   parseBookmarkPreview,
@@ -183,5 +185,56 @@ describe("bookmark network address selection", () => {
       faviconUrl: "https://example.com/favicon.ico",
       siteName: "example.com"
     });
+  });
+});
+
+
+describe("bookmark fetch deadline enforcement", () => {
+  it("destroys a request at the absolute deadline even when socket activity would continue", async () => {
+    vi.useFakeTimers();
+    try {
+      class FakeRequest extends EventEmitter {
+        destroyedWith: unknown = null;
+
+        destroy(error?: Error) {
+          this.destroyedWith = error;
+          return this;
+        }
+      }
+
+      const request = new FakeRequest();
+      enforceAbsoluteRequestDeadline(request, 1_000);
+      await vi.advanceTimersByTimeAsync(999);
+      expect(request.destroyedWith).toBeNull();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(request.destroyedWith).toMatchObject({
+        statusCode: 504,
+        code: "BOOKMARK_FETCH_TIMEOUT"
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels the absolute deadline after the request closes", async () => {
+    vi.useFakeTimers();
+    try {
+      class FakeRequest extends EventEmitter {
+        destroyedWith: unknown = null;
+
+        destroy(error?: Error) {
+          this.destroyedWith = error;
+          return this;
+        }
+      }
+
+      const request = new FakeRequest();
+      enforceAbsoluteRequestDeadline(request, 1_000);
+      request.emit("close");
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(request.destroyedWith).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

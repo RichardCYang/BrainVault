@@ -10,6 +10,10 @@ import {
 export { isPrivateAddress, prioritizeResolvedAddresses, type ResolvedAddress } from "./network-address.js";
 import { env } from "../config/env.js";
 import { ApiError } from "./http.js";
+import {
+  enforceAbsoluteRequestDeadline as enforceRequestDeadline,
+  type AbsoluteDeadlineRequest
+} from "./request-deadline.js";
 
 export const bookmarkLimits = {
   items: 50,
@@ -267,6 +271,14 @@ async function validateFetchUrl(value: string | URL) {
   return { url, addresses };
 }
 
+function createBookmarkFetchTimeoutError() {
+  return new ApiError(504, "BOOKMARK_FETCH_TIMEOUT", "The bookmark page took too long to respond");
+}
+
+export function enforceAbsoluteRequestDeadline(request: AbsoluteDeadlineRequest, timeoutMs: number) {
+  enforceRequestDeadline(request, timeoutMs, createBookmarkFetchTimeoutError);
+}
+
 function decodeResponseBody(buffer: Buffer, contentType: string) {
   const headerCharset = /charset\s*=\s*["']?([^;"'\s]+)/i.exec(contentType)?.[1]?.toLowerCase();
   const htmlPrefix = buffer.subarray(0, 8_192).toString("latin1");
@@ -290,7 +302,7 @@ async function fetchHtml(
   const client = url.protocol === "https:" ? https : http;
   const remainingTime = deadline - Date.now();
   if (remainingTime <= 0) {
-    throw new ApiError(504, "BOOKMARK_FETCH_TIMEOUT", "The bookmark page took too long to respond");
+    throw createBookmarkFetchTimeoutError();
   }
 
   return new Promise<HtmlResponse>((resolve, reject) => {
@@ -417,8 +429,9 @@ async function fetchHtml(
       }
     );
 
+    enforceAbsoluteRequestDeadline(request, remainingTime);
     request.setTimeout(remainingTime, () => {
-      request.destroy(new ApiError(504, "BOOKMARK_FETCH_TIMEOUT", "The bookmark page took too long to respond"));
+      request.destroy(createBookmarkFetchTimeoutError());
     });
     request.on("error", rejectFetch);
     request.end();

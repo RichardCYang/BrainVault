@@ -59,18 +59,24 @@ describe("collaboration commit ambiguity recovery", () => {
       waitingForBootstrap: new Set<string>(),
       writeQueue: Promise.resolve(),
       pendingWrites: 0,
+      pendingWriteBytes: 0,
       bootstrapWritePending: false,
       document: { destroy }
     };
 
     const internalHub = hub as unknown as {
       rooms: Map<string, unknown>;
-      enqueueRoomWrite: (targetRoom: unknown, client: unknown, action: () => Promise<void>) => void;
+      enqueueRoomWrite: (
+        targetRoom: unknown,
+        client: unknown,
+        writeBytes: number,
+        action: () => Promise<void>
+      ) => Promise<void> | null;
     };
     internalHub.rooms.set(room.pageId, room);
     const ambiguousError = Object.assign(new Error("commit response lost"), { commitOutcomeUnknown: true });
 
-    internalHub.enqueueRoomWrite(room, firstClient, async () => {
+    internalHub.enqueueRoomWrite(room, firstClient, 1, async () => {
       throw ambiguousError;
     });
     await room.writeQueue;
