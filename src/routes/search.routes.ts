@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "../lib/db.js";
+import { toSqlLikeContainsPattern } from "../lib/sql-like.js";
 import { requireAuth } from "../middleware/auth.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { requireUser } from "../utils/schemas.js";
@@ -28,13 +29,13 @@ searchRouter.get("/", validate({ query: searchQuerySchema }), async (req, res, n
   try {
     const user = requireUser(req.user);
     const query = getValidatedQuery<z.infer<typeof searchQuerySchema>>(req);
-    const search = `%${query.q}%`;
+    const search = toSqlLikeContainsPattern(query.q);
 
     const pages = await db.query<PageRow>(
       `SELECT p.* FROM pages p
        WHERE (p.owner_id = ? OR EXISTS (
          SELECT 1 FROM page_shares ps WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
-       )) AND p.is_archived = 0 AND p.title LIKE ?
+       )) AND p.is_archived = 0 AND p.title LIKE ? ESCAPE '!'
        ORDER BY p.updated_at DESC
        LIMIT ?`,
       [user.id, user.id, search, query.limit]
@@ -46,7 +47,7 @@ searchRouter.get("/", validate({ query: searchQuerySchema }), async (req, res, n
        INNER JOIN pages p ON p.id = b.page_id
        WHERE (p.owner_id = ? OR EXISTS (
          SELECT 1 FROM page_shares ps WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
-       )) AND p.is_archived = 0 AND b.markdown LIKE ?
+       )) AND p.is_archived = 0 AND b.markdown LIKE ? ESCAPE '!'
        ORDER BY b.updated_at DESC
        LIMIT ?`,
       [user.id, user.id, search, query.limit]

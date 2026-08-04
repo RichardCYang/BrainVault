@@ -12,6 +12,7 @@ import { disconnectPageCollaborators } from "../lib/collaboration-server.js";
 import { needsCollaborationMaterialization } from "../lib/collaboration-protocol.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { iconValueSchema, normalizeIconValue } from "../lib/icon-value.js";
+import { toSqlLikeContainsPattern } from "../lib/sql-like.js";
 import {
   diffPageVersionBlocks,
   diffPageVersionPage,
@@ -361,11 +362,12 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
 
     if (query.q) {
       where.push(
-        `(p.title LIKE ? OR EXISTS (
-          SELECT 1 FROM blocks b WHERE b.page_id = p.id AND b.markdown LIKE ?
+        `(p.title LIKE ? ESCAPE '!' OR EXISTS (
+          SELECT 1 FROM blocks b WHERE b.page_id = p.id AND b.markdown LIKE ? ESCAPE '!'
         ))`
       );
-      whereParams.push(`%${query.q}%`, `%${query.q}%`);
+      const search = toSqlLikeContainsPattern(query.q);
+      whereParams.push(search, search);
     }
 
     if (query.tag) {
