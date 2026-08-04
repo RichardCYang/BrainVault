@@ -20,6 +20,7 @@ type OwnerProfileRow = Pick<
   | "avatar_data"
   | "preferred_language"
   | "default_collection_icon"
+  | "theme"
   | "created_at"
   | "updated_at"
 >;
@@ -48,7 +49,7 @@ export async function getPageAccess(
   if (!page) throw notFound("Page");
 
   const owner = await client.queryOne<OwnerProfileRow>(
-    `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon, created_at, updated_at
+    `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon, theme, created_at, updated_at
      FROM users WHERE id = ?`,
     [page.owner_id]
   );

@@ -79,6 +79,7 @@ type ShareUserRow = Pick<
   | "avatar_data"
   | "preferred_language"
   | "default_collection_icon"
+  | "theme"
   | "created_at"
   | "updated_at"
 > & { permission: "EDIT"; shared_at: string };
@@ -100,7 +101,7 @@ function assertShareablePage(page: PageRow) {
 
 async function getShareRows(pageId: string, client: DbClient = db) {
   return client.query<ShareUserRow>(
-    `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language, u.default_collection_icon,
+    `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language, u.default_collection_icon, u.theme,
             u.created_at, u.updated_at, ps.permission, ps.created_at AS shared_at
      FROM page_shares ps
      INNER JOIN users u ON u.id = ps.user_id
@@ -189,7 +190,7 @@ collaborationRouter.post(
         assertShareablePage(page);
 
         const target = await client.queryOne<ShareUserRow>(
-          `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language, u.default_collection_icon,
+          `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language, u.default_collection_icon, u.theme,
                   u.created_at, u.updated_at, 'EDIT' AS permission, u.created_at AS shared_at
            FROM users u
            WHERE u.username = ? AND u.id <> ?
@@ -218,7 +219,7 @@ collaborationRouter.post(
           [pageId, target.id, owner.id]
         );
         const created = await client.queryOne<ShareUserRow>(
-          `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language, u.default_collection_icon,
+          `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language, u.default_collection_icon, u.theme,
                   u.created_at, u.updated_at, ps.permission, ps.created_at AS shared_at
            FROM page_shares ps INNER JOIN users u ON u.id = ps.user_id
            WHERE ps.page_id = ? AND ps.user_id = ? AND ps.permission = 'EDIT'`,
