@@ -29,6 +29,7 @@ beforeEach(async () => {
     avatar_data: null,
     preferred_language: null,
     default_collection_icon: null,
+    theme: "light",
     password_hash: await hashPassword("old-password-123"),
     auth_version: 1,
     created_at: "2026-07-16T00:00:00.000Z",
@@ -84,6 +85,23 @@ describe("Account settings routes", () => {
 
     expect(response.body.user.defaultCollectionIcon).toBe("🧠");
     expect(user.default_collection_icon).toBe("🧠");
+  });
+
+  it("persists the workspace theme in the user profile", async () => {
+    const response = await request(createApp())
+      .patch("/api/auth/profile")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ theme: "dark" })
+      .expect(200);
+
+    expect(response.body.user.theme).toBe("dark");
+    expect(user.theme).toBe("dark");
+
+    await request(createApp())
+      .patch("/api/auth/profile")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ theme: "system" })
+      .expect(400);
   });
 
   it("persists built-in and uploaded custom collection icons", async () => {

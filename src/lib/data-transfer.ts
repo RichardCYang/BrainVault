@@ -48,6 +48,7 @@ const backupVersion = 1;
 const maxManifestBytes = env.DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024;
 const idSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
 const timestampSchema = z.string().min(1).max(40);
+const profileThemeSchema = z.enum(["light", "dark"]);
 const nullableString = (max: number) => z.string().max(max).nullable();
 const nullableHttpUrl = (max: number) =>
   z
@@ -175,7 +176,9 @@ const manifestSchema = z.object({
     name: nullableString(80),
     avatar_data: backupAvatarSchema,
     preferred_language: nullableString(10),
-    default_collection_icon: iconValueSchema.nullable()
+    default_collection_icon: iconValueSchema.nullable(),
+    // Optional only for backups exported before account themes were added.
+    theme: profileThemeSchema.optional()
   }).strict(),
   data: z.object({
     pages: z.array(pageSchema).max(dataTransferResourceLimits.maxPages),
@@ -200,6 +203,7 @@ type WorkspaceRestoreAccountRow = {
   avatar_data: string | null;
   preferred_language: string | null;
   default_collection_icon: string | null;
+  theme: "light" | "dark";
 };
 
 type WorkspaceRestorePageRow = {
@@ -251,6 +255,7 @@ type RawAccountRow = {
   avatar_data: string | null;
   preferred_language: string | null;
   default_collection_icon: string | null;
+  theme: "light" | "dark";
 };
 
 type FileInspection = { size: bigint; sha256: string; crc32: number };
@@ -356,7 +361,7 @@ async function assertWorkspaceCollaborationMaterialized(client: DbClient, pageId
 async function createWorkspaceRestoreSnapshot(userId: string, client: DbClient = db, lock = false) {
   const lockClause = lock ? " FOR UPDATE" : "";
   const account = await client.queryOne<WorkspaceRestoreAccountRow>(
-    `SELECT name, avatar_data, preferred_language, default_collection_icon
+    `SELECT name, avatar_data, preferred_language, default_collection_icon, theme
      FROM users WHERE id = ?${lockClause}`,
     [userId]
   );
@@ -574,7 +579,7 @@ export async function prepareUserDataBackup(userId: string) {
       );
 
       const account = await client.queryOne<RawAccountRow>(
-        `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon
+        `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon, theme
          FROM users WHERE id = ?`,
         [userId]
       );
@@ -672,7 +677,8 @@ export async function prepareUserDataBackup(userId: string) {
         name: snapshot.account.name,
         avatar_data: snapshot.account.avatar_data,
         preferred_language: snapshot.account.preferred_language,
-        default_collection_icon: normalizeIconValue(snapshot.account.default_collection_icon)
+        default_collection_icon: normalizeIconValue(snapshot.account.default_collection_icon),
+        theme: snapshot.account.theme
       },
       data: {
         pages: snapshot.pages.map((page) => ({
@@ -992,12 +998,15 @@ async function importRows(
 ) {
   await client.execute("DELETE FROM pages WHERE owner_id = ?", [userId]);
   await client.execute(
-    `UPDATE users SET name = ?, avatar_data = ?, preferred_language = ?, default_collection_icon = ? WHERE id = ?`,
+    `UPDATE users
+     SET name = ?, avatar_data = ?, preferred_language = ?, default_collection_icon = ?, theme = COALESCE(?, theme)
+     WHERE id = ?`,
     [
       manifest.account.name,
       normalizeAvatarDataUrl(manifest.account.avatar_data),
       manifest.account.preferred_language,
       normalizeIconValue(manifest.account.default_collection_icon),
+      manifest.account.theme ?? null,
       userId
     ]
   );

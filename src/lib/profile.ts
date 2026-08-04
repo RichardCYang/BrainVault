@@ -3,6 +3,9 @@ import { ApiError } from "./http.js";
 export const supportedProfileLanguages = ["en", "ja", "ko", "fr", "de", "es", "pt"] as const;
 export type SupportedProfileLanguage = (typeof supportedProfileLanguages)[number];
 
+export const supportedProfileThemes = ["light", "dark"] as const;
+export type SupportedProfileTheme = (typeof supportedProfileThemes)[number];
+
 export const maxAvatarBytes = 512 * 1024;
 const avatarDataUrlPattern = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/i;
 

@@ -10,6 +10,8 @@ const dataRoutes = readFileSync(new URL("../src/routes/data.routes.ts", import.m
 const migration = readFileSync(new URL("../migrations/008_user_account_settings.sql", import.meta.url), "utf8");
 const loginHistoryMigration = readFileSync(new URL("../migrations/025_login_history.sql", import.meta.url), "utf8");
 const loginHistoryOutcomeMigration = readFileSync(new URL("../migrations/033_login_history_locked_outcome.sql", import.meta.url), "utf8");
+const themeMigration = readFileSync(new URL("../migrations/034_user_theme_preference.sql", import.meta.url), "utf8");
+const themeBootstrap = readFileSync(new URL("../public/theme-bootstrap.js", import.meta.url), "utf8");
 
 describe("Account settings layer", () => {
   it("opens from the sidebar identity card and groups profile, language, security, and logout", () => {
@@ -22,6 +24,9 @@ describe("Account settings layer", () => {
     expect(index).toContain('data-account-panel="data"');
     expect(index).toContain('id="account-avatar-input"');
     expect(index).toContain('id="language-select"');
+    expect(index).toContain('id="theme-select"');
+    expect(index).toContain('value="light"');
+    expect(index).toContain('value="dark"');
     expect(index).toContain('id="account-current-password"');
     expect(index).toContain('data-security-panel="history"');
     expect(index).toContain('id="account-login-history-months"');
@@ -44,6 +49,8 @@ describe("Account settings layer", () => {
     expect(client).toContain('/api/auth/login-history?months=');
     expect(client).toContain("function renderLoginHistory");
     expect(client).toContain("applyUserPreferredLanguage");
+    expect(client).toContain("applyUserTheme");
+    expect(client).toContain('body: { theme: nextTheme }');
     expect(client).toContain('fetch("/api/data/export"');
     expect(client).toContain('api("/api/data/import"');
   });
@@ -56,6 +63,11 @@ describe("Account settings layer", () => {
     expect(styles).toContain("@media (max-width: 760px)");
     expect(styles).toContain(".login-history-table");
     expect(styles).toContain(".login-history-result.failure");
+    expect(styles).toContain('html[data-theme="dark"]');
+    expect(styles).toContain('--chrome-canvas: #17191d');
+    expect(styles).toContain('.rendered-kanban-card--pink');
+    expect(styles).toContain('.rendered-database-card');
+    expect(styles).toContain('.rendered-gantt-stage');
     expect(styles).toMatch(/\.account-settings-dialog\s*\{[^}]*border-radius:\s*var\(--radius-lg\);/s);
     expect(styles).toMatch(/\.account-preference-card\s*\{[^}]*border-radius:\s*8px;/s);
     expect(styles).toContain("border-radius: var(--radius-lg) var(--radius-lg) 0 0;");
@@ -65,6 +77,8 @@ describe("Account settings layer", () => {
     expect(i18n).toContain('loginHistorySummary: "최근 {months}개월 · 총 {count}건"');
     expect(i18n).toContain('exportTitle: "모든 데이터 내보내기"');
     expect(i18n).toContain('importTitle: "백업 복원"');
+    expect(i18n).toContain('themeLight: "일반 테마"');
+    expect(i18n).toContain('themeDark: "다크 테마"');
     expect(authRoutes).toContain('authRouter.patch("/profile"');
     expect(authRoutes).toContain('authRouter.post("/password"');
     expect(authRoutes).toContain('"/login-history"');
@@ -79,6 +93,9 @@ describe("Account settings layer", () => {
     expect(loginHistoryMigration).toContain("CREATE TABLE IF NOT EXISTS user_login_attempts");
     expect(loginHistoryMigration).toContain("outcome ENUM('SUCCESS', 'FAILURE')");
     expect(loginHistoryOutcomeMigration).toContain("ENUM('SUCCESS', 'FAILURE', 'LOCKED')");
+    expect(themeMigration).toContain("ENUM('light', 'dark')");
+    expect(themeBootstrap).toContain('localStorage.getItem(storageKey)');
+    expect(themeBootstrap).toContain('document.documentElement.dataset.theme = theme');
     expect(loginHistoryMigration).toContain("source_ip VARCHAR(45)");
   });
 });

@@ -67,6 +67,9 @@ const rootParentKey = "__root__";
 const defaultCollectionKey = "__default_collection__";
 const recentEmojiStorageKey = "brainvault.recentEmojis";
 const emojiSkinToneStorageKey = "brainvault.emojiSkinTone";
+const themeStorageKey = "brainvault.theme";
+const supportedThemes = new Set(["light", "dark"]);
+const themeColorByTheme = Object.freeze({ light: "#e7eef3", dark: "#17191d" });
 const emojiSkinToneModifiers = Object.freeze(["🏻", "🏼", "🏽", "🏾", "🏿"]);
 const emojiBatchSize = 240;
 const builtInIconPrefix = "icon:";
@@ -667,6 +670,7 @@ const elements = {
   mobileSidebarClose: $("#mobile-sidebar-close"),
   mobileSidebarBackdrop: $("#mobile-sidebar-backdrop"),
   languageSelect: $("#language-select"),
+  themeSelect: $("#theme-select"),
   accountSettingsTrigger: $("#account-settings-trigger"),
   accountSettingsLayer: $("#account-settings-layer"),
   accountSettingsBackdrop: $("#account-settings-backdrop"),
@@ -997,6 +1001,35 @@ function setStatus(message, isError = false, { dismissAfter } = {}) {
 
 function setAuthenticated(value) {
   state.authenticated = Boolean(value);
+}
+
+function normalizeTheme(value) {
+  return supportedThemes.has(value) ? value : "light";
+}
+
+function getActiveTheme() {
+  return normalizeTheme(document.documentElement.dataset.theme);
+}
+
+function applyTheme(value, { persist = true } = {}) {
+  const theme = normalizeTheme(value);
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.style.colorScheme = theme;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", themeColorByTheme[theme]);
+
+  if (persist) {
+    try {
+      window.localStorage.setItem(themeStorageKey, theme);
+    } catch {
+      // The authenticated server preference remains authoritative when storage
+      // is unavailable (for example, in privacy-hardened browsing contexts).
+    }
+  }
+  return theme;
+}
+
+function applyUserTheme() {
+  return applyTheme(state.user?.theme);
 }
 
 function isWebAuthnSupported() {
@@ -1388,6 +1421,7 @@ async function restoreUserDataBackup(file) {
       // Preserve durable drafts from every tab. Restored rows receive fresh edit versions,
       // so pre-restore drafts are recovered as explicit conflicts instead of overwriting data.
       state.user = data.user;
+      applyUserTheme();
       await applyUserPreferredLanguage();
       fillAccountSettings();
       resetSearchDialogState();
@@ -1986,6 +2020,7 @@ function fillAccountSettings() {
   elements.accountDisplayName.value = state.user.name ?? "";
   elements.accountLoginId.value = state.user.username;
   elements.languageSelect.value = state.user.preferredLanguage || getLanguage();
+  elements.themeSelect.value = normalizeTheme(state.user.theme);
   renderUserAvatar(
     elements.accountAvatarPreview,
     elements.accountAvatarFallback,
@@ -2172,6 +2207,7 @@ async function completeAuthenticatedLogin(data) {
   state.user = data.user;
   elements.password.value = "";
   resetMfaLogin();
+  applyUserTheme();
   await applyUserPreferredLanguage();
   renderShell();
   await loadPages();
@@ -10035,6 +10071,7 @@ async function boot() {
 
   try {
     await loadMe();
+    applyUserTheme();
     await applyUserPreferredLanguage();
     renderShell();
     if (state.user) await loadPages();
@@ -10609,6 +10646,7 @@ window.addEventListener("hashchange", () => {
 function refreshLocalizedUi() {
   applyDocumentTranslations();
   elements.languageSelect.value = getLanguage();
+  if (state.user) elements.themeSelect.value = normalizeTheme(state.user.theme);
   setAuthMode(state.authMode, false);
   renderPages();
   if (!isCollaborativePage()) syncVisibleBlocksToState();
@@ -10651,7 +10689,33 @@ elements.languageSelect.addEventListener("change", async () => {
   }
 });
 
+elements.themeSelect.addEventListener("change", async () => {
+  const previousTheme = normalizeTheme(state.user?.theme ?? getActiveTheme());
+  const nextTheme = normalizeTheme(elements.themeSelect.value);
+  applyTheme(nextTheme);
+
+  try {
+    setAccountMessage(t("account.savingTheme"));
+    const data = await api("/api/auth/profile", { method: "PATCH", body: { theme: nextTheme } });
+    state.user = data.user;
+    applyUserTheme();
+    elements.themeSelect.value = normalizeTheme(state.user.theme);
+    setAccountMessage(t("account.themeSaved"));
+    setStatus(t("account.themeSaved"));
+  } catch (error) {
+    applyTheme(previousTheme);
+    elements.themeSelect.value = previousTheme;
+    setAccountMessage(error.message, true);
+  }
+});
+
 window.addEventListener("brainvault:languagechange", refreshLocalizedUi);
+window.addEventListener("storage", (event) => {
+  if (event.key !== themeStorageKey || !supportedThemes.has(event.newValue)) return;
+  const theme = applyTheme(event.newValue, { persist: false });
+  if (state.user) state.user.theme = theme;
+  if (elements.themeSelect) elements.themeSelect.value = theme;
+});
 
 elements.authForm.addEventListener("submit", async (event) => {
   event.preventDefault();

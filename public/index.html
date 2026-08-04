@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#e7eef3" />
+    <script src="/theme-bootstrap.js"></script>
     <title>BrainVault</title>
     <meta
       name="description"
@@ -732,6 +733,16 @@
                   <p data-i18n="account.languageDescription">Use this language whenever you sign in.</p>
                 </div>
                 <select id="language-select" aria-label="Language" data-i18n-aria-label="language.label"></select>
+              </div>
+              <div class="account-preference-card">
+                <div>
+                  <label for="theme-select" data-i18n="account.themeTitle">Theme</label>
+                  <p data-i18n="account.themeDescription">Choose the color theme used across the entire workspace.</p>
+                </div>
+                <select id="theme-select" aria-label="Theme" data-i18n-aria-label="account.themeTitle">
+                  <option value="light" data-i18n="account.themeLight">Light</option>
+                  <option value="dark" data-i18n="account.themeDark">Dark</option>
+                </select>
               </div>
             </section>
 

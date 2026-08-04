@@ -87,6 +87,7 @@ beforeEach(async () => {
     avatar_data: null,
     preferred_language: "ko",
     default_collection_icon: "🧠",
+    theme: "dark",
     password_hash: "unchanged-password-hash",
     created_at: "2026-07-17 00:00:00.000000",
     updated_at: "2026-07-17 00:00:00.000000"
@@ -226,8 +227,9 @@ beforeEach(async () => {
       for (const [id, block] of store.blocks) if (pageIds.has(String(block.page_id))) store.blocks.delete(id);
       store.pageTags = store.pageTags.filter((relation) => !pageIds.has(relation.page_id));
       store.shares = store.shares.filter((share) => !pageIds.has(share.page_id));
-    } else if (sql.startsWith("UPDATE users SET name = ?")) {
+    } else if (sql.startsWith("UPDATE users")) {
       [store.user.name, store.user.avatar_data, store.user.preferred_language, store.user.default_collection_icon] = params;
+      if (params[4] !== null && params[4] !== undefined) store.user.theme = params[4];
     } else if (sql.includes("INSERT INTO pages")) {
       const [id, title, icon, coverUrl, archived, collection, ownerId, parentPageId, editVersion, contentVersion, createdAt, updatedAt] = params;
       store.pages.set(String(id), { id, title, icon, cover_url: coverUrl, is_archived: archived, is_collection: collection, owner_id: ownerId, parent_page_id: parentPageId, edit_version: editVersion, content_version: contentVersion, created_at: createdAt, updated_at: updatedAt });

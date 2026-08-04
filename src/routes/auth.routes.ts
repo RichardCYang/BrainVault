@@ -21,7 +21,8 @@ import { clearAuthSessionCookie, setAuthSessionCookie } from "../lib/session-coo
 import {
   maxAvatarBytes,
   normalizeAvatarDataUrl,
-  supportedProfileLanguages
+  supportedProfileLanguages,
+  supportedProfileThemes
 } from "../lib/profile.js";
 import {
   requireAuth,
@@ -43,6 +44,7 @@ export const authRouter = Router();
 
 const dummyPasswordHash = hashPassword("brainvault-invalid-user-password");
 const preferredLanguageSchema = z.enum(supportedProfileLanguages);
+const profileThemeSchema = z.enum(supportedProfileThemes);
 
 const registerSchema = z.object({
   username: usernameSchema,
@@ -61,7 +63,8 @@ const profileSchema = z
     name: z.string().trim().max(80).nullable().optional(),
     avatarData: z.string().max(Math.ceil((maxAvatarBytes * 4) / 3) + 128).nullable().optional(),
     preferredLanguage: preferredLanguageSchema.nullable().optional(),
-    defaultCollectionIcon: iconValueSchema.nullable().optional()
+    defaultCollectionIcon: iconValueSchema.nullable().optional(),
+    theme: profileThemeSchema.optional()
   })
   .refine((value) => Object.values(value).some((item) => item !== undefined), {
     message: "At least one profile field is required"
@@ -269,6 +272,10 @@ authRouter.patch("/profile", requireAuth, validate({ body: profileSchema }), asy
     if (body.defaultCollectionIcon !== undefined) {
       fields.push("default_collection_icon = ?");
       values.push(normalizeIconValue(body.defaultCollectionIcon));
+    }
+    if (body.theme !== undefined) {
+      fields.push("theme = ?");
+      values.push(body.theme);
     }
 
     await db.execute(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`, [...values, currentUser.id]);

@@ -9,6 +9,7 @@ export function toPublicUser(
     | "avatar_data"
     | "preferred_language"
     | "default_collection_icon"
+    | "theme"
     | "created_at"
     | "updated_at"
   >
@@ -20,6 +21,7 @@ export function toPublicUser(
     avatarData: row.avatar_data ?? null,
     preferredLanguage: row.preferred_language ?? null,
     defaultCollectionIcon: row.default_collection_icon ?? null,
+    theme: row.theme === "dark" ? "dark" : "light",
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
