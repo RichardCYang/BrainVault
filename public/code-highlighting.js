@@ -39,6 +39,12 @@ const languageDefinitions = [
 
 export const codeLanguageOptions = Object.freeze(languageDefinitions.map((definition) => Object.freeze({ ...definition })));
 
+export const highlightResourceLimits = Object.freeze({
+  maxSourceLength: 2_000,
+  maxHydrationSourceLength: 8_000,
+  maxHydratedBlocks: 20
+});
+
 const languageById = new Map();
 for (const definition of codeLanguageOptions) {
   for (const alias of [definition.id, definition.grammar, ...definition.aliases]) {
@@ -78,6 +84,7 @@ export function stripCodeFence(value) {
 }
 
 function highlightSource(source, definition) {
+  if (definition.grammar === "plaintext" || source.length > highlightResourceLimits.maxSourceLength) return null;
   const highlighter = globalThis.hljs;
   if (!highlighter?.highlight || !highlighter.getLanguage?.(definition.grammar)) return null;
   try {
@@ -120,10 +127,22 @@ export function renderCodePreview(preview, value, language) {
 }
 
 export function hydrateHighlightedCodeBlocks(root = document) {
+  let attemptedBlocks = 0;
+  let attemptedSourceLength = 0;
+
   for (const code of root.querySelectorAll("pre > code[class*='language-']:not(.hljs)")) {
     const className = [...code.classList].find((name) => name.startsWith("language-"));
     const definition = getCodeLanguageDefinition(className?.slice("language-".length));
-    const highlighted = highlightSource(code.textContent ?? "", definition);
+    const source = code.textContent ?? "";
+    const withinHydrationBudget =
+      attemptedBlocks < highlightResourceLimits.maxHydratedBlocks &&
+      attemptedSourceLength + source.length <= highlightResourceLimits.maxHydrationSourceLength;
+    let highlighted = null;
+    if (withinHydrationBudget) {
+      attemptedBlocks += 1;
+      attemptedSourceLength += source.length;
+      highlighted = highlightSource(source, definition);
+    }
     code.classList.add("hljs", `language-${definition.grammar}`);
     if (highlighted !== null) code.innerHTML = highlighted;
   }

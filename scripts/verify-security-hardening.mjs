@@ -134,6 +134,10 @@ contains("src/config/env.ts", [
   "AUTH_LOGIN_LOCK_THRESHOLD",
   "AUTH_REGISTER_GLOBAL_MAX",
   "BOOKMARK_PREVIEW_MAX",
+  "DATA_TRANSFER_MAX_MANIFEST_SIZE_MB",
+  "DATA_IMPORT_WINDOW_MS",
+  "DATA_IMPORT_MAX",
+  "DATA_IMPORT_MAX_CONCURRENT",
   "MFA_TOTP_WINDOW_STEPS",
   "JWT_EXPIRES_IN must be between 5 minutes and 24 hours",
   "AUTH_ALLOW_BEARER_TOKENS",
@@ -158,6 +162,12 @@ contains("scripts/env-init.ts", [
   "Created .env with unique database, JWT, and MFA secrets"
 ]);
 contains("package.json", ['"secrets:generate": "node scripts/generate-secrets.mjs"']);
+const packageJson = JSON.parse(read("package.json"));
+const packageLock = JSON.parse(read("package-lock.json"));
+const supportedNodeRange = "^22.23.2 || ^24.18.1 || >=26.5.1";
+assert.equal(packageJson.engines?.node, supportedNodeRange, "package.json must reject pre-patch Node runtimes");
+assert.equal(packageLock.packages?.[""]?.engines?.node, supportedNodeRange, "package-lock.json must mirror the Node security floor");
+contains(".npmrc", ["engine-strict=true"]);
 contains("scripts/generate-secrets.mjs", [
   'const SECRET_BYTES = 32',
   'randomBytes(SECRET_BYTES).toString("base64url")',
@@ -294,7 +304,46 @@ contains("src/lib/attachment-metadata-integrity.ts", [
 ]);
 contains("src/lib/login-lockout.ts", ["AUTH_LOGIN_LOCK_THRESHOLD", "login_locked_until", "FOR UPDATE"]);
 contains("migrations/030_account_login_lockout.sql", ["failed_login_attempts", "login_locked_until"]);
-contains("src/routes/data.routes.ts", ["parts: 2", "fieldNestingDepth: 1", "headerPairs: 32"]);
+contains("src/routes/data.routes.ts", [
+  "parts: 2",
+  "fieldNestingDepth: 1",
+  "headerPairs: 32",
+  "dataImportRateLimit",
+  "enforceBackupUploadRequestSize",
+  "dataImportConcurrencyLimit"
+]);
+contains("src/middleware/data-rate-limit.ts", [
+  "DATA_IMPORT_RATE_LIMITED",
+  "DATA_IMPORT_IN_PROGRESS",
+  "DATA_IMPORT_BUSY",
+  "DataImportAdmissionGate"
+]);
+contains("src/lib/data-transfer-limits.ts", [
+  "maxBlocks: 50_000",
+  "maxAttachments: 5_000",
+  "maxZipEntries: 5_001",
+  "maxCentralDirectoryBytes: 4 * 1024 * 1024",
+  "measureJsonUtf8BytesWithinLimit"
+]);
+contains("src/lib/data-transfer.ts", [
+  "DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024",
+  "maxCentralDirectoryBytes: dataTransferResourceLimits.maxCentralDirectoryBytes",
+  "maxEntries: dataTransferResourceLimits.maxZipEntries",
+  "stagedAttachmentBytes + BigInt(fileStat.size) > maxTransferBytes",
+  "measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1)"
+]);
+contains("src/lib/code-highlighting.ts", [
+  "maxSourceLength: 2_000",
+  "executionTimeoutMs: 25",
+  "runHighlightWithDeadline",
+  "timeout: highlightResourceLimits.executionTimeoutMs"
+]);
+contains("public/code-highlighting.js", [
+  "maxSourceLength: 2_000",
+  "maxHydrationSourceLength: 8_000",
+  "maxHydratedBlocks: 20",
+  "source.length > highlightResourceLimits.maxSourceLength"
+]);
 
 for (const address of [
   "127.0.0.1",
@@ -325,4 +374,4 @@ assert.equal(acceptsSession(1, 1), true, "A current session must be accepted bef
 assert.equal(acceptsSession(1, 2), false, "An old session must be rejected after credential rotation");
 assert.equal(acceptsSession(2, 2), true, "The replacement session must remain usable");
 
-console.log("[security-hardening] PASS: login CSRF gates, exact origins, atomic MFA attempts, revocation-safe MFA completion, locked TOTP verification, account backoff, strict session defaults, cookie-only browser login, logout revocation, absolute bookmark deadlines, attachment screening, bounded WebSocket and collaboration queues, collaboration connection limits, cache controls, database accounts, CSP, error hygiene, JWT separation, multipart limits, and SSRF ranges");
+console.log("[security-hardening] PASS: login CSRF gates, exact origins, atomic MFA attempts, revocation-safe MFA completion, locked TOTP verification, account backoff, strict session defaults, cookie-only browser login, logout revocation, absolute bookmark deadlines, attachment screening, bounded WebSocket and collaboration queues, collaboration connection limits, syntax-highlighting deadlines, backup import admission limits, patched Node runtime enforcement, cache controls, database accounts, CSP, error hygiene, JWT separation, multipart limits, and SSRF ranges");

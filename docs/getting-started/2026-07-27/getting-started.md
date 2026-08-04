@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Node.js 22.13 or newer
+- Node.js 22.23.2 or newer within the 22.x line, Node.js 24.18.1 or newer within the 24.x line, or Node.js 26.5.1 or newer
 - npm 10.9 or newer
 - A running MariaDB server
 

@@ -19,6 +19,12 @@ Changing `MFA_ENCRYPTION_KEY` after users enroll TOTP invalidates their encrypte
 
 The HTTP server binds to `127.0.0.1` by default. External binding requires an explicit `HOST` setting.
 
+## Runtime security baseline
+
+Dependency installation is blocked on Node.js releases older than the July 29, 2026 security updates. Supported floors are Node.js 22.23.2 within the 22.x line, Node.js 24.18.1 within the 24.x line, or Node.js 26.5.1 and newer. The package engine range is mirrored in the lockfile, and `.npmrc` enables `engine-strict=true` so `npm install` and `npm ci` fail instead of merely warning on an older runtime.
+
+These versions include the Node.js fixes for the HTTP/2 memory-exhaustion and use-after-free issues, permission-model boundary defects, HTTPS identity/session-reuse issues, DNS and zlib denial-of-service conditions, request-header desynchronization, and the bundled Undici/llhttp updates announced in the July 2026 security release. Production images and CI runners should pin a current patched release rather than relying only on the minimum range.
+
 When `MARIADB_ADMIN_URL` is used, bootstrap creates application accounts only for the exact hosts in `DB_USER_HOSTS`, refreshes their passwords with `ALTER USER`, grants only the schema privileges needed by BrainVault, and removes the legacy `brainvault@'%'`-style wildcard account. Existing deployments should rerun `npm run db:init` with an administrator connection after choosing a new database password and exact account hosts.
 
 ## Authentication abuse controls
@@ -78,6 +84,12 @@ For an attachment that already exists in the collaboration document, its parent 
 
 See [Collaboration](../../collaboration/2026-07-29/collaboration.md) for the complete access and persistence model.
 
+## Untrusted code rendering
+
+Highlight.js grammars execute regular expressions synchronously. BrainVault therefore highlights at most 2,000 UTF-16 code units per untrusted code block on both the server and browser. Server rendering runs the grammar inside a Node.js VM invocation with a 25 ms execution deadline. Longer inputs, unknown grammars, errors, or timeouts preserve the complete source as HTML-escaped plain text instead of dropping or truncating note content.
+
+Initial browser hydration is additionally limited to 20 blocks and 8,000 aggregate code units per render pass. These controls apply to editor previews, Markdown fences, read-only rendering, backup restoration, and collaboration materialization paths that can encounter stored code.
+
 ## Attachment safety
 
 Uploaded bytes are stored under `ATTACHMENT_UPLOAD_DIR`, which defaults to `uploads/` at the project root. This directory is ignored by Git and is never mounted as a public static directory.
@@ -100,7 +112,11 @@ Restore is intentionally destructive for workspace content: current pages, colle
 
 Current-format backups bind page sharing grants to both the collaborator's stable account ID and username. Restore locks accounts by ID and requires the exact pair to match before deleting any page; an unrelated destination account with the same username is not accepted. Username-only sharing records from the earlier backup format are accepted only when each record matches a currently locked page-to-account grant; username lookup alone is never used, and mixed legacy/current records fail closed. Archived ordinary pages may retain grants: archive blocks live collaboration, while backup and restore preserve the access list so unarchiving does not silently lose collaborators. Legacy backups without a `pageShares` field preserve the account's current grants for matching imported ordinary page IDs, including archived pages, preventing the page deletion cascade from silently erasing them. The historical Yjs update log is still excluded; the backup stores the latest server-materialized document state and restore creates a fresh collaboration generation.
 
-`DATA_TRANSFER_MAX_SIZE_MB` limits one uploaded backup ZIP and defaults to 4096 MB. Export streams the archive instead of buffering the complete backup in memory. Only ZIP files produced by BrainVault's data export are accepted.
+`DATA_TRANSFER_MAX_SIZE_MB` defaults to 1024 MB and is enforced before multipart intake when `Content-Length` is present, by Multer while streaming the file, against the ZIP's total stored-entry size, during export attachment staging, and against the completed export plan. `DATA_TRANSFER_MAX_MANIFEST_SIZE_MB` defaults to 16 MB; an oversized manifest is rejected before its bytes are allocated for parsing. Export still streams the final archive instead of buffering the complete backup in memory.
+
+Backup manifests are bounded to 20,000 pages, 50,000 blocks, 20,000 tags, 100,000 page-tag relations, 20,000 sharing grants, and 5,000 attachments. Import accepts at most 5,001 ZIP entries, including the manifest, and at most a 4 MiB central directory. BrainVault accepts only its UTF-8, store-mode ZIP format, so compressed-entry expansion is not available as an import path.
+
+Authenticated imports are limited before multipart bytes are accepted. Defaults allow three attempts per principal per hour, one active import per principal, and two concurrent imports per application process. These controls are process-local; multi-instance deployments must enforce an equivalent shared policy at the proxy or with a distributed limiter. Only ZIP files produced by BrainVault's data export are accepted.
 
 ## Metadata, URL, and restore validation
 
@@ -110,8 +126,9 @@ The unauthenticated health response contains only `{ "ok": true }`. Internal rep
 
 The server includes:
 
+- A security-patched Node.js runtime enforced during dependency installation
 - Helmet security headers, exact versioned external resources, and explicit CORS/WebSocket origin allowlists in every environment
-- Global, bookmark-preview, login, MFA-login, MFA-enrollment, and registration rate limiting
+- Global, bookmark-preview, data export/import, login, MFA-login, MFA-enrollment, and registration rate limiting
 - Persisted exponential password-failure backoff and current-password verification for password/MFA changes
 - Encrypted TOTP secrets with current-step replay protection by default
 - One-time, expiring MFA and WebAuthn challenges
@@ -119,6 +136,6 @@ The server includes:
 - Zod input validation and validated profile-image data
 - Private attachment storage with filename, media-type, signature, authenticated-download, and upload-size controls
 - `private, no-store` caching on authenticated page, rendered-page, session, and attachment responses
-- Sanitized Markdown/HTML output
+- Sanitized Markdown/HTML output with bounded, deadline-protected syntax highlighting
 
 These defaults are a starting point, not a substitute for HTTPS, secure secret storage, database and attachment backups, dependency updates, and production monitoring.

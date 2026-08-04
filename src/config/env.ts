@@ -85,9 +85,13 @@ const envSchema = z.object({
   ATTACHMENT_UPLOAD_DIR: z.string().min(1).default("uploads"),
   ATTACHMENT_TEMP_MAX_AGE_MS: z.coerce.number().int().min(60_000).max(30 * 24 * 60 * 60_000).default(24 * 60 * 60_000),
   MAX_ATTACHMENT_SIZE_MB: z.coerce.number().int().min(1).max(500).default(25),
-  DATA_TRANSFER_MAX_SIZE_MB: z.coerce.number().int().min(1).max(102_400).default(4096),
+  DATA_TRANSFER_MAX_SIZE_MB: z.coerce.number().int().min(1).max(16_384).default(1024),
+  DATA_TRANSFER_MAX_MANIFEST_SIZE_MB: z.coerce.number().int().min(1).max(64).default(16),
   DATA_EXPORT_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60_000),
   DATA_EXPORT_MAX: z.coerce.number().int().positive().default(20),
+  DATA_IMPORT_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60_000),
+  DATA_IMPORT_MAX: z.coerce.number().int().min(1).max(100).default(3),
+  DATA_IMPORT_MAX_CONCURRENT: z.coerce.number().int().min(1).max(32).default(2),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
   TRUST_PROXY_ADDRESSES: z.string().trim().max(2_048).default("")
 });

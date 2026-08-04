@@ -23,6 +23,18 @@ test("the patched lockfile excludes vulnerable ip-address releases", () => {
   assert.notEqual(installed?.version, "10.2.0");
 });
 
+
+test("dependency installation rejects Node releases below the July 2026 security floor", () => {
+  const packageJson = JSON.parse(read("package.json"));
+  const packageLock = JSON.parse(read("package-lock.json"));
+  const npmrc = read(".npmrc");
+  const expectedRange = "^22.23.2 || ^24.18.1 || >=26.5.1";
+
+  assert.equal(packageJson.engines?.node, expectedRange);
+  assert.equal(packageLock.packages?.[""]?.engines?.node, expectedRange);
+  assert.match(npmrc, /^engine-strict=true$/m);
+});
+
 test("the collaboration runtime is same-origin and the import map matches its CSP hash", () => {
   const appSource = read("src/app.ts");
   const collaborationSource = read("public/collaboration.js");

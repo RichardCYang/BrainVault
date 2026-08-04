@@ -317,7 +317,21 @@ async function readAt(file: Awaited<ReturnType<typeof open>>, length: number, po
   return buffer;
 }
 
-export async function readZipDirectory(filePath: string) {
+export type ZipDirectoryReadLimits = Readonly<{
+  maxCentralDirectoryBytes?: number;
+  maxEntries?: number;
+}>;
+
+export async function readZipDirectory(filePath: string, limits: ZipDirectoryReadLimits = {}) {
+  const maxCentralDirectoryBytes = limits.maxCentralDirectoryBytes ?? 256 * 1024 * 1024;
+  const maxEntries = limits.maxEntries ?? 1_000_000;
+  if (!Number.isSafeInteger(maxCentralDirectoryBytes) || maxCentralDirectoryBytes < 1) {
+    throw new TypeError("ZIP central-directory limit is invalid");
+  }
+  if (!Number.isSafeInteger(maxEntries) || maxEntries < 1) {
+    throw new TypeError("ZIP entry-count limit is invalid");
+  }
+
   const info = await stat(filePath);
   const fileSize = BigInt(info.size);
   if (fileSize < 22n) throw new Error("The uploaded file is not a valid ZIP archive");
@@ -374,8 +388,8 @@ export async function readZipDirectory(filePath: string) {
     }
 
     if (centralOffset + centralSize > fileSize) throw new Error("ZIP central directory is outside the file");
-    if (centralSize > 256n * 1024n * 1024n) throw new Error("ZIP central directory is too large");
-    if (entryCount > 1_000_000n) throw new Error("ZIP contains too many entries");
+    if (centralSize > BigInt(maxCentralDirectoryBytes)) throw new Error("ZIP central directory is too large");
+    if (entryCount > BigInt(maxEntries)) throw new Error("ZIP contains too many entries");
 
     const central = await readAt(file, toSafeNumber(centralSize, "ZIP central directory"), centralOffset);
     const entries: ZipReadEntry[] = [];
@@ -422,6 +436,7 @@ export async function readZipDirectory(filePath: string) {
       if (local.readUInt32LE(14) !== entryCrc32) throw new Error("ZIP local checksum does not match its directory");
       const localNameLength = local.readUInt16LE(26);
       const localExtraLength = local.readUInt16LE(28);
+      if (localNameLength !== nameLength) throw new Error("ZIP local entry name length does not match its directory");
       const localName = await readAt(file, localNameLength, localHeaderOffset + 30n);
       if (!localName.equals(nameBuffer)) throw new Error("ZIP local entry name does not match its directory");
       const dataOffset = localHeaderOffset + 30n + BigInt(localNameLength + localExtraLength);

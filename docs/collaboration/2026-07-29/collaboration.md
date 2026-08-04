@@ -69,7 +69,7 @@ The browser loads the pinned `yjs@13.6.31` ESM build from `/vendor/yjs/yjs.mjs`.
 
 ## Verification
 
-Run the collaboration-specific deterministic checks with Node.js 22.13 or newer:
+Run the collaboration-specific deterministic checks with Node.js 22.23.2 or newer within the 22.x line, Node.js 24.18.1 or newer within the 24.x line, or Node.js 26.5.1 or newer:
 
 ```bash
 npm run reproduce:materialization-loss

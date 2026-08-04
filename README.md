@@ -25,7 +25,7 @@ The preview is captured from the real browser UI. See [Development guide](docs/d
 
 ## Syntax-highlighted code blocks
 
-Code blocks include a language selector, a live highlighted preview, persisted language metadata, read-only/PDF rendering, and highlighted fenced code inside Markdown blocks. Highlight.js assets are served locally from `public/vendor/highlight`, so code highlighting does not require a third-party CDN.
+Code blocks include a language selector, a live highlighted preview, persisted language metadata, read-only/PDF rendering, and highlighted fenced code inside Markdown blocks. Highlight.js assets are served locally from `public/vendor/highlight`, so code highlighting does not require a third-party CDN. To bound synchronous regular-expression work on untrusted notes, blocks longer than 2,000 code units or server highlights that exceed 25 ms fall back to complete HTML-escaped plain text; browser hydration also has an aggregate work budget.
 
 Supported selectors include C, C++, C#, Java, Python, Dart, Rust, Lua, Ruby, Perl, Bash, PowerShell, JSON, SQL, XML, YAML, Markdown, HTML, JavaScript, CSS, PHP, VB.NET, BASIC, Assembly, Delphi, Lisp, TypeScript, CoffeeScript, COBOL, Fortran (`POTRAN` is accepted as an alias), MATLAB, Kotlin, Objective-C, Swift, and Haskell.
 
@@ -33,7 +33,7 @@ Supported selectors include C, C++, C#, Java, Python, Dart, Rust, Lua, Ruby, Per
 
 | Area | Technology |
 | --- | --- |
-| Runtime | Node.js 22.13+, Express 5, TypeScript |
+| Runtime | Node.js 22.23.2+/24.18.1+/26.5.1+, Express 5, TypeScript |
 | Database | MariaDB |
 | Frontend | Vanilla HTML, CSS, and JavaScript, with Yjs 13.6.31 for shared documents |
 | Auth | JWT, bcrypt, TOTP, and WebAuthn/FIDO2 |
@@ -42,7 +42,7 @@ Supported selectors include C, C++, C#, Java, Python, Dart, Rust, Lua, Ruby, Per
 
 ## Quick start
 
-Requirements: Node.js 22.13 or newer, npm 10.9 or newer, and a reachable MariaDB server.
+Requirements: Node.js 22.23.2 or newer within the 22.x line, Node.js 24.18.1 or newer within the 24.x line, or Node.js 26.5.1 or newer; npm 10.9 or newer; and a reachable MariaDB server.
 
 ```bash
 npm run db:configure

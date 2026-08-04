@@ -62,9 +62,15 @@ Never commit a real `.env` file.
 | `ATTACHMENT_UPLOAD_DIR` | `uploads` | Private on-disk directory for attachment bytes; startup rejects the public web root and its descendants |
 | `ATTACHMENT_TEMP_MAX_AGE_MS` | `86400000` | Age after which stale files in the private attachment staging directory are removed at startup |
 | `MAX_ATTACHMENT_SIZE_MB` | `25` | Maximum size of one uploaded attachment in megabytes |
-| `DATA_TRANSFER_MAX_SIZE_MB` | `4096` | Maximum size of one uploaded complete-data backup ZIP in megabytes |
+| `DATA_TRANSFER_MAX_SIZE_MB` | `1024` | Maximum size of one complete-data backup archive in megabytes; enforced on upload, ZIP contents, export staging, and the final export plan |
+| `DATA_TRANSFER_MAX_MANIFEST_SIZE_MB` | `16` | Maximum JSON manifest size buffered and parsed during backup export or import |
 | `DATA_EXPORT_WINDOW_MS` | `3600000` | Complete-data export limit window per authenticated user |
 | `DATA_EXPORT_MAX` | `20` | Complete-data exports allowed per authenticated user and window |
+| `DATA_IMPORT_WINDOW_MS` | `3600000` | Complete-data import limit window per authenticated user or fallback IP key |
+| `DATA_IMPORT_MAX` | `3` | Complete-data imports admitted per principal and window before multipart upload processing |
+| `DATA_IMPORT_MAX_CONCURRENT` | `2` | Maximum imports processed concurrently by one application process; each principal is also limited to one active import |
+
+The import limiter and concurrency gate use process-local state. A horizontally scaled deployment must apply equivalent limits in the edge proxy or use a shared rate-limit/admission store across instances.
 
 ## Development browser launch
 

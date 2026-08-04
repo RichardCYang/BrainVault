@@ -23,6 +23,7 @@ import {
   isRestorablePageShareTarget
 } from "./page-share-integrity.js";
 import { renderBlockHtml } from "./markdown.js";
+import { dataTransferResourceLimits, measureJsonUtf8BytesWithinLimit } from "./data-transfer-limits.js";
 import { blockSortOrderLimits } from "./block-order-integrity.js";
 import { maxAvatarBytes, normalizeAvatarDataUrl } from "./profile.js";
 import {
@@ -44,7 +45,7 @@ export const dataTransferTempDir = path.join(attachmentUploadRoot, ".data-transf
 const manifestName = "brainvault-backup.json";
 const backupFormat = "brainvault-backup";
 const backupVersion = 1;
-const maxManifestBytes = 128 * 1024 * 1024;
+const maxManifestBytes = env.DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024;
 const idSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
 const timestampSchema = z.string().min(1).max(40);
 const nullableString = (max: number) => z.string().max(max).nullable();
@@ -93,6 +94,7 @@ const restoreJournalV3Schema = z.object({
   userId: idSchema,
   operationId: idSchema,
   hadPreviousAttachments: z.boolean(),
+  // Recovery must remain compatible with journals created before the current backup intake limits.
   restoredAttachmentIds: z.array(idSchema).max(1_000_000)
 }).strict();
 const restoreJournalSchema = z.discriminatedUnion("version", [
@@ -176,15 +178,15 @@ const manifestSchema = z.object({
     default_collection_icon: iconValueSchema.nullable()
   }).strict(),
   data: z.object({
-    pages: z.array(pageSchema).max(1_000_000),
-    blocks: z.array(blockSchema).max(2_000_000),
-    tags: z.array(tagSchema).max(1_000_000),
-    pageTags: z.array(pageTagSchema).max(5_000_000),
+    pages: z.array(pageSchema).max(dataTransferResourceLimits.maxPages),
+    blocks: z.array(blockSchema).max(dataTransferResourceLimits.maxBlocks),
+    tags: z.array(tagSchema).max(dataTransferResourceLimits.maxTags),
+    pageTags: z.array(pageTagSchema).max(dataTransferResourceLimits.maxPageTags),
     // Optional only for backward compatibility with backups exported before
     // page sharing relationships became part of the complete workspace format.
-    pageShares: z.array(pageShareSchema).max(5_000_000).optional()
+    pageShares: z.array(pageShareSchema).max(dataTransferResourceLimits.maxPageShares).optional()
   }).strict(),
-  attachments: z.array(attachmentSchema).max(1_000_000)
+  attachments: z.array(attachmentSchema).max(dataTransferResourceLimits.maxAttachments)
 }).strict();
 
 export type BrainVaultBackup = z.infer<typeof manifestSchema>;
@@ -409,6 +411,16 @@ function invalidBackup(message: string, details?: unknown): never {
   throw new ApiError(400, "INVALID_DATA_BACKUP", message, details);
 }
 
+function assertExportCount(label: string, count: number, maximum: number) {
+  if (count <= maximum) return;
+  throw new ApiError(
+    413,
+    "DATA_BACKUP_TOO_LARGE",
+    `The workspace contains too many ${label} for one backup`,
+    { count, maximum }
+  );
+}
+
 function assertUnique(values: string[], label: string) {
   const seen = new Set<string>();
   for (const value of values) {
@@ -542,6 +554,7 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
 
 export async function prepareUserDataBackup(userId: string) {
   await ensureDataTransferDirectories();
+  const maxTransferBytes = BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n;
   const operationRoot = path.join(dataTransferTempDir, createId("export"));
   const stagedAttachmentDir = path.join(operationRoot, "attachments");
   await mkdir(stagedAttachmentDir, { recursive: true });
@@ -597,19 +610,36 @@ export async function prepareUserDataBackup(userId: string) {
          ORDER BY ps.page_id ASC, u.username ASC`,
         [userId]
       );
+      const attachmentBlocks = blocks.filter((item) => item.type === "ATTACHMENT");
+      assertExportCount("pages", pages.length, dataTransferResourceLimits.maxPages);
+      assertExportCount("blocks", blocks.length, dataTransferResourceLimits.maxBlocks);
+      assertExportCount("tags", tags.length, dataTransferResourceLimits.maxTags);
+      assertExportCount("page-tag relations", pageTags.length, dataTransferResourceLimits.maxPageTags);
+      assertExportCount("page sharing grants", pageShares.length, dataTransferResourceLimits.maxPageShares);
+      assertExportCount("attachments", attachmentBlocks.length, dataTransferResourceLimits.maxAttachments);
+
       const snapshot = { account, pages, blocks, tags, pageTags, pageShares };
       const attachmentFiles = [] as Array<{ blockId: string; path: string; filePath: string; inspection: FileInspection }>;
-      for (const block of blocks.filter((item) => item.type === "ATTACHMENT")) {
+      let stagedAttachmentBytes = 0n;
+      for (const block of attachmentBlocks) {
         const sourcePath = getAttachmentFilePath(userId, block.id);
         const stagedPath = path.join(stagedAttachmentDir, block.id);
         try {
           const fileStat = await stat(sourcePath);
           if (!fileStat.isFile()) throw new Error("not a file");
+          if (stagedAttachmentBytes + BigInt(fileStat.size) > maxTransferBytes) {
+            throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
+          }
           await copyFile(sourcePath, stagedPath);
-        } catch {
+        } catch (error) {
+          if (error instanceof ApiError) throw error;
           throw new ApiError(409, "BACKUP_ATTACHMENT_MISSING", `Attachment file is missing for block ${block.id}`);
         }
         const inspection = await inspectFile(stagedPath);
+        stagedAttachmentBytes += inspection.size;
+        if (stagedAttachmentBytes > maxTransferBytes) {
+          throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
+        }
         try {
           assertLosslessAttachmentMetadata(block.metadata, inspection.size);
         } catch (error) {
@@ -662,7 +692,15 @@ export async function prepareUserDataBackup(userId: string) {
         crc32: item.inspection.crc32
       }))
     };
-    const manifestBuffer = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    const measuredManifestBytes = measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1);
+    if (measuredManifestBytes === null) {
+      throw new ApiError(
+        413,
+        "DATA_BACKUP_TOO_LARGE",
+        "The backup manifest exceeds the supported import limit"
+      );
+    }
+    const manifestBuffer = Buffer.from(`${JSON.stringify(manifest)}\n`, "utf8");
     if (manifestBuffer.length > maxManifestBytes) {
       throw new ApiError(
         413,
@@ -674,7 +712,6 @@ export async function prepareUserDataBackup(userId: string) {
       (total, item) => total + item.inspection.size,
       BigInt(manifestBuffer.length)
     );
-    const maxTransferBytes = BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n;
     if (totalUncompressedSize > maxTransferBytes) {
       throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
     }
@@ -1470,12 +1507,12 @@ export async function recoverInterruptedDataRestores() {
 }
 
 export async function importUserDataBackup(userId: string, zipPath: string) {
-  const initialWorkspaceSnapshot = await transaction((client) =>
-    createWorkspaceRestoreSnapshot(userId, client)
-  );
   let entries;
   try {
-    entries = await readZipDirectory(zipPath);
+    entries = await readZipDirectory(zipPath, {
+      maxCentralDirectoryBytes: dataTransferResourceLimits.maxCentralDirectoryBytes,
+      maxEntries: dataTransferResourceLimits.maxZipEntries
+    });
   } catch (error) {
     invalidBackup(error instanceof Error ? error.message : "The ZIP archive is invalid");
   }
@@ -1495,6 +1532,9 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
 
   const manifestEntry = entryByName.get(manifestName);
   if (!manifestEntry) invalidBackup(`${manifestName} is missing`);
+  if (manifestEntry.uncompressedSize > BigInt(maxManifestBytes)) {
+    throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup manifest exceeds the configured manifest limit");
+  }
   let manifest: BrainVaultBackup;
   try {
     const buffer = await readZipEntryBuffer(zipPath, manifestEntry, maxManifestBytes);
@@ -1511,6 +1551,9 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
   if (entries.length !== allowedEntries.size) invalidBackup("The ZIP archive is missing one or more declared entries");
 
   await assertNoForeignIdConflicts(userId, manifest);
+  const initialWorkspaceSnapshot = await transaction((client) =>
+    createWorkspaceRestoreSnapshot(userId, client)
+  );
   await ensureDataTransferDirectories();
   const operationId = createId("restore");
   const journalBase = {

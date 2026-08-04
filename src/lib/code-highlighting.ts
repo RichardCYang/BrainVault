@@ -67,22 +67,39 @@ interface HighlightJsRuntime {
   versionString?: string;
 }
 
-let cachedHighlighter: HighlightJsRuntime | null = null;
+export const highlightResourceLimits = Object.freeze({
+  maxSourceLength: 2_000,
+  executionTimeoutMs: 25
+});
+
+type HighlightVmContext = ReturnType<typeof vm.createContext> & {
+  hljs?: HighlightJsRuntime;
+  __brainvaultSource?: string;
+  __brainvaultLanguage?: string;
+};
+
+type HighlightRuntime = Readonly<{
+  context: HighlightVmContext;
+  highlighter: HighlightJsRuntime;
+  script: vm.Script;
+}>;
+
+let cachedHighlightRuntime: HighlightRuntime | null = null;
 
 function getVendorPath(...segments: string[]) {
   return path.resolve(process.cwd(), "public", "vendor", "highlight", ...segments);
 }
 
 function loadHighlightJs() {
-  if (cachedHighlighter) return cachedHighlighter;
+  if (cachedHighlightRuntime) return cachedHighlightRuntime;
 
-  const context = vm.createContext({ console });
+  const context = vm.createContext({ console }) as HighlightVmContext;
   for (const filename of ["highlight.min.js", "brainvault-languages.js"]) {
     const source = fs.readFileSync(getVendorPath(filename), "utf8");
     vm.runInContext(source, context, { filename: getVendorPath(filename) });
   }
 
-  const highlighter = (context as typeof context & { hljs?: HighlightJsRuntime }).hljs;
+  const highlighter = context.hljs;
   if (!highlighter?.highlight || !highlighter.getLanguage) {
     throw new Error("Highlight.js failed to initialize from the vendored assets.");
   }
@@ -93,8 +110,28 @@ function loadHighlightJs() {
     throw new Error(`Highlight.js grammars are missing: ${missing.join(", ")}`);
   }
 
-  cachedHighlighter = highlighter;
-  return highlighter;
+  const script = new vm.Script(
+    "hljs.highlight(__brainvaultSource, { language: __brainvaultLanguage, ignoreIllegals: true }).value",
+    { filename: getVendorPath("brainvault-highlight-runner.vm.js") }
+  );
+  cachedHighlightRuntime = Object.freeze({ context, highlighter, script });
+  return cachedHighlightRuntime;
+}
+
+function runHighlightWithDeadline(source: string, grammar: string) {
+  const runtime = loadHighlightJs();
+  runtime.context.__brainvaultSource = source;
+  runtime.context.__brainvaultLanguage = grammar;
+  try {
+    const value = runtime.script.runInContext(runtime.context, {
+      timeout: highlightResourceLimits.executionTimeoutMs
+    }) as unknown;
+    if (typeof value !== "string") throw new Error("Highlight.js returned an invalid result.");
+    return value;
+  } finally {
+    delete runtime.context.__brainvaultSource;
+    delete runtime.context.__brainvaultLanguage;
+  }
 }
 
 function getMetadataRecord(metadata: unknown): Record<string, unknown> {
@@ -143,17 +180,18 @@ function escapeHtml(value: string) {
 export function highlightCode(value: unknown, language: unknown) {
   const definition = getCodeLanguageDefinition(language);
   const source = stripCodeFence(value);
+  const fallback = () => ({ definition, source, html: escapeHtml(source) });
+
+  // Highlight.js grammars execute complex regular expressions synchronously. Keep
+  // untrusted note content below a small input ceiling and a VM execution deadline.
+  if (definition.grammar === "plaintext" || source.length > highlightResourceLimits.maxSourceLength) {
+    return fallback();
+  }
+
   try {
-    return {
-      definition,
-      source,
-      html: loadHighlightJs().highlight(source, {
-        language: definition.grammar,
-        ignoreIllegals: true
-      }).value
-    };
+    return { definition, source, html: runHighlightWithDeadline(source, definition.grammar) };
   } catch {
-    return { definition, source, html: escapeHtml(source) };
+    return fallback();
   }
 }
 
@@ -172,5 +210,5 @@ export function renderMarkdownCodeFence(value: unknown, language: unknown) {
 }
 
 export function getHighlightJsVersion() {
-  return loadHighlightJs().versionString ?? "unknown";
+  return loadHighlightJs().highlighter.versionString ?? "unknown";
 }

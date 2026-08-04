@@ -1,178 +1,345 @@
 # BrainVault Security Review and Remediation Report
 
 **Review date:** August 4, 2026  
-**Repository commit at intake:** `e431023347d3fcfce508da78e8888fa84858996e`  
-**Review target:** The complete uploaded BrainVault repository, including the retained `.git` directory and history
+**Input archive:** `BrainVault.zip`  
+**Input archive SHA-256:** `b2fb88b2002a90004686d870e778f0150ff6bc773ff832f55ffd9cfc31216903`  
+**Repository HEAD at intake:** `a20c71ed4ec70c57643140bf71f590148f8dadb2`  
+**Intake commit:** `fix(security): harden dependencies and collaboration module loading.`  
+**Repository scope:** The complete uploaded project, including the retained `.git` directory and reachable history
 
 ## Executive Summary
 
-A security-focused source review, dependency review, reproducibility check, and regression-test pass were performed against the uploaded BrainVault project.
+BrainVault received a security-focused source review, targeted exploit reproduction, dependency-advisory verification, remediation, and regression testing.
 
-No critical application-source exploit was reproduced in the reviewed authentication, authorization, server-side request, file handling, backup/restore, rendering, or collaboration paths. Two actionable security findings were identified and remediated:
+No Critical-severity vulnerability was reproduced in the reviewed scope. Three additional security weaknesses were confirmed and remediated during this pass:
 
-1. **High — vulnerable transitive IP classification dependency.** The lockfile selected `ip-address@10.2.0`, which is affected by multiple 2026 trust-boundary classification vulnerabilities. It was upgraded and pinned to `10.3.1` through an npm override and lockfile update.
-2. **Medium — remotely executed collaboration runtime.** The browser dynamically imported the Yjs runtime from a third-party CDN. The exact version was pinned, but dynamic ES module imports do not provide the same Subresource Integrity protection used by the project's classic KaTeX script. Yjs and its browser dependencies are now served from same-origin, lockfile-controlled packages.
+1. **High — synchronous Highlight.js algorithmic denial of service.** User-controlled C/C++ code could trigger quadratic regular-expression work in both server-side rendering and browser hydration. A 20,000-character reproduction blocked the pre-fix server renderer for approximately 1.15 seconds in the audit environment.
+2. **Medium — authenticated backup import/export resource exhaustion.** The previous backup limits allowed very large archives and manifests, broad ZIP directory structures, and repeated or concurrent restore work. A single 32 MiB manifest caused approximately 96 MiB of resident-memory growth and about 475 ms of synchronous work in an isolated pre-fix reproduction.
+3. **High — deployment runtime range included security-vulnerable Node.js releases.** The previous `>=22.13.0` engine declaration allowed releases older than the July 29, 2026 Node.js security updates. The supported ranges now begin at the patched releases for each accepted major line, and installation fails closed on older runtimes.
 
-The remediation adds focused security regression tests and updates the existing security and collaboration verifiers. The repository's `.git` directory is retained; it was not deleted or replaced.
+The uploaded repository already contained two earlier security remediations. They were independently rechecked rather than assumed correct:
 
-This review materially reduces the identified risk. It is not a mathematical guarantee that no vulnerability exists, especially for deployment-specific behavior outside the supplied environment.
+- **High — `ip-address` trust-boundary classification vulnerabilities:** remediated at intake with `ip-address@10.3.1`; lockfile and regression checks passed.
+- **Medium — third-party collaboration runtime execution:** remediated at intake by serving lockfile-controlled Yjs modules from the BrainVault origin; CSP/import-map invariants passed.
 
-## Scope and Method
+The final dependency-free Node test suite completed with **93 passing tests and 0 failures**. The focused security-remediation suite completed with **11 passing tests and 0 failures**. All changed JavaScript and TypeScript files passed syntax checks, the security verifier passed, and all 346 lockfile-resolved package URLs used approved registry hosts.
 
-The review covered:
+This review materially reduces the demonstrated risks but is not a proof that every possible vulnerability is absent. Deployment topology, database behavior, reverse-proxy configuration, and browser integration must still be validated in the real production environment.
 
-- Authentication, session cookies, JWT validation, session revocation, login lockout, TOTP, and WebAuthn
-- Object-level authorization for pages, blocks, attachments, sharing, versions, and collaboration
-- Server-side URL fetching and DNS-rebinding/redirect behavior
-- Attachment upload, signature validation, private storage, and download response controls
-- Backup export/import, ZIP parsing, path handling, manifest validation, conflicts, and transaction recovery
-- Markdown, HTML sanitization, KaTeX, link handling, cached HTML, and browser DOM insertion points
-- WebSocket origin enforcement, collaboration tickets, resource limits, and durable materialization
-- SQL construction, process execution, file paths, cryptographic APIs, and security-sensitive randomness
-- Content Security Policy and third-party browser code execution
-- npm dependency lock state and publicly disclosed advisories relevant to selected versions
-- Obvious credential and private-key patterns in the working tree and Git object history
+## Finding Matrix
 
-The review combined manual source tracing, targeted static searches, dependency/advisory verification, focused reproduction checks, source-level security assertions, syntax checks, and the repository's dependency-free Node regression suite.
+| ID | Severity | Finding | Status |
+| --- | --- | --- | --- |
+| BV-SEC-001 | High | Vulnerable transitive `ip-address` classification behavior | Remediated at intake; independently validated |
+| BV-SEC-002 | Medium | Remote third-party Yjs runtime execution | Remediated at intake; independently validated |
+| BV-SEC-003 | High | Highlight.js quadratic CPU denial of service | Newly reproduced and remediated |
+| BV-SEC-004 | Medium | Backup import/export resource exhaustion | Newly reproduced and remediated |
+| BV-SEC-005 | High | Node.js engine range admitted pre-security-fix runtimes | Newly remediated |
 
-## Findings and Remediation
+Severity reflects the BrainVault deployment context and exploit prerequisites, not a formal vendor CVSS score.
 
-### BV-SEC-001 — Vulnerable `ip-address@10.2.0` Transitive Dependency
+## Scope and Review Method
+
+The review traced security-sensitive behavior across:
+
+- Registration, login, session cookies, JWT validation, logout, session revocation, TOTP, and WebAuthn
+- Page, block, attachment, share, version, and collaboration object authorization
+- Bookmark preview URL validation, DNS resolution, redirect handling, and response bounds
+- Attachment upload, signature validation, private storage, and download response policy
+- Complete-data backup export/import, ZIP parsing, manifest validation, attachment staging, destructive restore, and recovery journals
+- Markdown rendering, sanitization, cached HTML, KaTeX, syntax highlighting, and browser DOM insertion
+- WebSocket origin checks, collaboration tickets, message limits, backpressure, and durable materialization
+- SQL construction, filesystem paths, process execution, cryptographic APIs, and security-sensitive randomness
+- Content Security Policy and browser supply-chain boundaries
+- Locked dependency versions and public advisories relevant to those versions
+- Obvious private-key and common cloud/API token patterns in the working tree and reachable Git object history
+
+The method combined manual source tracing, targeted static searches, adversarial input construction, isolated timing/memory probes, dependency-lock verification, source-invariant verifiers, syntax validation, and dependency-free regression tests.
+
+## Detailed Findings
+
+### BV-SEC-003 — Highlight.js Quadratic CPU Denial of Service
 
 **Severity:** High  
 **Status:** Remediated
 
 #### Original condition
 
-`express-rate-limit@8.5.2` declared `ip-address` as a transitive dependency, and the supplied lockfile selected `ip-address@10.2.0`.
+BrainVault vendors Highlight.js `11.0.1` and uses it synchronously in two attacker-influenced paths:
 
-That selected version falls within the affected ranges of:
+- Server rendering in `src/lib/code-highlighting.ts`
+- Browser rendering and hydration in `public/code-highlighting.js`
 
-- **CVE-2026-69192 / GHSA-mwp4-54f8-5fhr:** leading-zero IPv4 octets can be interpreted differently by the library and the network resolver; affected through `10.3.0`, fixed in `10.3.1`.
-- **CVE-2026-69198 / GHSA-4xrf-jv44-h6hh:** attacker-controlled CIDR suffixes can suppress special-use classification; affected `10.1.1` through `10.2.1`, fixed in `10.2.2`.
-- **CVE-2026-54272 / GHSA-22jq-vg5j-6vgg:** IPv4-mapped and NAT64 IPv6 addresses can be misclassified; affected `10.1.1` through `10.2.0`, fixed in `10.2.1`.
+The upstream Highlight.js issue for the C/C++/Arduino `FUNCTION_DECLARATION` grammar documents a nested-quantifier pattern with quadratic backtracking. Its proof of concept is repeated words separated by spaces, such as `"a ".repeat(n)`. The issue also reproduces against Highlight.js `11.11.1`, so merely upgrading from the vendored `11.0.1` to the latest affected line would not provide a reliable fix.
 
-The highest-severity issue is directly reproducible at the URL parsing boundary: Node canonicalizes `http://012.0.0.1/` to host `10.0.0.1`, while affected `ip-address` releases can classify the original spelling as a different public address. A component relying on the affected classifier can therefore make an incorrect trust or rate-limit keying decision.
+Because server-side highlighting runs synchronously, a crafted note can monopolize the Node.js event loop. Persisted content also makes the cost repeatable when a page is rendered, restored, or collaboration state is materialized. Browser hydration can similarly freeze a client tab.
 
-BrainVault's bookmark preview SSRF defense does **not** use this package and was separately reviewed. It resolves all destination addresses, rejects the request if any answer is unsafe, pins the validated address into the connection lookup, repeats validation after every redirect, restricts ports, disables content encoding, applies absolute time and byte limits, and rejects non-HTML responses. No bookmark SSRF bypass was reproduced.
+#### Reproduction
+
+The upstream payload was run against the pristine uploaded bundle in an isolated Node.js process. Representative measurements were:
+
+| C source length | Pre-fix server highlighting time |
+| ---: | ---: |
+| 8,000 characters | approximately 197 ms |
+| 16,000 characters | approximately 752 ms |
+| 20,000 characters | approximately 1,146 ms |
+
+Doubling the input produced approximately four times the work, matching the expected quadratic trend. Absolute timings are machine-dependent, but the growth pattern is the relevant security property.
 
 #### Fix
 
-- Added an npm override pinning `ip-address` to `10.3.1`.
-- Updated the lockfile entry, tarball location, and integrity value to the patched release.
-- Added a regression test that fails if an affected version re-enters the lockfile.
-- Added a canonicalization regression check for the leading-zero IPv4 case.
+Server-side rendering now:
+
+- Limits untrusted syntax-highlighted source to 2,000 UTF-16 code units.
+- Executes grammar evaluation inside a reusable `node:vm` context with a 25 ms deadline.
+- Falls back to complete HTML-escaped plaintext when the source is too long, the grammar is unavailable, Highlight.js throws, or the deadline is exceeded.
+- Preserves the full original source rather than truncating note data.
+
+Browser rendering now:
+
+- Uses the same 2,000-unit per-block ceiling.
+- Uses `textContent` for the safe plaintext fallback.
+- Caps automatic hydration to 20 blocks and 8,000 aggregate source units per hydration pass.
+- Leaves over-budget blocks readable as plaintext instead of executing the grammar.
 
 #### Verification
 
-- The lockfile contains only `ip-address@10.3.1`.
-- The expected fixed-package integrity value is asserted by the regression test.
-- The public advisory reproduction input is normalized by Node to the internal address expected by the advisory.
+`tests/code-highlighting-resource-limits.node.test.mjs` reproduces the adversarial input, asserts a fast fallback, confirms complete HTML escaping, and locks the server/browser budgets together. On the remediated tree, the same 20,000-character payload returned escaped plaintext in approximately 0.17 ms in an isolated rerun.
 
-### BV-SEC-002 — Third-Party Remote Yjs Runtime Execution
+The 25 ms VM deadline is defense in depth for inputs below the length ceiling. JavaScript VM timeouts are not a general sandbox boundary; here they are used only to bound synchronous grammar execution from a locally bundled library.
+
+### BV-SEC-004 — Authenticated Backup Import/Export Resource Exhaustion
 
 **Severity:** Medium  
 **Status:** Remediated
 
 #### Original condition
 
-The collaboration client dynamically imported the exact Yjs version from a jsDelivr ES module URL. Version pinning reduced accidental drift, but the browser still executed a third party's runtime response. Dynamic `import()` does not accept an integrity attribute equivalent to the Subresource Integrity declaration used by the project's classic KaTeX script.
+Complete-data import required authentication, but one account could still impose disproportionate process, disk, and database load. The previous defaults and parser behavior allowed:
 
-This created an avoidable supply-chain and availability trust dependency in the collaboration path. Compromise or unexpected alteration of the remote delivery path could execute code with the application's browser origin privileges.
+- Backup uploads and aggregate uncompressed contents up to 4,096 MiB by default.
+- A manifest up to 128 MiB to be allocated, converted to a string, parsed as JSON, and validated.
+- ZIP central directories up to 256 MiB and up to 1,000,000 entries at the generic parser layer.
+- Repeated restore requests without a restore-specific rate limit.
+- Multiple simultaneous restores from the same principal or across the process.
+- Export manifest serialization into one aggregate JSON string before proving that the manifest fit the import limit.
+- Database snapshot work before all inexpensive archive-structure checks completed.
+
+This was not a ZIP-slip or decompression-bomb bypass; the existing archive integrity controls were substantial. The weakness was resource admission: a validly structured but intentionally large request could consume memory, CPU, disk, and destructive-restore preparation capacity.
+
+#### Reproduction
+
+An isolated pre-fix probe used a ZIP containing a 32 MiB manifest. The old path produced approximately 96 MiB of resident-memory growth and about 475 ms of synchronous allocation/string/parse work. The configured manifest ceiling was four times larger. Measurements vary by garbage-collector state and platform, but they demonstrated significant amplification before semantic validation.
+
+Against the new 16 MiB manifest ceiling, the same oversized entry is rejected from ZIP metadata before its body is allocated for parsing. In an isolated post-fix probe, rejection occurred in approximately 4 ms with less than 0.4 MiB of measured resident-memory growth.
 
 #### Fix
 
-- Changed the collaboration client to import `/vendor/yjs/yjs.mjs` from the BrainVault origin.
-- Added exact same-origin routes backed by the lockfile-controlled `yjs`, `lib0`, and `isomorphic.js` npm packages.
-- Restricted the exposed `lib0` subtree to JavaScript module requests, denied dotfiles, disabled indexes and redirects, and applied immutable caching, `nosniff`, and same-origin resource-policy headers.
-- Added a compact import map for Yjs bare module specifiers.
-- Authorized only that exact inline import map with a SHA-256 CSP hash.
-- Removed the remote Yjs URL from the Content Security Policy.
-- Updated collaboration documentation and regression verifiers.
+Request admission and upload handling now:
 
-The lockfile selects `yjs@13.6.31`, `lib0@0.2.99`, and `isomorphic.js@0.2.5`. Yjs publishes `dist/yjs.mjs` as its import entry, lib0 publishes ESM modules under `lib0/[module]`, and `isomorphic.js` publishes `browser.mjs` as its browser import entry.
+- Default `DATA_TRANSFER_MAX_SIZE_MB`: 1,024 MiB; schema maximum: 16,384 MiB.
+- Default `DATA_TRANSFER_MAX_MANIFEST_SIZE_MB`: 16 MiB; schema maximum: 64 MiB.
+- Default import allowance: 3 requests per authenticated principal per hour.
+- One active import per principal.
+- Default maximum of 2 active imports per application process.
+- `Content-Length` preflight before multipart parsing, with only 1 MiB allowed for multipart overhead.
+- Multer limits for file size, file count, fields, parts, field-name size, header pairs, and nesting depth.
+- Temporary upload deletion in the route's `finally` path.
 
-#### Verification
+Archive and manifest validation now:
 
-- The collaboration source contains no remote Yjs module URL.
-- The CSP contains no remote Yjs allowance.
-- The import-map source hashes to the exact CSP value.
-- Server route, import-map, package-version, and remote-reference invariants are covered by regression tests and source verifiers.
+- Applies a backup-specific maximum of 5,001 ZIP entries: one manifest plus at most 5,000 attachments.
+- Applies a backup-specific 4 MiB central-directory ceiling.
+- Rejects a manifest whose uncompressed ZIP size exceeds the configured manifest limit before allocating it.
+- Rejects local/central ZIP filename-length mismatches before reading an attacker-selected local-name length.
+- Limits manifest collections to 20,000 pages, 50,000 blocks, 20,000 tags, 100,000 page-tag relationships, 20,000 shares, and 5,000 attachments.
+- Validates archive structure, manifest relations, allowed entries, and foreign identifier conflicts before taking the current workspace restore snapshot.
 
-## High-Risk Areas Reviewed Without a Reproduced Exploit
+Export now:
+
+- Applies the same collection limits.
+- Bounds cumulative staged attachment bytes before and after file inspection.
+- Measures the exact UTF-8 JSON size without first constructing one aggregate manifest string, stopping as soon as the configured limit is exceeded.
+- Verifies aggregate uncompressed content and calculated final archive size before streaming.
+- Preserves the existing attachment-integrity error semantics; resource-limit errors are no longer converted into misleading missing-attachment responses.
+
+#### Operational limitation
+
+The concurrency gate is intentionally process-local. A multi-process or multi-host deployment must enforce a shared restore concurrency policy at the reverse proxy, job queue, or distributed coordination layer. Per-principal rate limiting may also need an external store to be globally consistent across replicas.
+
+### BV-SEC-005 — Vulnerable Node.js Runtime Floor
+
+**Severity:** High  
+**Status:** Remediated
+
+#### Original condition
+
+`package.json` previously declared Node.js `>=22.13.0`. That admitted Node.js versions predating the July 29, 2026 security releases. The vendor releases for Node.js 22.23.2, 24.18.1, and 26.5.1 include multiple High-severity fixes, including HTTP/2 session memory accounting, HTTP/2 reset-stream lifetime handling, and permission-model path handling.
+
+Application dependency pinning cannot remediate vulnerabilities in the runtime that accepts network traffic. A production deployment satisfying the old engine declaration could therefore remain exposed while appearing supported by the project.
+
+#### Fix
+
+- `package.json` and the lockfile root now require `^22.23.2 || ^24.18.1 || >=26.5.1`.
+- `.npmrc` now sets `engine-strict=true`, causing npm installation to fail on older runtimes instead of emitting only a warning.
+- Setup, configuration, collaboration, and security documentation now state the patched runtime floor.
+- The source verifier and focused regression suite assert the exact engine range and strict-install setting.
+
+The audit container supplied Node.js `22.16.0`. Dependency-free source tests could run there, but the remediated package intentionally rejects that version for installation or deployment.
+
+## Independent Validation of Existing Intake Remediations
+
+### BV-SEC-001 — `ip-address` Classification Vulnerabilities
+
+**Severity:** High  
+**Status:** Remediated at intake; independently validated
+
+The lockfile selects `ip-address@10.3.1` through an npm override. That version is outside the affected ranges of the reviewed 2026 leading-zero IPv4, attacker-controlled CIDR suffix, and IPv4-mapped/NAT64 classification advisories.
+
+The focused test also preserves the leading-zero reproduction boundary: Node.js canonicalizes `http://012.0.0.1/` to `10.0.0.1`. The regression fails if a vulnerable `ip-address` version re-enters the lockfile.
+
+BrainVault's bookmark-preview SSRF defense does not rely on `ip-address`. It was separately traced and retains normalized protocol/port checks, complete DNS-answer validation, connection address pinning, redirect revalidation, absolute deadlines, byte limits, content-type restrictions, and unsafe-address rejection. No bookmark SSRF bypass was reproduced in the supplied implementation and tests.
+
+### BV-SEC-002 — Third-Party Yjs Runtime Execution
+
+**Severity:** Medium  
+**Status:** Remediated at intake; independently validated
+
+The collaboration client imports Yjs from same-origin routes backed by the lockfile-controlled `yjs`, `lib0`, and `isomorphic.js` packages. The reviewed CSP no longer permits the former remote Yjs module URL. A compact import map is authorized by an exact SHA-256 CSP hash, and the regression suite verifies that the import map, CSP hash, server routes, and lockfile-selected module versions remain aligned.
+
+No remote Yjs reference or collaboration CSP regression was found.
+
+## Other High-Risk Areas Reviewed Without a Reproduced Exploit
 
 ### Authentication and sessions
 
-JWT verification fixes the expected algorithm, issuer, and audience; authorization uses verified claims rather than decoded untrusted claims. Session cookies are `HttpOnly`, `SameSite=Strict`, and secure under HTTPS mode. Session invalidation is tied to an authentication version. Sensitive state-changing authentication routes enforce origin and JSON expectations. Account and source-IP controls are present for login and MFA abuse. TOTP replay prevention and WebAuthn challenge, origin, RP ID, and user-verification checks are implemented.
+JWT verification fixes the expected algorithm, issuer, and audience. Authorization consumes verified claims rather than decoded untrusted claims. Session cookies are `HttpOnly`, `SameSite=Strict`, and secure in HTTPS mode. Session invalidation is tied to authentication versioning. Sensitive authentication state changes enforce browser-origin and JSON expectations. Login and MFA abuse controls, atomic MFA attempt reservation, TOTP replay prevention, and WebAuthn challenge/origin/RP/user-verification checks are covered by source assertions and regression tests.
 
 ### Object-level authorization
 
-Page, block, attachment, sharing, version, and collaboration operations trace ownership or editor rights before returning or mutating protected resources. Unauthorized access is generally mapped to a non-enumerating not-found response. No reproducible insecure direct object reference was identified in the reviewed routes.
+Page, block, attachment, sharing, version, and collaboration operations trace ownership or editor permission before returning or mutating protected resources. Unauthorized object access is generally normalized to a non-enumerating not-found result. No reproducible insecure direct object reference was identified in the reviewed routes.
 
 ### Server-side URL fetching
 
-The bookmark preview implementation validates the normalized protocol, forbids credentials and non-approved ports, resolves and validates every address, rejects mixed safe/unsafe DNS answer sets, pins the selected address to the outbound connection, repeats validation for redirects, and limits time, size, redirects, content type, and content encoding. No DNS-rebinding, redirect, alternate-IPv4-spelling, IPv4-mapped IPv6, or oversized-response bypass was reproduced from the supplied source and tests.
+The bookmark preview path validates normalized protocols, forbids credentials and unapproved ports, resolves and validates all destination addresses, rejects mixed safe/unsafe answer sets, pins a validated address into the outbound connection, repeats validation after redirects, disables content encoding, and enforces absolute time and response-size limits. No DNS-rebinding, redirect, alternate IPv4 spelling, mapped IPv6, or oversized-response bypass was reproduced.
 
 ### Attachments
 
-Attachments are stored outside the public static directory using generated names. Upload count, field nesting, and size are bounded. File signatures are checked in addition to metadata. Downloads use restrictive cache and content-sniffing headers, and potentially active content is served with sandboxing controls. No path traversal or arbitrary-file retrieval path was reproduced.
-
-### Backup and restore
-
-The ZIP parser applies entry, compressed-size, uncompressed-size, expansion-ratio, path, filename, method, CRC, and manifest restrictions. Restore validates hashes and structure, rerenders derived HTML rather than trusting imported cached HTML, handles conflicts explicitly, and uses transactions and recovery markers for destructive phases. No ZIP-slip, manifest substitution, decompression-bomb, or trusted-HTML import bypass was reproduced.
+Attachments are stored outside the public static root under generated names. Upload count, nesting, and size are bounded; signatures are checked in addition to metadata. Downloads use restrictive cache/content-sniffing headers, and potentially active content is forced into a constrained response policy. No path traversal or arbitrary-file retrieval path was reproduced.
 
 ### Rendering and DOM sinks
 
-Markdown permits source HTML only before sanitize-html processing. The sanitizer restricts tags, attributes, URL schemes, and embedded frames. Links receive opener protections, images use a no-referrer policy, KaTeX runs with trust disabled, and imported content is rerendered. Reviewed `innerHTML` assignments were fed by fixed catalogs, escaped syntax-highlighting output, or server-sanitized cached HTML. No stored or reflected XSS payload was reproduced in the reviewed paths.
+Markdown source HTML is sanitized before storage/use. Sanitizer policy restricts tags, attributes, URL schemes, and embedded content. Links receive opener protections, images use a no-referrer policy, KaTeX trust is disabled, and imported content is rerendered instead of trusting imported cached HTML. Reviewed `innerHTML` assignments were supplied by fixed catalogs, server-sanitized HTML, or Highlight.js output with the new resource gate and safe fallback. No stored or reflected XSS payload was reproduced.
 
 ### Collaboration and WebSockets
 
-WebSocket upgrades enforce the configured origin. Collaboration uses short-lived, purpose-specific tickets with fixed claims, checks access again at connection and persistence boundaries, limits frames and document state, and protects materialization against stale room writers. No unauthenticated room join, cross-page ticket reuse, or obvious resource-limit bypass was reproduced.
+WebSocket upgrades enforce the configured origin. Collaboration uses short-lived purpose-specific tickets, rechecks access at connection and persistence boundaries, and limits frames, document state, connection allocation, inbound queues, outbound buffering, and durable materialization. No unauthenticated room join, cross-page ticket reuse, or obvious limit bypass was reproduced.
 
-### Secrets and Git history
+### Secrets and history
 
-The working tree and approximately 1,367 Git blobs were checked for obvious private keys, common cloud/API token formats, and credential-assignment patterns. No likely committed secret was identified by those pattern checks. Pattern scanning cannot prove that every possible proprietary or low-entropy credential is absent.
+The working tree and reachable Git blobs were scanned for obvious private keys and common AWS, GitHub, OpenAI, Slack, and Google credential formats. No likely credential was detected by those pattern checks. Pattern matching cannot prove the absence of every proprietary, low-entropy, or context-dependent secret.
 
-## Validation Results
+## Locked Dependency Advisory Review
 
-The final source tree was validated with:
+The following security-relevant locked versions were checked against the reviewed public advisories:
 
-- Lockfile registry and dependency-version assertions
-- Security-hardening source verifier
-- Collaboration source verifier and JavaScript syntax scan
-- Data-loss guard verifier
-- Focused remediation regression tests
-- All dependency-free `tests/*.node.test.mjs` tests
-- Targeted JavaScript and TypeScript syntax checks
-- Exact CSP import-map SHA-256 verification
-- `.git` byte-manifest comparison against the extracted baseline
+| Package | Locked version | Review result |
+| --- | ---: | --- |
+| `ip-address` | 10.3.1 | Outside the reviewed affected ranges |
+| `express-rate-limit` | 8.5.2 | Newer than the reviewed 8.2.2 fix level |
+| `multer` | 2.2.0 | Includes the reviewed aborted-upload cleanup and nested-field DoS fixes |
+| `sanitize-html` | 2.17.5 | At the reviewed fix version |
+| `markdown-it` | 14.3.0 | Newer than the reviewed 14.2.0 fix version |
+| `linkify-it` | 5.0.2 | At the reviewed fix version for both relevant advisories |
+| `postcss` | 8.5.25 | Newer than the reviewed 8.5.18/8.5.19 fix levels |
+| `qs` | 6.15.3 | Newer than the reviewed 6.14.2 fix version |
 
-The dependency-free Node suite completed with **85 passing tests and 0 failures** before final packaging. The focused remediation file completed with **3 passing tests and 0 failures** and is also invoked by `npm run verify:security`.
+The vendored Highlight.js bundle remains version `11.0.1`, but the upstream quadratic issue is also reported against `11.11.1`. BrainVault therefore applies application-level execution limits and plaintext fallback rather than claiming that an unaffected upstream release was available during this review.
 
-A full `npm ci`, `npm audit`, TypeScript build, Vitest suite, MariaDB integration run, and browser-driven collaboration session could not be completed in the analysis container because the configured package-registry path did not provide every locked package and direct public-registry DNS resolution was unavailable. This is an environment limitation, not a passing result. The source and lockfile checks above were therefore supplemented with public advisory and package-metadata verification.
+`npm audit` could not be completed in the audit container, so this table is a targeted advisory review rather than a complete registry-generated audit result.
 
-## Files Changed
+## Reproducibility and Validation Results
 
+### Focused security suite
+
+Command:
+
+```bash
+node --experimental-strip-types --test \
+  tests/security-remediation.node.test.mjs \
+  tests/code-highlighting-resource-limits.node.test.mjs \
+  tests/data-transfer-resource-limits.node.test.mjs
+```
+
+Result: **11 passed, 0 failed**.
+
+The focused suite covers the patched `ip-address` lock, Node.js security floor, same-origin collaboration runtime/CSP hash, advisory hostname canonicalization, Highlight.js long-input fallback and escaping, aligned server/browser highlighting budgets, exact bounded JSON byte measurement, import concurrency admission, ZIP entry/central-directory ceilings, local-header mismatch rejection, and early backup admission ordering.
+
+### Full dependency-free suite
+
+Command:
+
+```bash
+node --experimental-strip-types --test tests/*.node.test.mjs
+```
+
+Result: **93 passed, 0 failed**.
+
+### Source and lock checks
+
+- `scripts/verify-security-hardening.mjs`: passed.
+- Syntax checks for every changed `.js`, `.mjs`, and `.ts` source/test file: passed.
+- `scripts/lockfile-registry.mjs`: passed; 346 resolved URLs used approved portable registry hosts.
+- Exact source comparison against the pristine extraction: only the files listed below differ.
+- `.git` is restored from and byte-compared with the pristine extraction immediately before packaging.
+
+### Environment limitations
+
+The analysis environment could not complete `npm ci` because its configured package mirror did not provide every package in the supplied lockfile, while direct public-registry DNS was unavailable. Consequently, the following could not be claimed as completed:
+
+- `npm audit`
+- Full TypeScript compilation through the installed project toolchain
+- Vitest unit/integration suites that require installed dependencies
+- MariaDB-backed integration tests
+- Browser-driven end-to-end collaboration and rendering tests
+
+These are environment limitations, not passing results. The direct Node regression suite and syntax checks are complementary and do not replace those deployment tests.
+
+## Files Changed in This Remediation Pass
+
+- `.env.example`
+- `.npmrc`
+- `README.md`
 - `SECURITY_REVIEW.md`
-- `package.json`
-- `package-lock.json`
-- `src/app.ts`
-- `public/index.html`
-- `public/collaboration.js`
-- `tests/security-remediation.node.test.mjs`
-- `tests/collaboration-ui.test.ts`
-- `scripts/verify-security-hardening.mjs`
-- `scripts/verify-collaboration.mjs`
 - `docs/collaboration/2026-07-29/collaboration.md`
 - `docs/configuration/2026-07-28/configuration.md`
+- `docs/getting-started/2026-07-27/getting-started.md`
+- `docs/security/2026-07-30/security.md`
+- `package-lock.json`
+- `package.json`
+- `public/code-highlighting.js`
+- `scripts/verify-security-hardening.mjs`
+- `src/config/env.ts`
+- `src/lib/code-highlighting.ts`
+- `src/lib/data-import-admission.ts`
+- `src/lib/data-transfer-limits.ts`
+- `src/lib/data-transfer.ts`
+- `src/lib/zip.ts`
+- `src/middleware/data-rate-limit.ts`
+- `src/routes/data.routes.ts`
+- `tests/code-highlighting-resource-limits.node.test.mjs`
+- `tests/code-highlighting.test.ts`
+- `tests/data-transfer-resource-limits.node.test.mjs`
+- `tests/security-remediation.node.test.mjs`
 
 No separate raw audit-log file was added.
 
 ## Deployment Follow-Up
 
-Before production release, run the following from a network that can access the lockfile registry and from an integration environment with the production MariaDB major version:
+Use a patched supported runtime, then run the complete project checks from a network that can access the lockfile registry and an integration environment matching the production MariaDB major version:
 
 ```bash
+node --version
 npm ci
 npm audit --omit=dev
 npm run check
@@ -181,10 +348,22 @@ npm run verify:collaboration
 npm run verify:data-loss
 ```
 
-Also verify the real reverse-proxy trust boundary, HTTPS redirect behavior, `PUBLIC_ORIGIN`, `CORS_ORIGIN`, WebSocket upgrades, cookie flags, upload/body limits, database permissions, backup storage permissions, and restore recovery behavior under the exact production topology.
+Before production release, also verify:
 
-The remaining KaTeX resources are exact-version jsDelivr paths and the script uses Subresource Integrity. Self-hosting those static assets would further reduce third-party availability and supply-chain exposure, although it was not classified as an urgent vulnerability in this review.
+- Reverse-proxy trust boundaries, forwarded headers, HTTPS redirects, and the exact `PUBLIC_ORIGIN`/`CORS_ORIGIN` values
+- Secure cookie behavior and WebSocket upgrades through the real proxy/CDN path
+- Shared rate-limit and restore-concurrency storage when more than one application process or host is used
+- Disk quotas for upload, data-transfer temporary, backup, and attachment directories
+- Database account privileges, transaction behavior, lock timeouts, and restore recovery under failure injection
+- Backup retention, encryption, access control, and recovery drills
+- Browser rendering and collaboration behavior with the production CSP and static-asset cache
 
 ## Repository Preservation
 
-The supplied `.git` directory is retained in the remediated archive. It was compared by path, size, mode-relevant file content, and SHA-256 manifest against the extracted baseline before packaging. The original working-tree line-ending state was not reset or normalized.
+The supplied `.git` directory is retained in the remediated archive. Before packaging, it is restored byte-for-byte from the pristine extraction and verified by relative path, file type, size, and SHA-256 content manifest. The `.git` directory itself is not deleted or replaced. No Git command is run after that restoration step.
+
+The original working-tree line-ending state is preserved for modified text files. No `node_modules`, temporary upload, benchmark output, or standalone audit-log file is included in the final archive.
+
+## Conclusion
+
+The review confirmed and fixed three additional security weaknesses, independently validated the two security remediations already present at intake, and found no reproducible Critical-severity exploit in the reviewed source paths. The most material code-level risk was the synchronous syntax-highlighting denial of service; it is now bounded on both server and browser paths without truncating stored note content. Backup restoration now fails earlier and admits substantially less unbounded work, and deployment tooling now rejects Node.js releases older than the July 29, 2026 security fixes.

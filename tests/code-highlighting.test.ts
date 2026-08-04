@@ -5,6 +5,7 @@ import {
   getCodeLanguage,
   getHighlightJsVersion,
   highlightCode,
+  highlightResourceLimits,
   normalizeCodeLanguage,
   renderHighlightedCode
 } from "../src/lib/code-highlighting.js";
@@ -69,6 +70,14 @@ describe("syntax highlighting", () => {
       expect(result.definition.id).toBe(definition.id);
       expect(result.html.length).toBeGreaterThan(0);
     }
+  });
+
+  it("falls back to escaped plaintext for code above the highlighting ceiling", () => {
+    const source = `<tag>${"a".repeat(highlightResourceLimits.maxSourceLength)}</tag>`;
+    const result = highlightCode(source, "c");
+    expect(result.source).toBe(source);
+    expect(result.html).not.toContain("<tag>");
+    expect(result.html).toContain("&lt;tag&gt;");
   });
 
   it("escapes source code before returning highlighted HTML", () => {
