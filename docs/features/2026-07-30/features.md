@@ -8,7 +8,7 @@ Pages and collections support Unicode Emoji 17 icons with Korean/English search,
 
 ### Page cover images
 
-Each ordinary page can display a wide cover above its title. Choose one of the five images in `public/img/default_cover`, or upload a PNG, JPEG, or WebP image. Browser-side optimization bounds custom covers to 2 MB before the existing page update API stores them, and server validation verifies both the declared image type and its binary signature.
+Each ordinary page can display a wide cover above its title. Choose one of the five images in `public/img/default_cover`, or upload a PNG, JPEG, or WebP image. The closed picker does not fetch the full-size artwork; compact WebP previews are assigned only when the dialog opens. Browser-side optimization bounds custom covers to 2 MB before the existing page update API stores them, and server validation verifies both the declared image type and its binary signature.
 
 Owners can replace or remove a cover at any time and add it again later. **Reposition** mode supports direct pointer dragging plus horizontal and vertical sliders. The selected focal point is persisted as 0–100 coordinates and rendered with `object-fit: cover` and `object-position`. Cover source and position metadata are included in workspace backup and restore.
 
@@ -116,7 +116,7 @@ Attachment storage and deletion rules are documented in [Security](../../securit
 
 Open **Settings → Data** to download a complete BrainVault backup or restore an archive exported by BrainVault.
 
-The ZIP contains the account workspace graph: normal and archived pages, collections, nested blocks, block metadata, page/tag relationships, page sharing grants bound to collaborator account ID and username, supported profile preferences, and every attachment as its original byte sequence. Before export, BrainVault coordinates same-origin tabs and refuses to create an incomplete archive while an owned page still has an unsaved direct draft or an unconfirmed real-time recovery snapshot in browser storage.
+The ZIP contains the account workspace graph: normal and archived pages, collections, nested blocks, block metadata, page/tag relationships, page sharing grants bound to collaborator account ID and username, supported profile preferences, every attachment as its original byte sequence, and custom page-cover bytes. Current v2 exports store custom covers as digest-bound `page-covers/` ZIP entries instead of inflating the JSON manifest; v1 backups with inline custom covers remain importable. Before export, BrainVault coordinates same-origin tabs and refuses to create an incomplete archive while an owned page still has an unsaved direct draft or an unconfirmed real-time recovery snapshot in browser storage.
 
 Restore replaces the current account's workspace content. The login username, password hash, authenticator secret, passkeys, and other security credentials are not exported and remain unchanged. Every collaborator referenced by a current-format backup must exist with the same account ID and username on the destination server; otherwise restore fails before any workspace data is replaced. Username-only sharing records from the earlier format must match a current exact page-to-account grant. For older backups that omit sharing export entirely, grants already present on matching ordinary page IDs, including retained grants on archived pages, are preserved instead of being silently removed.
 

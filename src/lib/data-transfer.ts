@@ -2,7 +2,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import type { Writable } from "node:stream";
-import { access, copyFile, link, mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { access, copyFile, link, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { z } from "zod";
 import { env } from "../config/env.js";
 import { attachmentUploadRoot, getAttachmentFilePath, withUserAttachmentLock } from "./attachments.js";
@@ -15,7 +15,16 @@ import { needsCollaborationMaterialization } from "./collaboration-protocol.js";
 import { db, transaction, type DbClient } from "./db.js";
 import { ApiError } from "./http.js";
 import { iconValueSchema, normalizeIconValue } from "./icon-value.js";
-import { pageCoverPositionSchema, pageCoverUrlSchema } from "./page-cover.js";
+import {
+  createCustomCoverDataUrl,
+  inspectCustomCoverBytes,
+  inspectCustomCoverDataUrl,
+  isCustomPageCoverValue,
+  maxCustomCoverImageBytes,
+  pageCoverPositionSchema,
+  pageCoverUrlSchema,
+  storedCustomPageCoverSentinel
+} from "./page-cover.js";
 import { createId } from "./id.js";
 import {
   getBackupPageShareIdentityMode,
@@ -45,7 +54,8 @@ import type { BlockType, UserRow } from "../types/domain.js";
 export const dataTransferTempDir = path.join(attachmentUploadRoot, ".data-transfer");
 const manifestName = "brainvault-backup.json";
 const backupFormat = "brainvault-backup";
-const backupVersion = 1;
+const legacyBackupVersion = 1;
+const backupVersion = 2;
 const maxManifestBytes = env.DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024;
 const idSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
 const timestampSchema = z.string().min(1).max(40);
@@ -159,10 +169,19 @@ const attachmentSchema = z.object({
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   crc32: z.number().int().min(0).max(0xffffffff)
 }).strict();
+const pageCoverMimeTypeSchema = z.enum(["image/png", "image/jpeg", "image/webp"]);
+const pageCoverFileSchema = z.object({
+  pageId: idSchema,
+  path: z.string().min(1).max(160),
+  mimeType: pageCoverMimeTypeSchema,
+  size: z.string().regex(/^\d+$/),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  crc32: z.number().int().min(0).max(0xffffffff)
+}).strict();
 
 const manifestSchema = z.object({
   format: z.literal(backupFormat),
-  version: z.literal(backupVersion),
+  version: z.union([z.literal(legacyBackupVersion), z.literal(backupVersion)]),
   exportedAt: timestampSchema,
   source: z.object({ userId: idSchema, username: z.string().min(1).max(50) }).strict(),
   account: z.object({
@@ -182,14 +201,33 @@ const manifestSchema = z.object({
     // page sharing relationships became part of the complete workspace format.
     pageShares: z.array(pageShareSchema).max(dataTransferResourceLimits.maxPageShares).optional()
   }).strict(),
-  attachments: z.array(attachmentSchema).max(dataTransferResourceLimits.maxAttachments)
-}).strict();
+  attachments: z.array(attachmentSchema).max(dataTransferResourceLimits.maxAttachments),
+  // Version 2 moves custom cover bytes out of JSON so a handful of valid images
+  // cannot exhaust the much smaller manifest limit. Version 1 remains importable.
+  pageCovers: z.array(pageCoverFileSchema).max(dataTransferResourceLimits.maxPageCovers).optional()
+}).strict().superRefine((manifest, context) => {
+  if (manifest.version === backupVersion && !manifest.pageCovers) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["pageCovers"],
+      message: "Version 2 backups must declare page cover files"
+    });
+  }
+  if (manifest.version === legacyBackupVersion && manifest.pageCovers) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["pageCovers"],
+      message: "Version 1 backups cannot declare page cover files"
+    });
+  }
+});
 
 export type BrainVaultBackup = z.infer<typeof manifestSchema>;
 type BackupPage = BrainVaultBackup["data"]["pages"][number];
 type BackupBlock = BrainVaultBackup["data"]["blocks"][number];
 type BackupTag = BrainVaultBackup["data"]["tags"][number];
 type BackupPageShare = z.infer<typeof pageShareSchema>;
+type BackupPageCoverFile = z.infer<typeof pageCoverFileSchema>;
 
 type WorkspaceRestoreAccountRow = {
   name: string | null;
@@ -462,12 +500,15 @@ function orderByParent<T>(items: T[], getId: (item: T) => string, getParent: (it
 function validateManifestRelations(manifest: BrainVaultBackup) {
   const { pages, blocks, tags, pageTags } = manifest.data;
   const pageShares = manifest.data.pageShares ?? [];
+  const pageCovers = manifest.pageCovers ?? [];
   assertUnique(pages.map((item) => item.id), "page ID");
   assertUnique(blocks.map((item) => item.id), "block ID");
   assertUnique(tags.map((item) => item.id), "tag ID");
   assertUnique(tags.map((item) => item.name.toLowerCase()), "tag name");
   assertUnique(manifest.attachments.map((item) => item.blockId), "attachment block ID");
   assertUnique(manifest.attachments.map((item) => item.path), "attachment path");
+  assertUnique(pageCovers.map((item) => item.pageId), "page cover page ID");
+  assertUnique(pageCovers.map((item) => item.path), "page cover path");
   assertUnique(
     pageShares.map((item) => `${item.page_id}\u0000${item.shared_username.toLowerCase()}`),
     "page share username"
@@ -491,6 +532,27 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
     if (page.is_collection && page.parent_page_id) invalidBackup(`Collection has an invalid parent: ${page.id}`);
   }
   orderByParent(pages, (item) => item.id, (item) => item.parent_page_id);
+
+  const pageCoverByPageId = new Map(pageCovers.map((item) => [item.pageId, item]));
+  for (const pageCover of pageCovers) {
+    const page = pageById.get(pageCover.pageId);
+    if (!page) invalidBackup(`Page cover page is missing: ${pageCover.pageId}`);
+    if (pageCover.path !== `page-covers/${pageCover.pageId}`) {
+      invalidBackup(`Page cover path is invalid: ${pageCover.path}`);
+    }
+    if (isCustomPageCoverValue(page.cover_url)) {
+      invalidBackup(`Page cover is declared both inline and as a ZIP entry: ${pageCover.pageId}`);
+    }
+  }
+  if (manifest.version === backupVersion) {
+    for (const page of pages) {
+      if (isCustomPageCoverValue(page.cover_url)) {
+        invalidBackup(`Version 2 page cover must be stored as a ZIP entry: ${page.id}`);
+      }
+    }
+  } else if (pageCoverByPageId.size) {
+    invalidBackup("Version 1 backups cannot contain page cover entries");
+  }
 
   for (const block of blocks) {
     if (!pageById.has(block.page_id)) invalidBackup(`Block page is missing: ${block.id}`);
@@ -555,20 +617,26 @@ export async function prepareUserDataBackup(userId: string) {
   const maxTransferBytes = BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n;
   const operationRoot = path.join(dataTransferTempDir, createId("export"));
   const stagedAttachmentDir = path.join(operationRoot, "attachments");
-  await mkdir(stagedAttachmentDir, { recursive: true });
+  const stagedPageCoverDir = path.join(operationRoot, "page-covers");
+  await Promise.all([
+    mkdir(stagedAttachmentDir, { recursive: true }),
+    mkdir(stagedPageCoverDir, { recursive: true })
+  ]);
 
   try {
-    const { snapshot, attachmentFiles } = await withUserAttachmentLock(userId, async (client) => {
+    const { snapshot, attachmentFiles, pageCoverFiles } = await withUserAttachmentLock(userId, async (client) => {
       // Lock the complete page set before the first consistent read establishes the
       // REPEATABLE READ snapshot. Otherwise a concurrent commit can make this locking
       // read observe newer page versions while later non-locking reads still return
       // older blocks and tag relations from an earlier snapshot.
       const pages = await client.query<BackupPage>(
-        `SELECT id, title, icon, cover_url, cover_position_x, cover_position_y, is_archived, is_collection, parent_page_id, edit_version, content_version,
+        `SELECT id, title, icon,
+           CASE WHEN cover_url LIKE 'data:image/%;base64,%' THEN ? ELSE cover_url END AS cover_url,
+           cover_position_x, cover_position_y, is_archived, is_collection, parent_page_id, edit_version, content_version,
            DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at,
            DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at
          FROM pages WHERE owner_id = ? ORDER BY created_at ASC, id ASC FOR UPDATE`,
-        [userId]
+        [storedCustomPageCoverSentinel, userId]
       );
 
       const account = await client.queryOne<RawAccountRow>(
@@ -616,16 +684,58 @@ export async function prepareUserDataBackup(userId: string) {
       assertExportCount("page sharing grants", pageShares.length, dataTransferResourceLimits.maxPageShares);
       assertExportCount("attachments", attachmentBlocks.length, dataTransferResourceLimits.maxAttachments);
 
+      const pageCoverFiles = [] as Array<{
+        pageId: string;
+        path: string;
+        mimeType: BackupPageCoverFile["mimeType"];
+        filePath: string;
+        inspection: FileInspection;
+      }>;
+      let stagedFileBytes = 0n;
+      for (const page of pages) {
+        if (page.cover_url !== storedCustomPageCoverSentinel) continue;
+        const raw = await client.queryOne<{ cover_url: string | null }>(
+          "SELECT cover_url FROM pages WHERE id = ? AND owner_id = ?",
+          [page.id, userId]
+        );
+        if (!raw?.cover_url) {
+          throw new ApiError(409, "BACKUP_COVER_MISSING", `Custom cover is missing for page ${page.id}`);
+        }
+        let inspectedCover: ReturnType<typeof inspectCustomCoverDataUrl>;
+        try {
+          inspectedCover = inspectCustomCoverDataUrl(raw.cover_url);
+        } catch (error) {
+          throw new ApiError(409, "BACKUP_COVER_INVALID", `Custom cover is invalid for page ${page.id}`, {
+            reason: error instanceof Error ? error.message : "invalid cover"
+          });
+        }
+        const stagedPath = path.join(stagedPageCoverDir, page.id);
+        const nextStagedBytes = stagedFileBytes + BigInt(inspectedCover.bytes.length);
+        if (nextStagedBytes > maxTransferBytes) {
+          throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
+        }
+        await writeFile(stagedPath, inspectedCover.bytes, { flag: "wx", mode: 0o600 });
+        const inspection = await inspectFile(stagedPath);
+        stagedFileBytes = nextStagedBytes;
+        page.cover_url = null;
+        pageCoverFiles.push({
+          pageId: page.id,
+          path: `page-covers/${page.id}`,
+          mimeType: inspectedCover.mimeType as BackupPageCoverFile["mimeType"],
+          filePath: stagedPath,
+          inspection
+        });
+      }
+
       const snapshot = { account, pages, blocks, tags, pageTags, pageShares };
       const attachmentFiles = [] as Array<{ blockId: string; path: string; filePath: string; inspection: FileInspection }>;
-      let stagedAttachmentBytes = 0n;
       for (const block of attachmentBlocks) {
         const sourcePath = getAttachmentFilePath(userId, block.id);
         const stagedPath = path.join(stagedAttachmentDir, block.id);
         try {
           const fileStat = await stat(sourcePath);
           if (!fileStat.isFile()) throw new Error("not a file");
-          if (stagedAttachmentBytes + BigInt(fileStat.size) > maxTransferBytes) {
+          if (stagedFileBytes + BigInt(fileStat.size) > maxTransferBytes) {
             throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
           }
           await copyFile(sourcePath, stagedPath);
@@ -634,8 +744,8 @@ export async function prepareUserDataBackup(userId: string) {
           throw new ApiError(409, "BACKUP_ATTACHMENT_MISSING", `Attachment file is missing for block ${block.id}`);
         }
         const inspection = await inspectFile(stagedPath);
-        stagedAttachmentBytes += inspection.size;
-        if (stagedAttachmentBytes > maxTransferBytes) {
+        stagedFileBytes += inspection.size;
+        if (stagedFileBytes > maxTransferBytes) {
           throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
         }
         try {
@@ -658,7 +768,7 @@ export async function prepareUserDataBackup(userId: string) {
           inspection
         });
       }
-      return { snapshot, attachmentFiles };
+      return { snapshot, attachmentFiles, pageCoverFiles };
     });
 
     const manifest: BrainVaultBackup = {
@@ -689,6 +799,14 @@ export async function prepareUserDataBackup(userId: string) {
         size: item.inspection.size.toString(),
         sha256: item.inspection.sha256,
         crc32: item.inspection.crc32
+      })),
+      pageCovers: pageCoverFiles.map((item) => ({
+        pageId: item.pageId,
+        path: item.path,
+        mimeType: item.mimeType,
+        size: item.inspection.size.toString(),
+        sha256: item.inspection.sha256,
+        crc32: item.inspection.crc32
       }))
     };
     const measuredManifestBytes = measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1);
@@ -707,7 +825,7 @@ export async function prepareUserDataBackup(userId: string) {
         "The backup manifest exceeds the supported import limit"
       );
     }
-    const totalUncompressedSize = attachmentFiles.reduce(
+    const totalUncompressedSize = [...attachmentFiles, ...pageCoverFiles].reduce(
       (total, item) => total + item.inspection.size,
       BigInt(manifestBuffer.length)
     );
@@ -716,9 +834,18 @@ export async function prepareUserDataBackup(userId: string) {
     }
     const archiveSize = calculateZipArchiveSize([
       { name: manifestName, size: BigInt(manifestBuffer.length) },
-      ...attachmentFiles.map((item) => ({ name: item.path, size: item.inspection.size }))
+      ...attachmentFiles.map((item) => ({ name: item.path, size: item.inspection.size })),
+      ...pageCoverFiles.map((item) => ({ name: item.path, size: item.inspection.size }))
     ]);
-    return { account: snapshot.account, manifest, manifestBuffer, attachmentFiles, archiveSize, operationRoot };
+    return {
+      account: snapshot.account,
+      manifest,
+      manifestBuffer,
+      attachmentFiles,
+      pageCoverFiles,
+      archiveSize,
+      operationRoot
+    };
   } catch (error) {
     await rm(operationRoot, { recursive: true, force: true }).catch(() => undefined);
     throw error;
@@ -729,7 +856,7 @@ export async function writeUserDataBackup(
   plan: Awaited<ReturnType<typeof prepareUserDataBackup>>,
   output: Writable
 ) {
-  const { account, manifest, manifestBuffer, attachmentFiles } = plan;
+  const { account, manifest, manifestBuffer, attachmentFiles, pageCoverFiles } = plan;
   try {
     const writer = new ZipWriter(output);
     await writer.add({
@@ -747,12 +874,22 @@ export async function writeUserDataBackup(
         source: { kind: "file", path: item.filePath }
       });
     }
+    for (const item of pageCoverFiles) {
+      await writer.add({
+        name: item.path,
+        size: item.inspection.size,
+        crc32: item.inspection.crc32,
+        sha256: item.inspection.sha256,
+        source: { kind: "file", path: item.filePath }
+      });
+    }
     await writer.finalize();
     return {
       username: account.username,
       pages: manifest.data.pages.length,
       blocks: manifest.data.blocks.length,
-      attachments: manifest.attachments.length
+      attachments: manifest.attachments.length,
+      pageCovers: manifest.pageCovers?.length ?? 0
     };
   } finally {
     await rm(plan.operationRoot, { recursive: true, force: true }).catch(() => undefined);
@@ -987,7 +1124,8 @@ async function importRows(
   userId: string,
   manifest: BrainVaultBackup,
   restoreVersion: number,
-  pageShares: RestoredPageShare[]
+  pageShares: RestoredPageShare[],
+  stagedPageCoverDir: string
 ) {
   await client.execute("DELETE FROM pages WHERE owner_id = ?", [userId]);
   await client.execute(
@@ -1004,14 +1142,22 @@ async function importRows(
     ]
   );
 
+  const pageCoverByPageId = new Map((manifest.pageCovers ?? []).map((item) => [item.pageId, item]));
   const orderedPages = orderByParent(manifest.data.pages, (item) => item.id, (item) => item.parent_page_id);
   for (const page of orderedPages) {
+    const pageCover = pageCoverByPageId.get(page.id);
+    const coverUrl = pageCover
+      ? createCustomCoverDataUrl(
+        pageCover.mimeType,
+        await readFile(path.join(stagedPageCoverDir, page.id))
+      )
+      : page.cover_url;
     await client.execute(
       `INSERT INTO pages
        (id, title, icon, cover_url, cover_position_x, cover_position_y, is_archived, is_collection, owner_id, parent_page_id, edit_version, content_version, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        page.id, page.title, normalizeIconValue(page.icon), page.cover_url,
+        page.id, page.title, normalizeIconValue(page.icon), coverUrl,
         page.cover_position_x ?? 50, page.cover_position_y ?? 50,
         page.is_archived, page.is_collection, userId,
         page.parent_page_id, restoreVersion, restoreVersion, page.created_at, page.updated_at
@@ -1074,6 +1220,7 @@ function getRestorePaths(journal: RestoreJournal) {
     journalPath: path.join(dataTransferTempDir, `${restoreJournalPrefix}${journal.operationId}.json`),
     operationRoot: path.join(dataTransferTempDir, journal.operationId),
     stagedAttachmentDir: path.join(dataTransferTempDir, journal.operationId, "attachments"),
+    stagedPageCoverDir: path.join(dataTransferTempDir, journal.operationId, "page-covers"),
     oldAttachmentDir: path.join(attachmentUploadRoot, `.restore-previous-${safeUserId}-${journal.operationId}`),
     targetAttachmentDir: path.join(attachmentUploadRoot, safeUserId)
   };
@@ -1548,7 +1695,11 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
   }
   validateManifestRelations(manifest);
 
-  const allowedEntries = new Set([manifestName, ...manifest.attachments.map((item) => item.path)]);
+  const allowedEntries = new Set([
+    manifestName,
+    ...manifest.attachments.map((item) => item.path),
+    ...(manifest.pageCovers ?? []).map((item) => item.path)
+  ]);
   for (const entry of entries) {
     if (!allowedEntries.has(entry.name)) invalidBackup(`Unexpected ZIP entry: ${entry.name}`);
   }
@@ -1567,11 +1718,21 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
     restoredAttachmentIds: manifest.attachments.map((attachment) => attachment.blockId)
   };
   const derivedPaths = getRestorePaths({ ...journalBase, hadPreviousAttachments: false });
-  const { operationRoot, stagedAttachmentDir, oldAttachmentDir, targetAttachmentDir, journalPath } = derivedPaths;
+  const {
+    operationRoot,
+    stagedAttachmentDir,
+    stagedPageCoverDir,
+    oldAttachmentDir,
+    targetAttachmentDir,
+    journalPath
+  } = derivedPaths;
   let journalWritten = false;
   let restoreJournal: RestoreJournal | null = null;
   let restoreSharingPlan: RestoreSharingPlan = { mode: "backup", shares: [] };
-  await mkdir(stagedAttachmentDir, { recursive: true });
+  await Promise.all([
+    mkdir(stagedAttachmentDir, { recursive: true }),
+    mkdir(stagedPageCoverDir, { recursive: true })
+  ]);
 
   try {
     for (const attachment of manifest.attachments) {
@@ -1590,6 +1751,35 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
       const inspection = await inspectFile(outputPath);
       if (inspection.sha256 !== attachment.sha256 || inspection.size.toString() !== attachment.size) {
         invalidBackup(`Attachment SHA-256 does not match: ${attachment.blockId}`);
+      }
+    }
+    for (const pageCover of manifest.pageCovers ?? []) {
+      const entry = entryByName.get(pageCover.path);
+      if (!entry) invalidBackup(`Page cover entry is missing: ${pageCover.path}`);
+      if (
+        entry.uncompressedSize.toString() !== pageCover.size
+        || entry.uncompressedSize > BigInt(maxCustomCoverImageBytes)
+        || entry.crc32 !== pageCover.crc32
+      ) {
+        invalidBackup(`Page cover size or CRC does not match: ${pageCover.pageId}`);
+      }
+      const outputPath = path.join(stagedPageCoverDir, pageCover.pageId);
+      try {
+        await copyZipEntryToFile(zipPath, entry, outputPath);
+        await syncPath(outputPath);
+      } catch (error) {
+        invalidBackup(error instanceof Error ? error.message : `Page cover is corrupt: ${pageCover.pageId}`);
+      }
+      const inspection = await inspectFile(outputPath);
+      if (inspection.sha256 !== pageCover.sha256 || inspection.size.toString() !== pageCover.size) {
+        invalidBackup(`Page cover SHA-256 does not match: ${pageCover.pageId}`);
+      }
+      try {
+        inspectCustomCoverBytes(pageCover.mimeType, await readFile(outputPath));
+      } catch (error) {
+        invalidBackup(`Page cover content is invalid: ${pageCover.pageId}`, {
+          reason: error instanceof Error ? error.message : "invalid cover"
+        });
       }
     }
     await writeRestoreGenerationMarker(stagedAttachmentDir, operationId);
@@ -1628,7 +1818,7 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
         await writeRestoreJournal(restoreJournal);
         journalWritten = true;
         const restoreVersion = await createRestoreEditVersion(client, userId, manifest);
-        await importRows(client, userId, manifest, restoreVersion, restoreSharingPlan.shares);
+        await importRows(client, userId, manifest, restoreVersion, restoreSharingPlan.shares, stagedPageCoverDir);
         await mkdir(path.dirname(targetAttachmentDir), { recursive: true });
         if (await pathExists(targetAttachmentDir)) {
           await rename(targetAttachmentDir, oldAttachmentDir);
@@ -1705,6 +1895,7 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
         pages: manifest.data.pages.length,
         blocks: manifest.data.blocks.length,
         attachments: manifest.attachments.length,
+        pageCovers: manifest.pageCovers?.length ?? 0,
         tags: manifest.data.tags.length,
         shares: restoreSharingPlan.shares.length
       },

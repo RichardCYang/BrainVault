@@ -44,6 +44,7 @@
     "reproduce:cross-page-parent-loss": "node scripts/reproduce-cross-page-parent-cascade-loss.mjs",
     "reproduce:backup-stream-integrity-loss": "node --experimental-strip-types scripts/reproduce-backup-stream-integrity-loss.mjs",
     "reproduce:backup-transport-truncation": "node --experimental-strip-types scripts/reproduce-backup-transport-truncation.mjs",
+    "reproduce:page-cover-backup-manifest": "node --experimental-strip-types scripts/reproduce-page-cover-backup-manifest-loss.mjs",
     "reproduce:backup-share-loss": "node scripts/reproduce-backup-share-loss.mjs",
     "reproduce:backup-share-identity-rebinding": "node --experimental-strip-types scripts/reproduce-backup-share-identity-rebinding.mjs",
     "reproduce:archived-share-backup-loss": "node --experimental-strip-types scripts/reproduce-archived-share-backup-loss.mjs",

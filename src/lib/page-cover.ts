@@ -46,6 +46,24 @@ function hasExpectedSignature(mimeType: string, bytes: Buffer) {
   return false;
 }
 
+export function inspectCustomCoverBytes(mimeType: string, bytes: Buffer) {
+  if (!supportedCustomCoverMimeTypes.has(mimeType)) {
+    throw new Error("Cover image type is unsupported");
+  }
+  if (!bytes.length || bytes.length > maxCustomCoverImageBytes) {
+    throw new Error("Cover image is too large");
+  }
+  if (!hasExpectedSignature(mimeType, bytes)) {
+    throw new Error("Cover image content does not match its declared type");
+  }
+  return { mimeType, bytes };
+}
+
+export function createCustomCoverDataUrl(mimeType: string, bytes: Buffer) {
+  inspectCustomCoverBytes(mimeType, bytes);
+  return `data:${mimeType};base64,${bytes.toString("base64")}`;
+}
+
 export function inspectCustomCoverDataUrl(value: string) {
   const match = dataUrlPattern.exec(value);
   if (!match) throw new Error("Cover image must be a base64 PNG, JPEG, or WebP data URL");
@@ -55,13 +73,10 @@ export function inspectCustomCoverDataUrl(value: string) {
   }
 
   const bytes = Buffer.from(encoded, "base64");
-  if (!bytes.length || bytes.length > maxCustomCoverImageBytes) {
-    throw new Error("Cover image is too large");
+  if (bytes.toString("base64") !== encoded) {
+    throw new Error("Cover image encoding is invalid");
   }
-  if (bytes.toString("base64") !== encoded || !hasExpectedSignature(mimeType, bytes)) {
-    throw new Error("Cover image content does not match its declared type");
-  }
-  return { mimeType, bytes };
+  return inspectCustomCoverBytes(mimeType, bytes);
 }
 
 export function normalizePageCoverUrl(value: string) {

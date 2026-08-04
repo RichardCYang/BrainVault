@@ -5,7 +5,8 @@ export const dataTransferResourceLimits = Object.freeze({
   maxPageTags: 100_000,
   maxPageShares: 20_000,
   maxAttachments: 5_000,
-  maxZipEntries: 5_001,
+  maxPageCovers: 20_000,
+  maxZipEntries: 25_001,
   maxCentralDirectoryBytes: 4 * 1024 * 1024
 });
 

@@ -1,5 +1,14 @@
 import type { BlockRow, PageRow, TagRow, UserRow } from "../types/domain.js";
-import { toPublicPageCoverUrl } from "./page-cover.js";
+
+const storedCustomPageCoverSentinel = "custom-image:stored";
+
+function toPublicPageCoverUrl(pageId: string, value: string | null, pageVersion: number) {
+  if (!value) return null;
+  const isCustom = value === storedCustomPageCoverSentinel || value.startsWith("data:image/");
+  if (!isCustom) return value;
+  const version = Number.isSafeInteger(pageVersion) && pageVersion > 0 ? pageVersion : 1;
+  return `/api/pages/${encodeURIComponent(pageId)}/cover?v=${version}`;
+}
 
 export function toPublicUser(
   row: Pick<

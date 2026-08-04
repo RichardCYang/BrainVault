@@ -63,6 +63,7 @@ import {
   updateYouTubeVideoPreview
 } from "./youtube-block.js";
 import { restoreSessionAtBoot } from "./session-bootstrap.js";
+import { createPageCoverOperationGuard } from "./page-cover-operation.js";
 
 const rootParentKey = "__root__";
 const defaultCollectionKey = "__default_collection__";
@@ -113,6 +114,7 @@ const pageTransitionLock = createPageTransitionLock(window.localStorage, {
 let activePageTransitionLease = null;
 let pageTransitionUnlockTimer = null;
 let collaborationRecoveryPanelGeneration = 0;
+const pageCoverOperationGuard = createPageCoverOperationGuard();
 let pageCoverSaving = false;
 let pageCoverPositionDraft = null;
 let pageCoverDragPointerId = null;
@@ -9393,38 +9395,54 @@ function renderPageCover(page) {
   syncPageCoverControls();
 }
 
+function hydratePageCoverPreviews() {
+  for (const image of elements.pageCoverDialog.querySelectorAll("img[data-cover-preview-src]")) {
+    if (image.getAttribute("src")) continue;
+    image.loading = "lazy";
+    image.decoding = "async";
+    image.setAttribute("src", image.dataset.coverPreviewSrc);
+  }
+}
+
 function openPageCoverDialog() {
   if (!requireWritablePage() || !isPageOwner()) return;
   closePageCoverPositionEditor({ restore: true });
+  hydratePageCoverPreviews();
   if (!elements.pageCoverDialog.open) elements.pageCoverDialog.showModal();
 }
 
 function closePageCoverDialog() {
+  if (!pageCoverSaving) pageCoverOperationGuard.invalidate();
   if (elements.pageCoverDialog.open) elements.pageCoverDialog.close();
 }
 
-async function persistPageCover(updates, successKey) {
+async function persistPageCover(updates, successKey, { operation = null } = {}) {
   if (!requireWritablePage() || !isPageOwner() || pageCoverSaving) return null;
   const pageId = state.selectedPage.id;
+  const activeOperation = operation ?? pageCoverOperationGuard.begin(pageId);
+  if (!pageCoverOperationGuard.isCurrent(activeOperation, pageId)) return null;
   pageCoverSaving = true;
   syncPageCoverControls();
   try {
     let updatedPage = null;
     await withPageEditLock(async () => {
-      if (state.selectedPage?.id !== pageId) return;
+      if (
+        state.selectedPage?.id !== pageId
+        || !pageCoverOperationGuard.isCurrent(activeOperation, pageId)
+      ) return;
+      const expectedVersion = state.selectedPage.version;
       const task = { mutationId: createMutationId() };
       const data = await submitWithFreshMutationIdOnReuse(task, () =>
         api(`/api/pages/${pageId}`, {
           method: "PATCH",
           body: {
             ...updates,
-            expectedVersion: state.selectedPage.version,
+            expectedVersion,
             mutationId: task.mutationId
           }
         })
       );
       updatedPage = data.page;
-      state.selectedPage = data.page;
       applyPageSummaryUpdate(pageId, {
         coverUrl: data.page.coverUrl,
         coverPositionX: data.page.coverPositionX,
@@ -9432,10 +9450,19 @@ async function persistPageCover(updates, successKey) {
         version: data.page.version,
         updatedAt: data.page.updatedAt
       });
-      renderSelectedPage();
+      if (
+        state.selectedPage?.id === pageId
+        && pageCoverOperationGuard.isCurrent(activeOperation, pageId)
+      ) {
+        state.selectedPage = data.page;
+        renderSelectedPage();
+      }
     });
     if (updatedPage && successKey) setStatus(t(successKey));
     return updatedPage;
+  } catch (error) {
+    if (state.selectedPage?.id === pageId) renderPageCover(state.selectedPage);
+    throw error;
   } finally {
     pageCoverSaving = false;
     syncPageCoverControls();
@@ -11248,18 +11275,24 @@ elements.pageCoverCustomButton.addEventListener("click", () => {
 elements.pageCoverCustomInput.addEventListener("change", async () => {
   const file = elements.pageCoverCustomInput.files?.[0] ?? null;
   elements.pageCoverCustomInput.value = "";
-  if (!file) return;
+  const pageId = state.selectedPage?.id ?? null;
+  if (!file || !pageId || pageCoverSaving) return;
+  const operation = pageCoverOperationGuard.begin(pageId);
   try {
     setStatus(t("cover.preparing"));
     const coverUrl = await prepareCustomCoverDataUrl(file);
+    if (!pageCoverOperationGuard.isCurrent(operation, state.selectedPage?.id)) return;
     setStatus(t("cover.applying"));
     const updated = await persistPageCover(
       { coverUrl, coverPositionX: 50, coverPositionY: 50 },
-      "cover.customApplied"
+      "cover.customApplied",
+      { operation }
     );
     if (updated) closePageCoverDialog();
   } catch (error) {
-    setStatus(error.message, true);
+    if (pageCoverOperationGuard.isCurrent(operation, state.selectedPage?.id)) {
+      setStatus(error.message, true);
+    }
   }
 });
 
@@ -11323,16 +11356,20 @@ elements.pageCoverImage.addEventListener("pointerdown", (event) => {
   updatePageCoverPositionFromPointer(event);
 });
 elements.pageCoverImage.addEventListener("pointermove", updatePageCoverPositionFromPointer);
-for (const eventName of ["pointerup", "pointercancel"]) {
-  elements.pageCoverImage.addEventListener(eventName, (event) => {
-    if (event.pointerId !== pageCoverDragPointerId) return;
-    updatePageCoverPositionFromPointer(event);
-    pageCoverDragPointerId = null;
-    if (elements.pageCoverImage.hasPointerCapture(event.pointerId)) {
-      elements.pageCoverImage.releasePointerCapture(event.pointerId);
-    }
-  });
+function finishPageCoverPointerDrag(event, { update = false } = {}) {
+  if (event.pointerId !== pageCoverDragPointerId) return;
+  if (update) updatePageCoverPositionFromPointer(event);
+  pageCoverDragPointerId = null;
+  if (elements.pageCoverImage.hasPointerCapture(event.pointerId)) {
+    elements.pageCoverImage.releasePointerCapture(event.pointerId);
+  }
 }
+elements.pageCoverImage.addEventListener("pointerup", (event) => {
+  finishPageCoverPointerDrag(event, { update: true });
+});
+elements.pageCoverImage.addEventListener("pointercancel", (event) => {
+  finishPageCoverPointerDrag(event);
+});
 
 elements.pageTitle.addEventListener("input", (event) => {
   if (!requireWritablePage({ announce: false })) return;

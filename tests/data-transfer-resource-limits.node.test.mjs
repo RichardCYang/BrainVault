@@ -96,6 +96,11 @@ test("backup route and manifest limits are applied before expensive import work"
   assert.ok(transferSource.includes("if (error instanceof ApiError) throw error"));
   const importSource = transferSource.slice(transferSource.indexOf("export async function importUserDataBackup"));
   assert.ok(importSource.indexOf("readZipDirectory(zipPath") < importSource.indexOf("const initialWorkspaceSnapshot"));
-  assert.ok(dataTransferResourceLimits.maxAttachments + 1 === dataTransferResourceLimits.maxZipEntries);
+  assert.ok(
+    dataTransferResourceLimits.maxAttachments
+      + dataTransferResourceLimits.maxPageCovers
+      + 1
+      === dataTransferResourceLimits.maxZipEntries
+  );
   assert.ok(dataTransferResourceLimits.maxCentralDirectoryBytes <= 4 * 1024 * 1024);
 });

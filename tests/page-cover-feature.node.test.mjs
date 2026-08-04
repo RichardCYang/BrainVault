@@ -10,6 +10,10 @@ const defaultCoverPaths = Array.from(
   { length: 5 },
   (_, index) => `public/img/default_cover/coverimg${index + 1}.png`
 );
+const defaultCoverThumbnailPaths = Array.from(
+  { length: 5 },
+  (_, index) => `public/img/default_cover/thumbnails/coverimg${index + 1}.webp`
+);
 
 test("all built-in cover images are shipped and exposed by the picker", async () => {
   const html = await readSource("public/index.html");
@@ -30,6 +34,20 @@ test("all built-in cover images are shipped and exposed by the picker", async ()
     assert.match(html, new RegExp(publicPath.replaceAll("/", "\\/")));
   }
   assert.match(serverValidation, /Array\.from\(\{ length: 5 \}[\s\S]*?`\/img\/default_cover\/coverimg\$\{index \+ 1\}\.png`/);
+
+  let thumbnailBytes = 0;
+  for (const relativePath of defaultCoverThumbnailPaths) {
+    const info = await stat(new URL(`../${relativePath}`, import.meta.url));
+    const bytes = await readFile(new URL(`../${relativePath}`, import.meta.url));
+    thumbnailBytes += info.size;
+    assert.ok(info.isFile() && info.size > 8 && info.size < 100 * 1024);
+    assert.equal(bytes.toString("ascii", 0, 4), "RIFF");
+    assert.equal(bytes.toString("ascii", 8, 12), "WEBP");
+    const publicPath = `/${relativePath.replace(/^public\//, "")}`;
+    assert.match(html, new RegExp(`data-cover-preview-src="${publicPath.replaceAll("/", "\\/")}"`));
+  }
+  assert.ok(thumbnailBytes < 500 * 1024);
+  assert.doesNotMatch(html, /<img\s+src="\/img\/default_cover\/coverimg\d+\.png"/);
 });
 
 test("the page UI supports adding, replacing, removing, and repositioning covers", async () => {
@@ -53,6 +71,8 @@ test("the page UI supports adding, replacing, removing, and repositioning covers
   assert.match(app, /\{ coverPositionX: x, coverPositionY: y \}/);
   assert.match(app, /style\.objectPosition = `\$\{positionX\}% \$\{positionY\}%`/);
   assert.match(app, /setPointerCapture\(event\.pointerId\)/);
+  assert.match(app, /hydratePageCoverPreviews\(\)/);
+  assert.match(app, /createPageCoverOperationGuard\(\)/);
 
   assert.match(styles, /\.page-cover-image\s*\{[\s\S]*?object-fit:\s*cover;[\s\S]*?object-position:\s*50% 50%;/);
   assert.match(styles, /\.page-cover\.is-repositioning \.page-cover-image/);
@@ -100,7 +120,8 @@ test("cover persistence, validation, migration, history, and backup paths remain
   assert.match(pageAccess, /storedCustomPageCoverSentinel/);
   assert.match(pageAccess, /CASE WHEN .*cover_url.*LIKE 'data:image\/%;base64,%'/);
 
-  assert.match(transfer, /SELECT id, title, icon, cover_url, cover_position_x, cover_position_y/);
+  assert.match(transfer, /CASE WHEN cover_url LIKE 'data:image\/%;base64,%' THEN \? ELSE cover_url END AS cover_url/);
+  assert.match(transfer, /pageCovers: pageCoverFiles\.map/);
   assert.match(transfer, /page\.cover_position_x \?\? 50, page\.cover_position_y \?\? 50/);
   assert.match(history, /describePageCoverUrlForHistory\(page\.cover_url\)/);
   assert.match(history, /coverPositionX/);

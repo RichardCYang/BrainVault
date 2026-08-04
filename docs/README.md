@@ -52,3 +52,8 @@ docs/<topic>/<YYYY-MM-DD>/<document>
 - [Structured-block metadata integrity](data-loss/2026-07-30/structured-metadata-integrity.md)
 - [Independent data-integrity review](data-loss/2026-07-30/independent-data-integrity-review.md)
 - [Final data-integrity review](data-loss/2026-07-30/final-data-integrity-review.md)
+
+### 2026-08-04
+
+- [Page-cover backup, race, and regression integrity review](data-loss/2026-08-04/page-cover-integrity-review.md)
+

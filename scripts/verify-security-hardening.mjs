@@ -239,13 +239,24 @@ contains("src/lib/posh-acme-https.ts", [
 contains("src/middleware/https.ts", ["req.secure", "buildHttpsRedirectUrl", "HTTPS_REQUIRED", "res.redirect(308"]);
 contains("src/lib/reverse-proxy.ts", ["createExpressTrustProxySetting", "trustedProxyAddresses"]);
 contains("src/routes/page.routes.ts", [
-  "coverUrl: httpUrlSchema(500)",
+  "coverUrl: pageCoverUrlSchema.nullable().optional()",
+  "inspectCustomCoverDataUrl(row.cover_url)",
   "escapeHtmlAttribute(block.id)",
   'res.setHeader("Cache-Control", "private, no-store")'
 ]);
+contains("src/lib/page-cover.ts", [
+  "maxCustomCoverImageBytes = 2 * 1024 * 1024",
+  'new Set(["image/png", "image/jpeg", "image/webp"])',
+  "hasExpectedSignature",
+  'bytes.toString("base64") !== encoded',
+  "parsed.username || parsed.password",
+  "['http:', 'https:'].includes(parsed.protocol)"
+]);
 contains("src/lib/collaboration-materialization.ts", ["z.string().regex(/^[a-zA-Z0-9_-]+$/).min(1).max(64)"]);
 contains("src/lib/data-transfer.ts", [
-  "cover_url: nullableHttpUrl(500)",
+  "cover_url: pageCoverUrlSchema.nullable()",
+  "inspectCustomCoverBytes(pageCover.mimeType",
+  "pageCovers: z.array(pageCoverFileSchema)",
   "normalizeAvatarDataUrl(manifest.account.avatar_data)",
   "The backup contains an identifier owned by another account"
 ]);
@@ -321,7 +332,8 @@ contains("src/middleware/data-rate-limit.ts", [
 contains("src/lib/data-transfer-limits.ts", [
   "maxBlocks: 50_000",
   "maxAttachments: 5_000",
-  "maxZipEntries: 5_001",
+  "maxPageCovers: 20_000",
+  "maxZipEntries: 25_001",
   "maxCentralDirectoryBytes: 4 * 1024 * 1024",
   "measureJsonUtf8BytesWithinLimit"
 ]);
@@ -329,7 +341,7 @@ contains("src/lib/data-transfer.ts", [
   "DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024",
   "maxCentralDirectoryBytes: dataTransferResourceLimits.maxCentralDirectoryBytes",
   "maxEntries: dataTransferResourceLimits.maxZipEntries",
-  "stagedAttachmentBytes + BigInt(fileStat.size) > maxTransferBytes",
+  "stagedFileBytes + BigInt(fileStat.size) > maxTransferBytes",
   "measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1)"
 ]);
 contains("src/lib/code-highlighting.ts", [

@@ -294,7 +294,11 @@ assert(
 assert(
   zipSource.includes("export function calculateZipArchiveSize")
     && dataTransferSource.includes("const archiveSize = calculateZipArchiveSize")
-    && dataTransferSource.includes("attachmentFiles, archiveSize, operationRoot")
+    && dataTransferSource.includes("attachmentFiles")
+    && dataTransferSource.includes("pageCoverFiles")
+    && dataTransferSource.includes("archiveSize")
+    && dataTransferSource.includes("operationRoot")
+    && dataTransferSource.includes("...pageCoverFiles.map")
     && dataRouteSource.includes('res.setHeader("Content-Length", plan.archiveSize.toString())')
     && dataRouteSource.includes('res.setHeader("Cache-Control", "private, no-store, no-transform")')
     && dataRouteSource.includes("res.strictContentLength = true")
