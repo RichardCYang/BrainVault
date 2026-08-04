@@ -62,6 +62,7 @@ import {
   parseYouTubeVideoUrl,
   updateYouTubeVideoPreview
 } from "./youtube-block.js";
+import { restoreSessionAtBoot } from "./session-bootstrap.js";
 
 const rootParentKey = "__root__";
 const defaultCollectionKey = "__default_collection__";
@@ -9914,7 +9915,7 @@ async function createUntitledPage() {
 
 async function loadMe() {
   const data = await api("/api/auth/me", { skipAuthReset: true });
-  state.user = data.user;
+  return data.user;
 }
 
 async function fetchAllPageSummaries({ query = "", tag = "", archived = false } = {}) {
@@ -10069,17 +10070,32 @@ async function boot() {
   renderLoginHistory();
   setAuthMode(state.authMode, false);
 
-  try {
-    await loadMe();
-    applyUserTheme();
-    await applyUserPreferredLanguage();
-    renderShell();
-    if (state.user) await loadPages();
-    setStatus(state.user ? t("status.ready") : t("status.getStarted"));
-  } catch (error) {
-    resetAuthenticationSessionState();
-    setStatus(t("status.loginRequired"));
+  const result = await restoreSessionAtBoot(state, {
+    loadUser: loadMe,
+    initializeAuthenticatedUi: async () => {
+      applyUserTheme();
+      await applyUserPreferredLanguage();
+      renderShell();
+    },
+    loadWorkspace: loadPages
+  });
+
+  if (result.outcome === "ready") {
+    setStatus(t("status.ready"));
+    return;
   }
+
+  if (result.outcome === "workspace-unavailable") {
+    setStatus(result.error?.message ?? t("errors.unknown"), true);
+    return;
+  }
+
+  resetAuthenticationSessionState();
+  if (result.outcome === "unauthenticated") {
+    setStatus(t("status.loginRequired"));
+    return;
+  }
+  setStatus(result.error?.message ?? t("errors.unknown"), true);
 }
 
 async function openHomeFromBrand() {
