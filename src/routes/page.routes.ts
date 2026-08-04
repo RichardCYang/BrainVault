@@ -7,11 +7,18 @@ import { removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { renderBlockHtml } from "../lib/markdown.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
 import { toBlock, toPage, toTag } from "../lib/mappers.js";
-import { getOwnedPage, getPageAccess, toAccessPayload, toCollaborationPayload } from "../lib/page-access.js";
+import {
+  getOwnedPage,
+  getPageAccess,
+  pageSummaryProjection,
+  toAccessPayload,
+  toCollaborationPayload
+} from "../lib/page-access.js";
 import { disconnectPageCollaborators } from "../lib/collaboration-server.js";
 import { needsCollaborationMaterialization } from "../lib/collaboration-protocol.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { iconValueSchema, normalizeIconValue } from "../lib/icon-value.js";
+import { inspectCustomCoverDataUrl, pageCoverPositionSchema, pageCoverUrlSchema } from "../lib/page-cover.js";
 import { toSqlLikeContainsPattern } from "../lib/sql-like.js";
 import {
   diffPageVersionBlocks,
@@ -26,7 +33,7 @@ import {
 import { requireAuth } from "../middleware/auth.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { buildBlockTree } from "../utils/blockTree.js";
-import { httpUrlSchema, idParamSchema, requireUser, routeIdSchema } from "../utils/schemas.js";
+import { idParamSchema, requireUser, routeIdSchema } from "../utils/schemas.js";
 import type { BlockRow, PageRow, TagRow } from "../types/domain.js";
 
 export const pageRouter = Router();
@@ -64,7 +71,9 @@ function encodePageListCursor(row: { id: string; cursor_created_at: string }) {
 const createPageSchema = z.object({
   title: z.string().trim().min(1).max(160),
   icon: iconValueSchema.optional(),
-  coverUrl: httpUrlSchema(500).optional(),
+  coverUrl: pageCoverUrlSchema.optional(),
+  coverPositionX: pageCoverPositionSchema.optional(),
+  coverPositionY: pageCoverPositionSchema.optional(),
   parentPageId: z.string().min(1).optional(),
   isCollection: z.boolean().optional().default(false),
   initialMarkdown: z.string().max(20_000).optional(),
@@ -74,7 +83,9 @@ const createPageSchema = z.object({
 const updatePageSchema = z.object({
   title: z.string().trim().min(1).max(160).optional(),
   icon: iconValueSchema.nullable().optional(),
-  coverUrl: httpUrlSchema(500).nullable().optional(),
+  coverUrl: pageCoverUrlSchema.nullable().optional(),
+  coverPositionX: pageCoverPositionSchema.optional(),
+  coverPositionY: pageCoverPositionSchema.optional(),
   isArchived: z.boolean().optional(),
   parentPageId: z.string().min(1).nullable().optional(),
   tags: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
@@ -323,7 +334,7 @@ async function getBlocks(pageId: string, client: DbClient = db) {
 async function getPageResponse(pageId: string, userId: string, client: DbClient = db) {
   const access = await getPageAccess(pageId, userId, client);
   const childRows = await client.query<PageRow>(
-    `SELECT c.* FROM pages c
+    `SELECT ${pageSummaryProjection("c")} FROM pages c
      WHERE c.parent_page_id = ?
        AND (c.owner_id = ? OR EXISTS (
          SELECT 1 FROM page_shares child_share
@@ -390,7 +401,7 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
     const rows = await db.query<
       PageRow & { block_count: number; child_count: number; cursor_created_at: string }
     >(
-      `SELECT p.*,
+      `SELECT ${pageSummaryProjection("p")},
         DATE_FORMAT(p.created_at, '%Y-%m-%d %H:%i:%s.%f') AS cursor_created_at,
         (SELECT COUNT(*) FROM blocks b WHERE b.page_id = p.id) AS block_count,
         (SELECT COUNT(*) FROM pages c
@@ -445,13 +456,16 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
     const pageId = await transaction(async (client) => {
       const id = createId("pag");
       await client.execute(
-        `INSERT INTO pages (id, title, icon, cover_url, is_collection, owner_id, parent_page_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO pages
+           (id, title, icon, cover_url, cover_position_x, cover_position_y, is_collection, owner_id, parent_page_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           body.title,
           normalizeIconValue(body.icon ?? null),
           body.coverUrl ?? null,
+          body.coverPositionX ?? 50,
+          body.coverPositionY ?? 50,
           body.isCollection ? 1 : 0,
           user.id,
           body.parentPageId ?? null
@@ -487,6 +501,41 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
     });
 
     res.status(201).json({ page: await getPageResponse(pageId, user.id) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+pageRouter.get("/:pageId/cover", validate({ params: idParamSchema }), async (req, res, next) => {
+  try {
+    const user = requireUser(req.user);
+    const pageId = String(req.params.pageId);
+    const row = await db.queryOne<{ cover_url: string | null }>(
+      `SELECT p.cover_url
+       FROM pages p
+       WHERE p.id = ?
+         AND (p.owner_id = ? OR EXISTS (
+           SELECT 1 FROM page_shares ps
+           WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+         ))`,
+      [pageId, user.id, user.id]
+    );
+    if (!row?.cover_url?.startsWith("data:")) throw notFound("Page cover");
+
+    const { mimeType, bytes } = inspectCustomCoverDataUrl(row.cover_url);
+    const etag = `"${createHash("sha256").update(bytes).digest("hex")}"`;
+    res.setHeader("Cache-Control", "private, max-age=0, must-revalidate");
+    res.setHeader("ETag", etag);
+    res.setHeader("Vary", "Cookie, Authorization");
+    if (req.headers["if-none-match"] === etag) {
+      res.status(304).end();
+      return;
+    }
+
+    res.setHeader("Content-Type", mimeType);
+    res.setHeader("Content-Length", String(bytes.length));
+    res.setHeader("Content-Disposition", "inline");
+    res.end(bytes);
   } catch (error) {
     next(error);
   }
@@ -654,6 +703,14 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
     if (updates.coverUrl !== undefined) {
       fields.push("cover_url = ?");
       values.push(updates.coverUrl);
+    }
+    if (updates.coverPositionX !== undefined) {
+      fields.push("cover_position_x = ?");
+      values.push(updates.coverPositionX);
+    }
+    if (updates.coverPositionY !== undefined) {
+      fields.push("cover_position_y = ?");
+      values.push(updates.coverPositionY);
     }
     if (updates.isArchived !== undefined) {
       fields.push("is_archived = ?");

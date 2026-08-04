@@ -15,6 +15,7 @@ import { needsCollaborationMaterialization } from "./collaboration-protocol.js";
 import { db, transaction, type DbClient } from "./db.js";
 import { ApiError } from "./http.js";
 import { iconValueSchema, normalizeIconValue } from "./icon-value.js";
+import { pageCoverPositionSchema, pageCoverUrlSchema } from "./page-cover.js";
 import { createId } from "./id.js";
 import {
   getBackupPageShareIdentityMode,
@@ -50,16 +51,6 @@ const idSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
 const timestampSchema = z.string().min(1).max(40);
 const profileThemeSchema = z.enum(["light", "dark"]);
 const nullableString = (max: number) => z.string().max(max).nullable();
-const nullableHttpUrl = (max: number) =>
-  z
-    .string()
-    .max(max)
-    .url()
-    .refine((value) => {
-      const protocol = new URL(value).protocol;
-      return protocol === "http:" || protocol === "https:";
-    }, "URL must use HTTP or HTTPS")
-    .nullable();
 const backupAvatarSchema = z
   .string()
   .max(Math.ceil((maxAvatarBytes * 4) / 3) + 128)
@@ -111,7 +102,9 @@ const pageSchema = z.object({
   id: idSchema,
   title: z.string().max(160),
   icon: iconValueSchema.nullable(),
-  cover_url: nullableHttpUrl(500),
+  cover_url: pageCoverUrlSchema.nullable(),
+  cover_position_x: pageCoverPositionSchema.optional(),
+  cover_position_y: pageCoverPositionSchema.optional(),
   is_archived: z.union([z.literal(0), z.literal(1)]),
   is_collection: z.union([z.literal(0), z.literal(1)]),
   parent_page_id: idSchema.nullable(),
@@ -571,7 +564,7 @@ export async function prepareUserDataBackup(userId: string) {
       // read observe newer page versions while later non-locking reads still return
       // older blocks and tag relations from an earlier snapshot.
       const pages = await client.query<BackupPage>(
-        `SELECT id, title, icon, cover_url, is_archived, is_collection, parent_page_id, edit_version, content_version,
+        `SELECT id, title, icon, cover_url, cover_position_x, cover_position_y, is_archived, is_collection, parent_page_id, edit_version, content_version,
            DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at,
            DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at
          FROM pages WHERE owner_id = ? ORDER BY created_at ASC, id ASC FOR UPDATE`,
@@ -1015,10 +1008,12 @@ async function importRows(
   for (const page of orderedPages) {
     await client.execute(
       `INSERT INTO pages
-       (id, title, icon, cover_url, is_archived, is_collection, owner_id, parent_page_id, edit_version, content_version, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, title, icon, cover_url, cover_position_x, cover_position_y, is_archived, is_collection, owner_id, parent_page_id, edit_version, content_version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        page.id, page.title, normalizeIconValue(page.icon), page.cover_url, page.is_archived, page.is_collection, userId,
+        page.id, page.title, normalizeIconValue(page.icon), page.cover_url,
+        page.cover_position_x ?? 50, page.cover_position_y ?? 50,
+        page.is_archived, page.is_collection, userId,
         page.parent_page_id, restoreVersion, restoreVersion, page.created_at, page.updated_at
       ]
     );

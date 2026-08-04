@@ -342,7 +342,17 @@ components:
           type: string
         coverUrl:
           type: string
-          format: uri
+          description: Built-in /img/default_cover path, HTTP(S) URL, or validated PNG/JPEG/WebP data URL.
+        coverPositionX:
+          type: integer
+          minimum: 0
+          maximum: 100
+          default: 50
+        coverPositionY:
+          type: integer
+          minimum: 0
+          maximum: 100
+          default: 50
         parentPageId:
           type: string
         isCollection:
@@ -391,7 +401,15 @@ components:
           maxLength: 32
         coverUrl:
           type: [string, 'null']
-          format: uri
+          description: Built-in /img/default_cover path, HTTP(S) URL, validated PNG/JPEG/WebP data URL, or null to remove the cover.
+        coverPositionX:
+          type: integer
+          minimum: 0
+          maximum: 100
+        coverPositionY:
+          type: integer
+          minimum: 0
+          maximum: 100
         isArchived:
           type: boolean
         parentPageId:
@@ -1353,6 +1371,47 @@ paths:
           description: Page subtree permanently deleted
         '409':
           description: A page or block in the subtree changed after the snapshot
+  /api/pages/{pageId}/cover:
+    get:
+      summary: Read the current custom cover image
+      description: Returns the decoded PNG, JPEG, or WebP bytes for a stored custom page cover. The owner and users with edit access may read it. Built-in and remote cover URLs are served directly from their original URL instead.
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9_-]{1,64}$'
+        - in: query
+          name: v
+          description: Optional page edit version used for client-side cache busting.
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Custom cover image bytes
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: The cached cover image is still current
+        '404':
+          description: Page not found, inaccessible, or without a custom cover
   /api/pages/{pageId}/versions:
     get:
       summary: List page version history

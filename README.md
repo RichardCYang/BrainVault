@@ -16,7 +16,7 @@ The preview is captured from the real browser UI. See [Development guide](docs/d
 - Rich text, Markdown, syntax-highlighted code blocks, callouts, bookmarks, YouTube video embeds, file attachments, AI conversation blocks, and KaTeX formulas
 - Crash-resilient browser drafts, automatic title saving, and search across page titles and block content
 - Owner-managed page sharing with Yjs-based simultaneous title/block editing, live presence, reconnect recovery, and MariaDB persistence
-- Page collections, nesting, archiving, permanent deletion, PDF export, and complete ZIP backup/restore including sharing grants
+- Page collections, nesting, built-in or custom cover images with adjustable focal positions, archiving, permanent deletion, PDF export, and complete ZIP backup/restore including sharing grants
 - JWT authentication with an HttpOnly browser session cookie, profile settings, TOTP authenticator support, and multiple WebAuthn/FIDO2 passkeys
 - Seven interface languages: English, Japanese, Korean, French, German, Spanish, and Portuguese
 - Private attachment storage, sanitized Markdown rendering, rate limiting, and validated bookmark previews

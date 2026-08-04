@@ -466,7 +466,13 @@ collaborationRouter.put(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",
           [pageId]
         );
-        const versionBeforePage = { ...access.page };
+        // Access projections intentionally hide custom cover bytes. Version diffs need the
+        // raw row so an unrelated collaboration materialization does not look like a cover change.
+        const versionBeforePage = await client.queryOne<PageRow>(
+          "SELECT * FROM pages WHERE id = ?",
+          [pageId]
+        );
+        if (!versionBeforePage) throw notFound("Page");
         const versionBeforeRows = existingRows.map((row) => ({ ...row }));
         const existingById = new Map(existingRows.map((row) => [row.id, row]));
         const newBlockIds = orderedBlocks

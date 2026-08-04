@@ -1,4 +1,5 @@
 import type { DbClient } from "./db.js";
+import { describePageCoverUrlForHistory } from "./page-cover.js";
 import type { BlockRow, PageRow, UserRow } from "../types/domain.js";
 
 export type PageVersionActor = {
@@ -27,6 +28,8 @@ export type PageVersionPageState = {
   title: string;
   icon: string | null;
   coverUrl: string | null;
+  coverPositionX: number;
+  coverPositionY: number;
   isArchived: boolean;
   isCollection: boolean;
   parentPageId: string | null;
@@ -122,7 +125,9 @@ export function toPageVersionPageState(page: PageRow, tags: string[] = []): Page
   return {
     title: page.title,
     icon: page.icon,
-    coverUrl: page.cover_url,
+    coverUrl: describePageCoverUrlForHistory(page.cover_url),
+    coverPositionX: Math.min(100, Math.max(0, Number(page.cover_position_x ?? 50))),
+    coverPositionY: Math.min(100, Math.max(0, Number(page.cover_position_y ?? 50))),
     isArchived: Boolean(page.is_archived),
     isCollection: Boolean(page.is_collection),
     parentPageId: page.parent_page_id,
@@ -156,6 +161,8 @@ export function diffPageVersionPage(
   pushFieldChange(fields, "title", beforeState.title, afterState.title);
   pushFieldChange(fields, "icon", beforeState.icon, afterState.icon);
   pushFieldChange(fields, "coverUrl", beforeState.coverUrl, afterState.coverUrl);
+  pushFieldChange(fields, "coverPositionX", beforeState.coverPositionX, afterState.coverPositionX);
+  pushFieldChange(fields, "coverPositionY", beforeState.coverPositionY, afterState.coverPositionY);
   pushFieldChange(fields, "isArchived", beforeState.isArchived, afterState.isArchived);
   pushFieldChange(fields, "isCollection", beforeState.isCollection, afterState.isCollection);
   pushFieldChange(fields, "parentPageId", beforeState.parentPageId, afterState.parentPageId);
@@ -304,7 +311,9 @@ export async function resetPageVersionHistory(
       page: {
         title: input.page.title,
         icon: input.page.icon,
-        coverUrl: input.page.cover_url,
+        coverUrl: describePageCoverUrlForHistory(input.page.cover_url),
+        coverPositionX: Math.min(100, Math.max(0, Number(input.page.cover_position_x ?? 50))),
+        coverPositionY: Math.min(100, Math.max(0, Number(input.page.cover_position_y ?? 50))),
         isArchived: Boolean(input.page.is_archived),
         isCollection: Boolean(input.page.is_collection),
         parentPageId: input.page.parent_page_id

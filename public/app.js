@@ -78,6 +78,14 @@ const imageIconPrefix = "image:";
 const customIconMaxBytes = 512 * 1024;
 const customIconMaxUrlLength = 2048;
 const customIconMimeTypes = Object.freeze(["image/png", "image/jpeg", "image/webp"]);
+const defaultPageCoverPaths = Object.freeze(
+  Array.from({ length: 5 }, (_, index) => `/img/default_cover/coverimg${index + 1}.png`)
+);
+const customCoverMimeTypes = Object.freeze(["image/png", "image/jpeg", "image/webp"]);
+const customCoverMaxBytes = 2 * 1024 * 1024;
+const customCoverSourceMaxBytes = 20 * 1024 * 1024;
+const customCoverMaxWidth = 2400;
+const customCoverMaxHeight = 1600;
 const mobileSidebarMedia = window.matchMedia("(max-width: 760px)");
 const pageModes = Object.freeze({ READ: "read", WRITE: "write" });
 const keepaliveSaveBudgetBytes = 60 * 1024;
@@ -105,6 +113,9 @@ const pageTransitionLock = createPageTransitionLock(window.localStorage, {
 let activePageTransitionLease = null;
 let pageTransitionUnlockTimer = null;
 let collaborationRecoveryPanelGeneration = 0;
+let pageCoverSaving = false;
+let pageCoverPositionDraft = null;
+let pageCoverDragPointerId = null;
 
 const emojiSearchIndex = emojiRecords.map((record) =>
   `${record[0]} ${record[2]} ${record[3]} ${record[4]} ${record[5]}`.toLocaleLowerCase()
@@ -803,6 +814,25 @@ const elements = {
   pageModeBadge: $("#page-mode-badge"),
   pageModeBadgeLabel: $("#page-mode-badge-label"),
   pageView: $("#page-view"),
+  pageCover: $("#page-cover"),
+  pageCoverImage: $("#page-cover-image"),
+  pageCoverControls: $("#page-cover-controls"),
+  pageCoverAddButton: $("#page-cover-add-button"),
+  pageCoverEmptyActions: $("#page-cover-empty-actions"),
+  pageCoverChangeButton: $("#page-cover-change-button"),
+  pageCoverPositionButton: $("#page-cover-position-button"),
+  pageCoverRemoveButton: $("#page-cover-remove-button"),
+  pageCoverPositionPanel: $("#page-cover-position-panel"),
+  pageCoverPositionX: $("#page-cover-position-x"),
+  pageCoverPositionY: $("#page-cover-position-y"),
+  pageCoverPositionXOutput: $("#page-cover-position-x-output"),
+  pageCoverPositionYOutput: $("#page-cover-position-y-output"),
+  pageCoverPositionCancel: $("#page-cover-position-cancel"),
+  pageCoverPositionSave: $("#page-cover-position-save"),
+  pageCoverDialog: $("#page-cover-dialog"),
+  pageCoverDialogClose: $("#page-cover-dialog-close"),
+  pageCoverCustomButton: $("#page-cover-custom-button"),
+  pageCoverCustomInput: $("#page-cover-custom-input"),
   pageKicker: $("#page-kicker"),
   pageIconButton: $("#page-icon-button"),
   pageTitle: $("#page-title"),
@@ -3539,6 +3569,7 @@ function syncPageModeUi() {
   elements.pageModeToggleDescription.textContent = t(modeDescriptionKey);
   elements.pageModeBadge.classList.toggle("is-write-mode", !readOnly);
   elements.pageModeBadgeLabel.textContent = t(modeLabelKey);
+  syncPageCoverControls();
 
   for (const row of elements.blockList.querySelectorAll(".editor-block-row")) {
     syncBlockReadOnlyState(row, controlsReadOnly);
@@ -4086,6 +4117,8 @@ const pageVersionFieldTranslationKeys = Object.freeze({
   title: "versions.fieldTitle",
   icon: "versions.fieldIcon",
   coverUrl: "versions.fieldCoverUrl",
+  coverPositionX: "versions.fieldCoverPositionX",
+  coverPositionY: "versions.fieldCoverPositionY",
   isArchived: "versions.fieldIsArchived",
   isCollection: "versions.fieldIsCollection",
   parentPageId: "versions.fieldParentPageId",
@@ -9274,6 +9307,232 @@ async function exportCurrentPageToPdf() {
   }
 }
 
+
+function clampPageCoverPosition(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(100, Math.max(0, Math.round(number))) : 50;
+}
+
+function setPageCoverPreviewPosition(x, y) {
+  const positionX = clampPageCoverPosition(x);
+  const positionY = clampPageCoverPosition(y);
+  elements.pageCoverImage.style.objectPosition = `${positionX}% ${positionY}%`;
+  elements.pageCoverPositionX.value = String(positionX);
+  elements.pageCoverPositionY.value = String(positionY);
+  elements.pageCoverPositionXOutput.value = `${positionX}%`;
+  elements.pageCoverPositionYOutput.value = `${positionY}%`;
+  if (pageCoverPositionDraft) {
+    pageCoverPositionDraft.x = positionX;
+    pageCoverPositionDraft.y = positionY;
+  }
+}
+
+function closePageCoverPositionEditor({ restore = false } = {}) {
+  if (restore && pageCoverPositionDraft && state.selectedPage?.id === pageCoverPositionDraft.pageId) {
+    setPageCoverPreviewPosition(
+      state.selectedPage.coverPositionX ?? 50,
+      state.selectedPage.coverPositionY ?? 50
+    );
+  }
+  pageCoverPositionDraft = null;
+  pageCoverDragPointerId = null;
+  elements.pageCover.classList.remove("is-repositioning");
+  elements.pageCoverPositionPanel.classList.add("hidden");
+  elements.pageCoverPositionButton.setAttribute("aria-expanded", "false");
+}
+
+function syncPageCoverControls() {
+  const page = state.workspaceView === "page" ? state.selectedPage : null;
+  const hasCover = Boolean(page?.coverUrl);
+  const canEditCover = Boolean(
+    page && hasCover && !isPageReadOnly() && isPageOwner(page) && !isPageInteractionLocked() && !pageCoverSaving
+  );
+  const canAddCover = Boolean(
+    page && !hasCover && !isPageReadOnly() && isPageOwner(page) && !isPageInteractionLocked() && !pageCoverSaving
+  );
+
+  elements.pageCoverControls.classList.toggle("hidden", !canEditCover);
+  elements.pageCoverEmptyActions.classList.toggle("hidden", !canAddCover);
+  for (const button of [
+    elements.pageCoverAddButton,
+    elements.pageCoverChangeButton,
+    elements.pageCoverPositionButton,
+    elements.pageCoverRemoveButton,
+    elements.pageCoverPositionCancel,
+    elements.pageCoverPositionSave
+  ]) {
+    button.disabled = pageCoverSaving || (!canEditCover && button !== elements.pageCoverAddButton);
+  }
+  elements.pageCoverAddButton.disabled = pageCoverSaving || !canAddCover;
+  elements.pageCoverPositionX.disabled = !canEditCover;
+  elements.pageCoverPositionY.disabled = !canEditCover;
+
+  if (!canEditCover && pageCoverPositionDraft) closePageCoverPositionEditor({ restore: true });
+}
+
+function renderPageCover(page) {
+  const hasCover = Boolean(page?.coverUrl);
+  elements.pageCover.classList.toggle("hidden", !hasCover);
+  if (!hasCover) {
+    elements.pageCoverImage.removeAttribute("src");
+    elements.pageCoverImage.alt = "";
+    closePageCoverPositionEditor();
+    syncPageCoverControls();
+    return;
+  }
+
+  if (elements.pageCoverImage.getAttribute("src") !== page.coverUrl) {
+    elements.pageCoverImage.setAttribute("src", page.coverUrl);
+  }
+  elements.pageCoverImage.alt = t("cover.alt", { title: page.title || t("newDocumentTitle") });
+  const draft = pageCoverPositionDraft?.pageId === page.id ? pageCoverPositionDraft : null;
+  setPageCoverPreviewPosition(
+    draft?.x ?? page.coverPositionX ?? 50,
+    draft?.y ?? page.coverPositionY ?? 50
+  );
+  syncPageCoverControls();
+}
+
+function openPageCoverDialog() {
+  if (!requireWritablePage() || !isPageOwner()) return;
+  closePageCoverPositionEditor({ restore: true });
+  if (!elements.pageCoverDialog.open) elements.pageCoverDialog.showModal();
+}
+
+function closePageCoverDialog() {
+  if (elements.pageCoverDialog.open) elements.pageCoverDialog.close();
+}
+
+async function persistPageCover(updates, successKey) {
+  if (!requireWritablePage() || !isPageOwner() || pageCoverSaving) return null;
+  const pageId = state.selectedPage.id;
+  pageCoverSaving = true;
+  syncPageCoverControls();
+  try {
+    let updatedPage = null;
+    await withPageEditLock(async () => {
+      if (state.selectedPage?.id !== pageId) return;
+      const task = { mutationId: createMutationId() };
+      const data = await submitWithFreshMutationIdOnReuse(task, () =>
+        api(`/api/pages/${pageId}`, {
+          method: "PATCH",
+          body: {
+            ...updates,
+            expectedVersion: state.selectedPage.version,
+            mutationId: task.mutationId
+          }
+        })
+      );
+      updatedPage = data.page;
+      state.selectedPage = data.page;
+      applyPageSummaryUpdate(pageId, {
+        coverUrl: data.page.coverUrl,
+        coverPositionX: data.page.coverPositionX,
+        coverPositionY: data.page.coverPositionY,
+        version: data.page.version,
+        updatedAt: data.page.updatedAt
+      });
+      renderSelectedPage();
+    });
+    if (updatedPage && successKey) setStatus(t(successKey));
+    return updatedPage;
+  } finally {
+    pageCoverSaving = false;
+    syncPageCoverControls();
+  }
+}
+
+function readBlobAsDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result ?? "")), { once: true });
+    reader.addEventListener("error", () => reject(new Error(t("cover.readError"))), { once: true });
+    reader.readAsDataURL(blob);
+  });
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+}
+
+async function loadCustomCoverImage(file) {
+  if (typeof createImageBitmap === "function") {
+    const bitmap = await createImageBitmap(file);
+    return {
+      width: bitmap.width,
+      height: bitmap.height,
+      draw(context, width, height) { context.drawImage(bitmap, 0, 0, width, height); },
+      close() { bitmap.close(); }
+    };
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const candidate = new Image();
+      candidate.onload = () => resolve(candidate);
+      candidate.onerror = () => reject(new Error(t("cover.invalidFile")));
+      candidate.src = objectUrl;
+    });
+    return {
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      draw(context, width, height) { context.drawImage(image, 0, 0, width, height); },
+      close() { URL.revokeObjectURL(objectUrl); }
+    };
+  } catch (error) {
+    URL.revokeObjectURL(objectUrl);
+    throw error;
+  }
+}
+
+async function prepareCustomCoverDataUrl(file) {
+  if (!file || !customCoverMimeTypes.includes(file.type)) throw new Error(t("cover.invalidFile"));
+  if (file.size > customCoverSourceMaxBytes) throw new Error(t("cover.sourceTooLarge"));
+
+  const image = await loadCustomCoverImage(file);
+  try {
+    if (!image.width || !image.height) throw new Error(t("cover.invalidFile"));
+    let scale = Math.min(1, customCoverMaxWidth / image.width, customCoverMaxHeight / image.height);
+    let quality = 0.9;
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const width = Math.max(1, Math.round(image.width * scale));
+      const height = Math.max(1, Math.round(image.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d", { alpha: false });
+      if (!context) throw new Error(t("cover.readError"));
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, width, height);
+      image.draw(context, width, height);
+
+      const blob = await canvasToBlob(canvas, "image/webp", quality)
+        ?? await canvasToBlob(canvas, "image/jpeg", quality);
+      canvas.width = 1;
+      canvas.height = 1;
+      if (!blob) throw new Error(t("cover.readError"));
+      if (blob.size <= customCoverMaxBytes) return readBlobAsDataUrl(blob);
+
+      if (quality > 0.6) quality -= 0.08;
+      else scale *= 0.82;
+    }
+    throw new Error(t("cover.optimizedTooLarge"));
+  } finally {
+    image.close();
+  }
+}
+
+function updatePageCoverPositionFromPointer(event) {
+  if (!pageCoverPositionDraft || event.pointerId !== pageCoverDragPointerId) return;
+  const rect = elements.pageCoverImage.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const x = ((event.clientX - rect.left) / rect.width) * 100;
+  const y = ((event.clientY - rect.top) / rect.height) * 100;
+  setPageCoverPreviewPosition(x, y);
+}
+
 function renderSelectedPage() {
   closeBlockContextMenu();
   closePageActionsMenu();
@@ -9320,6 +9579,7 @@ function renderSelectedPage() {
   elements.blockList.dataset.pageId = page.id;
   const flatBlocks = flattenBlocks(page.blocks);
   renderPageHeader(page);
+  renderPageCover(page);
   elements.pageKicker.textContent = formatDate(page.updatedAt);
   renderIconValue(elements.pageIconButton, page.icon, "📄");
   elements.pageTitle.value = page.title;
@@ -10954,6 +11214,125 @@ document.addEventListener("keydown", (event) => {
     closeSharePageDialog();
   }
 });
+
+
+elements.pageCoverAddButton.addEventListener("click", openPageCoverDialog);
+elements.pageCoverChangeButton.addEventListener("click", openPageCoverDialog);
+elements.pageCoverDialogClose.addEventListener("click", closePageCoverDialog);
+elements.pageCoverDialog.addEventListener("click", (event) => {
+  if (event.target === elements.pageCoverDialog) closePageCoverDialog();
+});
+
+elements.pageCoverDialog.querySelector(".page-cover-default-grid").addEventListener("click", async (event) => {
+  const option = event.target.closest("button[data-cover-url]");
+  if (!option || pageCoverSaving) return;
+  const coverUrl = option.dataset.coverUrl;
+  if (!defaultPageCoverPaths.includes(coverUrl)) return;
+  try {
+    setStatus(t("cover.applying"));
+    const updated = await persistPageCover(
+      { coverUrl, coverPositionX: 50, coverPositionY: 50 },
+      "cover.applied"
+    );
+    if (updated) closePageCoverDialog();
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+});
+
+elements.pageCoverCustomButton.addEventListener("click", () => {
+  if (!requireWritablePage() || !isPageOwner() || pageCoverSaving) return;
+  elements.pageCoverCustomInput.click();
+});
+
+elements.pageCoverCustomInput.addEventListener("change", async () => {
+  const file = elements.pageCoverCustomInput.files?.[0] ?? null;
+  elements.pageCoverCustomInput.value = "";
+  if (!file) return;
+  try {
+    setStatus(t("cover.preparing"));
+    const coverUrl = await prepareCustomCoverDataUrl(file);
+    setStatus(t("cover.applying"));
+    const updated = await persistPageCover(
+      { coverUrl, coverPositionX: 50, coverPositionY: 50 },
+      "cover.customApplied"
+    );
+    if (updated) closePageCoverDialog();
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+});
+
+elements.pageCoverRemoveButton.addEventListener("click", async () => {
+  if (!window.confirm(t("cover.removeConfirm"))) return;
+  closePageCoverPositionEditor();
+  try {
+    await persistPageCover(
+      { coverUrl: null, coverPositionX: 50, coverPositionY: 50 },
+      "cover.removed"
+    );
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+});
+
+elements.pageCoverPositionButton.addEventListener("click", () => {
+  if (!requireWritablePage() || !isPageOwner() || !state.selectedPage?.coverUrl) return;
+  pageCoverPositionDraft = {
+    pageId: state.selectedPage.id,
+    x: clampPageCoverPosition(state.selectedPage.coverPositionX ?? 50),
+    y: clampPageCoverPosition(state.selectedPage.coverPositionY ?? 50)
+  };
+  elements.pageCover.classList.add("is-repositioning");
+  elements.pageCoverPositionPanel.classList.remove("hidden");
+  elements.pageCoverPositionButton.setAttribute("aria-expanded", "true");
+  setPageCoverPreviewPosition(pageCoverPositionDraft.x, pageCoverPositionDraft.y);
+  elements.pageCoverPositionY.focus();
+});
+
+for (const slider of [elements.pageCoverPositionX, elements.pageCoverPositionY]) {
+  slider.addEventListener("input", () => {
+    setPageCoverPreviewPosition(elements.pageCoverPositionX.value, elements.pageCoverPositionY.value);
+  });
+}
+
+elements.pageCoverPositionCancel.addEventListener("click", () => {
+  closePageCoverPositionEditor({ restore: true });
+  elements.pageCoverPositionButton.focus();
+});
+
+elements.pageCoverPositionSave.addEventListener("click", async () => {
+  if (!pageCoverPositionDraft) return;
+  const { x, y } = pageCoverPositionDraft;
+  closePageCoverPositionEditor();
+  try {
+    await persistPageCover(
+      { coverPositionX: x, coverPositionY: y },
+      "cover.positionSaved"
+    );
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+});
+
+elements.pageCoverImage.addEventListener("pointerdown", (event) => {
+  if (!pageCoverPositionDraft || event.isPrimary === false) return;
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  pageCoverDragPointerId = event.pointerId;
+  elements.pageCoverImage.setPointerCapture(event.pointerId);
+  updatePageCoverPositionFromPointer(event);
+});
+elements.pageCoverImage.addEventListener("pointermove", updatePageCoverPositionFromPointer);
+for (const eventName of ["pointerup", "pointercancel"]) {
+  elements.pageCoverImage.addEventListener(eventName, (event) => {
+    if (event.pointerId !== pageCoverDragPointerId) return;
+    updatePageCoverPositionFromPointer(event);
+    pageCoverDragPointerId = null;
+    if (elements.pageCoverImage.hasPointerCapture(event.pointerId)) {
+      elements.pageCoverImage.releasePointerCapture(event.pointerId);
+    }
+  });
+}
 
 elements.pageTitle.addEventListener("input", (event) => {
   if (!requireWritablePage({ announce: false })) return;

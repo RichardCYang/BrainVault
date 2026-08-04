@@ -6,6 +6,12 @@ BrainVault uses a page-first workspace with a compact document tree and automati
 
 Pages and collections support Unicode Emoji 17 icons with Korean/English search, categories, skin-tone variants, and recent selections. Pages can be nested, archived, or permanently deleted from their three-dot menus, and search covers page titles and block content.
 
+### Page cover images
+
+Each ordinary page can display a wide cover above its title. Choose one of the five images in `public/img/default_cover`, or upload a PNG, JPEG, or WebP image. Browser-side optimization bounds custom covers to 2 MB before the existing page update API stores them, and server validation verifies both the declared image type and its binary signature.
+
+Owners can replace or remove a cover at any time and add it again later. **Reposition** mode supports direct pointer dragging plus horizontal and vertical sliders. The selected focal point is persisted as 0–100 coordinates and rendered with `object-fit: cover` and `object-position`. Cover source and position metadata are included in workspace backup and restore.
+
 ## Page sharing and simultaneous editing
 
 Open an ordinary page and select **Share** to add an existing BrainVault account by login ID. The page owner controls the access list; invited users receive edit access to that page but cannot add/remove collaborators, move it in the owner’s hierarchy, archive it, or permanently delete it. Collections cannot be shared. Archived pages cannot start or use live collaboration, but an existing access list is retained and live collaboration becomes available again after the owner restores the page.

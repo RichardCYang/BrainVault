@@ -1,4 +1,5 @@
 import type { BlockRow, PageRow, TagRow, UserRow } from "../types/domain.js";
+import { toPublicPageCoverUrl } from "./page-cover.js";
 
 export function toPublicUser(
   row: Pick<
@@ -32,7 +33,9 @@ export function toPage(row: PageRow) {
     id: row.id,
     title: row.title,
     icon: row.icon,
-    coverUrl: row.cover_url,
+    coverUrl: toPublicPageCoverUrl(row.id, row.cover_url, Number(row.edit_version ?? 1)),
+    coverPositionX: Math.min(100, Math.max(0, Number(row.cover_position_x ?? 50))),
+    coverPositionY: Math.min(100, Math.max(0, Number(row.cover_position_y ?? 50))),
     isArchived: Boolean(row.is_archived),
     isCollection: Boolean(row.is_collection),
     ownerId: row.owner_id,

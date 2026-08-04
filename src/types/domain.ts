@@ -20,6 +20,8 @@ export type PageRow = {
   title: string;
   icon: string | null;
   cover_url: string | null;
+  cover_position_x: number;
+  cover_position_y: number;
   is_archived: 0 | 1;
   is_collection: 0 | 1;
   owner_id: string;

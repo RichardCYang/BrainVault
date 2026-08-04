@@ -1,6 +1,7 @@
 import { db, type DbClient } from "./db.js";
 import { ApiError, notFound } from "./http.js";
 import { toPublicUser } from "./mappers.js";
+import { storedCustomPageCoverSentinel } from "./page-cover.js";
 import type { BlockRow, PageRow, UserRow } from "../types/domain.js";
 
 export type PageAccessRole = "OWNER" | "EDITOR";
@@ -11,6 +12,21 @@ export type PageAccess = {
   owner: ReturnType<typeof toPublicUser>;
   shareCount: number;
 };
+
+function pageRowProjection(alias = "") {
+  const column = (name: string) => alias ? `${alias}.${name}` : name;
+  return [
+    "id", "title", "icon",
+    `CASE WHEN ${column("cover_url")} LIKE 'data:image/%;base64,%' THEN '${storedCustomPageCoverSentinel}' ELSE ${column("cover_url")} END AS cover_url`,
+    "cover_position_x", "cover_position_y", "is_archived", "is_collection", "owner_id",
+    "parent_page_id", "edit_version", "content_version", "last_mutation_id", "last_mutation_hash",
+    "created_at", "updated_at"
+  ].map((name) => name.includes(" ") || name.includes("(") ? name : column(name)).join(", ");
+}
+
+export function pageSummaryProjection(alias = "") {
+  return pageRowProjection(alias);
+}
 
 type OwnerProfileRow = Pick<
   UserRow,
@@ -32,13 +48,13 @@ export async function getPageAccess(
   { lockPage = false }: { lockPage?: boolean } = {}
 ): Promise<PageAccess> {
   let page = await client.queryOne<PageRow>(
-    `SELECT * FROM pages WHERE id = ? AND owner_id = ?${lockPage ? " FOR UPDATE" : ""}`,
+    `SELECT ${pageRowProjection()} FROM pages WHERE id = ? AND owner_id = ?${lockPage ? " FOR UPDATE" : ""}`,
     [pageId, userId]
   );
   let role: PageAccessRole = "OWNER";
   if (!page) {
     page = await client.queryOne<PageRow>(
-      `SELECT p.*
+      `SELECT ${pageRowProjection("p")}
        FROM pages p
        INNER JOIN page_shares ps ON ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
        WHERE p.id = ?${lockPage ? " FOR UPDATE" : ""}`,
@@ -69,7 +85,7 @@ export async function getPageAccess(
 
 export async function getOwnedPage(pageId: string, ownerId: string, client: DbClient = db) {
   const page = await client.queryOne<PageRow>(
-    "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
+    `SELECT ${pageRowProjection()} FROM pages WHERE id = ? AND owner_id = ?`,
     [pageId, ownerId]
   );
   if (!page) throw notFound("Page");

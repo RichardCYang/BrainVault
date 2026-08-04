@@ -60,7 +60,7 @@ beforeEach(() => {
     return undefined;
   });
   database.query.mockImplementation(async (sql: string) => {
-    if (sql.includes("SELECT p.*") && sql.includes("FROM pages p")) return database.pageBatches.shift() ?? [];
+    if (sql.includes("FROM pages p") && sql.includes("AS cursor_created_at")) return database.pageBatches.shift() ?? [];
     if (sql.includes("FROM page_tags")) return [];
     return [];
   });
@@ -86,7 +86,7 @@ describe("Page-list pagination", () => {
     );
     expect(cursorPayload).toEqual({ createdAt: "2026-07-18 11:00:00.000000", id: "pag_b" });
     expect(cursorPayload).not.toHaveProperty("updatedAt");
-    const firstListCall = database.query.mock.calls.find(([sql]) => String(sql).includes("SELECT p.*"));
+    const firstListCall = database.query.mock.calls.find(([sql]) => String(sql).includes("AS cursor_created_at"));
     expect(firstListCall?.[0]).toContain("ORDER BY p.created_at DESC, p.id DESC");
     expect(firstListCall?.[0]).not.toContain("ORDER BY p.updated_at DESC, p.id DESC");
     expect(firstListCall?.[1]).toEqual([user.id, user.id, user.id, user.id, 0, 3]);
@@ -104,7 +104,7 @@ describe("Page-list pagination", () => {
 
     expect(second.body.pages.map((item: { id: string }) => item.id)).toEqual(["pag_a"]);
     expect(second.body.nextCursor).toBeNull();
-    const secondListCall = database.query.mock.calls.find(([sql]) => String(sql).includes("SELECT p.*"));
+    const secondListCall = database.query.mock.calls.find(([sql]) => String(sql).includes("AS cursor_created_at"));
     expect(secondListCall?.[0]).toContain("p.created_at < ?");
     expect(secondListCall?.[0]).not.toContain("p.updated_at < ?");
     expect(secondListCall?.[1]).toEqual([
@@ -127,6 +127,6 @@ describe("Page-list pagination", () => {
       .expect(400);
 
     expect(response.body.error.code).toBe("INVALID_PAGE_CURSOR");
-    expect(database.query.mock.calls.some(([sql]) => String(sql).includes("SELECT p.*"))).toBe(false);
+    expect(database.query.mock.calls.some(([sql]) => String(sql).includes("AS cursor_created_at"))).toBe(false);
   });
 });

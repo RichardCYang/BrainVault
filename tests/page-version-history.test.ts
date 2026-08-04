@@ -23,6 +23,8 @@ function page(overrides: Partial<PageRow> = {}): PageRow {
     title: "Before",
     icon: null,
     cover_url: null,
+    cover_position_x: 50,
+    cover_position_y: 50,
     is_archived: 0,
     is_collection: 0,
     owner_id: "usr_owner",

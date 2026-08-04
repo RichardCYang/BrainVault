@@ -423,6 +423,36 @@
         </section>
 
         <section id="page-view" class="page-view hidden">
+          <section id="page-cover" class="page-cover hidden" data-i18n-aria-label="cover.regionAria" aria-label="Page cover">
+            <img id="page-cover-image" class="page-cover-image" alt="" draggable="false" />
+            <div id="page-cover-controls" class="page-cover-controls hidden">
+              <button id="page-cover-change-button" type="button" class="secondary" data-i18n="cover.change">Change cover</button>
+              <button id="page-cover-position-button" type="button" class="secondary" data-i18n="cover.reposition">Reposition</button>
+              <button id="page-cover-remove-button" type="button" class="secondary danger-ghost" data-i18n="cover.remove">Remove</button>
+            </div>
+            <div id="page-cover-position-panel" class="page-cover-position-panel hidden" role="group" data-i18n-aria-label="cover.positionAria" aria-label="Cover position controls">
+              <p data-i18n="cover.positionHelp">Drag across the cover or use the sliders to choose its focal point.</p>
+              <label>
+                <span data-i18n="cover.horizontal">Horizontal</span>
+                <input id="page-cover-position-x" type="range" min="0" max="100" value="50" />
+                <output id="page-cover-position-x-output" for="page-cover-position-x">50%</output>
+              </label>
+              <label>
+                <span data-i18n="cover.vertical">Vertical</span>
+                <input id="page-cover-position-y" type="range" min="0" max="100" value="50" />
+                <output id="page-cover-position-y-output" for="page-cover-position-y">50%</output>
+              </label>
+              <div class="page-cover-position-actions">
+                <button id="page-cover-position-cancel" type="button" class="secondary" data-i18n="cover.cancel">Cancel</button>
+                <button id="page-cover-position-save" type="button" data-i18n="cover.applyPosition">Apply position</button>
+              </div>
+            </div>
+          </section>
+
+          <div id="page-cover-empty-actions" class="page-cover-empty-actions hidden">
+            <button id="page-cover-add-button" type="button" class="secondary" data-i18n="cover.add">Add cover</button>
+          </div>
+
           <div class="page-toolbar">
             <div class="page-heading">
               <button
@@ -468,6 +498,34 @@
       </main>
     </div>
 
+
+    <dialog id="page-cover-dialog" class="page-cover-dialog" aria-labelledby="page-cover-dialog-title">
+      <section class="page-cover-dialog-surface">
+        <header class="page-cover-dialog-header">
+          <div>
+            <p class="kicker" data-i18n="cover.dialogKicker">Page style</p>
+            <h2 id="page-cover-dialog-title" data-i18n="cover.dialogTitle">Choose a cover</h2>
+            <p data-i18n="cover.dialogDescription">Use a built-in cover or upload your own image.</p>
+          </div>
+          <button id="page-cover-dialog-close" class="page-cover-dialog-close" type="button" data-i18n-aria-label="cover.close" aria-label="Close cover picker">×</button>
+        </header>
+        <div class="page-cover-default-grid" data-i18n-aria-label="cover.defaultsAria" aria-label="Default cover images">
+          <button type="button" class="page-cover-option" data-cover-url="/img/default_cover/coverimg1.png"><img src="/img/default_cover/coverimg1.png" alt="" /><span data-i18n="cover.defaultOption">Default cover</span></button>
+          <button type="button" class="page-cover-option" data-cover-url="/img/default_cover/coverimg2.png"><img src="/img/default_cover/coverimg2.png" alt="" /><span data-i18n="cover.defaultOption">Default cover</span></button>
+          <button type="button" class="page-cover-option" data-cover-url="/img/default_cover/coverimg3.png"><img src="/img/default_cover/coverimg3.png" alt="" /><span data-i18n="cover.defaultOption">Default cover</span></button>
+          <button type="button" class="page-cover-option" data-cover-url="/img/default_cover/coverimg4.png"><img src="/img/default_cover/coverimg4.png" alt="" /><span data-i18n="cover.defaultOption">Default cover</span></button>
+          <button type="button" class="page-cover-option" data-cover-url="/img/default_cover/coverimg5.png"><img src="/img/default_cover/coverimg5.png" alt="" /><span data-i18n="cover.defaultOption">Default cover</span></button>
+        </div>
+        <div class="page-cover-custom-row">
+          <div>
+            <strong data-i18n="cover.customTitle">Custom image</strong>
+            <span data-i18n="cover.customHelp">PNG, JPEG, or WebP. Large images are optimized before upload.</span>
+          </div>
+          <button id="page-cover-custom-button" type="button" data-i18n="cover.upload">Upload image</button>
+          <input id="page-cover-custom-input" class="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" tabindex="-1" />
+        </div>
+      </section>
+    </dialog>
 
     <div id="share-page-layer" class="share-page-layer hidden" aria-hidden="true">
       <button
