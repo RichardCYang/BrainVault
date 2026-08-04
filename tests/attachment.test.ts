@@ -1,13 +1,15 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   attachmentTempDir,
+  cleanupStaleAttachmentTempFiles,
   formatAttachmentSize,
   getAttachmentFilePath,
   getAttachmentInfo,
   isBlockedAttachmentFilename,
+  isPathInside,
   moveAttachmentFile,
   normalizeAttachmentMimeType,
   sanitizeAttachmentDownloadFilename,
@@ -48,6 +50,30 @@ describe("Attachment metadata", () => {
     expect(html).toContain(">report.pdf</span>");
     expect(html).toContain("2.0 KB · application/pdf");
     expect(html).not.toContain("<img");
+  });
+
+  it("recognizes only true descendants of protected storage roots", () => {
+    expect(isPathInside(path.join(process.cwd(), "public"), path.join(process.cwd(), "public", "uploads"))).toBe(true);
+    expect(isPathInside(path.join(process.cwd(), "public"), path.join(process.cwd(), "public-backup"))).toBe(false);
+  });
+
+  it("removes stale upload temporary files without touching current uploads", async () => {
+    const suffix = randomUUID().replaceAll("-", "");
+    const stalePath = path.join(attachmentTempDir, `stale-${suffix}`);
+    const freshPath = path.join(attachmentTempDir, `fresh-${suffix}`);
+    await mkdir(attachmentTempDir, { recursive: true });
+    await writeFile(stalePath, "stale");
+    await writeFile(freshPath, "fresh");
+    const old = new Date(Date.now() - 2 * 24 * 60 * 60_000);
+    await utimes(stalePath, old, old);
+    try {
+      await cleanupStaleAttachmentTempFiles();
+      await expect(readFile(stalePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(readFile(freshPath, "utf8")).resolves.toBe("fresh");
+    } finally {
+      await rm(stalePath, { force: true });
+      await rm(freshPath, { force: true });
+    }
   });
 
   it("never overwrites an existing attachment when a block ID collides", async () => {

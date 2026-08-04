@@ -267,6 +267,10 @@ async function validateFetchUrl(value: string | URL) {
     throw new ApiError(400, "BOOKMARK_URL_INVALID", "Enter a valid HTTP or HTTPS URL");
   }
   const url = new URL(normalized);
+  const effectivePort = url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
+  if (!env.BOOKMARK_FETCH_ALLOWED_PORTS.includes(effectivePort)) {
+    throw new ApiError(400, "BOOKMARK_PORT_BLOCKED", "Bookmark previews are limited to approved web ports");
+  }
   const addresses = await resolvePublicAddresses(url);
   return { url, addresses };
 }
@@ -377,7 +381,7 @@ async function fetchHtml(
         }
 
         const contentType = String(response.headers["content-type"] ?? "");
-        if (contentType && !/text\/html|application\/xhtml\+xml/i.test(contentType)) {
+        if (!contentType || !/text\/html|application\/xhtml\+xml/i.test(contentType)) {
           response.resume();
           rejectFetch(new ApiError(422, "BOOKMARK_NOT_HTML", "The bookmark URL did not return an HTML page"));
           return;
@@ -568,6 +572,8 @@ export async function fetchBookmarkPreview(value: string): Promise<BookmarkPrevi
 
 
 const recoverableBookmarkPreviewCodes = new Set([
+  "BOOKMARK_URL_BLOCKED",
+  "BOOKMARK_PORT_BLOCKED",
   "BOOKMARK_FETCH_FAILED",
   "BOOKMARK_FETCH_TIMEOUT",
   "BOOKMARK_NOT_HTML",
@@ -582,7 +588,10 @@ export type BookmarkPreviewResponse = {
   };
 };
 
-export function createFallbackBookmarkPreview(value: string): BookmarkPreview {
+export function createFallbackBookmarkPreview(
+  value: string,
+  { includeFavicon = true }: { includeFavicon?: boolean } = {}
+): BookmarkPreview {
   const url = normalizeBookmarkUrl(value);
   if (!url) {
     throw new ApiError(400, "BOOKMARK_URL_INVALID", "Enter a valid HTTP or HTTPS URL");
@@ -593,7 +602,7 @@ export function createFallbackBookmarkPreview(value: string): BookmarkPreview {
     title: parsedUrl.hostname,
     description: "",
     imageUrl: "",
-    faviconUrl: new URL("/favicon.ico", url).toString(),
+    faviconUrl: includeFavicon ? new URL("/favicon.ico", url).toString() : "",
     siteName: parsedUrl.hostname
   };
 }
@@ -603,9 +612,10 @@ export async function fetchBookmarkPreviewWithFallback(value: string): Promise<B
     return { preview: await fetchBookmarkPreview(value) };
   } catch (error) {
     if (error instanceof ApiError && recoverableBookmarkPreviewCodes.has(error.code)) {
+      const blockedTarget = error.code === "BOOKMARK_URL_BLOCKED" || error.code === "BOOKMARK_PORT_BLOCKED";
       return {
-        preview: createFallbackBookmarkPreview(value),
-        warning: { code: error.code }
+        preview: createFallbackBookmarkPreview(value, { includeFavicon: false }),
+        warning: { code: blockedTarget ? "BOOKMARK_FETCH_FAILED" : error.code }
       };
     }
     throw error;

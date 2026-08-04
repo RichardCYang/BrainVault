@@ -51,6 +51,16 @@ describe("YouTube video block", () => {
     expect(html).not.toContain("javascript:");
   });
 
+  it("removes unapproved iframes and non-checkbox input controls", () => {
+    const html = renderBlockHtml(
+      "MARKDOWN",
+      '<iframe src="https://evil.example/embed"></iframe><input type="password"><input type="checkbox" checked disabled>'
+    );
+    expect(html).not.toContain("evil.example");
+    expect(html).not.toContain('type="password"');
+    expect(html).toContain('type="checkbox"');
+  });
+
   it("registers UI, persistence, CSP, migration, and responsive styles", () => {
     expect(appSource).toContain('{ type: "VIDEO", command: "/video", icon: "video" }');
     expect(appSource).toContain("createYouTubeVideoEditor(block)");

@@ -1,0 +1,2 @@
+ALTER TABLE user_login_attempts
+  MODIFY COLUMN outcome ENUM('SUCCESS', 'FAILURE', 'LOCKED') NOT NULL;

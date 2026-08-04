@@ -41,10 +41,13 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `PATCH` | `/api/blocks/:blockId` | Update a block |
 | `DELETE` | `/api/blocks/:blockId` | Delete a block and its descendants, including stored attachment files |
 | `GET` | `/api/blocks/:blockId/attachment` | Download an attachment after current page-access verification, forced disposition, and active-content response hardening |
-| `GET` | `/api/data/export` | Stream a complete ZIP backup of the authenticated workspace, including page sharing grants bound to collaborator account ID and username |
+| `GET` | `/api/data/export` | Stream a complete ZIP backup under a per-user rate limit, including page sharing grants bound to collaborator account ID and username |
 | `POST` | `/api/data/import` | Validate and restore a BrainVault backup ZIP; ID-bound grants are recreated; legacy grants are preserved only through verified current identities |
 | `POST` | `/api/pages/:pageId/blocks/reorder` | Move or reorder blocks |
 | `GET` | `/api/pages/:pageId/render` | Render sanitized page HTML |
+| `GET` | `/api/pages/:pageId/versions` | List owner-only page version history; historical entries may contain deleted content |
+| `GET` | `/api/pages/:pageId/versions/:versionId` | Read one owner-only page version entry |
+| `DELETE` | `/api/pages/:pageId/versions` | Reset owner-only page version history to a fresh baseline |
 | `GET` | `/api/search?q=...` | Search titles and block Markdown |
 
 

@@ -33,7 +33,7 @@ searchRouter.get("/", validate({ query: searchQuerySchema }), async (req, res, n
     const pages = await db.query<PageRow>(
       `SELECT p.* FROM pages p
        WHERE (p.owner_id = ? OR EXISTS (
-         SELECT 1 FROM page_shares ps WHERE ps.page_id = p.id AND ps.user_id = ?
+         SELECT 1 FROM page_shares ps WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
        )) AND p.is_archived = 0 AND p.title LIKE ?
        ORDER BY p.updated_at DESC
        LIMIT ?`,
@@ -45,7 +45,7 @@ searchRouter.get("/", validate({ query: searchQuerySchema }), async (req, res, n
        FROM blocks b
        INNER JOIN pages p ON p.id = b.page_id
        WHERE (p.owner_id = ? OR EXISTS (
-         SELECT 1 FROM page_shares ps WHERE ps.page_id = p.id AND ps.user_id = ?
+         SELECT 1 FROM page_shares ps WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
        )) AND p.is_archived = 0 AND b.markdown LIKE ?
        ORDER BY b.updated_at DESC
        LIMIT ?`,

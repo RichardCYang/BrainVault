@@ -228,6 +228,12 @@ export function assertLosslessAttachmentMetadata(
   if (mimeType !== attachment.mimeType) {
     fail("metadata.attachment.mimeType", "is not in the canonical lossless MIME type form");
   }
+  if (isBlockedAttachmentFilename(originalName)) {
+    fail("metadata.attachment.originalName", "uses a blocked filename or extension");
+  }
+  if (isActiveAttachmentMimeType(mimeType)) {
+    fail("metadata.attachment.mimeType", "uses an active web or executable MIME type");
+  }
 
   if (typeof attachment.size !== "number"
     || !Number.isSafeInteger(attachment.size)

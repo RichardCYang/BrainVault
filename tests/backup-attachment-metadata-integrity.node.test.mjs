@@ -40,6 +40,8 @@ test("restore rejects missing, double-encoded, or normalizing attachment metadat
     [JSON.stringify(JSON.stringify(validMetadata)), "metadata"],
     [{ attachment: { ...validMetadata.attachment, originalName: "../계획서.pdf" } }, "metadata.attachment.originalName"],
     [{ attachment: { ...validMetadata.attachment, mimeType: " Application/PDF " } }, "metadata.attachment.mimeType"],
+    [{ attachment: { ...validMetadata.attachment, originalName: "payload.html" } }, "metadata.attachment.originalName"],
+    [{ attachment: { ...validMetadata.attachment, mimeType: "text/html" } }, "metadata.attachment.mimeType"],
     [{ attachment: { ...validMetadata.attachment, size: Number.MAX_SAFE_INTEGER + 1 } }, "metadata.attachment.size"]
   ];
 

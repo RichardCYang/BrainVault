@@ -14,6 +14,7 @@ import { createId } from "../lib/id.js";
 import { ApiError } from "../lib/http.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { requireAuth } from "../middleware/auth.js";
+import { dataExportRateLimit } from "../middleware/data-rate-limit.js";
 import { requireUser } from "../utils/schemas.js";
 
 export const dataRouter = Router();
@@ -41,7 +42,7 @@ const backupUpload = multer({
   defParamCharset: "utf8"
 });
 
-dataRouter.get("/export", async (req, res, next) => {
+dataRouter.get("/export", dataExportRateLimit, async (req, res, next) => {
   try {
     const user = requireUser(req.user);
     const plan = await prepareUserDataBackup(user.id);

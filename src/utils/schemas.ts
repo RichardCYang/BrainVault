@@ -20,9 +20,11 @@ export const usernameSchema = z
   .regex(/^[a-zA-Z0-9._-]+$/, "ID can contain letters, numbers, dots, underscores, and hyphens only")
   .transform((value) => value.toLowerCase());
 
+export const routeIdSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/, "Invalid resource identifier");
+
 export const idParamSchema = z.object({
-  pageId: z.string().min(1).optional(),
-  blockId: z.string().min(1).optional()
+  pageId: routeIdSchema.optional(),
+  blockId: routeIdSchema.optional()
 });
 
 export const blockTypeSchema = z.enum([

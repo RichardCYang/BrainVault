@@ -85,6 +85,15 @@ describe("migration replay data safety", () => {
     expect(sql).not.toMatch(/\b(?:DELETE|DROP|TRUNCATE)\b/i);
   });
 
+  it("extends login history with a distinct locked outcome without deleting records", () => {
+    const sql = fs.readFileSync(
+      path.join(migrationsDir, "033_login_history_locked_outcome.sql"),
+      "utf8"
+    );
+    expect(sql).toMatch(/ENUM\('SUCCESS', 'FAILURE', 'LOCKED'\)/i);
+    expect(sql).not.toMatch(/\b(?:DELETE|DROP|TRUNCATE)\b/i);
+  });
+
   it("adds a non-destructive collaboration document epoch fence", () => {
     const sql = fs.readFileSync(
       path.join(migrationsDir, "021_collaboration_document_epoch.sql"),

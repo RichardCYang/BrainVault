@@ -39,7 +39,7 @@ export async function getPageAccess(
     page = await client.queryOne<PageRow>(
       `SELECT p.*
        FROM pages p
-       INNER JOIN page_shares ps ON ps.page_id = p.id AND ps.user_id = ?
+       INNER JOIN page_shares ps ON ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
        WHERE p.id = ?${lockPage ? " FOR UPDATE" : ""}`,
       [userId, pageId]
     );
@@ -53,7 +53,7 @@ export async function getPageAccess(
     [page.owner_id]
   );
   const shareCountRow = await client.queryOne<{ share_count: number }>(
-    "SELECT COUNT(*) AS share_count FROM page_shares WHERE page_id = ?",
+    "SELECT COUNT(*) AS share_count FROM page_shares WHERE page_id = ? AND permission = 'EDIT'",
     [pageId]
   );
 

@@ -24,7 +24,7 @@ Never commit a real `.env` file.
 | `WEBAUTHN_RP_ID` | `localhost` | WebAuthn relying-party domain without scheme or port |
 | `WEBAUTHN_ORIGIN` | `http://localhost:4000` | Comma-separated exact browser origins accepted for WebAuthn responses |
 | `CORS_ORIGIN` | Local development origins | Comma-separated browser origins allowed to call the API |
-| `PUBLIC_ORIGIN` | First `WEBAUTHN_ORIGIN` | Canonical browser-facing origin used for redirects and direct-certificate hostname validation |
+| `PUBLIC_ORIGIN` | First `WEBAUTHN_ORIGIN` | Canonical browser-facing origin used for redirects and direct-certificate hostname validation; production requires HTTPS |
 | `HTTPS_MODE` | `off` | `off` for HTTP, `proxy` for trusted reverse-proxy TLS, or `posh-acme` for direct HTTPS with Posh-ACME PEM files |
 | `POSH_ACME_CERT_PATH` | Not set | Required in `posh-acme` mode; order directory or `fullchain.cer`/`FullChainFile` path |
 | `POSH_ACME_KEY_PATH` | Sibling `cert.key` | Optional private-key override for `posh-acme` mode |
@@ -58,9 +58,13 @@ Never commit a real `.env` file.
 | `BOOKMARK_PREVIEW_MAX` | `12` | Bookmark-preview requests allowed per authenticated user and window |
 | `BOOKMARK_FETCH_TIMEOUT_MS` | `8000` | Maximum duration of one OpenGraph page fetch |
 | `BOOKMARK_FETCH_MAX_BYTES` | `524288` | Maximum document-head bytes inspected for one bookmark preview |
-| `ATTACHMENT_UPLOAD_DIR` | `uploads` | Private on-disk directory for attachment bytes |
+| `BOOKMARK_FETCH_ALLOWED_PORTS` | `80,443` | Comma-separated destination ports permitted for server-side bookmark preview fetches |
+| `ATTACHMENT_UPLOAD_DIR` | `uploads` | Private on-disk directory for attachment bytes; startup rejects the public web root and its descendants |
+| `ATTACHMENT_TEMP_MAX_AGE_MS` | `86400000` | Age after which stale files in the private attachment staging directory are removed at startup |
 | `MAX_ATTACHMENT_SIZE_MB` | `25` | Maximum size of one uploaded attachment in megabytes |
 | `DATA_TRANSFER_MAX_SIZE_MB` | `4096` | Maximum size of one uploaded complete-data backup ZIP in megabytes |
+| `DATA_EXPORT_WINDOW_MS` | `3600000` | Complete-data export limit window per authenticated user |
+| `DATA_EXPORT_MAX` | `20` | Complete-data exports allowed per authenticated user and window |
 
 ## Development browser launch
 

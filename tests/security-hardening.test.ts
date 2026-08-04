@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { Request } from "express";
 import { describe, expect, it } from "vitest";
 import { signAuthToken, verifyAuthToken } from "../src/lib/auth.js";
@@ -5,6 +6,12 @@ import { signCollaborationToken, verifyCollaborationToken } from "../src/lib/col
 import { isAllowedCorsOrigin } from "../src/middleware/cors.js";
 import { readAuthSessionCookie } from "../src/lib/session-cookie.js";
 import { httpUrlSchema } from "../src/utils/schemas.js";
+
+const pageAccessSource = readFileSync(new URL("../src/lib/page-access.ts", import.meta.url), "utf8");
+const pageRoutesSource = readFileSync(new URL("../src/routes/page.routes.ts", import.meta.url), "utf8");
+const searchRoutesSource = readFileSync(new URL("../src/routes/search.routes.ts", import.meta.url), "utf8");
+const collaborationRoutesSource = readFileSync(new URL("../src/routes/collaboration.routes.ts", import.meta.url), "utf8");
+const schemaSource = readFileSync(new URL("../src/utils/schemas.ts", import.meta.url), "utf8");
 
 function mockRequest(headers: Record<string, string>): Request {
   return {
@@ -68,6 +75,21 @@ describe("CORS proxy-header hardening", () => {
   it("rejects unlisted loopback origins even outside production", () => {
     expect(isAllowedCorsOrigin(mockRequest({}), "http://localhost:9999")).toBe(false);
     expect(isAllowedCorsOrigin(mockRequest({}), "http://127.0.0.1:9999")).toBe(false);
+  });
+});
+
+
+describe("explicit shared-edit authorization", () => {
+  it("requires an EDIT grant instead of treating every share row as editor access", () => {
+    expect(pageAccessSource).toContain("ps.permission = 'EDIT'");
+    expect(pageRoutesSource).toContain("current_share.permission = 'EDIT'");
+    expect(pageRoutesSource).toContain("child_share.permission = 'EDIT'");
+    expect(searchRoutesSource).toContain("ps.permission = 'EDIT'");
+    expect(collaborationRoutesSource).toContain("ps.permission = 'EDIT'");
+  });
+
+  it("uses the restricted generated-ID alphabet for route identifiers", () => {
+    expect(schemaSource).toContain("/^[a-zA-Z0-9_-]{1,64}$/");
   });
 });
 

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   createFallbackBookmarkPreview,
@@ -12,6 +13,9 @@ import {
   summarizeBookmarkData
 } from "../src/lib/bookmark.js";
 import { renderBlockHtml } from "../src/lib/markdown.js";
+
+const bookmarkSource = readFileSync(new URL("../src/lib/bookmark.ts", import.meta.url), "utf8");
+const envSource = readFileSync(new URL("../src/config/env.ts", import.meta.url), "utf8");
 
 describe("bookmark OpenGraph parsing", () => {
   it("extracts OpenGraph data, resolves relative assets, and decodes entities", () => {
@@ -174,6 +178,14 @@ describe("bookmark network address selection", () => {
       { address: "1.1.1.1", family: 4 },
       { address: "2606:4700:4700::1111", family: 6 }
     ]);
+  });
+
+  it("uses approved ports, requires an HTML content type, and normalizes blocked-target failures", () => {
+    expect(envSource).toContain('BOOKMARK_FETCH_ALLOWED_PORTS');
+    expect(bookmarkSource).toContain('BOOKMARK_PORT_BLOCKED');
+    expect(bookmarkSource).toContain('if (!contentType || !/text\/html|application\/xhtml\+xml/i.test(contentType))');
+    expect(bookmarkSource).toContain('blockedTarget ? "BOOKMARK_FETCH_FAILED" : error.code');
+    expect(createFallbackBookmarkPreview("http://127.0.0.1/", { includeFavicon: false }).faviconUrl).toBe("");
   });
 
   it("creates a usable basic bookmark when OpenGraph retrieval is unavailable", () => {

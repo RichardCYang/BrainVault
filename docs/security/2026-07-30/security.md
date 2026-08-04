@@ -23,7 +23,7 @@ When `MARIADB_ADMIN_URL` is used, bootstrap creates application accounts only fo
 
 ## Authentication abuse controls
 
-Login is protected by IP-keyed and normalized-account-keyed request limits plus a database-persisted account backoff. Password failures are updated under a user-row lock; after the configured threshold, the lock duration grows exponentially up to the configured maximum, so distributed source IPs cannot reset the account state. A password-valid response that still requires MFA is counted rather than treated as a completed successful login. TOTP and passkey login verification have separate IP and account limits, and TOTP enrollment verification has its own account limit. MFA failures are carried into replacement login sessions under a user-row lock, so signing in again cannot reset the eight-attempt session budget. Successful MFA completion clears the carried state. Registration has per-IP and process-wide limits, defaults to disabled in production, avoids repeated password hashing for an existing username, and returns the same padded accepted response. The in-memory request limiters are suitable for one process; multi-instance deployments should use a shared rate-limit store, while the password backoff remains shared through MariaDB.
+Login is protected by IP-keyed and normalized-account-keyed request limits plus a database-persisted account backoff. Password failures are updated under a user-row lock; after the configured threshold, the lock duration grows exponentially up to the configured maximum, so distributed source IPs cannot reset the account state. A correct password clears a persisted lock and failure counter, preventing a low-rate attacker from keeping an account unavailable indefinitely; the account must still complete any configured MFA challenge. Attempts rejected solely because the account is still locked are recorded as `LOCKED`, not as ordinary credential failures. A password-valid response that still requires MFA is counted rather than treated as a completed successful login. TOTP and passkey login verification have separate IP and account limits, and the short-lived MFA login token is bound to the source IP that created it. TOTP enrollment verification has its own account limit, and the enrollment code's time step is stored immediately so the same code cannot be reused for login. MFA failures are carried into replacement login sessions under a user-row lock, so signing in again cannot reset the eight-attempt session budget. Successful MFA completion clears the carried state. Registration has per-IP and process-wide limits, defaults to disabled in production, avoids repeated password hashing for an existing username, and returns the same padded accepted response. When public registration is enabled, combining registration and login behavior may still reveal whether a normalized login ID exists; production should keep registration disabled unless open enrollment is intentional. The in-memory request limiters are suitable for one process; multi-instance deployments should use a shared rate-limit store, while the password backoff remains shared through MariaDB.
 
 ## Credential-change session revocation
 
@@ -33,8 +33,12 @@ The `024_auth_session_revocation.sql` migration adds the non-secret `users.auth_
 
 ## Browser origin policy
 
-Every browser origin, including development loopback origins and ports, must be listed explicitly in `CORS_ORIGIN`. API CORS and collaboration WebSocket origin checks never derive authorization from `X-Forwarded-Host` or `X-Forwarded-Proto`. In `HTTPS_MODE=proxy`, only the request protocol is taken from forwarding headers, and only after Express verifies that the connecting peer matches `TRUST_PROXY_ADDRESSES` or the exact `TRUST_PROXY_HOPS` topology. In `HTTPS_MODE=posh-acme`, BrainVault validates the configured certificate against `PUBLIC_ORIGIN` and creates a native TLS listener without trusting forwarding headers. Redirect destinations always use fixed `PUBLIC_ORIGIN`, not a request header. The two proxy-trust methods cannot be combined, and unrestricted boolean proxy trust is not used.
+Production refuses to start when `PUBLIC_ORIGIN` is not HTTPS, even when `HTTPS_MODE` is left off. Every browser origin, including development loopback origins and ports, must be listed explicitly in `CORS_ORIGIN`. API CORS and collaboration WebSocket origin checks never derive authorization from `X-Forwarded-Host` or `X-Forwarded-Proto`. In `HTTPS_MODE=proxy`, only the request protocol is taken from forwarding headers, and only after Express verifies that the connecting peer matches `TRUST_PROXY_ADDRESSES` or the exact `TRUST_PROXY_HOPS` topology. In `HTTPS_MODE=posh-acme`, BrainVault validates the configured certificate against `PUBLIC_ORIGIN` and creates a native TLS listener without trusting forwarding headers. Redirect destinations always use fixed `PUBLIC_ORIGIN`, not a request header. The two proxy-trust methods cannot be combined, and unrestricted boolean proxy trust is not used.
 
+
+## Rendered HTML restrictions
+
+Sanitized note HTML permits embedded video frames only from the supported YouTube hosts. User-supplied iframe permission attributes are removed, and input elements are retained only for disabled checkbox rendering; password and other interactive input types are discarded.
 
 ## Content Security Policy
 
@@ -42,7 +46,9 @@ The Content Security Policy allows only same-origin application scripts plus the
 
 ## Bookmark preview safety
 
-Browser cross-origin rules prevent the editor from reading arbitrary page HTML directly, so OpenGraph retrieval uses the authenticated `/api/bookmarks/preview` server endpoint.
+Browser cross-origin rules prevent the editor from reading arbitrary page HTML directly, so OpenGraph retrieval uses the authenticated `/api/bookmarks/preview` server endpoint. Server-side preview fetches permit only the configured destination ports (80 and 443 by default), require an explicit HTML content type, pin validated public DNS answers to the outbound request, and revalidate every redirect. Blocked private-network targets and ordinary remote fetch failures return the same recoverable warning shape so the endpoint does not expose a useful internal-DNS or port oracle.
+
+Stored bookmark, image, and favicon URLs reject private or local IP literals before they can be rendered into another viewer's browser. Hostnames that later resolve to a private address cannot be rejected by this synchronous storage validation; operators should treat internal DNS names as sensitive, while the server-side preview path continues to perform full DNS validation and pinning.
 
 The fetcher:
 
@@ -55,6 +61,10 @@ The fetcher:
 - Supports common legacy page character sets
 
 A dedicated authenticated-user limiter bounds how often this server-side fetch path can be invoked. Use `BOOKMARK_PREVIEW_WINDOW_MS` and `BOOKMARK_PREVIEW_MAX` for that limit, and `BOOKMARK_FETCH_TIMEOUT_MS` and `BOOKMARK_FETCH_MAX_BYTES` for each fetch.
+
+## Page version-history privacy
+
+Page version history can contain complete snapshots of deleted blocks. List, detail, and reset operations are therefore owner-only, and the browser hides the version-history action from invited editors. Normal page and collaboration access remains available to editors; only the historical snapshot store is restricted.
 
 ## Shared-page collaboration safety
 
@@ -74,7 +84,7 @@ Uploaded bytes are stored under `ATTACHMENT_UPLOAD_DIR`, which defaults to `uplo
 
 Upload validation rejects active web and executable extensions and media types, detects executable signatures, verifies signatures for formats that have stable magic bytes, and downgrades unrecognized client-declared media types to `application/octet-stream`. Client `Content-Type` is never accepted as the only trust signal. Existing legacy metadata is also normalized at download time, and active legacy filenames receive a neutral `.download` suffix.
 
-Every download goes through `/api/blocks/:blockId/attachment`, re-checks the current user's current page access, forces download disposition, applies `nosniff`, a sandboxing Content Security Policy, and a same-origin resource policy. Deleting an attachment block, a parent block containing attachments, or a permanently deleted page subtree also removes the associated files.
+Every download goes through `/api/blocks/:blockId/attachment`, re-checks the current user's current page access, forces download disposition, applies `nosniff`, a sandboxing Content Security Policy, and a same-origin resource policy. Backup restore applies the same blocked-filename and active-MIME policy as direct upload. The configured attachment root is rejected when it equals or is nested under the public web root, including case-insensitive Windows paths, and startup removes stale staging files without touching committed attachments. Deleting an attachment block, a parent block containing attachments, or a permanently deleted page subtree also removes the associated files.
 
 Do not point `ATTACHMENT_UPLOAD_DIR` at `public/`, `docs/`, `.git/`, or the project root.
 

@@ -14,7 +14,7 @@ import { env } from "../config/env.js";
 import { db, transaction, type DbClient } from "../lib/db.js";
 import { normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
-import { recordLoginAttempt } from "../lib/login-history.js";
+import { getClientIpAddress, recordLoginAttempt } from "../lib/login-history.js";
 import { createId } from "../lib/id.js";
 import {
   buildTotpUri,
@@ -285,12 +285,12 @@ export async function createMfaLoginSession(userId: string, sourceIp: string) {
   return token;
 }
 
-async function getActiveMfaSession(mfaToken: string, client: DbClient = db) {
+async function getActiveMfaSession(mfaToken: string, sourceIp: string, client: DbClient = db) {
   const row = await client.queryOne<MfaSessionRow>(
     `SELECT token_hash, user_id, source_ip, failed_attempts, expires_at, used_at
      FROM mfa_login_sessions
-     WHERE token_hash = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)`,
-    [hashOpaqueToken(mfaToken)]
+     WHERE token_hash = ? AND source_ip = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)`,
+    [hashOpaqueToken(mfaToken), sourceIp]
   );
   if (!row || Number(row.failed_attempts) >= maxMfaAttempts) {
     throw new ApiError(401, "MFA_SESSION_EXPIRED", "The two-step verification session expired");
@@ -298,15 +298,15 @@ async function getActiveMfaSession(mfaToken: string, client: DbClient = db) {
   return row;
 }
 
-async function reserveMfaAttempt(mfaToken: string) {
+async function reserveMfaAttempt(mfaToken: string, sourceIp: string) {
   const tokenHash = hashOpaqueToken(mfaToken);
   return transaction(async (client) => {
     const row = await client.queryOne<MfaSessionRow>(
       `SELECT token_hash, user_id, source_ip, failed_attempts, expires_at, used_at
        FROM mfa_login_sessions
-       WHERE token_hash = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)
+       WHERE token_hash = ? AND source_ip = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)
        FOR UPDATE`,
-      [tokenHash]
+      [tokenHash, sourceIp]
     );
     const failedAttempts = Number(row?.failed_attempts ?? maxMfaAttempts);
     if (!row || failedAttempts >= maxMfaAttempts) {
@@ -316,9 +316,9 @@ async function reserveMfaAttempt(mfaToken: string) {
     const result = await client.execute<{ affectedRows: number }>(
       `UPDATE mfa_login_sessions
        SET failed_attempts = failed_attempts + 1
-       WHERE token_hash = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)
+       WHERE token_hash = ? AND source_ip = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)
          AND failed_attempts = ?`,
-      [tokenHash, failedAttempts]
+      [tokenHash, sourceIp, failedAttempts]
     );
     if (Number(result.affectedRows) !== 1) {
       throw new ApiError(401, "MFA_SESSION_EXPIRED", "The two-step verification session expired");
@@ -500,7 +500,8 @@ mfaRouter.post(
         iv: setup.secret_iv,
         tag: setup.secret_tag
       });
-      if (findMatchingTotpStep(secret, code) === null) {
+      const matchedStep = findMatchingTotpStep(secret, code);
+      if (matchedStep === null) {
         throw new ApiError(400, "INVALID_MFA_CODE", "The verification code is invalid");
       }
 
@@ -508,13 +509,13 @@ mfaRouter.post(
         await client.execute(
           `INSERT INTO user_totp_credentials
              (user_id, secret_ciphertext, secret_iv, secret_tag, last_used_step)
-           VALUES (?, ?, ?, ?, NULL)
+           VALUES (?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE
              secret_ciphertext = VALUES(secret_ciphertext),
              secret_iv = VALUES(secret_iv),
              secret_tag = VALUES(secret_tag),
-             last_used_step = NULL`,
-          [user.id, setup.secret_ciphertext, setup.secret_iv, setup.secret_tag]
+             last_used_step = VALUES(last_used_step)`,
+          [user.id, setup.secret_ciphertext, setup.secret_iv, setup.secret_tag, matchedStep]
         );
         await client.execute("DELETE FROM mfa_totp_setups WHERE token_hash = ?", [hashOpaqueToken(setupToken)]);
       });
@@ -711,7 +712,7 @@ mfaRouter.post(
     const { mfaToken, code } = req.body as z.infer<typeof mfaLoginTotpSchema>;
     let session: MfaSessionRow | undefined;
     try {
-      const activeSession = await reserveMfaAttempt(mfaToken);
+      const activeSession = await reserveMfaAttempt(mfaToken, getClientIpAddress(req));
       session = activeSession;
       const result = await transaction(async (client) => {
         const loginUser = await getLoginUserForUpdate(client, activeSession.user_id);
@@ -774,7 +775,7 @@ mfaRouter.post(
   async (req, res, next) => {
     try {
       const { mfaToken } = req.body as z.infer<typeof mfaTokenSchema>;
-      const session = await getActiveMfaSession(mfaToken);
+      const session = await getActiveMfaSession(mfaToken, getClientIpAddress(req));
       const passkeys = await db.query<PasskeyRow>(
         `SELECT id, user_id, credential_id, webauthn_user_id, public_key, counter, transports,
                 device_type, backed_up, aaguid, name, created_at, updated_at, last_used_at
@@ -817,7 +818,7 @@ mfaRouter.post(
     const { mfaToken, challengeToken, response } = req.body as z.infer<typeof passkeyLoginVerifySchema>;
     let session: MfaSessionRow | undefined;
     try {
-      const activeSession = await reserveMfaAttempt(mfaToken);
+      const activeSession = await reserveMfaAttempt(mfaToken, getClientIpAddress(req));
       session = activeSession;
       const contextHash = hashOpaqueToken(mfaToken);
       const challenge = await consumeChallenge(challengeToken, activeSession.user_id, "authentication", contextHash);

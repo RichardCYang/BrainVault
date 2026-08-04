@@ -1,5 +1,5 @@
 import path from "node:path";
-import { link, mkdir, open, rm, stat } from "node:fs/promises";
+import { link, lstat, mkdir, open, readdir, rm, stat } from "node:fs/promises";
 import { env } from "../config/env.js";
 import { ApiError } from "./http.js";
 import { transaction, type DbClient } from "./db.js";
@@ -29,11 +29,21 @@ const projectRoot = path.resolve(process.cwd());
 export const attachmentUploadRoot = path.resolve(projectRoot, env.ATTACHMENT_UPLOAD_DIR);
 export const attachmentTempDir = path.join(attachmentUploadRoot, ".tmp");
 
-if (attachmentUploadRoot === projectRoot) {
+function comparablePath(value: string) {
+  const resolved = path.resolve(value);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+export function isPathInside(root: string, candidate: string) {
+  const relative = path.relative(comparablePath(root), comparablePath(candidate));
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+if (isPathInside(projectRoot, attachmentUploadRoot) && comparablePath(attachmentUploadRoot) === comparablePath(projectRoot)) {
   throw new Error("ATTACHMENT_UPLOAD_DIR cannot be the project root");
 }
 for (const forbiddenRoot of [path.join(projectRoot, "public"), path.join(projectRoot, "docs"), path.join(projectRoot, ".git")]) {
-  if (attachmentUploadRoot === forbiddenRoot || attachmentUploadRoot.startsWith(`${forbiddenRoot}${path.sep}`)) {
+  if (isPathInside(forbiddenRoot, attachmentUploadRoot)) {
     throw new Error("ATTACHMENT_UPLOAD_DIR must stay outside the public, docs, and .git folders");
   }
 }
@@ -199,6 +209,20 @@ export function formatAttachmentSize(size: number) {
 
 export async function ensureAttachmentDirectories() {
   await mkdir(attachmentTempDir, { recursive: true });
+}
+
+export async function cleanupStaleAttachmentTempFiles(nowMs = Date.now()) {
+  await ensureAttachmentDirectories();
+  let removed = 0;
+  for (const entry of await readdir(attachmentTempDir, { withFileTypes: true })) {
+    if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+    const filePath = path.join(attachmentTempDir, entry.name);
+    const info = await lstat(filePath).catch(() => null);
+    if (!info || nowMs - info.mtimeMs < env.ATTACHMENT_TEMP_MAX_AGE_MS) continue;
+    await rm(filePath, { force: true });
+    removed += 1;
+  }
+  return removed;
 }
 
 async function syncPath(value: string) {

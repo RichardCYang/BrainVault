@@ -9,6 +9,7 @@ const authRoutes = readFileSync(new URL("../src/routes/auth.routes.ts", import.m
 const dataRoutes = readFileSync(new URL("../src/routes/data.routes.ts", import.meta.url), "utf8");
 const migration = readFileSync(new URL("../migrations/008_user_account_settings.sql", import.meta.url), "utf8");
 const loginHistoryMigration = readFileSync(new URL("../migrations/025_login_history.sql", import.meta.url), "utf8");
+const loginHistoryOutcomeMigration = readFileSync(new URL("../migrations/033_login_history_locked_outcome.sql", import.meta.url), "utf8");
 
 describe("Account settings layer", () => {
   it("opens from the sidebar identity card and groups profile, language, security, and logout", () => {
@@ -67,14 +68,17 @@ describe("Account settings layer", () => {
     expect(authRoutes).toContain('authRouter.patch("/profile"');
     expect(authRoutes).toContain('authRouter.post("/password"');
     expect(authRoutes).toContain('"/login-history"');
-    expect(authRoutes).toContain('recordLoginAttempt(user.id, sourceIp, "FAILURE")');
+    expect(authRoutes).toContain('decision === "LOCKED" ? "LOCKED" : "FAILURE"');
+    expect(client).toContain('attempt.outcome === "LOCKED"');
+    expect(i18n).toContain('loginHistoryLocked: "Locked"');
     expect(authRoutes).toContain("verifyPassword(currentPassword");
-    expect(dataRoutes).toContain('dataRouter.get("/export"');
+    expect(dataRoutes).toContain('dataRouter.get("/export", dataExportRateLimit');
     expect(dataRoutes).toContain('dataRouter.post("/import"');
     expect(migration).toContain("avatar_data MEDIUMTEXT");
     expect(migration).toContain("preferred_language VARCHAR(10)");
     expect(loginHistoryMigration).toContain("CREATE TABLE IF NOT EXISTS user_login_attempts");
     expect(loginHistoryMigration).toContain("outcome ENUM('SUCCESS', 'FAILURE')");
+    expect(loginHistoryOutcomeMigration).toContain("ENUM('SUCCESS', 'FAILURE', 'LOCKED')");
     expect(loginHistoryMigration).toContain("source_ip VARCHAR(45)");
   });
 });

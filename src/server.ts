@@ -5,6 +5,7 @@ import { env } from "./config/env.js";
 import { bootstrapDatabase } from "./lib/db-bootstrap.js";
 import { closeDb } from "./lib/db.js";
 import { recoverInterruptedDataRestores } from "./lib/data-transfer.js";
+import { cleanupStaleAttachmentTempFiles } from "./lib/attachments.js";
 import { attachPageCollaborationServer } from "./lib/collaboration-server.js";
 import { loadPoshAcmeTls } from "./lib/posh-acme-https.js";
 import { createExpressTrustProxySetting, describeExpressTrustProxySetting } from "./lib/reverse-proxy.js";
@@ -25,6 +26,7 @@ async function start() {
   }
 
   await recoverInterruptedDataRestores();
+  await cleanupStaleAttachmentTempFiles();
 
   const app = createApp();
   const displayHost = env.HOST === "0.0.0.0" || env.HOST === "::" ? "localhost" : env.HOST;

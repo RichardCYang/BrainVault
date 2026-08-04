@@ -115,7 +115,8 @@ components:
           description: Normalized IPv4 or IPv6 address, or unknown when no valid address is available.
         outcome:
           type: string
-          enum: [SUCCESS, FAILURE]
+          enum: [SUCCESS, FAILURE, LOCKED]
+          description: LOCKED means the password request was rejected by an existing persisted account lock.
         attemptedAt:
           type: string
           format: date-time
@@ -491,6 +492,118 @@ components:
             blocks:
               type: integer
               minimum: 0
+    PageVersionActor:
+      type: object
+      required: [id, username, name]
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        name:
+          type: [string, 'null']
+    PageVersionSummary:
+      type: object
+      required: [baseline, pageCreated, pageFields, blocksCreated, blocksUpdated, blocksDeleted, blocksMoved]
+      properties:
+        baseline:
+          type: integer
+          minimum: 0
+        pageCreated:
+          type: integer
+          minimum: 0
+        pageFields:
+          type: array
+          items:
+            type: string
+        blocksCreated:
+          type: integer
+          minimum: 0
+        blocksUpdated:
+          type: integer
+          minimum: 0
+        blocksDeleted:
+          type: integer
+          minimum: 0
+        blocksMoved:
+          type: integer
+          minimum: 0
+    PageVersionListItem:
+      type: object
+      required: [id, revision, pageVersion, contentVersion, actors, source, changeCount, summary, createdAt]
+      properties:
+        id:
+          type: string
+          pattern: '^\d+$'
+        revision:
+          type: integer
+          minimum: 1
+        pageVersion:
+          type: integer
+          minimum: 1
+        contentVersion:
+          type: integer
+          minimum: 1
+        actors:
+          type: array
+          items:
+            $ref: '#/components/schemas/PageVersionActor'
+        source:
+          type: string
+        changeCount:
+          type: integer
+          minimum: 0
+        summary:
+          $ref: '#/components/schemas/PageVersionSummary'
+        createdAt:
+          type: string
+          format: date-time
+    PageVersionDetail:
+      allOf:
+        - $ref: '#/components/schemas/PageVersionListItem'
+        - type: object
+          required: [changes]
+          properties:
+            changes:
+              type: array
+              description: Historical page and block changes. Deleted-block entries can contain the complete former block content.
+              items:
+                type: object
+                additionalProperties: true
+    PageVersionListResponse:
+      type: object
+      required: [current, versions, nextCursor]
+      properties:
+        current:
+          type: object
+          required: [revision, pageVersion, contentVersion]
+          properties:
+            revision:
+              type: integer
+              minimum: 0
+            pageVersion:
+              type: integer
+              minimum: 1
+            contentVersion:
+              type: integer
+              minimum: 1
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PageVersionListItem'
+        nextCursor:
+          type: [string, 'null']
+          pattern: '^\d+$'
+    PageVersionResetResponse:
+      type: object
+      required: [revision, deletedCount]
+      properties:
+        revision:
+          type: integer
+          const: 1
+        deletedCount:
+          type: integer
+          minimum: 0
     BlockReorderInput:
       type: object
       required: [items]
@@ -1072,7 +1185,7 @@ paths:
   /api/auth/login-history:
     get:
       summary: Read recent login attempts for the current account
-      description: Returns successful and failed password or MFA login attempts in newest-first order.
+      description: Returns successful, failed, and persisted-lock password or MFA login attempts in newest-first order.
       parameters:
         - in: query
           name: months
@@ -1240,6 +1353,97 @@ paths:
           description: Page subtree permanently deleted
         '409':
           description: A page or block in the subtree changed after the snapshot
+  /api/pages/{pageId}/versions:
+    get:
+      summary: List page version history
+      description: Owner only. Historical entries may contain content deleted before the page was shared, so invited editors receive 404.
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9_-]{1,64}$'
+        - in: query
+          name: cursor
+          schema:
+            type: string
+            pattern: '^\d+$'
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: Owner-only version history
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageVersionListResponse'
+        '404':
+          description: Page is not owned by the authenticated user
+    delete:
+      summary: Reset page version history
+      description: Owner only. Deletes prior historical entries and writes a fresh revision-1 baseline without resetting optimistic-concurrency generations.
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9_-]{1,64}$'
+      responses:
+        '200':
+          description: History reset result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageVersionResetResponse'
+        '404':
+          description: Page is not owned by the authenticated user
+  /api/pages/{pageId}/versions/{versionId}:
+    get:
+      summary: Read one page version
+      description: Owner only. The changes array can include complete snapshots of deleted blocks.
+      parameters:
+        - in: path
+          name: pageId
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9_-]{1,64}$'
+        - in: path
+          name: versionId
+          required: true
+          schema:
+            type: string
+            pattern: '^\d+$'
+      responses:
+        '200':
+          description: Owner-only page version detail
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: private, no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version]
+                properties:
+                  version:
+                    $ref: '#/components/schemas/PageVersionDetail'
+        '404':
+          description: Page is not owned by the authenticated user, or the version does not exist
   /api/pages/{pageId}/deletion-snapshot:
     get:
       summary: Create a page-subtree deletion precondition
@@ -1260,7 +1464,7 @@ paths:
   /api/bookmarks/preview:
     post:
       summary: Fetch OpenGraph metadata for a bookmark URL
-      description: Fetches a public HTTP(S) page from the server under a dedicated authenticated-user rate limit, validates redirects and every resolved address, and returns title, description, image, favicon, and site information. Local and private network destinations are rejected. Recoverable remote fetch failures return a basic bookmark plus a warning instead of failing the request.
+      description: Fetches a public HTTP(S) page from the server under a dedicated authenticated-user rate limit, permits only configured destination ports (80 and 443 by default), requires an explicit HTML content type, validates redirects and every resolved address, and returns title, description, image, favicon, and site information. Private-network targets and other recoverable remote fetch failures return the same basic bookmark warning shape.
       requestBody:
         required: true
         content:
@@ -1286,7 +1490,7 @@ paths:
                   warning:
                     $ref: '#/components/schemas/BookmarkPreviewWarning'
         '400':
-          description: Invalid, local, or private-network URL
+          description: Invalid or unsupported bookmark URL
         '429':
           description: Authenticated user exceeded the bookmark-preview request limit
   /api/pages/{pageId}/shares:
@@ -1618,7 +1822,7 @@ paths:
   /api/data/export:
     get:
       summary: Export the authenticated account workspace as a complete BrainVault ZIP backup
-      description: Includes page sharing grants bound to collaborator account ID and username. Security credentials and the historical Yjs update log are excluded.
+      description: Streams a complete workspace backup under a per-authenticated-user rate limit. Includes page sharing grants bound to collaborator account ID and username. Security credentials and the historical Yjs update log are excluded.
       responses:
         '200':
           description: Lossless workspace backup containing the manifest, sharing grants, and original attachment bytes
@@ -1633,6 +1837,8 @@ paths:
                 format: binary
         '404':
           description: Authenticated user no longer exists
+        '429':
+          description: Authenticated user exceeded the complete-data export request limit
   /api/data/import:
     post:
       summary: Replace the authenticated account workspace from a BrainVault backup ZIP

@@ -146,7 +146,7 @@ authRouter.post(
       const sourceIp = getClientIpAddress(req);
       const candidate = await db.queryOne<UserRow>("SELECT * FROM users WHERE username = ?", [username]);
       let user: UserRow | undefined;
-      let passwordDecision: "ALLOWED" | "DENIED" = "DENIED";
+      let passwordDecision: "ALLOWED" | "DENIED" | "LOCKED" = "DENIED";
 
       if (!candidate) {
         await verifyPassword(password, await dummyPasswordHash);
@@ -163,7 +163,9 @@ authRouter.post(
           if (!lockedUser) return { user: undefined, decision: "DENIED" as const };
 
           const decision = await evaluatePasswordLogin(client, lockedUser.id, passwordMatches);
-          if (decision !== "ALLOWED") await recordLoginAttempt(lockedUser.id, sourceIp, "FAILURE", client);
+          if (decision !== "ALLOWED") {
+            await recordLoginAttempt(lockedUser.id, sourceIp, decision === "LOCKED" ? "LOCKED" : "FAILURE", client);
+          }
           return { user: lockedUser, decision };
         });
         user = result.user;

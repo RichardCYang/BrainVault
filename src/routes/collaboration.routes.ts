@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db, transaction, type DbClient } from "../lib/db.js";
 import { requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
-import { idParamSchema, requireUser, usernameSchema } from "../utils/schemas.js";
+import { idParamSchema, requireUser, routeIdSchema, usernameSchema } from "../utils/schemas.js";
 import { ApiError, notFound } from "../lib/http.js";
 import {
   assertCollaborationDocumentEpoch,
@@ -56,8 +56,8 @@ const shareUserSchema = z.object({
 });
 
 const shareParamsSchema = z.object({
-  pageId: z.string().min(1),
-  userId: z.string().min(1)
+  pageId: routeIdSchema,
+  userId: routeIdSchema
 });
 
 // Pre-fix tabs may still send title/blocks/deletedAttachmentIds. Zod strips
@@ -104,7 +104,7 @@ async function getShareRows(pageId: string, client: DbClient = db) {
             u.created_at, u.updated_at, ps.permission, ps.created_at AS shared_at
      FROM page_shares ps
      INNER JOIN users u ON u.id = ps.user_id
-     WHERE ps.page_id = ?
+     WHERE ps.page_id = ? AND ps.permission = 'EDIT'
      ORDER BY ps.created_at ASC, u.username ASC`,
     [pageId]
   );
@@ -194,7 +194,8 @@ collaborationRouter.post(
            FROM users u
            WHERE u.username = ? AND u.id <> ?
              AND NOT EXISTS (
-               SELECT 1 FROM page_shares ps WHERE ps.page_id = ? AND ps.user_id = u.id
+               SELECT 1 FROM page_shares ps
+               WHERE ps.page_id = ? AND ps.user_id = u.id AND ps.permission = 'EDIT'
              )`,
           [username, owner.id, pageId]
         );
@@ -202,7 +203,7 @@ collaborationRouter.post(
           throw new ApiError(400, "SHARE_TARGET_UNAVAILABLE", "The requested account cannot be added");
         }
         const count = await client.queryOne<{ share_count: number }>(
-          "SELECT COUNT(*) AS share_count FROM page_shares WHERE page_id = ?",
+          "SELECT COUNT(*) AS share_count FROM page_shares WHERE page_id = ? AND permission = 'EDIT'",
           [pageId]
         );
         firstShare = Number(count?.share_count ?? 0) === 0;
@@ -220,7 +221,7 @@ collaborationRouter.post(
           `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language, u.default_collection_icon,
                   u.created_at, u.updated_at, ps.permission, ps.created_at AS shared_at
            FROM page_shares ps INNER JOIN users u ON u.id = ps.user_id
-           WHERE ps.page_id = ? AND ps.user_id = ?`,
+           WHERE ps.page_id = ? AND ps.user_id = ? AND ps.permission = 'EDIT'`,
           [pageId, target.id]
         );
         if (!created) throw new ApiError(500, "PAGE_SHARE_FAILED", "The page share was not created");
@@ -251,12 +252,12 @@ collaborationRouter.delete(
         );
         if (!page) throw notFound("Page");
         const deletion = await client.execute<{ affectedRows: number }>(
-          "DELETE FROM page_shares WHERE page_id = ? AND user_id = ?",
+          "DELETE FROM page_shares WHERE page_id = ? AND user_id = ? AND permission = 'EDIT'",
           [pageId, sharedUserId]
         );
         if (Number(deletion.affectedRows) === 0) throw notFound("Page share");
         const count = await client.queryOne<{ share_count: number }>(
-          "SELECT COUNT(*) AS share_count FROM page_shares WHERE page_id = ?",
+          "SELECT COUNT(*) AS share_count FROM page_shares WHERE page_id = ? AND permission = 'EDIT'",
           [pageId]
         );
         const remaining = Number(count?.share_count ?? 0);

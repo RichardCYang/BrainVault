@@ -1533,8 +1533,13 @@ function renderLoginHistory() {
     const resultCell = document.createElement("td");
     const result = document.createElement("span");
     const succeeded = attempt.outcome === "SUCCESS";
+    const resultKey = succeeded
+      ? "account.loginHistorySuccess"
+      : attempt.outcome === "LOCKED"
+        ? "account.loginHistoryLocked"
+        : "account.loginHistoryFailure";
     result.className = `login-history-result ${succeeded ? "success" : "failure"}`;
-    result.textContent = t(succeeded ? "account.loginHistorySuccess" : "account.loginHistoryFailure");
+    result.textContent = t(resultKey);
     resultCell.append(result);
     row.append(timeCell, ipCell, resultCell);
     elements.accountLoginHistoryBody.append(row);
@@ -3483,6 +3488,8 @@ function syncPageModeUi() {
   elements.archivePageButton.classList.toggle("hidden", !owner);
   elements.sharePageButton.classList.toggle("hidden", !state.selectedPage || !owner);
   elements.sharePageButton.disabled = interactionLocked;
+  elements.pageVersionHistoryButton.classList.toggle("hidden", !state.selectedPage || !owner);
+  elements.pageVersionHistoryButton.disabled = interactionLocked || !owner;
   elements.blockList.setAttribute("aria-readonly", String(controlsReadOnly));
   elements.blockList.setAttribute("aria-label", t(readOnly ? "page.readerAria" : "page.editorAria"));
   elements.blockEditorHelp.innerHTML = t(readOnly ? "page.readOnlyHelp" : "page.editorHelp");
@@ -4398,7 +4405,7 @@ async function loadPageVersionDetail(versionId) {
 
 function openPageVersionHistory() {
   const page = state.selectedPage;
-  if (!page) return;
+  if (!page || !isPageOwner(page)) return;
   closePageActionsMenu();
   state.pageVersionHistory.pageId = page.id;
   state.pageVersionHistory.versions = [];
@@ -10897,6 +10904,7 @@ elements.pageModeToggle.addEventListener("click", async () => {
 });
 
 elements.pageVersionHistoryButton.addEventListener("click", () => {
+  if (!isPageOwner()) return;
   openPageVersionHistory();
 });
 

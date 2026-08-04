@@ -169,7 +169,7 @@ const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   th: ["class", "scope"],
   td: ["class", "colspan"],
   time: ["class", "datetime"],
-  iframe: ["class", "src", "title", "loading", "allow", "allowfullscreen", "referrerpolicy"],
+  iframe: ["class", "src", "title", "loading", "allowfullscreen", "referrerpolicy"],
   details: ["class", "open"],
   summary: ["class"],
   ul: ["class"],
@@ -187,6 +187,8 @@ const sanitizeOptions: sanitizeHtml.IOptions = {
     }
   },
   allowedSchemes: ["http", "https", "mailto"],
+  allowedIframeHostnames: ["www.youtube-nocookie.com", "www.youtube.com"],
+  exclusiveFilter: (frame) => frame.tag === "input" && frame.attribs.type !== "checkbox",
   transformTags: {
     a: sanitizeHtml.simpleTransform("a", { rel: "noopener noreferrer", target: "_blank" }),
     img: sanitizeHtml.simpleTransform("img", { loading: "lazy", referrerpolicy: "no-referrer" })

@@ -81,9 +81,13 @@ const envSchema = z.object({
   BOOKMARK_PREVIEW_MAX: z.coerce.number().int().positive().default(12),
   BOOKMARK_FETCH_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(8_000),
   BOOKMARK_FETCH_MAX_BYTES: z.coerce.number().int().min(64 * 1024).max(768 * 1024).default(512 * 1024),
+  BOOKMARK_FETCH_ALLOWED_PORTS: z.string().trim().min(1).default("80,443"),
   ATTACHMENT_UPLOAD_DIR: z.string().min(1).default("uploads"),
+  ATTACHMENT_TEMP_MAX_AGE_MS: z.coerce.number().int().min(60_000).max(30 * 24 * 60 * 60_000).default(24 * 60 * 60_000),
   MAX_ATTACHMENT_SIZE_MB: z.coerce.number().int().min(1).max(500).default(25),
   DATA_TRANSFER_MAX_SIZE_MB: z.coerce.number().int().min(1).max(102_400).default(4096),
+  DATA_EXPORT_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60_000),
+  DATA_EXPORT_MAX: z.coerce.number().int().positive().default(20),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
   TRUST_PROXY_ADDRESSES: z.string().trim().max(2_048).default("")
 });
@@ -160,7 +164,18 @@ function parsePublicOrigin(value: string) {
   if (!["http:", "https:"].includes(parsed.protocol) || parsed.origin !== normalized) {
     throw new Error("PUBLIC_ORIGIN must be one exact HTTP(S) origin without a path");
   }
+  if (parsedEnv.NODE_ENV === "production" && parsed.protocol !== "https:") {
+    throw new Error("PUBLIC_ORIGIN must use HTTPS in production");
+  }
   return normalized;
+}
+
+function parseBookmarkFetchAllowedPorts(value: string) {
+  const ports = value.split(",").map((item) => item.trim()).filter(Boolean).map(Number);
+  if (!ports.length || ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65_535)) {
+    throw new Error("BOOKMARK_FETCH_ALLOWED_PORTS must be a comma-separated list of ports from 1 to 65535");
+  }
+  return [...new Set(ports)];
 }
 
 const trustedProxyAddressGroups = new Set(["loopback", "linklocal", "uniquelocal"]);
@@ -212,6 +227,7 @@ for (const origin of webAuthnOrigins) {
 }
 
 const publicOrigin = parsePublicOrigin(parsedEnv.PUBLIC_ORIGIN ?? webAuthnOrigins[0]);
+const bookmarkFetchAllowedPorts = parseBookmarkFetchAllowedPorts(parsedEnv.BOOKMARK_FETCH_ALLOWED_PORTS);
 const httpsRedirect = parsedEnv.HTTPS_REDIRECT ?? parsedEnv.HTTPS_MODE === "proxy";
 const secureHttpsMode = parsedEnv.HTTPS_MODE !== "off";
 const trustedProxyAddresses = parsedEnv.TRUST_PROXY_ADDRESSES
@@ -248,6 +264,7 @@ export const env = {
   JWT_SECRET: jwtSecret,
   MFA_ENCRYPTION_KEY: mfaEncryptionKey,
   PUBLIC_ORIGIN: publicOrigin,
+  BOOKMARK_FETCH_ALLOWED_PORTS: bookmarkFetchAllowedPorts,
   HTTPS_REDIRECT: httpsRedirect,
   TRUST_PROXY_ADDRESSES: trustedProxyAddresses,
   AUTH_ALLOW_BEARER_TOKENS: parsedEnv.AUTH_ALLOW_BEARER_TOKENS ?? parsedEnv.NODE_ENV !== "production",

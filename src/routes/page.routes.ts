@@ -25,7 +25,7 @@ import {
 import { requireAuth } from "../middleware/auth.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { buildBlockTree } from "../utils/blockTree.js";
-import { httpUrlSchema, idParamSchema, requireUser } from "../utils/schemas.js";
+import { httpUrlSchema, idParamSchema, requireUser, routeIdSchema } from "../utils/schemas.js";
 import type { BlockRow, PageRow, TagRow } from "../types/domain.js";
 
 export const pageRouter = Router();
@@ -106,7 +106,7 @@ const pageVersionListQuerySchema = z.object({
 });
 
 const pageVersionParamsSchema = z.object({
-  pageId: z.string().min(1).max(64),
+  pageId: routeIdSchema,
   versionId: z.string().regex(/^\d+$/)
 });
 
@@ -325,7 +325,8 @@ async function getPageResponse(pageId: string, userId: string, client: DbClient 
     `SELECT c.* FROM pages c
      WHERE c.parent_page_id = ?
        AND (c.owner_id = ? OR EXISTS (
-         SELECT 1 FROM page_shares child_share WHERE child_share.page_id = c.id AND child_share.user_id = ?
+         SELECT 1 FROM page_shares child_share
+         WHERE child_share.page_id = c.id AND child_share.user_id = ? AND child_share.permission = 'EDIT'
        ))
      ORDER BY c.updated_at DESC`,
     [pageId, userId, userId]
@@ -353,7 +354,7 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
     const user = requireUser(req.user);
     const query = getValidatedQuery<z.infer<typeof listPagesQuerySchema>>(req);
     const where = [
-      "(p.owner_id = ? OR EXISTS (SELECT 1 FROM page_shares current_share WHERE current_share.page_id = p.id AND current_share.user_id = ?))",
+      "(p.owner_id = ? OR EXISTS (SELECT 1 FROM page_shares current_share WHERE current_share.page_id = p.id AND current_share.user_id = ? AND current_share.permission = 'EDIT'))",
       "p.is_archived = ?"
     ];
     const whereParams: DbValue[] = [user.id, user.id, query.archived ? 1 : 0];
@@ -394,7 +395,7 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
           WHERE c.parent_page_id = p.id
             AND (c.owner_id = ? OR EXISTS (
               SELECT 1 FROM page_shares child_share
-              WHERE child_share.page_id = c.id AND child_share.user_id = ?
+              WHERE child_share.page_id = c.id AND child_share.user_id = ? AND child_share.permission = 'EDIT'
             ))) AS child_count
        FROM pages p
        WHERE ${where.join(" AND ")}
@@ -508,7 +509,7 @@ pageRouter.get(
       const user = requireUser(req.user);
       const pageId = String(req.params.pageId);
       const query = getValidatedQuery<z.infer<typeof pageVersionListQuerySchema>>(req);
-      const access = await getPageAccess(pageId, user.id);
+      const page = await getOwnedPage(pageId, user.id);
       const rows = await db.query<PageVersionRow>(
         `SELECT id, page_id, revision, page_edit_version, page_content_version,
                 actors, source, change_count, change_summary, created_at
@@ -527,8 +528,8 @@ pageRouter.get(
       res.json({
         current: {
           revision: Number(latest?.revision ?? 0),
-          pageVersion: Number(access.page.edit_version ?? 1),
-          contentVersion: Number(access.page.content_version ?? 1)
+          pageVersion: Number(page.edit_version ?? 1),
+          contentVersion: Number(page.content_version ?? 1)
         },
         versions: pageRows.map(mapPageVersionListRow),
         nextCursor: rows.length > query.limit ? String(pageRows.at(-1)?.id ?? "") : null
@@ -579,7 +580,7 @@ pageRouter.get(
       const user = requireUser(req.user);
       const pageId = String(req.params.pageId);
       const versionId = String(req.params.versionId);
-      await getPageAccess(pageId, user.id);
+      await getOwnedPage(pageId, user.id);
       const row = await db.queryOne<PageVersionRow>(
         `SELECT id, page_id, revision, page_edit_version, page_content_version,
                 actors, source, change_count, change_summary, changes, created_at
@@ -694,7 +695,7 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
 
       if (updates.title !== undefined) {
         const shareCountRow = await client.queryOne<{ share_count: number }>(
-          "SELECT COUNT(*) AS share_count FROM page_shares WHERE page_id = ?",
+          "SELECT COUNT(*) AS share_count FROM page_shares WHERE page_id = ? AND permission = 'EDIT'",
           [pageId]
         );
         if (Number(shareCountRow?.share_count ?? 0) > 0) {

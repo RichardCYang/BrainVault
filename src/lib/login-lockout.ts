@@ -1,7 +1,7 @@
 import { env } from "../config/env.js";
 import type { DbClient } from "./db.js";
 
-export type PasswordLoginDecision = "ALLOWED" | "DENIED";
+export type PasswordLoginDecision = "ALLOWED" | "DENIED" | "LOCKED";
 
 type LoginLockState = {
   failed_login_attempts?: number | bigint | string | null;
@@ -40,9 +40,6 @@ export async function evaluatePasswordLogin(
   );
   if (!state) return "DENIED";
 
-  const lockedUntil = timestamp(state.login_locked_until);
-  if (lockedUntil !== null && lockedUntil > nowMs) return "DENIED";
-
   if (passwordMatches) {
     await client.execute(
       `UPDATE users
@@ -52,6 +49,9 @@ export async function evaluatePasswordLogin(
     );
     return "ALLOWED";
   }
+
+  const lockedUntil = timestamp(state.login_locked_until);
+  if (lockedUntil !== null && lockedUntil > nowMs) return "LOCKED";
 
   const lastFailure = timestamp(state.last_failed_login_at);
   const withinFailureWindow = lastFailure !== null && nowMs - lastFailure <= env.AUTH_LOGIN_FAILURE_RESET_MS;

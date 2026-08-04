@@ -19,7 +19,7 @@ type Attempt = {
   id: string;
   user_id: string;
   ip_address: string;
-  outcome: "SUCCESS" | "FAILURE";
+  outcome: "SUCCESS" | "FAILURE" | "LOCKED";
   attempted_at: string;
 };
 

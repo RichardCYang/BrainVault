@@ -8,7 +8,7 @@ export const maxLoginHistoryMonths = 12;
 export const loginHistoryResultLimit = 500;
 const loginHistoryRetentionMonths = maxLoginHistoryMonths + 1;
 
-export type LoginAttemptOutcome = "SUCCESS" | "FAILURE";
+export type LoginAttemptOutcome = "SUCCESS" | "FAILURE" | "LOCKED";
 
 type LoginAttemptRow = {
   id: string;

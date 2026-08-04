@@ -14,6 +14,7 @@ const i18n = readFileSync(new URL("../public/i18n.js", import.meta.url), "utf8")
 const pageRoutes = readFileSync(new URL("../src/routes/page.routes.ts", import.meta.url), "utf8");
 const blockRoutes = readFileSync(new URL("../src/routes/block.routes.ts", import.meta.url), "utf8");
 const collaborationRoutes = readFileSync(new URL("../src/routes/collaboration.routes.ts", import.meta.url), "utf8");
+const pageVersionHistory = readFileSync(new URL("../src/lib/page-version-history.ts", import.meta.url), "utf8");
 const migration = readFileSync(new URL("../migrations/027_page_version_history.sql", import.meta.url), "utf8");
 
 function page(overrides: Partial<PageRow> = {}): PageRow {
@@ -60,6 +61,8 @@ describe("Page version history", () => {
     expect(index).toContain('id="page-version-history-reset"');
     expect(index).toContain('id="page-version-history-detail"');
     expect(client).toContain("function openPageVersionHistory");
+    expect(client).toContain('pageVersionHistoryButton.classList.toggle("hidden", !state.selectedPage || !owner)');
+    expect(client).toContain("if (!page || !isPageOwner(page)) return;");
     expect(client).toContain("function loadPageVersionHistory");
     expect(client).toContain("function loadPageVersionDetail");
     expect(client).toContain("async function resetPageVersionHistory");
@@ -83,9 +86,11 @@ describe("Page version history", () => {
     expect(migration).toContain("uq_page_versions_revision UNIQUE (page_id, revision)");
     expect(pageRoutes).toContain('"/:pageId/versions"');
     expect(pageRoutes).toContain('pageRouter.delete(');
-    expect(pageRoutes).toContain('source: "RESET"');
-    expect(pageRoutes).toContain('"DELETE FROM page_versions WHERE page_id = ?"');
+    expect(pageVersionHistory).toContain('source: "RESET"');
+    expect(pageVersionHistory).toContain('"DELETE FROM page_versions WHERE page_id = ?"');
     expect(pageRoutes).toContain('"/:pageId/versions/:versionId"');
+    expect(pageRoutes).toMatch(/"\/:pageId\/versions"[\s\S]{0,500}getOwnedPage\(pageId, user\.id\)/);
+    expect(pageRoutes).toMatch(/"\/:pageId\/versions\/:versionId"[\s\S]{0,500}getOwnedPage\(pageId, user\.id\)/);
     expect(blockRoutes).toContain('source: "BLOCK_UPDATE"');
     expect(blockRoutes).toContain('source: "BLOCK_DELETE"');
     expect(collaborationRoutes).toContain('source: "COLLABORATION"');

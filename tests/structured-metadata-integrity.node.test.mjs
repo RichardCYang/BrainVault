@@ -104,6 +104,26 @@ test("normalized structured metadata remains accepted at exact limits", () => {
 });
 
 
+test("bookmark metadata rejects private IP literals in stored page and asset URLs", () => {
+  const item = {
+    id: "bookmark-private",
+    url: "https://example.com/",
+    title: "Example",
+    description: "",
+    imageUrl: "https://example.com/image.png",
+    faviconUrl: "https://example.com/favicon.ico",
+    siteName: "example.com"
+  };
+  const metadata = (overrides) => ({ bookmark: { view: "gallery", items: [{ ...item, ...overrides }] } });
+
+  expectIntegrityFailure("BOOKMARK", metadata({ imageUrl: "http://192.168.1.1/admin.png" }), "metadata.bookmark.items[0].imageUrl");
+  expectIntegrityFailure("BOOKMARK", metadata({ faviconUrl: "http://[::1]/favicon.ico" }), "metadata.bookmark.items[0].faviconUrl");
+  expectIntegrityFailure("BOOKMARK", metadata({ imageUrl: "http://[::ffff:192.168.1.1]/admin.png" }), "metadata.bookmark.items[0].imageUrl");
+  expectIntegrityFailure("BOOKMARK", metadata({ url: "http://127.0.0.1/" }), "metadata.bookmark.items[0].url");
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("BOOKMARK", metadata({ imageUrl: "https://cdn.example.com/image.png" })));
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("BOOKMARK", metadata({ imageUrl: "http://[::ffff:808:808]/image.png" })));
+});
+
 test("JSON text metadata is decoded and serialized exactly once", () => {
   const metadata = {
     aiChat: {
