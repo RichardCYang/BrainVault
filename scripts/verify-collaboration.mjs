@@ -401,7 +401,7 @@ function verifySourceWiring() {
     "live collaboration rooms must be invalidated before restored rows replace the workspace"
   );
   assertContains("public/collaboration.js", [
-    "https://cdn.jsdelivr.net/npm/yjs@13.6.31/+esm",
+    'const YJS_MODULE_URL = "/vendor/yjs/yjs.mjs";',
     'const RECOVERY_ORIGIN = Object.freeze({ kind: "recovery" });',
     "Y.applyUpdate",
     "Y.encodeStateAsUpdate",
@@ -434,7 +434,20 @@ function verifySourceWiring() {
     "could not be decoded and was preserved",
     "Collaboration recovery records from different document versions cannot be merged"
   ]);
+  assertContains("public/index.html", [
+    '<script type="importmap">{"imports":{"lib0/":"/vendor/yjs/lib0/","isomorphic.js":"/vendor/yjs/isomorphic/browser.mjs"}}</script>'
+  ]);
+  assertContains("src/app.ts", [
+    'app.get("/vendor/yjs/yjs.mjs"',
+    'app.get("/vendor/yjs/isomorphic/browser.mjs"',
+    '"/vendor/yjs/lib0"',
+    "'sha256-AQrGHmNf2ToDPODxkNyXldxWl9tWr2pnwbahY0pFneE='"
+  ]);
   const collaborationClientSource = read("public/collaboration.js");
+  assert.ok(
+    !collaborationClientSource.includes("https://cdn.jsdelivr.net/npm/yjs@"),
+    "the collaboration client must not execute a remote Yjs runtime"
+  );
   assert.ok(
     !collaborationClientSource.includes("body: snapshot"),
     "the browser must not submit a second, independently trusted content snapshot"

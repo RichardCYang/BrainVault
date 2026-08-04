@@ -65,7 +65,7 @@ In proxy mode, the proxy must also be one of the peers trusted by `TRUST_PROXY_A
 
 Direct Posh-ACME plus complete Caddy, NGINX, Nginx Proxy Manager, and Synology DSM configurations are provided in the repository [HTTPS deployment guide](../../../deploy/README.md). The included NGINX example forwards WebSocket upgrade headers on the shared location, so both normal API requests and `/api/collaboration/` use the same backend port.
 
-The browser module imports the pinned Yjs ESM build at `yjs@13.6.31` from jsDelivr. A deployment with a restrictive outbound or browser content policy must allow that exact CDN resource, or vendor the same version locally and update the import plus Content Security Policy together.
+The browser loads the pinned `yjs@13.6.31` ESM build from `/vendor/yjs/yjs.mjs`. BrainVault exposes only JavaScript module files from the lockfile-controlled `yjs`, `lib0`, and `isomorphic.js` packages, and an inline import map with a CSP hash resolves Yjs bare module specifiers to those same-origin routes. No third-party Yjs CDN access is required.
 
 ## Verification
 

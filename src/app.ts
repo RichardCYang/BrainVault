@@ -1,5 +1,6 @@
-import express from "express";
+import express, { type NextFunction, type Response } from "express";
 import path from "node:path";
+import { type ServerResponse } from "node:http";
 import helmet from "helmet";
 import cors from "cors";
 import morgan from "morgan";
@@ -39,8 +40,8 @@ export function createApp() {
           imgSrc: ["'self'", "data:", "http:", "https:"],
           scriptSrc: [
             "'self'",
-            "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js",
-            "https://cdn.jsdelivr.net/npm/yjs@13.6.31/+esm"
+            "'sha256-AQrGHmNf2ToDPODxkNyXldxWl9tWr2pnwbahY0pFneE='",
+            "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js"
           ],
           styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.css"],
           fontSrc: ["'self'", "data:", "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/fonts/"],
@@ -73,6 +74,47 @@ export function createApp() {
 
   const publicDir = path.resolve(process.cwd(), "public");
   const docsDir = path.resolve(process.cwd(), "docs");
+  const browserModuleRoot = path.resolve(process.cwd(), "node_modules");
+  const browserModuleCacheControl = "public, max-age=31536000, immutable";
+
+  function setBrowserModuleHeaders(res: ServerResponse) {
+    res.setHeader("Cache-Control", browserModuleCacheControl);
+    res.setHeader("Content-Type", "text/javascript; charset=utf-8");
+    res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+  }
+
+  function sendBrowserModule(res: Response, next: NextFunction, filePath: string) {
+    setBrowserModuleHeaders(res);
+    res.sendFile(filePath, (error) => {
+      if (error) next(error);
+    });
+  }
+
+  app.get("/vendor/yjs/yjs.mjs", (_req, res, next) => {
+    sendBrowserModule(res, next, path.join(browserModuleRoot, "yjs", "dist", "yjs.mjs"));
+  });
+  app.get("/vendor/yjs/isomorphic/browser.mjs", (_req, res, next) => {
+    sendBrowserModule(res, next, path.join(browserModuleRoot, "isomorphic.js", "browser.mjs"));
+  });
+  app.use(
+    "/vendor/yjs/lib0",
+    (req, res, next) => {
+      const extension = path.posix.extname(req.path);
+      if (extension && extension !== ".js") {
+        res.sendStatus(404);
+        return;
+      }
+      next();
+    },
+    express.static(path.join(browserModuleRoot, "lib0"), {
+      dotfiles: "deny",
+      extensions: ["js"],
+      index: false,
+      redirect: false,
+      setHeaders: setBrowserModuleHeaders
+    })
+  );
   app.use(express.static(publicDir, { index: false }));
   if (env.SERVE_INTERNAL_DOCS) {
     app.use("/docs", requireAuth, express.static(docsDir, { index: false }));

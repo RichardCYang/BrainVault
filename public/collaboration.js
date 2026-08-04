@@ -9,7 +9,7 @@ import {
   requirePageTitleWithinLimit
 } from "./editor-content-limits.js";
 
-const YJS_MODULE_URL = "https://cdn.jsdelivr.net/npm/yjs@13.6.31/+esm";
+const YJS_MODULE_URL = "/vendor/yjs/yjs.mjs";
 const REMOTE_ORIGIN = Object.freeze({ kind: "remote" });
 const BOOTSTRAP_ORIGIN = Object.freeze({ kind: "bootstrap" });
 const LOCAL_ORIGIN = Object.freeze({ kind: "local" });

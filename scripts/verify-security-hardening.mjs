@@ -191,10 +191,25 @@ const appSource = contains("src/app.ts", [
   "createHttpsEnforcementMiddleware",
   'enabled: env.HTTPS_MODE !== "off"',
   "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js",
-  "https://cdn.jsdelivr.net/npm/yjs@13.6.31/+esm",
+  "'sha256-AQrGHmNf2ToDPODxkNyXldxWl9tWr2pnwbahY0pFneE='",
+  'app.get("/vendor/yjs/yjs.mjs"',
+  'app.get("/vendor/yjs/isomorphic/browser.mjs"',
+  '"/vendor/yjs/lib0"',
+  'path.join(browserModuleRoot, "yjs", "dist", "yjs.mjs")',
+  'path.join(browserModuleRoot, "isomorphic.js", "browser.mjs")',
+  'extensions: ["js"]',
   'connectSrc: ["\'self\'", ...configuredWebSocketOrigins]',
   "res.json({ ok: true })"
 ]);
+const collaborationBrowserSource = contains("public/collaboration.js", [
+  'const YJS_MODULE_URL = "/vendor/yjs/yjs.mjs";'
+]);
+const indexSource = contains("public/index.html", [
+  '<script type="importmap">{"imports":{"lib0/":"/vendor/yjs/lib0/","isomorphic.js":"/vendor/yjs/isomorphic/browser.mjs"}}</script>'
+]);
+assert.ok(!appSource.includes("https://cdn.jsdelivr.net/npm/yjs@"), "CSP must not permit a remote Yjs runtime");
+assert.ok(!collaborationBrowserSource.includes("https://cdn.jsdelivr.net/npm/yjs@"), "The browser must load Yjs locally");
+assert.ok(indexSource.includes("/vendor/yjs/lib0/"), "The import map must resolve lib0 locally");
 assert.ok(!appSource.includes('scriptSrc: ["\'self\'", "https://cdn.jsdelivr.net"]'), "CSP must not trust the entire jsDelivr host");
 assert.ok(!appSource.includes('connectSrc: ["\'self\'", "ws:", "wss:"]'), "CSP must not allow arbitrary WebSocket hosts");
 contains("src/server.ts", [

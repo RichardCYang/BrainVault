@@ -5,6 +5,7 @@ import { translationCatalogs } from "../public/i18n.js";
 const index = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../public/styles.css", import.meta.url), "utf8");
 const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
+const serverApp = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
 const collaboration = readFileSync(new URL("../public/collaboration.js", import.meta.url), "utf8");
 const exitGuard = readFileSync(new URL("../public/collaboration-exit-guard.js", import.meta.url), "utf8");
 const recoveryStore = readFileSync(new URL("../public/collaboration-recovery-store.js", import.meta.url), "utf8");
@@ -50,7 +51,12 @@ describe("page sharing and Yjs collaboration wiring", () => {
   });
 
   it("pins Yjs and supports persisted updates, reconnect recovery, awareness, and attachment reconciliation", () => {
-    expect(collaboration).toContain("https://cdn.jsdelivr.net/npm/yjs@13.6.31/+esm");
+    expect(collaboration).toContain('const YJS_MODULE_URL = "/vendor/yjs/yjs.mjs";');
+    expect(collaboration).not.toContain("https://cdn.jsdelivr.net/npm/yjs@");
+    expect(index).toContain('<script type="importmap">{"imports":{"lib0/":"/vendor/yjs/lib0/","isomorphic.js":"/vendor/yjs/isomorphic/browser.mjs"}}</script>');
+    expect(serverApp).toContain('app.get("/vendor/yjs/yjs.mjs"');
+    expect(serverApp).toContain('    "/vendor/yjs/lib0"');
+    expect(serverApp).toContain("'sha256-AQrGHmNf2ToDPODxkNyXldxWl9tWr2pnwbahY0pFneE='");
     expect(collaboration).toContain('const RECOVERY_ORIGIN = Object.freeze({ kind: "recovery" });');
     expect(collaboration.indexOf("const RECOVERY_ORIGIN")).toBeLessThan(
       collaboration.indexOf("origin !== RECOVERY_ORIGIN")
