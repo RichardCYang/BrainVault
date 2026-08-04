@@ -18,6 +18,7 @@
     "reproduce:bootstrap-loss": "node --experimental-strip-types scripts/reproduce-collaboration-bootstrap-loss.mjs",
     "reproduce:cross-instance-loss": "node scripts/reproduce-cross-instance-compaction-loss.mjs",
     "reproduce:recovery-write-loss": "node scripts/reproduce-collaboration-recovery-write-loss.mjs",
+    "reproduce:browser-module-cache-staleness": "node scripts/reproduce-browser-module-cache-staleness.mjs",
     "test:durability": "node --experimental-strip-types --test tests/*.node.test.mjs",
     "lockfile:repair": "node scripts/lockfile-registry.mjs --fix",
     "preinstall": "npm run lockfile:check",

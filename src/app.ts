@@ -75,7 +75,9 @@ export function createApp() {
   const publicDir = path.resolve(process.cwd(), "public");
   const docsDir = path.resolve(process.cwd(), "docs");
   const browserModuleRoot = path.resolve(process.cwd(), "node_modules");
-  const browserModuleCacheControl = "public, max-age=31536000, immutable";
+  // These module URLs are stable across deployments, so they must revalidate.
+  // Long-lived immutable caching is safe only when the URL itself is versioned.
+  const browserModuleCacheControl = "public, max-age=0, must-revalidate";
 
   function setBrowserModuleHeaders(res: ServerResponse) {
     res.setHeader("Cache-Control", browserModuleCacheControl);
@@ -86,7 +88,7 @@ export function createApp() {
 
   function sendBrowserModule(res: Response, next: NextFunction, filePath: string) {
     setBrowserModuleHeaders(res);
-    res.sendFile(filePath, (error) => {
+    res.sendFile(filePath, { cacheControl: false }, (error) => {
       if (error) next(error);
     });
   }
@@ -108,6 +110,7 @@ export function createApp() {
       next();
     },
     express.static(path.join(browserModuleRoot, "lib0"), {
+      cacheControl: false,
       dotfiles: "deny",
       extensions: ["js"],
       index: false,
