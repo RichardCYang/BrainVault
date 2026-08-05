@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import path from "node:path";
 import { link, lstat, mkdir, open, readdir, rm, stat } from "node:fs/promises";
 import { env } from "../config/env.js";
@@ -147,6 +149,12 @@ function detectAttachmentSignature(value: Buffer) {
   if (startsWithBytes(value, [0x1a, 0x45, 0xdf, 0xa3])) return "webm";
   if (value.subarray(0, 5).toString("ascii").toLowerCase() === "{\\rtf") return "rtf";
   return null;
+}
+
+export async function createAttachmentFileHash(filePath: string) {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(filePath)) hash.update(chunk as Buffer);
+  return hash.digest("hex");
 }
 
 async function readAttachmentHeader(filePath: string) {

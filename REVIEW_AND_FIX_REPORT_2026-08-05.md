@@ -6,7 +6,7 @@
 
 첨부 프로젝트의 개발 방향은 **비동기 결과를 시작 당시의 계정·페이지·최신 사용자 의도에 묶고, 인증 경계와 데이터 보존 경계에서는 오래된 작업이 현재 상태를 바꾸지 못하게 하는 것**으로 판단됩니다. 기존 코드의 초안 보존, Yjs 협업, 프로필·아바타, 페이지 커버, 검색, 버전 이력 등에는 이 원칙이 폭넓게 반영되어 있었습니다.
 
-전체 흐름을 지연 순서와 응답 유실까지 통제해 재검토한 결과, 앞서 수정된 인증·백업·편집 잠금 경계 결함군과 페이지 생성 멱등성 보완에 더해, 페이지 버전 기록 초기화의 응답 유실 재시도와 성공 응답 뒤 목록 동기화 실패가 이후 기록을 다시 삭제할 수 있는 고위험 결함을 재현하고 수정했습니다.
+전체 흐름을 지연 순서와 응답 유실까지 통제해 재검토한 결과, 앞서 수정된 인증·백업·편집 잠금 경계 결함군과 페이지 생성·버전 기록 초기화 멱등성 보완에 더해, 일반 블록 및 첨부 생성의 커밋 응답 유실이 중복 블록과 중복 저장 파일을 만들 수 있는 고위험 결함을 재현하고 수정했습니다.
 
 1. **계정 보안 상태의 인증 경계 누출**: 이전 계정의 로그인 이력, 패스키 이름, MFA 상태, TOTP 설정 비밀키가 다음 계정 화면에 남거나 늦은 응답으로 덮일 수 있었습니다.
 2. **공유 목록의 잘못된 페이지 결합**: 페이지 A의 느린 공유 목록이 페이지 B 대화상자에 표시되고, 잘못된 페이지/사용자 조합으로 제거 요청이 만들어질 수 있었습니다.
@@ -19,6 +19,7 @@
 9. **첨부 다운로드와 401의 인증 경계 누출**: 이전 계정에서 시작한 비공개 첨부가 새 계정에서 자동 다운로드되거나, 이전 요청의 늦은 `401`이 새 로그인 세션을 초기화할 수 있었습니다.
 10. **버전 기록 초기화의 재시도 데이터 손실**: 첫 초기화 트랜잭션은 커밋됐지만 응답만 유실된 뒤 새 기록이 생성되고 사용자가 다시 초기화하면, 두 번째 `DELETE`가 그 새 기록까지 삭제할 수 있었습니다. 대화상자를 닫았다 다시 여는 동안 진행 상태와 오래된 `finally`가 현재 화면을 잘못 제어할 가능성도 있었습니다.
 11. **성공 응답 뒤 동기화 실패의 영수증 조기 폐기**: 초기화 API는 성공했지만 이력 목록 재조회가 실패하면 브라우저가 작업과 mutation ID를 즉시 버렸습니다. 그 사이 새 편집 이력이 생성된 뒤 사용자가 다시 초기화하면 새 mutation ID로 두 번째 파괴적 요청이 실행되어 새 이력까지 삭제될 수 있었습니다.
+12. **일반 블록·첨부 생성의 응답 유실 중복**: 블록 생성 트랜잭션이 커밋됐지만 HTTP 응답만 유실되면 재시도가 새 블록 ID를 만들었습니다. 첨부는 블록뿐 아니라 물리 파일도 한 번 더 이동·보존되어, 한 번의 사용자 의도가 일반 블록 2개 또는 첨부 블록·파일 각 2개가 되는 것을 재현했습니다.
 
 ## 추가 수정 내용
 
@@ -54,6 +55,16 @@
 - 컬렉션/홈/사이드바 생성 버튼은 공통 busy 상태를 사용하고, 애매한 실패는 같은 mutation ID로 한 번 자동 재시도합니다.
 - 서버 생성 성공 뒤 목록 재조회나 화면 이동이 실패해도 작업 영수증을 즉시 잊지 않고 전체 UI 완료 시점까지 유지하여, 다음 시도가 새 페이지를 중복 생성하지 않게 했습니다.
 
+### 일반 블록·첨부 생성 멱등성
+
+- `block_create_mutations` 영수증 테이블과 업그레이드 마이그레이션 `038_block_create_mutation_receipts.sql`을 추가했습니다.
+- `(actor_id, mutation_id)`를 기본키로 사용하고 페이지, 생성 블록 ID, 정규화된 요청 SHA-256을 저장합니다.
+- 일반 블록과 첨부 모두 영수증 예약을 블록 삽입, 페이지 콘텐츠 버전 증가, 버전 이력 기록보다 먼저 같은 SQL 트랜잭션에서 수행합니다.
+- 첨부 요청 해시는 정규화 파일명, 검사된 MIME, 바이트 길이와 실제 업로드 바이트의 스트리밍 SHA-256까지 결합하며, 영수증 예약이 성공한 경우에만 파일을 영구 위치로 이동합니다.
+- 같은 요청의 재전송은 원래 블록을 반환하고 추가 블록·이력·파일을 만들지 않습니다. 다른 내용으로 같은 키를 재사용하면 `409 MUTATION_ID_REUSED`, 원래 블록이 삭제된 뒤 재생하면 `409 BLOCK_CREATE_REPLAY_UNAVAILABLE`로 실패 폐쇄합니다.
+- 재생 판정을 현재 공유/보관 상태의 신규 쓰기 금지보다 먼저 수행하여, 최초 쓰기 뒤 페이지 상태가 바뀌어도 이미 완료된 결과를 확인할 수 있게 했습니다. 신규 쓰기에는 기존 제한이 그대로 적용됩니다.
+- 브라우저는 애매한 실패를 같은 키로 한 번 재시도하고 인증 세대가 바뀌면 대기 작업을 폐기합니다. 동시에 시작된 정상 생성 두 건은 `inFlight` 경계로 합치지 않습니다.
+
 ### 페이지 버전 기록 초기화 멱등성
 
 - `page_version_reset_mutations` 영수증 테이블과 업그레이드 마이그레이션 `037_page_version_reset_mutation_receipts.sql`을 추가했습니다.
@@ -80,6 +91,7 @@
 npm run reproduce:auth-data-lock-boundary
 npm run reproduce:page-create-auth-boundary
 npm run reproduce:page-version-reset-retry
+npm run reproduce:block-create-response-loss
 ```
 
 추가 회귀 범위:
@@ -89,15 +101,17 @@ npm run reproduce:page-version-reset-retry
 - `tests/page-create-auth-boundary.node.test.mjs`의 영수증, 마이그레이션, UI 인증 범위, 독립 재현 5개 사례
 - `tests/page-version-reset-idempotency.node.test.mjs`의 영수증 판정, SQL 순서, 마이그레이션, UI 재시도/인증 범위, 성공 후 목록 동기화 실패, 독립 재현 6개 사례
 - `tests/page-version-history-reset.routes.test.ts`의 최초 실행, 응답 유실 재전송, 소유권, 필수 mutation ID 통합 사례
-- 백업, 페이지 생성, 버전 기록 초기화 변경을 반영한 데이터 손실 검증기와 정적 검증
+- `tests/block-create-idempotency.node.test.mjs`의 영수증 판정, SQL·파일 이동 순서, 브라우저 재시도·인증 범위·동시 의도 분리, 마이그레이션, 독립 재현 5개 사례
+- 백업, 페이지·블록·첨부 생성, 버전 기록 초기화 변경을 반영한 데이터 손실 검증기와 정적 검증
 
 ## 최종 검증 결과
 
-- 의존성 없는 Node 내구성 테스트: **160/160 통과**
+- 의존성 없는 Node 내구성 테스트: **165/165 통과**
 - 이번 버전 기록 초기화 추가 회귀 테스트: **6/6 통과**
+- 이번 블록·첨부 생성 멱등성 추가 회귀 테스트: **5/5 통과**
 - 잠금파일 레지스트리 검사: **346개 URL 통과**
 - 데이터 손실 방지 검증: 통과
-- 협업·프로토콜·소스 검증: 통과, **269개 파일 구문 확인**
+- 협업·프로토콜·소스 검증: 통과, **272개 파일 구문 확인**
 - 보안 강화 검증: 통과, 의존성 없는 보안 회귀 **11/11 통과**
 - 수정 JavaScript 및 재현 스크립트 구문 검사: 통과
 
@@ -105,7 +119,7 @@ npm run reproduce:page-version-reset-retry
 
 프로젝트는 Node.js `^22.23.2 || ^24.18.1 || >=26.5.1`과 npm `engine-strict`를 요구하지만 검토 환경은 Node.js 22.16.0이었습니다. `npm ci --ignore-scripts --engine-strict=false`도 샌드박스 패키지 미러에서 잠금된 `zod@3.25.76` 아티팩트를 찾지 못해 `404`로 중단됐습니다. 의존성이 설치되지 않아 전역 `tsc` 검사는 `node` 및 `vitest/globals` 타입 정의 부재로 완료할 수 없었습니다.
 
-따라서 TypeScript 전체 빌드와 의존성 기반 Vitest 전체 테스트는 실행 완료로 보고하지 않습니다. 대신 TypeScript 구문 검사, 160개 의존성 없는 회귀, 데이터 손실·협업·보안 검증을 수행했습니다. `node_modules`는 결과물에 포함하지 않습니다.
+따라서 TypeScript 전체 빌드와 의존성 기반 Vitest 전체 테스트는 실행 완료로 보고하지 않습니다. 대신 JavaScript/TypeScript 구문 검사, 165개 의존성 없는 회귀, 데이터 손실·협업·보안 검증을 수행했습니다. `node_modules`는 결과물에 포함하지 않습니다.
 
 ## 전체 재현·검증 명령
 
@@ -116,6 +130,7 @@ npm run reproduce:workspace-navigation-race
 npm run reproduce:auth-data-lock-boundary
 npm run reproduce:page-create-auth-boundary
 npm run reproduce:page-version-reset-retry
+npm run reproduce:block-create-response-loss
 npm run test:durability
 npm run lockfile:check
 npm run verify:data-loss
@@ -133,3 +148,4 @@ npm run verify:security
 - `docs/data-loss/2026-08-05/auth-data-and-lock-boundary-review.md`
 - `docs/data-loss/2026-08-05/page-create-idempotency-and-download-boundary.md`
 - `docs/data-loss/2026-08-05/page-version-reset-idempotency.md`
+- `docs/data-loss/2026-08-05/block-create-response-loss-idempotency.md`

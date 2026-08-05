@@ -7,6 +7,7 @@ import { env } from "../config/env.js";
 import {
   attachmentFileExists,
   attachmentTempDir,
+  createAttachmentFileHash,
   ensureAttachmentDirectories,
   getAttachmentFilePath,
   getAttachmentInfo,
@@ -19,6 +20,10 @@ import {
 } from "../lib/attachments.js";
 import { renderBlockHtml } from "../lib/markdown.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
+import {
+  assessBlockCreateMutationReceipt,
+  type BlockCreateMutationReceipt
+} from "../lib/block-create-mutation.js";
 import {
   fetchBookmarkPreviewWithFallback,
   getBookmarkData,
@@ -56,6 +61,7 @@ blockRouter.use(requireAuth);
 const blockSortOrderSchema = z.number().int()
   .min(blockSortOrderLimits.min)
   .max(blockSortOrderLimits.max);
+const mutationIdSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
 
 const createBlockSchema = z.object({
   type: blockTypeSchema.default("MARKDOWN"),
@@ -63,7 +69,8 @@ const createBlockSchema = z.object({
   checked: z.boolean().optional(),
   parentBlockId: z.string().min(1).nullable().optional(),
   sortOrder: blockSortOrderSchema.optional(),
-  metadata: metadataSchema
+  metadata: metadataSchema,
+  mutationId: mutationIdSchema.optional()
 });
 
 const updateBlockSchema = z.object({
@@ -74,7 +81,7 @@ const updateBlockSchema = z.object({
   sortOrder: blockSortOrderSchema.optional(),
   metadata: metadataSchema.nullable().optional(),
   expectedVersion: z.number().int().min(1),
-  mutationId: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/).optional()
+  mutationId: mutationIdSchema.optional()
 });
 
 const versionSnapshotSchema = z.object({
@@ -129,8 +136,86 @@ function prepareBlockContent(type: BlockRow["type"], markdown: string, metadata:
   return { markdown, metadata };
 }
 
+function isDuplicateEntryError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; errno?: unknown };
+  return candidate.code === "ER_DUP_ENTRY" || Number(candidate.errno) === 1062;
+}
+
+async function lockBlockCreateUsers(client: DbClient, userIds: string[]) {
+  const uniqueIds = [...new Set(userIds)].sort();
+  const rows = await client.query<{ id: string }>(
+    `SELECT id FROM users WHERE id IN (${uniqueIds.map(() => "?").join(", ")}) ORDER BY id ASC FOR UPDATE`,
+    uniqueIds
+  );
+  if (rows.length !== uniqueIds.length) throw notFound("User");
+}
+
+async function reserveBlockCreateMutation(
+  client: DbClient,
+  input: {
+    actorId: string;
+    mutationId: string | undefined;
+    pageId: string;
+    blockId: string;
+    requestHash: string | undefined;
+  }
+): Promise<{ kind: "new" } | { kind: "replay"; block: BlockRow }> {
+  if (!input.mutationId || !input.requestHash) return { kind: "new" };
+
+  try {
+    await client.execute(
+      `INSERT INTO block_create_mutations (actor_id, mutation_id, page_id, block_id, request_hash)
+       VALUES (?, ?, ?, ?, ?)`,
+      [input.actorId, input.mutationId, input.pageId, input.blockId, input.requestHash]
+    );
+    return { kind: "new" };
+  } catch (error) {
+    if (!isDuplicateEntryError(error)) throw error;
+  }
+
+  const receipt = await client.queryOne<BlockCreateMutationReceipt>(
+    `SELECT page_id, block_id, request_hash
+     FROM block_create_mutations
+     WHERE actor_id = ? AND mutation_id = ?
+     FOR UPDATE`,
+    [input.actorId, input.mutationId]
+  );
+  if (!receipt) {
+    throw new ApiError(500, "BLOCK_CREATE_RECEIPT_MISSING", "The block creation receipt is unavailable");
+  }
+
+  const assessment = assessBlockCreateMutationReceipt(receipt, {
+    pageId: input.pageId,
+    requestHash: input.requestHash
+  });
+  if (assessment.kind === "collision") {
+    throw new ApiError(
+      409,
+      "MUTATION_ID_REUSED",
+      "This mutation id was already used for a different block creation request. No additional block was created."
+    );
+  }
+  if (assessment.kind !== "replay") {
+    throw new ApiError(500, "BLOCK_CREATE_RECEIPT_MISSING", "The block creation receipt is unavailable");
+  }
+
+  const block = await client.queryOne<BlockRow>(
+    "SELECT * FROM blocks WHERE id = ? AND page_id = ?",
+    [assessment.blockId, input.pageId]
+  );
+  if (!block) {
+    throw new ApiError(
+      409,
+      "BLOCK_CREATE_REPLAY_UNAVAILABLE",
+      "This block creation was already completed, but the created block is no longer available. No additional block was created."
+    );
+  }
+  return { kind: "replay", block };
+}
+
 const reorderSchema = z.object({
-  mutationId: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/).optional(),
+  mutationId: mutationIdSchema.optional(),
   items: z
     .array(
       z.object({
@@ -152,6 +237,10 @@ const attachmentFormSchema = z.object({
   sortOrder: z.preprocess(
     (value) => (value === undefined || value === "" ? undefined : Number(value)),
     blockSortOrderSchema.optional()
+  ),
+  mutationId: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() ? value.trim() : undefined),
+    mutationIdSchema.optional()
   )
 });
 
@@ -167,8 +256,8 @@ const attachmentUpload = multer({
   limits: {
     fileSize: env.MAX_ATTACHMENT_SIZE_MB * 1024 * 1024,
     files: 1,
-    fields: 4,
-    parts: 6,
+    fields: 5,
+    parts: 7,
     fieldNameSize: 64,
     fieldSize: 16 * 1024,
     headerPairs: 32,
@@ -333,12 +422,12 @@ blockRouter.post(
 
       const body = attachmentFormSchema.parse(req.body);
       const access = await assertAccessiblePage(pageId, user.id);
-      assertDirectBlockMutationAllowed(access);
       const ownerId = access.page.owner_id;
-      await assertParentBlock(body.parentBlockId, pageId);
-
       const id = createId("blk");
-      const inspectedUpload = await inspectAttachmentUpload(file.path, file.originalname, file.mimetype);
+      const [inspectedUpload, fileHash] = await Promise.all([
+        inspectAttachmentUpload(file.path, file.originalname, file.mimetype),
+        createAttachmentFileHash(file.path)
+      ]);
       const originalName = inspectedUpload.originalName;
       const metadata: AttachmentMetadata = {
         attachment: {
@@ -347,22 +436,45 @@ blockRouter.post(
           size: file.size
         }
       };
+      const mutationHash = body.mutationId
+        ? createMutationRequestHash({
+            kind: "ATTACHMENT",
+            pageId,
+            parentBlockId: body.parentBlockId,
+            sortOrder: body.sortOrder,
+            file: {
+              originalName,
+              mimeType: inspectedUpload.mimeType,
+              size: file.size,
+              sha256: fileHash
+            }
+          })
+        : undefined;
 
-      let pageContentVersion = 1;
+      let result: { block: BlockRow; pageContentVersion: number } | null = null;
       try {
-        await transaction(async (client) => {
-          // Export/restore and attachment cleanup lock the owner before page rows.
-          // Keep the same global order here so an upload cannot deadlock against
-          // a workspace snapshot while its temporary file is waiting to commit.
-          const lockedUser = await client.queryOne<{ id: string }>(
-            "SELECT id FROM users WHERE id = ? FOR UPDATE",
-            [ownerId]
-          );
-          if (!lockedUser) throw notFound("Page owner");
+        result = await transaction(async (client) => {
+          // Lock every user row before the page. This preserves the workspace
+          // snapshot lock order while the receipt's actor FK is reserved.
+          await lockBlockCreateUsers(client, [user.id, ownerId]);
           const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
           if (lockedAccess.page.owner_id !== ownerId) {
             throw new ApiError(409, "PAGE_OWNER_CHANGED", "The page owner changed while the attachment was uploading");
           }
+          const reservation = await reserveBlockCreateMutation(client, {
+            actorId: user.id,
+            mutationId: body.mutationId,
+            pageId,
+            blockId: id,
+            requestHash: mutationHash
+          });
+          if (reservation.kind === "replay") {
+            return {
+              block: reservation.block,
+              pageContentVersion: Number(lockedAccess.page.content_version ?? 1)
+            };
+          }
+
           assertDirectBlockMutationAllowed(lockedAccess);
           if (lockedAccess.page.is_archived) {
             throw new ApiError(409, "PAGE_ARCHIVED", "Restore the page before adding an attachment");
@@ -387,7 +499,7 @@ blockRouter.post(
               JSON.stringify(metadata)
             ]
           );
-          pageContentVersion = await advancePageContentVersion(client, pageId, user.id);
+          const pageContentVersion = await advancePageContentVersion(client, pageId, user.id);
           const createdBlock = await client.queryOne<BlockRow>("SELECT * FROM blocks WHERE id = ?", [id]);
           if (!createdBlock) throw new ApiError(500, "BLOCK_CREATE_FAILED", "Attachment block was not created");
           await recordPageVersion(client, {
@@ -396,47 +508,81 @@ blockRouter.post(
             source: "ATTACHMENT_CREATE",
             changes: diffPageVersionBlocks([], [createdBlock])
           });
+          return { block: createdBlock, pageContentVersion };
         });
         movedPath = null;
       } catch (error) {
         const commitOutcomeUnknown = Boolean(
           error && typeof error === "object" && "commitOutcomeUnknown" in error && error.commitOutcomeUnknown === true
         );
+
         if (commitOutcomeUnknown) {
-          console.error("Attachment commit outcome is unknown; preserving the moved file", {
-            id,
-            movedPath,
-            errorName: error instanceof Error ? error.name : typeof error,
-            errorCode: typeof error === "object" && error !== null && "code" in error ? String(error.code) : null
-          });
+          try {
+            const confirmedBlock = await db.queryOne<BlockRow>(
+              "SELECT * FROM blocks WHERE id = ? AND page_id = ?",
+              [id, pageId]
+            );
+            if (confirmedBlock) {
+              const confirmedPage = await db.queryOne<{ content_version: number }>(
+                "SELECT content_version FROM pages WHERE id = ?",
+                [pageId]
+              );
+              result = {
+                block: confirmedBlock,
+                pageContentVersion: Number(confirmedPage?.content_version ?? 1)
+              };
+              movedPath = null;
+            } else {
+              console.error("Attachment commit outcome is unknown; preserving the moved file", {
+                id,
+                movedPath,
+                errorName: error instanceof Error ? error.name : typeof error,
+                errorCode: typeof error === "object" && error !== null && "code" in error ? String(error.code) : null
+              });
+              throw error;
+            }
+          } catch (verificationError) {
+            if (verificationError === error) throw error;
+            console.error("Attachment commit verification failed; preserving the moved file", {
+              id,
+              movedPath,
+              errorName: verificationError instanceof Error ? verificationError.name : typeof verificationError,
+              errorCode: typeof verificationError === "object" && verificationError !== null && "code" in verificationError
+                ? String(verificationError.code)
+                : null
+            });
+            throw error;
+          }
+        } else {
+          let insertDefinitelyFailed = false;
+          try {
+            insertDefinitelyFailed = !(await db.queryOne<{ id: string }>("SELECT id FROM blocks WHERE id = ?", [id]));
+          } catch (verificationError) {
+            console.error("Attachment insert outcome is unknown; preserving the moved file", {
+              id,
+              movedPath,
+              errorName: verificationError instanceof Error ? verificationError.name : typeof verificationError,
+              errorCode: typeof verificationError === "object" && verificationError !== null && "code" in verificationError
+                ? String(verificationError.code)
+                : null
+            });
+          }
+          if (insertDefinitelyFailed && movedPath) {
+            await removeAttachmentPath(movedPath);
+            movedPath = null;
+          }
           throw error;
         }
-
-        let insertDefinitelyFailed = false;
-        try {
-          insertDefinitelyFailed = !(await db.queryOne<{ id: string }>("SELECT id FROM blocks WHERE id = ?", [id]));
-        } catch (verificationError) {
-          console.error("Attachment insert outcome is unknown; preserving the moved file", {
-            id,
-            movedPath,
-            errorName: verificationError instanceof Error ? verificationError.name : typeof verificationError,
-            errorCode: typeof verificationError === "object" && verificationError !== null && "code" in verificationError
-              ? String(verificationError.code)
-              : null
-          });
-        }
-        if (insertDefinitelyFailed && movedPath) {
-          await removeAttachmentPath(movedPath);
-          movedPath = null;
-        }
-        throw error;
       }
 
-      const block = await db.queryOne<BlockRow>("SELECT * FROM blocks WHERE id = ?", [id]);
-      if (!block) throw new ApiError(500, "BLOCK_CREATE_FAILED", "Attachment block was not created");
-      const payload = toBlock(block);
+      if (!result) throw new ApiError(500, "BLOCK_CREATE_FAILED", "Attachment block was not created");
+      if (cleanupPath) {
+        await removeAttachmentPath(cleanupPath);
+        cleanupPath = null;
+      }
+      const payload = toBlock(result.block);
       broadcastCanonicalAttachment(pageId, payload);
-      res.status(201).json({ block: payload, pageContentVersion });
+      res.status(201).json({ block: payload, pageContentVersion: result.pageContentVersion });
     } catch (error) {
       if (cleanupPath) await removeAttachmentPath(cleanupPath);
       if (movedPath) {
@@ -482,21 +628,45 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
     const user = requireUser(req.user);
     const pageId = String(req.params.pageId);
     const body = req.body as z.infer<typeof createBlockSchema>;
+    const { mutationId, ...creation } = body;
 
-    if (body.type === "ATTACHMENT") {
+    if (creation.type === "ATTACHMENT") {
       throw new ApiError(400, "USE_ATTACHMENT_UPLOAD", "Create attachment blocks through the file upload endpoint");
     }
 
+    const access = await assertAccessiblePage(pageId, user.id);
+    const ownerId = access.page.owner_id;
     const id = createId("blk");
-    const losslessMetadata = assertLosslessStructuredMetadata(body.type, body.metadata);
-    const prepared = prepareBlockContent(body.type, body.markdown, losslessMetadata);
+    const mutationHash = mutationId
+      ? createMutationRequestHash({ kind: "BLOCK", pageId, creation })
+      : undefined;
+    const losslessMetadata = assertLosslessStructuredMetadata(creation.type, creation.metadata);
+    const prepared = prepareBlockContent(creation.type, creation.markdown, losslessMetadata);
     const result = await transaction(async (client) => {
+      await lockBlockCreateUsers(client, [user.id, ownerId]);
       const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
+      if (lockedAccess.page.owner_id !== ownerId) {
+        throw new ApiError(409, "PAGE_OWNER_CHANGED", "The page owner changed while the block was being created");
+      }
+      const reservation = await reserveBlockCreateMutation(client, {
+        actorId: user.id,
+        mutationId,
+        pageId,
+        blockId: id,
+        requestHash: mutationHash
+      });
+      if (reservation.kind === "replay") {
+        return {
+          block: reservation.block,
+          pageContentVersion: Number(lockedAccess.page.content_version ?? 1)
+        };
+      }
+
       assertDirectBlockMutationAllowed(lockedAccess);
-      await assertParentBlock(body.parentBlockId, pageId, client);
+      await assertParentBlock(creation.parentBlockId, pageId, client);
       const lastBlock = await client.queryOne<{ sort_order: number }>(
         "SELECT sort_order FROM blocks WHERE page_id = ? AND parent_block_id <=> ? ORDER BY sort_order DESC LIMIT 1",
-        [pageId, body.parentBlockId ?? null]
+        [pageId, creation.parentBlockId ?? null]
       );
       await client.execute(
         `INSERT INTO blocks (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata)
@@ -504,12 +674,12 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
         [
           id,
           pageId,
-          body.parentBlockId ?? null,
-          body.type,
+          creation.parentBlockId ?? null,
+          creation.type,
           prepared.markdown,
-          renderBlockHtml(body.type, prepared.markdown, Boolean(body.checked), prepared.metadata),
-          body.checked ? 1 : 0,
-          body.sortOrder ?? getNextBlockSortOrder(lastBlock?.sort_order),
+          renderBlockHtml(creation.type, prepared.markdown, Boolean(creation.checked), prepared.metadata),
+          creation.checked ? 1 : 0,
+          creation.sortOrder ?? getNextBlockSortOrder(lastBlock?.sort_order),
           prepared.metadata ? JSON.stringify(prepared.metadata) : null
         ]
       );

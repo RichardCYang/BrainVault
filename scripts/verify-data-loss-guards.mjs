@@ -228,6 +228,20 @@ const pageVersionResetMutationMigrationSource = readFileSync(
   new URL("../migrations/037_page_version_reset_mutation_receipts.sql", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const blockCreateMutationMigrationSource = readFileSync(
+  new URL("../migrations/038_block_create_mutation_receipts.sql", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
+const directBlockCreateRouteSource = section(
+  blockRouteSource,
+  'blockRouter.post("/pages/:pageId/blocks"',
+  'blockRouter.patch("/blocks/:blockId"'
+);
+const attachmentCreateRouteSource = section(
+  blockRouteSource,
+  '"/pages/:pageId/attachments"',
+  'blockRouter.get("/blocks/:blockId/attachment"'
+);
 
 assert(
   blockOrderIntegritySource.includes("max: 2_147_483_647")
@@ -292,6 +306,47 @@ assert(
     && client.includes("attempt === 0 && isAmbiguousApiError(error)")
     && client.includes("pendingPageVersionResetTasks.clear()"),
   "A lost page-version reset response can still cause a retry to erase history created after the first commit"
+);
+
+assert(
+  baselineSchemaSource.includes("CREATE TABLE IF NOT EXISTS block_create_mutations")
+    && blockCreateMutationMigrationSource.includes("PRIMARY KEY (actor_id, mutation_id)")
+    && blockCreateMutationMigrationSource.includes(
+      "FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE"
+    )
+    && blockRouteSource.includes("mutationId: mutationIdSchema.optional()")
+    && directBlockCreateRouteSource.includes('createMutationRequestHash({ kind: "BLOCK", pageId, creation })')
+    && directBlockCreateRouteSource.indexOf("reserveBlockCreateMutation")
+      < directBlockCreateRouteSource.indexOf("INSERT INTO blocks")
+    && attachmentCreateRouteSource.includes('kind: "ATTACHMENT"')
+    && attachmentCreateRouteSource.includes("sha256: fileHash")
+    && attachmentCreateRouteSource.indexOf("reserveBlockCreateMutation")
+      < attachmentCreateRouteSource.indexOf("moveAttachmentFile")
+    && client.includes("const pendingBlockCreateTasks = new Map()")
+    && client.includes("const pendingAttachmentCreateTasks = new Map()")
+    && client.includes("body: { ...task.payload, mutationId: task.mutationId }")
+    && client.includes('formData.set("mutationId", task.mutationId)')
+    && client.includes("pendingBlockCreateTasks.clear()")
+    && client.includes("pendingAttachmentCreateTasks.clear()"),
+  "A lost block or attachment creation response can still duplicate committed content on retry"
+);
+
+const blockCreateReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL("./reproduce-block-create-response-loss.mjs", import.meta.url))],
+  { encoding: "utf8" }
+));
+assert(
+  blockCreateReproduction.vulnerable.ordinaryBlockCountAfterLostResponseRetry === 2
+    && blockCreateReproduction.vulnerable.attachmentBlockCountAfterLostResponseRetry === 2
+    && blockCreateReproduction.vulnerable.attachmentFileCountAfterLostResponseRetry === 2
+    && blockCreateReproduction.fixed.ordinaryBlockCountAfterLostResponseRetry === 1
+    && blockCreateReproduction.fixed.attachmentBlockCountAfterLostResponseRetry === 1
+    && blockCreateReproduction.fixed.attachmentFileCountAfterLostResponseRetry === 1
+    && blockCreateReproduction.fixed.ordinaryReplayReturnedOriginalId
+    && blockCreateReproduction.fixed.attachmentReplayReturnedOriginalId
+    && blockCreateReproduction.fixed.changedPayloadCollisionRejected,
+  "The block-create response-loss reproduction did not prove both vulnerable and fixed states"
 );
 
 const pageVersionResetReproduction = JSON.parse(execFileSync(
@@ -579,7 +634,7 @@ const directStructuredCreate = section(
 );
 assertBefore(
   directStructuredCreate,
-  "assertLosslessStructuredMetadata(body.type, body.metadata)",
+  "assertLosslessStructuredMetadata(creation.type, creation.metadata)",
   "INSERT INTO blocks",
   "direct structured block create"
 );
@@ -1411,5 +1466,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified and length-framed backup ZIP integrity, identity-bound page-share backup/restore, archived-share backup round-trip integrity, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, and fail-closed recovery inspection, plus owner-scoped idempotent page creation, idempotent page-version reset replay, and authentication-scoped download completion."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified and length-framed backup ZIP integrity, identity-bound page-share backup/restore, archived-share backup round-trip integrity, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, and fail-closed recovery inspection, plus owner-scoped idempotent page creation, actor-scoped idempotent block and attachment creation, idempotent page-version reset replay, and authentication-scoped download completion."
 );

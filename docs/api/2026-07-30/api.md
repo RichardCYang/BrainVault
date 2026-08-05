@@ -35,9 +35,9 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `POST` | `/api/pages/:pageId/collaboration/session` | Issue a short-lived page-scoped WebSocket ticket and canonical snapshot; requires `{ "documentEpochProtocol": 2 }` |
 | `PUT` | `/api/pages/:pageId/collaboration/snapshot` | Materialize the locked durable Yjs log into page/block tables; request content is not trusted |
 | `WS` | `/api/collaboration/:pageId` | Authenticated binary Yjs updates plus JSON presence/control messages |
-| `POST` | `/api/pages/:pageId/blocks` | Add a non-attachment block |
+| `POST` | `/api/pages/:pageId/blocks` | Add a non-attachment block; exact ambiguous retries reuse `mutationId` |
 | `POST` | `/api/bookmarks/preview` | Fetch sanitized OpenGraph metadata for a public URL under a dedicated authenticated-user rate limit |
-| `POST` | `/api/pages/:pageId/attachments` | Upload a screened file and create an attachment block on a page that is not in collaboration |
+| `POST` | `/api/pages/:pageId/attachments` | Upload a screened file and create an attachment block; exact ambiguous retries reuse `mutationId` |
 | `PATCH` | `/api/blocks/:blockId` | Update a block |
 | `DELETE` | `/api/blocks/:blockId` | Delete a block and its descendants, including stored attachment files |
 | `GET` | `/api/blocks/:blockId/attachment` | Download an attachment after current page-access verification, forced disposition, and active-content response hardening |
@@ -54,6 +54,12 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 ## Page-creation retry integrity
 
 `POST /api/pages` accepts an optional `mutationId` (1–64 ASCII letters, digits, `_`, or `-`). The server reserves the owner-scoped mutation receipt in the same transaction as the page, its initial block, tags, and creation-history entry. Retrying the exact same body with the same ID returns the original page. Reusing the ID with different content is rejected with `409 MUTATION_ID_REUSED`. If the original page was later permanently deleted, a replay is rejected rather than silently creating a replacement.
+
+## Block and attachment creation retry integrity
+
+`POST /api/pages/:pageId/blocks` and multipart `POST /api/pages/:pageId/attachments` accept an optional `mutationId` (1–64 ASCII letters, digits, `_`, or `-`). The server reserves `(actor_id, mutation_id)` in the same transaction before inserting a block; attachment requests reserve the receipt before moving the uploaded file to its durable path. An exact retry returns the original block without adding another history entry, advancing the page content version again, or storing another attachment file.
+
+The request hash includes the page, block payload, and operation kind. For attachments it also includes the normalized filename, media type, byte size, placement, and SHA-256 digest of the uploaded bytes. Reusing a key with different data is rejected with `409 MUTATION_ID_REUSED`. If the original block was later deleted, replay fails closed with `409 BLOCK_CREATE_REPLAY_UNAVAILABLE` rather than creating a replacement. The browser retries an ambiguous response once and retains the same task key for a later manual retry; authentication changes clear the pending task.
 
 ## Page-version reset retry integrity
 

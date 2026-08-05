@@ -296,12 +296,11 @@ assert.ok(!bootstrapSource.includes("GRANT ALL PRIVILEGES"), "Application DB acc
 assert.doesNotMatch(bootstrapSource, /CREATE USER IF NOT EXISTS[^\n]+@'%' /, "Application DB accounts must not be created for wildcard hosts");
 
 contains("src/routes/block.routes.ts", [
-  "parts: 6",
+  "parts: 7",
   "fieldNestingDepth: 1",
   "headerPairs: 32",
   "bookmarkPreviewRateLimit",
   "inspectAttachmentUpload",
-  "assertDirectBlockMutationAllowed(access)",
   "assertDirectBlockMutationAllowed(lockedAccess)",
   "sanitizeAttachmentDownloadFilename",
   "Content-Security-Policy",

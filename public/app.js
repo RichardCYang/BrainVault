@@ -152,6 +152,8 @@ let sharePageRequestGeneration = 0;
 let pageEditLockGeneration = 0;
 const pendingWorkspaceCreateTasks = new Map();
 const pendingPageVersionResetTasks = new Map();
+const pendingBlockCreateTasks = new Map();
+const pendingAttachmentCreateTasks = new Map();
 let pageCoverSaving = false;
 let pageCoverPositionDraft = null;
 let pageCoverDragPointerId = null;
@@ -1709,6 +1711,8 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   discardPendingPageEdits();
   pendingWorkspaceCreateTasks.clear();
   pendingPageVersionResetTasks.clear();
+  pendingBlockCreateTasks.clear();
+  pendingAttachmentCreateTasks.clear();
   closeAccountSettings({ restoreFocus: false, force: true });
   closeEmojiPicker({ restoreFocus: false });
   closeNavigationContextMenu();
@@ -4370,6 +4374,7 @@ async function setPageMode(nextMode, { announce = true } = {}) {
       // The mode transition intentionally holds pageModeChanging until the first editor block is ready.
       // Bypass only that self-owned interaction lock; createEmptyBlock still requires active write mode.
       const data = await createEmptyBlock(state.selectedPage.id, { allowLocked: true });
+      if (!data) return;
       state.pendingFocusBlockId = data.block.id;
       await openPage(state.selectedPage.id);
     }
@@ -8956,11 +8961,101 @@ function updateSlashMenuForTextarea(textarea) {
   renderSlashMenu(row, context.query);
 }
 
+function getAttachmentCreateTask(
+  authenticationScope,
+  { pageId, sourceBlockId, parentBlockId, sortOrder, file }
+) {
+  const requestKey = JSON.stringify({
+    pageId,
+    sourceBlockId,
+    parentBlockId,
+    sortOrder,
+    file: {
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      lastModified: file.lastModified
+    }
+  });
+  const taskKey = `${authenticationScope.targetKey}\n${requestKey}`;
+  const pendingTask = pendingAttachmentCreateTasks.get(taskKey);
+  if (pendingTask && !pendingTask.inFlight) {
+    // A newly selected File with the same browser fingerprint may still contain
+    // different bytes. Send it with the retained mutation id; the server hash
+    // will reject a collision and submitWithFreshMutationIdOnReuse will rotate.
+    pendingTask.file = file;
+    return pendingTask;
+  }
+
+  return {
+    taskKey,
+    targetKey: authenticationScope.targetKey,
+    requestKey,
+    mutationId: createMutationId(),
+    pageId,
+    parentBlockId,
+    sortOrder,
+    file,
+    inFlight: false
+  };
+}
+
+async function submitAttachmentCreateTask(task, authenticationScope) {
+  task.inFlight = true;
+  let attempt = 0;
+
+  try {
+    while (attempt < 2) {
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+
+      try {
+        const data = await submitWithFreshMutationIdOnReuse(task, () => {
+          if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+          const formData = new FormData();
+          formData.set("file", task.file, task.file.name);
+          if (task.parentBlockId) formData.set("parentBlockId", task.parentBlockId);
+          formData.set("sortOrder", String(task.sortOrder));
+          formData.set("mutationId", task.mutationId);
+          return api(`/api/pages/${task.pageId}/attachments`, {
+            method: "POST",
+            body: formData
+          });
+        });
+        if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        if (pendingAttachmentCreateTasks.get(task.taskKey) === task) {
+          pendingAttachmentCreateTasks.delete(task.taskKey);
+        }
+        return data;
+      } catch (error) {
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        attempt += 1;
+        if (!isAmbiguousApiError(error) || attempt >= 2) {
+          if (!isAmbiguousApiError(error) && pendingAttachmentCreateTasks.get(task.taskKey) === task) {
+            pendingAttachmentCreateTasks.delete(task.taskKey);
+          }
+          throw error;
+        }
+      }
+    }
+
+    return null;
+  } catch (error) {
+    if (isAmbiguousApiError(error) && isCurrentAuthenticatedSessionScope(authenticationScope)) {
+      pendingAttachmentCreateTasks.set(task.taskKey, task);
+    }
+    throw error;
+  } finally {
+    task.inFlight = false;
+  }
+}
+
 async function uploadAttachmentFromRow(row, file, slashContext = null) {
   if (!requireWritablePage() || !row?.dataset.blockId || !file) return;
   if (!promoteBlockDraftConflict(row)) return;
 
   const pageId = state.selectedPage.id;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   const collaborationSessionAtStart = isCollaborativePage() ? state.collaborationSession : null;
   const blockId = row.dataset.blockId;
   const sourceEditRevision = Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0;
@@ -9001,15 +9096,15 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
     }
 
     const insertionIndex = replaceCurrentBlock ? referenceIndex : referenceIndex + 1;
-    const formData = new FormData();
-    formData.set("file", file, file.name);
-    if (parentBlockId) formData.set("parentBlockId", parentBlockId);
-    formData.set("sortOrder", String(insertionIndex));
-
-    const data = await api(`/api/pages/${pageId}/attachments`, {
-      method: "POST",
-      body: formData
+    const task = getAttachmentCreateTask(authenticationScope, {
+      pageId,
+      sourceBlockId: blockId,
+      parentBlockId,
+      sortOrder: insertionIndex,
+      file
     });
+    const data = await submitAttachmentCreateTask(task, authenticationScope);
+    if (!data || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
     applyPageContentVersion(pageId, data.pageContentVersion);
 
     const sourceStillCurrent =
@@ -9391,6 +9486,67 @@ async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {
   }
 }
 
+function getBlockCreateTask(authenticationScope, pageId, payload) {
+  const requestKey = JSON.stringify({ pageId, payload });
+  const taskKey = `${authenticationScope.targetKey}\n${requestKey}`;
+  const pendingTask = pendingBlockCreateTasks.get(taskKey);
+  if (pendingTask && !pendingTask.inFlight) return pendingTask;
+
+  return {
+    taskKey,
+    targetKey: authenticationScope.targetKey,
+    pageId,
+    requestKey,
+    mutationId: createMutationId(),
+    payload: Object.freeze({ ...payload }),
+    inFlight: false
+  };
+}
+
+async function submitBlockCreateTask(task, authenticationScope) {
+  task.inFlight = true;
+  let attempt = 0;
+
+  try {
+    while (attempt < 2) {
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+
+      try {
+        const data = await submitWithFreshMutationIdOnReuse(task, () => {
+          if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+          return api(`/api/pages/${task.pageId}/blocks`, {
+            method: "POST",
+            body: { ...task.payload, mutationId: task.mutationId }
+          });
+        });
+        if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        if (pendingBlockCreateTasks.get(task.taskKey) === task) {
+          pendingBlockCreateTasks.delete(task.taskKey);
+        }
+        return data;
+      } catch (error) {
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        attempt += 1;
+        if (!isAmbiguousApiError(error) || attempt >= 2) {
+          if (!isAmbiguousApiError(error) && pendingBlockCreateTasks.get(task.taskKey) === task) {
+            pendingBlockCreateTasks.delete(task.taskKey);
+          }
+          throw error;
+        }
+      }
+    }
+
+    return null;
+  } catch (error) {
+    if (isAmbiguousApiError(error) && isCurrentAuthenticatedSessionScope(authenticationScope)) {
+      pendingBlockCreateTasks.set(task.taskKey, task);
+    }
+    throw error;
+  } finally {
+    task.inFlight = false;
+  }
+}
+
 async function createEmptyBlock(
   pageId,
   { parentBlockId = null, sortOrder, allowLocked = false, type = "MARKDOWN", markdown = "", metadata } = {}
@@ -9416,16 +9572,18 @@ async function createEmptyBlock(
     session.upsertBlock(block);
     return { block, pageContentVersion: state.selectedPage?.contentVersion ?? 1 };
   }
-  const data = await api(`/api/pages/${pageId}/blocks`, {
-    method: "POST",
-    body: {
-      type,
-      markdown,
-      parentBlockId,
-      ...(metadata === undefined ? {} : { metadata }),
-      ...(sortOrder === undefined ? {} : { sortOrder })
-    }
-  });
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+  const payload = {
+    type,
+    markdown,
+    parentBlockId,
+    ...(metadata === undefined ? {} : { metadata }),
+    ...(sortOrder === undefined ? {} : { sortOrder })
+  };
+  const task = getBlockCreateTask(authenticationScope, pageId, payload);
+  const data = await submitBlockCreateTask(task, authenticationScope);
+  if (!data || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
   applyPageContentVersion(pageId, data.pageContentVersion);
   return data;
 }
@@ -9450,6 +9608,7 @@ async function insertBlockRelative(
     markdown,
     metadata
   });
+  if (!data) return null;
   const orderedIds = [...siblingIds];
   orderedIds.splice(insertionIndex, 0, data.block.id);
   await persistBlockOrder(parentBlockId, orderedIds, { [data.block.id]: data.block.version });
@@ -9471,6 +9630,7 @@ async function appendBlock(afterRow = null) {
 
   const siblingIds = getBlockSiblings(null).map((block) => block.id);
   const data = await createEmptyBlock(state.selectedPage.id, { sortOrder: siblingIds.length });
+  if (!data) return;
   await persistBlockOrder(null, [...siblingIds, data.block.id], { [data.block.id]: data.block.version });
 
   state.pendingFocusBlockId = data.block.id;
@@ -9521,6 +9681,7 @@ async function deleteEmptyBlock(row) {
 
     if (!focusBlockId) {
       const starter = await createEmptyBlock(state.selectedPage.id, { allowLocked: true });
+      if (!starter) return;
       focusBlockId = starter.block.id;
     }
 
@@ -11346,6 +11507,8 @@ elements.accountPasswordForm.addEventListener("submit", async (event) => {
     authenticationSessionGeneration += 1;
     pendingWorkspaceCreateTasks.clear();
     pendingPageVersionResetTasks.clear();
+    pendingBlockCreateTasks.clear();
+    pendingAttachmentCreateTasks.clear();
     setWorkspaceCreateBusy(false);
     setAuthenticated(true);
     elements.accountPasswordForm.reset();
