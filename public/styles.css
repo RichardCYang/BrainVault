@@ -15266,3 +15266,21 @@ html[data-theme="dark"] .page-cover-custom-row {
     grid-column: 1 / -1;
   }
 }
+
+/* Full-bleed page cover layout */
+@media screen {
+  body.app-mode:not(.pdf-export-mode) .page-view {
+    width: 100%;
+  }
+
+  body.app-mode:not(.pdf-export-mode) .page-view > :not(.page-cover) {
+    width: min(100%, 960px);
+    margin-inline: auto;
+  }
+
+  body.app-mode:not(.pdf-export-mode) .page-cover {
+    width: auto;
+    margin-inline: calc(0px - var(--main-inline-padding));
+    border-radius: 0;
+  }
+}

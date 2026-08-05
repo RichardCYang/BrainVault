@@ -76,6 +76,9 @@ test("the page UI supports adding, replacing, removing, and repositioning covers
 
   assert.match(styles, /\.page-cover-image\s*\{[\s\S]*?object-fit:\s*cover;[\s\S]*?object-position:\s*50% 50%;/);
   assert.match(styles, /\.page-cover\.is-repositioning \.page-cover-image/);
+  assert.match(styles, /body\.app-mode:not\(\.pdf-export-mode\) \.page-view\s*\{[\s\S]*?width:\s*100%;/);
+  assert.match(styles, /body\.app-mode:not\(\.pdf-export-mode\) \.page-view > :not\(\.page-cover\)\s*\{[\s\S]*?width:\s*min\(100%, 960px\);[\s\S]*?margin-inline:\s*auto;/);
+  assert.match(styles, /body\.app-mode:not\(\.pdf-export-mode\) \.page-cover\s*\{[\s\S]*?width:\s*auto;[\s\S]*?margin-inline:\s*calc\(0px - var\(--main-inline-padding\)\);[\s\S]*?border-radius:\s*0;/);
   assert.match(translations, /removeConfirm:\s*"Remove this page cover\?/);
   assert.match(translations, /removeConfirm:\s*"이 페이지의 커버를 삭제할까요\?/);
 });
