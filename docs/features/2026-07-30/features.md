@@ -30,7 +30,7 @@ See [Page sharing and real-time collaboration](../../collaboration/2026-07-29/co
 | --- | --- |
 | `Enter` | Insert a block below the current one |
 | `Shift + Enter` | Add a line break inside the same block |
-| `Backspace` on an empty block | Remove it and move focus to the previous block |
+| `Backspace` on an empty block | Remove it, promote nested children in place, and move focus to the previous block |
 | `/` | Open the block type menu |
 | `Ctrl/Cmd + B` | Apply bold formatting to selected text |
 | `Ctrl/Cmd + I` | Apply italic formatting to selected text |

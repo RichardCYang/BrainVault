@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -746,17 +746,47 @@ function verifyDependencyPins() {
   assert.equal(packageLock.packages?.["node_modules/isomorphic.js"]?.version, "0.2.5");
 }
 
-function verifySyntax() {
+function checkSyntax(path) {
+  const args = path.endsWith(".ts")
+    ? ["--experimental-strip-types", "--check", path]
+    : ["--check", path];
+  return new Promise((resolve, reject) => {
+    execFile(
+      process.execPath,
+      args,
+      {
+        encoding: "utf8",
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024,
+        env: { ...process.env, NODE_NO_WARNINGS: "1" }
+      },
+      (error, _stdout, stderr) => {
+        if (!error) {
+          resolve();
+          return;
+        }
+        const details = String(stderr ?? "").trim();
+        error.message = `Syntax check failed for ${path}: ${error.message}${details ? `\n${details}` : ""}`;
+        reject(error);
+      }
+    );
+  });
+}
+
+async function verifySyntax() {
   const sourceDirectories = ["src", "scripts", "tests", "public"];
   const files = sourceDirectories
     .flatMap((directory) => walk(join(rootDir, directory), [".ts", ".js", ".mjs"]))
     .filter((path) => !path.endsWith(".d.ts"));
-  for (const path of files) {
-    const args = path.endsWith(".ts")
-      ? ["--experimental-strip-types", "--check", path]
-      : ["--check", path];
-    execFileSync(process.execPath, args, { stdio: "pipe" });
-  }
+  const workerCount = Math.min(8, Math.max(1, files.length));
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < files.length) {
+      const path = files[nextIndex];
+      nextIndex += 1;
+      await checkSyntax(path);
+    }
+  }));
   return files.length;
 }
 
@@ -771,7 +801,7 @@ async function main() {
   verifyCrossInstanceWriteFence();
   verifyAttachmentPositionReconciliation();
   await verifyWebSocketProtocol();
-  const checkedFiles = verifySyntax();
+  const checkedFiles = await verifySyntax();
   console.log(`[verify-collaboration] OK: source wiring, exact Yjs dependency pins, recovery acknowledgement safety, document-lineage isolation, server-authoritative materialization provenance, SQL-fenced first-document bootstrap, cross-instance durable-room freshness, stale-SQL attachment-position fencing, hierarchy invariants, RFC 6455 protocol behavior, and syntax for ${checkedFiles} file(s).`);
 }
 

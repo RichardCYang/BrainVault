@@ -6104,16 +6104,25 @@ async function withCollaborativeDestructiveTransition(pageId, kind, action) {
 
 async function deleteBlockWithVersionCheck(blockId, options = {}) {
   const pageId = state.selectedPage.id;
+  const preserveChildren = options.preserveChildren === true;
   if (isCollaborativePage()) {
     return withCollaborativeDestructiveTransition(pageId, "block-delete", async (session) => ({
-      deletedIds: session.deleteBlock(blockId, { cascade: options.includeDescendants !== false })
+      deletedIds: session.deleteBlock(blockId, {
+        cascade: options.includeDescendants !== false,
+        promoteChildren: preserveChildren
+      })
     }));
   }
-  const expectedVersions = getBlockVersionSnapshot(blockId, options);
+  const expectedVersions = getBlockVersionSnapshot(blockId, {
+    includeDescendants: preserveChildren || options.includeDescendants !== false
+  });
+  const deletedVersions = preserveChildren
+    ? expectedVersions.filter(({ id }) => id === blockId)
+    : expectedVersions;
   if (blockSnapshotHasUnresolvedDraftConflict(expectedVersions)) {
     throw new Error(t("status.resolveRecoveredDraftConflict"));
   }
-  const recoveredConflictOrigins = expectedVersions
+  const recoveredConflictOrigins = deletedVersions
     .map(({ id }) => ({ blockId: id, origin: blockDraftConflictOrigins.get(id) }))
     .filter(({ origin }) => Boolean(origin));
   const scope = getDraftScope();
@@ -6128,15 +6137,23 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
     );
     const data = await api(`/api/blocks/${blockId}`, {
       method: "DELETE",
-      body: { expectedVersions }
+      body: {
+        expectedVersions,
+        ...(preserveChildren
+          ? {
+              preserveChildren: true,
+              expectedPageContentVersion: Number(state.selectedPage?.contentVersion ?? 1)
+            }
+          : {})
+      }
     });
-    for (const { id } of expectedVersions) blockDraftRenderSources.delete(id);
+    for (const { id } of deletedVersions) blockDraftRenderSources.delete(id);
     if (scope) {
       checkDraftStoreWrite(
         pageDraftStore.removeBlocks(
           scope.userId,
           scope.pageId,
-          expectedVersions.map(({ id }) => id),
+          deletedVersions.map(({ id }) => id),
           pageDraftSourceId
         )
       );
@@ -9654,9 +9671,6 @@ async function deleteEmptyBlock(row) {
       });
     }
     const block = getBlockById(blockId);
-    const parentBlockId = normalizeParentBlockId(row.dataset.parentBlockId);
-    const siblingIds = getBlockSiblings(parentBlockId).map((item) => item.id);
-    const siblingIndex = siblingIds.indexOf(blockId);
     const childIds = (block?.children ?? []).map((child) => child.id);
     const rows = [...elements.blockList.querySelectorAll(".editor-block-row")];
     const rowIndex = rows.indexOf(row);
@@ -9671,13 +9685,10 @@ async function deleteEmptyBlock(row) {
     closeInlineToolbar();
     closeBlockContextMenu();
 
-    const nextSiblingIds = [...siblingIds];
-    if (siblingIndex >= 0) nextSiblingIds.splice(siblingIndex, 1, ...childIds);
-    if (nextSiblingIds.length) {
-      await persistBlockOrder(parentBlockId, nextSiblingIds, {}, { allowLocked: true });
-    }
-
-    await deleteBlockWithVersionCheck(blockId, { includeDescendants: false });
+    await deleteBlockWithVersionCheck(blockId, {
+      includeDescendants: false,
+      preserveChildren: true
+    });
 
     if (!focusBlockId) {
       const starter = await createEmptyBlock(state.selectedPage.id, { allowLocked: true });

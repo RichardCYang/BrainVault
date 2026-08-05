@@ -88,6 +88,7 @@ npm run reproduce:attachment-position-loss # Reproduce stale-SQL attachment posi
 npm run reproduce:page-cover-backup-manifest # Reproduce inline-cover manifest exhaustion and the v2 fix
 npm run reproduce:page-cover-operation-scope # Reproduce picker-cancel and cross-page draft races
 npm run reproduce:page-cover-pdf-layout # Reproduce full-bleed PDF measurement regression
+npm run reproduce:block-preserve-children-delete # Reproduce partial hierarchy commit and atomic rollback
 npm run verify:collaboration # Check collaboration wiring, protocol behavior, and source syntax
 npm run verify:data-loss # Check persistence and recovery integrity guards
 npm start         # Run the compiled server

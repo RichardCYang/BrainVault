@@ -17,6 +17,7 @@
 | `npm run build` | Compile TypeScript into `dist/` |
 | `npm run reproduce:materialization-loss` | Reproduce the old browser-payload materialization loss and verify the server-authoritative fix from preserved Git history |
 | `npm run reproduce:cross-instance-loss` | Reproduce stale cross-process room compaction loss and verify the durable-tip fence |
+| `npm run reproduce:block-preserve-children-delete` | Reproduce the former two-request partial hierarchy commit and verify transaction rollback/success states |
 | `npm run verify:collaboration` | Check exact Yjs pins, collaboration wiring, durable-room freshness, hierarchy invariants, RFC 6455 behavior, and all executable JS/TS syntax without MariaDB |
 | `npm run verify:data-loss` | Execute dependency-free persistence, recovery, destructive-transition, and collaboration integrity guards |
 | `npm start` | Run the compiled server |

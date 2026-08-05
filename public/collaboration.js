@@ -615,22 +615,62 @@ class PageCollaborationSession {
     return normalized;
   }
 
-  deleteBlock(blockId, { cascade = true, allowDisconnected = false } = {}) {
+  deleteBlock(blockId, {
+    cascade = true,
+    promoteChildren = false,
+    allowDisconnected = false
+  } = {}) {
     this.assertWritable({ allowDisconnected });
+    const snapshot = [];
+    for (const [id, value] of this.blocks.entries()) {
+      if (!(value instanceof this.Y.Map)) continue;
+      snapshot.push(normalizeBlock({ id, ...readYValue(this.Y, value) }));
+    }
+    const target = snapshot.find((block) => block.id === blockId);
+    if (!target) return [];
+    if (cascade && promoteChildren) {
+      throw new Error("A collaborative block deletion cannot cascade and promote children together");
+    }
+
     const ids = new Set([blockId]);
     let changed = cascade;
     while (changed) {
       changed = false;
-      for (const [id, value] of this.blocks.entries()) {
-        if (!(value instanceof this.Y.Map) || ids.has(id)) continue;
-        const parent = readYValue(this.Y, value.get("parentBlockId"));
-        if (typeof parent === "string" && ids.has(parent)) {
-          ids.add(id);
+      for (const block of snapshot) {
+        if (ids.has(block.id)) continue;
+        if (block.parentBlockId && ids.has(block.parentBlockId)) {
+          ids.add(block.id);
           changed = true;
         }
       }
     }
+
+    let promotedOrder = [];
+    if (promoteChildren) {
+      const siblings = snapshot
+        .filter((block) => block.parentBlockId === target.parentBlockId)
+        .sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id));
+      const children = snapshot
+        .filter((block) => block.parentBlockId === blockId)
+        .sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id));
+      const targetIndex = siblings.findIndex((block) => block.id === blockId);
+      if (targetIndex < 0) throw new Error("The collaborative block hierarchy is inconsistent");
+      promotedOrder = siblings.filter((block) => block.id !== blockId);
+      promotedOrder.splice(targetIndex, 0, ...children);
+    }
+
+    const snapshotById = new Map(snapshot.map((block) => [block.id, block]));
     this.commitLocalMutation(({ blocks, deletedAttachments }) => {
+      for (const [sortOrder, block] of promotedOrder.entries()) {
+        const value = blocks.get(block.id);
+        const current = snapshotById.get(block.id);
+        if (!(value instanceof this.Y.Map) || !current) continue;
+        reconcileYMap(this.Y, value, {
+          ...current,
+          parentBlockId: target.parentBlockId,
+          sortOrder
+        });
+      }
       for (const id of ids) {
         const value = blocks.get(id);
         if (value instanceof this.Y.Map && readYValue(this.Y, value.get("type")) === "ATTACHMENT") {

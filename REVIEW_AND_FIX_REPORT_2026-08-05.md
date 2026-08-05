@@ -6,7 +6,7 @@
 
 첨부 프로젝트의 개발 방향은 **비동기 결과를 시작 당시의 계정·페이지·최신 사용자 의도에 묶고, 인증 경계와 데이터 보존 경계에서는 오래된 작업이 현재 상태를 바꾸지 못하게 하는 것**으로 판단됩니다. 기존 코드의 초안 보존, Yjs 협업, 프로필·아바타, 페이지 커버, 검색, 버전 이력 등에는 이 원칙이 폭넓게 반영되어 있었습니다.
 
-전체 흐름을 지연 순서와 응답 유실까지 통제해 재검토한 결과, 앞서 수정된 인증·백업·편집 잠금 경계 결함군과 페이지 생성·버전 기록 초기화 멱등성 보완에 더해, 일반 블록 및 첨부 생성의 커밋 응답 유실이 중복 블록과 중복 저장 파일을 만들 수 있는 고위험 결함을 재현하고 수정했습니다.
+전체 흐름을 지연 순서와 응답 유실까지 통제해 재검토한 결과, 앞서 수정된 인증·백업·편집 잠금 경계 결함군과 생성·초기화 멱등성 보완에 더해, 자식이 있는 빈 블록 삭제가 두 개의 독립 요청으로 나뉘어 문서 계층을 부분 커밋할 수 있는 고위험 결함을 재현하고 수정했습니다.
 
 1. **계정 보안 상태의 인증 경계 누출**: 이전 계정의 로그인 이력, 패스키 이름, MFA 상태, TOTP 설정 비밀키가 다음 계정 화면에 남거나 늦은 응답으로 덮일 수 있었습니다.
 2. **공유 목록의 잘못된 페이지 결합**: 페이지 A의 느린 공유 목록이 페이지 B 대화상자에 표시되고, 잘못된 페이지/사용자 조합으로 제거 요청이 만들어질 수 있었습니다.
@@ -20,6 +20,8 @@
 10. **버전 기록 초기화의 재시도 데이터 손실**: 첫 초기화 트랜잭션은 커밋됐지만 응답만 유실된 뒤 새 기록이 생성되고 사용자가 다시 초기화하면, 두 번째 `DELETE`가 그 새 기록까지 삭제할 수 있었습니다. 대화상자를 닫았다 다시 여는 동안 진행 상태와 오래된 `finally`가 현재 화면을 잘못 제어할 가능성도 있었습니다.
 11. **성공 응답 뒤 동기화 실패의 영수증 조기 폐기**: 초기화 API는 성공했지만 이력 목록 재조회가 실패하면 브라우저가 작업과 mutation ID를 즉시 버렸습니다. 그 사이 새 편집 이력이 생성된 뒤 사용자가 다시 초기화하면 새 mutation ID로 두 번째 파괴적 요청이 실행되어 새 이력까지 삭제될 수 있었습니다.
 12. **일반 블록·첨부 생성의 응답 유실 중복**: 블록 생성 트랜잭션이 커밋됐지만 HTTP 응답만 유실되면 재시도가 새 블록 ID를 만들었습니다. 첨부는 블록뿐 아니라 물리 파일도 한 번 더 이동·보존되어, 한 번의 사용자 의도가 일반 블록 2개 또는 첨부 블록·파일 각 2개가 되는 것을 재현했습니다.
+13. **자식 보존 빈 블록 삭제의 부분 커밋**: 빈 부모를 삭제하기 전에 자식 승격·형제 재정렬을 별도 API로 먼저 커밋했습니다. 뒤이은 DELETE만 실패하면 부모는 남고 자식은 이미 상위로 이동하며 형제 `sort_order`가 중복되는 계층 훼손 상태를 재현했습니다.
+14. **협업 검증기의 순차 자식 프로세스 병목**: 협업 검증이 275개 파일을 각각 별도 Node 프로세스로 직렬 검사해, 제한된 CI 환경에서 오랫동안 새 출력 없이 머물고 전체 작업 제한에 걸릴 수 있었습니다. 최대 8개의 제한된 작업자로 병렬화하고 파일별 30초 상한과 실패 파일명을 추가했습니다.
 
 ## 추가 수정 내용
 
@@ -65,6 +67,21 @@
 - 재생 판정을 현재 공유/보관 상태의 신규 쓰기 금지보다 먼저 수행하여, 최초 쓰기 뒤 페이지 상태가 바뀌어도 이미 완료된 결과를 확인할 수 있게 했습니다. 신규 쓰기에는 기존 제한이 그대로 적용됩니다.
 - 브라우저는 애매한 실패를 같은 키로 한 번 재시도하고 인증 세대가 바뀌면 대기 작업을 폐기합니다. 동시에 시작된 정상 생성 두 건은 `inFlight` 경계로 합치지 않습니다.
 
+### 자식 보존 빈 블록 삭제 원자성
+
+- 브라우저의 선행 블록 reorder 요청을 제거하고 `DELETE /api/blocks/:blockId` 한 번으로 의도를 표현합니다.
+- `preserveChildren` 요청은 대상과 모든 자손의 정확한 edit version 스냅샷, 현재 페이지 content version을 함께 전송합니다.
+- 서버는 페이지 행과 전체 블록 계층을 잠근 뒤 자식 승격, 형제 순서 재번호화, 대상 삭제, 콘텐츠 버전 증가, 버전 이력 기록을 하나의 SQL 트랜잭션에서 수행합니다.
+- 어느 단계든 실패하면 모든 계층 변경이 롤백되며, 보존된 자식의 브라우저 초안은 제거하지 않습니다.
+- 협업 편집에서는 자식 승격과 대상 삭제를 하나의 Yjs mutation으로 묶었습니다.
+- OpenAPI와 기능 문서에 자식 보존 삭제의 동작 및 동시성 전제조건을 반영했습니다.
+
+### 협업 검증 파이프라인 재현성
+
+- 275개 JavaScript/TypeScript 파일의 별도 Node 문법 검사를 최대 8개 작업자로 제한 병렬화했습니다.
+- 각 파일 검사에 30초 상한을 두고 실패 시 파일 경로와 표준 오류를 함께 표시합니다.
+- 변경 전 약 34초였던 동일 검증은 변경 후 계측 실행에서 약 19초에 정상 종료했으며, 검증 범위는 줄이지 않았습니다.
+
 ### 페이지 버전 기록 초기화 멱등성
 
 - `page_version_reset_mutations` 영수증 테이블과 업그레이드 마이그레이션 `037_page_version_reset_mutation_receipts.sql`을 추가했습니다.
@@ -92,6 +109,7 @@ npm run reproduce:auth-data-lock-boundary
 npm run reproduce:page-create-auth-boundary
 npm run reproduce:page-version-reset-retry
 npm run reproduce:block-create-response-loss
+npm run reproduce:block-preserve-children-delete
 ```
 
 추가 회귀 범위:
@@ -102,16 +120,19 @@ npm run reproduce:block-create-response-loss
 - `tests/page-version-reset-idempotency.node.test.mjs`의 영수증 판정, SQL 순서, 마이그레이션, UI 재시도/인증 범위, 성공 후 목록 동기화 실패, 독립 재현 6개 사례
 - `tests/page-version-history-reset.routes.test.ts`의 최초 실행, 응답 유실 재전송, 소유권, 필수 mutation ID 통합 사례
 - `tests/block-create-idempotency.node.test.mjs`의 영수증 판정, SQL·파일 이동 순서, 브라우저 재시도·인증 범위·동시 의도 분리, 마이그레이션, 독립 재현 5개 사례
-- 백업, 페이지·블록·첨부 생성, 버전 기록 초기화 변경을 반영한 데이터 손실 검증기와 정적 검증
+- `tests/block-preserve-children-delete.node.test.mjs`의 부분 커밋 모델, 단일 요청 UI, 페이지 잠금 SQL 트랜잭션, 단일 Yjs mutation 4개 사례
+- `scripts/reproduce-block-preserve-children-delete-race.mjs`의 기존 실패 상태, 수정 후 실패 롤백, 수정 후 성공 상태 독립 재현
+- 백업, 페이지·블록·첨부 생성·삭제, 버전 기록 초기화 변경을 반영한 데이터 손실 검증기와 정적 검증
 
 ## 최종 검증 결과
 
-- 의존성 없는 Node 내구성 테스트: **165/165 통과**
+- 의존성 없는 Node 내구성 테스트: **169/169 통과**
+- 이번 자식 보존 삭제 원자성 추가 회귀 테스트: **4/4 통과**
 - 이번 버전 기록 초기화 추가 회귀 테스트: **6/6 통과**
 - 이번 블록·첨부 생성 멱등성 추가 회귀 테스트: **5/5 통과**
 - 잠금파일 레지스트리 검사: **346개 URL 통과**
 - 데이터 손실 방지 검증: 통과
-- 협업·프로토콜·소스 검증: 통과, **272개 파일 구문 확인**
+- 협업·프로토콜·소스 검증: 통과, **275개 파일 구문 확인**, 제한 병렬화 후 약 **19초** 정상 종료
 - 보안 강화 검증: 통과, 의존성 없는 보안 회귀 **11/11 통과**
 - 수정 JavaScript 및 재현 스크립트 구문 검사: 통과
 
@@ -119,7 +140,7 @@ npm run reproduce:block-create-response-loss
 
 프로젝트는 Node.js `^22.23.2 || ^24.18.1 || >=26.5.1`과 npm `engine-strict`를 요구하지만 검토 환경은 Node.js 22.16.0이었습니다. `npm ci --ignore-scripts --engine-strict=false`도 샌드박스 패키지 미러에서 잠금된 `zod@3.25.76` 아티팩트를 찾지 못해 `404`로 중단됐습니다. 의존성이 설치되지 않아 전역 `tsc` 검사는 `node` 및 `vitest/globals` 타입 정의 부재로 완료할 수 없었습니다.
 
-따라서 TypeScript 전체 빌드와 의존성 기반 Vitest 전체 테스트는 실행 완료로 보고하지 않습니다. 대신 JavaScript/TypeScript 구문 검사, 165개 의존성 없는 회귀, 데이터 손실·협업·보안 검증을 수행했습니다. `node_modules`는 결과물에 포함하지 않습니다.
+따라서 TypeScript 전체 빌드와 의존성 기반 Vitest 전체 테스트는 실행 완료로 보고하지 않습니다. 대신 JavaScript/TypeScript 구문 검사, 169개 의존성 없는 회귀, 데이터 손실·협업·보안 검증을 수행했습니다. `node_modules`는 결과물에 포함하지 않습니다.
 
 ## 전체 재현·검증 명령
 
@@ -131,6 +152,7 @@ npm run reproduce:auth-data-lock-boundary
 npm run reproduce:page-create-auth-boundary
 npm run reproduce:page-version-reset-retry
 npm run reproduce:block-create-response-loss
+npm run reproduce:block-preserve-children-delete
 npm run test:durability
 npm run lockfile:check
 npm run verify:data-loss
@@ -149,3 +171,4 @@ npm run verify:security
 - `docs/data-loss/2026-08-05/page-create-idempotency-and-download-boundary.md`
 - `docs/data-loss/2026-08-05/page-version-reset-idempotency.md`
 - `docs/data-loss/2026-08-05/block-create-response-loss-idempotency.md`
+- `docs/data-loss/2026-08-05/block-preserve-children-delete-atomicity.md`

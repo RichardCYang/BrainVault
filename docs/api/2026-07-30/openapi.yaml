@@ -472,8 +472,25 @@ components:
           type: array
           minItems: 1
           maxItems: 10000
+          description: Exact block-subtree version snapshot. When preserving children, include the target and every descendant.
           items:
             $ref: '#/components/schemas/VersionSnapshot'
+        preserveChildren:
+          type: boolean
+          default: false
+          description: Promote immediate children into the deleted block's position instead of cascading the deletion.
+        expectedPageContentVersion:
+          type: integer
+          minimum: 1
+          description: Required when preserveChildren is true; rejects a stale sibling-order snapshot.
+      allOf:
+        - if:
+            properties:
+              preserveChildren:
+                const: true
+            required: [preserveChildren]
+          then:
+            required: [expectedPageContentVersion]
     PageDeleteInput:
       type: object
       properties:
@@ -1884,8 +1901,8 @@ paths:
         '409':
           description: Block changed in another session
     delete:
-      summary: Delete block and nested children
-      description: Owner only for unshared pages. Requires an exact version snapshot of the block subtree; shared document deletion is represented in Yjs and materialized atomically.
+      summary: Delete a block, optionally preserving its nested children
+      description: Owner only for unshared pages. Requires an exact version snapshot of the block subtree. With preserveChildren, the page content version, child promotion, sibling renumbering, target deletion, and version history are handled in one transaction. Shared document deletion is represented in one Yjs mutation and materialized atomically.
       parameters:
         - in: path
           name: blockId

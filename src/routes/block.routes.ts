@@ -40,6 +40,10 @@ import {
   blockSortOrderLimits,
   nextBlockSortOrder
 } from "../lib/block-order-integrity.js";
+import {
+  BlockPreserveChildrenIntegrityError,
+  planBlockDeletePreservingChildren
+} from "../lib/block-preserve-children.js";
 import { getBlockAccess, getPageAccess, type PageAccess } from "../lib/page-access.js";
 import { broadcastCanonicalAttachment } from "../lib/collaboration-server.js";
 import {
@@ -91,7 +95,18 @@ const versionSnapshotSchema = z.object({
 
 const deleteBlockSchema = z
   .object({
-    expectedVersions: z.array(versionSnapshotSchema).max(10_000).optional()
+    expectedVersions: z.array(versionSnapshotSchema).max(10_000).optional(),
+    preserveChildren: z.boolean().optional().default(false),
+    expectedPageContentVersion: z.number().int().min(1).optional()
+  })
+  .superRefine((body, context) => {
+    if (body.preserveChildren && body.expectedPageContentVersion === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expectedPageContentVersion"],
+        message: "The current page content version is required when preserving child blocks"
+      });
+    }
   })
   .default({});
 
@@ -353,16 +368,10 @@ function assertReorderDoesNotCreateCycle(
   }
 }
 
-async function getBlockSubtreeRows(rootBlockId: string, pageId: string, client: DbClient = db, lock = false) {
-  const rows = await client.query<{
-    id: string;
-    parent_block_id: string | null;
-    type: string;
-    edit_version: number;
-  }>(
-    `SELECT id, parent_block_id, type, edit_version FROM blocks WHERE page_id = ?${lock ? " FOR UPDATE" : ""}`,
-    [pageId]
-  );
+function collectBlockSubtreeRows<T extends { id: string; parent_block_id: string | null }>(
+  rootBlockId: string,
+  rows: T[]
+) {
   const children = new Map<string, string[]>();
   for (const row of rows) {
     if (!row.parent_block_id) continue;
@@ -373,7 +382,7 @@ async function getBlockSubtreeRows(rootBlockId: string, pageId: string, client: 
 
   const rowById = new Map(rows.map((row) => [row.id, row]));
   const pending = [rootBlockId];
-  const subtreeRows = [] as typeof rows;
+  const subtreeRows: T[] = [];
   const visited = new Set<string>();
   while (pending.length) {
     const id = pending.pop();
@@ -384,6 +393,56 @@ async function getBlockSubtreeRows(rootBlockId: string, pageId: string, client: 
     pending.push(...(children.get(id) ?? []));
   }
   return subtreeRows;
+}
+
+async function getBlockSubtreeRows(rootBlockId: string, pageId: string, client: DbClient = db, lock = false) {
+  const rows = await client.query<{
+    id: string;
+    parent_block_id: string | null;
+    type: string;
+    edit_version: number;
+  }>(
+    `SELECT id, parent_block_id, type, edit_version FROM blocks WHERE page_id = ?${lock ? " FOR UPDATE" : ""}`,
+    [pageId]
+  );
+  return collectBlockSubtreeRows(rootBlockId, rows);
+}
+
+async function promoteBlockChildrenBeforeDelete(
+  client: DbClient,
+  target: BlockRow,
+  hierarchyRows: BlockRow[]
+) {
+  let plan;
+  try {
+    plan = planBlockDeletePreservingChildren(target.id, hierarchyRows);
+  } catch (error) {
+    if (error instanceof BlockPreserveChildrenIntegrityError) {
+      throw new ApiError(409, "BLOCK_EDIT_CONFLICT", `${error.message}. Nothing was deleted.`);
+    }
+    throw error;
+  }
+
+  const rowById = new Map(hierarchyRows.map((row) => [row.id, row]));
+  for (const update of plan.updates) {
+    const row = rowById.get(update.id);
+    if (!row) {
+      throw new ApiError(409, "BLOCK_EDIT_CONFLICT", "The block hierarchy changed. Nothing was deleted.");
+    }
+    const result = await client.execute<{ affectedRows: number }>(
+      `UPDATE blocks
+       SET parent_block_id = ?, sort_order = ?, edit_version = edit_version + 1
+       WHERE id = ? AND edit_version = ?`,
+      [update.parentBlockId, update.sortOrder, row.id, Number(row.edit_version ?? 1)]
+    );
+    if (Number(result.affectedRows) === 0) {
+      throw new ApiError(
+        409,
+        "BLOCK_EDIT_CONFLICT",
+        "The block hierarchy changed in another session. Nothing was deleted."
+      );
+    }
+  }
 }
 
 function assertBlockVersionSnapshot(
@@ -882,25 +941,49 @@ blockRouter.delete(
       const { block } = await assertAccessibleBlock(blockId, user.id, client);
       const lockedAccess = await getPageAccess(block.page_id, user.id, client, { lockPage: true });
       assertDirectBlockMutationAllowed(lockedAccess);
-      const subtreeRows = await getBlockSubtreeRows(blockId, block.page_id, client, true);
-      assertBlockVersionSnapshot(subtreeRows, expectedVersions);
-      const subtreeIds = new Set(subtreeRows.map((row) => row.id));
-      const versionRows = (await client.query<BlockRow>(
-        "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC",
+      const hierarchyRows = await client.query<BlockRow>(
+        "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC FOR UPDATE",
         [block.page_id]
-      )).filter((row) => subtreeIds.has(row.id));
+      );
+      const subtreeRows = collectBlockSubtreeRows(blockId, hierarchyRows);
+      assertBlockVersionSnapshot(subtreeRows, expectedVersions);
+
+      let versionRows = subtreeRows;
+      let attachmentIds = subtreeRows.filter((row) => row.type === "ATTACHMENT").map((row) => row.id);
+      if (body.preserveChildren) {
+        const expectedPageContentVersion = Number(body.expectedPageContentVersion);
+        if (Number(lockedAccess.page.content_version ?? 1) !== expectedPageContentVersion) {
+          throw new ApiError(
+            409,
+            "BLOCK_EDIT_CONFLICT",
+            "The page changed in another session. Its block hierarchy was not modified."
+          );
+        }
+        const target = hierarchyRows.find((row) => row.id === blockId);
+        if (!target) throw notFound("Block");
+        versionRows = hierarchyRows;
+        attachmentIds = target.type === "ATTACHMENT" ? [target.id] : [];
+        await promoteBlockChildrenBeforeDelete(client, target, hierarchyRows);
+      }
+
       await client.execute("DELETE FROM blocks WHERE id = ?", [blockId]);
       await advancePageContentVersion(client, block.page_id, user.id);
+      const afterRows = body.preserveChildren
+        ? await client.query<BlockRow>(
+            "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC",
+            [block.page_id]
+          )
+        : [];
       await recordPageVersion(client, {
         pageId: block.page_id,
         actors: [toPageVersionActor(user)],
         source: "BLOCK_DELETE",
-        changes: diffPageVersionBlocks(versionRows, [])
+        changes: diffPageVersionBlocks(versionRows, afterRows)
       });
       return {
         pageId: block.page_id,
         ownerId: lockedAccess.page.owner_id,
-        attachmentIds: subtreeRows.filter((row) => row.type === "ATTACHMENT").map((row) => row.id)
+        attachmentIds
       };
     });
     await removeDeletedAttachmentFiles(deletion.ownerId, deletion.attachmentIds);

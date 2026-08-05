@@ -1070,6 +1070,70 @@ assert(
   blockDelete.includes("{ excludeSourceId: pageDraftSourceId }"),
   "Block deletion must exclude only the deleting tab's own source"
 );
+assert(
+  blockDelete.includes("includeDescendants: preserveChildren || options.includeDescendants !== false")
+    && blockDelete.includes("expectedPageContentVersion: Number(state.selectedPage?.contentVersion ?? 1)")
+    && blockDelete.includes("deletedVersions.map(({ id }) => id)"),
+  "Preserve-children deletion can use a stale partial snapshot or delete preserved child drafts"
+);
+
+const emptyBlockDelete = section(client, "async function deleteEmptyBlock", "function focusPendingBlock");
+assert(
+  !emptyBlockDelete.includes("persistBlockOrder(")
+    && emptyBlockDelete.includes("preserveChildren: true"),
+  "Empty-parent deletion can still commit child promotion before the target deletion"
+);
+
+const preserveChildrenDeleteRoute = section(
+  blockRouteSource,
+  "blockRouter.delete(",
+  'blockRouter.post(\n  "/pages/:pageId/blocks/reorder"'
+);
+assert(
+  blockRouteSource.includes("preserveChildren: z.boolean().optional().default(false)")
+    && blockRouteSource.includes("expectedPageContentVersion: z.number().int().min(1).optional()")
+    && preserveChildrenDeleteRoute.includes("ORDER BY sort_order ASC, id ASC FOR UPDATE")
+    && preserveChildrenDeleteRoute.includes("await promoteBlockChildrenBeforeDelete(client, target, hierarchyRows)")
+    && preserveChildrenDeleteRoute.indexOf("await promoteBlockChildrenBeforeDelete")
+      < preserveChildrenDeleteRoute.indexOf('await client.execute("DELETE FROM blocks WHERE id = ?"')
+    && preserveChildrenDeleteRoute.includes("lockedAccess.page.content_version"),
+  "Child promotion and empty-parent deletion are not fenced inside one page-locked SQL transaction"
+);
+
+const collaborativeBlockDelete = section(
+  collaborationClientSource,
+  "  deleteBlock(blockId",
+  "  adoptAttachment("
+);
+assert(
+  collaborativeBlockDelete.includes("promoteChildren = false")
+    && collaborativeBlockDelete.includes("promotedOrder.splice(targetIndex, 0, ...children)")
+    && collaborativeBlockDelete.indexOf("for (const [sortOrder, block] of promotedOrder.entries())")
+      < collaborativeBlockDelete.indexOf("blocks.delete(id)"),
+  "Collaborative empty-parent deletion does not promote children and delete the target in one Yjs mutation"
+);
+
+const preserveChildrenDeleteReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [
+    "--experimental-strip-types",
+    fileURLToPath(new URL("./reproduce-block-preserve-children-delete-race.mjs", import.meta.url))
+  ],
+  { encoding: "utf8" }
+));
+assert(
+  preserveChildrenDeleteReproduction.reproduced
+    && preserveChildrenDeleteReproduction.vulnerableAfterSecondRequestFailure.some(
+      (row) => row.id === "empty-parent"
+    )
+    && preserveChildrenDeleteReproduction.fixedAfterTransactionFailure.some(
+      (row) => row.id === "child-a" && row.parent_block_id === "empty-parent"
+    )
+    && !preserveChildrenDeleteReproduction.fixedAfterSuccess.some(
+      (row) => row.id === "empty-parent"
+    ),
+  "The preserve-children deletion reproduction did not prove partial commit, rollback, and success states"
+);
 
 const attachmentUpload = section(
   client,
@@ -1466,5 +1530,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified and length-framed backup ZIP integrity, identity-bound page-share backup/restore, archived-share backup round-trip integrity, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, and fail-closed recovery inspection, plus owner-scoped idempotent page creation, actor-scoped idempotent block and attachment creation, idempotent page-version reset replay, and authentication-scoped download completion."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified and length-framed backup ZIP integrity, identity-bound page-share backup/restore, archived-share backup round-trip integrity, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, atomic preserve-children block deletion, and fail-closed recovery inspection, plus owner-scoped idempotent page creation, actor-scoped idempotent block and attachment creation, idempotent page-version reset replay, and authentication-scoped download completion."
 );
