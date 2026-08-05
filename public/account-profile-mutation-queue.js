@@ -50,6 +50,11 @@ export function createAccountProfileMutationQueue({ getCurrentTargetKey }) {
     },
     invalidate() {
       generation += 1;
+      // An authentication boundary must also detach the next session from any
+      // unresolved work owned by the invalidated generation. Old operations
+      // still settle through their captured chain, but new-account writes can
+      // start immediately and remain protected by the generation checks above.
+      tail = Promise.resolve();
     }
   });
 }

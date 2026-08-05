@@ -92,6 +92,39 @@ test("auth invalidation suppresses in-flight results and cancels queued old-acco
   assert.equal(queuedOperationRan, false);
 });
 
+test("auth invalidation detaches a new account from a stalled old-account mutation", async () => {
+  const oldTargetKey = "user:user-one";
+  const newTargetKey = "user:user-two";
+  let currentTargetKey = oldTargetKey;
+  const oldGate = deferred();
+  let newOperationRan = false;
+  const queue = createAccountProfileMutationQueue({
+    getCurrentTargetKey: () => currentTargetKey
+  });
+
+  const oldMutation = queue.enqueue(oldTargetKey, async () => {
+    await oldGate.promise;
+    return "old-account-result";
+  });
+
+  await Promise.resolve();
+  currentTargetKey = newTargetKey;
+  queue.invalidate();
+
+  const newMutation = queue.enqueue(newTargetKey, async () => {
+    newOperationRan = true;
+    return "new-account-result";
+  });
+
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(newOperationRan, true);
+  assert.deepEqual(await newMutation, { applied: true, value: "new-account-result" });
+
+  oldGate.resolve();
+  assert.deepEqual(await oldMutation, { applied: false });
+});
+
 test("account profile callers share one authenticated mutation queue", async () => {
   const app = (await readFile(new URL("../public/app.js", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
 
@@ -116,4 +149,20 @@ test("standalone reproduction proves the preference ordering regression and corr
   assert.equal(result.fixed.latestSelectionPreserved, true);
   assert.equal(result.fixed.finalTheme, "light");
   assert.equal(result.fixed.laterWriteStartedBeforeEarlierCompleted, false);
+});
+
+
+test("standalone reproduction proves auth-boundary queue isolation", () => {
+  const result = JSON.parse(execFileSync(
+    process.execPath,
+    [fileURLToPath(new URL("../scripts/reproduce-account-profile-auth-boundary-stall.mjs", import.meta.url))],
+    { encoding: "utf8" }
+  ));
+
+  assert.equal(result.vulnerable.newAccountStartedBeforeOldRelease, false);
+  assert.equal(result.vulnerable.newAccountBlockedByOldGeneration, true);
+  assert.equal(result.fixed.newAccountStartedBeforeOldRelease, true);
+  assert.equal(result.fixed.newAccountBlockedByOldGeneration, false);
+  assert.deepEqual(result.fixed.oldResult, { applied: false });
+  assert.deepEqual(result.fixed.newResult, { applied: true, value: "new-account-result" });
 });
