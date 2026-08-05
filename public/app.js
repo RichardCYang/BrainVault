@@ -133,6 +133,17 @@ const accountAvatarOperationGuard = createAccountAvatarOperationGuard();
 const accountProfileSaveGuard = createAccountAvatarOperationGuard();
 const accountLanguageOperationGuard = createAccountAvatarOperationGuard();
 const accountThemeOperationGuard = createAccountAvatarOperationGuard();
+const accountSecurityOperationGuards = Object.freeze({
+  loginHistory: createAccountAvatarOperationGuard(),
+  mfaStatus: createAccountAvatarOperationGuard(),
+  password: createAccountAvatarOperationGuard(),
+  totpSetup: createAccountAvatarOperationGuard(),
+  totpVerify: createAccountAvatarOperationGuard(),
+  totpDisable: createAccountAvatarOperationGuard(),
+  passkeyRegister: createAccountAvatarOperationGuard()
+});
+let workspaceNavigationGeneration = 0;
+let sharePageRequestGeneration = 0;
 let pageCoverSaving = false;
 let pageCoverPositionDraft = null;
 let pageCoverDragPointerId = null;
@@ -183,6 +194,7 @@ const state = {
   pendingAvatarData: null,
   accountAvatarPreparing: false,
   accountProfileSaving: false,
+  accountPasskeyRegistering: false,
   mfaLogin: null,
   mfaStatus: { totpEnabled: false, passkeys: [] },
   totpSetupToken: null,
@@ -1542,9 +1554,13 @@ function renderShell() {
 }
 
 function resetAuthenticationSessionState({ render = true } = {}) {
+  workspaceNavigationGeneration += 1;
   void destroyPageCollaboration({ flush: false });
   closeSharePageDialog({ restoreFocus: false });
   closeSearchDialog({ restoreFocus: false });
+  closePageVersionHistory({ restoreFocus: false });
+  closePageCoverDialog();
+  closePageCoverPositionEditor();
   // Input handlers persist durable per-account drafts before enqueueing writes. Keep those
   // records, but never carry live editor state or retry queues across an auth boundary.
   discardPendingPageEdits();
@@ -1574,6 +1590,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   state.searchSubmittedQuery = "";
   state.searchRequestId += 1;
   state.pendingFocusBlockId = null;
+  resetAccountSecurityOperationState({ clearSensitiveState: true });
   accountProfileSaveGuard.invalidate();
   accountLanguageOperationGuard.invalidate();
   accountThemeOperationGuard.invalidate();
@@ -1582,7 +1599,6 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   state.accountAvatarPreparing = false;
   state.accountProfileSaving = false;
   state.activeSecurityPanel = "settings";
-  state.loginHistory = { months: 3, attempts: [], truncated: false, loading: false, loadedMonths: null };
   elements.searchInput.value = "";
 
   if (render) {
@@ -1594,6 +1610,32 @@ function resetAuthenticationSessionState({ render = true } = {}) {
 function setAccountMessage(message = "", isError = false) {
   elements.accountSettingsMessage.textContent = message;
   elements.accountSettingsMessage.classList.toggle("error", isError);
+}
+
+function isCurrentAccountSecurityOperation(guard, operation) {
+  return Boolean(
+    state.accountSettingsOpen
+      && guard.isCurrent(operation, getAccountAvatarTargetKey(state.user))
+  );
+}
+
+function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}) {
+  Object.values(accountSecurityOperationGuards).forEach((guard) => guard.invalidate());
+  state.loginHistory.loading = false;
+  state.loginHistory.loadedMonths = null;
+
+  if (clearSensitiveState) {
+    const months = state.loginHistory.months || 3;
+    state.loginHistory = { months, attempts: [], truncated: false, loading: false, loadedMonths: null };
+    state.mfaStatus = { totpEnabled: false, passkeys: [] };
+    hideTotpSetup();
+  }
+
+  elements.accountPasswordSave.disabled = false;
+  elements.accountTotpSetup.disabled = false;
+  elements.accountTotpVerify.disabled = false;
+  elements.accountTotpDisable.disabled = false;
+  setAccountPasskeyRegistering(false);
 }
 
 function populateLoginHistoryMonths() {
@@ -1658,7 +1700,8 @@ function renderLoginHistory() {
 }
 
 async function loadLoginHistory({ force = false } = {}) {
-  if (!state.user || state.loginHistory.loading) return;
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey || !state.accountSettingsOpen || state.loginHistory.loading) return;
   const months = Math.min(12, Math.max(1, Number(elements.accountLoginHistoryMonths.value) || 3));
   state.loginHistory.months = months;
   if (!force && state.loginHistory.loadedMonths === months) {
@@ -1666,22 +1709,27 @@ async function loadLoginHistory({ force = false } = {}) {
     return;
   }
 
+  const operation = accountSecurityOperationGuards.loginHistory.begin(targetKey);
   state.loginHistory.loading = true;
   renderLoginHistory();
   setAccountMessage();
   try {
     const data = await api(`/api/auth/login-history?months=${encodeURIComponent(months)}`);
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.loginHistory, operation)) return;
     state.loginHistory.attempts = Array.isArray(data?.attempts) ? data.attempts : [];
     state.loginHistory.truncated = Boolean(data?.truncated);
     state.loginHistory.loadedMonths = months;
   } catch (error) {
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.loginHistory, operation)) return;
     state.loginHistory.attempts = [];
     state.loginHistory.truncated = false;
     state.loginHistory.loadedMonths = null;
     setAccountMessage(error.message, true);
   } finally {
-    state.loginHistory.loading = false;
-    renderLoginHistory();
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.loginHistory, operation)) {
+      state.loginHistory.loading = false;
+      renderLoginHistory();
+    }
   }
 }
 
@@ -1828,6 +1876,13 @@ function renderPasskeyList() {
   });
 }
 
+function setAccountPasskeyRegistering(registering) {
+  state.accountPasskeyRegistering = Boolean(registering);
+  const disabled = !isWebAuthnSupported() || state.accountPasskeyRegistering;
+  elements.accountPasskeyRegister.disabled = disabled;
+  elements.accountPasskeyName.disabled = disabled;
+}
+
 function renderMfaSettings() {
   const passkeys = Array.isArray(state.mfaStatus.passkeys) ? state.mfaStatus.passkeys : [];
   const configuredCount = (state.mfaStatus.totpEnabled ? 1 : 0) + passkeys.length;
@@ -1842,16 +1897,18 @@ function renderMfaSettings() {
 
   const supported = isWebAuthnSupported();
   elements.accountPasskeySupport.textContent = t(supported ? "mfa.passkeyReady" : "mfa.passkeyUnsupported");
-  elements.accountPasskeyRegister.disabled = !supported;
-  elements.accountPasskeyName.disabled = !supported;
+  setAccountPasskeyRegistering(state.accountPasskeyRegistering);
   renderPasskeyList();
 }
 
 async function loadMfaSettings({ showLoading = true } = {}) {
-  if (!state.user) return;
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey || !state.accountSettingsOpen) return;
+  const operation = accountSecurityOperationGuards.mfaStatus.begin(targetKey);
   if (showLoading) setAccountMessage(t("mfa.loading"));
   try {
     const data = await api("/api/auth/mfa/status");
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.mfaStatus, operation)) return;
     state.mfaStatus = {
       totpEnabled: Boolean(data?.totpEnabled),
       passkeys: Array.isArray(data?.passkeys) ? data.passkeys : []
@@ -1859,7 +1916,9 @@ async function loadMfaSettings({ showLoading = true } = {}) {
     renderMfaSettings();
     if (showLoading) setAccountMessage();
   } catch (error) {
-    setAccountMessage(error.message, true);
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.mfaStatus, operation)) {
+      setAccountMessage(error.message, true);
+    }
   }
 }
 
@@ -2155,6 +2214,7 @@ function openAccountSettings(panel = "profile") {
 function closeAccountSettings({ restoreFocus = true } = {}) {
   if (!state.accountSettingsOpen) return;
   accountAvatarOperationGuard.invalidate();
+  resetAccountSecurityOperationState({ clearSensitiveState: true });
   setAccountAvatarPreparing(false);
   state.accountSettingsOpen = false;
   elements.accountSettingsLayer.classList.add("hidden");
@@ -4579,7 +4639,14 @@ function closePageVersionHistory({ restoreFocus = true } = {}) {
   state.pageVersionHistory.requestId += 1;
   state.pageVersionHistory.detailRequestId += 1;
   state.pageVersionHistory.resetting = false;
+  state.pageVersionHistory.loading = false;
   state.pageVersionHistory.pageId = null;
+  state.pageVersionHistory.versions = [];
+  state.pageVersionHistory.nextCursor = null;
+  state.pageVersionHistory.current = null;
+  state.pageVersionHistory.selectedId = null;
+  resetPageVersionHistoryDetail();
+  elements.pageVersionHistoryList.replaceChildren();
   if (elements.pageVersionHistoryDialog.open) elements.pageVersionHistoryDialog.close();
   if (restoreFocus && elements.pageActionsButton.isConnected) elements.pageActionsButton.focus();
 }
@@ -5534,33 +5601,63 @@ function renderSharePageList() {
   }
 }
 
-async function loadPageShares() {
-  if (!state.selectedPage || !isPageOwner()) return;
+function isCurrentSharePageRequest(requestGeneration, pageId) {
+  return Boolean(
+    requestGeneration === sharePageRequestGeneration
+      && state.sharePageOpen
+      && state.selectedPage?.id === pageId
+      && isPageOwner()
+  );
+}
+
+async function loadPageShares(pageId, requestGeneration) {
+  if (!isCurrentSharePageRequest(requestGeneration, pageId)) return;
   setSharePageMessage(t("sharing.loading"));
-  const data = await api(`/api/pages/${encodeURIComponent(state.selectedPage.id)}/shares`);
-  state.sharePageEntries = data.shares ?? [];
-  renderSharePageList();
-  setSharePageMessage();
+  try {
+    const data = await api(`/api/pages/${encodeURIComponent(pageId)}/shares`);
+    if (!isCurrentSharePageRequest(requestGeneration, pageId)) return;
+    state.sharePageEntries = data.shares ?? [];
+    renderSharePageList();
+    setSharePageMessage();
+  } catch (error) {
+    if (isCurrentSharePageRequest(requestGeneration, pageId)) {
+      setSharePageMessage(error.message, true);
+    }
+  }
 }
 
 async function openSharePageDialog() {
-  if (!state.selectedPage || !isPageOwner()) return;
+  const pageId = state.selectedPage?.id;
+  if (!pageId || !isPageOwner()) return;
+  const requestGeneration = ++sharePageRequestGeneration;
   await flushPendingPageEdits();
+  if (
+    requestGeneration !== sharePageRequestGeneration
+      || state.selectedPage?.id !== pageId
+      || !isPageOwner()
+  ) return;
   state.sharePageOpen = true;
   state.sharePageEntries = [];
   elements.sharePageLayer.classList.remove("hidden");
   elements.sharePageLayer.setAttribute("aria-hidden", "false");
   renderSharePageList();
-  await loadPageShares();
-  requestAnimationFrame(() => elements.sharePageUsername.focus());
+  await loadPageShares(pageId, requestGeneration);
+  if (isCurrentSharePageRequest(requestGeneration, pageId)) {
+    requestAnimationFrame(() => {
+      if (isCurrentSharePageRequest(requestGeneration, pageId)) elements.sharePageUsername.focus();
+    });
+  }
 }
 
 function closeSharePageDialog({ restoreFocus = true } = {}) {
+  sharePageRequestGeneration += 1;
   if (!state.sharePageOpen) return;
   state.sharePageOpen = false;
+  state.sharePageEntries = [];
   elements.sharePageLayer.classList.add("hidden");
   elements.sharePageLayer.setAttribute("aria-hidden", "true");
   elements.sharePageForm.reset();
+  renderSharePageList();
   setSharePageMessage();
   if (restoreFocus && elements.sharePageButton.isConnected && !elements.sharePageButton.classList.contains("hidden")) {
     elements.sharePageButton.focus();
@@ -10347,11 +10444,17 @@ async function loadPages(query = state.searchQuery, tag = state.activeTag) {
   renderPages();
 }
 
-async function showHome({ skipFlush = false } = {}) {
+function isCurrentWorkspaceNavigation(generation) {
+  return generation === workspaceNavigationGeneration;
+}
+
+async function showHome({ skipFlush = false, navigationGeneration = ++workspaceNavigationGeneration } = {}) {
   const shouldFlush = !skipFlush || state.pageEditLockDepth === 0;
   return withPageEditLock(
     async () => {
+      if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
       await destroyPageCollaboration({ flush: false });
+      if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
       closeSharePageDialog({ restoreFocus: false });
       resetPageEditTracking();
       state.selectedPage = null;
@@ -10364,11 +10467,16 @@ async function showHome({ skipFlush = false } = {}) {
   );
 }
 
-async function showCollection(collectionId, { skipFlush = false } = {}) {
+async function showCollection(
+  collectionId,
+  { skipFlush = false, navigationGeneration = ++workspaceNavigationGeneration } = {}
+) {
   const shouldFlush = !skipFlush || state.pageEditLockDepth === 0;
   return withPageEditLock(
     async () => {
+      if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
       await destroyPageCollaboration({ flush: false });
+      if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
       closeSharePageDialog({ restoreFocus: false });
       resetPageEditTracking();
       state.selectedPage = null;
@@ -10382,27 +10490,37 @@ async function showCollection(collectionId, { skipFlush = false } = {}) {
 }
 
 async function openPage(pageId, { skipFlush = false } = {}) {
+  const navigationGeneration = ++workspaceNavigationGeneration;
   const shouldFlush = !skipFlush || state.pageEditLockDepth === 0;
   return withPageEditLock(
     async () => {
+      if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
       const preserveMode = state.workspaceView === "page" && state.selectedPage?.id === pageId;
       const summary = state.allPages.find((page) => page.id === pageId);
       if (isCollectionPage(summary)) {
-        await showCollection(pageId, { skipFlush: true });
-        setStatus(t("status.collectionOpened"));
+        await showCollection(pageId, { skipFlush: true, navigationGeneration });
+        if (isCurrentWorkspaceNavigation(navigationGeneration)) setStatus(t("status.collectionOpened"));
         return;
       }
 
       setStatus(t("status.loadingDocument"));
-      const data = await api(`/api/pages/${pageId}`);
+      let data;
+      try {
+        data = await api(`/api/pages/${pageId}`);
+      } catch (error) {
+        if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
+        throw error;
+      }
+      if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
 
       if (isCollectionPage(data.page)) {
-        await showCollection(pageId, { skipFlush: true });
-        setStatus(t("status.collectionOpened"));
+        await showCollection(pageId, { skipFlush: true, navigationGeneration });
+        if (isCurrentWorkspaceNavigation(navigationGeneration)) setStatus(t("status.collectionOpened"));
         return;
       }
 
       await destroyPageCollaboration({ flush: false });
+      if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
       closeSharePageDialog({ restoreFocus: false });
       if (!preserveMode) {
         state.pageMode = pageModes.READ;
@@ -10423,8 +10541,11 @@ async function openPage(pageId, { skipFlush = false } = {}) {
       renderSelectedPage();
       if (isCollaborativePage(data.page)) {
         await startPageCollaboration(data.page);
-        setStatus(t("status.documentOpened"));
-      } else if (!activatePersistedPageDraft(recovery)) {
+        if (isCurrentWorkspaceNavigation(navigationGeneration)) setStatus(t("status.documentOpened"));
+      } else if (
+        isCurrentWorkspaceNavigation(navigationGeneration)
+          && !activatePersistedPageDraft(recovery)
+      ) {
         setStatus(t("status.documentOpened"));
       }
     },
@@ -10868,6 +10989,8 @@ elements.accountProfileForm.addEventListener("submit", async (event) => {
 
 elements.accountPasswordForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey) return;
   const currentPassword = elements.accountCurrentPassword.value;
   const newPassword = elements.accountNewPassword.value;
   const confirmPassword = elements.accountConfirmPassword.value;
@@ -10877,24 +11000,32 @@ elements.accountPasswordForm.addEventListener("submit", async (event) => {
     return;
   }
 
+  const operation = accountSecurityOperationGuards.password.begin(targetKey);
   elements.accountPasswordSave.disabled = true;
   try {
     setAccountMessage(t("account.changingPassword"));
-    const data = await api("/api/auth/password", { method: "POST", body: { currentPassword, newPassword } });
+    await api("/api/auth/password", { method: "POST", body: { currentPassword, newPassword } });
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.password, operation)) return;
     setAuthenticated(true);
     elements.accountPasswordForm.reset();
     setAccountMessage(t("account.passwordChanged"));
     setStatus(t("account.passwordChanged"));
   } catch (error) {
-    setAccountMessage(error.message, true);
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.password, operation)) {
+      setAccountMessage(error.message, true);
+    }
   } finally {
-    elements.accountPasswordSave.disabled = false;
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.password, operation)) {
+      elements.accountPasswordSave.disabled = false;
+    }
   }
 });
 
 elements.accountTotpSetup.addEventListener("click", async () => {
+  const targetKey = getAccountAvatarTargetKey(state.user);
   const currentPassword = requireMfaPassword();
-  if (!currentPassword) return;
+  if (!targetKey || !currentPassword) return;
+  const operation = accountSecurityOperationGuards.totpSetup.begin(targetKey);
   elements.accountTotpSetup.disabled = true;
   try {
     setAccountMessage(t("mfa.loading"));
@@ -10902,77 +11033,109 @@ elements.accountTotpSetup.addEventListener("click", async () => {
       method: "POST",
       body: { currentPassword }
     });
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpSetup, operation)) return;
     state.totpSetupToken = data.setupToken;
     elements.accountTotpQr.src = data.qrCodeDataUrl;
     elements.accountTotpSecret.textContent = data.secret;
     elements.accountTotpSetupPanel.classList.remove("hidden");
     elements.accountTotpVerifyForm.reset();
     setAccountMessage(t("mfa.totpSetupStarted"));
-    window.requestAnimationFrame(() => elements.accountTotpCode.focus());
+    window.requestAnimationFrame(() => {
+      if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpSetup, operation)) {
+        elements.accountTotpCode.focus();
+      }
+    });
   } catch (error) {
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpSetup, operation)) return;
     hideTotpSetup();
     setAccountMessage(error.message, true);
   } finally {
-    elements.accountTotpSetup.disabled = false;
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpSetup, operation)) {
+      elements.accountTotpSetup.disabled = false;
+    }
   }
 });
 
 elements.accountTotpVerifyForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!state.totpSetupToken) {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  const setupToken = state.totpSetupToken;
+  if (!targetKey || !setupToken) {
     setAccountMessage(t("mfa.totpSetupExpired"), true);
     return;
   }
+  const operation = accountSecurityOperationGuards.totpVerify.begin(targetKey);
   elements.accountTotpVerify.disabled = true;
   try {
     await api("/api/auth/mfa/totp/verify", {
       method: "POST",
       body: {
-        setupToken: state.totpSetupToken,
+        setupToken,
         code: elements.accountTotpCode.value.trim()
       }
     });
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpVerify, operation)) return;
     elements.accountMfaPassword.value = "";
     hideTotpSetup();
     await loadMfaSettings({ showLoading: false });
-    setAccountMessage(t("mfa.totpEnabled"));
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpVerify, operation)) {
+      setAccountMessage(t("mfa.totpEnabled"));
+    }
   } catch (error) {
-    setAccountMessage(error.message, true);
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpVerify, operation)) {
+      setAccountMessage(error.message, true);
+    }
   } finally {
-    elements.accountTotpVerify.disabled = false;
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpVerify, operation)) {
+      elements.accountTotpVerify.disabled = false;
+    }
   }
 });
 
 elements.accountTotpCancel.addEventListener("click", () => {
+  accountSecurityOperationGuards.totpSetup.invalidate();
+  accountSecurityOperationGuards.totpVerify.invalidate();
   hideTotpSetup();
+  elements.accountTotpSetup.disabled = false;
+  elements.accountTotpVerify.disabled = false;
   setAccountMessage();
 });
 
 elements.accountTotpDisable.addEventListener("click", async () => {
   if (!window.confirm(t("mfa.disableTotpConfirm"))) return;
+  const targetKey = getAccountAvatarTargetKey(state.user);
   const currentPassword = requireMfaPassword();
-  if (!currentPassword) return;
+  if (!targetKey || !currentPassword) return;
+  const operation = accountSecurityOperationGuards.totpDisable.begin(targetKey);
   elements.accountTotpDisable.disabled = true;
   try {
     await api("/api/auth/mfa/totp", {
       method: "DELETE",
       body: { currentPassword }
     });
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpDisable, operation)) return;
     elements.accountMfaPassword.value = "";
     hideTotpSetup();
     await loadMfaSettings({ showLoading: false });
-    setAccountMessage(t("mfa.totpDisabled"));
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpDisable, operation)) {
+      setAccountMessage(t("mfa.totpDisabled"));
+    }
   } catch (error) {
-    setAccountMessage(error.message, true);
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpDisable, operation)) {
+      setAccountMessage(error.message, true);
+    }
   } finally {
-    elements.accountTotpDisable.disabled = false;
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpDisable, operation)) {
+      elements.accountTotpDisable.disabled = false;
+    }
   }
 });
 
 elements.accountPasskeyRegisterForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const targetKey = getAccountAvatarTargetKey(state.user);
   const currentPassword = requireMfaPassword();
-  if (!currentPassword) return;
+  if (!targetKey || !currentPassword) return;
   const name = elements.accountPasskeyName.value.trim();
   if (!name) {
     setAccountMessage(t("mfa.nameRequired"), true);
@@ -10984,26 +11147,36 @@ elements.accountPasskeyRegisterForm.addEventListener("submit", async (event) => 
     return;
   }
 
-  elements.accountPasskeyRegister.disabled = true;
+  const operation = accountSecurityOperationGuards.passkeyRegister.begin(targetKey);
+  setAccountPasskeyRegistering(true);
   try {
     setAccountMessage(t("mfa.passkeyAdding"));
     const optionsData = await api("/api/auth/mfa/passkeys/options", {
       method: "POST",
       body: { currentPassword, name }
     });
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.passkeyRegister, operation)) return;
     const response = await createWebAuthnCredential(optionsData.options);
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.passkeyRegister, operation)) return;
     await api("/api/auth/mfa/passkeys", {
       method: "POST",
       body: { challengeToken: optionsData.challengeToken, response }
     });
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.passkeyRegister, operation)) return;
     elements.accountMfaPassword.value = "";
     elements.accountPasskeyRegisterForm.reset();
     await loadMfaSettings({ showLoading: false });
-    setAccountMessage(t("mfa.passkeyAdded"));
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.passkeyRegister, operation)) {
+      setAccountMessage(t("mfa.passkeyAdded"));
+    }
   } catch (error) {
-    setAccountMessage(normalizeWebAuthnError(error).message, true);
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.passkeyRegister, operation)) {
+      setAccountMessage(normalizeWebAuthnError(error).message, true);
+    }
   } finally {
-    elements.accountPasskeyRegister.disabled = !isWebAuthnSupported();
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.passkeyRegister, operation)) {
+      setAccountPasskeyRegistering(false);
+    }
   }
 });
 
