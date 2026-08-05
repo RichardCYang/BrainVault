@@ -1,0 +1,140 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import {
+  assessBlockDeleteMutationReceipt,
+  decodeBlockDeleteAttachmentIds
+} from "../src/lib/block-delete-mutation.ts";
+
+function source(path) {
+  return readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+}
+
+function section(text, start, end) {
+  const startIndex = text.indexOf(start);
+  const endIndex = text.indexOf(end, startIndex);
+  assert.notEqual(startIndex, -1, `missing source marker: ${start}`);
+  assert.ok(endIndex > startIndex, `missing source marker after ${start}: ${end}`);
+  return text.slice(startIndex, endIndex);
+}
+
+const route = source("../src/routes/block.routes.ts");
+const client = source("../public/app.js");
+const baselineSchema = source("../migrations/001_init.sql");
+const migration = source("../migrations/039_block_delete_mutation_receipts.sql");
+
+test("block deletion receipts replay only the exact request and retain cleanup scope", () => {
+  const receipt = {
+    page_id: "pag_1",
+    block_id: "blk_1",
+    request_hash: "hash_1",
+    page_content_version: 7,
+    attachment_ids: '["att_1","att_2"]'
+  };
+
+  assert.deepEqual(
+    assessBlockDeleteMutationReceipt(receipt, { blockId: "blk_1", requestHash: "hash_1" }),
+    {
+      kind: "replay",
+      pageId: "pag_1",
+      blockId: "blk_1",
+      pageContentVersion: 7,
+      attachmentIds: ["att_1", "att_2"]
+    }
+  );
+  assert.deepEqual(
+    assessBlockDeleteMutationReceipt(receipt, { blockId: "blk_other", requestHash: "hash_1" }),
+    { kind: "collision" }
+  );
+  assert.deepEqual(
+    assessBlockDeleteMutationReceipt(receipt, { blockId: "blk_1", requestHash: "hash_other" }),
+    { kind: "collision" }
+  );
+});
+
+test("malformed or duplicate attachment cleanup scopes fail closed", () => {
+  assert.equal(decodeBlockDeleteAttachmentIds("not-json"), null);
+  assert.equal(decodeBlockDeleteAttachmentIds(["att_1", "att_1"]), null);
+  assert.equal(decodeBlockDeleteAttachmentIds(["att_1", 2]), null);
+
+  assert.deepEqual(
+    assessBlockDeleteMutationReceipt(
+      {
+        page_id: "pag_1",
+        block_id: "blk_1",
+        request_hash: "hash_1",
+        page_content_version: 0,
+        attachment_ids: []
+      },
+      { blockId: "blk_1", requestHash: "hash_1" }
+    ),
+    { kind: "incomplete" }
+  );
+});
+
+test("server records and replays block deletion atomically before touching a missing block", () => {
+  const deleteRoute = section(
+    route,
+    'blockRouter.delete(\n  "/blocks/:blockId"',
+    'blockRouter.post(\n  "/pages/:pageId/blocks/reorder"'
+  );
+
+  assert.match(route, /const deleteBlockSchema[\s\S]*mutationId: mutationIdSchema\.optional\(\)/);
+  assert.match(deleteRoute, /kind: "BLOCK_DELETE"/);
+  assert.match(deleteRoute, /FROM block_delete_mutations/);
+  assert.match(deleteRoute, /assessBlockDeleteMutationReceipt/);
+  assert.match(deleteRoute, /INSERT INTO block_delete_mutations/);
+  assert.match(deleteRoute, /JSON\.stringify\(attachmentIds\)/);
+  assert.match(deleteRoute, /await removeDeletedAttachmentFiles\(deletion\.ownerId, deletion\.attachmentIds\)/);
+  assert.ok(
+    deleteRoute.indexOf("FROM block_delete_mutations") < deleteRoute.indexOf("assertAccessibleBlock(blockId"),
+    "a committed delete must be replayable before the deleted block is queried"
+  );
+  assert.ok(
+    deleteRoute.indexOf("recordPageVersion") < deleteRoute.indexOf("INSERT INTO block_delete_mutations"),
+    "the receipt must be committed in the same transaction after all relational effects"
+  );
+});
+
+test("browser retries ambiguous deletes with one auth-scoped mutation task", () => {
+  const deleteClient = section(
+    client,
+    "function getBlockDeleteTask",
+    "function updateBlockInState"
+  );
+
+  assert.match(client, /const pendingBlockDeleteTasks = new Map\(\)/);
+  assert.match(deleteClient, /mutationId: createMutationId\(\)/);
+  assert.match(deleteClient, /while \(attempt < 2\)/);
+  assert.match(deleteClient, /isAmbiguousApiError\(error\)/);
+  assert.match(deleteClient, /body: \{ \.\.\.task\.payload, mutationId: task\.mutationId \}/);
+  assert.match(deleteClient, /pendingBlockDeleteTasks\.get\(task\.taskKey\) === task/);
+  assert.ok(
+    (client.match(/pendingBlockDeleteTasks\.clear\(\)/g) ?? []).length >= 2,
+    "delete retry tasks must be cleared on logout and credential rotation"
+  );
+});
+
+test("baseline and upgrade schemas retain deletion receipts after the block row is gone", () => {
+  for (const sql of [baselineSchema, migration]) {
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS block_delete_mutations/);
+    assert.match(sql, /PRIMARY KEY \(actor_id, mutation_id\)/);
+    assert.match(sql, /attachment_ids JSON NOT NULL/);
+    assert.match(sql, /page_content_version BIGINT UNSIGNED NOT NULL/);
+    assert.doesNotMatch(sql, /FOREIGN KEY \(block_id\)/);
+  }
+});
+
+test("response-loss reproduction shows vulnerable 404 and fixed receipt replay", () => {
+  const output = execFileSync(
+    process.execPath,
+    [new URL("../scripts/reproduce-block-delete-response-loss.mjs", import.meta.url).pathname],
+    { encoding: "utf8" }
+  );
+  const result = JSON.parse(output);
+  assert.equal(result.vulnerable.blockDeleted, true);
+  assert.equal(result.vulnerable.retryAcknowledged, false);
+  assert.equal(result.fixed.retryAcknowledged, true);
+  assert.equal(result.fixed.attachmentCleanupCanRepeat, true);
+});

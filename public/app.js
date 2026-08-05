@@ -153,6 +153,7 @@ let pageEditLockGeneration = 0;
 const pendingWorkspaceCreateTasks = new Map();
 const pendingPageVersionResetTasks = new Map();
 const pendingBlockCreateTasks = new Map();
+const pendingBlockDeleteTasks = new Map();
 const pendingAttachmentCreateTasks = new Map();
 let pageCoverSaving = false;
 let pageCoverPositionDraft = null;
@@ -1712,6 +1713,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   pendingWorkspaceCreateTasks.clear();
   pendingPageVersionResetTasks.clear();
   pendingBlockCreateTasks.clear();
+  pendingBlockDeleteTasks.clear();
   pendingAttachmentCreateTasks.clear();
   closeAccountSettings({ restoreFocus: false, force: true });
   closeEmojiPicker({ restoreFocus: false });
@@ -6102,6 +6104,73 @@ async function withCollaborativeDestructiveTransition(pageId, kind, action) {
   });
 }
 
+function getBlockDeleteTask(authenticationScope, pageId, blockId, payload) {
+  const taskKey = [
+    authenticationScope.generation,
+    authenticationScope.targetKey,
+    pageId,
+    blockId,
+    payload.preserveChildren ? "preserve" : "cascade"
+  ].join("\u0000");
+  const pendingTask = pendingBlockDeleteTasks.get(taskKey);
+  if (pendingTask) return pendingTask;
+
+  const task = {
+    taskKey,
+    targetKey: authenticationScope.targetKey,
+    pageId,
+    blockId,
+    mutationId: createMutationId(),
+    payload: Object.freeze({
+      ...payload,
+      expectedVersions: Object.freeze(payload.expectedVersions.map((item) => Object.freeze({ ...item })))
+    }),
+    attempted: false,
+    inFlight: false
+  };
+  pendingBlockDeleteTasks.set(taskKey, task);
+  return task;
+}
+
+async function submitBlockDeleteTask(task, authenticationScope) {
+  if (task.inFlight) throw new Error(t("status.pageTransitionBusy"));
+  task.inFlight = true;
+  let attempt = 0;
+
+  try {
+    while (attempt < 2) {
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      try {
+        task.attempted = true;
+        const data = await submitWithFreshMutationIdOnReuse(task, () => {
+          if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+          return api(`/api/blocks/${encodeURIComponent(task.blockId)}`, {
+            method: "DELETE",
+            body: { ...task.payload, mutationId: task.mutationId }
+          });
+        });
+        if (data === null && !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        if (pendingBlockDeleteTasks.get(task.taskKey) === task) {
+          pendingBlockDeleteTasks.delete(task.taskKey);
+        }
+        return data;
+      } catch (error) {
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        attempt += 1;
+        if (!isAmbiguousApiError(error) || attempt >= 2) {
+          if (!isAmbiguousApiError(error) && pendingBlockDeleteTasks.get(task.taskKey) === task) {
+            pendingBlockDeleteTasks.delete(task.taskKey);
+          }
+          throw error;
+        }
+      }
+    }
+    return null;
+  } finally {
+    task.inFlight = false;
+  }
+}
+
 async function deleteBlockWithVersionCheck(blockId, options = {}) {
   const pageId = state.selectedPage.id;
   const preserveChildren = options.preserveChildren === true;
@@ -6116,63 +6185,71 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
   const expectedVersions = getBlockVersionSnapshot(blockId, {
     includeDescendants: preserveChildren || options.includeDescendants !== false
   });
-  const deletedVersions = preserveChildren
-    ? expectedVersions.filter(({ id }) => id === blockId)
-    : expectedVersions;
   if (blockSnapshotHasUnresolvedDraftConflict(expectedVersions)) {
     throw new Error(t("status.resolveRecoveredDraftConflict"));
   }
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
+    throw new Error(t("errors.UNAUTHENTICATED"));
+  }
+  const task = getBlockDeleteTask(authenticationScope, pageId, blockId, {
+    expectedVersions,
+    preserveChildren,
+    ...(preserveChildren
+      ? { expectedPageContentVersion: Number(state.selectedPage?.contentVersion ?? 1) }
+      : {})
+  });
+  const deletedVersions = task.payload.preserveChildren
+    ? task.payload.expectedVersions.filter(({ id }) => id === blockId)
+    : task.payload.expectedVersions;
   const recoveredConflictOrigins = deletedVersions
     .map(({ id }) => ({ blockId: id, origin: blockDraftConflictOrigins.get(id) }))
     .filter(({ origin }) => Boolean(origin));
   const scope = getDraftScope();
-  return withPagePersistenceTransition(pageId, "block-delete", async () => {
-    // The server version snapshot cannot observe a draft that only exists in a
-    // different tab. Keep that draft attached to its live block instead of
-    // deleting the block and relegating the edit to manual orphan recovery.
-    assertNoPendingLocalBlockDrafts(
-      pageId,
-      expectedVersions.map(({ id }) => id),
-      { excludeSourceId: pageDraftSourceId }
-    );
-    const data = await api(`/api/blocks/${blockId}`, {
-      method: "DELETE",
-      body: {
-        expectedVersions,
-        ...(preserveChildren
-          ? {
-              preserveChildren: true,
-              expectedPageContentVersion: Number(state.selectedPage?.contentVersion ?? 1)
-            }
-          : {})
-      }
-    });
-    for (const { id } of deletedVersions) blockDraftRenderSources.delete(id);
-    if (scope) {
-      checkDraftStoreWrite(
-        pageDraftStore.removeBlocks(
-          scope.userId,
-          scope.pageId,
-          deletedVersions.map(({ id }) => id),
-          pageDraftSourceId
-        )
+  try {
+    return await withPagePersistenceTransition(pageId, "block-delete", async () => {
+      // The server version snapshot cannot observe a draft that only exists in a
+      // different tab. Keep that draft attached to its live block instead of
+      // deleting the block and relegating the edit to manual orphan recovery.
+      assertNoPendingLocalBlockDrafts(
+        pageId,
+        task.payload.expectedVersions.map(({ id }) => id),
+        { excludeSourceId: pageDraftSourceId }
       );
-      for (const { blockId: deletedBlockId, origin } of recoveredConflictOrigins) {
-        const removed = checkDraftStoreWrite(
-          pageDraftStore.removeBlockIfUnchanged({
-            userId: scope.userId,
-            pageId: scope.pageId,
-            blockId: deletedBlockId,
-            ...origin
-          })
+      const data = await submitBlockDeleteTask(task, authenticationScope);
+      if (data === null && !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      for (const { id } of deletedVersions) blockDraftRenderSources.delete(id);
+      if (scope) {
+        checkDraftStoreWrite(
+          pageDraftStore.removeBlocks(
+            scope.userId,
+            scope.pageId,
+            deletedVersions.map(({ id }) => id),
+            pageDraftSourceId
+          )
         );
-        if (removed && blockDraftConflictOrigins.get(deletedBlockId) === origin) {
-          blockDraftConflictOrigins.delete(deletedBlockId);
+        for (const { blockId: deletedBlockId, origin } of recoveredConflictOrigins) {
+          const removed = checkDraftStoreWrite(
+            pageDraftStore.removeBlockIfUnchanged({
+              userId: scope.userId,
+              pageId: scope.pageId,
+              blockId: deletedBlockId,
+              ...origin
+            })
+          );
+          if (removed && blockDraftConflictOrigins.get(deletedBlockId) === origin) {
+            blockDraftConflictOrigins.delete(deletedBlockId);
+          }
         }
       }
+      return data;
+    });
+  } catch (error) {
+    if (!task.attempted && pendingBlockDeleteTasks.get(task.taskKey) === task) {
+      pendingBlockDeleteTasks.delete(task.taskKey);
     }
-    return data;
-  });
+    throw error;
+  }
 }
 
 function updateBlockInState(updatedBlock, blocks = state.selectedPage?.blocks ?? []) {
@@ -11519,6 +11596,7 @@ elements.accountPasswordForm.addEventListener("submit", async (event) => {
     pendingWorkspaceCreateTasks.clear();
     pendingPageVersionResetTasks.clear();
     pendingBlockCreateTasks.clear();
+    pendingBlockDeleteTasks.clear();
     pendingAttachmentCreateTasks.clear();
     setWorkspaceCreateBusy(false);
     setAuthenticated(true);

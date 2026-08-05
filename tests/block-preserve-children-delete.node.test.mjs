@@ -81,7 +81,8 @@ test("the UI sends one preserve-children deletion instead of committing a reorde
 
   const deletion = section(client, "async function deleteBlockWithVersionCheck", "function updateBlockInState");
   assert.match(deletion, /includeDescendants: preserveChildren \|\| options\.includeDescendants !== false/);
-  assert.match(deletion, /preserveChildren: true/);
+  assert.match(deletion, /const preserveChildren = options\.preserveChildren === true/);
+  assert.match(deletion, /\n    preserveChildren,\n/);
   assert.match(deletion, /expectedPageContentVersion: Number\(state\.selectedPage\?\.contentVersion \?\? 1\)/);
   assert.match(deletion, /deletedVersions\.map\(\(\{ id \}\) => id\)/);
 });

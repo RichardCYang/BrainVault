@@ -232,6 +232,10 @@ const blockCreateMutationMigrationSource = readFileSync(
   new URL("../migrations/038_block_create_mutation_receipts.sql", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const blockDeleteMutationMigrationSource = readFileSync(
+  new URL("../migrations/039_block_delete_mutation_receipts.sql", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const directBlockCreateRouteSource = section(
   blockRouteSource,
   'blockRouter.post("/pages/:pageId/blocks"',
@@ -241,6 +245,11 @@ const attachmentCreateRouteSource = section(
   blockRouteSource,
   '"/pages/:pageId/attachments"',
   'blockRouter.get("/blocks/:blockId/attachment"'
+);
+const directBlockDeleteRouteSource = section(
+  blockRouteSource,
+  'blockRouter.delete(\n  "/blocks/:blockId"',
+  'blockRouter.post(\n  "/pages/:pageId/blocks/reorder"'
 );
 
 assert(
@@ -329,6 +338,43 @@ assert(
     && client.includes("pendingBlockCreateTasks.clear()")
     && client.includes("pendingAttachmentCreateTasks.clear()"),
   "A lost block or attachment creation response can still duplicate committed content on retry"
+);
+
+assert(
+  baselineSchemaSource.includes("CREATE TABLE IF NOT EXISTS block_delete_mutations")
+    && blockDeleteMutationMigrationSource.includes("PRIMARY KEY (actor_id, mutation_id)")
+    && blockDeleteMutationMigrationSource.includes(
+      "FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE"
+    )
+    && !blockDeleteMutationMigrationSource.includes("FOREIGN KEY (block_id)")
+    && blockRouteSource.includes("mutationId: mutationIdSchema.optional()")
+    && directBlockDeleteRouteSource.includes('kind: "BLOCK_DELETE"')
+    && directBlockDeleteRouteSource.includes("assessBlockDeleteMutationReceipt(receipt")
+    && directBlockDeleteRouteSource.indexOf("FROM block_delete_mutations")
+      < directBlockDeleteRouteSource.indexOf("assertAccessibleBlock(blockId")
+    && directBlockDeleteRouteSource.includes("INSERT INTO block_delete_mutations")
+    && directBlockDeleteRouteSource.includes("JSON.stringify(attachmentIds)")
+    && directBlockDeleteRouteSource.includes("await removeDeletedAttachmentFiles(deletion.ownerId, deletion.attachmentIds)")
+    && client.includes("const pendingBlockDeleteTasks = new Map()")
+    && client.includes("async function submitBlockDeleteTask(task, authenticationScope)")
+    && client.includes("while (attempt < 2)")
+    && client.includes("body: { ...task.payload, mutationId: task.mutationId }")
+    && client.includes("pendingBlockDeleteTasks.clear()"),
+  "A committed block deletion can still become unacknowledgeable after an ambiguous DELETE retry"
+);
+
+const blockDeleteReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL("./reproduce-block-delete-response-loss.mjs", import.meta.url))],
+  { encoding: "utf8" }
+));
+assert(
+  blockDeleteReproduction.vulnerable.blockDeleted
+    && !blockDeleteReproduction.vulnerable.retryAcknowledged
+    && blockDeleteReproduction.fixed.blockDeleted
+    && blockDeleteReproduction.fixed.retryAcknowledged
+    && blockDeleteReproduction.fixed.attachmentCleanupCanRepeat,
+  "The block-delete response-loss reproduction no longer demonstrates vulnerable and fixed behavior"
 );
 
 const blockCreateReproduction = JSON.parse(execFileSync(
@@ -1063,7 +1109,7 @@ assert(
 assertBefore(
   blockDelete,
   "assertNoPendingLocalBlockDrafts(",
-  "await api(`/api/blocks/${blockId}`",
+  "const data = await submitBlockDeleteTask(task, authenticationScope)",
   "direct block deletion"
 );
 assert(
@@ -1530,5 +1576,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified and length-framed backup ZIP integrity, identity-bound page-share backup/restore, archived-share backup round-trip integrity, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, atomic preserve-children block deletion, and fail-closed recovery inspection, plus owner-scoped idempotent page creation, actor-scoped idempotent block and attachment creation, idempotent page-version reset replay, and authentication-scoped download completion."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified and length-framed backup ZIP integrity, identity-bound page-share backup/restore, archived-share backup round-trip integrity, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, atomic preserve-children block deletion, and fail-closed recovery inspection, plus owner-scoped idempotent page creation, actor-scoped idempotent block and attachment creation, actor-scoped idempotent block-delete replay, idempotent page-version reset replay, and authentication-scoped download completion."
 );

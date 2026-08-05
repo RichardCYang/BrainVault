@@ -61,6 +61,12 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 
 The request hash includes the page, block payload, and operation kind. For attachments it also includes the normalized filename, media type, byte size, placement, and SHA-256 digest of the uploaded bytes. Reusing a key with different data is rejected with `409 MUTATION_ID_REUSED`. If the original block was later deleted, replay fails closed with `409 BLOCK_CREATE_REPLAY_UNAVAILABLE` rather than creating a replacement. The browser retries an ambiguous response once and retains the same task key for a later manual retry; authentication changes clear the pending task.
 
+## Block-deletion response-loss integrity
+
+`DELETE /api/blocks/:blockId` accepts an optional `mutationId` (1–64 ASCII letters, digits, `_`, or `-`) alongside the required exact version snapshot. The server stores `(actor_id, mutation_id)`, the normalized request hash, committed page content version, and deleted attachment IDs in the same transaction as the block deletion and version-history entry. The receipt deliberately has no foreign key to the deleted block, so it survives the operation it proves.
+
+If the transaction commits but the HTTP response is lost, an exact retry is acknowledged with `204` without looking up or deleting the already-removed block again. Reusing the ID with a different block or request body is rejected with `409 MUTATION_ID_REUSED`, and malformed or incomplete receipts fail closed rather than repeating a destructive operation. Attachment-file cleanup is replay-safe and runs again after an acknowledged retry, which heals a process interruption between the database commit and filesystem cleanup. The browser keeps the original version snapshot and mutation ID, retries an ambiguous result once, and scopes pending work to the current authentication generation, account, page, block, and preserve/cascade mode.
+
 ## Page-version reset retry integrity
 
 `DELETE /api/pages/:pageId/versions` requires a JSON body containing `mutationId` (1–64 ASCII letters, digits, `_`, or `-`). The server locks the owned page, reserves `(owner_id, mutation_id)` before deleting any history, writes the fresh revision-1 baseline, and completes the receipt with `revision` and `deletedCount` in the same transaction.

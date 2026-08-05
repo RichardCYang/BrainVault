@@ -483,6 +483,11 @@ components:
           type: integer
           minimum: 1
           description: Required when preserveChildren is true; rejects a stale sibling-order snapshot.
+        mutationId:
+          type: string
+          maxLength: 64
+          pattern: '^[a-zA-Z0-9_-]+$'
+          description: Stable actor-scoped ID. Retrying the exact same deletion acknowledges the original committed result without deleting again.
       allOf:
         - if:
             properties:
@@ -1902,7 +1907,7 @@ paths:
           description: Block changed in another session
     delete:
       summary: Delete a block, optionally preserving its nested children
-      description: Owner only for unshared pages. Requires an exact version snapshot of the block subtree. With preserveChildren, the page content version, child promotion, sibling renumbering, target deletion, and version history are handled in one transaction. Shared document deletion is represented in one Yjs mutation and materialized atomically.
+      description: Owner only for unshared pages. Requires an exact version snapshot of the block subtree. With preserveChildren, the page content version, child promotion, sibling renumbering, target deletion, and version history are handled in one transaction. An optional mutationId makes an exact retry after an ambiguous response acknowledge the original committed deletion; a different request reusing that ID is rejected. Shared document deletion is represented in one Yjs mutation and materialized atomically.
       parameters:
         - in: path
           name: blockId
@@ -1917,9 +1922,9 @@ paths:
               $ref: '#/components/schemas/BlockDeleteInput'
       responses:
         '204':
-          description: Deleted
+          description: Deleted, or an exact mutation replay was acknowledged without repeating the deletion
         '409':
-          description: Block subtree changed after the snapshot
+          description: Block subtree changed after the snapshot, or the mutation ID was reused for another request
   /api/pages/{pageId}/blocks/reorder:
     post:
       summary: Reorder blocks or move blocks under another block

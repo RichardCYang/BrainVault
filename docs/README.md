@@ -67,4 +67,5 @@ docs/<topic>/<YYYY-MM-DD>/<document>
 - [Authentication, account-data, and editor-lock boundary review](data-loss/2026-08-05/auth-data-and-lock-boundary-review.md)
 - [Page-creation idempotency and authenticated download boundary review](data-loss/2026-08-05/page-create-idempotency-and-download-boundary.md)
 - [Page-version reset idempotency and response-loss retry review](data-loss/2026-08-05/page-version-reset-idempotency.md)
+- [Block-deletion response-loss idempotency review](data-loss/2026-08-05/block-delete-response-loss-idempotency.md)
 

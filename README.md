@@ -69,6 +69,7 @@ For database permissions, opt-in demo data, alternative environment setup, and p
 | [Page-cover follow-up review](docs/data-loss/2026-08-05/page-cover-interaction-and-pdf-regression-review.md) | Dialog cancellation, cross-page draft scope, PDF measurement, and restore ambiguity |
 | [Account-security and UI request-scope review](docs/data-loss/2026-08-05/account-security-and-ui-request-scope.md) | Authentication-boundary privacy, page-share request identity, and latest navigation intent |
 | [Authentication, account-data, and editor-lock boundary review](docs/data-loss/2026-08-05/auth-data-and-lock-boundary-review.md) | Boot/login supersession, backup account scope, and cross-authentication lock ownership |
+| [Block-delete response-loss idempotency review](docs/data-loss/2026-08-05/block-delete-response-loss-idempotency.md) | Committed DELETE acknowledgement, exact mutation replay, and attachment cleanup healing |
 | [Configuration](docs/configuration/2026-07-28/configuration.md) | Environment variables and runtime configuration |
 | [HTTPS deployment](deploy/README.md) | Direct Posh-ACME TLS plus Caddy, Synology DSM, NGINX, and Nginx Proxy Manager setup |
 | [Security](docs/security/2026-07-30/security.md) | MFA, production secrets, attachment safety, and security defaults |
@@ -89,6 +90,7 @@ npm run reproduce:page-cover-backup-manifest # Reproduce inline-cover manifest e
 npm run reproduce:page-cover-operation-scope # Reproduce picker-cancel and cross-page draft races
 npm run reproduce:page-cover-pdf-layout # Reproduce full-bleed PDF measurement regression
 npm run reproduce:block-preserve-children-delete # Reproduce partial hierarchy commit and atomic rollback
+npm run reproduce:block-delete-response-loss # Reproduce committed-delete response loss and idempotent acknowledgement
 npm run verify:collaboration # Check collaboration wiring, protocol behavior, and source syntax
 npm run verify:data-loss # Check persistence and recovery integrity guards
 npm start         # Run the compiled server

@@ -63,6 +63,7 @@
     "reproduce:page-create-auth-boundary": "node scripts/reproduce-page-create-auth-boundary.mjs",
     "reproduce:page-version-reset-retry": "node scripts/reproduce-page-version-reset-retry-loss.mjs",
     "reproduce:block-create-response-loss": "node scripts/reproduce-block-create-response-loss.mjs",
+    "reproduce:block-delete-response-loss": "node scripts/reproduce-block-delete-response-loss.mjs",
     "reproduce:block-preserve-children-delete": "node --experimental-strip-types scripts/reproduce-block-preserve-children-delete-race.mjs"
   },
   "dependencies": {

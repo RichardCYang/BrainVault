@@ -21,6 +21,10 @@ import {
 import { renderBlockHtml } from "../lib/markdown.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
 import {
+  assessBlockDeleteMutationReceipt,
+  type BlockDeleteMutationReceipt
+} from "../lib/block-delete-mutation.js";
+import {
   assessBlockCreateMutationReceipt,
   type BlockCreateMutationReceipt
 } from "../lib/block-create-mutation.js";
@@ -97,7 +101,8 @@ const deleteBlockSchema = z
   .object({
     expectedVersions: z.array(versionSnapshotSchema).max(10_000).optional(),
     preserveChildren: z.boolean().optional().default(false),
-    expectedPageContentVersion: z.number().int().min(1).optional()
+    expectedPageContentVersion: z.number().int().min(1).optional(),
+    mutationId: mutationIdSchema.optional()
   })
   .superRefine((body, context) => {
     if (body.preserveChildren && body.expectedPageContentVersion === undefined) {
@@ -929,6 +934,15 @@ blockRouter.delete(
     const user = requireUser(req.user);
     const blockId = String(req.params.blockId);
     const body = req.body as z.infer<typeof deleteBlockSchema>;
+    const mutationHash = body.mutationId
+      ? createMutationRequestHash({
+          kind: "BLOCK_DELETE",
+          blockId,
+          expectedVersions: body.expectedVersions ?? [],
+          preserveChildren: body.preserveChildren,
+          expectedPageContentVersion: body.expectedPageContentVersion ?? null
+        })
+      : undefined;
     if (!body.expectedVersions?.length) {
       throw new ApiError(
         400,
@@ -938,6 +952,47 @@ blockRouter.delete(
     }
     const expectedVersions = body.expectedVersions;
     const deletion = await transaction(async (client) => {
+      if (body.mutationId && mutationHash) {
+        // Block creation and workspace export lock users before pages. Keep the
+        // same order while serializing delete receipts for this actor.
+        await lockBlockCreateUsers(client, [user.id]);
+        const receipt = await client.queryOne<BlockDeleteMutationReceipt>(
+          `SELECT page_id, block_id, request_hash, page_content_version, attachment_ids
+           FROM block_delete_mutations
+           WHERE actor_id = ? AND mutation_id = ?
+           FOR UPDATE`,
+          [user.id, body.mutationId]
+        );
+        if (receipt) {
+          const assessment = assessBlockDeleteMutationReceipt(receipt, {
+            blockId,
+            requestHash: mutationHash
+          });
+          if (assessment.kind === "collision") {
+            throw new ApiError(
+              409,
+              "MUTATION_ID_REUSED",
+              "This mutation id was already used for a different block deletion request. No additional block was deleted."
+            );
+          }
+          if (assessment.kind === "incomplete") {
+            throw new ApiError(
+              500,
+              "BLOCK_DELETE_RECEIPT_INCOMPLETE",
+              "The block deletion receipt is incomplete. The deletion was not repeated."
+            );
+          }
+          const replayAccess = await getPageAccess(assessment.pageId, user.id, client, { lockPage: true });
+          return {
+            pageId: assessment.pageId,
+            ownerId: replayAccess.page.owner_id,
+            attachmentIds: assessment.attachmentIds,
+            pageContentVersion: assessment.pageContentVersion,
+            replayed: true
+          };
+        }
+      }
+
       const { block } = await assertAccessibleBlock(blockId, user.id, client);
       const lockedAccess = await getPageAccess(block.page_id, user.id, client, { lockPage: true });
       assertDirectBlockMutationAllowed(lockedAccess);
@@ -967,7 +1022,7 @@ blockRouter.delete(
       }
 
       await client.execute("DELETE FROM blocks WHERE id = ?", [blockId]);
-      await advancePageContentVersion(client, block.page_id, user.id);
+      const pageContentVersion = await advancePageContentVersion(client, block.page_id, user.id);
       const afterRows = body.preserveChildren
         ? await client.query<BlockRow>(
             "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC",
@@ -980,10 +1035,28 @@ blockRouter.delete(
         source: "BLOCK_DELETE",
         changes: diffPageVersionBlocks(versionRows, afterRows)
       });
+      if (body.mutationId && mutationHash) {
+        await client.execute(
+          `INSERT INTO block_delete_mutations
+             (actor_id, mutation_id, page_id, block_id, request_hash, page_content_version, attachment_ids)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            user.id,
+            body.mutationId,
+            block.page_id,
+            blockId,
+            mutationHash,
+            pageContentVersion,
+            JSON.stringify(attachmentIds)
+          ]
+        );
+      }
       return {
         pageId: block.page_id,
         ownerId: lockedAccess.page.owner_id,
-        attachmentIds
+        attachmentIds,
+        pageContentVersion,
+        replayed: false
       };
     });
     await removeDeletedAttachmentFiles(deletion.ownerId, deletion.attachmentIds);
