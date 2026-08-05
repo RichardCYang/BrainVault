@@ -67,6 +67,14 @@ import {
   createPageCoverOperationGuard,
   isPageCoverPositionDraftForPage
 } from "./page-cover-operation.js";
+import {
+  createIconPickerOperationGuard,
+  getIconPickerTargetKey
+} from "./icon-picker-operation.js";
+import {
+  createAccountAvatarOperationGuard,
+  getAccountAvatarTargetKey
+} from "./account-avatar-operation.js";
 
 const rootParentKey = "__root__";
 const defaultCollectionKey = "__default_collection__";
@@ -118,6 +126,8 @@ let activePageTransitionLease = null;
 let pageTransitionUnlockTimer = null;
 let collaborationRecoveryPanelGeneration = 0;
 const pageCoverOperationGuard = createPageCoverOperationGuard();
+const iconPickerOperationGuard = createIconPickerOperationGuard();
+const accountAvatarOperationGuard = createAccountAvatarOperationGuard();
 let pageCoverSaving = false;
 let pageCoverPositionDraft = null;
 let pageCoverDragPointerId = null;
@@ -166,6 +176,7 @@ const state = {
   activeSecurityPanel: "settings",
   loginHistory: { months: 3, attempts: [], truncated: false, loading: false, loadedMonths: null },
   pendingAvatarData: null,
+  accountAvatarPreparing: false,
   mfaLogin: null,
   mfaStatus: { totpEnabled: false, passkeys: [] },
   totpSetupToken: null,
@@ -2076,6 +2087,13 @@ function fillAccountSettings() {
   updateUserIdentityUi();
 }
 
+function setAccountAvatarPreparing(preparing) {
+  state.accountAvatarPreparing = Boolean(preparing);
+  elements.accountAvatarInput.disabled = state.accountAvatarPreparing;
+  elements.accountAvatarRemove.disabled = state.accountAvatarPreparing || !state.pendingAvatarData;
+  elements.accountProfileSave.disabled = state.accountAvatarPreparing;
+}
+
 function getAccountSettingsFocusableElements() {
   return [...elements.accountSettingsDialog.querySelectorAll(mobileSidebarFocusableSelector)].filter((element) => {
     return !element.disabled && !element.hidden && element.getAttribute("aria-hidden") !== "true" && element.getClientRects().length > 0;
@@ -2084,9 +2102,12 @@ function getAccountSettingsFocusableElements() {
 
 function openAccountSettings(panel = "profile") {
   if (!state.user || state.accountSettingsOpen) return;
+  accountAvatarOperationGuard.invalidate();
+  state.accountAvatarPreparing = false;
   closeMobileSidebar();
   state.accountSettingsOpen = true;
   fillAccountSettings();
+  setAccountAvatarPreparing(false);
   setAccountPanel(panel);
   elements.accountSettingsLayer.classList.remove("hidden");
   elements.accountSettingsLayer.setAttribute("aria-hidden", "false");
@@ -2100,6 +2121,8 @@ function openAccountSettings(panel = "profile") {
 
 function closeAccountSettings({ restoreFocus = true } = {}) {
   if (!state.accountSettingsOpen) return;
+  accountAvatarOperationGuard.invalidate();
+  state.accountAvatarPreparing = false;
   state.accountSettingsOpen = false;
   elements.accountSettingsLayer.classList.add("hidden");
   elements.accountSettingsLayer.setAttribute("aria-hidden", "true");
@@ -2828,6 +2851,7 @@ function renderEmojiPicker() {
 
 function setIconPickerTab(tabName, { focus = true } = {}) {
   if (!["emojis", "icons", "custom"].includes(tabName)) return;
+  if (state.activeIconPickerTab !== tabName) iconPickerOperationGuard.invalidate();
   state.activeIconPickerTab = tabName;
   elements.emojiSearchInput.value = "";
   hideEmojiSkinToneMenu();
@@ -2900,9 +2924,9 @@ function positionEmojiPicker(trigger) {
 }
 
 function openEmojiPicker(target, trigger) {
+  iconPickerOperationGuard.invalidate();
   state.emojiPickerTarget = target;
   state.emojiPickerReturnFocus = trigger instanceof HTMLElement ? trigger : null;
-  state.emojiSaving = false;
   state.emojiSkinTone = getStoredEmojiSkinTone();
   state.activeIconPickerTab = "emojis";
   state.activeEmojiCategory = "smileys-emotion";
@@ -2915,10 +2939,10 @@ function openEmojiPicker(target, trigger) {
 
   elements.emojiPickerLayer.classList.remove("hidden");
   elements.emojiPickerLayer.setAttribute("aria-hidden", "false");
-  elements.emojiPicker.removeAttribute("aria-busy");
-  elements.emojiResetButton.disabled = false;
-  elements.emojiCustomUrlButton.disabled = false;
-  elements.emojiCustomUploadButton.disabled = false;
+  elements.emojiPicker.toggleAttribute("aria-busy", state.emojiSaving);
+  elements.emojiResetButton.disabled = state.emojiSaving;
+  elements.emojiCustomUrlButton.disabled = state.emojiSaving;
+  elements.emojiCustomUploadButton.disabled = state.emojiSaving;
   renderEmojiPicker();
   positionEmojiPicker(trigger);
   requestAnimationFrame(() => elements.emojiSearchInput.focus());
@@ -2926,6 +2950,7 @@ function openEmojiPicker(target, trigger) {
 
 function closeEmojiPicker({ restoreFocus = true } = {}) {
   if (elements.emojiPickerLayer.classList.contains("hidden")) return;
+  iconPickerOperationGuard.invalidate();
   elements.emojiPickerLayer.classList.add("hidden");
   elements.emojiPickerLayer.setAttribute("aria-hidden", "true");
   const returnFocus = state.emojiPickerReturnFocus;
@@ -2953,9 +2978,12 @@ function openPageEmojiPicker(page, trigger) {
   );
 }
 
-async function saveEmojiSelection(emoji) {
+async function saveEmojiSelection(emoji, { operation = null } = {}) {
   const target = state.emojiPickerTarget;
   if (!target || state.emojiSaving) return;
+  const targetKey = getIconPickerTargetKey(target);
+  const activeOperation = operation ?? iconPickerOperationGuard.begin(targetKey);
+  if (!iconPickerOperationGuard.isCurrent(activeOperation, targetKey)) return;
 
   state.emojiSaving = true;
   elements.emojiPicker.setAttribute("aria-busy", "true");
@@ -2972,11 +3000,13 @@ async function saveEmojiSelection(emoji) {
       });
       state.user = data.user;
       if (isEmojiIconValue(emoji)) rememberRecentEmoji(emoji);
-      closeEmojiPicker({ restoreFocus: false });
       renderDefaultCollection();
       syncVisibleBlocksToState();
       renderSelectedPage();
-      elements.collectionIconButton.focus();
+      if (iconPickerOperationGuard.isCurrent(activeOperation, targetKey)) {
+        closeEmojiPicker({ restoreFocus: false });
+        elements.collectionIconButton.focus();
+      }
       setStatus(t("emoji.collectionSaved"));
       return;
     }
@@ -2999,9 +3029,11 @@ async function saveEmojiSelection(emoji) {
         updatedAt: data.page.updatedAt
       });
       if (isEmojiIconValue(emoji)) rememberRecentEmoji(emoji);
-      closeEmojiPicker({ restoreFocus: false });
       renderSelectedPage();
-      (target.isCollection ? elements.collectionIconButton : elements.pageIconButton).focus();
+      if (iconPickerOperationGuard.isCurrent(activeOperation, targetKey)) {
+        closeEmojiPicker({ restoreFocus: false });
+        (target.isCollection ? elements.collectionIconButton : elements.pageIconButton).focus();
+      }
       setStatus(t(target.isCollection ? "emoji.collectionSaved" : "emoji.pageSaved"));
     };
 
@@ -3009,7 +3041,12 @@ async function saveEmojiSelection(emoji) {
     else await savePageEmoji();
   } catch (error) {
     setStatus(error.message, true);
-    if (state.activeIconPickerTab === "custom") setCustomIconMessage(error.message, true);
+    if (
+      state.activeIconPickerTab === "custom"
+      && iconPickerOperationGuard.isCurrent(activeOperation, getIconPickerTargetKey(state.emojiPickerTarget))
+    ) {
+      setCustomIconMessage(error.message, true);
+    }
   } finally {
     state.emojiSaving = false;
     elements.emojiPicker.removeAttribute("aria-busy");
@@ -10520,17 +10557,24 @@ async function applyCustomIconFile(file) {
     return;
   }
 
+  const targetKey = getIconPickerTargetKey(state.emojiPickerTarget);
+  const operation = iconPickerOperationGuard.begin(targetKey);
   try {
     setCustomIconMessage(t("emoji.customReading"));
     const dataUrl = await readCustomIconFile(file);
+    if (!iconPickerOperationGuard.isCurrent(operation, getIconPickerTargetKey(state.emojiPickerTarget))) return;
     const value = `${imageIconPrefix}${dataUrl}`;
     renderCustomIconPreview(value);
     setCustomIconMessage();
-    await saveEmojiSelection(value);
+    await saveEmojiSelection(value, { operation });
   } catch {
-    setCustomIconMessage(t("emoji.customInvalidFile"), true);
+    if (iconPickerOperationGuard.isCurrent(operation, getIconPickerTargetKey(state.emojiPickerTarget))) {
+      setCustomIconMessage(t("emoji.customInvalidFile"), true);
+    }
   } finally {
-    elements.emojiCustomFileInput.value = "";
+    if (iconPickerOperationGuard.isCurrent(operation, getIconPickerTargetKey(state.emojiPickerTarget))) {
+      elements.emojiCustomFileInput.value = "";
+    }
   }
 }
 
@@ -10689,9 +10733,17 @@ elements.accountDataImport.addEventListener("click", async () => {
 elements.accountAvatarInput.addEventListener("change", async () => {
   const [file] = elements.accountAvatarInput.files ?? [];
   if (!file) return;
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  const operation = accountAvatarOperationGuard.begin(targetKey);
+  setAccountAvatarPreparing(true);
   try {
     setAccountMessage(t("account.preparingAvatar"));
-    state.pendingAvatarData = await createAvatarDataUrl(file);
+    const avatarData = await createAvatarDataUrl(file);
+    if (
+      !state.accountSettingsOpen
+      || !accountAvatarOperationGuard.isCurrent(operation, getAccountAvatarTargetKey(state.user))
+    ) return;
+    state.pendingAvatarData = avatarData;
     renderUserAvatar(
       elements.accountAvatarPreview,
       elements.accountAvatarFallback,
@@ -10701,14 +10753,25 @@ elements.accountAvatarInput.addEventListener("change", async () => {
     elements.accountAvatarRemove.disabled = false;
     setAccountMessage(t("account.avatarReady"));
   } catch (error) {
-    state.pendingAvatarData = state.user?.avatarData ?? null;
-    elements.accountAvatarInput.value = "";
-    setAccountMessage(error.message, true);
+    if (
+      state.accountSettingsOpen
+      && accountAvatarOperationGuard.isCurrent(operation, getAccountAvatarTargetKey(state.user))
+    ) {
+      state.pendingAvatarData = state.user?.avatarData ?? null;
+      elements.accountAvatarInput.value = "";
+      setAccountMessage(error.message, true);
+    }
+  } finally {
+    if (accountAvatarOperationGuard.isCurrent(operation, getAccountAvatarTargetKey(state.user))) {
+      setAccountAvatarPreparing(false);
+    }
   }
 });
 
 elements.accountAvatarRemove.addEventListener("click", () => {
+  accountAvatarOperationGuard.invalidate();
   state.pendingAvatarData = null;
+  setAccountAvatarPreparing(false);
   elements.accountAvatarInput.value = "";
   renderUserAvatar(elements.accountAvatarPreview, elements.accountAvatarFallback, null, getUserInitials(state.user));
   elements.accountAvatarRemove.disabled = true;
@@ -10717,6 +10780,7 @@ elements.accountAvatarRemove.addEventListener("click", () => {
 
 elements.accountProfileForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (state.accountAvatarPreparing) return;
   elements.accountProfileSave.disabled = true;
   try {
     setAccountMessage(t("account.savingProfile"));
