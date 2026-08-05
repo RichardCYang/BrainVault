@@ -18,6 +18,44 @@ function fixedReset({ history, receipts, mutationId, pageId }) {
   };
 }
 
+function reproduceClientRefreshGap({ retainTaskUntilRefresh }) {
+  const receipts = new Map();
+  let history = [
+    { revision: 1, source: "BASELINE" },
+    { revision: 2, source: "EDIT_BEFORE_RESET" }
+  ];
+  const originalMutationId = "mut_refresh_gap";
+  let pendingTask = { mutationId: originalMutationId };
+
+  const firstReset = fixedReset({
+    history,
+    receipts,
+    mutationId: pendingTask.mutationId,
+    pageId: "pag_refresh"
+  });
+  history = firstReset.history;
+
+  // The destructive request succeeded, but refreshing the version list failed.
+  const refreshLoaded = false;
+  if (!retainTaskUntilRefresh || refreshLoaded) pendingTask = null;
+
+  history.push({ revision: 2, source: "EDIT_AFTER_REFRESH_FAILURE" });
+  const retryMutationId = pendingTask?.mutationId ?? "mut_refresh_gap_retry";
+  const retry = fixedReset({
+    history,
+    receipts,
+    mutationId: retryMutationId,
+    pageId: "pag_refresh"
+  });
+
+  return {
+    reusedOriginalMutationId: retryMutationId === originalMutationId,
+    replayedOriginalReset: retry.replayed === true,
+    preservedLaterHistory: retry.history.some((entry) => entry.source === "EDIT_AFTER_REFRESH_FAILURE"),
+    finalSources: retry.history.map((entry) => entry.source)
+  };
+}
+
 const original = [
   { revision: 1, source: "BASELINE" },
   { revision: 2, source: "EDIT" },
@@ -56,6 +94,9 @@ try {
   collisionRejected = error?.message === "MUTATION_ID_REUSED";
 }
 
+const vulnerableRefreshGap = reproduceClientRefreshGap({ retainTaskUntilRefresh: false });
+const fixedRefreshGap = reproduceClientRefreshGap({ retainTaskUntilRefresh: true });
+
 const output = {
   vulnerable: {
     responseLossFollowedByRetryDeletedNewHistory:
@@ -69,6 +110,10 @@ const output = {
       fixedState.history.some((entry) => entry.source === "EDIT_AFTER_FIRST_RESET"),
     finalSources: fixedState.history.map((entry) => entry.source),
     mutationCollisionRejected: collisionRejected
+  },
+  refreshGap: {
+    vulnerable: vulnerableRefreshGap,
+    fixed: fixedRefreshGap
   }
 };
 

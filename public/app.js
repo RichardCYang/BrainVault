@@ -4790,10 +4790,9 @@ async function resetPageVersionHistory() {
   elements.pageVersionHistoryMessage.textContent = t("versions.resetting");
   renderPageVersionHistoryList();
 
-  let completed = false;
+  let synchronized = false;
   try {
     await submitPageVersionResetTask(task);
-    completed = true;
     if (!isCurrentAuthenticatedSessionScope(task.scope) || pageId !== history.pageId) return;
 
     history.versions = [];
@@ -4804,6 +4803,7 @@ async function resetPageVersionHistory() {
     renderPageVersionHistoryList();
     const loaded = await loadPageVersionHistory();
     if (loaded && isCurrentAuthenticatedSessionScope(task.scope) && pageId === history.pageId) {
+      synchronized = true;
       elements.pageVersionHistoryMessage.classList.remove("error");
       elements.pageVersionHistoryMessage.textContent = t("versions.resetSuccess");
     }
@@ -4816,7 +4816,7 @@ async function resetPageVersionHistory() {
     elements.pageVersionHistoryMessage.textContent = error?.message || t("versions.resetError");
   } finally {
     task.inFlight = false;
-    if (completed && pendingPageVersionResetTasks.get(task.taskKey) === task) {
+    if (synchronized && pendingPageVersionResetTasks.get(task.taskKey) === task) {
       pendingPageVersionResetTasks.delete(task.taskKey);
     }
     if (isCurrentAuthenticatedSessionScope(task.scope) && pageId === history.pageId) {

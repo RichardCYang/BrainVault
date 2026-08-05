@@ -8,6 +8,8 @@ The owner-only page-version reset endpoint deleted all rows from `page_versions`
 
 The browser also stored reset progress only in the currently open dialog. Closing and reopening the history dialog cleared the local `resetting` flag even while the original request remained in flight, and an older `finally` could update the shared dialog state after the page or authentication generation changed.
 
+A narrower post-response gap remained after the first idempotency fix: the browser retired its pending task as soon as the API returned success, even when the required history-list refresh failed. If a later edit created a new version before the user retried, the discarded task forced a new mutation ID and a second destructive reset, deleting that later history.
+
 ## Reproduction
 
 Run:
@@ -24,6 +26,8 @@ The independent model performs these steps:
 4. Retry the reset.
 
 The vulnerable model loses the new version. The fixed model replays the first receipt and preserves it.
+
+The reproduction also covers an API-success/list-refresh-failure gap. The vulnerable client discards the original mutation ID, so a manual retry performs a second reset and deletes the intervening edit. The fixed client retains the original task until list synchronization, reuses the same mutation ID, receives the original replay, and preserves the later edit.
 
 ## Server correction
 
@@ -46,6 +50,8 @@ The browser keeps owner/authentication-generation/page-scoped reset tasks in `pe
 
 Closing the dialog does not discard the task. Reopening the same page detects an in-flight task and keeps destructive controls disabled. Completion effects are applied only when the initiating authentication scope and page are still current. Logout, authentication reset, and password-driven credential rotation clear all pending reset tasks.
 
+An API success no longer retires the task by itself. The task is removed only after `loadPageVersionHistory()` successfully synchronizes the same page under the same authentication scope. A failed refresh therefore leaves the original mutation ID available for a safe replay instead of turning the next manual attempt into a new destructive operation.
+
 ## Regression coverage
 
 - `tests/page-version-reset-idempotency.node.test.mjs`
@@ -53,4 +59,4 @@ Closing the dialog does not discard the task. Reopening the same page detects an
 - `scripts/reproduce-page-version-reset-retry-loss.mjs`
 - `scripts/verify-data-loss-guards.mjs`
 
-The route test covers first execution, exact replay after a later edit, owner enforcement, and the required mutation ID. The dependency-free test checks receipt assessment, SQL ordering, fresh/upgrade migrations, browser task reuse, authentication fencing, and the standalone reproduction.
+The route test covers first execution, exact replay after a later edit, owner enforcement, and the required mutation ID. The dependency-free test checks receipt assessment, SQL ordering, fresh/upgrade migrations, browser task reuse, authentication fencing, post-success list-synchronization retention, and both response-loss and refresh-gap reproductions.

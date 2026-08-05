@@ -133,6 +133,27 @@ test("browser retries ambiguous reset outcomes with the same task and fences sta
   assert.match(passwordRotation, /pendingPageVersionResetTasks\.clear\(\);/);
 });
 
+test("browser retires a reset task only after the post-reset history list is synchronized", async () => {
+  const app = (await readFile(new URL("../public/app.js", import.meta.url), "utf8"))
+    .replace(/\r\n/g, "\n");
+  const reset = section(app, "async function resetPageVersionHistory", "async function loadPageVersionDetail");
+
+  assert.match(reset, /let synchronized = false;/);
+  assert.doesNotMatch(reset, /completed = true/);
+  assert.match(
+    reset,
+    /if \(loaded && isCurrentAuthenticatedSessionScope\(task\.scope\) && pageId === history\.pageId\) \{\s+synchronized = true;/
+  );
+  assert.match(
+    reset,
+    /if \(synchronized && pendingPageVersionResetTasks\.get\(task\.taskKey\) === task\) \{\s+pendingPageVersionResetTasks\.delete\(task\.taskKey\);/
+  );
+  assert.ok(
+    reset.indexOf("synchronized = true") < reset.indexOf("if (synchronized && pendingPageVersionResetTasks.get"),
+    "the task may be retired only after a successful, current-scope history refresh"
+  );
+});
+
 test("standalone reproduction proves that a lost reset response used to erase later history", () => {
   const result = JSON.parse(execFileSync(
     process.execPath,
@@ -144,4 +165,10 @@ test("standalone reproduction proves that a lost reset response used to erase la
   assert.equal(result.fixed.replayReturnedOriginalResult, true);
   assert.equal(result.fixed.responseLossFollowedByRetryPreservedNewHistory, true);
   assert.equal(result.fixed.mutationCollisionRejected, true);
+  assert.equal(result.refreshGap.vulnerable.reusedOriginalMutationId, false);
+  assert.equal(result.refreshGap.vulnerable.replayedOriginalReset, false);
+  assert.equal(result.refreshGap.vulnerable.preservedLaterHistory, false);
+  assert.equal(result.refreshGap.fixed.reusedOriginalMutationId, true);
+  assert.equal(result.refreshGap.fixed.replayedOriginalReset, true);
+  assert.equal(result.refreshGap.fixed.preservedLaterHistory, true);
 });
