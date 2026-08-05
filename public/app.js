@@ -73,7 +73,8 @@ import {
 } from "./icon-picker-operation.js";
 import {
   createAccountAvatarOperationGuard,
-  getAccountAvatarTargetKey
+  getAccountAvatarTargetKey,
+  isAccountProfileDraftUnchanged
 } from "./account-avatar-operation.js";
 
 const rootParentKey = "__root__";
@@ -128,6 +129,7 @@ let collaborationRecoveryPanelGeneration = 0;
 const pageCoverOperationGuard = createPageCoverOperationGuard();
 const iconPickerOperationGuard = createIconPickerOperationGuard();
 const accountAvatarOperationGuard = createAccountAvatarOperationGuard();
+const accountProfileSaveGuard = createAccountAvatarOperationGuard();
 let pageCoverSaving = false;
 let pageCoverPositionDraft = null;
 let pageCoverDragPointerId = null;
@@ -177,6 +179,7 @@ const state = {
   loginHistory: { months: 3, attempts: [], truncated: false, loading: false, loadedMonths: null },
   pendingAvatarData: null,
   accountAvatarPreparing: false,
+  accountProfileSaving: false,
   mfaLogin: null,
   mfaStatus: { totpEnabled: false, passkeys: [] },
   totpSetupToken: null,
@@ -1556,7 +1559,10 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   state.searchSubmittedQuery = "";
   state.searchRequestId += 1;
   state.pendingFocusBlockId = null;
+  accountProfileSaveGuard.invalidate();
   state.pendingAvatarData = null;
+  state.accountAvatarPreparing = false;
+  state.accountProfileSaving = false;
   state.activeSecurityPanel = "settings";
   state.loginHistory = { months: 3, attempts: [], truncated: false, loading: false, loadedMonths: null };
   elements.searchInput.value = "";
@@ -2074,7 +2080,7 @@ function fillAccountSettings() {
     state.pendingAvatarData,
     getUserInitials(state.user)
   );
-  elements.accountAvatarRemove.disabled = !state.pendingAvatarData;
+  syncAccountProfileControls();
   elements.accountPasswordForm.reset();
   resetDataImportSelection();
   elements.accountMfaPassword.value = "";
@@ -2087,11 +2093,20 @@ function fillAccountSettings() {
   updateUserIdentityUi();
 }
 
-function setAccountAvatarPreparing(preparing) {
-  state.accountAvatarPreparing = Boolean(preparing);
+function syncAccountProfileControls() {
   elements.accountAvatarInput.disabled = state.accountAvatarPreparing;
   elements.accountAvatarRemove.disabled = state.accountAvatarPreparing || !state.pendingAvatarData;
-  elements.accountProfileSave.disabled = state.accountAvatarPreparing;
+  elements.accountProfileSave.disabled = state.accountAvatarPreparing || state.accountProfileSaving;
+}
+
+function setAccountAvatarPreparing(preparing) {
+  state.accountAvatarPreparing = Boolean(preparing);
+  syncAccountProfileControls();
+}
+
+function setAccountProfileSaving(saving) {
+  state.accountProfileSaving = Boolean(saving);
+  syncAccountProfileControls();
 }
 
 function getAccountSettingsFocusableElements() {
@@ -2122,7 +2137,7 @@ function openAccountSettings(panel = "profile") {
 function closeAccountSettings({ restoreFocus = true } = {}) {
   if (!state.accountSettingsOpen) return;
   accountAvatarOperationGuard.invalidate();
-  state.accountAvatarPreparing = false;
+  setAccountAvatarPreparing(false);
   state.accountSettingsOpen = false;
   elements.accountSettingsLayer.classList.add("hidden");
   elements.accountSettingsLayer.setAttribute("aria-hidden", "true");
@@ -10780,25 +10795,54 @@ elements.accountAvatarRemove.addEventListener("click", () => {
 
 elements.accountProfileForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (state.accountAvatarPreparing) return;
-  elements.accountProfileSave.disabled = true;
+  if (state.accountAvatarPreparing || state.accountProfileSaving) return;
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey) return;
+  const submittedDraft = Object.freeze({
+    targetKey,
+    name: elements.accountDisplayName.value.trim() || null,
+    avatarData: state.pendingAvatarData
+  });
+  const operation = accountProfileSaveGuard.begin(targetKey);
+  setAccountProfileSaving(true);
+
+  const getCurrentDraft = () => ({
+    targetKey: getAccountAvatarTargetKey(state.user),
+    name: elements.accountDisplayName.value.trim() || null,
+    avatarData: state.pendingAvatarData
+  });
+  const canReplaceCurrentDraft = () => Boolean(
+    state.accountSettingsOpen
+      && !state.accountAvatarPreparing
+      && accountProfileSaveGuard.isCurrent(operation, getAccountAvatarTargetKey(state.user))
+      && isAccountProfileDraftUnchanged(submittedDraft, getCurrentDraft())
+  );
+
   try {
     setAccountMessage(t("account.savingProfile"));
     const data = await api("/api/auth/profile", {
       method: "PATCH",
       body: {
-        name: elements.accountDisplayName.value.trim() || null,
-        avatarData: state.pendingAvatarData
+        name: submittedDraft.name,
+        avatarData: submittedDraft.avatarData
       }
     });
+    if (!accountProfileSaveGuard.isCurrent(operation, getAccountAvatarTargetKey(state.user))) return;
     state.user = data.user;
-    fillAccountSettings();
-    setAccountMessage(t("account.profileSaved"));
+    updateUserIdentityUi();
+    if (canReplaceCurrentDraft()) {
+      fillAccountSettings();
+      setAccountMessage(t("account.profileSaved"));
+    }
     setStatus(t("account.profileSaved"));
   } catch (error) {
-    setAccountMessage(error.message, true);
+    if (!accountProfileSaveGuard.isCurrent(operation, getAccountAvatarTargetKey(state.user))) return;
+    if (canReplaceCurrentDraft()) setAccountMessage(error.message, true);
+    else setStatus(error.message, true);
   } finally {
-    elements.accountProfileSave.disabled = false;
+    if (accountProfileSaveGuard.isCurrent(operation, getAccountAvatarTargetKey(state.user))) {
+      setAccountProfileSaving(false);
+    }
   }
 });
 

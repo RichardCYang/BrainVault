@@ -27,9 +27,9 @@ test("account-avatar operations are scoped to the authenticated user", () => {
 test("avatar preparation cannot outlive settings, auth identity, or a removal intent", async () => {
   const app = (await readFile(new URL("../public/app.js", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
 
-  const preparationState = app.slice(app.indexOf("function setAccountAvatarPreparing"), app.indexOf("function getAccountSettingsFocusableElements"));
+  const preparationState = app.slice(app.indexOf("function syncAccountProfileControls"), app.indexOf("function getAccountSettingsFocusableElements"));
   assert.match(preparationState, /accountAvatarInput\.disabled = state\.accountAvatarPreparing/);
-  assert.match(preparationState, /accountProfileSave\.disabled = state\.accountAvatarPreparing/);
+  assert.match(preparationState, /accountProfileSave\.disabled = state\.accountAvatarPreparing \|\| state\.accountProfileSaving/);
 
   const openSettings = app.slice(app.indexOf("function openAccountSettings"), app.indexOf("function closeAccountSettings"));
   assert.match(openSettings, /accountAvatarOperationGuard\.invalidate\(\);/);
@@ -59,7 +59,7 @@ test("avatar preparation cannot outlive settings, auth identity, or a removal in
     app.indexOf('elements.accountProfileForm.addEventListener("submit"'),
     app.indexOf('elements.accountPasswordForm.addEventListener("submit"')
   );
-  assert.match(profileSubmit, /if \(state\.accountAvatarPreparing\) return;/);
+  assert.match(profileSubmit, /if \(state\.accountAvatarPreparing \|\| state\.accountProfileSaving\) return;/);
 });
 
 test("standalone reproduction demonstrates stale avatar preparation and premature save", () => {

@@ -2,6 +2,17 @@ export function getAccountAvatarTargetKey(user) {
   return typeof user?.id === "string" && user.id ? `user:${user.id}` : null;
 }
 
+export function isAccountProfileDraftUnchanged(submittedDraft, currentDraft) {
+  return Boolean(
+    submittedDraft
+      && currentDraft
+      && submittedDraft.targetKey !== null
+      && submittedDraft.targetKey === currentDraft.targetKey
+      && submittedDraft.name === currentDraft.name
+      && submittedDraft.avatarData === currentDraft.avatarData
+  );
+}
+
 export function createAccountAvatarOperationGuard() {
   let generation = 0;
 
