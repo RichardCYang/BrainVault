@@ -61,4 +61,5 @@ docs/<topic>/<YYYY-MM-DD>/<document>
 
 - [Page-cover interaction, PDF, and restore-ambiguity review](data-loss/2026-08-05/page-cover-interaction-and-pdf-regression-review.md)
 - [Account profile save and newer-draft race review](data-loss/2026-08-05/account-profile-save-draft-race.md)
+- [Account profile mutation ordering and preference race review](data-loss/2026-08-05/account-profile-mutation-order.md)
 

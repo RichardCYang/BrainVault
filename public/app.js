@@ -47,6 +47,7 @@ import { emojiCategoryDefinitions, emojiRecords } from "./emoji-data.js";
 import { iconCategoryDefinitions, iconRecords, iconSvgNodes } from "./icon-data.js";
 import { createPageDraftStore } from "./draft-store.js";
 import { createLatestWriteQueue } from "./save-queue.js";
+import { createAccountProfileMutationQueue } from "./account-profile-mutation-queue.js";
 import { createMutationId, submitWithFreshMutationIdOnReuse } from "./mutation-id.js";
 import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-rebase.js";
 import { createPageCollaboration, decodeCollaborationRecoveryRecords } from "./collaboration.js";
@@ -130,6 +131,8 @@ const pageCoverOperationGuard = createPageCoverOperationGuard();
 const iconPickerOperationGuard = createIconPickerOperationGuard();
 const accountAvatarOperationGuard = createAccountAvatarOperationGuard();
 const accountProfileSaveGuard = createAccountAvatarOperationGuard();
+const accountLanguageOperationGuard = createAccountAvatarOperationGuard();
+const accountThemeOperationGuard = createAccountAvatarOperationGuard();
 let pageCoverSaving = false;
 let pageCoverPositionDraft = null;
 let pageCoverDragPointerId = null;
@@ -211,6 +214,10 @@ const state = {
     resetting: false
   }
 };
+
+const accountProfileMutationQueue = createAccountProfileMutationQueue({
+  getCurrentTargetKey: () => getAccountAvatarTargetKey(state.user)
+});
 
 const blockTypeLabels = {
   MARKDOWN: "blocks.types.MARKDOWN",
@@ -1272,6 +1279,14 @@ async function api(path, options = {}) {
   return data;
 }
 
+function enqueueAccountProfilePatch(targetKey, body, { before } = {}) {
+  const payload = Object.freeze({ ...body });
+  return accountProfileMutationQueue.enqueue(targetKey, async () => {
+    if (typeof before === "function") await before();
+    return api("/api/auth/profile", { method: "PATCH", body: payload });
+  });
+}
+
 const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
   const currentPage = state.selectedPage?.id === task.pageId
     ? state.selectedPage
@@ -1560,6 +1575,9 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   state.searchRequestId += 1;
   state.pendingFocusBlockId = null;
   accountProfileSaveGuard.invalidate();
+  accountLanguageOperationGuard.invalidate();
+  accountThemeOperationGuard.invalidate();
+  accountProfileMutationQueue.invalidate();
   state.pendingAvatarData = null;
   state.accountAvatarPreparing = false;
   state.accountProfileSaving = false;
@@ -3009,10 +3027,13 @@ async function saveEmojiSelection(emoji, { operation = null } = {}) {
 
   try {
     if (target.type === "defaultCollection") {
-      const data = await api("/api/auth/profile", {
-        method: "PATCH",
-        body: { defaultCollectionIcon: emoji }
+      const accountTargetKey = getAccountAvatarTargetKey(state.user);
+      if (!accountTargetKey) return;
+      const result = await enqueueAccountProfilePatch(accountTargetKey, {
+        defaultCollectionIcon: emoji
       });
+      if (!result.applied) return;
+      const data = result.value;
       state.user = data.user;
       if (isEmojiIconValue(emoji)) rememberRecentEmoji(emoji);
       renderDefaultCollection();
@@ -10820,13 +10841,12 @@ elements.accountProfileForm.addEventListener("submit", async (event) => {
 
   try {
     setAccountMessage(t("account.savingProfile"));
-    const data = await api("/api/auth/profile", {
-      method: "PATCH",
-      body: {
-        name: submittedDraft.name,
-        avatarData: submittedDraft.avatarData
-      }
+    const result = await enqueueAccountProfilePatch(targetKey, {
+      name: submittedDraft.name,
+      avatarData: submittedDraft.avatarData
     });
+    if (!result.applied) return;
+    const data = result.value;
     if (!accountProfileSaveGuard.isCurrent(operation, getAccountAvatarTargetKey(state.user))) return;
     state.user = data.user;
     updateUserIdentityUi();
@@ -11092,39 +11112,60 @@ function refreshLocalizedUi() {
 }
 
 elements.languageSelect.addEventListener("change", async () => {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey) return;
   const language = elements.languageSelect.value;
-  const previousLanguage = getLanguage();
+  const operation = accountLanguageOperationGuard.begin(targetKey);
+
   try {
     setAccountMessage(t("account.savingLanguage"));
-    await flushPendingPageEdits();
-    const data = await api("/api/auth/profile", { method: "PATCH", body: { preferredLanguage: language } });
+    const result = await enqueueAccountProfilePatch(
+      targetKey,
+      { preferredLanguage: language },
+      { before: flushPendingPageEdits }
+    );
+    if (!result.applied) return;
+    const data = result.value;
     state.user = data.user;
-    setLanguage(language);
+    if (!accountLanguageOperationGuard.isCurrent(operation, getAccountAvatarTargetKey(state.user))) return;
+    const confirmedLanguage = state.user.preferredLanguage ?? language;
+    setLanguage(confirmedLanguage);
+    elements.languageSelect.value = confirmedLanguage;
     updateUserIdentityUi();
-    setAccountMessage(t("status.languageChanged", { language: getLanguageLabel(language) }));
-    setStatus(t("status.languageChanged", { language: getLanguageLabel(language) }));
+    setAccountMessage(t("status.languageChanged", { language: getLanguageLabel(confirmedLanguage) }));
+    setStatus(t("status.languageChanged", { language: getLanguageLabel(confirmedLanguage) }));
   } catch (error) {
-    elements.languageSelect.value = previousLanguage;
+    if (!accountLanguageOperationGuard.isCurrent(operation, getAccountAvatarTargetKey(state.user))) return;
+    const confirmedLanguage = state.user?.preferredLanguage ?? getLanguage();
+    setLanguage(confirmedLanguage);
+    elements.languageSelect.value = confirmedLanguage;
     setAccountMessage(error.message, true);
   }
 });
 
 elements.themeSelect.addEventListener("change", async () => {
-  const previousTheme = normalizeTheme(state.user?.theme ?? getActiveTheme());
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey) return;
   const nextTheme = normalizeTheme(elements.themeSelect.value);
+  const operation = accountThemeOperationGuard.begin(targetKey);
   applyTheme(nextTheme);
 
   try {
     setAccountMessage(t("account.savingTheme"));
-    const data = await api("/api/auth/profile", { method: "PATCH", body: { theme: nextTheme } });
+    const result = await enqueueAccountProfilePatch(targetKey, { theme: nextTheme });
+    if (!result.applied) return;
+    const data = result.value;
     state.user = data.user;
+    if (!accountThemeOperationGuard.isCurrent(operation, getAccountAvatarTargetKey(state.user))) return;
     applyUserTheme();
     elements.themeSelect.value = normalizeTheme(state.user.theme);
     setAccountMessage(t("account.themeSaved"));
     setStatus(t("account.themeSaved"));
   } catch (error) {
-    applyTheme(previousTheme);
-    elements.themeSelect.value = previousTheme;
+    if (!accountThemeOperationGuard.isCurrent(operation, getAccountAvatarTargetKey(state.user))) return;
+    const confirmedTheme = normalizeTheme(state.user?.theme ?? getActiveTheme());
+    applyTheme(confirmedTheme);
+    elements.themeSelect.value = confirmedTheme;
     setAccountMessage(error.message, true);
   }
 });

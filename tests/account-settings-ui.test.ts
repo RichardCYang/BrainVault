@@ -50,7 +50,7 @@ describe("Account settings layer", () => {
     expect(client).toContain("function renderLoginHistory");
     expect(client).toContain("applyUserPreferredLanguage");
     expect(client).toContain("applyUserTheme");
-    expect(client).toContain('body: { theme: nextTheme }');
+    expect(client).toContain('enqueueAccountProfilePatch(targetKey, { theme: nextTheme })');
     expect(client).toContain('fetch("/api/data/export"');
     expect(client).toContain('api("/api/data/import"');
   });

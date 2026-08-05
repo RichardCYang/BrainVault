@@ -516,12 +516,18 @@ describe("Data-loss prevention integration", () => {
     expect(dragBody).toContain("persistBlockOrderDraft(task);");
     expect(dragBody).toContain("await submitBlockOrderTaskWithReplay(task);");
 
+    const profilePatchStart = client.indexOf("function enqueueAccountProfilePatch");
+    const profilePatchEnd = client.indexOf("const pageTitleSaveQueue", profilePatchStart);
+    const profilePatchBody = client.slice(profilePatchStart, profilePatchEnd);
+    expect(profilePatchBody.indexOf('await before()')).toBeLessThan(
+      profilePatchBody.indexOf('api("/api/auth/profile"')
+    );
+
     const languageStart = client.indexOf('elements.languageSelect.addEventListener("change"');
     const languageEnd = client.indexOf('window.addEventListener("brainvault:languagechange"', languageStart);
     const languageBody = client.slice(languageStart, languageEnd);
-    expect(languageBody.indexOf("await flushPendingPageEdits();")).toBeLessThan(
-      languageBody.indexOf('await api("/api/auth/profile"')
-    );
+    expect(languageBody).toContain("enqueueAccountProfilePatch(");
+    expect(languageBody).toContain("{ before: flushPendingPageEdits }");
   });
 
   it("prevents delayed bookmark lookups from overwriting newer structured-block edits", () => {
