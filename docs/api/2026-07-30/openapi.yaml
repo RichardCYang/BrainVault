@@ -618,9 +618,19 @@ components:
         nextCursor:
           type: [string, 'null']
           pattern: '^\d+$'
+    PageVersionResetInput:
+      type: object
+      required: [mutationId]
+      properties:
+        mutationId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-zA-Z0-9_-]+$'
+          description: Owner-scoped idempotency key. Reuse only for an exact retry of the same page reset after an ambiguous outcome.
     PageVersionResetResponse:
       type: object
-      required: [revision, deletedCount]
+      required: [revision, deletedCount, replayed]
       properties:
         revision:
           type: integer
@@ -628,6 +638,9 @@ components:
         deletedCount:
           type: integer
           minimum: 0
+        replayed:
+          type: boolean
+          description: True when the server returned the committed result for an earlier request with the same mutation ID without resetting history again.
     BlockReorderInput:
       type: object
       required: [items]
@@ -1466,7 +1479,7 @@ paths:
           description: Page is not owned by the authenticated user
     delete:
       summary: Reset page version history
-      description: Owner only. Deletes prior historical entries and writes a fresh revision-1 baseline without resetting optimistic-concurrency generations.
+      description: Owner only. Requires a mutation ID, deletes prior historical entries once, and writes a fresh revision-1 baseline without resetting optimistic-concurrency generations. Exact retries replay the first committed result and do not delete newer history.
       parameters:
         - in: path
           name: pageId
@@ -1474,15 +1487,25 @@ paths:
           schema:
             type: string
             pattern: '^[a-zA-Z0-9_-]{1,64}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PageVersionResetInput'
       responses:
         '200':
-          description: History reset result
+          description: New or replayed history reset result
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PageVersionResetResponse'
+        '400':
+          description: Missing or invalid mutation ID
         '404':
           description: Page is not owned by the authenticated user
+        '409':
+          description: Mutation ID was already used for a different reset request
   /api/pages/{pageId}/versions/{versionId}:
     get:
       summary: Read one page version

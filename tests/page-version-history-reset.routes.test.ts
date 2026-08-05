@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const database = vi.hoisted(() => ({
   page: null as Record<string, unknown> | null,
   versions: [] as Array<Record<string, unknown>>,
+  resetReceipts: new Map<string, Record<string, unknown>>(),
   query: vi.fn(),
   queryOne: vi.fn(),
   execute: vi.fn()
@@ -34,6 +35,10 @@ const otherUser = { ...owner, id: "usr_other", username: "other-user", name: "Ot
 const ownerToken = signAuthToken({ sub: owner.id, username: owner.username, authVersion: 1 });
 const otherToken = signAuthToken({ sub: otherUser.id, username: otherUser.username, authVersion: 1 });
 
+function receiptKey(ownerId: unknown, mutationId: unknown) {
+  return `${String(ownerId)}\u0000${String(mutationId)}`;
+}
+
 beforeEach(() => {
   database.page = {
     id: "pag_version_reset",
@@ -54,6 +59,7 @@ beforeEach(() => {
     { id: 2, page_id: "pag_version_reset", revision: 2 },
     { id: 3, page_id: "pag_version_reset", revision: 3 }
   ];
+  database.resetReceipts.clear();
   database.query.mockReset();
   database.queryOne.mockReset();
   database.execute.mockReset();
@@ -65,6 +71,9 @@ beforeEach(() => {
     }
     if (sql.includes("SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE")) {
       return database.page?.id === params[0] && database.page?.owner_id === params[1] ? database.page : undefined;
+    }
+    if (sql.includes("FROM page_version_reset_mutations")) {
+      return database.resetReceipts.get(receiptKey(params[0], params[1]));
     }
     if (sql.includes("SELECT edit_version, content_version FROM pages WHERE id = ?")) {
       return database.page?.id === params[0]
@@ -78,6 +87,27 @@ beforeEach(() => {
   });
 
   database.execute.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
+    if (sql.includes("INSERT INTO page_version_reset_mutations")) {
+      const key = receiptKey(params[0], params[1]);
+      if (database.resetReceipts.has(key)) {
+        throw Object.assign(new Error("duplicate"), { code: "ER_DUP_ENTRY" });
+      }
+      database.resetReceipts.set(key, {
+        page_id: params[2],
+        request_hash: params[3],
+        revision: null,
+        deleted_count: null
+      });
+      return { affectedRows: 1 };
+    }
+    if (sql.includes("UPDATE page_version_reset_mutations")) {
+      const key = receiptKey(params[2], params[3]);
+      const receipt = database.resetReceipts.get(key);
+      if (!receipt) return { affectedRows: 0 };
+      receipt.revision = params[0];
+      receipt.deleted_count = params[1];
+      return { affectedRows: 1 };
+    }
     if (sql.includes("DELETE FROM page_versions WHERE page_id = ?")) {
       const before = database.versions.length;
       database.versions = database.versions.filter((row) => row.page_id !== params[0]);
@@ -108,9 +138,10 @@ describe("Page version history reset", () => {
     const response = await request(createApp())
       .delete("/api/pages/pag_version_reset/versions")
       .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ mutationId: "mut_reset_once" })
       .expect(200);
 
-    expect(response.body).toEqual({ revision: 1, deletedCount: 3 });
+    expect(response.body).toEqual({ revision: 1, deletedCount: 3, replayed: false });
     expect(database.versions).toHaveLength(1);
     expect(database.versions[0]).toMatchObject({
       page_id: "pag_version_reset",
@@ -127,10 +158,36 @@ describe("Page version history reset", () => {
     ]);
   });
 
+  it("replays the committed result without deleting history created after a lost response", async () => {
+    await request(createApp())
+      .delete("/api/pages/pag_version_reset/versions")
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ mutationId: "mut_reset_lost_response" })
+      .expect(200);
+
+    database.versions.push({
+      id: 200,
+      page_id: "pag_version_reset",
+      revision: 2,
+      source: "EDIT_AFTER_RESET"
+    });
+
+    const replay = await request(createApp())
+      .delete("/api/pages/pag_version_reset/versions")
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ mutationId: "mut_reset_lost_response" })
+      .expect(200);
+
+    expect(replay.body).toEqual({ revision: 1, deletedCount: 3, replayed: true });
+    expect(database.versions).toHaveLength(2);
+    expect(database.versions.some((version) => version.source === "EDIT_AFTER_RESET")).toBe(true);
+  });
+
   it("does not allow a non-owner to erase the page history", async () => {
     const response = await request(createApp())
       .delete("/api/pages/pag_version_reset/versions")
       .set("Authorization", `Bearer ${otherToken}`)
+      .send({ mutationId: "mut_reset_other" })
       .expect(404);
 
     expect(response.body.error.code).toBe("NOT_FOUND");
@@ -139,5 +196,16 @@ describe("Page version history reset", () => {
       expect.stringContaining("DELETE FROM page_versions"),
       expect.anything()
     );
+  });
+
+  it("requires a mutation id so ambiguous retries cannot silently become new resets", async () => {
+    const response = await request(createApp())
+      .delete("/api/pages/pag_version_reset/versions")
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({})
+      .expect(400);
+
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    expect(database.versions).toHaveLength(3);
   });
 });

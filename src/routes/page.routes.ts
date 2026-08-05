@@ -7,6 +7,10 @@ import { removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { renderBlockHtml } from "../lib/markdown.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
 import { assessPageCreateMutationReceipt, type PageCreateMutationReceipt } from "../lib/page-create-mutation.js";
+import {
+  assessPageVersionResetMutationReceipt,
+  type PageVersionResetMutationReceipt
+} from "../lib/page-version-reset-mutation.js";
 import { toBlock, toPage, toTag } from "../lib/mappers.js";
 import {
   getOwnedPage,
@@ -122,6 +126,10 @@ const pageVersionListQuerySchema = z.object({
 const pageVersionParamsSchema = z.object({
   pageId: routeIdSchema,
   versionId: z.string().regex(/^\d+$/)
+});
+
+const pageVersionResetSchema = z.object({
+  mutationId: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/)
 });
 
 function isDuplicateEntryError(error: unknown) {
@@ -647,17 +655,77 @@ pageRouter.get(
 
 pageRouter.delete(
   "/:pageId/versions",
-  validate({ params: idParamSchema }),
+  validate({ params: idParamSchema, body: pageVersionResetSchema }),
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
       const pageId = String(req.params.pageId);
+      const { mutationId } = req.body as z.infer<typeof pageVersionResetSchema>;
+      const requestHash = createMutationRequestHash({ pageId });
       const reset = await transaction(async (client) => {
+        // Workspace export/restore and attachment cleanup lock the owner before pages.
+        // Keep the same order before inserting the owner-referencing receipt.
+        const lockedOwner = await client.queryOne<{ id: string }>(
+          "SELECT id FROM users WHERE id = ? FOR UPDATE",
+          [user.id]
+        );
+        if (!lockedOwner) throw notFound("User");
+
         const page = await client.queryOne<PageRow>(
           "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
           [pageId, user.id]
         );
         if (!page) throw notFound("Page");
+
+        let reserved = true;
+        try {
+          await client.execute(
+            `INSERT INTO page_version_reset_mutations
+               (owner_id, mutation_id, page_id, request_hash)
+             VALUES (?, ?, ?, ?)`,
+            [user.id, mutationId, pageId, requestHash]
+          );
+        } catch (error) {
+          if (!isDuplicateEntryError(error)) throw error;
+          reserved = false;
+        }
+
+        if (!reserved) {
+          const receipt = await client.queryOne<PageVersionResetMutationReceipt>(
+            `SELECT page_id, request_hash, revision, deleted_count
+             FROM page_version_reset_mutations
+             WHERE owner_id = ? AND mutation_id = ?
+             FOR UPDATE`,
+            [user.id, mutationId]
+          );
+          const assessment = assessPageVersionResetMutationReceipt(receipt, { pageId, requestHash });
+          if (assessment.kind === "collision") {
+            throw new ApiError(
+              409,
+              "MUTATION_ID_REUSED",
+              "This mutation id was already used for a different page-version reset request. The history was not reset again."
+            );
+          }
+          if (assessment.kind === "incomplete") {
+            throw new ApiError(
+              500,
+              "PAGE_VERSION_RESET_RECEIPT_INCOMPLETE",
+              "The page-version reset receipt is incomplete. The history was not reset again."
+            );
+          }
+          if (assessment.kind !== "replay") {
+            throw new ApiError(
+              500,
+              "PAGE_VERSION_RESET_RECEIPT_MISSING",
+              "The page-version reset receipt is unavailable"
+            );
+          }
+          return {
+            revision: assessment.revision,
+            deletedCount: assessment.deletedCount,
+            replayed: true
+          };
+        }
 
         const resetHistory = await resetPageVersionHistoryRecords(client, {
           page,
@@ -666,7 +734,24 @@ pageRouter.delete(
         if (!resetHistory.version || resetHistory.version.revision !== 1) {
           throw new ApiError(500, "PAGE_VERSION_RESET_FAILED", "Page version history was not reset");
         }
-        return { revision: resetHistory.version.revision, deletedCount: resetHistory.deletedCount };
+        const receiptUpdate = await client.execute<{ affectedRows: number }>(
+          `UPDATE page_version_reset_mutations
+           SET revision = ?, deleted_count = ?
+           WHERE owner_id = ? AND mutation_id = ?`,
+          [resetHistory.version.revision, resetHistory.deletedCount, user.id, mutationId]
+        );
+        if (Number(receiptUpdate.affectedRows ?? 0) !== 1) {
+          throw new ApiError(
+            500,
+            "PAGE_VERSION_RESET_RECEIPT_UPDATE_FAILED",
+            "The page-version reset receipt could not be completed"
+          );
+        }
+        return {
+          revision: resetHistory.version.revision,
+          deletedCount: resetHistory.deletedCount,
+          replayed: false
+        };
       });
 
       res.setHeader("Cache-Control", "private, no-store");

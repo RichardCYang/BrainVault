@@ -47,13 +47,19 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `GET` | `/api/pages/:pageId/render` | Render sanitized page HTML |
 | `GET` | `/api/pages/:pageId/versions` | List owner-only page version history; historical entries may contain deleted content |
 | `GET` | `/api/pages/:pageId/versions/:versionId` | Read one owner-only page version entry |
-| `DELETE` | `/api/pages/:pageId/versions` | Reset owner-only page version history to a fresh baseline |
+| `DELETE` | `/api/pages/:pageId/versions` | Reset owner-only page version history once using a required idempotency key |
 | `GET` | `/api/search?q=...` | Search titles and block Markdown |
 
 
 ## Page-creation retry integrity
 
 `POST /api/pages` accepts an optional `mutationId` (1–64 ASCII letters, digits, `_`, or `-`). The server reserves the owner-scoped mutation receipt in the same transaction as the page, its initial block, tags, and creation-history entry. Retrying the exact same body with the same ID returns the original page. Reusing the ID with different content is rejected with `409 MUTATION_ID_REUSED`. If the original page was later permanently deleted, a replay is rejected rather than silently creating a replacement.
+
+## Page-version reset retry integrity
+
+`DELETE /api/pages/:pageId/versions` requires a JSON body containing `mutationId` (1–64 ASCII letters, digits, `_`, or `-`). The server locks the owned page, reserves `(owner_id, mutation_id)` before deleting any history, writes the fresh revision-1 baseline, and completes the receipt with `revision` and `deletedCount` in the same transaction.
+
+An exact retry for the same page returns the stored result with `replayed: true` and does not execute a second deletion. Reusing the ID for another page is rejected with `409 MUTATION_ID_REUSED`. This is important when the first transaction commits but its HTTP response is lost: edits recorded after that commit remain intact when the browser retries. Clients must not replace an ambiguous task with a new mutation ID; the built-in browser retries once automatically and retains the same task for a later manual retry.
 
 ## Backup sharing integrity
 

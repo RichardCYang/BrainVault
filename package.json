@@ -60,7 +60,8 @@
     "reproduce:auth-data-lock-boundary": "node scripts/reproduce-auth-data-lock-boundary-races.mjs",
     "reproduce:share-dialog-request-race": "node scripts/reproduce-share-dialog-request-race.mjs",
     "reproduce:workspace-navigation-race": "node scripts/reproduce-workspace-navigation-race.mjs",
-    "reproduce:page-create-auth-boundary": "node scripts/reproduce-page-create-auth-boundary.mjs"
+    "reproduce:page-create-auth-boundary": "node scripts/reproduce-page-create-auth-boundary.mjs",
+    "reproduce:page-version-reset-retry": "node scripts/reproduce-page-version-reset-retry-loss.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.2",

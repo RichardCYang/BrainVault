@@ -6,7 +6,7 @@
 
 첨부 프로젝트의 개발 방향은 **비동기 결과를 시작 당시의 계정·페이지·최신 사용자 의도에 묶고, 인증 경계와 데이터 보존 경계에서는 오래된 작업이 현재 상태를 바꾸지 못하게 하는 것**으로 판단됩니다. 기존 코드의 초안 보존, Yjs 협업, 프로필·아바타, 페이지 커버, 검색, 버전 이력 등에는 이 원칙이 폭넓게 반영되어 있었습니다.
 
-전체 흐름을 지연 순서와 응답 유실까지 통제해 재검토한 결과, 앞서 수정된 인증·백업·편집 잠금 경계 결함군에 더해 페이지 생성 멱등성, 생성 UI 직렬화, 인증 세대가 바뀐 뒤의 완료 효과라는 세 결함군을 추가로 재현하고 수정했습니다.
+전체 흐름을 지연 순서와 응답 유실까지 통제해 재검토한 결과, 앞서 수정된 인증·백업·편집 잠금 경계 결함군과 페이지 생성 멱등성 보완에 더해, 페이지 버전 기록 초기화의 응답 유실 재시도가 이후 기록을 다시 삭제하는 고위험 결함을 추가로 재현하고 수정했습니다.
 
 1. **계정 보안 상태의 인증 경계 누출**: 이전 계정의 로그인 이력, 패스키 이름, MFA 상태, TOTP 설정 비밀키가 다음 계정 화면에 남거나 늦은 응답으로 덮일 수 있었습니다.
 2. **공유 목록의 잘못된 페이지 결합**: 페이지 A의 느린 공유 목록이 페이지 B 대화상자에 표시되고, 잘못된 페이지/사용자 조합으로 제거 요청이 만들어질 수 있었습니다.
@@ -17,6 +17,7 @@
 7. **응답 유실 뒤 페이지 중복 생성**: `POST /api/pages`가 커밋된 뒤 응답만 유실되면 같은 사용자 의도를 재시도할 때 두 번째 페이지가 영구 생성될 수 있었습니다.
 8. **빠른 중복 클릭과 오래된 생성 완료**: 생성 버튼들이 공통 busy 상태를 공유하지 않아 병렬 요청이 시작될 수 있었고, 계정 전환 뒤 이전 계정의 생성 응답이 현재 목록·화면을 바꿀 수 있었습니다.
 9. **첨부 다운로드와 401의 인증 경계 누출**: 이전 계정에서 시작한 비공개 첨부가 새 계정에서 자동 다운로드되거나, 이전 요청의 늦은 `401`이 새 로그인 세션을 초기화할 수 있었습니다.
+10. **버전 기록 초기화의 재시도 데이터 손실**: 첫 초기화 트랜잭션은 커밋됐지만 응답만 유실된 뒤 새 기록이 생성되고 사용자가 다시 초기화하면, 두 번째 `DELETE`가 그 새 기록까지 삭제할 수 있었습니다. 대화상자를 닫았다 다시 여는 동안 진행 상태와 오래된 `finally`가 현재 화면을 잘못 제어할 가능성도 있었습니다.
 
 ## 추가 수정 내용
 
@@ -52,6 +53,15 @@
 - 컬렉션/홈/사이드바 생성 버튼은 공통 busy 상태를 사용하고, 애매한 실패는 같은 mutation ID로 한 번 자동 재시도합니다.
 - 서버 생성 성공 뒤 목록 재조회나 화면 이동이 실패해도 작업 영수증을 즉시 잊지 않고 전체 UI 완료 시점까지 유지하여, 다음 시도가 새 페이지를 중복 생성하지 않게 했습니다.
 
+### 페이지 버전 기록 초기화 멱등성
+
+- `page_version_reset_mutations` 영수증 테이블과 업그레이드 마이그레이션 `037_page_version_reset_mutation_receipts.sql`을 추가했습니다.
+- 초기화 API는 필수 `mutationId`를 받으며, 기존 전역 규칙대로 소유자 행→페이지 행 순서로 잠근 뒤 파괴적 삭제보다 먼저 `(owner_id, mutation_id)` 영수증을 예약합니다.
+- 같은 페이지·같은 요청 해시의 재전송은 최초 `revision`과 `deletedCount`를 반환하고 초기화 함수를 다시 호출하지 않습니다.
+- 같은 ID를 다른 페이지에 재사용하면 `409 MUTATION_ID_REUSED`로 거절하고, 비정상적인 미완료 영수증은 두 번째 삭제를 실행하지 않고 실패 폐쇄합니다.
+- 브라우저는 네트워크 오류·성공 응답 파싱 실패·5xx처럼 결과가 애매한 경우 동일 mutation ID로 한 번 자동 재시도하며, 두 번째 애매한 실패 뒤에도 수동 재시도를 위해 같은 작업을 유지합니다.
+- 대화상자 닫기/재열기와 같은 계정의 비밀번호 변경을 포함한 인증 세대 전환을 작업 범위에 결합했습니다. 성공 응답 뒤 목록 재동기화가 끝날 때까지도 작업을 유지하므로 좁은 재진입 창이 없습니다.
+
 ### 인증 세대가 바뀐 뒤의 완료 효과
 
 - API 요청은 시작 시 인증 세대와 계정 키를 캡처하며, 늦은 `401`은 동일한 세션일 때만 인증을 초기화합니다.
@@ -67,6 +77,7 @@
 ```bash
 npm run reproduce:auth-data-lock-boundary
 npm run reproduce:page-create-auth-boundary
+npm run reproduce:page-version-reset-retry
 ```
 
 추가 회귀 범위:
@@ -74,23 +85,25 @@ npm run reproduce:page-create-auth-boundary
 - `tests/auth-data-lock-boundary.node.test.mjs`
 - `tests/auth-session-bootstrap.node.test.mjs`의 부팅 복원 소유권·롤백 4개 사례
 - `tests/page-create-auth-boundary.node.test.mjs`의 영수증, 마이그레이션, UI 인증 범위, 독립 재현 5개 사례
-- 백업 및 페이지 생성 변경을 반영한 데이터 손실 검증기와 정적 검증
+- `tests/page-version-reset-idempotency.node.test.mjs`의 영수증 판정, SQL 순서, 마이그레이션, UI 재시도/인증 범위, 독립 재현 5개 사례
+- `tests/page-version-history-reset.routes.test.ts`의 최초 실행, 응답 유실 재전송, 소유권, 필수 mutation ID 통합 사례
+- 백업, 페이지 생성, 버전 기록 초기화 변경을 반영한 데이터 손실 검증기와 정적 검증
 
 ## 최종 검증 결과
 
-- 의존성 없는 Node 내구성 테스트: **154/154 통과**
-- 이번 페이지 생성·다운로드 추가 회귀 테스트: **5/5 통과**
+- 의존성 없는 Node 내구성 테스트: **159/159 통과**
+- 이번 버전 기록 초기화 추가 회귀 테스트: **5/5 통과**
 - 잠금파일 레지스트리 검사: **346개 URL 통과**
 - 데이터 손실 방지 검증: 통과
-- 협업·프로토콜·소스 검증: 통과, **266개 파일 구문 확인**
+- 협업·프로토콜·소스 검증: 통과, **269개 파일 구문 확인**
 - 보안 강화 검증: 통과, 의존성 없는 보안 회귀 **11/11 통과**
 - 수정 JavaScript 및 재현 스크립트 구문 검사: 통과
 
 ## 실행 환경 제한
 
-프로젝트는 Node.js `^22.23.2 || ^24.18.1 || >=26.5.1`과 npm `engine-strict`를 요구하지만 검토 환경은 Node.js 22.16.0이었습니다. 강제 설치 검증도 샌드박스 패키지 미러에서 잠금된 `zod@3.25.76` 아티팩트를 찾지 못해 완료되지 않았습니다.
+프로젝트는 Node.js `^22.23.2 || ^24.18.1 || >=26.5.1`과 npm `engine-strict`를 요구하지만 검토 환경은 Node.js 22.16.0이었습니다. `npm ci --ignore-scripts --engine-strict=false`도 샌드박스 패키지 미러에서 잠금된 `zod@3.25.76` 아티팩트를 찾지 못해 `404`로 중단됐습니다. 의존성이 설치되지 않아 전역 `tsc` 검사는 `node` 및 `vitest/globals` 타입 정의 부재로 완료할 수 없었습니다.
 
-따라서 TypeScript 전체 빌드와 의존성 기반 Vitest 전체 테스트는 실행 완료로 보고하지 않습니다. `node_modules`는 결과물에 포함하지 않습니다.
+따라서 TypeScript 전체 빌드와 의존성 기반 Vitest 전체 테스트는 실행 완료로 보고하지 않습니다. 대신 TypeScript 구문 검사, 159개 의존성 없는 회귀, 데이터 손실·협업·보안 검증을 수행했습니다. `node_modules`는 결과물에 포함하지 않습니다.
 
 ## 전체 재현·검증 명령
 
@@ -100,6 +113,7 @@ npm run reproduce:share-dialog-request-race
 npm run reproduce:workspace-navigation-race
 npm run reproduce:auth-data-lock-boundary
 npm run reproduce:page-create-auth-boundary
+npm run reproduce:page-version-reset-retry
 npm run test:durability
 npm run lockfile:check
 npm run verify:data-loss
@@ -116,3 +130,4 @@ npm run verify:security
 - `docs/data-loss/2026-08-05/account-security-and-ui-request-scope.md`
 - `docs/data-loss/2026-08-05/auth-data-and-lock-boundary-review.md`
 - `docs/data-loss/2026-08-05/page-create-idempotency-and-download-boundary.md`
+- `docs/data-loss/2026-08-05/page-version-reset-idempotency.md`

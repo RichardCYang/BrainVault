@@ -224,6 +224,11 @@ const pageCreateMutationMigrationSource = readFileSync(
   "utf8"
 ).replace(/\r\n/g, "\n");
 
+const pageVersionResetMutationMigrationSource = readFileSync(
+  new URL("../migrations/037_page_version_reset_mutation_receipts.sql", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
+
 assert(
   blockOrderIntegritySource.includes("max: 2_147_483_647")
     && blockRouteSource.includes(".max(blockSortOrderLimits.max)")
@@ -262,6 +267,44 @@ assert(
     && pageRouteSource.includes("assessPageCreateMutationReceipt(receipt, mutationHash)")
     && pageRouteSource.indexOf("INSERT INTO page_create_mutations") < pageRouteSource.indexOf("INSERT INTO pages"),
   "Page creation can still duplicate a committed page after an ambiguous POST retry"
+);
+
+assert(
+  baselineSchemaSource.includes("CREATE TABLE IF NOT EXISTS page_version_reset_mutations")
+    && pageVersionResetMutationMigrationSource.includes("PRIMARY KEY (owner_id, mutation_id)")
+    && pageVersionResetMutationMigrationSource.includes("revision BIGINT UNSIGNED NULL")
+    && pageVersionResetMutationMigrationSource.includes("deleted_count BIGINT UNSIGNED NULL")
+    && pageVersionResetMutationMigrationSource.includes(
+      "FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE"
+    )
+    && pageRouteSource.includes("body: pageVersionResetSchema")
+    && pageRouteSource.includes("createMutationRequestHash({ pageId })")
+    && pageRouteSource.includes("SELECT id FROM users WHERE id = ? FOR UPDATE")
+    && pageRouteSource.indexOf("SELECT id FROM users WHERE id = ? FOR UPDATE")
+      < pageRouteSource.indexOf("SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE", pageRouteSource.indexOf("SELECT id FROM users WHERE id = ? FOR UPDATE"))
+    && pageRouteSource.includes("INSERT INTO page_version_reset_mutations")
+    && pageRouteSource.includes("assessPageVersionResetMutationReceipt(receipt, { pageId, requestHash })")
+    && pageRouteSource.includes("UPDATE page_version_reset_mutations")
+    && pageRouteSource.indexOf("INSERT INTO page_version_reset_mutations")
+      < pageRouteSource.indexOf("const resetHistory = await resetPageVersionHistoryRecords")
+    && client.includes("const pendingPageVersionResetTasks = new Map()")
+    && client.includes("body: { mutationId: task.mutationId }")
+    && client.includes("attempt === 0 && isAmbiguousApiError(error)")
+    && client.includes("pendingPageVersionResetTasks.clear()"),
+  "A lost page-version reset response can still cause a retry to erase history created after the first commit"
+);
+
+const pageVersionResetReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL("./reproduce-page-version-reset-retry-loss.mjs", import.meta.url))],
+  { encoding: "utf8" }
+));
+assert(
+  pageVersionResetReproduction.vulnerable.responseLossFollowedByRetryDeletedNewHistory
+    && pageVersionResetReproduction.fixed.replayReturnedOriginalResult
+    && pageVersionResetReproduction.fixed.responseLossFollowedByRetryPreservedNewHistory
+    && pageVersionResetReproduction.fixed.mutationCollisionRejected,
+  "The page-version reset retry reproduction did not prove both vulnerable and fixed states"
 );
 
 assert(
@@ -1368,5 +1411,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified and length-framed backup ZIP integrity, identity-bound page-share backup/restore, archived-share backup round-trip integrity, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, and fail-closed recovery inspection, plus owner-scoped idempotent page creation and authentication-scoped download completion."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified and length-framed backup ZIP integrity, identity-bound page-share backup/restore, archived-share backup round-trip integrity, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, and fail-closed recovery inspection, plus owner-scoped idempotent page creation, idempotent page-version reset replay, and authentication-scoped download completion."
 );

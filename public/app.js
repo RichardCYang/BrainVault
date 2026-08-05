@@ -151,6 +151,7 @@ let authenticationSessionGeneration = 0;
 let sharePageRequestGeneration = 0;
 let pageEditLockGeneration = 0;
 const pendingWorkspaceCreateTasks = new Map();
+const pendingPageVersionResetTasks = new Map();
 let pageCoverSaving = false;
 let pageCoverPositionDraft = null;
 let pageCoverDragPointerId = null;
@@ -1707,6 +1708,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   // records, but never carry live editor state or retry queues across an auth boundary.
   discardPendingPageEdits();
   pendingWorkspaceCreateTasks.clear();
+  pendingPageVersionResetTasks.clear();
   closeAccountSettings({ restoreFocus: false, force: true });
   closeEmojiPicker({ restoreFocus: false });
   closeNavigationContextMenu();
@@ -4588,6 +4590,50 @@ function createPageVersionChangeCard(change) {
   return card;
 }
 
+function getPageVersionResetTaskKey(scope, pageId) {
+  return `${scope.generation}\u0000${scope.targetKey}\u0000${pageId}`;
+}
+
+function getCurrentPageVersionResetTask(pageId) {
+  if (!pageId) return null;
+  const scope = captureAuthenticatedSessionScope();
+  if (!scope.targetKey) return null;
+  return pendingPageVersionResetTasks.get(getPageVersionResetTaskKey(scope, pageId)) ?? null;
+}
+
+function getOrCreatePageVersionResetTask(pageId) {
+  const scope = captureAuthenticatedSessionScope();
+  if (!scope.targetKey) return null;
+  const taskKey = getPageVersionResetTaskKey(scope, pageId);
+  let task = pendingPageVersionResetTasks.get(taskKey);
+  if (!task) {
+    task = {
+      taskKey,
+      pageId,
+      scope,
+      mutationId: createMutationId(),
+      inFlight: false
+    };
+    pendingPageVersionResetTasks.set(taskKey, task);
+  }
+  return task;
+}
+
+async function submitPageVersionResetTask(task) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await api(`/api/pages/${encodeURIComponent(task.pageId)}/versions`, {
+        method: "DELETE",
+        body: { mutationId: task.mutationId }
+      });
+    } catch (error) {
+      if (attempt === 0 && isAmbiguousApiError(error)) continue;
+      throw error;
+    }
+  }
+  throw new Error(t("versions.resetError"));
+}
+
 function renderPageVersionHistoryList() {
   const history = state.pageVersionHistory;
   elements.pageVersionHistoryList.replaceChildren();
@@ -4731,6 +4777,9 @@ async function resetPageVersionHistory() {
   const title = page.title || t("newDocumentTitle");
   if (!window.confirm(t("versions.resetConfirm", { title }))) return;
 
+  const task = getOrCreatePageVersionResetTask(pageId);
+  if (!task || task.inFlight) return;
+  task.inFlight = true;
   history.resetting = true;
   history.requestId += 1;
   history.detailRequestId += 1;
@@ -4741,9 +4790,11 @@ async function resetPageVersionHistory() {
   elements.pageVersionHistoryMessage.textContent = t("versions.resetting");
   renderPageVersionHistoryList();
 
+  let completed = false;
   try {
-    await api(`/api/pages/${encodeURIComponent(pageId)}/versions`, { method: "DELETE" });
-    if (pageId !== history.pageId) return;
+    await submitPageVersionResetTask(task);
+    completed = true;
+    if (!isCurrentAuthenticatedSessionScope(task.scope) || pageId !== history.pageId) return;
 
     history.versions = [];
     history.nextCursor = null;
@@ -4752,20 +4803,29 @@ async function resetPageVersionHistory() {
     resetPageVersionHistoryDetail();
     renderPageVersionHistoryList();
     const loaded = await loadPageVersionHistory();
-    if (loaded && pageId === history.pageId) {
+    if (loaded && isCurrentAuthenticatedSessionScope(task.scope) && pageId === history.pageId) {
       elements.pageVersionHistoryMessage.classList.remove("error");
       elements.pageVersionHistoryMessage.textContent = t("versions.resetSuccess");
     }
   } catch (error) {
-    if (pageId !== history.pageId) return;
+    if (isDefinitiveApiError(error) && pendingPageVersionResetTasks.get(task.taskKey) === task) {
+      pendingPageVersionResetTasks.delete(task.taskKey);
+    }
+    if (!isCurrentAuthenticatedSessionScope(task.scope) || pageId !== history.pageId) return;
     elements.pageVersionHistoryMessage.classList.add("error");
     elements.pageVersionHistoryMessage.textContent = error?.message || t("versions.resetError");
   } finally {
-    history.resetting = false;
-    if (pageId === history.pageId) {
-      elements.pageVersionHistoryReset.disabled = history.loading;
-      elements.pageVersionHistoryReset.removeAttribute("aria-busy");
-      elements.pageVersionHistoryMore.disabled = history.loading;
+    task.inFlight = false;
+    if (completed && pendingPageVersionResetTasks.get(task.taskKey) === task) {
+      pendingPageVersionResetTasks.delete(task.taskKey);
+    }
+    if (isCurrentAuthenticatedSessionScope(task.scope) && pageId === history.pageId) {
+      const currentTask = getCurrentPageVersionResetTask(pageId);
+      history.resetting = Boolean(currentTask?.inFlight);
+      elements.pageVersionHistoryReset.disabled = history.loading || history.resetting;
+      if (history.resetting) elements.pageVersionHistoryReset.setAttribute("aria-busy", "true");
+      else elements.pageVersionHistoryReset.removeAttribute("aria-busy");
+      elements.pageVersionHistoryMore.disabled = history.loading || history.resetting;
       renderPageVersionHistoryList();
     }
   }
@@ -4799,13 +4859,17 @@ function openPageVersionHistory() {
   state.pageVersionHistory.versions = [];
   state.pageVersionHistory.nextCursor = null;
   state.pageVersionHistory.current = null;
-  state.pageVersionHistory.resetting = false;
+  state.pageVersionHistory.resetting = Boolean(getCurrentPageVersionResetTask(page.id)?.inFlight);
   state.pageVersionHistory.requestId += 1;
   state.pageVersionHistory.detailRequestId += 1;
   elements.pageVersionHistoryPageTitle.textContent = page.title || t("newDocumentTitle");
   elements.pageVersionHistoryReset.classList.toggle("hidden", !isPageOwner(page));
-  elements.pageVersionHistoryReset.disabled = false;
-  elements.pageVersionHistoryReset.removeAttribute("aria-busy");
+  elements.pageVersionHistoryReset.disabled = state.pageVersionHistory.resetting;
+  if (state.pageVersionHistory.resetting) {
+    elements.pageVersionHistoryReset.setAttribute("aria-busy", "true");
+  } else {
+    elements.pageVersionHistoryReset.removeAttribute("aria-busy");
+  }
   elements.pageVersionHistoryCurrent.textContent = "";
   elements.pageVersionHistoryMessage.textContent = "";
   elements.pageVersionHistoryList.replaceChildren();
@@ -11281,6 +11345,7 @@ elements.accountPasswordForm.addEventListener("submit", async (event) => {
     // under the previous credential generation, even though the account ID is unchanged.
     authenticationSessionGeneration += 1;
     pendingWorkspaceCreateTasks.clear();
+    pendingPageVersionResetTasks.clear();
     setWorkspaceCreateBusy(false);
     setAuthenticated(true);
     elements.accountPasswordForm.reset();
