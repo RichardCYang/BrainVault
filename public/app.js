@@ -147,8 +147,10 @@ const accountSecurityOperationGuards = Object.freeze({
   passkeyRegister: createAccountAvatarOperationGuard()
 });
 let workspaceNavigationGeneration = 0;
+let authenticationSessionGeneration = 0;
 let sharePageRequestGeneration = 0;
 let pageEditLockGeneration = 0;
+const pendingWorkspaceCreateTasks = new Map();
 let pageCoverSaving = false;
 let pageCoverPositionDraft = null;
 let pageCoverDragPointerId = null;
@@ -185,6 +187,7 @@ const state = {
   authMode: window.location.hash === "#signup" ? "register" : "login",
   authOperationBusy: false,
   accountDataOperationBusy: false,
+  workspaceCreateBusy: false,
   activeSlashBlockId: null,
   activeSlashIndex: 0,
   activeInlineBlockId: null,
@@ -1045,6 +1048,35 @@ function isCurrentAuthenticatedSessionOperation(operation) {
   );
 }
 
+function captureAuthenticatedSessionScope() {
+  return Object.freeze({
+    generation: authenticationSessionGeneration,
+    targetKey: getAccountAvatarTargetKey(state.user)
+  });
+}
+
+function isCurrentAuthenticatedSessionScope(scope) {
+  return Boolean(
+    scope
+      && state.authenticated
+      && scope.generation === authenticationSessionGeneration
+      && scope.targetKey !== null
+      && scope.targetKey === getAccountAvatarTargetKey(state.user)
+  );
+}
+
+function syncWorkspaceCreateControls() {
+  const busy = state.workspaceCreateBusy;
+  elements.addCollectionButton.disabled = busy;
+  elements.homeNewPageButton.disabled = busy;
+  elements.addDocumentButton.disabled = busy;
+}
+
+function setWorkspaceCreateBusy(busy) {
+  state.workspaceCreateBusy = Boolean(busy);
+  syncWorkspaceCreateControls();
+}
+
 function syncAuthOperationControls() {
   const busy = state.authOperationBusy;
   elements.authSubmit.disabled = busy;
@@ -1308,6 +1340,7 @@ function canSupersedeBlockSaveError(error) {
 
 async function api(path, options = {}) {
   const { skipAuthReset = false, ...requestOptions } = options;
+  const authenticationScope = captureAuthenticatedSessionScope();
   const headers = new Headers(requestOptions.headers ?? {});
 
   let body = requestOptions.body;
@@ -1336,7 +1369,11 @@ async function api(path, options = {}) {
   }
 
   if (!response.ok) {
-    if (response.status === 401 && !skipAuthReset) {
+    if (
+      response.status === 401
+      && !skipAuthReset
+      && isCurrentAuthenticatedSessionScope(authenticationScope)
+    ) {
       resetAuthenticationSessionState();
     }
     throw createApiRequestError(translateApiError(data, response.status), {
@@ -1432,6 +1469,9 @@ const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
 }, { shouldRetry: isAmbiguousApiError });
 
 async function downloadAttachment(block) {
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
+
   const attachment = getBlockAttachmentData(block);
   const headers = new Headers();
 
@@ -1439,9 +1479,11 @@ async function downloadAttachment(block) {
   try {
     response = await fetch(`/api/blocks/${block.id}/attachment`, { headers, credentials: "include" });
   } catch {
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
     throw new Error(t("errors.network"));
   }
 
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
   if (!response.ok) {
     let data = null;
     try {
@@ -1449,13 +1491,18 @@ async function downloadAttachment(block) {
     } catch {
       // Use the localized fallback below when the response is not JSON.
     }
-    if (response.status === 401) {
+    if (
+      response.status === 401
+      && isCurrentAuthenticatedSessionScope(authenticationScope)
+    ) {
       resetAuthenticationSessionState();
     }
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
     throw new Error(translateApiError(data, response.status));
   }
 
   const blob = await response.blob();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = objectUrl;
@@ -1465,6 +1512,7 @@ async function downloadAttachment(block) {
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+  return { applied: true };
 }
 
 function getResponseFilename(response, fallback) {
@@ -1482,6 +1530,7 @@ function getResponseFilename(response, fallback) {
 }
 
 async function downloadUserDataBackup({ operation = null } = {}) {
+  const authenticationScope = captureAuthenticatedSessionScope();
   const targetKey = getAccountAvatarTargetKey(state.user);
   const activeOperation = operation ?? accountDataOperationGuard.begin(targetKey);
   if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
@@ -1511,9 +1560,13 @@ async function downloadUserDataBackup({ operation = null } = {}) {
         } catch {
           // Use the localized fallback below when the response is not JSON.
         }
-        if (response.status === 401) {
+        if (
+          response.status === 401
+          && isCurrentAuthenticatedSessionScope(authenticationScope)
+        ) {
           resetAuthenticationSessionState();
         }
+        if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
         throw new Error(translateApiError(data, response.status));
       }
 
@@ -1635,6 +1688,7 @@ function renderShell() {
 
 function resetAuthenticationSessionState({ render = true } = {}) {
   workspaceNavigationGeneration += 1;
+  authenticationSessionGeneration += 1;
   authFlowOperationGuard.invalidate();
   authenticatedSessionOperationGuard.invalidate();
   accountDataOperationGuard.invalidate();
@@ -1652,6 +1706,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   // Input handlers persist durable per-account drafts before enqueueing writes. Keep those
   // records, but never carry live editor state or retry queues across an auth boundary.
   discardPendingPageEdits();
+  pendingWorkspaceCreateTasks.clear();
   closeAccountSettings({ restoreFocus: false, force: true });
   closeEmojiPicker({ restoreFocus: false });
   closeNavigationContextMenu();
@@ -1671,6 +1726,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   state.pageEditLockDepth = 0;
   state.authOperationBusy = false;
   state.accountDataOperationBusy = false;
+  state.workspaceCreateBusy = false;
   state.workspaceView = "home";
   state.activeCollectionId = null;
   state.activeTag = "";
@@ -1692,6 +1748,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   elements.searchInput.value = "";
   syncAuthOperationControls();
   syncAccountDataOperationControls();
+  syncWorkspaceCreateControls();
 
   if (render) {
     renderShell();
@@ -10447,58 +10504,124 @@ function activatePersistedPageDraft(recovery) {
   return true;
 }
 
+function getWorkspaceCreateRequestKey(payload) {
+  return JSON.stringify(payload);
+}
+
+function getWorkspaceCreateTask(authenticationScope, payload) {
+  const requestKey = getWorkspaceCreateRequestKey(payload);
+  const taskKey = `${authenticationScope.targetKey}\n${requestKey}`;
+  const pendingTask = pendingWorkspaceCreateTasks.get(taskKey);
+  if (pendingTask) return pendingTask;
+
+  return {
+    taskKey,
+    targetKey: authenticationScope.targetKey,
+    requestKey,
+    mutationId: createMutationId(),
+    payload: Object.freeze({ ...payload })
+  };
+}
+
+async function submitWorkspacePageCreate(task, authenticationScope) {
+  pendingWorkspaceCreateTasks.set(task.taskKey, task);
+  let attempt = 0;
+  while (attempt < 2) {
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+    try {
+      const data = await submitWithFreshMutationIdOnReuse(task, () => {
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        return api("/api/pages", {
+          method: "POST",
+          body: { ...task.payload, mutationId: task.mutationId }
+        });
+      });
+      if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      return data;
+    } catch (error) {
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      attempt += 1;
+      if (!isAmbiguousApiError(error) || attempt >= 2) {
+        if (!isAmbiguousApiError(error) && pendingWorkspaceCreateTasks.get(task.taskKey) === task) {
+          pendingWorkspaceCreateTasks.delete(task.taskKey);
+        }
+        throw error;
+      }
+    }
+  }
+  return null;
+}
+
+async function createWorkspacePage(payload, { creatingKey, createdKey, createdArgs = {} }) {
+  if (state.workspaceCreateBusy) return { applied: false };
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
+  const task = getWorkspaceCreateTask(authenticationScope, payload);
+
+  setWorkspaceCreateBusy(true);
+  try {
+    await assertWorkspacePersistenceUnlocked();
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
+    await flushPendingPageEdits();
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
+    await assertWorkspacePersistenceUnlocked();
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
+
+    setStatus(t(creatingKey));
+    const data = await submitWorkspacePageCreate(task, authenticationScope);
+    if (!data || !isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
+    if (!data.page?.id || data.page.ownerId !== state.user?.id) {
+      throw new Error(t("errors.invalidResponse"));
+    }
+
+    const pages = await fetchAllPageSummaries();
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
+    resetSearchDialogState();
+    state.searchQuery = "";
+    state.activeTag = "";
+    state.pages = pages;
+    state.allPages = pages;
+    renderPages();
+
+    if (payload.isCollection) await showCollection(data.page.id, { skipFlush: true });
+    else await openPage(data.page.id, { skipFlush: true });
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
+    if (pendingWorkspaceCreateTasks.get(task.taskKey) === task) {
+      pendingWorkspaceCreateTasks.delete(task.taskKey);
+    }
+    setStatus(t(createdKey, createdArgs));
+    return { applied: true, page: data.page };
+  } finally {
+    if (isCurrentAuthenticatedSessionScope(authenticationScope)) setWorkspaceCreateBusy(false);
+  }
+}
+
 async function createCollection() {
-  await assertWorkspacePersistenceUnlocked();
+  if (state.workspaceCreateBusy) return { applied: false };
   const requestedName = window.prompt(t("collection.createPrompt"), t("collection.defaultName"));
-  if (requestedName === null) return;
+  if (requestedName === null) return { applied: false };
 
   const name = requestedName.trim().slice(0, 160);
   if (!name) {
     setStatus(t("status.collectionNameRequired"), true);
-    return;
+    return { applied: false };
   }
 
-  await flushPendingPageEdits();
-  await assertWorkspacePersistenceUnlocked();
-  setStatus(t("status.creatingCollection"));
-  resetSearchDialogState();
-  state.searchQuery = "";
-  state.activeTag = "";
-
-  const data = await api("/api/pages", {
-    method: "POST",
-    body: {
-      title: name,
-      icon: "📁",
-      isCollection: true
+  return createWorkspacePage(
+    { title: name, icon: "📁", isCollection: true },
+    {
+      creatingKey: "status.creatingCollection",
+      createdKey: "status.collectionCreated",
+      createdArgs: { name }
     }
-  });
-
-  await loadPages("", "");
-  await showCollection(data.page.id, { skipFlush: true });
-  setStatus(t("status.collectionCreated", { name }));
+  );
 }
 
 async function createUntitledPage() {
-  await assertWorkspacePersistenceUnlocked();
-  await flushPendingPageEdits();
-  await assertWorkspacePersistenceUnlocked();
-  setStatus(t("status.creatingDocument"));
-  resetSearchDialogState();
-  state.searchQuery = "";
-  state.activeTag = "";
-
-  const data = await api("/api/pages", {
-    method: "POST",
-    body: {
-      title: t("newDocumentTitle"),
-      icon: "📄"
-    }
-  });
-
-  await loadPages("", "");
-  await openPage(data.page.id, { skipFlush: true });
-  setStatus(t("status.documentCreated"));
+  return createWorkspacePage(
+    { title: t("newDocumentTitle"), icon: "📄" },
+    { creatingKey: "status.creatingDocument", createdKey: "status.documentCreated" }
+  );
 }
 
 
@@ -11154,6 +11277,11 @@ elements.accountPasswordForm.addEventListener("submit", async (event) => {
     setAccountMessage(t("account.changingPassword"));
     await api("/api/auth/password", { method: "POST", body: { currentPassword, newPassword } });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.password, operation)) return;
+    // The server rotated the authentication cookie. Fence every response that began
+    // under the previous credential generation, even though the account ID is unchanged.
+    authenticationSessionGeneration += 1;
+    pendingWorkspaceCreateTasks.clear();
+    setWorkspaceCreateBusy(false);
     setAuthenticated(true);
     elements.accountPasswordForm.reset();
     setAccountMessage(t("account.passwordChanged"));
@@ -12416,8 +12544,10 @@ elements.blockList.addEventListener("click", async (event) => {
       const block = getBlockById(blockId);
       if (!block) throw new Error(t("errors.attachmentNotFound"));
       setStatus(t("status.attachmentDownloading", { name: getBlockAttachmentData(block).originalName }));
-      await downloadAttachment(block);
-      setStatus(t("status.attachmentDownloaded", { name: getBlockAttachmentData(block).originalName }));
+      const result = await downloadAttachment(block);
+      if (result.applied) {
+        setStatus(t("status.attachmentDownloaded", { name: getBlockAttachmentData(block).originalName }));
+      }
       return;
     }
 

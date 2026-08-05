@@ -6,6 +6,7 @@ import { createId } from "../lib/id.js";
 import { removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { renderBlockHtml } from "../lib/markdown.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
+import { assessPageCreateMutationReceipt, type PageCreateMutationReceipt } from "../lib/page-create-mutation.js";
 import { toBlock, toPage, toTag } from "../lib/mappers.js";
 import {
   getOwnedPage,
@@ -77,7 +78,8 @@ const createPageSchema = z.object({
   parentPageId: z.string().min(1).optional(),
   isCollection: z.boolean().optional().default(false),
   initialMarkdown: z.string().max(20_000).optional(),
-  tags: z.array(z.string().trim().min(1).max(50)).max(20).optional()
+  tags: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+  mutationId: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/).optional()
 });
 
 const updatePageSchema = z.object({
@@ -121,6 +123,10 @@ const pageVersionParamsSchema = z.object({
   pageId: routeIdSchema,
   versionId: z.string().regex(/^\d+$/)
 });
+
+function isDuplicateEntryError(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ER_DUP_ENTRY";
+}
 
 async function assertOwnedPage(pageId: string, ownerId: string, client: DbClient = db) {
   return getOwnedPage(pageId, ownerId, client);
@@ -447,40 +453,88 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
   try {
     const user = requireUser(req.user);
     const body = req.body as z.infer<typeof createPageSchema>;
-    await assertOwnedParentPage(body.parentPageId, user.id);
+    const { mutationId, ...creation } = body;
+    const mutationHash = mutationId ? createMutationRequestHash(creation) : undefined;
+    await assertOwnedParentPage(creation.parentPageId, user.id);
 
-    if (body.isCollection && body.parentPageId) {
+    if (creation.isCollection && creation.parentPageId) {
       throw new ApiError(400, "INVALID_COLLECTION_PARENT", "A collection cannot have a parent page");
     }
 
     const pageId = await transaction(async (client) => {
       const id = createId("pag");
+      if (mutationId && mutationHash) {
+        let reserved = true;
+        try {
+          await client.execute(
+            `INSERT INTO page_create_mutations (owner_id, mutation_id, page_id, request_hash)
+             VALUES (?, ?, ?, ?)`,
+            [user.id, mutationId, id, mutationHash]
+          );
+        } catch (error) {
+          if (!isDuplicateEntryError(error)) throw error;
+          reserved = false;
+        }
+        if (!reserved) {
+          const receipt = await client.queryOne<PageCreateMutationReceipt>(
+            `SELECT page_id, request_hash
+             FROM page_create_mutations
+             WHERE owner_id = ? AND mutation_id = ?
+             FOR UPDATE`,
+            [user.id, mutationId]
+          );
+          const assessment = assessPageCreateMutationReceipt(receipt, mutationHash);
+          if (assessment.kind === "collision") {
+            throw new ApiError(
+              409,
+              "MUTATION_ID_REUSED",
+              "This mutation id was already used for a different page creation request. No additional page was created."
+            );
+          }
+          if (assessment.kind !== "replay") {
+            throw new ApiError(500, "PAGE_CREATE_RECEIPT_MISSING", "The page creation receipt is unavailable");
+          }
+          const replayPage = await client.queryOne<{ id: string }>(
+            "SELECT id FROM pages WHERE id = ? AND owner_id = ?",
+            [assessment.pageId, user.id]
+          );
+          if (!replayPage) {
+            throw new ApiError(
+              409,
+              "PAGE_CREATE_REPLAY_UNAVAILABLE",
+              "This page creation was already completed, but the created page is no longer available. No additional page was created."
+            );
+          }
+          return assessment.pageId;
+        }
+      }
+
       await client.execute(
         `INSERT INTO pages
            (id, title, icon, cover_url, cover_position_x, cover_position_y, is_collection, owner_id, parent_page_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
-          body.title,
-          normalizeIconValue(body.icon ?? null),
-          body.coverUrl ?? null,
-          body.coverPositionX ?? 50,
-          body.coverPositionY ?? 50,
-          body.isCollection ? 1 : 0,
+          creation.title,
+          normalizeIconValue(creation.icon ?? null),
+          creation.coverUrl ?? null,
+          creation.coverPositionX ?? 50,
+          creation.coverPositionY ?? 50,
+          creation.isCollection ? 1 : 0,
           user.id,
-          body.parentPageId ?? null
+          creation.parentPageId ?? null
         ]
       );
 
-      if (body.initialMarkdown) {
+      if (creation.initialMarkdown) {
         await client.execute(
           `INSERT INTO blocks (id, page_id, type, markdown, html_cache, sort_order)
            VALUES (?, ?, 'MARKDOWN', ?, ?, 0)`,
-          [createId("blk"), id, body.initialMarkdown, renderBlockHtml("MARKDOWN", body.initialMarkdown)]
+          [createId("blk"), id, creation.initialMarkdown, renderBlockHtml("MARKDOWN", creation.initialMarkdown)]
         );
       }
 
-      if (body.tags?.length) await replaceTags(client, id, body.tags);
+      if (creation.tags?.length) await replaceTags(client, id, creation.tags);
       const createdPage = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [id]);
       if (!createdPage) throw new ApiError(500, "PAGE_CREATE_FAILED", "Page was not created");
       const createdTags = (await getPageTags(id, client)).map((tag) => tag.name);

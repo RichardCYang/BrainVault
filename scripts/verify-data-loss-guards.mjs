@@ -219,6 +219,11 @@ const blockParentIntegrityMigrationSource = readFileSync(
   "utf8"
 ).replace(/\r\n/g, "\n");
 
+const pageCreateMutationMigrationSource = readFileSync(
+  new URL("../migrations/036_page_create_mutation_receipts.sql", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
+
 assert(
   blockOrderIntegritySource.includes("max: 2_147_483_647")
     && blockRouteSource.includes(".max(blockSortOrderLimits.max)")
@@ -245,6 +250,18 @@ assert(
     && zipSource.includes("ZIP source SHA-256 changed while exporting")
     && dataTransferSource.includes("sha256: item.inspection.sha256"),
   "Backup ZIP creation can still trust stale pre-stream attachment checksums"
+);
+
+assert(
+  baselineSchemaSource.includes("CREATE TABLE IF NOT EXISTS page_create_mutations")
+    && pageCreateMutationMigrationSource.includes("PRIMARY KEY (owner_id, mutation_id)")
+    && pageCreateMutationMigrationSource.includes("FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE")
+    && !pageCreateMutationMigrationSource.includes("FOREIGN KEY (page_id)")
+    && pageRouteSource.includes("createMutationRequestHash(creation)")
+    && pageRouteSource.includes("INSERT INTO page_create_mutations")
+    && pageRouteSource.includes("assessPageCreateMutationReceipt(receipt, mutationHash)")
+    && pageRouteSource.indexOf("INSERT INTO page_create_mutations") < pageRouteSource.indexOf("INSERT INTO pages"),
+  "Page creation can still duplicate a committed page after an ambiguous POST retry"
 );
 
 assert(
@@ -1351,5 +1368,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified and length-framed backup ZIP integrity, identity-bound page-share backup/restore, archived-share backup round-trip integrity, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, and fail-closed recovery inspection."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified and length-framed backup ZIP integrity, identity-bound page-share backup/restore, archived-share backup round-trip integrity, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, and fail-closed recovery inspection, plus owner-scoped idempotent page creation and authentication-scoped download completion."
 );

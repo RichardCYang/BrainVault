@@ -25,7 +25,7 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `PATCH` | `/api/auth/profile` | Update display name, profile image, or preferred language |
 | `POST` | `/api/auth/password` | Change the password after verifying the current password |
 | `GET` | `/api/pages` | List pages |
-| `POST` | `/api/pages` | Create a page |
+| `POST` | `/api/pages` | Create a page; clients can provide `mutationId` and reuse it only for an exact retry after an ambiguous outcome |
 | `GET` | `/api/pages/:pageId` | Read a page and its block tree |
 | `PATCH` | `/api/pages/:pageId` | Update page metadata |
 | `DELETE` | `/api/pages/:pageId` | Archive or permanently delete a page |
@@ -50,6 +50,10 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `DELETE` | `/api/pages/:pageId/versions` | Reset owner-only page version history to a fresh baseline |
 | `GET` | `/api/search?q=...` | Search titles and block Markdown |
 
+
+## Page-creation retry integrity
+
+`POST /api/pages` accepts an optional `mutationId` (1–64 ASCII letters, digits, `_`, or `-`). The server reserves the owner-scoped mutation receipt in the same transaction as the page, its initial block, tags, and creation-history entry. Retrying the exact same body with the same ID returns the original page. Reusing the ID with different content is rejected with `409 MUTATION_ID_REUSED`. If the original page was later permanently deleted, a replay is rejected rather than silently creating a replacement.
 
 ## Backup sharing integrity
 

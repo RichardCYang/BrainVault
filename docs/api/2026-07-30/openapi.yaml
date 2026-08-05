@@ -365,6 +365,12 @@ components:
           type: array
           items:
             type: string
+        mutationId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-zA-Z0-9_-]+$'
+          description: Retry key for fault-tolerant page creation. Reuse the same value only when retrying the exact same request after an unknown outcome.
     BlockInput:
       type: object
       properties:
@@ -1310,9 +1316,18 @@ paths:
           description: Invalid list query or cursor
     post:
       summary: Create page
+      description: Supply a mutationId and reuse it with the exact same body when retrying after a missing or ambiguous response. A successful replay returns the originally created page instead of creating a duplicate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PageInput'
       responses:
         '201':
-          description: Created page
+          description: Created page or replay of the original successful creation
+        '409':
+          description: The mutation ID was reused with a different request, or its original page was permanently deleted
   /api/pages/{pageId}:
     get:
       summary: Read an owned or shared page with its block tree
