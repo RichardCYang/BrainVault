@@ -25,6 +25,12 @@ docs/<topic>/<YYYY-MM-DD>/<document>
 | API | 2026-07-30 | [OpenAPI 3.1 specification](api/2026-07-30/openapi.yaml) |
 | Assets | 2026-07-17 | [Workspace preview image](assets/2026-07-17/preview.png) |
 
+## Security reviews
+
+### 2026-08-04
+
+- [Security review and remediation report](security/2026-08-04/security-review-and-remediation-report.md)
+
 ## Data-loss and integrity reports
 
 ### 2026-07-28
@@ -59,6 +65,7 @@ docs/<topic>/<YYYY-MM-DD>/<document>
 
 ### 2026-08-05
 
+- [In-depth review and remediation results](data-loss/2026-08-05/in-depth-review-and-remediation-results.md)
 - [Page-cover interaction, PDF, and restore-ambiguity review](data-loss/2026-08-05/page-cover-interaction-and-pdf-regression-review.md)
 - [Account profile save and newer-draft race review](data-loss/2026-08-05/account-profile-save-draft-race.md)
 - [Account profile mutation ordering and preference race review](data-loss/2026-08-05/account-profile-mutation-order.md)

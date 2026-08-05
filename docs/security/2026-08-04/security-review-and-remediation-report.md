@@ -310,7 +310,7 @@ These are environment limitations, not passing results. The direct Node regressi
 - `.env.example`
 - `.npmrc`
 - `README.md`
-- `SECURITY_REVIEW.md`
+- `docs/security/2026-08-04/security-review-and-remediation-report.md`
 - `docs/collaboration/2026-07-29/collaboration.md`
 - `docs/configuration/2026-07-28/configuration.md`
 - `docs/getting-started/2026-07-27/getting-started.md`
