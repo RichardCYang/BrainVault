@@ -133,6 +133,10 @@ const accountAvatarOperationGuard = createAccountAvatarOperationGuard();
 const accountProfileSaveGuard = createAccountAvatarOperationGuard();
 const accountLanguageOperationGuard = createAccountAvatarOperationGuard();
 const accountThemeOperationGuard = createAccountAvatarOperationGuard();
+const authFlowOperationGuard = createAccountAvatarOperationGuard();
+const authenticatedSessionOperationGuard = createAccountAvatarOperationGuard();
+const accountDataOperationGuard = createAccountAvatarOperationGuard();
+const authFlowTargetKey = "authentication-flow";
 const accountSecurityOperationGuards = Object.freeze({
   loginHistory: createAccountAvatarOperationGuard(),
   mfaStatus: createAccountAvatarOperationGuard(),
@@ -144,6 +148,7 @@ const accountSecurityOperationGuards = Object.freeze({
 });
 let workspaceNavigationGeneration = 0;
 let sharePageRequestGeneration = 0;
+let pageEditLockGeneration = 0;
 let pageCoverSaving = false;
 let pageCoverPositionDraft = null;
 let pageCoverDragPointerId = null;
@@ -178,6 +183,8 @@ const state = {
   searchSubmittedQuery: "",
   searchRequestId: 0,
   authMode: window.location.hash === "#signup" ? "register" : "login",
+  authOperationBusy: false,
+  accountDataOperationBusy: false,
   activeSlashBlockId: null,
   activeSlashIndex: 0,
   activeInlineBlockId: null,
@@ -1023,6 +1030,56 @@ function handleMobileSidebarKeydown(event) {
   }
 }
 
+function beginAuthFlowOperation() {
+  return authFlowOperationGuard.begin(authFlowTargetKey);
+}
+
+function isCurrentAuthFlowOperation(operation) {
+  return authFlowOperationGuard.isCurrent(operation, authFlowTargetKey);
+}
+
+function isCurrentAuthenticatedSessionOperation(operation) {
+  return Boolean(
+    state.authenticated
+      && authenticatedSessionOperationGuard.isCurrent(operation, getAccountAvatarTargetKey(state.user))
+  );
+}
+
+function syncAuthOperationControls() {
+  const busy = state.authOperationBusy;
+  elements.authSubmit.disabled = busy;
+  elements.username.disabled = busy;
+  elements.password.disabled = busy;
+  elements.name.disabled = busy;
+  elements.authSwitchLink.setAttribute("aria-disabled", String(busy));
+  elements.authSwitchLink.tabIndex = busy ? -1 : 0;
+  elements.mfaLoginTotpSubmit.disabled = busy;
+  elements.mfaLoginPasskey.disabled = busy || !isWebAuthnSupported();
+  elements.mfaLoginCancel.disabled = busy;
+}
+
+function setAuthOperationBusy(busy) {
+  state.authOperationBusy = Boolean(busy);
+  syncAuthOperationControls();
+}
+
+function isCurrentAccountDataOperation(operation) {
+  return accountDataOperationGuard.isCurrent(operation, getAccountAvatarTargetKey(state.user));
+}
+
+function syncAccountDataOperationControls() {
+  const busy = state.accountDataOperationBusy;
+  elements.accountDataExport.disabled = busy;
+  elements.accountDataInput.disabled = busy;
+  elements.accountDataImport.disabled = busy || !(elements.accountDataInput.files?.length);
+  elements.accountSettingsClose.disabled = busy;
+}
+
+function setAccountDataOperationBusy(busy) {
+  state.accountDataOperationBusy = Boolean(busy);
+  syncAccountDataOperationControls();
+}
+
 function setAuthMode(mode, updateHash = true) {
   state.authMode = mode === "register" ? "register" : "login";
   const isRegister = state.authMode === "register";
@@ -1044,6 +1101,7 @@ function setAuthMode(mode, updateHash = true) {
     const hash = isRegister ? "#signup" : "#login";
     if (window.location.hash !== hash) window.history.replaceState(null, "", hash);
   }
+  syncAuthOperationControls();
 }
 
 function clearStatus() {
@@ -1423,10 +1481,15 @@ function getResponseFilename(response, fallback) {
   return quotedMatch?.[1] || fallback;
 }
 
-async function downloadUserDataBackup() {
+async function downloadUserDataBackup({ operation = null } = {}) {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  const activeOperation = operation ?? accountDataOperationGuard.begin(targetKey);
+  if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
+
   return withPageEditLock(async () =>
     withWorkspacePersistenceTransition("data-export", async () => {
       const ownedPageIds = await fetchOwnedWorkspacePageIds();
+      if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
       // A successful server export is still incomplete when another tab has a
       // browser-only direct draft or Yjs recovery snapshot. Require every local
       // editor to finish synchronization before generating the archive.
@@ -1462,6 +1525,7 @@ async function downloadUserDataBackup() {
       if (BigInt(blob.size) !== BigInt(expectedLength)) {
         throw new Error(t("errors.invalidResponse"));
       }
+      if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = objectUrl;
@@ -1471,6 +1535,7 @@ async function downloadUserDataBackup() {
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      return { applied: true };
     })
   );
 }
@@ -1478,13 +1543,18 @@ async function downloadUserDataBackup() {
 function resetDataImportSelection() {
   elements.accountDataInput.value = "";
   elements.accountDataFileName.textContent = t("account.noBackupSelected");
-  elements.accountDataImport.disabled = true;
+  syncAccountDataOperationControls();
 }
 
-async function restoreUserDataBackup(file) {
+async function restoreUserDataBackup(file, { operation = null } = {}) {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  const activeOperation = operation ?? accountDataOperationGuard.begin(targetKey);
+  if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
+
   return withPageEditLock(async () =>
     withWorkspacePersistenceTransition("data-restore", async () => {
       const ownedPageIds = await fetchOwnedWorkspacePageIds();
+      if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
       // The server detects changes that reached SQL/Yjs persistence, but it cannot
       // see direct drafts or a full-document recovery snapshot that exists only in
       // another tab's localStorage. Recheck after every same-origin editor has had
@@ -1495,18 +1565,28 @@ async function restoreUserDataBackup(file) {
       const formData = new FormData();
       formData.append("backup", file, file.name);
       const data = await api("/api/data/import", { method: "POST", body: formData });
+      if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
+      if (getAccountAvatarTargetKey(data?.user) !== targetKey) {
+        throw new Error(t("errors.invalidResponse"));
+      }
       // Preserve durable drafts from every tab. Restored rows receive fresh edit versions,
       // so pre-restore drafts are recovered as explicit conflicts instead of overwriting data.
       state.user = data.user;
       applyUserTheme();
       await applyUserPreferredLanguage();
+      if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
       fillAccountSettings();
       resetSearchDialogState();
       state.searchQuery = "";
       state.activeTag = "";
-      await loadPages("", "");
+      const pages = await fetchAllPageSummaries();
+      if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
+      state.pages = pages;
+      state.allPages = pages;
+      renderPages();
       await showHome({ skipFlush: true });
-      return data.counts;
+      if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
+      return { applied: true, counts: data.counts };
     })
   );
 }
@@ -1555,6 +1635,14 @@ function renderShell() {
 
 function resetAuthenticationSessionState({ render = true } = {}) {
   workspaceNavigationGeneration += 1;
+  authFlowOperationGuard.invalidate();
+  authenticatedSessionOperationGuard.invalidate();
+  accountDataOperationGuard.invalidate();
+  pageEditLockGeneration += 1;
+  if (activePageTransitionLease) {
+    pageTransitionLock.release(activePageTransitionLease);
+    activePageTransitionLease = null;
+  }
   void destroyPageCollaboration({ flush: false });
   closeSharePageDialog({ restoreFocus: false });
   closeSearchDialog({ restoreFocus: false });
@@ -1564,7 +1652,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   // Input handlers persist durable per-account drafts before enqueueing writes. Keep those
   // records, but never carry live editor state or retry queues across an auth boundary.
   discardPendingPageEdits();
-  closeAccountSettings({ restoreFocus: false });
+  closeAccountSettings({ restoreFocus: false, force: true });
   closeEmojiPicker({ restoreFocus: false });
   closeNavigationContextMenu();
   closeBlockContextMenu();
@@ -1581,6 +1669,8 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   state.pageMode = pageModes.READ;
   state.pageModeChanging = false;
   state.pageEditLockDepth = 0;
+  state.authOperationBusy = false;
+  state.accountDataOperationBusy = false;
   state.workspaceView = "home";
   state.activeCollectionId = null;
   state.activeTag = "";
@@ -1600,6 +1690,8 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   state.accountProfileSaving = false;
   state.activeSecurityPanel = "settings";
   elements.searchInput.value = "";
+  syncAuthOperationControls();
+  syncAccountDataOperationControls();
 
   if (render) {
     renderShell();
@@ -2211,8 +2303,8 @@ function openAccountSettings(panel = "profile") {
   });
 }
 
-function closeAccountSettings({ restoreFocus = true } = {}) {
-  if (!state.accountSettingsOpen) return;
+function closeAccountSettings({ restoreFocus = true, force = false } = {}) {
+  if (!state.accountSettingsOpen || (state.accountDataOperationBusy && !force)) return;
   accountAvatarOperationGuard.invalidate();
   resetAccountSecurityOperationState({ clearSensitiveState: true });
   setAccountAvatarPreparing(false);
@@ -2323,9 +2415,8 @@ function resetMfaLogin({ focus = false } = {}) {
   elements.mfaLoginPanel.classList.add("hidden");
   elements.mfaLoginTotpForm.classList.remove("hidden");
   elements.mfaLoginPasskey.classList.remove("hidden");
-  elements.mfaLoginPasskey.disabled = false;
   elements.mfaLoginTotpForm.reset();
-  elements.mfaLoginTotpSubmit.disabled = false;
+  syncAuthOperationControls();
   if (focus) window.requestAnimationFrame(() => elements.username.focus());
 }
 
@@ -2342,7 +2433,7 @@ function showMfaLogin(data) {
   elements.mfaLoginPanel.classList.remove("hidden");
   elements.mfaLoginTotpForm.classList.toggle("hidden", !methods.totp);
   elements.mfaLoginPasskey.classList.toggle("hidden", !methods.passkey);
-  elements.mfaLoginPasskey.disabled = methods.passkey && !isWebAuthnSupported();
+  syncAuthOperationControls();
   elements.mfaLoginDivider.classList.toggle("hidden", !(methods.totp && methods.passkey));
   elements.mfaLoginTotpForm.reset();
   setStatus(methods.passkey && !methods.totp && !isWebAuthnSupported() ? t("mfa.passkeyUnsupported") : "", true);
@@ -2357,13 +2448,42 @@ async function completeAuthenticatedLogin(data) {
   resetAuthenticationSessionState({ render: false });
   setAuthenticated(true);
   state.user = data.user;
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey) {
+    const error = new Error(t("errors.invalidResponse"));
+    resetAuthenticationSessionState();
+    setStatus(error.message, true);
+    return { outcome: "invalid-response", error };
+  }
+  const operation = authenticatedSessionOperationGuard.begin(targetKey);
+  setAuthOperationBusy(true);
   elements.password.value = "";
   resetMfaLogin();
   applyUserTheme();
-  await applyUserPreferredLanguage();
-  renderShell();
-  await loadPages();
-  setStatus(t("status.loggedInAs", { username: state.user.username }));
+  try {
+    await applyUserPreferredLanguage();
+    if (!isCurrentAuthenticatedSessionOperation(operation)) return { outcome: "superseded" };
+
+    try {
+      const pages = await fetchAllPageSummaries();
+      if (!isCurrentAuthenticatedSessionOperation(operation)) return { outcome: "superseded" };
+      state.searchQuery = "";
+      state.activeTag = "";
+      state.pages = pages;
+      state.allPages = pages;
+      renderShell();
+      renderPages();
+      setStatus(t("status.loggedInAs", { username: state.user.username }));
+      return { outcome: "ready" };
+    } catch (error) {
+      if (!isCurrentAuthenticatedSessionOperation(operation)) return { outcome: "superseded" };
+      renderShell();
+      setStatus(error.message, true);
+      return { outcome: "workspace-unavailable", error };
+    }
+  } finally {
+    if (isCurrentAuthenticatedSessionOperation(operation)) setAuthOperationBusy(false);
+  }
 }
 
 async function logout() {
@@ -3959,22 +4079,25 @@ function discardBlockSave(blockId) {
 }
 
 function lockPageEdits() {
+  const generation = pageEditLockGeneration;
   state.pageEditLockDepth += 1;
   syncPageModeUi();
+  return generation;
 }
 
-function unlockPageEdits() {
+function unlockPageEdits(generation) {
+  if (generation !== pageEditLockGeneration) return;
   state.pageEditLockDepth = Math.max(0, state.pageEditLockDepth - 1);
   syncPageModeUi();
 }
 
 async function withPageEditLock(action, { flush = true } = {}) {
-  lockPageEdits();
+  const lockGeneration = lockPageEdits();
   try {
     if (flush) await flushPendingPageEdits({ allowLocked: true });
     return await action();
   } finally {
-    unlockPageEdits();
+    unlockPageEdits(lockGeneration);
   }
 }
 
@@ -10560,22 +10683,40 @@ async function boot() {
   renderLoginHistory();
   setAuthMode(state.authMode, false);
 
+  const operation = beginAuthFlowOperation();
+  const isCurrent = () => isCurrentAuthFlowOperation(operation);
   const result = await restoreSessionAtBoot(state, {
     loadUser: loadMe,
+    isCurrent,
     initializeAuthenticatedUi: async () => {
+      if (!isCurrent()) return;
       applyUserTheme();
       await applyUserPreferredLanguage();
-      renderShell();
     },
-    loadWorkspace: loadPages
+    loadWorkspace: async () => {
+      const pages = await fetchAllPageSummaries();
+      if (!isCurrent()) return;
+      state.searchQuery = "";
+      state.activeTag = "";
+      state.pages = pages;
+      state.allPages = pages;
+    }
   });
 
+  if (!isCurrent() || result.outcome === "superseded") {
+    renderShell();
+    return;
+  }
+
   if (result.outcome === "ready") {
+    renderShell();
+    renderPages();
     setStatus(t("status.ready"));
     return;
   }
 
   if (result.outcome === "workspace-unavailable") {
+    renderShell();
     setStatus(result.error?.message ?? t("errors.unknown"), true);
     return;
   }
@@ -10839,37 +10980,46 @@ elements.accountLoginHistoryRefresh.addEventListener("click", () => {
 });
 
 elements.accountDataExport.addEventListener("click", async () => {
-  elements.accountDataExport.disabled = true;
+  if (state.accountDataOperationBusy) return;
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey) return;
+  const operation = accountDataOperationGuard.begin(targetKey);
+  setAccountDataOperationBusy(true);
   try {
     setAccountMessage(t("account.exportingData"));
-    await downloadUserDataBackup();
-    setAccountMessage(t("account.exportReady"));
+    const result = await downloadUserDataBackup({ operation });
+    if (result?.applied && isCurrentAccountDataOperation(operation)) {
+      setAccountMessage(t("account.exportReady"));
+    }
   } catch (error) {
-    setAccountMessage(error.message, true);
+    if (isCurrentAccountDataOperation(operation)) setAccountMessage(error.message, true);
   } finally {
-    elements.accountDataExport.disabled = false;
+    if (isCurrentAccountDataOperation(operation)) setAccountDataOperationBusy(false);
   }
 });
 
 elements.accountDataInput.addEventListener("change", () => {
   const [file] = elements.accountDataInput.files ?? [];
   elements.accountDataFileName.textContent = file?.name || t("account.noBackupSelected");
-  elements.accountDataImport.disabled = !file;
+  syncAccountDataOperationControls();
   setAccountMessage();
 });
 
 elements.accountDataImport.addEventListener("click", async () => {
+  if (state.accountDataOperationBusy) return;
   const [file] = elements.accountDataInput.files ?? [];
-  if (!file) return;
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!file || !targetKey) return;
   if (!window.confirm(t("account.importConfirm"))) return;
 
-  elements.accountDataExport.disabled = true;
-  elements.accountDataInput.disabled = true;
-  elements.accountDataImport.disabled = true;
+  const operation = accountDataOperationGuard.begin(targetKey);
+  setAccountDataOperationBusy(true);
   try {
     setAccountMessage(t("account.importingData"));
-    const counts = await restoreUserDataBackup(file);
+    const result = await restoreUserDataBackup(file, { operation });
+    if (!result?.applied || !isCurrentAccountDataOperation(operation)) return;
     resetDataImportSelection();
+    const counts = result.counts;
     const message = t("account.importComplete", {
       pages: formatNumber(counts.pages),
       blocks: formatNumber(counts.blocks),
@@ -10879,11 +11029,9 @@ elements.accountDataImport.addEventListener("click", async () => {
     setAccountMessage(message);
     setStatus(message);
   } catch (error) {
-    setAccountMessage(error.message, true);
+    if (isCurrentAccountDataOperation(operation)) setAccountMessage(error.message, true);
   } finally {
-    elements.accountDataExport.disabled = false;
-    elements.accountDataInput.disabled = false;
-    elements.accountDataImport.disabled = !(elements.accountDataInput.files?.length);
+    if (isCurrentAccountDataOperation(operation)) setAccountDataOperationBusy(false);
   }
 });
 
@@ -11182,76 +11330,99 @@ elements.accountPasskeyRegisterForm.addEventListener("submit", async (event) => 
 
 elements.mfaLoginTotpForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!state.mfaLogin?.token) {
+  if (state.authOperationBusy) return;
+  const mfaToken = state.mfaLogin?.token;
+  if (!mfaToken) {
     resetMfaLogin({ focus: true });
     setStatus(t("mfa.sessionExpired"), true);
     return;
   }
-  elements.mfaLoginTotpSubmit.disabled = true;
+  const operation = beginAuthFlowOperation();
+  setAuthOperationBusy(true);
   try {
     setStatus(t("mfa.verifying"));
     const data = await api("/api/auth/mfa/login/totp", {
       method: "POST",
       body: {
-        mfaToken: state.mfaLogin.token,
+        mfaToken,
         code: elements.mfaLoginCode.value.trim()
       },
       skipAuthReset: true
     });
+    if (!isCurrentAuthFlowOperation(operation) || state.mfaLogin?.token !== mfaToken) return;
     await completeAuthenticatedLogin(data);
   } catch (error) {
+    if (!isCurrentAuthFlowOperation(operation)) return;
     setStatus(error.message, true);
     elements.mfaLoginCode.select();
   } finally {
-    elements.mfaLoginTotpSubmit.disabled = false;
+    if (isCurrentAuthFlowOperation(operation)) setAuthOperationBusy(false);
   }
 });
 
 elements.mfaLoginPasskey.addEventListener("click", async () => {
-  if (!state.mfaLogin?.token) {
+  if (state.authOperationBusy) return;
+  const mfaToken = state.mfaLogin?.token;
+  if (!mfaToken) {
     resetMfaLogin({ focus: true });
     setStatus(t("mfa.sessionExpired"), true);
     return;
   }
-  elements.mfaLoginPasskey.disabled = true;
+  const operation = beginAuthFlowOperation();
+  setAuthOperationBusy(true);
   try {
     setStatus(t("mfa.passkeyAuthenticating"));
     const optionsData = await api("/api/auth/mfa/login/passkey/options", {
       method: "POST",
-      body: { mfaToken: state.mfaLogin.token },
+      body: { mfaToken },
       skipAuthReset: true
     });
+    if (!isCurrentAuthFlowOperation(operation) || state.mfaLogin?.token !== mfaToken) return;
     const response = await getWebAuthnCredential(optionsData.options);
+    if (!isCurrentAuthFlowOperation(operation) || state.mfaLogin?.token !== mfaToken) return;
     const data = await api("/api/auth/mfa/login/passkey/verify", {
       method: "POST",
       body: {
-        mfaToken: state.mfaLogin.token,
+        mfaToken,
         challengeToken: optionsData.challengeToken,
         response
       },
       skipAuthReset: true
     });
+    if (!isCurrentAuthFlowOperation(operation) || state.mfaLogin?.token !== mfaToken) return;
     await completeAuthenticatedLogin(data);
   } catch (error) {
-    setStatus(normalizeWebAuthnError(error).message, true);
+    if (isCurrentAuthFlowOperation(operation)) {
+      setStatus(normalizeWebAuthnError(error).message, true);
+    }
   } finally {
-    elements.mfaLoginPasskey.disabled = !isWebAuthnSupported();
+    if (isCurrentAuthFlowOperation(operation)) setAuthOperationBusy(false);
   }
 });
 
 elements.mfaLoginCancel.addEventListener("click", () => {
+  if (state.authOperationBusy) return;
+  authFlowOperationGuard.invalidate();
   resetMfaLogin({ focus: true });
   setStatus(t("status.loginPrompt"));
 });
 
 elements.authSwitchLink.addEventListener("click", (event) => {
   event.preventDefault();
+  if (state.authOperationBusy) return;
+  authFlowOperationGuard.invalidate();
   setAuthMode(state.authMode === "register" ? "login" : "register");
   setStatus(t(state.authMode === "register" ? "status.registerPrompt" : "status.loginPrompt"));
   elements.username.focus();
 });
 
 window.addEventListener("hashchange", () => {
+  if (state.authOperationBusy) {
+    const expectedHash = state.authMode === "register" ? "#signup" : "#login";
+    if (window.location.hash !== expectedHash) window.history.replaceState(null, "", expectedHash);
+    return;
+  }
+  authFlowOperationGuard.invalidate();
   if (state.mfaLogin) resetMfaLogin();
   setAuthMode(window.location.hash === "#signup" ? "register" : "login", false);
 });
@@ -11272,9 +11443,7 @@ function refreshLocalizedUi() {
     if (state.activeSecurityPanel === "history") renderLoginHistory();
     else renderMfaSettings();
   }
-  if (state.mfaLogin?.methods?.passkey) {
-    elements.mfaLoginPasskey.disabled = !isWebAuthnSupported();
-  }
+  if (state.mfaLogin?.methods?.passkey) syncAuthOperationControls();
   if (!elements.emojiPickerLayer.classList.contains("hidden")) renderEmojiPicker();
 
   if (!elements.slashMenu.classList.contains("hidden") && state.activeSlashBlockId) {
@@ -11353,6 +11522,8 @@ window.addEventListener("storage", (event) => {
 
 elements.authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (state.authOperationBusy) return;
+  const operation = beginAuthFlowOperation();
   const mode = state.authMode;
   const body = {
     username: elements.username.value.trim(),
@@ -11363,9 +11534,11 @@ elements.authForm.addEventListener("submit", async (event) => {
     body.preferredLanguage = getLanguage();
   }
 
+  setAuthOperationBusy(true);
   try {
     setStatus(t(mode === "login" ? "status.loggingIn" : "status.registering"));
     const data = await api(`/api/auth/${mode}`, { method: "POST", body });
+    if (!isCurrentAuthFlowOperation(operation)) return;
     if (mode === "register") {
       setAuthMode("login");
       elements.username.value = body.username;
@@ -11379,7 +11552,9 @@ elements.authForm.addEventListener("submit", async (event) => {
     }
     await completeAuthenticatedLogin(data);
   } catch (error) {
-    setStatus(error.message, true);
+    if (isCurrentAuthFlowOperation(operation)) setStatus(error.message, true);
+  } finally {
+    if (isCurrentAuthFlowOperation(operation)) setAuthOperationBusy(false);
   }
 });
 

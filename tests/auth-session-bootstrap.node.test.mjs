@@ -12,10 +12,15 @@ const appSource = readFileSync(new URL("../public/app.js", import.meta.url), "ut
 
 test("the browser boot path delegates session restoration before loading pages", () => {
   assert.match(appSource, /import \{ restoreSessionAtBoot \} from "\.\/session-bootstrap\.js";/);
-  assert.match(
-    appSource,
-    /restoreSessionAtBoot\(state, \{[\s\S]*loadUser: loadMe,[\s\S]*initializeAuthenticatedUi:[\s\S]*loadWorkspace: loadPages[\s\S]*\}\)/
-  );
+  const bootStart = appSource.indexOf("async function boot()");
+  const bootEnd = appSource.indexOf("async function openHomeFromBrand", bootStart);
+  assert.ok(bootStart >= 0 && bootEnd > bootStart);
+  const bootSource = appSource.slice(bootStart, bootEnd);
+  assert.match(bootSource, /const operation = beginAuthFlowOperation\(\);/);
+  assert.match(bootSource, /const isCurrent = \(\) => isCurrentAuthFlowOperation\(operation\);/);
+  assert.match(bootSource, /restoreSessionAtBoot\(state, \{[\s\S]*loadUser: loadMe,[\s\S]*isCurrent,[\s\S]*initializeAuthenticatedUi:/);
+  assert.match(bootSource, /loadWorkspace: async \(\) => \{[\s\S]*fetchAllPageSummaries\(\)[\s\S]*if \(!isCurrent\(\)\) return;/);
+  assert.match(bootSource, /result\.outcome === "superseded"[\s\S]*renderShell\(\);/);
   assert.doesNotMatch(
     appSource,
     /await loadMe\(\);[\s\S]{0,200}renderShell\(\);[\s\S]{0,100}await loadPages\(\)/
@@ -93,6 +98,83 @@ test("failed authenticated UI initialization rolls back partial state", async ()
 
   assert.equal(result.outcome, "session-unavailable");
   assert.equal(result.error, initializationError);
+  assert.equal(state.authenticated, false);
+  assert.equal(state.user, null);
+});
+
+test("a boot restoration superseded before commit leaves current state untouched", async () => {
+  const existingUser = { id: "usr_existing" };
+  const state = { authenticated: true, user: existingUser };
+  let current = true;
+
+  const result = await restoreSessionAtBoot(state, {
+    loadUser: async () => {
+      current = false;
+      return { id: "usr_boot" };
+    },
+    initializeAuthenticatedUi: async () => assert.fail("superseded boot must not initialize UI"),
+    loadWorkspace: async () => assert.fail("superseded boot must not load workspace"),
+    isCurrent: () => current
+  });
+
+  assert.equal(result.outcome, "superseded");
+  assert.equal(state.authenticated, true);
+  assert.equal(state.user, existingUser);
+});
+
+test("a boot restoration superseded during UI initialization rolls back only its own user", async () => {
+  const state = createState();
+  let current = true;
+
+  const result = await restoreSessionAtBoot(state, {
+    loadUser: async () => ({ id: "usr_boot" }),
+    initializeAuthenticatedUi: async () => {
+      current = false;
+    },
+    loadWorkspace: async () => assert.fail("superseded boot must not load workspace"),
+    isCurrent: () => current
+  });
+
+  assert.equal(result.outcome, "superseded");
+  assert.equal(state.authenticated, false);
+  assert.equal(state.user, null);
+});
+
+test("a superseded boot never rolls back a newer login that already committed", async () => {
+  const state = createState();
+  const newerUser = { id: "usr_newer" };
+  let current = true;
+
+  const result = await restoreSessionAtBoot(state, {
+    loadUser: async () => ({ id: "usr_boot" }),
+    initializeAuthenticatedUi: async () => {
+      state.authenticated = true;
+      state.user = newerUser;
+      current = false;
+    },
+    loadWorkspace: async () => assert.fail("superseded boot must not load workspace"),
+    isCurrent: () => current
+  });
+
+  assert.equal(result.outcome, "superseded");
+  assert.equal(state.authenticated, true);
+  assert.equal(state.user, newerUser);
+});
+
+test("a boot restoration superseded during workspace load removes its partial session", async () => {
+  const state = createState();
+  let current = true;
+
+  const result = await restoreSessionAtBoot(state, {
+    loadUser: async () => ({ id: "usr_boot" }),
+    initializeAuthenticatedUi: async () => {},
+    loadWorkspace: async () => {
+      current = false;
+    },
+    isCurrent: () => current
+  });
+
+  assert.equal(result.outcome, "superseded");
   assert.equal(state.authenticated, false);
   assert.equal(state.user, null);
 });

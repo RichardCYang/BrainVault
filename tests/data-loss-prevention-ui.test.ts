@@ -56,9 +56,9 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain('if (normalizedMode === pageModes.READ) await flushPendingPageEdits({ allowLocked: true });');
     expect(client).toContain('async function openPage(pageId, { skipFlush = false } = {})');
     expect(client).toContain('return withPageEditLock(\n    async () => {');
-    expect(client).toContain("async function downloadUserDataBackup()");
+    expect(client).toContain("async function downloadUserDataBackup(");
     expect(client).toContain('withWorkspacePersistenceTransition("data-export"');
-    expect(client).toContain("async function restoreUserDataBackup(file)");
+    expect(client).toContain("async function restoreUserDataBackup(file,");
     expect(client).toContain('withWorkspacePersistenceTransition("data-restore"');
     expect(client).toContain('applyPageContentVersion(task.pageId, data.pageContentVersion)');
     expect(client).toContain('Math.max(Number(page.contentVersion ?? 1), version)');
@@ -159,7 +159,7 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("decodeCollaborationRecoveryRecords(group.records)");
     expect(client).toContain('heading.textContent = t("status.orphanedCollaborationRecovery")');
 
-    const exportStart = client.indexOf("async function downloadUserDataBackup()");
+    const exportStart = client.indexOf("async function downloadUserDataBackup(");
     const exportEnd = client.indexOf("function resetDataImportSelection", exportStart);
     const exportBody = client.slice(exportStart, exportEnd);
     expect(exportBody).toContain('withWorkspacePersistenceTransition("data-export"');
@@ -184,7 +184,7 @@ describe("Data-loss prevention integration", () => {
       deleteBody.indexOf('await api(`/api/pages/${target.id}?permanent=true`')
     );
 
-    const restoreStart = client.indexOf("async function restoreUserDataBackup(file)");
+    const restoreStart = client.indexOf("async function restoreUserDataBackup(file,");
     const restoreEnd = client.indexOf("function getUserInitials", restoreStart);
     const restoreBody = client.slice(restoreStart, restoreEnd);
     expect(restoreBody).toContain('withWorkspacePersistenceTransition("data-restore"');
@@ -306,7 +306,7 @@ describe("Data-loss prevention integration", () => {
   });
 
   it("preserves durable drafts from every tab after a backup restore", () => {
-    const restoreStart = client.indexOf("async function restoreUserDataBackup(file)");
+    const restoreStart = client.indexOf("async function restoreUserDataBackup(file,");
     const restoreEnd = client.indexOf("function getUserInitials", restoreStart);
     const restoreBody = client.slice(restoreStart, restoreEnd);
 

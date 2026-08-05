@@ -879,7 +879,7 @@ assertBefore(
   "permanent page deletion Yjs recovery"
 );
 
-const restore = section(client, "async function restoreUserDataBackup(file)", "function getUserInitials");
+const restore = section(client, "async function restoreUserDataBackup(file,", "function getUserInitials");
 assertBefore(
   restore,
   "assertNoPendingLocalPageDraftsForPages(ownedPageIds",

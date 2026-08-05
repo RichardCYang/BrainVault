@@ -64,4 +64,5 @@ docs/<topic>/<YYYY-MM-DD>/<document>
 - [Account profile mutation ordering and preference race review](data-loss/2026-08-05/account-profile-mutation-order.md)
 - [Account profile authentication-boundary queue isolation review](data-loss/2026-08-05/account-profile-auth-boundary-queue-isolation.md)
 - [Account security, share-dialog, and workspace-navigation request-scope review](data-loss/2026-08-05/account-security-and-ui-request-scope.md)
+- [Authentication, account-data, and editor-lock boundary review](data-loss/2026-08-05/auth-data-and-lock-boundary-review.md)
 

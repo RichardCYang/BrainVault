@@ -57,6 +57,7 @@
     "reproduce:account-preference-race": "node scripts/reproduce-account-preference-race.mjs",
     "reproduce:account-profile-auth-boundary-stall": "node scripts/reproduce-account-profile-auth-boundary-stall.mjs",
     "reproduce:account-security-auth-boundary": "node scripts/reproduce-account-security-auth-boundary.mjs",
+    "reproduce:auth-data-lock-boundary": "node scripts/reproduce-auth-data-lock-boundary-races.mjs",
     "reproduce:share-dialog-request-race": "node scripts/reproduce-share-dialog-request-race.mjs",
     "reproduce:workspace-navigation-race": "node scripts/reproduce-workspace-navigation-race.mjs"
   },
