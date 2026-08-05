@@ -45,6 +45,8 @@
     "reproduce:backup-stream-integrity-loss": "node --experimental-strip-types scripts/reproduce-backup-stream-integrity-loss.mjs",
     "reproduce:backup-transport-truncation": "node --experimental-strip-types scripts/reproduce-backup-transport-truncation.mjs",
     "reproduce:page-cover-backup-manifest": "node --experimental-strip-types scripts/reproduce-page-cover-backup-manifest-loss.mjs",
+    "reproduce:page-cover-operation-scope": "node scripts/reproduce-page-cover-operation-scope.mjs",
+    "reproduce:page-cover-pdf-layout": "node scripts/reproduce-page-cover-pdf-layout-regression.mjs",
     "reproduce:backup-share-loss": "node scripts/reproduce-backup-share-loss.mjs",
     "reproduce:backup-share-identity-rebinding": "node --experimental-strip-types scripts/reproduce-backup-share-identity-rebinding.mjs",
     "reproduce:archived-share-backup-loss": "node --experimental-strip-types scripts/reproduce-archived-share-backup-loss.mjs",

@@ -66,6 +66,7 @@ For database permissions, opt-in demo data, alternative environment setup, and p
 | [Collaboration verification](docs/data-loss/2026-07-29/collaboration-verification.md) | Delivery checks, integrity-proof scope, and reproducible deployment validation |
 | [Data-loss and integrity reports](docs/README.md#data-loss-and-integrity-reports) | Dated audits, reproductions, corrections, and verification evidence |
 | [Page-cover integrity review](docs/data-loss/2026-08-04/page-cover-integrity-review.md) | Backup v2, async race, preview, asset-loading, and regression corrections |
+| [Page-cover follow-up review](docs/data-loss/2026-08-05/page-cover-interaction-and-pdf-regression-review.md) | Dialog cancellation, cross-page draft scope, PDF measurement, and restore ambiguity |
 | [Configuration](docs/configuration/2026-07-28/configuration.md) | Environment variables and runtime configuration |
 | [HTTPS deployment](deploy/README.md) | Direct Posh-ACME TLS plus Caddy, Synology DSM, NGINX, and Nginx Proxy Manager setup |
 | [Security](docs/security/2026-07-30/security.md) | MFA, production secrets, attachment safety, and security defaults |
@@ -83,6 +84,8 @@ npm run build     # Compile TypeScript
 npm run reproduce:cross-instance-loss # Reproduce the stale-room compaction loss and fixed behavior
 npm run reproduce:attachment-position-loss # Reproduce stale-SQL attachment position loss and the fixed merge
 npm run reproduce:page-cover-backup-manifest # Reproduce inline-cover manifest exhaustion and the v2 fix
+npm run reproduce:page-cover-operation-scope # Reproduce picker-cancel and cross-page draft races
+npm run reproduce:page-cover-pdf-layout # Reproduce full-bleed PDF measurement regression
 npm run verify:collaboration # Check collaboration wiring, protocol behavior, and source syntax
 npm run verify:data-loss # Check persistence and recovery integrity guards
 npm start         # Run the compiled server

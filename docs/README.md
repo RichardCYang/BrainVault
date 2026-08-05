@@ -57,3 +57,7 @@ docs/<topic>/<YYYY-MM-DD>/<document>
 
 - [Page-cover backup, race, and regression integrity review](data-loss/2026-08-04/page-cover-integrity-review.md)
 
+### 2026-08-05
+
+- [Page-cover interaction, PDF, and restore-ambiguity review](data-loss/2026-08-05/page-cover-interaction-and-pdf-regression-review.md)
+

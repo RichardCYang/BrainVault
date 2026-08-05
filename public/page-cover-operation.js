@@ -18,3 +18,7 @@ export function createPageCoverOperationGuard() {
     }
   });
 }
+
+export function isPageCoverPositionDraftForPage(draft, pageId) {
+  return Boolean(draft && pageId && draft.pageId === pageId);
+}

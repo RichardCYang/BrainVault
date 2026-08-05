@@ -53,6 +53,7 @@ test("backup v2 exports, authenticates, and restores page-cover ZIP entries whil
   assert.match(transfer, /for \(const item of pageCoverFiles\) \{[\s\S]*?writer\.add/);
   assert.match(transfer, /\.\.\.\(manifest\.pageCovers \?\? \[\]\)\.map\(\(item\) => item\.path\)/);
   assert.match(transfer, /inspectCustomCoverBytes\(pageCover\.mimeType, await readFile\(outputPath\)\)/);
+  assert.match(transfer, /if \(page\.cover_url !== null\) \{[\s\S]*?Page cover is declared both inline and as a ZIP entry/);
   assert.match(transfer, /createCustomCoverDataUrl\([\s\S]*?await readFile\(path\.join\(stagedPageCoverDir, page\.id\)\)/);
 });
 
@@ -70,4 +71,7 @@ test("standalone reproduction proves the vulnerable and corrected backup states"
   assert.equal(result.fixed.fitsManifestLimit, true);
   assert.equal(result.fixed.coverBytesStoredAsZipEntries, true);
   assert.equal(result.fixed.legacyVersionOneImportRetained, true);
+  assert.equal(result.vulnerable.ambiguousBuiltInAndZipCoverRejected, false);
+  assert.equal(result.vulnerable.ambiguousBuiltInCoverSilentlyOverridden, true);
+  assert.equal(result.fixed.ambiguousBuiltInAndZipCoverRejected, true);
 });

@@ -63,7 +63,10 @@ import {
   updateYouTubeVideoPreview
 } from "./youtube-block.js";
 import { restoreSessionAtBoot } from "./session-bootstrap.js";
-import { createPageCoverOperationGuard } from "./page-cover-operation.js";
+import {
+  createPageCoverOperationGuard,
+  isPageCoverPositionDraftForPage
+} from "./page-cover-operation.js";
 
 const rootParentKey = "__root__";
 const defaultCollectionKey = "__default_collection__";
@@ -9288,9 +9291,9 @@ async function exportCurrentPageToPdf() {
     restoreComputedStyles = freezePdfExportComputedStyles();
 
     await waitForPdfExportAssets();
+    document.body.classList.add("pdf-export-mode");
     await waitForAnimationFrame();
     configurePdfExportLayout();
-    document.body.classList.add("pdf-export-mode");
     document.title = `${sanitizePdfDocumentTitle(elements.pageTitle.value)} - BrainVault`;
     await waitForAnimationFrame();
 
@@ -9323,7 +9326,7 @@ function setPageCoverPreviewPosition(x, y) {
   elements.pageCoverPositionY.value = String(positionY);
   elements.pageCoverPositionXOutput.value = `${positionX}%`;
   elements.pageCoverPositionYOutput.value = `${positionY}%`;
-  if (pageCoverPositionDraft) {
+  if (isPageCoverPositionDraftForPage(pageCoverPositionDraft, state.selectedPage?.id)) {
     pageCoverPositionDraft.x = positionX;
     pageCoverPositionDraft.y = positionY;
   }
@@ -9345,6 +9348,7 @@ function closePageCoverPositionEditor({ restore = false } = {}) {
 
 function syncPageCoverControls() {
   const page = state.workspaceView === "page" ? state.selectedPage : null;
+  const hasCurrentPositionDraft = isPageCoverPositionDraftForPage(pageCoverPositionDraft, page?.id);
   const hasCover = Boolean(page?.coverUrl);
   const canEditCover = Boolean(
     page && hasCover && !isPageReadOnly() && isPageOwner(page) && !isPageInteractionLocked() && !pageCoverSaving
@@ -9369,10 +9373,15 @@ function syncPageCoverControls() {
   elements.pageCoverPositionX.disabled = !canEditCover;
   elements.pageCoverPositionY.disabled = !canEditCover;
 
-  if (!canEditCover && pageCoverPositionDraft) closePageCoverPositionEditor({ restore: true });
+  if (pageCoverPositionDraft && (!canEditCover || !hasCurrentPositionDraft)) {
+    closePageCoverPositionEditor({ restore: true });
+  }
 }
 
 function renderPageCover(page) {
+  if (pageCoverPositionDraft && !isPageCoverPositionDraftForPage(pageCoverPositionDraft, page?.id)) {
+    closePageCoverPositionEditor();
+  }
   const hasCover = Boolean(page?.coverUrl);
   elements.pageCover.classList.toggle("hidden", !hasCover);
   if (!hasCover) {
@@ -11246,6 +11255,10 @@ document.addEventListener("keydown", (event) => {
 elements.pageCoverAddButton.addEventListener("click", openPageCoverDialog);
 elements.pageCoverChangeButton.addEventListener("click", openPageCoverDialog);
 elements.pageCoverDialogClose.addEventListener("click", closePageCoverDialog);
+elements.pageCoverDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closePageCoverDialog();
+});
 elements.pageCoverDialog.addEventListener("click", (event) => {
   if (event.target === elements.pageCoverDialog) closePageCoverDialog();
 });
@@ -11336,7 +11349,12 @@ elements.pageCoverPositionCancel.addEventListener("click", () => {
 
 elements.pageCoverPositionSave.addEventListener("click", async () => {
   if (!pageCoverPositionDraft) return;
-  const { x, y } = pageCoverPositionDraft;
+  const draft = pageCoverPositionDraft;
+  if (!isPageCoverPositionDraftForPage(draft, state.selectedPage?.id)) {
+    closePageCoverPositionEditor();
+    return;
+  }
+  const { x, y } = draft;
   closePageCoverPositionEditor();
   try {
     await persistPageCover(

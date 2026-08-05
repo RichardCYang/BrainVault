@@ -540,7 +540,7 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
     if (pageCover.path !== `page-covers/${pageCover.pageId}`) {
       invalidBackup(`Page cover path is invalid: ${pageCover.path}`);
     }
-    if (isCustomPageCoverValue(page.cover_url)) {
+    if (page.cover_url !== null) {
       invalidBackup(`Page cover is declared both inline and as a ZIP entry: ${pageCover.pageId}`);
     }
   }

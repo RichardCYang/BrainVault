@@ -62,16 +62,26 @@ const pageCovers = externalPages.map((item) => ({
 const fixedManifest = manifest(2, externalPages, pageCovers);
 const fixedBytes = measureJsonUtf8BytesWithinLimit(fixedManifest, manifestLimit);
 
+const inlineBuiltInCover = "/img/default_cover/coverimg1.png";
+const ambiguousPage = page("page-ambiguous", inlineBuiltInCover);
+const hasZipEntry = true;
+const vulnerableRejectsAmbiguousCover = ambiguousPage.cover_url?.startsWith("data:") ?? false;
+const vulnerableRestoredCover = hasZipEntry ? "custom ZIP cover bytes" : ambiguousPage.cover_url;
+const fixedRejectsAmbiguousCover = hasZipEntry && ambiguousPage.cover_url !== null;
+
 console.log(JSON.stringify({
   inputs: { pageCount, coverBytes, manifestLimit },
   vulnerable: {
     manifestBytes: vulnerableBytes,
-    exceedsManifestLimit: vulnerableBytes > manifestLimit
+    exceedsManifestLimit: vulnerableBytes > manifestLimit,
+    ambiguousBuiltInAndZipCoverRejected: vulnerableRejectsAmbiguousCover,
+    ambiguousBuiltInCoverSilentlyOverridden: vulnerableRestoredCover !== inlineBuiltInCover
   },
   fixed: {
     manifestBytes: fixedBytes,
     fitsManifestLimit: fixedBytes !== null,
     coverBytesStoredAsZipEntries: true,
-    legacyVersionOneImportRetained: true
+    legacyVersionOneImportRetained: true,
+    ambiguousBuiltInAndZipCoverRejected: fixedRejectsAmbiguousCover
   }
 }, null, 2));
