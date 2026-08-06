@@ -9733,6 +9733,26 @@ async function appendBlock(afterRow = null) {
   setStatus(t("status.blockAppended"));
 }
 
+async function refreshSelectedPageAfterBlockDeletion(pageId, { focusBlockId = null } = {}) {
+  state.pendingFocusBlockId = focusBlockId;
+  if (isCollaborativePage()) renderSelectedPage();
+  else await openPage(pageId, { skipFlush: true });
+
+  const needsStarterBlock = Boolean(
+    state.selectedPage?.id === pageId
+    && state.workspaceView === "page"
+    && !isPageReadOnly()
+    && flattenBlocks(state.selectedPage.blocks).length === 0
+  );
+  if (!needsStarterBlock) return;
+
+  const starter = await createEmptyBlock(pageId, { allowLocked: true });
+  if (!starter) return;
+  state.pendingFocusBlockId = starter.block.id;
+  if (isCollaborativePage()) renderSelectedPage();
+  else await openPage(pageId, { skipFlush: true });
+}
+
 async function deleteEmptyBlock(row) {
   if (!requireWritablePage() || !row?.dataset.blockId || row.dataset.deleting === "true") return;
   if (row.dataset.draftConflict === "true") {
@@ -9754,7 +9774,7 @@ async function deleteEmptyBlock(row) {
     const groupRows = getBlockGroupRows(row);
     const previousBlockId = rows[rowIndex - 1]?.dataset.blockId ?? null;
     const nextBlockId = rows[rowIndex + groupRows.length]?.dataset.blockId ?? null;
-    let focusBlockId = previousBlockId ?? childIds[0] ?? nextBlockId;
+    const focusBlockId = previousBlockId ?? childIds[0] ?? nextBlockId;
 
     row.dataset.deleting = "true";
     discardBlockSave(blockId);
@@ -9767,15 +9787,7 @@ async function deleteEmptyBlock(row) {
       preserveChildren: true
     });
 
-    if (!focusBlockId) {
-      const starter = await createEmptyBlock(state.selectedPage.id, { allowLocked: true });
-      if (!starter) return;
-      focusBlockId = starter.block.id;
-    }
-
-    state.pendingFocusBlockId = focusBlockId;
-    if (isCollaborativePage()) renderSelectedPage();
-    else await openPage(state.selectedPage.id, { skipFlush: true });
+    await refreshSelectedPageAfterBlockDeletion(state.selectedPage.id, { focusBlockId });
     setStatus(t("status.emptyBlockDeleted"));
   });
 }
@@ -12959,8 +12971,7 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
           row.dataset.deleting = "false";
           throw error;
         }
-        if (isCollaborativePage()) renderSelectedPage();
-        else await openPage(pageId, { skipFlush: true });
+        await refreshSelectedPageAfterBlockDeletion(pageId);
         setStatus(t("status.blockDeleted"));
       });
     }
