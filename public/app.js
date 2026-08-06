@@ -10058,6 +10058,7 @@ function renderPageCover(page) {
     closePageCoverPositionEditor();
   }
   const hasCover = Boolean(page?.coverUrl);
+  elements.pageViewHeader.classList.toggle("has-page-cover", hasCover);
   elements.pageCover.classList.toggle("hidden", !hasCover);
   if (!hasCover) {
     elements.pageCoverImage.removeAttribute("src");

@@ -15535,6 +15535,10 @@ html[data-theme="dark"] .page-cover-custom-row {
 
 /* Full-bleed page cover layout */
 @media screen {
+  body.app-mode:not(.pdf-export-mode) .page-view-header.has-page-cover {
+    margin-bottom: 0;
+  }
+
   body.app-mode:not(.pdf-export-mode) .page-view {
     width: 100%;
   }

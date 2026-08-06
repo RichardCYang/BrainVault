@@ -73,7 +73,9 @@ test("the page UI supports adding, replacing, removing, and repositioning covers
   assert.match(app, /setPointerCapture\(event\.pointerId\)/);
   assert.match(app, /hydratePageCoverPreviews\(\)/);
   assert.match(app, /createPageCoverOperationGuard\(\)/);
+  assert.match(app, /elements\.pageViewHeader\.classList\.toggle\("has-page-cover", hasCover\);/);
 
+  assert.match(styles, /body\.app-mode:not\(\.pdf-export-mode\) \.page-view-header\.has-page-cover\s*\{[\s\S]*?margin-bottom:\s*0;/);
   assert.match(styles, /\.page-cover-image\s*\{[\s\S]*?object-fit:\s*cover;[\s\S]*?object-position:\s*50% 50%;/);
   assert.match(styles, /\.page-cover\.is-repositioning \.page-cover-image/);
   assert.match(styles, /body\.app-mode:not\(\.pdf-export-mode\) \.page-view\s*\{[\s\S]*?width:\s*100%;/);
