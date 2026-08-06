@@ -291,7 +291,7 @@ class PageCollaborationSession {
     this.reconnectTimer = null;
     this.materializeTimer = null;
     this.awarenessTimer = null;
-    this.lastAwareness = { blockId: null, field: null, selection: null };
+    this.lastAwareness = { blockId: null, field: null, control: null, selection: null };
     this.presence = new Map();
     this.lastUpdateId = 0;
     this.pendingLocalUpdates = 0;
@@ -752,6 +752,7 @@ class PageCollaborationSession {
     this.lastAwareness = {
       blockId: typeof state?.blockId === "string" ? state.blockId.slice(0, 64) : null,
       field: typeof state?.field === "string" ? state.field.slice(0, 32) : null,
+      control: typeof state?.control === "string" ? state.control.slice(0, 32) : null,
       selection: Number.isSafeInteger(state?.selection?.anchor) && Number.isSafeInteger(state?.selection?.head)
         ? { anchor: Math.max(0, state.selection.anchor), head: Math.max(0, state.selection.head) }
         : null

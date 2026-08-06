@@ -51,6 +51,14 @@ import { createAccountProfileMutationQueue } from "./account-profile-mutation-qu
 import { createMutationId, submitWithFreshMutationIdOnReuse } from "./mutation-id.js";
 import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-rebase.js";
 import { createPageCollaboration, decodeCollaborationRecoveryRecords } from "./collaboration.js";
+import {
+  assignRemoteCaretColors,
+  getRemoteCaretClientKey,
+  getRowTextSelectionControls,
+  getTextControlCaretRect,
+  getTextSelectionControlByKey,
+  getTextSelectionControlKey
+} from "./collaboration-caret.js";
 import { assertCollaborationExitSafe } from "./collaboration-exit-guard.js";
 import { createCollaborationRecoveryStore } from "./collaboration-recovery-store.js";
 import { createPageTransitionLock } from "./page-transition-lock.js";
@@ -718,6 +726,7 @@ let activeKanbanCardDrag = null;
 let suppressBlockHandleClickUntil = 0;
 let blockOrderSaving = false;
 let pendingBlockOrderTask = null;
+let collaborationCaretRenderFrame = null;
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -5630,9 +5639,78 @@ function getPresenceDisplayName(client) {
   return client?.user?.name?.trim() || client?.user?.username || t("sharing.editor");
 }
 
+function getRemoteCollaborationPresence() {
+  return state.collaborationPresence.filter((client) => client?.user?.id !== state.user?.id);
+}
+
+function setRemoteCaretColor(element, color) {
+  element?.style?.setProperty("--remote-caret-color", color);
+}
+
+function clearRemoteCollaborationCarets() {
+  document.querySelectorAll(".remote-collaboration-caret").forEach((caret) => caret.remove());
+}
+
+function getRemoteCollaborationCaretTarget(client) {
+  const awareness = client?.state;
+  if (!awareness?.selection) return null;
+  if (awareness.control === "title" || awareness.field === "title") return elements.pageTitle;
+  if (!awareness.blockId) return null;
+
+  const row = findRenderedBlockRow(awareness.blockId);
+  if (!row) return null;
+  const exactControl = getTextSelectionControlByKey(row, awareness.control);
+  if (exactControl) return exactControl;
+  if (awareness.field === "markdown") return row.querySelector('textarea[name="markdown"]');
+  if (awareness.field === "table") return row.querySelector(".table-cell-input");
+  return getRowTextSelectionControls(row)[0] ?? null;
+}
+
+function renderRemoteCollaborationCarets() {
+  collaborationCaretRenderFrame = null;
+  clearRemoteCollaborationCarets();
+  if (!state.selectedPage || state.workspaceView !== "page" || !isCollaborativePage()) return;
+
+  const presence = getRemoteCollaborationPresence();
+  const colors = assignRemoteCaretColors(presence);
+  for (const client of presence) {
+    const selection = client?.state?.selection;
+    if (!Number.isSafeInteger(selection?.head)) continue;
+    const control = getRemoteCollaborationCaretTarget(client);
+    if (!control || !document.contains(control)) continue;
+    const caretRect = getTextControlCaretRect(control, selection.head);
+    if (!caretRect) continue;
+
+    const color = colors.get(getRemoteCaretClientKey(client)) ?? "#2563eb";
+    const caret = document.createElement("span");
+    caret.className = "remote-collaboration-caret";
+    caret.setAttribute("aria-hidden", "true");
+    caret.dataset.connectionId = String(client.connectionId ?? "");
+    caret.style.left = `${caretRect.left}px`;
+    caret.style.top = `${caretRect.top}px`;
+    caret.style.height = `${caretRect.height}px`;
+    setRemoteCaretColor(caret, color);
+    if (caretRect.top < 38) caret.classList.add("is-label-below");
+
+    const line = document.createElement("span");
+    line.className = "remote-collaboration-caret-line";
+    const label = document.createElement("span");
+    label.className = "remote-collaboration-caret-label";
+    label.textContent = getPresenceDisplayName(client);
+    caret.append(line, label);
+    document.body.append(caret);
+  }
+}
+
+function scheduleRemoteCollaborationCaretRender() {
+  if (collaborationCaretRenderFrame !== null) return;
+  collaborationCaretRenderFrame = window.requestAnimationFrame(renderRemoteCollaborationCarets);
+}
+
 function renderCollaborationPresence() {
   elements.collaborationPresence.replaceChildren();
-  const presence = state.collaborationPresence.filter((client) => client?.user?.id !== state.user?.id);
+  const presence = getRemoteCollaborationPresence();
+  const colors = assignRemoteCaretColors(presence);
   elements.collaborationPresence.setAttribute(
     "aria-label",
     t("sharing.activeEditors", { count: presence.length })
@@ -5642,6 +5720,8 @@ function renderCollaborationPresence() {
     const avatar = document.createElement("span");
     avatar.className = "collaboration-presence-avatar";
     const name = getPresenceDisplayName(client);
+    const color = colors.get(getRemoteCaretClientKey(client)) ?? "#2563eb";
+    setRemoteCaretColor(avatar, color);
     avatar.title = name;
     avatar.setAttribute("aria-label", name);
     if (client.user?.avatarData) {
@@ -5657,6 +5737,7 @@ function renderCollaborationPresence() {
 
   for (const row of elements.blockList.querySelectorAll(".editor-block-row")) {
     row.classList.remove("has-remote-editor");
+    row.style.removeProperty("--remote-caret-color");
     row.querySelectorAll(".remote-editor-label").forEach((label) => label.remove());
   }
   const byBlock = new Map();
@@ -5671,12 +5752,19 @@ function renderCollaborationPresence() {
     const row = findRenderedBlockRow(blockId);
     if (!row) continue;
     row.classList.add("has-remote-editor");
-    const label = document.createElement("span");
-    label.className = "remote-editor-label";
-    label.textContent = editors.map(getPresenceDisplayName).join(", ");
-    label.title = t("sharing.remoteEditing", { name: label.textContent });
-    row.querySelector(".block-row-topline")?.append(label);
+    const primaryColor = colors.get(getRemoteCaretClientKey(editors[0])) ?? "#2563eb";
+    setRemoteCaretColor(row, primaryColor);
+    const topLine = row.querySelector(".block-row-topline");
+    for (const editor of editors) {
+      const label = document.createElement("span");
+      label.className = "remote-editor-label";
+      label.textContent = getPresenceDisplayName(editor);
+      label.title = t("sharing.remoteEditing", { name: label.textContent });
+      setRemoteCaretColor(label, colors.get(getRemoteCaretClientKey(editor)) ?? primaryColor);
+      topLine?.append(label);
+    }
   }
+  scheduleRemoteCollaborationCaretRender();
 }
 
 function renderCollaborationChrome() {
@@ -5684,6 +5772,7 @@ function renderCollaborationChrome() {
   elements.collaborationIndicator.classList.toggle("hidden", !visible);
   if (!visible) {
     elements.collaborationPresence.replaceChildren();
+    clearRemoteCollaborationCarets();
     return;
   }
   elements.collaborationIndicator.dataset.status = state.collaborationStatus;
@@ -5799,24 +5888,32 @@ function updateCollaborationAwareness(target = document.activeElement) {
   const session = state.collaborationSession;
   if (!session?.isReady) return;
   if (target === elements.pageTitle) {
+    const selection = Number.isInteger(elements.pageTitle.selectionStart)
+      && Number.isInteger(elements.pageTitle.selectionEnd)
+      ? { anchor: elements.pageTitle.selectionStart, head: elements.pageTitle.selectionEnd }
+      : null;
     session.setAwareness({
       blockId: null,
       field: "title",
-      selection: Number.isInteger(elements.pageTitle.selectionStart)
-        ? { anchor: elements.pageTitle.selectionStart, head: elements.pageTitle.selectionEnd }
-        : null
+      control: selection ? "title" : null,
+      selection
     });
     return;
   }
   const row = getBlockRow(target);
   if (!row?.dataset.blockId) {
-    session.setAwareness({ blockId: null, field: null, selection: null });
+    session.setAwareness({ blockId: null, field: null, control: null, selection: null });
     return;
   }
-  const selection = Number.isInteger(target?.selectionStart)
+  const selection = Number.isInteger(target?.selectionStart) && Number.isInteger(target?.selectionEnd)
     ? { anchor: target.selectionStart, head: target.selectionEnd }
     : null;
-  session.setAwareness({ blockId: row.dataset.blockId, field: getCollaborationField(target), selection });
+  session.setAwareness({
+    blockId: row.dataset.blockId,
+    field: getCollaborationField(target),
+    control: selection ? getTextSelectionControlKey(target, row) : null,
+    selection
+  });
 }
 
 function setSharePageMessage(message = "", isError = false) {
@@ -12357,6 +12454,8 @@ elements.pageCoverImage.addEventListener("pointercancel", (event) => {
 elements.pageTitle.addEventListener("input", (event) => {
   if (!requireWritablePage({ announce: false })) return;
   schedulePageTitleSave({ allowConflictPrompt: !event.isComposing });
+  updateCollaborationAwareness(elements.pageTitle);
+  scheduleRemoteCollaborationCaretRender();
 });
 
 elements.pageTitle.addEventListener("blur", () => {
@@ -12489,9 +12588,24 @@ elements.archivePageButton.addEventListener("click", async () => {
 
 for (const eventName of ["focusin", "input", "keyup", "mouseup", "change"]) {
   elements.blockList.addEventListener(eventName, (event) => {
-    if (isCollaborativePage()) updateCollaborationAwareness(event.target);
+    if (!isCollaborativePage()) return;
+    updateCollaborationAwareness(event.target);
+    scheduleRemoteCollaborationCaretRender();
   });
 }
+
+window.addEventListener("resize", scheduleRemoteCollaborationCaretRender);
+document.addEventListener("scroll", scheduleRemoteCollaborationCaretRender, true);
+window.visualViewport?.addEventListener("resize", scheduleRemoteCollaborationCaretRender);
+window.visualViewport?.addEventListener("scroll", scheduleRemoteCollaborationCaretRender);
+
+document.addEventListener("selectionchange", () => {
+  if (!isCollaborativePage()) return;
+  const active = document.activeElement;
+  if (active !== elements.pageTitle && !elements.blockList.contains(active)) return;
+  updateCollaborationAwareness(active);
+  scheduleRemoteCollaborationCaretRender();
+});
 
 elements.blockList.addEventListener("focusout", () => {
   if (!isCollaborativePage()) return;

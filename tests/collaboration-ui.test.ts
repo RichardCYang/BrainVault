@@ -7,6 +7,7 @@ const styles = readFileSync(new URL("../public/styles.css", import.meta.url), "u
 const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const serverApp = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
 const collaboration = readFileSync(new URL("../public/collaboration.js", import.meta.url), "utf8");
+const collaborationCaret = readFileSync(new URL("../public/collaboration-caret.js", import.meta.url), "utf8");
 const exitGuard = readFileSync(new URL("../public/collaboration-exit-guard.js", import.meta.url), "utf8");
 const recoveryStore = readFileSync(new URL("../public/collaboration-recovery-store.js", import.meta.url), "utf8");
 const transitionLock = readFileSync(new URL("../public/page-transition-lock.js", import.meta.url), "utf8");
@@ -48,6 +49,8 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(styles).toContain(".share-page-layer");
     expect(styles).toContain(".collaboration-indicator");
     expect(styles).toContain(".collaboration-presence");
+    expect(styles).toContain(".remote-collaboration-caret");
+    expect(styles).toContain("--remote-caret-color");
   });
 
   it("pins Yjs and supports persisted updates, reconnect recovery, awareness, and attachment reconciliation", () => {
@@ -108,6 +111,12 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(collaboration).toContain("deletedAttachments");
     expect(collaboration).toContain("A tombstone wins over a concurrently retained/re-created block");
     expect(collaboration).toContain("sendAwareness");
+    expect(collaboration).toContain("control: typeof state?.control");
+    expect(collaborationCaret).toContain("assignRemoteCaretColors");
+    expect(collaborationCaret).toContain("getTextControlCaretRect");
+    expect(app).toContain("renderRemoteCollaborationCarets");
+    expect(app).toContain("getTextSelectionControlKey");
+    expect(server).toContain("control: typeof source.control");
     expect(app).toContain("createPageCollaboration");
     expect(app).toContain("flushMaterialization");
     expect(collaboration).toContain("documentEpoch: snapshot.documentEpoch");

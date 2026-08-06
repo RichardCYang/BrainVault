@@ -72,6 +72,7 @@ type CollaborationProfile = Pick<UserRow, "id" | "username" | "name" | "avatar_d
 type AwarenessState = {
   blockId: string | null;
   field: string | null;
+  control: string | null;
   selection: { anchor: number; head: number } | null;
 };
 
@@ -159,6 +160,7 @@ function normalizeAwareness(value: unknown): AwarenessState {
   return {
     blockId: typeof source.blockId === "string" && source.blockId.length <= 64 ? source.blockId : null,
     field: typeof source.field === "string" && source.field.length <= 32 ? source.field : null,
+    control: typeof source.control === "string" && source.control.length <= 32 ? source.control : null,
     selection: Number.isSafeInteger(anchor) && anchor >= 0 && Number.isSafeInteger(head) && head >= 0
       ? { anchor, head }
       : null
@@ -430,7 +432,7 @@ export class PageCollaborationHub {
         authVersion: payload.authVersion,
         documentEpoch: payload.documentEpoch,
         synced: false,
-        awareness: { blockId: null, field: null, selection: null },
+        awareness: { blockId: null, field: null, control: null, selection: null },
         rateWindowStartedAt: Date.now(),
         frameCount: 0,
         byteCount: 0
