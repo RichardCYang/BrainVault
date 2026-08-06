@@ -107,6 +107,11 @@ test("browser retries ambiguous reset outcomes with the same task and fences sta
   const reset = section(app, "async function resetPageVersionHistory", "async function loadPageVersionDetail");
   const open = section(app, "function openPageVersionHistory", "function closePageVersionHistory");
   const authReset = section(app, "function resetAuthenticationSessionState", "function setAccountMessage");
+  const credentialRotation = section(
+    app,
+    "function acceptRotatedAuthenticationSession",
+    "function syncWorkspaceCreateControls"
+  );
   const passwordRotation = section(
     app,
     'elements.accountPasswordForm.addEventListener("submit"',
@@ -130,7 +135,8 @@ test("browser retries ambiguous reset outcomes with the same task and fences sta
   assert.match(reset, /const currentTask = getCurrentPageVersionResetTask\(pageId\)/);
   assert.match(open, /Boolean\(getCurrentPageVersionResetTask\(page\.id\)\?\.inFlight\)/);
   assert.match(authReset, /pendingPageVersionResetTasks\.clear\(\);/);
-  assert.match(passwordRotation, /pendingPageVersionResetTasks\.clear\(\);/);
+  assert.match(credentialRotation, /pendingPageVersionResetTasks\.clear\(\);/);
+  assert.match(passwordRotation, /acceptRotatedAuthenticationSession\(\);/);
 });
 
 test("browser retires a reset task only after the post-reset history list is synchronized", async () => {

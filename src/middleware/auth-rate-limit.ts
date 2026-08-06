@@ -32,6 +32,11 @@ async function mfaAccountKey(req: Request) {
     : hashRateLimitKey("mfa-token", mfaToken);
 }
 
+function accountReauthenticationKey(req: Request) {
+  const userId = typeof req.user?.id === "string" ? req.user.id : "";
+  return userId ? hashRateLimitKey("account-reauthentication", userId) : `ip:${clientIpKey(req)}`;
+}
+
 function mfaSetupAccountKey(req: Request) {
   const userId = typeof req.user?.id === "string" ? req.user.id : "";
   return userId ? hashRateLimitKey("mfa-setup", userId) : `ip:${clientIpKey(req)}`;
@@ -89,6 +94,16 @@ export const mfaLoginAccountRateLimit = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: true,
   keyGenerator: mfaAccountKey,
+  handler
+});
+
+export const accountReauthenticationRateLimit = rateLimit({
+  windowMs: env.AUTH_MFA_SETUP_WINDOW_MS,
+  limit: env.AUTH_MFA_SETUP_MAX,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  keyGenerator: accountReauthenticationKey,
   handler
 });
 

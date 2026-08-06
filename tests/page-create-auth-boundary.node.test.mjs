@@ -123,18 +123,24 @@ test("browser page creation and downloads remain bound to the initiating authent
   assert.match(reset, /pendingWorkspaceCreateTasks\.clear\(\);/);
   assert.match(reset, /state\.workspaceCreateBusy = false;/);
 
+  const credentialRotation = section(
+    app,
+    "function acceptRotatedAuthenticationSession",
+    "function syncWorkspaceCreateControls"
+  );
+  assert.match(credentialRotation, /authenticationSessionGeneration \+= 1;/);
+  assert.match(credentialRotation, /pendingWorkspaceCreateTasks\.clear\(\);/);
+  assert.match(credentialRotation, /setWorkspaceCreateBusy\(false\);/);
+  assert.ok(
+    credentialRotation.indexOf("authenticationSessionGeneration += 1") < credentialRotation.indexOf("setAuthenticated(true)"),
+    "same-account credential rotation must invalidate older responses before restoring controls"
+  );
   const passwordRotation = section(
     app,
     'elements.accountPasswordForm.addEventListener("submit"',
     'elements.accountTotpSetup.addEventListener("click"'
   );
-  assert.match(passwordRotation, /authenticationSessionGeneration \+= 1;/);
-  assert.match(passwordRotation, /pendingWorkspaceCreateTasks\.clear\(\);/);
-  assert.match(passwordRotation, /setWorkspaceCreateBusy\(false\);/);
-  assert.ok(
-    passwordRotation.indexOf("authenticationSessionGeneration += 1") < passwordRotation.indexOf("setAuthenticated(true)"),
-    "same-account credential rotation must invalidate older responses before restoring controls"
-  );
+  assert.match(passwordRotation, /acceptRotatedAuthenticationSession\(\);/);
 });
 
 test("standalone reproduction proves duplicate POST and stale-account effects before the fix", () => {

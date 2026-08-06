@@ -12,7 +12,7 @@
     "lockfile:check": "node scripts/lockfile-registry.mjs",
     "verify:collaboration": "node --experimental-strip-types scripts/verify-collaboration.mjs",
     "verify:data-loss": "node scripts/verify-data-loss-guards.mjs",
-    "verify:security": "node --experimental-strip-types scripts/verify-security-hardening.mjs && node --experimental-strip-types --test tests/security-remediation.node.test.mjs tests/code-highlighting-resource-limits.node.test.mjs tests/data-transfer-resource-limits.node.test.mjs",
+    "verify:security": "node --experimental-strip-types scripts/verify-security-hardening.mjs && node --experimental-strip-types --test tests/security-remediation.node.test.mjs tests/code-highlighting-resource-limits.node.test.mjs tests/data-transfer-resource-limits.node.test.mjs tests/authentication-credential-boundary.node.test.mjs",
     "test:security": "vitest run tests/security-hardening.test.ts tests/auth-settings.routes.test.ts tests/bookmark.test.ts tests/migration-data-safety.test.ts",
     "reproduce:materialization-loss": "node scripts/reproduce-collaboration-materialization-loss.mjs",
     "reproduce:bootstrap-loss": "node --experimental-strip-types scripts/reproduce-collaboration-bootstrap-loss.mjs",
@@ -64,7 +64,8 @@
     "reproduce:page-version-reset-retry": "node scripts/reproduce-page-version-reset-retry-loss.mjs",
     "reproduce:block-create-response-loss": "node scripts/reproduce-block-create-response-loss.mjs",
     "reproduce:block-delete-response-loss": "node scripts/reproduce-block-delete-response-loss.mjs",
-    "reproduce:block-preserve-children-delete": "node --experimental-strip-types scripts/reproduce-block-preserve-children-delete-race.mjs"
+    "reproduce:block-preserve-children-delete": "node --experimental-strip-types scripts/reproduce-block-preserve-children-delete-race.mjs",
+    "reproduce:authentication-credential-boundary": "node scripts/reproduce-authentication-credential-boundary.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.2",

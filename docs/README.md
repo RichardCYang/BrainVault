@@ -27,6 +27,10 @@ docs/<topic>/<YYYY-MM-DD>/<document>
 
 ## Security reviews
 
+### 2026-08-06
+
+- [Security review and remediation report](security/2026-08-06/security-review-and-remediation-report.md)
+
 ### 2026-08-04
 
 - [Security review and remediation report](security/2026-08-04/security-review-and-remediation-report.md)

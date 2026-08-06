@@ -48,6 +48,9 @@ const authRoutesSource = contains("src/routes/auth.routes.ts", [
   "SELECT * FROM users WHERE id = ? FOR UPDATE",
   "UPDATE users SET password_hash = ?, auth_version = ? WHERE id = ?",
   "UPDATE users SET auth_version = ? WHERE id = ?",
+  "assertAuthenticationVersion(user, expectedAuthVersion)",
+  "DELETE FROM mfa_totp_setups WHERE user_id = ?",
+  "accountReauthenticationRateLimit",
   'authRouter.post("/logout", requireAuth',
   "disconnectUserCollaborators(updatedUser.id",
   "res.locals.authenticationPending = true",
@@ -65,6 +68,11 @@ const mfaRoutesSource = contains("src/routes/mfa.routes.ts", [
   "mfaLoginIpRateLimit",
   "mfaLoginAccountRateLimit",
   "mfaSetupRateLimit",
+  "accountReauthenticationRateLimit",
+  "getAuthenticationUserForUpdate",
+  "rotateAuthenticationCredentials",
+  "issueRotatedAuthenticationSession",
+  "authVersion: expectedAuthVersion",
   "PASSKEY_COUNTER_REGRESSION",
   "res.json({ user: result.user })",
   "async function reserveMfaAttempt",
@@ -190,6 +198,8 @@ contains("src/middleware/auth-rate-limit.ts", [
   "mfaLoginIpRateLimit",
   "mfaLoginAccountRateLimit",
   "mfaSetupRateLimit",
+  "accountReauthenticationRateLimit",
+  'hashRateLimitKey("account-reauthentication", userId)',
   "requestWasSuccessful: authenticationRequestSucceeded",
   "registrationGlobalRateLimit",
   "registrationRateLimit"
@@ -211,6 +221,20 @@ const appSource = contains("src/app.ts", [
   'connectSrc: ["\'self\'", ...configuredWebSocketOrigins]',
   "res.json({ ok: true })"
 ]);
+assert.ok(
+  appSource.indexOf("rateLimit({") < appSource.indexOf('express.json({ limit: "5mb" })'),
+  "The global rate limiter must run before JSON body parsing"
+);
+assert.ok(
+  appSource.indexOf("rateLimit({") < appSource.indexOf("express.urlencoded({ extended: false })"),
+  "The global rate limiter must run before URL-encoded body parsing"
+);
+assert.ok(browserSource.includes("function acceptRotatedAuthenticationSession()"));
+assert.ok(
+  (browserSource.match(/acceptRotatedAuthenticationSession\(\);/g) ?? []).length >= 5,
+  "Password and MFA credential changes must fence responses from the previous cookie generation"
+);
+
 const collaborationBrowserSource = contains("public/collaboration.js", [
   'const YJS_MODULE_URL = "/vendor/yjs/yjs.mjs";'
 ]);
@@ -385,4 +409,4 @@ assert.equal(acceptsSession(1, 1), true, "A current session must be accepted bef
 assert.equal(acceptsSession(1, 2), false, "An old session must be rejected after credential rotation");
 assert.equal(acceptsSession(2, 2), true, "The replacement session must remain usable");
 
-console.log("[security-hardening] PASS: login CSRF gates, exact origins, atomic MFA attempts, revocation-safe MFA completion, locked TOTP verification, account backoff, strict session defaults, cookie-only browser login, logout revocation, absolute bookmark deadlines, attachment screening, bounded WebSocket and collaboration queues, collaboration connection limits, syntax-highlighting deadlines, backup import admission limits, patched Node runtime enforcement, cache controls, database accounts, CSP, error hygiene, JWT separation, multipart limits, and SSRF ranges");
+console.log("[security-hardening] PASS: login CSRF gates, exact origins, atomic MFA attempts, credential-boundary rotation, stale-auth rejection, account reauthentication throttling, pre-parser global limiting, revocation-safe MFA completion, locked TOTP verification, account backoff, strict session defaults, cookie-only browser login, logout revocation, absolute bookmark deadlines, attachment screening, bounded WebSocket and collaboration queues, collaboration connection limits, syntax-highlighting deadlines, backup import admission limits, patched Node runtime enforcement, cache controls, database accounts, CSP, error hygiene, JWT separation, multipart limits, and SSRF ranges");

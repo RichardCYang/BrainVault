@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import QRCode from "qrcode";
 import { z } from "zod";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@simplewebauthn/server";
 import { env } from "../config/env.js";
 import { db, transaction, type DbClient } from "../lib/db.js";
+import { disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
 import { getClientIpAddress, recordLoginAttempt } from "../lib/login-history.js";
@@ -35,7 +36,12 @@ import {
   requireJsonRequestBody,
   requireSameOriginBrowserRequest
 } from "../middleware/auth.js";
-import { mfaLoginAccountRateLimit, mfaLoginIpRateLimit, mfaSetupRateLimit } from "../middleware/auth-rate-limit.js";
+import {
+  accountReauthenticationRateLimit,
+  mfaLoginAccountRateLimit,
+  mfaLoginIpRateLimit,
+  mfaSetupRateLimit
+} from "../middleware/auth-rate-limit.js";
 import { validate } from "../middleware/validate.js";
 import type { UserRow } from "../types/domain.js";
 import { requireUser } from "../utils/schemas.js";
@@ -220,16 +226,57 @@ function toPublicPasskey(row: PasskeyRow) {
   };
 }
 
-async function getUserById(userId: string, client: DbClient = db) {
-  return client.queryOne<UserRow>("SELECT * FROM users WHERE id = ?", [userId]);
+function requireRequestAuthVersion(req: Request) {
+  const authVersion = Number(req.auth?.authVersion);
+  if (!Number.isSafeInteger(authVersion) || authVersion < 1) {
+    throw new ApiError(401, "UNAUTHENTICATED", "Authentication context is missing");
+  }
+  return authVersion;
 }
 
-async function requireCurrentPassword(userId: string, currentPassword: string) {
-  const user = await getUserById(userId);
-  if (!user || !(await verifyPassword(currentPassword, user.password_hash))) {
+async function getAuthenticationUserForUpdate(
+  client: DbClient,
+  userId: string,
+  expectedAuthVersion: number
+) {
+  const user = await client.queryOne<UserRow>("SELECT * FROM users WHERE id = ? FOR UPDATE", [userId]);
+  if (!user) throw new ApiError(401, "UNAUTHENTICATED", "User no longer exists");
+  if (normalizeAuthVersion(user.auth_version) !== expectedAuthVersion) {
+    throw new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid");
+  }
+  return user;
+}
+
+async function requireCurrentPasswordForUpdate(
+  client: DbClient,
+  userId: string,
+  expectedAuthVersion: number,
+  currentPassword: string
+) {
+  const user = await getAuthenticationUserForUpdate(client, userId, expectedAuthVersion);
+  if (!(await verifyPassword(currentPassword, user.password_hash))) {
     throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
   }
   return user;
+}
+
+async function rotateAuthenticationCredentials(client: DbClient, user: UserRow) {
+  const authVersion = normalizeAuthVersion(user.auth_version) + 1;
+  await client.execute("UPDATE users SET auth_version = ? WHERE id = ?", [authVersion, user.id]);
+  await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [user.id]);
+  await client.execute("DELETE FROM webauthn_challenges WHERE user_id = ?", [user.id]);
+  await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [user.id]);
+  return { ...user, auth_version: authVersion };
+}
+
+function issueRotatedAuthenticationSession(res: Response, user: UserRow) {
+  disconnectUserCollaborators(user.id, "Authentication credentials changed");
+  const token = signAuthToken({
+    sub: user.id,
+    username: user.username,
+    authVersion: normalizeAuthVersion(user.auth_version)
+  });
+  setAuthSessionCookie(res, token);
 }
 
 export async function getMfaMethods(userId: string): Promise<MfaMethods> {
@@ -346,6 +393,7 @@ async function completeMfaSession(client: DbClient, mfaToken: string, userId: st
 }
 
 async function createChallenge(
+  client: DbClient,
   userId: string,
   kind: ChallengeRow["kind"],
   challenge: string,
@@ -353,8 +401,12 @@ async function createChallenge(
   metadata: Record<string, unknown> | null
 ) {
   const token = createOpaqueToken();
-  await db.execute("DELETE FROM webauthn_challenges WHERE expires_at <= CURRENT_TIMESTAMP(3) OR used_at IS NOT NULL");
-  await db.execute(
+  await client.execute(
+    `DELETE FROM webauthn_challenges
+     WHERE user_id = ? AND (expires_at <= CURRENT_TIMESTAMP(3) OR used_at IS NOT NULL)`,
+    [userId]
+  );
+  await client.execute(
     `INSERT INTO webauthn_challenges
        (token_hash, user_id, kind, challenge, context_hash, metadata, expires_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -439,13 +491,13 @@ mfaRouter.get("/status", requireAuth, async (req, res, next) => {
 mfaRouter.post(
   "/totp/setup",
   requireAuth,
+  accountReauthenticationRateLimit,
   validate({ body: currentPasswordSchema }),
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
+      const expectedAuthVersion = requireRequestAuthVersion(req);
       const { currentPassword } = req.body as z.infer<typeof currentPasswordSchema>;
-      await requireCurrentPassword(user.id, currentPassword);
-
       const secret = generateTotpSecret();
       const encrypted = encryptMfaSecret(secret);
       const setupToken = createOpaqueToken();
@@ -456,20 +508,28 @@ mfaRouter.post(
         width: 240
       });
 
-      await db.execute("DELETE FROM mfa_totp_setups WHERE user_id = ? OR expires_at <= CURRENT_TIMESTAMP(3)", [user.id]);
-      await db.execute(
-        `INSERT INTO mfa_totp_setups
-           (token_hash, user_id, secret_ciphertext, secret_iv, secret_tag, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          hashOpaqueToken(setupToken),
+      await transaction(async (client) => {
+        const lockedUser = await requireCurrentPasswordForUpdate(
+          client,
           user.id,
-          encrypted.ciphertext,
-          encrypted.iv,
-          encrypted.tag,
-          expiresAt(totpSetupLifetimeMs)
-        ]
-      );
+          expectedAuthVersion,
+          currentPassword
+        );
+        await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [lockedUser.id]);
+        await client.execute(
+          `INSERT INTO mfa_totp_setups
+             (token_hash, user_id, secret_ciphertext, secret_iv, secret_tag, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            hashOpaqueToken(setupToken),
+            lockedUser.id,
+            encrypted.ciphertext,
+            encrypted.iv,
+            encrypted.tag,
+            expiresAt(totpSetupLifetimeMs)
+          ]
+        );
+      });
 
       res.json({ setupToken, secret, otpauthUri: uri, qrCodeDataUrl });
     } catch (error) {
@@ -486,26 +546,31 @@ mfaRouter.post(
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
+      const expectedAuthVersion = requireRequestAuthVersion(req);
       const { setupToken, code } = req.body as z.infer<typeof totpVerifySchema>;
-      const setup = await db.queryOne<TotpSetupRow>(
-        `SELECT token_hash, user_id, secret_ciphertext, secret_iv, secret_tag, expires_at
-         FROM mfa_totp_setups
-         WHERE token_hash = ? AND user_id = ? AND expires_at > CURRENT_TIMESTAMP(3)`,
-        [hashOpaqueToken(setupToken), user.id]
-      );
-      if (!setup) throw new ApiError(400, "TOTP_SETUP_EXPIRED", "The authenticator setup expired");
+      const setupTokenHash = hashOpaqueToken(setupToken);
 
-      const secret = decryptMfaSecret({
-        ciphertext: setup.secret_ciphertext,
-        iv: setup.secret_iv,
-        tag: setup.secret_tag
-      });
-      const matchedStep = findMatchingTotpStep(secret, code);
-      if (matchedStep === null) {
-        throw new ApiError(400, "INVALID_MFA_CODE", "The verification code is invalid");
-      }
+      const updatedUser = await transaction(async (client) => {
+        const lockedUser = await getAuthenticationUserForUpdate(client, user.id, expectedAuthVersion);
+        const setup = await client.queryOne<TotpSetupRow>(
+          `SELECT token_hash, user_id, secret_ciphertext, secret_iv, secret_tag, expires_at
+           FROM mfa_totp_setups
+           WHERE token_hash = ? AND user_id = ? AND expires_at > CURRENT_TIMESTAMP(3)
+           FOR UPDATE`,
+          [setupTokenHash, lockedUser.id]
+        );
+        if (!setup) throw new ApiError(400, "TOTP_SETUP_EXPIRED", "The authenticator setup expired");
 
-      await transaction(async (client) => {
+        const secret = decryptMfaSecret({
+          ciphertext: setup.secret_ciphertext,
+          iv: setup.secret_iv,
+          tag: setup.secret_tag
+        });
+        const matchedStep = findMatchingTotpStep(secret, code);
+        if (matchedStep === null) {
+          throw new ApiError(400, "INVALID_MFA_CODE", "The verification code is invalid");
+        }
+
         await client.execute(
           `INSERT INTO user_totp_credentials
              (user_id, secret_ciphertext, secret_iv, secret_tag, last_used_step)
@@ -515,11 +580,13 @@ mfaRouter.post(
              secret_iv = VALUES(secret_iv),
              secret_tag = VALUES(secret_tag),
              last_used_step = VALUES(last_used_step)`,
-          [user.id, setup.secret_ciphertext, setup.secret_iv, setup.secret_tag, matchedStep]
+          [lockedUser.id, setup.secret_ciphertext, setup.secret_iv, setup.secret_tag, matchedStep]
         );
-        await client.execute("DELETE FROM mfa_totp_setups WHERE token_hash = ?", [hashOpaqueToken(setupToken)]);
+        await client.execute("DELETE FROM mfa_totp_setups WHERE token_hash = ?", [setupTokenHash]);
+        return rotateAuthenticationCredentials(client, lockedUser);
       });
 
+      issueRotatedAuthenticationSession(res, updatedUser);
       res.json({ ok: true });
     } catch (error) {
       next(error);
@@ -530,14 +597,26 @@ mfaRouter.post(
 mfaRouter.delete(
   "/totp",
   requireAuth,
+  accountReauthenticationRateLimit,
   validate({ body: currentPasswordSchema }),
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
+      const expectedAuthVersion = requireRequestAuthVersion(req);
       const { currentPassword } = req.body as z.infer<typeof currentPasswordSchema>;
-      await requireCurrentPassword(user.id, currentPassword);
-      await db.execute("DELETE FROM user_totp_credentials WHERE user_id = ?", [user.id]);
-      await db.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [user.id]);
+      const updatedUser = await transaction(async (client) => {
+        const lockedUser = await requireCurrentPasswordForUpdate(
+          client,
+          user.id,
+          expectedAuthVersion,
+          currentPassword
+        );
+        await client.execute("DELETE FROM user_totp_credentials WHERE user_id = ?", [lockedUser.id]);
+        await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [lockedUser.id]);
+        return rotateAuthenticationCredentials(client, lockedUser);
+      });
+
+      issueRotatedAuthenticationSession(res, updatedUser);
       res.json({ ok: true });
     } catch (error) {
       next(error);
@@ -548,41 +627,60 @@ mfaRouter.delete(
 mfaRouter.post(
   "/passkeys/options",
   requireAuth,
+  accountReauthenticationRateLimit,
   validate({ body: passkeyOptionsSchema }),
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
+      const expectedAuthVersion = requireRequestAuthVersion(req);
       const { currentPassword, name } = req.body as z.infer<typeof passkeyOptionsSchema>;
-      await requireCurrentPassword(user.id, currentPassword);
-      const existingPasskeys = await db.query<PasskeyRow>(
-        `SELECT id, user_id, credential_id, webauthn_user_id, public_key, counter, transports,
-                device_type, backed_up, aaguid, name, created_at, updated_at, last_used_at
-         FROM user_passkeys WHERE user_id = ?`,
-        [user.id]
-      );
+      const result = await transaction(async (client) => {
+        const lockedUser = await requireCurrentPasswordForUpdate(
+          client,
+          user.id,
+          expectedAuthVersion,
+          currentPassword
+        );
+        const existingPasskeys = await client.query<PasskeyRow>(
+          `SELECT id, user_id, credential_id, webauthn_user_id, public_key, counter, transports,
+                  device_type, backed_up, aaguid, name, created_at, updated_at, last_used_at
+           FROM user_passkeys WHERE user_id = ?`,
+          [lockedUser.id]
+        );
 
-      const options = await generateRegistrationOptions({
-        rpName: webAuthnConfig.rpName,
-        rpID: webAuthnConfig.rpID,
-        userName: user.username,
-        userDisplayName: user.name ?? user.username,
-        userID: Buffer.from(user.id, "utf8"),
-        attestationType: "none",
-        excludeCredentials: existingPasskeys.map((passkey) => ({
-          id: toBase64Url(passkey.credential_id),
-          transports: parseTransports(passkey.transports)
-        })),
-        authenticatorSelection: {
-          residentKey: "preferred",
-          userVerification: "required"
-        }
+        const options = await generateRegistrationOptions({
+          rpName: webAuthnConfig.rpName,
+          rpID: webAuthnConfig.rpID,
+          userName: lockedUser.username,
+          userDisplayName: lockedUser.name ?? lockedUser.username,
+          userID: Buffer.from(lockedUser.id, "utf8"),
+          attestationType: "none",
+          excludeCredentials: existingPasskeys.map((passkey) => ({
+            id: toBase64Url(passkey.credential_id),
+            transports: parseTransports(passkey.transports)
+          })),
+          authenticatorSelection: {
+            residentKey: "preferred",
+            userVerification: "required"
+          }
+        });
+
+        const challengeToken = await createChallenge(
+          client,
+          lockedUser.id,
+          "registration",
+          options.challenge,
+          null,
+          {
+            name,
+            webauthnUserId: options.user.id,
+            authVersion: expectedAuthVersion
+          }
+        );
+        return { options, challengeToken };
       });
 
-      const challengeToken = await createChallenge(user.id, "registration", options.challenge, null, {
-        name,
-        webauthnUserId: options.user.id
-      });
-      res.json({ options, challengeToken });
+      res.json(result);
     } catch (error) {
       next(error);
     }
@@ -596,9 +694,13 @@ mfaRouter.post(
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
+      const expectedAuthVersion = requireRequestAuthVersion(req);
       const { challengeToken, response } = req.body as z.infer<typeof passkeyRegistrationSchema>;
       const challenge = await consumeChallenge(challengeToken, user.id, "registration", null);
       const metadata = parseMetadata(challenge.metadata);
+      if (Number(metadata.authVersion) !== expectedAuthVersion) {
+        throw new ApiError(400, "WEBAUTHN_CHALLENGE_EXPIRED", "The passkey challenge expired");
+      }
 
       let verification;
       try {
@@ -624,34 +726,41 @@ mfaRouter.post(
         : Buffer.from(user.id, "utf8");
       const id = createId("pky");
 
-      await db.execute(
-        `INSERT INTO user_passkeys
-           (id, user_id, credential_id, webauthn_user_id, public_key, counter, transports,
-            device_type, backed_up, aaguid, name)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          user.id,
-          fromBase64Url(credential.id),
-          webauthnUserId,
-          Buffer.from(credential.publicKey),
-          credential.counter,
-          serializeTransports(credential.transports),
-          credentialDeviceType,
-          credentialBackedUp,
-          aaguid || null,
-          name
-        ]
-      );
+      const result = await transaction(async (client) => {
+        const lockedUser = await getAuthenticationUserForUpdate(client, user.id, expectedAuthVersion);
+        await client.execute(
+          `INSERT INTO user_passkeys
+             (id, user_id, credential_id, webauthn_user_id, public_key, counter, transports,
+              device_type, backed_up, aaguid, name)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            id,
+            lockedUser.id,
+            fromBase64Url(credential.id),
+            webauthnUserId,
+            Buffer.from(credential.publicKey),
+            credential.counter,
+            serializeTransports(credential.transports),
+            credentialDeviceType,
+            credentialBackedUp,
+            aaguid || null,
+            name
+          ]
+        );
 
-      const passkey = await db.queryOne<PasskeyRow>(
-        `SELECT id, user_id, credential_id, webauthn_user_id, public_key, counter, transports,
-                device_type, backed_up, aaguid, name, created_at, updated_at, last_used_at
-         FROM user_passkeys WHERE id = ? AND user_id = ?`,
-        [id, user.id]
-      );
-      if (!passkey) throw new ApiError(500, "PASSKEY_CREATE_FAILED", "The passkey was not saved");
-      res.status(201).json({ passkey: toPublicPasskey(passkey) });
+        const passkey = await client.queryOne<PasskeyRow>(
+          `SELECT id, user_id, credential_id, webauthn_user_id, public_key, counter, transports,
+                  device_type, backed_up, aaguid, name, created_at, updated_at, last_used_at
+           FROM user_passkeys WHERE id = ? AND user_id = ?`,
+          [id, lockedUser.id]
+        );
+        if (!passkey) throw new ApiError(500, "PASSKEY_CREATE_FAILED", "The passkey was not saved");
+        const updatedUser = await rotateAuthenticationCredentials(client, lockedUser);
+        return { passkey, updatedUser };
+      });
+
+      issueRotatedAuthenticationSession(res, result.updatedUser);
+      res.status(201).json({ passkey: toPublicPasskey(result.passkey) });
     } catch (error) {
       next(error);
     }
@@ -682,18 +791,32 @@ mfaRouter.patch(
 mfaRouter.delete(
   "/passkeys/:id",
   requireAuth,
+  accountReauthenticationRateLimit,
   validate({ params: passkeyIdParamsSchema, body: currentPasswordSchema }),
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
+      const expectedAuthVersion = requireRequestAuthVersion(req);
       const { id } = req.params as z.infer<typeof passkeyIdParamsSchema>;
       const { currentPassword } = req.body as z.infer<typeof currentPasswordSchema>;
-      await requireCurrentPassword(user.id, currentPassword);
-      const result = await db.execute<{ affectedRows: number }>(
-        "DELETE FROM user_passkeys WHERE id = ? AND user_id = ?",
-        [id, user.id]
-      );
-      if (Number(result.affectedRows) !== 1) throw new ApiError(404, "PASSKEY_NOT_FOUND", "Passkey not found");
+      const updatedUser = await transaction(async (client) => {
+        const lockedUser = await requireCurrentPasswordForUpdate(
+          client,
+          user.id,
+          expectedAuthVersion,
+          currentPassword
+        );
+        const result = await client.execute<{ affectedRows: number }>(
+          "DELETE FROM user_passkeys WHERE id = ? AND user_id = ?",
+          [id, lockedUser.id]
+        );
+        if (Number(result.affectedRows) !== 1) {
+          throw new ApiError(404, "PASSKEY_NOT_FOUND", "Passkey not found");
+        }
+        return rotateAuthenticationCredentials(client, lockedUser);
+      });
+
+      issueRotatedAuthenticationSession(res, updatedUser);
       res.json({ ok: true });
     } catch (error) {
       next(error);
@@ -794,6 +917,7 @@ mfaRouter.post(
       });
       const contextHash = hashOpaqueToken(mfaToken);
       const challengeToken = await createChallenge(
+        db,
         session.user_id,
         "authentication",
         options.challenge,

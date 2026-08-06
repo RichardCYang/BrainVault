@@ -30,6 +30,7 @@ import {
   requireSameOriginBrowserRequest
 } from "../middleware/auth.js";
 import {
+  accountReauthenticationRateLimit,
   loginAccountRateLimit,
   loginIpRateLimit,
   registrationGlobalRateLimit,
@@ -83,6 +84,20 @@ const passwordSchema = z
     path: ["newPassword"],
     message: "New password must differ from the current password"
   });
+
+function requireRequestAuthVersion(req: { auth?: { authVersion: number } }) {
+  const authVersion = Number(req.auth?.authVersion);
+  if (!Number.isSafeInteger(authVersion) || authVersion < 1) {
+    throw new ApiError(401, "UNAUTHENTICATED", "Authentication context is missing");
+  }
+  return authVersion;
+}
+
+function assertAuthenticationVersion(user: UserRow, expectedAuthVersion: number) {
+  if (normalizeAuthVersion(user.auth_version) !== expectedAuthVersion) {
+    throw new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid");
+  }
+}
 
 function isDuplicateEntryError(error: unknown) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ER_DUP_ENTRY";
@@ -208,14 +223,17 @@ authRouter.post(
 authRouter.post("/logout", requireAuth, async (req, res, next) => {
   try {
     const currentUser = requireUser(req.user);
+    const expectedAuthVersion = requireRequestAuthVersion(req);
     const revokedUser = await transaction(async (client) => {
       const user = await client.queryOne<UserRow>("SELECT * FROM users WHERE id = ? FOR UPDATE", [currentUser.id]);
       if (!user) throw new ApiError(401, "UNAUTHENTICATED", "User no longer exists");
+      assertAuthenticationVersion(user, expectedAuthVersion);
 
       const authVersion = normalizeAuthVersion(user.auth_version) + 1;
       await client.execute("UPDATE users SET auth_version = ? WHERE id = ?", [authVersion, user.id]);
       await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [user.id]);
       await client.execute("DELETE FROM webauthn_challenges WHERE user_id = ?", [user.id]);
+      await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [user.id]);
       return { ...user, auth_version: authVersion };
     });
 
@@ -288,46 +306,56 @@ authRouter.patch("/profile", requireAuth, validate({ body: profileSchema }), asy
   }
 });
 
-authRouter.post("/password", requireAuth, validate({ body: passwordSchema }), async (req, res, next) => {
-  try {
-    const currentUser = requireUser(req.user);
-    const { currentPassword, newPassword } = req.body as z.infer<typeof passwordSchema>;
-    const passwordHash = await hashPassword(newPassword);
-    const updatedUser = await transaction(async (client) => {
-      const user = await client.queryOne<UserRow>(
-        "SELECT * FROM users WHERE id = ? FOR UPDATE",
-        [currentUser.id]
-      );
-      if (!user || !(await verifyPassword(currentPassword, user.password_hash))) {
-        throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
-      }
-      if (await verifyPassword(newPassword, user.password_hash)) {
-        throw new ApiError(400, "NEW_PASSWORD_SAME", "New password must differ from the current password");
-      }
+authRouter.post(
+  "/password",
+  requireAuth,
+  accountReauthenticationRateLimit,
+  validate({ body: passwordSchema }),
+  async (req, res, next) => {
+    try {
+      const currentUser = requireUser(req.user);
+      const expectedAuthVersion = requireRequestAuthVersion(req);
+      const { currentPassword, newPassword } = req.body as z.infer<typeof passwordSchema>;
+      const passwordHash = await hashPassword(newPassword);
+      const updatedUser = await transaction(async (client) => {
+        const user = await client.queryOne<UserRow>(
+          "SELECT * FROM users WHERE id = ? FOR UPDATE",
+          [currentUser.id]
+        );
+        if (!user) throw new ApiError(401, "UNAUTHENTICATED", "User no longer exists");
+        assertAuthenticationVersion(user, expectedAuthVersion);
+        if (!(await verifyPassword(currentPassword, user.password_hash))) {
+          throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
+        }
+        if (await verifyPassword(newPassword, user.password_hash)) {
+          throw new ApiError(400, "NEW_PASSWORD_SAME", "New password must differ from the current password");
+        }
 
-      const authVersion = normalizeAuthVersion(user.auth_version) + 1;
-      await client.execute(
-        "UPDATE users SET password_hash = ?, auth_version = ? WHERE id = ?",
-        [passwordHash, authVersion, user.id]
-      );
-      await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [user.id]);
-      await client.execute("DELETE FROM webauthn_challenges WHERE user_id = ?", [user.id]);
-      return { ...user, password_hash: passwordHash, auth_version: authVersion };
-    });
+        const authVersion = normalizeAuthVersion(user.auth_version) + 1;
+        await client.execute(
+          "UPDATE users SET password_hash = ?, auth_version = ? WHERE id = ?",
+          [passwordHash, authVersion, user.id]
+        );
+        await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [user.id]);
+        await client.execute("DELETE FROM webauthn_challenges WHERE user_id = ?", [user.id]);
+        await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [user.id]);
+        return { ...user, password_hash: passwordHash, auth_version: authVersion };
+      });
 
-    disconnectUserCollaborators(updatedUser.id, "Authentication credentials changed");
-    const token = signAuthToken({
-      sub: updatedUser.id,
-      username: updatedUser.username,
-      authVersion: normalizeAuthVersion(updatedUser.auth_version)
-    });
-    setAuthSessionCookie(res, token);
-    res.setHeader("Cache-Control", "private, no-store");
-    res.json({ ok: true });
-  } catch (error) {
-    next(error);
+      disconnectUserCollaborators(updatedUser.id, "Authentication credentials changed");
+      const token = signAuthToken({
+        sub: updatedUser.id,
+        username: updatedUser.username,
+        authVersion: normalizeAuthVersion(updatedUser.auth_version)
+      });
+      setAuthSessionCookie(res, token);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
 
 authRouter.use("/mfa", mfaRouter);

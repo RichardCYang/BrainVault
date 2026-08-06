@@ -1069,6 +1069,17 @@ function isCurrentAuthenticatedSessionScope(scope) {
   );
 }
 
+function acceptRotatedAuthenticationSession() {
+  authenticationSessionGeneration += 1;
+  pendingWorkspaceCreateTasks.clear();
+  pendingPageVersionResetTasks.clear();
+  pendingBlockCreateTasks.clear();
+  pendingBlockDeleteTasks.clear();
+  pendingAttachmentCreateTasks.clear();
+  setWorkspaceCreateBusy(false);
+  setAuthenticated(true);
+}
+
 function syncWorkspaceCreateControls() {
   const busy = state.workspaceCreateBusy;
   elements.addCollectionButton.disabled = busy;
@@ -2013,12 +2024,15 @@ function renderPasskeyList() {
       createPasskeyActionButton("mfa.removePasskey", "secondary danger compact", async () => {
         if (!window.confirm(t("mfa.removePasskeyConfirm", { name: passkey.name }))) return;
         const currentPassword = requireMfaPassword();
-        if (!currentPassword) return;
+        const targetKey = getAccountAvatarTargetKey(state.user);
+        if (!currentPassword || !targetKey) return;
         try {
           await api(`/api/auth/mfa/passkeys/${encodeURIComponent(passkey.id)}`, {
             method: "DELETE",
             body: { currentPassword }
           });
+          if (!state.accountSettingsOpen || getAccountAvatarTargetKey(state.user) !== targetKey) return;
+          acceptRotatedAuthenticationSession();
           elements.accountMfaPassword.value = "";
           await loadMfaSettings({ showLoading: false });
           setAccountMessage(t("mfa.passkeyRemoved"));
@@ -11605,14 +11619,7 @@ elements.accountPasswordForm.addEventListener("submit", async (event) => {
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.password, operation)) return;
     // The server rotated the authentication cookie. Fence every response that began
     // under the previous credential generation, even though the account ID is unchanged.
-    authenticationSessionGeneration += 1;
-    pendingWorkspaceCreateTasks.clear();
-    pendingPageVersionResetTasks.clear();
-    pendingBlockCreateTasks.clear();
-    pendingBlockDeleteTasks.clear();
-    pendingAttachmentCreateTasks.clear();
-    setWorkspaceCreateBusy(false);
-    setAuthenticated(true);
+    acceptRotatedAuthenticationSession();
     elements.accountPasswordForm.reset();
     setAccountMessage(t("account.passwordChanged"));
     setStatus(t("account.passwordChanged"));
@@ -11681,6 +11688,7 @@ elements.accountTotpVerifyForm.addEventListener("submit", async (event) => {
       }
     });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpVerify, operation)) return;
+    acceptRotatedAuthenticationSession();
     elements.accountMfaPassword.value = "";
     hideTotpSetup();
     await loadMfaSettings({ showLoading: false });
@@ -11720,6 +11728,7 @@ elements.accountTotpDisable.addEventListener("click", async () => {
       body: { currentPassword }
     });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpDisable, operation)) return;
+    acceptRotatedAuthenticationSession();
     elements.accountMfaPassword.value = "";
     hideTotpSetup();
     await loadMfaSettings({ showLoading: false });
@@ -11769,6 +11778,7 @@ elements.accountPasskeyRegisterForm.addEventListener("submit", async (event) => 
       body: { challengeToken: optionsData.challengeToken, response }
     });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.passkeyRegister, operation)) return;
+    acceptRotatedAuthenticationSession();
     elements.accountMfaPassword.value = "";
     elements.accountPasskeyRegisterForm.reset();
     await loadMfaSettings({ showLoading: false });

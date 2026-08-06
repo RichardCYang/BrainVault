@@ -60,8 +60,6 @@ export function createApp() {
     })
   );
   app.use(cors(corsOptionsDelegate));
-  app.use(express.json({ limit: "5mb" }));
-  app.use(express.urlencoded({ extended: false }));
   app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
   app.use(
     rateLimit({
@@ -71,6 +69,8 @@ export function createApp() {
       legacyHeaders: false
     })
   );
+  app.use(express.json({ limit: "5mb" }));
+  app.use(express.urlencoded({ extended: false }));
 
   const publicDir = path.resolve(process.cwd(), "public");
   const docsDir = path.resolve(process.cwd(), "docs");
