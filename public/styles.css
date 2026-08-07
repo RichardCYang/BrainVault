@@ -3968,6 +3968,10 @@ kbd {
   opacity: 0.45;
 }
 
+.page-view.is-read-only .page-title-icon-button:disabled {
+  opacity: 1;
+}
+
 .page-view.is-read-only .page-title-input {
   cursor: text;
 }
