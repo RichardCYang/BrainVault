@@ -190,7 +190,11 @@ export const translationCatalogs = {
       open: "Open search", title: "Search", close: "Close search", label: "Search pages and blocks", placeholder: "Quick Find", button: "Search", clear: "Clear search",
       help: "Search page titles and block content.", start: "Enter a keyword to search your workspace.", loading: "Searching...", results: "Search results", resultCount: "{count} result(s)", empty: "No matching pages or blocks.", pageResult: "Page", blockResult: "Block"
     },
-    navigation: { aria: "Default collection and page list" },
+    navigation: {
+      aria: "Default collection and page list",
+      expandSubpages: "Expand subpages of “{title}”",
+      collapseSubpages: "Collapse subpages of “{title}”"
+    },
     navigationMenu: {
       aria: "Page or collection actions",
       pageAria: "Actions for page “{title}”",
@@ -296,7 +300,10 @@ export const translationCatalogs = {
       readerAria: "Read-only block document",
       content: "Page content",
       editorHelp: "Press <kbd>Enter</kbd> for a new block · <kbd>Shift</kbd> + <kbd>Enter</kbd> for a line break · <kbd>Backspace</kbd> on an empty block to delete it",
-      editorAria: "Unified block document editor"
+      editorAria: "Unified block document editor",
+      subpagesEyebrow: "Page index",
+      subpagesTitle: "Subpages",
+      subpagesAria: "Subpages"
     },
     cover: {
       regionAria: "Page cover",
@@ -918,7 +925,11 @@ export const translationCatalogs = {
       open: "検索を開く", title: "検索", close: "検索を閉じる", label: "ページとブロックを検索", placeholder: "クイック検索", button: "検索", clear: "検索をクリア",
       help: "ページのタイトルとブロック内容を検索します。", start: "キーワードを入力してワークスペースを検索してください。", loading: "検索しています...", results: "検索結果", resultCount: "{count}件", empty: "一致するページまたはブロックがありません。", pageResult: "ページ", blockResult: "ブロック"
     },
-    navigation: { aria: "デフォルトコレクションとページ一覧" },
+    navigation: {
+      aria: "デフォルトコレクションとページ一覧",
+      expandSubpages: "「{title}」のサブページを展開",
+      collapseSubpages: "「{title}」のサブページを折りたたむ"
+    },
     navigationMenu: {
       aria: "ページまたはコレクションの操作",
       pageAria: "ページ「{title}」の操作",
@@ -972,7 +983,10 @@ export const translationCatalogs = {
       readerAria: "読み取り専用のブロックドキュメント",
       content: "ページ内容",
       editorHelp: "<kbd>Enter</kbd>で新しいブロック · <kbd>Shift</kbd> + <kbd>Enter</kbd>で改行 · 空のブロックで<kbd>Backspace</kbd>を押すと削除",
-      editorAria: "統合ブロックドキュメントエディター"
+      editorAria: "統合ブロックドキュメントエディター",
+      subpagesEyebrow: "ページ目次",
+      subpagesTitle: "サブページ",
+      subpagesAria: "サブページ目次"
     },
     sharing: {
       button: "共有",
@@ -1319,7 +1333,11 @@ export const translationCatalogs = {
       open: "검색 열기", title: "검색", close: "검색 닫기", label: "문서와 블록 검색", placeholder: "빠른 찾기", button: "검색", clear: "검색어 지우기",
       help: "페이지 제목과 블록 내용을 검색합니다.", start: "키워드를 입력해 워크스페이스를 검색하세요.", loading: "검색 중...", results: "검색 결과", resultCount: "결과 {count}개", empty: "일치하는 페이지나 블록이 없습니다.", pageResult: "페이지", blockResult: "블록"
     },
-    navigation: { aria: "기본 컬렉션과 문서 목록" },
+    navigation: {
+      aria: "기본 컬렉션과 문서 목록",
+      expandSubpages: "“{title}” 하위 페이지 펼치기",
+      collapseSubpages: "“{title}” 하위 페이지 접기"
+    },
     navigationMenu: {
       aria: "페이지 또는 컬렉션 작업",
       pageAria: "“{title}” 페이지 작업",
@@ -1425,7 +1443,10 @@ export const translationCatalogs = {
       readerAria: "읽기 전용 블록 문서",
       content: "페이지 콘텐츠",
       editorHelp: "<kbd>Enter</kbd>로 새 블록 · <kbd>Shift</kbd> + <kbd>Enter</kbd>로 줄바꿈 · 빈 블록에서 <kbd>Backspace</kbd>로 삭제",
-      editorAria: "통합 블록 문서 에디터"
+      editorAria: "통합 블록 문서 에디터",
+      subpagesEyebrow: "페이지 목차",
+      subpagesTitle: "하위 페이지",
+      subpagesAria: "하위 페이지 목차"
     },
     cover: {
       regionAria: "페이지 커버",
@@ -2028,7 +2049,11 @@ export const translationCatalogs = {
       open: "Ouvrir la recherche", title: "Recherche", close: "Fermer la recherche", label: "Rechercher des pages et des blocs", placeholder: "Recherche rapide", button: "Rechercher", clear: "Effacer la recherche",
       help: "Recherchez dans les titres de pages et le contenu des blocs.", start: "Saisissez un mot-clé pour rechercher dans votre espace.", loading: "Recherche en cours...", results: "Résultats de recherche", resultCount: "{count} résultat(s)", empty: "Aucune page ni aucun bloc correspondant.", pageResult: "Page", blockResult: "Bloc"
     },
-    navigation: { aria: "Collection par défaut et liste des pages" },
+    navigation: {
+      aria: "Collection par défaut et liste des pages",
+      expandSubpages: "Développer les sous-pages de « {title} »",
+      collapseSubpages: "Réduire les sous-pages de « {title} »"
+    },
     navigationMenu: {
       aria: "Actions de page ou de collection",
       pageAria: "Actions pour la page « {title} »",
@@ -2082,7 +2107,10 @@ export const translationCatalogs = {
       readerAria: "Document de blocs en lecture seule",
       content: "Contenu de la page",
       editorHelp: "<kbd>Entrée</kbd> pour un nouveau bloc · <kbd>Maj</kbd> + <kbd>Entrée</kbd> pour un saut de ligne · <kbd>Retour arrière</kbd> sur un bloc vide pour le supprimer",
-      editorAria: "Éditeur de document à blocs unifié"
+      editorAria: "Éditeur de document à blocs unifié",
+      subpagesEyebrow: "Index de page",
+      subpagesTitle: "Sous-pages",
+      subpagesAria: "Sous-pages"
     },
     sharing: {
       button: "Partager",
@@ -2411,7 +2439,11 @@ export const translationCatalogs = {
       open: "Suche öffnen", title: "Suche", close: "Suche schließen", label: "Seiten und Blöcke durchsuchen", placeholder: "Schnellsuche", button: "Suchen", clear: "Suche leeren",
       help: "Durchsucht Seitentitel und Blockinhalte.", start: "Geben Sie ein Stichwort ein, um den Arbeitsbereich zu durchsuchen.", loading: "Suche läuft...", results: "Suchergebnisse", resultCount: "{count} Ergebnis(se)", empty: "Keine passenden Seiten oder Blöcke.", pageResult: "Seite", blockResult: "Block"
     },
-    navigation: { aria: "Standardsammlung und Seitenliste" },
+    navigation: {
+      aria: "Standardsammlung und Seitenliste",
+      expandSubpages: "Unterseiten von „{title}“ aufklappen",
+      collapseSubpages: "Unterseiten von „{title}“ zuklappen"
+    },
     navigationMenu: {
       aria: "Seiten- oder Sammlungsaktionen",
       pageAria: "Aktionen für die Seite „{title}“",
@@ -2465,7 +2497,10 @@ export const translationCatalogs = {
       readerAria: "Schreibgeschütztes Blockdokument",
       content: "Seiteninhalt",
       editorHelp: "<kbd>Eingabe</kbd> für einen neuen Block · <kbd>Umschalt</kbd> + <kbd>Eingabe</kbd> für einen Zeilenumbruch · <kbd>Rücktaste</kbd> in einem leeren Block zum Löschen",
-      editorAria: "Einheitlicher Block-Dokumenteditor"
+      editorAria: "Einheitlicher Block-Dokumenteditor",
+      subpagesEyebrow: "Seitenübersicht",
+      subpagesTitle: "Unterseiten",
+      subpagesAria: "Unterseiten"
     },
     sharing: {
       button: "Teilen",
@@ -2794,7 +2829,11 @@ export const translationCatalogs = {
       open: "Abrir búsqueda", title: "Buscar", close: "Cerrar búsqueda", label: "Buscar páginas y bloques", placeholder: "Búsqueda rápida", button: "Buscar", clear: "Borrar búsqueda",
       help: "Busca en títulos de páginas y contenido de bloques.", start: "Escribe una palabra clave para buscar en tu espacio.", loading: "Buscando...", results: "Resultados de búsqueda", resultCount: "{count} resultado(s)", empty: "No hay páginas ni bloques coincidentes.", pageResult: "Página", blockResult: "Bloque"
     },
-    navigation: { aria: "Colección predeterminada y lista de páginas" },
+    navigation: {
+      aria: "Colección predeterminada y lista de páginas",
+      expandSubpages: "Expandir subpáginas de «{title}»",
+      collapseSubpages: "Contraer subpáginas de «{title}»"
+    },
     navigationMenu: {
       aria: "Acciones de página o colección",
       pageAria: "Acciones de la página «{title}»",
@@ -2848,7 +2887,10 @@ export const translationCatalogs = {
       readerAria: "Documento de bloques de solo lectura",
       content: "Contenido de la página",
       editorHelp: "<kbd>Intro</kbd> para un bloque nuevo · <kbd>Mayús</kbd> + <kbd>Intro</kbd> para un salto de línea · <kbd>Retroceso</kbd> en un bloque vacío para eliminarlo",
-      editorAria: "Editor unificado de documentos por bloques"
+      editorAria: "Editor unificado de documentos por bloques",
+      subpagesEyebrow: "Índice de página",
+      subpagesTitle: "Subpáginas",
+      subpagesAria: "Subpáginas"
     },
     sharing: {
       button: "Compartir",
@@ -3177,7 +3219,11 @@ export const translationCatalogs = {
       open: "Abrir pesquisa", title: "Pesquisar", close: "Fechar pesquisa", label: "Pesquisar páginas e blocos", placeholder: "Busca rápida", button: "Pesquisar", clear: "Limpar pesquisa",
       help: "Pesquise títulos de páginas e conteúdo de blocos.", start: "Digite uma palavra-chave para pesquisar no espaço de trabalho.", loading: "Pesquisando...", results: "Resultados da pesquisa", resultCount: "{count} resultado(s)", empty: "Nenhuma página ou bloco correspondente.", pageResult: "Página", blockResult: "Bloco"
     },
-    navigation: { aria: "Coleção padrão e lista de páginas" },
+    navigation: {
+      aria: "Coleção padrão e lista de páginas",
+      expandSubpages: "Expandir subpáginas de “{title}”",
+      collapseSubpages: "Recolher subpáginas de “{title}”"
+    },
     navigationMenu: {
       aria: "Ações da página ou coleção",
       pageAria: "Ações da página “{title}”",
@@ -3231,7 +3277,10 @@ export const translationCatalogs = {
       readerAria: "Documento de blocos somente leitura",
       content: "Conteúdo da página",
       editorHelp: "<kbd>Enter</kbd> para um novo bloco · <kbd>Shift</kbd> + <kbd>Enter</kbd> para quebrar a linha · <kbd>Backspace</kbd> em um bloco vazio para excluí-lo",
-      editorAria: "Editor unificado de documentos em blocos"
+      editorAria: "Editor unificado de documentos em blocos",
+      subpagesEyebrow: "Índice da página",
+      subpagesTitle: "Subpáginas",
+      subpagesAria: "Subpáginas"
     },
     sharing: {
       button: "Compartilhar",

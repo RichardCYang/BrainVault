@@ -166,6 +166,7 @@ const pendingAttachmentCreateTasks = new Map();
 let pageCoverSaving = false;
 let pageCoverPositionDraft = null;
 let pageCoverDragPointerId = null;
+let documentChildrenRenderId = 0;
 
 const emojiSearchIndex = emojiRecords.map((record) =>
   `${record[0]} ${record[2]} ${record[3]} ${record[4]} ${record[5]}`.toLocaleLowerCase()
@@ -208,6 +209,7 @@ const state = {
   activeBlockMenuHandle: null,
   activeNavigationMenuTarget: null,
   activeNavigationMenuTrigger: null,
+  collapsedNavigationPageIds: new Set(),
   pendingFocusBlockId: null,
   accountSettingsOpen: false,
   activeAccountPanel: "profile",
@@ -897,6 +899,9 @@ const elements = {
   pageKicker: $("#page-kicker"),
   pageIconButton: $("#page-icon-button"),
   pageTitle: $("#page-title"),
+  subpageIndex: $("#subpage-index"),
+  subpageIndexCount: $("#subpage-index-count"),
+  subpageIndexList: $("#subpage-index-list"),
   collaborationIndicator: $("#collaboration-indicator"),
   collaborationStatusDot: $("#collaboration-status-dot"),
   collaborationStatusLabel: $("#collaboration-status-label"),
@@ -3422,6 +3427,53 @@ function makeNavigationMenuButton({ id, kind, title }) {
   return button;
 }
 
+function makeDocumentChildrenToggle({ page, expanded, controlsId }) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "doc-expand-button";
+  button.dataset.pageChildrenToggleId = page.id;
+  button.dataset.pageChildrenToggleTitle = page.title;
+  button.setAttribute("aria-controls", controlsId);
+  button.setAttribute("aria-expanded", String(expanded));
+  button.setAttribute(
+    "aria-label",
+    t(expanded ? "navigation.collapseSubpages" : "navigation.expandSubpages", { title: page.title })
+  );
+  button.setAttribute(
+    "title",
+    t(expanded ? "navigation.collapseSubpages" : "navigation.expandSubpages", { title: page.title })
+  );
+
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M7 9.5 12 14.5 17 9.5");
+  icon.append(path);
+  button.append(icon);
+  button.classList.toggle("collapsed", !expanded);
+  return button;
+}
+
+function setNavigationSubpagesExpanded(pageId, expanded) {
+  if (!pageId) return;
+  if (expanded) state.collapsedNavigationPageIds.delete(pageId);
+  else state.collapsedNavigationPageIds.add(pageId);
+
+  const selector = `[data-page-children-toggle-id="${CSS.escape(pageId)}"]`;
+  for (const button of document.querySelectorAll(selector)) {
+    const title = button.dataset.pageChildrenToggleTitle || t("newDocumentTitle");
+    const label = t(expanded ? "navigation.collapseSubpages" : "navigation.expandSubpages", { title });
+    button.setAttribute("aria-expanded", String(expanded));
+    button.setAttribute("aria-label", label);
+    button.setAttribute("title", label);
+    button.classList.toggle("collapsed", !expanded);
+
+    const controlsId = button.getAttribute("aria-controls");
+    if (controlsId) document.getElementById(controlsId)?.classList.toggle("hidden", !expanded);
+  }
+}
+
 
 function renderDocumentNode(page, groups, depth = 0) {
   const wrapper = document.createElement("div");
@@ -3432,7 +3484,10 @@ function renderDocumentNode(page, groups, depth = 0) {
   row.className = "document-item-row";
 
   const children = groups.get(page.id) ?? [];
+  const expanded = children.length > 0 && !state.collapsedNavigationPageIds.has(page.id);
+  const childrenId = children.length ? `document-children-${++documentChildrenRenderId}` : null;
   const isActive = state.selectedPage?.id === page.id;
+  row.classList.toggle("has-children", children.length > 0);
   row.classList.toggle("active", isActive);
 
   const button = document.createElement("button");
@@ -3440,10 +3495,6 @@ function renderDocumentNode(page, groups, depth = 0) {
   button.className = "document-item";
   button.classList.toggle("active", isActive);
   button.dataset.pageId = page.id;
-
-  const caret = document.createElement("span");
-  caret.className = "doc-caret";
-  caret.textContent = children.length ? "▾" : "";
 
   const icon = document.createElement("span");
   icon.className = "doc-icon";
@@ -3453,8 +3504,11 @@ function renderDocumentNode(page, groups, depth = 0) {
   label.className = "doc-label";
   label.textContent = page.title;
 
-  button.append(caret, icon, label);
+  button.append(icon, label);
   row.append(button);
+  if (children.length && childrenId) {
+    row.append(makeDocumentChildrenToggle({ page, expanded, controlsId: childrenId }));
+  }
   if (isPageOwner(page)) {
     row.append(makeNavigationMenuButton({ id: page.id, kind: "page", title: page.title }));
   }
@@ -3463,6 +3517,8 @@ function renderDocumentNode(page, groups, depth = 0) {
   if (children.length) {
     const group = document.createElement("div");
     group.className = "document-children";
+    group.id = childrenId;
+    group.classList.toggle("hidden", !expanded);
     for (const child of children) group.append(renderDocumentNode(child, groups, depth + 1));
     wrapper.append(group);
   }
@@ -3551,6 +3607,69 @@ function renderDocumentTree() {
     if (isFiltering && !matchedCollectionIds.has(collection.id)) continue;
     elements.collectionList.append(renderCollectionSection(collection, collectionPages.get(collection.id) ?? []));
   }
+}
+
+function renderSubpageIndexItem(page, groups, depth = 0) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "subpage-index-item";
+  button.dataset.subpageIndexPageId = page.id;
+  button.style.setProperty("--subpage-depth", String(depth));
+
+  const icon = document.createElement("span");
+  icon.className = "subpage-index-icon";
+  icon.setAttribute("aria-hidden", "true");
+  renderIconValue(icon, page.icon, "📄");
+
+  const title = document.createElement("span");
+  title.className = "subpage-index-title";
+  title.textContent = page.title || t("newDocumentTitle");
+
+  const arrow = document.createElement("span");
+  arrow.className = "subpage-index-arrow";
+  arrow.setAttribute("aria-hidden", "true");
+  arrow.textContent = "→";
+
+  button.append(icon, title, arrow);
+
+  const fragment = document.createDocumentFragment();
+  fragment.append(button);
+  for (const child of groups.get(page.id) ?? []) {
+    fragment.append(renderSubpageIndexItem(child, groups, depth + 1));
+  }
+  return fragment;
+}
+
+function renderSubpageIndex(page = state.selectedPage) {
+  elements.subpageIndexList.replaceChildren();
+  if (!page || state.workspaceView !== "page") {
+    elements.subpageIndex.classList.add("hidden");
+    elements.subpageIndexCount.textContent = "";
+    return;
+  }
+
+  const groups = buildPageTree(state.allPages);
+  const children = groups.get(page.id) ?? [];
+  if (!children.length) {
+    elements.subpageIndex.classList.add("hidden");
+    elements.subpageIndexCount.textContent = "";
+    return;
+  }
+
+  let descendantCount = 0;
+  const countDescendants = (parentId) => {
+    for (const child of groups.get(parentId) ?? []) {
+      descendantCount += 1;
+      countDescendants(child.id);
+    }
+  };
+  countDescendants(page.id);
+
+  for (const child of children) {
+    elements.subpageIndexList.append(renderSubpageIndexItem(child, groups));
+  }
+  elements.subpageIndexCount.textContent = formatNumber(descendantCount);
+  elements.subpageIndex.classList.remove("hidden");
 }
 
 function renderParentOptions() {
@@ -5013,6 +5132,7 @@ async function createNavigationSubpage() {
 
   const parentPageId = target.id;
   closeNavigationContextMenu();
+  setNavigationSubpagesExpanded(parentPageId, true);
   return createWorkspacePage(
     { title: t("newDocumentTitle"), icon: "📄", parentPageId },
     { creatingKey: "status.creatingSubpage", createdKey: "status.subpageCreated" }
@@ -10406,6 +10526,7 @@ function renderSelectedPage() {
   elements.collectionView.classList.toggle("hidden", !isCollection);
   elements.pageViewHeader.classList.toggle("hidden", !hasPage);
   elements.pageView.classList.toggle("hidden", !hasPage);
+  renderSubpageIndex(hasPage ? page : null);
 
   if (isCollection) {
     delete elements.blockList.dataset.pageId;
@@ -12213,6 +12334,14 @@ elements.addDocumentButton.addEventListener("click", async () => {
 
 
 async function handleSidebarPageClick(event) {
+  const childrenToggle = event.target.closest("[data-page-children-toggle-id]");
+  if (childrenToggle) {
+    const pageId = childrenToggle.dataset.pageChildrenToggleId;
+    const expanded = childrenToggle.getAttribute("aria-expanded") === "true";
+    setNavigationSubpagesExpanded(pageId, !expanded);
+    return;
+  }
+
   const item = event.target.closest("[data-page-id], [data-collection-id]");
   if (!item) return;
   closeMobileSidebar({ restoreFocus: true });
@@ -12234,6 +12363,16 @@ async function handleSidebarPageClick(event) {
 elements.pageList.addEventListener("click", handleSidebarPageClick);
 elements.collectionList.addEventListener("click", handleSidebarPageClick);
 elements.collectionViewList.addEventListener("click", handleSidebarPageClick);
+
+elements.subpageIndexList.addEventListener("click", async (event) => {
+  const item = event.target.closest("[data-subpage-index-page-id]");
+  if (!item) return;
+  try {
+    await openPage(item.dataset.subpageIndexPageId);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+});
 
 elements.homeDocumentList.addEventListener("click", async (event) => {
   const item = event.target.closest(".home-document-item");
