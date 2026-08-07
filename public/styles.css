@@ -15717,3 +15717,455 @@ html[data-theme="dark"] .page-cover-custom-row {
     margin-top: -3.625rem;
   }
 }
+
+
+/* ========================================================================== 
+   Screenshot-matched sidebar list refinement
+   Targets the compact, neutral Notion sidebar rhythm shown in the supplied
+   reference while leaving BrainVault navigation behavior and data untouched.
+   ========================================================================== */
+@media screen {
+  body.app-mode {
+    --sidebar-reference-bg: #f7f7f5;
+    --sidebar-reference-hover: #eeeeec;
+    --sidebar-reference-active: #e9e9e7;
+    --sidebar-reference-text: #5f5e5b;
+    --sidebar-reference-text-strong: #37352f;
+    --sidebar-reference-muted: #9b9a97;
+    --sidebar-reference-icon: #a4a39f;
+    --sidebar-reference-line: #e6e6e3;
+  }
+
+  .app-mode .shell {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+
+  .app-mode .sidebar {
+    border-right: 1px solid var(--sidebar-reference-line);
+    background: var(--sidebar-reference-bg);
+    padding: 8px 6px 10px 8px;
+    scrollbar-color: rgba(55, 53, 47, 0.16) transparent;
+  }
+
+  .app-mode .workspace-panel {
+    gap: 0;
+  }
+
+  .app-mode .account-settings-trigger {
+    min-height: 32px;
+    grid-template-columns: 20px minmax(0, 1fr) 14px;
+    gap: 8px;
+    margin: 0 0 8px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    padding: 4px 6px;
+    color: var(--sidebar-reference-text-strong);
+  }
+
+  .app-mode .account-settings-trigger:hover,
+  .app-mode .account-settings-trigger:focus-visible {
+    border-color: transparent;
+    background: var(--sidebar-reference-hover);
+    color: var(--sidebar-reference-text-strong);
+  }
+
+  .app-mode .user-avatar--sidebar {
+    width: 20px;
+    height: 20px;
+    border: 1px solid rgba(55, 53, 47, 0.08);
+    border-radius: 4px;
+    background: #f2f0ff;
+    box-shadow: 0 1px 1px rgba(55, 53, 47, 0.06);
+    font-size: 10px;
+  }
+
+  .app-mode .user-identity {
+    display: block;
+  }
+
+  .app-mode .user-identity strong {
+    display: block;
+    color: var(--sidebar-reference-text-strong);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 20px;
+  }
+
+  .app-mode .user-identity small {
+    display: none;
+  }
+
+  .app-mode .account-settings-chevron {
+    width: 12px;
+    height: 12px;
+    color: #aaa9a5;
+    stroke-width: 1.6;
+    opacity: 1;
+  }
+
+  .sidebar-primary-actions {
+    gap: 2px;
+    margin-bottom: 18px;
+  }
+
+  .app-mode .sidebar-utility-button {
+    min-height: 28px;
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    padding: 4px 6px;
+    color: var(--sidebar-reference-text);
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: -0.006em;
+    line-height: 20px;
+  }
+
+  .app-mode .sidebar-utility-button:hover,
+  .app-mode .sidebar-utility-button:focus-visible,
+  .app-mode .sidebar-utility-button.active {
+    background: var(--sidebar-reference-hover);
+    color: var(--sidebar-reference-text-strong);
+  }
+
+  .app-mode .sidebar-utility-button svg {
+    width: 16px;
+    height: 16px;
+    stroke: var(--sidebar-reference-icon);
+    stroke-width: 1.7;
+  }
+
+  .app-mode .sidebar-utility-button:hover svg,
+  .app-mode .sidebar-utility-button:focus-visible svg,
+  .app-mode .sidebar-utility-button.active svg {
+    stroke: #8d8c88;
+  }
+
+  .app-mode .sidebar-section-label,
+  .app-mode .sidebar-footer-label {
+    margin: 0 8px 5px;
+    color: var(--sidebar-reference-muted);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0;
+    line-height: 18px;
+    text-transform: none;
+  }
+
+  .app-mode .sidebar-nav {
+    gap: 17px;
+    padding: 0 1px 8px 0;
+    scrollbar-color: rgba(55, 53, 47, 0.14) transparent;
+  }
+
+  .app-mode .nav-section {
+    gap: 2px;
+  }
+
+  .app-mode .collection-list {
+    gap: 16px;
+  }
+
+  .app-mode .collection-title-row {
+    min-height: 30px;
+    grid-template-columns: minmax(0, 1fr) 22px;
+    gap: 0;
+    border-radius: 4px;
+    background: transparent;
+  }
+
+  .app-mode .collection-title-row:hover,
+  .app-mode .collection-title-row:focus-within,
+  .app-mode .collection-title-row.is-menu-open {
+    background: var(--sidebar-reference-hover);
+  }
+
+  .app-mode .collection-title-row.active {
+    background: var(--sidebar-reference-active);
+  }
+
+  .app-mode .collection-title-button {
+    min-height: 30px;
+    gap: 0;
+    border-radius: 4px;
+    padding: 4px 7px;
+    color: var(--sidebar-reference-text);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.012em;
+    line-height: 20px;
+    text-transform: none;
+  }
+
+  .app-mode .collection-title-button:hover {
+    background: transparent;
+    color: var(--sidebar-reference-text);
+  }
+
+  .app-mode .default-collection .collection-title-button.active,
+  .app-mode .custom-collection .collection-title-button.active {
+    background: transparent;
+    color: var(--sidebar-reference-text-strong);
+  }
+
+  .app-mode .collection-title-main {
+    gap: 7px;
+  }
+
+  .app-mode .collection-title-main .app-inline-icon {
+    width: 18px;
+    height: 18px;
+    font-size: 16px;
+  }
+
+  .app-mode .count-pill {
+    display: none;
+  }
+
+  .app-mode .sidebar-add-button,
+  .app-mode .navigation-more-button {
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    color: var(--sidebar-reference-muted);
+    opacity: 0;
+  }
+
+  .app-mode .sidebar-add-button {
+    font-size: 16px;
+    font-weight: 400;
+  }
+
+  .app-mode .navigation-more-button {
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .app-mode .collection-title-row:hover .sidebar-add-button,
+  .app-mode .collection-title-row:focus-within .sidebar-add-button,
+  .app-mode .collection-title-row:hover .navigation-more-button,
+  .app-mode .collection-title-row:focus-within .navigation-more-button,
+  .app-mode .collection-title-row.is-menu-open .navigation-more-button,
+  .app-mode .document-item-row:hover .navigation-more-button,
+  .app-mode .document-item-row:focus-within .navigation-more-button,
+  .app-mode .document-item-row.is-menu-open .navigation-more-button {
+    color: var(--sidebar-reference-muted);
+    opacity: 1;
+  }
+
+  .app-mode .sidebar-add-button:hover,
+  .app-mode .navigation-more-button:hover,
+  .app-mode .navigation-more-button:focus-visible,
+  .app-mode .navigation-more-button[aria-expanded="true"] {
+    background: rgba(55, 53, 47, 0.08);
+    color: var(--sidebar-reference-text-strong);
+  }
+
+  .app-mode .collection-title-row .navigation-more-button:hover,
+  .app-mode .collection-title-row .navigation-more-button:focus-visible,
+  .app-mode .collection-title-row .navigation-more-button[aria-expanded="true"] {
+    background: rgba(55, 53, 47, 0.08);
+  }
+
+  .app-mode .document-tree,
+  .app-mode .document-children {
+    gap: 2px;
+  }
+
+  .app-mode .document-item-row {
+    min-height: 30px;
+    grid-template-columns: minmax(0, 1fr) 22px;
+    gap: 0;
+    border-radius: 4px;
+  }
+
+  .app-mode .document-item {
+    min-height: 30px;
+    grid-template-columns: 12px 18px minmax(0, 1fr);
+    column-gap: 4px;
+    border-radius: 4px;
+    padding: 4px 5px 4px calc(7px + (var(--depth, 0) * 14px));
+    color: #6b6a67;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: -0.008em;
+    line-height: 20px;
+  }
+
+  .app-mode .document-item:hover,
+  .app-mode .document-item-row.is-menu-open .document-item {
+    background: var(--sidebar-reference-hover);
+    color: var(--sidebar-reference-text-strong);
+  }
+
+  .app-mode .document-item-row.active {
+    border-radius: 4px;
+    background: var(--sidebar-reference-active);
+    color: var(--sidebar-reference-text-strong);
+    box-shadow: none;
+  }
+
+  .app-mode .document-item-row.active .document-item,
+  .app-mode .document-item.active {
+    background: transparent;
+    color: var(--sidebar-reference-text-strong);
+  }
+
+  .app-mode .document-item-row.active .doc-label {
+    font-weight: 650;
+  }
+
+  .app-mode .doc-caret {
+    width: 12px;
+    color: #b1b0ad;
+    font-size: 10px;
+    line-height: 1;
+    text-align: center;
+  }
+
+  .app-mode .doc-icon {
+    display: grid;
+    width: 18px;
+    height: 18px;
+    place-items: center;
+    color: var(--sidebar-reference-muted);
+    font-size: 15px;
+    filter: saturate(0.7);
+    line-height: 1;
+  }
+
+  .app-mode .doc-label {
+    line-height: 20px;
+  }
+
+  .app-mode .sidebar-footer {
+    gap: 2px;
+    margin-top: auto;
+    border-top: 0;
+    padding-top: 10px;
+  }
+
+  .app-mode .sidebar-footer-label {
+    margin-bottom: 4px;
+  }
+
+  .app-mode .sidebar-footer-button {
+    min-height: 30px;
+    gap: 6px;
+    border-radius: 4px;
+    padding: 4px 7px;
+    color: var(--sidebar-reference-text);
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 20px;
+  }
+
+  .app-mode .sidebar-footer-button:hover {
+    background: var(--sidebar-reference-hover);
+    color: var(--sidebar-reference-text-strong);
+  }
+
+  .app-mode .sidebar-footer-button svg {
+    width: 16px;
+    height: 16px;
+    stroke: var(--sidebar-reference-icon);
+  }
+
+  .app-mode .sidebar-footer-button:hover svg {
+    stroke: #8d8c88;
+  }
+}
+
+@media (max-width: 1080px) {
+  .app-mode .shell {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .app-mode .sidebar {
+    width: min(88vw, 240px);
+    padding: max(8px, env(safe-area-inset-top)) 6px max(10px, env(safe-area-inset-bottom)) 8px;
+  }
+
+  .app-mode .account-settings-trigger {
+    padding-right: 38px;
+  }
+}
+
+@media screen {
+  html[data-theme="dark"] body.app-mode {
+    --sidebar-reference-bg: #202020;
+    --sidebar-reference-hover: #2a2a2a;
+    --sidebar-reference-active: #303030;
+    --sidebar-reference-text: #c8c7c3;
+    --sidebar-reference-text-strong: #efefed;
+    --sidebar-reference-muted: #8f8e8a;
+    --sidebar-reference-icon: #858581;
+    --sidebar-reference-line: #30302f;
+  }
+
+  html[data-theme="dark"] .app-mode .sidebar {
+    border-right-color: var(--sidebar-reference-line);
+    background: var(--sidebar-reference-bg);
+  }
+
+  html[data-theme="dark"] .app-mode :is(
+    .account-settings-trigger,
+    .sidebar-utility-button,
+    .collection-title-button,
+    .document-item,
+    .sidebar-footer-button
+  ) {
+    color: var(--sidebar-reference-text);
+  }
+
+  html[data-theme="dark"] .app-mode .user-identity strong,
+  html[data-theme="dark"] .app-mode .account-settings-trigger strong,
+  html[data-theme="dark"] .app-mode .document-item-row.active .document-item,
+  html[data-theme="dark"] .app-mode .document-item.active {
+    color: var(--sidebar-reference-text-strong);
+  }
+
+  html[data-theme="dark"] .app-mode :is(
+    .account-settings-trigger:hover,
+    .account-settings-trigger:focus-visible,
+    .sidebar-utility-button:hover,
+    .sidebar-utility-button:focus-visible,
+    .sidebar-utility-button.active,
+    .collection-title-row:hover,
+    .collection-title-row:focus-within,
+    .collection-title-row.is-menu-open,
+    .document-item:hover,
+    .document-item-row.is-menu-open .document-item,
+    .sidebar-footer-button:hover
+  ) {
+    background: var(--sidebar-reference-hover);
+    color: var(--sidebar-reference-text-strong);
+  }
+
+  html[data-theme="dark"] .app-mode .document-item-row.active {
+    background: var(--sidebar-reference-active);
+  }
+
+  html[data-theme="dark"] .app-mode .collection-title-row.active {
+    background: var(--sidebar-reference-active);
+  }
+
+  html[data-theme="dark"] .app-mode .default-collection .collection-title-button.active,
+  html[data-theme="dark"] .app-mode .custom-collection .collection-title-button.active {
+    background: transparent;
+    color: var(--sidebar-reference-text-strong);
+  }
+
+  html[data-theme="dark"] .app-mode .user-avatar--sidebar {
+    border-color: rgba(255, 255, 255, 0.08);
+    background: #343238;
+    color: #dedde7;
+    box-shadow: none;
+  }
+}

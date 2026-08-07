@@ -3398,7 +3398,7 @@ function renderDefaultCollection() {
     "📁",
     getDefaultCollectionName()
   );
-  const isActive = getActiveCollectionId() === defaultCollectionKey;
+  const isActive = state.workspaceView === "collection" && state.activeCollectionId === defaultCollectionKey;
   elements.defaultCollectionButton.classList.toggle("active", isActive);
   elements.defaultCollectionButton.closest(".collection-title-row")?.classList.toggle("active", isActive);
 }
@@ -3441,7 +3441,7 @@ function renderDocumentNode(page, groups, depth = 0) {
 
   const caret = document.createElement("span");
   caret.className = "doc-caret";
-  caret.textContent = children.length ? "▾" : "•";
+  caret.textContent = children.length ? "▾" : "";
 
   const icon = document.createElement("span");
   icon.className = "doc-icon";
@@ -3475,7 +3475,7 @@ function renderCollectionSection(collection, pages) {
   const row = document.createElement("div");
   row.className = "collection-title-row";
 
-  const isActive = getActiveCollectionId() === collection.id;
+  const isActive = state.workspaceView === "collection" && state.activeCollectionId === collection.id;
   row.classList.toggle("active", isActive);
 
   const button = document.createElement("button");
