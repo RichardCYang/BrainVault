@@ -46,6 +46,7 @@ import {
   currentCollaborationMaterializationVersion,
   needsCollaborationMaterialization
 } from "../lib/collaboration-protocol.js";
+import { assessCollaborationHistoryReplay } from "../lib/collaboration-update-policy.js";
 import type { BlockRow, PageRow, UserRow } from "../types/domain.js";
 
 export const collaborationRouter = Router();
@@ -89,6 +90,23 @@ type CollaborationUpdateRow = {
   user_id: string;
   update_data: Buffer;
 };
+
+type CollaborationHistoryStatsRow = {
+  history_entries: number | string | bigint | null;
+  history_bytes: number | string | bigint | null;
+};
+
+function toSafeHistoryMetric(value: unknown, label: string) {
+  const metric = Number(value ?? 0);
+  if (!Number.isSafeInteger(metric) || metric < 0) {
+    throw new ApiError(
+      500,
+      "INVALID_COLLABORATION_STATE",
+      `Stored collaboration ${label} is invalid`
+    );
+  }
+  return metric;
+}
 
 function assertShareablePage(page: PageRow) {
   if (page.is_collection) {
@@ -382,6 +400,26 @@ collaborationRouter.put(
 
         // Every Yjs writer first locks the page row. Holding the same lock makes
         // this ordered history immutable until the relational transaction ends.
+        // Inspect aggregate metadata before selecting BLOBs so a legacy or
+        // tampered log cannot force an unbounded HTTP materialization replay.
+        const historyStats = await client.queryOne<CollaborationHistoryStatsRow>(
+          `SELECT COUNT(*) AS history_entries,
+                  COALESCE(SUM(OCTET_LENGTH(update_data)), 0) AS history_bytes
+           FROM page_yjs_updates
+           WHERE page_id = ?`,
+          [pageId]
+        );
+        const historyEntries = toSafeHistoryMetric(historyStats?.history_entries, "entry count");
+        const historyBytes = toSafeHistoryMetric(historyStats?.history_bytes, "byte count");
+        const replayAssessment = assessCollaborationHistoryReplay({ historyEntries, historyBytes });
+        if (!replayAssessment.accepted) {
+          throw new ApiError(
+            503,
+            "COLLABORATION_HISTORY_REPLAY_LIMIT",
+            "Stored collaboration history exceeds the safe replay limit"
+          );
+        }
+
         const updateRows = await client.query<CollaborationUpdateRow>(
           `SELECT id, update_data, user_id
            FROM page_yjs_updates
@@ -390,6 +428,17 @@ collaborationRouter.put(
            FOR UPDATE`,
           [pageId]
         );
+        const actualHistoryBytes = updateRows.reduce(
+          (total, row) => total + Buffer.from(row.update_data).length,
+          0
+        );
+        if (updateRows.length !== historyEntries || actualHistoryBytes !== historyBytes) {
+          throw new ApiError(
+            500,
+            "INVALID_COLLABORATION_STATE",
+            "Stored collaboration history changed during bounded replay"
+          );
+        }
         const latestUpdateId = Number(updateRows.at(-1)?.id ?? 0);
         if (!Number.isSafeInteger(latestUpdateId) || latestUpdateId !== body.updateId) {
           throw new ApiError(

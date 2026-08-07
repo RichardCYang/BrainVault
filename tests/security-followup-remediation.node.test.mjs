@@ -19,8 +19,14 @@ import {
   maxCollaborationAvatarDataUrlBytes
 } from "../src/lib/collaboration-presence.ts";
 import {
+  assessCollaborationHistoryReplay,
   assessCollaborationUpdatePersistence,
-  minCollaborationSnapshotHistoryEntries
+  maxCollaborationHistoryReplayBytes,
+  maxCollaborationHistoryReplayEntries,
+  maxCollaborationRetainedHistoryBytes,
+  maxCollaborationRetainedHistoryEntries,
+  minCollaborationSnapshotHistoryEntries,
+  shouldCompactCollaborationHistory
 } from "../src/lib/collaboration-update-policy.ts";
 
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -94,16 +100,103 @@ test("Yjs replay and compaction policy rejects resource-amplifying no-op work", 
   );
 });
 
+test("server-enforced Yjs history retention bounds durable replay work", () => {
+  assert.ok(maxCollaborationRetainedHistoryEntries > minCollaborationSnapshotHistoryEntries);
+  assert.deepEqual(
+    shouldCompactCollaborationHistory({
+      clientSnapshot: false,
+      historyEntries: maxCollaborationRetainedHistoryEntries - 1,
+      historyBytes: 1024,
+      nextUpdateBytes: 1024
+    }),
+    false
+  );
+  assert.equal(
+    shouldCompactCollaborationHistory({
+      clientSnapshot: false,
+      historyEntries: maxCollaborationRetainedHistoryEntries,
+      historyBytes: 1024,
+      nextUpdateBytes: 1024
+    }),
+    true
+  );
+  assert.equal(
+    shouldCompactCollaborationHistory({
+      clientSnapshot: false,
+      historyEntries: 1,
+      historyBytes: maxCollaborationRetainedHistoryBytes,
+      nextUpdateBytes: 1
+    }),
+    true
+  );
+  assert.equal(
+    shouldCompactCollaborationHistory({
+      clientSnapshot: true,
+      historyEntries: 1,
+      historyBytes: 1,
+      nextUpdateBytes: 1
+    }),
+    true
+  );
+
+  assert.deepEqual(
+    assessCollaborationHistoryReplay({
+      historyEntries: maxCollaborationRetainedHistoryEntries,
+      historyBytes: maxCollaborationRetainedHistoryBytes
+    }),
+    { accepted: true, compact: false }
+  );
+  assert.deepEqual(
+    assessCollaborationHistoryReplay({
+      historyEntries: maxCollaborationRetainedHistoryEntries + 1,
+      historyBytes: maxCollaborationRetainedHistoryBytes + 1
+    }),
+    { accepted: true, compact: true }
+  );
+  assert.deepEqual(
+    assessCollaborationHistoryReplay({
+      historyEntries: maxCollaborationHistoryReplayEntries + 1,
+      historyBytes: 1
+    }),
+    { accepted: false, reason: "entry-limit" }
+  );
+  assert.deepEqual(
+    assessCollaborationHistoryReplay({
+      historyEntries: 1,
+      historyBytes: maxCollaborationHistoryReplayBytes + 1
+    }),
+    { accepted: false, reason: "byte-limit" }
+  );
+  assert.deepEqual(
+    assessCollaborationHistoryReplay({ historyEntries: -1, historyBytes: 0 }),
+    { accepted: false, reason: "invalid-metrics" }
+  );
+});
+
 test("the production wiring preserves identity while removing repeated high-cost fan-out", () => {
   const server = read("src/lib/collaboration-server.ts");
   const client = read("public/collaboration.js");
   const yjsValidation = read("src/lib/yjs-validation.ts");
+  const collaborationRoutes = read("src/routes/collaboration.routes.ts");
   const sessionCookie = read("src/lib/session-cookie.ts");
   const app = read("src/app.ts");
 
   assert.match(yjsValidation, /changed: !Buffer\.from\(currentState\)\.equals\(Buffer\.from\(stateUpdate\)\)/);
   assert.match(server, /persistenceDecision\.action === "ignore"/);
   assert.match(server, /persistenceDecision\.action === "reject"/);
+  assert.match(server, /shouldCompactCollaborationHistory/);
+  assert.match(server, /durableSnapshot \? \[row\]/);
+  assert.match(server, /SUM\(OCTET_LENGTH\(update_data\)\)/);
+  assert.match(
+    server,
+    /UPDATE page_yjs_updates[\s\S]*SET update_data = \?, is_snapshot = 1[\s\S]*WHERE page_id = \? AND id = \?/
+  );
+  assert.match(server, /const envelope = updateEnvelope\(result\.updateId, update\)/);
+  assert.match(server, /updateEnvelope\(room\.maxUpdateId, room\.stateUpdate\)/);
+  assert.doesNotMatch(server, /for \(const row of room\.history\) connection\.sendBinary/);
+  assert.match(yjsValidation, /canonicalCurrentState/);
+  assert.match(collaborationRoutes, /COLLABORATION_HISTORY_REPLAY_LIMIT/);
+  assert.match(collaborationRoutes, /SUM\(OCTET_LENGTH\(update_data\)\)/);
   assert.match(server, /type: "compaction-complete"/);
   assert.match(server, /publicPresence\(client, includeIdentity\)/);
   assert.match(server, /includeIdentity: true/);

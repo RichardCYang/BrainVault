@@ -50,11 +50,20 @@ export function createValidatedYjsDocument(
 export function applyValidatedYjsUpdate(
   currentDocument: Y.Doc,
   update: Uint8Array,
-  maxStateBytes: number
+  maxStateBytes: number,
+  canonicalCurrentState?: Uint8Array
 ): ValidatedYjsUpdate {
   const candidate = new Y.Doc();
   try {
-    const currentState = encodeBoundedState(currentDocument, maxStateBytes);
+    // The collaboration room caches the server-generated canonical state. Using
+    // it here avoids re-encoding a potentially large document before every
+    // small update while preserving the isolated-candidate commit boundary.
+    const currentState = canonicalCurrentState === undefined
+      ? encodeBoundedState(currentDocument, maxStateBytes)
+      : Buffer.from(canonicalCurrentState);
+    if (currentState.byteLength > maxStateBytes) {
+      throw new InvalidYjsUpdateError("The current collaboration document is too large");
+    }
     Y.applyUpdate(candidate, currentState);
     Y.applyUpdate(candidate, update);
     const stateUpdate = encodeBoundedState(candidate, maxStateBytes);

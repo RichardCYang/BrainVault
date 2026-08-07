@@ -30,8 +30,10 @@ describe("server-side Yjs validation", () => {
 
     const live = createValidatedYjsDocument([baseUpdate], limit);
     const candidate = applyValidatedYjsUpdate(live, leftUpdate, limit);
+    const cachedCandidate = applyValidatedYjsUpdate(live, leftUpdate, limit, baseUpdate);
     expect(titleOf(live)).toBe("BrainVault");
     expect(titleOf(candidate.document)).not.toBe(titleOf(live));
+    expect(Buffer.from(cachedCandidate.stateUpdate)).toEqual(Buffer.from(candidate.stateUpdate));
 
     const leftThenRight = createValidatedYjsDocument([candidate.stateUpdate, rightUpdate], limit);
     const rightThenLeft = createValidatedYjsDocument([baseUpdate, rightUpdate, leftUpdate], limit);
@@ -40,7 +42,16 @@ describe("server-side Yjs validation", () => {
       Buffer.from(Y.encodeStateVector(rightThenLeft))
     );
 
-    for (const document of [base, left, right, live, candidate.document, leftThenRight, rightThenLeft]) {
+    for (const document of [
+      base,
+      left,
+      right,
+      live,
+      candidate.document,
+      cachedCandidate.document,
+      leftThenRight,
+      rightThenLeft
+    ]) {
       document.destroy();
     }
   });

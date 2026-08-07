@@ -20,7 +20,7 @@ import {
   type WebSocketMessage
 } from "./websocket.js";
 import type { BlockRow, UserRow } from "../types/domain.js";
-import type * as Y from "yjs";
+import * as Y from "yjs";
 import {
   applyValidatedYjsUpdate,
   createValidatedYjsDocument,
@@ -49,7 +49,12 @@ import {
   assessCollaborationWriteAdmission
 } from "./collaboration-resource-limits.js";
 import { getCollaborationAvatarData } from "./collaboration-presence.js";
-import { assessCollaborationUpdatePersistence } from "./collaboration-update-policy.js";
+import {
+  assessCollaborationHistoryReplay,
+  assessCollaborationUpdatePersistence,
+  maxCollaborationRetainedHistoryBytes,
+  shouldCompactCollaborationHistory
+} from "./collaboration-update-policy.js";
 
 type CollaborationNetworkServer = HttpServer | HttpsServer;
 
@@ -67,6 +72,11 @@ type YjsUpdateRow = {
   id: number;
   update_data: Buffer;
   is_snapshot: 0 | 1;
+};
+
+type CollaborationHistoryStatsRow = {
+  history_entries: number | string | bigint | null;
+  history_bytes: number | string | bigint | null;
 };
 
 type CollaborationProfile = Pick<UserRow, "id" | "username" | "name" | "avatar_data">;
@@ -96,6 +106,8 @@ type Room = {
   documentEpoch: string;
   clients: Map<string, ClientContext>;
   history: YjsUpdateRow[];
+  historyBytes: number;
+  stateUpdate: Buffer;
   maxUpdateId: number;
   loaded: boolean;
   loadFailed: boolean;
@@ -148,6 +160,14 @@ function toSafeUpdateId(value: unknown) {
     throw new ApiError(500, "INVALID_COLLABORATION_STATE", "Collaboration update id exceeded the supported range");
   }
   return id;
+}
+
+function toSafeHistoryMetric(value: unknown, label: string) {
+  const metric = Number(value ?? 0);
+  if (!Number.isSafeInteger(metric) || metric < 0) {
+    throw new InvalidYjsUpdateError(`Stored collaboration ${label} is invalid`);
+  }
+  return metric;
 }
 
 function normalizeAwareness(value: unknown): AwarenessState {
@@ -494,7 +514,12 @@ export class PageCollaborationHub {
         || !room.clients.has(client.id)
       ) return;
 
-      for (const row of room.history) connection.sendBinary(updateEnvelope(toSafeUpdateId(row.id), Buffer.from(row.update_data)));
+      if (room.maxUpdateId > 0) {
+        // A reconnect needs the canonical state and durable cursor, not every
+        // historical frame. This keeps synchronization work bounded even when
+        // an obsolete client delayed cooperative compaction.
+        connection.sendBinary(updateEnvelope(room.maxUpdateId, room.stateUpdate));
+      }
       connection.sendJson({
         type: "presence",
         clients: [...room.clients.values()]
@@ -545,6 +570,8 @@ export class PageCollaborationHub {
       documentEpoch,
       clients: new Map<string, ClientContext>(),
       history: [],
+      historyBytes: 0,
+      stateUpdate: Buffer.alloc(0),
       maxUpdateId: 0,
       loaded: false,
       loadFailed: false,
@@ -557,28 +584,116 @@ export class PageCollaborationHub {
       bootstrapWritePending: false,
       document: createValidatedYjsDocument([], maxCollaborationDocumentBytes)
     });
-    room.loadPromise = db.query<YjsUpdateRow>(
-      `SELECT id, update_data, is_snapshot
-       FROM page_yjs_updates
-       WHERE page_id = ?
-       ORDER BY id ASC`,
-      [pageId]
-    ).then((rows) => {
-      if (room.invalidated || this.rooms.get(pageId) !== room) return;
-      room.history = rows.map((row) => ({
+    let pendingLoadedDocument: Y.Doc | null = null;
+    room.loadPromise = transaction(async (dbClient) => {
+      // Every durable collaboration writer locks the page row first. Taking the
+      // same lock keeps the aggregate preflight, BLOB read, and optional legacy
+      // compaction consistent without selecting an unbounded history first.
+      const page = await dbClient.queryOne<{ id: string }>(
+        "SELECT id FROM pages WHERE id = ? FOR UPDATE",
+        [pageId]
+      );
+      if (!page) throw new ApiError(404, "PAGE_NOT_FOUND", "Page not found");
+
+      const statsRow = await dbClient.queryOne<CollaborationHistoryStatsRow>(
+        `SELECT COUNT(*) AS history_entries,
+                COALESCE(SUM(OCTET_LENGTH(update_data)), 0) AS history_bytes
+         FROM page_yjs_updates
+         WHERE page_id = ?`,
+        [pageId]
+      );
+      const historyEntries = toSafeHistoryMetric(statsRow?.history_entries, "entry count");
+      const historyBytes = toSafeHistoryMetric(statsRow?.history_bytes, "byte count");
+      const replayAssessment = assessCollaborationHistoryReplay({ historyEntries, historyBytes });
+      if (!replayAssessment.accepted) {
+        throw new InvalidYjsUpdateError(
+          `Stored collaboration history exceeds the safe replay ${replayAssessment.reason}`
+        );
+      }
+
+      const rows = await dbClient.query<YjsUpdateRow>(
+        `SELECT id, update_data, is_snapshot
+         FROM page_yjs_updates
+         WHERE page_id = ?
+         ORDER BY id ASC`,
+        [pageId]
+      );
+      const history = rows.map((row) => ({
         id: toSafeUpdateId(row.id),
         update_data: Buffer.from(row.update_data),
-        is_snapshot: row.is_snapshot
+        is_snapshot: row.is_snapshot === 1 ? 1 as const : 0 as const
       }));
+      const actualHistoryBytes = history.reduce((total, row) => total + row.update_data.length, 0);
+      if (history.length !== historyEntries || actualHistoryBytes !== historyBytes) {
+        throw new InvalidYjsUpdateError("Stored collaboration history changed during bounded replay");
+      }
+
       const loadedDocument = createValidatedYjsDocument(
-        room.history.map((row) => row.update_data),
+        history.map((row) => row.update_data),
         maxCollaborationDocumentBytes
       );
+      pendingLoadedDocument = loadedDocument;
+      const stateUpdate = Buffer.from(Y.encodeStateAsUpdate(loadedDocument));
+
+      if (!replayAssessment.compact || !history.length) {
+        return {
+          document: loadedDocument,
+          history,
+          historyBytes: actualHistoryBytes,
+          stateUpdate,
+          maxUpdateId: history.length ? history[history.length - 1].id : 0
+        };
+      }
+
+      // Histories from older builds that only moderately exceed the retained
+      // caps are repaired once under the page lock. The replacement is encoded
+      // from the validated canonical document, never from a client payload.
+      if (stateUpdate.length > maxCollaborationRetainedHistoryBytes) {
+        throw new InvalidYjsUpdateError("The compacted collaboration state exceeds the retained history limit");
+      }
+      const updateId = history.at(-1)?.id;
+      if (updateId === undefined) {
+        throw new InvalidYjsUpdateError("Stored collaboration history has no compaction checkpoint");
+      }
+      // Replace the latest row in place so state-equivalent legacy repair does
+      // not advance the durable cursor or invalidate rooms on another server.
+      const replacement = await dbClient.execute<{ affectedRows: number }>(
+        `UPDATE page_yjs_updates
+         SET update_data = ?, is_snapshot = 1
+         WHERE page_id = ? AND id = ?`,
+        [stateUpdate, pageId, updateId]
+      );
+      if (replacement.affectedRows !== 1) {
+        throw new InvalidYjsUpdateError("Stored collaboration history could not be compacted safely");
+      }
+      await dbClient.execute(
+        "DELETE FROM page_yjs_updates WHERE page_id = ? AND id < ?",
+        [pageId, updateId]
+      );
+      return {
+        document: loadedDocument,
+        history: [{ id: updateId, update_data: stateUpdate, is_snapshot: 1 as const }],
+        historyBytes: stateUpdate.length,
+        stateUpdate,
+        maxUpdateId: updateId
+      };
+    }).then((loaded) => {
+      if (room.invalidated || this.rooms.get(pageId) !== room) {
+        loaded.document.destroy();
+        pendingLoadedDocument = null;
+        return;
+      }
+      room.history = loaded.history;
+      room.historyBytes = loaded.historyBytes;
+      room.stateUpdate = loaded.stateUpdate;
       room.document.destroy();
-      room.document = loadedDocument;
-      room.maxUpdateId = room.history.length ? room.history[room.history.length - 1].id : 0;
+      room.document = loaded.document;
+      pendingLoadedDocument = null;
+      room.maxUpdateId = loaded.maxUpdateId;
       room.loaded = true;
     }).catch((error) => {
+      pendingLoadedDocument?.destroy();
+      pendingLoadedDocument = null;
       room.loadFailed = true;
       room.invalidated = true;
       if (this.rooms.get(pageId) === room) this.rooms.delete(pageId);
@@ -763,7 +878,12 @@ export class PageCollaborationHub {
   ) {
     if (room.invalidated || this.rooms.get(room.pageId) !== room) return;
 
-    const candidate = applyValidatedYjsUpdate(room.document, update, maxCollaborationDocumentBytes);
+    const candidate = applyValidatedYjsUpdate(
+      room.document,
+      update,
+      maxCollaborationDocumentBytes,
+      room.stateUpdate
+    );
     const persistenceDecision = assessCollaborationUpdatePersistence({
       snapshot,
       documentChanged: candidate.changed,
@@ -785,7 +905,13 @@ export class PageCollaborationHub {
       return;
     }
 
-    const persistedUpdate = snapshot ? Buffer.from(candidate.stateUpdate) : update;
+    const durableSnapshot = shouldCompactCollaborationHistory({
+      clientSnapshot: snapshot,
+      historyEntries: room.history.length,
+      historyBytes: room.historyBytes,
+      nextUpdateBytes: update.length
+    });
+    const persistedUpdate = durableSnapshot ? Buffer.from(candidate.stateUpdate) : update;
     let result:
       | { accepted: true; updateId: number }
       | {
@@ -872,10 +998,10 @@ export class PageCollaborationHub {
         const insert = await dbClient.execute<{ insertId: number | bigint }>(
           `INSERT INTO page_yjs_updates (page_id, user_id, update_data, is_snapshot)
            VALUES (?, ?, ?, ?)`,
-          [room.pageId, client.user.id, persistedUpdate, snapshot ? 1 : 0]
+          [room.pageId, client.user.id, persistedUpdate, durableSnapshot ? 1 : 0]
         );
         const updateId = toSafeUpdateId(insert.insertId);
-        if (snapshot) {
+        if (durableSnapshot) {
           await dbClient.execute("DELETE FROM page_yjs_updates WHERE page_id = ? AND id < ?", [room.pageId, updateId]);
         }
         return { accepted: true as const, updateId };
@@ -938,15 +1064,19 @@ export class PageCollaborationHub {
 
     const previousDocument = room.document;
     room.document = candidate.document;
+    room.stateUpdate = Buffer.from(candidate.stateUpdate);
     previousDocument.destroy();
 
     const row: YjsUpdateRow = {
       id: result.updateId,
       update_data: persistedUpdate,
-      is_snapshot: snapshot ? 1 : 0
+      is_snapshot: durableSnapshot ? 1 : 0
     };
     room.maxUpdateId = result.updateId;
-    room.history = snapshot ? [row] : [...room.history, row];
+    room.history = durableSnapshot ? [row] : [...room.history, row];
+    room.historyBytes = durableSnapshot
+      ? persistedUpdate.length
+      : room.historyBytes + persistedUpdate.length;
     if (snapshot) {
       // A compaction snapshot is proven state-equivalent before persistence.
       // Peers need only the new durable cursor, not a second full document.
@@ -956,8 +1086,19 @@ export class PageCollaborationHub {
         }
       }
     } else {
-      const envelope = updateEnvelope(result.updateId, persistedUpdate);
+      // Server-enforced compaction changes only the durable representation.
+      // Existing peers still receive the original incremental update while a
+      // reconnect receives the equivalent full-state snapshot from history.
+      const envelope = updateEnvelope(result.updateId, update);
       for (const target of room.clients.values()) target.socket.sendBinary(envelope);
+      if (durableSnapshot) {
+        // Reset cooperative client counters as well. Otherwise an honest client
+        // could immediately submit a redundant snapshot after the server has
+        // already compacted the same canonical state.
+        for (const target of room.clients.values()) {
+          target.socket.sendJson({ type: "compaction-complete", updateId: result.updateId });
+        }
+      }
     }
     if (room.clients.has(client.id) && client.socket.isOpen) {
       client.socket.sendJson({ type: "update-ack", updateId: result.updateId, snapshot });
