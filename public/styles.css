@@ -15623,4 +15623,23 @@ html[data-theme="dark"] .page-cover-custom-row {
     margin-inline: calc(0px - var(--main-inline-padding));
     border-radius: 0;
   }
+
+  /* Keep the page icon centered on the cover/content boundary. */
+  body.app-mode:not(.pdf-export-mode) .page-view.has-page-cover .page-title-icon-button {
+    position: relative;
+    z-index: 4;
+    margin-top: -4.375rem;
+  }
+}
+
+@media screen and (max-width: 760px) {
+  body.app-mode:not(.pdf-export-mode) .page-view.has-page-cover .page-title-icon-button {
+    margin-top: -3.925rem;
+  }
+}
+
+@media screen and (max-width: 430px) {
+  body.app-mode:not(.pdf-export-mode) .page-view.has-page-cover .page-title-icon-button {
+    margin-top: -3.625rem;
+  }
 }

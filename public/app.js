@@ -10170,6 +10170,7 @@ function renderPageCover(page) {
   }
   const hasCover = Boolean(page?.coverUrl);
   elements.pageViewHeader.classList.toggle("has-page-cover", hasCover);
+  elements.pageView.classList.toggle("has-page-cover", hasCover);
   elements.pageCover.classList.toggle("hidden", !hasCover);
   if (!hasCover) {
     elements.pageCoverImage.removeAttribute("src");
