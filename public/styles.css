@@ -915,6 +915,20 @@ textarea {
   grid-template-columns: minmax(0, 1fr) 1.8rem;
   align-items: center;
   gap: 0.1rem;
+  border-radius: var(--radius-md);
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.collection-title-row:hover,
+.collection-title-row:focus-within,
+.collection-title-row.is-menu-open {
+  background: var(--hover);
+  color: var(--ink-strong);
+}
+
+.collection-title-row.active {
+  background: var(--active);
+  color: var(--ink-strong);
 }
 
 .collection-title-button,
@@ -964,7 +978,11 @@ textarea {
 }
 
 .sidebar-add-button:hover,
-.collection-title-button:hover,
+.collection-title-button:hover {
+  background: transparent;
+  color: var(--ink-strong);
+}
+
 .document-item:hover,
 .home-row:hover {
   background: var(--hover);
@@ -976,9 +994,14 @@ textarea {
 }
 
 .custom-collection .collection-title-button.active {
-  background: var(--active);
+  background: transparent;
   color: var(--ink-strong);
   box-shadow: none;
+}
+
+.collection-title-row.active .sidebar-add-button,
+.collection-title-row.active .navigation-more-button {
+  color: var(--ink-strong);
 }
 
 .document-item-row.active {
@@ -11406,6 +11429,17 @@ body.search-dialog-open {
   .app-mode .collection-title-row {
     grid-template-columns: minmax(0, 1fr) 1.72rem;
     gap: 0.04rem;
+    border-radius: 5px;
+  }
+
+  .app-mode .collection-title-row:hover,
+  .app-mode .collection-title-row:focus-within,
+  .app-mode .collection-title-row.is-menu-open {
+    background: var(--notion-sidebar-hover);
+  }
+
+  .app-mode .collection-title-row.active {
+    background: var(--notion-sidebar-active);
   }
 
   .app-mode .collection-title-button {
@@ -11420,15 +11454,27 @@ body.search-dialog-open {
   }
 
   .app-mode .collection-title-button:hover {
-    background: var(--notion-sidebar-hover);
+    background: transparent;
     color: #27343c;
+  }
+
+  .app-mode .collection-title-row:hover .sidebar-add-button,
+  .app-mode .collection-title-row:focus-within .sidebar-add-button,
+  .app-mode .collection-title-row:hover .navigation-more-button,
+  .app-mode .collection-title-row:focus-within .navigation-more-button {
+    color: var(--chrome-accent-strong);
   }
 
   .app-mode .default-collection .collection-title-button.active,
   .app-mode .custom-collection .collection-title-button.active {
-    background: var(--notion-sidebar-active);
+    background: transparent;
     color: #075985;
     box-shadow: none;
+  }
+
+  .app-mode .collection-title-row.active .sidebar-add-button,
+  .app-mode .collection-title-row.active .navigation-more-button {
+    color: #075985;
   }
 
   .app-mode .count-pill {
@@ -11442,12 +11488,22 @@ body.search-dialog-open {
     color: #87939a;
   }
 
-  .app-mode .sidebar-add-button:hover,
+  .app-mode .sidebar-add-button:hover {
+    background: transparent;
+    color: var(--chrome-accent-strong);
+  }
+
   .app-mode .navigation-more-button:hover,
   .app-mode .navigation-more-button:focus-visible,
   .app-mode .navigation-more-button[aria-expanded="true"] {
     background: var(--notion-sidebar-hover);
     color: var(--chrome-accent-strong);
+  }
+
+  .app-mode .collection-title-row .navigation-more-button:hover,
+  .app-mode .collection-title-row .navigation-more-button:focus-visible,
+  .app-mode .collection-title-row .navigation-more-button[aria-expanded="true"] {
+    background: transparent;
   }
 
   .app-mode .document-tree {
@@ -15184,6 +15240,20 @@ html[data-theme="dark"] .rendered-gantt-status--blocked { background: #513529; c
     .document-item.active
   ) {
     background: var(--notion-sidebar-active);
+    color: #9fddfa;
+  }
+
+  html[data-theme="dark"] .app-mode .collection-title-row .collection-title-button:hover,
+  html[data-theme="dark"] .app-mode .collection-title-row .sidebar-add-button:hover,
+  html[data-theme="dark"] .app-mode .collection-title-row .navigation-more-button:hover,
+  html[data-theme="dark"] .app-mode .collection-title-row .navigation-more-button:focus-visible,
+  html[data-theme="dark"] .app-mode .collection-title-row .navigation-more-button[aria-expanded="true"],
+  html[data-theme="dark"] .app-mode .collection-title-row.active .collection-title-button {
+    background: transparent;
+  }
+
+  html[data-theme="dark"] .app-mode .collection-title-row.active .sidebar-add-button,
+  html[data-theme="dark"] .app-mode .collection-title-row.active .navigation-more-button {
     color: #9fddfa;
   }
 

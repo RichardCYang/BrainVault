@@ -3398,10 +3398,9 @@ function renderDefaultCollection() {
     "📁",
     getDefaultCollectionName()
   );
-  elements.defaultCollectionButton.classList.toggle(
-    "active",
-    getActiveCollectionId() === defaultCollectionKey
-  );
+  const isActive = getActiveCollectionId() === defaultCollectionKey;
+  elements.defaultCollectionButton.classList.toggle("active", isActive);
+  elements.defaultCollectionButton.closest(".collection-title-row")?.classList.toggle("active", isActive);
 }
 
 function makeNavigationMenuButton({ id, kind, title }) {
@@ -3476,10 +3475,13 @@ function renderCollectionSection(collection, pages) {
   const row = document.createElement("div");
   row.className = "collection-title-row";
 
+  const isActive = getActiveCollectionId() === collection.id;
+  row.classList.toggle("active", isActive);
+
   const button = document.createElement("button");
   button.type = "button";
   button.className = "collection-title-button";
-  button.classList.toggle("active", getActiveCollectionId() === collection.id);
+  button.classList.toggle("active", isActive);
   button.dataset.collectionId = collection.id;
 
   const title = document.createElement("span");
