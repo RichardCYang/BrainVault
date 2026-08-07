@@ -921,6 +921,7 @@ const elements = {
   slashMenu: $("#slash-menu"),
   blockContextMenu: $("#block-context-menu"),
   navigationContextMenu: $("#navigation-context-menu"),
+  navigationAddSubpageButton: $("#navigation-add-subpage-button"),
   navigationDeleteLabel: $("#navigation-delete-label"),
   calloutTypeGroup: $("#callout-type-group"),
   inlineToolbar: $("#inline-toolbar"),
@@ -1094,6 +1095,7 @@ function syncWorkspaceCreateControls() {
   elements.addCollectionButton.disabled = busy;
   elements.homeNewPageButton.disabled = busy;
   elements.addDocumentButton.disabled = busy;
+  elements.navigationAddSubpageButton.disabled = busy;
 }
 
 function setWorkspaceCreateBusy(busy) {
@@ -4928,7 +4930,9 @@ function closePageVersionHistory({ restoreFocus = true } = {}) {
 }
 
 function getNavigationContextMenuItems() {
-  return [...elements.navigationContextMenu.querySelectorAll('[role="menuitem"]')];
+  return [...elements.navigationContextMenu.querySelectorAll('[role="menuitem"]')].filter(
+    (item) => !item.disabled && !item.classList.contains("hidden")
+  );
 }
 
 function closeNavigationContextMenu({ restoreFocus = false } = {}) {
@@ -4993,12 +4997,26 @@ function openNavigationContextMenu(trigger, { focusFirst = false } = {}) {
     "aria-label",
     t(kind === "collection" ? "navigationMenu.collectionAria" : "navigationMenu.pageAria", { title })
   );
+  elements.navigationAddSubpageButton.classList.toggle("hidden", kind !== "page");
+  elements.navigationAddSubpageButton.disabled = state.workspaceCreateBusy;
   elements.navigationDeleteLabel.textContent = t(
     kind === "collection" ? "navigationMenu.deleteCollection" : "navigationMenu.deletePage"
   );
   positionNavigationContextMenu(trigger);
 
   if (focusFirst) getNavigationContextMenuItems()[0]?.focus();
+}
+
+async function createNavigationSubpage() {
+  const target = state.activeNavigationMenuTarget;
+  if (!target || target.kind !== "page") return { applied: false };
+
+  const parentPageId = target.id;
+  closeNavigationContextMenu();
+  return createWorkspacePage(
+    { title: t("newDocumentTitle"), icon: "📄", parentPageId },
+    { creatingKey: "status.creatingSubpage", createdKey: "status.subpageCreated" }
+  );
 }
 
 async function deleteNavigationTarget() {
@@ -13203,10 +13221,14 @@ elements.pageActionsMenu.addEventListener("keydown", (event) => {
 
 elements.navigationContextMenu.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-action]");
-  if (!button || button.dataset.action !== "delete-navigation-item") return;
+  if (!button) return;
 
   try {
-    await deleteNavigationTarget();
+    if (button.dataset.action === "add-navigation-subpage") {
+      await createNavigationSubpage();
+      return;
+    }
+    if (button.dataset.action === "delete-navigation-item") await deleteNavigationTarget();
   } catch (error) {
     setStatus(error.message, true);
   }
