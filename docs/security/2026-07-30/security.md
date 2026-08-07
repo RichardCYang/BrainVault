@@ -98,6 +98,8 @@ Upload validation rejects active web and executable extensions and media types, 
 
 Every download goes through `/api/blocks/:blockId/attachment`, re-checks the current user's current page access, forces download disposition, applies `nosniff`, a sandboxing Content Security Policy, and a same-origin resource policy. Backup restore applies the same blocked-filename and active-MIME policy as direct upload. The configured attachment root is rejected when it equals or is nested under the public web root, including case-insensitive Windows paths, and startup removes stale staging files without touching committed attachments. Deleting an attachment block, a parent block containing attachments, or a permanently deleted page subtree also removes the associated files.
 
+`ATTACHMENT_STORAGE_MAX_MB` defaults to 2048 MB and caps committed attachment bytes per account. Accounts are also limited to 5,000 committed attachment files so zero-byte or tiny uploads cannot exhaust filesystem inodes without crossing the byte quota. Upload accounting runs while the owner row is locked, so concurrent writers cannot each reserve the same remaining capacity. Backup restore validates the replacement attachment generation against both limits before staging files. Set the byte limit below the usable capacity of the dedicated attachment volume and reserve additional space for temporary uploads, backup staging, and interrupted-restore recovery generations.
+
 Do not point `ATTACHMENT_UPLOAD_DIR` at `public/`, `docs/`, `.git/`, or the project root.
 
 ## Backup and restore safety

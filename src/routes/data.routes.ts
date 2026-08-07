@@ -15,6 +15,7 @@ import { ApiError } from "../lib/http.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { requireAuth } from "../middleware/auth.js";
 import {
+  beginDataImportProcessing,
   dataExportRateLimit,
   dataImportConcurrencyLimit,
   dataImportRateLimit
@@ -100,6 +101,7 @@ dataRouter.post(
   dataImportConcurrencyLimit,
   backupUpload.single("backup"),
   async (req, res, next) => {
+    const releaseDataImport = beginDataImportProcessing(res);
     const uploadPath = req.file?.path ?? null;
     try {
       const user = requireUser(req.user);
@@ -115,6 +117,7 @@ dataRouter.post(
       next(error);
     } finally {
       if (uploadPath) await rm(uploadPath, { force: true }).catch(() => undefined);
+      releaseDataImport();
     }
   }
 );

@@ -19,6 +19,11 @@ import {
   maxCollaborationAvatarDataUrlBytes
 } from "../src/lib/collaboration-presence.ts";
 import {
+  assessAttachmentFileCountLimit,
+  assessAttachmentStorageLimit
+} from "../src/lib/attachment-storage-limit.ts";
+import { isPrivateAddress } from "../src/lib/network-address.ts";
+import {
   assessCollaborationHistoryReplay,
   assessCollaborationUpdatePersistence,
   maxCollaborationHistoryReplayBytes,
@@ -31,6 +36,29 @@ import {
 
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (relativePath) => readFileSync(join(rootDir, relativePath), "utf8").replace(/\r\n/g, "\n");
+
+test("deprecated IPv6 site-local addresses remain blocked as non-public SSRF targets", () => {
+  assert.equal(isPrivateAddress("fec0::1"), true);
+  assert.equal(isPrivateAddress("feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"), true);
+  assert.equal(isPrivateAddress("ff00::1"), true);
+  assert.equal(isPrivateAddress("2606:4700:4700::1111"), false);
+});
+
+test("attachment storage quotas use overflow-safe bigint accounting", () => {
+  assert.deepEqual(assessAttachmentStorageLimit(900n, 100n, 1_000n), { accepted: true, nextBytes: 1_000n });
+  assert.deepEqual(assessAttachmentStorageLimit(900n, 101n, 1_000n), { accepted: false, reason: "quota-exceeded" });
+  assert.deepEqual(
+    assessAttachmentStorageLimit(2n ** 100n, 1n, 2n ** 100n),
+    { accepted: false, reason: "quota-exceeded" }
+  );
+  assert.throws(() => assessAttachmentStorageLimit(-1n, 0n, 1n), /non-negative/);
+  assert.deepEqual(assessAttachmentFileCountLimit(4_999, 1, 5_000), { accepted: true, nextFiles: 5_000 });
+  assert.deepEqual(
+    assessAttachmentFileCountLimit(5_000, 1, 5_000),
+    { accepted: false, reason: "file-count-exceeded" }
+  );
+  assert.throws(() => assessAttachmentFileCountLimit(0.5, 1, 5_000), /safe integers/);
+});
 
 test("secure sessions use a __Host cookie and ambiguous duplicate cookies fail closed", () => {
   assert.equal(getAuthSessionCookieName(false), legacyAuthSessionCookieName);
@@ -180,6 +208,10 @@ test("the production wiring preserves identity while removing repeated high-cost
   const collaborationRoutes = read("src/routes/collaboration.routes.ts");
   const sessionCookie = read("src/lib/session-cookie.ts");
   const app = read("src/app.ts");
+  const attachmentSource = read("src/lib/attachments.ts");
+  const blockRoutes = read("src/routes/block.routes.ts");
+  const dataTransfer = read("src/lib/data-transfer.ts");
+  const envSource = read("src/config/env.ts");
 
   assert.match(yjsValidation, /changed: !Buffer\.from\(currentState\)\.equals\(Buffer\.from\(stateUpdate\)\)/);
   assert.match(server, /persistenceDecision\.action === "ignore"/);
@@ -206,4 +238,11 @@ test("the production wiring preserves identity while removing repeated high-cost
   assert.match(sessionCookie, /readUniqueCookieValue/);
   assert.match(app, /productionAccessLogFormat : developmentAccessLogFormat/);
   assert.doesNotMatch(app, /morgan\([^\n]*(?:"combined"|"dev")/);
+  assert.match(envSource, /ATTACHMENT_STORAGE_MAX_MB:[^\n]+default\(2048\)/);
+  assert.match(attachmentSource, /getAttachmentStorageUsage/);
+  assert.match(attachmentSource, /ATTACHMENT_STORAGE_QUOTA_EXCEEDED/);
+  assert.match(attachmentSource, /ATTACHMENT_FILE_COUNT_LIMIT_EXCEEDED/);
+  assert.match(blockRoutes, /currentAttachmentUsage\.bytes/);
+  assert.match(blockRoutes, /currentAttachmentUsage\.files/);
+  assert.match(dataTransfer, /assertAttachmentStorageLimit\(0n, restoredAttachmentBytes, 0, manifest\.attachments\.length\)/);
 });

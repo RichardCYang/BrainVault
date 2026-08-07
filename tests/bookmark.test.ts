@@ -138,6 +138,7 @@ describe("bookmark SSRF address filtering", () => {
     "5f00::1",
     "fc00::1",
     "fe80::1",
+    "fec0::1",
     "::ffff:127.0.0.1"
   ])("blocks private address %s", (address) => {
     expect(isPrivateAddress(address)).toBe(true);

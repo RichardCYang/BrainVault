@@ -108,7 +108,7 @@ The original URL remains in `markdown` so search, collaboration, version history
 
 Type `/file`, choose **Attachment**, and select a file. When the current block contains only the slash command, it is replaced in place; otherwise the attachment is inserted below it. The card shows the original filename, media type, size, and an authenticated download button.
 
-Uploaded bytes are stored under `ATTACHMENT_UPLOAD_DIR`, which defaults to `uploads/`. The default maximum file size is 25 MB and can be changed with `MAX_ATTACHMENT_SIZE_MB`.
+Uploaded bytes are stored under `ATTACHMENT_UPLOAD_DIR`, which defaults to `uploads/`. The default maximum file size is 25 MB and can be changed with `MAX_ATTACHMENT_SIZE_MB`. Committed attachment storage is capped per account by `ATTACHMENT_STORAGE_MAX_MB`, which defaults to 2048 MB, plus a fixed limit of 5,000 files; both limits are also enforced when restoring a backup.
 
 Attachment storage and deletion rules are documented in [Security](../../security/2026-07-30/security.md#attachment-safety).
 

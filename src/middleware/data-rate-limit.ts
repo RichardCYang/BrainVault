@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { env } from "../config/env.js";
-import { DataImportAdmissionGate } from "../lib/data-import-admission.js";
+import { DataImportAdmissionGate, DataImportAdmissionLease } from "../lib/data-import-admission.js";
 
 function dataKey(scope: "export" | "import", req: Request) {
   const userId = typeof req.user?.id === "string" ? req.user.id : "";
@@ -46,6 +46,18 @@ export const dataImportRateLimit = rateLimit({
 });
 
 const dataImportAdmissionGate = new DataImportAdmissionGate(env.DATA_IMPORT_MAX_CONCURRENT);
+const dataImportAdmissionLeases = new WeakMap<Response, DataImportAdmissionLease>();
+
+export function beginDataImportProcessing(res: Response) {
+  const lease = dataImportAdmissionLeases.get(res);
+  if (!lease || !lease.beginProcessing()) {
+    throw new Error("Data import admission lease is unavailable");
+  }
+
+  return () => {
+    if (lease.release()) dataImportAdmissionLeases.delete(res);
+  };
+}
 
 export function dataImportConcurrencyLimit(req: Request, res: Response, next: NextFunction) {
   const principal = dataKey("import", req);
@@ -70,17 +82,13 @@ export function dataImportConcurrencyLimit(req: Request, res: Response, next: Ne
     return;
   }
 
-  let released = false;
-  const release = () => {
-    if (released) return;
-    released = true;
-    res.off("finish", release);
-    res.off("close", release);
-    req.off("aborted", release);
-    dataImportAdmissionGate.release(principal);
+  const lease = new DataImportAdmissionLease(() => dataImportAdmissionGate.release(principal));
+  dataImportAdmissionLeases.set(res, lease);
+  const releaseBeforeProcessing = () => {
+    if (lease.releaseBeforeProcessing()) dataImportAdmissionLeases.delete(res);
   };
-  res.once("finish", release);
-  res.once("close", release);
-  req.once("aborted", release);
+  res.once("finish", releaseBeforeProcessing);
+  res.once("close", releaseBeforeProcessing);
+  req.once("aborted", releaseBeforeProcessing);
   next();
 }

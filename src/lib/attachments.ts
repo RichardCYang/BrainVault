@@ -3,6 +3,8 @@ import { createReadStream } from "node:fs";
 import path from "node:path";
 import { link, lstat, mkdir, open, readdir, rm, stat } from "node:fs/promises";
 import { env } from "../config/env.js";
+import { assessAttachmentFileCountLimit, assessAttachmentStorageLimit } from "./attachment-storage-limit.js";
+import { dataTransferResourceLimits } from "./data-transfer-limits.js";
 import { ApiError } from "./http.js";
 import { transaction, type DbClient } from "./db.js";
 import {
@@ -30,6 +32,8 @@ export {
 const projectRoot = path.resolve(process.cwd());
 export const attachmentUploadRoot = path.resolve(projectRoot, env.ATTACHMENT_UPLOAD_DIR);
 export const attachmentTempDir = path.join(attachmentUploadRoot, ".tmp");
+export const maxAttachmentStorageBytes = BigInt(env.ATTACHMENT_STORAGE_MAX_MB) * 1024n * 1024n;
+export const maxAttachmentFilesPerAccount = dataTransferResourceLimits.maxAttachments;
 
 function comparablePath(value: string) {
   const resolved = path.resolve(value);
@@ -248,6 +252,61 @@ export function getAttachmentFilePath(ownerId: string, blockId: string) {
     safeStorageSegment(ownerId),
     safeStorageSegment(blockId)
   );
+}
+
+export async function getAttachmentStorageUsage(ownerId: string) {
+  const ownerDirectory = path.join(attachmentUploadRoot, safeStorageSegment(ownerId));
+  let entries;
+  try {
+    entries = await readdir(ownerDirectory, { withFileTypes: true });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return { bytes: 0n, files: 0 };
+    }
+    throw error;
+  }
+
+  let totalBytes = 0n;
+  let totalFiles = 0;
+  for (const entry of entries) {
+    const filePath = path.join(ownerDirectory, entry.name);
+    const info = await lstat(filePath, { bigint: true });
+    if (!info.isFile()) {
+      throw new Error(`Attachment storage contains an unsupported entry: ${filePath}`);
+    }
+    totalBytes += info.size;
+    totalFiles += 1;
+  }
+  return { bytes: totalBytes, files: totalFiles };
+}
+
+export function assertAttachmentStorageLimit(
+  currentBytes: bigint,
+  incomingBytes: bigint,
+  currentFiles: number,
+  incomingFiles: number
+) {
+  const byteAssessment = assessAttachmentStorageLimit(currentBytes, incomingBytes, maxAttachmentStorageBytes);
+  if (!byteAssessment.accepted) {
+    throw new ApiError(
+      413,
+      "ATTACHMENT_STORAGE_QUOTA_EXCEEDED",
+      "The account attachment storage limit has been reached"
+    );
+  }
+  const countAssessment = assessAttachmentFileCountLimit(
+    currentFiles,
+    incomingFiles,
+    maxAttachmentFilesPerAccount
+  );
+  if (!countAssessment.accepted) {
+    throw new ApiError(
+      413,
+      "ATTACHMENT_FILE_COUNT_LIMIT_EXCEEDED",
+      "The account attachment file-count limit has been reached"
+    );
+  }
+  return { bytes: byteAssessment.nextBytes, files: countAssessment.nextFiles };
 }
 
 export async function moveAttachmentFile(temporaryPath: string, ownerId: string, blockId: string) {

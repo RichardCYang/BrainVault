@@ -62,6 +62,7 @@ Never commit a real `.env` file.
 | `ATTACHMENT_UPLOAD_DIR` | `uploads` | Private on-disk directory for attachment bytes; startup rejects the public web root and its descendants |
 | `ATTACHMENT_TEMP_MAX_AGE_MS` | `86400000` | Age after which stale files in the private attachment staging directory are removed at startup |
 | `MAX_ATTACHMENT_SIZE_MB` | `25` | Maximum size of one uploaded attachment in megabytes |
+| `ATTACHMENT_STORAGE_MAX_MB` | `2048` | Maximum committed attachment bytes per account in megabytes; applies to uploads and backup restore |
 | `DATA_TRANSFER_MAX_SIZE_MB` | `1024` | Maximum size of one complete-data backup archive in megabytes; enforced on upload, ZIP contents, export staging, and the final export plan |
 | `DATA_TRANSFER_MAX_MANIFEST_SIZE_MB` | `16` | Maximum JSON manifest size buffered and parsed during backup export or import |
 | `DATA_EXPORT_WINDOW_MS` | `3600000` | Complete-data export limit window per authenticated user |

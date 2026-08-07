@@ -5,7 +5,12 @@ import type { Writable } from "node:stream";
 import { access, copyFile, link, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { z } from "zod";
 import { env } from "../config/env.js";
-import { attachmentUploadRoot, getAttachmentFilePath, withUserAttachmentLock } from "./attachments.js";
+import {
+  assertAttachmentStorageLimit,
+  attachmentUploadRoot,
+  getAttachmentFilePath,
+  withUserAttachmentLock
+} from "./attachments.js";
 import {
   assertLosslessAttachmentMetadata,
   AttachmentMetadataIntegrityError
@@ -153,6 +158,7 @@ const tagSchema = z.object({
 }).strict();
 
 const pageTagSchema = z.object({ page_id: idSchema, tag_id: idSchema }).strict();
+const byteCountSchema = z.string().min(1).max(20).regex(/^\d+$/);
 const pageShareSchema = z.object({
   page_id: idSchema,
   // Optional only for backups exported before collaborator account IDs were
@@ -165,7 +171,7 @@ const pageShareSchema = z.object({
 const attachmentSchema = z.object({
   blockId: idSchema,
   path: z.string().min(1).max(160),
-  size: z.string().regex(/^\d+$/),
+  size: byteCountSchema,
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   crc32: z.number().int().min(0).max(0xffffffff)
 }).strict();
@@ -174,7 +180,7 @@ const pageCoverFileSchema = z.object({
   pageId: idSchema,
   path: z.string().min(1).max(160),
   mimeType: pageCoverMimeTypeSchema,
-  size: z.string().regex(/^\d+$/),
+  size: byteCountSchema,
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   crc32: z.number().int().min(0).max(0xffffffff)
 }).strict();
@@ -1694,6 +1700,11 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
     invalidBackup("The backup manifest is invalid", error instanceof z.ZodError ? error.flatten() : undefined);
   }
   validateManifestRelations(manifest);
+  const restoredAttachmentBytes = manifest.attachments.reduce(
+    (total, attachment) => total + BigInt(attachment.size),
+    0n
+  );
+  assertAttachmentStorageLimit(0n, restoredAttachmentBytes, 0, manifest.attachments.length);
 
   const allowedEntries = new Set([
     manifestName,

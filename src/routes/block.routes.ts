@@ -11,10 +11,12 @@ import {
   ensureAttachmentDirectories,
   getAttachmentFilePath,
   getAttachmentInfo,
+  getAttachmentStorageUsage,
   inspectAttachmentUpload,
   moveAttachmentFile,
   removeDeletedAttachmentFiles,
   removeAttachmentPath,
+  assertAttachmentStorageLimit,
   sanitizeAttachmentDownloadFilename,
   type AttachmentMetadata
 } from "../lib/attachments.js";
@@ -544,6 +546,13 @@ blockRouter.post(
             throw new ApiError(409, "PAGE_ARCHIVED", "Restore the page before adding an attachment");
           }
           await assertParentBlock(body.parentBlockId, pageId, client);
+          const currentAttachmentUsage = await getAttachmentStorageUsage(ownerId);
+          assertAttachmentStorageLimit(
+            currentAttachmentUsage.bytes,
+            BigInt(file.size),
+            currentAttachmentUsage.files,
+            1
+          );
           const lastBlock = await client.queryOne<{ sort_order: number }>(
             "SELECT sort_order FROM blocks WHERE page_id = ? AND parent_block_id <=> ? ORDER BY sort_order DESC LIMIT 1",
             [pageId, body.parentBlockId]

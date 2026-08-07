@@ -85,6 +85,7 @@ const envSchema = z.object({
   ATTACHMENT_UPLOAD_DIR: z.string().min(1).default("uploads"),
   ATTACHMENT_TEMP_MAX_AGE_MS: z.coerce.number().int().min(60_000).max(30 * 24 * 60 * 60_000).default(24 * 60 * 60_000),
   MAX_ATTACHMENT_SIZE_MB: z.coerce.number().int().min(1).max(500).default(25),
+  ATTACHMENT_STORAGE_MAX_MB: z.coerce.number().int().min(1).max(1_048_576).default(2048),
   DATA_TRANSFER_MAX_SIZE_MB: z.coerce.number().int().min(1).max(16_384).default(1024),
   DATA_TRANSFER_MAX_MANIFEST_SIZE_MB: z.coerce.number().int().min(1).max(64).default(16),
   DATA_EXPORT_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60_000),
@@ -101,6 +102,9 @@ if (!inputEnv.DATABASE_URL && inputEnv.NODE_ENV === "test") {
   inputEnv.DATABASE_URL = "mariadb://brainvault:test-only-password@127.0.0.1:3306/brainvault_test";
 }
 const parsedEnv = envSchema.parse(inputEnv);
+if (parsedEnv.ATTACHMENT_STORAGE_MAX_MB < parsedEnv.MAX_ATTACHMENT_SIZE_MB) {
+  throw new Error("ATTACHMENT_STORAGE_MAX_MB must be at least MAX_ATTACHMENT_SIZE_MB");
+}
 
 function generateEphemeralSecret() {
   return randomBytes(48).toString("base64url");

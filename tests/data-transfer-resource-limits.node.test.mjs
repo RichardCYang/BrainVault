@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { DataImportAdmissionGate } from "../src/lib/data-import-admission.ts";
+import { DataImportAdmissionGate, DataImportAdmissionLease } from "../src/lib/data-import-admission.ts";
 import { dataTransferResourceLimits, measureJsonUtf8BytesWithinLimit } from "../src/lib/data-transfer-limits.ts";
 import { crc32, readZipDirectory, readZipEntryBuffer, ZipWriter } from "../src/lib/zip.ts";
 
@@ -38,6 +38,25 @@ test("data-import admission allows one operation per principal and caps server c
   assert.deepEqual(gate.tryAcquire("user-c"), { accepted: true });
   gate.release("user-a");
   assert.equal(gate.activeCount, 2);
+});
+
+test("data-import admission remains held after disconnect once restore processing begins", () => {
+  const gate = new DataImportAdmissionGate(1);
+  assert.deepEqual(gate.tryAcquire("user-a"), { accepted: true });
+  const lease = new DataImportAdmissionLease(() => gate.release("user-a"));
+  assert.equal(lease.beginProcessing(), true);
+  assert.equal(lease.releaseBeforeProcessing(), false);
+  assert.deepEqual(gate.tryAcquire("user-a"), { accepted: false, reason: "principal-active" });
+  assert.equal(lease.release(), true);
+  assert.equal(lease.release(), false);
+  assert.deepEqual(gate.tryAcquire("user-a"), { accepted: true });
+  gate.release("user-a");
+
+  assert.deepEqual(gate.tryAcquire("user-b"), { accepted: true });
+  const waitingLease = new DataImportAdmissionLease(() => gate.release("user-b"));
+  assert.equal(waitingLease.releaseBeforeProcessing(), true);
+  assert.deepEqual(gate.tryAcquire("user-b"), { accepted: true });
+  gate.release("user-b");
 });
 
 test("backup ZIP parsing honors caller-specific entry and central-directory ceilings", async () => {
@@ -88,9 +107,13 @@ test("backup route and manifest limits are applied before expensive import work"
   assert.ok(middlewareSource.includes("DATA_IMPORT_RATE_LIMITED"));
   assert.ok(middlewareSource.includes("DATA_IMPORT_IN_PROGRESS"));
   assert.ok(middlewareSource.includes("DATA_IMPORT_BUSY"));
+  assert.ok(middlewareSource.includes("beginDataImportProcessing"));
+  assert.ok(routeSource.includes("const releaseDataImport = beginDataImportProcessing(res)"));
+  assert.ok(routeSource.includes("releaseDataImport();"));
   assert.ok(transferSource.includes("DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024"));
   assert.ok(transferSource.includes("measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1)"));
   assert.ok(transferSource.includes("manifestEntry.uncompressedSize > BigInt(maxManifestBytes)"));
+  assert.ok(transferSource.includes("const byteCountSchema = z.string().min(1).max(20)"));
   assert.ok(transferSource.includes("maxCentralDirectoryBytes: dataTransferResourceLimits.maxCentralDirectoryBytes"));
   assert.ok(transferSource.includes("maxEntries: dataTransferResourceLimits.maxZipEntries"));
   assert.ok(transferSource.includes("if (error instanceof ApiError) throw error"));

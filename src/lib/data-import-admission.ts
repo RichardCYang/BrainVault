@@ -2,6 +2,33 @@ export type DataImportAdmission =
   | Readonly<{ accepted: true }>
   | Readonly<{ accepted: false; reason: "principal-active" | "server-capacity" }>;
 
+export class DataImportAdmissionLease {
+  private state: "waiting" | "processing" | "released" = "waiting";
+  private readonly releaseAdmission: () => void;
+
+  constructor(releaseAdmission: () => void) {
+    this.releaseAdmission = releaseAdmission;
+  }
+
+  beginProcessing() {
+    if (this.state !== "waiting") return false;
+    this.state = "processing";
+    return true;
+  }
+
+  releaseBeforeProcessing() {
+    if (this.state !== "waiting") return false;
+    return this.release();
+  }
+
+  release() {
+    if (this.state === "released") return false;
+    this.state = "released";
+    this.releaseAdmission();
+    return true;
+  }
+}
+
 export class DataImportAdmissionGate {
   private readonly activePrincipals = new Set<string>();
   readonly maxConcurrent: number;

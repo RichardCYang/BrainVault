@@ -120,6 +120,7 @@ test("bookmark metadata rejects private IP literals in stored page and asset URL
   expectIntegrityFailure("BOOKMARK", metadata({ faviconUrl: "http://[::1]/favicon.ico" }), "metadata.bookmark.items[0].faviconUrl");
   expectIntegrityFailure("BOOKMARK", metadata({ imageUrl: "http://[::ffff:192.168.1.1]/admin.png" }), "metadata.bookmark.items[0].imageUrl");
   expectIntegrityFailure("BOOKMARK", metadata({ url: "http://127.0.0.1/" }), "metadata.bookmark.items[0].url");
+  expectIntegrityFailure("BOOKMARK", metadata({ url: "http://[fec0::1]/" }), "metadata.bookmark.items[0].url");
   assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("BOOKMARK", metadata({ imageUrl: "https://cdn.example.com/image.png" })));
   assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("BOOKMARK", metadata({ imageUrl: "http://[::ffff:808:808]/image.png" })));
 });
