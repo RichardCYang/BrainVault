@@ -1,4 +1,4 @@
-import express, { type NextFunction, type Response } from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import path from "node:path";
 import { type ServerResponse } from "node:http";
 import helmet from "helmet";
@@ -17,6 +17,11 @@ import { errorHandler, notFoundHandler } from "./middleware/error.js";
 import { requireAuth } from "./middleware/auth.js";
 import { createHttpsEnforcementMiddleware } from "./middleware/https.js";
 import { createExpressTrustProxySetting } from "./lib/reverse-proxy.js";
+import {
+  developmentAccessLogFormat,
+  productionAccessLogFormat,
+  stripUrlQueryAndFragment
+} from "./lib/access-log.js";
 
 const trustProxySetting = env.HTTPS_MODE === "proxy"
   ? createExpressTrustProxySetting(env.TRUST_PROXY_HOPS, env.TRUST_PROXY_ADDRESSES)
@@ -26,6 +31,15 @@ const configuredWebSocketOrigins = corsOrigins.map((origin) => {
   const parsed = new URL(origin);
   parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
   return parsed.origin;
+});
+
+morgan.token("safe-url", (req) => {
+  const request = req as Request;
+  return stripUrlQueryAndFragment(request.originalUrl ?? request.url, "/");
+});
+morgan.token("safe-referrer", (req) => {
+  const referrer = req.headers.referer ?? req.headers.referrer;
+  return stripUrlQueryAndFragment(Array.isArray(referrer) ? referrer[0] : referrer);
 });
 
 export function createApp() {
@@ -60,7 +74,7 @@ export function createApp() {
     })
   );
   app.use(cors(corsOptionsDelegate));
-  app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
+  app.use(morgan(env.NODE_ENV === "production" ? productionAccessLogFormat : developmentAccessLogFormat));
   app.use(
     rateLimit({
       windowMs: env.RATE_LIMIT_WINDOW_MS,

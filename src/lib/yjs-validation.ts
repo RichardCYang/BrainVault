@@ -12,6 +12,7 @@ export class InvalidYjsUpdateError extends Error {
 export type ValidatedYjsUpdate = {
   document: Y.Doc;
   stateUpdate: Uint8Array;
+  changed: boolean;
 };
 
 function encodeBoundedState(document: Y.Doc, maxStateBytes: number) {
@@ -56,9 +57,11 @@ export function applyValidatedYjsUpdate(
     const currentState = encodeBoundedState(currentDocument, maxStateBytes);
     Y.applyUpdate(candidate, currentState);
     Y.applyUpdate(candidate, update);
+    const stateUpdate = encodeBoundedState(candidate, maxStateBytes);
     return {
       document: candidate,
-      stateUpdate: encodeBoundedState(candidate, maxStateBytes)
+      stateUpdate,
+      changed: !Buffer.from(currentState).equals(Buffer.from(stateUpdate))
     };
   } catch (error) {
     candidate.destroy();

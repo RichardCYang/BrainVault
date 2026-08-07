@@ -1,10 +1,15 @@
 import type { Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env.js";
-
-export const authSessionCookieName = "brainvault_session";
+import {
+  getAuthSessionCookieName,
+  legacyAuthSessionCookieName,
+  readUniqueCookieValue
+} from "./session-cookie-policy.js";
 
 const secureSessionCookie = env.HTTPS_MODE !== "off" || new URL(env.PUBLIC_ORIGIN).protocol === "https:";
+
+export const authSessionCookieName = getAuthSessionCookieName(secureSessionCookie);
 
 const baseCookieOptions = {
   httpOnly: true,
@@ -20,32 +25,24 @@ export function setAuthSessionCookie(res: Response, token: string) {
       ? new Date(decoded.exp * 1000)
       : undefined;
 
+  // Secure deployments intentionally stop accepting the unprefixed cookie.
+  // Clearing it here provides a clean migration for a browser that previously
+  // received a host-only BrainVault session cookie.
+  if (authSessionCookieName !== legacyAuthSessionCookieName) {
+    res.clearCookie(legacyAuthSessionCookieName, baseCookieOptions);
+  }
   res.cookie(authSessionCookieName, token, { ...baseCookieOptions, expires });
   res.setHeader("Cache-Control", "private, no-store");
 }
 
 export function clearAuthSessionCookie(res: Response) {
   res.clearCookie(authSessionCookieName, baseCookieOptions);
+  if (authSessionCookieName !== legacyAuthSessionCookieName) {
+    res.clearCookie(legacyAuthSessionCookieName, baseCookieOptions);
+  }
   res.setHeader("Cache-Control", "private, no-store");
 }
 
 export function readAuthSessionCookie(req: Request) {
-  const header = req.header("cookie");
-  if (!header) return null;
-
-  for (const entry of header.split(";")) {
-    const separator = entry.indexOf("=");
-    if (separator < 0) continue;
-    const name = entry.slice(0, separator).trim();
-    if (name !== authSessionCookieName) continue;
-    const value = entry.slice(separator + 1).trim();
-    if (!value) return null;
-    try {
-      return decodeURIComponent(value);
-    } catch {
-      return null;
-    }
-  }
-
-  return null;
+  return readUniqueCookieValue(req.header("cookie"), authSessionCookieName);
 }

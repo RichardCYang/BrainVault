@@ -48,6 +48,8 @@ import {
   assessCollaborationUpgradeAdmission,
   assessCollaborationWriteAdmission
 } from "./collaboration-resource-limits.js";
+import { getCollaborationAvatarData } from "./collaboration-presence.js";
+import { assessCollaborationUpdatePersistence } from "./collaboration-update-policy.js";
 
 type CollaborationNetworkServer = HttpServer | HttpsServer;
 
@@ -167,17 +169,21 @@ function normalizeAwareness(value: unknown): AwarenessState {
   };
 }
 
-function publicPresence(client: ClientContext) {
-  return {
+function publicPresence(client: ClientContext, includeIdentity = true) {
+  const presence = {
     connectionId: client.id,
+    state: client.awareness,
+    synced: client.synced
+  };
+  if (!includeIdentity) return presence;
+  return {
+    ...presence,
     user: {
       id: client.user.id,
       username: client.user.username,
       name: client.user.name,
-      avatarData: client.user.avatar_data ?? null
-    },
-    state: client.awareness,
-    synced: client.synced
+      avatarData: getCollaborationAvatarData(client.user.avatar_data)
+    }
   };
 }
 
@@ -491,7 +497,9 @@ export class PageCollaborationHub {
       for (const row of room.history) connection.sendBinary(updateEnvelope(toSafeUpdateId(row.id), Buffer.from(row.update_data)));
       connection.sendJson({
         type: "presence",
-        clients: [...room.clients.values()].filter((item) => item.id !== client.id).map(publicPresence)
+        clients: [...room.clients.values()]
+          .filter((item) => item.id !== client.id)
+          .map((item) => publicPresence(item, true))
       });
 
       if (room.history.length || room.maxUpdateId > 0) {
@@ -515,7 +523,7 @@ export class PageCollaborationHub {
         room.waitingForBootstrap.add(client.id);
         connection.sendJson({ type: "bootstrap-wait", connectionId: client.id });
       }
-      this.broadcastPresenceUpdate(room, client);
+      this.broadcastPresenceUpdate(room, client, { includeIdentity: true });
     } finally {
       if (upgradeReserved) this.releaseUpgrade(payload.sub);
     }
@@ -756,6 +764,27 @@ export class PageCollaborationHub {
     if (room.invalidated || this.rooms.get(room.pageId) !== room) return;
 
     const candidate = applyValidatedYjsUpdate(room.document, update, maxCollaborationDocumentBytes);
+    const persistenceDecision = assessCollaborationUpdatePersistence({
+      snapshot,
+      documentChanged: candidate.changed,
+      historyEntries: room.history.length
+    });
+
+    // The first durable update must still pass the canonical SQL bootstrap
+    // check, even when an empty page happens to encode to the empty Yjs state.
+    if (!snapshot && room.maxUpdateId > 0 && persistenceDecision.action === "ignore") {
+      candidate.document.destroy();
+      if (room.clients.has(client.id) && client.socket.isOpen) {
+        client.socket.sendJson({
+          type: "update-ack",
+          updateId: room.maxUpdateId,
+          snapshot: false,
+          noChange: true
+        });
+      }
+      return;
+    }
+
     const persistedUpdate = snapshot ? Buffer.from(candidate.stateUpdate) : update;
     let result:
       | { accepted: true; updateId: number }
@@ -794,6 +823,14 @@ export class PageCollaborationHub {
           snapshotBaseUpdateId: baseUpdateId
         });
         if (!checkpoint.accepted) return checkpoint;
+
+        if (snapshot && persistenceDecision.action === "reject") {
+          return {
+            accepted: false as const,
+            currentUpdateId,
+            reason: persistenceDecision.reason
+          };
+        }
 
         if (currentUpdateId === 0) {
           // The first durable Yjs state initializes collaboration from SQL. It
@@ -890,7 +927,11 @@ export class PageCollaborationHub {
           client.socket.close(4012, "Initial collaboration state did not match the saved page");
         }
       } else if (room.clients.has(client.id) && client.socket.isOpen) {
-        client.socket.sendJson({ type: "snapshot-rejected", lastUpdateId: result.currentUpdateId });
+        client.socket.sendJson({
+          type: "snapshot-rejected",
+          lastUpdateId: result.currentUpdateId,
+          reason: result.reason
+        });
       }
       return;
     }
@@ -906,8 +947,18 @@ export class PageCollaborationHub {
     };
     room.maxUpdateId = result.updateId;
     room.history = snapshot ? [row] : [...room.history, row];
-    const envelope = updateEnvelope(result.updateId, persistedUpdate);
-    for (const target of room.clients.values()) target.socket.sendBinary(envelope);
+    if (snapshot) {
+      // A compaction snapshot is proven state-equivalent before persistence.
+      // Peers need only the new durable cursor, not a second full document.
+      for (const target of room.clients.values()) {
+        if (target.id !== client.id) {
+          target.socket.sendJson({ type: "compaction-complete", updateId: result.updateId });
+        }
+      }
+    } else {
+      const envelope = updateEnvelope(result.updateId, persistedUpdate);
+      for (const target of room.clients.values()) target.socket.sendBinary(envelope);
+    }
     if (room.clients.has(client.id) && client.socket.isOpen) {
       client.socket.sendJson({ type: "update-ack", updateId: result.updateId, snapshot });
     }
@@ -931,10 +982,14 @@ export class PageCollaborationHub {
     }
   }
 
-  private broadcastPresenceUpdate(room: Room, client: ClientContext, removed = false) {
+  private broadcastPresenceUpdate(
+    room: Room,
+    client: ClientContext,
+    { removed = false, includeIdentity = false }: { removed?: boolean; includeIdentity?: boolean } = {}
+  ) {
     const message = removed
       ? { type: "awareness-update", connectionId: client.id, state: null }
-      : { type: "awareness-update", ...publicPresence(client) };
+      : { type: "awareness-update", ...publicPresence(client, includeIdentity) };
     for (const target of room.clients.values()) {
       if (target.id !== client.id) target.socket.sendJson(message);
     }
@@ -985,7 +1040,7 @@ export class PageCollaborationHub {
     if (!room.clients.delete(client.id)) return;
     this.untrackClient(room.pageId, client.user.id);
     room.waitingForBootstrap.delete(client.id);
-    this.broadcastPresenceUpdate(room, client, true);
+    this.broadcastPresenceUpdate(room, client, { removed: true });
 
     if (
       room.bootstrapLeaderId === client.id

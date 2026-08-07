@@ -3,7 +3,9 @@ export const maxCollaborationDocumentBytes = 16 * 1024 * 1024;
 
 export type CollaborationWriteRejectionReason =
   | "room-stale"
-  | "snapshot-base-mismatch";
+  | "snapshot-base-mismatch"
+  | "snapshot-changed-document"
+  | "snapshot-too-early";
 
 export type CollaborationWriteCheckpoint =
   | { accepted: true }

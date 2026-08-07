@@ -123,7 +123,25 @@ contains("src/lib/collaboration-server.ts", [
   "pendingWriteBytes",
   "await write",
   "Collaboration write backlog exceeded",
-  "this.accessRecheckRunning"
+  "this.accessRecheckRunning",
+  'persistenceDecision.action === "ignore"',
+  'persistenceDecision.action === "reject"',
+  'type: "compaction-complete"',
+  "publicPresence(client, includeIdentity)",
+  "includeIdentity: true"
+]);
+contains("src/lib/collaboration-update-policy.ts", [
+  "minCollaborationSnapshotHistoryEntries = 200",
+  'reason: "no-document-change"',
+  'reason: "snapshot-changed-document"',
+  'reason: "snapshot-too-early"'
+]);
+contains("src/lib/collaboration-presence.ts", [
+  "maxCollaborationAvatarDataUrlBytes = 64 * 1024",
+  'Buffer.byteLength(value, "utf8")'
+]);
+contains("src/lib/yjs-validation.ts", [
+  "changed: !Buffer.from(currentState).equals(Buffer.from(stateUpdate))"
 ]);
 contains("migrations/024_auth_session_revocation.sql", [
   /ADD COLUMN IF NOT EXISTS auth_version BIGINT UNSIGNED NOT NULL DEFAULT 1/i
@@ -191,7 +209,23 @@ const browserSource = read("public/app.js");
 assert.ok(!browserSource.includes("brainvault.token"), "The browser must not persist the JWT in localStorage");
 assert.ok(!browserSource.includes('Authorization", `Bearer'), "The built-in browser must use the HttpOnly session cookie");
 assert.ok(browserSource.includes("CSS.escape(blockId)"), "Dynamic block selectors must escape block IDs");
-contains("src/lib/session-cookie.ts", ["httpOnly: true", 'sameSite: "strict"', "secure: secureSessionCookie"]);
+contains("src/lib/session-cookie.ts", [
+  "httpOnly: true",
+  'sameSite: "strict"',
+  "secure: secureSessionCookie",
+  "getAuthSessionCookieName(secureSessionCookie)",
+  "readUniqueCookieValue"
+]);
+contains("src/lib/session-cookie-policy.ts", [
+  'secureAuthSessionCookieName = "__Host-brainvault_session"',
+  "matches !== 1",
+  "decodeURIComponent(encodedValue)"
+]);
+contains("src/lib/access-log.ts", [
+  "stripUrlQueryAndFragment",
+  ":safe-url",
+  ":safe-referrer"
+]);
 contains("src/middleware/auth-rate-limit.ts", [
   "loginIpRateLimit",
   "loginAccountRateLimit",
@@ -219,6 +253,9 @@ const appSource = contains("src/app.ts", [
   'path.join(browserModuleRoot, "isomorphic.js", "browser.mjs")',
   'extensions: ["js"]',
   'connectSrc: ["\'self\'", ...configuredWebSocketOrigins]',
+  "productionAccessLogFormat : developmentAccessLogFormat",
+  'morgan.token("safe-url"',
+  'morgan.token("safe-referrer"',
   "res.json({ ok: true })"
 ]);
 assert.ok(
@@ -236,7 +273,9 @@ assert.ok(
 );
 
 const collaborationBrowserSource = contains("public/collaboration.js", [
-  'const YJS_MODULE_URL = "/vendor/yjs/yjs.mjs";'
+  'const YJS_MODULE_URL = "/vendor/yjs/yjs.mjs";',
+  'message.type === "compaction-complete"',
+  "this.presence.set(message.connectionId, { ...previous, ...message })"
 ]);
 const indexSource = contains("public/index.html", [
   '<script type="importmap">{"imports":{"lib0/":"/vendor/yjs/lib0/","isomorphic.js":"/vendor/yjs/isomorphic/browser.mjs"}}</script>'
@@ -409,4 +448,4 @@ assert.equal(acceptsSession(1, 1), true, "A current session must be accepted bef
 assert.equal(acceptsSession(1, 2), false, "An old session must be rejected after credential rotation");
 assert.equal(acceptsSession(2, 2), true, "The replacement session must remain usable");
 
-console.log("[security-hardening] PASS: login CSRF gates, exact origins, atomic MFA attempts, credential-boundary rotation, stale-auth rejection, account reauthentication throttling, pre-parser global limiting, revocation-safe MFA completion, locked TOTP verification, account backoff, strict session defaults, cookie-only browser login, logout revocation, absolute bookmark deadlines, attachment screening, bounded WebSocket and collaboration queues, collaboration connection limits, syntax-highlighting deadlines, backup import admission limits, patched Node runtime enforcement, cache controls, database accounts, CSP, error hygiene, JWT separation, multipart limits, and SSRF ranges");
+console.log("[security-hardening] PASS: login CSRF gates, exact origins, atomic MFA attempts, credential-boundary rotation, stale-auth rejection, account reauthentication throttling, pre-parser global limiting, revocation-safe MFA completion, locked TOTP verification, account backoff, __Host session cookies, duplicate-cookie rejection, query-safe access logs, bounded presence identity, no-op Yjs replay rejection, state-equivalent compaction, cookie-only browser login, logout revocation, absolute bookmark deadlines, attachment screening, bounded WebSocket and collaboration queues, collaboration connection limits, syntax-highlighting deadlines, backup import admission limits, patched Node runtime enforcement, cache controls, database accounts, CSP, error hygiene, JWT separation, multipart limits, and SSRF ranges");

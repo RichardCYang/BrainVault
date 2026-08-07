@@ -1030,6 +1030,12 @@ class PageCollaborationSession {
       }
       return;
     }
+    if (message.type === "compaction-complete") {
+      this.lastUpdateId = Math.max(this.lastUpdateId, Number(message.updateId) || 0);
+      this.updatesSinceCompaction = 0;
+      this.scheduleMaterialization();
+      return;
+    }
     if (message.type === "snapshot-rejected") {
       this.compactionPending = false;
       this.lastUpdateId = Math.max(this.lastUpdateId, Number(message.lastUpdateId) || 0);
@@ -1052,8 +1058,12 @@ class PageCollaborationSession {
       return;
     }
     if (message.type === "awareness-update") {
-      if (message.state === null) this.presence.delete(message.connectionId);
-      else this.presence.set(message.connectionId, message);
+      if (message.state === null) {
+        this.presence.delete(message.connectionId);
+      } else {
+        const previous = this.presence.get(message.connectionId) ?? {};
+        this.presence.set(message.connectionId, { ...previous, ...message });
+      }
       this.emitPresence();
       return;
     }
