@@ -70,7 +70,8 @@ export function createApp() {
       enabled: env.HTTPS_MODE !== "off",
       publicOrigin: env.PUBLIC_ORIGIN,
       redirect: env.HTTPS_REDIRECT,
-      healthcheckBypass: env.HTTPS_HEALTHCHECK_BYPASS
+      healthcheckBypass: env.HTTPS_HEALTHCHECK_BYPASS,
+      trustedProxyAddresses: env.HTTPS_MODE === "proxy" ? env.TRUST_PROXY_ADDRESSES : []
     })
   );
   app.use(cors(corsOptionsDelegate));

@@ -371,7 +371,7 @@ export class PageCollaborationHub {
 
     if (
       env.HTTPS_MODE === "proxy" &&
-      !isHttpsRequestFromTrustedProxy(request, env.TRUST_PROXY_HOPS, env.TRUST_PROXY_ADDRESSES)
+      !isHttpsRequestFromTrustedProxy(request, env.TRUST_PROXY_ADDRESSES)
     ) {
       rejectWebSocketUpgrade(socket, 426, "HTTPS reverse proxy is required");
       return;

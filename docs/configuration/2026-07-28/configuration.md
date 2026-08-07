@@ -25,7 +25,7 @@ Never commit a real `.env` file.
 | `WEBAUTHN_ORIGIN` | `http://localhost:4000` | Comma-separated exact browser origins accepted for WebAuthn responses |
 | `CORS_ORIGIN` | Local development origins | Comma-separated browser origins allowed to call the API |
 | `PUBLIC_ORIGIN` | First `WEBAUTHN_ORIGIN` | Canonical browser-facing origin used for redirects and direct-certificate hostname validation; production requires HTTPS |
-| `HTTPS_MODE` | `off` | `off` for HTTP, `proxy` for trusted reverse-proxy TLS, or `posh-acme` for direct HTTPS with Posh-ACME PEM files |
+| `HTTPS_MODE` | `off` | `off` for development/test HTTP, `proxy` for trusted reverse-proxy TLS, or `posh-acme` for direct HTTPS with Posh-ACME PEM files; production rejects `off` |
 | `POSH_ACME_CERT_PATH` | Not set | Required in `posh-acme` mode; order directory or `fullchain.cer`/`FullChainFile` path |
 | `POSH_ACME_KEY_PATH` | Sibling `cert.key` | Optional private-key override for `posh-acme` mode |
 | `HTTPS_REDIRECT` | Enabled in proxy mode | Proxy-mode redirect for unrecognized HTTP requests; direct Posh-ACME mode opens HTTPS only |
@@ -52,8 +52,8 @@ Never commit a real `.env` file.
 | `AUTH_REGISTER_WINDOW_MS` | `3600000` | Registration throttling window |
 | `AUTH_REGISTER_MAX` | `5` | Registration requests allowed per IP window |
 | `AUTH_REGISTER_GLOBAL_MAX` | `20` | Registration requests allowed per process-wide window |
-| `TRUST_PROXY_ADDRESSES` | Empty | Comma-separated proxy IPs, CIDRs, or `loopback`/`linklocal`/`uniquelocal`; recommended over hop trust |
-| `TRUST_PROXY_HOPS` | `0` | Exact trusted reverse-proxy hop count; cannot be combined with `TRUST_PROXY_ADDRESSES` |
+| `TRUST_PROXY_ADDRESSES` | Empty | Comma-separated proxy IPs, narrow CIDRs, or `loopback`/`linklocal`/`uniquelocal`; required in proxy mode |
+| `TRUST_PROXY_HOPS` | `0` | Compatibility variable only; numeric hop trust is disabled and this value must remain `0` |
 | `BOOKMARK_PREVIEW_WINDOW_MS` | `60000` | Dedicated authenticated-user bookmark-preview limit window |
 | `BOOKMARK_PREVIEW_MAX` | `12` | Bookmark-preview requests allowed per authenticated user and window |
 | `BOOKMARK_FETCH_TIMEOUT_MS` | `8000` | Maximum duration of one OpenGraph page fetch |
@@ -115,7 +115,7 @@ TRUST_PROXY_ADDRESSES="loopback"
 TRUST_PROXY_HOPS=0
 ```
 
-For a proxy in another container or host, replace `loopback` with the exact proxy IP or narrowest practical CIDR. `HTTPS_MODE=proxy` refuses to start without one of the two trust settings, and `PUBLIC_ORIGIN` must be HTTPS and present in both `WEBAUTHN_ORIGIN` and `CORS_ORIGIN`. Keep the backend port private.
+For a proxy in another container or host, replace `loopback` with the exact proxy IP or narrowest practical CIDR. `HTTPS_MODE=proxy` refuses to start without `TRUST_PROXY_ADDRESSES`, numeric hop trust and catch-all `/0` CIDRs are rejected, and `PUBLIC_ORIGIN` must be HTTPS and present in both `WEBAUTHN_ORIGIN` and `CORS_ORIGIN`. Keep the backend port private.
 
 To terminate TLS in BrainVault with Posh-ACME instead, replace the proxy-specific values with:
 

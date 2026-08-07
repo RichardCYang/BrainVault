@@ -169,6 +169,10 @@ contains("src/config/env.ts", [
   "AUTH_ALLOW_BEARER_TOKENS",
   "TRUST_PROXY_HOPS",
   "TRUST_PROXY_ADDRESSES",
+  "TRUST_PROXY_HOPS must remain 0",
+  "TRUST_PROXY_ADDRESSES must not trust every address",
+  "HTTPS_MODE=proxy requires TRUST_PROXY_ADDRESSES",
+  "HTTPS_MODE must be proxy or posh-acme in production",
   'HTTPS_MODE: z.enum(["off", "proxy", "posh-acme"])',
   "HTTPS_MODE=posh-acme requires POSH_ACME_CERT_PATH",
   "PUBLIC_ORIGIN must use HTTPS when HTTPS_MODE is proxy or posh-acme",
@@ -299,8 +303,20 @@ contains("src/lib/posh-acme-https.ts", [
   "certificate.checkHost(hostname)",
   'minVersion: "TLSv1.2"'
 ]);
-contains("src/middleware/https.ts", ["req.secure", "buildHttpsRedirectUrl", "HTTPS_REQUIRED", "res.redirect(308"]);
-contains("src/lib/reverse-proxy.ts", ["createExpressTrustProxySetting", "trustedProxyAddresses"]);
+const httpsMiddlewareSource = contains("src/middleware/https.ts", [
+  "isDirectTlsRequest(req.socket)",
+  "isHttpsRequestFromTrustedProxy(req, options.trustedProxyAddresses)",
+  "buildHttpsRedirectUrl",
+  "HTTPS_REQUIRED",
+  "res.redirect(308"
+]);
+assert.ok(!httpsMiddlewareSource.includes("req.secure"), "HTTPS enforcement must validate the direct proxy peer itself");
+const reverseProxySource = contains("src/lib/reverse-proxy.ts", [
+  "createExpressTrustProxySetting",
+  "TRUST_PROXY_HOPS must remain 0",
+  "isTrustedProxyRemoteAddress(request.socket.remoteAddress, trustedProxyAddresses)"
+]);
+assert.ok(!reverseProxySource.includes("trustedProxyHops > 0"), "Numeric hop trust must not authorize forwarding headers");
 contains("src/routes/page.routes.ts", [
   "coverUrl: pageCoverUrlSchema.nullable().optional()",
   "inspectCustomCoverDataUrl(row.cover_url)",

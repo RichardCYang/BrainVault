@@ -13,7 +13,10 @@ import {
   isTrustedProxyRemoteAddress
 } from "../src/lib/reverse-proxy.js";
 
-function createTestApp(options: Partial<HttpsEnforcementOptions> = {}, trustProxy: false | string | number = "loopback") {
+function createTestApp(
+  options: Partial<HttpsEnforcementOptions> = {},
+  trustProxy: false | string | string[] | number = ["loopback"]
+) {
   const app = express();
   app.set("trust proxy", trustProxy);
   app.use(
@@ -22,6 +25,7 @@ function createTestApp(options: Partial<HttpsEnforcementOptions> = {}, trustProx
       publicOrigin: "https://notes.example.com",
       redirect: true,
       healthcheckBypass: true,
+      trustedProxyAddresses: ["loopback"],
       ...options
     })
   );
@@ -31,7 +35,7 @@ function createTestApp(options: Partial<HttpsEnforcementOptions> = {}, trustProx
 }
 
 describe("HTTPS reverse-proxy enforcement", () => {
-  it("accepts HTTPS reported by a trusted reverse proxy", async () => {
+  it("accepts HTTPS reported by an explicitly trusted reverse proxy", async () => {
     const response = await request(createTestApp())
       .get("/api/check")
       .set("X-Forwarded-Proto", "https")
@@ -41,7 +45,16 @@ describe("HTTPS reverse-proxy enforcement", () => {
   });
 
   it("does not accept a forged forwarded protocol when proxy trust is disabled", async () => {
-    const response = await request(createTestApp({}, false))
+    const response = await request(createTestApp({ trustedProxyAddresses: [] }, false))
+      .get("/api/check?view=recent")
+      .set("X-Forwarded-Proto", "https")
+      .expect(308);
+
+    expect(response.headers.location).toBe("https://notes.example.com/api/check?view=recent");
+  });
+
+  it("does not rely on an unsafe numeric Express trust setting", async () => {
+    const response = await request(createTestApp({ trustedProxyAddresses: [] }, 1))
       .get("/api/check?view=recent")
       .set("X-Forwarded-Proto", "https")
       .expect(308);
@@ -79,16 +92,16 @@ describe("HTTPS reverse-proxy enforcement", () => {
 });
 
 describe("Express reverse-proxy trust setting", () => {
-  it("prefers explicit proxy addresses over hop counts", () => {
+  it("uses explicit proxy addresses", () => {
     expect(createExpressTrustProxySetting(0, ["127.0.0.1", "172.18.0.2"])).toEqual([
       "127.0.0.1",
       "172.18.0.2"
     ]);
+    expect(createExpressTrustProxySetting(0, [])).toBe(false);
   });
 
-  it("keeps the existing exact-hop mode available", () => {
-    expect(createExpressTrustProxySetting(1, [])).toBe(1);
-    expect(createExpressTrustProxySetting(0, [])).toBe(false);
+  it("fails closed when numeric hop trust is configured", () => {
+    expect(() => createExpressTrustProxySetting(1, [])).toThrow(/TRUST_PROXY_HOPS must remain 0/);
   });
 
   it("matches exact addresses, CIDRs, and named private ranges", () => {
@@ -98,15 +111,21 @@ describe("Express reverse-proxy trust setting", () => {
     expect(isTrustedProxyRemoteAddress("fd00::12", ["uniquelocal"])).toBe(true);
   });
 
-  it("requires both a trusted peer and forwarded HTTPS for raw WebSocket upgrades", () => {
-    const headers = { "x-forwarded-proto": "https, http" };
-    const request = {
-      headers,
+  it("requires a trusted peer and one canonical forwarded HTTPS value", () => {
+    const validHeaders = { "x-forwarded-proto": "https" };
+    const validRequest = {
+      headers: validHeaders,
+      socket: { remoteAddress: "127.0.0.1" }
+    } as unknown as Parameters<typeof isHttpsRequestFromTrustedProxy>[0];
+    const listRequest = {
+      headers: { "x-forwarded-proto": "https, http" },
       socket: { remoteAddress: "127.0.0.1" }
     } as unknown as Parameters<typeof isHttpsRequestFromTrustedProxy>[0];
 
-    expect(forwardedProtocol(headers)).toBe("https");
-    expect(isHttpsRequestFromTrustedProxy(request, 0, ["loopback"])).toBe(true);
-    expect(isHttpsRequestFromTrustedProxy(request, 0, ["10.0.0.1"])).toBe(false);
+    expect(forwardedProtocol(validHeaders)).toBe("https");
+    expect(forwardedProtocol(listRequest.headers)).toBeNull();
+    expect(isHttpsRequestFromTrustedProxy(validRequest, ["loopback"])).toBe(true);
+    expect(isHttpsRequestFromTrustedProxy(validRequest, ["10.0.0.1"])).toBe(false);
+    expect(isHttpsRequestFromTrustedProxy(listRequest, ["loopback"])).toBe(false);
   });
 });

@@ -1,19 +1,20 @@
 import net from "node:net";
 import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
 
-export type ExpressTrustProxySetting = false | number | string[];
+export type ExpressTrustProxySetting = false | string[];
 
 export function createExpressTrustProxySetting(
   trustedProxyHops: number,
-  trustedProxyAddresses: string[]
+  trustedProxyAddresses: readonly string[]
 ): ExpressTrustProxySetting {
-  if (trustedProxyAddresses.length > 0) return [...trustedProxyAddresses];
-  return trustedProxyHops > 0 ? trustedProxyHops : false;
+  if (trustedProxyHops !== 0) {
+    throw new Error("TRUST_PROXY_HOPS must remain 0; configure TRUST_PROXY_ADDRESSES with exact proxy peers");
+  }
+  return trustedProxyAddresses.length > 0 ? [...trustedProxyAddresses] : false;
 }
 
 export function describeExpressTrustProxySetting(setting: ExpressTrustProxySetting) {
   if (setting === false) return "disabled";
-  if (typeof setting === "number") return `${setting} hop${setting === 1 ? "" : "s"}`;
   return setting.join(", ");
 }
 
@@ -107,7 +108,10 @@ const namedProxyRanges: Record<string, string[]> = {
   uniquelocal: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"]
 };
 
-export function isTrustedProxyRemoteAddress(remoteAddress: string | undefined, trustedProxyAddresses: string[]) {
+export function isTrustedProxyRemoteAddress(
+  remoteAddress: string | undefined,
+  trustedProxyAddresses: readonly string[]
+) {
   if (!remoteAddress) return false;
   const address = parseAddress(remoteAddress);
   if (!address) return false;
@@ -121,17 +125,21 @@ export function isTrustedProxyRemoteAddress(remoteAddress: string | undefined, t
 
 export function forwardedProtocol(headers: IncomingHttpHeaders) {
   const value = headers["x-forwarded-proto"];
-  const first = Array.isArray(value) ? value[0] : value;
-  return first?.split(",", 1)[0].trim().toLowerCase() ?? null;
+  if (Array.isArray(value) && value.length !== 1) return null;
+
+  const candidate = Array.isArray(value) ? value[0] : value;
+  if (typeof candidate !== "string") return null;
+
+  const protocol = candidate.trim().toLowerCase();
+  return protocol === "http" || protocol === "https" ? protocol : null;
 }
 
 export function isHttpsRequestFromTrustedProxy(
   request: Pick<IncomingMessage, "headers" | "socket">,
-  trustedProxyHops: number,
-  trustedProxyAddresses: string[]
+  trustedProxyAddresses: readonly string[]
 ) {
-  const trusted = trustedProxyAddresses.length > 0
-    ? isTrustedProxyRemoteAddress(request.socket.remoteAddress, trustedProxyAddresses)
-    : trustedProxyHops > 0;
-  return trusted && forwardedProtocol(request.headers) === "https";
+  return (
+    isTrustedProxyRemoteAddress(request.socket.remoteAddress, trustedProxyAddresses) &&
+    forwardedProtocol(request.headers) === "https"
+  );
 }

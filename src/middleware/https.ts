@@ -1,10 +1,12 @@
 import type { RequestHandler } from "express";
+import { isHttpsRequestFromTrustedProxy } from "../lib/reverse-proxy.js";
 
 export type HttpsEnforcementOptions = {
   enabled: boolean;
   publicOrigin: string;
   redirect: boolean;
   healthcheckBypass: boolean;
+  trustedProxyAddresses: readonly string[];
 };
 
 export function buildHttpsRedirectUrl(publicOrigin: string, originalUrl: string) {
@@ -16,9 +18,17 @@ export function buildHttpsRedirectUrl(publicOrigin: string, originalUrl: string)
   return target.toString();
 }
 
+function isDirectTlsRequest(socket: unknown) {
+  return (socket as { encrypted?: boolean }).encrypted === true;
+}
+
 export function createHttpsEnforcementMiddleware(options: HttpsEnforcementOptions): RequestHandler {
   return (req, res, next) => {
-    if (!options.enabled || req.secure) {
+    const secureRequest =
+      isDirectTlsRequest(req.socket) ||
+      isHttpsRequestFromTrustedProxy(req, options.trustedProxyAddresses);
+
+    if (!options.enabled || secureRequest) {
       next();
       return;
     }

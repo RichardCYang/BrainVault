@@ -117,7 +117,7 @@ Before using production mode:
 - Keep `SERVE_INTERNAL_DOCS=false` unless authenticated project documentation must be exposed deliberately.
 - Set `DB_USER_HOSTS` to the exact application client hosts and rerun `npm run db:init` to remove any legacy wildcard account.
 - Set `PUBLIC_ORIGIN` to the canonical HTTPS origin. Use `HTTPS_MODE=posh-acme` with `POSH_ACME_CERT_PATH` for direct Posh-ACME TLS, or `HTTPS_MODE=proxy` when a trusted reverse proxy terminates TLS.
-- In proxy mode, prefer `TRUST_PROXY_ADDRESSES` with the exact proxy IP/CIDR. Use `TRUST_PROXY_HOPS` only when every route has the same exact hop count, and never configure both.
+- In proxy mode, configure `TRUST_PROXY_ADDRESSES` with the exact proxy IP or narrowest practical CIDR. Numeric `TRUST_PROXY_HOPS` trust is disabled and must remain `0`.
 - In proxy mode, keep the backend HTTP port private; allow only the proxy or local health checker to reach it. In Posh-ACME mode, expose only the intended HTTPS listener.
 - Use HTTPS, managed secret storage, database backups, and normal production monitoring.
 

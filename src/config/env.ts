@@ -205,6 +205,9 @@ function assertTrustedProxyAddress(value: string) {
   if (!/^\d+$/.test(prefixText) || !Number.isInteger(prefix) || prefix < 0 || prefix > maxPrefix) {
     throw new Error(`TRUST_PROXY_ADDRESSES contains an invalid CIDR prefix: ${value}`);
   }
+  if (prefix === 0) {
+    throw new Error(`TRUST_PROXY_ADDRESSES must not trust every address: ${value}`);
+  }
 }
 
 assertDatabasePasswordIsSecure(parsedEnv.DATABASE_URL);
@@ -245,11 +248,14 @@ const trustedProxyAddresses = parsedEnv.TRUST_PROXY_ADDRESSES
 
 for (const address of trustedProxyAddresses) assertTrustedProxyAddress(address);
 
-if (parsedEnv.TRUST_PROXY_HOPS > 0 && trustedProxyAddresses.length > 0) {
-  throw new Error("Configure either TRUST_PROXY_HOPS or TRUST_PROXY_ADDRESSES, not both");
+if (parsedEnv.TRUST_PROXY_HOPS !== 0) {
+  throw new Error("TRUST_PROXY_HOPS must remain 0; configure TRUST_PROXY_ADDRESSES with exact proxy peers");
 }
-if (parsedEnv.HTTPS_MODE === "proxy" && parsedEnv.TRUST_PROXY_HOPS === 0 && trustedProxyAddresses.length === 0) {
-  throw new Error("HTTPS_MODE=proxy requires TRUST_PROXY_HOPS or TRUST_PROXY_ADDRESSES");
+if (parsedEnv.NODE_ENV === "production" && parsedEnv.HTTPS_MODE === "off") {
+  throw new Error("HTTPS_MODE must be proxy or posh-acme in production");
+}
+if (parsedEnv.HTTPS_MODE === "proxy" && trustedProxyAddresses.length === 0) {
+  throw new Error("HTTPS_MODE=proxy requires TRUST_PROXY_ADDRESSES");
 }
 if (parsedEnv.HTTPS_MODE !== "proxy" && httpsRedirect) {
   throw new Error("HTTPS_REDIRECT=true requires HTTPS_MODE=proxy");

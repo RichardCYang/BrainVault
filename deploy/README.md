@@ -71,9 +71,9 @@ TRUST_PROXY_ADDRESSES="loopback"
 TRUST_PROXY_HOPS=0
 ```
 
-For a proxy in another container or host, replace `loopback` with the exact proxy IP or the narrowest practical CIDR and bind `HOST` only to the private interface reachable by that proxy. `TRUST_PROXY_HOPS=1` remains available for a topology that always has exactly one proxy hop, but explicit addresses are safer when the backend port could otherwise be reached directly. Never configure both trust options.
+For a proxy in another container or host, replace `loopback` with the exact proxy IP or the narrowest practical CIDR and bind `HOST` only to the private interface reachable by that proxy. BrainVault intentionally refuses numeric hop trust because a shorter path to the backend can otherwise let a client supply forwarding headers. Catch-all `/0` CIDRs are also rejected. `TRUST_PROXY_HOPS` is retained only as a compatibility variable and must remain `0`.
 
-`HTTPS_MODE=proxy` requires a trusted proxy rule. Requests recognized as HTTPS continue normally. Plain HTTP requests are redirected with status 308 to `PUBLIC_ORIGIN`; set `HTTPS_REDIRECT=false` to return `426 HTTPS_REQUIRED` instead. `/health` remains available on the private HTTP listener by default for local checks.
+`HTTPS_MODE=proxy` requires at least one `TRUST_PROXY_ADDRESSES` rule. Requests recognized as HTTPS continue normally. Plain HTTP requests are redirected with status 308 to `PUBLIC_ORIGIN`; set `HTTPS_REDIRECT=false` to return `426 HTTPS_REQUIRED` instead. `/health` remains available on the private HTTP listener by default for local checks.
 
 ### Caddy
 
