@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { db, transaction, type DbClient, type DbValue } from "../lib/db.js";
@@ -59,6 +59,11 @@ import {
 } from "../lib/page-version-history.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { requireAuth } from "../middleware/auth.js";
+import {
+  attachmentUploadConcurrencyLimit,
+  attachmentUploadRateLimit,
+  beginAttachmentUploadProcessing
+} from "../middleware/attachment-rate-limit.js";
 import { bookmarkPreviewRateLimit } from "../middleware/bookmark-rate-limit.js";
 import { validate } from "../middleware/validate.js";
 import { blockTypeSchema, idParamSchema, metadataSchema, requireUser } from "../utils/schemas.js";
@@ -266,6 +271,27 @@ const attachmentFormSchema = z.object({
   )
 });
 
+const maxAttachmentUploadBytes = env.MAX_ATTACHMENT_SIZE_MB * 1024 * 1024;
+const maxAttachmentMultipartOverheadBytes = 1024 * 1024;
+
+function enforceAttachmentUploadRequestSize(req: Request, _res: Response, next: NextFunction) {
+  const rawContentLength = req.headers["content-length"];
+  if (rawContentLength === undefined) {
+    next();
+    return;
+  }
+  const contentLength = Number(rawContentLength);
+  if (!Number.isSafeInteger(contentLength) || contentLength < 0) {
+    next(new ApiError(400, "INVALID_CONTENT_LENGTH", "Content-Length is invalid"));
+    return;
+  }
+  if (contentLength > maxAttachmentUploadBytes + maxAttachmentMultipartOverheadBytes) {
+    next(new ApiError(413, "ATTACHMENT_TOO_LARGE", "Attachment exceeds the configured size limit"));
+    return;
+  }
+  next();
+}
+
 const attachmentUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, callback) => {
@@ -276,7 +302,7 @@ const attachmentUpload = multer({
     filename: (_req, _file, callback) => callback(null, createId("upload"))
   }),
   limits: {
-    fileSize: env.MAX_ATTACHMENT_SIZE_MB * 1024 * 1024,
+    fileSize: maxAttachmentUploadBytes,
     files: 1,
     fields: 5,
     parts: 7,
@@ -335,6 +361,40 @@ function assertDirectBlockMutationAllowed(access: Pick<PageAccess, "shareCount">
       "This shared page must be edited through its real-time collaboration session"
     );
   }
+}
+
+type AttachmentUploadTarget = Readonly<{
+  actorId: string;
+  pageId: string;
+  ownerId: string;
+}>;
+
+async function authorizeAttachmentUploadTarget(req: Request, res: Response, next: NextFunction) {
+  try {
+    const user = requireUser(req.user);
+    const pageId = String(req.params.pageId);
+    const access = await assertAccessiblePage(pageId, user.id);
+    assertDirectBlockMutationAllowed(access);
+    if (access.page.is_archived) {
+      throw new ApiError(409, "PAGE_ARCHIVED", "Restore the page before adding an attachment");
+    }
+    res.locals.attachmentUploadTarget = Object.freeze({
+      actorId: user.id,
+      pageId,
+      ownerId: access.page.owner_id
+    } satisfies AttachmentUploadTarget);
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+function requireAttachmentUploadTarget(res: Response, actorId: string, pageId: string) {
+  const target = res.locals.attachmentUploadTarget as AttachmentUploadTarget | undefined;
+  if (!target || target.actorId !== actorId || target.pageId !== pageId || !target.ownerId) {
+    throw new ApiError(500, "ATTACHMENT_UPLOAD_TARGET_MISSING", "Attachment upload authorization is unavailable");
+  }
+  return target;
 }
 
 async function advancePageContentVersion(client: DbClient, pageId: string, _userId: string) {
@@ -476,19 +536,25 @@ function assertBlockVersionSnapshot(
 blockRouter.post(
   "/pages/:pageId/attachments",
   validate({ params: idParamSchema }),
+  attachmentUploadRateLimit,
+  enforceAttachmentUploadRequestSize,
+  authorizeAttachmentUploadTarget,
+  attachmentUploadConcurrencyLimit,
   attachmentUpload.single("file"),
   async (req, res, next) => {
     let cleanupPath = req.file?.path ?? null;
     let movedPath: string | null = null;
+    let releaseAttachmentUpload: (() => void) | null = null;
     try {
+      releaseAttachmentUpload = beginAttachmentUploadProcessing(res);
       const user = requireUser(req.user);
       const pageId = String(req.params.pageId);
+      const target = requireAttachmentUploadTarget(res, user.id, pageId);
       const file = req.file;
       if (!file) throw new ApiError(400, "ATTACHMENT_FILE_REQUIRED", "Select a file to attach");
 
       const body = attachmentFormSchema.parse(req.body);
-      const access = await assertAccessiblePage(pageId, user.id);
-      const ownerId = access.page.owner_id;
+      const ownerId = target.ownerId;
       const id = createId("blk");
       const [inspectedUpload, fileHash] = await Promise.all([
         inspectAttachmentUpload(file.path, file.originalname, file.mimetype),
@@ -662,6 +728,8 @@ blockRouter.post(
         console.error("Preserving an attachment file because the database write outcome is unknown", { movedPath });
       }
       next(error);
+    } finally {
+      releaseAttachmentUpload?.();
     }
   }
 );

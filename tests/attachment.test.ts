@@ -122,12 +122,16 @@ describe("Attachment integration surface", () => {
     );
     const fileMove = uploadSource.indexOf("movedPath = await moveAttachmentFile");
     const blockInsert = uploadSource.indexOf("INSERT INTO blocks");
+    const earlyAuthorization = uploadSource.indexOf("authorizeAttachmentUploadTarget");
+    const multipartIntake = uploadSource.indexOf('attachmentUpload.single("file")');
     expect(userLock).toBeGreaterThanOrEqual(0);
     expect(pageLock).toBeGreaterThan(userLock);
     expect(fileMove).toBeGreaterThan(pageLock);
     expect(blockInsert).toBeGreaterThan(fileMove);
+    expect(earlyAuthorization).toBeGreaterThanOrEqual(0);
+    expect(multipartIntake).toBeGreaterThan(earlyAuthorization);
     expect(uploadSource).toContain("lockedAccess.page.owner_id !== ownerId");
-    expect(uploadSource).toContain("assertDirectBlockMutationAllowed(access)");
+    expect(routeSource).toContain("assertDirectBlockMutationAllowed(access)");
     expect(uploadSource).toContain("assertDirectBlockMutationAllowed(lockedAccess)");
     expect(uploadSource).toContain("inspectAttachmentUpload(file.path, file.originalname, file.mimetype)");
     expect(await readFile("src/lib/attachments.ts", "utf8")).toContain("await handle.sync()");

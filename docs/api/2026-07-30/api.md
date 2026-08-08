@@ -37,7 +37,7 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `WS` | `/api/collaboration/:pageId` | Authenticated binary Yjs updates plus JSON presence/control messages |
 | `POST` | `/api/pages/:pageId/blocks` | Add a non-attachment block; exact ambiguous retries reuse `mutationId` |
 | `POST` | `/api/bookmarks/preview` | Fetch sanitized OpenGraph metadata for a public URL under a dedicated authenticated-user rate limit |
-| `POST` | `/api/pages/:pageId/attachments` | Upload a screened file and create an attachment block; exact ambiguous retries reuse `mutationId` |
+| `POST` | `/api/pages/:pageId/attachments` | Upload a screened file and create an attachment block; access, page state, request size, rate, and concurrency admission are checked before multipart bytes reach temporary storage; exact ambiguous retries reuse `mutationId` |
 | `PATCH` | `/api/blocks/:blockId` | Update a block |
 | `DELETE` | `/api/blocks/:blockId` | Delete a block and its descendants, including stored attachment files |
 | `GET` | `/api/blocks/:blockId/attachment` | Download an attachment after current page-access verification, forced disposition, and active-content response hardening |
@@ -58,6 +58,8 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 ## Block and attachment creation retry integrity
 
 `POST /api/pages/:pageId/blocks` and multipart `POST /api/pages/:pageId/attachments` accept an optional `mutationId` (1–64 ASCII letters, digits, `_`, or `-`). The server reserves `(actor_id, mutation_id)` in the same transaction before inserting a block; attachment requests reserve the receipt before moving the uploaded file to its durable path. An exact retry returns the original block without adding another history entry, advancing the page content version again, or storing another attachment file.
+
+Attachment uploads resolve page access, collaboration mode, archive state, declared request size, per-account rate, and process-local concurrency before Multer opens a temporary file. The transaction repeats the authorization and page-state checks after intake so a concurrent ownership, sharing, or archive change fails closed before durable storage or block creation.
 
 The request hash includes the page, block payload, and operation kind. For attachments it also includes the normalized filename, media type, byte size, placement, and SHA-256 digest of the uploaded bytes. Reusing a key with different data is rejected with `409 MUTATION_ID_REUSED`. If the original block was later deleted, replay fails closed with `409 BLOCK_CREATE_REPLAY_UNAVAILABLE` rather than creating a replacement. The browser retries an ambiguous response once and retains the same task key for a later manual retry; authentication changes clear the pending task.
 

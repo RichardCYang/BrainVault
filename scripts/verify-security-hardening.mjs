@@ -160,6 +160,9 @@ contains("src/config/env.ts", [
   "AUTH_LOGIN_LOCK_THRESHOLD",
   "AUTH_REGISTER_GLOBAL_MAX",
   "BOOKMARK_PREVIEW_MAX",
+  "ATTACHMENT_UPLOAD_WINDOW_MS",
+  "ATTACHMENT_UPLOAD_MAX",
+  "ATTACHMENT_UPLOAD_MAX_CONCURRENT",
   "DATA_TRANSFER_MAX_MANIFEST_SIZE_MB",
   "DATA_IMPORT_WINDOW_MS",
   "DATA_IMPORT_MAX",
@@ -378,12 +381,23 @@ contains("src/routes/block.routes.ts", [
   "parts: 7",
   "fieldNestingDepth: 1",
   "headerPairs: 32",
+  "attachmentUploadRateLimit",
+  "enforceAttachmentUploadRequestSize",
+  "authorizeAttachmentUploadTarget",
+  "attachmentUploadConcurrencyLimit",
+  "beginAttachmentUploadProcessing",
   "bookmarkPreviewRateLimit",
   "inspectAttachmentUpload",
   "assertDirectBlockMutationAllowed(lockedAccess)",
   "sanitizeAttachmentDownloadFilename",
   "Content-Security-Policy",
   "Cross-Origin-Resource-Policy"
+]);
+contains("src/middleware/attachment-rate-limit.ts", [
+  "ATTACHMENT_UPLOAD_RATE_LIMITED",
+  "ATTACHMENT_UPLOAD_IN_PROGRESS",
+  "ATTACHMENT_UPLOAD_BUSY",
+  "AttachmentUploadAdmissionGate"
 ]);
 contains("src/lib/attachment-metadata-integrity.ts", [
   "safeAttachmentMimeTypes",
@@ -464,4 +478,4 @@ assert.equal(acceptsSession(1, 1), true, "A current session must be accepted bef
 assert.equal(acceptsSession(1, 2), false, "An old session must be rejected after credential rotation");
 assert.equal(acceptsSession(2, 2), true, "The replacement session must remain usable");
 
-console.log("[security-hardening] PASS: login CSRF gates, exact origins, atomic MFA attempts, credential-boundary rotation, stale-auth rejection, account reauthentication throttling, pre-parser global limiting, revocation-safe MFA completion, locked TOTP verification, account backoff, __Host session cookies, duplicate-cookie rejection, query-safe access logs, bounded presence identity, no-op Yjs replay rejection, state-equivalent compaction, cookie-only browser login, logout revocation, absolute bookmark deadlines, attachment screening, bounded WebSocket and collaboration queues, collaboration connection limits, syntax-highlighting deadlines, backup import admission limits, patched Node runtime enforcement, cache controls, database accounts, CSP, error hygiene, JWT separation, multipart limits, and SSRF ranges");
+console.log("[security-hardening] PASS: login CSRF gates, exact origins, atomic MFA attempts, credential-boundary rotation, stale-auth rejection, account reauthentication throttling, pre-parser global limiting, revocation-safe MFA completion, locked TOTP verification, account backoff, __Host session cookies, duplicate-cookie rejection, query-safe access logs, bounded presence identity, no-op Yjs replay rejection, state-equivalent compaction, cookie-only browser login, logout revocation, absolute bookmark deadlines, attachment screening and pre-storage admission, bounded WebSocket and collaboration queues, collaboration connection limits, syntax-highlighting deadlines, backup import admission limits, patched Node runtime enforcement, cache controls, database accounts, CSP, error hygiene, JWT separation, multipart limits, and SSRF ranges");

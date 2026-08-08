@@ -63,6 +63,9 @@ Never commit a real `.env` file.
 | `ATTACHMENT_TEMP_MAX_AGE_MS` | `86400000` | Age after which stale files in the private attachment staging directory are removed at startup |
 | `MAX_ATTACHMENT_SIZE_MB` | `25` | Maximum size of one uploaded attachment in megabytes |
 | `ATTACHMENT_STORAGE_MAX_MB` | `2048` | Maximum committed attachment bytes per account in megabytes; applies to uploads and backup restore |
+| `ATTACHMENT_UPLOAD_WINDOW_MS` | `60000` | Dedicated attachment-upload admission window per authenticated account |
+| `ATTACHMENT_UPLOAD_MAX` | `12` | Attachment upload requests admitted per account and window before multipart bytes are accepted |
+| `ATTACHMENT_UPLOAD_MAX_CONCURRENT` | `4` | Maximum attachment uploads processed concurrently by one application process; each account is also limited to one active upload |
 | `DATA_TRANSFER_MAX_SIZE_MB` | `1024` | Maximum size of one complete-data backup archive in megabytes; enforced on upload, ZIP contents, export staging, and the final export plan |
 | `DATA_TRANSFER_MAX_MANIFEST_SIZE_MB` | `16` | Maximum JSON manifest size buffered and parsed during backup export or import |
 | `DATA_EXPORT_WINDOW_MS` | `3600000` | Complete-data export limit window per authenticated user |
@@ -71,7 +74,7 @@ Never commit a real `.env` file.
 | `DATA_IMPORT_MAX` | `3` | Complete-data imports admitted per principal and window before multipart upload processing |
 | `DATA_IMPORT_MAX_CONCURRENT` | `2` | Maximum imports processed concurrently by one application process; each principal is also limited to one active import |
 
-The import limiter and concurrency gate use process-local state. A horizontally scaled deployment must apply equivalent limits in the edge proxy or use a shared rate-limit/admission store across instances.
+The attachment-upload and import admission gates use process-local state. A horizontally scaled deployment must apply equivalent limits in the edge proxy or use a shared rate-limit/admission store across instances.
 
 ## Development browser launch
 

@@ -1819,7 +1819,7 @@ paths:
   /api/pages/{pageId}/attachments:
     post:
       summary: Upload a file and create a canonical attachment block
-      description: Available only while the page is not participating in collaboration. Stores the file outside the public web root, rejects active web or executable filenames and media types, validates stable file signatures, and applies the configured per-file size limit (25 MB by default), per-account committed-storage limit (2048 MB by default), and 5,000-file account limit. Direct attachment creation on a shared page is rejected to preserve the collaboration write invariant. Exact retries reuse mutationId and are matched against normalized metadata plus the uploaded file SHA-256 digest.
+      description: Available only while the page is not participating in collaboration. Current page access, collaboration state, archive state, declared request size, per-account rate admission, and process-wide upload concurrency are checked before multipart bytes are written to temporary storage. The transaction repeats the authorization and page-state checks after intake. Stores the file outside the public web root, rejects active web or executable filenames and media types, validates stable file signatures, and applies the configured per-file size limit (25 MB by default), per-account committed-storage limit (2048 MB by default), and 5,000-file account limit. Exact retries reuse mutationId and are matched against normalized metadata plus the uploaded file SHA-256 digest.
       parameters:
         - in: path
           name: pageId
@@ -1859,6 +1859,10 @@ paths:
           description: Attachment exceeds MAX_ATTACHMENT_SIZE_MB, ATTACHMENT_STORAGE_MAX_MB, or the 5,000-file account limit
         '415':
           description: Attachment filename, media type, executable signature, or declared-type signature is not allowed
+        '429':
+          description: The authenticated account exceeded the attachment-upload rate or already has an active upload
+        '503':
+          description: The application process is already handling the configured maximum number of attachment uploads
   /api/blocks/{blockId}/attachment:
     get:
       summary: Download an attachment after current page-access verification
