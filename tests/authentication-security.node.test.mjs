@@ -97,13 +97,14 @@ test("TOTP verification uses the currently locked credential instead of a stale 
 });
 
 test("authentication route source retains all hardened ordering guarantees", async () => {
-  const [authRoutes, mfaRoutes, authMiddleware, corsMiddleware, collaboration, originHelper] = await Promise.all([
+  const [authRoutes, mfaRoutes, authMiddleware, corsMiddleware, collaboration, originHelper, envConfig] = await Promise.all([
     readSource("src/routes/auth.routes.ts"),
     readSource("src/routes/mfa.routes.ts"),
     readSource("src/middleware/auth.ts"),
     readSource("src/middleware/cors.ts"),
     readSource("src/lib/collaboration-server.ts"),
-    readSource("src/lib/request-origin.ts")
+    readSource("src/lib/request-origin.ts"),
+    readSource("src/config/env.ts")
   ]);
 
   assert.match(authRoutes, /"\/register",\s+requireSameOriginBrowserRequest,\s+requireJsonRequestBody,/);
@@ -111,6 +112,14 @@ test("authentication route source retains all hardened ordering guarantees", asy
   assert.equal((mfaRoutes.match(/requireSameOriginBrowserRequest/g) ?? []).length >= 4, true);
   assert.equal((mfaRoutes.match(/requireJsonRequestBody/g) ?? []).length >= 4, true);
   assert.match(authMiddleware, /req\.is\("application\/json"\)/);
+  assert.match(envConfig, /AUTH_ALLOW_BEARER_TOKENS:\s*parsedEnv\.AUTH_ALLOW_BEARER_TOKENS \?\? false/);
+  assert.match(authMiddleware, /new ApiError\(403, "ORIGIN_REQUIRED"/);
+  assert.match(authMiddleware, /assertBrowserRequestOrigin\(req, \{ requireOrigin: true \}\)/);
+  assert.match(authMiddleware, /requiresCookieMutationOrigin\(req, selectedSource\)/);
+  const cookieCredentialIndex = authMiddleware.indexOf("const cookieToken = readAuthSessionCookie(req)");
+  const bearerCredentialIndex = authMiddleware.indexOf("const bearerToken = cookieToken ? null : getBearerToken(req)");
+  assert.ok(cookieCredentialIndex >= 0 && bearerCredentialIndex > cookieCredentialIndex);
+  assert.match(authMiddleware, /const token = cookieToken \?\? bearerToken/);
 
   assert.match(mfaRoutes, /async function reserveMfaAttempt/);
   assert.match(mfaRoutes, /FROM mfa_login_sessions[\s\S]{0,220}FOR UPDATE/);

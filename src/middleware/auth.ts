@@ -22,21 +22,34 @@ function getBearerToken(req: Request) {
   return token;
 }
 
-function assertBrowserRequestOrigin(req: Request) {
+function assertBrowserRequestOrigin(
+  req: Request,
+  { requireOrigin = false }: { requireOrigin?: boolean } = {}
+) {
   const fetchSite = req.header("sec-fetch-site")?.trim().toLowerCase();
   if (fetchSite === "cross-site") {
     throw new ApiError(403, "CROSS_SITE_REQUEST_BLOCKED", "Cross-site browser authentication is not allowed");
   }
 
   const origin = req.header("origin");
-  if (origin && !isAllowedCorsOrigin(req, origin)) {
+  if (!origin) {
+    if (requireOrigin) {
+      throw new ApiError(403, "ORIGIN_REQUIRED", "A same-origin request origin is required");
+    }
+    return;
+  }
+  if (!isAllowedCorsOrigin(req, origin)) {
     throw new ApiError(403, "ORIGIN_NOT_ALLOWED", "Request origin is not allowed");
   }
 }
 
+function requiresCookieMutationOrigin(req: Request, source: "bearer" | "cookie") {
+  return source === "cookie" && !["GET", "HEAD", "OPTIONS"].includes(req.method.toUpperCase());
+}
+
 export function requireSameOriginBrowserRequest(req: Request, _res: Response, next: NextFunction) {
   try {
-    assertBrowserRequestOrigin(req);
+    assertBrowserRequestOrigin(req, { requireOrigin: true });
     next();
   } catch (error) {
     next(error);
@@ -55,16 +68,17 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   setPrivateNoStoreCacheControl(res);
   let source: "bearer" | "cookie" | null = null;
   try {
-    const bearerToken = getBearerToken(req);
     const cookieToken = readAuthSessionCookie(req);
-    const token = bearerToken ?? cookieToken;
-    source = bearerToken ? "bearer" : cookieToken ? "cookie" : null;
+    const bearerToken = cookieToken ? null : getBearerToken(req);
+    const token = cookieToken ?? bearerToken;
+    const selectedSource = cookieToken ? "cookie" : bearerToken ? "bearer" : null;
 
-    if (!token || !source) {
+    if (!token || !selectedSource) {
       next(new ApiError(401, "UNAUTHENTICATED", "Authentication required"));
       return;
     }
-    assertBrowserRequestOrigin(req);
+    assertBrowserRequestOrigin(req, { requireOrigin: requiresCookieMutationOrigin(req, selectedSource) });
+    source = selectedSource;
 
     const payload = verifyAuthToken(token);
     const user = await db.queryOne<UserRow>(

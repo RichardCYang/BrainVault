@@ -74,20 +74,26 @@ const authMiddlewareSource = contains("src/middleware/auth.ts", [
   "payload.authVersion !== authVersion",
   'new ApiError(401, "SESSION_REVOKED"',
   "req.auth = { authVersion }",
-  "assertBrowserRequestOrigin(req)",
+  'new ApiError(403, "ORIGIN_REQUIRED"',
+  "assertBrowserRequestOrigin(req, { requireOrigin: true })",
+  "requiresCookieMutationOrigin(req, selectedSource)",
   'fetchSite === "cross-site"',
   "requireSameOriginBrowserRequest",
   "requireJsonRequestBody",
   'req.is("application/json")',
-  "setPrivateNoStoreCacheControl(res)"
+  "setPrivateNoStoreCacheControl(res)",
+  "const cookieToken = readAuthSessionCookie(req)",
+  "const bearerToken = cookieToken ? null : getBearerToken(req)",
+  "const token = cookieToken ?? bearerToken"
 ]);
 const requireAuthStart = authMiddlewareSource.indexOf("export async function requireAuth");
 const authenticatedCachePolicyIndex = authMiddlewareSource.indexOf("setPrivateNoStoreCacheControl(res)", requireAuthStart);
-const bearerReadIndex = authMiddlewareSource.indexOf("const bearerToken = getBearerToken(req)", requireAuthStart);
+const cookieReadIndex = authMiddlewareSource.indexOf("const cookieToken = readAuthSessionCookie(req)", requireAuthStart);
+const bearerReadIndex = authMiddlewareSource.indexOf("const bearerToken = cookieToken ? null : getBearerToken(req)", requireAuthStart);
 assert.ok(requireAuthStart >= 0 && authenticatedCachePolicyIndex > requireAuthStart);
 assert.ok(
-  authenticatedCachePolicyIndex < bearerReadIndex,
-  "Authenticated response cache policy must run before credential parsing and all downstream exits"
+  authenticatedCachePolicyIndex < cookieReadIndex && cookieReadIndex < bearerReadIndex,
+  "Authenticated responses must be no-store and cookie credentials must take precedence over optional bearer credentials"
 );
 const authRoutesSource = contains("src/routes/auth.routes.ts", [
   "SELECT * FROM users WHERE id = ? FOR UPDATE",
@@ -218,6 +224,7 @@ contains("src/config/env.ts", [
   "MFA_TOTP_WINDOW_STEPS",
   "JWT_EXPIRES_IN must be between 5 minutes and 24 hours",
   "AUTH_ALLOW_BEARER_TOKENS",
+  'AUTH_ALLOW_BEARER_TOKENS: parsedEnv.AUTH_ALLOW_BEARER_TOKENS ?? false',
   "TRUST_PROXY_HOPS",
   "TRUST_PROXY_ADDRESSES",
   "TRUST_PROXY_HOPS must remain 0",

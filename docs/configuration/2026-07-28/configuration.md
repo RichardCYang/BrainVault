@@ -18,7 +18,7 @@ Never commit a real `.env` file.
 | `DATABASE_CONNECTION_LIMIT` | `10` | Maximum database pool size |
 | `JWT_SECRET` | Random ephemeral value outside production | Secret used to sign access tokens; `env:init` writes a persistent random value and production requires an explicit non-placeholder value |
 | `JWT_EXPIRES_IN` | `12h` | Session-token lifetime; must be between 5 minutes and 24 hours |
-| `AUTH_ALLOW_BEARER_TOKENS` | Enabled outside production, disabled in production | Permit compatibility `Authorization: Bearer` sessions; the browser client uses the `HttpOnly` cookie |
+| `AUTH_ALLOW_BEARER_TOKENS` | `false` | Permit compatibility `Authorization: Bearer` sessions only when explicitly enabled; the browser client uses the `HttpOnly` cookie |
 | `MFA_ENCRYPTION_KEY` | Random ephemeral value outside production | Independent key material used to encrypt TOTP secrets; `env:init` writes a persistent random value |
 | `WEBAUTHN_RP_NAME` | `BrainVault` | Name shown during passkey registration |
 | `WEBAUTHN_RP_ID` | `localhost` | WebAuthn relying-party domain without scheme or port |

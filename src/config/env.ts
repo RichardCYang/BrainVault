@@ -284,7 +284,7 @@ export const env = {
   BOOKMARK_FETCH_ALLOWED_PORTS: bookmarkFetchAllowedPorts,
   HTTPS_REDIRECT: httpsRedirect,
   TRUST_PROXY_ADDRESSES: trustedProxyAddresses,
-  AUTH_ALLOW_BEARER_TOKENS: parsedEnv.AUTH_ALLOW_BEARER_TOKENS ?? parsedEnv.NODE_ENV !== "production",
+  AUTH_ALLOW_BEARER_TOKENS: parsedEnv.AUTH_ALLOW_BEARER_TOKENS ?? false,
   REGISTRATION_ENABLED: parsedEnv.REGISTRATION_ENABLED ?? parsedEnv.NODE_ENV !== "production"
 };
 
