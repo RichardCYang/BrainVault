@@ -9,6 +9,9 @@ import { cleanupStaleAttachmentTempFiles } from "./lib/attachments.js";
 import { attachPageCollaborationServer } from "./lib/collaboration-server.js";
 import { loadPoshAcmeTls } from "./lib/posh-acme-https.js";
 import { createExpressTrustProxySetting, describeExpressTrustProxySetting } from "./lib/reverse-proxy.js";
+import { assertSupportedNodeRuntime } from "./lib/runtime-security.js";
+
+assertSupportedNodeRuntime();
 
 async function start() {
   const poshAcmeTls = env.HTTPS_MODE === "posh-acme"

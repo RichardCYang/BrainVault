@@ -2,28 +2,28 @@
 
 **Review date:** August 8, 2026  
 **Input archive:** `BrainVault.zip`  
-**Input archive SHA-256:** `12b6453d9767e5c146c9eb9e7a8d1cf22b96c7c1ee2314ef3f960f2524a66939`  
-**Repository HEAD at intake:** `6d1b54222aa6f4410e18a174c79e5664c5b161e0`  
+**Input archive SHA-256:** `d7aba79f45579816ef62e1bd30b1ef3a0a3c974de836dbf9ba4e4b44d1d9ac32`  
+**Repository HEAD at intake:** `980236bd46f36be3e8ce3c6285d3a12ff86ea6b1`  
 **Intake branch:** `main`  
-**Intake commit:** `fix(security): prevent shared-cache leakage of authenticated responses.`  
+**Intake commit:** `fix(auth): prevent bcrypt password truncation.`  
+**Working-tree state at intake:** Modified; every pre-existing change was retained  
 **Repository scope:** The complete uploaded project, including the retained `.git` directory and all reachable history  
 **Assessment type:** Manual source review, source-directed exploit reproduction, remediation, dependency/advisory comparison, secret scanning, and dependency-free regression verification
 
 ## Executive Summary
 
-No Critical-severity vulnerability and no new High-severity vulnerability were reproduced in the uploaded revision. One new **Medium-severity authentication-integrity vulnerability** was confirmed and remediated:
+No Critical-severity vulnerability and no new High-severity application exploit were reproduced. The delivered working tree contains remediations for two Medium findings:
 
-- **Passwords longer than bcrypt's 72-byte input boundary were accepted even though bcrypt silently ignored every UTF-8 byte after byte 72.** Two different passwords with the same first 72 bytes therefore represented the same effective credential. A user could also appear to change a password while changing only an ignored suffix, leaving the effective credential unchanged.
+- **BV-SEC-014 - bcrypt accepted passwords above its 72-byte effective-input boundary.** This remediation was already present in the uploaded working tree and was independently reverified across registration, login, password change, MFA reauthentication, passkey management, and demo seeding.
+- **BV-SEC-015 - the patched Node.js security floor was enforced during npm installation but not during direct server startup.** An operator could run a prebuilt `dist/src/server.js` with `node` on a pre-floor runtime, bypassing `package.json` `engines` and `.npmrc` `engine-strict`.
 
-The vulnerable condition was present at every password-bearing boundary: registration, login, password change, MFA reauthentication, passkey management, and demo seeding. Character-count validation did not solve the issue because bcrypt's boundary is measured in UTF-8 bytes; for example, a multi-byte Unicode password can cross the limit well before 72 characters.
+The runtime-floor gap was reproduced without changing the project by creating a temporary package that declared an impossible Node.js range (`>=999.0.0`) with `engine-strict=true`; direct `node` execution still ran its entrypoint. BrainVault now performs a dependency-free, fail-closed runtime assertion in `src/server.ts` before TLS loading, database bootstrap, or listener startup. The guard implements the exact declared range `^22.23.2 || ^24.18.1 || >=26.5.1`, rejects malformed and prerelease version strings, and has a deterministic reproduction plus four regression tests.
 
-The remediation introduces one shared UTF-8 byte policy, rejects inputs above 72 bytes in all request schemas and seeding, rejects them again in the password-hash helper, and makes password verification fail closed if a future route omits schema validation. The code also calls the locked `bcryptjs` package's `truncates()` helper so application policy remains aligned with the implementation. A deterministic reproduction and four regression tests were added.
+The uploaded revision also contained the remediation for the previously documented deployment-dependent shared-cache disclosure, **BV-SEC-013**. That protection was re-reviewed and regression-tested. No bypass was reproduced in authentication/session state transitions, object authorization, SQL construction, Markdown/HTML handling, bookmark-preview SSRF controls, multipart uploads, backup ZIP processing, MFA/WebAuthn, or real-time collaboration controls.
 
-The uploaded revision already contained the remediation for the previously documented deployment-dependent shared-cache disclosure, **BV-SEC-013**. That protection was re-reviewed and regression-tested. No bypass was reproduced in authentication/session state transitions, object authorization, SQL construction, Markdown/HTML handling, bookmark-preview SSRF controls, multipart uploads, backup ZIP processing, MFA/WebAuthn, or real-time collaboration controls.
+The focused security command completed with **45 passing tests and 0 failures**. The complete dependency-free Node durability suite completed with **216 passing tests and 0 failures**. Data-loss, collaboration, lockfile-host, changed-file syntax, current-tree secret, reachable-history secret, and Git-object integrity checks passed.
 
-The focused security command completed with **41 passing tests and 0 failures**. The complete dependency-free Node durability suite completed with **212 passing tests and 0 failures**. Data-loss, collaboration, lockfile-host, syntax, current-tree secret, reachable-history secret, and Git-object integrity checks passed.
-
-The original `.git` directory is restored byte-for-byte from the uploaded archive immediately before packaging and verified against a 28-file content manifest. No Git history, refs, config, hooks, index, logs, or object files are changed by this remediation.
+The original `.git` directory is retained byte-for-byte from the uploaded archive and verified against a 28-file SHA-256 content manifest immediately before packaging. No Git history, refs, config, hooks, index, logs, or object files are changed by this remediation.
 
 This assessment materially reduces demonstrated risk but is not proof that every vulnerability is absent. The isolated package mirror and runtime constraints prevented a fresh registry-backed audit, dependency installation, full TypeScript build with package types, Vitest/Supertest execution, live MariaDB integration, and browser-driven end-to-end testing. Those limits are recorded below rather than represented as successful checks.
 
@@ -31,14 +31,15 @@ This assessment materially reduces demonstrated risk but is not proof that every
 
 | ID | Severity | Finding | Status |
 | --- | --- | --- | --- |
-| BV-SEC-014 | Medium | Passwords above 72 UTF-8 bytes were silently reduced to the same bcrypt effective input | Remediated in this review |
+| BV-SEC-015 | Medium, deployment-dependent | Direct server startup did not enforce the patched Node.js runtime floor | Remediated in this follow-up |
+| BV-SEC-014 | Medium | Passwords above 72 UTF-8 bytes were silently reduced to the same bcrypt effective input | Remediation present at intake and reverified |
 | BV-SEC-013 | High, deployment-dependent | Cookie-authenticated responses could be reused across users by a URI-keyed shared cache | Remediation present at intake and reverified |
 
-Severity values reflect BrainVault's confidentiality and authentication-integrity impact and are not vendor CVSS scores.
+Severity values reflect BrainVault's confidentiality, availability, and authentication-integrity impact and are not vendor CVSS scores.
 
 ## Scope and Review Method
 
-The review covered 344 JavaScript, TypeScript, and SQL files comprising approximately 72,267 lines, plus configuration, documentation, lockfile data, static assets, and reachable Git history. Security-sensitive flows were traced across:
+The final reviewed tree contains 347 JavaScript, TypeScript, and SQL files comprising approximately 72,527 lines, plus configuration, documentation, lockfile data, static assets, and reachable Git history. Security-sensitive flows were traced across:
 
 - Registration, login, password hashing and comparison, JWT verification, session cookies, logout, password changes, TOTP, WebAuthn, authentication-version revocation, login history, and account lockout
 - Page, block, attachment, page-cover, sharing, archive, version-history, collaboration, search, and backup authorization boundaries
@@ -59,7 +60,8 @@ The method combined manual control-flow and data-flow review, route-to-authoriza
 
 **Severity:** Medium  
 **Weakness:** CWE-521 (Weak Password Requirements)  
-**Affected pre-fix areas:** `src/routes/auth.routes.ts`, `src/routes/mfa.routes.ts`, `src/lib/auth.ts`, and `scripts/seed.ts`
+**Affected pre-fix areas:** `src/routes/auth.routes.ts`, `src/routes/mfa.routes.ts`, `src/lib/auth.ts`, and `scripts/seed.ts`  
+**Status in this review:** Remediation was present at intake and independently reverified.
 
 #### Original Condition
 
@@ -139,6 +141,59 @@ Before deploying this change, administrators should arrange a password reset to 
 
 The test is included in `npm run verify:security`.
 
+### BV-SEC-015 - Direct server startup did not enforce the patched Node.js floor
+
+**Severity:** Medium, deployment-dependent  
+**Weakness:** Runtime security policy enforced only by installation metadata  
+**Affected pre-fix areas:** `package.json`, `.npmrc`, and `src/server.ts`  
+**Status in this review:** Confirmed, reproduced, and remediated.
+
+#### Original Condition
+
+`package.json` correctly declared Node.js `^22.23.2 || ^24.18.1 || >=26.5.1`, and `.npmrc` set `engine-strict=true`. Those controls constrain npm installation, but the Node.js executable does not evaluate either file when an operator directly starts a JavaScript entrypoint. A deployment that copied a prebuilt `dist/` tree or retained previously installed dependencies could therefore run BrainVault below its declared patched runtime floor.
+
+The validation environment itself demonstrated the practical gap: it ran Node.js 22.16.0 and successfully executed an npm script even though that version is below the project range. The standalone reproduction also creates an isolated temporary package with an intentionally impossible `engines.node` value and confirms that direct `node` execution still reaches the entrypoint.
+
+#### Reproduction
+
+Run:
+
+```bash
+npm run reproduce:runtime-security-floor
+```
+
+The dependency-free reproduction emits structured output and verifies both the retired metadata-only control and the remediated startup path:
+
+| Check | Result |
+| --- | --- |
+| Direct `node` executes despite temporary `engines.node: ">=999.0.0"` | `true` |
+| Temporary project also has `engine-strict=true` | `true` |
+| Guard accepts Node.js 22.23.2, 24.18.1, and 26.5.1 | `true` |
+| Guard rejects known pre-floor Node.js 22.16.0 | `true` |
+| Guard executes before TLS load, database bootstrap, and listener startup | `true` |
+
+#### Impact
+
+The gap could leave a deployment running a Node.js release missing security fixes that the project explicitly required. The July 29, 2026 Node.js security releases fixed multiple High- and Medium-severity runtime issues across supported lines. Exploitability for BrainVault depends on the selected Node.js line, transport mode, runtime flags, and the vulnerable subsystem; no application-specific remote exploit of a Node.js CVE was demonstrated. The finding is therefore rated Medium and deployment-dependent rather than inheriting a vendor CVE's maximum severity.
+
+#### Root Cause
+
+The runtime version was represented only as package-manager metadata. The server entrypoint had no executable assertion tying the production process to the same security floor, so install-time policy and run-time policy could diverge.
+
+#### Remediation
+
+- Added `src/lib/runtime-security.ts` as a dependency-free implementation of the exact declared Node.js range.
+- Added a fail-closed `assertSupportedNodeRuntime()` call to `src/server.ts` before TLS certificate loading, database bootstrap, recovery processing, collaboration setup, or network listening.
+- Stable Node.js releases at or above 22.23.2, 24.18.1, and 26.5.1 are accepted; unsupported majors, lower patch levels, malformed values, and prerelease strings are rejected.
+- Added `scripts/reproduce-runtime-security-floor.mjs` and `tests/runtime-security-floor.node.test.mjs`.
+- Extended `scripts/verify-security-hardening.mjs` and `npm run verify:security` so the package range, runtime implementation, startup order, and reproduction remain aligned.
+
+No dependency, lockfile, database migration, or Git metadata change was required.
+
+#### Regression Verification
+
+`tests/runtime-security-floor.node.test.mjs` contains four tests covering range boundaries, malformed/prerelease fail-closed behavior, server startup ordering, and the standalone reproduction. The tests pass under the dependency-free type-stripping runner even when the validation host itself is below the production floor because they test the pure guard with explicit version inputs and do not start the server.
+
 ### BV-SEC-013 - Authenticated responses could be reused across users by a shared cache
 
 **Severity:** High, deployment-dependent  
@@ -214,19 +269,20 @@ The lockfile pins direct runtime dependencies and uses approved portable registr
 | `markdown-it` | 14.3.0 | Above the reviewed regular-expression and smart-quote complexity fixes |
 | `linkify-it` | 5.0.2 | Includes both reviewed quadratic-scanning fixes through 5.0.2 |
 | `picomatch` | 4.0.5 | Above the 4.0.4 extglob ReDoS fix |
+| `postcss` | 8.5.25 | Above the 8.5.18 source-map path traversal fix and earlier 8.5.x file-read fixes |
 | `@simplewebauthn/server` | 13.3.2 | Includes the reviewed 13.3.2 advisory fix |
 
 No dependency change was required for the reviewed advisories. This comparison is not a substitute for a successful registry-backed audit of every transitive package.
 
-The project requires Node.js `^22.23.2 || ^24.18.1 || >=26.5.1`. The validation container provided Node.js 22.16.0, below that project floor. Dependency-free checks ran successfully, but production, CI, installation, and full build verification must use a runtime satisfying the declared engine range.
+The project requires Node.js `^22.23.2 || ^24.18.1 || >=26.5.1`. The validation container provided Node.js 22.16.0, below that project floor. The new server-entrypoint assertion now refuses to operate the application on that runtime even if installation metadata was bypassed. Dependency-free guard, reproduction, source-order, and regression checks ran successfully; production startup, CI installation, and the full build must still use a runtime satisfying the declared range.
 
 ## Secret and Repository Review
 
 - No real `.env` file was present; only `.env.example` was included.
 - No high-confidence PEM private key, AWS access key, GitHub token, npm token, OpenAI-style key, Slack token, Google API key, or Stripe live secret pattern was found in the final working tree.
-- The same scan covered 1,765 unique blobs across 175 reachable Git revisions and found no match.
+- The same scan covered 1,779 unique blobs across 176 reachable Git revisions and found no match.
 - `git fsck --full` passed before the original `.git` directory was restored for packaging.
-- No generated `node_modules`, `dist`, attachment, upload, or runtime-secret directory is included in the release archive.
+- No generated `node_modules`, `dist`, attachment, upload, or runtime-secret directory is included in the release archive. The final working tree contains 425 non-Git files and no symbolic links.
 - `.git` remains part of the deliverable exactly as requested. It is restored from the original input after commands that could refresh Git metadata, then compared file-by-file by size and SHA-256 against the original 28-file manifest.
 
 ## Verification Results
@@ -235,43 +291,40 @@ The project requires Node.js `^22.23.2 || ^24.18.1 || >=26.5.1`. The validation 
 | --- | --- |
 | `npm run reproduce:bcrypt-password-boundary` | Different long passwords had equal effective 72-byte inputs; the fixed policy rejected both and accepted exactly 72 bytes |
 | `npm run reproduce:authenticated-cache-isolation` | Retired model disclosed Alice to Bob; current model isolated both responses |
-| `npm run verify:security` | PASS; hardening verifier plus 41 tests, 0 failures |
-| `npm run test:durability` | PASS; 212 tests, 0 failures |
+| `npm run reproduce:runtime-security-floor` | Direct Node.js execution bypassed impossible engine metadata; the fixed guard rejected 22.16.0 and ran before startup operations |
+| `npm run verify:security` | PASS; hardening verifier plus 45 tests, 0 failures |
+| `npm run test:durability` | PASS; 216 tests, 0 failures |
 | `npm run verify:data-loss` | PASS |
-| `npm run verify:collaboration` | PASS; source wiring, protocol checks, reproductions, and syntax checks for 303 files |
+| `npm run verify:collaboration` | PASS; source wiring, protocol checks, reproductions, and syntax checks for 306 files |
 | `npm run lockfile:check` | PASS; 346 resolved URLs used approved registry hosts |
 | Changed TypeScript and JavaScript syntax checks | PASS |
-| High-confidence current-tree secret scan | PASS; no match |
-| High-confidence reachable-history secret scan | PASS; no match in 1,765 unique blobs across 175 revisions |
+| High-confidence current-tree secret scan | PASS; no match in 425 non-Git files |
+| High-confidence reachable-history secret scan | PASS; no match in 1,779 unique blobs across 176 revisions |
 | `git fsck --full` | PASS |
 | Final `.git` content-manifest comparison | PASS; 28 files, byte-for-byte content match |
 
 ## Validation Limitations
 
 - `npm audit --package-lock-only` could not complete because the configured isolated registry returned HTTP 404 for the npm audit endpoint.
-- `npm ci --ignore-scripts` could not complete because the isolated package mirror did not provide the locked `zod-3.25.76.tgz` artifact. The container also reported that Node.js 22.16.0 is below the project's declared engine range.
+- A dependency installation attempt with the engine check explicitly bypassed could not complete because the isolated package mirror did not provide the locked `zod-3.25.76.tgz` artifact.
+- The available Node.js 22.16.0 runtime is intentionally rejected by the new production startup guard. No supported Node.js runtime was available for a full server start.
 - With no installed `node_modules`, a full TypeScript build, Vitest suite, Supertest route integration suite, and browser capture were unavailable.
 - No live MariaDB service was available for production-parity transaction, migration, backup/restore, or authorization integration tests.
 - No external CDN or reverse proxy was attacked. The cache condition is exercised by a loopback HTTP proxy implementing the affected URI-keyed default-TTL configuration.
 - No independent dynamic application security scanner or third-party penetration test was available in the isolated environment.
 
-These limits do not invalidate the source-confirmed bcrypt boundary, deterministic reproduction, cache reproduction, or dependency-free regression results; they define what remains for deployment-parity assurance.
+These limits do not invalidate the source-confirmed bcrypt boundary, deterministic cache and runtime-floor reproductions, fail-closed runtime guard, or dependency-free regression results; they define what remains for deployment-parity assurance.
 
 ## Changed Files
 
-- `src/lib/password-policy.ts`
-- `src/lib/auth.ts`
-- `src/utils/schemas.ts`
-- `src/routes/auth.routes.ts`
-- `src/routes/mfa.routes.ts`
-- `scripts/seed.ts`
-- `scripts/reproduce-bcrypt-password-boundary.mjs`
+This independent follow-up changed only the following project files; all pre-existing working-tree changes were retained:
+
+- `src/lib/runtime-security.ts`
+- `src/server.ts`
+- `scripts/reproduce-runtime-security-floor.mjs`
 - `scripts/verify-security-hardening.mjs`
-- `tests/bcrypt-password-boundary.node.test.mjs`
+- `tests/runtime-security-floor.node.test.mjs`
 - `package.json`
-- `public/index.html`
-- `public/i18n.js`
-- `docs/getting-started/2026-07-27/getting-started.md`
 - `docs/security/2026-08-08/security-review-and-remediation-report.md`
 
 No database migration, dependency version, lockfile, Git history, or Git metadata change was required.
@@ -279,11 +332,11 @@ No database migration, dependency version, lockfile, Git history, or Git metadat
 ## Deployment Guidance
 
 1. Before deployment, arrange a trusted password reset for any account known or suspected to use more than 72 UTF-8 bytes. Do not re-enable silent truncation as a migration shortcut.
-2. Use a supported Node.js release satisfying `^22.23.2 || ^24.18.1 || >=26.5.1`, then run `npm ci`, `npm audit`, `npm run build`, and the complete unit/integration suite in a networked CI environment.
+2. Use a supported Node.js release satisfying `^22.23.2 || ^24.18.1 || >=26.5.1`. The server now refuses startup outside that range, but CI should still run `npm ci`, `npm audit`, `npm run build`, and the complete unit/integration suite on a supported runtime.
 3. Deploy behind a reverse proxy or CDN rule that does not cache `/api/**` or authenticated `/docs/**`, and retain the origin's `Cache-Control` headers without replacement.
 4. Keep `AUTH_ALLOW_BEARER_TOKENS=false`, `REGISTRATION_ENABLED=false` unless intentionally public, exact CORS/WebAuthn origins, exact trusted-proxy addresses, and HTTPS-only production cookies.
 5. Use a dedicated non-public attachment volume with quotas and backups; never place it below `public/`, `docs/`, `.git/`, or the project root.
-6. Re-run authentication, HTML/XSS, cache, SSRF, backup, upload, and collaboration regression tests whenever middleware order, password hashing, sanitizer/parser versions, reverse-proxy behavior, or response cache policy changes.
+6. Re-run authentication, runtime-floor, HTML/XSS, cache, SSRF, backup, upload, and collaboration regression tests whenever the Node.js floor, server entrypoint, middleware order, password hashing, sanitizer/parser versions, reverse-proxy behavior, or response cache policy changes.
 
 ## External References Reviewed
 
@@ -293,5 +346,6 @@ No database migration, dependency version, lockfile, Git history, or Git metadat
 - RFC 9111, *HTTP Caching*
 - OWASP Web Security Testing Guide, *Testing for Browser Cache Weaknesses*
 - Express 5 documentation for static response cache metadata
+- Official npm `package.json` documentation for `engines` and `engine-strict` behavior
 - Official Node.js July 29, 2026 security release information
-- GitHub Security Advisories for the reviewed Multer, express-rate-limit, sanitize-html, markdown-it, linkify-it, picomatch, and SimpleWebAuthn issues
+- GitHub Security Advisories for the reviewed Multer, express-rate-limit, sanitize-html, markdown-it, linkify-it, picomatch, PostCSS, and SimpleWebAuthn issues

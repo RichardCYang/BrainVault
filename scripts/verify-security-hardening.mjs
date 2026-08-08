@@ -9,6 +9,11 @@ import {
   getPasswordUtf8ByteLength,
   isPasswordWithinBcryptLimit
 } from "../src/lib/password-policy.ts";
+import {
+  assertSupportedNodeRuntime,
+  isNodeRuntimeSupported,
+  nodeRuntimeSecurityFloor
+} from "../src/lib/runtime-security.ts";
 
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (relativePath) => readFileSync(join(rootDir, relativePath), "utf8").replace(/\r\n/g, "\n");
@@ -26,6 +31,14 @@ assert.equal(isPasswordWithinBcryptLimit("A".repeat(72)), true);
 assert.equal(isPasswordWithinBcryptLimit("A".repeat(73)), false);
 assert.equal(getPasswordUtf8ByteLength("🔐".repeat(19)), 76);
 assert.equal(isPasswordWithinBcryptLimit("🔐".repeat(19)), false);
+assert.equal(nodeRuntimeSecurityFloor, "^22.23.2 || ^24.18.1 || >=26.5.1");
+for (const version of ["22.23.2", "24.18.1", "26.5.1", "27.0.0"]) {
+  assert.equal(isNodeRuntimeSupported(version), true, `${version} must satisfy the runtime security floor`);
+}
+for (const version of ["22.23.1", "23.0.0", "24.18.0", "25.0.0", "26.5.0", "22.23.2-rc.1"]) {
+  assert.equal(isNodeRuntimeSupported(version), false, `${version} must fail the runtime security floor`);
+}
+assert.throws(() => assertSupportedNodeRuntime("22.16.0"), /Refusing to start/);
 
 function contains(relativePath, values) {
   const source = read(relativePath);
@@ -232,9 +245,19 @@ contains("scripts/env-init.ts", [
 contains("package.json", ['"secrets:generate": "node scripts/generate-secrets.mjs"']);
 const packageJson = JSON.parse(read("package.json"));
 const packageLock = JSON.parse(read("package-lock.json"));
-const supportedNodeRange = "^22.23.2 || ^24.18.1 || >=26.5.1";
+const supportedNodeRange = nodeRuntimeSecurityFloor;
 assert.equal(packageJson.engines?.node, supportedNodeRange, "package.json must reject pre-patch Node runtimes");
 assert.equal(packageLock.packages?.[""]?.engines?.node, supportedNodeRange, "package-lock.json must mirror the Node security floor");
+assert.equal(
+  packageJson.scripts?.["reproduce:runtime-security-floor"],
+  "node --experimental-strip-types scripts/reproduce-runtime-security-floor.mjs",
+  "package.json must expose the runtime-floor reproduction"
+);
+assert.match(
+  packageJson.scripts?.["verify:security"] ?? "",
+  /tests\/runtime-security-floor\.node\.test\.mjs/,
+  "verify:security must execute the runtime-floor regression tests"
+);
 contains(".npmrc", ["engine-strict=true"]);
 contains("scripts/generate-secrets.mjs", [
   'const SECRET_BYTES = 32',
@@ -333,13 +356,28 @@ assert.ok(!collaborationBrowserSource.includes("https://cdn.jsdelivr.net/npm/yjs
 assert.ok(indexSource.includes("/vendor/yjs/lib0/"), "The import map must resolve lib0 locally");
 assert.ok(!appSource.includes('scriptSrc: ["\'self\'", "https://cdn.jsdelivr.net"]'), "CSP must not trust the entire jsDelivr host");
 assert.ok(!appSource.includes('connectSrc: ["\'self\'", "ws:", "wss:"]'), "CSP must not allow arbitrary WebSocket hosts");
-contains("src/server.ts", [
+contains("src/lib/runtime-security.ts", [
+  'export const nodeRuntimeSecurityFloor = "^22.23.2 || ^24.18.1 || >=26.5.1"',
+  "process.versions.node",
+  "Refusing to start"
+]);
+const serverSource = contains("src/server.ts", [
+  'import { assertSupportedNodeRuntime } from "./lib/runtime-security.js";',
+  "assertSupportedNodeRuntime();",
   "createHttpServer(app)",
   "createHttpsServer(poshAcmeTls.options, app)",
   "server.listen(env.PORT, env.HOST",
   "HTTPS reverse-proxy mode enabled",
   "Posh-ACME HTTPS mode enabled"
 ]);
+const runtimeGuardIndex = serverSource.indexOf("assertSupportedNodeRuntime();");
+assert.ok(runtimeGuardIndex >= 0, "The server entrypoint must enforce the runtime security floor");
+for (const startupOperation of ["await loadPoshAcmeTls(", "await bootstrapDatabase(", "server.listen("]) {
+  assert.ok(
+    serverSource.indexOf(startupOperation) > runtimeGuardIndex,
+    `${startupOperation} must remain after the runtime security-floor assertion`
+  );
+}
 contains("src/lib/posh-acme-https.ts", [
   'defaultCertificateFileName = "fullchain.cer"',
   'defaultPrivateKeyFileName = "cert.key"',
