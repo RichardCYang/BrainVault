@@ -2,10 +2,19 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { privateNoStoreCacheControl, setPrivateNoStoreCacheControl } from "../src/lib/cache-control.ts";
 import { isPrivateAddress } from "../src/lib/network-address.ts";
 
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (relativePath) => readFileSync(join(rootDir, relativePath), "utf8").replace(/\r\n/g, "\n");
+
+const authenticatedCacheHeaders = new Map();
+setPrivateNoStoreCacheControl({
+  setHeader(name, value) {
+    authenticatedCacheHeaders.set(name.toLowerCase(), value);
+  }
+});
+assert.equal(authenticatedCacheHeaders.get("cache-control"), privateNoStoreCacheControl);
 
 function contains(relativePath, values) {
   const source = read(relativePath);
@@ -34,7 +43,7 @@ assert.notEqual(
   "API and collaboration JWT audiences must remain distinct"
 );
 
-contains("src/middleware/auth.ts", [
+const authMiddlewareSource = contains("src/middleware/auth.ts", [
   "payload.authVersion !== authVersion",
   'new ApiError(401, "SESSION_REVOKED"',
   "req.auth = { authVersion }",
@@ -42,8 +51,17 @@ contains("src/middleware/auth.ts", [
   'fetchSite === "cross-site"',
   "requireSameOriginBrowserRequest",
   "requireJsonRequestBody",
-  'req.is("application/json")'
+  'req.is("application/json")',
+  "setPrivateNoStoreCacheControl(res)"
 ]);
+const requireAuthStart = authMiddlewareSource.indexOf("export async function requireAuth");
+const authenticatedCachePolicyIndex = authMiddlewareSource.indexOf("setPrivateNoStoreCacheControl(res)", requireAuthStart);
+const bearerReadIndex = authMiddlewareSource.indexOf("const bearerToken = getBearerToken(req)", requireAuthStart);
+assert.ok(requireAuthStart >= 0 && authenticatedCachePolicyIndex > requireAuthStart);
+assert.ok(
+  authenticatedCachePolicyIndex < bearerReadIndex,
+  "Authenticated response cache policy must run before credential parsing and all downstream exits"
+);
 const authRoutesSource = contains("src/routes/auth.routes.ts", [
   "SELECT * FROM users WHERE id = ? FOR UPDATE",
   "UPDATE users SET password_hash = ?, auth_version = ? WHERE id = ?",
@@ -247,7 +265,7 @@ contains("src/middleware/auth-rate-limit.ts", [
 ]);
 const appSource = contains("src/app.ts", [
   "if (env.SERVE_INTERNAL_DOCS)",
-  'app.use("/docs", requireAuth',
+  /app\.use\(\s*"\/docs",\s*requireAuth/,
   "createExpressTrustProxySetting",
   "createHttpsEnforcementMiddleware",
   'enabled: env.HTTPS_MODE !== "off"',
@@ -272,6 +290,11 @@ assert.ok(
 assert.ok(
   appSource.indexOf("rateLimit({") < appSource.indexOf("express.urlencoded({ extended: false })"),
   "The global rate limiter must run before URL-encoded body parsing"
+);
+assert.match(
+  appSource,
+  /app\.use\(\s*"\/docs",\s*requireAuth,\s*express\.static\(docsDir,\s*\{[\s\S]*?cacheControl: false,[\s\S]*?etag: false,[\s\S]*?lastModified: false,[\s\S]*?setHeaders: setPrivateNoStoreCacheControl/,
+  "Authenticated documentation must preserve the private no-store policy instead of enabling static caching"
 );
 assert.ok(browserSource.includes("function acceptRotatedAuthenticationSession()"));
 assert.ok(
@@ -478,4 +501,4 @@ assert.equal(acceptsSession(1, 1), true, "A current session must be accepted bef
 assert.equal(acceptsSession(1, 2), false, "An old session must be rejected after credential rotation");
 assert.equal(acceptsSession(2, 2), true, "The replacement session must remain usable");
 
-console.log("[security-hardening] PASS: login CSRF gates, exact origins, atomic MFA attempts, credential-boundary rotation, stale-auth rejection, account reauthentication throttling, pre-parser global limiting, revocation-safe MFA completion, locked TOTP verification, account backoff, __Host session cookies, duplicate-cookie rejection, query-safe access logs, bounded presence identity, no-op Yjs replay rejection, state-equivalent compaction, cookie-only browser login, logout revocation, absolute bookmark deadlines, attachment screening and pre-storage admission, bounded WebSocket and collaboration queues, collaboration connection limits, syntax-highlighting deadlines, backup import admission limits, patched Node runtime enforcement, cache controls, database accounts, CSP, error hygiene, JWT separation, multipart limits, and SSRF ranges");
+console.log("[security-hardening] PASS: login CSRF gates, exact origins, atomic MFA attempts, credential-boundary rotation, stale-auth rejection, account reauthentication throttling, pre-parser global limiting, revocation-safe MFA completion, locked TOTP verification, account backoff, __Host session cookies, duplicate-cookie rejection, query-safe access logs, bounded presence identity, no-op Yjs replay rejection, state-equivalent compaction, cookie-only browser login, logout revocation, absolute bookmark deadlines, attachment screening and pre-storage admission, bounded WebSocket and collaboration queues, collaboration connection limits, syntax-highlighting deadlines, backup import admission limits, patched Node runtime enforcement, authenticated response cache isolation, database accounts, CSP, error hygiene, JWT separation, multipart limits, and SSRF ranges");

@@ -16,6 +16,7 @@ import { collaborationRouter } from "./routes/collaboration.routes.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.js";
 import { requireAuth } from "./middleware/auth.js";
 import { createHttpsEnforcementMiddleware } from "./middleware/https.js";
+import { setPrivateNoStoreCacheControl } from "./lib/cache-control.js";
 import { createExpressTrustProxySetting } from "./lib/reverse-proxy.js";
 import {
   developmentAccessLogFormat,
@@ -135,7 +136,17 @@ export function createApp() {
   );
   app.use(express.static(publicDir, { index: false }));
   if (env.SERVE_INTERNAL_DOCS) {
-    app.use("/docs", requireAuth, express.static(docsDir, { index: false }));
+    app.use(
+      "/docs",
+      requireAuth,
+      express.static(docsDir, {
+        cacheControl: false,
+        etag: false,
+        index: false,
+        lastModified: false,
+        setHeaders: setPrivateNoStoreCacheControl
+      })
+    );
   }
 
   app.get("/", (_req, res) => {

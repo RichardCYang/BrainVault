@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { env } from "../config/env.js";
 import { db } from "../lib/db.js";
 import { normalizeAuthVersion, verifyAuthToken } from "../lib/auth.js";
+import { setPrivateNoStoreCacheControl } from "../lib/cache-control.js";
 import { ApiError } from "../lib/http.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { clearAuthSessionCookie, readAuthSessionCookie } from "../lib/session-cookie.js";
@@ -51,6 +52,7 @@ export function requireJsonRequestBody(req: Request, _res: Response, next: NextF
 }
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
+  setPrivateNoStoreCacheControl(res);
   let source: "bearer" | "cookie" | null = null;
   try {
     const bearerToken = getBearerToken(req);

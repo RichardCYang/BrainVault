@@ -27,6 +27,12 @@ These versions include the Node.js fixes for the HTTP/2 memory-exhaustion and us
 
 When `MARIADB_ADMIN_URL` is used, bootstrap creates application accounts only for the exact hosts in `DB_USER_HOSTS`, refreshes their passwords with `ALTER USER`, grants only the schema privileges needed by BrainVault, and removes the legacy `brainvault@'%'`-style wildcard account. Existing deployments should rerun `npm run db:init` with an administrator connection after choosing a new database password and exact account hosts.
 
+## Authenticated response cache isolation
+
+Every request that crosses the `requireAuth` boundary receives `Cache-Control: private, no-store` before credential parsing, database access, or route execution. This protects cookie-authenticated API JSON, authenticated errors, data exports, attachments, and optional internal documentation from browser or intermediary reuse. The internal documentation static handler disables its own cache metadata so it cannot replace the authentication-boundary policy.
+
+The custom page-cover binary endpoint is the only deliberate exception. It remains private, uses immediate revalidation, and varies on both `Cookie` and `Authorization` so an unchanged image can be conditionally reused only within the matching credential context.
+
 ## Authentication abuse controls
 
 Login is protected by IP-keyed and normalized-account-keyed request limits plus a database-persisted account backoff. Password failures are updated under a user-row lock; after the configured threshold, the lock duration grows exponentially up to the configured maximum, so distributed source IPs cannot reset the account state. A correct password clears a persisted lock and failure counter, preventing a low-rate attacker from keeping an account unavailable indefinitely; the account must still complete any configured MFA challenge. Attempts rejected solely because the account is still locked are recorded as `LOCKED`, not as ordinary credential failures. A password-valid response that still requires MFA is counted rather than treated as a completed successful login. TOTP and passkey login verification have separate IP and account limits, and the short-lived MFA login token is bound to the source IP that created it. TOTP enrollment verification has its own account limit, and the enrollment code's time step is stored immediately so the same code cannot be reused for login. MFA failures are carried into replacement login sessions under a user-row lock, so signing in again cannot reset the eight-attempt session budget. Successful MFA completion clears the carried state. Registration has per-IP and process-wide limits, defaults to disabled in production, avoids repeated password hashing for an existing username, and returns the same padded accepted response. When public registration is enabled, combining registration and login behavior may still reveal whether a normalized login ID exists; production should keep registration disabled unless open enrollment is intentional. The in-memory request limiters are suitable for one process; multi-instance deployments should use a shared rate-limit store, while the password backoff remains shared through MariaDB.
@@ -139,7 +145,7 @@ The server includes:
 - WebAuthn user verification, strict JWT audience separation, and credential-change session revocation
 - Zod input validation and validated profile-image data
 - Private attachment storage with filename, media-type, signature, authenticated-download, and upload-size controls
-- `private, no-store` caching on authenticated page, rendered-page, session, and attachment responses
+- `private, no-store` caching at the authenticated middleware boundary, with credential-varying private revalidation only for page-cover bytes
 - Sanitized Markdown/HTML output with bounded, deadline-protected syntax highlighting
 
 These defaults are a starting point, not a substitute for HTTPS, secure secret storage, database and attachment backups, dependency updates, and production monitoring.
