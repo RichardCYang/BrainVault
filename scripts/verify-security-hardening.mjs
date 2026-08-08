@@ -4,6 +4,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { privateNoStoreCacheControl, setPrivateNoStoreCacheControl } from "../src/lib/cache-control.ts";
 import { isPrivateAddress } from "../src/lib/network-address.ts";
+import {
+  bcryptPasswordMaxBytes,
+  getPasswordUtf8ByteLength,
+  isPasswordWithinBcryptLimit
+} from "../src/lib/password-policy.ts";
 
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (relativePath) => readFileSync(join(rootDir, relativePath), "utf8").replace(/\r\n/g, "\n");
@@ -15,6 +20,12 @@ setPrivateNoStoreCacheControl({
   }
 });
 assert.equal(authenticatedCacheHeaders.get("cache-control"), privateNoStoreCacheControl);
+assert.equal(bcryptPasswordMaxBytes, 72);
+assert.equal(getPasswordUtf8ByteLength("A".repeat(72)), 72);
+assert.equal(isPasswordWithinBcryptLimit("A".repeat(72)), true);
+assert.equal(isPasswordWithinBcryptLimit("A".repeat(73)), false);
+assert.equal(getPasswordUtf8ByteLength("🔐".repeat(19)), 76);
+assert.equal(isPasswordWithinBcryptLimit("🔐".repeat(19)), false);
 
 function contains(relativePath, values) {
   const source = read(relativePath);
@@ -29,7 +40,10 @@ const authSource = contains("src/lib/auth.ts", [
   'const authAudience = "brainvault-api"',
   'algorithm: "HS256"',
   'algorithms: ["HS256"]',
-  "authVersion: normalizeAuthVersion(decoded.authVersion)"
+  "authVersion: normalizeAuthVersion(decoded.authVersion)",
+  "assertPasswordWithinBcryptLimit(password)",
+  "bcrypt.truncates(password)",
+  "if (bcryptWouldTruncate(password)) return Promise.resolve(false)"
 ]);
 const collaborationTokenSource = contains("src/lib/collaboration-token.ts", [
   'const collaborationAudience = "brainvault-page-collaboration"',
@@ -75,7 +89,9 @@ const authRoutesSource = contains("src/routes/auth.routes.ts", [
   "res.status(202).json({ ok: true })",
   "same status, response shape",
   /"\/register",\s+requireSameOriginBrowserRequest,\s+requireJsonRequestBody,/,
-  /"\/login",\s+requireSameOriginBrowserRequest,\s+requireJsonRequestBody,/
+  /"\/login",\s+requireSameOriginBrowserRequest,\s+requireJsonRequestBody,/,
+  "passwordInputSchema(8)",
+  "passwordInputSchema(1)"
 ]);
 assert.doesNotMatch(authRoutesSource, /res\.json\(\{[^}]*token/, "Authentication responses must not expose JWTs");
 
@@ -97,7 +113,8 @@ const mfaRoutesSource = contains("src/routes/mfa.routes.ts", [
   "SET failed_attempts = failed_attempts + 1",
   "FROM user_totp_credentials WHERE user_id = ? FOR UPDATE",
   "return createMfaLoginResult(loginUser)",
-  'res.setHeader("Cache-Control", "private, no-store")'
+  'res.setHeader("Cache-Control", "private, no-store")',
+  "currentPassword: passwordInputSchema(1)"
 ]);
 assert.ok(!mfaRoutesSource.includes("DELETE FROM mfa_login_sessions WHERE user_id = ? OR"), "MFA re-login must not reset failures");
 assert.ok(!mfaRoutesSource.includes("async function recordMfaFailure"), "MFA failures must consume a reserved attempt before verification");
@@ -228,7 +245,8 @@ contains("scripts/generate-secrets.mjs", [
 ]);
 contains("scripts/seed.ts", [
   "BRAINVAULT_SEED_DEMO",
-  "BRAINVAULT_DEMO_PASSWORD must contain 12-128 characters"
+  "BRAINVAULT_DEMO_PASSWORD must contain 12-128 characters and no more than 72 UTF-8 bytes",
+  "isPasswordWithinBcryptLimit(password)"
 ]);
 const browserSource = read("public/app.js");
 assert.ok(!browserSource.includes("brainvault.token"), "The browser must not persist the JWT in localStorage");

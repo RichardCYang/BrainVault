@@ -37,7 +37,7 @@ import {
   registrationRateLimit
 } from "../middleware/auth-rate-limit.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
-import { requireUser, usernameSchema } from "../utils/schemas.js";
+import { passwordInputSchema, requireUser, usernameSchema } from "../utils/schemas.js";
 import type { UserRow } from "../types/domain.js";
 import { createMfaLoginSession, getMfaMethods, mfaRouter } from "./mfa.routes.js";
 
@@ -49,14 +49,14 @@ const profileThemeSchema = z.enum(supportedProfileThemes);
 
 const registerSchema = z.object({
   username: usernameSchema,
-  password: z.string().min(8).max(128),
+  password: passwordInputSchema(8),
   name: z.string().trim().min(1).max(80).optional(),
   preferredLanguage: preferredLanguageSchema.optional()
 });
 
 const loginSchema = z.object({
   username: usernameSchema,
-  password: z.string().min(1).max(128)
+  password: passwordInputSchema(1)
 });
 
 const profileSchema = z
@@ -77,8 +77,8 @@ const loginHistoryQuerySchema = z.object({
 
 const passwordSchema = z
   .object({
-    currentPassword: z.string().min(1).max(128),
-    newPassword: z.string().min(8).max(128)
+    currentPassword: passwordInputSchema(1),
+    newPassword: passwordInputSchema(8)
   })
   .refine((value) => value.currentPassword !== value.newPassword, {
     path: ["newPassword"],

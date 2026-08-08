@@ -44,7 +44,7 @@ import {
 } from "../middleware/auth-rate-limit.js";
 import { validate } from "../middleware/validate.js";
 import type { UserRow } from "../types/domain.js";
-import { requireUser } from "../utils/schemas.js";
+import { passwordInputSchema, requireUser } from "../utils/schemas.js";
 
 export const mfaRouter = Router();
 
@@ -60,7 +60,7 @@ const maxMfaAttempts = 8;
 const mfaFailureCarryWindowMs = env.AUTH_MFA_ACCOUNT_WINDOW_MS;
 
 const currentPasswordSchema = z.object({
-  currentPassword: z.string().min(1).max(128)
+  currentPassword: passwordInputSchema(1)
 });
 
 const totpVerifySchema = z.object({
@@ -80,7 +80,7 @@ const mfaTokenSchema = z.object({
 const passkeyNameSchema = z.string().trim().min(1).max(80);
 
 const passkeyOptionsSchema = z.object({
-  currentPassword: z.string().min(1).max(128),
+  currentPassword: passwordInputSchema(1),
   name: passkeyNameSchema
 });
 

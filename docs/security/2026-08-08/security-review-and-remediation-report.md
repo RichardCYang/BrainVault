@@ -2,42 +2,45 @@
 
 **Review date:** August 8, 2026  
 **Input archive:** `BrainVault.zip`  
-**Input archive SHA-256:** `50895e50e2b04667cbde734e2a1d31c58f2cf41bbc78a277c434db4bd5c39252`  
-**Repository HEAD at intake:** `5387852f3f3579f27a0d76cd657792562f26e15f`  
+**Input archive SHA-256:** `12b6453d9767e5c146c9eb9e7a8d1cf22b96c7c1ee2314ef3f960f2524a66939`  
+**Repository HEAD at intake:** `6d1b54222aa6f4410e18a174c79e5664c5b161e0`  
 **Intake branch:** `main`  
-**Intake commit:** `fix(security): harden attachment uploads and authenticated API caching.`  
-**Repository scope:** The complete uploaded project, including the retained `.git` directory and reachable history  
-**Assessment type:** Manual source review, source-directed exploit reproduction, remediation, dependency/advisory comparison, and dependency-free regression verification
+**Intake commit:** `fix(security): prevent shared-cache leakage of authenticated responses.`  
+**Repository scope:** The complete uploaded project, including the retained `.git` directory and all reachable history  
+**Assessment type:** Manual source review, source-directed exploit reproduction, remediation, dependency/advisory comparison, secret scanning, and dependency-free regression verification
 
 ## Executive Summary
 
-No Critical-severity vulnerability was reproduced in the reviewed scope. One **High-impact, deployment-dependent information disclosure weakness** was confirmed and remediated:
+No Critical-severity vulnerability and no new High-severity vulnerability were reproduced in the uploaded revision. One new **Medium-severity authentication-integrity vulnerability** was confirmed and remediated:
 
-- **Authenticated API responses did not have a complete cache-isolation policy at the authentication boundary.** Several sensitive routes set `Cache-Control: private, no-store` individually, but the cookie-authenticated page-list and search responses did not. HTTP does not give cookie-authenticated requests the shared-cache exception that applies to requests carrying `Authorization`. A reverse proxy or CDN configured to cache dynamic `200` responses by request URI could therefore store one user's response and reuse it for another user requesting the same URI. The default `/api/pages` request is especially exposed because its request URI is normally identical across users; `/api/search` can additionally contain note snippets.
+- **Passwords longer than bcrypt's 72-byte input boundary were accepted even though bcrypt silently ignored every UTF-8 byte after byte 72.** Two different passwords with the same first 72 bytes therefore represented the same effective credential. A user could also appear to change a password while changing only an ignored suffix, leaving the effective credential unchanged.
 
-A live loopback reproduction was built with a cookie-authenticated origin and a URI-keyed shared-cache proxy. In the vulnerable model, Alice's first request was a cache miss and Bob's request to the same endpoint was a cache hit returning Alice's response. With the patched authentication-boundary policy, both requests were cache misses at the shared cache and Bob received only Bob's response.
+The vulnerable condition was present at every password-bearing boundary: registration, login, password change, MFA reauthentication, passkey management, and demo seeding. Character-count validation did not solve the issue because bcrypt's boundary is measured in UTF-8 bytes; for example, a multi-byte Unicode password can cross the limit well before 72 characters.
 
-The fix applies `Cache-Control: private, no-store` in `requireAuth` before credential parsing, database access, or any downstream exit. This covers authenticated successes and errors without depending on every route author remembering a header. Optional authenticated documentation also disables static-file cache metadata and reapplies the same policy. The page-cover binary endpoint remains the only deliberate exception: it is private, immediately revalidated, and varies on `Cookie` and `Authorization`.
+The remediation introduces one shared UTF-8 byte policy, rejects inputs above 72 bytes in all request schemas and seeding, rejects them again in the password-hash helper, and makes password verification fail closed if a future route omits schema validation. The code also calls the locked `bcryptjs` package's `truncates()` helper so application policy remains aligned with the implementation. A deterministic reproduction and four regression tests were added.
 
-The focused security command completed with **37 passing tests and 0 failures**. The complete dependency-free Node durability suite completed with **208 passing tests and 0 failures**. The data-loss, collaboration, syntax, and lockfile verifiers passed. No high-confidence private key, cloud token, package token, AI-provider token, or messaging token was found in the current tree or reachable Git history.
+The uploaded revision already contained the remediation for the previously documented deployment-dependent shared-cache disclosure, **BV-SEC-013**. That protection was re-reviewed and regression-tested. No bypass was reproduced in authentication/session state transitions, object authorization, SQL construction, Markdown/HTML handling, bookmark-preview SSRF controls, multipart uploads, backup ZIP processing, MFA/WebAuthn, or real-time collaboration controls.
 
-The original `.git` directory is restored byte-for-byte from the uploaded archive immediately before packaging and is verified with a file-content manifest. No Git history, refs, config, hooks, index, logs, or object files are intentionally changed by this remediation.
+The focused security command completed with **41 passing tests and 0 failures**. The complete dependency-free Node durability suite completed with **212 passing tests and 0 failures**. Data-loss, collaboration, lockfile-host, syntax, current-tree secret, reachable-history secret, and Git-object integrity checks passed.
 
-This assessment materially reduces demonstrated risk but is not proof that every vulnerability is absent. Registry and dependency-install limitations prevented a fresh registry-backed audit, full TypeScript build with installed package types, Vitest suite, live MariaDB integration run, and browser-driven end-to-end exercise. Those limits are recorded below rather than treated as successful checks.
+The original `.git` directory is restored byte-for-byte from the uploaded archive immediately before packaging and verified against a 28-file content manifest. No Git history, refs, config, hooks, index, logs, or object files are changed by this remediation.
+
+This assessment materially reduces demonstrated risk but is not proof that every vulnerability is absent. The isolated package mirror and runtime constraints prevented a fresh registry-backed audit, dependency installation, full TypeScript build with package types, Vitest/Supertest execution, live MariaDB integration, and browser-driven end-to-end testing. Those limits are recorded below rather than represented as successful checks.
 
 ## Finding Matrix
 
 | ID | Severity | Finding | Status |
 | --- | --- | --- | --- |
-| BV-SEC-013 | High, deployment-dependent | Cookie-authenticated page-list and search responses could be reused across users by a URI-keyed shared cache | Remediated |
+| BV-SEC-014 | Medium | Passwords above 72 UTF-8 bytes were silently reduced to the same bcrypt effective input | Remediated in this review |
+| BV-SEC-013 | High, deployment-dependent | Cookie-authenticated responses could be reused across users by a URI-keyed shared cache | Remediation present at intake and reverified |
 
-Severity reflects BrainVault's note-confidentiality impact and the prerequisite that a shared intermediary be configured to cache dynamic authenticated responses. It is not a vendor CVSS score.
+Severity values reflect BrainVault's confidentiality and authentication-integrity impact and are not vendor CVSS scores.
 
 ## Scope and Review Method
 
-The review covered 341 JavaScript, TypeScript, SQL, and related source files comprising approximately 72,101 lines, plus configuration, documentation, lockfile data, static assets, and reachable Git history. Security-sensitive flows were traced across:
+The review covered 344 JavaScript, TypeScript, and SQL files comprising approximately 72,267 lines, plus configuration, documentation, lockfile data, static assets, and reachable Git history. Security-sensitive flows were traced across:
 
-- Registration, login, JWT verification, session cookies, logout, password changes, TOTP, WebAuthn, authentication-version revocation, login history, and account lockout
+- Registration, login, password hashing and comparison, JWT verification, session cookies, logout, password changes, TOTP, WebAuthn, authentication-version revocation, login history, and account lockout
 - Page, block, attachment, page-cover, sharing, archive, version-history, collaboration, search, and backup authorization boundaries
 - Express middleware order, CORS, HTTPS enforcement, reverse-proxy trust, static-file routing, cache behavior, request limits, error handling, and access logging
 - SQL construction, placeholder usage, dynamic statement fragments, transaction boundaries, row locks, optimistic edit versions, and idempotency receipts
@@ -46,32 +49,105 @@ The review covered 341 JavaScript, TypeScript, SQL, and related source files com
 - Bookmark-preview SSRF controls, URL canonicalization, DNS resolution, IP-range rejection, redirects, absolute deadlines, encodings, and response-size limits
 - WebSocket handshake parsing, exact origins, collaboration tickets, connection and queue limits, backpressure, Yjs validation, durable history, access rechecks, and session revocation
 - Direct and relevant transitive dependency versions against selected current official advisories, the lockfile registry policy, and the configured Node.js runtime floor
-- High-confidence secret patterns in the working tree and every reachable tracked revision
+- High-confidence secret patterns in the working tree and every unique blob reachable from Git refs
 
-The method combined manual control-flow and data-flow review, route-to-authorization mapping, dangerous-sink inspection, SQL interpolation review, deterministic and live-loopback vulnerable-versus-fixed reproduction, source assertions, dependency-free tests, syntax verification, and official standards/advisory comparison. No exploit traffic was sent to any external system.
+The method combined manual control-flow and data-flow review, route-to-authorization mapping, dangerous-sink inspection, SQL interpolation review, deterministic vulnerable-versus-fixed reproduction, source assertions, dependency-free tests, syntax verification, advisory comparison, secret scanning, and Git integrity checks. No exploit traffic was sent to any external system.
 
-## Detailed Finding
+## Detailed Findings
+
+### BV-SEC-014 - Bcrypt silently truncated accepted password input after 72 UTF-8 bytes
+
+**Severity:** Medium  
+**Weakness:** CWE-521 (Weak Password Requirements)  
+**Affected pre-fix areas:** `src/routes/auth.routes.ts`, `src/routes/mfa.routes.ts`, `src/lib/auth.ts`, and `scripts/seed.ts`
+
+#### Original Condition
+
+The application accepted passwords up to 128 characters. It then passed those strings directly to `bcryptjs` for hashing or comparison.
+
+Bcrypt's effective input is limited to 72 bytes. The locked `bcryptjs` 3.0.3 implementation retains that compatibility behavior and exposes `bcrypt.truncates(password)` so applications can detect an input that exceeds the boundary; hashing and comparison do not reject it automatically.
+
+The previous validation was character-based rather than byte-based. Consequently:
+
+- `"A".repeat(72) + "-ORIGINAL-SUFFIX"` and `"A".repeat(72) + "-CHANGED-SUFFIX"` are visibly different strings but have the same first 72 UTF-8 bytes.
+- A 73-character ASCII password crosses the limit by one byte.
+- Eighteen lock emoji occupy exactly 72 UTF-8 bytes, while nineteen occupy 76 bytes.
+- Changing only a suffix beyond byte 72 does not rotate the effective bcrypt credential.
+
+This did not create an unauthenticated universal bypass: an attacker still needed the effective 72-byte prefix. It nevertheless violated password-change integrity, silently discarded user-provided entropy, and made the user-visible credential differ from the credential actually protected by the hash.
+
+#### Reproduction
+
+Run:
+
+```bash
+npm run reproduce:bcrypt-password-boundary
+```
+
+The dependency-free reproduction models the documented and source-confirmed bcrypt input boundary and emits structured output. The observed result was:
+
+| Check | Result |
+| --- | --- |
+| Original and changed passwords are different strings | `true` |
+| Original password length | 88 UTF-8 bytes |
+| Changed password length | 87 UTF-8 bytes |
+| Effective first 72-byte inputs are equal | `true` |
+| Patched policy accepts either long password | `false` |
+| Patched policy accepts exactly 72 bytes | `true` |
+| Patched policy accepts 73 bytes | `false` |
+
+The exact locked package could not be installed in the validation container because the isolated mirror did not provide a required locked artifact. The implementation behavior was therefore verified against the official `bcryptjs` 3.0.3 source and API documentation, while the repository reproduction independently demonstrates the byte-boundary collision and the corrected acceptance policy.
+
+#### Impact
+
+A user who selected a password above 72 UTF-8 bytes could authenticate with any value having the same first 72 bytes. More importantly, a password change that altered only ignored bytes would appear successful while leaving the effective credential unchanged. This can defeat an intended credential rotation after suspected disclosure.
+
+The issue is more likely to affect passphrases containing multi-byte Unicode because the byte limit can be reached with fewer than 72 visible characters.
+
+#### Root Cause
+
+The application treated its existing 128-character request cap as a cryptographic password limit. No common policy converted the password to UTF-8 bytes and checked bcrypt's algorithm-specific boundary, and the hashing/comparison helpers did not fail closed when called outside a validated route.
+
+#### Remediation
+
+- Added `src/lib/password-policy.ts` as the single source of truth for the 72-byte UTF-8 boundary and validation message.
+- Added `passwordInputSchema(minLength)` in `src/utils/schemas.ts` and applied it to registration, login, password change, TOTP setup/removal, passkey registration, and passkey deletion.
+- `hashPassword()` now rejects oversized input before hashing and also checks `bcrypt.truncates()`.
+- `verifyPassword()` now returns `false` without invoking bcrypt for oversized input, protecting future callers even if route validation is omitted.
+- Demo seeding rejects passwords above 72 UTF-8 bytes.
+- User guidance and setup documentation now describe the byte boundary explicitly.
+- Added `scripts/reproduce-bcrypt-password-boundary.mjs` and `tests/bcrypt-password-boundary.node.test.mjs`.
+- Extended `scripts/verify-security-hardening.mjs` so the shared policy and every password-bearing boundary remain enforced.
+
+No dependency or lockfile change was required.
+
+#### Compatibility and Migration
+
+A bcrypt hash does not reveal whether its original input contained ignored bytes after byte 72. Existing accounts that may use passwords above 72 UTF-8 bytes cannot be identified reliably from stored hashes alone.
+
+Before deploying this change, administrators should arrange a password reset to a value of 72 UTF-8 bytes or fewer for any user known or suspected to use an unusually long password. After deployment, an oversized password is rejected instead of being silently reduced. Administrators should use the normal trusted account-recovery or administrative reset process rather than temporarily re-enabling truncation.
+
+#### Regression Verification
+
+`tests/bcrypt-password-boundary.node.test.mjs` verifies:
+
+- Exact ASCII and Unicode byte boundaries
+- Defense in depth inside the hashing and comparison helpers
+- Shared schema use across authentication and MFA routes
+- Seeding-policy coverage
+- Vulnerable effective-input equality and patched rejection in the standalone reproduction
+
+The test is included in `npm run verify:security`.
 
 ### BV-SEC-013 - Authenticated responses could be reused across users by a shared cache
 
 **Severity:** High, deployment-dependent  
 **Weakness:** CWE-524 (Use of Cache Containing Sensitive Information), CWE-200 (Exposure of Sensitive Information)  
-**Affected pre-fix areas:** `src/middleware/auth.ts`, `src/routes/page.routes.ts`, `src/routes/search.routes.ts`, and optional authenticated documentation wiring in `src/app.ts`
+**Status in this review:** The uploaded revision already contained the remediation; this review reverified its placement and regression coverage.
 
-#### Original Condition
+#### Condition and Reproduction
 
-BrainVault correctly placed explicit private no-store headers on many high-risk responses, including page detail/render, version history, attachments, collaboration tickets, authentication state, and backup export/import. The policy was nevertheless route-local rather than enforced at the authentication boundary.
-
-Two important authenticated `GET` responses had no explicit cache directive:
-
-- `GET /api/pages` returns the current user's page summaries, owner/access information, tags, collaboration metadata, and page/block counts. Its default request URI is normally the same for every user.
-- `GET /api/search` returns page matches and note-block snippets. Users who search the same term produce the same request URI while the response remains account-specific.
-
-The built-in browser authenticates with an `HttpOnly` cookie rather than an `Authorization` header. Under HTTP caching rules, a shared cache is specifically restricted from reusing responses to requests with `Authorization` unless the response permits it. A request containing only `Cookie` does not receive that automatic rule. `Set-Cookie` also does not itself prohibit storage. Servers that need confidentiality must emit appropriate response cache directives.
-
-A standards-compliant cache can store a response only when its storage rules allow it; `no-store` prohibits both private and shared storage, while `private` prohibits shared storage. In addition, operational reverse proxies and CDNs are often configured with explicit default TTLs that make otherwise unannotated `200` responses reusable by URI. Because the pre-fix page-list and search responses supplied neither directive, the application did not establish a reliable origin-side isolation boundary.
-
-#### Reproduction
+Before its prior remediation, authenticated page-list and search responses did not consistently emit an origin-side private no-store policy. A URI-keyed reverse proxy or CDN rule with a default TTL could therefore store one cookie-authenticated user's response and reuse it for another user requesting the same URI.
 
 Run:
 
@@ -79,158 +155,143 @@ Run:
 npm run reproduce:authenticated-cache-isolation
 ```
 
-The script starts two loopback HTTP servers using only Node.js built-ins:
+The loopback reproduction uses a cookie-authenticated origin and a deliberately cache-enabled URI-keyed proxy. The retired vulnerable model returns Alice's response to Bob as a cache hit. The current policy produces two cache misses and returns only Bob's response to Bob.
 
-1. A cookie-authenticated origin that returns a different private note response for `session=alice` and `session=bob`.
-2. A deliberately cache-enabled shared proxy keyed by HTTP method and request URI, representing a reverse-proxy or CDN rule with a default TTL for dynamic `200` responses.
+#### Verified Remediation
 
-It executes the same endpoint sequence against a vulnerable origin without an explicit policy and the fixed origin using BrainVault's actual `setPrivateNoStoreCacheControl()` helper.
+- `requireAuth` applies `Cache-Control: private, no-store` before credential parsing, origin checks, JWT verification, database access, or downstream exits.
+- Optional authenticated documentation disables static-file cache metadata and reapplies the same private no-store policy.
+- Route-specific stricter directives remain intact.
+- The deliberate page-cover exception remains private, requires immediate revalidation, and varies on `Cookie` and `Authorization`.
+- Source-order assertions and the live HTTP reproduction remain included in `npm run verify:security`.
 
-Observed deterministic result:
-
-| Model | Alice request | Bob request | Bob response owner | Cross-user disclosure |
-| --- | --- | --- | --- | --- |
-| Vulnerable | `MISS` | `HIT` | `alice` | Yes |
-| Fixed | `MISS` | `MISS` | `bob` | No |
-
-The reproduction is a controlled deployment model, not a claim that every CDN caches cookie-bearing responses by default. It proves that the origin's missing policy allowed a common cache configuration to convert an authenticated response into cross-user disclosure.
-
-#### Impact
-
-In an affected deployment, one authenticated user's page names, tags, owner/access metadata, page IDs, collection structure, and search snippets could be returned to another authenticated user. Search snippets can contain direct note content. Cached responses can also remain available after the originating user logs out because cache lifetime is separate from application session lifetime.
-
-The attacker does not need to forge a token or bypass database authorization; the intermediary satisfies the second request without consulting BrainVault. This is why route-level authorization alone cannot mitigate the issue once a private response has been stored under a shared key.
-
-#### Root Cause
-
-Cache controls were implemented on selected route handlers rather than as an invariant of `requireAuth`. The current commit already protected many individual authenticated responses, but any omitted or newly added route could return account-specific data without a cache directive. Optional documentation used `express.static` with static cache metadata enabled by default, creating a second place where a downstream middleware could replace or supplement an authentication-layer header.
-
-#### Remediation
-
-- Added `src/lib/cache-control.ts` with a dependency-free, directly testable private no-store policy.
-- `requireAuth` now invokes the policy before reading bearer tokens or cookies, before origin checks, before JWT verification, before database access, and before every success/error exit.
-- This protects authenticated API responses and errors independent of individual route implementation.
-- Optional `/docs` serving disables Express static `Cache-Control`, ETag, and Last-Modified generation and reapplies the private no-store policy in `setHeaders`.
-- Existing route-specific stricter directives, such as backup `no-transform`, remain intact because handlers may deliberately replace the default.
-- The page-cover endpoint retains `private, max-age=0, must-revalidate` plus `Vary: Cookie, Authorization`, allowing safe credential-partitioned conditional revalidation for unchanged image bytes.
-
-#### Regression Verification
-
-`tests/authenticated-response-cache-policy.node.test.mjs` verifies that:
-
-- The executable policy produces exactly `Cache-Control: private, no-store`.
-- A shared cache must reject storage under that policy.
-- The middleware call appears before credential parsing and database access.
-- Authenticated static documentation cannot enable its own cache metadata.
-- The live HTTP reproduction shows disclosure in the retired model and isolation in the fixed model.
-
-`scripts/verify-security-hardening.mjs` independently enforces the same source-order and static-handler invariants. The focused test is wired into `npm run verify:security`.
+No regression or bypass was reproduced.
 
 ## Areas Where No Serious Vulnerability Was Reproduced
 
 The following conclusions are scoped to the reviewed code and tests; they do not claim mathematical absence of all defects.
 
-### Authentication and Session Boundaries
+### Authentication, Sessions, and MFA
 
-No reproducible JWT algorithm-confusion, audience-confusion, stale-session acceptance, cookie duplication ambiguity, login CSRF, password-change race, TOTP replay, passkey challenge reuse, or post-credential-change session survival was found. API and collaboration JWT audiences are distinct, HS256 is fixed on sign and verify, authentication generations are checked against the user row, secure deployments use a `__Host-` cookie, and duplicate cookie names fail closed.
+No reproducible JWT algorithm confusion, audience confusion, stale-session acceptance, cookie duplication ambiguity, login CSRF, password-change race, TOTP replay, MFA challenge reuse, passkey challenge reuse, passkey counter race, or post-credential-change session survival was found. API and collaboration JWT audiences are distinct, HS256 is fixed on sign and verify, authentication generations are checked against the user row, secure deployments use a `__Host-` cookie, duplicate cookie names fail closed, MFA challenges are single-use, and TOTP replay state is transactionally updated.
 
 ### Authorization and SQL
 
-No unauthenticated route to note content, cross-account page/block mutation, version-history IDOR, attachment IDOR, or SQL injection was reproduced. Reviewed SQL values are parameterized; dynamic fragments are selected from fixed program-controlled structures or generated placeholder counts. Shared-page access is resolved through the page access layer, direct mutations are constrained by role/page state, and sensitive destructive operations repeat checks under transaction locks.
+No unauthenticated route to note content, cross-account page/block mutation, version-history IDOR, attachment IDOR, or SQL injection was reproduced. Reviewed SQL values are parameterized; dynamic fragments are selected from fixed program-controlled structures or generated placeholder counts. Shared-page access is resolved through the page access layer, direct mutations are constrained by role and page state, and sensitive destructive operations repeat checks under transaction locks.
 
 ### Stored and DOM XSS
 
-No stored-script execution path was reproduced from Markdown, imported backups, collaboration materialization, profile images, icons, covers, bookmark metadata, code highlighting, or structured blocks. Rendered note HTML is generated server-side and passed through an explicit `sanitize-html` policy; the browser's note-preview `innerHTML` sinks consume that sanitized cache. Current locked sanitizer/Markdown/linkifier versions are above the reviewed 2026 advisory fixes. This conclusion depends on preserving the sanitize-on-write/import/materialization invariant and should be retested whenever the HTML parser, sanitizer, Markdown engine, or final DOM insertion context changes.
+No stored-script execution path was reproduced from Markdown, imported backups, collaboration materialization, profile images, icons, covers, bookmark metadata, code highlighting, or structured blocks. Rendered note HTML is generated server-side and passed through an explicit `sanitize-html` policy; note-preview `innerHTML` sinks consume that sanitized cache. This conclusion depends on preserving the sanitize-on-write, import, and collaboration-materialization invariant and should be retested whenever the parser, sanitizer, renderer, or final DOM insertion context changes.
 
 ### SSRF
 
-No bypass was reproduced against bookmark preview URL validation. The implementation restricts schemes and ports, rejects credentials, resolves DNS before connection, blocks broad special-use IPv4 and IPv6 ranges, pins the selected addresses into the HTTP client lookup, revalidates every redirect, enforces an absolute deadline, rejects compressed responses, and caps accepted bytes. Remote bookmark image/favicon URLs are normalized through the same public-target validation before being returned.
+No bypass was reproduced against bookmark-preview URL validation. The implementation restricts schemes and ports, rejects credentials, resolves DNS before connection, blocks broad special-use IPv4 and IPv6 ranges, pins selected addresses into the HTTP client lookup, revalidates every redirect, enforces an absolute deadline, rejects compressed responses, and caps accepted bytes. Remote image and favicon URLs are normalized through the same public-target validation before being returned.
 
 ### Upload and Backup Processing
 
-No attachment path traversal, active-content inline execution, temporary-upload preauthorization bypass, ZIP traversal, decompression bomb, duplicate-entry overwrite, manifest/file mismatch, or partial destructive restore was reproduced. Attachments are outside public/docs/Git storage, inspected by name/MIME/signature, served with forced download and sandbox/nosniff headers, and bounded before multipart intake. Backup import accepts BrainVault's bounded UTF-8 store-mode ZIP format, verifies local/central headers, CRC-32, SHA-256, sizes, entry relationships, and restore staging before replacement.
+No attachment path traversal, active-content inline execution, temporary-upload preauthorization bypass, ZIP traversal, decompression bomb, duplicate-entry overwrite, manifest/file mismatch, or partial destructive restore was reproduced. Attachments are stored outside public, documentation, and Git paths; file names, MIME declarations, and signatures are checked; downloads use forced attachment and sandbox/nosniff headers; and request admission is bounded before processing.
+
+The locked Multer version is 2.2.0, which is at the fixed boundary for the reviewed 2026 aborted-upload cleanup and deep nested-field resource-exhaustion advisories. Both attachment and backup multipart configurations additionally set `fieldNestingDepth: 1`, small part/header limits, and explicit request-size/concurrency controls.
 
 ### Collaboration and WebSockets
 
-No WebSocket cross-origin acceptance, ticket-scope confusion, unlimited frame/message backlog, slow-consumer buffer growth, stale-auth collaboration survival, cross-instance silent overwrite, or state-equivalent Yjs amplification regression was reproduced. The implementation uses exact origins, short page-scoped tickets, authentication generation and collaboration epoch checks, handshake/frame validation, connection and pending-write ceilings, backpressure termination, durable-tip freshness fencing, and state-equivalence checks.
+No WebSocket cross-origin acceptance, ticket-scope confusion, unlimited frame/message backlog, slow-consumer buffer growth, stale-auth collaboration survival, cross-instance silent overwrite, or state-equivalent Yjs amplification regression was reproduced. The implementation uses exact origins, short page-scoped tickets, authentication-generation and collaboration-epoch checks, handshake/frame validation, connection and pending-write ceilings, backpressure termination, durable-tip freshness fencing, and state-equivalence checks.
+
+### Structured Metadata Boundary
+
+Very deeply nested authenticated block metadata can eventually cause a synchronous `JSON.stringify` range error, but the route catches the exception and returns an error rather than terminating the process. Request-body and rate limits bound the input, and no cross-account or unauthenticated impact was reproduced. This was not classified as a serious vulnerability in the tested configuration. A future defense-in-depth improvement could impose explicit metadata depth and aggregate-key limits if the product begins accepting larger structured payloads.
 
 ## Dependency and Runtime Review
 
-The lockfile pins the direct runtime dependencies and uses approved portable registry hosts. Selected current official advisories relevant to exposed packages were compared with the exact locked versions:
+The lockfile pins direct runtime dependencies and uses approved portable registry hosts. Selected current official advisories relevant to exposed packages were compared with exact locked versions:
 
 | Package | Locked version | Reviewed security baseline |
 | --- | --- | --- |
-| `multer` | 2.2.0 | Includes the fixes for the 2026 aborted-upload cleanup and deep nested-field resource-exhaustion advisories |
+| `bcryptjs` | 3.0.3 | Retains bcrypt's 72-byte behavior and exposes `truncates()`; application policy now rejects oversized input |
+| `multer` | 2.2.0 | Fixed boundary for the reviewed 2026 aborted-upload cleanup and deep nested-field exhaustion advisories; application nesting depth is also limited |
 | `express-rate-limit` | 8.5.2 | Above the 8.2.2 fix for IPv4-mapped IPv6 client-key collapse |
-| `sanitize-html` | 2.17.5 | Above the 2.17.3 and 2.17.4 fixes for the reviewed 2026 sanitizer advisories |
-| `markdown-it` | 14.3.0 | Above the reviewed 14.1.1/14.2.0 regular-expression and smart-quote complexity fixes |
+| `sanitize-html` | 2.17.5 | Above the reviewed 2026 sanitizer advisory fixes |
+| `markdown-it` | 14.3.0 | Above the reviewed regular-expression and smart-quote complexity fixes |
 | `linkify-it` | 5.0.2 | Includes both reviewed quadratic-scanning fixes through 5.0.2 |
 | `picomatch` | 4.0.5 | Above the 4.0.4 extglob ReDoS fix |
-| `@simplewebauthn/server` | 13.3.2 | Includes the 13.3.2 low-severity advisory fix |
+| `@simplewebauthn/server` | 13.3.2 | Includes the reviewed 13.3.2 advisory fix |
 
-No dependency change was required for those reviewed advisories. This is not a substitute for a complete registry-backed audit of every transitive package.
+No dependency change was required for the reviewed advisories. This comparison is not a substitute for a successful registry-backed audit of every transitive package.
 
-The project requires Node.js `^22.23.2 || ^24.18.1 || >=26.5.1`, matching the July 29, 2026 security floors already documented by the project. The validation container provided Node.js 22.16.0, which is below the supported project floor. The dependency-free tests ran successfully, but production, CI, installation, and full build verification must use a supported patched runtime. At review time, the official Node release page listed Node.js 24.19.0 as the latest LTS and 26.7.0 as the latest Current release.
+The project requires Node.js `^22.23.2 || ^24.18.1 || >=26.5.1`. The validation container provided Node.js 22.16.0, below that project floor. Dependency-free checks ran successfully, but production, CI, installation, and full build verification must use a runtime satisfying the declared engine range.
 
 ## Secret and Repository Review
 
-- No `.env` file was present; only `.env.example` was included.
-- No high-confidence PEM private key, AWS access key, GitHub token, npm token, OpenAI-style key, Slack token, or Google API key pattern was found in the final working tree.
-- The same high-confidence scan across all reachable tracked revisions returned no match.
-- No user attachment directory or generated `node_modules` directory is included in the final package.
-- `.git` remains part of the deliverable exactly as requested. It is restored from the original archive after all commands that might update the Git index stat cache, then compared file-by-file by SHA-256 before packaging.
+- No real `.env` file was present; only `.env.example` was included.
+- No high-confidence PEM private key, AWS access key, GitHub token, npm token, OpenAI-style key, Slack token, Google API key, or Stripe live secret pattern was found in the final working tree.
+- The same scan covered 1,765 unique blobs across 175 reachable Git revisions and found no match.
+- `git fsck --full` passed before the original `.git` directory was restored for packaging.
+- No generated `node_modules`, `dist`, attachment, upload, or runtime-secret directory is included in the release archive.
+- `.git` remains part of the deliverable exactly as requested. It is restored from the original input after commands that could refresh Git metadata, then compared file-by-file by size and SHA-256 against the original 28-file manifest.
 
 ## Verification Results
 
 | Verification | Result |
 | --- | --- |
-| `npm run reproduce:authenticated-cache-isolation` | Vulnerable model disclosed Alice to Bob; fixed model isolated both responses |
-| `npm run verify:security` | PASS; hardening verifier plus 37 tests, 0 failures |
-| `npm run test:durability` | PASS; 208 tests, 0 failures |
+| `npm run reproduce:bcrypt-password-boundary` | Different long passwords had equal effective 72-byte inputs; the fixed policy rejected both and accepted exactly 72 bytes |
+| `npm run reproduce:authenticated-cache-isolation` | Retired model disclosed Alice to Bob; current model isolated both responses |
+| `npm run verify:security` | PASS; hardening verifier plus 41 tests, 0 failures |
+| `npm run test:durability` | PASS; 212 tests, 0 failures |
 | `npm run verify:data-loss` | PASS |
-| `npm run verify:collaboration` | PASS; source wiring, protocol checks, reproductions, and syntax for 300 files |
-| `npm run lockfile:check` | PASS; 346 resolved URLs on approved registry hosts |
+| `npm run verify:collaboration` | PASS; source wiring, protocol checks, reproductions, and syntax checks for 303 files |
+| `npm run lockfile:check` | PASS; 346 resolved URLs used approved registry hosts |
+| Changed TypeScript and JavaScript syntax checks | PASS |
 | High-confidence current-tree secret scan | PASS; no match |
-| High-confidence reachable-history secret scan | PASS; no match |
-| Final `.git` content-manifest comparison | Required before archive release; recorded in the delivery summary |
+| High-confidence reachable-history secret scan | PASS; no match in 1,765 unique blobs across 175 revisions |
+| `git fsck --full` | PASS |
+| Final `.git` content-manifest comparison | PASS; 28 files, byte-for-byte content match |
 
 ## Validation Limitations
 
-- `npm audit --package-lock-only` could not complete because the configured isolated registry returned an HTTP 404 for the audit endpoint.
-- `npm ci --ignore-scripts` could not complete because the isolated package mirror did not provide the locked `zod-3.25.76.tgz` artifact.
+- `npm audit --package-lock-only` could not complete because the configured isolated registry returned HTTP 404 for the npm audit endpoint.
+- `npm ci --ignore-scripts` could not complete because the isolated package mirror did not provide the locked `zod-3.25.76.tgz` artifact. The container also reported that Node.js 22.16.0 is below the project's declared engine range.
 - With no installed `node_modules`, a full TypeScript build, Vitest suite, Supertest route integration suite, and browser capture were unavailable.
 - No live MariaDB service was available for production-parity transaction, migration, backup/restore, or authorization integration tests.
-- No external CDN or reverse proxy was attacked. The cache issue was reproduced with an actual loopback HTTP proxy implementing the affected URI-keyed default-TTL configuration.
+- No external CDN or reverse proxy was attacked. The cache condition is exercised by a loopback HTTP proxy implementing the affected URI-keyed default-TTL configuration.
 - No independent dynamic application security scanner or third-party penetration test was available in the isolated environment.
 
-These limits do not invalidate the reproduced cache disclosure or the dependency-free regression results; they define what remains for deployment-parity assurance.
+These limits do not invalidate the source-confirmed bcrypt boundary, deterministic reproduction, cache reproduction, or dependency-free regression results; they define what remains for deployment-parity assurance.
 
 ## Changed Files
 
-- `src/lib/cache-control.ts`
-- `src/middleware/auth.ts`
-- `src/app.ts`
-- `scripts/reproduce-authenticated-cache-isolation.mjs`
+- `src/lib/password-policy.ts`
+- `src/lib/auth.ts`
+- `src/utils/schemas.ts`
+- `src/routes/auth.routes.ts`
+- `src/routes/mfa.routes.ts`
+- `scripts/seed.ts`
+- `scripts/reproduce-bcrypt-password-boundary.mjs`
 - `scripts/verify-security-hardening.mjs`
-- `tests/authenticated-response-cache-policy.node.test.mjs`
+- `tests/bcrypt-password-boundary.node.test.mjs`
 - `package.json`
-- `docs/security/2026-07-30/security.md`
+- `public/index.html`
+- `public/i18n.js`
+- `docs/getting-started/2026-07-27/getting-started.md`
 - `docs/security/2026-08-08/security-review-and-remediation-report.md`
 
-No database migration, lockfile dependency version, public asset, or Git-history change was required.
+No database migration, dependency version, lockfile, Git history, or Git metadata change was required.
 
 ## Deployment Guidance
 
-1. Deploy behind a reverse proxy/CDN rule that does not cache `/api/**` or `/docs/**`; retain origin `Cache-Control` headers without replacement.
-2. Use Node.js 24.19.0 LTS or another currently supported release satisfying the project's engine range, then run `npm ci`, `npm audit`, `npm run build`, and the complete test suite in CI.
-3. Keep `AUTH_ALLOW_BEARER_TOKENS=false`, `REGISTRATION_ENABLED=false` unless intentionally public, exact `CORS_ORIGIN`/WebAuthn origins, exact trusted proxy addresses, and HTTPS-only production cookies.
-4. Use a dedicated non-public attachment volume with quotas and backups; never place it below `public/`, `docs/`, `.git/`, or the project root.
-5. Re-run HTML/XSS, cache, SSRF, backup, and collaboration regression tests whenever route middleware order, sanitizer/parser versions, reverse-proxy behavior, or response cache policy changes.
+1. Before deployment, arrange a trusted password reset for any account known or suspected to use more than 72 UTF-8 bytes. Do not re-enable silent truncation as a migration shortcut.
+2. Use a supported Node.js release satisfying `^22.23.2 || ^24.18.1 || >=26.5.1`, then run `npm ci`, `npm audit`, `npm run build`, and the complete unit/integration suite in a networked CI environment.
+3. Deploy behind a reverse proxy or CDN rule that does not cache `/api/**` or authenticated `/docs/**`, and retain the origin's `Cache-Control` headers without replacement.
+4. Keep `AUTH_ALLOW_BEARER_TOKENS=false`, `REGISTRATION_ENABLED=false` unless intentionally public, exact CORS/WebAuthn origins, exact trusted-proxy addresses, and HTTPS-only production cookies.
+5. Use a dedicated non-public attachment volume with quotas and backups; never place it below `public/`, `docs/`, `.git/`, or the project root.
+6. Re-run authentication, HTML/XSS, cache, SSRF, backup, upload, and collaboration regression tests whenever middleware order, password hashing, sanitizer/parser versions, reverse-proxy behavior, or response cache policy changes.
 
 ## External References Reviewed
 
-- RFC 9111, *HTTP Caching*, especially Sections 3, 3.5, 4.1, 5.2.2.5, 5.2.2.7, and 7.3
+- Official bcrypt.js 3.0.3 source and API documentation for the 72-byte compatibility boundary and `truncates()` helper
+- OWASP Password Storage Cheat Sheet guidance for bcrypt's 72-byte input limit
+- OWASP Authentication Cheat Sheet guidance against silent password truncation
+- RFC 9111, *HTTP Caching*
 - OWASP Web Security Testing Guide, *Testing for Browser Cache Weaknesses*
-- Express 5 documentation for `express.static` cache-control, ETag, Last-Modified, and `setHeaders` behavior
-- Official Node.js July 29, 2026 security releases and the August 2026 release index
+- Express 5 documentation for static response cache metadata
+- Official Node.js July 29, 2026 security release information
 - GitHub Security Advisories for the reviewed Multer, express-rate-limit, sanitize-html, markdown-it, linkify-it, picomatch, and SimpleWebAuthn issues

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { closeDb, db, transaction, type DbClient } from "../src/lib/db.js";
 import { createId } from "../src/lib/id.js";
 import { hashPassword } from "../src/lib/auth.js";
+import { isPasswordWithinBcryptLimit } from "../src/lib/password-policy.js";
 import { renderBlockHtml } from "../src/lib/markdown.js";
 import type { BlockType, TagRow, UserRow } from "../src/types/domain.js";
 
@@ -96,8 +97,10 @@ async function main() {
   if (!/^[a-zA-Z0-9._-]{3,40}$/.test(username)) {
     throw new Error("BRAINVAULT_DEMO_USERNAME must contain 3-40 letters, numbers, dots, underscores, or hyphens");
   }
-  if (password.length < 12 || password.length > 128) {
-    throw new Error("BRAINVAULT_DEMO_PASSWORD must contain 12-128 characters");
+  if (password.length < 12 || password.length > 128 || !isPasswordWithinBcryptLimit(password)) {
+    throw new Error(
+      "BRAINVAULT_DEMO_PASSWORD must contain 12-128 characters and no more than 72 UTF-8 bytes"
+    );
   }
 
   const demoWorkspace = await loadDemoWorkspace();

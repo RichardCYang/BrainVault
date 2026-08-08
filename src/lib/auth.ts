@@ -2,6 +2,10 @@ import bcrypt from "bcryptjs";
 import jwt, { type Secret, type SignOptions } from "jsonwebtoken";
 import { env } from "../config/env.js";
 import { ApiError } from "./http.js";
+import {
+  assertPasswordWithinBcryptLimit,
+  isPasswordWithinBcryptLimit
+} from "./password-policy.js";
 
 const authAudience = "brainvault-api";
 const authIssuer = "brainvault";
@@ -20,10 +24,23 @@ export function normalizeAuthVersion(value: unknown) {
   return version;
 }
 
-export const hashPassword = (password: string) => bcrypt.hash(password, 12);
+function bcryptWouldTruncate(password: string) {
+  return bcrypt.truncates(password) || !isPasswordWithinBcryptLimit(password);
+}
 
-export const verifyPassword = (password: string, passwordHash: string) =>
-  bcrypt.compare(password, passwordHash);
+export function hashPassword(password: string) {
+  const libraryWouldTruncate = bcrypt.truncates(password);
+  assertPasswordWithinBcryptLimit(password);
+  if (libraryWouldTruncate) {
+    throw new RangeError("Password exceeds the bcrypt input limit");
+  }
+  return bcrypt.hash(password, 12);
+}
+
+export function verifyPassword(password: string, passwordHash: string) {
+  if (bcryptWouldTruncate(password)) return Promise.resolve(false);
+  return bcrypt.compare(password, passwordHash);
+}
 
 export function signAuthToken(payload: AuthTokenPayload) {
   const options: SignOptions = {

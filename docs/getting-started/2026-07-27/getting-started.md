@@ -45,7 +45,7 @@ Private-mode launch supports Chrome, Edge, Firefox, and Brave. BrainVault first 
 
 ## Optional demo data
 
-Demo seeding is disabled by default and never uses a repository-defined password. To create the sample workspace, provide an explicit password of 12-128 characters:
+Demo seeding is disabled by default and never uses a repository-defined password. To create the sample workspace, provide an explicit password of 12-128 characters that is no more than 72 UTF-8 bytes:
 
 ```bash
 BRAINVAULT_SEED_DEMO=true \

@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  bcryptPasswordLimitMessage,
+  isPasswordWithinBcryptLimit
+} from "../lib/password-policy.js";
 
 export function httpUrlSchema(maxLength: number) {
   return z
@@ -10,6 +14,14 @@ export function httpUrlSchema(maxLength: number) {
       const protocol = new URL(value).protocol;
       return protocol === "http:" || protocol === "https:";
     }, "URL must use HTTP or HTTPS");
+}
+
+export function passwordInputSchema(minLength: number) {
+  return z
+    .string()
+    .min(minLength)
+    .max(128)
+    .refine(isPasswordWithinBcryptLimit, bcryptPasswordLimitMessage);
 }
 
 export const usernameSchema = z
