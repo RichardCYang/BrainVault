@@ -62,6 +62,12 @@ body.app-mode {
   background: var(--bg);
 }
 
+/* Keep the logged-out shell from flashing while the HttpOnly session cookie is checked. */
+body.boot-mode .shell,
+body.boot-mode .status {
+  visibility: hidden;
+}
+
 button,
 input,
 textarea,

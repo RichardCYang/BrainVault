@@ -73,6 +73,7 @@ import {
   updateYouTubeVideoPreview
 } from "./youtube-block.js";
 import { restoreSessionAtBoot } from "./session-bootstrap.js";
+import { parseWorkspaceLocation, serializeWorkspaceLocation } from "./workspace-location.js";
 import {
   createPageCoverOperationGuard,
   isPageCoverPositionDraftForPage
@@ -1739,6 +1740,7 @@ function updateUserIdentityUi() {
 
 function renderShell() {
   const authenticated = Boolean(state.authenticated && state.user);
+  document.body.classList.remove("boot-mode");
   const enteringMobileApp = authenticated && mobileSidebarMedia.matches && !document.body.classList.contains("app-mode");
   if (enteringMobileApp) suppressMobileSidebarTransition();
   if (!authenticated && state.searchDialogOpen) closeSearchDialog({ restoreFocus: false });
@@ -2600,8 +2602,10 @@ async function completeAuthenticatedLogin(data) {
       state.activeTag = "";
       state.pages = pages;
       state.allPages = pages;
-      renderShell();
       renderPages();
+      await restoreWorkspaceLocationFromHash({ fallbackToHome: true });
+      if (!isCurrentAuthenticatedSessionOperation(operation)) return { outcome: "superseded" };
+      renderShell();
       setStatus(t("status.loggedInAs", { username: state.user.username }));
       return { outcome: "ready" };
     } catch (error) {
@@ -4252,6 +4256,7 @@ function syncBlockReadOnlyState(row, readOnly = isPageReadOnly() || isPageIntera
 }
 
 function syncPageModeUi() {
+  syncWorkspaceLocation();
   const readOnly = isPageReadOnly();
   const interactionLocked = isPageInteractionLocked();
   const controlsReadOnly = readOnly || interactionLocked;
@@ -10801,6 +10806,7 @@ function updatePageCoverPositionFromPointer(event) {
 function renderSelectedPage() {
   closeBlockContextMenu();
   closePageActionsMenu();
+  syncWorkspaceLocation();
   const page = state.selectedPage;
   const isHome = state.workspaceView === "home";
   const isCollection = state.workspaceView === "collection";
@@ -11505,6 +11511,65 @@ async function createUntitledPage() {
 }
 
 
+function getCurrentWorkspaceLocation() {
+  if (state.workspaceView === "page" && state.selectedPage?.id) {
+    return { view: "page", pageId: state.selectedPage.id, pageMode: state.pageMode };
+  }
+  if (state.workspaceView === "collection" && state.activeCollectionId) {
+    return { view: "collection", collectionId: state.activeCollectionId };
+  }
+  return { view: "home" };
+}
+
+function syncWorkspaceLocation() {
+  if (!state.authenticated || !state.user) return;
+  const hash = serializeWorkspaceLocation(getCurrentWorkspaceLocation());
+  const target = `${window.location.pathname}${window.location.search}${hash}`;
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (current !== target) window.history.replaceState(null, "", target);
+}
+
+async function restoreWorkspaceLocationFromHash({ fallbackToHome = false } = {}) {
+  if (!state.authenticated || !state.user) return false;
+  const destination = parseWorkspaceLocation(window.location.hash);
+
+  if (!destination || destination.view === "home") {
+    if (fallbackToHome || destination?.view === "home") {
+      await showHome({ skipFlush: true });
+      return true;
+    }
+    syncWorkspaceLocation();
+    return false;
+  }
+
+  try {
+    if (destination.view === "collection") {
+      const validCollection = destination.collectionId === defaultCollectionKey
+        || state.allPages.some((page) => page.id === destination.collectionId && isCollectionPage(page));
+      if (!validCollection) throw new Error(t("errors.invalidResponse"));
+      await showCollection(destination.collectionId, { skipFlush: true });
+      return true;
+    }
+
+    if (destination.view === "page") {
+      await openPage(destination.pageId, {
+        skipFlush: true,
+        requestedPageMode: destination.pageMode
+      });
+      return true;
+    }
+  } catch (error) {
+    if (!fallbackToHome) throw error;
+    await showHome({ skipFlush: true });
+    setStatus(error?.message ?? t("errors.unknown"), true);
+    return false;
+  }
+
+  if (fallbackToHome) await showHome({ skipFlush: true });
+  return false;
+}
+
+
 async function loadMe() {
   const data = await api("/api/auth/me", { skipAuthReset: true });
   return data.user;
@@ -11615,7 +11680,7 @@ async function showCollection(
   );
 }
 
-async function openPage(pageId, { skipFlush = false } = {}) {
+async function openPage(pageId, { skipFlush = false, requestedPageMode = null } = {}) {
   const navigationGeneration = ++workspaceNavigationGeneration;
   const shouldFlush = !skipFlush || state.pageEditLockDepth === 0;
   return withPageEditLock(
@@ -11648,9 +11713,16 @@ async function openPage(pageId, { skipFlush = false } = {}) {
       await destroyPageCollaboration({ flush: false });
       if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
       closeSharePageDialog({ restoreFocus: false });
+      const normalizedRequestedPageMode = requestedPageMode === pageModes.WRITE
+        ? pageModes.WRITE
+        : requestedPageMode === pageModes.READ
+          ? pageModes.READ
+          : null;
       if (!preserveMode) {
-        state.pageMode = pageModes.READ;
+        state.pageMode = normalizedRequestedPageMode ?? pageModes.READ;
         state.pendingFocusBlockId = null;
+      } else if (normalizedRequestedPageMode) {
+        state.pageMode = normalizedRequestedPageMode;
       }
 
       resetPageEditTracking();
@@ -11712,8 +11784,10 @@ async function boot() {
   }
 
   if (result.outcome === "ready") {
-    renderShell();
     renderPages();
+    await restoreWorkspaceLocationFromHash({ fallbackToHome: true });
+    if (!isCurrent()) return;
+    renderShell();
     setStatus(t("status.ready"));
     return;
   }
@@ -12475,6 +12549,19 @@ elements.authSwitchLink.addEventListener("click", (event) => {
 });
 
 window.addEventListener("hashchange", () => {
+  if (state.authenticated && state.user) {
+    const destination = parseWorkspaceLocation(window.location.hash);
+    if (!destination) {
+      syncWorkspaceLocation();
+      return;
+    }
+    void restoreWorkspaceLocationFromHash().catch((error) => {
+      syncWorkspaceLocation();
+      setStatus(error?.message ?? t("errors.unknown"), true);
+    });
+    return;
+  }
+
   if (state.authOperationBusy) {
     const expectedHash = state.authMode === "register" ? "#signup" : "#login";
     if (window.location.hash !== expectedHash) window.history.replaceState(null, "", expectedHash);
