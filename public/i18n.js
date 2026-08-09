@@ -511,6 +511,9 @@ export const translationCatalogs = {
       typeLocked: "Attachment type is fixed after upload."
     },
     bookmark: {
+      defaultTitle: "Bookmarks",
+      titlePlaceholder: "Bookmark block title",
+      titleAria: "Bookmark block title",
       viewAria: "Bookmark view",
       listView: "List",
       listViewTitle: "Show favicons and titles in a compact list",
@@ -1650,6 +1653,9 @@ export const translationCatalogs = {
       typeLocked: "업로드한 첨부파일 블록의 유형은 변경할 수 없습니다."
     },
     bookmark: {
+      defaultTitle: "북마크",
+      titlePlaceholder: "북마크 블록 제목",
+      titleAria: "북마크 블록 제목",
       viewAria: "북마크 보기 방식",
       listView: "리스트",
       listViewTitle: "파비콘과 제목만 간결한 리스트로 표시",

@@ -72,6 +72,7 @@ const bookmarkLimits = {
   items: 50,
   idLength: 64,
   urlLength: 2_048,
+  blockTitleLength: 120,
   titleLength: 300,
   descriptionLength: 1_000,
   siteNameLength: 160
@@ -536,6 +537,7 @@ function assertTimetableMetadata(root: MetadataRecord) {
 function assertBookmarkMetadata(root: MetadataRecord) {
   const bookmark = optionalRecord(root.bookmark, "metadata.bookmark");
   if (!bookmark) return;
+  assertCanonicalBookmarkText(bookmark.title, "metadata.bookmark.title", bookmarkLimits.blockTitleLength);
   if (bookmark.view !== null && bookmark.view !== undefined && bookmark.view !== "list" && bookmark.view !== "gallery") {
     fail("metadata.bookmark.view", "must be list or gallery");
   }

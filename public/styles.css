@@ -4195,6 +4195,7 @@ kbd {
 .page-view.is-read-only .block-row-input,
 .page-view.is-read-only .table-cell-input,
 .page-view.is-read-only .kanban-title-input,
+.page-view.is-read-only .bookmark-title-input,
 .page-view.is-read-only .kanban-column-title,
 .page-view.is-read-only .kanban-card-title,
 .page-view.is-read-only .kanban-card-description,
@@ -5403,6 +5404,7 @@ kbd {
   body.pdf-export-mode .block-row-input,
   body.pdf-export-mode .table-cell-input,
   body.pdf-export-mode .kanban-title-input,
+  body.pdf-export-mode .bookmark-title-input,
   body.pdf-export-mode .kanban-column-title,
   body.pdf-export-mode .kanban-card-title,
   body.pdf-export-mode .kanban-card-description,
@@ -7561,6 +7563,39 @@ kbd {
   gap: 0.62rem;
 }
 
+.bookmark-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.bookmark-title-input {
+  width: 100%;
+  min-width: 8rem;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink);
+  padding: 0.15rem 0.22rem;
+  font: inherit;
+  font-size: clamp(1.32rem, 2.3vw, 1.72rem);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.22;
+  box-shadow: none;
+}
+
+.bookmark-title-input:hover,
+.bookmark-title-input:focus {
+  background: var(--hover);
+  box-shadow: none;
+}
+
+.bookmark-title-input:focus-visible {
+  outline: 2px solid var(--focus-soft);
+  outline-offset: 1px;
+}
+
 .bookmark-toolbar,
 .bookmark-add-row {
   display: flex;
@@ -7859,6 +7894,22 @@ kbd {
   padding: 1rem;
   font-size: 0.8rem;
   text-align: center;
+}
+
+.rendered-bookmark-block {
+  display: grid;
+  min-width: 0;
+  gap: 0.62rem;
+}
+
+.rendered-bookmark-block > h3 {
+  margin: 0;
+  color: var(--ink);
+  padding: 0.15rem 0.22rem;
+  font-size: clamp(1.32rem, 2.3vw, 1.72rem);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.22;
 }
 
 .rendered-bookmarks--list ul {

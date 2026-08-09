@@ -19,6 +19,7 @@ export const bookmarkLimits = {
   items: 50,
   idLength: 64,
   urlLength: 2_048,
+  blockTitleLength: 120,
   titleLength: 300,
   descriptionLength: 1_000,
   siteNameLength: 160,
@@ -40,6 +41,7 @@ export type BookmarkItem = {
 };
 
 export type BookmarkData = {
+  title: string;
   view: BookmarkView;
   items: BookmarkItem[];
 };
@@ -104,7 +106,7 @@ export function normalizeBookmarkUrl(value: unknown, baseUrl?: string | URL) {
 }
 
 export function createDefaultBookmarkData(): BookmarkData {
-  return { view: "gallery", items: [] };
+  return { title: "Bookmarks", view: "gallery", items: [] };
 }
 
 export function getBookmarkData(metadata: unknown): BookmarkData {
@@ -112,6 +114,9 @@ export function getBookmarkData(metadata: unknown): BookmarkData {
   const source = recordValue(value);
   if (!source) return createDefaultBookmarkData();
 
+  const title = typeof source.title === "string"
+    ? normalizeText(source.title, bookmarkLimits.blockTitleLength)
+    : "Bookmarks";
   const requestedView = normalizeText(source.view, 20) as BookmarkView;
   const view = bookmarkViews.includes(requestedView) ? requestedView : "gallery";
   const sourceItems = Array.isArray(source.items) ? source.items.slice(0, bookmarkLimits.items) : [];
@@ -147,7 +152,7 @@ export function getBookmarkData(metadata: unknown): BookmarkData {
     });
   }
 
-  return { view, items };
+  return { title, view, items };
 }
 
 export function normalizeBookmarkMetadata(metadata: unknown) {
@@ -156,10 +161,10 @@ export function normalizeBookmarkMetadata(metadata: unknown) {
 }
 
 export function summarizeBookmarkData(data: BookmarkData) {
-  return data.items
+  const itemSummary = data.items
     .map((item) => `${item.title}\n${item.description}\n${item.url}`.trim())
-    .join("\n\n")
-    .slice(0, 20_000);
+    .join("\n\n");
+  return [data.title, itemSummary].filter(Boolean).join("\n\n").slice(0, 20_000);
 }
 
 function escapeHtml(value: string) {
@@ -192,10 +197,13 @@ export function renderBookmarkHtml(metadata: unknown) {
     return `<article class="rendered-bookmark-card"><a href="${escapeHtml(item.url)}"><div class="rendered-bookmark-media">${image}</div><div class="rendered-bookmark-content"><strong>${escapeHtml(item.title)}</strong>${description}<small>${favicon}${escapeHtml(item.siteName)}</small></div></a></article>`;
   });
 
+  const title = bookmark.title
+    ? `<h3>${escapeHtml(bookmark.title)}</h3>`
+    : "";
   if (bookmark.view === "list") {
-    return `<div class="rendered-bookmarks rendered-bookmarks--list"><ul>${items.join("")}</ul></div>`;
+    return `<div class="rendered-bookmark-block">${title}<div class="rendered-bookmarks rendered-bookmarks--list"><ul>${items.join("")}</ul></div></div>`;
   }
-  return `<div class="rendered-bookmarks rendered-bookmarks--gallery">${items.join("")}</div>`;
+  return `<div class="rendered-bookmark-block">${title}<div class="rendered-bookmarks rendered-bookmarks--gallery">${items.join("")}</div></div>`;
 }
 
 async function resolvePublicAddresses(url: URL): Promise<ResolvedAddress[]> {

@@ -80,6 +80,7 @@ test("normalized structured metadata remains accepted at exact limits", () => {
   }));
   assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("BOOKMARK", {
     bookmark: {
+      title: "Bookmarks",
       view: "gallery",
       items: [{
         id: "bookmark-1",
@@ -103,6 +104,18 @@ test("normalized structured metadata remains accepted at exact limits", () => {
   }));
 });
 
+
+test("bookmark metadata validates the block title without normalizing it", () => {
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("BOOKMARK", {
+    bookmark: { title: "x".repeat(120), view: "gallery", items: [] }
+  }));
+  expectIntegrityFailure("BOOKMARK", {
+    bookmark: { title: "x".repeat(121), view: "gallery", items: [] }
+  }, "metadata.bookmark.title");
+  expectIntegrityFailure("BOOKMARK", {
+    bookmark: { title: " leading", view: "gallery", items: [] }
+  }, "metadata.bookmark.title");
+});
 
 test("bookmark metadata rejects private IP literals in stored page and asset URLs", () => {
   const item = {

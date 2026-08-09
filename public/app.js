@@ -466,6 +466,7 @@ const bookmarkLimits = {
   items: 50,
   idLength: 64,
   urlLength: 2048,
+  blockTitleLength: 120,
   titleLength: 300,
   descriptionLength: 1000,
   siteNameLength: 160
@@ -499,11 +500,14 @@ function normalizeBookmarkInputUrl(value) {
 }
 
 function createDefaultBookmarkData() {
-  return { view: "gallery", items: [] };
+  return { title: t("bookmark.defaultTitle"), view: "gallery", items: [] };
 }
 
 function normalizeBookmarkData(value) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const title = typeof source.title === "string"
+    ? normalizeBookmarkText(source.title, bookmarkLimits.blockTitleLength)
+    : t("bookmark.defaultTitle");
   const view = source.view === "list" ? "list" : "gallery";
   const seenIds = new Set();
   const seenUrls = new Set();
@@ -531,14 +535,15 @@ function normalizeBookmarkData(value) {
     });
   }
 
-  return { view, items };
+  return { title, view, items };
 }
 
 function summarizeBookmarkData(data) {
-  return normalizeBookmarkData(data).items
+  const bookmark = normalizeBookmarkData(data);
+  const itemSummary = bookmark.items
     .map((item) => `${item.title}\n${item.description}\n${item.url}`.trim())
-    .join("\n\n")
-    .slice(0, 20_000);
+    .join("\n\n");
+  return [bookmark.title, itemSummary].filter(Boolean).join("\n\n").slice(0, 20_000);
 }
 
 const slashCommands = [
@@ -7857,6 +7862,18 @@ function createBookmarkEditor(row, value) {
   const editor = document.createElement("div");
   editor.className = "bookmark-block-editor";
 
+  const titleRow = document.createElement("div");
+  titleRow.className = "bookmark-title-row";
+
+  const titleInput = document.createElement("input");
+  titleInput.type = "text";
+  titleInput.className = "bookmark-title-input";
+  titleInput.value = data.title;
+  titleInput.maxLength = bookmarkLimits.blockTitleLength;
+  titleInput.placeholder = t("bookmark.titlePlaceholder");
+  titleInput.setAttribute("aria-label", t("bookmark.titleAria"));
+  titleRow.append(titleInput);
+
   const toolbar = document.createElement("div");
   toolbar.className = "bookmark-toolbar";
 
@@ -7908,12 +7925,17 @@ function createBookmarkEditor(row, value) {
     items.append(empty);
   }
 
-  editor.append(toolbar, addRow, items);
+  editor.append(titleRow, toolbar, addRow, items);
   return editor;
 }
 
 function extractBookmarkData(row) {
-  return normalizeBookmarkData(row?.bookmarkData);
+  const data = normalizeBookmarkData(row?.bookmarkData);
+  const titleInput = row?.querySelector(".bookmark-title-input");
+  return normalizeBookmarkData({
+    ...data,
+    title: titleInput ? titleInput.value : data.title
+  });
 }
 
 function createBookmarkRequestContext(row) {
@@ -9848,7 +9870,9 @@ async function applySlashCommand(row, type) {
   } else if (type === "GANTT") {
     row.querySelector(".gantt-title-input")?.focus();
   } else if (type === "BOOKMARK") {
-    row.querySelector(".bookmark-url-input")?.focus();
+    const titleInput = row.querySelector(".bookmark-title-input");
+    titleInput?.focus();
+    titleInput?.select();
   } else if (type === "AI_CHAT") {
     row.querySelector(".ai-chat-question-input")?.focus();
   } else {
@@ -10259,7 +10283,7 @@ function focusPendingBlock() {
     textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
   } else {
     row?.querySelector(
-      ".table-cell-input, .kanban-title-input, .database-title-input, .gantt-title-input, .bookmark-url-input, .attachment-download-button"
+      ".table-cell-input, .kanban-title-input, .database-title-input, .gantt-title-input, .bookmark-title-input, .bookmark-url-input, .attachment-download-button"
     )?.focus();
   }
   state.pendingFocusBlockId = null;
@@ -10320,7 +10344,7 @@ function freezePdfExportComputedStyles() {
     '.editor-block-row[data-block-type="HEADING_1"] .block-row-input, ' +
     '.editor-block-row[data-block-type="HEADING_2"] .block-row-input, ' +
     '.editor-block-row[data-block-type="HEADING_3"] .block-row-input, ' +
-    ".kanban-title-input, .database-title-input, .gantt-title-input"
+    ".kanban-title-input, .database-title-input, .gantt-title-input, .bookmark-title-input"
   ).forEach((element) => {
     const computed = remember(element);
     element.style.fontSize = computed.fontSize;
@@ -13149,6 +13173,13 @@ elements.blockList.addEventListener("input", (event) => {
     return;
   }
 
+  const bookmarkTitle = event.target.closest(".bookmark-title-input");
+  if (bookmarkTitle) {
+    const row = getBlockRow(bookmarkTitle);
+    if (row) scheduleBlockSave(row, { allowConflictPrompt: !event.isComposing });
+    return;
+  }
+
   const kanbanField = event.target.closest(
     ".kanban-title-input, .kanban-column-title, .kanban-card-title, .kanban-card-description, .kanban-card-tags, .kanban-card-emoji-input"
   );
@@ -13336,6 +13367,15 @@ elements.blockList.addEventListener("focusout", (event) => {
   const toggleTitle = event.target.closest(".toggle-title-input");
   if (toggleTitle) {
     const row = getBlockRow(toggleTitle);
+    if (row && !row.contains(event.relatedTarget) && row.dataset.deleting !== "true") {
+      saveBlockRow(row, { quiet: true }).catch((error) => setStatus(error.message, true));
+    }
+    return;
+  }
+
+  const bookmarkTitle = event.target.closest(".bookmark-title-input");
+  if (bookmarkTitle) {
+    const row = getBlockRow(bookmarkTitle);
     if (row && !row.contains(event.relatedTarget) && row.dataset.deleting !== "true") {
       saveBlockRow(row, { quiet: true }).catch((error) => setStatus(error.message, true));
     }

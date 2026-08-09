@@ -58,6 +58,7 @@ describe("bookmark OpenGraph parsing", () => {
 describe("bookmark data normalization and rendering", () => {
   const metadata = {
     bookmark: {
+      title: "Research <script>alert(2)</script>",
       view: "gallery",
       items: [
         {
@@ -88,11 +89,15 @@ describe("bookmark data normalization and rendering", () => {
     expect(data.items).toHaveLength(1);
     expect(data.items[0].imageUrl).toBe("https://example.com/cover.jpg");
     expect(data.items[0].faviconUrl).toBe("https://example.com/favicon.png");
+    expect(data.title).toBe("Research <script>alert(2)</script>");
+    expect(summarizeBookmarkData(data)).toContain("Research <script>alert(2)</script>");
     expect(summarizeBookmarkData(data)).toContain("https://example.com/post");
   });
 
   it("renders a sanitized OpenGraph gallery", () => {
     const html = renderBookmarkHtml(metadata);
+    expect(html).toContain('<div class="rendered-bookmark-block"><h3>Research &lt;script&gt;alert(2)&lt;/script&gt;</h3>');
+    expect(html).toContain("Research &lt;script&gt;alert(2)&lt;/script&gt;");
     expect(html).toContain('class="rendered-bookmarks rendered-bookmarks--gallery"');
     expect(html).toContain('class="rendered-bookmark-image"');
     expect(html).toContain("Unsafe &lt;script&gt;");

@@ -12,6 +12,19 @@ describe("bookmark block UI", () => {
     expect(client).toContain('api("/api/bookmarks/preview"');
   });
 
+  it("supports an editable block title like the Kanban board", () => {
+    expect(client).toContain('titleInput.className = "bookmark-title-input"');
+    expect(client).toContain('titleInput.maxLength = bookmarkLimits.blockTitleLength');
+    expect(client).toContain('titleInput.placeholder = t("bookmark.titlePlaceholder")');
+    expect(client).toContain('const titleInput = row?.querySelector(".bookmark-title-input")');
+    expect(client).toContain('title: titleInput ? titleInput.value : data.title');
+    expect(client).toContain('const bookmarkTitle = event.target.closest(".bookmark-title-input")');
+    expect(client).toContain('const titleInput = row.querySelector(".bookmark-title-input")');
+    expect(styles).toMatch(/\.bookmark-title-input\s*\{[^}]*font-size:\s*clamp\(1\.32rem, 2\.3vw, 1\.72rem\);/s);
+    expect(i18n).toContain('defaultTitle: "북마크"');
+    expect(i18n).toContain('titlePlaceholder: "북마크 블록 제목"');
+  });
+
   it("supports list and gallery modes", () => {
     expect(client).toContain('data.view = button.dataset.bookmarkView === "list" ? "list" : "gallery"');
     expect(client).toContain('items.className = `bookmark-items bookmark-items--${data.view}`');
