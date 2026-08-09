@@ -9,7 +9,7 @@ export const maxRemoteIconUrlLength = 2048;
 export const maxIconValueLength = Math.ceil((maxCustomIconBytes * 4) / 3) + 256;
 
 const builtInIconPattern = /^icon:[a-z0-9-]{1,27}$/;
-const imageDataUrlPattern = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/i;
+const imageDataUrlPattern = /^data:image\/(png|jpeg|webp|vnd\.microsoft\.icon|x-icon);base64,([A-Za-z0-9+/]+={0,2})$/i;
 
 function hasExpectedImageSignature(mimeType: string, bytes: Buffer) {
   if (mimeType === "image/png") {
@@ -20,6 +20,22 @@ function hasExpectedImageSignature(mimeType: string, bytes: Buffer) {
   }
   if (mimeType === "image/webp") {
     return bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP";
+  }
+  if (mimeType === "image/vnd.microsoft.icon") {
+    if (bytes.length < 22 || bytes.readUInt16LE(0) !== 0 || bytes.readUInt16LE(2) !== 1) return false;
+    const imageCount = bytes.readUInt16LE(4);
+    const directoryEnd = 6 + imageCount * 16;
+    if (!imageCount || directoryEnd > bytes.length) return false;
+
+    for (let index = 0; index < imageCount; index += 1) {
+      const entryOffset = 6 + index * 16;
+      const imageSize = bytes.readUInt32LE(entryOffset + 8);
+      const imageOffset = bytes.readUInt32LE(entryOffset + 12);
+      if (!imageSize || imageOffset < directoryEnd || imageOffset > bytes.length || imageSize > bytes.length - imageOffset) {
+        return false;
+      }
+    }
+    return true;
   }
   return false;
 }
@@ -39,10 +55,11 @@ function normalizeImageIconSource(source: string) {
 
   const match = imageDataUrlPattern.exec(value);
   if (!match) {
-    throw new ApiError(400, "INVALID_ICON", "Custom icons must use an HTTP(S) URL or a PNG, JPEG, or WebP data URL");
+    throw new ApiError(400, "INVALID_ICON", "Custom icons must use an HTTP(S) URL or a PNG, JPEG, WebP, or ICO data URL");
   }
 
-  const mimeType = `image/${match[1].toLowerCase()}`;
+  const imageSubtype = match[1].toLowerCase();
+  const mimeType = imageSubtype === "x-icon" ? "image/vnd.microsoft.icon" : `image/${imageSubtype}`;
   const payload = match[2];
   const bytes = Buffer.from(payload, "base64");
   if (!bytes.length || bytes.byteLength > maxCustomIconBytes || !hasExpectedImageSignature(mimeType, bytes)) {

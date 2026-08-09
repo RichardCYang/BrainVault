@@ -105,7 +105,7 @@ const builtInIconPrefix = "icon:";
 const imageIconPrefix = "image:";
 const customIconMaxBytes = 512 * 1024;
 const customIconMaxUrlLength = 2048;
-const customIconMimeTypes = Object.freeze(["image/png", "image/jpeg", "image/webp"]);
+const customIconMimeTypes = Object.freeze(["image/png", "image/jpeg", "image/webp", "image/vnd.microsoft.icon", "image/x-icon"]);
 const defaultPageCoverPaths = Object.freeze(
   Array.from({ length: 5 }, (_, index) => `/img/default_cover/coverimg${index + 1}.png`)
 );
@@ -2884,7 +2884,7 @@ function createBuiltInIconSvg(name) {
 function getCustomImageSource(iconValue) {
   if (typeof iconValue !== "string" || !iconValue.startsWith(imageIconPrefix)) return null;
   const source = iconValue.slice(imageIconPrefix.length).trim();
-  if (/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/]+=*$/i.test(source)) return source;
+  if (/^data:image\/(?:png|jpeg|webp|vnd\.microsoft\.icon|x-icon);base64,[a-z0-9+/]+=*$/i.test(source)) return source;
   try {
     const url = new URL(source);
     if (source.length > customIconMaxUrlLength || url.username || url.password) return null;
@@ -3331,18 +3331,83 @@ function normalizeCustomIconUrl(value) {
   }
 }
 
+function hasValidIcoStructure(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength < 22) return false;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint16(0, true) !== 0 || view.getUint16(2, true) !== 1) return false;
+  const imageCount = view.getUint16(4, true);
+  const directoryEnd = 6 + imageCount * 16;
+  if (!imageCount || directoryEnd > bytes.byteLength) return false;
+
+  for (let index = 0; index < imageCount; index += 1) {
+    const entryOffset = 6 + index * 16;
+    const imageSize = view.getUint32(entryOffset + 8, true);
+    const imageOffset = view.getUint32(entryOffset + 12, true);
+    if (
+      !imageSize
+      || imageOffset < directoryEnd
+      || imageOffset > bytes.byteLength
+      || imageSize > bytes.byteLength - imageOffset
+    ) return false;
+  }
+  return true;
+}
+
+function detectCustomIconMimeType(bytes) {
+  if (
+    bytes.byteLength >= 8
+    && bytes[0] === 0x89
+    && bytes[1] === 0x50
+    && bytes[2] === 0x4e
+    && bytes[3] === 0x47
+    && bytes[4] === 0x0d
+    && bytes[5] === 0x0a
+    && bytes[6] === 0x1a
+    && bytes[7] === 0x0a
+  ) return "image/png";
+  if (bytes.byteLength >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (
+    bytes.byteLength >= 12
+    && String.fromCharCode(...bytes.subarray(0, 4)) === "RIFF"
+    && String.fromCharCode(...bytes.subarray(8, 12)) === "WEBP"
+  ) return "image/webp";
+  if (hasValidIcoStructure(bytes)) return "image/vnd.microsoft.icon";
+  return null;
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function isSupportedCustomIconFile(file) {
+  const mimeType = String(file?.type ?? "").trim().toLowerCase();
+  if (customIconMimeTypes.includes(mimeType)) return true;
+  return /\.(?:png|jpe?g|webp|ico)$/i.test(String(file?.name ?? ""));
+}
+
 function readCustomIconFile(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.addEventListener("load", () => {
-      if (typeof reader.result === "string" && /^data:image\/(?:png|jpeg|webp);base64,/i.test(reader.result)) {
-        resolve(reader.result);
-      } else {
+      if (!(reader.result instanceof ArrayBuffer)) {
         reject(new Error("INVALID_CUSTOM_ICON_FILE"));
+        return;
       }
+      const bytes = new Uint8Array(reader.result);
+      const mimeType = detectCustomIconMimeType(bytes);
+      if (!mimeType) {
+        reject(new Error("INVALID_CUSTOM_ICON_FILE"));
+        return;
+      }
+      resolve(`data:${mimeType};base64,${bytesToBase64(bytes)}`);
     }, { once: true });
     reader.addEventListener("error", () => reject(reader.error ?? new Error("CUSTOM_ICON_READ_FAILED")), { once: true });
-    reader.readAsDataURL(file);
+    reader.readAsArrayBuffer(file);
   });
 }
 
@@ -11700,7 +11765,7 @@ async function applyCustomIconUrl() {
 
 async function applyCustomIconFile(file) {
   if (state.emojiSaving || !file) return;
-  if (!customIconMimeTypes.includes(file.type)) {
+  if (!isSupportedCustomIconFile(file)) {
     setCustomIconMessage(t("emoji.customInvalidFile"), true);
     return;
   }

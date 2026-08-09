@@ -40,7 +40,7 @@ describe("page and collection emoji picker", () => {
     expect(index).toContain('id="emoji-custom-file-input"');
     expect(index).toContain('id="emoji-custom-library-grid"');
     expect(index).toContain('id="emoji-custom-library-count"');
-    expect(index).toContain('accept="image/png,image/jpeg,image/webp"');
+    expect(index).toContain('accept=".png,.jpg,.jpeg,.webp,.ico,image/png,image/jpeg,image/webp,image/vnd.microsoft.icon,image/x-icon"');
     expect(styles).toContain(".emoji-picker");
     expect(styles).toContain(".emoji-picker-tab.active::after");
     expect(styles).toContain(".emoji-picker-toolbar");
@@ -58,6 +58,9 @@ describe("page and collection emoji picker", () => {
     expect(app).toContain('const imageIconPrefix = "image:"');
     expect(app).toContain('event.target.closest("[data-icon-name]")');
     expect(app).toContain("new FileReader()");
+    expect(app).toContain("reader.readAsArrayBuffer(file)");
+    expect(app).toContain('return "image/vnd.microsoft.icon"');
+    expect(app).toContain("hasValidIcoStructure(bytes)");
     expect(app).toContain("new URL(source)");
     expect(app).toContain('from "./custom-icon-library.js"');
     expect(app).toContain("handleIconPickerTabKeydown");

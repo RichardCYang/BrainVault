@@ -4,7 +4,7 @@
 
 BrainVault uses a page-first workspace with a compact document tree and automatic title saving. A crash-resilient browser draft journal restores unacknowledged title and block edits without overwriting a newer server version.
 
-Pages and collections support Unicode Emoji 17 icons with Korean/English search, categories, skin-tone variants, and recent selections. Pages can be nested, archived, or permanently deleted from their three-dot menus, and search covers page titles and block content.
+Pages and collections support Unicode Emoji 17 icons with Korean/English search, categories, skin-tone variants, recent selections, and reusable custom PNG, JPEG, WebP, or ICO image icons up to 512 KB. Pages can be nested, archived, or permanently deleted from their three-dot menus, and search covers page titles and block content.
 
 ### Page cover images
 
