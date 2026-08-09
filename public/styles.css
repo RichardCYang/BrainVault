@@ -7616,6 +7616,49 @@ kbd {
   gap: 0.18rem;
 }
 
+.bookmark-list-columns-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  margin-left: 0.22rem;
+  border-left: 1px solid var(--line);
+  padding-left: 0.42rem;
+}
+
+.bookmark-list-columns-control[hidden] {
+  display: none;
+}
+
+.bookmark-list-columns-label {
+  color: var(--muted-light);
+  font-size: 0.7rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.bookmark-list-columns-select {
+  min-height: 1.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0.22rem 1.55rem 0.22rem 0.42rem;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 650;
+  outline: none;
+}
+
+.bookmark-list-columns-select:hover,
+.bookmark-list-columns-select:focus-visible {
+  border-color: var(--line-strong);
+  background: var(--hover);
+}
+
+.bookmark-list-columns-select:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus-soft);
+}
+
 .bookmark-action-button,
 .bookmark-view-button,
 .bookmark-add-button {
@@ -7701,7 +7744,38 @@ kbd {
 
 .bookmark-items--list {
   display: grid;
+  grid-template-columns: repeat(var(--bookmark-list-columns, 1), minmax(0, 1fr));
+  column-gap: 0.7rem;
   border-top: 1px solid var(--line);
+}
+
+.bookmark-items--list-columns-1,
+.rendered-bookmarks--list-columns-1 {
+  --bookmark-list-columns: 1;
+}
+
+.bookmark-items--list-columns-2,
+.rendered-bookmarks--list-columns-2 {
+  --bookmark-list-columns: 2;
+}
+
+.bookmark-items--list-columns-3,
+.rendered-bookmarks--list-columns-3 {
+  --bookmark-list-columns: 3;
+}
+
+.bookmark-items--list-columns-4,
+.rendered-bookmarks--list-columns-4 {
+  --bookmark-list-columns: 4;
+}
+
+.bookmark-items--list-columns-5,
+.rendered-bookmarks--list-columns-5 {
+  --bookmark-list-columns: 5;
+}
+
+.bookmark-items--list .bookmark-empty {
+  grid-column: 1 / -1;
 }
 
 .bookmark-list-item {
@@ -7914,6 +7988,8 @@ kbd {
 
 .rendered-bookmarks--list ul {
   display: grid;
+  grid-template-columns: repeat(var(--bookmark-list-columns, 1), minmax(0, 1fr));
+  column-gap: 0.7rem;
   margin: 0;
   padding: 0;
   border-top: 1px solid var(--line);

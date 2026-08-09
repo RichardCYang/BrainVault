@@ -517,6 +517,9 @@ export const translationCatalogs = {
       viewAria: "Bookmark view",
       listView: "List",
       listViewTitle: "Show favicons and titles in a compact list",
+      listColumnsLabel: "Columns",
+      listColumnsAria: "Number of columns in list view",
+      columnCount: "{count} col",
       galleryView: "Gallery",
       galleryViewTitle: "Show OpenGraph images, titles, and descriptions",
       count: "{count} bookmarks",
@@ -815,6 +818,7 @@ export const translationCatalogs = {
       bookmarkRefreshedFallback: "Kept “{title}” as a basic bookmark because its preview could not be refreshed.",
       bookmarkRemoved: "Removed bookmark “{title}”.",
       bookmarkViewChanged: "Bookmark view changed.",
+      bookmarkColumnsChanged: "Bookmark list columns changed to {count}.",
       languageChanged: "Language changed to {language}."
     },
     errors: {
@@ -1659,6 +1663,9 @@ export const translationCatalogs = {
       viewAria: "북마크 보기 방식",
       listView: "리스트",
       listViewTitle: "파비콘과 제목만 간결한 리스트로 표시",
+      listColumnsLabel: "열",
+      listColumnsAria: "리스트 보기 열 수",
+      columnCount: "{count}열",
       galleryView: "갤러리",
       galleryViewTitle: "OpenGraph 이미지, 제목, 설명을 카드로 표시",
       count: "북마크 {count}개",
@@ -1957,6 +1964,7 @@ export const translationCatalogs = {
       bookmarkRefreshedFallback: "미리보기를 새로고침하지 못해 ‘{title}’의 기본 북마크 정보를 유지했습니다.",
       bookmarkRemoved: "‘{title}’ 북마크를 삭제했습니다.",
       bookmarkViewChanged: "북마크 보기 방식을 변경했습니다.",
+      bookmarkColumnsChanged: "북마크 리스트를 {count}열로 변경했습니다.",
       languageChanged: "언어를 {language}(으)로 변경했습니다."
     },
     errors: {

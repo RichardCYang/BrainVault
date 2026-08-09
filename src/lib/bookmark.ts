@@ -23,6 +23,7 @@ export const bookmarkLimits = {
   titleLength: 300,
   descriptionLength: 1_000,
   siteNameLength: 160,
+  maxListColumns: 5,
   htmlBytes: 768 * 1024,
   redirects: 5
 } as const;
@@ -43,6 +44,7 @@ export type BookmarkItem = {
 export type BookmarkData = {
   title: string;
   view: BookmarkView;
+  listColumns: number;
   items: BookmarkItem[];
 };
 
@@ -90,6 +92,11 @@ function normalizeItemId(value: unknown, fallback: string) {
   return id || fallback;
 }
 
+function normalizeBookmarkListColumns(value: unknown) {
+  if (typeof value !== "number" || !Number.isInteger(value)) return 1;
+  return Math.min(bookmarkLimits.maxListColumns, Math.max(1, value));
+}
+
 export function normalizeBookmarkUrl(value: unknown, baseUrl?: string | URL) {
   const raw = normalizeText(value, bookmarkLimits.urlLength);
   if (!raw) return "";
@@ -106,7 +113,7 @@ export function normalizeBookmarkUrl(value: unknown, baseUrl?: string | URL) {
 }
 
 export function createDefaultBookmarkData(): BookmarkData {
-  return { title: "Bookmarks", view: "gallery", items: [] };
+  return { title: "Bookmarks", view: "gallery", listColumns: 1, items: [] };
 }
 
 export function getBookmarkData(metadata: unknown): BookmarkData {
@@ -119,6 +126,7 @@ export function getBookmarkData(metadata: unknown): BookmarkData {
     : "Bookmarks";
   const requestedView = normalizeText(source.view, 20) as BookmarkView;
   const view = bookmarkViews.includes(requestedView) ? requestedView : "gallery";
+  const listColumns = normalizeBookmarkListColumns(source.listColumns);
   const sourceItems = Array.isArray(source.items) ? source.items.slice(0, bookmarkLimits.items) : [];
   const seenIds = new Set<string>();
   const seenUrls = new Set<string>();
@@ -152,7 +160,7 @@ export function getBookmarkData(metadata: unknown): BookmarkData {
     });
   }
 
-  return { title, view, items };
+  return { title, view, listColumns, items };
 }
 
 export function normalizeBookmarkMetadata(metadata: unknown) {
@@ -201,7 +209,7 @@ export function renderBookmarkHtml(metadata: unknown) {
     ? `<h3>${escapeHtml(bookmark.title)}</h3>`
     : "";
   if (bookmark.view === "list") {
-    return `<div class="rendered-bookmark-block">${title}<div class="rendered-bookmarks rendered-bookmarks--list"><ul>${items.join("")}</ul></div></div>`;
+    return `<div class="rendered-bookmark-block">${title}<div class="rendered-bookmarks rendered-bookmarks--list rendered-bookmarks--list-columns-${bookmark.listColumns}"><ul>${items.join("")}</ul></div></div>`;
   }
   return `<div class="rendered-bookmark-block">${title}<div class="rendered-bookmarks rendered-bookmarks--gallery">${items.join("")}</div></div>`;
 }

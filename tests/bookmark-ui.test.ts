@@ -32,6 +32,21 @@ describe("bookmark block UI", () => {
     expect(styles).toContain(".bookmark-items--gallery");
   });
 
+  it("supports one through five columns for list view while defaulting to one", () => {
+    expect(client).toContain('view: "gallery", listColumns: 1, items: []');
+    expect(client).toContain('maxListColumns: 5');
+    expect(client).toContain('listColumnsSelect.className = "bookmark-list-columns-select"');
+    expect(client).toContain('listColumnsControl.hidden = data.view !== "list"');
+    expect(client).toContain('items.classList.add(`bookmark-items--list-columns-${data.listColumns}`)');
+    expect(client).toContain('async function setBookmarkListColumns(row, value)');
+    expect(client).toContain('data.listColumns = nextColumns');
+    expect(styles).toContain('grid-template-columns: repeat(var(--bookmark-list-columns, 1), minmax(0, 1fr));');
+    expect(styles).toContain('.bookmark-items--list-columns-5');
+    expect(styles).toContain('.rendered-bookmarks--list-columns-5');
+    expect(i18n).toContain('listColumnsLabel: "열"');
+    expect(i18n).toContain('columnCount: "{count}열"');
+  });
+
   it("shows OpenGraph media and hides descriptions in list item construction", () => {
     expect(client).toContain('image.className = "bookmark-card-image"');
     expect(client).toContain('description.className = "bookmark-card-description"');

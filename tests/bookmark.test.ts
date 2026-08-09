@@ -87,6 +87,7 @@ describe("bookmark data normalization and rendering", () => {
   it("deduplicates URLs and rejects non-HTTP links", () => {
     const data = getBookmarkData(metadata);
     expect(data.items).toHaveLength(1);
+    expect(data.listColumns).toBe(1);
     expect(data.items[0].imageUrl).toBe("https://example.com/cover.jpg");
     expect(data.items[0].faviconUrl).toBe("https://example.com/favicon.png");
     expect(data.title).toBe("Research <script>alert(2)</script>");
@@ -113,14 +114,24 @@ describe("bookmark data normalization and rendering", () => {
     const html = renderBookmarkHtml({
       bookmark: {
         ...metadata.bookmark,
-        view: "list"
+        view: "list",
+        listColumns: 3
       }
     });
     expect(html).toContain("rendered-bookmarks--list");
+    expect(html).toContain("rendered-bookmarks--list-columns-3");
     expect(html).toContain("rendered-bookmark-favicon");
     expect(html).toContain("Unsafe &lt;script&gt;");
     expect(html).not.toContain("rendered-bookmark-description");
     expect(html).not.toContain("Description &lt;img");
+  });
+
+  it("keeps list columns backward compatible and within the supported range", () => {
+    expect(getBookmarkData({ bookmark: { view: "list", items: [] } }).listColumns).toBe(1);
+    expect(getBookmarkData({ bookmark: { view: "list", listColumns: 5, items: [] } }).listColumns).toBe(5);
+    expect(getBookmarkData({ bookmark: { view: "list", listColumns: 9, items: [] } }).listColumns).toBe(5);
+    expect(getBookmarkData({ bookmark: { view: "list", listColumns: 0, items: [] } }).listColumns).toBe(1);
+    expect(getBookmarkData({ bookmark: { view: "list", listColumns: "3", items: [] } }).listColumns).toBe(1);
   });
 });
 

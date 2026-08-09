@@ -75,7 +75,8 @@ const bookmarkLimits = {
   blockTitleLength: 120,
   titleLength: 300,
   descriptionLength: 1_000,
-  siteNameLength: 160
+  siteNameLength: 160,
+  maxListColumns: 5
 } as const;
 const aiChatLimits = {
   questionLength: 8_000,
@@ -540,6 +541,10 @@ function assertBookmarkMetadata(root: MetadataRecord) {
   assertCanonicalBookmarkText(bookmark.title, "metadata.bookmark.title", bookmarkLimits.blockTitleLength);
   if (bookmark.view !== null && bookmark.view !== undefined && bookmark.view !== "list" && bookmark.view !== "gallery") {
     fail("metadata.bookmark.view", "must be list or gallery");
+  }
+  const listColumns = optionalFiniteNumber(bookmark.listColumns, "metadata.bookmark.listColumns");
+  if (listColumns !== null && (!Number.isInteger(listColumns) || listColumns < 1 || listColumns > bookmarkLimits.maxListColumns)) {
+    fail("metadata.bookmark.listColumns", `must be an integer from 1 through ${bookmarkLimits.maxListColumns}`);
   }
   const items = optionalArray(bookmark.items, "metadata.bookmark.items", bookmarkLimits.items);
   if (!items) return;

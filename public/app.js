@@ -469,7 +469,8 @@ const bookmarkLimits = {
   blockTitleLength: 120,
   titleLength: 300,
   descriptionLength: 1000,
-  siteNameLength: 160
+  siteNameLength: 160,
+  maxListColumns: 5
 };
 
 function normalizeBookmarkText(value, maxLength) {
@@ -493,6 +494,11 @@ function normalizeBookmarkUrl(value, baseUrl) {
   }
 }
 
+function normalizeBookmarkListColumns(value) {
+  if (typeof value !== "number" || !Number.isInteger(value)) return 1;
+  return Math.min(bookmarkLimits.maxListColumns, Math.max(1, value));
+}
+
 function normalizeBookmarkInputUrl(value) {
   const raw = normalizeBookmarkText(value, bookmarkLimits.urlLength);
   if (!raw) return "";
@@ -500,7 +506,7 @@ function normalizeBookmarkInputUrl(value) {
 }
 
 function createDefaultBookmarkData() {
-  return { title: t("bookmark.defaultTitle"), view: "gallery", items: [] };
+  return { title: t("bookmark.defaultTitle"), view: "gallery", listColumns: 1, items: [] };
 }
 
 function normalizeBookmarkData(value) {
@@ -509,6 +515,7 @@ function normalizeBookmarkData(value) {
     ? normalizeBookmarkText(source.title, bookmarkLimits.blockTitleLength)
     : t("bookmark.defaultTitle");
   const view = source.view === "list" ? "list" : "gallery";
+  const listColumns = normalizeBookmarkListColumns(source.listColumns);
   const seenIds = new Set();
   const seenUrls = new Set();
   const items = [];
@@ -535,7 +542,7 @@ function normalizeBookmarkData(value) {
     });
   }
 
-  return { title, view, items };
+  return { title, view, listColumns, items };
 }
 
 function summarizeBookmarkData(data) {
@@ -7894,6 +7901,27 @@ function createBookmarkEditor(row, value) {
     viewToggle.append(button);
   }
 
+  const listColumnsControl = document.createElement("label");
+  listColumnsControl.className = "bookmark-list-columns-control";
+  listColumnsControl.hidden = data.view !== "list";
+
+  const listColumnsLabel = document.createElement("span");
+  listColumnsLabel.className = "bookmark-list-columns-label";
+  listColumnsLabel.textContent = t("bookmark.listColumnsLabel");
+
+  const listColumnsSelect = document.createElement("select");
+  listColumnsSelect.className = "bookmark-list-columns-select";
+  listColumnsSelect.setAttribute("aria-label", t("bookmark.listColumnsAria"));
+  for (let columnCount = 1; columnCount <= bookmarkLimits.maxListColumns; columnCount += 1) {
+    const option = document.createElement("option");
+    option.value = String(columnCount);
+    option.textContent = t("bookmark.columnCount", { count: formatNumber(columnCount) });
+    listColumnsSelect.append(option);
+  }
+  listColumnsSelect.value = String(data.listColumns);
+  listColumnsControl.append(listColumnsLabel, listColumnsSelect);
+  viewToggle.append(listColumnsControl);
+
   const count = document.createElement("span");
   count.className = "bookmark-count";
   count.textContent = t("bookmark.count", { count: formatNumber(data.items.length) });
@@ -7916,6 +7944,7 @@ function createBookmarkEditor(row, value) {
 
   const items = document.createElement("div");
   items.className = `bookmark-items bookmark-items--${data.view}`;
+  if (data.view === "list") items.classList.add(`bookmark-items--list-columns-${data.listColumns}`);
   if (data.items.length) {
     data.items.forEach((item) => items.append(createBookmarkItem(item, data.view)));
   } else {
@@ -8001,6 +8030,18 @@ async function addBookmarkToRow(row) {
     currentRow?.classList.remove("is-bookmark-loading");
     if (addButton?.isConnected) addButton.disabled = false;
   }
+}
+
+async function setBookmarkListColumns(row, value) {
+  const data = extractBookmarkData(row);
+  const nextColumns = normalizeBookmarkListColumns(Number(value));
+  if (data.listColumns === nextColumns) return;
+  if (!promoteBlockDraftConflict(row)) return;
+
+  data.listColumns = nextColumns;
+  replaceBookmarkEditor(row, data);
+  await saveBlockRow(row, { quiet: true });
+  setStatus(t("status.bookmarkColumnsChanged", { count: formatNumber(nextColumns) }));
 }
 
 async function handleBookmarkAction(row, button) {
@@ -13248,6 +13289,14 @@ elements.blockList.addEventListener("change", (event) => {
     row.dataset.codeLanguage = normalizeCodeLanguage(languageSelect.value);
     updateCodeBlockPreview(row, getBlockTextarea(row)?.value ?? "", row.dataset.codeLanguage);
     scheduleBlockSave(row);
+    return;
+  }
+
+  const bookmarkColumns = event.target.closest(".bookmark-list-columns-select");
+  if (bookmarkColumns) {
+    const row = getBlockRow(bookmarkColumns);
+    if (!row) return;
+    setBookmarkListColumns(row, bookmarkColumns.value).catch((error) => setStatus(error.message, true));
     return;
   }
 
