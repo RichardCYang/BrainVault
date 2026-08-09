@@ -17,16 +17,19 @@ describe("Subpage index and collapsible page navigation", () => {
     expect(client).toContain("await openPage(item.dataset.subpageIndexPageId);");
   });
 
-  it("renders a right-side disclosure button for parent pages", () => {
+  it("renders a left-side filled triangle disclosure button for parent pages", () => {
     expect(client).toContain('button.className = "doc-expand-button";');
     expect(client).toContain('button.setAttribute("aria-controls", controlsId);');
     expect(client).toContain('button.setAttribute("aria-expanded", String(expanded));');
     expect(client).toContain('button.classList.toggle("collapsed", !expanded);');
+    expect(client).toContain('path.setAttribute("d", "M6.75 8.5 17.25 8.5 12 14.5Z");');
     expect(styles).toContain(".doc-expand-button");
-    expect(styles).toMatch(/\.document-item-row\.has-children\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 1\.75rem 1\.75rem;/);
+    expect(styles).toMatch(/\.document-item-row\s*\{[\s\S]*grid-template-columns:\s*1\.75rem minmax\(0, 1fr\) 1\.75rem;/);
+    expect(styles).toMatch(/\.document-item\s*\{[\s\S]*?grid-column:\s*2;[\s\S]*?grid-row:\s*1;/);
     expect(styles).toContain(".document-item-row > .navigation-more-button");
-    expect(styles).toMatch(/\.doc-expand-button\s*\{[\s\S]*?grid-column:\s*3;[\s\S]*?grid-row:\s*1;/);
-    expect(styles).toMatch(/\.document-item-row > \.navigation-more-button\s*\{[\s\S]*?grid-column:\s*2;[\s\S]*?grid-row:\s*1;/);
+    expect(styles).toMatch(/\.doc-expand-button\s*\{[\s\S]*?grid-column:\s*1;[\s\S]*?grid-row:\s*1;/);
+    expect(styles).toMatch(/\.doc-expand-button svg\s*\{[\s\S]*?fill:\s*currentColor;[\s\S]*?stroke:\s*none;/);
+    expect(styles).toMatch(/\.document-item-row > \.navigation-more-button\s*\{[\s\S]*?grid-column:\s*3;[\s\S]*?grid-row:\s*1;/);
   });
 
   it("persists collapse state across navigation tree rerenders and keeps new subpages expanded", () => {

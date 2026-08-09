@@ -3700,7 +3700,7 @@ function makeDocumentChildrenToggle({ page, expanded, controlsId }) {
   icon.setAttribute("viewBox", "0 0 24 24");
   icon.setAttribute("aria-hidden", "true");
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", "M7 9.5 12 14.5 17 9.5");
+  path.setAttribute("d", "M6.75 8.5 17.25 8.5 12 14.5Z");
   icon.append(path);
   button.append(icon);
   button.classList.toggle("collapsed", !expanded);
@@ -3756,11 +3756,11 @@ function renderDocumentNode(page, groups, depth = 0) {
   label.className = "doc-label";
   label.textContent = page.title;
 
-  button.append(icon, label);
-  row.append(button);
   if (children.length && childrenId) {
     row.append(makeDocumentChildrenToggle({ page, expanded, controlsId: childrenId }));
   }
+  button.append(icon, label);
+  row.append(button);
   if (isPageOwner(page)) {
     row.append(makeNavigationMenuButton({ id: page.id, kind: "page", title: page.title }));
   }

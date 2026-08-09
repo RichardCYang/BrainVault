@@ -1066,14 +1066,10 @@ textarea {
 
 .document-item-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 1.75rem;
+  grid-template-columns: 1.75rem minmax(0, 1fr) 1.75rem;
   align-items: center;
   gap: 0.08rem;
   min-width: 0;
-}
-
-.document-item-row.has-children {
-  grid-template-columns: minmax(0, 1fr) 1.75rem 1.75rem;
 }
 
 .home-document-row {
@@ -1091,6 +1087,8 @@ textarea {
 
 .document-item {
   display: grid;
+  grid-column: 2;
+  grid-row: 1;
   grid-template-columns: 1.05rem minmax(0, 1fr);
   align-items: center;
   column-gap: 0.28rem;
@@ -1102,7 +1100,7 @@ textarea {
 
 .doc-expand-button {
   display: grid;
-  grid-column: 3;
+  grid-column: 1;
   grid-row: 1;
   width: 1.7rem;
   height: 1.7rem;
@@ -1120,11 +1118,8 @@ textarea {
 .doc-expand-button svg {
   width: 0.95rem;
   height: 0.95rem;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 2;
+  fill: currentColor;
+  stroke: none;
   transform: rotate(0deg);
   transition: transform 140ms ease;
 }
@@ -1140,12 +1135,8 @@ textarea {
 }
 
 .document-item-row > .navigation-more-button {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 1;
-}
-
-.document-item-row.has-children > .navigation-more-button {
-  grid-column: 2;
 }
 
 .doc-icon {
@@ -16421,13 +16412,9 @@ html[data-theme="dark"] .page-cover-custom-row {
 
   .app-mode .document-item-row {
     min-height: 30px;
-    grid-template-columns: minmax(0, 1fr) 22px;
+    grid-template-columns: 22px minmax(0, 1fr) 22px;
     gap: 0;
     border-radius: 4px;
-  }
-
-  .app-mode .document-item-row.has-children {
-    grid-template-columns: minmax(0, 1fr) 22px 22px;
   }
 
   .app-mode .document-item {
@@ -16477,7 +16464,6 @@ html[data-theme="dark"] .page-cover-custom-row {
   .app-mode .doc-expand-button svg {
     width: 14px;
     height: 14px;
-    stroke-width: 1.8;
   }
 
   .app-mode .doc-expand-button:hover,
