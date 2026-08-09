@@ -1,9 +1,10 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { mkdir, rm, stat, writeFile } from "node:fs/promises";
-import { db } from "./db.js";
+import { db, transaction } from "./db.js";
 import { createId } from "./id.js";
 import { ApiError } from "./http.js";
-import { maxCustomIconBytes } from "./icon-value.js";
+import { imageIconPrefix, maxCustomIconBytes, normalizeIconValue } from "./icon-value.js";
 
 export const customIconLibraryLimit = 36;
 export const customIconUploadRoot = path.resolve(process.cwd(), "upload", "icons");
@@ -16,6 +17,22 @@ type StoredCustomIconRow = {
   file_path: string;
   last_used_at: Date | string;
 };
+
+type CustomIconLibraryRemovalRow = {
+  value_hash: string;
+};
+
+function normalizeCustomIconLibraryValue(value: string) {
+  const normalized = normalizeIconValue(value);
+  if (!normalized?.startsWith(imageIconPrefix)) {
+    throw new ApiError(400, "INVALID_CUSTOM_ICON", "Only custom image icons can be removed from the custom icon library");
+  }
+  return normalized;
+}
+
+function getCustomIconLibraryRemovalKey(value: string) {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
 
 function safeStorageSegment(value: string) {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(value)) {
@@ -111,6 +128,79 @@ export async function listCustomIcons(userId: string) {
   }
 
   return available;
+}
+
+export async function listCustomIconLibraryRemovalKeys(userId: string) {
+  const safeUserId = safeStorageSegment(userId);
+  const rows = await db.query<CustomIconLibraryRemovalRow>(
+    `SELECT value_hash
+     FROM custom_icon_library_removals
+     WHERE user_id = ?
+     ORDER BY removed_at DESC`,
+    [safeUserId]
+  );
+  return rows.map((row) => row.value_hash);
+}
+
+export async function removeCustomIconFromLibrary(userId: string, value: string) {
+  const safeUserId = safeStorageSegment(userId);
+  const normalized = normalizeCustomIconLibraryValue(value);
+  const removedKey = getCustomIconLibraryRemovalKey(normalized);
+  const publicPath = normalized.slice(imageIconPrefix.length);
+
+  await transaction(async (client) => {
+    await client.execute(
+      `INSERT INTO custom_icon_library_removals (user_id, value_hash, removed_at)
+       VALUES (?, ?, CURRENT_TIMESTAMP(3))
+       ON DUPLICATE KEY UPDATE removed_at = VALUES(removed_at)`,
+      [safeUserId, removedKey]
+    );
+
+    if (isServerCustomIconPath(publicPath) && publicPath.startsWith(`${customIconPublicPrefix}${safeUserId}/`)) {
+      // Removing an icon from the library must not break pages or version history
+      // that still reference its immutable upload URL. Keep the file on disk and
+      // only remove the library record.
+      await client.execute(
+        "DELETE FROM custom_icons WHERE user_id = ? AND file_path = ?",
+        [safeUserId, publicPath]
+      );
+    }
+  });
+
+  return { value: normalized, removedKey };
+}
+
+export async function restoreCustomIconToLibrary(userId: string, value: string) {
+  const safeUserId = safeStorageSegment(userId);
+  const normalized = normalizeCustomIconLibraryValue(value);
+  const removedKey = getCustomIconLibraryRemovalKey(normalized);
+  const publicPath = normalized.slice(imageIconPrefix.length);
+
+  await transaction(async (client) => {
+    await client.execute(
+      "DELETE FROM custom_icon_library_removals WHERE user_id = ? AND value_hash = ?",
+      [safeUserId, removedKey]
+    );
+
+    if (!isServerCustomIconPath(publicPath) || !publicPath.startsWith(`${customIconPublicPrefix}${safeUserId}/`)) return;
+    const filePath = getCustomIconFilePath(publicPath);
+    if (!filePath) return;
+    try {
+      const fileStat = await stat(filePath);
+      if (!fileStat.isFile()) return;
+    } catch {
+      return;
+    }
+
+    const filename = path.basename(publicPath);
+    const iconId = safeStorageSegment(filename.slice(0, filename.lastIndexOf(".")));
+    await client.execute(
+      `INSERT INTO custom_icons (id, user_id, file_path, last_used_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP(3))
+       ON DUPLICATE KEY UPDATE last_used_at = VALUES(last_used_at)`,
+      [iconId, safeUserId, publicPath]
+    );
+  });
 }
 
 export async function rememberCustomIconPaths(userId: string, iconValues: readonly string[]) {

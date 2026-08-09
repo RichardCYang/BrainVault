@@ -37,13 +37,16 @@ async function request(path, options = {}) {
 }
 
 export async function listCustomIconLibrary(userId) {
-  if (typeof userId !== "string" || !userId) return [];
+  if (typeof userId !== "string" || !userId) return { entries: [], removedKeys: [] };
   const data = await request(customIconApiPath);
-  return (Array.isArray(data?.icons) ? data.icons : [])
+  const entries = (Array.isArray(data?.icons) ? data.icons : [])
     .map(normalizeStoredEntry)
     .filter(Boolean)
     .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
     .slice(0, customIconLibraryLimit);
+  const removedKeys = (Array.isArray(data?.removedKeys) ? data.removedKeys : [])
+    .filter((value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value));
+  return { entries, removedKeys };
 }
 
 export async function rememberCustomIconLibraryEntry(userId, value) {
@@ -51,12 +54,12 @@ export async function rememberCustomIconLibraryEntry(userId, value) {
     typeof userId !== "string"
     || !userId
     || typeof value !== "string"
-    || !uploadedCustomIconValuePattern.test(value)
+    || !value.startsWith("image:")
   ) return;
 
-  await request(`${customIconApiPath}/touch`, {
+  await request(`${customIconApiPath}/restore`, {
     method: "POST",
-    body: { values: [value] }
+    body: { value }
   });
 }
 
@@ -72,4 +75,32 @@ export async function rememberCustomIconLibraryEntries(userId, entries) {
     method: "POST",
     body: { values }
   });
+}
+
+export async function removeCustomIconLibraryEntry(userId, value) {
+  if (typeof userId !== "string" || !userId || typeof value !== "string") return null;
+  return request(customIconApiPath, {
+    method: "DELETE",
+    body: { value }
+  });
+}
+
+export async function customIconLibraryValueKey(value) {
+  if (typeof value !== "string" || !value || !globalThis.crypto?.subtle) return null;
+  const bytes = new TextEncoder().encode(value);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export async function filterRemovedCustomIconLibraryEntries(entries, removedKeys) {
+  if (!Array.isArray(entries) || !entries.length) return [];
+  const removed = new Set(Array.isArray(removedKeys) ? removedKeys : removedKeys instanceof Set ? removedKeys : []);
+  if (!removed.size) return entries;
+
+  const filtered = [];
+  for (const entry of entries) {
+    const key = await customIconLibraryValueKey(entry?.value);
+    if (!key || !removed.has(key)) filtered.push(entry);
+  }
+  return filtered;
 }

@@ -12,6 +12,7 @@ const customIconLibrarySource = fs.readFileSync(path.join(root, "public/custom-i
 const migration = fs.readFileSync(path.join(root, "migrations/009_pages_collection_kind.sql"), "utf8");
 const customIconMigration = fs.readFileSync(path.join(root, "migrations/026_page_custom_icons.sql"), "utf8");
 const customIconFilesMigration = fs.readFileSync(path.join(root, "migrations/041_custom_icon_files.sql"), "utf8");
+const customIconRemovalMigration = fs.readFileSync(path.join(root, "migrations/042_custom_icon_library_removals.sql"), "utf8");
 const customIconRoutes = fs.readFileSync(path.join(root, "src/routes/custom-icon.routes.ts"), "utf8");
 const customIconStorage = fs.readFileSync(path.join(root, "src/lib/custom-icons.ts"), "utf8");
 
@@ -42,6 +43,7 @@ describe("page and collection emoji picker", () => {
     expect(index).toContain('id="emoji-custom-url-input"');
     expect(index).toContain('id="emoji-custom-file-input"');
     expect(index).toContain('id="emoji-custom-library-grid"');
+    expect(index).toMatch(/id="emoji-custom-library-grid"[\s\S]*?role="group"/);
     expect(index).toContain('id="emoji-custom-library-count"');
     expect(index).toContain('accept=".png,.jpg,.jpeg,.webp,.ico,image/png,image/jpeg,image/webp,image/vnd.microsoft.icon,image/x-icon"');
     expect(styles).toContain(".emoji-picker");
@@ -104,11 +106,21 @@ describe("page and collection emoji picker", () => {
     expect(customIconStorage).toContain('path.resolve(process.cwd(), "upload", "icons")');
     expect(customIconStorage).toContain("writeFile(filePath, bytes");
     expect(customIconRoutes).toContain('customIconRouter.post("/", parseCustomIconUpload');
+    expect(customIconRoutes).toContain('customIconRouter.delete("/"');
+    expect(customIconRoutes).toContain('customIconRouter.post("/restore"');
     expect(customIconRoutes).toContain('storage: multer.memoryStorage()');
+    expect(customIconRemovalMigration).toContain("CREATE TABLE IF NOT EXISTS custom_icon_library_removals");
+    expect(customIconRemovalMigration).toContain("value_hash CHAR(64)");
     expect(app).toContain("collectWorkspaceCustomIconLibraryEntries()");
     expect(app).toContain("listCustomIconLibrary(userId)");
     expect(app).toContain("rememberCustomIconLibraryEntry(userId, normalized, entry.lastUsedAt)");
     expect(app).toContain('event.target.closest("[data-custom-icon-index]")');
+    expect(app).toContain('event.target.closest("[data-custom-icon-remove-index]")');
+    expect(app).toContain("removeCustomIconLibraryEntry(userId, entry.value)");
+    expect(app).toContain("customLibraryRemoveConfirm");
+    expect(styles).toContain(".custom-icon-library-remove");
+    expect(customIconLibrarySource).toContain('method: "DELETE"');
+    expect(customIconLibrarySource).toContain('globalThis.crypto.subtle.digest("SHA-256"');
     expect(app).toContain("rememberCustomIconSelection(emoji)");
     expect(app).toContain('imageSource.startsWith("/upload/icons/") ? "📄" : fallback');
   });

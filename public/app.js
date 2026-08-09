@@ -82,9 +82,11 @@ import {
 } from "./icon-picker-operation.js";
 import {
   customIconLibraryLimit,
+  filterRemovedCustomIconLibraryEntries,
   listCustomIconLibrary,
   rememberCustomIconLibraryEntries,
-  rememberCustomIconLibraryEntry
+  rememberCustomIconLibraryEntry,
+  removeCustomIconLibraryEntry
 } from "./custom-icon-library.js";
 import {
   createAccountAvatarOperationGuard,
@@ -237,6 +239,8 @@ const state = {
   emojiPickerResults: [],
   emojiRenderedCount: 0,
   customIconLibrary: [],
+  customIconLibraryRemovedKeys: new Set(),
+  customIconLibraryRemovingValues: new Set(),
   customIconLibraryUserId: null,
   emojiSkinTone: "",
   emojiSaving: false,
@@ -3008,16 +3012,33 @@ function renderCustomIconLibrary() {
 
   const fragment = document.createDocumentFragment();
   entries.forEach((entry, index) => {
+    const item = document.createElement("div");
+    item.className = "custom-icon-library-item";
+    item.setAttribute("role", "none");
+
     const button = document.createElement("button");
     button.type = "button";
     button.className = "emoji-option custom-icon-option";
     button.dataset.customIconIndex = String(index);
-    button.setAttribute("role", "option");
     const label = t("emoji.customLibraryItem", { index: formatNumber(index + 1) });
     button.setAttribute("aria-label", label);
     button.title = label;
     renderIconValue(button, entry.value, "📄");
-    fragment.append(button);
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "custom-icon-library-remove";
+    removeButton.dataset.customIconRemoveIndex = String(index);
+    removeButton.setAttribute("aria-label", t("emoji.customLibraryRemove", { index: formatNumber(index + 1) }));
+    removeButton.title = t("emoji.customLibraryRemoveShort");
+    removeButton.disabled = state.customIconLibraryRemovingValues.has(entry.value);
+    const removeGlyph = document.createElement("span");
+    removeGlyph.textContent = "×";
+    removeGlyph.setAttribute("aria-hidden", "true");
+    removeButton.append(removeGlyph);
+
+    item.append(button, removeButton);
+    fragment.append(item);
   });
 
   elements.emojiCustomLibraryGrid.replaceChildren(fragment);
@@ -3032,21 +3053,30 @@ async function refreshCustomIconLibrary() {
   if (state.customIconLibraryUserId !== userId) {
     state.customIconLibraryUserId = userId;
     state.customIconLibrary = [];
+    state.customIconLibraryRemovedKeys = new Set();
+    state.customIconLibraryRemovingValues = new Set();
   }
 
   const workspaceEntries = collectWorkspaceCustomIconLibraryEntries();
-  state.customIconLibrary = mergeCustomIconLibraryEntries(workspaceEntries, state.customIconLibrary);
-  if (state.activeIconPickerTab === "custom") renderCustomIconLibrary();
-  if (!userId) return;
+  if (!userId) {
+    state.customIconLibrary = mergeCustomIconLibraryEntries(workspaceEntries, state.customIconLibrary);
+    if (state.activeIconPickerTab === "custom") renderCustomIconLibrary();
+    return;
+  }
 
   try {
-    const storedEntries = await listCustomIconLibrary(userId);
+    const libraryState = await listCustomIconLibrary(userId);
     if (generation !== customIconLibraryLoadGeneration || state.user?.id !== userId) return;
-    state.customIconLibrary = mergeCustomIconLibraryEntries(storedEntries, workspaceEntries, state.customIconLibrary);
+    state.customIconLibraryRemovedKeys = new Set(libraryState.removedKeys);
+    const mergedEntries = mergeCustomIconLibraryEntries(libraryState.entries, workspaceEntries, state.customIconLibrary);
+    state.customIconLibrary = await filterRemovedCustomIconLibraryEntries(mergedEntries, state.customIconLibraryRemovedKeys);
+    if (generation !== customIconLibraryLoadGeneration || state.user?.id !== userId) return;
     if (state.activeIconPickerTab === "custom") renderCustomIconLibrary();
     void rememberCustomIconLibraryEntries(userId, workspaceEntries).catch(() => {});
   } catch {
     // The workspace-derived list still provides reuse when the server library is unavailable.
+    state.customIconLibrary = mergeCustomIconLibraryEntries(workspaceEntries, state.customIconLibrary);
+    if (state.activeIconPickerTab === "custom") renderCustomIconLibrary();
   }
 }
 
@@ -3063,7 +3093,9 @@ function rememberCustomIconSelection(value) {
   const entry = { value: normalized, lastUsedAt: Date.now() };
   state.customIconLibrary = mergeCustomIconLibraryEntries([entry], state.customIconLibrary);
   if (state.activeIconPickerTab === "custom") renderCustomIconLibrary();
-  void rememberCustomIconLibraryEntry(userId, normalized, entry.lastUsedAt).catch(() => {});
+  void rememberCustomIconLibraryEntry(userId, normalized, entry.lastUsedAt)
+    .then(() => refreshCustomIconLibrary())
+    .catch(() => {});
 }
 
 function isEmojiIconValue(value) {
@@ -11768,7 +11800,41 @@ function handleEmojiOptionClick(event) {
   if (record) void saveEmojiSelection(record[0]);
 }
 
+async function removeCustomIconLibraryItem(index) {
+  if (state.emojiSaving) return;
+  const entry = state.customIconLibrary[index];
+  const userId = state.user?.id;
+  if (!entry?.value || !userId || state.customIconLibraryRemovingValues.has(entry.value)) return;
+
+  if (!globalThis.confirm(t("emoji.customLibraryRemoveConfirm"))) return;
+
+  // Invalidate any older refresh so a stale GET cannot reinsert the item after removal.
+  customIconLibraryLoadGeneration += 1;
+  state.customIconLibraryRemovingValues.add(entry.value);
+  renderCustomIconLibrary();
+  try {
+    const result = await removeCustomIconLibraryEntry(userId, entry.value);
+    if (state.user?.id !== userId) return;
+    if (typeof result?.removedKey === "string") state.customIconLibraryRemovedKeys.add(result.removedKey);
+    state.customIconLibrary = state.customIconLibrary.filter((candidate) => candidate.value !== entry.value);
+    setCustomIconMessage(t("emoji.customLibraryRemoved"));
+  } catch (error) {
+    setCustomIconMessage(error?.message ?? t("emoji.customLibraryRemoveError"), true);
+  } finally {
+    state.customIconLibraryRemovingValues.delete(entry.value);
+    if (state.activeIconPickerTab === "custom") renderCustomIconLibrary();
+  }
+}
+
 function handleCustomIconLibraryClick(event) {
+  const removeButton = event.target.closest("[data-custom-icon-remove-index]");
+  if (removeButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    void removeCustomIconLibraryItem(Number(removeButton.dataset.customIconRemoveIndex));
+    return;
+  }
+
   if (state.emojiSaving) return;
   const button = event.target.closest("[data-custom-icon-index]");
   if (!button) return;
