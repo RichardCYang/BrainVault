@@ -17,7 +17,7 @@ The preview is captured from the real browser UI. See [Development guide](docs/d
 - Crash-resilient browser drafts, automatic title saving, and search across page titles and block content
 - Owner-managed page sharing with Yjs-based simultaneous title/block editing, live presence, reconnect recovery, and MariaDB persistence
 - Page collections, nesting, built-in or custom cover images with adjustable focal positions, archiving, permanent deletion, PDF export, and complete ZIP backup/restore including sharing grants
-- JWT authentication with an HttpOnly browser session cookie, profile settings, TOTP authenticator support, and multiple WebAuthn/FIDO2 passkeys
+- JWT authentication with an HttpOnly browser session cookie, profile settings, TOTP authenticator support, multiple WebAuthn/FIDO2 passkeys, and passwordless passkey-first login from the sign-in screen
 - Seven interface languages: English, Japanese, Korean, French, German, Spanish, and Portuguese
 - Private attachment storage, sanitized Markdown rendering, rate limiting, and validated bookmark previews
 - Automatic MariaDB bootstrap and migrations, plus an included OpenAPI 3.1 specification
@@ -75,6 +75,7 @@ For database permissions, opt-in demo data, alternative environment setup, and p
 | [HTTPS deployment](deploy/README.md) | Direct Posh-ACME TLS plus Caddy, Synology DSM, NGINX, and Nginx Proxy Manager setup |
 | [Security](docs/security/2026-07-30/security.md) | MFA, production secrets, attachment safety, and security defaults |
 | [Security review and remediation report](docs/security/2026-08-04/security-review-and-remediation-report.md) | Security findings, reproductions, remediations, and verification limits |
+| [Direct passkey-login verification](docs/security/2026-08-09/passkey-direct-login-verification.md) | Discoverable-credential design, threat model, attack reproductions, and verification evidence |
 | [API](docs/api/2026-07-30/api.md) | Route overview, authentication, health check, and OpenAPI access |
 | [Development](docs/development/2026-07-28/development.md) | Scripts, lockfile policy, project structure, translations, and preview capture |
 | [OpenAPI specification](docs/api/2026-07-30/openapi.yaml) | Full OpenAPI 3.1 document |
@@ -93,6 +94,7 @@ npm run reproduce:page-cover-operation-scope # Reproduce picker-cancel and cross
 npm run reproduce:page-cover-pdf-layout # Reproduce full-bleed PDF measurement regression
 npm run reproduce:block-preserve-children-delete # Reproduce partial hierarchy commit and atomic rollback
 npm run reproduce:block-delete-response-loss # Reproduce committed-delete response loss and idempotent acknowledgement
+npm run reproduce:passkey-direct-login # Generate a P-256 assertion and replay the passkey-login attack matrix
 npm run verify:collaboration # Check collaboration wiring, protocol behavior, and source syntax
 npm run verify:data-loss # Check persistence and recovery integrity guards
 npm start         # Run the compiled server

@@ -85,6 +85,10 @@ export function createApp() {
       legacyHeaders: false
     })
   );
+  // Passwordless WebAuthn assertions have a deliberately small, bounded JSON
+  // contract. Parse this anonymous endpoint with a tighter limit before the
+  // broader application parser so chunked requests cannot bypass the bound.
+  app.use("/api/auth/passkey", express.json({ limit: "64kb" }));
   app.use(express.json({ limit: "5mb" }));
   app.use(express.urlencoded({ extended: false }));
 

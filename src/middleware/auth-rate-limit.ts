@@ -77,6 +77,26 @@ export const loginAccountRateLimit = rateLimit({
   handler
 });
 
+export const passkeyLoginOptionsIpRateLimit = rateLimit({
+  windowMs: env.AUTH_PASSKEY_OPTIONS_IP_WINDOW_MS,
+  limit: env.AUTH_PASSKEY_OPTIONS_IP_MAX,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: clientIpKey,
+  handler
+});
+
+export const passkeyLoginVerifyIpRateLimit = rateLimit({
+  windowMs: env.AUTH_PASSKEY_VERIFY_IP_WINDOW_MS,
+  limit: env.AUTH_PASSKEY_VERIFY_IP_MAX,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  requestWasSuccessful: authenticationRequestSucceeded,
+  keyGenerator: clientIpKey,
+  handler
+});
+
 export const mfaLoginIpRateLimit = rateLimit({
   windowMs: env.AUTH_MFA_IP_WINDOW_MS,
   limit: env.AUTH_MFA_IP_MAX,

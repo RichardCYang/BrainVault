@@ -1,5 +1,13 @@
 # Security
 
+## Passwordless passkey login
+
+The sign-in screen can authenticate directly with a discoverable WebAuthn credential, without first accepting an ID or password. The anonymous options route returns an empty `allowCredentials` list and requires user verification. Its one-time challenge is stored only by hash, bound to a separate `HttpOnly`, `SameSite=Strict` ceremony cookie, expired after five minutes, and atomically consumed before the full assertion is parsed so a malformed attempt cannot be corrected and replayed.
+
+Verification requires canonical and byte-identical `id`/`rawId` values, the credential's populated `userHandle`, the configured exact origin and RP ID, user presence and user verification, a valid signature, and a non-regressing counter where counters are supported. The transaction re-locks both the account and credential, verifies that the credential's security fields have not changed since signature verification, and updates the counter with compare-and-swap semantics. Unknown credentials, wrong handles, cryptographic failures, and replay return the same generic error. New passkey registration requires `residentKey: "required"`; an older non-discoverable passkey may need to be re-registered before it appears in direct login.
+
+The anonymous passkey body is limited to 64 KiB and uses exact object key sets plus explicit base64url, extension-result, depth, and node bounds. Options and verification have separate IP rate limits. Those stores are process-local, so horizontally scaled deployments must apply equivalent edge limits or a shared store. See [Direct passkey-login security and reproducibility verification](../2026-08-09/passkey-direct-login-verification.md) for the threat model, attack matrix, and commands.
+
 ## Two-step verification
 
 Open **Settings → Security** to configure either verification method:

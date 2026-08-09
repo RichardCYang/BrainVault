@@ -8769,6 +8769,35 @@ body.auth-mode * {
   background: #1b719f;
 }
 
+.auth-mode .auth-passkey-login-section {
+  display: grid;
+  gap: 0.72rem;
+}
+
+.auth-mode .auth-passkey-login {
+  width: 100%;
+  min-height: 3rem;
+  border-color: #8ea9ba;
+  background: #f7fbfd;
+  color: #244b63;
+  box-shadow: none;
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.auth-mode .auth-passkey-login:hover {
+  border-color: #5f879e;
+  background: #edf6fa;
+}
+
+.auth-mode .auth-passkey-hint {
+  margin: 0;
+  color: #687f8d;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
 .auth-mode .auth-switch {
   display: flex;
   justify-content: space-between;

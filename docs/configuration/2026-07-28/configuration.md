@@ -48,6 +48,10 @@ Never commit a real `.env` file.
 | `AUTH_MFA_ACCOUNT_MAX` | `20` | Failed MFA login verifications allowed per account window |
 | `AUTH_MFA_SETUP_WINDOW_MS` | `900000` | Account-security reauthentication and MFA enrollment verification window |
 | `AUTH_MFA_SETUP_MAX` | `10` | Failed current-password reauthentication or TOTP enrollment verification attempts allowed per account and window |
+| `AUTH_PASSKEY_OPTIONS_IP_WINDOW_MS` | `900000` | Username-less passkey option-issuance window per IP |
+| `AUTH_PASSKEY_OPTIONS_IP_MAX` | `30` | Passkey option requests allowed per IP window; successful issuance is counted |
+| `AUTH_PASSKEY_VERIFY_IP_WINDOW_MS` | `900000` | Username-less passkey verification window per IP |
+| `AUTH_PASSKEY_VERIFY_IP_MAX` | `15` | Failed passkey verifications allowed per IP window; successful verification is skipped |
 | `MFA_TOTP_WINDOW_STEPS` | `0` | Additional TOTP steps accepted on either side of the current step; `0` prevents adjacent-step reuse |
 | `AUTH_REGISTER_WINDOW_MS` | `3600000` | Registration throttling window |
 | `AUTH_REGISTER_MAX` | `5` | Registration requests allowed per IP window |

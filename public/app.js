@@ -819,6 +819,8 @@ const elements = {
   authTitle: $("#auth-title"),
   authDescription: $("#auth-description"),
   authSubmit: $("#auth-submit"),
+  authPasskeyLoginSection: $("#auth-passkey-login-section"),
+  authPasskeyLogin: $("#auth-passkey-login"),
   authSwitchCopy: $("#auth-switch-copy"),
   authSwitchLink: $("#auth-switch-link"),
   registerFields: $("#register-fields"),
@@ -1111,6 +1113,7 @@ function setWorkspaceCreateBusy(busy) {
 function syncAuthOperationControls() {
   const busy = state.authOperationBusy;
   elements.authSubmit.disabled = busy;
+  elements.authPasskeyLogin.disabled = busy || state.authMode !== "login" || !isWebAuthnSupported();
   elements.username.disabled = busy;
   elements.password.disabled = busy;
   elements.name.disabled = busy;
@@ -1158,6 +1161,8 @@ function setAuthMode(mode, updateHash = true) {
   elements.authSwitchLink.textContent = t(isRegister ? "auth.login" : "auth.register");
   elements.authSwitchLink.href = isRegister ? "#login" : "#signup";
   elements.registerFields.classList.toggle("hidden", !isRegister);
+  elements.authPasskeyLoginSection.classList.toggle("hidden", isRegister);
+  elements.username.autocomplete = isRegister ? "username" : "username webauthn";
   elements.password.autocomplete = isRegister ? "new-password" : "current-password";
 
   if (updateHash) {
@@ -12225,6 +12230,36 @@ window.addEventListener("storage", (event) => {
   const theme = applyTheme(event.newValue, { persist: false });
   if (state.user) state.user.theme = theme;
   if (elements.themeSelect) elements.themeSelect.value = theme;
+});
+
+elements.authPasskeyLogin.addEventListener("click", async () => {
+  if (state.authOperationBusy || state.authMode !== "login") return;
+  const operation = beginAuthFlowOperation();
+  setAuthOperationBusy(true);
+  try {
+    setStatus(t("auth.passkeyAuthenticating"));
+    const optionsData = await api("/api/auth/passkey/options", {
+      method: "POST",
+      body: {},
+      skipAuthReset: true
+    });
+    if (!isCurrentAuthFlowOperation(operation)) return;
+    const response = await getWebAuthnCredential(optionsData.options);
+    if (!isCurrentAuthFlowOperation(operation)) return;
+    const data = await api("/api/auth/passkey/verify", {
+      method: "POST",
+      body: { challengeToken: optionsData.challengeToken, response },
+      skipAuthReset: true
+    });
+    if (!isCurrentAuthFlowOperation(operation)) return;
+    await completeAuthenticatedLogin(data);
+  } catch (error) {
+    if (isCurrentAuthFlowOperation(operation)) {
+      setStatus(normalizeWebAuthnError(error).message, true);
+    }
+  } finally {
+    if (isCurrentAuthFlowOperation(operation)) setAuthOperationBusy(false);
+  }
 });
 
 elements.authForm.addEventListener("submit", async (event) => {

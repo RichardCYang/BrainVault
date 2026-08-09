@@ -187,7 +187,7 @@
           <form id="auth-form" class="auth-form">
             <div class="form-field">
               <label for="username" data-i18n="auth.username">ID</label>
-              <input id="username" name="username" type="text" autocomplete="username" minlength="3" maxlength="40" pattern="[a-zA-Z0-9._-]+" required />
+              <input id="username" name="username" type="text" autocomplete="username webauthn" minlength="3" maxlength="40" pattern="[a-zA-Z0-9._-]+" required />
             </div>
             <div class="form-field">
               <label for="password" data-i18n="auth.password">Password</label>
@@ -203,6 +203,12 @@
 
             <div class="auth-actions">
               <button id="auth-submit" type="submit" data-auth-mode="login">Log in</button>
+            </div>
+
+            <div id="auth-passkey-login-section" class="auth-passkey-login-section">
+              <div class="mfa-login-divider"><span data-i18n="auth.passkeyDivider">or</span></div>
+              <button id="auth-passkey-login" class="secondary auth-passkey-login" type="button" data-i18n="auth.passkeyLogin">Sign in with a passkey</button>
+              <p class="auth-passkey-hint" data-i18n="auth.passkeyLoginHint">No ID or password is required. Use a discoverable passkey registered for BrainVault.</p>
             </div>
 
             <p class="auth-switch">

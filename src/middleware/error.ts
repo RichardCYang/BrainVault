@@ -18,6 +18,23 @@ export function notFoundHandler(req: Request, _res: Response, next: NextFunction
 }
 
 export function errorHandler(error: unknown, req: Request, res: Response, _next: NextFunction) {
+  if (
+    typeof error === "object"
+    && error !== null
+    && "status" in error
+    && Number(error.status) === 413
+    && "type" in error
+    && error.type === "entity.too.large"
+  ) {
+    res.status(413).json({
+      error: {
+        code: "REQUEST_BODY_TOO_LARGE",
+        message: "Request body exceeds the permitted size"
+      }
+    });
+    return;
+  }
+
   if (error instanceof MulterError) {
     const tooLarge = error.code === "LIMIT_FILE_SIZE";
     const dataTransfer = req.originalUrl.startsWith("/api/data/import");

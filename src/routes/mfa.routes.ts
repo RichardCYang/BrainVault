@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import QRCode from "qrcode";
 import { z } from "zod";
@@ -23,7 +24,6 @@ import {
   decryptMfaSecret,
   encryptMfaSecret,
   findMatchingTotpStep,
-  fromBase64Url,
   generateTotpSecret,
   hashOpaqueToken,
   toBase64Url,
@@ -57,7 +57,72 @@ const mfaSessionLifetimeMs = 5 * 60_000;
 const challengeLifetimeMs = 5 * 60_000;
 const totpSetupLifetimeMs = 10 * 60_000;
 const maxMfaAttempts = 8;
+const base64UrlPattern = /^[A-Za-z0-9_-]+$/;
+const maxCredentialIdBytes = 1023;
+const maxUserHandleBytes = 64;
+const maxClientExtensionResultsBytes = 8 * 1024;
+const maxClientExtensionNodes = 256;
+const maxClientExtensionDepth = 8;
+const opaqueTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+const canonicalBase64Url = (maxLength: number) =>
+  z.string().min(1).max(maxLength).regex(base64UrlPattern);
 const mfaFailureCarryWindowMs = env.AUTH_MFA_ACCOUNT_WINDOW_MS;
+
+function isBoundedJsonValue(value: unknown) {
+  const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
+  let visitedNodes = 0;
+
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current) break;
+    visitedNodes += 1;
+    if (visitedNodes > maxClientExtensionNodes || current.depth > maxClientExtensionDepth) return false;
+
+    const candidate = current.value;
+    if (
+      candidate === null
+      || typeof candidate === "boolean"
+      || (typeof candidate === "number" && Number.isFinite(candidate))
+      || (typeof candidate === "string" && candidate.length <= 2_048)
+    ) continue;
+
+    if (Array.isArray(candidate)) {
+      if (candidate.length > 64) return false;
+      for (const item of candidate) stack.push({ value: item, depth: current.depth + 1 });
+      continue;
+    }
+
+    if (typeof candidate !== "object" || Object.getPrototypeOf(candidate) !== Object.prototype) return false;
+    const entries = Object.entries(candidate as Record<string, unknown>);
+    if (entries.length > 32) return false;
+    for (const [key, item] of entries) {
+      if (
+        !key
+        || key.length > 128
+        || key === "__proto__"
+        || key === "prototype"
+        || key === "constructor"
+      ) return false;
+      stack.push({ value: item, depth: current.depth + 1 });
+    }
+  }
+
+  try {
+    return Buffer.byteLength(JSON.stringify(value), "utf8") <= maxClientExtensionResultsBytes;
+  } catch {
+    return false;
+  }
+}
+
+const clientExtensionResultsSchema = z.custom<Record<string, unknown>>(
+  (value) => (
+    typeof value === "object"
+    && value !== null
+    && !Array.isArray(value)
+    && Object.getPrototypeOf(value) === Object.prototype
+    && isBoundedJsonValue(value)
+  )
+);
 
 const currentPasswordSchema = z.object({
   currentPassword: passwordInputSchema(1)
@@ -85,45 +150,45 @@ const passkeyOptionsSchema = z.object({
 });
 
 const registrationResponseSchema = z.object({
-  id: z.string().min(1).max(2000),
-  rawId: z.string().min(1).max(2000),
+  id: canonicalBase64Url(1366),
+  rawId: canonicalBase64Url(1366),
   type: z.literal("public-key"),
   authenticatorAttachment: z.enum(["platform", "cross-platform"]).optional(),
-  clientExtensionResults: z.record(z.string(), z.unknown()),
+  clientExtensionResults: clientExtensionResultsSchema,
   response: z.object({
-    clientDataJSON: z.string().min(1),
-    attestationObject: z.string().min(1),
-    authenticatorData: z.string().optional(),
-    transports: z.array(z.string()).optional(),
+    clientDataJSON: canonicalBase64Url(16_384),
+    attestationObject: canonicalBase64Url(131_072),
+    authenticatorData: canonicalBase64Url(16_384).optional(),
+    transports: z.array(z.string().min(1).max(32)).max(8).optional(),
     publicKeyAlgorithm: z.number().int().optional(),
-    publicKey: z.string().optional()
-  })
-});
+    publicKey: canonicalBase64Url(16_384).optional()
+  }).strict()
+}).strict();
 
 const passkeyRegistrationSchema = z.object({
-  challengeToken: z.string().min(20).max(256),
+  challengeToken: opaqueTokenSchema,
   response: registrationResponseSchema
-});
+}).strict();
 
 const authenticationResponseSchema = z.object({
-  id: z.string().min(1).max(2000),
-  rawId: z.string().min(1).max(2000),
+  id: canonicalBase64Url(1366),
+  rawId: canonicalBase64Url(1366),
   type: z.literal("public-key"),
   authenticatorAttachment: z.enum(["platform", "cross-platform"]).optional(),
-  clientExtensionResults: z.record(z.string(), z.unknown()),
+  clientExtensionResults: clientExtensionResultsSchema,
   response: z.object({
-    clientDataJSON: z.string().min(1),
-    authenticatorData: z.string().min(1),
-    signature: z.string().min(1),
-    userHandle: z.string().optional()
-  })
-});
+    clientDataJSON: canonicalBase64Url(16_384),
+    authenticatorData: canonicalBase64Url(16_384),
+    signature: canonicalBase64Url(4_096),
+    userHandle: canonicalBase64Url(128).optional()
+  }).strict()
+}).strict();
 
 const passkeyLoginVerifySchema = z.object({
-  mfaToken: z.string().min(20).max(256),
-  challengeToken: z.string().min(20).max(256),
+  mfaToken: opaqueTokenSchema,
+  challengeToken: opaqueTokenSchema,
   response: authenticationResponseSchema
-});
+}).strict();
 
 const passkeyIdParamsSchema = z.object({
   id: z.string().min(1).max(64)
@@ -202,6 +267,37 @@ function parseTransports(value: string | null | undefined): AuthenticatorTranspo
 
 function serializeTransports(value: readonly string[] | undefined) {
   return value?.length ? value.join(",") : null;
+}
+
+type WebAuthnBoundaryErrorFactory = () => ApiError;
+
+function decodeBase64UrlStrict(
+  value: string,
+  maxBytes: number,
+  createError: WebAuthnBoundaryErrorFactory
+) {
+  if (!base64UrlPattern.test(value)) throw createError();
+  const decoded = Buffer.from(value, "base64url");
+  if (!decoded.length || decoded.length > maxBytes || decoded.toString("base64url") !== value) {
+    throw createError();
+  }
+  return decoded;
+}
+
+function equalBytes(left: Buffer | Uint8Array, right: Buffer | Uint8Array) {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function assertMatchingCredentialIds(
+  response: { id: string; rawId: string },
+  createError: WebAuthnBoundaryErrorFactory
+) {
+  const id = decodeBase64UrlStrict(response.id, maxCredentialIdBytes, createError);
+  const rawId = decodeBase64UrlStrict(response.rawId, maxCredentialIdBytes, createError);
+  if (!equalBytes(id, rawId)) throw createError();
+  return id;
 }
 
 function parseMetadata(value: string | null) {
@@ -660,7 +756,7 @@ mfaRouter.post(
             transports: parseTransports(passkey.transports)
           })),
           authenticatorSelection: {
-            residentKey: "preferred",
+            residentKey: "required",
             userVerification: "required"
           }
         });
@@ -702,6 +798,10 @@ mfaRouter.post(
         throw new ApiError(400, "WEBAUTHN_CHALLENGE_EXPIRED", "The passkey challenge expired");
       }
 
+      const registrationFailure = () =>
+        new ApiError(400, "PASSKEY_REGISTRATION_FAILED", "The passkey could not be verified");
+      assertMatchingCredentialIds(response, registrationFailure);
+
       let verification;
       try {
         verification = await verifyRegistrationResponse({
@@ -722,7 +822,7 @@ mfaRouter.post(
       const { credential, credentialDeviceType, credentialBackedUp, aaguid } = verification.registrationInfo;
       const name = typeof metadata.name === "string" ? metadata.name : "Passkey";
       const webauthnUserId = typeof metadata.webauthnUserId === "string"
-        ? fromBase64Url(metadata.webauthnUserId)
+        ? decodeBase64UrlStrict(metadata.webauthnUserId, maxUserHandleBytes, registrationFailure)
         : Buffer.from(user.id, "utf8");
       const id = createId("pky");
 
@@ -736,7 +836,7 @@ mfaRouter.post(
           [
             id,
             lockedUser.id,
-            fromBase64Url(credential.id),
+            decodeBase64UrlStrict(credential.id, maxCredentialIdBytes, registrationFailure),
             webauthnUserId,
             Buffer.from(credential.publicKey),
             credential.counter,
@@ -946,7 +1046,9 @@ mfaRouter.post(
       session = activeSession;
       const contextHash = hashOpaqueToken(mfaToken);
       const challenge = await consumeChallenge(challengeToken, activeSession.user_id, "authentication", contextHash);
-      const credentialId = fromBase64Url(response.id);
+      const authenticationFailure = () =>
+        new ApiError(401, "PASSKEY_AUTHENTICATION_FAILED", "The passkey could not be verified");
+      const credentialId = assertMatchingCredentialIds(response, authenticationFailure);
       const passkey = await db.queryOne<PasskeyRow>(
         `SELECT id, user_id, credential_id, webauthn_user_id, public_key, counter, transports,
                 device_type, backed_up, aaguid, name, created_at, updated_at, last_used_at
@@ -955,6 +1057,14 @@ mfaRouter.post(
       );
       if (!passkey) {
         throw new ApiError(401, "PASSKEY_NOT_FOUND", "The passkey is not registered for this account");
+      }
+      if (response.response.userHandle) {
+        const userHandle = decodeBase64UrlStrict(
+          response.response.userHandle,
+          maxUserHandleBytes,
+          authenticationFailure
+        );
+        if (!equalBytes(userHandle, passkey.webauthn_user_id)) throw authenticationFailure();
       }
 
       let verification;
@@ -981,6 +1091,8 @@ mfaRouter.post(
 
       const previousCounter = Number(passkey.counter);
       const newCounter = Number(verification.authenticationInfo.newCounter);
+      if (!Number.isSafeInteger(previousCounter) || previousCounter < 0) throw authenticationFailure();
+      if (!Number.isSafeInteger(newCounter) || newCounter < 0) throw authenticationFailure();
       if (previousCounter > 0 && newCounter <= previousCounter) {
         throw new ApiError(401, "PASSKEY_COUNTER_REGRESSION", "The passkey counter did not advance");
       }

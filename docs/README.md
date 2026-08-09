@@ -27,6 +27,10 @@ docs/<topic>/<YYYY-MM-DD>/<document>
 
 ## Security reviews
 
+### 2026-08-09
+
+- [Direct passkey-login security and reproducibility verification](security/2026-08-09/passkey-direct-login-verification.md)
+
 ### 2026-08-06
 
 - [Security review and remediation report](security/2026-08-06/security-review-and-remediation-report.md)

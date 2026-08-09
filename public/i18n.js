@@ -33,7 +33,11 @@ export const translationCatalogs = {
       login: "Log in",
       register: "Sign up",
       loginSwitch: "New to BrainVault?",
-      registerSwitch: "Already have an account?"
+      registerSwitch: "Already have an account?",
+      passkeyDivider: "or",
+      passkeyLogin: "Sign in with a passkey",
+      passkeyLoginHint: "No ID or password is required. Use a discoverable passkey registered for BrainVault.",
+      passkeyAuthenticating: "Waiting for your passkey..."
     },
     workspace: { aria: "Workspace Navigation", shortcutsAria: "Workspace Shortcuts", home: "Workspace Home", settings: "Settings & Account", section: "Workspace", tools: "Tools", addCollection: "Add Collection", logout: "Log Out" },
     account: {
@@ -814,6 +818,7 @@ export const translationCatalogs = {
       VALIDATION_ERROR: "Please check the entered information.",
       ID_TAKEN: "That ID is already in use.",
       INVALID_CREDENTIALS: "The ID or password is incorrect.",
+      PASSKEY_LOGIN_FAILED: "The passkey could not be verified.",
       CURRENT_PASSWORD_INCORRECT: "The current password is incorrect.",
       MFA_SESSION_EXPIRED: "The two-step verification session expired. Sign in again.",
       INVALID_MFA_CODE: "The verification code is invalid.",
@@ -893,7 +898,11 @@ export const translationCatalogs = {
       login: "ログイン",
       register: "新規登録",
       loginSwitch: "初めてご利用ですか？",
-      registerSwitch: "すでにアカウントをお持ちですか？"
+      registerSwitch: "すでにアカウントをお持ちですか？",
+      passkeyDivider: "または",
+      passkeyLogin: "パスキーでログイン",
+      passkeyLoginHint: "IDとパスワードは不要です。BrainVaultに登録した検出可能なパスキーを使用します。",
+      passkeyAuthenticating: "パスキーでログインしています..."
     },
     workspace: { aria: "ワークスペースナビゲーション", shortcutsAria: "ワークスペースのショートカット", home: "ワークスペースホーム", settings: "設定とアカウント", section: "ワークスペース", tools: "ツール", addCollection: "コレクションを追加", logout: "ログアウト" },
     account: {
@@ -1231,6 +1240,7 @@ export const translationCatalogs = {
       VALIDATION_ERROR: "入力内容を確認してください。",
       ID_TAKEN: "そのIDはすでに使用されています。",
       INVALID_CREDENTIALS: "IDまたはパスワードが正しくありません。",
+      PASSKEY_LOGIN_FAILED: "パスキーを確認できませんでした。",
       CURRENT_PASSWORD_INCORRECT: "現在のパスワードが正しくありません。",
       NEW_PASSWORD_SAME: "現在とは異なるパスワードを選択してください。",
       INVALID_AVATAR: "プロフィール画像が無効か、大きすぎます。",
@@ -1283,7 +1293,11 @@ export const translationCatalogs = {
       login: "로그인",
       register: "회원가입",
       loginSwitch: "회원이 아니신가요?",
-      registerSwitch: "이미 계정이 있으신가요?"
+      registerSwitch: "이미 계정이 있으신가요?",
+      passkeyDivider: "또는",
+      passkeyLogin: "패스키로 바로 로그인",
+      passkeyLoginHint: "아이디와 비밀번호 없이 BrainVault에 등록한 발견 가능한 패스키를 사용합니다.",
+      passkeyAuthenticating: "패스키로 로그인하고 있습니다..."
     },
     workspace: { aria: "워크스페이스 탐색", shortcutsAria: "워크스페이스 바로가기", home: "워크스페이스 홈", settings: "설정 및 계정", section: "워크스페이스", tools: "도구", addCollection: "컬렉션 추가", logout: "로그아웃" },
     account: {
@@ -1938,6 +1952,7 @@ export const translationCatalogs = {
       VALIDATION_ERROR: "입력한 내용을 확인하세요.",
       ID_TAKEN: "이미 사용 중인 아이디입니다.",
       INVALID_CREDENTIALS: "아이디 또는 비밀번호가 올바르지 않습니다.",
+      PASSKEY_LOGIN_FAILED: "패스키를 확인하지 못했습니다.",
       CURRENT_PASSWORD_INCORRECT: "현재 비밀번호가 올바르지 않습니다.",
       MFA_SESSION_EXPIRED: "2단계 인증 시간이 만료되었습니다. 다시 로그인하세요.",
       INVALID_MFA_CODE: "인증 코드가 올바르지 않습니다.",
@@ -2017,7 +2032,11 @@ export const translationCatalogs = {
       login: "Se connecter",
       register: "S’inscrire",
       loginSwitch: "Nouveau sur BrainVault ?",
-      registerSwitch: "Vous avez déjà un compte ?"
+      registerSwitch: "Vous avez déjà un compte ?",
+      passkeyDivider: "ou",
+      passkeyLogin: "Se connecter avec une clé d’accès",
+      passkeyLoginHint: "Aucun identifiant ni mot de passe requis. Utilisez une clé d’accès détectable enregistrée pour BrainVault.",
+      passkeyAuthenticating: "Connexion avec votre clé d’accès..."
     },
     workspace: { aria: "Navigation de l’espace de travail", shortcutsAria: "Raccourcis de l’espace de travail", home: "Accueil de l’espace", settings: "Paramètres et compte", section: "Espace de travail", tools: "Outils", addCollection: "Ajouter une collection", logout: "Se déconnecter" },
     account: {
@@ -2355,6 +2374,7 @@ export const translationCatalogs = {
       VALIDATION_ERROR: "Vérifiez les informations saisies.",
       ID_TAKEN: "Cet identifiant est déjà utilisé.",
       INVALID_CREDENTIALS: "L’identifiant ou le mot de passe est incorrect.",
+      PASSKEY_LOGIN_FAILED: "La clé d’accès n’a pas pu être vérifiée.",
       CURRENT_PASSWORD_INCORRECT: "Le mot de passe actuel est incorrect.",
       NEW_PASSWORD_SAME: "Choisissez un mot de passe différent de l’actuel.",
       INVALID_AVATAR: "L’image de profil est invalide ou trop volumineuse.",
@@ -2407,7 +2427,11 @@ export const translationCatalogs = {
       login: "Anmelden",
       register: "Registrieren",
       loginSwitch: "Neu bei BrainVault?",
-      registerSwitch: "Du hast bereits ein Konto?"
+      registerSwitch: "Du hast bereits ein Konto?",
+      passkeyDivider: "oder",
+      passkeyLogin: "Mit Passkey anmelden",
+      passkeyLoginHint: "Keine ID und kein Passwort erforderlich. Verwende einen für BrainVault registrierten auffindbaren Passkey.",
+      passkeyAuthenticating: "Anmeldung mit Passkey..."
     },
     workspace: { aria: "Arbeitsbereich-Navigation", shortcutsAria: "Arbeitsbereich-Kurzbefehle", home: "Arbeitsbereich-Startseite", settings: "Einstellungen und Konto", section: "Arbeitsbereich", tools: "Werkzeuge", addCollection: "Sammlung hinzufügen", logout: "Abmelden" },
     account: {
@@ -2745,6 +2769,7 @@ export const translationCatalogs = {
       VALIDATION_ERROR: "Bitte prüfe die eingegebenen Daten.",
       ID_TAKEN: "Diese ID wird bereits verwendet.",
       INVALID_CREDENTIALS: "ID oder Passwort ist falsch.",
+      PASSKEY_LOGIN_FAILED: "Der Passkey konnte nicht verifiziert werden.",
       CURRENT_PASSWORD_INCORRECT: "Das aktuelle Passwort ist falsch.",
       NEW_PASSWORD_SAME: "Wähle ein anderes Passwort als das aktuelle.",
       INVALID_AVATAR: "Das Profilbild ist ungültig oder zu groß.",
@@ -2797,7 +2822,11 @@ export const translationCatalogs = {
       login: "Iniciar sesión",
       register: "Registrarse",
       loginSwitch: "¿Eres nuevo en BrainVault?",
-      registerSwitch: "¿Ya tienes una cuenta?"
+      registerSwitch: "¿Ya tienes una cuenta?",
+      passkeyDivider: "o",
+      passkeyLogin: "Iniciar sesión con una clave de acceso",
+      passkeyLoginHint: "No necesitas ID ni contraseña. Usa una clave de acceso detectable registrada en BrainVault.",
+      passkeyAuthenticating: "Iniciando sesión con tu clave de acceso..."
     },
     workspace: { aria: "Navegación del espacio de trabajo", shortcutsAria: "Accesos del espacio de trabajo", home: "Inicio del espacio", settings: "Ajustes y cuenta", section: "Espacio de trabajo", tools: "Herramientas", addCollection: "Añadir colección", logout: "Cerrar sesión" },
     account: {
@@ -3135,6 +3164,7 @@ export const translationCatalogs = {
       VALIDATION_ERROR: "Revisa la información introducida.",
       ID_TAKEN: "Ese ID ya está en uso.",
       INVALID_CREDENTIALS: "El ID o la contraseña no son correctos.",
+      PASSKEY_LOGIN_FAILED: "No se pudo verificar la clave de acceso.",
       CURRENT_PASSWORD_INCORRECT: "La contraseña actual no es correcta.",
       NEW_PASSWORD_SAME: "Elige una contraseña distinta de la actual.",
       INVALID_AVATAR: "La imagen de perfil no es válida o es demasiado grande.",
@@ -3187,7 +3217,11 @@ export const translationCatalogs = {
       login: "Entrar",
       register: "Cadastrar-se",
       loginSwitch: "Novo no BrainVault?",
-      registerSwitch: "Já tem uma conta?"
+      registerSwitch: "Já tem uma conta?",
+      passkeyDivider: "ou",
+      passkeyLogin: "Entrar com uma chave de acesso",
+      passkeyLoginHint: "Não é necessário ID nem senha. Use uma chave de acesso detectável registrada no BrainVault.",
+      passkeyAuthenticating: "Entrando com sua chave de acesso..."
     },
     workspace: { aria: "Navegação do espaço de trabalho", shortcutsAria: "Atalhos do espaço de trabalho", home: "Início do espaço", settings: "Configurações e conta", section: "Espaço de trabalho", tools: "Ferramentas", addCollection: "Adicionar coleção", logout: "Sair" },
     account: {
@@ -3525,6 +3559,7 @@ export const translationCatalogs = {
       VALIDATION_ERROR: "Verifique as informações digitadas.",
       ID_TAKEN: "Esse ID já está em uso.",
       INVALID_CREDENTIALS: "O ID ou a senha está incorreto.",
+      PASSKEY_LOGIN_FAILED: "Não foi possível verificar a chave de acesso.",
       CURRENT_PASSWORD_INCORRECT: "A senha atual está incorreta.",
       NEW_PASSWORD_SAME: "Escolha uma senha diferente da atual.",
       INVALID_AVATAR: "A imagem do perfil é inválida ou muito grande.",

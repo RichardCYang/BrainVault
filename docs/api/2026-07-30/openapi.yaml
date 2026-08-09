@@ -75,6 +75,78 @@ components:
           minLength: 8
           maxLength: 128
           example: use-a-unique-password
+    PasskeyDirectOptionsInput:
+      type: object
+      description: Username-less option generation accepts no account identifier or other properties.
+      additionalProperties: false
+      properties: {}
+    PasskeyDirectAuthenticatorResponse:
+      type: object
+      required: [clientDataJSON, authenticatorData, signature, userHandle]
+      additionalProperties: false
+      properties:
+        clientDataJSON:
+          type: string
+          minLength: 1
+          maxLength: 16384
+          pattern: '^[A-Za-z0-9_-]+$'
+        authenticatorData:
+          type: string
+          minLength: 1
+          maxLength: 16384
+          pattern: '^[A-Za-z0-9_-]+$'
+        signature:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          pattern: '^[A-Za-z0-9_-]+$'
+        userHandle:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_-]+$'
+          description: Required for discoverable login and matched to the credential's stored WebAuthn user ID.
+    PasskeyDirectCredential:
+      type: object
+      required: [id, rawId, type, clientExtensionResults, response]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 1366
+          pattern: '^[A-Za-z0-9_-]+$'
+        rawId:
+          type: string
+          minLength: 1
+          maxLength: 1366
+          pattern: '^[A-Za-z0-9_-]+$'
+          description: Must be canonical base64url and decode to the same bytes as id.
+        type:
+          type: string
+          const: public-key
+        authenticatorAttachment:
+          type: string
+          enum: [platform, cross-platform]
+        clientExtensionResults:
+          type: object
+          description: JSON object limited at runtime to 8 KiB, 256 nodes, depth 8, bounded keys, arrays, and strings.
+          additionalProperties: true
+        response:
+          $ref: '#/components/schemas/PasskeyDirectAuthenticatorResponse'
+    PasskeyDirectVerifyInput:
+      type: object
+      required: [challengeToken, response]
+      additionalProperties: false
+      properties:
+        challengeToken:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: One-time opaque token bound to the anonymous HttpOnly ceremony cookie.
+        response:
+          $ref: '#/components/schemas/PasskeyDirectCredential'
     AuthResponse:
       type: object
       required: [user]
@@ -1070,6 +1142,58 @@ paths:
                 oneOf:
                   - $ref: '#/components/schemas/AuthResponse'
                   - $ref: '#/components/schemas/MfaRequiredResponse'
+  /api/auth/passkey/options:
+    post:
+      security: []
+      summary: Create username-less discoverable-passkey authentication options
+      description: Issues an empty allowCredentials list, requires user verification, and binds the one-time challenge to an HttpOnly SameSite=Strict ceremony cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasskeyDirectOptionsInput'
+      responses:
+        '200':
+          description: WebAuthn authentication options and one-time challenge token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnOptionsResponse'
+        '403':
+          description: Missing or disallowed request origin
+        '415':
+          description: Authentication endpoints accept only application/json
+        '429':
+          description: Passkey option issuance rate limit exceeded
+  /api/auth/passkey/verify:
+    post:
+      security: []
+      summary: Verify a discoverable passkey and create a browser session
+      description: Consumes the browser-bound one-time challenge before full assertion validation, requires exact origin and RP ID plus user verification, and never returns a JWT in JSON.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasskeyDirectVerifyInput'
+      responses:
+        '200':
+          description: User plus an HttpOnly session cookie
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Generic passkey verification failure for malformed, unknown, replayed, or cryptographically invalid assertions
+        '403':
+          description: Missing or disallowed request origin
+        '413':
+          description: Anonymous passkey JSON body exceeds 64 KiB
+        '415':
+          description: Authentication endpoints accept only application/json
+        '429':
+          description: Failed passkey verification rate limit exceeded
   /api/auth/logout:
     post:
       summary: Revoke all current account sessions and clear the browser session cookie

@@ -40,6 +40,7 @@ import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { passwordInputSchema, requireUser, usernameSchema } from "../utils/schemas.js";
 import type { UserRow } from "../types/domain.js";
 import { createMfaLoginSession, getMfaMethods, mfaRouter } from "./mfa.routes.js";
+import { passkeyLoginRouter } from "./passkey-login.routes.js";
 
 export const authRouter = Router();
 
@@ -358,4 +359,5 @@ authRouter.post(
 );
 
 
+authRouter.use("/passkey", passkeyLoginRouter);
 authRouter.use("/mfa", mfaRouter);

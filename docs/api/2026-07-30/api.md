@@ -1,6 +1,6 @@
 # API
 
-Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cookie. The cookie is `Secure` for configured HTTPS deployments, and compatibility bearer sessions default to disabled in production. Login and MFA completion never return the JWT in JSON, and the built-in browser client never stores it in `localStorage`. Accounts with MFA enabled receive a temporary opaque MFA session during login and receive the normal authentication cookie only after completing a TOTP or passkey challenge.
+Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cookie. The cookie is `Secure` for configured HTTPS deployments, and compatibility bearer sessions default to disabled in production. Password, direct-passkey, and MFA completion never return the JWT in JSON, and the built-in browser client never stores it in `localStorage`. Accounts with MFA enabled receive a temporary opaque MFA session during password login and receive the normal authentication cookie only after completing a TOTP or passkey challenge. A discoverable passkey can instead complete the separate username-less primary login ceremony directly from the sign-in screen.
 
 ## Route overview
 
@@ -8,6 +8,8 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | --- | --- | --- |
 | `POST` | `/api/auth/register` | Submit account creation; always returns the same accepted response for valid new or existing IDs |
 | `POST` | `/api/auth/login` | Sign in; returns either a cookie-authenticated user response or a temporary MFA session |
+| `POST` | `/api/auth/passkey/options` | Create username-less discoverable-passkey options and a browser-bound one-time challenge token |
+| `POST` | `/api/auth/passkey/verify` | Verify the discoverable passkey and create the normal `HttpOnly` session cookie |
 | `POST` | `/api/auth/logout` | Revoke the account authentication generation and clear the browser session cookie |
 | `GET` | `/api/auth/mfa/status` | Read configured TOTP and passkey methods |
 | `POST` | `/api/auth/mfa/totp/setup` | Begin current-password-protected TOTP enrollment |
