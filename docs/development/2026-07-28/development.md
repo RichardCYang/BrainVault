@@ -23,7 +23,7 @@
 | `npm start` | Run the compiled server |
 | `npm test` | Validate the lockfile and run the test suite once |
 | `npm run test:watch` | Run tests in watch mode |
-| `npm run preview:capture` | Capture `docs/assets/2026-07-17/preview.png` from the local browser UI |
+| `npm run preview:capture` | Capture `docs/assets/2026-08-09/preview.png` from the local browser UI |
 
 ## Dependency lockfile reliability
 
@@ -89,7 +89,7 @@ Regenerate it locally with:
 npm run preview:capture
 ```
 
-Chromium or Chrome is required. The command updates [`docs/assets/2026-07-17/preview.png`](../../assets/2026-07-17/preview.png).
+Chromium or Chrome is required. The command updates [`docs/assets/2026-08-09/preview.png`](../../assets/2026-08-09/preview.png).
 
 ## Collaboration implementation
 

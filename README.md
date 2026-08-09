@@ -6,7 +6,7 @@ Every row on a page is an editable block that can be formatted, moved, nested, o
 
 ## Preview
 
-![BrainVault main workspace preview with structured project blocks](docs/assets/2026-07-17/preview.png)
+![BrainVault main workspace preview with structured project blocks](docs/assets/2026-08-09/preview.png)
 
 The preview is captured from the real browser UI. See [Development guide](docs/development/2026-07-28/development.md#preview-capture) to regenerate it.
 
