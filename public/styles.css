@@ -1097,6 +1097,7 @@ textarea {
 .doc-expand-button {
   display: grid;
   grid-column: 3;
+  grid-row: 1;
   width: 1.7rem;
   height: 1.7rem;
   place-items: center;
@@ -1134,6 +1135,7 @@ textarea {
 
 .document-item-row > .navigation-more-button {
   grid-column: 2;
+  grid-row: 1;
 }
 
 .document-item-row.has-children > .navigation-more-button {

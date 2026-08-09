@@ -25,6 +25,8 @@ describe("Subpage index and collapsible page navigation", () => {
     expect(styles).toContain(".doc-expand-button");
     expect(styles).toMatch(/\.document-item-row\.has-children\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 1\.75rem 1\.75rem;/);
     expect(styles).toContain(".document-item-row > .navigation-more-button");
+    expect(styles).toMatch(/\.doc-expand-button\s*\{[\s\S]*?grid-column:\s*3;[\s\S]*?grid-row:\s*1;/);
+    expect(styles).toMatch(/\.document-item-row > \.navigation-more-button\s*\{[\s\S]*?grid-column:\s*2;[\s\S]*?grid-row:\s*1;/);
   });
 
   it("persists collapse state across navigation tree rerenders and keeps new subpages expanded", () => {
