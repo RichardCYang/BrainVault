@@ -44,6 +44,7 @@ import {
   summarizeAiChatData
 } from "./ai-chat-block.js";
 import { emojiCategoryDefinitions, emojiRecords } from "./emoji-data.js";
+import { createEmojiVisual, renderEmojiVisual } from "./emoji-renderer.js";
 import { iconCategoryDefinitions, iconRecords, iconSvgNodes } from "./icon-data.js";
 import { createPageDraftStore } from "./draft-store.js";
 import { createLatestWriteQueue } from "./save-queue.js";
@@ -2932,9 +2933,12 @@ function createIconVisual(iconValue, fallback = "📄") {
     return image;
   }
 
+  const emojiValue = value.startsWith(imageIconPrefix) || value.startsWith(builtInIconPrefix) ? fallback : value;
+  if (emojiRecordByValue.has(emojiValue)) return createEmojiVisual(emojiValue);
+
   const emoji = document.createElement("span");
   emoji.className = "app-icon-emoji";
-  emoji.textContent = value.startsWith(imageIconPrefix) || value.startsWith(builtInIconPrefix) ? fallback : value;
+  emoji.textContent = emojiValue;
   emoji.setAttribute("aria-hidden", "true");
   return emoji;
 }
@@ -3174,7 +3178,7 @@ function renderEmojiCategories() {
     button.classList.toggle("active", activeCategory === category.id);
     button.dataset.emojiCategory = category.id;
     if (isIcons) renderIconValue(button, `${builtInIconPrefix}${category.icon}`, "◇");
-    else button.textContent = category.icon;
+    else renderEmojiVisual(button, category.icon);
     const label = isIcons ? getIconCategoryLabel(category) : getEmojiCategoryLabel(category);
     button.title = label;
     button.setAttribute("aria-label", label);
@@ -3206,7 +3210,7 @@ function createEmojiOption(recordIndex) {
   const record = emojiRecords[recordIndex];
   if (!record) return null;
   button.dataset.emojiIndex = String(recordIndex);
-  button.textContent = record[0];
+  renderEmojiVisual(button, record[0]);
   const localizedLabel = getEmojiRecordLabel(record);
   button.setAttribute("aria-label", localizedLabel);
   button.title = getLanguage() === "ko" && record[3] ? `${localizedLabel} · ${record[3]}` : localizedLabel;
@@ -3228,8 +3232,9 @@ function appendEmojiBatch() {
 }
 
 function renderEmojiSkinToneControl() {
-  elements.emojiSkinToneButton.textContent = `👋${state.emojiSkinTone}`;
+  renderEmojiVisual(elements.emojiSkinToneButton, `👋${state.emojiSkinTone}`);
   elements.emojiSkinToneMenu.querySelectorAll("[data-emoji-skin-tone]").forEach((button) => {
+    renderEmojiVisual(button, `👋${button.dataset.emojiSkinTone ?? ""}`);
     button.setAttribute("aria-checked", String(button.dataset.emojiSkinTone === state.emojiSkinTone));
   });
 }

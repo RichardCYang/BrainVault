@@ -9859,7 +9859,8 @@ body.search-dialog-open {
 }
 
 .app-icon-svg,
-.app-icon-image {
+.app-icon-image,
+.app-icon-emoji-image {
   display: block;
   width: 1em;
   height: 1em;
@@ -9869,6 +9870,10 @@ body.search-dialog-open {
 .app-icon-image {
   border-radius: 0.22em;
   object-fit: cover;
+}
+
+.app-icon-emoji-image {
+  object-fit: contain;
 }
 
 .app-icon-emoji {
@@ -9899,7 +9904,8 @@ body.search-dialog-open {
 }
 
 .page-emoji-button .app-icon-svg,
-.page-emoji-button .app-icon-image {
+.page-emoji-button .app-icon-image,
+.page-emoji-button .app-icon-emoji-image {
   width: 0.92em;
   height: 0.92em;
 }
@@ -10431,7 +10437,8 @@ body.search-dialog-open {
 }
 
 .emoji-custom-preview .app-icon-svg,
-.emoji-custom-preview .app-icon-image {
+.emoji-custom-preview .app-icon-image,
+.emoji-custom-preview .app-icon-emoji-image {
   width: 0.82em;
   height: 0.82em;
 }
