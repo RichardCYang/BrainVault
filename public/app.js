@@ -81,6 +81,12 @@ import {
   getIconPickerTargetKey
 } from "./icon-picker-operation.js";
 import {
+  customIconLibraryLimit,
+  listCustomIconLibrary,
+  rememberCustomIconLibraryEntries,
+  rememberCustomIconLibraryEntry
+} from "./custom-icon-library.js";
+import {
   createAccountAvatarOperationGuard,
   getAccountAvatarTargetKey,
   isAccountProfileDraftUnchanged
@@ -137,6 +143,7 @@ let pageTransitionUnlockTimer = null;
 let collaborationRecoveryPanelGeneration = 0;
 const pageCoverOperationGuard = createPageCoverOperationGuard();
 const iconPickerOperationGuard = createIconPickerOperationGuard();
+let customIconLibraryLoadGeneration = 0;
 const accountAvatarOperationGuard = createAccountAvatarOperationGuard();
 const accountProfileSaveGuard = createAccountAvatarOperationGuard();
 const accountLanguageOperationGuard = createAccountAvatarOperationGuard();
@@ -229,6 +236,8 @@ const state = {
   activeIconCategory: "general",
   emojiPickerResults: [],
   emojiRenderedCount: 0,
+  customIconLibrary: [],
+  customIconLibraryUserId: null,
   emojiSkinTone: "",
   emojiSaving: false,
   collaborationSession: null,
@@ -955,6 +964,9 @@ const elements = {
   emojiEmpty: $("#emoji-empty"),
   emojiResetButton: $("#emoji-reset-button"),
   emojiCustomPreview: $("#emoji-custom-preview"),
+  emojiCustomLibraryGrid: $("#emoji-custom-library-grid"),
+  emojiCustomLibraryEmpty: $("#emoji-custom-library-empty"),
+  emojiCustomLibraryCount: $("#emoji-custom-library-count"),
   emojiCustomUrlInput: $("#emoji-custom-url-input"),
   emojiCustomUrlButton: $("#emoji-custom-url-button"),
   emojiCustomFileInput: $("#emoji-custom-file-input"),
@@ -2923,6 +2935,123 @@ function renderIconLabel(container, iconValue, fallback, labelText) {
   container.replaceChildren(icon, label);
 }
 
+function normalizeCustomIconLibraryValue(value) {
+  const source = getCustomImageSource(value);
+  return source ? `${imageIconPrefix}${source}` : null;
+}
+
+function mergeCustomIconLibraryEntries(...groups) {
+  const entriesByValue = new Map();
+
+  for (const entries of groups) {
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      const value = normalizeCustomIconLibraryValue(entry?.value);
+      if (!value) continue;
+      const lastUsedAt = Number(entry?.lastUsedAt);
+      const timestamp = Number.isFinite(lastUsedAt) && lastUsedAt > 0 ? lastUsedAt : 0;
+      const previous = entriesByValue.get(value);
+      if (!previous || timestamp > previous.lastUsedAt) {
+        entriesByValue.set(value, { value, lastUsedAt: timestamp });
+      }
+    }
+  }
+
+  return [...entriesByValue.values()]
+    .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
+    .slice(0, customIconLibraryLimit);
+}
+
+function collectWorkspaceCustomIconLibraryEntries() {
+  const userId = state.user?.id;
+  if (!userId) return [];
+
+  const entries = [];
+  const add = (value, updatedAt) => {
+    const normalized = normalizeCustomIconLibraryValue(value);
+    if (!normalized) return;
+    const timestamp = Date.parse(updatedAt ?? "");
+    entries.push({
+      value: normalized,
+      lastUsedAt: Number.isFinite(timestamp) ? timestamp : 0
+    });
+  };
+
+  add(state.user?.defaultCollectionIcon, state.user?.updatedAt);
+  for (const page of state.allPages) {
+    if (page?.ownerId === userId) add(page.icon, page.updatedAt);
+  }
+  if (state.selectedPage?.ownerId === userId) add(state.selectedPage.icon, state.selectedPage.updatedAt);
+
+  return mergeCustomIconLibraryEntries(entries);
+}
+
+function renderCustomIconLibrary() {
+  const entries = state.customIconLibrary;
+  elements.emojiCustomLibraryCount.textContent = t("emoji.customLibraryCount", {
+    count: formatNumber(entries.length)
+  });
+
+  const fragment = document.createDocumentFragment();
+  entries.forEach((entry, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "emoji-option custom-icon-option";
+    button.dataset.customIconIndex = String(index);
+    button.setAttribute("role", "option");
+    const label = t("emoji.customLibraryItem", { index: formatNumber(index + 1) });
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    renderIconValue(button, entry.value, "📄");
+    fragment.append(button);
+  });
+
+  elements.emojiCustomLibraryGrid.replaceChildren(fragment);
+  elements.emojiCustomLibraryGrid.classList.toggle("hidden", entries.length === 0);
+  elements.emojiCustomLibraryEmpty.classList.toggle("hidden", entries.length > 0);
+}
+
+async function refreshCustomIconLibrary() {
+  const userId = state.user?.id ?? null;
+  const generation = ++customIconLibraryLoadGeneration;
+
+  if (state.customIconLibraryUserId !== userId) {
+    state.customIconLibraryUserId = userId;
+    state.customIconLibrary = [];
+  }
+
+  const workspaceEntries = collectWorkspaceCustomIconLibraryEntries();
+  state.customIconLibrary = mergeCustomIconLibraryEntries(workspaceEntries, state.customIconLibrary);
+  if (state.activeIconPickerTab === "custom") renderCustomIconLibrary();
+  if (!userId) return;
+
+  try {
+    const storedEntries = await listCustomIconLibrary(userId);
+    if (generation !== customIconLibraryLoadGeneration || state.user?.id !== userId) return;
+    state.customIconLibrary = mergeCustomIconLibraryEntries(storedEntries, workspaceEntries, state.customIconLibrary);
+    if (state.activeIconPickerTab === "custom") renderCustomIconLibrary();
+    void rememberCustomIconLibraryEntries(userId, workspaceEntries).catch(() => {});
+  } catch {
+    // The workspace-derived list still provides reuse when IndexedDB is unavailable.
+  }
+}
+
+function rememberCustomIconSelection(value) {
+  const normalized = normalizeCustomIconLibraryValue(value);
+  const userId = state.user?.id;
+  if (!normalized || !userId) return;
+
+  if (state.customIconLibraryUserId !== userId) {
+    state.customIconLibraryUserId = userId;
+    state.customIconLibrary = [];
+  }
+
+  const entry = { value: normalized, lastUsedAt: Date.now() };
+  state.customIconLibrary = mergeCustomIconLibraryEntries([entry], state.customIconLibrary);
+  if (state.activeIconPickerTab === "custom") renderCustomIconLibrary();
+  void rememberCustomIconLibraryEntry(userId, normalized, entry.lastUsedAt).catch(() => {});
+}
+
 function isEmojiIconValue(value) {
   return typeof value === "string" && !value.startsWith(builtInIconPrefix) && !value.startsWith(imageIconPrefix) && emojiRecordByValue.has(value);
 }
@@ -3146,6 +3275,7 @@ function renderEmojiPicker() {
   renderIconPickerTabs();
   if (state.activeIconPickerTab === "custom") {
     renderCustomIconPreview();
+    renderCustomIconLibrary();
     return;
   }
 
@@ -3175,6 +3305,7 @@ function setIconPickerTab(tabName, { focus = true } = {}) {
     const currentSource = getCustomImageSource(state.emojiPickerTarget?.currentEmoji);
     elements.emojiCustomUrlInput.value = currentSource?.startsWith("http") ? currentSource : "";
     elements.emojiCustomFileInput.value = "";
+    void refreshCustomIconLibrary();
   }
   renderEmojiPicker();
   if (!focus) return;
@@ -3316,6 +3447,7 @@ async function saveEmojiSelection(emoji, { operation = null } = {}) {
       const data = result.value;
       state.user = data.user;
       if (isEmojiIconValue(emoji)) rememberRecentEmoji(emoji);
+      else if (getCustomImageSource(emoji)) rememberCustomIconSelection(emoji);
       renderDefaultCollection();
       syncVisibleBlocksToState();
       renderSelectedPage();
@@ -3345,6 +3477,7 @@ async function saveEmojiSelection(emoji, { operation = null } = {}) {
         updatedAt: data.page.updatedAt
       });
       if (isEmojiIconValue(emoji)) rememberRecentEmoji(emoji);
+      else if (getCustomImageSource(emoji)) rememberCustomIconSelection(emoji);
       renderSelectedPage();
       if (iconPickerOperationGuard.isCurrent(activeOperation, targetKey)) {
         closeEmojiPicker({ restoreFocus: false });
@@ -11519,6 +11652,20 @@ function handleEmojiOptionClick(event) {
   if (record) void saveEmojiSelection(record[0]);
 }
 
+function handleCustomIconLibraryClick(event) {
+  if (state.emojiSaving) return;
+  const button = event.target.closest("[data-custom-icon-index]");
+  if (!button) return;
+
+  const index = Number(button.dataset.customIconIndex);
+  const entry = state.customIconLibrary[index];
+  if (!entry?.value || !getCustomImageSource(entry.value)) return;
+
+  setCustomIconMessage();
+  renderCustomIconPreview(entry.value);
+  void saveEmojiSelection(entry.value);
+}
+
 function handleIconPickerTabKeydown(event) {
   const currentTab = event.target.closest("[data-icon-picker-tab]");
   if (!currentTab) return;
@@ -11638,6 +11785,7 @@ elements.emojiGrid.addEventListener("scroll", () => {
     appendEmojiBatch();
   }
 });
+elements.emojiCustomLibraryGrid.addEventListener("click", handleCustomIconLibraryClick);
 elements.emojiCustomUrlButton.addEventListener("click", () => void applyCustomIconUrl());
 elements.emojiCustomUrlInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {

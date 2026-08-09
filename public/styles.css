@@ -10173,6 +10173,51 @@ body.search-dialog-open {
   padding: 1.15rem;
 }
 
+.emoji-custom-library {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 0.3rem;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  padding: 0.25rem 0.15rem 0.5rem;
+}
+
+.emoji-custom-library-heading {
+  padding-inline: 0.7rem;
+}
+
+.emoji-custom-library-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 0.12rem;
+  max-height: 10.6rem;
+  overflow-y: auto;
+  padding: 0.05rem 0.58rem 0.3rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(64, 137, 194, 0.24) transparent;
+}
+
+.emoji-custom-library-empty {
+  margin: 0;
+  padding: 0.65rem 0.85rem 0.8rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.emoji-option.custom-icon-option {
+  overflow: hidden;
+}
+
+.emoji-option.custom-icon-option .app-icon-image {
+  width: 72%;
+  height: 72%;
+  object-fit: contain;
+  border-radius: 5px;
+}
+
 .emoji-custom-preview-card {
   display: grid;
   align-content: start;
@@ -10316,7 +10361,8 @@ body.search-dialog-open {
   }
 
   .emoji-grid,
-  .emoji-recent-grid {
+  .emoji-recent-grid,
+  .emoji-custom-library-grid {
     grid-template-columns: repeat(7, minmax(0, 1fr));
   }
 

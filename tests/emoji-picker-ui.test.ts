@@ -8,6 +8,7 @@ const app = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
 const styles = fs.readFileSync(path.join(root, "public/styles.css"), "utf8");
 const dataSource = fs.readFileSync(path.join(root, "public/emoji-data.js"), "utf8");
 const iconDataSource = fs.readFileSync(path.join(root, "public/icon-data.js"), "utf8");
+const customIconLibrarySource = fs.readFileSync(path.join(root, "public/custom-icon-library.js"), "utf8");
 const migration = fs.readFileSync(path.join(root, "migrations/009_pages_collection_kind.sql"), "utf8");
 const customIconMigration = fs.readFileSync(path.join(root, "migrations/026_page_custom_icons.sql"), "utf8");
 
@@ -37,6 +38,8 @@ describe("page and collection emoji picker", () => {
     expect(index).not.toMatch(/id="emoji-tab-(?:icons|custom)"[^>]*disabled/);
     expect(index).toContain('id="emoji-custom-url-input"');
     expect(index).toContain('id="emoji-custom-file-input"');
+    expect(index).toContain('id="emoji-custom-library-grid"');
+    expect(index).toContain('id="emoji-custom-library-count"');
     expect(index).toContain('accept="image/png,image/jpeg,image/webp"');
     expect(styles).toContain(".emoji-picker");
     expect(styles).toContain(".emoji-picker-tab.active::after");
@@ -44,6 +47,8 @@ describe("page and collection emoji picker", () => {
     expect(styles).toContain(".emoji-category-button");
     expect(styles).toContain(".emoji-skin-tone-menu");
     expect(styles).toContain(".emoji-custom-panel");
+    expect(styles).toContain(".emoji-custom-library-grid");
+    expect(styles).toContain(".emoji-option.custom-icon-option");
     expect(styles).toContain(".emoji-option.icon-option");
     expect(styles).toContain(".app-icon-image");
     expect(app).toContain('const emojiSkinToneStorageKey = "brainvault.emojiSkinTone"');
@@ -54,6 +59,7 @@ describe("page and collection emoji picker", () => {
     expect(app).toContain('event.target.closest("[data-icon-name]")');
     expect(app).toContain("new FileReader()");
     expect(app).toContain("new URL(source)");
+    expect(app).toContain('from "./custom-icon-library.js"');
     expect(app).toContain("handleIconPickerTabKeydown");
     expect(styles).toMatch(/\.emoji-picker\s*\{[^}]*border-radius:\s*var\(--radius-lg\);/s);
     expect(styles).toMatch(/\.emoji-search-label\s*\{[^}]*border-radius:\s*var\(--radius-md\);/s);
@@ -80,6 +86,16 @@ describe("page and collection emoji picker", () => {
     expect(app).toContain('renderIconValue(elements.pageIconButton, page.icon, "📄")');
     expect(customIconMigration).toMatch(/default_collection_icon MEDIUMTEXT/i);
     expect(customIconMigration).toMatch(/icon MEDIUMTEXT/i);
+  });
+
+  it("keeps uploaded custom icons reusable without re-uploading", () => {
+    expect(customIconLibrarySource).toContain('globalThis.indexedDB.open(customIconLibraryDbName');
+    expect(customIconLibrarySource).toContain("customIconLibraryLimit = 36");
+    expect(app).toContain("collectWorkspaceCustomIconLibraryEntries()");
+    expect(app).toContain("listCustomIconLibrary(userId)");
+    expect(app).toContain("rememberCustomIconLibraryEntry(userId, normalized, entry.lastUsedAt)");
+    expect(app).toContain('event.target.closest("[data-custom-icon-index]")');
+    expect(app).toContain("rememberCustomIconSelection(emoji)");
   });
 
   it("persists selected emojis and keeps collection identity separate from the icon", () => {
