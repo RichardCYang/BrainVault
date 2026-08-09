@@ -2896,6 +2896,7 @@ function createBuiltInIconSvg(name) {
 function getCustomImageSource(iconValue) {
   if (typeof iconValue !== "string" || !iconValue.startsWith(imageIconPrefix)) return null;
   const source = iconValue.slice(imageIconPrefix.length).trim();
+  if (/^\/upload\/icons\/[A-Za-z0-9_-]{1,64}\/[A-Za-z0-9_-]{1,96}\.(?:png|jpg|webp|ico)$/.test(source)) return source;
   if (/^data:image\/(?:png|jpeg|webp|vnd\.microsoft\.icon|x-icon);base64,[a-z0-9+/]+=*$/i.test(source)) return source;
   try {
     const url = new URL(source);
@@ -2922,7 +2923,8 @@ function createIconVisual(iconValue, fallback = "📄") {
     image.decoding = "async";
     image.referrerPolicy = "no-referrer";
     image.setAttribute("aria-hidden", "true");
-    image.addEventListener("error", () => image.replaceWith(createIconVisual(fallback, "📄")), { once: true });
+    const missingFileFallback = imageSource.startsWith("/upload/icons/") ? "📄" : fallback;
+    image.addEventListener("error", () => image.replaceWith(createIconVisual(missingFileFallback, "📄")), { once: true });
     return image;
   }
 
@@ -3044,7 +3046,7 @@ async function refreshCustomIconLibrary() {
     if (state.activeIconPickerTab === "custom") renderCustomIconLibrary();
     void rememberCustomIconLibraryEntries(userId, workspaceEntries).catch(() => {});
   } catch {
-    // The workspace-derived list still provides reuse when IndexedDB is unavailable.
+    // The workspace-derived list still provides reuse when the server library is unavailable.
   }
 }
 
@@ -3387,41 +3389,25 @@ function detectCustomIconMimeType(bytes) {
   return null;
 }
 
-function bytesToBase64(bytes) {
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
-  }
-  return btoa(binary);
+async function validateCustomIconFileContents(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  return Boolean(detectCustomIconMimeType(bytes));
 }
 
-function isSupportedCustomIconFile(file) {
-  const mimeType = String(file?.type ?? "").trim().toLowerCase();
-  if (customIconMimeTypes.includes(mimeType)) return true;
-  return /\.(?:png|jpe?g|webp|ico)$/i.test(String(file?.name ?? ""));
-}
-
-function readCustomIconFile(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      if (!(reader.result instanceof ArrayBuffer)) {
-        reject(new Error("INVALID_CUSTOM_ICON_FILE"));
-        return;
-      }
-      const bytes = new Uint8Array(reader.result);
-      const mimeType = detectCustomIconMimeType(bytes);
-      if (!mimeType) {
-        reject(new Error("INVALID_CUSTOM_ICON_FILE"));
-        return;
-      }
-      resolve(`data:${mimeType};base64,${bytesToBase64(bytes)}`);
-    }, { once: true });
-    reader.addEventListener("error", () => reject(reader.error ?? new Error("CUSTOM_ICON_READ_FAILED")), { once: true });
-    reader.readAsArrayBuffer(file);
+async function uploadCustomIconFile(file) {
+  const formData = new FormData();
+  formData.append("icon", file, file.name || "icon");
+  const data = await api("/api/custom-icons", {
+    method: "POST",
+    body: formData
   });
+  const value = data?.icon?.value;
+  if (typeof value !== "string" || !value.startsWith(`${imageIconPrefix}/upload/icons/`) || !getCustomImageSource(value)) {
+    throw new Error(t("errors.invalidResponse"));
+  }
+  return value;
 }
+
 
 function positionEmojiPicker(trigger) {
   elements.emojiPicker.style.removeProperty("--emoji-picker-left");
@@ -11843,15 +11829,16 @@ async function applyCustomIconFile(file) {
   const operation = iconPickerOperationGuard.begin(targetKey);
   try {
     setCustomIconMessage(t("emoji.customReading"));
-    const dataUrl = await readCustomIconFile(file);
+    if (!(await validateCustomIconFileContents(file))) throw new Error("INVALID_CUSTOM_ICON_FILE");
     if (!iconPickerOperationGuard.isCurrent(operation, getIconPickerTargetKey(state.emojiPickerTarget))) return;
-    const value = `${imageIconPrefix}${dataUrl}`;
+    const value = await uploadCustomIconFile(file);
+    if (!iconPickerOperationGuard.isCurrent(operation, getIconPickerTargetKey(state.emojiPickerTarget))) return;
     renderCustomIconPreview(value);
     setCustomIconMessage();
     await saveEmojiSelection(value, { operation });
-  } catch {
+  } catch (error) {
     if (iconPickerOperationGuard.isCurrent(operation, getIconPickerTargetKey(state.emojiPickerTarget))) {
-      setCustomIconMessage(t("emoji.customInvalidFile"), true);
+      setCustomIconMessage(error?.message === "INVALID_CUSTOM_ICON_FILE" ? t("emoji.customInvalidFile") : error?.message ?? t("emoji.customInvalidFile"), true);
     }
   } finally {
     if (iconPickerOperationGuard.isCurrent(operation, getIconPickerTargetKey(state.emojiPickerTarget))) {

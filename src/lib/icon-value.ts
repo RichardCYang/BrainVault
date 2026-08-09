@@ -9,6 +9,7 @@ export const maxRemoteIconUrlLength = 2048;
 export const maxIconValueLength = Math.ceil((maxCustomIconBytes * 4) / 3) + 256;
 
 const builtInIconPattern = /^icon:[a-z0-9-]{1,27}$/;
+const uploadedImagePathPattern = /^\/upload\/icons\/[A-Za-z0-9_-]{1,64}\/[A-Za-z0-9_-]{1,96}\.(?:png|jpg|webp|ico)$/;
 const imageDataUrlPattern = /^data:image\/(png|jpeg|webp|vnd\.microsoft\.icon|x-icon);base64,([A-Za-z0-9+/]+={0,2})$/i;
 
 function hasExpectedImageSignature(mimeType: string, bytes: Buffer) {
@@ -42,6 +43,8 @@ function hasExpectedImageSignature(mimeType: string, bytes: Buffer) {
 
 function normalizeImageIconSource(source: string) {
   const value = source.trim();
+  if (uploadedImagePathPattern.test(value)) return value;
+
   if (value.length <= maxRemoteIconUrlLength) {
     try {
       const url = new URL(value);

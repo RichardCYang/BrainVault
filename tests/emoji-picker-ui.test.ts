@@ -11,6 +11,9 @@ const iconDataSource = fs.readFileSync(path.join(root, "public/icon-data.js"), "
 const customIconLibrarySource = fs.readFileSync(path.join(root, "public/custom-icon-library.js"), "utf8");
 const migration = fs.readFileSync(path.join(root, "migrations/009_pages_collection_kind.sql"), "utf8");
 const customIconMigration = fs.readFileSync(path.join(root, "migrations/026_page_custom_icons.sql"), "utf8");
+const customIconFilesMigration = fs.readFileSync(path.join(root, "migrations/041_custom_icon_files.sql"), "utf8");
+const customIconRoutes = fs.readFileSync(path.join(root, "src/routes/custom-icon.routes.ts"), "utf8");
+const customIconStorage = fs.readFileSync(path.join(root, "src/lib/custom-icons.ts"), "utf8");
 
 function readGeneratedEmojiRecords() {
   const prefix = "export const emojiRecords = Object.freeze(";
@@ -57,8 +60,9 @@ describe("page and collection emoji picker", () => {
     expect(app).toContain('const builtInIconPrefix = "icon:"');
     expect(app).toContain('const imageIconPrefix = "image:"');
     expect(app).toContain('event.target.closest("[data-icon-name]")');
-    expect(app).toContain("new FileReader()");
-    expect(app).toContain("reader.readAsArrayBuffer(file)");
+    expect(app).toContain("await file.arrayBuffer()");
+    expect(app).toContain('formData.append("icon", file');
+    expect(app).toContain('api("/api/custom-icons"');
     expect(app).toContain('return "image/vnd.microsoft.icon"');
     expect(app).toContain("hasValidIcoStructure(bytes)");
     expect(app).toContain("new URL(source)");
@@ -91,14 +95,22 @@ describe("page and collection emoji picker", () => {
     expect(customIconMigration).toMatch(/icon MEDIUMTEXT/i);
   });
 
-  it("keeps uploaded custom icons reusable without re-uploading", () => {
-    expect(customIconLibrarySource).toContain('globalThis.indexedDB.open(customIconLibraryDbName');
+  it("stores uploaded custom icons as server files and keeps the library server-backed", () => {
+    expect(customIconLibrarySource).not.toContain("indexedDB");
+    expect(customIconLibrarySource).toContain('const customIconApiPath = "/api/custom-icons"');
     expect(customIconLibrarySource).toContain("customIconLibraryLimit = 36");
+    expect(customIconFilesMigration).toContain("CREATE TABLE IF NOT EXISTS custom_icons");
+    expect(customIconFilesMigration).toContain("file_path VARCHAR(512) NOT NULL");
+    expect(customIconStorage).toContain('path.resolve(process.cwd(), "upload", "icons")');
+    expect(customIconStorage).toContain("writeFile(filePath, bytes");
+    expect(customIconRoutes).toContain('customIconRouter.post("/", parseCustomIconUpload');
+    expect(customIconRoutes).toContain('storage: multer.memoryStorage()');
     expect(app).toContain("collectWorkspaceCustomIconLibraryEntries()");
     expect(app).toContain("listCustomIconLibrary(userId)");
     expect(app).toContain("rememberCustomIconLibraryEntry(userId, normalized, entry.lastUsedAt)");
     expect(app).toContain('event.target.closest("[data-custom-icon-index]")');
     expect(app).toContain("rememberCustomIconSelection(emoji)");
+    expect(app).toContain('imageSource.startsWith("/upload/icons/") ? "📄" : fallback');
   });
 
   it("persists selected emojis and keeps collection identity separate from the icon", () => {

@@ -26,7 +26,10 @@ describe("page and collection icon values", () => {
     expect(normalizeIconValue(null)).toBeNull();
   });
 
-  it("accepts HTTP(S) image URLs and supported image data URLs", () => {
+  it("accepts server-upload paths, HTTP(S) image URLs, and supported legacy data URLs", () => {
+    expect(normalizeIconValue("image:/upload/icons/usr_123/cicon_abc123.png")).toBe(
+      "image:/upload/icons/usr_123/cicon_abc123.png"
+    );
     expect(normalizeIconValue("image:https://example.com/note.png")).toBe(
       "image:https://example.com/note.png"
     );
@@ -39,6 +42,7 @@ describe("page and collection icon values", () => {
 
   it("rejects unsafe schemes, unsupported formats, malformed images, and oversized uploads", () => {
     expect(isValidIconValue("image:javascript:alert(1)")).toBe(false);
+    expect(isValidIconValue("image:/upload/icons/../../secret.png")).toBe(false);
     expect(isValidIconValue("image:https://user:secret@example.com/icon.png")).toBe(false);
     expect(isValidIconValue("image:data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=")).toBe(false);
     expect(isValidIconValue("image:data:image/png;base64,AAAA")).toBe(false);

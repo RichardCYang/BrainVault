@@ -13,11 +13,13 @@ import { blockRouter } from "./routes/block.routes.js";
 import { searchRouter } from "./routes/search.routes.js";
 import { dataRouter } from "./routes/data.routes.js";
 import { collaborationRouter } from "./routes/collaboration.routes.js";
+import { customIconRouter } from "./routes/custom-icon.routes.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.js";
 import { requireAuth } from "./middleware/auth.js";
 import { createHttpsEnforcementMiddleware } from "./middleware/https.js";
 import { setPrivateNoStoreCacheControl } from "./lib/cache-control.js";
 import { createExpressTrustProxySetting } from "./lib/reverse-proxy.js";
+import { customIconUploadRoot } from "./lib/custom-icons.js";
 import {
   developmentAccessLogFormat,
   productionAccessLogFormat,
@@ -138,6 +140,19 @@ export function createApp() {
       setHeaders: setBrowserModuleHeaders
     })
   );
+  app.use(
+    "/upload/icons",
+    express.static(customIconUploadRoot, {
+      dotfiles: "deny",
+      index: false,
+      redirect: false,
+      setHeaders(res) {
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+        res.setHeader("X-Content-Type-Options", "nosniff");
+      }
+    })
+  );
   app.use(express.static(publicDir, { index: false }));
   if (env.SERVE_INTERNAL_DOCS) {
     app.use(
@@ -167,6 +182,7 @@ export function createApp() {
   app.use("/api", blockRouter);
   app.use("/api/search", searchRouter);
   app.use("/api/data", dataRouter);
+  app.use("/api/custom-icons", customIconRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

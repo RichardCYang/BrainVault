@@ -54,7 +54,7 @@ test("custom icon file reads and save completion UI remain scoped to the origina
   assert.match(saveSelection, /state\.activeIconPickerTab === "custom"[\s\S]*?iconPickerOperationGuard\.isCurrent\(activeOperation, getIconPickerTargetKey\(state\.emojiPickerTarget\)\)/);
 
   const customFile = app.slice(app.indexOf("async function applyCustomIconFile"), app.indexOf('elements.emojiPickerClose.addEventListener'));
-  assert.match(customFile, /const operation = iconPickerOperationGuard\.begin\(targetKey\);[\s\S]*?await readCustomIconFile\(file\);/);
+  assert.match(customFile, /const operation = iconPickerOperationGuard\.begin\(targetKey\);[\s\S]*?await validateCustomIconFileContents\(file\)[\s\S]*?await uploadCustomIconFile\(file\);/);
   assert.match(customFile, /!iconPickerOperationGuard\.isCurrent\(operation, getIconPickerTargetKey\(state\.emojiPickerTarget\)\)[\s\S]*?return;/);
   assert.match(customFile, /saveEmojiSelection\(value, \{ operation \}\)/);
 });
