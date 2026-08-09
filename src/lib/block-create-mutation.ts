@@ -1,8 +1,8 @@
-export interface BlockCreateMutationReceipt {
+export type BlockCreateMutationReceipt = {
   page_id: string;
   block_id: string;
   request_hash: string | null;
-}
+};
 
 export type BlockCreateMutationAssessment =
   | { kind: "new" }

@@ -86,8 +86,10 @@ describe("MFA login gate", () => {
     expect(response.body.mfaRequired).toBeUndefined();
     expect(response.body.token).toBeUndefined();
     expect(response.body.user.username).toBe("mfa-user");
-    expect(response.headers["set-cookie"]?.join(";")).toContain("brainvault_session=");
-    expect(response.headers["set-cookie"]?.join(";")).toContain("HttpOnly");
-    expect(response.headers["set-cookie"]?.join(";")).toContain("SameSite=Strict");
+    const setCookie = response.headers["set-cookie"];
+    const joinedSetCookie = Array.isArray(setCookie) ? setCookie.join(";") : setCookie;
+    expect(joinedSetCookie).toContain("brainvault_session=");
+    expect(joinedSetCookie).toContain("HttpOnly");
+    expect(joinedSetCookie).toContain("SameSite=Strict");
   });
 });

@@ -24,6 +24,7 @@ export function toPublicUser(
     | "updated_at"
   >
 ) {
+  const theme: "light" | "dark" = row.theme === "dark" ? "dark" : "light";
   return {
     id: row.id,
     username: row.username,
@@ -31,7 +32,7 @@ export function toPublicUser(
     avatarData: row.avatar_data ?? null,
     preferredLanguage: row.preferred_language ?? null,
     defaultCollectionIcon: row.default_collection_icon ?? null,
-    theme: row.theme === "dark" ? "dark" : "light",
+    theme,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

@@ -76,9 +76,11 @@ beforeEach(() => {
       return database.resetReceipts.get(receiptKey(params[0], params[1]));
     }
     if (sql.includes("SELECT edit_version, content_version FROM pages WHERE id = ?")) {
-      return database.page?.id === params[0]
-        ? { edit_version: database.page.edit_version, content_version: database.page.content_version }
-        : undefined;
+      const page = database.page;
+      if (page && page.id === params[0]) {
+        return { edit_version: page.edit_version, content_version: page.content_version };
+      }
+      return undefined;
     }
     if (sql.includes("SELECT MAX(revision) AS revision FROM page_versions")) {
       return { revision: database.versions.reduce((max, row) => Math.max(max, Number(row.revision)), 0) || null };

@@ -513,7 +513,7 @@ async function promoteBlockChildrenBeforeDelete(
 }
 
 function assertBlockVersionSnapshot(
-  rows: Array<{ id: string; edit_version: number }>,
+  rows: Array<{ id: string; edit_version?: number }>,
   expectedVersions: Array<{ id: string; version: number }>
 ) {
 

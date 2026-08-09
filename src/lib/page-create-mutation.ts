@@ -1,7 +1,7 @@
-export interface PageCreateMutationReceipt {
+export type PageCreateMutationReceipt = {
   page_id: string;
   request_hash: string | null;
-}
+};
 
 export type PageCreateMutationAssessment =
   | { kind: "new" }

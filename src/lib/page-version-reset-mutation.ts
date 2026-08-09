@@ -1,9 +1,9 @@
-export interface PageVersionResetMutationReceipt {
+export type PageVersionResetMutationReceipt = {
   page_id: string;
   request_hash: string | null;
   revision: number | bigint | null;
   deleted_count: number | bigint | null;
-}
+};
 
 export type PageVersionResetMutationAssessment =
   | { kind: "new" }

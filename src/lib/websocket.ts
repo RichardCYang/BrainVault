@@ -335,7 +335,6 @@ export class WebSocketConnection {
       while (
         this.acceptingMessages &&
         this.isOpen &&
-        this.messageHandler &&
         this.messageQueue.length
       ) {
         const message = this.messageQueue.shift()!;
@@ -354,7 +353,6 @@ export class WebSocketConnection {
       if (
         this.acceptingMessages &&
         this.isOpen &&
-        this.messageHandler &&
         this.messageQueue.length
       ) void this.drainMessages();
     }

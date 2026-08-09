@@ -1,10 +1,10 @@
-export interface BlockDeleteMutationReceipt {
+export type BlockDeleteMutationReceipt = {
   page_id: string;
   block_id: string;
   request_hash: string | null;
   page_content_version: number;
   attachment_ids: unknown;
-}
+};
 
 export type BlockDeleteMutationAssessment =
   | {

@@ -261,8 +261,10 @@ describe("direct discoverable-passkey login", () => {
     });
     expect(optionsResponse.body.challengeToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(optionsResponse.headers["cache-control"]).toContain("no-store");
-    expect(optionsResponse.headers["set-cookie"]?.join(";")).toContain("HttpOnly");
-    expect(optionsResponse.headers["set-cookie"]?.join(";")).toContain("SameSite=Strict");
+    const optionsSetCookie = optionsResponse.headers["set-cookie"];
+    const joinedOptionsSetCookie = Array.isArray(optionsSetCookie) ? optionsSetCookie.join(";") : optionsSetCookie;
+    expect(joinedOptionsSetCookie).toContain("HttpOnly");
+    expect(joinedOptionsSetCookie).toContain("SameSite=Strict");
 
     const verifyResponse = await agent
       .post("/api/auth/passkey/verify")
@@ -279,8 +281,10 @@ describe("direct discoverable-passkey login", () => {
       preferredLanguage: "ko"
     });
     expect(verifyResponse.body.token).toBeUndefined();
-    expect(verifyResponse.headers["set-cookie"]?.join(";")).toContain("brainvault_session=");
-    expect(verifyResponse.headers["set-cookie"]?.join(";")).toContain("HttpOnly");
+    const verifySetCookie = verifyResponse.headers["set-cookie"];
+    const joinedVerifySetCookie = Array.isArray(verifySetCookie) ? verifySetCookie.join(";") : verifySetCookie;
+    expect(joinedVerifySetCookie).toContain("brainvault_session=");
+    expect(joinedVerifySetCookie).toContain("HttpOnly");
     expect(passkey?.counter).toBe(1);
     expect(user.failed_login_attempts).toBe(0);
     expect(loginOutcomes).toContain("SUCCESS");
