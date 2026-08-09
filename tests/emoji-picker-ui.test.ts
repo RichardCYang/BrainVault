@@ -63,6 +63,9 @@ describe("page and collection emoji picker", () => {
     expect(app).toContain('const imageIconPrefix = "image:"');
     expect(app).toContain('event.target.closest("[data-icon-name]")');
     expect(app).toContain("await file.arrayBuffer()");
+    expect(app).toContain("function isSupportedCustomIconFile(file)");
+    expect(app).toContain("customIconMimeTypes.includes(mimeType)");
+    expect(app).toContain("(?:png|jpe?g|webp|ico)");
     expect(app).toContain('formData.append("icon", file');
     expect(app).toContain('api("/api/custom-icons"');
     expect(app).toContain('return "image/vnd.microsoft.icon"');
@@ -120,6 +123,8 @@ describe("page and collection emoji picker", () => {
     expect(app).toContain("customLibraryRemoveConfirm");
     expect(styles).toContain(".custom-icon-library-remove");
     expect(customIconLibrarySource).toContain('method: "DELETE"');
+    expect(customIconLibrarySource).toContain("error.status = response.status");
+    expect(app).toContain("Number(error?.status ?? 0) === 401");
     expect(customIconLibrarySource).toContain('globalThis.crypto.subtle.digest("SHA-256"');
     expect(app).toContain("rememberCustomIconSelection(emoji)");
     expect(app).toContain('imageSource.startsWith("/upload/icons/") ? "📄" : fallback');

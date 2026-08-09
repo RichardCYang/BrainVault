@@ -3073,7 +3073,11 @@ async function refreshCustomIconLibrary() {
     if (generation !== customIconLibraryLoadGeneration || state.user?.id !== userId) return;
     if (state.activeIconPickerTab === "custom") renderCustomIconLibrary();
     void rememberCustomIconLibraryEntries(userId, workspaceEntries).catch(() => {});
-  } catch {
+  } catch (error) {
+    if (Number(error?.status ?? 0) === 401 && state.user?.id === userId) {
+      resetAuthenticationSessionState();
+      return;
+    }
     // The workspace-derived list still provides reuse when the server library is unavailable.
     state.customIconLibrary = mergeCustomIconLibraryEntries(workspaceEntries, state.customIconLibrary);
     if (state.activeIconPickerTab === "custom") renderCustomIconLibrary();
@@ -3419,6 +3423,12 @@ function detectCustomIconMimeType(bytes) {
   ) return "image/webp";
   if (hasValidIcoStructure(bytes)) return "image/vnd.microsoft.icon";
   return null;
+}
+
+function isSupportedCustomIconFile(file) {
+  const mimeType = String(file?.type ?? "").trim().toLowerCase();
+  if (customIconMimeTypes.includes(mimeType)) return true;
+  return /\.(?:png|jpe?g|webp|ico)$/i.test(String(file?.name ?? ""));
 }
 
 async function validateCustomIconFileContents(file) {

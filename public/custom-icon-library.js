@@ -31,7 +31,11 @@ async function request(path, options = {}) {
     headers,
     body
   });
-  if (!response.ok) throw new Error(`CUSTOM_ICON_LIBRARY_HTTP_${response.status}`);
+  if (!response.ok) {
+    const error = new Error(`CUSTOM_ICON_LIBRARY_HTTP_${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
   if (response.status === 204) return null;
   return response.json();
 }
