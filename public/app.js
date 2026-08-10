@@ -174,6 +174,7 @@ const pendingPageVersionResetTasks = new Map();
 const pendingBlockCreateTasks = new Map();
 const pendingBlockDeleteTasks = new Map();
 const pendingAttachmentCreateTasks = new Map();
+const navigationPreferenceSaveQueues = new Map();
 let pageCoverSaving = false;
 let pageCoverPositionDraft = null;
 let pageCoverDragPointerId = null;
@@ -1523,6 +1524,50 @@ function enqueueAccountProfilePatch(targetKey, body, { before } = {}) {
   });
 }
 
+async function loadNavigationPreferences() {
+  const data = await api("/api/auth/navigation-preferences");
+  if (
+    !Array.isArray(data?.collapsedPageIds)
+    || data.collapsedPageIds.some((pageId) => typeof pageId !== "string" || !pageId)
+  ) {
+    throw new Error(t("errors.invalidResponse"));
+  }
+  state.collapsedNavigationPageIds = new Set(data.collapsedPageIds);
+}
+
+function discardNavigationPreferenceSaves() {
+  for (const queue of navigationPreferenceSaveQueues.values()) queue.discard();
+  navigationPreferenceSaveQueues.clear();
+}
+
+function getNavigationPreferenceSaveQueue(pageId) {
+  let queue = navigationPreferenceSaveQueues.get(pageId);
+  if (queue) return queue;
+
+  queue = createLatestWriteQueue(
+    async (task) => {
+      if (!isCurrentAuthenticatedSessionScope(task.authenticationScope)) return null;
+      return api("/api/auth/navigation-preferences", {
+        method: "PATCH",
+        keepalive: true,
+        body: { pageId: task.pageId, collapsed: task.collapsed }
+      });
+    },
+    { shouldRetry: () => false }
+  );
+  navigationPreferenceSaveQueues.set(pageId, queue);
+  return queue;
+}
+
+function persistNavigationPreference(pageId, collapsed) {
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+  const queue = getNavigationPreferenceSaveQueue(pageId);
+  queue.enqueue({ pageId, collapsed, authenticationScope }).catch((error) => {
+    if (isCurrentAuthenticatedSessionScope(authenticationScope)) setStatus(error.message, true);
+  });
+}
+
 const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
   const currentPage = state.selectedPage?.id === task.pageId
     ? state.selectedPage
@@ -1763,6 +1808,8 @@ async function restoreUserDataBackup(file, { operation = null } = {}) {
       state.activeTag = "";
       const pages = await fetchAllPageSummaries();
       if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
+      await loadNavigationPreferences();
+      if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
       state.pages = pages;
       state.allPages = pages;
       renderPages();
@@ -1841,6 +1888,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   pendingBlockCreateTasks.clear();
   pendingBlockDeleteTasks.clear();
   pendingAttachmentCreateTasks.clear();
+  discardNavigationPreferenceSaves();
   closeAccountSettings({ restoreFocus: false, force: true });
   closeEmojiPicker({ restoreFocus: false });
   closeNavigationContextMenu();
@@ -1869,6 +1917,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   state.searchLoading = false;
   state.searchSubmittedQuery = "";
   state.searchRequestId += 1;
+  state.collapsedNavigationPageIds = new Set();
   state.pendingFocusBlockId = null;
   resetAccountSecurityOperationState({ clearSensitiveState: true });
   accountProfileSaveGuard.invalidate();
@@ -2660,7 +2709,7 @@ async function completeAuthenticatedLogin(data) {
     if (!isCurrentAuthenticatedSessionOperation(operation)) return { outcome: "superseded" };
 
     try {
-      const pages = await fetchAllPageSummaries();
+      const [pages] = await Promise.all([fetchAllPageSummaries(), loadNavigationPreferences()]);
       if (!isCurrentAuthenticatedSessionOperation(operation)) return { outcome: "superseded" };
       state.searchQuery = "";
       state.activeTag = "";
@@ -3775,6 +3824,7 @@ function setNavigationSubpagesExpanded(pageId, expanded) {
   if (!pageId) return;
   if (expanded) state.collapsedNavigationPageIds.delete(pageId);
   else state.collapsedNavigationPageIds.add(pageId);
+  persistNavigationPreference(pageId, !expanded);
 
   const selector = `[data-page-children-toggle-id="${CSS.escape(pageId)}"]`;
   for (const button of document.querySelectorAll(selector)) {
@@ -11833,7 +11883,7 @@ async function boot() {
       await applyUserPreferredLanguage();
     },
     loadWorkspace: async () => {
-      const pages = await fetchAllPageSummaries();
+      const [pages] = await Promise.all([fetchAllPageSummaries(), loadNavigationPreferences()]);
       if (!isCurrent()) return;
       state.searchQuery = "";
       state.activeTag = "";

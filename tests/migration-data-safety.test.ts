@@ -139,6 +139,22 @@ describe("migration replay data safety", () => {
     expect(sql).toMatch(/INSERT IGNORE[\s\S]*WHERE NOT EXISTS[\s\S]*is_collection/i);
     expect(sql).toMatch(/UPDATE\s+pages[\s\S]*WHERE EXISTS[\s\S]*schema_migrations/i);
   });
+  it("adds durable per-user navigation collapse preferences with cascade cleanup", () => {
+    const baseline = fs.readFileSync(path.join(migrationsDir, "001_init.sql"), "utf8");
+    const sql = fs.readFileSync(
+      path.join(migrationsDir, "043_navigation_collapse_preferences.sql"),
+      "utf8"
+    );
+
+    for (const source of [baseline, sql]) {
+      expect(source).toMatch(/CREATE TABLE IF NOT EXISTS user_navigation_collapsed_pages/i);
+      expect(source).toMatch(/PRIMARY KEY \(user_id, page_id\)/i);
+      expect(source).toMatch(/FOREIGN KEY \(user_id\) REFERENCES users\(id\) ON DELETE CASCADE/i);
+      expect(source).toMatch(/FOREIGN KEY \(page_id\) REFERENCES pages\(id\) ON DELETE CASCADE/i);
+    }
+    expect(sql).not.toMatch(/\b(?:DROP|TRUNCATE)\b/i);
+  });
+
   it("widens page icon storage without deleting existing data", () => {
     const sql = fs.readFileSync(
       path.join(migrationsDir, "026_page_custom_icons.sql"),

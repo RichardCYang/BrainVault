@@ -76,6 +76,11 @@ const loginHistoryQuerySchema = z.object({
   months: z.coerce.number().int().min(1).max(maxLoginHistoryMonths).default(defaultLoginHistoryMonths)
 });
 
+const navigationPreferenceSchema = z.object({
+  pageId: z.string().min(1).max(64),
+  collapsed: z.boolean()
+});
+
 const passwordSchema = z
   .object({
     currentPassword: passwordInputSchema(1),
@@ -251,6 +256,63 @@ authRouter.get("/me", requireAuth, async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
   res.json({ user });
 });
+
+authRouter.get("/navigation-preferences", requireAuth, async (req, res, next) => {
+  try {
+    const currentUser = requireUser(req.user);
+    const rows = await db.query<{ page_id: string }>(
+      `SELECT page_id
+       FROM user_navigation_collapsed_pages
+       WHERE user_id = ?
+       ORDER BY page_id`,
+      [currentUser.id]
+    );
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json({ collapsedPageIds: rows.map((row) => row.page_id) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+authRouter.patch(
+  "/navigation-preferences",
+  requireAuth,
+  validate({ body: navigationPreferenceSchema }),
+  async (req, res, next) => {
+    try {
+      const currentUser = requireUser(req.user);
+      const { pageId, collapsed } = req.body as z.infer<typeof navigationPreferenceSchema>;
+      const page = await db.queryOne<{ id: string }>(
+        `SELECT p.id
+         FROM pages p
+         LEFT JOIN page_shares ps
+           ON ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+         WHERE p.id = ? AND (p.owner_id = ? OR ps.user_id IS NOT NULL)
+         LIMIT 1`,
+        [currentUser.id, pageId, currentUser.id]
+      );
+      if (!page) throw new ApiError(404, "NOT_FOUND", "Page not found");
+
+      if (collapsed) {
+        await db.execute(
+          `INSERT IGNORE INTO user_navigation_collapsed_pages (user_id, page_id)
+           VALUES (?, ?)`,
+          [currentUser.id, pageId]
+        );
+      } else {
+        await db.execute(
+          "DELETE FROM user_navigation_collapsed_pages WHERE user_id = ? AND page_id = ?",
+          [currentUser.id, pageId]
+        );
+      }
+
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json({ pageId, collapsed });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 authRouter.get(
   "/login-history",
