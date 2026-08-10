@@ -1,6 +1,7 @@
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
+import type { Dirent } from "node:fs";
 import type { Writable } from "node:stream";
 import { access, copyFile, link, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { z } from "zod";
@@ -1114,7 +1115,7 @@ export async function prepareUserDataBackup(userId: string) {
 
       const activeAttachmentNames = new Set(attachmentFiles.map((item) => item.blockId));
       const attachmentOwnerDir = path.join(attachmentUploadRoot, userId);
-      let attachmentEntries;
+      let attachmentEntries: Dirent[];
       try {
         attachmentEntries = await readdir(attachmentOwnerDir, { withFileTypes: true });
       } catch (error) {
@@ -1191,7 +1192,7 @@ export async function prepareUserDataBackup(userId: string) {
       }
 
       const customIconOwnerDir = path.join(customIconUploadRoot, userId);
-      let customIconEntries;
+      let customIconEntries: Dirent[];
       try {
         customIconEntries = await readdir(customIconOwnerDir, { withFileTypes: true });
       } catch (error) {
