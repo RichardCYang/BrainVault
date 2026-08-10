@@ -94,6 +94,16 @@ describe("migration replay data safety", () => {
     expect(sql).not.toMatch(/\b(?:DELETE|DROP|TRUNCATE)\b/i);
   });
 
+  it("adds non-destructive GeoIP metadata to login history", () => {
+    const sql = fs.readFileSync(
+      path.join(migrationsDir, "044_login_history_country.sql"),
+      "utf8"
+    );
+    expect(sql).toMatch(/ADD COLUMN IF NOT EXISTS country_code CHAR\(2\) NULL/i);
+    expect(sql).toMatch(/ADD COLUMN IF NOT EXISTS country_dataset_updated_at DATETIME\(3\) NULL/i);
+    expect(sql).not.toMatch(/\b(?:DELETE|DROP|TRUNCATE)\b/i);
+  });
+
   it("adds a non-destructive collaboration document epoch fence", () => {
     const sql = fs.readFileSync(
       path.join(migrationsDir, "021_collaboration_document_epoch.sql"),

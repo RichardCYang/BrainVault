@@ -12230,7 +12230,7 @@ body.search-dialog-open {
 
 .login-history-table {
   width: 100%;
-  min-width: 31rem;
+  min-width: 39rem;
   border-collapse: collapse;
   font-size: 0.73rem;
 }
@@ -12263,6 +12263,11 @@ body.search-dialog-open {
 .login-history-table td:nth-child(2) {
   color: var(--ink-strong);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.login-history-country {
+  color: var(--ink-strong);
+  white-space: nowrap;
 }
 
 .login-history-result {

@@ -19,6 +19,8 @@ type Attempt = {
   id: string;
   user_id: string;
   ip_address: string;
+  country_code: string | null;
+  country_dataset_updated_at: string | null;
   outcome: "SUCCESS" | "FAILURE" | "LOCKED";
   attempted_at: string;
 };
@@ -63,6 +65,8 @@ beforeEach(async () => {
         id: String(params[0]),
         user_id: String(params[1]),
         ip_address: String(params[2]),
+        country_code: null,
+        country_dataset_updated_at: null,
         outcome: params[3] as Attempt["outcome"],
         attempted_at: new Date(Date.now() + attempts.length).toISOString()
       });
@@ -95,8 +99,8 @@ describe("Login history", () => {
     expect(history.body.months).toBe(3);
     expect(history.body.truncated).toBe(false);
     expect(history.body.attempts).toHaveLength(2);
-    expect(history.body.attempts[0]).toMatchObject({ outcome: "SUCCESS", ipAddress: "127.0.0.1" });
-    expect(history.body.attempts[1]).toMatchObject({ outcome: "FAILURE", ipAddress: "127.0.0.1" });
+    expect(history.body.attempts[0]).toMatchObject({ outcome: "SUCCESS", ipAddress: "127.0.0.1", countryCode: null });
+    expect(history.body.attempts[1]).toMatchObject({ outcome: "FAILURE", ipAddress: "127.0.0.1", countryCode: null });
   });
 
   it("accepts a month-based period from 1 through 12", async () => {

@@ -1439,6 +1439,18 @@ function formatDate(value) {
   return new Intl.DateTimeFormat(getLocale(), { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
+function formatLoginCountry(countryCode) {
+  const normalized = typeof countryCode === "string" ? countryCode.trim().toUpperCase() : "";
+  if (!/^[A-Z]{2}$/.test(normalized)) return t("account.loginHistoryUnknownCountry");
+
+  try {
+    const label = new Intl.DisplayNames([getLocale()], { type: "region" }).of(normalized);
+    return label && label !== normalized ? `${label} (${normalized})` : normalized;
+  } catch {
+    return normalized;
+  }
+}
+
 function translateApiError(data, status) {
   const code = data?.error?.code;
   if (code && t(`errors.${code}`) !== `errors.${code}`) return t(`errors.${code}`);
@@ -1995,7 +2007,7 @@ function renderLoginHistory() {
     const row = document.createElement("tr");
     row.className = "login-history-loading";
     const cell = document.createElement("td");
-    cell.colSpan = 3;
+    cell.colSpan = 4;
     cell.textContent = t("account.loginHistoryLoading");
     row.append(cell);
     elements.accountLoginHistoryBody.append(row);
@@ -2009,6 +2021,9 @@ function renderLoginHistory() {
     timeCell.textContent = formatDate(attempt.attemptedAt);
     const ipCell = document.createElement("td");
     ipCell.textContent = attempt.ipAddress === "unknown" ? t("account.loginHistoryUnknownIp") : attempt.ipAddress;
+    const countryCell = document.createElement("td");
+    countryCell.className = "login-history-country";
+    countryCell.textContent = formatLoginCountry(attempt.countryCode);
     const resultCell = document.createElement("td");
     const result = document.createElement("span");
     const succeeded = attempt.outcome === "SUCCESS";
@@ -2020,7 +2035,7 @@ function renderLoginHistory() {
     result.className = `login-history-result ${succeeded ? "success" : "failure"}`;
     result.textContent = t(resultKey);
     resultCell.append(result);
-    row.append(timeCell, ipCell, resultCell);
+    row.append(timeCell, ipCell, countryCell, resultCell);
     elements.accountLoginHistoryBody.append(row);
   });
 

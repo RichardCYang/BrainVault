@@ -10,6 +10,7 @@ const dataRoutes = readFileSync(new URL("../src/routes/data.routes.ts", import.m
 const migration = readFileSync(new URL("../migrations/008_user_account_settings.sql", import.meta.url), "utf8");
 const loginHistoryMigration = readFileSync(new URL("../migrations/025_login_history.sql", import.meta.url), "utf8");
 const loginHistoryOutcomeMigration = readFileSync(new URL("../migrations/033_login_history_locked_outcome.sql", import.meta.url), "utf8");
+const loginHistoryCountryMigration = readFileSync(new URL("../migrations/044_login_history_country.sql", import.meta.url), "utf8");
 const themeMigration = readFileSync(new URL("../migrations/034_user_theme_preference.sql", import.meta.url), "utf8");
 const themeBootstrap = readFileSync(new URL("../public/theme-bootstrap.js", import.meta.url), "utf8");
 
@@ -31,6 +32,7 @@ describe("Account settings layer", () => {
     expect(index).toContain('data-security-panel="history"');
     expect(index).toContain('id="account-login-history-months"');
     expect(index).toContain('id="account-login-history-body"');
+    expect(index).toContain('data-i18n="account.loginHistoryCountry"');
     expect(index).toContain('id="account-data-export"');
     expect(index).toContain('id="account-data-input"');
     expect(index).toContain('id="account-data-import"');
@@ -48,6 +50,7 @@ describe("Account settings layer", () => {
     expect(client).toContain('api("/api/auth/password"');
     expect(client).toContain('/api/auth/login-history?months=');
     expect(client).toContain("function renderLoginHistory");
+    expect(client).toContain("function formatLoginCountry");
     expect(client).toContain("applyUserPreferredLanguage");
     expect(client).toContain("applyUserTheme");
     expect(client).toContain('enqueueAccountProfilePatch(targetKey, { theme: nextTheme })');
@@ -75,6 +78,7 @@ describe("Account settings layer", () => {
     expect(i18n).toContain('passwordChanged: "비밀번호를 변경했습니다."');
     expect(i18n).toContain('loginHistoryTitle: "로그인 기록"');
     expect(i18n).toContain('loginHistorySummary: "최근 {months}개월 · 총 {count}건"');
+    expect(i18n).toContain('loginHistoryCountry: "국가"');
     expect(i18n).toContain('exportTitle: "모든 데이터 내보내기"');
     expect(i18n).toContain('importTitle: "백업 복원"');
     expect(i18n).toContain('themeLight: "일반 테마"');
@@ -93,6 +97,8 @@ describe("Account settings layer", () => {
     expect(loginHistoryMigration).toContain("CREATE TABLE IF NOT EXISTS user_login_attempts");
     expect(loginHistoryMigration).toContain("outcome ENUM('SUCCESS', 'FAILURE')");
     expect(loginHistoryOutcomeMigration).toContain("ENUM('SUCCESS', 'FAILURE', 'LOCKED')");
+    expect(loginHistoryCountryMigration).toContain("country_code CHAR(2)");
+    expect(loginHistoryCountryMigration).toContain("country_dataset_updated_at DATETIME(3)");
     expect(themeMigration).toContain("ENUM('light', 'dark')");
     expect(themeBootstrap).toContain('localStorage.getItem(storageKey)');
     expect(themeBootstrap).toContain('document.documentElement.dataset.theme = theme');
