@@ -5,6 +5,7 @@ import { normalizeAuthVersion, verifyAuthToken } from "../lib/auth.js";
 import { setPrivateNoStoreCacheControl } from "../lib/cache-control.js";
 import { ApiError } from "../lib/http.js";
 import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
+import { enforceVpnAccessPolicy, getClientTimeZone } from "../lib/vpn-access-policy.js";
 import { getClientIpAddress } from "../lib/login-history.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { clearAuthSessionCookie, readAuthSessionCookie } from "../lib/session-cookie.js";
@@ -85,7 +86,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     const payload = verifyAuthToken(token);
     const user = await db.queryOne<UserRow>(
       `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon, theme, country_login_mode,
-              password_hash, auth_version, created_at, updated_at
+              password_hash, vpn_block_enabled, auth_version, created_at, updated_at
        FROM users WHERE id = ?`,
       [payload.sub]
     );
@@ -104,6 +105,12 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     }
 
     await enforceCountryLoginPolicy(user.id, user.country_login_mode, getClientIpAddress(req));
+    await enforceVpnAccessPolicy(
+      user.id,
+      user.vpn_block_enabled,
+      getClientIpAddress(req),
+      getClientTimeZone(req)
+    );
 
     req.auth = { authVersion };
     req.user = toPublicUser(user);

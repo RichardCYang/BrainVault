@@ -161,6 +161,7 @@ const accountSecurityOperationGuards = Object.freeze({
   loginHistory: createAccountAvatarOperationGuard(),
   blockHistory: createAccountAvatarOperationGuard(),
   countryPolicy: createAccountAvatarOperationGuard(),
+  vpnPolicy: createAccountAvatarOperationGuard(),
   mfaStatus: createAccountAvatarOperationGuard(),
   password: createAccountAvatarOperationGuard(),
   totpSetup: createAccountAvatarOperationGuard(),
@@ -236,6 +237,20 @@ const state = {
     countries: [],
     currentIp: "unknown",
     currentCountryCode: null,
+    loading: false,
+    saving: false,
+    loaded: false
+  },
+  vpnBlockPolicy: {
+    enabled: false,
+    currentIp: "unknown",
+    currentCountryCode: null,
+    verdict: "UNKNOWN",
+    confidence: 0,
+    datacenter: false,
+    timezoneMismatch: false,
+    providerCount: 0,
+    supportingSignals: [],
     loading: false,
     saving: false,
     loaded: false
@@ -818,6 +833,14 @@ const elements = {
   accountCountryLoginPassword: $("#account-country-login-password"),
   accountCountryLoginSave: $("#account-country-login-save"),
   accountCountryLoginStatus: $("#account-country-login-status"),
+  accountVpnBlockEnabled: $("#account-vpn-block-enabled"),
+  accountVpnBlockCurrentIp: $("#account-vpn-block-current-ip"),
+  accountVpnBlockCurrentCountry: $("#account-vpn-block-current-country"),
+  accountVpnBlockCurrentVerdict: $("#account-vpn-block-current-verdict"),
+  accountVpnBlockCurrentSignals: $("#account-vpn-block-current-signals"),
+  accountVpnBlockPassword: $("#account-vpn-block-password"),
+  accountVpnBlockSave: $("#account-vpn-block-save"),
+  accountVpnBlockStatus: $("#account-vpn-block-status"),
   sidebarUserAvatar: $("#sidebar-user-avatar"),
   sidebarUserAvatarFallback: $("#sidebar-user-avatar-fallback"),
   userUsername: $("#user-username"),
@@ -1508,10 +1531,23 @@ function canSupersedeBlockSaveError(error) {
   return isDefinitiveApiError(error) && error?.code === "BLOCK_METADATA_WOULD_TRUNCATE";
 }
 
+function getBrowserTimeZone() {
+  try {
+    const value = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return typeof value === "string" && value.length > 0 && value.length <= 64 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 async function api(path, options = {}) {
   const { skipAuthReset = false, ...requestOptions } = options;
   const authenticationScope = captureAuthenticatedSessionScope();
   const headers = new Headers(requestOptions.headers ?? {});
+  const browserTimeZone = getBrowserTimeZone();
+  if (browserTimeZone && !headers.has("X-BrainVault-Timezone")) {
+    headers.set("X-BrainVault-Timezone", browserTimeZone);
+  }
 
   let body = requestOptions.body;
   if (body && typeof body === "object" && !(body instanceof FormData)) {
@@ -1540,7 +1576,10 @@ async function api(path, options = {}) {
 
   if (!response.ok) {
     const authenticationDenied = response.status === 401
-      || (response.status === 403 && data?.error?.code === "COUNTRY_LOGIN_BLOCKED");
+      || (response.status === 403 && (
+        data?.error?.code === "COUNTRY_LOGIN_BLOCKED"
+        || data?.error?.code === "VPN_ACCESS_BLOCKED"
+      ));
     if (
       authenticationDenied
       && !skipAuthReset
@@ -2002,6 +2041,9 @@ function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}
   state.countryLoginPolicy.loading = false;
   state.countryLoginPolicy.saving = false;
   state.countryLoginPolicy.loaded = false;
+  state.vpnBlockPolicy.loading = false;
+  state.vpnBlockPolicy.saving = false;
+  state.vpnBlockPolicy.loaded = false;
 
   if (clearSensitiveState) {
     const months = state.loginHistory.months || 3;
@@ -2017,6 +2059,20 @@ function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}
       saving: false,
       loaded: false
     };
+    state.vpnBlockPolicy = {
+      enabled: false,
+      currentIp: "unknown",
+      currentCountryCode: null,
+      verdict: "UNKNOWN",
+      confidence: 0,
+      datacenter: false,
+      timezoneMismatch: false,
+      providerCount: 0,
+      supportingSignals: [],
+      loading: false,
+      saving: false,
+      loaded: false
+    };
     state.mfaStatus = { totpEnabled: false, passkeys: [] };
     hideTotpSetup();
   }
@@ -2026,6 +2082,7 @@ function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}
   elements.accountTotpVerify.disabled = false;
   elements.accountTotpDisable.disabled = false;
   elements.accountCountryLoginPassword.value = "";
+  elements.accountVpnBlockPassword.value = "";
   setAccountPasskeyRegistering(false);
 }
 
@@ -2194,7 +2251,11 @@ function renderBlockHistory() {
     NOT_ALLOWLISTED: "account.blockHistoryNotAllowlisted",
     BLOCKLISTED: "account.blockHistoryBlacklisted",
     COUNTRY_UNRESOLVED: "account.blockHistoryCountryUnresolved",
-    POLICY_INVALID: "account.blockHistoryPolicyInvalid"
+    POLICY_INVALID: "account.blockHistoryPolicyInvalid",
+    VPN_DETECTED: "account.blockHistoryVpnDetected",
+    VPN_GATE_DETECTED: "account.blockHistoryVpnGateDetected",
+    PROXY_DETECTED: "account.blockHistoryProxyDetected",
+    TOR_DETECTED: "account.blockHistoryTorDetected"
   };
 
   blocks.forEach((block) => {
@@ -2402,6 +2463,148 @@ async function saveCountryLoginPolicy() {
   }
 }
 
+function normalizeVpnRiskVerdict(value) {
+  return ["CLEAR", "VPN", "VPN_GATE", "PROXY", "TOR", "UNKNOWN"].includes(value) ? value : "UNKNOWN";
+}
+
+function applyVpnBlockPolicyResponse(data) {
+  state.vpnBlockPolicy.enabled = Boolean(data?.enabled);
+  state.vpnBlockPolicy.currentIp = typeof data?.currentIp === "string" ? data.currentIp : "unknown";
+  state.vpnBlockPolicy.currentCountryCode = typeof data?.currentCountryCode === "string"
+    ? data.currentCountryCode.toUpperCase()
+    : null;
+  state.vpnBlockPolicy.verdict = normalizeVpnRiskVerdict(data?.verdict);
+  state.vpnBlockPolicy.confidence = Number.isFinite(Number(data?.confidence))
+    ? Math.min(100, Math.max(0, Math.round(Number(data.confidence))))
+    : 0;
+  state.vpnBlockPolicy.datacenter = Boolean(data?.datacenter);
+  state.vpnBlockPolicy.timezoneMismatch = Boolean(data?.timezoneMismatch);
+  state.vpnBlockPolicy.providerCount = Number.isFinite(Number(data?.providerCount))
+    ? Math.max(0, Math.trunc(Number(data.providerCount)))
+    : 0;
+  state.vpnBlockPolicy.supportingSignals = Array.isArray(data?.supportingSignals)
+    ? data.supportingSignals.filter((value) => typeof value === "string").slice(0, 16)
+    : [];
+}
+
+function renderVpnBlockPolicy() {
+  const policy = state.vpnBlockPolicy;
+  const busy = policy.loading || policy.saving;
+  elements.accountVpnBlockEnabled.value = String(policy.enabled);
+  elements.accountVpnBlockStatus.textContent = t(policy.enabled ? "account.vpnBlockOn" : "account.vpnBlockOff");
+  elements.accountVpnBlockStatus.dataset.mode = policy.enabled ? "enabled" : "disabled";
+  elements.accountVpnBlockCurrentIp.textContent = policy.currentIp === "unknown"
+    ? t("account.loginHistoryUnknownIp")
+    : policy.currentIp;
+  elements.accountVpnBlockCurrentCountry.textContent = formatLoginCountry(policy.currentCountryCode);
+
+  const verdictKey = {
+    CLEAR: "account.vpnBlockRiskClear",
+    VPN: "account.vpnBlockRiskVpn",
+    VPN_GATE: "account.vpnBlockRiskVpnGate",
+    PROXY: "account.vpnBlockRiskProxy",
+    TOR: "account.vpnBlockRiskTor",
+    UNKNOWN: "account.vpnBlockRiskUnknown"
+  }[policy.verdict] ?? "account.vpnBlockRiskUnknown";
+  const verdict = t(verdictKey);
+  elements.accountVpnBlockCurrentVerdict.textContent = policy.loading
+    ? t("account.vpnBlockLoading")
+    : policy.providerCount > 0 || policy.verdict !== "UNKNOWN"
+      ? t("account.vpnBlockRiskWithConfidence", {
+          risk: verdict,
+          confidence: formatNumber(policy.confidence)
+        })
+      : verdict;
+
+  const supportingSignals = [];
+  if (policy.providerCount > 0) {
+    supportingSignals.push(t("account.vpnBlockProviderCount", { count: formatNumber(policy.providerCount) }));
+  }
+  if (policy.datacenter) supportingSignals.push(t("account.vpnBlockDatacenterSignal"));
+  if (policy.timezoneMismatch) supportingSignals.push(t("account.vpnBlockTimezoneSignal"));
+  if (policy.supportingSignals.includes("VPN_GATE_DIRECTORY_DDNS_VERIFIED")) {
+    supportingSignals.push(t("account.vpnBlockVpnGateDdnsVerified"));
+  } else if (policy.supportingSignals.includes("VPN_GATE_DIRECTORY_PROVIDER_CORROBORATED")) {
+    supportingSignals.push(t("account.vpnBlockVpnGateProviderCorroborated"));
+  } else if (policy.supportingSignals.includes("VPN_GATE_DIRECTORY_UNVERIFIED")) {
+    supportingSignals.push(t("account.vpnBlockVpnGateUnverified"));
+  } else if (policy.supportingSignals.includes("VPN_GATE_PUBLIC_RELAY_DIRECTORY")) {
+    supportingSignals.push(t("account.vpnBlockVpnGateListed"));
+  }
+  elements.accountVpnBlockCurrentSignals.textContent = supportingSignals.length
+    ? supportingSignals.join(" · ")
+    : t("account.vpnBlockNoSupportingSignals");
+
+  elements.accountVpnBlockEnabled.disabled = busy;
+  elements.accountVpnBlockPassword.disabled = busy;
+  elements.accountVpnBlockSave.disabled = busy;
+  elements.accountVpnBlockSave.textContent = t(policy.saving ? "account.vpnBlockSaving" : "account.vpnBlockSave");
+}
+
+async function loadVpnBlockPolicy({ force = false } = {}) {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey || !state.accountSettingsOpen || state.vpnBlockPolicy.loading) return;
+  if (!force && state.vpnBlockPolicy.loaded) {
+    renderVpnBlockPolicy();
+    return;
+  }
+
+  const operation = accountSecurityOperationGuards.vpnPolicy.begin(targetKey);
+  state.vpnBlockPolicy.loading = true;
+  renderVpnBlockPolicy();
+  setAccountMessage();
+  try {
+    const data = await api("/api/auth/vpn-block-policy");
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.vpnPolicy, operation)) return;
+    applyVpnBlockPolicyResponse(data);
+    state.vpnBlockPolicy.loaded = true;
+  } catch (error) {
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.vpnPolicy, operation)) return;
+    state.vpnBlockPolicy.loaded = false;
+    setAccountMessage(error.message, true);
+  } finally {
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.vpnPolicy, operation)) {
+      state.vpnBlockPolicy.loading = false;
+      renderVpnBlockPolicy();
+    }
+  }
+}
+
+async function saveVpnBlockPolicy() {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey || state.vpnBlockPolicy.loading || state.vpnBlockPolicy.saving) return;
+  const enabled = elements.accountVpnBlockEnabled.value === "true";
+  const operation = accountSecurityOperationGuards.vpnPolicy.begin(targetKey);
+  state.vpnBlockPolicy.enabled = enabled;
+  state.vpnBlockPolicy.saving = true;
+  renderVpnBlockPolicy();
+  setAccountMessage();
+  try {
+    const data = await api("/api/auth/vpn-block-policy", {
+      method: "PUT",
+      body: {
+        currentPassword: elements.accountVpnBlockPassword.value,
+        enabled
+      }
+    });
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.vpnPolicy, operation)) return;
+    acceptRotatedAuthenticationSession();
+    applyVpnBlockPolicyResponse(data);
+    state.vpnBlockPolicy.loaded = true;
+    elements.accountVpnBlockPassword.value = "";
+    state.blockHistory.loadedMonths = null;
+    setAccountMessage(t("account.vpnBlockSaved"));
+  } catch (error) {
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.vpnPolicy, operation)) return;
+    setAccountMessage(error.message, true);
+  } finally {
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.vpnPolicy, operation)) {
+      state.vpnBlockPolicy.saving = false;
+      renderVpnBlockPolicy();
+    }
+  }
+}
+
 function loadActiveSecurityPanel() {
   if (state.activeSecurityPanel === "history") {
     void loadLoginHistory();
@@ -2413,6 +2616,7 @@ function loadActiveSecurityPanel() {
   }
   void loadMfaSettings();
   void loadCountryLoginPolicy();
+  void loadVpnBlockPolicy();
 }
 
 function setSecurityPanel(panel, { focusTab = false, load = true } = {}) {
@@ -2843,6 +3047,7 @@ function fillAccountSettings() {
   resetDataImportSelection();
   elements.accountMfaPassword.value = "";
   elements.accountCountryLoginPassword.value = "";
+  elements.accountVpnBlockPassword.value = "";
   elements.accountPasskeyRegisterForm.reset();
   hideTotpSetup();
   populateLoginHistoryMonths();
@@ -2853,6 +3058,7 @@ function fillAccountSettings() {
   renderLoginHistory();
   renderBlockHistory();
   renderCountryLoginPolicy();
+  renderVpnBlockPolicy();
   updateUserIdentityUi();
 }
 
@@ -2912,6 +3118,7 @@ function closeAccountSettings({ restoreFocus = true, force = false } = {}) {
   elements.accountPasswordForm.reset();
   elements.accountMfaPassword.value = "";
   elements.accountCountryLoginPassword.value = "";
+  elements.accountVpnBlockPassword.value = "";
   elements.accountPasskeyRegisterForm.reset();
   hideTotpSetup();
   syncMobileSidebarAccessibility();
@@ -12614,6 +12821,16 @@ elements.accountCountryLoginSave.addEventListener("click", () => {
   void saveCountryLoginPolicy();
 });
 
+elements.accountVpnBlockEnabled.addEventListener("change", () => {
+  state.vpnBlockPolicy.enabled = elements.accountVpnBlockEnabled.value === "true";
+  renderVpnBlockPolicy();
+  setAccountMessage();
+});
+
+elements.accountVpnBlockSave.addEventListener("click", () => {
+  void saveVpnBlockPolicy();
+});
+
 elements.accountDataExport.addEventListener("click", async () => {
   if (state.accountDataOperationBusy) return;
   const targetKey = getAccountAvatarTargetKey(state.user);
@@ -13105,6 +13322,7 @@ function refreshLocalizedUi() {
     else {
       renderMfaSettings();
       renderCountryLoginPolicy();
+      renderVpnBlockPolicy();
     }
   }
   if (state.mfaLogin?.methods?.passkey) syncAuthOperationControls();

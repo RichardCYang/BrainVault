@@ -1011,6 +1011,48 @@
                   </div>
                 </section>
 
+                <section class="account-security-section vpn-block-policy-section" aria-labelledby="account-vpn-block-title">
+                  <div class="account-security-section-heading">
+                    <div>
+                      <h4 id="account-vpn-block-title" data-i18n="account.vpnBlockTitle">VPN / proxy access blocking</h4>
+                      <p data-i18n="account.vpnBlockDescription">Block account access from high-confidence VPN, proxy, and Tor exit addresses.</p>
+                    </div>
+                    <span id="account-vpn-block-status" class="country-login-status vpn-block-status" data-i18n="account.vpnBlockOff">Off</span>
+                  </div>
+
+                  <div class="vpn-block-policy-form">
+                    <div class="form-field">
+                      <label for="account-vpn-block-enabled" data-i18n="account.vpnBlockMode">VPN blocking</label>
+                      <select id="account-vpn-block-enabled">
+                        <option value="false" data-i18n="account.vpnBlockOff">Off</option>
+                        <option value="true" data-i18n="account.vpnBlockOn">On</option>
+                      </select>
+                    </div>
+
+                    <div class="country-login-current vpn-block-current">
+                      <span data-i18n="account.vpnBlockCurrentIp">Current IP</span>
+                      <strong id="account-vpn-block-current-ip">—</strong>
+                      <span data-i18n="account.vpnBlockCurrentCountry">Current country</span>
+                      <strong id="account-vpn-block-current-country">—</strong>
+                      <span data-i18n="account.vpnBlockCurrentVerdict">Network assessment</span>
+                      <strong id="account-vpn-block-current-verdict">—</strong>
+                      <span data-i18n="account.vpnBlockCurrentSignals">Supporting signals</span>
+                      <strong id="account-vpn-block-current-signals">—</strong>
+                    </div>
+
+                    <div class="form-field">
+                      <label for="account-vpn-block-password" data-i18n="account.vpnBlockPassword">Current password to save this policy</label>
+                      <input id="account-vpn-block-password" type="password" autocomplete="current-password" maxlength="128" />
+                    </div>
+
+                    <p class="country-login-warning" data-i18n="account.vpnBlockWarning">Detection uses free no-key network intelligence and the Tor exit list. Data-center and browser-timezone differences are supporting signals only; ambiguous results are not blocked. Saving revokes other active sessions.</p>
+
+                    <div class="account-form-actions">
+                      <button id="account-vpn-block-save" type="button" data-i18n="account.vpnBlockSave">Save VPN blocking policy</button>
+                    </div>
+                  </div>
+                </section>
+
                 <section class="account-security-section" aria-labelledby="account-password-title">
                 <div class="account-security-section-heading">
                   <div>
@@ -1077,7 +1119,7 @@
                 <div class="login-history-heading">
                   <div>
                     <h4 data-i18n="account.blockHistoryTitle">Block history</h4>
-                    <p data-i18n="account.blockHistoryDescription">Review sign-ins and authenticated sessions rejected by the country access policy.</p>
+                    <p data-i18n="account.blockHistoryDescription">Review sign-ins and authenticated sessions denied by country or VPN/proxy security policies.</p>
                   </div>
                   <button id="account-block-history-refresh" class="secondary compact" type="button" data-i18n="account.blockHistoryRefresh">Refresh</button>
                 </div>
@@ -1091,7 +1133,7 @@
 
                 <div class="login-history-table-wrap">
                   <table class="login-history-table block-history-table">
-                    <caption class="visually-hidden" data-i18n="account.blockHistoryTableCaption">Recent country-policy blocks</caption>
+                    <caption class="visually-hidden" data-i18n="account.blockHistoryTableCaption">Recent security-policy blocks</caption>
                     <thead>
                       <tr>
                         <th scope="col" data-i18n="account.loginHistoryTime">Time</th>
@@ -1102,7 +1144,7 @@
                     </thead>
                     <tbody id="account-block-history-body"></tbody>
                   </table>
-                  <p id="account-block-history-empty" class="login-history-empty hidden" data-i18n="account.blockHistoryEmpty">No country-policy blocks were recorded during this period.</p>
+                  <p id="account-block-history-empty" class="login-history-empty hidden" data-i18n="account.blockHistoryEmpty">No security-policy blocks were recorded during this period.</p>
                 </div>
                 <p id="account-block-history-truncated" class="login-history-note hidden" data-i18n="account.blockHistoryTruncated">Only the latest 500 blocks are shown.</p>
               </section>

@@ -12325,12 +12325,14 @@ body.search-dialog-open {
   margin-top: 1.25rem;
 }
 
-.country-login-policy-form {
+.country-login-policy-form,
+.vpn-block-policy-form {
   display: grid;
   gap: 0.95rem;
 }
 
-.country-login-policy-form .form-field {
+.country-login-policy-form .form-field,
+.vpn-block-policy-form .form-field {
   display: grid;
   gap: 0.42rem;
 }
@@ -12433,7 +12435,8 @@ body.search-dialog-open {
 }
 
 .country-login-status[data-mode="allowlist"],
-.country-login-status[data-mode="blocklist"] {
+.country-login-status[data-mode="blocklist"],
+.vpn-block-status[data-mode="enabled"] {
   border-color: rgba(64, 137, 194, 0.28);
   background: rgba(64, 137, 194, 0.08);
   color: var(--accent-text);

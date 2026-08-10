@@ -10,7 +10,11 @@ export type CountryLoginBlockReason =
   | "NOT_ALLOWLISTED"
   | "BLOCKLISTED"
   | "COUNTRY_UNRESOLVED"
-  | "POLICY_INVALID";
+  | "POLICY_INVALID"
+  | "VPN_DETECTED"
+  | "VPN_GATE_DETECTED"
+  | "PROXY_DETECTED"
+  | "TOR_DETECTED";
 
 export const defaultCountryBlockHistoryMonths = 3;
 export const maxCountryBlockHistoryMonths = 12;

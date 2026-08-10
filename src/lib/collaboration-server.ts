@@ -13,6 +13,7 @@ import {
 } from "./collaboration-lineage.js";
 import { ApiError } from "./http.js";
 import { enforceCountryLoginPolicy } from "./country-login-policy.js";
+import { enforceVpnAccessPolicy } from "./vpn-access-policy.js";
 import {
   acceptWebSocketUpgrade,
   parseWebSocketProtocols,
@@ -423,8 +424,9 @@ export class PageCollaborationHub {
       const user = await db.queryOne<CollaborationProfile & {
         auth_version?: number;
         country_login_mode?: UserRow["country_login_mode"];
+        vpn_block_enabled?: UserRow["vpn_block_enabled"];
       }>(
-        "SELECT id, username, name, avatar_data, auth_version, country_login_mode FROM users WHERE id = ?",
+        "SELECT id, username, name, avatar_data, auth_version, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
         [payload.sub]
       );
       if (!user) {
@@ -437,6 +439,7 @@ export class PageCollaborationHub {
         return;
       }
       await enforceCountryLoginPolicy(user.id, user.country_login_mode, sourceIp);
+      await enforceVpnAccessPolicy(user.id, user.vpn_block_enabled, sourceIp);
 
       if (this.closed) {
         rejectWebSocketUpgrade(socket, 503, "Collaboration server is shutting down");
@@ -495,8 +498,9 @@ export class PageCollaborationHub {
         const currentUser = await db.queryOne<{
           auth_version?: number;
           country_login_mode?: UserRow["country_login_mode"];
+          vpn_block_enabled?: UserRow["vpn_block_enabled"];
         }>(
-          "SELECT auth_version, country_login_mode FROM users WHERE id = ?",
+          "SELECT auth_version, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
           [payload.sub]
         );
         if (!currentUser || Number(currentUser.auth_version ?? 1) !== payload.authVersion) {
@@ -504,6 +508,7 @@ export class PageCollaborationHub {
           return;
         }
         await enforceCountryLoginPolicy(payload.sub, currentUser.country_login_mode, sourceIp);
+        await enforceVpnAccessPolicy(payload.sub, currentUser.vpn_block_enabled, sourceIp);
         const currentAccess = await getPageAccess(pageId, payload.sub);
         if (currentAccess.page.is_collection || currentAccess.page.is_archived || currentAccess.shareCount < 1) {
           connection.close(4010, "Collaboration is no longer available");
@@ -1236,8 +1241,9 @@ export class PageCollaborationHub {
               const currentUser = await db.queryOne<{
                 auth_version?: number;
                 country_login_mode?: UserRow["country_login_mode"];
+                vpn_block_enabled?: UserRow["vpn_block_enabled"];
               }>(
-                "SELECT auth_version, country_login_mode FROM users WHERE id = ?",
+                "SELECT auth_version, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
                 [client.user.id]
               );
               if (!currentUser || Number(currentUser.auth_version ?? 1) !== client.authVersion) {
@@ -1245,6 +1251,7 @@ export class PageCollaborationHub {
                 return;
               }
               await enforceCountryLoginPolicy(client.user.id, currentUser.country_login_mode, client.ipAddress);
+              await enforceVpnAccessPolicy(client.user.id, currentUser.vpn_block_enabled, client.ipAddress);
               const access = await getPageAccess(room.pageId, client.user.id);
               if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
                 client.socket.close(4010, "Collaboration is no longer available");

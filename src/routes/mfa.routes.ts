@@ -17,6 +17,7 @@ import { disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
 import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
+import { enforceVpnAccessPolicy, getClientTimeZone } from "../lib/vpn-access-policy.js";
 import { getClientIpAddress, recordLoginAttempt } from "../lib/login-history.js";
 import { createId } from "../lib/id.js";
 import {
@@ -447,6 +448,11 @@ async function getActiveMfaSession(mfaToken: string, sourceIp: string, client: D
     throw new ApiError(401, "MFA_SESSION_EXPIRED", "The two-step verification session expired");
   }
   return row;
+}
+
+async function enforceMfaLoginNetworkAccess(pendingSession: MfaSessionRow, req: Request) {
+  await enforceCountryLoginPolicy(pendingSession.user_id, undefined, pendingSession.source_ip);
+  await enforceVpnAccessPolicy(pendingSession.user_id, undefined, pendingSession.source_ip, getClientTimeZone(req));
 }
 
 async function reserveMfaAttempt(mfaToken: string, sourceIp: string) {
@@ -960,7 +966,7 @@ mfaRouter.post(
     try {
       const sourceIp = getClientIpAddress(req);
       const pendingSession = await getActiveMfaSession(mfaToken, sourceIp);
-      await enforceCountryLoginPolicy(pendingSession.user_id, undefined, pendingSession.source_ip);
+      await enforceMfaLoginNetworkAccess(pendingSession, req);
       const activeSession = await reserveMfaAttempt(mfaToken, sourceIp);
       session = activeSession;
       const result = await transaction(async (client) => {
@@ -1026,6 +1032,7 @@ mfaRouter.post(
       const { mfaToken } = req.body as z.infer<typeof mfaTokenSchema>;
       const session = await getActiveMfaSession(mfaToken, getClientIpAddress(req));
       await enforceCountryLoginPolicy(session.user_id, undefined, session.source_ip);
+      await enforceVpnAccessPolicy(session.user_id, undefined, session.source_ip, getClientTimeZone(req));
       const passkeys = await db.query<PasskeyRow>(
         `SELECT id, user_id, credential_id, webauthn_user_id, public_key, counter, transports,
                 device_type, backed_up, aaguid, name, created_at, updated_at, last_used_at
@@ -1071,7 +1078,7 @@ mfaRouter.post(
     try {
       const sourceIp = getClientIpAddress(req);
       const pendingSession = await getActiveMfaSession(mfaToken, sourceIp);
-      await enforceCountryLoginPolicy(pendingSession.user_id, undefined, pendingSession.source_ip);
+      await enforceMfaLoginNetworkAccess(pendingSession, req);
       const activeSession = await reserveMfaAttempt(mfaToken, sourceIp);
       session = activeSession;
       const contextHash = hashOpaqueToken(mfaToken);

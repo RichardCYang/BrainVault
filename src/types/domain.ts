@@ -8,6 +8,7 @@ export type UserRow = {
   theme: "light" | "dark" | null;
   country_login_mode?: "OFF" | "ALLOWLIST" | "BLOCKLIST";
   password_hash: string;
+  vpn_block_enabled?: 0 | 1 | boolean | number | string;
   auth_version?: number;
   failed_login_attempts?: number | bigint | string;
   last_failed_login_at?: string | Date | null;
