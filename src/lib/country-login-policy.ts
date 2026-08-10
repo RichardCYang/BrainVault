@@ -1,5 +1,10 @@
 import { db, type DbClient } from "./db.js";
-import { lookupCountryCodes, normalizeCountryLookupIp, isPublicCountryLookupIp } from "./geo-country.js";
+import {
+  isCountryPolicyLocalNetworkIp,
+  isPublicCountryLookupIp,
+  lookupCountryCodes,
+  normalizeCountryLookupIp
+} from "./geo-country.js";
 import { normalizeIsoCountryCode, type IsoCountryCode } from "./country-codes.js";
 import { createId } from "./id.js";
 import { ApiError } from "./http.js";
@@ -182,6 +187,19 @@ export async function checkCountryLoginAccess(
   }
 
   const resolution = await resolveCountryLoginLocation(ipAddress);
+  // Private/loopback addresses have no meaningful public-country mapping. Allow
+  // only the explicit local ranges used by a host/LAN, while keeping CGNAT,
+  // link-local, documentation, reserved, malformed, and unknown addresses on
+  // the normal fail-closed country-policy path.
+  if (isCountryPolicyLocalNetworkIp(resolution.ipAddress)) {
+    return {
+      allowed: true,
+      policy,
+      resolution,
+      reason: null as CountryLoginBlockReason | null
+    };
+  }
+
   const decision = evaluateResolvedCountryPolicy(policy, resolution);
   return { ...decision, policy, resolution };
 }
@@ -259,6 +277,8 @@ export async function assertPolicyAllowsCurrentLocation(
 ) {
   if (mode === "OFF") return resolveCountryLoginLocation(ipAddress);
   const resolution = await resolveCountryLoginLocation(ipAddress);
+  if (isCountryPolicyLocalNetworkIp(resolution.ipAddress)) return resolution;
+
   const decision = evaluateResolvedCountryPolicy({ mode, countries: [...countries] }, resolution);
   if (!decision.allowed) {
     throw new ApiError(

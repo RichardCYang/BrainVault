@@ -22,6 +22,21 @@ export function normalizeCountryLookupIp(ipAddress: string) {
   return net.isIP(normalized) ? normalized : null;
 }
 
+const countryPolicyLocalNetworks = new net.BlockList();
+countryPolicyLocalNetworks.addSubnet("127.0.0.0", 8, "ipv4");
+countryPolicyLocalNetworks.addSubnet("10.0.0.0", 8, "ipv4");
+countryPolicyLocalNetworks.addSubnet("172.16.0.0", 12, "ipv4");
+countryPolicyLocalNetworks.addSubnet("192.168.0.0", 16, "ipv4");
+countryPolicyLocalNetworks.addAddress("::1", "ipv6");
+countryPolicyLocalNetworks.addSubnet("fc00::", 7, "ipv6");
+
+export function isCountryPolicyLocalNetworkIp(ipAddress: string) {
+  const normalized = normalizeCountryLookupIp(ipAddress);
+  if (!normalized) return false;
+  const family = net.isIPv4(normalized) ? "ipv4" : "ipv6";
+  return countryPolicyLocalNetworks.check(normalized, family);
+}
+
 function isNonPublicIpv4(ipAddress: string) {
   const octets = ipAddress.split(".").map(Number);
   if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {

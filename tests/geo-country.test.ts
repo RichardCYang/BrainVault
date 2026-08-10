@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getCountryDatasetUpdatedAt,
+  isCountryPolicyLocalNetworkIp,
   isPublicCountryLookupIp,
   lookupCountryCodes,
   normalizeCountryCode,
@@ -26,6 +27,28 @@ describe("GeoIP country lookup", () => {
     expect(isPublicCountryLookupIp("fd00::1")).toBe(false);
     expect(normalizeCountryCode("kr")).toBe("KR");
     expect(normalizeCountryCode("unknown")).toBeNull();
+  });
+
+  it("allows only explicit host/LAN ranges to bypass country policy", () => {
+    expect(isCountryPolicyLocalNetworkIp("127.0.0.1")).toBe(true);
+    expect(isCountryPolicyLocalNetworkIp("127.255.255.254")).toBe(true);
+    expect(isCountryPolicyLocalNetworkIp("10.23.45.67")).toBe(true);
+    expect(isCountryPolicyLocalNetworkIp("172.16.0.1")).toBe(true);
+    expect(isCountryPolicyLocalNetworkIp("172.31.255.254")).toBe(true);
+    expect(isCountryPolicyLocalNetworkIp("192.168.50.25")).toBe(true);
+    expect(isCountryPolicyLocalNetworkIp("::1")).toBe(true);
+    expect(isCountryPolicyLocalNetworkIp("0:0:0:0:0:0:0:1")).toBe(true);
+    expect(isCountryPolicyLocalNetworkIp("fd12:3456:789a::1")).toBe(true);
+    expect(isCountryPolicyLocalNetworkIp("fc00::abcd")).toBe(true);
+    expect(isCountryPolicyLocalNetworkIp("::ffff:192.168.1.20")).toBe(true);
+
+    expect(isCountryPolicyLocalNetworkIp("100.64.0.1")).toBe(false);
+    expect(isCountryPolicyLocalNetworkIp("169.254.1.10")).toBe(false);
+    expect(isCountryPolicyLocalNetworkIp("192.0.2.10")).toBe(false);
+    expect(isCountryPolicyLocalNetworkIp("8.8.8.8")).toBe(false);
+    expect(isCountryPolicyLocalNetworkIp("fe80::1")).toBe(false);
+    expect(isCountryPolicyLocalNetworkIp("2001:db8::1")).toBe(false);
+    expect(isCountryPolicyLocalNetworkIp("unknown")).toBe(false);
   });
 
   it("uses the no-key batch endpoint and treats omitted public IPs as unresolved countries", async () => {

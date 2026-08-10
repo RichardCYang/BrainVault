@@ -30,6 +30,7 @@ test("enabled country policy fails closed and records a dedicated block event", 
 
   assert.match(policy, /if \(!policy\.countries\.length\) return \{ allowed: false, reason: "POLICY_INVALID" \};/);
   assert.match(policy, /if \(!resolution\.resolved \|\| !resolution\.countryCode\)/);
+  assert.match(policy, /isCountryPolicyLocalNetworkIp\(resolution\.ipAddress\)/);
   assert.match(policy, /reason: "COUNTRY_UNRESOLVED"/);
   assert.match(policy, /reason: "NOT_ALLOWLISTED"/);
   assert.match(policy, /reason: "BLOCKLISTED"/);
