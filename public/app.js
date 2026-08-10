@@ -828,6 +828,8 @@ const elements = {
   accountPasskeyCount: $("#account-passkey-count"),
   accountPasskeyRegisterForm: $("#account-passkey-register-form"),
   accountPasskeyName: $("#account-passkey-name"),
+  accountPasskeyRegistrationTarget: $("#account-passkey-registration-target"),
+  accountPasskeyRegistrationHelp: $("#account-passkey-registration-help"),
   accountPasskeyRegister: $("#account-passkey-register"),
   accountPasskeySupport: $("#account-passkey-support"),
   accountPasskeyList: $("#account-passkey-list"),
@@ -1261,6 +1263,52 @@ function isWebAuthnSupported() {
   return Boolean(window.isSecureContext && window.PublicKeyCredential && navigator.credentials);
 }
 
+let webAuthnClientCapabilitiesPromise = null;
+
+function getPasskeyRegistrationTarget() {
+  return elements.accountPasskeyRegistrationTarget?.value === "remote" ? "remote" : "automatic";
+}
+
+function getWebAuthnClientCapabilities() {
+  if (!isWebAuthnSupported() || typeof window.PublicKeyCredential.getClientCapabilities !== "function") {
+    return Promise.resolve(null);
+  }
+  if (!webAuthnClientCapabilitiesPromise) {
+    webAuthnClientCapabilitiesPromise = window.PublicKeyCredential.getClientCapabilities().catch(() => null);
+  }
+  return webAuthnClientCapabilitiesPromise;
+}
+
+async function refreshPasskeyRegistrationSupport() {
+  const target = getPasskeyRegistrationTarget();
+  const supported = isWebAuthnSupported();
+  elements.accountPasskeyRegistrationHelp.textContent = t(
+    target === "remote" ? "mfa.passkeyRegistrationRemoteHint" : "mfa.passkeyRegistrationAutomaticHint"
+  );
+
+  if (!supported) {
+    elements.accountPasskeySupport.textContent = t("mfa.passkeyUnsupported");
+    return;
+  }
+  if (target !== "remote") {
+    elements.accountPasskeySupport.textContent = t("mfa.passkeyReady");
+    return;
+  }
+
+  // WebAuthn Level 3 clients can report hybrid-transport support. Older
+  // clients do not expose this API, so absence is treated as "unknown" rather
+  // than "unsupported" and the standards-based hybrid request is still sent.
+  const capabilities = await getWebAuthnClientCapabilities();
+  if (getPasskeyRegistrationTarget() !== target) return;
+  if (capabilities?.hybridTransport === false) {
+    elements.accountPasskeySupport.textContent = t("mfa.passkeyHybridUnsupported");
+  } else if (capabilities?.hybridTransport === true) {
+    elements.accountPasskeySupport.textContent = t("mfa.passkeyHybridReady");
+  } else {
+    elements.accountPasskeySupport.textContent = t("mfa.passkeyHybridUnknown");
+  }
+}
+
 function base64UrlToArrayBuffer(value) {
   const normalized = String(value).replace(/-/g, "+").replace(/_/g, "/");
   const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
@@ -1367,7 +1415,22 @@ function normalizeWebAuthnError(error) {
   if (error?.name === "NotAllowedError" || error?.name === "AbortError") {
     return new Error(t("mfa.passkeyOperationCancelled"));
   }
+  if (error?.name === "SecurityError") {
+    return new Error(t("mfa.passkeySecurityError"));
+  }
   return error instanceof Error ? error : new Error(t("errors.unknown"));
+}
+
+function normalizePasskeyRegistrationError(error, registrationTarget) {
+  if (registrationTarget === "remote") {
+    if (error?.name === "NotAllowedError" || error?.name === "AbortError") {
+      return new Error(t("mfa.passkeyRemoteOperationCancelled"));
+    }
+    if (error?.name === "NotSupportedError") {
+      return new Error(t("mfa.passkeyRemoteUnsupported"));
+    }
+  }
+  return normalizeWebAuthnError(error);
 }
 
 function formatDate(value) {
@@ -2104,6 +2167,7 @@ function setAccountPasskeyRegistering(registering) {
   const disabled = !isWebAuthnSupported() || state.accountPasskeyRegistering;
   elements.accountPasskeyRegister.disabled = disabled;
   elements.accountPasskeyName.disabled = disabled;
+  elements.accountPasskeyRegistrationTarget.disabled = disabled;
 }
 
 function renderMfaSettings() {
@@ -2118,8 +2182,8 @@ function renderMfaSettings() {
   elements.accountTotpDisable.classList.toggle("hidden", !state.mfaStatus.totpEnabled);
   elements.accountPasskeyCount.textContent = t("mfa.passkeyCount", { count: formatNumber(passkeys.length) });
 
-  const supported = isWebAuthnSupported();
-  elements.accountPasskeySupport.textContent = t(supported ? "mfa.passkeyReady" : "mfa.passkeyUnsupported");
+  elements.accountPasskeySupport.textContent = t(isWebAuthnSupported() ? "mfa.passkeyReady" : "mfa.passkeyUnsupported");
+  void refreshPasskeyRegistrationSupport();
   setAccountPasskeyRegistering(state.accountPasskeyRegistering);
   renderPasskeyList();
 }
@@ -12416,6 +12480,7 @@ elements.accountPasskeyRegisterForm.addEventListener("submit", async (event) => 
   const currentPassword = requireMfaPassword();
   if (!targetKey || !currentPassword) return;
   const name = elements.accountPasskeyName.value.trim();
+  const registrationTarget = getPasskeyRegistrationTarget();
   if (!name) {
     setAccountMessage(t("mfa.nameRequired"), true);
     elements.accountPasskeyName.focus();
@@ -12429,10 +12494,10 @@ elements.accountPasskeyRegisterForm.addEventListener("submit", async (event) => 
   const operation = accountSecurityOperationGuards.passkeyRegister.begin(targetKey);
   setAccountPasskeyRegistering(true);
   try {
-    setAccountMessage(t("mfa.passkeyAdding"));
+    setAccountMessage(t(registrationTarget === "remote" ? "mfa.passkeyAddingRemote" : "mfa.passkeyAdding"));
     const optionsData = await api("/api/auth/mfa/passkeys/options", {
       method: "POST",
-      body: { currentPassword, name }
+      body: { currentPassword, name, registrationTarget }
     });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.passkeyRegister, operation)) return;
     const response = await createWebAuthnCredential(optionsData.options);
@@ -12451,13 +12516,17 @@ elements.accountPasskeyRegisterForm.addEventListener("submit", async (event) => 
     }
   } catch (error) {
     if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.passkeyRegister, operation)) {
-      setAccountMessage(normalizeWebAuthnError(error).message, true);
+      setAccountMessage(normalizePasskeyRegistrationError(error, registrationTarget).message, true);
     }
   } finally {
     if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.passkeyRegister, operation)) {
       setAccountPasskeyRegistering(false);
     }
   }
+});
+
+elements.accountPasskeyRegistrationTarget.addEventListener("change", () => {
+  void refreshPasskeyRegistrationSupport();
 });
 
 elements.mfaLoginTotpForm.addEventListener("submit", async (event) => {

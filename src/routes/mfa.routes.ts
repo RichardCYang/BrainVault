@@ -55,6 +55,12 @@ mfaRouter.use((_req, res, next) => {
 
 const mfaSessionLifetimeMs = 5 * 60_000;
 const challengeLifetimeMs = 5 * 60_000;
+// Cross-device passkey registration includes QR scanning, nearby-device
+// verification, provider selection, and device unlock. SimpleWebAuthn's
+// default is 60 seconds, which is unnecessarily tight for that ceremony.
+// Leave one minute of the server-side challenge lifetime for the verification
+// request to return after the authenticator finishes.
+const passkeyRegistrationTimeoutMs = challengeLifetimeMs - 60_000;
 const totpSetupLifetimeMs = 10 * 60_000;
 const maxMfaAttempts = 8;
 const base64UrlPattern = /^[A-Za-z0-9_-]+$/;
@@ -146,7 +152,8 @@ const passkeyNameSchema = z.string().trim().min(1).max(80);
 
 const passkeyOptionsSchema = z.object({
   currentPassword: passwordInputSchema(1),
-  name: passkeyNameSchema
+  name: passkeyNameSchema,
+  registrationTarget: z.enum(["automatic", "remote"]).default("automatic")
 });
 
 const registrationResponseSchema = z.object({
@@ -729,7 +736,7 @@ mfaRouter.post(
     try {
       const user = requireUser(req.user);
       const expectedAuthVersion = requireRequestAuthVersion(req);
-      const { currentPassword, name } = req.body as z.infer<typeof passkeyOptionsSchema>;
+      const { currentPassword, name, registrationTarget } = req.body as z.infer<typeof passkeyOptionsSchema>;
       const result = await transaction(async (client) => {
         const lockedUser = await requireCurrentPasswordForUpdate(
           client,
@@ -755,6 +762,20 @@ mfaRouter.post(
             id: toBase64Url(passkey.credential_id),
             transports: parseTransports(passkey.transports)
           })),
+          // WebAuthn Level 3 defines the "hybrid" hint for a phone/tablet
+          // authenticator reached from another client device. SimpleWebAuthn
+          // maps remoteDevice to hints:["hybrid"] and also supplies the
+          // cross-platform attachment fallback for older browsers.
+          ...(registrationTarget === "remote"
+            ? {
+                preferredAuthenticatorType: "remoteDevice" as const,
+                timeout: passkeyRegistrationTimeoutMs,
+                // Keep the existing automatic/hardware-key path untouched,
+                // but use the two most common algorithms for the QR/provider
+                // interoperability path instead of leading with Ed25519.
+                supportedAlgorithmIDs: [-7, -257]
+              }
+            : {}),
           authenticatorSelection: {
             residentKey: "required",
             userVerification: "required"
@@ -770,7 +791,8 @@ mfaRouter.post(
           {
             name,
             webauthnUserId: options.user.id,
-            authVersion: expectedAuthVersion
+            authVersion: expectedAuthVersion,
+            registrationTarget
           }
         );
         return { options, challengeToken };

@@ -15,6 +15,8 @@ describe("Two-step verification UI and persistence", () => {
     expect(index).toContain('id="mfa-login-passkey"');
     expect(index).toContain('id="account-totp-setup"');
     expect(index).toContain('id="account-passkey-register-form"');
+    expect(index).toContain('id="account-passkey-registration-target"');
+    expect(index).toContain('<option value="remote"');
     expect(index).toContain('id="account-passkey-list"');
     expect(styles).toContain(".mfa-login-panel");
     expect(styles).toContain(".passkey-list-item");
@@ -23,6 +25,7 @@ describe("Two-step verification UI and persistence", () => {
   it("serializes browser WebAuthn responses and completes the MFA challenge before login", () => {
     expect(client).toContain("navigator.credentials.create");
     expect(client).toContain("navigator.credentials.get");
+    expect(client).toContain("PublicKeyCredential.getClientCapabilities");
     expect(client).toContain("serializeRegistrationCredential");
     expect(client).toContain("serializeAuthenticationCredential");
     expect(client).toContain('api("/api/auth/mfa/login/totp"');
@@ -39,6 +42,9 @@ describe("Two-step verification UI and persistence", () => {
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS webauthn_challenges");
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS mfa_login_sessions");
     expect(mfaRoutes).toContain("excludeCredentials: existingPasskeys.map");
+    expect(mfaRoutes).toContain('preferredAuthenticatorType: "remoteDevice"');
+    expect(mfaRoutes).toContain("supportedAlgorithmIDs: [-7, -257]");
+    expect(mfaRoutes).toContain("timeout: passkeyRegistrationTimeoutMs");
     expect(mfaRoutes).toContain("allowCredentials: passkeys.map");
     expect(mfaRoutes).toContain("last_used_step");
     expect(mfaRoutes).toContain("used_at = CURRENT_TIMESTAMP(3)");

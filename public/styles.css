@@ -12481,7 +12481,7 @@ button.danger {
 
 .passkey-register-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(13rem, 0.8fr) auto;
   align-items: end;
   gap: 0.65rem;
 }

@@ -943,8 +943,16 @@
                       <label for="account-passkey-name" data-i18n="mfa.passkeyNameLabel">Passkey name</label>
                       <input id="account-passkey-name" type="text" maxlength="80" placeholder="Laptop, phone, backup key…" data-i18n-placeholder="mfa.passkeyNamePlaceholder" />
                     </div>
+                    <div class="form-field">
+                      <label for="account-passkey-registration-target" data-i18n="mfa.passkeyRegistrationTargetLabel">Registration method</label>
+                      <select id="account-passkey-registration-target" aria-describedby="account-passkey-registration-help">
+                        <option value="automatic" data-i18n="mfa.passkeyRegistrationAutomatic">Automatic / this device</option>
+                        <option value="remote" data-i18n="mfa.passkeyRegistrationRemote">Phone or tablet by QR code</option>
+                      </select>
+                    </div>
                     <button id="account-passkey-register" type="submit" data-i18n="mfa.addPasskey">Add passkey</button>
                   </form>
+                  <div id="account-passkey-registration-help" class="field-help" data-i18n="mfa.passkeyRegistrationAutomaticHint">Use the normal browser chooser, or select QR registration to explicitly request a nearby phone or tablet.</div>
                   <div id="account-passkey-support" class="field-help"></div>
                   <div id="account-passkey-list" class="passkey-list" aria-live="polite"></div>
                 </article>
