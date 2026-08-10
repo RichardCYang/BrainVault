@@ -1,5 +1,6 @@
-function isUnauthorized(error) {
-  return Number(error?.status ?? 0) === 401;
+function isAuthenticationDenied(error) {
+  const status = Number(error?.status ?? 0);
+  return status === 401 || (status === 403 && error?.code === "COUNTRY_LOGIN_BLOCKED");
 }
 
 /**
@@ -31,7 +32,7 @@ export async function restoreSessionAtBoot(
     user = await loadUser();
   } catch (error) {
     if (!isCurrent()) return superseded();
-    return { outcome: isUnauthorized(error) ? "unauthenticated" : "session-unavailable", error };
+    return { outcome: isAuthenticationDenied(error) ? "unauthenticated" : "session-unavailable", error };
   }
 
   if (!isCurrent()) return superseded();

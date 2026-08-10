@@ -4,6 +4,8 @@ import { db } from "../lib/db.js";
 import { normalizeAuthVersion, verifyAuthToken } from "../lib/auth.js";
 import { setPrivateNoStoreCacheControl } from "../lib/cache-control.js";
 import { ApiError } from "../lib/http.js";
+import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
+import { getClientIpAddress } from "../lib/login-history.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { clearAuthSessionCookie, readAuthSessionCookie } from "../lib/session-cookie.js";
 import { isAllowedCorsOrigin } from "./cors.js";
@@ -82,8 +84,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
     const payload = verifyAuthToken(token);
     const user = await db.queryOne<UserRow>(
-      `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon, theme, password_hash,
-              auth_version, created_at, updated_at
+      `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon, theme, country_login_mode,
+              password_hash, auth_version, created_at, updated_at
        FROM users WHERE id = ?`,
       [payload.sub]
     );
@@ -100,6 +102,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       next(new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid"));
       return;
     }
+
+    await enforceCountryLoginPolicy(user.id, user.country_login_mode, getClientIpAddress(req));
 
     req.auth = { authVersion };
     req.user = toPublicUser(user);

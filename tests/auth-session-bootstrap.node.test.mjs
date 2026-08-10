@@ -63,13 +63,19 @@ test("a transient workspace failure does not discard a valid session", async () 
   assert.equal(state.user, user);
 });
 
-test("only an explicit 401 is classified as an unauthenticated session", async () => {
-  for (const [status, expectedOutcome] of [[401, "unauthenticated"], [0, "session-unavailable"], [500, "session-unavailable"]]) {
+test("authentication denials, including country-policy blocks, are classified as unauthenticated", async () => {
+  for (const [status, code, expectedOutcome] of [
+    [401, null, "unauthenticated"],
+    [403, "COUNTRY_LOGIN_BLOCKED", "unauthenticated"],
+    [403, "ORIGIN_NOT_ALLOWED", "session-unavailable"],
+    [0, null, "session-unavailable"],
+    [500, null, "session-unavailable"]
+  ]) {
     const state = createState();
     let initialized = false;
     const result = await restoreSessionAtBoot(state, {
       loadUser: async () => {
-        throw Object.assign(new Error(`session failure ${status}`), { status });
+        throw Object.assign(new Error(`session failure ${status}`), { status, code });
       },
       initializeAuthenticatedUi: async () => {
         initialized = true;

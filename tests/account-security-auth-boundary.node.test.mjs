@@ -18,6 +18,8 @@ test("account security data and mutations are isolated across authentication bou
   assert.match(app, /const accountSecurityOperationGuards = Object\.freeze\(\{/);
   assert.match(app, /resetAccountSecurityOperationState\(\{ clearSensitiveState: true \}\);/);
   assert.match(app, /state\.mfaStatus = \{ totpEnabled: false, passkeys: \[\] \};/);
+  assert.match(app, /state\.blockHistory = \{ months: blockMonths, blocks: \[\], truncated: false, loading: false, loadedMonths: null \};/);
+  assert.match(app, /state\.countryLoginPolicy = \{[\s\S]*?mode: "OFF",[\s\S]*?countries: \[\],[\s\S]*?loaded: false[\s\S]*?\};/);
   assert.match(app, /accountPasskeyRegistering: false/);
   assert.match(app, /function setAccountPasskeyRegistering\(registering\)/);
 
@@ -29,6 +31,8 @@ test("account security data and mutations are isolated across authentication bou
   const history = section(app, "async function loadLoginHistory", "function loadActiveSecurityPanel");
   assert.match(history, /loginHistory\.begin\(targetKey\)/);
   assert.match(history, /if \(!isCurrentAccountSecurityOperation\(accountSecurityOperationGuards\.loginHistory, operation\)\) return;/);
+  assert.match(history, /blockHistory\.begin\(targetKey\)/);
+  assert.match(history, /countryPolicy\.begin\(targetKey\)/);
 
   const mfa = section(app, "async function loadMfaSettings", "function setSearchDialogMessage");
   assert.match(mfa, /mfaStatus\.begin\(targetKey\)/);

@@ -1,3 +1,4 @@
+import { isoCountryCodes } from "./country-codes.js";
 import {
   applyDocumentTranslations,
   formatNumber,
@@ -158,6 +159,8 @@ const accountDataOperationGuard = createAccountAvatarOperationGuard();
 const authFlowTargetKey = "authentication-flow";
 const accountSecurityOperationGuards = Object.freeze({
   loginHistory: createAccountAvatarOperationGuard(),
+  blockHistory: createAccountAvatarOperationGuard(),
+  countryPolicy: createAccountAvatarOperationGuard(),
   mfaStatus: createAccountAvatarOperationGuard(),
   password: createAccountAvatarOperationGuard(),
   totpSetup: createAccountAvatarOperationGuard(),
@@ -227,6 +230,16 @@ const state = {
   activeAccountPanel: "profile",
   activeSecurityPanel: "settings",
   loginHistory: { months: 3, attempts: [], truncated: false, loading: false, loadedMonths: null },
+  blockHistory: { months: 3, blocks: [], truncated: false, loading: false, loadedMonths: null },
+  countryLoginPolicy: {
+    mode: "OFF",
+    countries: [],
+    currentIp: "unknown",
+    currentCountryCode: null,
+    loading: false,
+    saving: false,
+    loaded: false
+  },
   pendingAvatarData: null,
   accountAvatarPreparing: false,
   accountProfileSaving: false,
@@ -790,6 +803,21 @@ const elements = {
   accountLoginHistoryBody: $("#account-login-history-body"),
   accountLoginHistoryEmpty: $("#account-login-history-empty"),
   accountLoginHistoryTruncated: $("#account-login-history-truncated"),
+  accountBlockHistoryMonths: $("#account-block-history-months"),
+  accountBlockHistoryRefresh: $("#account-block-history-refresh"),
+  accountBlockHistorySummary: $("#account-block-history-summary"),
+  accountBlockHistoryBody: $("#account-block-history-body"),
+  accountBlockHistoryEmpty: $("#account-block-history-empty"),
+  accountBlockHistoryTruncated: $("#account-block-history-truncated"),
+  accountCountryLoginMode: $("#account-country-login-mode"),
+  accountCountryLoginCountry: $("#account-country-login-country"),
+  accountCountryLoginAdd: $("#account-country-login-add"),
+  accountCountryLoginSelected: $("#account-country-login-selected"),
+  accountCountryLoginCurrentIp: $("#account-country-login-current-ip"),
+  accountCountryLoginCurrentCountry: $("#account-country-login-current-country"),
+  accountCountryLoginPassword: $("#account-country-login-password"),
+  accountCountryLoginSave: $("#account-country-login-save"),
+  accountCountryLoginStatus: $("#account-country-login-status"),
   sidebarUserAvatar: $("#sidebar-user-avatar"),
   sidebarUserAvatarFallback: $("#sidebar-user-avatar-fallback"),
   userUsername: $("#user-username"),
@@ -1511,8 +1539,10 @@ async function api(path, options = {}) {
   }
 
   if (!response.ok) {
+    const authenticationDenied = response.status === 401
+      || (response.status === 403 && data?.error?.code === "COUNTRY_LOGIN_BLOCKED");
     if (
-      response.status === 401
+      authenticationDenied
       && !skipAuthReset
       && isCurrentAuthenticatedSessionScope(authenticationScope)
     ) {
@@ -1967,10 +1997,26 @@ function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}
   Object.values(accountSecurityOperationGuards).forEach((guard) => guard.invalidate());
   state.loginHistory.loading = false;
   state.loginHistory.loadedMonths = null;
+  state.blockHistory.loading = false;
+  state.blockHistory.loadedMonths = null;
+  state.countryLoginPolicy.loading = false;
+  state.countryLoginPolicy.saving = false;
+  state.countryLoginPolicy.loaded = false;
 
   if (clearSensitiveState) {
     const months = state.loginHistory.months || 3;
+    const blockMonths = state.blockHistory.months || 3;
     state.loginHistory = { months, attempts: [], truncated: false, loading: false, loadedMonths: null };
+    state.blockHistory = { months: blockMonths, blocks: [], truncated: false, loading: false, loadedMonths: null };
+    state.countryLoginPolicy = {
+      mode: "OFF",
+      countries: [],
+      currentIp: "unknown",
+      currentCountryCode: null,
+      loading: false,
+      saving: false,
+      loaded: false
+    };
     state.mfaStatus = { totpEnabled: false, passkeys: [] };
     hideTotpSetup();
   }
@@ -1979,6 +2025,7 @@ function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}
   elements.accountTotpSetup.disabled = false;
   elements.accountTotpVerify.disabled = false;
   elements.accountTotpDisable.disabled = false;
+  elements.accountCountryLoginPassword.value = "";
   setAccountPasskeyRegistering(false);
 }
 
@@ -1993,6 +2040,49 @@ function populateLoginHistoryMonths() {
     })
   );
   elements.accountLoginHistoryMonths.value = String(Math.min(12, Math.max(1, selectedMonths)));
+}
+
+function populateBlockHistoryMonths() {
+  const selectedMonths = Number(elements.accountBlockHistoryMonths.value) || state.blockHistory.months || 3;
+  elements.accountBlockHistoryMonths.replaceChildren(
+    ...Array.from({ length: 12 }, (_, index) => {
+      const option = document.createElement("option");
+      option.value = String(index + 1);
+      option.textContent = t("account.blockHistoryMonths", { count: formatNumber(index + 1) });
+      return option;
+    })
+  );
+  elements.accountBlockHistoryMonths.value = String(Math.min(12, Math.max(1, selectedMonths)));
+}
+
+function getCountryLoginCountryLabel(countryCode) {
+  const normalized = typeof countryCode === "string" ? countryCode.trim().toUpperCase() : "";
+  if (!/^[A-Z]{2}$/.test(normalized)) return normalized;
+  try {
+    const label = new Intl.DisplayNames([getLocale()], { type: "region" }).of(normalized);
+    return label && label !== normalized ? `${label} (${normalized})` : normalized;
+  } catch {
+    return normalized;
+  }
+}
+
+function populateCountryLoginCountryOptions() {
+  const previousValue = elements.accountCountryLoginCountry.value;
+  const options = isoCountryCodes
+    .map((countryCode) => ({ countryCode, label: getCountryLoginCountryLabel(countryCode) }))
+    .sort((left, right) => left.label.localeCompare(right.label, getLocale()));
+
+  elements.accountCountryLoginCountry.replaceChildren(
+    ...options.map(({ countryCode, label }) => {
+      const option = document.createElement("option");
+      option.value = countryCode;
+      option.textContent = label;
+      return option;
+    })
+  );
+  if (options.some(({ countryCode }) => countryCode === previousValue)) {
+    elements.accountCountryLoginCountry.value = previousValue;
+  }
 }
 
 function renderLoginHistory() {
@@ -2080,13 +2170,253 @@ async function loadLoginHistory({ force = false } = {}) {
   }
 }
 
+function renderBlockHistory() {
+  const { blocks, truncated, loading, months } = state.blockHistory;
+  elements.accountBlockHistoryBody.replaceChildren();
+  elements.accountBlockHistoryEmpty.classList.add("hidden");
+  elements.accountBlockHistoryTruncated.classList.toggle("hidden", !truncated || loading);
+  elements.accountBlockHistoryMonths.disabled = loading;
+  elements.accountBlockHistoryRefresh.disabled = loading;
+
+  if (loading) {
+    const row = document.createElement("tr");
+    row.className = "login-history-loading";
+    const cell = document.createElement("td");
+    cell.colSpan = 4;
+    cell.textContent = t("account.blockHistoryLoading");
+    row.append(cell);
+    elements.accountBlockHistoryBody.append(row);
+    elements.accountBlockHistorySummary.textContent = t("account.blockHistoryLoading");
+    return;
+  }
+
+  const reasonTranslationKeys = {
+    NOT_ALLOWLISTED: "account.blockHistoryNotAllowlisted",
+    BLOCKLISTED: "account.blockHistoryBlacklisted",
+    COUNTRY_UNRESOLVED: "account.blockHistoryCountryUnresolved",
+    POLICY_INVALID: "account.blockHistoryPolicyInvalid"
+  };
+
+  blocks.forEach((block) => {
+    const row = document.createElement("tr");
+    const timeCell = document.createElement("td");
+    timeCell.textContent = formatDate(block.blockedAt);
+    const ipCell = document.createElement("td");
+    ipCell.textContent = block.ipAddress === "unknown" ? t("account.loginHistoryUnknownIp") : block.ipAddress;
+    const countryCell = document.createElement("td");
+    countryCell.className = "login-history-country";
+    countryCell.textContent = formatLoginCountry(block.countryCode);
+    const reasonCell = document.createElement("td");
+    const reason = document.createElement("span");
+    reason.className = "login-history-result failure";
+    reason.textContent = t(reasonTranslationKeys[block.reason] ?? "account.blockHistoryPolicyInvalid");
+    reasonCell.append(reason);
+    row.append(timeCell, ipCell, countryCell, reasonCell);
+    elements.accountBlockHistoryBody.append(row);
+  });
+
+  elements.accountBlockHistoryEmpty.classList.toggle("hidden", blocks.length > 0);
+  elements.accountBlockHistorySummary.textContent = t("account.blockHistorySummary", {
+    count: formatNumber(blocks.length),
+    months: formatNumber(months)
+  });
+}
+
+async function loadBlockHistory({ force = false } = {}) {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey || !state.accountSettingsOpen || state.blockHistory.loading) return;
+  const months = Math.min(12, Math.max(1, Number(elements.accountBlockHistoryMonths.value) || 3));
+  state.blockHistory.months = months;
+  if (!force && state.blockHistory.loadedMonths === months) {
+    renderBlockHistory();
+    return;
+  }
+
+  const operation = accountSecurityOperationGuards.blockHistory.begin(targetKey);
+  state.blockHistory.loading = true;
+  renderBlockHistory();
+  setAccountMessage();
+  try {
+    const data = await api(`/api/auth/block-history?months=${encodeURIComponent(months)}`);
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.blockHistory, operation)) return;
+    state.blockHistory.blocks = Array.isArray(data?.blocks) ? data.blocks : [];
+    state.blockHistory.truncated = Boolean(data?.truncated);
+    state.blockHistory.loadedMonths = months;
+  } catch (error) {
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.blockHistory, operation)) return;
+    state.blockHistory.blocks = [];
+    state.blockHistory.truncated = false;
+    state.blockHistory.loadedMonths = null;
+    setAccountMessage(error.message, true);
+  } finally {
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.blockHistory, operation)) {
+      state.blockHistory.loading = false;
+      renderBlockHistory();
+    }
+  }
+}
+
+function normalizeCountryLoginMode(mode) {
+  return ["OFF", "ALLOWLIST", "BLOCKLIST"].includes(mode) ? mode : "OFF";
+}
+
+function renderCountryLoginPolicy() {
+  const policy = state.countryLoginPolicy;
+  const enabled = policy.mode !== "OFF";
+  const busy = policy.loading || policy.saving;
+  elements.accountCountryLoginMode.value = policy.mode;
+  elements.accountCountryLoginCurrentIp.textContent = policy.currentIp === "unknown"
+    ? t("account.loginHistoryUnknownIp")
+    : policy.currentIp;
+  elements.accountCountryLoginCurrentCountry.textContent = formatLoginCountry(policy.currentCountryCode);
+  elements.accountCountryLoginStatus.textContent = t(
+    policy.mode === "ALLOWLIST"
+      ? "account.countryLoginAllowlist"
+      : policy.mode === "BLOCKLIST"
+        ? "account.countryLoginBlocklist"
+        : "account.countryLoginOff"
+  );
+  elements.accountCountryLoginStatus.dataset.mode = policy.mode.toLowerCase();
+
+  elements.accountCountryLoginSelected.replaceChildren();
+  if (!policy.countries.length) {
+    const empty = document.createElement("span");
+    empty.className = "country-login-selected-empty";
+    empty.textContent = t("account.countryLoginNoCountries");
+    elements.accountCountryLoginSelected.append(empty);
+  } else {
+    policy.countries.forEach((countryCode) => {
+      const chip = document.createElement("span");
+      chip.className = "country-login-chip";
+      const label = document.createElement("span");
+      label.textContent = getCountryLoginCountryLabel(countryCode);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.dataset.countryCode = countryCode;
+      remove.setAttribute("aria-label", t("account.countryLoginRemove", { country: getCountryLoginCountryLabel(countryCode) }));
+      remove.textContent = "×";
+      remove.disabled = busy;
+      chip.append(label, remove);
+      elements.accountCountryLoginSelected.append(chip);
+    });
+  }
+
+  elements.accountCountryLoginMode.disabled = busy;
+  elements.accountCountryLoginCountry.disabled = busy || !enabled;
+  elements.accountCountryLoginAdd.disabled = busy || !enabled;
+  elements.accountCountryLoginPassword.disabled = busy;
+  elements.accountCountryLoginSave.disabled = busy || (enabled && policy.countries.length === 0);
+  elements.accountCountryLoginSave.textContent = t(policy.saving ? "account.countryLoginSaving" : "account.countryLoginSave");
+}
+
+async function loadCountryLoginPolicy({ force = false } = {}) {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey || !state.accountSettingsOpen || state.countryLoginPolicy.loading) return;
+  if (!force && state.countryLoginPolicy.loaded) {
+    renderCountryLoginPolicy();
+    return;
+  }
+
+  const operation = accountSecurityOperationGuards.countryPolicy.begin(targetKey);
+  state.countryLoginPolicy.loading = true;
+  renderCountryLoginPolicy();
+  setAccountMessage();
+  try {
+    const data = await api("/api/auth/country-login-policy");
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.countryPolicy, operation)) return;
+    const validCountries = new Set(isoCountryCodes);
+    state.countryLoginPolicy.mode = normalizeCountryLoginMode(data?.mode);
+    state.countryLoginPolicy.countries = Array.isArray(data?.countries)
+      ? [...new Set(data.countries
+          .map((countryCode) => typeof countryCode === "string" ? countryCode.toUpperCase() : "")
+          .filter((countryCode) => validCountries.has(countryCode)))]
+      : [];
+    state.countryLoginPolicy.currentIp = typeof data?.currentIp === "string" ? data.currentIp : "unknown";
+    state.countryLoginPolicy.currentCountryCode = typeof data?.currentCountryCode === "string"
+      ? data.currentCountryCode.toUpperCase()
+      : null;
+    state.countryLoginPolicy.loaded = true;
+  } catch (error) {
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.countryPolicy, operation)) return;
+    state.countryLoginPolicy.loaded = false;
+    setAccountMessage(error.message, true);
+  } finally {
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.countryPolicy, operation)) {
+      state.countryLoginPolicy.loading = false;
+      renderCountryLoginPolicy();
+    }
+  }
+}
+
+async function saveCountryLoginPolicy() {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey || state.countryLoginPolicy.loading || state.countryLoginPolicy.saving) return;
+  const mode = normalizeCountryLoginMode(elements.accountCountryLoginMode.value);
+  const countries = [...new Set(state.countryLoginPolicy.countries)];
+  if (mode !== "OFF" && countries.length === 0) {
+    setAccountMessage(t("account.countryLoginCountriesRequired"), true);
+    return;
+  }
+
+  const operation = accountSecurityOperationGuards.countryPolicy.begin(targetKey);
+  state.countryLoginPolicy.mode = mode;
+  state.countryLoginPolicy.saving = true;
+  renderCountryLoginPolicy();
+  setAccountMessage();
+  try {
+    const data = await api("/api/auth/country-login-policy", {
+      method: "PUT",
+      body: {
+        currentPassword: elements.accountCountryLoginPassword.value,
+        mode,
+        countries
+      }
+    });
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.countryPolicy, operation)) return;
+    acceptRotatedAuthenticationSession();
+    const validCountries = new Set(isoCountryCodes);
+    state.countryLoginPolicy.mode = normalizeCountryLoginMode(data?.mode);
+    state.countryLoginPolicy.countries = Array.isArray(data?.countries)
+      ? [...new Set(data.countries
+          .map((countryCode) => typeof countryCode === "string" ? countryCode.toUpperCase() : "")
+          .filter((countryCode) => validCountries.has(countryCode)))]
+      : [];
+    state.countryLoginPolicy.currentIp = typeof data?.currentIp === "string"
+      ? data.currentIp
+      : state.countryLoginPolicy.currentIp;
+    state.countryLoginPolicy.currentCountryCode = typeof data?.currentCountryCode === "string"
+      ? data.currentCountryCode.toUpperCase()
+      : null;
+    state.countryLoginPolicy.loaded = true;
+    elements.accountCountryLoginPassword.value = "";
+    state.blockHistory.loadedMonths = null;
+    setAccountMessage(t("account.countryLoginSaved"));
+  } catch (error) {
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.countryPolicy, operation)) return;
+    setAccountMessage(error.message, true);
+  } finally {
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.countryPolicy, operation)) {
+      state.countryLoginPolicy.saving = false;
+      renderCountryLoginPolicy();
+    }
+  }
+}
+
 function loadActiveSecurityPanel() {
-  if (state.activeSecurityPanel === "history") void loadLoginHistory();
-  else void loadMfaSettings();
+  if (state.activeSecurityPanel === "history") {
+    void loadLoginHistory();
+    return;
+  }
+  if (state.activeSecurityPanel === "blocks") {
+    void loadBlockHistory();
+    return;
+  }
+  void loadMfaSettings();
+  void loadCountryLoginPolicy();
 }
 
 function setSecurityPanel(panel, { focusTab = false, load = true } = {}) {
-  const nextPanel = panel === "history" ? "history" : "settings";
+  const nextPanel = ["settings", "history", "blocks"].includes(panel) ? panel : "settings";
   state.activeSecurityPanel = nextPanel;
   elements.accountSecurityTabs.forEach((tab) => {
     const selected = tab.dataset.securityPanel === nextPanel;
@@ -2512,12 +2842,17 @@ function fillAccountSettings() {
   elements.accountPasswordForm.reset();
   resetDataImportSelection();
   elements.accountMfaPassword.value = "";
+  elements.accountCountryLoginPassword.value = "";
   elements.accountPasskeyRegisterForm.reset();
   hideTotpSetup();
   populateLoginHistoryMonths();
+  populateBlockHistoryMonths();
+  populateCountryLoginCountryOptions();
   setSecurityPanel(state.activeSecurityPanel, { load: false });
   renderMfaSettings();
   renderLoginHistory();
+  renderBlockHistory();
+  renderCountryLoginPolicy();
   updateUserIdentityUi();
 }
 
@@ -2576,6 +2911,7 @@ function closeAccountSettings({ restoreFocus = true, force = false } = {}) {
   elements.accountAvatarInput.value = "";
   elements.accountPasswordForm.reset();
   elements.accountMfaPassword.value = "";
+  elements.accountCountryLoginPassword.value = "";
   elements.accountPasskeyRegisterForm.reset();
   hideTotpSetup();
   syncMobileSidebarAccessibility();
@@ -11884,7 +12220,11 @@ async function boot() {
   applyDocumentTranslations();
   populateLanguageSelect(elements.languageSelect);
   populateLoginHistoryMonths();
+  populateBlockHistoryMonths();
+  populateCountryLoginCountryOptions();
   renderLoginHistory();
+  renderBlockHistory();
+  renderCountryLoginPolicy();
   setAuthMode(state.authMode, false);
 
   const operation = beginAuthFlowOperation();
@@ -11929,7 +12269,7 @@ async function boot() {
 
   resetAuthenticationSessionState();
   if (result.outcome === "unauthenticated") {
-    setStatus(t("status.loginRequired"));
+    setStatus(result.error?.message ?? t("status.loginRequired"), Boolean(result.error));
     return;
   }
   setStatus(result.error?.message ?? t("errors.unknown"), true);
@@ -12233,6 +12573,45 @@ elements.accountLoginHistoryMonths.addEventListener("change", () => {
 elements.accountLoginHistoryRefresh.addEventListener("click", () => {
   state.loginHistory.loadedMonths = null;
   void loadLoginHistory({ force: true });
+});
+
+elements.accountBlockHistoryMonths.addEventListener("change", () => {
+  state.blockHistory.loadedMonths = null;
+  void loadBlockHistory({ force: true });
+});
+
+elements.accountBlockHistoryRefresh.addEventListener("click", () => {
+  state.blockHistory.loadedMonths = null;
+  void loadBlockHistory({ force: true });
+});
+
+elements.accountCountryLoginMode.addEventListener("change", () => {
+  state.countryLoginPolicy.mode = normalizeCountryLoginMode(elements.accountCountryLoginMode.value);
+  renderCountryLoginPolicy();
+  setAccountMessage();
+});
+
+elements.accountCountryLoginAdd.addEventListener("click", () => {
+  const countryCode = elements.accountCountryLoginCountry.value;
+  if (!isoCountryCodes.includes(countryCode) || state.countryLoginPolicy.countries.includes(countryCode)) return;
+  state.countryLoginPolicy.countries = [...state.countryLoginPolicy.countries, countryCode]
+    .sort((left, right) => getCountryLoginCountryLabel(left).localeCompare(getCountryLoginCountryLabel(right), getLocale()));
+  renderCountryLoginPolicy();
+  setAccountMessage();
+});
+
+elements.accountCountryLoginSelected.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-country-code]");
+  if (!button || state.countryLoginPolicy.loading || state.countryLoginPolicy.saving) return;
+  state.countryLoginPolicy.countries = state.countryLoginPolicy.countries.filter(
+    (countryCode) => countryCode !== button.dataset.countryCode
+  );
+  renderCountryLoginPolicy();
+  setAccountMessage();
+});
+
+elements.accountCountryLoginSave.addEventListener("click", () => {
+  void saveCountryLoginPolicy();
 });
 
 elements.accountDataExport.addEventListener("click", async () => {
@@ -12717,10 +13096,16 @@ function refreshLocalizedUi() {
   syncPageModeUi();
   if (state.user) updateUserIdentityUi();
   populateLoginHistoryMonths();
+  populateBlockHistoryMonths();
+  populateCountryLoginCountryOptions();
   if (state.searchDialogOpen) renderSearchDialog();
   if (state.accountSettingsOpen) {
     if (state.activeSecurityPanel === "history") renderLoginHistory();
-    else renderMfaSettings();
+    else if (state.activeSecurityPanel === "blocks") renderBlockHistory();
+    else {
+      renderMfaSettings();
+      renderCountryLoginPolicy();
+    }
   }
   if (state.mfaLogin?.methods?.passkey) syncAuthOperationControls();
   if (!elements.emojiPickerLayer.classList.contains("hidden")) renderEmojiPicker();

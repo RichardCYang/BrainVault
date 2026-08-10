@@ -10,6 +10,7 @@ import {
 import { db, transaction, type DbClient } from "../lib/db.js";
 import { normalizeAuthVersion, signAuthToken } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
+import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
 import { getClientIpAddress, recordLoginAttempt } from "../lib/login-history.js";
 import {
   createOpaqueToken,
@@ -389,6 +390,8 @@ passkeyLoginRouter.post(
       if (!Number.isSafeInteger(newCounter) || newCounter < 0) throw loginFailure();
       if (previousCounter > 0 && newCounter <= previousCounter) throw loginFailure();
 
+      await enforceCountryLoginPolicy(passkey.user_id, undefined, sourceIp);
+
       const result = await transaction(async (client) => {
         const user = await client.queryOne<UserRow>(
           "SELECT * FROM users WHERE id = ? FOR UPDATE",
@@ -459,7 +462,7 @@ passkeyLoginRouter.post(
            WHERE id = ?`,
           [user.id]
         );
-        await recordLoginAttempt(user.id, challenge.source_ip || sourceIp, "SUCCESS", client);
+        await recordLoginAttempt(user.id, sourceIp, "SUCCESS", client);
 
         return {
           user: toPublicUser(user),

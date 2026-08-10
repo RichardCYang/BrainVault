@@ -16,6 +16,7 @@ import { db, transaction, type DbClient } from "../lib/db.js";
 import { disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
+import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
 import { getClientIpAddress, recordLoginAttempt } from "../lib/login-history.js";
 import { createId } from "../lib/id.js";
 import {
@@ -957,7 +958,10 @@ mfaRouter.post(
     const { mfaToken, code } = req.body as z.infer<typeof mfaLoginTotpSchema>;
     let session: MfaSessionRow | undefined;
     try {
-      const activeSession = await reserveMfaAttempt(mfaToken, getClientIpAddress(req));
+      const sourceIp = getClientIpAddress(req);
+      const pendingSession = await getActiveMfaSession(mfaToken, sourceIp);
+      await enforceCountryLoginPolicy(pendingSession.user_id, undefined, pendingSession.source_ip);
+      const activeSession = await reserveMfaAttempt(mfaToken, sourceIp);
       session = activeSession;
       const result = await transaction(async (client) => {
         const loginUser = await getLoginUserForUpdate(client, activeSession.user_id);
@@ -1021,6 +1025,7 @@ mfaRouter.post(
     try {
       const { mfaToken } = req.body as z.infer<typeof mfaTokenSchema>;
       const session = await getActiveMfaSession(mfaToken, getClientIpAddress(req));
+      await enforceCountryLoginPolicy(session.user_id, undefined, session.source_ip);
       const passkeys = await db.query<PasskeyRow>(
         `SELECT id, user_id, credential_id, webauthn_user_id, public_key, counter, transports,
                 device_type, backed_up, aaguid, name, created_at, updated_at, last_used_at
@@ -1064,7 +1069,10 @@ mfaRouter.post(
     const { mfaToken, challengeToken, response } = req.body as z.infer<typeof passkeyLoginVerifySchema>;
     let session: MfaSessionRow | undefined;
     try {
-      const activeSession = await reserveMfaAttempt(mfaToken, getClientIpAddress(req));
+      const sourceIp = getClientIpAddress(req);
+      const pendingSession = await getActiveMfaSession(mfaToken, sourceIp);
+      await enforceCountryLoginPolicy(pendingSession.user_id, undefined, pendingSession.source_ip);
+      const activeSession = await reserveMfaAttempt(mfaToken, sourceIp);
       session = activeSession;
       const contextHash = hashOpaqueToken(mfaToken);
       const challenge = await consumeChallenge(challengeToken, activeSession.user_id, "authentication", contextHash);

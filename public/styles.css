@@ -12325,6 +12325,135 @@ body.search-dialog-open {
   margin-top: 1.25rem;
 }
 
+.country-login-policy-form {
+  display: grid;
+  gap: 0.95rem;
+}
+
+.country-login-policy-form .form-field {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.country-login-country-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.country-login-country-picker select {
+  min-width: 0;
+  width: 100%;
+}
+
+.country-login-selected {
+  display: flex;
+  min-height: 2.55rem;
+  align-items: center;
+  align-content: flex-start;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 0.55rem;
+}
+
+.country-login-selected-empty {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.country-login-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid rgba(64, 137, 194, 0.24);
+  border-radius: 999px;
+  background: rgba(64, 137, 194, 0.08);
+  color: var(--ink-strong);
+  padding: 0.28rem 0.3rem 0.28rem 0.56rem;
+  font-size: 0.7rem;
+  font-weight: 680;
+}
+
+.country-login-chip button {
+  width: 1.35rem;
+  height: 1.35rem;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+  box-shadow: none;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.country-login-chip button:hover {
+  background: var(--hover);
+  color: var(--danger);
+}
+
+.country-login-current {
+  display: grid;
+  grid-template-columns: minmax(7rem, auto) minmax(0, 1fr);
+  gap: 0.45rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 0.72rem 0.8rem;
+  font-size: 0.72rem;
+}
+
+.country-login-current span {
+  color: var(--muted);
+}
+
+.country-login-current strong {
+  min-width: 0;
+  color: var(--ink-strong);
+  overflow-wrap: anywhere;
+}
+
+.country-login-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  padding: 0.3rem 0.52rem;
+  font-size: 0.67rem;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.country-login-status[data-mode="allowlist"],
+.country-login-status[data-mode="blocklist"] {
+  border-color: rgba(64, 137, 194, 0.28);
+  background: rgba(64, 137, 194, 0.08);
+  color: var(--accent-text);
+}
+
+.country-login-warning {
+  margin: 0;
+  border-left: 3px solid rgba(210, 66, 66, 0.44);
+  border-radius: 0 6px 6px 0;
+  background: rgba(210, 66, 66, 0.055);
+  color: var(--muted);
+  padding: 0.68rem 0.78rem;
+  font-size: 0.71rem;
+  line-height: 1.55;
+}
+
+.block-history-table td:last-child {
+  min-width: 10rem;
+}
+
 .account-security-section-heading,
 .mfa-method-card-header {
   display: flex;
@@ -12579,6 +12708,15 @@ button.danger {
   }
 
   .login-history-toolbar select {
+    width: 100%;
+  }
+
+  .country-login-country-picker,
+  .country-login-current {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .country-login-country-picker button {
     width: 100%;
   }
 }

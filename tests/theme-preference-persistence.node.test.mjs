@@ -30,7 +30,7 @@ test("a missing theme projection silently converts a dark account to light", () 
 test("session restoration selects the persisted theme before mapping /api/auth/me", () => {
   assert.match(
     authMiddlewareSource,
-    /SELECT\s+id,\s*username,\s*name,\s*avatar_data,\s*preferred_language,\s*default_collection_icon,\s*theme,\s*password_hash,/s
+    /SELECT\s+id,\s*username,\s*name,\s*avatar_data,\s*preferred_language,\s*default_collection_icon,\s*theme,\s*country_login_mode,\s*password_hash,/s
   );
 });
 

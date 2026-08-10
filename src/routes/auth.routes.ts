@@ -10,6 +10,18 @@ import { ApiError } from "../lib/http.js";
 import { iconValueSchema, normalizeIconValue } from "../lib/icon-value.js";
 import { evaluatePasswordLogin } from "../lib/login-lockout.js";
 import {
+  assertPolicyAllowsCurrentLocation,
+  countryLoginModes,
+  defaultCountryBlockHistoryMonths,
+  enforceCountryLoginPolicy,
+  getCountryLoginPolicy,
+  listCountryLoginBlocks,
+  maxCountryBlockHistoryMonths,
+  normalizeCountryLoginMode,
+  resolveCountryLoginLocation
+} from "../lib/country-login-policy.js";
+import { normalizeIsoCountryCode } from "../lib/country-codes.js";
+import {
   defaultLoginHistoryMonths,
   getClientIpAddress,
   listLoginAttempts,
@@ -75,6 +87,37 @@ const profileSchema = z
 const loginHistoryQuerySchema = z.object({
   months: z.coerce.number().int().min(1).max(maxLoginHistoryMonths).default(defaultLoginHistoryMonths)
 });
+
+const countryBlockHistoryQuerySchema = z.object({
+  months: z.coerce.number().int().min(1).max(maxCountryBlockHistoryMonths).default(defaultCountryBlockHistoryMonths)
+});
+
+const countryLoginPolicySchema = z
+  .object({
+    currentPassword: passwordInputSchema(1),
+    mode: z.enum(countryLoginModes),
+    countries: z.array(
+      z.string()
+        .transform((value) => value.trim().toUpperCase())
+        .refine((value) => Boolean(normalizeIsoCountryCode(value)), "Invalid ISO country code")
+    ).max(249)
+  })
+  .superRefine((value, context) => {
+    if (new Set(value.countries).size !== value.countries.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["countries"],
+        message: "Country codes must be unique"
+      });
+    }
+    if (value.mode !== "OFF" && value.countries.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["countries"],
+        message: "At least one country is required when the policy is enabled"
+      });
+    }
+  });
 
 const navigationPreferenceSchema = z.object({
   pageId: z.string().min(1).max(64),
@@ -199,6 +242,8 @@ authRouter.post(
       if (!user || passwordDecision !== "ALLOWED") {
         throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid ID or password");
       }
+
+      await enforceCountryLoginPolicy(user.id, user.country_login_mode, sourceIp);
 
       const methods = await getMfaMethods(user.id);
       if (methods.totp || methods.passkey) {
@@ -325,6 +370,118 @@ authRouter.get(
       const history = await listLoginAttempts(user.id, months);
       res.setHeader("Cache-Control", "private, no-store");
       res.json(history);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+authRouter.get(
+  "/block-history",
+  requireAuth,
+  validate({ query: countryBlockHistoryQuerySchema }),
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req.user);
+      const { months } = getValidatedQuery<z.infer<typeof countryBlockHistoryQuerySchema>>(req);
+      const history = await listCountryLoginBlocks(user.id, months);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json(history);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+authRouter.get("/country-login-policy", requireAuth, async (req, res, next) => {
+  try {
+    const currentUser = requireUser(req.user);
+    const row = await db.queryOne<{ country_login_mode: unknown }>(
+      "SELECT country_login_mode FROM users WHERE id = ?",
+      [currentUser.id]
+    );
+    if (!row) throw new ApiError(404, "NOT_FOUND", "User not found");
+
+    const policy = await getCountryLoginPolicy(currentUser.id, row.country_login_mode);
+    const location = await resolveCountryLoginLocation(getClientIpAddress(req));
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json({
+      mode: policy.mode,
+      countries: policy.countries,
+      currentIp: location.ipAddress || "unknown",
+      currentCountryCode: location.countryCode
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+authRouter.put(
+  "/country-login-policy",
+  requireAuth,
+  accountReauthenticationRateLimit,
+  validate({ body: countryLoginPolicySchema }),
+  async (req, res, next) => {
+    try {
+      const currentUser = requireUser(req.user);
+      const expectedAuthVersion = requireRequestAuthVersion(req);
+      const { currentPassword, mode: rawMode, countries: rawCountries } =
+        req.body as z.infer<typeof countryLoginPolicySchema>;
+      const mode = normalizeCountryLoginMode(rawMode);
+      const countries = [...new Set(
+        rawCountries
+          .map((country) => normalizeIsoCountryCode(country))
+          .filter((country): country is NonNullable<ReturnType<typeof normalizeIsoCountryCode>> => Boolean(country))
+      )].sort();
+      const sourceIp = getClientIpAddress(req);
+      const location = mode === "OFF"
+        ? { ipAddress: sourceIp, countryCode: null, resolved: false }
+        : await assertPolicyAllowsCurrentLocation(mode, countries, sourceIp);
+
+      const updatedUser = await transaction(async (client) => {
+        const user = await client.queryOne<UserRow>(
+          "SELECT * FROM users WHERE id = ? FOR UPDATE",
+          [currentUser.id]
+        );
+        if (!user) throw new ApiError(401, "UNAUTHENTICATED", "User no longer exists");
+        assertAuthenticationVersion(user, expectedAuthVersion);
+        if (!(await verifyPassword(currentPassword, user.password_hash))) {
+          throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
+        }
+
+        const authVersion = normalizeAuthVersion(user.auth_version) + 1;
+        await client.execute(
+          "UPDATE users SET country_login_mode = ?, auth_version = ? WHERE id = ?",
+          [mode, authVersion, user.id]
+        );
+        await client.execute("DELETE FROM user_country_login_countries WHERE user_id = ?", [user.id]);
+        for (const countryCode of countries) {
+          await client.execute(
+            `INSERT INTO user_country_login_countries (user_id, country_code)
+             VALUES (?, ?)`,
+            [user.id, countryCode]
+          );
+        }
+        await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [user.id]);
+        await client.execute("DELETE FROM webauthn_challenges WHERE user_id = ?", [user.id]);
+        await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [user.id]);
+        return { ...user, country_login_mode: mode, auth_version: authVersion };
+      });
+
+      disconnectUserCollaborators(updatedUser.id, "Country login access policy changed");
+      const token = signAuthToken({
+        sub: updatedUser.id,
+        username: updatedUser.username,
+        authVersion: normalizeAuthVersion(updatedUser.auth_version)
+      });
+      setAuthSessionCookie(res, token);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json({
+        mode,
+        countries,
+        currentIp: location.ipAddress || sourceIp || "unknown",
+        currentCountryCode: location.countryCode
+      });
     } catch (error) {
       next(error);
     }

@@ -878,6 +878,9 @@
                 <button id="account-security-tab-history" type="button" role="tab" aria-selected="false" aria-controls="account-security-panel-history" data-security-panel="history" tabindex="-1">
                   <span data-i18n="account.loginHistoryTab">Login history</span>
                 </button>
+                <button id="account-security-tab-blocks" type="button" role="tab" aria-selected="false" aria-controls="account-security-panel-blocks" data-security-panel="blocks" tabindex="-1">
+                  <span data-i18n="account.blockHistoryTab">Block history</span>
+                </button>
               </div>
 
               <div id="account-security-panel-settings" class="account-security-panel" role="tabpanel" aria-labelledby="account-security-tab-settings" data-security-panel-content="settings">
@@ -958,6 +961,56 @@
                 </article>
                 </section>
 
+                <section class="account-security-section country-login-policy-section" aria-labelledby="account-country-login-title">
+                  <div class="account-security-section-heading">
+                    <div>
+                      <h4 id="account-country-login-title" data-i18n="account.countryLoginTitle">Country login access</h4>
+                      <p data-i18n="account.countryLoginDescription">Allow or block sign-ins based on the country inferred from the trusted client IP address.</p>
+                    </div>
+                    <span id="account-country-login-status" class="country-login-status" data-i18n="account.countryLoginOff">Off</span>
+                  </div>
+
+                  <div class="country-login-policy-form">
+                    <div class="form-field">
+                      <label for="account-country-login-mode" data-i18n="account.countryLoginMode">Access mode</label>
+                      <select id="account-country-login-mode">
+                        <option value="OFF" data-i18n="account.countryLoginOff">Off</option>
+                        <option value="ALLOWLIST" data-i18n="account.countryLoginAllowlist">Whitelist countries</option>
+                        <option value="BLOCKLIST" data-i18n="account.countryLoginBlocklist">Blacklist countries</option>
+                      </select>
+                    </div>
+
+                    <div class="form-field">
+                      <label for="account-country-login-country" data-i18n="account.countryLoginCountry">Country</label>
+                      <div class="country-login-country-picker">
+                        <select id="account-country-login-country"></select>
+                        <button id="account-country-login-add" class="secondary compact" type="button" data-i18n="account.countryLoginAdd">Add</button>
+                      </div>
+                      <p class="field-help" data-i18n="account.countryLoginCountryHint">Choose one or more countries for the selected policy.</p>
+                    </div>
+
+                    <div id="account-country-login-selected" class="country-login-selected" aria-live="polite"></div>
+
+                    <div class="country-login-current">
+                      <span data-i18n="account.countryLoginCurrentIp">Current IP</span>
+                      <strong id="account-country-login-current-ip">—</strong>
+                      <span data-i18n="account.countryLoginCurrentCountry">Current country</span>
+                      <strong id="account-country-login-current-country">—</strong>
+                    </div>
+
+                    <div class="form-field">
+                      <label for="account-country-login-password" data-i18n="account.countryLoginPassword">Current password to save this policy</label>
+                      <input id="account-country-login-password" type="password" autocomplete="current-password" maxlength="128" />
+                    </div>
+
+                    <p class="country-login-warning" data-i18n="account.countryLoginWarning">When enabled, a login is denied if the IP country cannot be determined. Saving also revokes other active sessions.</p>
+
+                    <div class="account-form-actions">
+                      <button id="account-country-login-save" type="button" data-i18n="account.countryLoginSave">Save country access policy</button>
+                    </div>
+                  </div>
+                </section>
+
                 <section class="account-security-section" aria-labelledby="account-password-title">
                 <div class="account-security-section-heading">
                   <div>
@@ -1018,6 +1071,40 @@
                   <p id="account-login-history-empty" class="login-history-empty hidden" data-i18n="account.loginHistoryEmpty">No login attempts were recorded during this period.</p>
                 </div>
                 <p id="account-login-history-truncated" class="login-history-note hidden" data-i18n="account.loginHistoryTruncated">Only the latest 500 attempts are shown.</p>
+              </section>
+
+              <section id="account-security-panel-blocks" class="account-security-panel hidden" role="tabpanel" aria-labelledby="account-security-tab-blocks" data-security-panel-content="blocks">
+                <div class="login-history-heading">
+                  <div>
+                    <h4 data-i18n="account.blockHistoryTitle">Block history</h4>
+                    <p data-i18n="account.blockHistoryDescription">Review sign-ins and authenticated sessions rejected by the country access policy.</p>
+                  </div>
+                  <button id="account-block-history-refresh" class="secondary compact" type="button" data-i18n="account.blockHistoryRefresh">Refresh</button>
+                </div>
+
+                <div class="login-history-toolbar">
+                  <label for="account-block-history-months" data-i18n="account.blockHistoryPeriod">History period</label>
+                  <select id="account-block-history-months" aria-label="Block history period" data-i18n-aria-label="account.blockHistoryPeriod"></select>
+                </div>
+
+                <p id="account-block-history-summary" class="login-history-summary" aria-live="polite"></p>
+
+                <div class="login-history-table-wrap">
+                  <table class="login-history-table block-history-table">
+                    <caption class="visually-hidden" data-i18n="account.blockHistoryTableCaption">Recent country-policy blocks</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col" data-i18n="account.loginHistoryTime">Time</th>
+                        <th scope="col" data-i18n="account.loginHistoryIp">IP address</th>
+                        <th scope="col" data-i18n="account.loginHistoryCountry">Country</th>
+                        <th scope="col" data-i18n="account.blockHistoryReason">Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody id="account-block-history-body"></tbody>
+                  </table>
+                  <p id="account-block-history-empty" class="login-history-empty hidden" data-i18n="account.blockHistoryEmpty">No country-policy blocks were recorded during this period.</p>
+                </div>
+                <p id="account-block-history-truncated" class="login-history-note hidden" data-i18n="account.blockHistoryTruncated">Only the latest 500 blocks are shown.</p>
               </section>
             </section>
           </div>

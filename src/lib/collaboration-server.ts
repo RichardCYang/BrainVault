@@ -12,6 +12,7 @@ import {
   getCollaborationState
 } from "./collaboration-lineage.js";
 import { ApiError } from "./http.js";
+import { enforceCountryLoginPolicy } from "./country-login-policy.js";
 import {
   acceptWebSocketUpgrade,
   parseWebSocketProtocols,
@@ -36,7 +37,7 @@ import {
   readCollaborationMaterialization
 } from "./collaboration-materialization.js";
 import { CollaborationDocumentError } from "./collaboration-document.js";
-import { isHttpsRequestFromTrustedProxy } from "./reverse-proxy.js";
+import { getClientIpAddressFromTrustedProxyRequest, isHttpsRequestFromTrustedProxy } from "./reverse-proxy.js";
 import {
   assessInitialCollaborationBootstrap,
   invalidInitialCollaborationBootstrapSummary,
@@ -93,6 +94,7 @@ type ClientContext = {
   socket: WebSocketConnection;
   user: CollaborationProfile;
   authVersion: number;
+  ipAddress: string;
   documentEpoch: string;
   synced: boolean;
   awareness: AwarenessState;
@@ -414,8 +416,15 @@ export class PageCollaborationHub {
       }
       const collaborationState = await getCollaborationState(pageId);
       assertCollaborationDocumentEpoch(collaborationState, payload.documentEpoch);
-      const user = await db.queryOne<CollaborationProfile & { auth_version?: number }>(
-        "SELECT id, username, name, avatar_data, auth_version FROM users WHERE id = ?",
+      const sourceIp = getClientIpAddressFromTrustedProxyRequest(
+        request,
+        env.HTTPS_MODE === "proxy" ? env.TRUST_PROXY_ADDRESSES : []
+      );
+      const user = await db.queryOne<CollaborationProfile & {
+        auth_version?: number;
+        country_login_mode?: UserRow["country_login_mode"];
+      }>(
+        "SELECT id, username, name, avatar_data, auth_version, country_login_mode FROM users WHERE id = ?",
         [payload.sub]
       );
       if (!user) {
@@ -427,6 +436,7 @@ export class PageCollaborationHub {
         rejectWebSocketUpgrade(socket, 401, "Authentication session was revoked");
         return;
       }
+      await enforceCountryLoginPolicy(user.id, user.country_login_mode, sourceIp);
 
       if (this.closed) {
         rejectWebSocketUpgrade(socket, 503, "Collaboration server is shutting down");
@@ -456,6 +466,7 @@ export class PageCollaborationHub {
         socket: connection,
         user,
         authVersion: payload.authVersion,
+        ipAddress: sourceIp,
         documentEpoch: payload.documentEpoch,
         synced: false,
         awareness: { blockId: null, field: null, control: null, selection: null },
@@ -481,14 +492,18 @@ export class PageCollaborationHub {
       ) return;
 
       try {
-        const currentUser = await db.queryOne<{ auth_version?: number }>(
-          "SELECT auth_version FROM users WHERE id = ?",
+        const currentUser = await db.queryOne<{
+          auth_version?: number;
+          country_login_mode?: UserRow["country_login_mode"];
+        }>(
+          "SELECT auth_version, country_login_mode FROM users WHERE id = ?",
           [payload.sub]
         );
         if (!currentUser || Number(currentUser.auth_version ?? 1) !== payload.authVersion) {
           connection.close(4003, "Authentication session was revoked");
           return;
         }
+        await enforceCountryLoginPolicy(payload.sub, currentUser.country_login_mode, sourceIp);
         const currentAccess = await getPageAccess(pageId, payload.sub);
         if (currentAccess.page.is_collection || currentAccess.page.is_archived || currentAccess.shareCount < 1) {
           connection.close(4010, "Collaboration is no longer available");
@@ -499,6 +514,10 @@ export class PageCollaborationHub {
       } catch (error) {
         if (error instanceof ApiError && error.code === "COLLABORATION_LINEAGE_CHANGED") {
           connection.close(4011, "The collaboration document was replaced");
+          return;
+        }
+        if (error instanceof ApiError && error.code === "COUNTRY_LOGIN_BLOCKED") {
+          connection.close(4003, "Access from this IP country is blocked");
           return;
         }
         if (error instanceof ApiError && error.statusCode === 404) {
@@ -1214,14 +1233,18 @@ export class PageCollaborationHub {
         for (const client of room.clients.values()) {
           checks.push((async () => {
             try {
-              const currentUser = await db.queryOne<{ auth_version?: number }>(
-                "SELECT auth_version FROM users WHERE id = ?",
+              const currentUser = await db.queryOne<{
+                auth_version?: number;
+                country_login_mode?: UserRow["country_login_mode"];
+              }>(
+                "SELECT auth_version, country_login_mode FROM users WHERE id = ?",
                 [client.user.id]
               );
               if (!currentUser || Number(currentUser.auth_version ?? 1) !== client.authVersion) {
                 client.socket.close(4003, "Authentication session was revoked");
                 return;
               }
+              await enforceCountryLoginPolicy(client.user.id, currentUser.country_login_mode, client.ipAddress);
               const access = await getPageAccess(room.pageId, client.user.id);
               if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
                 client.socket.close(4010, "Collaboration is no longer available");
@@ -1232,6 +1255,10 @@ export class PageCollaborationHub {
                 this.invalidateRoomForLineageChange(room);
               }
             } catch (error) {
+              if (error instanceof ApiError && error.code === "COUNTRY_LOGIN_BLOCKED") {
+                client.socket.close(4003, "Access from this IP country is blocked");
+                return;
+              }
               if (error instanceof ApiError && error.statusCode === 404) {
                 client.socket.close(4003, "Page access was removed");
                 return;

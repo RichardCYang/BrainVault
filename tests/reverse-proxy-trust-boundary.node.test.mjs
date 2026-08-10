@@ -5,7 +5,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createExpressTrustProxySetting,
+  forwardedForAddresses,
   forwardedProtocol,
+  getClientIpAddressFromTrustedProxyRequest,
   isHttpsRequestFromTrustedProxy
 } from "../src/lib/reverse-proxy.ts";
 
@@ -33,6 +35,28 @@ test("forwarded protocol parsing rejects duplicate, comma-delimited, and non-HTT
   assert.equal(forwardedProtocol({ "x-forwarded-proto": "https, http" }), null);
   assert.equal(forwardedProtocol({ "x-forwarded-proto": ["https", "http"] }), null);
   assert.equal(forwardedProtocol({ "x-forwarded-proto": "wss" }), null);
+});
+
+
+test("websocket client IP follows the same explicit trusted-proxy boundary", () => {
+  const directSpoof = {
+    headers: { "x-forwarded-for": "198.51.100.10" },
+    socket: { remoteAddress: "203.0.113.77" }
+  };
+  assert.equal(getClientIpAddressFromTrustedProxyRequest(directSpoof, ["loopback"]), "203.0.113.77");
+
+  const oneProxy = {
+    headers: { "x-forwarded-for": "198.51.100.10" },
+    socket: { remoteAddress: "127.0.0.1" }
+  };
+  assert.equal(getClientIpAddressFromTrustedProxyRequest(oneProxy, ["loopback"]), "198.51.100.10");
+
+  const appendedSpoof = {
+    headers: { "x-forwarded-for": "192.0.2.99, 198.51.100.10" },
+    socket: { remoteAddress: "127.0.0.1" }
+  };
+  assert.equal(getClientIpAddressFromTrustedProxyRequest(appendedSpoof, ["loopback"]), "198.51.100.10");
+  assert.deepEqual(forwardedForAddresses({ "x-forwarded-for": "192.0.2.99, nope" }), null);
 });
 
 test("production wiring requires encrypted transport and exact reverse-proxy peers", () => {

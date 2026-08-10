@@ -123,6 +123,49 @@ export function isTrustedProxyRemoteAddress(
   });
 }
 
+function normalizeNetworkIpAddress(value: string | undefined) {
+  if (!value) return null;
+  const normalized = normalizeRemoteAddress(value.trim());
+  return net.isIP(normalized) ? normalized : null;
+}
+
+export function forwardedForAddresses(headers: IncomingHttpHeaders) {
+  const value = headers["x-forwarded-for"];
+  if (Array.isArray(value) && value.length !== 1) return null;
+  const candidate = Array.isArray(value) ? value[0] : value;
+  if (typeof candidate !== "string" || !candidate.trim()) return [];
+
+  const addresses = candidate
+    .split(",")
+    .map((part) => normalizeNetworkIpAddress(part.trim()));
+  return addresses.every((address): address is string => Boolean(address)) ? addresses : null;
+}
+
+export function getClientIpAddressFromTrustedProxyRequest(
+  request: Pick<IncomingMessage, "headers" | "socket">,
+  trustedProxyAddresses: readonly string[]
+) {
+  const remoteAddress = normalizeNetworkIpAddress(request.socket.remoteAddress);
+  if (!remoteAddress) return "unknown";
+  if (!isTrustedProxyRemoteAddress(remoteAddress, trustedProxyAddresses)) return remoteAddress;
+
+  const forwardedAddresses = forwardedForAddresses(request.headers);
+  if (!forwardedAddresses?.length) return remoteAddress;
+
+  // Match Express/proxy-addr's right-to-left trust boundary: only walk farther
+  // into X-Forwarded-For while the immediately closer hop is explicitly trusted.
+  // A client-supplied leftmost value is therefore never selected through an
+  // untrusted hop. Malformed chains fall back to the socket peer above.
+  let selectedAddress = remoteAddress;
+  let closerHop = remoteAddress;
+  for (let index = forwardedAddresses.length - 1; index >= 0; index -= 1) {
+    if (!isTrustedProxyRemoteAddress(closerHop, trustedProxyAddresses)) break;
+    selectedAddress = forwardedAddresses[index];
+    closerHop = selectedAddress;
+  }
+  return selectedAddress;
+}
+
 export function forwardedProtocol(headers: IncomingHttpHeaders) {
   const value = headers["x-forwarded-proto"];
   if (Array.isArray(value) && value.length !== 1) return null;
