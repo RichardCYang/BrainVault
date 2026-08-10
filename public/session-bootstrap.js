@@ -1,6 +1,6 @@
 function isAuthenticationDenied(error) {
   const status = Number(error?.status ?? 0);
-  return status === 401 || (status === 403 && error?.code === "COUNTRY_LOGIN_BLOCKED");
+  return status === 401 || (status === 403 && ["COUNTRY_LOGIN_BLOCKED", "VPN_ACCESS_BLOCKED"].includes(error?.code));
 }
 
 /**

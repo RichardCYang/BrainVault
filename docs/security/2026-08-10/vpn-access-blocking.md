@@ -54,6 +54,16 @@ The browser sends its current IANA timezone using `Intl.DateTimeFormat().resolve
 
 This signal is deliberately not treated as proof of VPN use because it can be spoofed and can also be legitimate when a user is traveling, has an unusual device timezone, or connects near a timezone border.
 
+## WebRTC STUN network verification
+BrainVault now performs a browser-side ICE candidate-gathering check with `RTCPeerConnection` and Cloudflare's public STUN endpoint at `stun:stun.cloudflare.com:3478`. It creates a data channel only; it does not request camera or microphone access. The browser collects only server-reflexive (`srflx`) ICE candidate addresses and sends a bounded list of those observed public IP addresses with subsequent BrainVault API requests.
+The server normalizes and validates the browser-provided addresses and compares the HTTP source IP against every observed STUN address. This supports dual-stack clients where IPv4 and IPv6 server-reflexive candidates can both be gathered. An exact match is exposed as `WEBRTC_HTTP_IP_MATCH`. If WebRTC returns one or more valid public `srflx` addresses and none match the HTTP source IP, BrainVault exposes `WEBRTC_HTTP_IP_MISMATCH` and requests the conditional secondary IP-intelligence cross-check.
+A WebRTC/HTTP IP mismatch is deliberately not a standalone block reason. It changes an otherwise clean decision to `UNKNOWN`, because browser ICE can use a different path from HTTPS in some legitimate multi-homed, split-tunnel, enterprise, mobile, or IPv4/IPv6 environments. Existing high-confidence VPN/proxy/Tor/VPN Gate evidence remains responsible for an actual block.
+When `RTCPeerConnection` is unavailable or browser policy rejects its use, the browser reports WebRTC as `DISABLED`. When WebRTC exists but no usable STUN observation can be collected before completion/timeout, it reports `UNAVAILABLE`. Both states are supporting risk signals only (`WEBRTC_DISABLED` / `WEBRTC_STUN_UNAVAILABLE`) and cannot independently block an account; they only lower clear-result confidence and trigger the same conditional second-opinion lookup.
+The browser result is cached briefly to avoid running ICE gathering on every API call. Collaboration WebSockets cannot attach arbitrary browser headers, so the immediately preceding authenticated collaboration-session HTTP request sanitizes the WebRTC signal and embeds it in the short-lived signed collaboration ticket; WebSocket admission and periodic VPN-policy checks then reuse that signed value.
+### Trust and privacy boundary
+The WebRTC observation is supplemental telemetry, not cryptographic proof. A modified client can forge its own BrainVault request headers, so the server never treats a claimed match as sufficient evidence that a connection is safe and never treats a mismatch/disabled state as sufficient evidence to block. A production deployment that needs stronger attestation would require a server-controlled correlation mechanism rather than trusting browser-returned candidate text.
+Running the STUN check sends a STUN Binding request from the browser network path to the configured STUN service, which necessarily exposes that network path's translated source address to the STUN service. Operators should account for that third-party network contact in their privacy documentation.
+
 ## Enforcement points
 
 When enabled, VPN/proxy/Tor/VPN Gate enforcement runs at the same account-security boundaries as country access controls:
@@ -82,6 +92,10 @@ Migration `047_vpngate_detection.sql` adds the distinct `VPN_GATE_DETECTED` hist
 
 ## Upstream references
 
+- WebRTC specification (`RTCIceCandidate` / ICE gathering): `https://www.w3.org/TR/webrtc/`
+- ICE / server-reflexive candidate definition: `https://www.rfc-editor.org/rfc/rfc8445`
+- STUN specification: `https://www.rfc-editor.org/rfc/rfc8489`
+- Cloudflare Realtime STUN service address and ports: `https://developers.cloudflare.com/realtime/turn/`
 - VPN Gate public relay list and CSV link: `https://www.vpngate.net/en/`
 - VPN Gate CSV endpoint: `https://www.vpngate.net/api/iphone/`
 - SoftEther explanation of the difference between SoftEther VPN and VPN Gate: `https://www.softether.org/9-about/What_is_different_between_SoftEther_VPN_and_VPN_Gate%3F`

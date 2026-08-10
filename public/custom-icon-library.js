@@ -1,3 +1,5 @@
+import { applyWebRtcNetworkSignalHeaders, getWebRtcNetworkSignal } from "./webrtc-network-signal.js";
+
 export const customIconLibraryLimit = 36;
 
 const customIconApiPath = "/api/custom-icons";
@@ -19,6 +21,9 @@ function normalizeStoredEntry(entry) {
 
 async function request(path, options = {}) {
   const headers = new Headers(options.headers ?? {});
+  if (!headers.has("X-BrainVault-WebRTC-State")) {
+    applyWebRtcNetworkSignalHeaders(headers, await getWebRtcNetworkSignal());
+  }
   let body = options.body;
   if (body && typeof body === "object" && !(body instanceof FormData)) {
     headers.set("Content-Type", "application/json");

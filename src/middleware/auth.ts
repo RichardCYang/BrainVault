@@ -5,7 +5,7 @@ import { normalizeAuthVersion, verifyAuthToken } from "../lib/auth.js";
 import { setPrivateNoStoreCacheControl } from "../lib/cache-control.js";
 import { ApiError } from "../lib/http.js";
 import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
-import { enforceVpnAccessPolicy, getClientTimeZone } from "../lib/vpn-access-policy.js";
+import { enforceVpnAccessPolicy, getClientTimeZone, getClientWebRtcSignal } from "../lib/vpn-access-policy.js";
 import { getClientIpAddress } from "../lib/login-history.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { clearAuthSessionCookie, readAuthSessionCookie } from "../lib/session-cookie.js";
@@ -109,7 +109,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       user.id,
       user.vpn_block_enabled,
       getClientIpAddress(req),
-      getClientTimeZone(req)
+      getClientTimeZone(req),
+      getClientWebRtcSignal(req)
     );
 
     req.auth = { authVersion };

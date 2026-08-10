@@ -13,6 +13,8 @@ export type CollaborationTokenPayload = {
   documentEpoch: string;
   authVersion: number;
   scope: "page:collaborate";
+  webRtcState?: "ABSENT" | "AVAILABLE" | "DISABLED" | "UNAVAILABLE";
+  webRtcObservedIps?: string[];
 };
 
 export function signCollaborationToken(payload: CollaborationTokenPayload) {
@@ -46,13 +48,29 @@ export function verifyCollaborationToken(token: string): CollaborationTokenPaylo
     ) {
       throw new ApiError(401, "INVALID_COLLABORATION_TICKET", "Invalid collaboration ticket");
     }
+    const webRtcState = decoded.webRtcState === undefined ? "ABSENT" : String(decoded.webRtcState);
+    if (!["ABSENT", "AVAILABLE", "DISABLED", "UNAVAILABLE"].includes(webRtcState)) {
+      throw new ApiError(401, "INVALID_COLLABORATION_TICKET", "Invalid collaboration ticket");
+    }
+    const webRtcObservedIps = decoded.webRtcObservedIps === undefined ? [] : decoded.webRtcObservedIps;
+    if (
+      !Array.isArray(webRtcObservedIps)
+      || webRtcObservedIps.length > 4
+      || webRtcObservedIps.some((value) => typeof value !== "string" || !value || value.length > 64)
+      || (webRtcState === "AVAILABLE" && webRtcObservedIps.length === 0)
+      || (webRtcState !== "AVAILABLE" && webRtcObservedIps.length > 0)
+    ) {
+      throw new ApiError(401, "INVALID_COLLABORATION_TICKET", "Invalid collaboration ticket");
+    }
     return {
       sub: String(decoded.sub),
       username: String(decoded.username),
       pageId: String(decoded.pageId),
       documentEpoch: decoded.documentEpoch,
       authVersion: Number(decoded.authVersion),
-      scope: "page:collaborate"
+      scope: "page:collaborate",
+      webRtcState: webRtcState as CollaborationTokenPayload["webRtcState"],
+      webRtcObservedIps: webRtcObservedIps.map(String)
     };
   } catch (error) {
     if (error instanceof ApiError) throw error;

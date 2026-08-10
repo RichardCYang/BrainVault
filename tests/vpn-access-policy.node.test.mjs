@@ -15,12 +15,12 @@ test("VPN access policy is enforced across authentication and collaboration boun
   ]);
 
   assert.match(authRoutes, /await enforceVpnAccessPolicy\([\s\S]*?user\.id,[\s\S]*?user\.vpn_block_enabled,[\s\S]*?sourceIp/);
-  assert.match(mfaRoutes, /await enforceVpnAccessPolicy\(pendingSession\.user_id, undefined, pendingSession\.source_ip, getClientTimeZone\(req\)\);/);
-  assert.match(mfaRoutes, /await enforceVpnAccessPolicy\(session\.user_id, undefined, session\.source_ip, getClientTimeZone\(req\)\);/);
-  assert.match(passkeyRoutes, /await enforceVpnAccessPolicy\(passkey\.user_id, undefined, sourceIp, getClientTimeZone\(req\)\);/);
+  assert.match(mfaRoutes, /await enforceVpnAccessPolicy\(pendingSession\.user_id, undefined, pendingSession\.source_ip, getClientTimeZone\(req\), getClientWebRtcSignal\(req\)\);/);
+  assert.match(mfaRoutes, /await enforceVpnAccessPolicy\(session\.user_id, undefined, session\.source_ip, getClientTimeZone\(req\), getClientWebRtcSignal\(req\)\);/);
+  assert.match(passkeyRoutes, /await enforceVpnAccessPolicy\(passkey\.user_id, undefined, sourceIp, getClientTimeZone\(req\), getClientWebRtcSignal\(req\)\);/);
   assert.match(authMiddleware, /await enforceVpnAccessPolicy\([\s\S]*?user\.vpn_block_enabled[\s\S]*?getClientTimeZone\(req\)/);
-  assert.match(collaborationServer, /await enforceVpnAccessPolicy\(user\.id, user\.vpn_block_enabled, sourceIp\);/);
-  assert.match(collaborationServer, /await enforceVpnAccessPolicy\(client\.user\.id, currentUser\.vpn_block_enabled, client\.ipAddress\);/);
+  assert.match(collaborationServer, /await enforceVpnAccessPolicy\(user\.id, user\.vpn_block_enabled, sourceIp, null, webRtcSignal\);/);
+  assert.match(collaborationServer, /await enforceVpnAccessPolicy\([\s\S]*?currentUser\.vpn_block_enabled,[\s\S]*?client\.ipAddress,[\s\S]*?client\.webRtcSignal[\s\S]*?\);/);
 });
 
 test("VPN detection uses free no-key network intelligence, Tor bulk data, VPN Gate directory data, and conservative supporting signals", async () => {
@@ -50,24 +50,34 @@ test("VPN detection uses free no-key network intelligence, Tor bulk data, VPN Ga
   assert.match(policy, /TIMEZONE_OFFSET_MISMATCH/);
   assert.match(policy, /DATACENTER_NETWORK/);
   assert.match(policy, /timezoneMismatchThresholdMinutes = 180/);
+  assert.match(policy, /x-brainvault-webrtc-state/);
+  assert.match(policy, /x-brainvault-webrtc-ips/);
+  assert.match(policy, /WEBRTC_HTTP_IP_MATCH/);
+  assert.match(policy, /WEBRTC_HTTP_IP_MISMATCH/);
+  assert.match(policy, /WEBRTC_DISABLED/);
+  assert.match(policy, /WEBRTC_STUN_UNAVAILABLE/);
+  assert.match(policy, /if \(webRtcIpMismatch\) \{[\s\S]*?verdict: "UNKNOWN",[\s\S]*?blocked: false/);
+  assert.match(policy, /webRtcState === "DISABLED"[\s\S]*?Math\.min\(baseClearConfidence, 70\)/);
+  assert.match(policy, /AVAILABLE:\$\{webRtcIpMismatch \? "MISMATCH" : "MATCH"\}/);
   assert.match(policy, /verdict: "UNKNOWN",\s*blocked: false/);
   assert.match(policy, /"VPN_ACCESS_BLOCKED"/);
 });
 
 test("settings API, migration, browser UI, and block history include VPN blocking", async () => {
-  const [authRoutes, migration, vpnGateMigration, index, client, i18n, countryPolicy] = await Promise.all([
+  const [authRoutes, migration, vpnGateMigration, index, client, customIconLibrary, i18n, countryPolicy] = await Promise.all([
     read("src/routes/auth.routes.ts"),
     read("migrations/046_vpn_access_policy.sql"),
     read("migrations/047_vpngate_detection.sql"),
     read("public/index.html"),
     read("public/app.js"),
+    read("public/custom-icon-library.js"),
     read("public/i18n.js"),
     read("src/lib/country-login-policy.ts")
   ]);
 
   assert.match(authRoutes, /authRouter\.get\("\/vpn-block-policy", requireAuth/);
   assert.match(authRoutes, /"\/vpn-block-policy",\s*requireAuth,/);
-  assert.match(authRoutes, /assertVpnPolicyAllowsCurrentConnection\(enabled, sourceIp, clientTimeZone\)/);
+  assert.match(authRoutes, /assertVpnPolicyAllowsCurrentConnection\([\s\S]*?enabled,[\s\S]*?sourceIp,[\s\S]*?clientTimeZone,[\s\S]*?getClientWebRtcSignal\(req\)[\s\S]*?\)/);
   assert.match(migration, /vpn_block_enabled TINYINT\(1\) NOT NULL DEFAULT 0/);
   assert.match(migration, /'VPN_DETECTED'/);
   assert.match(migration, /'PROXY_DETECTED'/);
@@ -84,6 +94,13 @@ test("settings API, migration, browser UI, and block history include VPN blockin
   assert.match(client, /VPN_GATE_DETECTED: "account\.blockHistoryVpnGateDetected"/);
   assert.match(client, /VPN_GATE: "account\.vpnBlockRiskVpnGate"/);
   assert.match(client, /VPN_GATE_DIRECTORY_DDNS_VERIFIED/);
+  assert.match(client, /getWebRtcNetworkSignal/);
+  assert.match(client, /applyWebRtcNetworkSignalHeaders/);
+  assert.match(customIconLibrary, /getWebRtcNetworkSignal/);
+  assert.match(customIconLibrary, /applyWebRtcNetworkSignalHeaders/);
+  assert.match(client, /WEBRTC_HTTP_IP_MISMATCH/);
+  assert.match(i18n, /vpnBlockWebRtcMismatchSignal/);
+  assert.match(i18n, /vpnBlockWebRtcDisabledSignal/);
   assert.match(i18n, /vpnBlockTitle: "VPN \/ 프록시 접속 차단"/);
   assert.match(i18n, /blockHistoryVpnDetected: "VPN 감지"/);
   assert.match(i18n, /blockHistoryVpnGateDetected: "VPN Gate 공개 릴레이 감지"/);

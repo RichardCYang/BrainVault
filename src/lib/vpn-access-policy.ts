@@ -30,6 +30,13 @@ export type VpnProviderSignal = {
   asn: string | null;
 };
 
+export type ClientWebRtcState = "ABSENT" | "AVAILABLE" | "DISABLED" | "UNAVAILABLE";
+
+export type ClientWebRtcSignal = {
+  state: ClientWebRtcState;
+  observedIps: string[];
+};
+
 export type VpnRiskResolution = {
   ipAddress: string;
   countryCode: IsoCountryCode | null;
@@ -40,6 +47,9 @@ export type VpnRiskResolution = {
   datacenter: boolean;
   timezoneMismatch: boolean;
   providerCount: number;
+  webRtcState: ClientWebRtcState;
+  webRtcObservedIps: string[];
+  webRtcIpMismatch: boolean;
   supportingSignals: string[];
 };
 
@@ -63,6 +73,13 @@ const clearRiskCacheMs = 5 * 60_000;
 const unknownRiskCacheMs = 60_000;
 const maxRiskCacheEntries = 4_096;
 const timezoneMismatchThresholdMinutes = 180;
+const maxClientWebRtcHeaderLength = 256;
+const maxClientWebRtcObservedIps = 4;
+
+const absentClientWebRtcSignal: ClientWebRtcSignal = Object.freeze({
+  state: "ABSENT",
+  observedIps: []
+});
 
 const riskCache = new Map<string, VpnRiskCacheEntry>();
 let torExitAddresses = new Set<string>();
@@ -264,6 +281,36 @@ export function getClientTimeZone(req: Request) {
   return isValidTimeZone(raw) ? raw : null;
 }
 
+function normalizeClientWebRtcSignal(signal: ClientWebRtcSignal | null | undefined): ClientWebRtcSignal {
+  if (!signal) return absentClientWebRtcSignal;
+  const observedIps = Array.from(new Set(
+    (Array.isArray(signal.observedIps) ? signal.observedIps : [])
+      .map((value) => normalizeCountryLookupIp(String(value)))
+      .filter((value): value is string => Boolean(value && isPublicCountryLookupIp(value)))
+  )).slice(0, maxClientWebRtcObservedIps);
+
+  if (signal.state === "AVAILABLE" && observedIps.length > 0) {
+    return { state: "AVAILABLE", observedIps };
+  }
+  if (signal.state === "DISABLED") return { state: "DISABLED", observedIps: [] };
+  if (signal.state === "UNAVAILABLE") return { state: "UNAVAILABLE", observedIps: [] };
+  return absentClientWebRtcSignal;
+}
+
+export function getClientWebRtcSignal(req: Request): ClientWebRtcSignal {
+  const rawState = req.get("x-brainvault-webrtc-state")?.trim().toLowerCase() ?? "";
+  if (rawState === "disabled") return { state: "DISABLED", observedIps: [] };
+  if (rawState === "unavailable") return { state: "UNAVAILABLE", observedIps: [] };
+  if (rawState !== "available") return absentClientWebRtcSignal;
+
+  const rawIps = req.get("x-brainvault-webrtc-ips")?.trim() ?? "";
+  if (!rawIps || rawIps.length > maxClientWebRtcHeaderLength) return absentClientWebRtcSignal;
+  return normalizeClientWebRtcSignal({
+    state: "AVAILABLE",
+    observedIps: rawIps.split(",").map((value) => value.trim()).filter(Boolean)
+  });
+}
+
 function hasTimezoneMismatch(ipTimeZone: string | null, clientTimeZone: string | null) {
   if (!isValidTimeZone(ipTimeZone) || !isValidTimeZone(clientTimeZone)) return false;
   const ipOffset = getTimeZoneOffsetMinutes(ipTimeZone);
@@ -286,14 +333,18 @@ export function evaluateVpnSignals(
     torListMatch = false,
     timezoneMismatch = false,
     vpnGateListed = false,
-    vpnGateDnsVerified = false
+    vpnGateDnsVerified = false,
+    webRtcState = "ABSENT",
+    webRtcIpMismatch = false
   }: {
     torListMatch?: boolean;
     timezoneMismatch?: boolean;
     vpnGateListed?: boolean;
     vpnGateDnsVerified?: boolean;
+    webRtcState?: ClientWebRtcState;
+    webRtcIpMismatch?: boolean;
   } = {}
-): Omit<VpnRiskResolution, "ipAddress" | "countryCode"> {
+): Omit<VpnRiskResolution, "ipAddress" | "countryCode" | "webRtcObservedIps" | "webRtcState" | "webRtcIpMismatch"> {
   const available = signals.filter((signal) => signal.available);
   const datacenter = available.some((signal) => signal.datacenter);
   const supportingSignals: string[] = [];
@@ -301,6 +352,13 @@ export function evaluateVpnSignals(
   if (timezoneMismatch) supportingSignals.push("TIMEZONE_OFFSET_MISMATCH");
   if (vpnGateListed) supportingSignals.push("VPN_GATE_PUBLIC_RELAY_DIRECTORY");
   if (available.some((signal) => (signal.riskScore ?? 0) >= 75)) supportingSignals.push("HIGH_PROVIDER_RISK_SCORE");
+  if (webRtcState === "AVAILABLE") {
+    supportingSignals.push(webRtcIpMismatch ? "WEBRTC_HTTP_IP_MISMATCH" : "WEBRTC_HTTP_IP_MATCH");
+  } else if (webRtcState === "DISABLED") {
+    supportingSignals.push("WEBRTC_DISABLED");
+  } else if (webRtcState === "UNAVAILABLE") {
+    supportingSignals.push("WEBRTC_STUN_UNAVAILABLE");
+  }
 
   if (torListMatch) {
     return {
@@ -450,11 +508,30 @@ export function evaluateVpnSignals(
     };
   }
 
+  if (webRtcIpMismatch) {
+    return {
+      verdict: "UNKNOWN",
+      blocked: false,
+      reason: null,
+      confidence: 0,
+      datacenter,
+      timezoneMismatch,
+      providerCount: available.length,
+      supportingSignals
+    };
+  }
+
+  const baseClearConfidence = available.length >= 2 ? 90 : 82;
+  const clearConfidence = webRtcState === "DISABLED"
+    ? Math.min(baseClearConfidence, 70)
+    : webRtcState === "UNAVAILABLE"
+      ? Math.min(baseClearConfidence, 76)
+      : baseClearConfidence;
   return {
     verdict: "CLEAR",
     blocked: false,
     reason: null,
-    confidence: available.length >= 2 ? 90 : 82,
+    confidence: clearConfidence,
     datacenter,
     timezoneMismatch,
     providerCount: available.length,
@@ -462,7 +539,7 @@ export function evaluateVpnSignals(
   };
 }
 
-function rememberRiskResolution(ipAddress: string, resolution: VpnRiskResolution) {
+function rememberRiskResolution(cacheKey: string, resolution: VpnRiskResolution) {
   const ttl = resolution.blocked
     ? resolution.verdict === "VPN_GATE"
       ? vpnGatePositiveRiskCacheMs
@@ -470,8 +547,8 @@ function rememberRiskResolution(ipAddress: string, resolution: VpnRiskResolution
     : resolution.verdict === "UNKNOWN"
       ? unknownRiskCacheMs
       : clearRiskCacheMs;
-  riskCache.delete(ipAddress);
-  riskCache.set(ipAddress, { resolution, expiresAt: Date.now() + ttl });
+  riskCache.delete(cacheKey);
+  riskCache.set(cacheKey, { resolution, expiresAt: Date.now() + ttl });
   while (riskCache.size > maxRiskCacheEntries) {
     const oldestKey = riskCache.keys().next().value as string | undefined;
     if (!oldestKey) break;
@@ -479,7 +556,7 @@ function rememberRiskResolution(ipAddress: string, resolution: VpnRiskResolution
   }
 }
 
-function shouldCrossCheck(primary: VpnProviderSignal, timezoneMismatch: boolean) {
+function shouldCrossCheck(primary: VpnProviderSignal, timezoneMismatch: boolean, webRtcAuxiliaryRisk: boolean) {
   return primary.available && (
     primary.vpn
     || primary.proxy
@@ -487,14 +564,33 @@ function shouldCrossCheck(primary: VpnProviderSignal, timezoneMismatch: boolean)
     || primary.datacenter
     || (primary.riskScore ?? 0) >= 50
     || timezoneMismatch
+    || webRtcAuxiliaryRisk
   );
+}
+
+function createRiskCacheKey(
+  ipAddress: string,
+  clientTimeZone: string | null,
+  webRtcSignal: ClientWebRtcSignal,
+  webRtcIpMismatch: boolean
+) {
+  const webRtcCacheState = webRtcSignal.state === "AVAILABLE"
+    ? `AVAILABLE:${webRtcIpMismatch ? "MISMATCH" : "MATCH"}`
+    : webRtcSignal.state;
+  return [
+    ipAddress,
+    isValidTimeZone(clientTimeZone) ? clientTimeZone : "",
+    webRtcCacheState
+  ].join("|");
 }
 
 export async function resolveVpnAccessRisk(
   ipAddress: string,
-  clientTimeZone: string | null = null
+  clientTimeZone: string | null = null,
+  clientWebRtcSignal: ClientWebRtcSignal | null = null
 ): Promise<VpnRiskResolution> {
   const normalizedIp = normalizeCountryLookupIp(ipAddress);
+  const webRtcSignal = normalizeClientWebRtcSignal(clientWebRtcSignal);
   if (!normalizedIp || !isPublicCountryLookupIp(normalizedIp)) {
     return {
       ipAddress: (normalizedIp ?? ipAddress) || "unknown",
@@ -506,12 +602,30 @@ export async function resolveVpnAccessRisk(
       datacenter: false,
       timezoneMismatch: false,
       providerCount: 0,
-      supportingSignals: []
+      webRtcState: webRtcSignal.state,
+      webRtcObservedIps: webRtcSignal.observedIps,
+      webRtcIpMismatch: false,
+      supportingSignals: webRtcSignal.state === "DISABLED"
+        ? ["WEBRTC_DISABLED"]
+        : webRtcSignal.state === "UNAVAILABLE"
+          ? ["WEBRTC_STUN_UNAVAILABLE"]
+          : []
     };
   }
 
-  const cached = riskCache.get(normalizedIp);
-  if (cached && cached.expiresAt > Date.now()) return cached.resolution;
+  const webRtcIpMismatch = webRtcSignal.state === "AVAILABLE"
+    && !webRtcSignal.observedIps.includes(normalizedIp);
+  const webRtcAuxiliaryRisk = webRtcIpMismatch
+    || webRtcSignal.state === "DISABLED"
+    || webRtcSignal.state === "UNAVAILABLE";
+  const cacheKey = createRiskCacheKey(normalizedIp, clientTimeZone, webRtcSignal, webRtcIpMismatch);
+  const cached = riskCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return {
+      ...cached.resolution,
+      webRtcObservedIps: webRtcSignal.observedIps
+    };
+  }
 
   const [torExits, vpnGate, primary] = await Promise.all([
     refreshTorExitAddresses(),
@@ -521,7 +635,8 @@ export async function resolveVpnAccessRisk(
   const torListMatch = torExits.has(normalizedIp);
   const primaryTimezoneMismatch = hasTimezoneMismatch(primary.timezone, clientTimeZone);
   const secondary = !vpnGate.dnsVerified
-    && (torListMatch || vpnGate.listed || shouldCrossCheck(primary, primaryTimezoneMismatch))
+    && (torListMatch || vpnGate.listed || webRtcAuxiliaryRisk
+      || shouldCrossCheck(primary, primaryTimezoneMismatch, webRtcAuxiliaryRisk))
       ? await queryIpApi(normalizedIp)
       : emptyProviderSignal("ipapi");
   const timezoneMismatch = primaryTimezoneMismatch || hasTimezoneMismatch(secondary.timezone, clientTimeZone);
@@ -530,7 +645,9 @@ export async function resolveVpnAccessRisk(
     torListMatch,
     timezoneMismatch,
     vpnGateListed: vpnGate.listed,
-    vpnGateDnsVerified: vpnGate.dnsVerified
+    vpnGateDnsVerified: vpnGate.dnsVerified,
+    webRtcState: webRtcSignal.state,
+    webRtcIpMismatch
   });
   let countryCode = chooseCountryCode(signals) ?? vpnGate.countryCode;
 
@@ -542,9 +659,12 @@ export async function resolveVpnAccessRisk(
   const resolution: VpnRiskResolution = {
     ipAddress: normalizedIp,
     countryCode,
+    webRtcState: webRtcSignal.state,
+    webRtcObservedIps: webRtcSignal.observedIps,
+    webRtcIpMismatch,
     ...decision
   };
-  rememberRiskResolution(normalizedIp, resolution);
+  rememberRiskResolution(cacheKey, resolution);
   return resolution;
 }
 
@@ -568,12 +688,13 @@ export async function enforceVpnAccessPolicy(
   enabledHint: unknown,
   ipAddress: string,
   clientTimeZone: string | null = null,
+  clientWebRtcSignal: ClientWebRtcSignal | null = null,
   client: DbClient = db
 ) {
   const enabled = await getVpnBlockEnabled(userId, enabledHint, client);
   if (!enabled) return null;
 
-  const resolution = await resolveVpnAccessRisk(ipAddress, clientTimeZone);
+  const resolution = await resolveVpnAccessRisk(ipAddress, clientTimeZone, clientWebRtcSignal);
   if (!resolution.blocked || !resolution.reason) return resolution;
 
   await recordCountryLoginBlock(
@@ -598,9 +719,10 @@ export async function enforceVpnAccessPolicy(
 export async function assertVpnPolicyAllowsCurrentConnection(
   enabled: boolean,
   ipAddress: string,
-  clientTimeZone: string | null = null
+  clientTimeZone: string | null = null,
+  clientWebRtcSignal: ClientWebRtcSignal | null = null
 ) {
-  const resolution = await resolveVpnAccessRisk(ipAddress, clientTimeZone);
+  const resolution = await resolveVpnAccessRisk(ipAddress, clientTimeZone, clientWebRtcSignal);
   if (enabled && resolution.blocked) {
     throw new ApiError(
       400,

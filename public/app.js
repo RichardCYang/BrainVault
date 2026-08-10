@@ -74,6 +74,10 @@ import {
   updateYouTubeVideoPreview
 } from "./youtube-block.js";
 import { restoreSessionAtBoot } from "./session-bootstrap.js";
+import {
+  applyWebRtcNetworkSignalHeaders,
+  getWebRtcNetworkSignal
+} from "./webrtc-network-signal.js";
 import { parseWorkspaceLocation, serializeWorkspaceLocation } from "./workspace-location.js";
 import {
   createPageCoverOperationGuard,
@@ -250,6 +254,9 @@ const state = {
     datacenter: false,
     timezoneMismatch: false,
     providerCount: 0,
+    webRtcState: "ABSENT",
+    webRtcObservedIps: [],
+    webRtcIpMismatch: false,
     supportingSignals: [],
     loading: false,
     saving: false,
@@ -1540,14 +1547,23 @@ function getBrowserTimeZone() {
   }
 }
 
-async function api(path, options = {}) {
-  const { skipAuthReset = false, ...requestOptions } = options;
-  const authenticationScope = captureAuthenticatedSessionScope();
-  const headers = new Headers(requestOptions.headers ?? {});
+async function applyClientNetworkVerificationHeaders(headers) {
   const browserTimeZone = getBrowserTimeZone();
   if (browserTimeZone && !headers.has("X-BrainVault-Timezone")) {
     headers.set("X-BrainVault-Timezone", browserTimeZone);
   }
+  if (!headers.has("X-BrainVault-WebRTC-State")) {
+    const webRtcSignal = await getWebRtcNetworkSignal();
+    applyWebRtcNetworkSignalHeaders(headers, webRtcSignal);
+  }
+  return headers;
+}
+
+async function api(path, options = {}) {
+  const { skipAuthReset = false, ...requestOptions } = options;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  const headers = new Headers(requestOptions.headers ?? {});
+  await applyClientNetworkVerificationHeaders(headers);
 
   let body = requestOptions.body;
   if (body && typeof body === "object" && !(body instanceof FormData)) {
@@ -1729,6 +1745,7 @@ async function downloadAttachment(block) {
 
   const attachment = getBlockAttachmentData(block);
   const headers = new Headers();
+  await applyClientNetworkVerificationHeaders(headers);
 
   let response;
   try {
@@ -1801,6 +1818,7 @@ async function downloadUserDataBackup({ operation = null } = {}) {
       assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds);
 
       const headers = new Headers();
+      await applyClientNetworkVerificationHeaders(headers);
       let response;
       try {
         response = await fetch("/api/data/export", { headers, credentials: "include" });
@@ -2068,6 +2086,9 @@ function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}
       datacenter: false,
       timezoneMismatch: false,
       providerCount: 0,
+      webRtcState: "ABSENT",
+      webRtcObservedIps: [],
+      webRtcIpMismatch: false,
       supportingSignals: [],
       loading: false,
       saving: false,
@@ -2482,6 +2503,13 @@ function applyVpnBlockPolicyResponse(data) {
   state.vpnBlockPolicy.providerCount = Number.isFinite(Number(data?.providerCount))
     ? Math.max(0, Math.trunc(Number(data.providerCount)))
     : 0;
+  state.vpnBlockPolicy.webRtcState = ["ABSENT", "AVAILABLE", "DISABLED", "UNAVAILABLE"].includes(data?.webRtcState)
+    ? data.webRtcState
+    : "ABSENT";
+  state.vpnBlockPolicy.webRtcObservedIps = Array.isArray(data?.webRtcObservedIps)
+    ? data.webRtcObservedIps.filter((value) => typeof value === "string" && value.length <= 64).slice(0, 4)
+    : [];
+  state.vpnBlockPolicy.webRtcIpMismatch = Boolean(data?.webRtcIpMismatch);
   state.vpnBlockPolicy.supportingSignals = Array.isArray(data?.supportingSignals)
     ? data.supportingSignals.filter((value) => typeof value === "string").slice(0, 16)
     : [];
@@ -2522,6 +2550,17 @@ function renderVpnBlockPolicy() {
   }
   if (policy.datacenter) supportingSignals.push(t("account.vpnBlockDatacenterSignal"));
   if (policy.timezoneMismatch) supportingSignals.push(t("account.vpnBlockTimezoneSignal"));
+  if (policy.supportingSignals.includes("WEBRTC_HTTP_IP_MISMATCH")) {
+    supportingSignals.push(t("account.vpnBlockWebRtcMismatchSignal", {
+      ips: policy.webRtcObservedIps.join(", ") || t("account.loginHistoryUnknownIp")
+    }));
+  } else if (policy.supportingSignals.includes("WEBRTC_HTTP_IP_MATCH")) {
+    supportingSignals.push(t("account.vpnBlockWebRtcMatchSignal"));
+  } else if (policy.supportingSignals.includes("WEBRTC_DISABLED")) {
+    supportingSignals.push(t("account.vpnBlockWebRtcDisabledSignal"));
+  } else if (policy.supportingSignals.includes("WEBRTC_STUN_UNAVAILABLE")) {
+    supportingSignals.push(t("account.vpnBlockWebRtcUnavailableSignal"));
+  }
   if (policy.supportingSignals.includes("VPN_GATE_DIRECTORY_DDNS_VERIFIED")) {
     supportingSignals.push(t("account.vpnBlockVpnGateDdnsVerified"));
   } else if (policy.supportingSignals.includes("VPN_GATE_DIRECTORY_PROVIDER_CORROBORATED")) {
@@ -3293,7 +3332,9 @@ async function completeAuthenticatedLogin(data) {
 async function logout() {
   return withPageEditLock(async () => {
     try {
-      await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+      const headers = new Headers();
+      await applyClientNetworkVerificationHeaders(headers);
+      await fetch("/api/auth/logout", { method: "POST", credentials: "include", headers });
     } finally {
       resetAuthenticationSessionState();
       setStatus(t("status.loggedOut"));

@@ -25,6 +25,7 @@ import {
   assertVpnPolicyAllowsCurrentConnection,
   enforceVpnAccessPolicy,
   getClientTimeZone,
+  getClientWebRtcSignal,
   normalizeVpnBlockEnabled,
   resolveVpnAccessRisk
 } from "../lib/vpn-access-policy.js";
@@ -260,7 +261,8 @@ authRouter.post(
         user.id,
         user.vpn_block_enabled,
         sourceIp,
-        getClientTimeZone(req)
+        getClientTimeZone(req),
+        getClientWebRtcSignal(req)
       );
 
       const methods = await getMfaMethods(user.id);
@@ -421,7 +423,11 @@ authRouter.get("/vpn-block-policy", requireAuth, async (req, res, next) => {
     if (!row) throw new ApiError(404, "NOT_FOUND", "User not found");
 
     const enabled = normalizeVpnBlockEnabled(row.vpn_block_enabled);
-    const risk = await resolveVpnAccessRisk(getClientIpAddress(req), getClientTimeZone(req));
+    const risk = await resolveVpnAccessRisk(
+      getClientIpAddress(req),
+      getClientTimeZone(req),
+      getClientWebRtcSignal(req)
+    );
     res.setHeader("Cache-Control", "private, no-store");
     res.json({
       enabled,
@@ -432,6 +438,9 @@ authRouter.get("/vpn-block-policy", requireAuth, async (req, res, next) => {
       datacenter: risk.datacenter,
       timezoneMismatch: risk.timezoneMismatch,
       providerCount: risk.providerCount,
+      webRtcState: risk.webRtcState,
+      webRtcObservedIps: risk.webRtcObservedIps,
+      webRtcIpMismatch: risk.webRtcIpMismatch,
       supportingSignals: risk.supportingSignals
     });
   } catch (error) {
@@ -451,7 +460,12 @@ authRouter.put(
       const { currentPassword, enabled } = req.body as z.infer<typeof vpnBlockPolicySchema>;
       const sourceIp = getClientIpAddress(req);
       const clientTimeZone = getClientTimeZone(req);
-      const risk = await assertVpnPolicyAllowsCurrentConnection(enabled, sourceIp, clientTimeZone);
+      const risk = await assertVpnPolicyAllowsCurrentConnection(
+        enabled,
+        sourceIp,
+        clientTimeZone,
+        getClientWebRtcSignal(req)
+      );
 
       const updatedUser = await transaction(async (client) => {
         const user = await client.queryOne<UserRow>(
@@ -491,7 +505,11 @@ authRouter.put(
         confidence: risk.confidence,
         datacenter: risk.datacenter,
         timezoneMismatch: risk.timezoneMismatch,
-        providerCount: risk.providerCount
+        providerCount: risk.providerCount,
+        webRtcState: risk.webRtcState,
+        webRtcObservedIps: risk.webRtcObservedIps,
+        webRtcIpMismatch: risk.webRtcIpMismatch,
+        supportingSignals: risk.supportingSignals
       });
     } catch (error) {
       next(error);
