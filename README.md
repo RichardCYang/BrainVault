@@ -16,7 +16,7 @@ The preview is captured from the real browser UI. See [Development guide](docs/d
 - Rich text, Markdown, syntax-highlighted code blocks, callouts, bookmarks, YouTube video embeds, file attachments, AI conversation blocks, and KaTeX formulas
 - Crash-resilient browser drafts, automatic title saving, and search across page titles and block content
 - Owner-managed page sharing with Yjs-based simultaneous title/block editing, live presence, reconnect recovery, and MariaDB persistence
-- Page collections, nesting, built-in or custom cover images with adjustable focal positions, archiving, permanent deletion, PDF export, and complete ZIP backup/restore including sharing grants
+- Page collections, nesting, built-in or custom cover images with adjustable focal positions, archiving, permanent deletion, PDF export, and complete ZIP backup/restore including sharing grants, every account attachment-upload file, and uploaded custom-icon assets
 - Custom page/collection icon uploads stored as physical files under `upload/icons/`; MariaDB stores only the generated file path, and missing files fall back to the default page icon
 - JWT authentication with an HttpOnly browser session cookie, profile settings, TOTP authenticator support, multiple WebAuthn/FIDO2 passkeys, and passwordless passkey-first login from the sign-in screen
 - Seven interface languages: English, Japanese, Korean, French, German, Spanish, and Portuguese
@@ -71,6 +71,7 @@ For database permissions, opt-in demo data, alternative environment setup, and p
 | [In-depth review and remediation results](docs/data-loss/2026-08-05/in-depth-review-and-remediation-results.md) | Consolidated authentication-boundary, idempotency, deletion-atomicity, and verification findings |
 | [Page-cover integrity review](docs/data-loss/2026-08-04/page-cover-integrity-review.md) | Backup v2, async race, preview, asset-loading, and regression corrections |
 | [Page-cover follow-up review](docs/data-loss/2026-08-05/page-cover-interaction-and-pdf-regression-review.md) | Dialog cancellation, cross-page draft scope, PDF measurement, and restore ambiguity |
+| [Complete uploaded-asset backup review](docs/data-loss/2026-08-10/complete-upload-asset-backup-restore.md) | Backup v3 complete upload assets, account-ID rebinding, and crash-safe multi-asset restore |
 | [Account-security and UI request-scope review](docs/data-loss/2026-08-05/account-security-and-ui-request-scope.md) | Authentication-boundary privacy, page-share request identity, and latest navigation intent |
 | [Authentication, account-data, and editor-lock boundary review](docs/data-loss/2026-08-05/auth-data-and-lock-boundary-review.md) | Boot/login supersession, backup account scope, and cross-authentication lock ownership |
 | [Block-delete response-loss idempotency review](docs/data-loss/2026-08-05/block-delete-response-loss-idempotency.md) | Committed DELETE acknowledgement, exact mutation replay, and attachment cleanup healing |

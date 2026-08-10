@@ -365,7 +365,7 @@ components:
           maxLength: 128
     DataTransferCounts:
       type: object
-      required: [pages, blocks, attachments, tags, shares]
+      required: [pages, blocks, attachments, retainedAttachments, pageCovers, customIcons, tags, shares]
       properties:
         pages:
           type: integer
@@ -376,6 +376,19 @@ components:
         attachments:
           type: integer
           minimum: 0
+          description: Attachment files referenced by restored live attachment blocks.
+        retainedAttachments:
+          type: integer
+          minimum: 0
+          description: Additional account attachment-upload files restored from a version 3 ZIP even though no live block referenced them at export time.
+        pageCovers:
+          type: integer
+          minimum: 0
+          description: Custom page-cover image files restored from the ZIP.
+        customIcons:
+          type: integer
+          minimum: 0
+          description: Uploaded custom-icon image files restored from a version 3 ZIP.
         tags:
           type: integer
           minimum: 0
@@ -2089,10 +2102,10 @@ paths:
   /api/data/export:
     get:
       summary: Export the authenticated account workspace as a complete BrainVault ZIP backup
-      description: Streams a complete workspace backup under a per-authenticated-user rate limit. Includes page sharing grants bound to collaborator account ID and username. Security credentials and the historical Yjs update log are excluded.
+      description: Streams a complete workspace backup under a per-authenticated-user rate limit. Current version 3 exports include page sharing grants, every regular account attachment-upload file (including deliberately retained unlinked files), custom page-cover bytes, every uploaded custom-icon file retained for the account, and custom-icon library/removal state. Security credentials and the historical Yjs update log are excluded.
       responses:
         '200':
-          description: Lossless workspace backup containing the manifest, sharing grants, and original attachment bytes
+          description: Lossless workspace backup containing the manifest, sharing grants, all account attachment-upload bytes, page-cover bytes, and uploaded custom-icon bytes
           headers:
             Content-Disposition:
               schema:
@@ -2109,7 +2122,7 @@ paths:
   /api/data/import:
     post:
       summary: Replace the authenticated account workspace from a BrainVault backup ZIP
-      description: Restored rows receive a new edit-version generation, and a durable restore journal automatically reconciles database and attachment state after an interrupted process. Current-format sharing grants are resolved before destructive replacement; a missing collaborator fails closed. Legacy backups preserve current grants for matching shareable page IDs.
+      description: Restored rows receive a new edit-version generation, and a durable restore journal automatically reconciles database, attachment, and version 3 custom-icon filesystem state after an interrupted process. Current-format sharing grants are resolved before destructive replacement; a missing collaborator fails closed. Retained unlinked attachment-upload files are restored under their original generated names, and uploaded custom-icon URLs are rebound to the destination account ID. Legacy backups preserve current grants for matching shareable page IDs and do not replace custom-icon storage.
       requestBody:
         required: true
         content:

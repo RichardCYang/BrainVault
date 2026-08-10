@@ -6,8 +6,11 @@ export const dataTransferResourceLimits = Object.freeze({
   maxPageShares: 20_000,
   maxAttachments: 5_000,
   maxPageCovers: 20_000,
-  maxZipEntries: 25_001,
-  maxCentralDirectoryBytes: 4 * 1024 * 1024
+  maxCustomIcons: 20_000,
+  maxCustomIconLibraryRemovals: 50_000,
+  // manifest + uploaded attachment files (active + retained) + page covers + uploaded custom icons
+  maxZipEntries: 45_001,
+  maxCentralDirectoryBytes: 8 * 1024 * 1024
 });
 
 function jsonStringByteLength(value: string) {

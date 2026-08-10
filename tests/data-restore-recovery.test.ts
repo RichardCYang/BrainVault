@@ -20,6 +20,7 @@ vi.mock("../src/lib/db.js", () => ({
 }));
 
 import { attachmentUploadRoot } from "../src/lib/attachments.js";
+import { customIconUploadRoot } from "../src/lib/custom-icons.js";
 import {
   dataRestoreGenerationMarkerName,
   dataTransferTempDir,
@@ -36,7 +37,10 @@ function paths() {
     operationRoot: path.join(dataTransferTempDir, operationId),
     stagedAttachmentDir: path.join(dataTransferTempDir, operationId, "attachments"),
     oldAttachmentDir: path.join(attachmentUploadRoot, `.restore-previous-${safeUserId}-${operationId}`),
-    targetAttachmentDir: path.join(attachmentUploadRoot, safeUserId)
+    targetAttachmentDir: path.join(attachmentUploadRoot, safeUserId),
+    stagedCustomIconDir: path.join(dataTransferTempDir, operationId, "custom-icons"),
+    oldCustomIconDir: path.join(customIconUploadRoot, `.restore-previous-${safeUserId}-${operationId}`),
+    targetCustomIconDir: path.join(customIconUploadRoot, safeUserId)
   };
 }
 
@@ -118,6 +122,42 @@ async function writeTrackedFixture(hadPreviousAttachments: boolean) {
   return journal;
 }
 
+async function writeTrackedAssetFixture(hadPrevious: boolean) {
+  const value = paths();
+  await mkdir(value.targetAttachmentDir, { recursive: true });
+  await writeFile(path.join(value.targetAttachmentDir, "restored_attachment"), "restored-attachment");
+  await writeFile(path.join(value.targetAttachmentDir, "later_attachment"), "later-attachment");
+  await writeFile(
+    path.join(value.targetAttachmentDir, dataRestoreGenerationMarkerName),
+    JSON.stringify({ version: 1, operationId })
+  );
+  await mkdir(value.targetCustomIconDir, { recursive: true });
+  await writeFile(path.join(value.targetCustomIconDir, "restored.png"), "restored-icon");
+  await writeFile(path.join(value.targetCustomIconDir, "later.png"), "later-icon");
+  await writeFile(
+    path.join(value.targetCustomIconDir, dataRestoreGenerationMarkerName),
+    JSON.stringify({ version: 1, operationId })
+  );
+  if (hadPrevious) {
+    await mkdir(value.oldAttachmentDir, { recursive: true });
+    await writeFile(path.join(value.oldAttachmentDir, "restored_attachment"), "old-attachment");
+    await mkdir(value.oldCustomIconDir, { recursive: true });
+    await writeFile(path.join(value.oldCustomIconDir, "restored.png"), "old-icon");
+  }
+  const journal = {
+    version: 4 as const,
+    userId,
+    operationId,
+    hadPreviousAttachments: hadPrevious,
+    hadPreviousCustomIcons: hadPrevious,
+    restoredAttachmentIds: ["restored_attachment"],
+    restoredCustomIconFiles: ["restored.png"]
+  };
+  await mkdir(dataTransferTempDir, { recursive: true });
+  await writeFile(value.journalPath, JSON.stringify(journal));
+  return journal;
+}
+
 beforeEach(() => {
   operationId = `restore_recovery_${Date.now()}_${Math.random().toString(16).slice(2)}`;
   database.marker = null;
@@ -138,7 +178,9 @@ afterEach(async () => {
     rm(value.journalPath, { force: true }),
     rm(value.operationRoot, { recursive: true, force: true }),
     rm(value.oldAttachmentDir, { recursive: true, force: true }),
-    rm(value.targetAttachmentDir, { recursive: true, force: true })
+    rm(value.targetAttachmentDir, { recursive: true, force: true }),
+    rm(value.oldCustomIconDir, { recursive: true, force: true }),
+    rm(value.targetCustomIconDir, { recursive: true, force: true })
   ]);
 });
 
@@ -267,6 +309,35 @@ describe("Interrupted data restore recovery", () => {
       readFile(path.join(paths().targetAttachmentDir, dataRestoreGenerationMarkerName), "utf8")
     ).rejects.toMatchObject({ code: "ENOENT" });
     await expect(readFile(paths().journalPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rolls back attachments and uploaded custom icons together while preserving later writes", async () => {
+    const journal = await writeTrackedAssetFixture(true);
+
+    await recoverDataRestoreJournal(journal);
+
+    await expect(readFile(path.join(paths().targetAttachmentDir, "restored_attachment"), "utf8")).resolves.toBe("old-attachment");
+    await expect(readFile(path.join(paths().targetAttachmentDir, "later_attachment"), "utf8")).resolves.toBe("later-attachment");
+    await expect(readFile(path.join(paths().targetCustomIconDir, "restored.png"), "utf8")).resolves.toBe("old-icon");
+    await expect(readFile(path.join(paths().targetCustomIconDir, "later.png"), "utf8")).resolves.toBe("later-icon");
+  });
+
+  it("finalizes committed attachment and custom-icon generations together", async () => {
+    const journal = await writeTrackedAssetFixture(true);
+    database.marker = operationId;
+
+    await recoverDataRestoreJournal(journal);
+
+    await expect(readFile(path.join(paths().targetAttachmentDir, "restored_attachment"), "utf8")).resolves.toBe("restored-attachment");
+    await expect(readFile(path.join(paths().targetCustomIconDir, "restored.png"), "utf8")).resolves.toBe("restored-icon");
+    await expect(readFile(paths().oldAttachmentDir, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(paths().oldCustomIconDir, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(path.join(paths().targetAttachmentDir, dataRestoreGenerationMarkerName), "utf8")
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(path.join(paths().targetCustomIconDir, dataRestoreGenerationMarkerName), "utf8")
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("cleans the versioned generation marker after a committed restore", async () => {

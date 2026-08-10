@@ -17,9 +17,16 @@ import {
 } from "./attachment-metadata-integrity.js";
 import { disconnectPageCollaborators } from "./collaboration-server.js";
 import { needsCollaborationMaterialization } from "./collaboration-protocol.js";
+import {
+  customIconPublicPrefix,
+  customIconUploadRoot,
+  detectCustomIconFileType,
+  getCustomIconFilePath,
+  isServerCustomIconPath
+} from "./custom-icons.js";
 import { db, transaction, type DbClient } from "./db.js";
 import { ApiError } from "./http.js";
-import { iconValueSchema, normalizeIconValue } from "./icon-value.js";
+import { iconValueSchema, imageIconPrefix, maxCustomIconBytes, normalizeIconValue } from "./icon-value.js";
 import {
   createCustomCoverDataUrl,
   inspectCustomCoverBytes,
@@ -60,7 +67,8 @@ export const dataTransferTempDir = path.join(attachmentUploadRoot, ".data-transf
 const manifestName = "brainvault-backup.json";
 const backupFormat = "brainvault-backup";
 const legacyBackupVersion = 1;
-const backupVersion = 2;
+const pageCoverFileBackupVersion = 2;
+const backupVersion = 3;
 const maxManifestBytes = env.DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024;
 const idSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
 const timestampSchema = z.string().min(1).max(40);
@@ -104,14 +112,31 @@ const restoreJournalV3Schema = z.object({
   // Recovery must remain compatible with journals created before the current backup intake limits.
   restoredAttachmentIds: z.array(idSchema).max(1_000_000)
 }).strict();
+const customIconFilenameSchema = z.string()
+  .min(1)
+  .max(100)
+  .regex(/^[A-Za-z0-9_-]{1,96}\.(?:png|jpg|webp|ico)$/);
+const restoreJournalV4Schema = z.object({
+  version: z.literal(4),
+  userId: idSchema,
+  operationId: idSchema,
+  hadPreviousAttachments: z.boolean(),
+  hadPreviousCustomIcons: z.boolean(),
+  // Recovery limits stay intentionally broad so a journal written by a future
+  // intake configuration remains recoverable after an interrupted restore.
+  restoredAttachmentIds: z.array(idSchema).max(1_000_000),
+  restoredCustomIconFiles: z.array(customIconFilenameSchema).max(1_000_000)
+}).strict();
 const restoreJournalSchema = z.discriminatedUnion("version", [
   restoreJournalV1Schema,
   restoreJournalV2Schema,
-  restoreJournalV3Schema
+  restoreJournalV3Schema,
+  restoreJournalV4Schema
 ]);
 type RestoreJournal = z.infer<typeof restoreJournalSchema>;
 type RestoreJournalV2 = z.infer<typeof restoreJournalV2Schema>;
 type RestoreJournalV3 = z.infer<typeof restoreJournalV3Schema>;
+type RestoreJournalV4 = z.infer<typeof restoreJournalV4Schema>;
 
 const pageSchema = z.object({
   id: idSchema,
@@ -175,6 +200,13 @@ const attachmentSchema = z.object({
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   crc32: z.number().int().min(0).max(0xffffffff)
 }).strict();
+const retainedAttachmentSchema = z.object({
+  fileName: idSchema,
+  path: z.string().min(1).max(160),
+  size: byteCountSchema,
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  crc32: z.number().int().min(0).max(0xffffffff)
+}).strict();
 const pageCoverMimeTypeSchema = z.enum(["image/png", "image/jpeg", "image/webp"]);
 const pageCoverFileSchema = z.object({
   pageId: idSchema,
@@ -184,10 +216,38 @@ const pageCoverFileSchema = z.object({
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   crc32: z.number().int().min(0).max(0xffffffff)
 }).strict();
+const customIconMimeTypeSchema = z.enum([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/vnd.microsoft.icon"
+]);
+const customIconLibraryMetadataSchema = z.object({
+  id: idSchema,
+  last_used_at: timestampSchema,
+  created_at: timestampSchema
+}).strict();
+const customIconFileSchema = z.object({
+  fileName: customIconFilenameSchema,
+  path: z.string().min(1).max(180),
+  mimeType: customIconMimeTypeSchema,
+  size: byteCountSchema,
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  crc32: z.number().int().min(0).max(0xffffffff),
+  library: customIconLibraryMetadataSchema.nullable()
+}).strict();
+const customIconLibraryRemovalSchema = z.object({
+  value_hash: z.string().regex(/^[a-f0-9]{64}$/),
+  removed_at: timestampSchema
+}).strict();
 
 const manifestSchema = z.object({
   format: z.literal(backupFormat),
-  version: z.union([z.literal(legacyBackupVersion), z.literal(backupVersion)]),
+  version: z.union([
+    z.literal(legacyBackupVersion),
+    z.literal(pageCoverFileBackupVersion),
+    z.literal(backupVersion)
+  ]),
   exportedAt: timestampSchema,
   source: z.object({ userId: idSchema, username: z.string().min(1).max(50) }).strict(),
   account: z.object({
@@ -208,15 +268,27 @@ const manifestSchema = z.object({
     pageShares: z.array(pageShareSchema).max(dataTransferResourceLimits.maxPageShares).optional()
   }).strict(),
   attachments: z.array(attachmentSchema).max(dataTransferResourceLimits.maxAttachments),
+  // Version 3 also preserves any account attachment file that is intentionally
+  // left on disk without a current ATTACHMENT block (for example after an
+  // ambiguous database commit outcome), so the per-account uploads directory is
+  // byte-complete rather than silently dropping retained files.
+  retainedAttachments: z.array(retainedAttachmentSchema).max(dataTransferResourceLimits.maxAttachments).optional(),
   // Version 2 moves custom cover bytes out of JSON so a handful of valid images
   // cannot exhaust the much smaller manifest limit. Version 1 remains importable.
-  pageCovers: z.array(pageCoverFileSchema).max(dataTransferResourceLimits.maxPageCovers).optional()
+  pageCovers: z.array(pageCoverFileSchema).max(dataTransferResourceLimits.maxPageCovers).optional(),
+  // Version 3 makes every uploaded custom icon self-contained in the archive,
+  // including files removed from the picker library but intentionally retained
+  // on disk for immutable icon URLs and historical references.
+  customIcons: z.array(customIconFileSchema).max(dataTransferResourceLimits.maxCustomIcons).optional(),
+  customIconLibraryRemovals: z.array(customIconLibraryRemovalSchema)
+    .max(dataTransferResourceLimits.maxCustomIconLibraryRemovals)
+    .optional()
 }).strict().superRefine((manifest, context) => {
-  if (manifest.version === backupVersion && !manifest.pageCovers) {
+  if (manifest.version !== legacyBackupVersion && !manifest.pageCovers) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["pageCovers"],
-      message: "Version 2 backups must declare page cover files"
+      message: "Version 2 and newer backups must declare page cover files"
     });
   }
   if (manifest.version === legacyBackupVersion && manifest.pageCovers) {
@@ -224,6 +296,41 @@ const manifestSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ["pageCovers"],
       message: "Version 1 backups cannot declare page cover files"
+    });
+  }
+  if (manifest.version === backupVersion && !manifest.retainedAttachments) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["retainedAttachments"],
+      message: "Version 3 backups must declare retained attachment files"
+    });
+  }
+  if (manifest.version !== backupVersion && manifest.retainedAttachments) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["retainedAttachments"],
+      message: "Backups before version 3 cannot declare retained attachment files"
+    });
+  }
+  if (manifest.version === backupVersion && !manifest.customIcons) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["customIcons"],
+      message: "Version 3 backups must declare uploaded custom icon files"
+    });
+  }
+  if (manifest.version === backupVersion && !manifest.customIconLibraryRemovals) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["customIconLibraryRemovals"],
+      message: "Version 3 backups must declare custom icon library removal state"
+    });
+  }
+  if (manifest.version !== backupVersion && (manifest.customIcons || manifest.customIconLibraryRemovals)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["customIcons"],
+      message: "Backups before version 3 cannot declare uploaded custom icon state"
     });
   }
 });
@@ -234,6 +341,8 @@ type BackupBlock = BrainVaultBackup["data"]["blocks"][number];
 type BackupTag = BrainVaultBackup["data"]["tags"][number];
 type BackupPageShare = z.infer<typeof pageShareSchema>;
 type BackupPageCoverFile = z.infer<typeof pageCoverFileSchema>;
+type BackupRetainedAttachmentFile = z.infer<typeof retainedAttachmentSchema>;
+type BackupCustomIconFile = z.infer<typeof customIconFileSchema>;
 
 type WorkspaceRestoreAccountRow = {
   name: string | null;
@@ -266,6 +375,18 @@ type WorkspaceRestoreShareRow = {
   shared_at: string;
 };
 
+type WorkspaceRestoreCustomIconRow = {
+  id: string;
+  file_path: string;
+  last_used_at: string;
+  created_at: string;
+};
+
+type WorkspaceRestoreCustomIconRemovalRow = {
+  value_hash: string;
+  removed_at: string;
+};
+
 type RestoredPageShare = {
   pageId: string;
   userId: string;
@@ -293,6 +414,18 @@ type RawAccountRow = {
   preferred_language: string | null;
   default_collection_icon: string | null;
   theme: "light" | "dark";
+};
+
+type RawCustomIconRow = {
+  id: string;
+  file_path: string;
+  last_used_at: string;
+  created_at: string;
+};
+
+type RawCustomIconLibraryRemovalRow = {
+  value_hash: string;
+  removed_at: string;
 };
 
 type FileInspection = { size: bigint; sha256: string; crc32: number };
@@ -395,7 +528,48 @@ async function assertWorkspaceCollaborationMaterialized(client: DbClient, pageId
   }
 }
 
-async function createWorkspaceRestoreSnapshot(userId: string, client: DbClient = db, lock = false) {
+async function listWorkspaceRestoreAssetFiles(
+  directory: string,
+  label: string,
+  isValidName: (name: string) => boolean
+) {
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [] as Array<{ name: string; size: string }>;
+    throw error;
+  }
+
+  const files: Array<{ name: string; size: string }> = [];
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (entry.name === dataRestoreGenerationMarkerName) continue;
+    if (!entry.isFile() || !isValidName(entry.name)) {
+      throw new ApiError(
+        409,
+        "DATA_RESTORE_ASSET_STORAGE_INVALID",
+        `${label} storage contains an unsupported entry: ${entry.name}`
+      );
+    }
+    const fileInfo = await stat(path.join(directory, entry.name));
+    if (!fileInfo.isFile()) {
+      throw new ApiError(
+        409,
+        "DATA_RESTORE_ASSET_STORAGE_INVALID",
+        `${label} storage entry is not a regular file: ${entry.name}`
+      );
+    }
+    files.push({ name: entry.name, size: String(fileInfo.size) });
+  }
+  return files;
+}
+
+async function createWorkspaceRestoreSnapshot(
+  userId: string,
+  client: DbClient = db,
+  lock = false,
+  includeCustomIconAssets = false
+) {
   const lockClause = lock ? " FOR UPDATE" : "";
   const account = await client.queryOne<WorkspaceRestoreAccountRow>(
     `SELECT name, avatar_data, preferred_language, default_collection_icon, theme
@@ -424,6 +598,35 @@ async function createWorkspaceRestoreSnapshot(userId: string, client: DbClient =
      ORDER BY ps.page_id ASC, ps.user_id ASC${lockClause}`,
     [userId]
   );
+  const customIcons = await client.query<WorkspaceRestoreCustomIconRow>(
+    `SELECT id, file_path,
+            DATE_FORMAT(last_used_at, '%Y-%m-%d %H:%i:%s.%f') AS last_used_at,
+            DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
+     FROM custom_icons
+     WHERE user_id = ?
+     ORDER BY id ASC${lockClause}`,
+    [userId]
+  );
+  const customIconRemovals = await client.query<WorkspaceRestoreCustomIconRemovalRow>(
+    `SELECT value_hash,
+            DATE_FORMAT(removed_at, '%Y-%m-%d %H:%i:%s.%f') AS removed_at
+     FROM custom_icon_library_removals
+     WHERE user_id = ?
+     ORDER BY value_hash ASC${lockClause}`,
+    [userId]
+  );
+  const attachmentAssetFiles = await listWorkspaceRestoreAssetFiles(
+    path.join(attachmentUploadRoot, userId),
+    "Attachment",
+    (name) => idSchema.safeParse(name).success
+  );
+  const customIconAssetFiles = includeCustomIconAssets
+    ? await listWorkspaceRestoreAssetFiles(
+      path.join(customIconUploadRoot, userId),
+      "Custom icon",
+      (name) => customIconFilenameSchema.safeParse(name).success
+    )
+    : [];
 
   const hash = createHash("sha256");
   hash.update(`account\0${JSON.stringify(account)}\n`);
@@ -441,6 +644,20 @@ async function createWorkspaceRestoreSnapshot(userId: string, client: DbClient =
     hash.update(
       `share\0${share.page_id}\0${share.user_id}\0${share.permission}\0${share.shared_by}\0${share.shared_at}\n`
     );
+  }
+  for (const icon of customIcons) {
+    hash.update(
+      `custom-icon\0${icon.id}\0${icon.file_path}\0${icon.last_used_at}\0${icon.created_at}\n`
+    );
+  }
+  for (const removal of customIconRemovals) {
+    hash.update(`custom-icon-removal\0${removal.value_hash}\0${removal.removed_at}\n`);
+  }
+  for (const file of attachmentAssetFiles) {
+    hash.update(`attachment-file\0${file.name}\0${file.size}\n`);
+  }
+  for (const file of customIconAssetFiles) {
+    hash.update(`custom-icon-file\0${file.name}\0${file.size}\n`);
   }
   return {
     fingerprint: hash.digest("hex"),
@@ -469,6 +686,43 @@ function assertUnique(values: string[], label: string) {
     if (seen.has(value)) invalidBackup(`The backup contains a duplicate ${label}: ${value}`);
     seen.add(value);
   }
+}
+
+function customIconPublicPath(userId: string, fileName: string) {
+  return `${customIconPublicPrefix}${userId}/${fileName}`;
+}
+
+function customIconValue(userId: string, fileName: string) {
+  return `${imageIconPrefix}${customIconPublicPath(userId, fileName)}`;
+}
+
+function customIconValueHash(value: string) {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function localCustomIconPublicPath(value: string | null) {
+  if (!value?.startsWith(imageIconPrefix)) return null;
+  const publicPath = value.slice(imageIconPrefix.length).trim();
+  return isServerCustomIconPath(publicPath) ? publicPath : null;
+}
+
+function rebindCustomIconValue(value: string | null, sourceUserId: string, targetUserId: string) {
+  const normalized = normalizeIconValue(value);
+  const publicPath = localCustomIconPublicPath(normalized);
+  if (!publicPath) return normalized;
+  const sourcePrefix = `${customIconPublicPrefix}${sourceUserId}/`;
+  if (!publicPath.startsWith(sourcePrefix)) {
+    invalidBackup(`Uploaded custom icon belongs to another account: ${publicPath}`);
+  }
+  const fileName = publicPath.slice(sourcePrefix.length);
+  return `${imageIconPrefix}${customIconPublicPath(targetUserId, fileName)}`;
+}
+
+function expectedCustomIconExtension(mimeType: BackupCustomIconFile["mimeType"]) {
+  if (mimeType === "image/png") return "png";
+  if (mimeType === "image/jpeg") return "jpg";
+  if (mimeType === "image/webp") return "webp";
+  return "ico";
 }
 
 function orderByParent<T>(items: T[], getId: (item: T) => string, getParent: (item: T) => string | null) {
@@ -506,15 +760,27 @@ function orderByParent<T>(items: T[], getId: (item: T) => string, getParent: (it
 function validateManifestRelations(manifest: BrainVaultBackup) {
   const { pages, blocks, tags, pageTags } = manifest.data;
   const pageShares = manifest.data.pageShares ?? [];
+  const retainedAttachments = manifest.retainedAttachments ?? [];
   const pageCovers = manifest.pageCovers ?? [];
+  const customIcons = manifest.customIcons ?? [];
+  const customIconLibraryRemovals = manifest.customIconLibraryRemovals ?? [];
   assertUnique(pages.map((item) => item.id), "page ID");
   assertUnique(blocks.map((item) => item.id), "block ID");
   assertUnique(tags.map((item) => item.id), "tag ID");
   assertUnique(tags.map((item) => item.name.toLowerCase()), "tag name");
   assertUnique(manifest.attachments.map((item) => item.blockId), "attachment block ID");
   assertUnique(manifest.attachments.map((item) => item.path), "attachment path");
+  assertUnique(retainedAttachments.map((item) => item.fileName), "retained attachment filename");
+  assertUnique(retainedAttachments.map((item) => item.path), "retained attachment path");
+  assertUnique(
+    [...manifest.attachments.map((item) => item.path), ...retainedAttachments.map((item) => item.path)],
+    "uploaded attachment path"
+  );
   assertUnique(pageCovers.map((item) => item.pageId), "page cover page ID");
   assertUnique(pageCovers.map((item) => item.path), "page cover path");
+  assertUnique(customIcons.map((item) => item.fileName), "custom icon filename");
+  assertUnique(customIcons.map((item) => item.path), "custom icon path");
+  assertUnique(customIconLibraryRemovals.map((item) => item.value_hash), "custom icon removal key");
   assertUnique(
     pageShares.map((item) => `${item.page_id}\u0000${item.shared_username.toLowerCase()}`),
     "page share username"
@@ -550,14 +816,48 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
       invalidBackup(`Page cover is declared both inline and as a ZIP entry: ${pageCover.pageId}`);
     }
   }
-  if (manifest.version === backupVersion) {
+  if (manifest.version !== legacyBackupVersion) {
     for (const page of pages) {
       if (isCustomPageCoverValue(page.cover_url)) {
-        invalidBackup(`Version 2 page cover must be stored as a ZIP entry: ${page.id}`);
+        invalidBackup(`Version 2 and newer page cover must be stored as a ZIP entry: ${page.id}`);
       }
     }
   } else if (pageCoverByPageId.size) {
     invalidBackup("Version 1 backups cannot contain page cover entries");
+  }
+
+  if (manifest.version === backupVersion) {
+    const declaredCustomIconPaths = new Set<string>();
+    for (const icon of customIcons) {
+      if (icon.path !== `custom-icons/${icon.fileName}`) {
+        invalidBackup(`Custom icon path is invalid: ${icon.path}`);
+      }
+      const extension = icon.fileName.slice(icon.fileName.lastIndexOf(".") + 1);
+      if (extension !== expectedCustomIconExtension(icon.mimeType)) {
+        invalidBackup(`Custom icon extension does not match its media type: ${icon.fileName}`);
+      }
+      if (icon.library) {
+        const expectedId = icon.fileName.slice(0, icon.fileName.lastIndexOf("."));
+        if (icon.library.id !== expectedId) {
+          invalidBackup(`Custom icon library ID does not match its filename: ${icon.fileName}`);
+        }
+      }
+      declaredCustomIconPaths.add(customIconPublicPath(manifest.source.userId, icon.fileName));
+    }
+
+    for (const [label, value] of [
+      ["default collection", manifest.account.default_collection_icon] as const,
+      ...pages.map((page) => [`page ${page.id}`, page.icon] as const)
+    ]) {
+      const publicPath = localCustomIconPublicPath(value);
+      if (!publicPath) continue;
+      if (!publicPath.startsWith(`${customIconPublicPrefix}${manifest.source.userId}/`)) {
+        invalidBackup(`The ${label} custom icon belongs to another account: ${publicPath}`);
+      }
+      if (!declaredCustomIconPaths.has(publicPath)) {
+        invalidBackup(`The ${label} custom icon file is missing from the backup: ${publicPath}`);
+      }
+    }
   }
 
   for (const block of blocks) {
@@ -600,6 +900,12 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
   const attachmentBlockIds = new Set(blocks.filter((block) => block.type === "ATTACHMENT").map((block) => block.id));
   const describedAttachmentIds = new Set(manifest.attachments.map((item) => item.blockId));
   if (attachmentBlockIds.size !== describedAttachmentIds.size) invalidBackup("Attachment files do not match attachment blocks");
+  if (manifest.attachments.length + retainedAttachments.length > dataTransferResourceLimits.maxAttachments) {
+    invalidBackup("The backup contains too many uploaded attachment files");
+  }
+  if (manifest.version !== backupVersion && retainedAttachments.length) {
+    invalidBackup("Backups before version 3 cannot contain retained attachment files");
+  }
   for (const attachment of manifest.attachments) {
     const block = blockById.get(attachment.blockId);
     if (!block || block.type !== "ATTACHMENT") invalidBackup(`Attachment block is missing: ${attachment.blockId}`);
@@ -616,6 +922,14 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
       throw error;
     }
   }
+  for (const retained of retainedAttachments) {
+    if (retained.path !== `attachments/${retained.fileName}`) {
+      invalidBackup(`Retained attachment path is invalid: ${retained.path}`);
+    }
+    if (describedAttachmentIds.has(retained.fileName)) {
+      invalidBackup(`Retained attachment duplicates an active attachment: ${retained.fileName}`);
+    }
+  }
 }
 
 export async function prepareUserDataBackup(userId: string) {
@@ -624,13 +938,15 @@ export async function prepareUserDataBackup(userId: string) {
   const operationRoot = path.join(dataTransferTempDir, createId("export"));
   const stagedAttachmentDir = path.join(operationRoot, "attachments");
   const stagedPageCoverDir = path.join(operationRoot, "page-covers");
+  const stagedCustomIconDir = path.join(operationRoot, "custom-icons");
   await Promise.all([
     mkdir(stagedAttachmentDir, { recursive: true }),
-    mkdir(stagedPageCoverDir, { recursive: true })
+    mkdir(stagedPageCoverDir, { recursive: true }),
+    mkdir(stagedCustomIconDir, { recursive: true })
   ]);
 
   try {
-    const { snapshot, attachmentFiles, pageCoverFiles } = await withUserAttachmentLock(userId, async (client) => {
+    const { snapshot, attachmentFiles, retainedAttachmentFiles, pageCoverFiles, customIconFiles } = await withUserAttachmentLock(userId, async (client) => {
       // Lock the complete page set before the first consistent read establishes the
       // REPEATABLE READ snapshot. Otherwise a concurrent commit can make this locking
       // read observe newer page versions while later non-locking reads still return
@@ -682,6 +998,23 @@ export async function prepareUserDataBackup(userId: string) {
          ORDER BY ps.page_id ASC, u.username ASC`,
         [userId]
       );
+      const customIconRows = await client.query<RawCustomIconRow>(
+        `SELECT id, file_path,
+                DATE_FORMAT(last_used_at, '%Y-%m-%d %H:%i:%s.%f') AS last_used_at,
+                DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
+         FROM custom_icons
+         WHERE user_id = ?
+         ORDER BY created_at ASC, id ASC`,
+        [userId]
+      );
+      const customIconLibraryRemovals = await client.query<RawCustomIconLibraryRemovalRow>(
+        `SELECT value_hash,
+                DATE_FORMAT(removed_at, '%Y-%m-%d %H:%i:%s.%f') AS removed_at
+         FROM custom_icon_library_removals
+         WHERE user_id = ?
+         ORDER BY removed_at ASC, value_hash ASC`,
+        [userId]
+      );
       const attachmentBlocks = blocks.filter((item) => item.type === "ATTACHMENT");
       assertExportCount("pages", pages.length, dataTransferResourceLimits.maxPages);
       assertExportCount("blocks", blocks.length, dataTransferResourceLimits.maxBlocks);
@@ -689,6 +1022,11 @@ export async function prepareUserDataBackup(userId: string) {
       assertExportCount("page-tag relations", pageTags.length, dataTransferResourceLimits.maxPageTags);
       assertExportCount("page sharing grants", pageShares.length, dataTransferResourceLimits.maxPageShares);
       assertExportCount("attachments", attachmentBlocks.length, dataTransferResourceLimits.maxAttachments);
+      assertExportCount(
+        "custom icon library removal records",
+        customIconLibraryRemovals.length,
+        dataTransferResourceLimits.maxCustomIconLibraryRemovals
+      );
 
       const pageCoverFiles = [] as Array<{
         pageId: string;
@@ -733,7 +1071,6 @@ export async function prepareUserDataBackup(userId: string) {
         });
       }
 
-      const snapshot = { account, pages, blocks, tags, pageTags, pageShares };
       const attachmentFiles = [] as Array<{ blockId: string; path: string; filePath: string; inspection: FileInspection }>;
       for (const block of attachmentBlocks) {
         const sourcePath = getAttachmentFilePath(userId, block.id);
@@ -774,7 +1111,156 @@ export async function prepareUserDataBackup(userId: string) {
           inspection
         });
       }
-      return { snapshot, attachmentFiles, pageCoverFiles };
+
+      const activeAttachmentNames = new Set(attachmentFiles.map((item) => item.blockId));
+      const attachmentOwnerDir = path.join(attachmentUploadRoot, userId);
+      let attachmentEntries;
+      try {
+        attachmentEntries = await readdir(attachmentOwnerDir, { withFileTypes: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") attachmentEntries = [];
+        else throw error;
+      }
+      attachmentEntries = attachmentEntries.filter((entry) => entry.name !== dataRestoreGenerationMarkerName);
+      assertExportCount(
+        "uploaded attachment files",
+        attachmentEntries.length,
+        dataTransferResourceLimits.maxAttachments
+      );
+
+      const retainedAttachmentFiles = [] as Array<{
+        fileName: string;
+        path: string;
+        filePath: string;
+        inspection: FileInspection;
+      }>;
+      for (const entry of attachmentEntries.sort((left, right) => left.name.localeCompare(right.name))) {
+        if (!entry.isFile() || !idSchema.safeParse(entry.name).success) {
+          throw new ApiError(
+            409,
+            "BACKUP_ATTACHMENT_STORAGE_INVALID",
+            `Attachment storage contains an unsupported entry: ${entry.name}`
+          );
+        }
+        if (activeAttachmentNames.has(entry.name)) continue;
+
+        const sourcePath = getAttachmentFilePath(userId, entry.name);
+        const stagedPath = path.join(stagedAttachmentDir, entry.name);
+        const fileStat = await stat(sourcePath);
+        if (!fileStat.isFile()) {
+          throw new ApiError(409, "BACKUP_ATTACHMENT_STORAGE_INVALID", `Retained attachment is not a file: ${entry.name}`);
+        }
+        if (stagedFileBytes + BigInt(fileStat.size) > maxTransferBytes) {
+          throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
+        }
+        await copyFile(sourcePath, stagedPath);
+        const inspection = await inspectFile(stagedPath);
+        stagedFileBytes += inspection.size;
+        if (stagedFileBytes > maxTransferBytes) {
+          throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
+        }
+        retainedAttachmentFiles.push({
+          fileName: entry.name,
+          path: `attachments/${entry.name}`,
+          filePath: stagedPath,
+          inspection
+        });
+      }
+
+      const customIconRowsByFileName = new Map<string, RawCustomIconRow>();
+      const expectedOwnerPrefix = `${customIconPublicPrefix}${userId}/`;
+      for (const row of customIconRows) {
+        if (!isServerCustomIconPath(row.file_path) || !row.file_path.startsWith(expectedOwnerPrefix)) {
+          throw new ApiError(
+            409,
+            "BACKUP_CUSTOM_ICON_PATH_INVALID",
+            `Custom icon library path is invalid for icon ${row.id}`
+          );
+        }
+        const fileName = row.file_path.slice(expectedOwnerPrefix.length);
+        if (!customIconFilenameSchema.safeParse(fileName).success) {
+          throw new ApiError(409, "BACKUP_CUSTOM_ICON_PATH_INVALID", `Custom icon filename is invalid: ${fileName}`);
+        }
+        if (row.id !== fileName.slice(0, fileName.lastIndexOf("."))) {
+          throw new ApiError(409, "BACKUP_CUSTOM_ICON_PATH_INVALID", `Custom icon ID does not match its filename: ${row.id}`);
+        }
+        if (customIconRowsByFileName.has(fileName)) {
+          throw new ApiError(409, "BACKUP_CUSTOM_ICON_DUPLICATE", `Custom icon library path is duplicated: ${fileName}`);
+        }
+        customIconRowsByFileName.set(fileName, row);
+      }
+
+      const customIconOwnerDir = path.join(customIconUploadRoot, userId);
+      let customIconEntries;
+      try {
+        customIconEntries = await readdir(customIconOwnerDir, { withFileTypes: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") customIconEntries = [];
+        else throw error;
+      }
+      customIconEntries = customIconEntries.filter((entry) => entry.name !== dataRestoreGenerationMarkerName);
+      assertExportCount("uploaded custom icons", customIconEntries.length, dataTransferResourceLimits.maxCustomIcons);
+
+      const customIconFiles = [] as Array<{
+        fileName: string;
+        path: string;
+        mimeType: BackupCustomIconFile["mimeType"];
+        library: BackupCustomIconFile["library"];
+        filePath: string;
+        inspection: FileInspection;
+      }>;
+      const stagedCustomIconNames = new Set<string>();
+      for (const entry of customIconEntries.sort((left, right) => left.name.localeCompare(right.name))) {
+        if (!entry.isFile() || !customIconFilenameSchema.safeParse(entry.name).success) {
+          throw new ApiError(
+            409,
+            "BACKUP_CUSTOM_ICON_STORAGE_INVALID",
+            `Custom icon storage contains an unsupported entry: ${entry.name}`
+          );
+        }
+        const sourcePath = getCustomIconFilePath(customIconPublicPath(userId, entry.name));
+        if (!sourcePath) {
+          throw new ApiError(409, "BACKUP_CUSTOM_ICON_PATH_INVALID", `Custom icon path is invalid: ${entry.name}`);
+        }
+        const stagedPath = path.join(stagedCustomIconDir, entry.name);
+        const fileStat = await stat(sourcePath);
+        if (!fileStat.isFile() || fileStat.size <= 0 || fileStat.size > maxCustomIconBytes) {
+          throw new ApiError(409, "BACKUP_CUSTOM_ICON_INVALID", `Custom icon file is invalid: ${entry.name}`);
+        }
+        if (stagedFileBytes + BigInt(fileStat.size) > maxTransferBytes) {
+          throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
+        }
+        await copyFile(sourcePath, stagedPath);
+        const bytes = await readFile(stagedPath);
+        const fileType = detectCustomIconFileType(bytes);
+        if (!fileType || fileType.extension !== entry.name.slice(entry.name.lastIndexOf(".") + 1)) {
+          throw new ApiError(409, "BACKUP_CUSTOM_ICON_INVALID", `Custom icon file is invalid: ${entry.name}`);
+        }
+        const inspection = await inspectFile(stagedPath);
+        stagedFileBytes += inspection.size;
+        const row = customIconRowsByFileName.get(entry.name) ?? null;
+        customIconFiles.push({
+          fileName: entry.name,
+          path: `custom-icons/${entry.name}`,
+          mimeType: fileType.mimeType,
+          library: row ? {
+            id: row.id,
+            last_used_at: row.last_used_at,
+            created_at: row.created_at
+          } : null,
+          filePath: stagedPath,
+          inspection
+        });
+        stagedCustomIconNames.add(entry.name);
+      }
+      for (const fileName of customIconRowsByFileName.keys()) {
+        if (!stagedCustomIconNames.has(fileName)) {
+          throw new ApiError(409, "BACKUP_CUSTOM_ICON_MISSING", `Custom icon file is missing: ${fileName}`);
+        }
+      }
+
+      const snapshot = { account, pages, blocks, tags, pageTags, pageShares, customIconLibraryRemovals };
+      return { snapshot, attachmentFiles, retainedAttachmentFiles, pageCoverFiles, customIconFiles };
     });
 
     const manifest: BrainVaultBackup = {
@@ -806,6 +1292,13 @@ export async function prepareUserDataBackup(userId: string) {
         sha256: item.inspection.sha256,
         crc32: item.inspection.crc32
       })),
+      retainedAttachments: retainedAttachmentFiles.map((item) => ({
+        fileName: item.fileName,
+        path: item.path,
+        size: item.inspection.size.toString(),
+        sha256: item.inspection.sha256,
+        crc32: item.inspection.crc32
+      })),
       pageCovers: pageCoverFiles.map((item) => ({
         pageId: item.pageId,
         path: item.path,
@@ -813,8 +1306,19 @@ export async function prepareUserDataBackup(userId: string) {
         size: item.inspection.size.toString(),
         sha256: item.inspection.sha256,
         crc32: item.inspection.crc32
-      }))
+      })),
+      customIcons: customIconFiles.map((item) => ({
+        fileName: item.fileName,
+        path: item.path,
+        mimeType: item.mimeType,
+        size: item.inspection.size.toString(),
+        sha256: item.inspection.sha256,
+        crc32: item.inspection.crc32,
+        library: item.library
+      })),
+      customIconLibraryRemovals: snapshot.customIconLibraryRemovals
     };
+    validateManifestRelations(manifest);
     const measuredManifestBytes = measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1);
     if (measuredManifestBytes === null) {
       throw new ApiError(
@@ -831,7 +1335,7 @@ export async function prepareUserDataBackup(userId: string) {
         "The backup manifest exceeds the supported import limit"
       );
     }
-    const totalUncompressedSize = [...attachmentFiles, ...pageCoverFiles].reduce(
+    const totalUncompressedSize = [...attachmentFiles, ...retainedAttachmentFiles, ...pageCoverFiles, ...customIconFiles].reduce(
       (total, item) => total + item.inspection.size,
       BigInt(manifestBuffer.length)
     );
@@ -841,14 +1345,18 @@ export async function prepareUserDataBackup(userId: string) {
     const archiveSize = calculateZipArchiveSize([
       { name: manifestName, size: BigInt(manifestBuffer.length) },
       ...attachmentFiles.map((item) => ({ name: item.path, size: item.inspection.size })),
-      ...pageCoverFiles.map((item) => ({ name: item.path, size: item.inspection.size }))
+      ...retainedAttachmentFiles.map((item) => ({ name: item.path, size: item.inspection.size })),
+      ...pageCoverFiles.map((item) => ({ name: item.path, size: item.inspection.size })),
+      ...customIconFiles.map((item) => ({ name: item.path, size: item.inspection.size }))
     ]);
     return {
       account: snapshot.account,
       manifest,
       manifestBuffer,
       attachmentFiles,
+      retainedAttachmentFiles,
       pageCoverFiles,
+      customIconFiles,
       archiveSize,
       operationRoot
     };
@@ -862,7 +1370,7 @@ export async function writeUserDataBackup(
   plan: Awaited<ReturnType<typeof prepareUserDataBackup>>,
   output: Writable
 ) {
-  const { account, manifest, manifestBuffer, attachmentFiles, pageCoverFiles } = plan;
+  const { account, manifest, manifestBuffer, attachmentFiles, retainedAttachmentFiles, pageCoverFiles, customIconFiles } = plan;
   try {
     const writer = new ZipWriter(output);
     await writer.add({
@@ -880,7 +1388,25 @@ export async function writeUserDataBackup(
         source: { kind: "file", path: item.filePath }
       });
     }
+    for (const item of retainedAttachmentFiles) {
+      await writer.add({
+        name: item.path,
+        size: item.inspection.size,
+        crc32: item.inspection.crc32,
+        sha256: item.inspection.sha256,
+        source: { kind: "file", path: item.filePath }
+      });
+    }
     for (const item of pageCoverFiles) {
+      await writer.add({
+        name: item.path,
+        size: item.inspection.size,
+        crc32: item.inspection.crc32,
+        sha256: item.inspection.sha256,
+        source: { kind: "file", path: item.filePath }
+      });
+    }
+    for (const item of customIconFiles) {
       await writer.add({
         name: item.path,
         size: item.inspection.size,
@@ -895,7 +1421,9 @@ export async function writeUserDataBackup(
       pages: manifest.data.pages.length,
       blocks: manifest.data.blocks.length,
       attachments: manifest.attachments.length,
-      pageCovers: manifest.pageCovers?.length ?? 0
+      retainedAttachments: manifest.retainedAttachments?.length ?? 0,
+      pageCovers: manifest.pageCovers?.length ?? 0,
+      customIcons: manifest.customIcons?.length ?? 0
     };
   } finally {
     await rm(plan.operationRoot, { recursive: true, force: true }).catch(() => undefined);
@@ -927,6 +1455,20 @@ async function assertNoForeignIdConflicts(userId: string, manifest: BrainVaultBa
     );
     const conflict = rows.find((row) => row.owner_id !== userId);
     if (conflict) throw new ApiError(409, "BACKUP_ID_CONFLICT", "The backup contains an identifier owned by another account");
+  }
+  if (manifest.version === backupVersion) {
+    const libraryIds = (manifest.customIcons ?? []).flatMap((item) => item.library ? [item.library.id] : []);
+    for (const ids of batch(libraryIds)) {
+      if (!ids.length) continue;
+      const rows = await db.query<{ id: string; user_id: string }>(
+        `SELECT id, user_id FROM custom_icons WHERE id IN (${ids.map(() => "?").join(",")})`,
+        ids
+      );
+      const conflict = rows.find((row) => row.user_id !== userId);
+      if (conflict) {
+        throw new ApiError(409, "BACKUP_ID_CONFLICT", "The backup contains a custom icon identifier owned by another account");
+      }
+    }
   }
 }
 
@@ -1133,6 +1675,9 @@ async function importRows(
   pageShares: RestoredPageShare[],
   stagedPageCoverDir: string
 ) {
+  const restoreIconValue = (value: string | null) => manifest.version === backupVersion
+    ? rebindCustomIconValue(value, manifest.source.userId, userId)
+    : normalizeIconValue(value);
   await client.execute("DELETE FROM pages WHERE owner_id = ?", [userId]);
   await client.execute(
     `UPDATE users
@@ -1142,7 +1687,7 @@ async function importRows(
       manifest.account.name,
       normalizeAvatarDataUrl(manifest.account.avatar_data),
       manifest.account.preferred_language,
-      normalizeIconValue(manifest.account.default_collection_icon),
+      restoreIconValue(manifest.account.default_collection_icon),
       manifest.account.theme ?? null,
       userId
     ]
@@ -1163,7 +1708,7 @@ async function importRows(
        (id, title, icon, cover_url, cover_position_x, cover_position_y, is_archived, is_collection, owner_id, parent_page_id, edit_version, content_version, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        page.id, page.title, normalizeIconValue(page.icon), coverUrl,
+        page.id, page.title, restoreIconValue(page.icon), coverUrl,
         page.cover_position_x ?? 50, page.cover_position_y ?? 50,
         page.is_archived, page.is_collection, userId,
         page.parent_page_id, restoreVersion, restoreVersion, page.created_at, page.updated_at
@@ -1218,6 +1763,40 @@ async function importRows(
       [share.pageId, share.userId, share.permission, userId, share.createdAt]
     );
   }
+
+  if (manifest.version === backupVersion) {
+    await client.execute("DELETE FROM custom_icons WHERE user_id = ?", [userId]);
+    await client.execute("DELETE FROM custom_icon_library_removals WHERE user_id = ?", [userId]);
+
+    for (const icon of manifest.customIcons ?? []) {
+      if (!icon.library) continue;
+      await client.execute(
+        `INSERT INTO custom_icons (id, user_id, file_path, last_used_at, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+          icon.library.id,
+          userId,
+          customIconPublicPath(userId, icon.fileName),
+          icon.library.last_used_at,
+          icon.library.created_at
+        ]
+      );
+    }
+
+    const localRemovalHashMap = new Map(
+      (manifest.customIcons ?? []).map((icon) => [
+        customIconValueHash(customIconValue(manifest.source.userId, icon.fileName)),
+        customIconValueHash(customIconValue(userId, icon.fileName))
+      ])
+    );
+    for (const removal of manifest.customIconLibraryRemovals ?? []) {
+      await client.execute(
+        `INSERT INTO custom_icon_library_removals (user_id, value_hash, removed_at)
+         VALUES (?, ?, ?)`,
+        [userId, localRemovalHashMap.get(removal.value_hash) ?? removal.value_hash, removal.removed_at]
+      );
+    }
+  }
 }
 
 function getRestorePaths(journal: RestoreJournal) {
@@ -1228,7 +1807,10 @@ function getRestorePaths(journal: RestoreJournal) {
     stagedAttachmentDir: path.join(dataTransferTempDir, journal.operationId, "attachments"),
     stagedPageCoverDir: path.join(dataTransferTempDir, journal.operationId, "page-covers"),
     oldAttachmentDir: path.join(attachmentUploadRoot, `.restore-previous-${safeUserId}-${journal.operationId}`),
-    targetAttachmentDir: path.join(attachmentUploadRoot, safeUserId)
+    targetAttachmentDir: path.join(attachmentUploadRoot, safeUserId),
+    stagedCustomIconDir: path.join(dataTransferTempDir, journal.operationId, "custom-icons"),
+    oldCustomIconDir: path.join(customIconUploadRoot, `.restore-previous-${safeUserId}-${journal.operationId}`),
+    targetCustomIconDir: path.join(customIconUploadRoot, safeUserId)
   };
 }
 
@@ -1309,7 +1891,7 @@ async function readRestoreGenerationMarker(
 function describeRestoreGeneration(state: RestoreGenerationMarkerState) {
   if (state.status === "other") return `restore ${state.operationId}`;
   if (state.status === "invalid") return "an invalid restore marker";
-  if (state.status === "missing") return "an unmarked attachment generation";
+  if (state.status === "missing") return "an unmarked restore generation";
   return "the current restore generation";
 }
 
@@ -1319,14 +1901,14 @@ async function listTrackedRestoreEntries(directory: string) {
     if (entry.name === dataRestoreGenerationMarkerName) continue;
     if (!entry.isFile()) {
       throw new Error(
-        `Restore recovery found an unsupported attachment entry: ${path.join(directory, entry.name)}`
+        `Restore recovery found an unsupported asset entry: ${path.join(directory, entry.name)}`
       );
     }
   }
   return entries;
 }
 
-async function preserveAttachmentEntry(source: string, destination: string) {
+async function preserveRestoreEntry(source: string, destination: string) {
   await mkdir(path.dirname(destination), { recursive: true });
   let linked = false;
   let sourceRemoved = false;
@@ -1351,7 +1933,7 @@ async function preserveAttachmentEntry(source: string, destination: string) {
         return;
       }
       throw new Error(
-        `Restore recovery found conflicting attachment files at ${source} and ${destination}; preserving both generations for manual recovery`
+        `Restore recovery found conflicting asset files at ${source} and ${destination}; preserving both generations for manual recovery`
       );
     }
     // Once the source name is gone, destination is the only remaining link and
@@ -1480,111 +2062,163 @@ async function recoverVersionedRestoreAttachments(
   );
 }
 
-async function recoverTrackedRestoreAttachments(
-  journal: RestoreJournalV3,
-  paths: ReturnType<typeof getRestorePaths>,
+type TrackedRestoreDirectory = {
+  label: string;
+  operationId: string;
+  hadPrevious: boolean;
+  restoredEntries: readonly string[];
+  stagedDirectory: string;
+  oldDirectory: string;
+  targetDirectory: string;
+  operationRoot: string;
+};
+
+async function recoverTrackedRestoreDirectory(
+  tracked: TrackedRestoreDirectory,
   committed: boolean
 ) {
-  let targetExists = await pathExists(paths.targetAttachmentDir);
-  const stagedExists = await pathExists(paths.stagedAttachmentDir);
+  let targetExists = await pathExists(tracked.targetDirectory);
+  const stagedExists = await pathExists(tracked.stagedDirectory);
 
   if (committed) {
     if (!targetExists && stagedExists) {
-      const stagedGeneration = await readRestoreGenerationMarker(paths.stagedAttachmentDir, journal.operationId);
+      const stagedGeneration = await readRestoreGenerationMarker(tracked.stagedDirectory, tracked.operationId);
       if (stagedGeneration.status !== "match") {
         throw new Error(
-          `Committed restore ${journal.operationId} cannot promote ${describeRestoreGeneration(stagedGeneration)}`
+          `Committed restore ${tracked.operationId} cannot promote ${describeRestoreGeneration(stagedGeneration)}`
         );
       }
-      await mkdir(path.dirname(paths.targetAttachmentDir), { recursive: true });
-      await rename(paths.stagedAttachmentDir, paths.targetAttachmentDir);
-      await syncPath(path.dirname(paths.targetAttachmentDir));
-      await syncDirectoryIfPresent(paths.operationRoot);
+      await mkdir(path.dirname(tracked.targetDirectory), { recursive: true });
+      await rename(tracked.stagedDirectory, tracked.targetDirectory);
+      await syncPath(path.dirname(tracked.targetDirectory));
+      await syncDirectoryIfPresent(tracked.operationRoot);
       targetExists = true;
     }
     if (!targetExists) {
-      throw new Error(`Committed restore ${journal.operationId} is missing its attachment directory`);
+      throw new Error(`Committed restore ${tracked.operationId} is missing its ${tracked.label} directory`);
     }
-    const targetGeneration = await readRestoreGenerationMarker(paths.targetAttachmentDir, journal.operationId);
+    const targetGeneration = await readRestoreGenerationMarker(tracked.targetDirectory, tracked.operationId);
     if (targetGeneration.status !== "match") {
       throw new Error(
-        `Committed restore ${journal.operationId} found ${describeRestoreGeneration(targetGeneration)}; preserving all attachment generations for manual recovery`
+        `Committed restore ${tracked.operationId} found ${describeRestoreGeneration(targetGeneration)}; preserving all ${tracked.label} generations for manual recovery`
       );
     }
-    await rm(paths.oldAttachmentDir, { recursive: true, force: true });
-    await syncPath(path.dirname(paths.oldAttachmentDir));
+    await rm(tracked.oldDirectory, { recursive: true, force: true });
+    await syncPath(path.dirname(tracked.oldDirectory));
     return;
   }
 
-  const restoredAttachmentIds = new Set(journal.restoredAttachmentIds);
+  const restoredEntries = new Set(tracked.restoredEntries);
 
-  if (journal.hadPreviousAttachments) {
-    if (await pathExists(paths.oldAttachmentDir)) {
+  if (tracked.hadPrevious) {
+    if (await pathExists(tracked.oldDirectory)) {
       if (targetExists) {
-        const targetGeneration = await readRestoreGenerationMarker(paths.targetAttachmentDir, journal.operationId);
+        const targetGeneration = await readRestoreGenerationMarker(tracked.targetDirectory, tracked.operationId);
         if (targetGeneration.status !== "match") {
           throw new Error(
-            `Restore ${journal.operationId} found ${describeRestoreGeneration(targetGeneration)} after a failed rollback; preserving both attachment generations for manual recovery`
+            `Restore ${tracked.operationId} found ${describeRestoreGeneration(targetGeneration)} after a failed rollback; preserving both ${tracked.label} generations for manual recovery`
           );
         }
 
         // A new upload can commit after the failed restore transaction releases
         // its row lock but before recovery reacquires it. Preserve every file not
         // owned by this restore before discarding the failed restore generation.
-        const entries = await listTrackedRestoreEntries(paths.targetAttachmentDir);
+        const entries = await listTrackedRestoreEntries(tracked.targetDirectory);
         for (const entry of entries) {
-          if (entry.name === dataRestoreGenerationMarkerName || restoredAttachmentIds.has(entry.name)) continue;
-          await preserveAttachmentEntry(
-            path.join(paths.targetAttachmentDir, entry.name),
-            path.join(paths.oldAttachmentDir, entry.name)
+          if (entry.name === dataRestoreGenerationMarkerName || restoredEntries.has(entry.name)) continue;
+          await preserveRestoreEntry(
+            path.join(tracked.targetDirectory, entry.name),
+            path.join(tracked.oldDirectory, entry.name)
           );
         }
-        await rm(paths.targetAttachmentDir, { recursive: true, force: true });
+        await rm(tracked.targetDirectory, { recursive: true, force: true });
       }
-      await rename(paths.oldAttachmentDir, paths.targetAttachmentDir);
-      await syncPath(path.dirname(paths.targetAttachmentDir));
+      await rename(tracked.oldDirectory, tracked.targetDirectory);
+      await syncPath(path.dirname(tracked.targetDirectory));
       return;
     }
 
     if (!targetExists) {
       throw new Error(
-        `Restore ${journal.operationId} is missing both the previous and current attachment directories`
+        `Restore ${tracked.operationId} is missing both the previous and current ${tracked.label} directories`
       );
     }
-    const targetGeneration = await readRestoreGenerationMarker(paths.targetAttachmentDir, journal.operationId);
+    const targetGeneration = await readRestoreGenerationMarker(tracked.targetDirectory, tracked.operationId);
     if (targetGeneration.status === "match") {
       throw new Error(
-        `Restore ${journal.operationId} cannot roll back because its previous attachment directory is missing`
+        `Restore ${tracked.operationId} cannot roll back because its previous ${tracked.label} directory is missing`
       );
     }
     return;
   }
 
   if (!targetExists) return;
-  const targetGeneration = await readRestoreGenerationMarker(paths.targetAttachmentDir, journal.operationId);
+  const targetGeneration = await readRestoreGenerationMarker(tracked.targetDirectory, tracked.operationId);
   if (targetGeneration.status === "match") {
-    const entries = await listTrackedRestoreEntries(paths.targetAttachmentDir);
+    const entries = await listTrackedRestoreEntries(tracked.targetDirectory);
     for (const entry of entries) {
-      if (restoredAttachmentIds.has(entry.name)) {
-        await rm(path.join(paths.targetAttachmentDir, entry.name), { force: true });
+      if (restoredEntries.has(entry.name)) {
+        await rm(path.join(tracked.targetDirectory, entry.name), { force: true });
       }
     }
     // Remove the ownership marker last. If recovery crashes earlier, a retry can
     // still identify and finish cleaning this failed restore generation.
-    await rm(restoreGenerationMarkerPath(paths.targetAttachmentDir), { force: true });
-    await syncPath(paths.targetAttachmentDir);
-    if ((await readdir(paths.targetAttachmentDir)).length === 0) {
-      await rm(paths.targetAttachmentDir, { recursive: true, force: true });
-      await syncPath(path.dirname(paths.targetAttachmentDir));
+    await rm(restoreGenerationMarkerPath(tracked.targetDirectory), { force: true });
+    await syncPath(tracked.targetDirectory);
+    if ((await readdir(tracked.targetDirectory)).length === 0) {
+      await rm(tracked.targetDirectory, { recursive: true, force: true });
+      await syncPath(path.dirname(tracked.targetDirectory));
     }
     return;
   }
-  if (targetGeneration.status === "missing") {
-    return;
-  }
+  if (targetGeneration.status === "missing") return;
   throw new Error(
-    `Restore ${journal.operationId} found ${describeRestoreGeneration(targetGeneration)}; preserving it for manual recovery`
+    `Restore ${tracked.operationId} found ${describeRestoreGeneration(targetGeneration)}; preserving it for manual recovery`
   );
+}
+
+async function recoverTrackedRestoreAttachments(
+  journal: RestoreJournalV3,
+  paths: ReturnType<typeof getRestorePaths>,
+  committed: boolean
+) {
+  await recoverTrackedRestoreDirectory({
+    label: "attachment",
+    operationId: journal.operationId,
+    hadPrevious: journal.hadPreviousAttachments,
+    restoredEntries: journal.restoredAttachmentIds,
+    stagedDirectory: paths.stagedAttachmentDir,
+    oldDirectory: paths.oldAttachmentDir,
+    targetDirectory: paths.targetAttachmentDir,
+    operationRoot: paths.operationRoot
+  }, committed);
+}
+
+async function recoverTrackedRestoreAssets(
+  journal: RestoreJournalV4,
+  paths: ReturnType<typeof getRestorePaths>,
+  committed: boolean
+) {
+  await recoverTrackedRestoreDirectory({
+    label: "attachment",
+    operationId: journal.operationId,
+    hadPrevious: journal.hadPreviousAttachments,
+    restoredEntries: journal.restoredAttachmentIds,
+    stagedDirectory: paths.stagedAttachmentDir,
+    oldDirectory: paths.oldAttachmentDir,
+    targetDirectory: paths.targetAttachmentDir,
+    operationRoot: paths.operationRoot
+  }, committed);
+  await recoverTrackedRestoreDirectory({
+    label: "custom icon",
+    operationId: journal.operationId,
+    hadPrevious: journal.hadPreviousCustomIcons,
+    restoredEntries: journal.restoredCustomIconFiles,
+    stagedDirectory: paths.stagedCustomIconDir,
+    oldDirectory: paths.oldCustomIconDir,
+    targetDirectory: paths.targetCustomIconDir,
+    operationRoot: paths.operationRoot
+  }, committed);
 }
 
 export async function recoverDataRestoreJournal(journalInput: unknown) {
@@ -1605,8 +2239,10 @@ async function recoverRestoreJournal(journal: RestoreJournal) {
       await recoverLegacyRestoreAttachments(journal, paths, committed);
     } else if (journal.version === 2) {
       await recoverVersionedRestoreAttachments(journal, paths, committed);
-    } else {
+    } else if (journal.version === 3) {
       await recoverTrackedRestoreAttachments(journal, paths, committed);
+    } else {
+      await recoverTrackedRestoreAssets(journal, paths, committed);
     }
 
     await rm(paths.operationRoot, { recursive: true, force: true });
@@ -1620,6 +2256,10 @@ async function recoverRestoreJournal(journal: RestoreJournal) {
       try {
         await rm(restoreGenerationMarkerPath(paths.targetAttachmentDir), { force: true });
         await syncDirectoryIfPresent(paths.targetAttachmentDir);
+        if (journal.version === 4) {
+          await rm(restoreGenerationMarkerPath(paths.targetCustomIconDir), { force: true });
+          await syncDirectoryIfPresent(paths.targetCustomIconDir);
+        }
       } catch (error) {
         console.error("Committed restore generation marker cleanup failed", {
           userId: journal.userId,
@@ -1700,16 +2340,25 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
     invalidBackup("The backup manifest is invalid", error instanceof z.ZodError ? error.flatten() : undefined);
   }
   validateManifestRelations(manifest);
-  const restoredAttachmentBytes = manifest.attachments.reduce(
+  const restoresCustomIcons = manifest.version === backupVersion;
+  const retainedAttachments = manifest.retainedAttachments ?? [];
+  const restoredAttachmentBytes = [...manifest.attachments, ...retainedAttachments].reduce(
     (total, attachment) => total + BigInt(attachment.size),
     0n
   );
-  assertAttachmentStorageLimit(0n, restoredAttachmentBytes, 0, manifest.attachments.length);
+  assertAttachmentStorageLimit(
+    0n,
+    restoredAttachmentBytes,
+    0,
+    manifest.attachments.length + retainedAttachments.length
+  );
 
   const allowedEntries = new Set([
     manifestName,
     ...manifest.attachments.map((item) => item.path),
-    ...(manifest.pageCovers ?? []).map((item) => item.path)
+    ...retainedAttachments.map((item) => item.path),
+    ...(manifest.pageCovers ?? []).map((item) => item.path),
+    ...(manifest.customIcons ?? []).map((item) => item.path)
   ]);
   for (const entry of entries) {
     if (!allowedEntries.has(entry.name)) invalidBackup(`Unexpected ZIP entry: ${entry.name}`);
@@ -1718,23 +2367,42 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
 
   await assertNoForeignIdConflicts(userId, manifest);
   const initialWorkspaceSnapshot = await transaction((client) =>
-    createWorkspaceRestoreSnapshot(userId, client)
+    createWorkspaceRestoreSnapshot(userId, client, false, restoresCustomIcons)
   );
   await ensureDataTransferDirectories();
   const operationId = createId("restore");
-  const journalBase = {
-    version: 3 as const,
-    userId,
-    operationId,
-    restoredAttachmentIds: manifest.attachments.map((attachment) => attachment.blockId)
-  };
-  const derivedPaths = getRestorePaths({ ...journalBase, hadPreviousAttachments: false });
+  const restoredAttachmentIds = [
+    ...manifest.attachments.map((attachment) => attachment.blockId),
+    ...retainedAttachments.map((attachment) => attachment.fileName)
+  ];
+  const restoredCustomIconFiles = (manifest.customIcons ?? []).map((icon) => icon.fileName);
+  const journalSeed: RestoreJournal = restoresCustomIcons
+    ? {
+      version: 4,
+      userId,
+      operationId,
+      hadPreviousAttachments: false,
+      hadPreviousCustomIcons: false,
+      restoredAttachmentIds,
+      restoredCustomIconFiles
+    }
+    : {
+      version: 3,
+      userId,
+      operationId,
+      hadPreviousAttachments: false,
+      restoredAttachmentIds
+    };
+  const derivedPaths = getRestorePaths(journalSeed);
   const {
     operationRoot,
     stagedAttachmentDir,
     stagedPageCoverDir,
+    stagedCustomIconDir,
     oldAttachmentDir,
     targetAttachmentDir,
+    oldCustomIconDir,
+    targetCustomIconDir,
     journalPath
   } = derivedPaths;
   let journalWritten = false;
@@ -1742,7 +2410,8 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
   let restoreSharingPlan: RestoreSharingPlan = { mode: "backup", shares: [] };
   await Promise.all([
     mkdir(stagedAttachmentDir, { recursive: true }),
-    mkdir(stagedPageCoverDir, { recursive: true })
+    mkdir(stagedPageCoverDir, { recursive: true }),
+    ...(restoresCustomIcons ? [mkdir(stagedCustomIconDir, { recursive: true })] : [])
   ]);
 
   try {
@@ -1762,6 +2431,24 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
       const inspection = await inspectFile(outputPath);
       if (inspection.sha256 !== attachment.sha256 || inspection.size.toString() !== attachment.size) {
         invalidBackup(`Attachment SHA-256 does not match: ${attachment.blockId}`);
+      }
+    }
+    for (const retained of retainedAttachments) {
+      const entry = entryByName.get(retained.path);
+      if (!entry) invalidBackup(`Retained attachment entry is missing: ${retained.path}`);
+      if (entry.uncompressedSize.toString() !== retained.size || entry.crc32 !== retained.crc32) {
+        invalidBackup(`Retained attachment size or CRC does not match: ${retained.fileName}`);
+      }
+      const outputPath = path.join(stagedAttachmentDir, retained.fileName);
+      try {
+        await copyZipEntryToFile(zipPath, entry, outputPath);
+        await syncPath(outputPath);
+      } catch (error) {
+        invalidBackup(error instanceof Error ? error.message : `Retained attachment is corrupt: ${retained.fileName}`);
+      }
+      const inspection = await inspectFile(outputPath);
+      if (inspection.sha256 !== retained.sha256 || inspection.size.toString() !== retained.size) {
+        invalidBackup(`Retained attachment SHA-256 does not match: ${retained.fileName}`);
       }
     }
     for (const pageCover of manifest.pageCovers ?? []) {
@@ -1793,13 +2480,50 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
         });
       }
     }
+    for (const customIcon of manifest.customIcons ?? []) {
+      const entry = entryByName.get(customIcon.path);
+      if (!entry) invalidBackup(`Custom icon entry is missing: ${customIcon.path}`);
+      if (
+        entry.uncompressedSize.toString() !== customIcon.size
+        || entry.uncompressedSize > BigInt(maxCustomIconBytes)
+        || entry.crc32 !== customIcon.crc32
+      ) {
+        invalidBackup(`Custom icon size or CRC does not match: ${customIcon.fileName}`);
+      }
+      const outputPath = path.join(stagedCustomIconDir, customIcon.fileName);
+      try {
+        await copyZipEntryToFile(zipPath, entry, outputPath);
+        await syncPath(outputPath);
+      } catch (error) {
+        invalidBackup(error instanceof Error ? error.message : `Custom icon is corrupt: ${customIcon.fileName}`);
+      }
+      const inspection = await inspectFile(outputPath);
+      if (inspection.sha256 !== customIcon.sha256 || inspection.size.toString() !== customIcon.size) {
+        invalidBackup(`Custom icon SHA-256 does not match: ${customIcon.fileName}`);
+      }
+      const fileType = detectCustomIconFileType(await readFile(outputPath));
+      if (
+        !fileType
+        || fileType.mimeType !== customIcon.mimeType
+        || fileType.extension !== expectedCustomIconExtension(customIcon.mimeType)
+      ) {
+        invalidBackup(`Custom icon content is invalid: ${customIcon.fileName}`);
+      }
+    }
     await writeRestoreGenerationMarker(stagedAttachmentDir, operationId);
+    if (restoresCustomIcons) await writeRestoreGenerationMarker(stagedCustomIconDir, operationId);
     await syncPath(operationRoot);
 
-    let movedOld = false;
+    let movedOldAttachments = false;
+    let movedOldCustomIcons = false;
     try {
       await transaction(async (client) => {
-        const lockedWorkspaceSnapshot = await createWorkspaceRestoreSnapshot(userId, client, true);
+        const lockedWorkspaceSnapshot = await createWorkspaceRestoreSnapshot(
+          userId,
+          client,
+          true,
+          restoresCustomIcons
+        );
         if (lockedWorkspaceSnapshot.fingerprint !== initialWorkspaceSnapshot.fingerprint) {
           throw new ApiError(
             409,
@@ -1819,24 +2543,50 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
         for (const pageId of lockedWorkspaceSnapshot.pageIds) {
           disconnectPageCollaborators(pageId, "Workspace data is being restored");
         }
-        // Record the live attachment generation only after the user row is locked.
-        // Otherwise an attachment created between the check and the lock could be
-        // mistaken for failed-restore output and deleted during conflict recovery.
-        restoreJournal = {
-          ...journalBase,
-          hadPreviousAttachments: await pathExists(targetAttachmentDir)
-        };
+
+        // The user row lock is shared by attachment and custom-icon writes. Record
+        // both live filesystem generations only after acquiring that lock, so any
+        // later write either belongs to the previous generation or waits until the
+        // restore transaction releases it.
+        restoreJournal = restoresCustomIcons
+          ? {
+            version: 4,
+            userId,
+            operationId,
+            hadPreviousAttachments: await pathExists(targetAttachmentDir),
+            hadPreviousCustomIcons: await pathExists(targetCustomIconDir),
+            restoredAttachmentIds,
+            restoredCustomIconFiles
+          }
+          : {
+            version: 3,
+            userId,
+            operationId,
+            hadPreviousAttachments: await pathExists(targetAttachmentDir),
+            restoredAttachmentIds
+          };
         await writeRestoreJournal(restoreJournal);
         journalWritten = true;
         const restoreVersion = await createRestoreEditVersion(client, userId, manifest);
         await importRows(client, userId, manifest, restoreVersion, restoreSharingPlan.shares, stagedPageCoverDir);
+
         await mkdir(path.dirname(targetAttachmentDir), { recursive: true });
         if (await pathExists(targetAttachmentDir)) {
           await rename(targetAttachmentDir, oldAttachmentDir);
-          movedOld = true;
+          movedOldAttachments = true;
         }
         await rename(stagedAttachmentDir, targetAttachmentDir);
         await syncPath(attachmentUploadRoot);
+
+        if (restoresCustomIcons) {
+          await mkdir(path.dirname(targetCustomIconDir), { recursive: true });
+          if (await pathExists(targetCustomIconDir)) {
+            await rename(targetCustomIconDir, oldCustomIconDir);
+            movedOldCustomIcons = true;
+          }
+          await rename(stagedCustomIconDir, targetCustomIconDir);
+          await syncPath(customIconUploadRoot);
+        }
         await syncPath(operationRoot);
         await client.execute(
           `INSERT INTO data_restore_markers (user_id, operation_id, committed_at)
@@ -1853,36 +2603,40 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
           [userId, operationId]
         );
       } catch (verificationError) {
-        console.error("Data restore commit outcome is unknown; preserving both attachment generations", {
+        console.error("Data restore commit outcome is unknown; preserving asset generations", {
           userId,
           operationId,
           targetAttachmentDir,
-          preservedAttachmentDir: movedOld ? oldAttachmentDir : null,
+          preservedAttachmentDir: movedOldAttachments ? oldAttachmentDir : null,
+          targetCustomIconDir: restoresCustomIcons ? targetCustomIconDir : null,
+          preservedCustomIconDir: movedOldCustomIcons ? oldCustomIconDir : null,
           journalPath,
           verificationError
         });
         throw new ApiError(
           500,
           "DATA_RESTORE_OUTCOME_UNKNOWN",
-          "The restore outcome could not be verified. Attachment generations were preserved for startup recovery."
+          "The restore outcome could not be verified. Asset generations were preserved for startup recovery."
         );
       }
 
       const committed = marker?.operation_id === operationId;
       await recoverRestoreJournal(restoreJournal).catch((recoveryError) => {
-        console.error("Attachment restore reconciliation requires manual recovery", {
+        console.error("Asset restore reconciliation requires manual recovery", {
           userId,
           operationId,
           committed,
           targetAttachmentDir,
-          preservedAttachmentDir: movedOld ? oldAttachmentDir : null,
+          preservedAttachmentDir: movedOldAttachments ? oldAttachmentDir : null,
+          targetCustomIconDir: restoresCustomIcons ? targetCustomIconDir : null,
+          preservedCustomIconDir: movedOldCustomIcons ? oldCustomIconDir : null,
           journalPath,
           recoveryError
         });
         throw new ApiError(
           500,
           "DATA_RESTORE_RECOVERY_FAILED",
-          "The restore outcome was identified, but attachment reconciliation requires manual recovery."
+          "The restore outcome was identified, but asset reconciliation requires manual recovery."
         );
       });
       journalWritten = false;
@@ -1906,7 +2660,9 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
         pages: manifest.data.pages.length,
         blocks: manifest.data.blocks.length,
         attachments: manifest.attachments.length,
+        retainedAttachments: retainedAttachments.length,
         pageCovers: manifest.pageCovers?.length ?? 0,
+        customIcons: manifest.customIcons?.length ?? 0,
         tags: manifest.data.tags.length,
         shares: restoreSharingPlan.shares.length
       },

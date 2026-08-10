@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { once } from "node:events";
@@ -13,6 +14,10 @@ const store = vi.hoisted(() => ({
   blocks: new Map<string, Record<string, unknown>>(),
   tags: new Map<string, Record<string, unknown>>(),
   pageTags: [] as Array<{ page_id: string; tag_id: string }>,
+  customIcons: new Map<string, {
+    id: string; user_id: string; file_path: string; last_used_at: string; created_at: string;
+  }>(),
+  customIconRemovals: new Map<string, { user_id: string; value_hash: string; removed_at: string }>(),
   shares: [] as Array<{
     page_id: string;
     user_id: string;
@@ -61,6 +66,7 @@ vi.mock("../src/lib/collaboration-server.js", () => ({
 
 import { createApp } from "../src/app.js";
 import { attachmentUploadRoot, getAttachmentFilePath } from "../src/lib/attachments.js";
+import { customIconUploadRoot } from "../src/lib/custom-icons.js";
 import { signAuthToken } from "../src/lib/auth.js";
 import { prepareUserDataBackup, writeUserDataBackup } from "../src/lib/data-transfer.js";
 import { readZipDirectory, readZipEntryBuffer } from "../src/lib/zip.js";
@@ -126,6 +132,8 @@ beforeEach(async () => {
   }]]);
   store.tags = new Map([[tagId, { id: tagId, name: "backup", created_at: "2026-07-17 00:00:00.000000" }]]);
   store.pageTags = [{ page_id: pageId, tag_id: tagId }];
+  store.customIcons = new Map();
+  store.customIconRemovals = new Map();
   store.shares = [];
   store.collaborationUpdates = new Map();
   store.collaborationMaterialized = new Map();
@@ -215,6 +223,22 @@ beforeEach(async () => {
         return block && page ? [{ id: block.id, owner_id: page.owner_id }] : [];
       });
     }
+    if (sql.includes("FROM custom_icons") && sql.includes("WHERE user_id = ?") && !sql.includes("id IN")) {
+      return [...store.customIcons.values()]
+        .filter((icon) => icon.user_id === params[0])
+        .map((icon) => ({ ...icon }));
+    }
+    if (sql.includes("FROM custom_icon_library_removals") && sql.includes("WHERE user_id = ?")) {
+      return [...store.customIconRemovals.values()]
+        .filter((removal) => removal.user_id === params[0])
+        .map((removal) => ({ value_hash: removal.value_hash, removed_at: removal.removed_at }));
+    }
+    if (sql.startsWith("SELECT id, user_id FROM custom_icons WHERE id IN")) {
+      return params.flatMap((id) => {
+        const icon = store.customIcons.get(String(id));
+        return icon ? [{ id: icon.id, user_id: icon.user_id }] : [];
+      });
+    }
     if (sql.includes("FROM tags WHERE")) return [...store.tags.values()].map((tag) => ({ ...tag }));
     return [];
   });
@@ -231,8 +255,8 @@ beforeEach(async () => {
       [store.user.name, store.user.avatar_data, store.user.preferred_language, store.user.default_collection_icon] = params;
       if (params[4] !== null && params[4] !== undefined) store.user.theme = params[4];
     } else if (sql.includes("INSERT INTO pages")) {
-      const [id, title, icon, coverUrl, archived, collection, ownerId, parentPageId, editVersion, contentVersion, createdAt, updatedAt] = params;
-      store.pages.set(String(id), { id, title, icon, cover_url: coverUrl, is_archived: archived, is_collection: collection, owner_id: ownerId, parent_page_id: parentPageId, edit_version: editVersion, content_version: contentVersion, created_at: createdAt, updated_at: updatedAt });
+      const [id, title, icon, coverUrl, coverPositionX, coverPositionY, archived, collection, ownerId, parentPageId, editVersion, contentVersion, createdAt, updatedAt] = params;
+      store.pages.set(String(id), { id, title, icon, cover_url: coverUrl, cover_position_x: coverPositionX, cover_position_y: coverPositionY, is_archived: archived, is_collection: collection, owner_id: ownerId, parent_page_id: parentPageId, edit_version: editVersion, content_version: contentVersion, created_at: createdAt, updated_at: updatedAt });
     } else if (sql.includes("INSERT INTO blocks")) {
       const [id, importedPageId, parentBlockId, type, markdown, htmlCache, checked, sortOrder, metadata, editVersion, createdAt, updatedAt] = params;
       store.blocks.set(String(id), { id, page_id: importedPageId, parent_block_id: parentBlockId, type, markdown, html_cache: htmlCache, checked, sort_order: sortOrder, metadata, edit_version: editVersion, created_at: createdAt, updated_at: updatedAt });
@@ -249,6 +273,21 @@ beforeEach(async () => {
         shared_by: String(params[3]),
         shared_at: String(params[4])
       });
+    } else if (sql === "DELETE FROM custom_icons WHERE user_id = ?") {
+      for (const [id, icon] of store.customIcons) if (icon.user_id === params[0]) store.customIcons.delete(id);
+    } else if (sql === "DELETE FROM custom_icon_library_removals WHERE user_id = ?") {
+      for (const [key, removal] of store.customIconRemovals) if (removal.user_id === params[0]) store.customIconRemovals.delete(key);
+    } else if (sql.includes("INSERT INTO custom_icons")) {
+      const [id, ownerId, filePath, lastUsedAt, createdAt] = params;
+      store.customIcons.set(String(id), {
+        id: String(id), user_id: String(ownerId), file_path: String(filePath),
+        last_used_at: String(lastUsedAt), created_at: String(createdAt)
+      });
+    } else if (sql.includes("INSERT INTO custom_icon_library_removals")) {
+      const [ownerId, valueHash, removedAt] = params;
+      store.customIconRemovals.set(String(valueHash), {
+        user_id: String(ownerId), value_hash: String(valueHash), removed_at: String(removedAt)
+      });
     } else if (sql.includes("INSERT INTO data_restore_markers")) {
       store.restoreMarker = String(params[1]);
     } else if (sql.startsWith("DELETE FROM data_restore_markers")) {
@@ -258,12 +297,14 @@ beforeEach(async () => {
   });
 
   await rm(path.join(attachmentUploadRoot, userId), { recursive: true, force: true });
+  await rm(path.join(customIconUploadRoot, userId), { recursive: true, force: true });
   await mkdir(path.dirname(getAttachmentFilePath(userId, blockId)), { recursive: true });
   await writeFile(getAttachmentFilePath(userId, blockId), originalBytes);
 });
 
 afterAll(async () => {
   await rm(path.join(attachmentUploadRoot, userId), { recursive: true, force: true });
+  await rm(path.join(customIconUploadRoot, userId), { recursive: true, force: true });
   await rm(path.join(attachmentUploadRoot, ".data-transfer"), { recursive: true, force: true });
 });
 
@@ -373,6 +414,114 @@ describe("Complete data transfer routes", () => {
     await rm(zipPath, { force: true });
   });
 
+  it("exports and restores every uploaded custom icon file plus library state", async () => {
+    const activeIconId = "cicon_backup_active";
+    const removedIconId = "cicon_backup_removed";
+    const activeFileName = `${activeIconId}.png`;
+    const removedFileName = `${removedIconId}.webp`;
+    const activePublicPath = `/upload/icons/${userId}/${activeFileName}`;
+    const removedPublicPath = `/upload/icons/${userId}/${removedFileName}`;
+    const activeValue = `image:${activePublicPath}`;
+    const removedValue = `image:${removedPublicPath}`;
+    const activeBytes = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from("brainvault-active-icon")
+    ]);
+    const removedBytes = Buffer.concat([
+      Buffer.from("RIFF"),
+      Buffer.alloc(4),
+      Buffer.from("WEBPbrainvault-removed-icon")
+    ]);
+    const removedHash = createHash("sha256").update(removedValue, "utf8").digest("hex");
+    const retainedAttachmentId = "blk_retained_ambiguous";
+    const retainedAttachmentBytes = Buffer.from("preserved after ambiguous attachment commit");
+    const retainedAttachmentPath = getAttachmentFilePath(userId, retainedAttachmentId);
+    const iconDirectory = path.join(customIconUploadRoot, userId);
+    await mkdir(iconDirectory, { recursive: true });
+    await mkdir(path.dirname(retainedAttachmentPath), { recursive: true });
+    await writeFile(retainedAttachmentPath, retainedAttachmentBytes);
+    await writeFile(path.join(iconDirectory, activeFileName), activeBytes);
+    await writeFile(path.join(iconDirectory, removedFileName), removedBytes);
+    store.customIcons.set(activeIconId, {
+      id: activeIconId,
+      user_id: userId,
+      file_path: activePublicPath,
+      last_used_at: "2026-07-17 00:03:00.000000",
+      created_at: "2026-07-17 00:02:00.000000"
+    });
+    store.customIconRemovals.set(removedHash, {
+      user_id: userId,
+      value_hash: removedHash,
+      removed_at: "2026-07-17 00:04:00.000000"
+    });
+    store.user.default_collection_icon = activeValue;
+    store.pages.get(pageId)!.icon = removedValue;
+
+    const exported = await request(createApp())
+      .get("/api/data/export")
+      .set("Authorization", `Bearer ${token}`)
+      .buffer(true)
+      .parse(binaryParser)
+      .expect(200);
+
+    const zipPath = path.join(attachmentUploadRoot, ".data-transfer", "custom-icon-roundtrip.zip");
+    await mkdir(path.dirname(zipPath), { recursive: true });
+    await writeFile(zipPath, exported.body as Buffer);
+    const entries = await readZipDirectory(zipPath);
+    const manifestEntry = entries.find((entry) => entry.name === "brainvault-backup.json");
+    expect(manifestEntry).toBeTruthy();
+    const manifest = JSON.parse((await readZipEntryBuffer(zipPath, manifestEntry!, 1024 * 1024)).toString("utf8"));
+    expect(manifest.version).toBe(3);
+    expect(manifest.retainedAttachments).toEqual([expect.objectContaining({
+      fileName: retainedAttachmentId,
+      path: `attachments/${retainedAttachmentId}`
+    })]);
+    const retainedEntry = entries.find((candidate) => candidate.name === `attachments/${retainedAttachmentId}`);
+    expect(retainedEntry).toBeTruthy();
+    await expect(readZipEntryBuffer(zipPath, retainedEntry!, 1024 * 1024)).resolves.toEqual(retainedAttachmentBytes);
+    expect(manifest.customIcons).toHaveLength(2);
+    expect(manifest.customIconLibraryRemovals).toEqual([{
+      value_hash: removedHash,
+      removed_at: "2026-07-17 00:04:00.000000"
+    }]);
+    for (const [fileName, bytes] of [[activeFileName, activeBytes], [removedFileName, removedBytes]] as const) {
+      const entry = entries.find((candidate) => candidate.name === `custom-icons/${fileName}`);
+      expect(entry).toBeTruthy();
+      await expect(readZipEntryBuffer(zipPath, entry!, 1024 * 1024)).resolves.toEqual(bytes);
+    }
+
+    await rm(iconDirectory, { recursive: true, force: true });
+    await rm(retainedAttachmentPath, { force: true });
+    store.customIcons.clear();
+    store.customIconRemovals.clear();
+    store.user.default_collection_icon = "🧠";
+    store.pages.get(pageId)!.icon = "📄";
+
+    const restored = await request(createApp())
+      .post("/api/data/import")
+      .set("Authorization", `Bearer ${token}`)
+      .attach("backup", exported.body as Buffer, {
+        filename: "BrainVault-backup.zip",
+        contentType: "application/zip"
+      })
+      .expect(200);
+
+    expect(restored.body.counts.retainedAttachments).toBe(1);
+    expect(restored.body.counts.customIcons).toBe(2);
+    await expect(readFile(retainedAttachmentPath)).resolves.toEqual(retainedAttachmentBytes);
+    await expect(readFile(path.join(iconDirectory, activeFileName))).resolves.toEqual(activeBytes);
+    await expect(readFile(path.join(iconDirectory, removedFileName))).resolves.toEqual(removedBytes);
+    expect(store.user.default_collection_icon).toBe(activeValue);
+    expect(store.pages.get(pageId)?.icon).toBe(removedValue);
+    expect(store.customIcons.get(activeIconId)).toMatchObject({
+      user_id: userId,
+      file_path: activePublicPath
+    });
+    expect(store.customIcons.has(removedIconId)).toBe(false);
+    expect(store.customIconRemovals.get(removedHash)?.removed_at).toBe("2026-07-17 00:04:00.000000");
+    await rm(zipPath, { force: true });
+  });
+
   it("exports and restores database rows, page shares, and exact attachment bytes", async () => {
     store.shares.push({
       page_id: pageId,
@@ -423,7 +572,9 @@ describe("Complete data transfer routes", () => {
       .attach("backup", exported.body as Buffer, { filename: "BrainVault-backup.zip", contentType: "application/zip" })
       .expect(200);
 
-    expect(restored.body.counts).toEqual({ pages: 1, blocks: 1, attachments: 1, tags: 1, shares: 1 });
+    expect(restored.body.counts).toEqual({
+      pages: 1, blocks: 1, attachments: 1, retainedAttachments: 0, pageCovers: 0, customIcons: 0, tags: 1, shares: 1
+    });
     expect(restored.body.sharing).toEqual({ mode: "backup", count: 1 });
     expect(store.pages.get(pageId)?.title).toBe("Original Page");
     expect(Number(store.pages.get(pageId)?.edit_version)).toBeGreaterThan(stalePageVersion);
@@ -583,6 +734,79 @@ describe("Complete data transfer routes", () => {
     expect(response.body.error.code).toBe("DATA_RESTORE_CONFLICT");
     expect(store.pages.get(pageId)?.title).toBe("Concurrent Page");
     await expect(readFile(getAttachmentFilePath(userId, blockId))).resolves.toEqual(originalBytes);
+  });
+
+  it("does not overwrite an unlinked attachment file created while restore is waiting for its lock", async () => {
+    const exported = await request(createApp())
+      .get("/api/data/export")
+      .set("Authorization", `Bearer ${token}`)
+      .buffer(true)
+      .parse(binaryParser)
+      .expect(200);
+
+    const concurrentFileId = "blk_retained_concurrent";
+    const concurrentFilePath = getAttachmentFilePath(userId, concurrentFileId);
+    const concurrentBytes = Buffer.from("unlinked upload created while restore waits");
+    store.transactionHooks = [
+      () => undefined,
+      async () => {
+        await mkdir(path.dirname(concurrentFilePath), { recursive: true });
+        await writeFile(concurrentFilePath, concurrentBytes);
+      }
+    ];
+
+    const response = await request(createApp())
+      .post("/api/data/import")
+      .set("Authorization", `Bearer ${token}`)
+      .attach("backup", exported.body as Buffer, { filename: "BrainVault-backup.zip", contentType: "application/zip" })
+      .expect(409);
+
+    expect(response.body.error.code).toBe("DATA_RESTORE_CONFLICT");
+    await expect(readFile(concurrentFilePath)).resolves.toEqual(concurrentBytes);
+    expect(store.restoreEvents).not.toContain("delete-pages");
+  });
+
+  it("does not overwrite a custom icon uploaded while restore is waiting for its lock", async () => {
+    const exported = await request(createApp())
+      .get("/api/data/export")
+      .set("Authorization", `Bearer ${token}`)
+      .buffer(true)
+      .parse(binaryParser)
+      .expect(200);
+
+    const concurrentIconId = "cicon_concurrent_restore";
+    const concurrentFileName = `${concurrentIconId}.png`;
+    const concurrentPublicPath = `/upload/icons/${userId}/${concurrentFileName}`;
+    const concurrentBytes = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from("created while restore waits")
+    ]);
+    const concurrentFilePath = path.join(customIconUploadRoot, userId, concurrentFileName);
+    store.transactionHooks = [
+      () => undefined,
+      async () => {
+        store.customIcons.set(concurrentIconId, {
+          id: concurrentIconId,
+          user_id: userId,
+          file_path: concurrentPublicPath,
+          last_used_at: "2026-07-17 00:05:00.000000",
+          created_at: "2026-07-17 00:05:00.000000"
+        });
+        await mkdir(path.dirname(concurrentFilePath), { recursive: true });
+        await writeFile(concurrentFilePath, concurrentBytes);
+      }
+    ];
+
+    const response = await request(createApp())
+      .post("/api/data/import")
+      .set("Authorization", `Bearer ${token}`)
+      .attach("backup", exported.body as Buffer, { filename: "BrainVault-backup.zip", contentType: "application/zip" })
+      .expect(409);
+
+    expect(response.body.error.code).toBe("DATA_RESTORE_CONFLICT");
+    expect(store.customIcons.get(concurrentIconId)?.file_path).toBe(concurrentPublicPath);
+    await expect(readFile(concurrentFilePath)).resolves.toEqual(concurrentBytes);
+    expect(store.restoreEvents).not.toContain("delete-pages");
   });
 
   it("does not delete an attachment created while restore is waiting for its lock", async () => {

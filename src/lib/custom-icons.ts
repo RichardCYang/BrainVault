@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { mkdir, rm, stat, writeFile } from "node:fs/promises";
-import { db, transaction } from "./db.js";
+import { withUserAttachmentLock } from "./attachments.js";
+import { db } from "./db.js";
 import { createId } from "./id.js";
 import { ApiError } from "./http.js";
 import { imageIconPrefix, maxCustomIconBytes, normalizeIconValue } from "./icon-value.js";
@@ -93,41 +94,43 @@ function toTimestamp(value: Date | string) {
 
 export async function listCustomIcons(userId: string) {
   const safeUserId = safeStorageSegment(userId);
-  const rows = await db.query<StoredCustomIconRow>(
-    `SELECT id, file_path, last_used_at
-     FROM custom_icons
-     WHERE user_id = ?
-     ORDER BY last_used_at DESC, created_at DESC
-     LIMIT ?`,
-    [safeUserId, customIconLibraryLimit]
-  );
+  return withUserAttachmentLock(safeUserId, async (client) => {
+    const rows = await client.query<StoredCustomIconRow>(
+      `SELECT id, file_path, last_used_at
+       FROM custom_icons
+       WHERE user_id = ?
+       ORDER BY last_used_at DESC, created_at DESC
+       LIMIT ?`,
+      [safeUserId, customIconLibraryLimit]
+    );
 
-  const available = [] as Array<{ value: string; lastUsedAt: number }>;
-  const missingIds: string[] = [];
-  for (const row of rows) {
-    const filePath = getCustomIconFilePath(row.file_path);
-    if (!filePath) {
-      missingIds.push(row.id);
-      continue;
+    const available = [] as Array<{ value: string; lastUsedAt: number }>;
+    const missingIds: string[] = [];
+    for (const row of rows) {
+      const filePath = getCustomIconFilePath(row.file_path);
+      if (!filePath) {
+        missingIds.push(row.id);
+        continue;
+      }
+      try {
+        const fileStat = await stat(filePath);
+        if (!fileStat.isFile()) throw new Error("not a file");
+        available.push({ value: `image:${row.file_path}`, lastUsedAt: toTimestamp(row.last_used_at) });
+      } catch {
+        missingIds.push(row.id);
+      }
     }
-    try {
-      const fileStat = await stat(filePath);
-      if (!fileStat.isFile()) throw new Error("not a file");
-      available.push({ value: `image:${row.file_path}`, lastUsedAt: toTimestamp(row.last_used_at) });
-    } catch {
-      missingIds.push(row.id);
+
+    if (missingIds.length) {
+      const placeholders = missingIds.map(() => "?").join(", ");
+      await client.execute(
+        `DELETE FROM custom_icons WHERE user_id = ? AND id IN (${placeholders})`,
+        [safeUserId, ...missingIds]
+      );
     }
-  }
 
-  if (missingIds.length) {
-    const placeholders = missingIds.map(() => "?").join(", ");
-    void db.execute(
-      `DELETE FROM custom_icons WHERE user_id = ? AND id IN (${placeholders})`,
-      [safeUserId, ...missingIds]
-    ).catch(() => undefined);
-  }
-
-  return available;
+    return available;
+  });
 }
 
 export async function listCustomIconLibraryRemovalKeys(userId: string) {
@@ -148,7 +151,7 @@ export async function removeCustomIconFromLibrary(userId: string, value: string)
   const removedKey = getCustomIconLibraryRemovalKey(normalized);
   const publicPath = normalized.slice(imageIconPrefix.length);
 
-  await transaction(async (client) => {
+  await withUserAttachmentLock(safeUserId, async (client) => {
     await client.execute(
       `INSERT INTO custom_icon_library_removals (user_id, value_hash, removed_at)
        VALUES (?, ?, CURRENT_TIMESTAMP(3))
@@ -176,7 +179,7 @@ export async function restoreCustomIconToLibrary(userId: string, value: string) 
   const removedKey = getCustomIconLibraryRemovalKey(normalized);
   const publicPath = normalized.slice(imageIconPrefix.length);
 
-  await transaction(async (client) => {
+  await withUserAttachmentLock(safeUserId, async (client) => {
     await client.execute(
       "DELETE FROM custom_icon_library_removals WHERE user_id = ? AND value_hash = ?",
       [safeUserId, removedKey]
@@ -211,13 +214,15 @@ export async function rememberCustomIconPaths(userId: string, iconValues: readon
     return isServerCustomIconPath(publicPath) ? [publicPath] : [];
   }))].slice(0, customIconLibraryLimit);
 
-  for (const publicPath of paths) {
-    await db.execute(
-      `UPDATE custom_icons SET last_used_at = CURRENT_TIMESTAMP(3)
-       WHERE user_id = ? AND file_path = ?`,
-      [safeUserId, publicPath]
-    );
-  }
+  await withUserAttachmentLock(safeUserId, async (client) => {
+    for (const publicPath of paths) {
+      await client.execute(
+        `UPDATE custom_icons SET last_used_at = CURRENT_TIMESTAMP(3)
+         WHERE user_id = ? AND file_path = ?`,
+        [safeUserId, publicPath]
+      );
+    }
+  });
 }
 
 export async function storeCustomIcon(userId: string, bytes: Buffer) {
@@ -233,23 +238,25 @@ export async function storeCustomIcon(userId: string, bytes: Buffer) {
   const filePath = path.join(ownerDirectory, filename);
   const publicPath = `${customIconPublicPrefix}${safeUserId}/${filename}`;
 
-  await mkdir(ownerDirectory, { recursive: true });
-  await writeFile(filePath, bytes, { flag: "wx", mode: 0o600 });
-  try {
-    await db.execute(
-      `INSERT INTO custom_icons (id, user_id, file_path, last_used_at)
-       VALUES (?, ?, ?, CURRENT_TIMESTAMP(3))`,
-      [iconId, safeUserId, publicPath]
-    );
-  } catch (error) {
-    await rm(filePath, { force: true }).catch(() => undefined);
-    throw error;
-  }
+  return withUserAttachmentLock(safeUserId, async (client) => {
+    await mkdir(ownerDirectory, { recursive: true });
+    await writeFile(filePath, bytes, { flag: "wx", mode: 0o600 });
+    try {
+      await client.execute(
+        `INSERT INTO custom_icons (id, user_id, file_path, last_used_at)
+         VALUES (?, ?, ?, CURRENT_TIMESTAMP(3))`,
+        [iconId, safeUserId, publicPath]
+      );
+    } catch (error) {
+      await rm(filePath, { force: true }).catch(() => undefined);
+      throw error;
+    }
 
-  return {
-    value: `image:${publicPath}`,
-    filePath: publicPath,
-    mimeType: fileType.mimeType,
-    lastUsedAt: Date.now()
-  };
+    return {
+      value: `image:${publicPath}`,
+      filePath: publicPath,
+      mimeType: fileType.mimeType,
+      lastUsedAt: Date.now()
+    };
+  });
 }

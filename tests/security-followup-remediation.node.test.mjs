@@ -244,5 +244,5 @@ test("the production wiring preserves identity while removing repeated high-cost
   assert.match(attachmentSource, /ATTACHMENT_FILE_COUNT_LIMIT_EXCEEDED/);
   assert.match(blockRoutes, /currentAttachmentUsage\.bytes/);
   assert.match(blockRoutes, /currentAttachmentUsage\.files/);
-  assert.match(dataTransfer, /assertAttachmentStorageLimit\(0n, restoredAttachmentBytes, 0, manifest\.attachments\.length\)/);
+  assert.match(dataTransfer, /assertAttachmentStorageLimit\([\s\S]*?restoredAttachmentBytes[\s\S]*?manifest\.attachments\.length \+ retainedAttachments\.length[\s\S]*?\)/);
 });

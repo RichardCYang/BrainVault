@@ -16,6 +16,7 @@ import {
   moveAttachmentFile,
   removeDeletedAttachmentFiles,
   removeAttachmentPath,
+  withUserAttachmentLock,
   assertAttachmentStorageLimit,
   sanitizeAttachmentDownloadFilename,
   type AttachmentMetadata
@@ -707,7 +708,10 @@ blockRouter.post(
             });
           }
           if (insertDefinitelyFailed && movedPath) {
-            await removeAttachmentPath(movedPath);
+            const failedMovedPath = movedPath;
+            await withUserAttachmentLock(ownerId, async () => {
+              await removeAttachmentPath(failedMovedPath);
+            });
             movedPath = null;
           }
           throw error;

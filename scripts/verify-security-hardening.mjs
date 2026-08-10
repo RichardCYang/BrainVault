@@ -511,8 +511,9 @@ contains("src/lib/data-transfer-limits.ts", [
   "maxBlocks: 50_000",
   "maxAttachments: 5_000",
   "maxPageCovers: 20_000",
-  "maxZipEntries: 25_001",
-  "maxCentralDirectoryBytes: 4 * 1024 * 1024",
+  "maxCustomIcons: 20_000",
+  "maxZipEntries: 45_001",
+  "maxCentralDirectoryBytes: 8 * 1024 * 1024",
   "measureJsonUtf8BytesWithinLimit"
 ]);
 contains("src/lib/data-transfer.ts", [

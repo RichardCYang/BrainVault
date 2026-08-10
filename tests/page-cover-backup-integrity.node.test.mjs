@@ -43,10 +43,10 @@ test("external cover entries prevent valid custom images from exhausting the JSO
   assert.ok(measured !== null && measured < 32 * 1024);
 });
 
-test("backup v2 exports, authenticates, and restores page-cover ZIP entries while retaining v1 import", async () => {
+test("backup v2 cover files remain importable while current v3 preserves the same integrity checks", async () => {
   const transfer = (await readFile(new URL("../src/lib/data-transfer.ts", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
-  assert.match(transfer, /const legacyBackupVersion = 1;\nconst backupVersion = 2;/);
-  assert.match(transfer, /version: z\.union\(\[z\.literal\(legacyBackupVersion\), z\.literal\(backupVersion\)\]\)/);
+  assert.match(transfer, /const legacyBackupVersion = 1;\nconst pageCoverFileBackupVersion = 2;\nconst backupVersion = 3;/);
+  assert.match(transfer, /z\.literal\(legacyBackupVersion\),\n\s*z\.literal\(pageCoverFileBackupVersion\),\n\s*z\.literal\(backupVersion\)/);
   assert.match(transfer, /CASE WHEN cover_url LIKE 'data:image\/%;base64,%' THEN \? ELSE cover_url END AS cover_url/);
   assert.match(transfer, /page\.cover_url = null;/);
   assert.match(transfer, /path: `page-covers\/\$\{page\.id\}`/);

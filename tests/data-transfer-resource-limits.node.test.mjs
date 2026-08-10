@@ -122,8 +122,9 @@ test("backup route and manifest limits are applied before expensive import work"
   assert.ok(
     dataTransferResourceLimits.maxAttachments
       + dataTransferResourceLimits.maxPageCovers
+      + dataTransferResourceLimits.maxCustomIcons
       + 1
       === dataTransferResourceLimits.maxZipEntries
   );
-  assert.ok(dataTransferResourceLimits.maxCentralDirectoryBytes <= 4 * 1024 * 1024);
+  assert.ok(dataTransferResourceLimits.maxCentralDirectoryBytes <= 8 * 1024 * 1024);
 });
