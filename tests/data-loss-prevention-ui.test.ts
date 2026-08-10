@@ -53,7 +53,9 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain('async function withPageEditLock(action, { flush = true } = {})');
     expect(client).toContain('if (flush) await flushPendingPageEdits({ allowLocked: true });');
     expect(client).toContain('const shouldFlush = !skipFlush || state.pageEditLockDepth === 0;');
-    expect(client).toContain('if (normalizedMode === pageModes.READ) await flushPendingPageEdits({ allowLocked: true });');
+    expect(client).toContain('if (normalizedMode === pageModes.READ) {');
+    expect(client).toContain('const materialization = await flushPendingPageEdits({ allowLocked: true });');
+    expect(client).toContain('applyMaterializedHtmlCaches(materialization);');
     expect(client).toContain('async function openPage(pageId, { skipFlush = false } = {})');
     expect(client).toContain('return withPageEditLock(\n    async () => {');
     expect(client).toContain("async function downloadUserDataBackup(");

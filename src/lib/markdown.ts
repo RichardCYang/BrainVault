@@ -312,21 +312,25 @@ function renderAiChat(metadata: unknown) {
   const escapeText = (value: string) => sanitizeHtml(value, { allowedTags: [], allowedAttributes: {} });
   const provider = escapeText(getAiProviderLabel(data.provider));
   const model = escapeText(data.model);
-  const answeredAt = escapeText(data.answeredAt);
-  const question = renderMarkdown(data.question);
-  const answer = renderMarkdown(data.answer);
-
-  return sanitizeHtml(
-    `<section class="rendered-ai-chat">
+  const title = escapeText(data.title);
+  const turns = data.turns.map((turn, index) => {
+    const answeredAt = escapeText(turn.answeredAt);
+    const question = renderMarkdown(turn.question);
+    const answer = renderMarkdown(turn.answer);
+    return `<section class="rendered-ai-chat-turn">
       <article class="rendered-ai-chat-message rendered-ai-chat-question">
-        <header class="rendered-ai-chat-meta"><strong>Question</strong></header>
+        <header class="rendered-ai-chat-meta"><strong>Q${index + 1}</strong></header>
         <div class="rendered-ai-chat-content">${question}</div>
       </article>
       <article class="rendered-ai-chat-message rendered-ai-chat-answer">
         <header class="rendered-ai-chat-meta"><strong>${provider}</strong>${model ? `<span class="rendered-ai-chat-model">${model}</span>` : ""}${answeredAt ? `<small class="rendered-ai-chat-time">${answeredAt}</small>` : ""}</header>
         <div class="rendered-ai-chat-content">${answer}</div>
       </article>
-    </section>`,
+    </section>`;
+  }).join("");
+
+  return sanitizeHtml(
+    `<section class="rendered-ai-chat">${title ? `<div class="rendered-ai-chat-title">${title}</div>` : ""}${turns}</section>`,
     sanitizeOptions
   );
 }

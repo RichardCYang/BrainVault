@@ -5421,9 +5421,11 @@ async function flushPendingPageEdits({ keepalive = false, allowLocked = false, c
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
     assertCollaborationExitSafe(session, t("sharing.syncRequired"));
-    if (session?.isReady) await session.flushMaterialization({ compact: collaborationCompact });
+    const materialization = session?.isReady
+      ? await session.flushMaterialization({ compact: collaborationCompact })
+      : null;
     syncBeforeUnloadProtection();
-    return;
+    return materialization;
   }
   if (pendingBlockOrderTask && canPersistSelectedPage()) {
     await retryPendingBlockOrder({ keepalive });
@@ -5466,6 +5468,19 @@ async function flushPendingPageEdits({ keepalive = false, allowLocked = false, c
       .map(([, queue]) => queue.flush())
   );
   syncBeforeUnloadProtection();
+  return null;
+}
+
+function applyMaterializedHtmlCaches(result) {
+  if (!result?.blocks?.length || !state.selectedPage) return;
+  const localBlocks = new Map(flattenBlocks(state.selectedPage.blocks ?? []).map((block) => [block.id, block]));
+  for (const serverBlock of result.blocks) {
+    const block = localBlocks.get(serverBlock?.id);
+    if (!block || typeof serverBlock?.htmlCache !== "string") continue;
+    block.htmlCache = serverBlock.htmlCache;
+    const row = findRenderedBlockRow(block.id);
+    if (row) updateRenderedBlockPreview(row, block);
+  }
 }
 
 async function setPageMode(nextMode, { announce = true } = {}) {
@@ -5476,7 +5491,10 @@ async function setPageMode(nextMode, { announce = true } = {}) {
   state.pageModeChanging = true;
   syncPageModeUi();
   try {
-    if (normalizedMode === pageModes.READ) await flushPendingPageEdits({ allowLocked: true });
+    if (normalizedMode === pageModes.READ) {
+      const materialization = await flushPendingPageEdits({ allowLocked: true });
+      applyMaterializedHtmlCaches(materialization);
+    }
     state.pageMode = normalizedMode;
     state.pendingFocusBlockId = null;
     syncPageModeUi();
@@ -8876,7 +8894,10 @@ function mountBlockEditor(row, block) {
               : block.type === "BOOKMARK"
                 ? createBookmarkEditor(row, getBlockBookmarkData(block))
                 : block.type === "AI_CHAT"
-                  ? createAiChatEditor(row, getBlockAiChatData(block), { onDirty: () => scheduleBlockSave(row) })
+                  ? createAiChatEditor(row, getBlockAiChatData(block), {
+                      onDirty: () => scheduleBlockSave(row),
+                      htmlCache: block.htmlCache ?? ""
+                    })
                   : block.type === "VIDEO"
                     ? createYouTubeVideoEditor(block)
                     : block.type === "TOGGLE"

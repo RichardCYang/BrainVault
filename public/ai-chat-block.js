@@ -9,6 +9,8 @@ export const aiProviderPresets = Object.freeze([
 ]);
 
 export const aiChatLimits = Object.freeze({
+  titleLength: 120,
+  turns: 50,
   questionLength: 8_000,
   answerLength: 12_000,
   modelLength: 120
@@ -57,28 +59,38 @@ export function getAiProviderPreset(value) {
   return providerById.get(typeof value === "string" ? value.toLowerCase() : "") ?? aiProviderPresets[0];
 }
 
+function normalizeTurn(value, { fallbackAnsweredAt = "" } = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    answeredAt: normalizeLocalDateTime(source.answeredAt) || normalizeLocalDateTime(fallbackAnsweredAt) || createLocalDateTimeValue(),
+    question: normalizeText(source.question, aiChatLimits.questionLength),
+    answer: normalizeText(source.answer, aiChatLimits.answerLength)
+  };
+}
+
 export function createDefaultAiChatData({ question = "", answeredAt = "" } = {}) {
   return {
+    title: "",
     provider: "chatgpt",
     model: "",
-    answeredAt: normalizeLocalDateTime(answeredAt) || createLocalDateTimeValue(),
-    question: normalizeText(question, aiChatLimits.questionLength),
-    answer: ""
+    turns: [normalizeTurn({ question, answeredAt }, { fallbackAnsweredAt: answeredAt })]
   };
 }
 
 export function normalizeAiChatData(value, { fallbackAnsweredAt = "" } = {}) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  const fallback = createDefaultAiChatData({ answeredAt: fallbackAnsweredAt });
+  const rawTurns = Array.isArray(source.turns)
+    ? source.turns.slice(0, aiChatLimits.turns)
+    : [source];
+  const turns = rawTurns.map((turn, index) => normalizeTurn(turn, {
+    fallbackAnsweredAt: index === 0 ? fallbackAnsweredAt : ""
+  }));
+
   return {
+    title: normalizeText(source.title, aiChatLimits.titleLength).trim(),
     provider: getAiProviderPreset(source.provider).id,
     model: normalizeText(source.model, aiChatLimits.modelLength).trim(),
-    answeredAt:
-      normalizeLocalDateTime(source.answeredAt) ||
-      normalizeLocalDateTime(fallbackAnsweredAt) ||
-      fallback.answeredAt,
-    question: normalizeText(source.question, aiChatLimits.questionLength),
-    answer: normalizeText(source.answer, aiChatLimits.answerLength)
+    turns: turns.length ? turns : [normalizeTurn({}, { fallbackAnsweredAt })]
   };
 }
 
@@ -86,10 +98,14 @@ export function summarizeAiChatData(value) {
   const data = normalizeAiChatData(value);
   const provider = getAiProviderPreset(data.provider).label;
   return [
+    data.title,
     `${provider}${data.model ? ` · ${data.model}` : ""}`,
-    data.answeredAt,
-    data.question,
-    data.answer
+    ...data.turns.flatMap((turn, index) => [
+      `Question ${index + 1}`,
+      turn.answeredAt,
+      turn.question,
+      turn.answer
+    ])
   ]
     .filter(Boolean)
     .join("\n\n")
@@ -156,8 +172,9 @@ export function createAiProviderIcon(providerValue, className = "") {
 }
 
 function autoGrow(textarea) {
+  const minimum = textarea.classList.contains("ai-chat-question-input") ? 38 : 112;
   textarea.style.height = "auto";
-  textarea.style.height = `${Math.max(textarea.scrollHeight, 72)}px`;
+  textarea.style.height = `${Math.max(textarea.scrollHeight, minimum)}px`;
 }
 
 function formatLocalDateTime(value) {
@@ -186,34 +203,171 @@ function createLabeledField(labelText, input) {
 function syncEditorPreview(editor) {
   const provider = getAiProviderPreset(editor.dataset.aiProvider);
   const modelInput = editor.querySelector(".ai-chat-model-input");
-  const timeInput = editor.querySelector(".ai-chat-time-input");
-  const iconHost = editor.querySelector(".ai-chat-answer-icon");
-  const providerLabel = editor.querySelector(".ai-chat-provider-label");
-  const modelLabel = editor.querySelector(".ai-chat-model-preview");
-  const timeLabel = editor.querySelector(".ai-chat-time-preview");
 
   editor.dataset.aiProvider = provider.id;
   editor.querySelectorAll(".ai-chat-provider-option").forEach((button) => {
     button.classList.toggle("is-selected", button.dataset.aiProvider === provider.id);
     button.setAttribute("aria-pressed", String(button.dataset.aiProvider === provider.id));
   });
-  if (iconHost) iconHost.replaceChildren(createAiProviderIcon(provider.id));
-  if (providerLabel) providerLabel.textContent = provider.label;
+  editor.querySelectorAll(".ai-chat-answer-icon").forEach((iconHost) => {
+    iconHost.replaceChildren(createAiProviderIcon(provider.id));
+  });
+  editor.querySelectorAll(".ai-chat-provider-label").forEach((providerLabel) => {
+    providerLabel.textContent = provider.label;
+  });
 
   const model = normalizeText(modelInput?.value, aiChatLimits.modelLength).trim();
-  if (modelLabel) {
+  editor.querySelectorAll(".ai-chat-model-preview").forEach((modelLabel) => {
     modelLabel.textContent = model || t("aiChat.modelNotSet");
     modelLabel.classList.toggle("is-empty", !model);
-  }
-  if (timeLabel) timeLabel.textContent = formatLocalDateTime(timeInput?.value ?? "");
+  });
 }
 
-export function createAiChatEditor(row, value, { onDirty } = {}) {
+function syncTurnControls(editor) {
+  const turns = [...editor.querySelectorAll(".ai-chat-turn")];
+  const addTurnButton = editor.querySelector(".ai-chat-add-turn");
+  if (addTurnButton) {
+    const atLimit = turns.length >= aiChatLimits.turns;
+    addTurnButton.disabled = atLimit;
+    addTurnButton.setAttribute("aria-disabled", String(atLimit));
+  }
+
+  turns.forEach((turn, index) => {
+    turn.dataset.aiTurnIndex = String(index);
+    const turnLabel = turn.querySelector(".ai-chat-turn-label");
+    if (turnLabel) turnLabel.textContent = t("aiChat.turnLabel", { count: index + 1 });
+    const questionInput = turn.querySelector(".ai-chat-question-input");
+    const answerInput = turn.querySelector(".ai-chat-answer-input");
+    const timeInput = turn.querySelector(".ai-chat-time-input");
+    questionInput?.setAttribute("aria-label", t("aiChat.questionAriaNumbered", { count: index + 1 }));
+    answerInput?.setAttribute("aria-label", t("aiChat.answerAriaNumbered", { count: index + 1 }));
+    timeInput?.setAttribute("aria-label", t("aiChat.timeAriaNumbered", { count: index + 1 }));
+    const removeButton = turn.querySelector(".ai-chat-remove-turn");
+    if (removeButton) {
+      removeButton.hidden = turns.length <= 1;
+      removeButton.title = t("aiChat.removeTurnNumbered", { count: index + 1 });
+      removeButton.setAttribute("aria-label", t("aiChat.removeTurnNumbered", { count: index + 1 }));
+    }
+  });
+}
+
+function createTurnEditor(editor, row, turnData, { onDirty } = {}) {
+  const turn = document.createElement("section");
+  turn.className = "ai-chat-turn";
+
+  const turnHeader = document.createElement("div");
+  turnHeader.className = "ai-chat-turn-header";
+  const turnLabel = document.createElement("span");
+  turnLabel.className = "ai-chat-turn-label";
+  const removeButton = document.createElement("button");
+  removeButton.type = "button";
+  removeButton.className = "ai-chat-remove-turn";
+  removeButton.dataset.action = "remove-ai-chat-turn";
+  removeButton.textContent = "×";
+  removeButton.addEventListener("click", () => {
+    if (editor.querySelectorAll(".ai-chat-turn").length <= 1) return;
+    turn.remove();
+    syncTurnControls(editor);
+    onDirty?.(row);
+  });
+  turnHeader.append(turnLabel, removeButton);
+
+  const questionMessage = document.createElement("article");
+  questionMessage.className = "ai-chat-message ai-chat-message--question";
+  const questionMeta = document.createElement("header");
+  questionMeta.className = "ai-chat-message-meta";
+  const questionRole = document.createElement("span");
+  questionRole.className = "ai-chat-role-mark";
+  questionRole.textContent = "Q";
+  const questionLabel = document.createElement("strong");
+  questionLabel.textContent = t("aiChat.questionLabel");
+  questionMeta.append(questionRole, questionLabel);
+
+  const questionInput = document.createElement("textarea");
+  questionInput.className = "ai-chat-question-input";
+  questionInput.value = turnData.question;
+  questionInput.maxLength = aiChatLimits.questionLength;
+  questionInput.placeholder = t("aiChat.questionPlaceholder");
+  questionInput.spellcheck = true;
+  questionInput.rows = 1;
+  questionMessage.append(questionMeta, questionInput);
+
+  const answerMessage = document.createElement("article");
+  answerMessage.className = "ai-chat-message ai-chat-message--answer";
+  const answerMeta = document.createElement("header");
+  answerMeta.className = "ai-chat-message-meta ai-chat-answer-meta";
+  const answerIdentity = document.createElement("span");
+  answerIdentity.className = "ai-chat-answer-identity";
+  const answerIcon = document.createElement("span");
+  answerIcon.className = "ai-chat-answer-icon";
+  answerIcon.append(createAiProviderIcon(editor.dataset.aiProvider));
+  const providerLabel = document.createElement("strong");
+  providerLabel.className = "ai-chat-provider-label";
+  const modelPreview = document.createElement("span");
+  modelPreview.className = "ai-chat-model-preview";
+  answerIdentity.append(answerIcon, providerLabel, modelPreview);
+
+  const timeControl = document.createElement("label");
+  timeControl.className = "ai-chat-turn-time-control";
+  const timeCaption = document.createElement("span");
+  timeCaption.textContent = t("aiChat.timeLabel");
+  const timeInput = document.createElement("input");
+  timeInput.type = "datetime-local";
+  timeInput.className = "ai-chat-time-input";
+  timeInput.value = turnData.answeredAt;
+  timeInput.step = "60";
+  timeInput.title = formatLocalDateTime(turnData.answeredAt);
+  timeControl.append(timeCaption, timeInput);
+  answerMeta.append(answerIdentity, timeControl);
+
+  const answerInput = document.createElement("textarea");
+  answerInput.className = "ai-chat-answer-input";
+  answerInput.value = turnData.answer;
+  answerInput.maxLength = aiChatLimits.answerLength;
+  answerInput.placeholder = t("aiChat.answerPlaceholder");
+  answerInput.spellcheck = true;
+  answerInput.rows = 4;
+  answerMessage.append(answerMeta, answerInput);
+
+  const handleInput = (event) => {
+    if (event.target instanceof HTMLTextAreaElement) autoGrow(event.target);
+    if (event.target === timeInput) timeInput.title = formatLocalDateTime(timeInput.value);
+    syncEditorPreview(editor);
+    onDirty?.(row);
+  };
+  [questionInput, answerInput, timeInput].forEach((control) => {
+    control.addEventListener("input", handleInput);
+    control.addEventListener("change", handleInput);
+  });
+
+  turn.append(turnHeader, questionMessage, answerMessage);
+  requestAnimationFrame(() => {
+    autoGrow(questionInput);
+    autoGrow(answerInput);
+  });
+  return turn;
+}
+
+export function createAiChatEditor(row, value, { onDirty, htmlCache = "" } = {}) {
   const data = normalizeAiChatData(value);
   const editor = document.createElement("section");
   editor.className = "ai-chat-block-editor";
   editor.dataset.aiProvider = data.provider;
   editor.setAttribute("aria-label", t("aiChat.editorAria"));
+
+  const editingSurface = document.createElement("div");
+  editingSurface.className = "ai-chat-editing-surface";
+
+  const titleRow = document.createElement("div");
+  titleRow.className = "ai-chat-title-row";
+  const titleInput = document.createElement("input");
+  titleInput.type = "text";
+  titleInput.className = "ai-chat-title-input";
+  titleInput.value = data.title;
+  titleInput.maxLength = aiChatLimits.titleLength;
+  titleInput.placeholder = t("aiChat.titlePlaceholder");
+  titleInput.setAttribute("aria-label", t("aiChat.titleAria"));
+  titleRow.append(titleInput);
 
   const settings = document.createElement("div");
   settings.className = "ai-chat-settings";
@@ -255,87 +409,53 @@ export function createAiChatEditor(row, value, { onDirty } = {}) {
   modelInput.setAttribute("aria-label", t("aiChat.modelAria"));
   modelInput.autocomplete = "off";
 
-  const timeInput = document.createElement("input");
-  timeInput.type = "datetime-local";
-  timeInput.className = "ai-chat-time-input";
-  timeInput.value = data.answeredAt;
-  timeInput.step = "60";
-  timeInput.setAttribute("aria-label", t("aiChat.timeAria"));
-
   settings.append(
     providerField,
-    createLabeledField(t("aiChat.modelLabel"), modelInput),
-    createLabeledField(t("aiChat.timeLabel"), timeInput)
+    createLabeledField(t("aiChat.modelLabel"), modelInput)
   );
 
   const conversation = document.createElement("div");
   conversation.className = "ai-chat-conversation";
+  data.turns.forEach((turnData) => {
+    conversation.append(createTurnEditor(editor, row, turnData, { onDirty }));
+  });
 
-  const questionMessage = document.createElement("article");
-  questionMessage.className = "ai-chat-message ai-chat-message--question";
-  const questionMeta = document.createElement("header");
-  questionMeta.className = "ai-chat-message-meta";
-  const questionRole = document.createElement("span");
-  questionRole.className = "ai-chat-role-mark";
-  questionRole.textContent = "Q";
-  const questionLabel = document.createElement("strong");
-  questionLabel.textContent = t("aiChat.questionLabel");
-  questionMeta.append(questionRole, questionLabel);
+  const actions = document.createElement("div");
+  actions.className = "ai-chat-actions";
+  const addTurnButton = document.createElement("button");
+  addTurnButton.type = "button";
+  addTurnButton.className = "ai-chat-add-turn";
+  addTurnButton.textContent = t("aiChat.addTurn");
+  addTurnButton.title = t("aiChat.addTurnTitle");
+  addTurnButton.addEventListener("click", () => {
+    if (conversation.querySelectorAll(".ai-chat-turn").length >= aiChatLimits.turns) return;
+    const turn = createTurnEditor(editor, row, normalizeTurn({ answeredAt: createLocalDateTimeValue() }), { onDirty });
+    conversation.append(turn);
+    syncTurnControls(editor);
+    syncEditorPreview(editor);
+    onDirty?.(row);
+    turn.querySelector(".ai-chat-question-input")?.focus();
+  });
+  actions.append(addTurnButton);
 
-  const questionInput = document.createElement("textarea");
-  questionInput.className = "ai-chat-question-input";
-  questionInput.value = data.question;
-  questionInput.maxLength = aiChatLimits.questionLength;
-  questionInput.placeholder = t("aiChat.questionPlaceholder");
-  questionInput.setAttribute("aria-label", t("aiChat.questionAria"));
-  questionInput.spellcheck = true;
-  questionMessage.append(questionMeta, questionInput);
+  const preview = document.createElement("div");
+  preview.className = "block-rendered-preview ai-chat-rendered-preview";
+  preview.innerHTML = htmlCache || "";
 
-  const answerMessage = document.createElement("article");
-  answerMessage.className = "ai-chat-message ai-chat-message--answer";
-  const answerMeta = document.createElement("header");
-  answerMeta.className = "ai-chat-message-meta ai-chat-answer-meta";
-  const answerIdentity = document.createElement("span");
-  answerIdentity.className = "ai-chat-answer-identity";
-  const answerIcon = document.createElement("span");
-  answerIcon.className = "ai-chat-answer-icon";
-  answerIcon.append(createAiProviderIcon(data.provider));
-  const providerLabel = document.createElement("strong");
-  providerLabel.className = "ai-chat-provider-label";
-  const modelPreview = document.createElement("span");
-  modelPreview.className = "ai-chat-model-preview";
-  answerIdentity.append(answerIcon, providerLabel, modelPreview);
-  const timePreview = document.createElement("span");
-  timePreview.className = "ai-chat-time-preview";
-  answerMeta.append(answerIdentity, timePreview);
+  editingSurface.append(titleRow, settings, conversation, actions);
+  editor.append(editingSurface, preview);
 
-  const answerInput = document.createElement("textarea");
-  answerInput.className = "ai-chat-answer-input";
-  answerInput.value = data.answer;
-  answerInput.maxLength = aiChatLimits.answerLength;
-  answerInput.placeholder = t("aiChat.answerPlaceholder");
-  answerInput.setAttribute("aria-label", t("aiChat.answerAria"));
-  answerInput.spellcheck = true;
-  answerMessage.append(answerMeta, answerInput);
-
-  conversation.append(questionMessage, answerMessage);
-  editor.append(settings, conversation);
-
-  const handleInput = (event) => {
-    if (event.target instanceof HTMLTextAreaElement) autoGrow(event.target);
+  const handleInput = () => {
     syncEditorPreview(editor);
     onDirty?.(row);
   };
-  [modelInput, timeInput, questionInput, answerInput].forEach((control) => {
+  [titleInput, modelInput].forEach((control) => {
     control.addEventListener("input", handleInput);
     control.addEventListener("change", handleInput);
   });
 
   syncEditorPreview(editor);
-  requestAnimationFrame(() => {
-    autoGrow(questionInput);
-    autoGrow(answerInput);
-  });
+  syncTurnControls(editor);
   return editor;
 }
 
@@ -343,10 +463,13 @@ export function extractAiChatData(row) {
   const editor = row?.querySelector(".ai-chat-block-editor");
   if (!editor) return createDefaultAiChatData();
   return normalizeAiChatData({
+    title: editor.querySelector(".ai-chat-title-input")?.value ?? "",
     provider: editor.dataset.aiProvider,
     model: editor.querySelector(".ai-chat-model-input")?.value ?? "",
-    answeredAt: editor.querySelector(".ai-chat-time-input")?.value ?? "",
-    question: editor.querySelector(".ai-chat-question-input")?.value ?? "",
-    answer: editor.querySelector(".ai-chat-answer-input")?.value ?? ""
+    turns: [...editor.querySelectorAll(".ai-chat-turn")].map((turn) => ({
+      answeredAt: turn.querySelector(".ai-chat-time-input")?.value ?? "",
+      question: turn.querySelector(".ai-chat-question-input")?.value ?? "",
+      answer: turn.querySelector(".ai-chat-answer-input")?.value ?? ""
+    }))
   });
 }

@@ -12,21 +12,25 @@ function loadSetPageMode() {
   return source.slice(start, end).trim();
 }
 
-function createHarness(blocks = []) {
+function createHarness(blocks = [], { initialMode = "read", materialization = null } = {}) {
   const pageModes = Object.freeze({ READ: "read", WRITE: "write" });
   const state = {
     selectedPage: { id: "page-1", blocks },
     workspaceView: "page",
-    pageMode: pageModes.READ,
+    pageMode: initialMode === pageModes.WRITE ? pageModes.WRITE : pageModes.READ,
     pageModeChanging: false,
     pendingFocusBlockId: null
   };
-  const calls = { created: 0, opened: 0 };
+  const calls = { created: 0, opened: 0, appliedMaterialization: 0 };
   const context = {
     state,
     pageModes,
     syncPageModeUi() {},
-    async flushPendingPageEdits() {},
+    async flushPendingPageEdits() { return materialization; },
+    applyMaterializedHtmlCaches(result) {
+      assert.equal(result, materialization);
+      calls.appliedMaterialization += 1;
+    },
     flattenBlocks(value) { return value; },
     renderSelectedPage() {},
     canPersistSelectedPage() {
@@ -60,7 +64,7 @@ test("empty pages enter write mode and create the first block under the transiti
   assert.equal(state.pageMode, pageModes.WRITE);
   assert.equal(state.pageModeChanging, false);
   assert.equal(state.pendingFocusBlockId, "block-1");
-  assert.deepEqual(calls, { created: 1, opened: 1 });
+  assert.deepEqual(calls, { created: 1, opened: 1, appliedMaterialization: 0 });
 });
 
 test("pages with blocks enter write mode without creating another block", async () => {
@@ -68,5 +72,19 @@ test("pages with blocks enter write mode without creating another block", async 
   await context.setPageMode(pageModes.WRITE);
   assert.equal(state.pageMode, pageModes.WRITE);
   assert.equal(state.pageModeChanging, false);
-  assert.deepEqual(calls, { created: 0, opened: 0 });
+  assert.deepEqual(calls, { created: 0, opened: 0, appliedMaterialization: 0 });
+});
+
+test("entering read mode applies the materialized rendered cache before completing the transition", async () => {
+  const materialization = { blocks: [{ id: "ai-1", htmlCache: "<strong>rendered</strong>" }] };
+  const { context, state, pageModes, calls } = createHarness([{ id: "ai-1" }], {
+    initialMode: "write",
+    materialization
+  });
+
+  await context.setPageMode(pageModes.READ);
+
+  assert.equal(state.pageMode, pageModes.READ);
+  assert.equal(state.pageModeChanging, false);
+  assert.deepEqual(calls, { created: 0, opened: 0, appliedMaterialization: 1 });
 });

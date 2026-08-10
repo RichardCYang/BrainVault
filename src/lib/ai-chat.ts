@@ -2,12 +2,17 @@ export const aiProviderIds = ["chatgpt", "gemini", "claude", "deepseek", "grok"]
 
 export type AiProviderId = (typeof aiProviderIds)[number];
 
-export type AiChatData = {
-  provider: AiProviderId;
-  model: string;
+export type AiChatTurn = {
   answeredAt: string;
   question: string;
   answer: string;
+};
+
+export type AiChatData = {
+  title: string;
+  provider: AiProviderId;
+  model: string;
+  turns: AiChatTurn[];
 };
 
 const providerLabels: Record<AiProviderId, string> = {
@@ -19,6 +24,8 @@ const providerLabels: Record<AiProviderId, string> = {
 };
 
 const limits = {
+  titleLength: 120,
+  turns: 50,
   questionLength: 8_000,
   answerLength: 12_000,
   modelLength: 120
@@ -65,6 +72,15 @@ function normalizeAnsweredAt(value: unknown) {
   return normalized;
 }
 
+function normalizeTurn(value: unknown): AiChatTurn {
+  const source = asRecord(value);
+  return {
+    answeredAt: normalizeAnsweredAt(source.answeredAt),
+    question: normalizeText(source.question, limits.questionLength),
+    answer: normalizeText(source.answer, limits.answerLength)
+  };
+}
+
 export function getAiProviderLabel(provider: AiProviderId) {
   return providerLabels[provider];
 }
@@ -72,12 +88,16 @@ export function getAiProviderLabel(provider: AiProviderId) {
 export function getAiChatData(metadata: unknown): AiChatData {
   const root = asRecord(metadata);
   const source = asRecord(root.aiChat);
+  const rawTurns = Array.isArray(source.turns)
+    ? source.turns.slice(0, limits.turns)
+    : [source];
+  const turns = rawTurns.map(normalizeTurn);
+
   return {
+    title: normalizeText(source.title, limits.titleLength).trim(),
     provider: normalizeProvider(source.provider),
     model: normalizeText(source.model, limits.modelLength).trim(),
-    answeredAt: normalizeAnsweredAt(source.answeredAt),
-    question: normalizeText(source.question, limits.questionLength),
-    answer: normalizeText(source.answer, limits.answerLength)
+    turns: turns.length ? turns : [normalizeTurn({})]
   };
 }
 
@@ -87,12 +107,18 @@ export function normalizeAiChatMetadata(metadata: unknown): Record<string, unkno
 }
 
 export function summarizeAiChatData(data: AiChatData) {
-  return [
+  const sections = [
+    data.title,
     `${getAiProviderLabel(data.provider)}${data.model ? ` · ${data.model}` : ""}`,
-    data.answeredAt,
-    data.question,
-    data.answer
-  ]
+    ...data.turns.flatMap((turn, index) => [
+      `Question ${index + 1}`,
+      turn.answeredAt,
+      turn.question,
+      turn.answer
+    ])
+  ];
+
+  return sections
     .filter(Boolean)
     .join("\n\n")
     .slice(0, 20_000);

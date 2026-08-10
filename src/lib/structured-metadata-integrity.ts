@@ -79,6 +79,8 @@ const bookmarkLimits = {
   maxListColumns: 5
 } as const;
 const aiChatLimits = {
+  titleLength: 120,
+  turns: 50,
   questionLength: 8_000,
   answerLength: 12_000,
   modelLength: 120,
@@ -582,22 +584,47 @@ function isValidAnsweredAt(value: string) {
     && date.getUTCMinutes() === Number(minute);
 }
 
+function assertAiChatTurn(turn: MetadataRecord, path: string) {
+  const answeredAt = optionalString(turn.answeredAt, `${path}.answeredAt`, aiChatLimits.answeredAtLength);
+  if (answeredAt !== null && !isValidAnsweredAt(answeredAt)) fail(`${path}.answeredAt`, "must be an exact YYYY-MM-DDTHH:mm value");
+  const question = optionalString(turn.question, `${path}.question`, aiChatLimits.questionLength);
+  const answer = optionalString(turn.answer, `${path}.answer`, aiChatLimits.answerLength);
+  if (question?.includes("\u0000")) fail(`${path}.question`, "contains a NUL character that would be removed");
+  if (answer?.includes("\u0000")) fail(`${path}.answer`, "contains a NUL character that would be removed");
+}
+
 function assertAiChatMetadata(root: MetadataRecord) {
   const aiChat = optionalRecord(root.aiChat, "metadata.aiChat");
   if (!aiChat) return;
   if (aiChat.provider !== null && aiChat.provider !== undefined && !aiProviderIds.has(aiChat.provider as string)) {
     fail("metadata.aiChat.provider", "is not a supported AI provider");
   }
+  const title = optionalString(aiChat.title, "metadata.aiChat.title", aiChatLimits.titleLength);
+  if (title !== null && (title.includes("\u0000") || title.trim() !== title)) {
+    fail("metadata.aiChat.title", "contains characters or whitespace that would be removed by the editor");
+  }
   const model = optionalString(aiChat.model, "metadata.aiChat.model", aiChatLimits.modelLength);
   if (model !== null && (model.includes("\u0000") || model.trim() !== model)) {
     fail("metadata.aiChat.model", "contains characters or whitespace that would be removed by the editor");
   }
-  const answeredAt = optionalString(aiChat.answeredAt, "metadata.aiChat.answeredAt", aiChatLimits.answeredAtLength);
-  if (answeredAt !== null && !isValidAnsweredAt(answeredAt)) fail("metadata.aiChat.answeredAt", "must be an exact YYYY-MM-DDTHH:mm value");
-  const question = optionalString(aiChat.question, "metadata.aiChat.question", aiChatLimits.questionLength);
-  const answer = optionalString(aiChat.answer, "metadata.aiChat.answer", aiChatLimits.answerLength);
-  if (question?.includes("\u0000")) fail("metadata.aiChat.question", "contains a NUL character that would be removed");
-  if (answer?.includes("\u0000")) fail("metadata.aiChat.answer", "contains a NUL character that would be removed");
+
+  const turns = optionalArray(aiChat.turns, "metadata.aiChat.turns", aiChatLimits.turns);
+  if (turns !== null) {
+    if (turns.length === 0) fail("metadata.aiChat.turns", "must contain at least one conversation turn");
+    if (aiChat.answeredAt !== undefined || aiChat.question !== undefined || aiChat.answer !== undefined) {
+      fail("metadata.aiChat", "must not mix legacy single-turn fields with turns");
+    }
+    turns.forEach((rawTurn, index) => {
+      const path = `metadata.aiChat.turns[${index}]`;
+      const turn = optionalRecord(rawTurn, path);
+      if (!turn) fail(path, "must be an object");
+      assertAiChatTurn(turn, path);
+    });
+    return;
+  }
+
+  // Legacy single-turn metadata remains valid and is migrated by the editor on the next save.
+  assertAiChatTurn(aiChat, "metadata.aiChat");
 }
 
 export function assertStructuredBlockMetadataIntegrity(type: BlockType, metadata: unknown) {

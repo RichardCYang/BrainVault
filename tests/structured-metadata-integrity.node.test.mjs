@@ -95,11 +95,14 @@ test("normalized structured metadata remains accepted at exact limits", () => {
   }));
   assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("AI_CHAT", {
     aiChat: {
+      title: "t".repeat(120),
       provider: "chatgpt",
       model: "gpt-test",
-      answeredAt: "2026-07-30T09:28",
-      question: "q".repeat(8_000),
-      answer: "a".repeat(12_000)
+      turns: [{
+        answeredAt: "2026-07-30T09:28",
+        question: "q".repeat(8_000),
+        answer: "a".repeat(12_000)
+      }]
     }
   }));
 });
@@ -188,6 +191,36 @@ test("AI metadata that the old save path silently truncated is rejected atomical
     aiChat: { provider: "chatgpt", model: "", answeredAt: "", question: "", answer: "a".repeat(12_001) }
   }, "metadata.aiChat.answer");
 });
+
+test("multi-turn AI metadata enforces title, turn, and per-turn limits", () => {
+  expectIntegrityFailure("AI_CHAT", {
+    aiChat: {
+      title: "t".repeat(121),
+      provider: "chatgpt",
+      model: "",
+      turns: [{ answeredAt: "", question: "", answer: "" }]
+    }
+  }, "metadata.aiChat.title");
+
+  expectIntegrityFailure("AI_CHAT", {
+    aiChat: {
+      title: "",
+      provider: "chatgpt",
+      model: "",
+      turns: Array.from({ length: 51 }, () => ({ answeredAt: "", question: "", answer: "" }))
+    }
+  }, "metadata.aiChat.turns");
+
+  expectIntegrityFailure("AI_CHAT", {
+    aiChat: {
+      title: "",
+      provider: "chatgpt",
+      model: "",
+      turns: [{ answeredAt: "", question: "", answer: "a".repeat(12_001) }]
+    }
+  }, "metadata.aiChat.turns[0].answer");
+});
+
 
 test("collection overflows that editor normalizers would discard fail closed", () => {
   expectIntegrityFailure("TABLE", {
