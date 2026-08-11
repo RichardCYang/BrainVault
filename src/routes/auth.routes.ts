@@ -137,6 +137,18 @@ const navigationPreferenceSchema = z.object({
   collapsed: z.boolean()
 });
 
+const navigationOrderSchema = z.object({
+  pageIds: z.array(z.string().min(1).max(64)).min(1).max(20_000)
+}).superRefine((value, context) => {
+  if (new Set(value.pageIds).size !== value.pageIds.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["pageIds"],
+      message: "Page ids must be unique"
+    });
+  }
+});
+
 const passwordSchema = z
   .object({
     currentPassword: passwordInputSchema(1),
@@ -325,15 +337,32 @@ authRouter.get("/me", requireAuth, async (req, res) => {
 authRouter.get("/navigation-preferences", requireAuth, async (req, res, next) => {
   try {
     const currentUser = requireUser(req.user);
-    const rows = await db.query<{ page_id: string }>(
-      `SELECT page_id
-       FROM user_navigation_collapsed_pages
-       WHERE user_id = ?
-       ORDER BY page_id`,
-      [currentUser.id]
-    );
+    const [collapsedRows, orderRows] = await Promise.all([
+      db.query<{ page_id: string }>(
+        `SELECT page_id
+         FROM user_navigation_collapsed_pages
+         WHERE user_id = ?
+         ORDER BY page_id`,
+        [currentUser.id]
+      ),
+      db.query<{ page_id: string; sort_order: number }>(
+        `SELECT no.page_id, no.sort_order
+         FROM user_navigation_page_order no
+         INNER JOIN pages p ON p.id = no.page_id
+         WHERE no.user_id = ?
+           AND (p.owner_id = ? OR EXISTS (
+             SELECT 1 FROM page_shares ps
+             WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+           ))
+         ORDER BY no.sort_order ASC, no.page_id ASC`,
+        [currentUser.id, currentUser.id, currentUser.id]
+      )
+    ]);
     res.setHeader("Cache-Control", "private, no-store");
-    res.json({ collapsedPageIds: rows.map((row) => row.page_id) });
+    res.json({
+      collapsedPageIds: collapsedRows.map((row) => row.page_id),
+      navigationPageOrder: orderRows.map((row) => ({ pageId: row.page_id, sortOrder: Number(row.sort_order) }))
+    });
   } catch (error) {
     next(error);
   }
@@ -384,6 +413,65 @@ authRouter.patch(
 
       res.setHeader("Cache-Control", "private, no-store");
       res.json({ pageId, collapsed });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+
+authRouter.patch(
+  "/navigation-order",
+  requireAuth,
+  validate({ body: navigationOrderSchema }),
+  async (req, res, next) => {
+    try {
+      const currentUser = requireUser(req.user);
+      const { pageIds } = req.body as z.infer<typeof navigationOrderSchema>;
+      await transaction(async (client) => {
+        // Serialize navigation mutations with backup/restore snapshots. The order
+        // table is preference-only and never updates page or block content rows.
+        const lockedUser = await client.queryOne<{ id: string }>(
+          "SELECT id FROM users WHERE id = ? FOR UPDATE",
+          [currentUser.id]
+        );
+        if (!lockedUser) throw new ApiError(404, "NOT_FOUND", "User not found");
+
+        const accessibleRows = await client.query<{ id: string }>(
+          `SELECT p.id
+           FROM pages p
+           WHERE p.is_archived = 0
+             AND (p.owner_id = ? OR EXISTS (
+               SELECT 1 FROM page_shares ps
+               WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+             ))
+           ORDER BY p.id ASC`,
+          [currentUser.id, currentUser.id]
+        );
+        const accessibleIds = new Set(accessibleRows.map((row) => row.id));
+        if (pageIds.some((pageId) => !accessibleIds.has(pageId))) {
+          throw new ApiError(404, "NOT_FOUND", "Page not found");
+        }
+
+        const chunkSize = 250;
+        for (let offset = 0; offset < pageIds.length; offset += chunkSize) {
+          const chunk = pageIds.slice(offset, offset + chunkSize);
+          const values = chunk.map(() => "(?, ?, ?)").join(", ");
+          const params: DbValue[] = [];
+          chunk.forEach((pageId, index) => {
+            params.push(currentUser.id, pageId, offset + index);
+          });
+          await client.execute(
+            `INSERT INTO user_navigation_page_order (user_id, page_id, sort_order)
+             VALUES ${values}
+             ON DUPLICATE KEY UPDATE sort_order = VALUES(sort_order), updated_at = CURRENT_TIMESTAMP(3)`,
+            params
+          );
+        }
+      });
+
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json({ pageIds });
     } catch (error) {
       next(error);
     }

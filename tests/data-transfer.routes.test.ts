@@ -19,6 +19,7 @@ const store = vi.hoisted(() => ({
     actors: string; source: string; change_count: number; change_summary: string; changes: string; created_at: string;
   }>,
   navigationCollapsedPageIds: new Set<string>(),
+  navigationPageOrder: new Map<string, number>(),
   customIcons: new Map<string, {
     id: string; user_id: string; file_path: string; last_used_at: string; created_at: string;
   }>(),
@@ -139,6 +140,7 @@ beforeEach(async () => {
   store.pageTags = [{ page_id: pageId, tag_id: tagId }];
   store.pageVersions = [];
   store.navigationCollapsedPageIds = new Set();
+  store.navigationPageOrder = new Map();
   store.customIcons = new Map();
   store.customIconRemovals = new Map();
   store.shares = [];
@@ -226,6 +228,13 @@ beforeEach(async () => {
         .filter((collapsedPageId) => store.pages.get(collapsedPageId)?.owner_id === ownerId)
         .map((collapsedPageId) => ({ page_id: collapsedPageId }));
     }
+    if (sql.includes("FROM user_navigation_page_order no")) {
+      const ownerId = String(params[1] ?? params[0]);
+      return [...store.navigationPageOrder.entries()]
+        .filter(([orderedPageId]) => store.pages.get(orderedPageId)?.owner_id === ownerId)
+        .map(([orderedPageId, sortOrder]) => ({ page_id: orderedPageId, sort_order: sortOrder }))
+        .sort((left, right) => left.sort_order - right.sort_order || left.page_id.localeCompare(right.page_id));
+    }
     if (sql.includes("SELECT DISTINCT t.id")) return [...store.tags.values()].map((tag) => ({ ...tag }));
     if (sql.includes("SELECT pt.page_id")) return store.pageTags.map((relation) => ({ ...relation }));
     if (sql.startsWith("SELECT id, owner_id FROM pages WHERE id IN")) {
@@ -273,6 +282,9 @@ beforeEach(async () => {
       for (const collapsedPageId of store.navigationCollapsedPageIds) {
         if (pageIds.has(collapsedPageId)) store.navigationCollapsedPageIds.delete(collapsedPageId);
       }
+      for (const orderedPageId of store.navigationPageOrder.keys()) {
+        if (pageIds.has(orderedPageId)) store.navigationPageOrder.delete(orderedPageId);
+      }
     } else if (sql.startsWith("UPDATE users")) {
       [store.user.name, store.user.avatar_data, store.user.preferred_language, store.user.default_collection_icon] = params;
       if (params[4] !== null && params[4] !== undefined) store.user.theme = params[4];
@@ -305,6 +317,8 @@ beforeEach(async () => {
       });
     } else if (sql.includes("INSERT INTO user_navigation_collapsed_pages")) {
       store.navigationCollapsedPageIds.add(String(params[1]));
+    } else if (sql.includes("INSERT INTO user_navigation_page_order")) {
+      store.navigationPageOrder.set(String(params[1]), Number(params[2]));
     } else if (sql === "DELETE FROM custom_icons WHERE user_id = ?") {
       for (const [id, icon] of store.customIcons) if (icon.user_id === params[0]) store.customIcons.delete(id);
     } else if (sql === "DELETE FROM custom_icon_library_removals WHERE user_id = ?") {
@@ -568,6 +582,7 @@ describe("Complete data transfer routes", () => {
       created_at: "2026-07-17 00:00:15.000000"
     });
     store.navigationCollapsedPageIds.add(pageId);
+    store.navigationPageOrder.set(pageId, 0);
     store.shares.push({
       page_id: pageId,
       user_id: "usr_collaborator",
@@ -604,6 +619,7 @@ describe("Complete data transfer routes", () => {
     expect(manifest.data.pageVersions).toHaveLength(1);
     expect(manifest.data.pageVersions[0]).toMatchObject({ page_id: pageId, revision: 3, source: "PAGE_UPDATE" });
     expect(manifest.data.navigationCollapsedPageIds).toEqual([pageId]);
+    expect(manifest.data.navigationPageOrder).toEqual([{ page_id: pageId, sort_order: 0 }]);
     expect(manifest.attachments[0].sha256).toMatch(/^[a-f0-9]{64}$/);
 
     const stalePageVersion = Number(store.pages.get(pageId)!.edit_version);
@@ -614,6 +630,7 @@ describe("Complete data transfer routes", () => {
     store.shares = [];
     store.pageVersions = [];
     store.navigationCollapsedPageIds.clear();
+    store.navigationPageOrder.clear();
     await writeFile(getAttachmentFilePath(userId, blockId), Buffer.from("changed bytes"));
 
     const restored = await request(createApp())
@@ -624,7 +641,7 @@ describe("Complete data transfer routes", () => {
 
     expect(restored.body.counts).toEqual({
       pages: 1, blocks: 1, attachments: 1, retainedAttachments: 0, pageCovers: 0, customIcons: 0, tags: 1, shares: 1,
-      pageVersions: 1, navigationCollapsedPages: 1
+      pageVersions: 1, navigationCollapsedPages: 1, navigationOrderedPages: 1
     });
     expect(restored.body.sharing).toEqual({ mode: "backup", count: 1 });
     expect(store.pages.get(pageId)?.title).toBe("Original Page");
@@ -644,6 +661,7 @@ describe("Complete data transfer routes", () => {
     expect(store.pageVersions).toHaveLength(1);
     expect(store.pageVersions[0]).toMatchObject({ page_id: pageId, revision: 3, source: "PAGE_UPDATE" });
     expect(store.navigationCollapsedPageIds.has(pageId)).toBe(true);
+    expect(store.navigationPageOrder.get(pageId)).toBe(0);
     expect(store.disconnectPageCollaborators).toHaveBeenCalledWith(pageId, "Workspace data is being restored");
     expect(store.restoreEvents.indexOf(`disconnect:${pageId}`)).toBeLessThan(store.restoreEvents.indexOf("delete-pages"));
     await expect(readFile(getAttachmentFilePath(userId, blockId))).resolves.toEqual(originalBytes);

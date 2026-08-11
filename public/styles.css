@@ -16980,3 +16980,45 @@ html[data-theme="dark"] .page-cover-custom-row {
     box-shadow: none;
   }
 }
+
+/* Sidebar page ordering: the existing action button doubles as a pointer drag handle. */
+.app-mode .navigation-more-button {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.app-mode .navigation-more-button.is-pressed,
+body.is-navigation-dragging .app-mode .navigation-more-button[aria-grabbed="true"] {
+  cursor: grabbing;
+}
+
+.navigation-drop-indicator {
+  height: 2px;
+  min-height: 2px;
+  margin: 1px 6px 1px calc(29px + (var(--navigation-drop-depth, 0) * 14px));
+  border-radius: 999px;
+  background: var(--focus);
+  pointer-events: none;
+}
+
+.collection-list > .navigation-drop-indicator {
+  margin-left: 7px;
+}
+
+.document-node.is-navigation-dragging > .document-item-row,
+.custom-collection.is-navigation-dragging > .collection-title-row {
+  opacity: 0.45;
+}
+
+body.is-navigation-dragging {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .app-mode .navigation-more-button {
+    opacity: 0.72;
+  }
+}

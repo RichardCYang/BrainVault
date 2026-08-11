@@ -271,6 +271,11 @@ const pageVersionSchema = z.object({
   created_at: timestampSchema
 }).strict();
 
+const navigationPageOrderSchema = z.object({
+  page_id: idSchema,
+  sort_order: z.number().int().min(0).max(dataTransferResourceLimits.maxPages - 1)
+}).strict();
+
 const manifestSchema = z.object({
   format: z.literal(backupFormat),
   version: z.union([
@@ -300,7 +305,10 @@ const manifestSchema = z.object({
     // Version 4 makes user-visible page history and owned-page navigation state
     // part of the complete workspace round trip. Older backups did not carry it.
     pageVersions: z.array(pageVersionSchema).max(dataTransferResourceLimits.maxPageVersions).optional(),
-    navigationCollapsedPageIds: z.array(idSchema).max(dataTransferResourceLimits.maxPages).optional()
+    navigationCollapsedPageIds: z.array(idSchema).max(dataTransferResourceLimits.maxPages).optional(),
+    // Added compatibly to version 4: older v4 backups without this preference
+    // remain importable, while new backups preserve explicit sidebar order.
+    navigationPageOrder: z.array(navigationPageOrderSchema).max(dataTransferResourceLimits.maxPages).optional()
   }).strict(),
   attachments: z.array(attachmentSchema).max(dataTransferResourceLimits.maxAttachments),
   // Version 3 also preserves any account attachment file that is intentionally
@@ -382,7 +390,10 @@ const manifestSchema = z.object({
       message: "Version 4 backups must declare owned-page navigation preferences"
     });
   }
-  if (manifest.version < backupVersion && (manifest.data.pageVersions || manifest.data.navigationCollapsedPageIds)) {
+  if (
+    manifest.version < backupVersion
+    && (manifest.data.pageVersions || manifest.data.navigationCollapsedPageIds || manifest.data.navigationPageOrder)
+  ) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["data", "pageVersions"],
@@ -688,6 +699,14 @@ async function createWorkspaceRestoreSnapshot(
      ORDER BY np.page_id ASC${lockClause}`,
     [userId, userId]
   )).map((row) => row.page_id);
+  const navigationPageOrder = await client.query<{ page_id: string; sort_order: number }>(
+    `SELECT no.page_id, no.sort_order
+     FROM user_navigation_page_order no
+     INNER JOIN pages p ON p.id = no.page_id
+     WHERE no.user_id = ? AND p.owner_id = ?
+     ORDER BY no.sort_order ASC, no.page_id ASC${lockClause}`,
+    [userId, userId]
+  );
   const customIcons = await client.query<WorkspaceRestoreCustomIconRow>(
     `SELECT id, file_path,
             DATE_FORMAT(last_used_at, '%Y-%m-%d %H:%i:%s.%f') AS last_used_at,
@@ -742,6 +761,9 @@ async function createWorkspaceRestoreSnapshot(
   }
   for (const pageId of navigationCollapsedPageIds) {
     hash.update(`navigation-collapsed\0${pageId}\n`);
+  }
+  for (const item of navigationPageOrder) {
+    hash.update(`navigation-order\0${item.page_id}\0${Number(item.sort_order)}\n`);
   }
   for (const icon of customIcons) {
     hash.update(
@@ -916,6 +938,7 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
   const pageShares = manifest.data.pageShares ?? [];
   const pageVersions = manifest.data.pageVersions ?? [];
   const navigationCollapsedPageIds = manifest.data.navigationCollapsedPageIds ?? [];
+  const navigationPageOrder = manifest.data.navigationPageOrder ?? [];
   const retainedAttachments = manifest.retainedAttachments ?? [];
   const pageCovers = manifest.pageCovers ?? [];
   const customIcons = manifest.customIcons ?? [];
@@ -952,6 +975,7 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
     "page version revision"
   );
   assertUnique(navigationCollapsedPageIds, "collapsed navigation page ID");
+  assertUnique(navigationPageOrder.map((item) => item.page_id), "ordered navigation page ID");
   if (getBackupPageShareIdentityMode(pageShares) === "mixed") {
     invalidBackup("The backup mixes ID-bound and legacy username-only sharing grants");
   }
@@ -978,6 +1002,9 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
   }
   for (const pageId of navigationCollapsedPageIds) {
     if (!pageById.has(pageId)) invalidBackup(`Collapsed navigation page is missing: ${pageId}`);
+  }
+  for (const item of navigationPageOrder) {
+    if (!pageById.has(item.page_id)) invalidBackup(`Ordered navigation page is missing: ${item.page_id}`);
   }
 
   const pageCoverByPageId = new Map(pageCovers.map((item) => [item.pageId, item]));
@@ -1192,6 +1219,14 @@ export async function prepareUserDataBackup(userId: string) {
          ORDER BY np.page_id ASC`,
         [userId, userId]
       )).map((row) => row.page_id);
+      const navigationPageOrder = await client.query<{ page_id: string; sort_order: number }>(
+        `SELECT no.page_id, no.sort_order
+         FROM user_navigation_page_order no
+         INNER JOIN pages p ON p.id = no.page_id
+         WHERE no.user_id = ? AND p.owner_id = ?
+         ORDER BY no.sort_order ASC, no.page_id ASC`,
+        [userId, userId]
+      );
       const customIconRows = await client.query<RawCustomIconRow>(
         `SELECT id, file_path,
                 DATE_FORMAT(last_used_at, '%Y-%m-%d %H:%i:%s.%f') AS last_used_at,
@@ -1217,6 +1252,7 @@ export async function prepareUserDataBackup(userId: string) {
       assertExportCount("page sharing grants", pageShares.length, dataTransferResourceLimits.maxPageShares);
       assertExportCount("page version history entries", pageVersions.length, dataTransferResourceLimits.maxPageVersions);
       assertExportCount("collapsed navigation pages", navigationCollapsedPageIds.length, dataTransferResourceLimits.maxPages);
+      assertExportCount("ordered navigation pages", navigationPageOrder.length, dataTransferResourceLimits.maxPages);
       assertExportCount("attachments", attachmentBlocks.length, dataTransferResourceLimits.maxAttachments);
       assertExportCount(
         "custom icon library removal records",
@@ -1456,7 +1492,8 @@ export async function prepareUserDataBackup(userId: string) {
       }
 
       const snapshot = {
-        account, pages, blocks, tags, pageTags, pageShares, pageVersions, navigationCollapsedPageIds, customIconLibraryRemovals
+        account, pages, blocks, tags, pageTags, pageShares, pageVersions, navigationCollapsedPageIds, navigationPageOrder,
+        customIconLibraryRemovals
       };
       return { snapshot, attachmentFiles, retainedAttachmentFiles, pageCoverFiles, customIconFiles };
     });
@@ -1483,7 +1520,11 @@ export async function prepareUserDataBackup(userId: string) {
         pageTags: snapshot.pageTags,
         pageShares: snapshot.pageShares,
         pageVersions: snapshot.pageVersions,
-        navigationCollapsedPageIds: snapshot.navigationCollapsedPageIds
+        navigationCollapsedPageIds: snapshot.navigationCollapsedPageIds,
+        navigationPageOrder: snapshot.navigationPageOrder.map((item) => ({
+          page_id: item.page_id,
+          sort_order: Number(item.sort_order)
+        }))
       },
       attachments: attachmentFiles.map((item) => ({
         blockId: item.blockId,
@@ -1625,7 +1666,8 @@ export async function writeUserDataBackup(
       pageCovers: manifest.pageCovers?.length ?? 0,
       customIcons: manifest.customIcons?.length ?? 0,
       pageVersions: manifest.data.pageVersions?.length ?? 0,
-      navigationCollapsedPages: manifest.data.navigationCollapsedPageIds?.length ?? 0
+      navigationCollapsedPages: manifest.data.navigationCollapsedPageIds?.length ?? 0,
+      navigationOrderedPages: manifest.data.navigationPageOrder?.length ?? 0
     };
   } finally {
     await rm(plan.operationRoot, { recursive: true, force: true }).catch(() => undefined);
@@ -1993,6 +2035,12 @@ async function importRows(
       await client.execute(
         `INSERT INTO user_navigation_collapsed_pages (user_id, page_id) VALUES (?, ?)`,
         [userId, pageId]
+      );
+    }
+    for (const item of manifest.data.navigationPageOrder ?? []) {
+      await client.execute(
+        `INSERT INTO user_navigation_page_order (user_id, page_id, sort_order) VALUES (?, ?, ?)`,
+        [userId, item.page_id, item.sort_order]
       );
     }
   }
@@ -2911,7 +2959,8 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
         tags: manifest.data.tags.length,
         shares: restoreSharingPlan.shares.length,
         pageVersions: manifest.data.pageVersions?.length ?? 0,
-        navigationCollapsedPages: manifest.data.navigationCollapsedPageIds?.length ?? 0
+        navigationCollapsedPages: manifest.data.navigationCollapsedPageIds?.length ?? 0,
+      navigationOrderedPages: manifest.data.navigationPageOrder?.length ?? 0
       },
       sharing: {
         mode: restoreSharingPlan.mode,

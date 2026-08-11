@@ -8,6 +8,7 @@ describe("Navigation collapse persistence", () => {
     expect(client).toContain('async function loadNavigationPreferences()');
     expect(client).toContain('api("/api/auth/navigation-preferences")');
     expect(client).toContain('state.collapsedNavigationPageIds = new Set(data.collapsedPageIds);');
+    expect(client).toContain('state.navigationPageOrder = navigationPageOrder;');
     expect(client).toMatch(/Promise\.all\(\[fetchAllPageSummaries\(\), loadNavigationPreferences\(\)\]\)/);
   });
 
@@ -23,5 +24,6 @@ describe("Navigation collapse persistence", () => {
   it("clears in-memory collapse state and pending writes at authentication boundaries", () => {
     expect(client).toContain('discardNavigationPreferenceSaves();');
     expect(client).toContain('state.collapsedNavigationPageIds = new Set();');
+    expect(client).toContain('state.navigationPageOrder = new Map();');
   });
 });

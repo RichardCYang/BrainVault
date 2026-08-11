@@ -815,6 +815,8 @@ export const translationCatalogs = {
     },
     status: {
       calloutChanged: "Changed the callout type to {type}.",
+      savingNavigationOrder: "Saving page order...",
+      navigationOrderChanged: "Page order updated.",
       savingBlockOrder: "Saving block order...",
       blockOrderChanged: "Block order updated.",
       blockSaved: "Block saved.",
@@ -1252,6 +1254,8 @@ export const translationCatalogs = {
     },
     status: {
       calloutChanged: "コールアウトタイプを「{type}」に変更しました。",
+      savingNavigationOrder: "ページの順序を保存しています...",
+      navigationOrderChanged: "ページの順序を変更しました。",
       savingBlockOrder: "ブロックの順序を保存しています...",
       blockOrderChanged: "ブロックの順序を変更しました。",
       blockSaved: "ブロックを保存しました。",
@@ -1993,6 +1997,8 @@ export const translationCatalogs = {
     },
     status: {
       calloutChanged: "콜아웃 타입을 {type}(으)로 변경했습니다.",
+      savingNavigationOrder: "페이지 순서를 저장하는 중입니다...",
+      navigationOrderChanged: "페이지 순서를 변경했습니다.",
       savingBlockOrder: "블록 순서를 저장하는 중입니다...",
       blockOrderChanged: "블록 순서를 변경했습니다.",
       blockSaved: "블록을 저장했습니다.",
@@ -2430,6 +2436,8 @@ export const translationCatalogs = {
     },
     status: {
       calloutChanged: "Type d’encadré remplacé par « {type} ».",
+      savingNavigationOrder: "Enregistrement de l’ordre des pages...",
+      navigationOrderChanged: "Ordre des pages mis à jour.",
       savingBlockOrder: "Enregistrement de l’ordre des blocs...",
       blockOrderChanged: "Ordre des blocs mis à jour.",
       blockSaved: "Bloc enregistré.",
@@ -2829,6 +2837,8 @@ export const translationCatalogs = {
     },
     status: {
       calloutChanged: "Hinweis-Typ zu „{type}“ geändert.",
+      savingNavigationOrder: "Seitenreihenfolge wird gespeichert...",
+      navigationOrderChanged: "Seitenreihenfolge aktualisiert.",
       savingBlockOrder: "Blockreihenfolge wird gespeichert...",
       blockOrderChanged: "Blockreihenfolge aktualisiert.",
       blockSaved: "Block gespeichert.",
@@ -3228,6 +3238,8 @@ export const translationCatalogs = {
     },
     status: {
       calloutChanged: "El tipo de aviso se cambió a «{type}».",
+      savingNavigationOrder: "Guardando el orden de las páginas...",
+      navigationOrderChanged: "Orden de páginas actualizado.",
       savingBlockOrder: "Guardando el orden de los bloques...",
       blockOrderChanged: "Orden de bloques actualizado.",
       blockSaved: "Bloque guardado.",
@@ -3627,6 +3639,8 @@ export const translationCatalogs = {
     },
     status: {
       calloutChanged: "Tipo de destaque alterado para “{type}”.",
+      savingNavigationOrder: "Salvando a ordem das páginas...",
+      navigationOrderChanged: "Ordem das páginas atualizada.",
       savingBlockOrder: "Salvando a ordem dos blocos...",
       blockOrderChanged: "Ordem dos blocos atualizada.",
       blockSaved: "Bloco salvo.",

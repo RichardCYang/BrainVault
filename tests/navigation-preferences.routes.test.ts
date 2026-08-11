@@ -46,18 +46,30 @@ beforeEach(() => {
 });
 
 describe("Navigation collapse preferences", () => {
-  it("loads the authenticated user's collapsed page ids from the database", async () => {
-    database.query.mockResolvedValue([{ page_id: "pg_a" }, { page_id: "pg_b" }]);
+  it("loads the authenticated user's collapsed page ids and explicit page order", async () => {
+    database.query
+      .mockResolvedValueOnce([{ page_id: "pg_a" }, { page_id: "pg_b" }])
+      .mockResolvedValueOnce([{ page_id: "pg_b", sort_order: 0 }, { page_id: "pg_a", sort_order: 1 }]);
 
     const response = await request(createApp())
       .get("/api/auth/navigation-preferences")
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
 
-    expect(response.body).toEqual({ collapsedPageIds: ["pg_a", "pg_b"] });
+    expect(response.body).toEqual({
+      collapsedPageIds: ["pg_a", "pg_b"],
+      navigationPageOrder: [
+        { pageId: "pg_b", sortOrder: 0 },
+        { pageId: "pg_a", sortOrder: 1 }
+      ]
+    });
     expect(database.query).toHaveBeenCalledWith(
       expect.stringContaining("FROM user_navigation_collapsed_pages"),
       [user.id]
+    );
+    expect(database.query).toHaveBeenCalledWith(
+      expect.stringContaining("FROM user_navigation_page_order no"),
+      [user.id, user.id, user.id]
     );
   });
 
@@ -93,6 +105,41 @@ describe("Navigation collapse preferences", () => {
       .send({ pageId: "pg_hidden", collapsed: true })
       .expect(404);
 
+    expect(database.execute).not.toHaveBeenCalled();
+  });
+
+  it("stores an authenticated page order without mutating page content rows", async () => {
+    database.query.mockResolvedValue([{ id: "pg_first" }, { id: "pg_second" }]);
+
+    await request(createApp())
+      .patch("/api/auth/navigation-order")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ pageIds: ["pg_second", "pg_first"] })
+      .expect(200, { pageIds: ["pg_second", "pg_first"] });
+
+    expect(database.execute).toHaveBeenCalledTimes(1);
+    expect(database.execute).toHaveBeenCalledWith(
+      expect.stringMatching(/INSERT INTO user_navigation_page_order[\s\S]*ON DUPLICATE KEY UPDATE/),
+      [user.id, "pg_second", 0, user.id, "pg_first", 1]
+    );
+    const sql = String(database.execute.mock.calls[0]?.[0] ?? "");
+    expect(sql).not.toMatch(/UPDATE\s+pages|UPDATE\s+blocks/i);
+  });
+
+  it("rejects duplicate or inaccessible page ids before persisting order", async () => {
+    await request(createApp())
+      .patch("/api/auth/navigation-order")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ pageIds: ["pg_first", "pg_first"] })
+      .expect(400);
+    expect(database.execute).not.toHaveBeenCalled();
+
+    database.query.mockResolvedValue([{ id: "pg_first" }]);
+    await request(createApp())
+      .patch("/api/auth/navigation-order")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ pageIds: ["pg_first", "pg_hidden"] })
+      .expect(404);
     expect(database.execute).not.toHaveBeenCalled();
   });
 });

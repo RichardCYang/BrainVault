@@ -230,6 +230,7 @@ const state = {
   activeNavigationMenuTarget: null,
   activeNavigationMenuTrigger: null,
   collapsedNavigationPageIds: new Set(),
+  navigationPageOrder: new Map(),
   pendingFocusBlockId: null,
   accountSettingsOpen: false,
   activeAccountPanel: "profile",
@@ -810,7 +811,10 @@ const statusDismissDelay = 2400;
 const statusErrorDismissDelay = 6000;
 let activeBlockDrag = null;
 let activeKanbanCardDrag = null;
+let activeNavigationDrag = null;
 let suppressBlockHandleClickUntil = 0;
+let suppressNavigationMenuClickUntil = 0;
+let navigationOrderSaving = false;
 let blockOrderSaving = false;
 let pendingBlockOrderTask = null;
 let collaborationCaretRenderFrame = null;
@@ -1648,10 +1652,25 @@ async function loadNavigationPreferences() {
   if (
     !Array.isArray(data?.collapsedPageIds)
     || data.collapsedPageIds.some((pageId) => typeof pageId !== "string" || !pageId)
+    || !Array.isArray(data?.navigationPageOrder)
+    || data.navigationPageOrder.some((item) => (
+      !item
+      || typeof item.pageId !== "string"
+      || !item.pageId
+      || !Number.isSafeInteger(item.sortOrder)
+      || item.sortOrder < 0
+    ))
   ) {
     throw new Error(t("errors.invalidResponse"));
   }
+
+  const navigationPageOrder = new Map();
+  for (const item of data.navigationPageOrder) {
+    if (navigationPageOrder.has(item.pageId)) throw new Error(t("errors.invalidResponse"));
+    navigationPageOrder.set(item.pageId, item.sortOrder);
+  }
   state.collapsedNavigationPageIds = new Set(data.collapsedPageIds);
+  state.navigationPageOrder = navigationPageOrder;
 }
 
 function discardNavigationPreferenceSaves() {
@@ -2039,6 +2058,14 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   state.searchSubmittedQuery = "";
   state.searchRequestId += 1;
   state.collapsedNavigationPageIds = new Set();
+  state.navigationPageOrder = new Map();
+  const navigationDrag = activeNavigationDrag;
+  activeNavigationDrag = null;
+  if (navigationDrag?.handle?.hasPointerCapture?.(navigationDrag.pointerId)) {
+    navigationDrag.handle.releasePointerCapture(navigationDrag.pointerId);
+  }
+  clearNavigationDragVisuals(navigationDrag);
+  navigationOrderSaving = false;
   state.pendingFocusBlockId = null;
   resetAccountSecurityOperationState({ clearSensitiveState: true });
   accountProfileSaveGuard.invalidate();
@@ -3368,7 +3395,26 @@ function sortByRecent(items) {
   return [...items].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
-function buildPageTree(pages) {
+function sortByNavigationOrder(items) {
+  return [...items].sort((a, b) => {
+    const aOrder = state.navigationPageOrder.get(a.id);
+    const bOrder = state.navigationPageOrder.get(b.id);
+    const aRanked = Number.isSafeInteger(aOrder) && aOrder >= 0;
+    const bRanked = Number.isSafeInteger(bOrder) && bOrder >= 0;
+
+    // Pages without an explicit preference keep the historical recent-first
+    // behavior. Newly created pages therefore appear first until the user
+    // explicitly reorders that sibling group.
+    if (aRanked !== bRanked) return aRanked ? 1 : -1;
+    if (aRanked && bRanked && aOrder !== bOrder) return aOrder - bOrder;
+
+    const recent = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    if (recent !== 0) return recent;
+    return String(a.id).localeCompare(String(b.id));
+  });
+}
+
+function buildPageTree(pages, { useNavigationOrder = false } = {}) {
   const ids = new Set(pages.map((page) => page.id));
   const groups = new Map([[rootParentKey, []]]);
 
@@ -3378,7 +3424,8 @@ function buildPageTree(pages) {
     groups.get(parentKey).push(page);
   }
 
-  for (const [key, children] of groups) groups.set(key, sortByRecent(children));
+  const sortChildren = useNavigationOrder ? sortByNavigationOrder : sortByRecent;
+  for (const [key, children] of groups) groups.set(key, sortChildren(children));
   return groups;
 }
 
@@ -3400,7 +3447,7 @@ function isCollectionPage(page) {
 }
 
 function getRootCollections(pages = state.allPages) {
-  return sortByRecent(pages.filter(isCollectionPage));
+  return sortByNavigationOrder(pages.filter(isCollectionPage));
 }
 
 function getCollectionRootId(pageId, pages = state.allPages) {
@@ -4409,6 +4456,8 @@ function makeNavigationMenuButton({ id, kind, title }) {
   button.setAttribute("aria-haspopup", "menu");
   button.setAttribute("aria-expanded", "false");
   button.setAttribute("aria-controls", "navigation-context-menu");
+  button.setAttribute("aria-grabbed", "false");
+  button.dataset.navigationOrderId = id;
   button.textContent = "⋮";
   return button;
 }
@@ -4465,6 +4514,7 @@ function setNavigationSubpagesExpanded(pageId, expanded) {
 function renderDocumentNode(page, groups, depth = 0) {
   const wrapper = document.createElement("div");
   wrapper.className = "document-node";
+  wrapper.dataset.navigationOrderId = page.id;
   wrapper.style.setProperty("--depth", String(depth));
 
   const row = document.createElement("div");
@@ -4516,6 +4566,7 @@ function renderDocumentNode(page, groups, depth = 0) {
 function renderCollectionSection(collection, pages) {
   const section = document.createElement("section");
   section.className = "nav-section custom-collection";
+  section.dataset.navigationOrderId = collection.id;
 
   const row = document.createElement("div");
   row.className = "collection-title-row";
@@ -4547,7 +4598,7 @@ function renderCollectionSection(collection, pages) {
   if (pages.length) {
     const tree = document.createElement("div");
     tree.className = "document-tree";
-    const groups = buildPageTree(pages);
+    const groups = buildPageTree(pages, { useNavigationOrder: true });
     for (const page of groups.get(rootParentKey) ?? []) {
       tree.append(renderDocumentNode(page, groups));
     }
@@ -4578,7 +4629,7 @@ function renderDocumentTree() {
     if (page.id !== collectionId) collectionPages.get(collectionId)?.push(page);
   }
 
-  const defaultGroups = buildPageTree(defaultPages);
+  const defaultGroups = buildPageTree(defaultPages, { useNavigationOrder: true });
   const defaultRoots = defaultGroups.get(rootParentKey) ?? [];
   if (!defaultRoots.length) {
     const message = state.searchQuery || state.activeTag
@@ -4593,6 +4644,183 @@ function renderDocumentTree() {
   for (const collection of collectionRoots) {
     if (isFiltering && !matchedCollectionIds.has(collection.id)) continue;
     elements.collectionList.append(renderCollectionSection(collection, collectionPages.get(collection.id) ?? []));
+  }
+}
+
+
+function getNavigationDragNode(handle) {
+  const node = handle?.closest(".document-node, .custom-collection");
+  if (!node?.dataset.navigationOrderId) return null;
+  const container = node.parentElement;
+  if (!container) return null;
+  const validContainer = container === elements.pageList
+    || container === elements.collectionList
+    || container.classList.contains("document-tree")
+    || container.classList.contains("document-children");
+  return validContainer ? node : null;
+}
+
+function getNavigationSiblingNodes(node) {
+  const container = node?.parentElement;
+  if (!container) return [];
+  return [...container.children].filter((candidate) => (
+    candidate instanceof HTMLElement
+    && Boolean(candidate.dataset.navigationOrderId)
+  ));
+}
+
+function getNavigationInsertionIndex(clientY, candidates) {
+  for (let index = 0; index < candidates.length; index += 1) {
+    const anchor = candidates[index].querySelector(".document-item-row, .collection-title-row");
+    const rect = (anchor ?? candidates[index]).getBoundingClientRect();
+    if (clientY < rect.top + rect.height / 2) return index;
+  }
+  return candidates.length;
+}
+
+function placeNavigationDropIndicator(drag) {
+  if (!drag?.indicator || !drag.container) return;
+  const candidate = drag.candidates[drag.targetIndex];
+  if (candidate) {
+    drag.container.insertBefore(drag.indicator, candidate);
+    return;
+  }
+  const last = drag.candidates.at(-1);
+  if (last) last.after(drag.indicator);
+  else drag.container.insertBefore(drag.indicator, drag.node);
+}
+
+function autoScrollForNavigationDrag(clientY) {
+  const scroller = elements.appSidebar?.querySelector(".sidebar-nav");
+  if (!scroller) return;
+  const rect = scroller.getBoundingClientRect();
+  const edge = Math.min(64, Math.max(36, rect.height * 0.14));
+  if (clientY < rect.top + edge) {
+    scroller.scrollBy(0, -Math.max(5, (rect.top + edge - clientY) * 0.18));
+  } else if (clientY > rect.bottom - edge) {
+    scroller.scrollBy(0, Math.max(5, (clientY - (rect.bottom - edge)) * 0.18));
+  }
+}
+
+function activateNavigationDrag(event) {
+  const drag = activeNavigationDrag;
+  if (!drag || drag.active || navigationOrderSaving) return false;
+
+  const siblingNodes = getNavigationSiblingNodes(drag.node);
+  if (siblingNodes.length < 2) return false;
+
+  closeNavigationContextMenu();
+  drag.active = true;
+  drag.siblingNodes = siblingNodes;
+  drag.candidates = siblingNodes.filter((node) => node !== drag.node);
+  drag.initialIndex = siblingNodes.indexOf(drag.node);
+  drag.targetIndex = drag.initialIndex;
+  drag.indicator = document.createElement("div");
+  drag.indicator.className = "navigation-drop-indicator";
+  drag.indicator.setAttribute("aria-hidden", "true");
+  drag.indicator.style.setProperty("--navigation-drop-depth", drag.node.style.getPropertyValue("--depth") || "0");
+
+  drag.node.classList.add("is-navigation-dragging");
+  drag.handle.classList.add("is-pressed");
+  drag.handle.setAttribute("aria-grabbed", "true");
+  document.body.classList.add("is-navigation-dragging");
+  placeNavigationDropIndicator(drag);
+  event.preventDefault();
+  return true;
+}
+
+function updateNavigationDrag(event) {
+  const drag = activeNavigationDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+
+  if (!drag.active) {
+    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+    const threshold = event.pointerType === "touch" ? 7 : 4;
+    if (distance < threshold) return;
+    if (!activateNavigationDrag(event)) return;
+  }
+
+  event.preventDefault();
+  drag.targetIndex = getNavigationInsertionIndex(event.clientY, drag.candidates);
+  placeNavigationDropIndicator(drag);
+  autoScrollForNavigationDrag(event.clientY);
+}
+
+function clearNavigationDragVisuals(drag) {
+  if (!drag) return;
+  drag.node?.classList.remove("is-navigation-dragging");
+  drag.indicator?.remove();
+  drag.handle?.classList.remove("is-pressed");
+  drag.handle?.setAttribute("aria-grabbed", "false");
+  document.body.classList.remove("is-navigation-dragging");
+}
+
+function snapshotNavigationPageOrder(pageIds) {
+  return new Map(pageIds.map((pageId) => [
+    pageId,
+    state.navigationPageOrder.has(pageId)
+      ? { present: true, value: state.navigationPageOrder.get(pageId) }
+      : { present: false, value: null }
+  ]));
+}
+
+function applyNavigationPageOrder(pageIds) {
+  pageIds.forEach((pageId, index) => state.navigationPageOrder.set(pageId, index));
+}
+
+function restoreNavigationPageOrder(snapshot) {
+  for (const [pageId, previous] of snapshot) {
+    if (previous.present) state.navigationPageOrder.set(pageId, previous.value);
+    else state.navigationPageOrder.delete(pageId);
+  }
+}
+
+async function finishNavigationDrag(event, { cancelled = false } = {}) {
+  const drag = activeNavigationDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  activeNavigationDrag = null;
+
+  if (drag.handle.hasPointerCapture?.(drag.pointerId)) {
+    drag.handle.releasePointerCapture(drag.pointerId);
+  }
+
+  if (!drag.active) {
+    drag.handle.classList.remove("is-pressed");
+    return;
+  }
+
+  event.preventDefault();
+  suppressNavigationMenuClickUntil = Date.now() + 500;
+  clearNavigationDragVisuals(drag);
+  if (cancelled || drag.targetIndex === drag.initialIndex) return;
+
+  const orderedIds = drag.candidates.map((node) => node.dataset.navigationOrderId);
+  orderedIds.splice(drag.targetIndex, 0, drag.node.dataset.navigationOrderId);
+  if (orderedIds.some((pageId) => !pageId)) return;
+
+  const previousOrder = snapshotNavigationPageOrder(orderedIds);
+  const authenticationScope = captureAuthenticatedSessionScope();
+  applyNavigationPageOrder(orderedIds);
+  renderPages();
+  navigationOrderSaving = true;
+  setStatus(t("status.savingNavigationOrder"));
+
+  try {
+    await api("/api/auth/navigation-order", {
+      method: "PATCH",
+      body: { pageIds: orderedIds }
+    });
+    if (isCurrentAuthenticatedSessionScope(authenticationScope)) {
+      setStatus(t("status.navigationOrderChanged"));
+    }
+  } catch (error) {
+    if (isCurrentAuthenticatedSessionScope(authenticationScope)) {
+      restoreNavigationPageOrder(previousOrder);
+      renderPages();
+    }
+    throw error;
+  } finally {
+    if (isCurrentAuthenticatedSessionScope(authenticationScope)) navigationOrderSaving = false;
   }
 }
 
@@ -13659,6 +13887,57 @@ elements.pageList.addEventListener("click", handleSidebarPageClick);
 elements.collectionList.addEventListener("click", handleSidebarPageClick);
 elements.collectionViewList.addEventListener("click", handleSidebarPageClick);
 
+
+elements.appSidebar.addEventListener("pointerdown", (event) => {
+  const handle = event.target.closest(".navigation-more-button");
+  if (
+    !handle
+    || activeNavigationDrag
+    || navigationOrderSaving
+    || state.searchQuery
+    || state.activeTag
+    || event.isPrimary === false
+  ) return;
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+
+  const node = getNavigationDragNode(handle);
+  if (!node || getNavigationSiblingNodes(node).length < 2) return;
+  activeNavigationDrag = {
+    pointerId: event.pointerId,
+    pointerType: event.pointerType,
+    handle,
+    node,
+    container: node.parentElement,
+    startX: event.clientX,
+    startY: event.clientY,
+    active: false,
+    initialIndex: -1,
+    targetIndex: -1,
+    siblingNodes: [],
+    candidates: [],
+    indicator: null
+  };
+  handle.classList.add("is-pressed");
+  handle.setPointerCapture?.(event.pointerId);
+});
+
+elements.appSidebar.addEventListener("pointermove", (event) => {
+  updateNavigationDrag(event);
+});
+
+elements.appSidebar.addEventListener("pointerup", (event) => {
+  finishNavigationDrag(event).catch((error) => setStatus(error.message, true));
+});
+
+elements.appSidebar.addEventListener("pointercancel", (event) => {
+  finishNavigationDrag(event, { cancelled: true }).catch((error) => setStatus(error.message, true));
+});
+
+elements.appSidebar.addEventListener("lostpointercapture", (event) => {
+  if (!activeNavigationDrag || activeNavigationDrag.pointerId !== event.pointerId) return;
+  finishNavigationDrag(event, { cancelled: true }).catch((error) => setStatus(error.message, true));
+});
+
 elements.subpageIndexList.addEventListener("click", async (event) => {
   const item = event.target.closest("[data-subpage-index-page-id]");
   if (!item) return;
@@ -14791,6 +15070,7 @@ document.addEventListener("click", (event) => {
   const navigationMenuTrigger = event.target.closest(".navigation-more-button");
   if (navigationMenuTrigger) {
     event.preventDefault();
+    if (Date.now() < suppressNavigationMenuClickUntil) return;
     openNavigationContextMenu(navigationMenuTrigger, { focusFirst: event.detail === 0 });
     return;
   }

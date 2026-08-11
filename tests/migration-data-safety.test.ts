@@ -165,6 +165,23 @@ describe("migration replay data safety", () => {
     expect(sql).not.toMatch(/\b(?:DROP|TRUNCATE)\b/i);
   });
 
+  it("adds non-destructive per-user sidebar page ordering without touching note rows", () => {
+    const baseline = fs.readFileSync(path.join(migrationsDir, "001_init.sql"), "utf8");
+    const sql = fs.readFileSync(
+      path.join(migrationsDir, "049_navigation_page_order.sql"),
+      "utf8"
+    );
+
+    for (const source of [baseline, sql]) {
+      expect(source).toMatch(/CREATE TABLE IF NOT EXISTS user_navigation_page_order/i);
+      expect(source).toMatch(/PRIMARY KEY \(user_id, page_id\)/i);
+      expect(source).toMatch(/sort_order INT UNSIGNED NOT NULL/i);
+      expect(source).toMatch(/FOREIGN KEY \(user_id\) REFERENCES users\(id\) ON DELETE CASCADE/i);
+      expect(source).toMatch(/FOREIGN KEY \(page_id\) REFERENCES pages\(id\) ON DELETE CASCADE/i);
+    }
+    expect(sql).not.toMatch(/\b(?:DELETE|DROP|TRUNCATE|UPDATE\s+pages|UPDATE\s+blocks)\b/i);
+  });
+
   it("widens page icon storage without deleting existing data", () => {
     const sql = fs.readFileSync(
       path.join(migrationsDir, "026_page_custom_icons.sql"),
