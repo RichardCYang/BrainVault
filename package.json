@@ -58,6 +58,7 @@
     "reproduce:backup-metadata-loss": "node --experimental-strip-types scripts/reproduce-backup-metadata-loss.mjs",
     "reproduce:collaboration-block-delete-loss": "node scripts/reproduce-collaboration-block-delete-recovery-loss.mjs",
     "reproduce:backup-attachment-metadata-loss": "node --experimental-strip-types scripts/reproduce-backup-attachment-metadata-loss.mjs",
+    "reproduce:backup-workspace-state-loss": "node scripts/reproduce-backup-workspace-state-loss.mjs",
     "reproduce:account-profile-draft-race": "node scripts/reproduce-account-profile-draft-race.mjs",
     "reproduce:account-preference-race": "node scripts/reproduce-account-preference-race.mjs",
     "reproduce:account-profile-auth-boundary-stall": "node scripts/reproduce-account-profile-auth-boundary-stall.mjs",

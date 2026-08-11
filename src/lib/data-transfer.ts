@@ -70,7 +70,8 @@ const manifestName = "brainvault-backup.json";
 const backupFormat = "brainvault-backup";
 const legacyBackupVersion = 1;
 const pageCoverFileBackupVersion = 2;
-const backupVersion = 3;
+const uploadedAssetBackupVersion = 3;
+const backupVersion = 4;
 const maxManifestBytes = env.DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024;
 const idSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
 const timestampSchema = z.string().min(1).max(40);
@@ -242,12 +243,40 @@ const customIconLibraryRemovalSchema = z.object({
   value_hash: z.string().regex(/^[a-f0-9]{64}$/),
   removed_at: timestampSchema
 }).strict();
+const jsonArrayColumnSchema = z.string().min(1).max(maxManifestBytes).refine((value) => {
+  try {
+    return Array.isArray(JSON.parse(value));
+  } catch {
+    return false;
+  }
+}, "Backup JSON array is invalid");
+const jsonObjectColumnSchema = z.string().min(1).max(maxManifestBytes).refine((value) => {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
+}, "Backup JSON object is invalid");
+const pageVersionSchema = z.object({
+  page_id: idSchema,
+  revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  page_edit_version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  page_content_version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  actors: jsonArrayColumnSchema,
+  source: z.string().min(1).max(32),
+  change_count: z.number().int().min(0).max(0xffffffff),
+  change_summary: jsonObjectColumnSchema,
+  changes: jsonArrayColumnSchema,
+  created_at: timestampSchema
+}).strict();
 
 const manifestSchema = z.object({
   format: z.literal(backupFormat),
   version: z.union([
     z.literal(legacyBackupVersion),
     z.literal(pageCoverFileBackupVersion),
+    z.literal(uploadedAssetBackupVersion),
     z.literal(backupVersion)
   ]),
   exportedAt: timestampSchema,
@@ -267,7 +296,11 @@ const manifestSchema = z.object({
     pageTags: z.array(pageTagSchema).max(dataTransferResourceLimits.maxPageTags),
     // Optional only for backward compatibility with backups exported before
     // page sharing relationships became part of the complete workspace format.
-    pageShares: z.array(pageShareSchema).max(dataTransferResourceLimits.maxPageShares).optional()
+    pageShares: z.array(pageShareSchema).max(dataTransferResourceLimits.maxPageShares).optional(),
+    // Version 4 makes user-visible page history and owned-page navigation state
+    // part of the complete workspace round trip. Older backups did not carry it.
+    pageVersions: z.array(pageVersionSchema).max(dataTransferResourceLimits.maxPageVersions).optional(),
+    navigationCollapsedPageIds: z.array(idSchema).max(dataTransferResourceLimits.maxPages).optional()
   }).strict(),
   attachments: z.array(attachmentSchema).max(dataTransferResourceLimits.maxAttachments),
   // Version 3 also preserves any account attachment file that is intentionally
@@ -300,39 +333,60 @@ const manifestSchema = z.object({
       message: "Version 1 backups cannot declare page cover files"
     });
   }
-  if (manifest.version === backupVersion && !manifest.retainedAttachments) {
+  if (manifest.version >= uploadedAssetBackupVersion && !manifest.retainedAttachments) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["retainedAttachments"],
-      message: "Version 3 backups must declare retained attachment files"
+      message: "Version 3 and newer backups must declare retained attachment files"
     });
   }
-  if (manifest.version !== backupVersion && manifest.retainedAttachments) {
+  if (manifest.version < uploadedAssetBackupVersion && manifest.retainedAttachments) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["retainedAttachments"],
       message: "Backups before version 3 cannot declare retained attachment files"
     });
   }
-  if (manifest.version === backupVersion && !manifest.customIcons) {
+  if (manifest.version >= uploadedAssetBackupVersion && !manifest.customIcons) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["customIcons"],
-      message: "Version 3 backups must declare uploaded custom icon files"
+      message: "Version 3 and newer backups must declare uploaded custom icon files"
     });
   }
-  if (manifest.version === backupVersion && !manifest.customIconLibraryRemovals) {
+  if (manifest.version >= uploadedAssetBackupVersion && !manifest.customIconLibraryRemovals) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["customIconLibraryRemovals"],
-      message: "Version 3 backups must declare custom icon library removal state"
+      message: "Version 3 and newer backups must declare custom icon library removal state"
     });
   }
-  if (manifest.version !== backupVersion && (manifest.customIcons || manifest.customIconLibraryRemovals)) {
+  if (manifest.version < uploadedAssetBackupVersion && (manifest.customIcons || manifest.customIconLibraryRemovals)) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["customIcons"],
       message: "Backups before version 3 cannot declare uploaded custom icon state"
+    });
+  }
+  if (manifest.version === backupVersion && !manifest.data.pageVersions) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["data", "pageVersions"],
+      message: "Version 4 backups must declare page version history"
+    });
+  }
+  if (manifest.version === backupVersion && !manifest.data.navigationCollapsedPageIds) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["data", "navigationCollapsedPageIds"],
+      message: "Version 4 backups must declare owned-page navigation preferences"
+    });
+  }
+  if (manifest.version < backupVersion && (manifest.data.pageVersions || manifest.data.navigationCollapsedPageIds)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["data", "pageVersions"],
+      message: "Backups before version 4 cannot declare page history or navigation state"
     });
   }
 });
@@ -342,6 +396,7 @@ type BackupPage = BrainVaultBackup["data"]["pages"][number];
 type BackupBlock = BrainVaultBackup["data"]["blocks"][number];
 type BackupTag = BrainVaultBackup["data"]["tags"][number];
 type BackupPageShare = z.infer<typeof pageShareSchema>;
+type BackupPageVersion = z.infer<typeof pageVersionSchema>;
 type BackupPageCoverFile = z.infer<typeof pageCoverFileSchema>;
 type BackupRetainedAttachmentFile = z.infer<typeof retainedAttachmentSchema>;
 type BackupCustomIconFile = z.infer<typeof customIconFileSchema>;
@@ -387,6 +442,19 @@ type WorkspaceRestoreCustomIconRow = {
 type WorkspaceRestoreCustomIconRemovalRow = {
   value_hash: string;
   removed_at: string;
+};
+
+type WorkspaceRestorePageVersionRow = {
+  page_id: string;
+  revision: number | bigint;
+  page_edit_version: number | bigint;
+  page_content_version: number | bigint;
+  actors: string;
+  source: string;
+  change_count: number;
+  change_summary: string;
+  changes: string;
+  created_at: string;
 };
 
 type RestoredPageShare = {
@@ -600,6 +668,26 @@ async function createWorkspaceRestoreSnapshot(
      ORDER BY ps.page_id ASC, ps.user_id ASC${lockClause}`,
     [userId]
   );
+  const pageVersions = await client.query<WorkspaceRestorePageVersionRow>(
+    `SELECT pv.page_id, pv.revision, pv.page_edit_version, pv.page_content_version,
+            CAST(pv.actors AS CHAR CHARACTER SET utf8mb4) AS actors,
+            pv.source, pv.change_count,
+            CAST(pv.change_summary AS CHAR CHARACTER SET utf8mb4) AS change_summary,
+            CAST(pv.changes AS CHAR CHARACTER SET utf8mb4) AS changes,
+            DATE_FORMAT(pv.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
+     FROM page_versions pv INNER JOIN pages p ON p.id = pv.page_id
+     WHERE p.owner_id = ?
+     ORDER BY pv.page_id ASC, pv.revision ASC${lockClause}`,
+    [userId]
+  );
+  const navigationCollapsedPageIds = (await client.query<{ page_id: string }>(
+    `SELECT np.page_id
+     FROM user_navigation_collapsed_pages np
+     INNER JOIN pages p ON p.id = np.page_id
+     WHERE np.user_id = ? AND p.owner_id = ?
+     ORDER BY np.page_id ASC${lockClause}`,
+    [userId, userId]
+  )).map((row) => row.page_id);
   const customIcons = await client.query<WorkspaceRestoreCustomIconRow>(
     `SELECT id, file_path,
             DATE_FORMAT(last_used_at, '%Y-%m-%d %H:%i:%s.%f') AS last_used_at,
@@ -646,6 +734,14 @@ async function createWorkspaceRestoreSnapshot(
     hash.update(
       `share\0${share.page_id}\0${share.user_id}\0${share.permission}\0${share.shared_by}\0${share.shared_at}\n`
     );
+  }
+  for (const version of pageVersions) {
+    hash.update(
+      `page-version\0${version.page_id}\0${String(version.revision)}\0${String(version.page_edit_version)}\0${String(version.page_content_version)}\0${version.actors}\0${version.source}\0${version.change_count}\0${version.change_summary}\0${version.changes}\0${version.created_at}\n`
+    );
+  }
+  for (const pageId of navigationCollapsedPageIds) {
+    hash.update(`navigation-collapsed\0${pageId}\n`);
   }
   for (const icon of customIcons) {
     hash.update(
@@ -720,6 +816,62 @@ function rebindCustomIconValue(value: string | null, sourceUserId: string, targe
   return `${imageIconPrefix}${customIconPublicPath(targetUserId, fileName)}`;
 }
 
+function rebindPageVersionChangesJson(value: string, sourceUserId: string, targetUserId: string) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    invalidBackup("Page version history contains invalid JSON");
+  }
+  if (!Array.isArray(parsed)) invalidBackup("Page version history changes must be an array");
+
+  const rebindHistoryIcon = (candidate: unknown) => {
+    if (candidate !== null && typeof candidate !== "string") {
+      invalidBackup("Page version history contains an invalid icon value");
+    }
+    return rebindCustomIconValue(candidate as string | null, sourceUserId, targetUserId);
+  };
+
+  for (const change of parsed) {
+    if (!change || typeof change !== "object" || Array.isArray(change)) continue;
+    const record = change as Record<string, unknown>;
+    if (record.kind === "history-started" || record.kind === "page-created") {
+      const page = record.page;
+      if (page && typeof page === "object" && !Array.isArray(page) && "icon" in page) {
+        const pageRecord = page as Record<string, unknown>;
+        pageRecord.icon = rebindHistoryIcon(pageRecord.icon);
+      }
+      continue;
+    }
+    if (record.kind !== "page-updated" || !Array.isArray(record.fields)) continue;
+    for (const field of record.fields) {
+      if (!field || typeof field !== "object" || Array.isArray(field)) continue;
+      const fieldRecord = field as Record<string, unknown>;
+      if (fieldRecord.field !== "icon") continue;
+      if ("before" in fieldRecord) fieldRecord.before = rebindHistoryIcon(fieldRecord.before);
+      if ("after" in fieldRecord) fieldRecord.after = rebindHistoryIcon(fieldRecord.after);
+    }
+  }
+
+  return JSON.stringify(parsed);
+}
+
+function rebindPageVersionActorsJson(value: string, sourceUserId: string, targetUserId: string) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    invalidBackup("Page version history contains invalid actor JSON");
+  }
+  if (!Array.isArray(parsed)) invalidBackup("Page version history actors must be an array");
+  for (const actor of parsed) {
+    if (!actor || typeof actor !== "object" || Array.isArray(actor)) continue;
+    const record = actor as Record<string, unknown>;
+    if (record.id === sourceUserId) record.id = targetUserId;
+  }
+  return JSON.stringify(parsed);
+}
+
 function expectedCustomIconExtension(mimeType: BackupCustomIconFile["mimeType"]) {
   if (mimeType === "image/png") return "png";
   if (mimeType === "image/jpeg") return "jpg";
@@ -762,6 +914,8 @@ function orderByParent<T>(items: T[], getId: (item: T) => string, getParent: (it
 function validateManifestRelations(manifest: BrainVaultBackup) {
   const { pages, blocks, tags, pageTags } = manifest.data;
   const pageShares = manifest.data.pageShares ?? [];
+  const pageVersions = manifest.data.pageVersions ?? [];
+  const navigationCollapsedPageIds = manifest.data.navigationCollapsedPageIds ?? [];
   const retainedAttachments = manifest.retainedAttachments ?? [];
   const pageCovers = manifest.pageCovers ?? [];
   const customIcons = manifest.customIcons ?? [];
@@ -793,6 +947,11 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
       .map((item) => `${item.page_id}\u0000${item.shared_user_id}`),
     "page share account ID"
   );
+  assertUnique(
+    pageVersions.map((item) => `${item.page_id}\u0000${item.revision}`),
+    "page version revision"
+  );
+  assertUnique(navigationCollapsedPageIds, "collapsed navigation page ID");
   if (getBackupPageShareIdentityMode(pageShares) === "mixed") {
     invalidBackup("The backup mixes ID-bound and legacy username-only sharing grants");
   }
@@ -806,6 +965,20 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
     if (page.is_collection && page.parent_page_id) invalidBackup(`Collection has an invalid parent: ${page.id}`);
   }
   orderByParent(pages, (item) => item.id, (item) => item.parent_page_id);
+
+  for (const version of pageVersions) {
+    const page = pageById.get(version.page_id);
+    if (!page) invalidBackup(`Page version page is missing: ${version.page_id}`);
+    if (version.page_edit_version > Number(page.edit_version ?? 1)) {
+      invalidBackup(`Page version edit version exceeds the current page version: ${version.page_id}`);
+    }
+    if (version.page_content_version > Number(page.content_version ?? 1)) {
+      invalidBackup(`Page version content version exceeds the current page version: ${version.page_id}`);
+    }
+  }
+  for (const pageId of navigationCollapsedPageIds) {
+    if (!pageById.has(pageId)) invalidBackup(`Collapsed navigation page is missing: ${pageId}`);
+  }
 
   const pageCoverByPageId = new Map(pageCovers.map((item) => [item.pageId, item]));
   for (const pageCover of pageCovers) {
@@ -828,7 +1001,7 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
     invalidBackup("Version 1 backups cannot contain page cover entries");
   }
 
-  if (manifest.version === backupVersion) {
+  if (manifest.version >= uploadedAssetBackupVersion) {
     const declaredCustomIconPaths = new Set<string>();
     for (const icon of customIcons) {
       if (icon.path !== `custom-icons/${icon.fileName}`) {
@@ -905,7 +1078,7 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
   if (manifest.attachments.length + retainedAttachments.length > dataTransferResourceLimits.maxAttachments) {
     invalidBackup("The backup contains too many uploaded attachment files");
   }
-  if (manifest.version !== backupVersion && retainedAttachments.length) {
+  if (manifest.version < uploadedAssetBackupVersion && retainedAttachments.length) {
     invalidBackup("Backups before version 3 cannot contain retained attachment files");
   }
   for (const attachment of manifest.attachments) {
@@ -1000,6 +1173,25 @@ export async function prepareUserDataBackup(userId: string) {
          ORDER BY ps.page_id ASC, u.username ASC`,
         [userId]
       );
+      const pageVersions = await client.query<BackupPageVersion>(
+        `SELECT pv.page_id, pv.revision, pv.page_edit_version, pv.page_content_version,
+                CAST(pv.actors AS CHAR CHARACTER SET utf8mb4) AS actors, pv.source, pv.change_count,
+                CAST(pv.change_summary AS CHAR CHARACTER SET utf8mb4) AS change_summary,
+                CAST(pv.changes AS CHAR CHARACTER SET utf8mb4) AS changes,
+                DATE_FORMAT(pv.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
+         FROM page_versions pv INNER JOIN pages p ON p.id = pv.page_id
+         WHERE p.owner_id = ?
+         ORDER BY pv.page_id ASC, pv.revision ASC`,
+        [userId]
+      );
+      const navigationCollapsedPageIds = (await client.query<{ page_id: string }>(
+        `SELECT np.page_id
+         FROM user_navigation_collapsed_pages np
+         INNER JOIN pages p ON p.id = np.page_id
+         WHERE np.user_id = ? AND p.owner_id = ?
+         ORDER BY np.page_id ASC`,
+        [userId, userId]
+      )).map((row) => row.page_id);
       const customIconRows = await client.query<RawCustomIconRow>(
         `SELECT id, file_path,
                 DATE_FORMAT(last_used_at, '%Y-%m-%d %H:%i:%s.%f') AS last_used_at,
@@ -1023,6 +1215,8 @@ export async function prepareUserDataBackup(userId: string) {
       assertExportCount("tags", tags.length, dataTransferResourceLimits.maxTags);
       assertExportCount("page-tag relations", pageTags.length, dataTransferResourceLimits.maxPageTags);
       assertExportCount("page sharing grants", pageShares.length, dataTransferResourceLimits.maxPageShares);
+      assertExportCount("page version history entries", pageVersions.length, dataTransferResourceLimits.maxPageVersions);
+      assertExportCount("collapsed navigation pages", navigationCollapsedPageIds.length, dataTransferResourceLimits.maxPages);
       assertExportCount("attachments", attachmentBlocks.length, dataTransferResourceLimits.maxAttachments);
       assertExportCount(
         "custom icon library removal records",
@@ -1261,7 +1455,9 @@ export async function prepareUserDataBackup(userId: string) {
         }
       }
 
-      const snapshot = { account, pages, blocks, tags, pageTags, pageShares, customIconLibraryRemovals };
+      const snapshot = {
+        account, pages, blocks, tags, pageTags, pageShares, pageVersions, navigationCollapsedPageIds, customIconLibraryRemovals
+      };
       return { snapshot, attachmentFiles, retainedAttachmentFiles, pageCoverFiles, customIconFiles };
     });
 
@@ -1285,7 +1481,9 @@ export async function prepareUserDataBackup(userId: string) {
         blocks: snapshot.blocks,
         tags: snapshot.tags,
         pageTags: snapshot.pageTags,
-        pageShares: snapshot.pageShares
+        pageShares: snapshot.pageShares,
+        pageVersions: snapshot.pageVersions,
+        navigationCollapsedPageIds: snapshot.navigationCollapsedPageIds
       },
       attachments: attachmentFiles.map((item) => ({
         blockId: item.blockId,
@@ -1425,7 +1623,9 @@ export async function writeUserDataBackup(
       attachments: manifest.attachments.length,
       retainedAttachments: manifest.retainedAttachments?.length ?? 0,
       pageCovers: manifest.pageCovers?.length ?? 0,
-      customIcons: manifest.customIcons?.length ?? 0
+      customIcons: manifest.customIcons?.length ?? 0,
+      pageVersions: manifest.data.pageVersions?.length ?? 0,
+      navigationCollapsedPages: manifest.data.navigationCollapsedPageIds?.length ?? 0
     };
   } finally {
     await rm(plan.operationRoot, { recursive: true, force: true }).catch(() => undefined);
@@ -1458,7 +1658,7 @@ async function assertNoForeignIdConflicts(userId: string, manifest: BrainVaultBa
     const conflict = rows.find((row) => row.owner_id !== userId);
     if (conflict) throw new ApiError(409, "BACKUP_ID_CONFLICT", "The backup contains an identifier owned by another account");
   }
-  if (manifest.version === backupVersion) {
+  if (manifest.version >= uploadedAssetBackupVersion) {
     const libraryIds = (manifest.customIcons ?? []).flatMap((item) => item.library ? [item.library.id] : []);
     for (const ids of batch(libraryIds)) {
       if (!ids.length) continue;
@@ -1635,6 +1835,9 @@ function getManifestMaxEditVersion(manifest: BrainVaultBackup) {
     maximum = Math.max(maximum, Number(page.edit_version ?? 1), Number(page.content_version ?? 1));
   }
   for (const block of manifest.data.blocks) maximum = Math.max(maximum, Number(block.edit_version ?? 1));
+  for (const version of manifest.data.pageVersions ?? []) {
+    maximum = Math.max(maximum, version.page_edit_version, version.page_content_version);
+  }
   return maximum;
 }
 
@@ -1677,7 +1880,7 @@ async function importRows(
   pageShares: RestoredPageShare[],
   stagedPageCoverDir: string
 ) {
-  const restoreIconValue = (value: string | null) => manifest.version === backupVersion
+  const restoreIconValue = (value: string | null) => manifest.version >= uploadedAssetBackupVersion
     ? rebindCustomIconValue(value, manifest.source.userId, userId)
     : normalizeIconValue(value);
   await client.execute("DELETE FROM pages WHERE owner_id = ?", [userId]);
@@ -1767,6 +1970,34 @@ async function importRows(
   }
 
   if (manifest.version === backupVersion) {
+    for (const version of manifest.data.pageVersions ?? []) {
+      await client.execute(
+        `INSERT INTO page_versions
+         (page_id, revision, page_edit_version, page_content_version, actors, source, change_count, change_summary, changes, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          version.page_id,
+          version.revision,
+          version.page_edit_version,
+          version.page_content_version,
+          rebindPageVersionActorsJson(version.actors, manifest.source.userId, userId),
+          version.source,
+          version.change_count,
+          version.change_summary,
+          rebindPageVersionChangesJson(version.changes, manifest.source.userId, userId),
+          version.created_at
+        ]
+      );
+    }
+    for (const pageId of manifest.data.navigationCollapsedPageIds ?? []) {
+      await client.execute(
+        `INSERT INTO user_navigation_collapsed_pages (user_id, page_id) VALUES (?, ?)`,
+        [userId, pageId]
+      );
+    }
+  }
+
+  if (manifest.version >= uploadedAssetBackupVersion) {
     await client.execute("DELETE FROM custom_icons WHERE user_id = ?", [userId]);
     await client.execute("DELETE FROM custom_icon_library_removals WHERE user_id = ?", [userId]);
 
@@ -2342,7 +2573,7 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
     invalidBackup("The backup manifest is invalid", error instanceof z.ZodError ? error.flatten() : undefined);
   }
   validateManifestRelations(manifest);
-  const restoresCustomIcons = manifest.version === backupVersion;
+  const restoresCustomIcons = manifest.version >= uploadedAssetBackupVersion;
   const retainedAttachments = manifest.retainedAttachments ?? [];
   const restoredAttachmentBytes = [...manifest.attachments, ...retainedAttachments].reduce(
     (total, attachment) => total + BigInt(attachment.size),
@@ -2678,7 +2909,9 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
         pageCovers: manifest.pageCovers?.length ?? 0,
         customIcons: manifest.customIcons?.length ?? 0,
         tags: manifest.data.tags.length,
-        shares: restoreSharingPlan.shares.length
+        shares: restoreSharingPlan.shares.length,
+        pageVersions: manifest.data.pageVersions?.length ?? 0,
+        navigationCollapsedPages: manifest.data.navigationCollapsedPageIds?.length ?? 0
       },
       sharing: {
         mode: restoreSharingPlan.mode,

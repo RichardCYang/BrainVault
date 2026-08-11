@@ -4,11 +4,11 @@ import test from "node:test";
 
 const normalize = (value) => value.replace(/\r\n/g, "\n");
 
-test("backup v3 makes uploaded custom icons self-contained and restorable", async () => {
+test("backup v3+ makes uploaded custom icons self-contained and restorable", async () => {
   const transfer = normalize(await readFile(new URL("../src/lib/data-transfer.ts", import.meta.url), "utf8"));
   const customIcons = normalize(await readFile(new URL("../src/lib/custom-icons.ts", import.meta.url), "utf8"));
 
-  assert.match(transfer, /const pageCoverFileBackupVersion = 2;\nconst backupVersion = 3;/);
+  assert.match(transfer, /const pageCoverFileBackupVersion = 2;\nconst uploadedAssetBackupVersion = 3;\nconst backupVersion = 4;/);
   assert.match(transfer, /customIcons: z\.array\(customIconFileSchema\)/);
   assert.match(transfer, /customIconLibraryRemovals: z\.array\(customIconLibraryRemovalSchema\)/);
   assert.match(transfer, /const customIconOwnerDir = path\.join\(customIconUploadRoot, userId\)/);
@@ -45,7 +45,7 @@ test("backup v3 makes uploaded custom icons self-contained and restorable", asyn
   assert.match(customIcons, /storeCustomIcon[\s\S]*?withUserAttachmentLock/);
 });
 
-test("backup v3 retains files removed from the picker instead of exporting active rows only", async () => {
+test("backup v3+ retains files removed from the picker instead of exporting active rows only", async () => {
   const transfer = normalize(await readFile(new URL("../src/lib/data-transfer.ts", import.meta.url), "utf8"));
   const rowQuery = transfer.indexOf("FROM custom_icons");
   const directoryRead = transfer.indexOf("readdir(customIconOwnerDir, { withFileTypes: true })");

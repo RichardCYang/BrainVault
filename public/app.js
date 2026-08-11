@@ -12964,7 +12964,9 @@ elements.accountDataImport.addEventListener("click", async () => {
       pages: formatNumber(counts.pages),
       blocks: formatNumber(counts.blocks),
       attachments: formatNumber(counts.attachments),
-      shares: formatNumber(counts.shares ?? 0)
+      shares: formatNumber(counts.shares ?? 0),
+      pageVersions: formatNumber(counts.pageVersions ?? 0),
+      navigationCollapsedPages: formatNumber(counts.navigationCollapsedPages ?? 0)
     });
     setAccountMessage(message);
     setStatus(message);

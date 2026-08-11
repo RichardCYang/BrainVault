@@ -8,7 +8,7 @@ test("backup v3 preserves every per-account attachment file, including retained 
   const transfer = normalize(await readFile(new URL("../src/lib/data-transfer.ts", import.meta.url), "utf8"));
 
   assert.match(transfer, /retainedAttachments: z\.array\(retainedAttachmentSchema\)/);
-  assert.match(transfer, /Version 3 backups must declare retained attachment files/);
+  assert.match(transfer, /Version 3 and newer backups must declare retained attachment files/);
   assert.match(transfer, /const attachmentOwnerDir = path\.join\(attachmentUploadRoot, userId\)/);
   assert.match(transfer, /attachmentEntries = attachmentEntries\.filter\(\(entry\) => entry\.name !== dataRestoreGenerationMarkerName\)/);
   assert.match(transfer, /if \(activeAttachmentNames\.has\(entry\.name\)\) continue;/);

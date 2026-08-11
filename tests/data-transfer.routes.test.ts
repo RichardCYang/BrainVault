@@ -14,6 +14,11 @@ const store = vi.hoisted(() => ({
   blocks: new Map<string, Record<string, unknown>>(),
   tags: new Map<string, Record<string, unknown>>(),
   pageTags: [] as Array<{ page_id: string; tag_id: string }>,
+  pageVersions: [] as Array<{
+    page_id: string; revision: number; page_edit_version: number; page_content_version: number;
+    actors: string; source: string; change_count: number; change_summary: string; changes: string; created_at: string;
+  }>,
+  navigationCollapsedPageIds: new Set<string>(),
   customIcons: new Map<string, {
     id: string; user_id: string; file_path: string; last_used_at: string; created_at: string;
   }>(),
@@ -132,6 +137,8 @@ beforeEach(async () => {
   }]]);
   store.tags = new Map([[tagId, { id: tagId, name: "backup", created_at: "2026-07-17 00:00:00.000000" }]]);
   store.pageTags = [{ page_id: pageId, tag_id: tagId }];
+  store.pageVersions = [];
+  store.navigationCollapsedPageIds = new Set();
   store.customIcons = new Map();
   store.customIconRemovals = new Map();
   store.shares = [];
@@ -208,6 +215,17 @@ beforeEach(async () => {
     if (sql.startsWith("SELECT id FROM users WHERE id IN")) {
       return params.flatMap((id) => store.users.has(String(id)) ? [{ id: String(id) }] : []);
     }
+    if (sql.includes("FROM page_versions pv")) {
+      return store.pageVersions
+        .filter((version) => store.pages.get(version.page_id)?.owner_id === params[0])
+        .map((version) => ({ ...version }));
+    }
+    if (sql.includes("FROM user_navigation_collapsed_pages np")) {
+      const ownerId = String(params[1] ?? params[0]);
+      return [...store.navigationCollapsedPageIds]
+        .filter((collapsedPageId) => store.pages.get(collapsedPageId)?.owner_id === ownerId)
+        .map((collapsedPageId) => ({ page_id: collapsedPageId }));
+    }
     if (sql.includes("SELECT DISTINCT t.id")) return [...store.tags.values()].map((tag) => ({ ...tag }));
     if (sql.includes("SELECT pt.page_id")) return store.pageTags.map((relation) => ({ ...relation }));
     if (sql.startsWith("SELECT id, owner_id FROM pages WHERE id IN")) {
@@ -251,6 +269,10 @@ beforeEach(async () => {
       for (const [id, block] of store.blocks) if (pageIds.has(String(block.page_id))) store.blocks.delete(id);
       store.pageTags = store.pageTags.filter((relation) => !pageIds.has(relation.page_id));
       store.shares = store.shares.filter((share) => !pageIds.has(share.page_id));
+      store.pageVersions = store.pageVersions.filter((version) => !pageIds.has(version.page_id));
+      for (const collapsedPageId of store.navigationCollapsedPageIds) {
+        if (pageIds.has(collapsedPageId)) store.navigationCollapsedPageIds.delete(collapsedPageId);
+      }
     } else if (sql.startsWith("UPDATE users")) {
       [store.user.name, store.user.avatar_data, store.user.preferred_language, store.user.default_collection_icon] = params;
       if (params[4] !== null && params[4] !== undefined) store.user.theme = params[4];
@@ -273,6 +295,16 @@ beforeEach(async () => {
         shared_by: String(params[3]),
         shared_at: String(params[4])
       });
+    } else if (sql.includes("INSERT INTO page_versions")) {
+      const [importedPageId, revision, pageEditVersion, pageContentVersion, actors, source, changeCount, changeSummary, changes, createdAt] = params;
+      store.pageVersions.push({
+        page_id: String(importedPageId), revision: Number(revision), page_edit_version: Number(pageEditVersion),
+        page_content_version: Number(pageContentVersion), actors: String(actors), source: String(source),
+        change_count: Number(changeCount), change_summary: String(changeSummary), changes: String(changes),
+        created_at: String(createdAt)
+      });
+    } else if (sql.includes("INSERT INTO user_navigation_collapsed_pages")) {
+      store.navigationCollapsedPageIds.add(String(params[1]));
     } else if (sql === "DELETE FROM custom_icons WHERE user_id = ?") {
       for (const [id, icon] of store.customIcons) if (icon.user_id === params[0]) store.customIcons.delete(id);
     } else if (sql === "DELETE FROM custom_icon_library_removals WHERE user_id = ?") {
@@ -522,7 +554,20 @@ describe("Complete data transfer routes", () => {
     await rm(zipPath, { force: true });
   });
 
-  it("exports and restores database rows, page shares, and exact attachment bytes", async () => {
+  it("exports and restores database rows, page shares, page history, navigation state, and exact attachment bytes", async () => {
+    store.pageVersions.push({
+      page_id: pageId,
+      revision: 3,
+      page_edit_version: 7,
+      page_content_version: 11,
+      actors: JSON.stringify([{ id: userId, username: "backup-user", name: "Original User" }]),
+      source: "PAGE_UPDATE",
+      change_count: 1,
+      change_summary: JSON.stringify({ baseline: 0, pageCreated: 0, pageFields: ["title"], blocksCreated: 0, blocksUpdated: 0, blocksDeleted: 0, blocksMoved: 0 }),
+      changes: JSON.stringify([{ kind: "page-updated", fields: [{ field: "title", before: "Before", after: "Original Page" }] }]),
+      created_at: "2026-07-17 00:00:15.000000"
+    });
+    store.navigationCollapsedPageIds.add(pageId);
     store.shares.push({
       page_id: pageId,
       user_id: "usr_collaborator",
@@ -556,6 +601,9 @@ describe("Complete data transfer routes", () => {
       permission: "EDIT",
       created_at: "2026-07-17 00:00:20.000000"
     }]);
+    expect(manifest.data.pageVersions).toHaveLength(1);
+    expect(manifest.data.pageVersions[0]).toMatchObject({ page_id: pageId, revision: 3, source: "PAGE_UPDATE" });
+    expect(manifest.data.navigationCollapsedPageIds).toEqual([pageId]);
     expect(manifest.attachments[0].sha256).toMatch(/^[a-f0-9]{64}$/);
 
     const stalePageVersion = Number(store.pages.get(pageId)!.edit_version);
@@ -564,6 +612,8 @@ describe("Complete data transfer routes", () => {
     store.pages.get(pageId)!.title = "Changed Page";
     store.user.name = "Changed User";
     store.shares = [];
+    store.pageVersions = [];
+    store.navigationCollapsedPageIds.clear();
     await writeFile(getAttachmentFilePath(userId, blockId), Buffer.from("changed bytes"));
 
     const restored = await request(createApp())
@@ -573,7 +623,8 @@ describe("Complete data transfer routes", () => {
       .expect(200);
 
     expect(restored.body.counts).toEqual({
-      pages: 1, blocks: 1, attachments: 1, retainedAttachments: 0, pageCovers: 0, customIcons: 0, tags: 1, shares: 1
+      pages: 1, blocks: 1, attachments: 1, retainedAttachments: 0, pageCovers: 0, customIcons: 0, tags: 1, shares: 1,
+      pageVersions: 1, navigationCollapsedPages: 1
     });
     expect(restored.body.sharing).toEqual({ mode: "backup", count: 1 });
     expect(store.pages.get(pageId)?.title).toBe("Original Page");
@@ -590,6 +641,9 @@ describe("Complete data transfer routes", () => {
       shared_by: userId,
       shared_at: "2026-07-17 00:00:20.000000"
     }]);
+    expect(store.pageVersions).toHaveLength(1);
+    expect(store.pageVersions[0]).toMatchObject({ page_id: pageId, revision: 3, source: "PAGE_UPDATE" });
+    expect(store.navigationCollapsedPageIds.has(pageId)).toBe(true);
     expect(store.disconnectPageCollaborators).toHaveBeenCalledWith(pageId, "Workspace data is being restored");
     expect(store.restoreEvents.indexOf(`disconnect:${pageId}`)).toBeLessThan(store.restoreEvents.indexOf("delete-pages"));
     await expect(readFile(getAttachmentFilePath(userId, blockId))).resolves.toEqual(originalBytes);

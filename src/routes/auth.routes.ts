@@ -347,29 +347,40 @@ authRouter.patch(
     try {
       const currentUser = requireUser(req.user);
       const { pageId, collapsed } = req.body as z.infer<typeof navigationPreferenceSchema>;
-      const page = await db.queryOne<{ id: string }>(
-        `SELECT p.id
-         FROM pages p
-         LEFT JOIN page_shares ps
-           ON ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
-         WHERE p.id = ? AND (p.owner_id = ? OR ps.user_id IS NOT NULL)
-         LIMIT 1`,
-        [currentUser.id, pageId, currentUser.id]
-      );
-      if (!page) throw new ApiError(404, "NOT_FOUND", "Page not found");
+      await transaction(async (client) => {
+        // Backup/restore uses the same per-user row lock. Serializing preference
+        // mutations with that lock prevents a collapse/expand write from landing
+        // between the backup snapshot and its archived navigation state.
+        const lockedUser = await client.queryOne<{ id: string }>(
+          "SELECT id FROM users WHERE id = ? FOR UPDATE",
+          [currentUser.id]
+        );
+        if (!lockedUser) throw new ApiError(404, "NOT_FOUND", "User not found");
 
-      if (collapsed) {
-        await db.execute(
-          `INSERT IGNORE INTO user_navigation_collapsed_pages (user_id, page_id)
-           VALUES (?, ?)`,
-          [currentUser.id, pageId]
+        const page = await client.queryOne<{ id: string }>(
+          `SELECT p.id
+           FROM pages p
+           LEFT JOIN page_shares ps
+             ON ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+           WHERE p.id = ? AND (p.owner_id = ? OR ps.user_id IS NOT NULL)
+           LIMIT 1`,
+          [currentUser.id, pageId, currentUser.id]
         );
-      } else {
-        await db.execute(
-          "DELETE FROM user_navigation_collapsed_pages WHERE user_id = ? AND page_id = ?",
-          [currentUser.id, pageId]
-        );
-      }
+        if (!page) throw new ApiError(404, "NOT_FOUND", "Page not found");
+
+        if (collapsed) {
+          await client.execute(
+            `INSERT IGNORE INTO user_navigation_collapsed_pages (user_id, page_id)
+             VALUES (?, ?)`,
+            [currentUser.id, pageId]
+          );
+        } else {
+          await client.execute(
+            "DELETE FROM user_navigation_collapsed_pages WHERE user_id = ? AND page_id = ?",
+            [currentUser.id, pageId]
+          );
+        }
+      });
 
       res.setHeader("Cache-Control", "private, no-store");
       res.json({ pageId, collapsed });

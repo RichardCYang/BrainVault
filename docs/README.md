@@ -41,6 +41,14 @@ docs/<topic>/<YYYY-MM-DD>/<document>
 
 ## Data-loss and integrity reports
 
+### 2026-08-11
+
+- [Backup workspace-state round-trip integrity review](data-loss/2026-08-11/backup-workspace-state-roundtrip-integrity.md)
+
+### 2026-08-10
+
+- [Complete uploaded-asset backup and restore review](data-loss/2026-08-10/complete-upload-asset-backup-restore.md)
+
 ### 2026-07-28
 
 - [Critical persistence and recovery paths](data-loss/2026-07-28/critical-persistence-and-recovery-paths.md)
