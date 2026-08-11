@@ -11,8 +11,8 @@ Never commit a real `.env` file.
 | `NODE_ENV` | `development` | Runtime environment |
 | `HOST` | `127.0.0.1` | Network address to bind; set `0.0.0.0` or `::` only when external access is intentional |
 | `PORT` | `4000` | HTTP listener port in `off`/`proxy` mode or HTTPS listener port in `posh-acme` mode |
-| `DATABASE_URL` | Required; `env:init` generates the password | MariaDB connection used by the app; a non-empty, non-default password is required |
-| `MARIADB_ADMIN_URL` | Not set | Optional admin connection for database and exact-host user creation |
+| `DATABASE_URL` | Required; `env:init` generates the password | MariaDB connection used by the app; a non-empty, non-default password is required, and remote production hosts require `?ssl=true` |
+| `MARIADB_ADMIN_URL` | Not set | Optional admin connection for database and exact-host user creation; remote production hosts require `?ssl=true` |
 | `DB_USER_HOSTS` | `localhost,127.0.0.1,::1` | Comma-separated exact MariaDB account hosts; `%` and `_` wildcards are rejected |
 | `AUTO_BOOTSTRAP_DATABASE` | `true` | Run database bootstrap before listening |
 | `DATABASE_CONNECTION_LIMIT` | `10` | Maximum database pool size |
@@ -87,6 +87,8 @@ The attachment-upload and import admission gates use process-local state. A hori
 ## Database behavior
 
 With `AUTO_BOOTSTRAP_DATABASE=true`, application startup attempts to prepare the target database, reconcile the baseline schema, and apply migrations before listening.
+
+For remote database hosts, append `?ssl=true` to the connection URL. The URL parser forwards this as the MariaDB Connector/Node.js `ssl` option. Production rejects non-loopback `DATABASE_URL` and `MARIADB_ADMIN_URL` values that omit TLS, and unsupported URL query parameters fail closed instead of being silently ignored.
 
 Use `MARIADB_ADMIN_URL` when the application account does not yet exist or cannot create the database/user itself. Bootstrap creates or updates the application account on each exact `DB_USER_HOSTS` entry, grants only `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `INDEX`, `DROP`, and `REFERENCES` on the target schema, and removes the same username at the wildcard host `%`. To move schema management outside the application, set:
 

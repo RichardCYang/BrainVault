@@ -1,6 +1,7 @@
 import "dotenv/config";
 import mariadb, { type Pool } from "mariadb";
 import {
+  assertSecureDatabaseTransport,
   databaseOptionsWithSchema,
   databaseOptionsWithoutSchema,
   parseDatabaseUrl,
@@ -23,6 +24,11 @@ async function main() {
     .filter(Boolean);
   if (!databaseUserHosts.length || databaseUserHosts.some((host) => host.includes("%") || host.includes("_"))) {
     throw new Error("DB_USER_HOSTS must contain exact MariaDB account hosts without wildcards");
+  }
+  const production = process.env.NODE_ENV === "production";
+  assertSecureDatabaseTransport(databaseUrl, { production, name: "DATABASE_URL" });
+  if (process.env.MARIADB_ADMIN_URL) {
+    assertSecureDatabaseTransport(process.env.MARIADB_ADMIN_URL, { production, name: "MARIADB_ADMIN_URL" });
   }
   const target = parseDatabaseUrl(databaseUrl, { requireDatabase: true });
   const admin = parseDatabaseUrl(process.env.MARIADB_ADMIN_URL ?? databaseUrl, { requireDatabase: false });

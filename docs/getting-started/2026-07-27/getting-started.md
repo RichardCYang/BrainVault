@@ -6,7 +6,7 @@
 - npm 10.9 or newer
 - A running MariaDB server
 
-Docker is not required. MariaDB may run locally or on a remote host as long as the credentials in `DATABASE_URL` can reach it.
+Docker is not required. MariaDB may run locally or on a remote host as long as the credentials in `DATABASE_URL` can reach it. In production, a remote database URL must append `?ssl=true`; BrainVault rejects plaintext remote database transport.
 
 ## First-time setup
 
@@ -116,6 +116,7 @@ Before using production mode:
 - Keep `REGISTRATION_ENABLED` unset or `false` unless public sign-up is intentional.
 - Keep `SERVE_INTERNAL_DOCS=false` unless authenticated project documentation must be exposed deliberately.
 - Set `DB_USER_HOSTS` to the exact application client hosts and rerun `npm run db:init` to remove any legacy wildcard account.
+- When `DATABASE_URL` or `MARIADB_ADMIN_URL` points to a non-loopback host, append `?ssl=true`; production startup and `db:init` reject plaintext remote database connections.
 - Set `PUBLIC_ORIGIN` to the canonical HTTPS origin. Use `HTTPS_MODE=posh-acme` with `POSH_ACME_CERT_PATH` for direct Posh-ACME TLS, or `HTTPS_MODE=proxy` when a trusted reverse proxy terminates TLS.
 - In proxy mode, configure `TRUST_PROXY_ADDRESSES` with the exact proxy IP or narrowest practical CIDR. Numeric `TRUST_PROXY_HOPS` trust is disabled and must remain `0`.
 - In proxy mode, keep the backend HTTP port private; allow only the proxy or local health checker to reach it. In Posh-ACME mode, expose only the intended HTTPS listener.

@@ -2,6 +2,7 @@ import "dotenv/config";
 import { randomBytes } from "node:crypto";
 import net from "node:net";
 import { z } from "zod";
+import { assertSecureDatabaseTransport } from "../lib/database-url.js";
 
 const knownInsecureSecrets = new Set(
   [
@@ -218,6 +219,16 @@ function assertTrustedProxyAddress(value: string) {
 }
 
 assertDatabasePasswordIsSecure(parsedEnv.DATABASE_URL);
+assertSecureDatabaseTransport(parsedEnv.DATABASE_URL, {
+  production: parsedEnv.NODE_ENV === "production",
+  name: "DATABASE_URL"
+});
+if (parsedEnv.MARIADB_ADMIN_URL) {
+  assertSecureDatabaseTransport(parsedEnv.MARIADB_ADMIN_URL, {
+    production: parsedEnv.NODE_ENV === "production",
+    name: "MARIADB_ADMIN_URL"
+  });
+}
 
 if (parsedEnv.NODE_ENV === "production" && !parsedEnv.JWT_SECRET) {
   throw new Error("JWT_SECRET must be explicitly configured in production");
