@@ -2139,6 +2139,12 @@ kbd {
   line-height: 1.4;
 }
 
+.editor-block-row[data-block-type="UNORDERED_LIST"] .block-row-input,
+.editor-block-row[data-block-type="ORDERED_LIST"] .block-row-input {
+  padding-left: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .editor-block-row[data-block-type="QUOTE"] .block-row-input {
   border-left: 3px solid #76b9e8;
   padding-left: 0.72rem;
@@ -4828,6 +4834,27 @@ kbd {
   width: auto;
   margin-top: 0.35rem;
   accent-color: var(--focus);
+}
+
+.rendered-list {
+  margin: 0.4rem 0;
+  padding-left: 1.65rem;
+}
+
+.rendered-list > li {
+  padding-left: 0.15rem;
+}
+
+.rendered-list > li + li {
+  margin-top: 0.28rem;
+}
+
+.rendered-list--unordered {
+  list-style-type: disc;
+}
+
+.rendered-list--ordered {
+  list-style-type: decimal;
 }
 
 .checkbox-label {

@@ -45,6 +45,8 @@ export const blockTypeSchema = z.enum([
   "HEADING_2",
   "HEADING_3",
   "TODO",
+  "UNORDERED_LIST",
+  "ORDERED_LIST",
   "QUOTE",
   "CALLOUT",
   "TOGGLE",

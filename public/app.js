@@ -312,6 +312,8 @@ const blockTypeLabels = {
   HEADING_2: "blocks.types.HEADING_2",
   HEADING_3: "blocks.types.HEADING_3",
   TODO: "blocks.types.TODO",
+  UNORDERED_LIST: "blocks.types.UNORDERED_LIST",
+  ORDERED_LIST: "blocks.types.ORDERED_LIST",
   QUOTE: "blocks.types.QUOTE",
   CALLOUT: "blocks.types.CALLOUT",
   TOGGLE: "blocks.types.TOGGLE",
@@ -601,6 +603,8 @@ const slashCommands = [
   { type: "HEADING_2", command: "/h2", icon: "heading-2" },
   { type: "HEADING_3", command: "/h3", icon: "heading-3" },
   { type: "TODO", command: "/todo", icon: "todo" },
+  { type: "UNORDERED_LIST", command: "/bullet", icon: "unordered-list" },
+  { type: "ORDERED_LIST", command: "/number", icon: "ordered-list" },
   { type: "QUOTE", command: "/quote", icon: "quote" },
   { type: "CALLOUT", command: "/callout", icon: "callout" },
   { type: "TOGGLE", command: "/toggle", icon: "toggle" },
@@ -618,6 +622,8 @@ const slashCommands = [
   { type: "VIDEO", command: "/video", icon: "video" },
   { type: "ATTACHMENT", command: "/file", icon: "attachment" }
 ];
+
+const listBlockTypes = new Set(["UNORDERED_LIST", "ORDERED_LIST"]);
 
 // These block types cannot retain arbitrary source markdown. When their slash command is
 // used on a later line, insert a new sibling instead of replacing earlier note text.
@@ -660,6 +666,22 @@ const slashCommandIconShapes = {
   todo: [
     ["path", { d: "m9 11 3 3L22 4" }],
     ["path", { d: "M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" }]
+  ],
+  "unordered-list": [
+    ["circle", { cx: "4", cy: "6", r: "1" }],
+    ["circle", { cx: "4", cy: "12", r: "1" }],
+    ["circle", { cx: "4", cy: "18", r: "1" }],
+    ["path", { d: "M8 6h13" }],
+    ["path", { d: "M8 12h13" }],
+    ["path", { d: "M8 18h13" }]
+  ],
+  "ordered-list": [
+    ["path", { d: "M3 5h2v4" }],
+    ["path", { d: "M3 14c0-1 2-1.5 2-3 0-.8-.6-1.3-1.5-1.3-.6 0-1.1.2-1.5.6" }],
+    ["path", { d: "M3 14h2" }],
+    ["path", { d: "M8 6h13" }],
+    ["path", { d: "M8 12h13" }],
+    ["path", { d: "M8 18h13" }]
   ],
   quote: [
     ["path", { d: "M3 21c3 0 7-1 7-8V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v6c0 1.1.9 2 2 2h3c0 4-2 6-5 8Z" }],
@@ -7223,6 +7245,10 @@ function getToggleMarkdownFromRow(row, fallback = "") {
 function isBlockMarkdownEmpty(row, textarea) {
   if (row?.dataset.blockType === "TOGGLE") {
     return !row.querySelector(".toggle-title-input")?.value.trim() && !textarea?.value.trim();
+  }
+  if (listBlockTypes.has(row?.dataset.blockType)) {
+    const content = textarea?.value.replace(/^\s*(?:[-+*]|\d+[.)])\s*/gm, "") ?? "";
+    return !content.trim();
   }
   return !textarea?.value.trim();
 }
@@ -14263,6 +14289,42 @@ elements.blockList.addEventListener("change", (event) => {
   }
 });
 
+async function handleListBlockEnter(event, textarea, row) {
+  const type = row?.dataset.blockType;
+  if (!listBlockTypes.has(type) || event.key !== "Enter" || event.shiftKey || event.isComposing) return false;
+
+  const value = textarea.value;
+  const selectionStart = textarea.selectionStart ?? value.length;
+  const selectionEnd = textarea.selectionEnd ?? selectionStart;
+  const lineStart = value.lastIndexOf("\n", Math.max(0, selectionStart - 1)) + 1;
+  const nextBreak = value.indexOf("\n", selectionEnd);
+  const lineEnd = nextBreak < 0 ? value.length : nextBreak;
+  const currentLine = value.slice(lineStart, lineEnd);
+  const markerPattern = type === "ORDERED_LIST" ? /^\s*(\d+)[.)]\s*/ : /^\s*([-+*])\s*/;
+  const markerMatch = currentLine.match(markerPattern);
+  const itemContent = currentLine.replace(markerPattern, "").trim();
+
+  // Pressing Enter on an empty list item exits the list through the normal block append path.
+  if (!itemContent) {
+    if (markerMatch) {
+      textarea.setRangeText("", lineStart, lineEnd, "end");
+      autoGrowTextarea(textarea);
+      scheduleBlockSave(row);
+    }
+    return false;
+  }
+
+  const nextMarker = type === "ORDERED_LIST"
+    ? `${Math.max(1, Number.parseInt(markerMatch?.[1] ?? "1", 10) || 1) + 1}. `
+    : `${markerMatch?.[1] ?? "-"} `;
+
+  event.preventDefault();
+  textarea.setRangeText(`\n${nextMarker}`, selectionStart, selectionEnd, "end");
+  autoGrowTextarea(textarea);
+  scheduleBlockSave(row);
+  return true;
+}
+
 elements.blockList.addEventListener("keydown", async (event) => {
   if (!requireWritablePage({ announce: false })) return;
   const toggleTitle = event.target.closest(".toggle-title-input");
@@ -14352,6 +14414,8 @@ elements.blockList.addEventListener("keydown", async (event) => {
     }
     return;
   }
+
+  if (await handleListBlockEnter(event, textarea, row)) return;
 
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();

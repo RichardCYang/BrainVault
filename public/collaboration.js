@@ -24,6 +24,8 @@ const COLLABORATIVE_BLOCK_TYPES = new Set([
   "HEADING_2",
   "HEADING_3",
   "TODO",
+  "UNORDERED_LIST",
+  "ORDERED_LIST",
   "QUOTE",
   "CALLOUT",
   "TOGGLE",

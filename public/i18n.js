@@ -4434,6 +4434,61 @@ for (const [language, addition] of Object.entries(toggleTranslationAdditions)) {
   catalog.toggle = addition.toggle;
 }
 
+
+const listTranslationAdditions = {
+  en: {
+    unorderedBlockType: "Bulleted list",
+    orderedBlockType: "Numbered list",
+    unorderedSlash: { label: "Bulleted list", hint: "Create a list with bullets", keywords: "bullet unordered list ul" },
+    orderedSlash: { label: "Numbered list", hint: "Create a numbered list", keywords: "number ordered list ol" }
+  },
+  ko: {
+    unorderedBlockType: "순서 없는 리스트",
+    orderedBlockType: "순서 있는 리스트",
+    unorderedSlash: { label: "순서 없는 리스트", hint: "글머리 기호 목록 만들기", keywords: "bullet unordered list 글머리 목록 순서없음" },
+    orderedSlash: { label: "순서 있는 리스트", hint: "번호가 있는 목록 만들기", keywords: "number ordered list 번호 목록 순서" }
+  },
+  ja: {
+    unorderedBlockType: "箇条書きリスト",
+    orderedBlockType: "番号付きリスト",
+    unorderedSlash: { label: "箇条書きリスト", hint: "箇条書きのリストを作成", keywords: "bullet unordered list 箇条書き リスト" },
+    orderedSlash: { label: "番号付きリスト", hint: "番号付きのリストを作成", keywords: "number ordered list 番号 リスト" }
+  },
+  fr: {
+    unorderedBlockType: "Liste à puces",
+    orderedBlockType: "Liste numérotée",
+    unorderedSlash: { label: "Liste à puces", hint: "Créer une liste à puces", keywords: "puces liste unordered bullet" },
+    orderedSlash: { label: "Liste numérotée", hint: "Créer une liste numérotée", keywords: "numérotée liste ordered number" }
+  },
+  de: {
+    unorderedBlockType: "Aufzählung",
+    orderedBlockType: "Nummerierte Liste",
+    unorderedSlash: { label: "Aufzählung", hint: "Eine Liste mit Aufzählungszeichen erstellen", keywords: "aufzählung liste bullet unordered" },
+    orderedSlash: { label: "Nummerierte Liste", hint: "Eine nummerierte Liste erstellen", keywords: "nummeriert liste number ordered" }
+  },
+  es: {
+    unorderedBlockType: "Lista con viñetas",
+    orderedBlockType: "Lista numerada",
+    unorderedSlash: { label: "Lista con viñetas", hint: "Crear una lista con viñetas", keywords: "viñetas lista bullet unordered" },
+    orderedSlash: { label: "Lista numerada", hint: "Crear una lista numerada", keywords: "numerada lista number ordered" }
+  },
+  pt: {
+    unorderedBlockType: "Lista com marcadores",
+    orderedBlockType: "Lista numerada",
+    unorderedSlash: { label: "Lista com marcadores", hint: "Criar uma lista com marcadores", keywords: "marcadores lista bullet unordered" },
+    orderedSlash: { label: "Lista numerada", hint: "Criar uma lista numerada", keywords: "numerada lista number ordered" }
+  }
+};
+
+for (const [language, addition] of Object.entries(listTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  catalog.blocks.types.UNORDERED_LIST = addition.unorderedBlockType;
+  catalog.blocks.types.ORDERED_LIST = addition.orderedBlockType;
+  catalog.slash.UNORDERED_LIST = addition.unorderedSlash;
+  catalog.slash.ORDERED_LIST = addition.orderedSlash;
+}
+
 function readStorage(key) {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;

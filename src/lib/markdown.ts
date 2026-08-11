@@ -173,6 +173,7 @@ const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   details: ["class", "open"],
   summary: ["class"],
   ul: ["class"],
+  ol: ["class"],
   li: ["class"]
 };
 
@@ -230,6 +231,28 @@ function stripHeadingMarks(raw: string) {
 
 function stripBlockquoteMarks(raw: string) {
   return raw.replace(/^\s*>\s?/gm, "");
+}
+
+function stripListItemMarker(raw: string, type: "UNORDERED_LIST" | "ORDERED_LIST") {
+  const pattern = type === "ORDERED_LIST" ? /^\s*\d+[.)]\s+/ : /^\s*[-+*]\s+/;
+  return raw.replace(pattern, "").trim();
+}
+
+function renderListBlock(type: "UNORDERED_LIST" | "ORDERED_LIST", raw: string) {
+  const tag = type === "ORDERED_LIST" ? "ol" : "ul";
+  const variant = type === "ORDERED_LIST" ? "ordered" : "unordered";
+  const items = raw
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => stripListItemMarker(line, type))
+    .filter(Boolean)
+    .map((item) => `<li>${markdown.renderInline(item)}</li>`)
+    .join("");
+
+  return sanitizeHtml(
+    `<${tag} class="rendered-list rendered-list--${variant}">${items}</${tag}>`,
+    sanitizeOptions
+  );
 }
 
 function stripFence(raw: string) {
@@ -384,6 +407,9 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
         metadata
       );
     }
+    case "UNORDERED_LIST":
+    case "ORDERED_LIST":
+      return renderListBlock(type, markdownValue);
     case "QUOTE":
       return renderTextAlignment(renderMarkdown(`> ${stripBlockquoteMarks(markdownValue)}`), metadata);
     case "CALLOUT": {
