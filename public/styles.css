@@ -2150,6 +2150,8 @@ kbd {
   --callout-border: rgba(80, 151, 207, 0.18);
   --callout-background: #edf8ff;
   --callout-ink: #294f69;
+  margin-top: 0.45rem;
+  margin-bottom: 0.45rem;
 }
 
 .editor-block-row[data-block-type="CALLOUT"][data-callout-type="info"] {
