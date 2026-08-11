@@ -49,6 +49,16 @@ describe("Page read/write mode", () => {
     expect(styles).toContain('.page-view.is-read-only .block-handle');
   });
 
+  it("keeps read-mode callouts to a single rendered border", () => {
+    expect(styles).toMatch(
+      /\.page-view\.is-read-only \.editor-block-row\[data-block-type="CALLOUT"\] \.block-row-body\s*\{[^}]*border:\s*0;[^}]*background:\s*transparent;[^}]*padding:\s*0;/s
+    );
+    expect(styles).toMatch(
+      /\.page-view\.is-read-only \.editor-block-row\[data-block-type="CALLOUT"\] \.block-row-body::before\s*\{[^}]*content:\s*none;/s
+    );
+    expect(styles).toMatch(/\.rendered-callout\s*\{[^}]*border:\s*1px solid/s);
+  });
+
   it("guards page and block mutations behind write mode", () => {
     expect(client).toContain('function requireWritablePage');
     expect(client).toMatch(/async function saveBlockRow[\s\S]*requireWritablePage/);

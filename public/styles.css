@@ -4187,6 +4187,27 @@ kbd {
   display: block;
 }
 
+/*
+ * In read mode, CALLOUT content is rendered as a complete .rendered-callout card.
+ * Remove the editor-only outer callout surface so the rendered card is not
+ * wrapped by a second border/background/icon layer.
+ */
+.page-view.is-read-only .editor-block-row[data-block-type="CALLOUT"],
+.page-view.is-read-only .editor-block-row[data-block-type="CALLOUT"]:hover,
+.page-view.is-read-only .editor-block-row[data-block-type="CALLOUT"]:focus-within {
+  background: transparent;
+}
+
+.page-view.is-read-only .editor-block-row[data-block-type="CALLOUT"] .block-row-body {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.page-view.is-read-only .editor-block-row[data-block-type="CALLOUT"] .block-row-body::before {
+  content: none;
+}
+
 .page-view.is-read-only .inline-todo {
   display: none;
 }
