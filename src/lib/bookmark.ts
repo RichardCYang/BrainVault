@@ -14,6 +14,12 @@ import {
   enforceAbsoluteRequestDeadline as enforceRequestDeadline,
   type AbsoluteDeadlineRequest
 } from "./request-deadline.js";
+import {
+  isRedditBookmarkUrl,
+  parseRedditOEmbedPayload,
+  type RedditOEmbedPayload
+} from "./reddit-bookmark.js";
+export { isRedditBookmarkUrl, parseRedditOEmbedPayload } from "./reddit-bookmark.js";
 
 export const bookmarkLimits = {
   items: 50,
@@ -54,6 +60,15 @@ type HtmlResponse = {
   url: URL;
   html: string;
 };
+
+type JsonResponse = {
+  url: URL;
+  json: unknown;
+};
+
+const redditOEmbedEndpoint = "https://www.reddit.com/oembed";
+const redditOEmbedMaxBytes = 64 * 1024;
+const redditDirectFetchBudgetMs = 2_500;
 
 function parseMetadata(metadata: unknown): Record<string, unknown> | null {
   if (!metadata) return null;
@@ -458,6 +473,158 @@ async function fetchHtml(
   });
 }
 
+async function fetchJson(
+  value: string | URL,
+  redirectsLeft: number = 2,
+  deadline: number = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS
+): Promise<JsonResponse> {
+  const { url, addresses } = await validateFetchUrl(value);
+  const client = url.protocol === "https:" ? https : http;
+  const remainingTime = deadline - Date.now();
+  if (remainingTime <= 0) {
+    throw createBookmarkFetchTimeoutError();
+  }
+
+  return new Promise<JsonResponse>((resolve, reject) => {
+    let settled = false;
+    const rejectFetch = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      if (error instanceof ApiError) {
+        reject(error);
+        return;
+      }
+      const systemCode = error && typeof error === "object" && "code" in error ? String(error.code) : undefined;
+      reject(new ApiError(422, "BOOKMARK_FETCH_FAILED", "The bookmark metadata service could not be fetched", {
+        reason: "network",
+        systemCode
+      }));
+    };
+
+    const request = client.request(
+      url,
+      {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          "Accept-Encoding": "identity",
+          "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+          // Reddit oEmbed is a supported metadata surface. Keep the client identity explicit
+          // instead of impersonating Googlebot, Facebook, Discord, or another third-party bot.
+          "User-Agent": "BrainVault/1.0 (user-initiated bookmark preview; Reddit oEmbed)"
+        },
+        lookup: createPinnedLookup(addresses),
+        autoSelectFamily: addresses.length > 1,
+        autoSelectFamilyAttemptTimeout: 250
+      },
+      (response) => {
+        const status = response.statusCode ?? 0;
+        const location = response.headers.location;
+
+        if (status >= 300 && status < 400 && location) {
+          response.resume();
+          if (redirectsLeft <= 0) {
+            rejectFetch(new ApiError(422, "BOOKMARK_REDIRECT_LIMIT", "The bookmark metadata service redirected too many times"));
+            return;
+          }
+          let nextUrl: URL;
+          try {
+            nextUrl = new URL(location, url);
+          } catch {
+            rejectFetch(new ApiError(422, "BOOKMARK_FETCH_FAILED", "The bookmark metadata service returned an invalid redirect"));
+            return;
+          }
+          if (!isRedditBookmarkUrl(nextUrl)) {
+            rejectFetch(new ApiError(422, "BOOKMARK_FETCH_FAILED", "The Reddit metadata service redirected outside Reddit", {
+              reason: "redirect-host"
+            }));
+            return;
+          }
+          fetchJson(nextUrl, redirectsLeft - 1, deadline).then(
+            (result) => {
+              if (settled) return;
+              settled = true;
+              resolve(result);
+            },
+            rejectFetch
+          );
+          return;
+        }
+
+        if (status < 200 || status >= 300) {
+          response.resume();
+          rejectFetch(new ApiError(422, "BOOKMARK_FETCH_FAILED", `The bookmark metadata service returned HTTP ${status || "error"}`, {
+            reason: "http",
+            status
+          }));
+          return;
+        }
+
+        const contentType = String(response.headers["content-type"] ?? "");
+        if (!contentType || !/application\/json|[^;]+\+json/i.test(contentType)) {
+          response.resume();
+          rejectFetch(new ApiError(422, "BOOKMARK_FETCH_FAILED", "The bookmark metadata service did not return JSON", {
+            reason: "content-type",
+            contentType
+          }));
+          return;
+        }
+
+        const contentEncoding = String(response.headers["content-encoding"] ?? "").toLowerCase().trim();
+        if (contentEncoding && contentEncoding !== "identity") {
+          response.resume();
+          rejectFetch(new ApiError(422, "BOOKMARK_FETCH_FAILED", "The bookmark metadata service ignored the requested response encoding", {
+            reason: "encoding",
+            contentEncoding
+          }));
+          return;
+        }
+
+        const chunks: Buffer[] = [];
+        let total = 0;
+        response.on("data", (rawChunk: Buffer | string) => {
+          if (settled) return;
+          const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
+          total += chunk.length;
+          if (total > redditOEmbedMaxBytes) {
+            response.destroy();
+            rejectFetch(new ApiError(422, "BOOKMARK_FETCH_FAILED", "The bookmark metadata response was too large", {
+              reason: "size"
+            }));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        response.on("end", () => {
+          if (settled) return;
+          let json: unknown;
+          try {
+            json = JSON.parse(decodeResponseBody(Buffer.concat(chunks), contentType));
+          } catch {
+            rejectFetch(new ApiError(422, "BOOKMARK_FETCH_FAILED", "The bookmark metadata service returned invalid JSON", {
+              reason: "json"
+            }));
+            return;
+          }
+          settled = true;
+          resolve({ url, json });
+        });
+        response.on("aborted", () => rejectFetch(new Error("The bookmark metadata response was aborted")));
+        response.on("error", rejectFetch);
+      }
+    );
+
+    enforceAbsoluteRequestDeadline(request, remainingTime);
+    request.setTimeout(remainingTime, () => {
+      request.destroy(createBookmarkFetchTimeoutError());
+    });
+    request.on("error", rejectFetch);
+    request.end();
+  });
+}
+
 function decodeHtmlEntities(value: string) {
   const named: Record<string, string> = {
     amp: "&",
@@ -566,8 +733,8 @@ async function normalizePublicPreviewUrl(value: string, fallback = "") {
   }
 }
 
-export async function fetchBookmarkPreview(value: string): Promise<BookmarkPreview> {
-  const response = await fetchHtml(value);
+async function fetchBookmarkPreviewFromHtml(value: string, deadline: number): Promise<BookmarkPreview> {
+  const response = await fetchHtml(value, bookmarkLimits.redirects, deadline);
   const parsed = parseBookmarkPreview(response.html, response.url);
   const finalUrl = response.url.toString();
   const pageUrl = await normalizePublicPreviewUrl(parsed.url, finalUrl);
@@ -584,6 +751,85 @@ export async function fetchBookmarkPreview(value: string): Promise<BookmarkPrevi
     faviconUrl,
     siteName: parsed.siteName || new URL(pageUrl).hostname
   };
+}
+
+function asRedditOEmbedPayload(value: unknown): RedditOEmbedPayload | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as RedditOEmbedPayload)
+    : null;
+}
+
+async function fetchRedditOEmbedPreview(value: string, deadline: number): Promise<BookmarkPreview> {
+  const sourceUrl = normalizeBookmarkUrl(value);
+  if (!sourceUrl || !isRedditBookmarkUrl(sourceUrl)) {
+    throw new ApiError(400, "BOOKMARK_URL_INVALID", "Enter a valid Reddit HTTP or HTTPS URL");
+  }
+
+  const endpoint = new URL(redditOEmbedEndpoint);
+  endpoint.searchParams.set("url", sourceUrl);
+  endpoint.searchParams.set("format", "json");
+  const response = await fetchJson(endpoint, 2, deadline);
+  const payload = asRedditOEmbedPayload(response.json);
+  const rawPreview = payload ? parseRedditOEmbedPayload(payload, sourceUrl) : null;
+  if (!rawPreview) {
+    throw new ApiError(422, "BOOKMARK_FETCH_FAILED", "Reddit did not return usable bookmark metadata", {
+      reason: "reddit-oembed"
+    });
+  }
+
+  const pageUrl = await normalizePublicPreviewUrl(rawPreview.url, sourceUrl);
+  const fallbackFavicon = new URL("/favicon.ico", pageUrl).toString();
+  const [imageUrl, faviconUrl] = await Promise.all([
+    normalizePublicPreviewUrl(rawPreview.imageUrl),
+    normalizePublicPreviewUrl(rawPreview.faviconUrl, fallbackFavicon)
+  ]);
+
+  return {
+    url: pageUrl,
+    title: normalizeText(rawPreview.title, bookmarkLimits.titleLength) || new URL(pageUrl).hostname,
+    description: normalizeText(rawPreview.description, bookmarkLimits.descriptionLength),
+    imageUrl,
+    faviconUrl,
+    siteName: normalizeText(rawPreview.siteName, bookmarkLimits.siteNameLength) || "Reddit"
+  };
+}
+
+const redditOEmbedFallbackCodes = new Set([
+  "BOOKMARK_FETCH_FAILED",
+  "BOOKMARK_FETCH_TIMEOUT",
+  "BOOKMARK_NOT_HTML",
+  "BOOKMARK_PAGE_TOO_LARGE",
+  "BOOKMARK_REDIRECT_LIMIT"
+]);
+
+function shouldUseRedditOEmbedFallback(error: unknown) {
+  return error instanceof ApiError && redditOEmbedFallbackCodes.has(error.code);
+}
+
+export async function fetchBookmarkPreview(value: string): Promise<BookmarkPreview> {
+  const normalizedInput = normalizeBookmarkUrl(value);
+  const isReddit = Boolean(normalizedInput && isRedditBookmarkUrl(normalizedInput));
+  const deadline = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS;
+
+  if (!isReddit) {
+    return fetchBookmarkPreviewFromHtml(value, deadline);
+  }
+
+  // Preserve the existing OpenGraph behavior when Reddit serves it normally, but do not
+  // consume the full request budget on a predictable bot/network-policy rejection.
+  const directDeadline = Math.min(deadline, Date.now() + redditDirectFetchBudgetMs);
+  try {
+    return await fetchBookmarkPreviewFromHtml(value, directDeadline);
+  } catch (directError) {
+    if (!shouldUseRedditOEmbedFallback(directError)) throw directError;
+    try {
+      return await fetchRedditOEmbedPreview(normalizedInput!, deadline);
+    } catch {
+      // Keep the pre-existing warning/fallback semantics if Reddit's supported metadata
+      // surface is unavailable as well. The bookmark is still created without data loss.
+      throw directError;
+    }
+  }
 }
 
 

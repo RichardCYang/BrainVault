@@ -6,8 +6,10 @@ import {
   createPinnedLookup,
   enforceAbsoluteRequestDeadline,
   getBookmarkData,
+  isRedditBookmarkUrl,
   isPrivateAddress,
   parseBookmarkPreview,
+  parseRedditOEmbedPayload,
   prioritizeResolvedAddresses,
   renderBookmarkHtml,
   summarizeBookmarkData
@@ -52,6 +54,48 @@ describe("bookmark OpenGraph parsing", () => {
     expect(preview.siteName).toBe("docs.example.org");
     expect(preview.faviconUrl).toBe("https://docs.example.org/favicon.ico");
     expect(preview.imageUrl).toBe("");
+  });
+});
+
+describe("Reddit bookmark metadata fallback", () => {
+  it("only routes Reddit-owned hostnames to the Reddit-specific fallback", () => {
+    expect(isRedditBookmarkUrl("https://www.reddit.com/r/webdev/comments/abc123/example/")).toBe(true);
+    expect(isRedditBookmarkUrl("https://redd.it/abc123")).toBe(true);
+    expect(isRedditBookmarkUrl("https://reddit.com.evil.example/r/webdev/comments/abc123/example/")).toBe(false);
+    expect(isRedditBookmarkUrl("https://evilreddit.com/r/webdev/comments/abc123/example/")).toBe(false);
+  });
+
+  it("maps Reddit oEmbed post metadata into bookmark title and description fields", () => {
+    expect(parseRedditOEmbedPayload(
+      {
+        author_name: "avitorio",
+        provider_name: "reddit",
+        title: "I built an open source content curation directory",
+        thumbnail_url: "https://preview.redd.it/example.png"
+      },
+      "https://www.reddit.com/r/webdev/comments/1sowvc7/i_built_an_open_source_content_curation_directory/"
+    )).toEqual({
+      url: "https://www.reddit.com/r/webdev/comments/1sowvc7/i_built_an_open_source_content_curation_directory/",
+      title: "I built an open source content curation directory",
+      description: "u/avitorio · r/webdev",
+      imageUrl: "https://preview.redd.it/example.png",
+      faviconUrl: "https://www.redditstatic.com/desktop2x/img/favicon/favicon-32x32.png",
+      siteName: "Reddit"
+    });
+  });
+
+  it("uses Reddit comment text as the bookmark description", () => {
+    expect(parseRedditOEmbedPayload(
+      {
+        author_name: "yankeltank",
+        title: "We should start keeping giraffes a secret from young children."
+      },
+      "https://www.reddit.com/r/Showerthoughts/comments/2safxv/we_should_start_keeping_giraffes_a_secret_from/cno7zic"
+    )).toMatchObject({
+      title: "Reddit comment by u/yankeltank",
+      description: "We should start keeping giraffes a secret from young children.",
+      siteName: "Reddit"
+    });
   });
 });
 
