@@ -16,6 +16,14 @@ test("passkey registration exposes an explicit standards-based QR/hybrid path", 
   assert.match(route, /const passkeyRegistrationTimeoutMs = challengeLifetimeMs - 60_000/);
   assert.match(
     route,
+    /function getWebAuthnUserDisplayName\(name: string \| null \| undefined, username: string\)[\s\S]*?return name\?\.trim\(\) \|\| username;/
+  );
+  assert.match(
+    route,
+    /userDisplayName:\s*getWebAuthnUserDisplayName\(lockedUser\.name, lockedUser\.username\)/
+  );
+  assert.match(
+    route,
     /registrationTarget === "remote"[\s\S]*?preferredAuthenticatorType:\s*"remoteDevice"[\s\S]*?timeout:\s*passkeyRegistrationTimeoutMs[\s\S]*?supportedAlgorithmIDs:\s*\[-7, -257\]/
   );
 

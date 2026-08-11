@@ -278,6 +278,15 @@ function serializeTransports(value: readonly string[] | undefined) {
   return value?.length ? value.join(",") : null;
 }
 
+function getWebAuthnUserDisplayName(name: string | null | undefined, username: string) {
+  // Chromium hybrid/QR registration has historically failed after the QR is
+  // scanned when `user.displayName` is an empty string. BrainVault normally
+  // stores an empty profile name as NULL, but legacy/restored data can still
+  // contain an empty/whitespace-only value. Always send a non-empty display
+  // name at the WebAuthn boundary so the QR path cannot hit that browser bug.
+  return name?.trim() || username;
+}
+
 type WebAuthnBoundaryErrorFactory = () => ApiError;
 
 function decodeBase64UrlStrict(
@@ -762,7 +771,7 @@ mfaRouter.post(
           rpName: webAuthnConfig.rpName,
           rpID: webAuthnConfig.rpID,
           userName: lockedUser.username,
-          userDisplayName: lockedUser.name ?? lockedUser.username,
+          userDisplayName: getWebAuthnUserDisplayName(lockedUser.name, lockedUser.username),
           userID: Buffer.from(lockedUser.id, "utf8"),
           attestationType: "none",
           excludeCredentials: existingPasskeys.map((passkey) => ({
