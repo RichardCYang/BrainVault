@@ -7,7 +7,7 @@ import { createId } from "../lib/id.js";
 import { hashPassword, normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { ApiError } from "../lib/http.js";
-import { iconValueSchema, normalizeIconValue } from "../lib/icon-value.js";
+import { iconMutationValueSchema, normalizeIconValue } from "../lib/icon-value.js";
 import { evaluatePasswordLogin } from "../lib/login-lockout.js";
 import {
   assertPolicyAllowsCurrentLocation,
@@ -85,7 +85,7 @@ const profileSchema = z
     name: z.string().trim().max(80).nullable().optional(),
     avatarData: z.string().max(Math.ceil((maxAvatarBytes * 4) / 3) + 128).nullable().optional(),
     preferredLanguage: preferredLanguageSchema.nullable().optional(),
-    defaultCollectionIcon: iconValueSchema.nullable().optional(),
+    defaultCollectionIcon: iconMutationValueSchema.nullable().optional(),
     theme: profileThemeSchema.optional()
   })
   .refine((value) => Object.values(value).some((item) => item !== undefined), {

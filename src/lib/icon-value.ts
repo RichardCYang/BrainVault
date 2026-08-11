@@ -111,3 +111,15 @@ export const iconValueSchema = z
   .min(1)
   .max(maxIconValueLength)
   .refine(isValidIconValue, "Icon value is invalid");
+
+export function isInlineImageIconValue(value: string) {
+  return value.trim().toLowerCase().startsWith(`${imageIconPrefix}data:image/`);
+}
+
+// Inline image data remains readable for legacy rows and backup compatibility,
+// but new mutations must use the bounded upload endpoint so database rows and
+// page-version history cannot be used as an unbounded binary storage channel.
+export const iconMutationValueSchema = iconValueSchema.refine(
+  (value) => !isInlineImageIconValue(value),
+  "Upload custom icon files through the custom icon endpoint instead of embedding image data"
+);

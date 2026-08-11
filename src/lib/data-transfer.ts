@@ -19,6 +19,7 @@ import {
 import { disconnectPageCollaborators } from "./collaboration-server.js";
 import { needsCollaborationMaterialization } from "./collaboration-protocol.js";
 import {
+  assertCustomIconStorageLimit,
   customIconPublicPrefix,
   customIconUploadRoot,
   detectCustomIconFileType,
@@ -2353,6 +2354,18 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
     0,
     manifest.attachments.length + retainedAttachments.length
   );
+  if (restoresCustomIcons) {
+    const restoredCustomIconBytes = (manifest.customIcons ?? []).reduce(
+      (total, icon) => total + BigInt(icon.size),
+      0n
+    );
+    assertCustomIconStorageLimit(
+      0n,
+      restoredCustomIconBytes,
+      0,
+      manifest.customIcons?.length ?? 0
+    );
+  }
 
   const allowedEntries = new Set([
     manifestName,

@@ -25,8 +25,14 @@ const customIconUpload = multer({
   limits: {
     fileSize: maxCustomIconBytes,
     files: 1,
-    fields: 0
-  }
+    fields: 0,
+    parts: 1,
+    fieldNameSize: 64,
+    headerPairs: 32,
+    fieldNestingDepth: 1
+  },
+  preservePath: false,
+  defParamCharset: "utf8"
 }).single("icon");
 
 function parseCustomIconUpload(req: Request, res: Response, next: NextFunction) {

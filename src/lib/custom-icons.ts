@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { withUserAttachmentLock } from "./attachments.js";
+import { env } from "../config/env.js";
+import { assessCustomIconStorageLimit } from "./custom-icon-storage-limit.js";
 import { db } from "./db.js";
 import { createId } from "./id.js";
 import { ApiError } from "./http.js";
@@ -10,6 +12,10 @@ import { imageIconPrefix, maxCustomIconBytes, normalizeIconValue } from "./icon-
 export const customIconLibraryLimit = 36;
 export const customIconUploadRoot = path.resolve(process.cwd(), "upload", "icons");
 export const customIconPublicPrefix = "/upload/icons/";
+export const maxCustomIconStorageBytes = BigInt(env.CUSTOM_ICON_STORAGE_MAX_MB) * 1024n * 1024n;
+export const maxCustomIconFilesPerAccount = env.CUSTOM_ICON_STORAGE_MAX_FILES;
+
+const restoreGenerationMarkerName = ".brainvault-restore-generation.json";
 
 const localCustomIconPathPattern = /^\/upload\/icons\/([A-Za-z0-9_-]{1,64})\/([A-Za-z0-9_-]{1,96}\.(?:png|jpg|webp|ico))$/;
 
@@ -84,6 +90,55 @@ export function getCustomIconFilePath(publicPath: string) {
   if (!match) return null;
   const [, userId, filename] = match;
   return path.join(customIconUploadRoot, safeStorageSegment(userId), filename);
+}
+
+export async function getCustomIconStorageUsage(userId: string) {
+  const safeUserId = safeStorageSegment(userId);
+  const ownerDirectory = path.join(customIconUploadRoot, safeUserId);
+  let entries;
+  try {
+    entries = await readdir(ownerDirectory, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { bytes: 0n, files: 0 };
+    throw error;
+  }
+
+  let bytes = 0n;
+  let files = 0;
+  for (const entry of entries) {
+    if (entry.name === restoreGenerationMarkerName) continue;
+    const filePath = path.join(ownerDirectory, entry.name);
+    const info = await lstat(filePath, { bigint: true });
+    if (!entry.isFile() || !info.isFile()) {
+      throw new ApiError(409, "CUSTOM_ICON_STORAGE_INVALID", "Custom icon storage contains an unsupported entry");
+    }
+    bytes += info.size;
+    files += 1;
+  }
+  return { bytes, files };
+}
+
+export function assertCustomIconStorageLimit(
+  currentBytes: bigint,
+  incomingBytes: bigint,
+  currentFiles: number,
+  incomingFiles: number
+) {
+  const assessment = assessCustomIconStorageLimit(
+    currentBytes,
+    incomingBytes,
+    currentFiles,
+    incomingFiles,
+    maxCustomIconStorageBytes,
+    maxCustomIconFilesPerAccount
+  );
+  if (!assessment.accepted) {
+    if (assessment.reason === "file-count-exceeded") {
+      throw new ApiError(413, "CUSTOM_ICON_FILE_COUNT_LIMIT_EXCEEDED", "The account custom icon file-count limit has been reached");
+    }
+    throw new ApiError(413, "CUSTOM_ICON_STORAGE_QUOTA_EXCEEDED", "The account custom icon storage limit has been reached");
+  }
+  return assessment;
 }
 
 function toTimestamp(value: Date | string) {
@@ -239,6 +294,8 @@ export async function storeCustomIcon(userId: string, bytes: Buffer) {
   const publicPath = `${customIconPublicPrefix}${safeUserId}/${filename}`;
 
   return withUserAttachmentLock(safeUserId, async (client) => {
+    const usage = await getCustomIconStorageUsage(safeUserId);
+    assertCustomIconStorageLimit(usage.bytes, BigInt(bytes.length), usage.files, 1);
     await mkdir(ownerDirectory, { recursive: true });
     await writeFile(filePath, bytes, { flag: "wx", mode: 0o600 });
     try {

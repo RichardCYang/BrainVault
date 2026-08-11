@@ -90,6 +90,8 @@ const envSchema = z.object({
   ATTACHMENT_UPLOAD_DIR: z.string().min(1).default("uploads"),
   ATTACHMENT_TEMP_MAX_AGE_MS: z.coerce.number().int().min(60_000).max(30 * 24 * 60 * 60_000).default(24 * 60 * 60_000),
   MAX_ATTACHMENT_SIZE_MB: z.coerce.number().int().min(1).max(500).default(25),
+  CUSTOM_ICON_STORAGE_MAX_MB: z.coerce.number().int().min(1).max(16_384).default(64),
+  CUSTOM_ICON_STORAGE_MAX_FILES: z.coerce.number().int().min(1).max(20_000).default(2_048),
   ATTACHMENT_STORAGE_MAX_MB: z.coerce.number().int().min(1).max(1_048_576).default(2048),
   ATTACHMENT_UPLOAD_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   ATTACHMENT_UPLOAD_MAX: z.coerce.number().int().min(1).max(100).default(12),

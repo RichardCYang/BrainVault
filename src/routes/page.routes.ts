@@ -22,7 +22,7 @@ import {
 import { disconnectPageCollaborators } from "../lib/collaboration-server.js";
 import { needsCollaborationMaterialization } from "../lib/collaboration-protocol.js";
 import { ApiError, notFound } from "../lib/http.js";
-import { iconValueSchema, normalizeIconValue } from "../lib/icon-value.js";
+import { iconMutationValueSchema, normalizeIconValue } from "../lib/icon-value.js";
 import { inspectCustomCoverDataUrl, pageCoverPositionSchema, pageCoverUrlSchema } from "../lib/page-cover.js";
 import { toSqlLikeContainsPattern } from "../lib/sql-like.js";
 import {
@@ -75,7 +75,7 @@ function encodePageListCursor(row: { id: string; cursor_created_at: string }) {
 
 const createPageSchema = z.object({
   title: z.string().trim().min(1).max(160),
-  icon: iconValueSchema.optional(),
+  icon: iconMutationValueSchema.optional(),
   coverUrl: pageCoverUrlSchema.optional(),
   coverPositionX: pageCoverPositionSchema.optional(),
   coverPositionY: pageCoverPositionSchema.optional(),
@@ -88,7 +88,7 @@ const createPageSchema = z.object({
 
 const updatePageSchema = z.object({
   title: z.string().trim().min(1).max(160).optional(),
-  icon: iconValueSchema.nullable().optional(),
+  icon: iconMutationValueSchema.nullable().optional(),
   coverUrl: pageCoverUrlSchema.nullable().optional(),
   coverPositionX: pageCoverPositionSchema.optional(),
   coverPositionY: pageCoverPositionSchema.optional(),
