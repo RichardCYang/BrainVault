@@ -292,6 +292,16 @@ export function createPinnedLookup(addresses: ResolvedAddress[]): LookupFunction
   };
 }
 
+function createBookmarkFetchAgent(url: URL, addresses: ResolvedAddress[]) {
+  const agentOptions: http.AgentOptions = {
+    autoSelectFamily: addresses.length > 1,
+    autoSelectFamilyAttemptTimeout: 250
+  };
+  return url.protocol === "https:"
+    ? new https.Agent(agentOptions)
+    : new http.Agent(agentOptions);
+}
+
 async function validateFetchUrl(value: string | URL) {
   const normalized = normalizeBookmarkUrl(String(value));
   if (!normalized) {
@@ -367,8 +377,7 @@ async function fetchHtml(
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36 BrainVault/1.0"
       },
       lookup: createPinnedLookup(addresses),
-      autoSelectFamily: addresses.length > 1,
-      autoSelectFamilyAttemptTimeout: 250
+      agent: createBookmarkFetchAgent(url, addresses)
     };
 
     const request = client.request(
@@ -516,8 +525,7 @@ async function fetchJson(
           "User-Agent": "BrainVault/1.0 (user-initiated bookmark preview; Reddit oEmbed)"
         },
         lookup: createPinnedLookup(addresses),
-        autoSelectFamily: addresses.length > 1,
-        autoSelectFamilyAttemptTimeout: 250
+        agent: createBookmarkFetchAgent(url, addresses)
       },
       (response) => {
         const status = response.statusCode ?? 0;
