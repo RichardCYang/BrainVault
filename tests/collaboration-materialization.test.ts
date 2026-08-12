@@ -39,7 +39,7 @@ function createDurableDocument() {
     checked: true,
     parentBlockId: "root",
     sortOrder: 20,
-    metadata: { labels: ["integrity"], score: 7 }
+    metadata: { textAlign: "center" }
   });
   addBlock(document, "root", {
     type: "HEADING_1",
@@ -75,7 +75,7 @@ describe("server-authoritative collaboration materialization", () => {
       markdown: "must survive",
       checked: true,
       parentBlockId: "root",
-      metadata: { labels: ["integrity"], score: 7 }
+      metadata: { textAlign: "center" }
     });
     expect(snapshot.deletedAttachmentIds).toEqual(["deleted-attachment"]);
     document.destroy();

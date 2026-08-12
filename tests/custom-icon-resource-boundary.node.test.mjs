@@ -66,3 +66,51 @@ test("custom icon uploads and backup restores enforce the same durable resource 
   assert.match(customIconRoutes, /fieldNestingDepth: 1/);
   assert.match(customIconRoutes, /headerPairs: 32/);
 });
+
+
+test("custom icon reads require authentication, ownership or an exact shared-page reference, and private caching", async () => {
+  const appSource = read("src/app.ts");
+  const customIcons = read("src/lib/custom-icons.ts");
+  const iconMountStart = appSource.indexOf('"/upload/icons"');
+  const iconMountEnd = appSource.indexOf("app.use(express.static(publicDir", iconMountStart);
+  const iconMount = appSource.slice(iconMountStart, iconMountEnd);
+
+  assert.match(iconMount, /"\/upload\/icons",\s*requireAuth,/);
+  assert.match(iconMount, /canUserReadCustomIcon\(userId, publicPath\)/);
+  assert.match(iconMount, /setPrivateNoStoreCacheControl\(res\)/);
+  assert.doesNotMatch(iconMount, /public, max-age=31536000, immutable/);
+  assert.match(customIcons, /p\.owner_id = \?/);
+  assert.match(customIcons, /INNER JOIN page_shares ps/);
+  assert.match(customIcons, /JSON_SEARCH\(b\.metadata, 'one', \?, '#'\) IS NOT NULL/);
+
+  process.env.NODE_ENV = "test";
+  const { canUserReadCustomIcon } = await import("../src/lib/custom-icons.ts");
+  let queryCount = 0;
+  const fakeClient = {
+    async queryOne(sql, params) {
+      queryCount += 1;
+      assert.match(sql, /p\.owner_id = \?/);
+      assert.equal(params[0], "editor_1");
+      assert.equal(params[1], "owner_1");
+      assert.equal(params[2], "image:/upload/icons/owner_1/cicon_value_1.png");
+      assert.equal(params[3], "image:/upload/icons/owner#_1/cicon#_value#_1.png");
+      return { allowed: 1 };
+    }
+  };
+
+  assert.equal(
+    await canUserReadCustomIcon("owner_1", "/upload/icons/owner_1/cicon_value_1.png", fakeClient),
+    true
+  );
+  assert.equal(queryCount, 0, "owners should not need a sharing lookup");
+  assert.equal(
+    await canUserReadCustomIcon("editor_1", "/upload/icons/owner_1/cicon_value_1.png", fakeClient),
+    true
+  );
+  assert.equal(queryCount, 1);
+  assert.equal(
+    await canUserReadCustomIcon("editor_1", "/upload/icons/owner_1/not-an-icon.txt", fakeClient),
+    false
+  );
+  assert.equal(queryCount, 1, "invalid paths must fail before database lookup");
+});

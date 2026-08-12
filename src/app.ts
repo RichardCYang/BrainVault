@@ -19,7 +19,7 @@ import { requireAuth } from "./middleware/auth.js";
 import { createHttpsEnforcementMiddleware } from "./middleware/https.js";
 import { setPrivateNoStoreCacheControl } from "./lib/cache-control.js";
 import { createExpressTrustProxySetting } from "./lib/reverse-proxy.js";
-import { customIconUploadRoot } from "./lib/custom-icons.js";
+import { canUserReadCustomIcon, customIconUploadRoot } from "./lib/custom-icons.js";
 import {
   developmentAccessLogFormat,
   productionAccessLogFormat,
@@ -142,12 +142,27 @@ export function createApp() {
   );
   app.use(
     "/upload/icons",
+    requireAuth,
+    async (req, res, next) => {
+      try {
+        const userId = req.user?.id;
+        const publicPath = `${req.baseUrl}${req.path}`;
+        if (!userId || !(await canUserReadCustomIcon(userId, publicPath))) {
+          res.sendStatus(404);
+          return;
+        }
+        next();
+      } catch (error) {
+        next(error);
+      }
+    },
     express.static(customIconUploadRoot, {
+      cacheControl: false,
       dotfiles: "deny",
       index: false,
       redirect: false,
       setHeaders(res) {
-        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        setPrivateNoStoreCacheControl(res);
         res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
         res.setHeader("X-Content-Type-Options", "nosniff");
       }

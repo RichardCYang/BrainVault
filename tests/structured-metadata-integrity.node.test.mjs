@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { getDatabaseData } from "../src/lib/database.ts";
+import { metadataSchema } from "../src/utils/schemas.ts";
 import {
   assertStructuredBlockMetadataIntegrity,
   StructuredMetadataIntegrityError
@@ -13,6 +14,66 @@ function expectIntegrityFailure(type, metadata, expectedPath) {
     (error) => error instanceof StructuredMetadataIntegrityError && error.path === expectedPath
   );
 }
+
+
+test("non-structured metadata accepts only bounded, known scalar fields", () => {
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("CODE", {
+    textAlign: "center",
+    codeLanguage: "typescript"
+  }));
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("CALLOUT", {
+    calloutType: "warning",
+    textAlign: "right"
+  }));
+  expectIntegrityFailure("CODE", {
+    junk: { nested: { payload: "x" } }
+  }, "metadata.junk");
+  expectIntegrityFailure("MARKDOWN", {
+    table: { rows: [["hidden structured payload"]] }
+  }, "metadata.table");
+});
+
+test("structured metadata rejects unknown fields at every validated object boundary", () => {
+  expectIntegrityFailure("TABLE", {
+    table: { rows: [["ok"]], headerRow: false, headerColumn: false, junk: "x" }
+  }, "metadata.table.junk");
+  expectIntegrityFailure("KANBAN", {
+    kanban: {
+      title: "Board",
+      columns: [{ id: "todo", title: "Todo", color: "gray", cards: [], junk: true }]
+    }
+  }, "metadata.kanban.columns[0].junk");
+  expectIntegrityFailure("DATABASE", {
+    database: {
+      properties: [{ id: "title", name: "Name", type: "title", options: [] }],
+      rows: [{ id: "row-1", values: { title: "ok", junk: "hidden" } }],
+      views: []
+    }
+  }, "metadata.database.rows[0].values.junk");
+});
+
+test("metadata envelope rejects dangerous keys, excessive depth, and oversized payloads", () => {
+  const dangerous = JSON.parse('{"__proto__":{"polluted":true}}');
+  assert.equal(metadataSchema.safeParse(dangerous).success, false);
+
+  let deep = { value: "leaf" };
+  for (let index = 0; index < 14; index += 1) deep = { child: deep };
+  assert.equal(metadataSchema.safeParse(deep).success, false);
+
+  const oversized = { textAlign: "left", padding: "x".repeat(4 * 1024 * 1024) };
+  assert.equal(metadataSchema.safeParse(oversized).success, false);
+});
+
+test("metadata keys and dynamic identifiers that could become prototype keys fail closed", () => {
+  expectIntegrityFailure("MARKDOWN", JSON.parse('{"__proto__":{"polluted":true}}'), "metadata.__proto__");
+  expectIntegrityFailure("DATABASE", {
+    database: {
+      properties: [{ id: "constructor", name: "Unsafe", type: "text", options: [] }],
+      rows: [],
+      views: []
+    }
+  }, "metadata.database.properties[0].id");
+});
 
 test("normalized structured metadata remains accepted at exact limits", () => {
   assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("TABLE", {
@@ -44,6 +105,13 @@ test("normalized structured metadata remains accepted at exact limits", () => {
         hiddenPropertyIds: []
       }],
       activeViewId: "table-view"
+    }
+  }));
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("ACCORDION", {
+    accordion: {
+      title: "FAQ",
+      showOrder: true,
+      items: [{ id: "accordion-1", icon: "icon:document", title: "Question", content: "Answer", open: true }]
     }
   }));
   assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("TIMETABLE", {

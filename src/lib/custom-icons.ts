@@ -4,7 +4,7 @@ import { lstat, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { withUserAttachmentLock } from "./attachments.js";
 import { env } from "../config/env.js";
 import { assessCustomIconStorageLimit } from "./custom-icon-storage-limit.js";
-import { db } from "./db.js";
+import { db, type DbClient } from "./db.js";
 import { createId } from "./id.js";
 import { ApiError } from "./http.js";
 import { imageIconPrefix, maxCustomIconBytes, normalizeIconValue } from "./icon-value.js";
@@ -90,6 +90,48 @@ export function getCustomIconFilePath(publicPath: string) {
   if (!match) return null;
   const [, userId, filename] = match;
   return path.join(customIconUploadRoot, safeStorageSegment(userId), filename);
+}
+
+function escapeJsonSearchPattern(value: string) {
+  return value.replaceAll("#", "##").replaceAll("%", "#%").replaceAll("_", "#_");
+}
+
+export async function canUserReadCustomIcon(
+  requesterId: string,
+  publicPath: string,
+  client: DbClient = db
+) {
+  const safeRequesterId = safeStorageSegment(requesterId);
+  const match = localCustomIconPathPattern.exec(publicPath);
+  if (!match) return false;
+
+  const ownerId = match[1];
+  if (ownerId === safeRequesterId) return true;
+
+  const iconValue = `${imageIconPrefix}${publicPath}`;
+  const jsonSearchPattern = escapeJsonSearchPattern(iconValue);
+  const sharedReference = await client.queryOne<{ allowed: number }>(
+    `SELECT 1 AS allowed
+     FROM pages p
+     INNER JOIN page_shares ps
+       ON ps.page_id = p.id
+      AND ps.user_id = ?
+      AND ps.permission = 'EDIT'
+     WHERE p.owner_id = ?
+       AND (
+         p.icon = ?
+         OR EXISTS (
+           SELECT 1
+           FROM blocks b
+           WHERE b.page_id = p.id
+             AND b.metadata IS NOT NULL
+             AND JSON_SEARCH(b.metadata, 'one', ?, '#') IS NOT NULL
+         )
+       )
+     LIMIT 1`,
+    [safeRequesterId, ownerId, iconValue, jsonSearchPattern]
+  );
+  return Boolean(sharedReference);
 }
 
 export async function getCustomIconStorageUsage(userId: string) {

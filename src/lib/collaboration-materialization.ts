@@ -7,6 +7,10 @@ import {
 } from "./collaboration-document.js";
 import { maxCollaborationDocumentBytes } from "./collaboration-protocol.js";
 import {
+  assertStructuredBlockMetadataIntegrity,
+  StructuredMetadataIntegrityError
+} from "./structured-metadata-integrity.js";
+import {
   createValidatedYjsDocument,
   InvalidYjsUpdateError
 } from "./yjs-validation.js";
@@ -130,7 +134,16 @@ function readBlock(id: string, value: unknown, budget: DecodeBudget): Materializ
   if (!parsed.success) {
     return invalidDocument("The collaboration document contains an invalid block");
   }
-  return parsed.data as MaterializedCollaborationBlock;
+
+  try {
+    const validatedMetadata = assertStructuredBlockMetadataIntegrity(parsed.data.type, parsed.data.metadata);
+    return { ...parsed.data, metadata: validatedMetadata } as MaterializedCollaborationBlock;
+  } catch (error) {
+    if (error instanceof StructuredMetadataIntegrityError) {
+      return invalidDocument("The collaboration document contains invalid block metadata");
+    }
+    throw error;
+  }
 }
 
 export function readCollaborationMaterialization(document: Y.Doc): CollaborationMaterialization {

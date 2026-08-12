@@ -1,5 +1,10 @@
 import net from "node:net";
 import type { BlockType } from "../types/domain.js";
+import {
+  assertLosslessAttachmentMetadata,
+  AttachmentMetadataIntegrityError
+} from "./attachment-metadata-integrity.js";
+import { normalizeCodeLanguage } from "./code-highlighting.js";
 
 const privateBookmarkAddressBlockList = new net.BlockList();
 const privateBookmarkIpv4Ranges = [
@@ -140,6 +145,21 @@ const ganttScales = new Set(["week", "month", "quarter"]);
 const ganttStatuses = new Set(["not_started", "in_progress", "review", "done", "blocked"]);
 const timetableIntervals = new Set([1, 15, 30, 60]);
 const aiProviderIds = new Set(["chatgpt", "gemini", "claude", "deepseek", "grok"]);
+const unsafeMetadataKeys = new Set(["__proto__", "constructor", "prototype"]);
+const sharedMetadataKeys = ["textAlign", "toggleOpen", "calloutType", "codeLanguage"] as const;
+const textAlignments = new Set(["left", "center", "right", "justify"]);
+const calloutTypes = new Set(["idea", "info", "success", "warning", "danger"]);
+const structuredMetadataKeyByType: Partial<Record<BlockType, string>> = {
+  TABLE: "table",
+  KANBAN: "kanban",
+  DATABASE: "database",
+  ACCORDION: "accordion",
+  TIMETABLE: "timetable",
+  GANTT: "gantt",
+  BOOKMARK: "bookmark",
+  AI_CHAT: "aiChat",
+  ATTACHMENT: "attachment"
+};
 
 export class StructuredMetadataIntegrityError extends Error {
   readonly path: string;
@@ -159,6 +179,29 @@ function fail(path: string, message: string): never {
 
 function isRecord(value: unknown): value is MetadataRecord {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function assertAllowedKeys(record: MetadataRecord, path: string, allowedKeys: Iterable<string>) {
+  const allowed = allowedKeys instanceof Set ? allowedKeys : new Set(allowedKeys);
+  for (const key of Object.keys(record)) {
+    if (unsafeMetadataKeys.has(key)) fail(`${path}.${key}`, "uses a disallowed metadata key");
+    if (!allowed.has(key)) fail(`${path}.${key}`, "is not a supported metadata field");
+  }
+}
+
+function assertSharedMetadata(root: MetadataRecord) {
+  const textAlign = optionalString(root.textAlign, "metadata.textAlign", 7);
+  if (textAlign !== null && !textAlignments.has(textAlign)) {
+    fail("metadata.textAlign", "is not a supported text alignment");
+  }
+  optionalBoolean(root.toggleOpen, "metadata.toggleOpen");
+  if (root.calloutType !== null && root.calloutType !== undefined && !calloutTypes.has(root.calloutType as string)) {
+    fail("metadata.calloutType", "is not a supported callout type");
+  }
+  const codeLanguage = optionalString(root.codeLanguage, "metadata.codeLanguage", 32);
+  if (codeLanguage !== null && normalizeCodeLanguage(codeLanguage) !== codeLanguage) {
+    fail("metadata.codeLanguage", "must use a canonical supported code-language identifier");
+  }
 }
 
 function parseMetadataRoot(metadata: unknown) {
@@ -259,6 +302,7 @@ function canonicalBookmarkUrl(value: unknown, path: string, baseUrl?: string) {
 function assertTableMetadata(root: MetadataRecord) {
   const table = optionalRecord(root.table, "metadata.table");
   if (!table) return;
+  assertAllowedKeys(table, "metadata.table", ["rows", "headerRow", "headerColumn"]);
   const rows = optionalArray(table.rows, "metadata.table.rows", tableLimits.rows);
   if (rows) {
     rows.forEach((rawRow, rowIndex) => {
@@ -278,6 +322,7 @@ function assertTableMetadata(root: MetadataRecord) {
 function assertKanbanMetadata(root: MetadataRecord) {
   const kanban = optionalRecord(root.kanban, "metadata.kanban");
   if (!kanban) return;
+  assertAllowedKeys(kanban, "metadata.kanban", ["title", "columns"]);
   optionalString(kanban.title, "metadata.kanban.title", kanbanLimits.boardTitleLength);
   const columns = optionalArray(kanban.columns, "metadata.kanban.columns", kanbanLimits.columns);
   if (!columns) return;
@@ -288,6 +333,7 @@ function assertKanbanMetadata(root: MetadataRecord) {
     const path = `metadata.kanban.columns[${columnIndex}]`;
     const column = optionalRecord(rawColumn, path);
     if (!column) fail(path, "must be an object");
+    assertAllowedKeys(column, path, ["id", "title", "color", "cards"]);
     columnIds.push(assertIdentifier(column.id, `${path}.id`)!);
     optionalString(column.title, `${path}.title`, kanbanLimits.columnTitleLength);
     if (column.color !== null && column.color !== undefined && !kanbanColumnColors.has(column.color as string)) {
@@ -298,6 +344,7 @@ function assertKanbanMetadata(root: MetadataRecord) {
       const cardPath = `${path}.cards[${cardIndex}]`;
       const card = optionalRecord(rawCard, cardPath);
       if (!card) fail(cardPath, "must be an object");
+      assertAllowedKeys(card, cardPath, ["id", "title", "description", "icon", "color", "tags"]);
       cardIds.push(assertIdentifier(card.id, `${cardPath}.id`)!);
       optionalString(card.title, `${cardPath}.title`, kanbanLimits.cardTitleLength);
       optionalString(card.description, `${cardPath}.description`, kanbanLimits.cardDescriptionLength);
@@ -327,6 +374,7 @@ function assertKanbanMetadata(root: MetadataRecord) {
 function assertDatabaseMetadata(root: MetadataRecord) {
   const database = optionalRecord(root.database, "metadata.database");
   if (!database) return;
+  assertAllowedKeys(database, "metadata.database", ["title", "properties", "rows", "views", "activeViewId"]);
   optionalString(database.title, "metadata.database.title", databaseLimits.titleLength);
 
   const properties = optionalArray(database.properties, "metadata.database.properties", databaseLimits.properties);
@@ -338,7 +386,9 @@ function assertDatabaseMetadata(root: MetadataRecord) {
     const path = `metadata.database.properties[${propertyIndex}]`;
     const property = optionalRecord(rawProperty, path);
     if (!property) fail(path, "must be an object");
+    assertAllowedKeys(property, path, ["id", "name", "type", "options"]);
     const id = assertIdentifier(property.id, `${path}.id`)!;
+    if (unsafeMetadataKeys.has(id)) fail(`${path}.id`, "uses a reserved object-key identifier");
     propertyIds.push(id);
     optionalString(property.name, `${path}.name`, databaseLimits.propertyNameLength);
     if (!databasePropertyTypes.has(property.type as string)) fail(`${path}.type`, "is not a supported property type");
@@ -351,6 +401,7 @@ function assertDatabaseMetadata(root: MetadataRecord) {
       const optionPath = `${path}.options[${optionIndex}]`;
       const option = optionalRecord(rawOption, optionPath);
       if (!option) fail(optionPath, "must be an object");
+      assertAllowedKeys(option, optionPath, ["id", "name", "color"]);
       optionIds.push(assertIdentifier(option.id, `${optionPath}.id`)!);
       optionalString(option.name, `${optionPath}.name`, databaseLimits.optionNameLength);
       if (option.color !== null && option.color !== undefined && !databaseOptionColors.has(option.color as string)) {
@@ -373,9 +424,11 @@ function assertDatabaseMetadata(root: MetadataRecord) {
     const path = `metadata.database.rows[${rowIndex}]`;
     const row = optionalRecord(rawRow, path);
     if (!row) fail(path, "must be an object");
+    assertAllowedKeys(row, path, ["id", "values"]);
     rowIds.push(assertIdentifier(row.id, `${path}.id`)!);
     const values = optionalRecord(row.values, `${path}.values`);
     if (!values) return;
+    assertAllowedKeys(values, `${path}.values`, propertyIdSet);
     for (const [propertyId, value] of Object.entries(values)) {
       if (!propertyIdSet.has(propertyId)) fail(`${path}.values.${propertyId}`, "references a missing property and would be discarded");
       const type = propertyTypes.get(propertyId);
@@ -411,6 +464,7 @@ function assertDatabaseMetadata(root: MetadataRecord) {
     const path = `metadata.database.views[${viewIndex}]`;
     const view = optionalRecord(rawView, path);
     if (!view) fail(path, "must be an object");
+    assertAllowedKeys(view, path, ["id", "name", "type", "filters", "sorts", "groupPropertyId", "hiddenPropertyIds"]);
     viewIds.push(assertIdentifier(view.id, `${path}.id`)!);
     optionalString(view.name, `${path}.name`, databaseLimits.viewNameLength);
     if (!databaseViewTypes.has(view.type as string)) fail(`${path}.type`, "is not a supported view type");
@@ -421,6 +475,7 @@ function assertDatabaseMetadata(root: MetadataRecord) {
       const filterPath = `${path}.filters[${filterIndex}]`;
       const filter = optionalRecord(rawFilter, filterPath);
       if (!filter) fail(filterPath, "must be an object");
+      assertAllowedKeys(filter, filterPath, ["id", "propertyId", "operator", "value"]);
       filterIds.push(assertIdentifier(filter.id, `${filterPath}.id`)!);
       const propertyId = assertIdentifier(filter.propertyId, `${filterPath}.propertyId`)!;
       if (!propertyIdSet.has(propertyId)) fail(`${filterPath}.propertyId`, "references a missing property");
@@ -438,6 +493,7 @@ function assertDatabaseMetadata(root: MetadataRecord) {
       const sortPath = `${path}.sorts[${sortIndex}]`;
       const sort = optionalRecord(rawSort, sortPath);
       if (!sort) fail(sortPath, "must be an object");
+      assertAllowedKeys(sort, sortPath, ["id", "propertyId", "direction"]);
       sortIds.push(assertIdentifier(sort.id, `${sortPath}.id`)!);
       const propertyId = assertIdentifier(sort.propertyId, `${sortPath}.propertyId`)!;
       if (!propertyIdSet.has(propertyId)) fail(`${sortPath}.propertyId`, "references a missing property");
@@ -491,6 +547,7 @@ function parseExactIsoDay(value: unknown, path: string) {
 function assertAccordionMetadata(root: MetadataRecord) {
   const accordion = optionalRecord(root.accordion, "metadata.accordion");
   if (!accordion) return;
+  assertAllowedKeys(accordion, "metadata.accordion", ["title", "showOrder", "items"]);
   optionalString(accordion.title, "metadata.accordion.title", accordionLimits.titleLength);
   optionalBoolean(accordion.showOrder, "metadata.accordion.showOrder");
   const items = optionalArray(accordion.items, "metadata.accordion.items", accordionLimits.items);
@@ -501,6 +558,7 @@ function assertAccordionMetadata(root: MetadataRecord) {
     const path = `metadata.accordion.items[${itemIndex}]`;
     const item = optionalRecord(rawItem, path);
     if (!item) fail(path, "must be an object");
+    assertAllowedKeys(item, path, ["id", "icon", "title", "content", "open"]);
     ids.push(assertIdentifier(item.id, `${path}.id`)!);
     const icon = optionalString(item.icon, `${path}.icon`, accordionLimits.iconLength);
     if (icon !== null && !isValidAccordionIconValue(icon)) fail(`${path}.icon`, "is not a valid icon value");
@@ -514,6 +572,7 @@ function assertAccordionMetadata(root: MetadataRecord) {
 function assertGanttMetadata(root: MetadataRecord) {
   const gantt = optionalRecord(root.gantt, "metadata.gantt");
   if (!gantt) return;
+  assertAllowedKeys(gantt, "metadata.gantt", ["title", "scale", "viewStart", "showWeekends", "tasks"]);
   optionalString(gantt.title, "metadata.gantt.title", ganttLimits.titleLength);
   if (gantt.scale !== null && gantt.scale !== undefined && !ganttScales.has(gantt.scale as string)) {
     fail("metadata.gantt.scale", "is not a supported timeline scale");
@@ -528,6 +587,7 @@ function assertGanttMetadata(root: MetadataRecord) {
     const path = `metadata.gantt.tasks[${taskIndex}]`;
     const task = optionalRecord(rawTask, path);
     if (!task) fail(path, "must be an object");
+    assertAllowedKeys(task, path, ["id", "title", "start", "end", "progress", "status", "assignee"]);
     const id = assertIdentifier(task.id, `${path}.id`)!;
     if (id.length > ganttLimits.idLength) fail(`${path}.id`, `contains more than ${ganttLimits.idLength} characters`);
     if (id.trim() !== id) fail(`${path}.id`, "must not contain leading or trailing whitespace");
@@ -561,6 +621,7 @@ function parseExactTime(value: unknown, path: string) {
 function assertTimetableMetadata(root: MetadataRecord) {
   const timetable = optionalRecord(root.timetable, "metadata.timetable");
   if (!timetable) return;
+  assertAllowedKeys(timetable, "metadata.timetable", ["title", "date", "interval", "entries"]);
   optionalString(timetable.title, "metadata.timetable.title", timetableLimits.titleLength);
   parseExactIsoDay(timetable.date, "metadata.timetable.date");
   if (
@@ -578,6 +639,7 @@ function assertTimetableMetadata(root: MetadataRecord) {
     const path = `metadata.timetable.entries[${entryIndex}]`;
     const entry = optionalRecord(rawEntry, path);
     if (!entry) fail(path, "must be an object");
+    assertAllowedKeys(entry, path, ["id", "start", "end", "title", "note", "completed"]);
     const id = assertIdentifier(entry.id, `${path}.id`)!;
     if (id.length > timetableLimits.idLength) fail(`${path}.id`, `contains more than ${timetableLimits.idLength} characters`);
     if (id.trim() !== id) fail(`${path}.id`, "must not contain leading or trailing whitespace");
@@ -597,6 +659,7 @@ function assertTimetableMetadata(root: MetadataRecord) {
 function assertBookmarkMetadata(root: MetadataRecord) {
   const bookmark = optionalRecord(root.bookmark, "metadata.bookmark");
   if (!bookmark) return;
+  assertAllowedKeys(bookmark, "metadata.bookmark", ["title", "view", "listColumns", "items"]);
   assertCanonicalBookmarkText(bookmark.title, "metadata.bookmark.title", bookmarkLimits.blockTitleLength);
   if (bookmark.view !== null && bookmark.view !== undefined && bookmark.view !== "list" && bookmark.view !== "gallery") {
     fail("metadata.bookmark.view", "must be list or gallery");
@@ -613,6 +676,7 @@ function assertBookmarkMetadata(root: MetadataRecord) {
     const path = `metadata.bookmark.items[${itemIndex}]`;
     const item = optionalRecord(rawItem, path);
     if (!item) fail(path, "must be an object");
+    assertAllowedKeys(item, path, ["id", "url", "title", "description", "imageUrl", "faviconUrl", "siteName"]);
     const id = assertCanonicalBookmarkText(item.id, `${path}.id`, bookmarkLimits.idLength, { required: true });
     ids.push(id);
     const url = canonicalBookmarkUrl(item.url, `${path}.url`);
@@ -642,6 +706,7 @@ function isValidAnsweredAt(value: string) {
 }
 
 function assertAiChatTurn(turn: MetadataRecord, path: string) {
+  assertAllowedKeys(turn, path, ["answeredAt", "question", "answer"]);
   const answeredAt = optionalString(turn.answeredAt, `${path}.answeredAt`, aiChatLimits.answeredAtLength);
   if (answeredAt !== null && !isValidAnsweredAt(answeredAt)) fail(`${path}.answeredAt`, "must be an exact YYYY-MM-DDTHH:mm value");
   const question = optionalString(turn.question, `${path}.question`, aiChatLimits.questionLength);
@@ -653,6 +718,7 @@ function assertAiChatTurn(turn: MetadataRecord, path: string) {
 function assertAiChatMetadata(root: MetadataRecord) {
   const aiChat = optionalRecord(root.aiChat, "metadata.aiChat");
   if (!aiChat) return;
+  assertAllowedKeys(aiChat, "metadata.aiChat", ["title", "provider", "model", "turns", "answeredAt", "question", "answer"]);
   if (aiChat.provider !== null && aiChat.provider !== undefined && !aiProviderIds.has(aiChat.provider as string)) {
     fail("metadata.aiChat.provider", "is not a supported AI provider");
   }
@@ -684,10 +750,28 @@ function assertAiChatMetadata(root: MetadataRecord) {
   assertAiChatTurn(aiChat, "metadata.aiChat");
 }
 
+function assertAttachmentMetadata(root: MetadataRecord) {
+  const attachment = optionalRecord(root.attachment, "metadata.attachment");
+  if (!attachment) return;
+  assertAllowedKeys(attachment, "metadata.attachment", ["originalName", "mimeType", "size"]);
+  try {
+    assertLosslessAttachmentMetadata(root);
+  } catch (error) {
+    if (error instanceof AttachmentMetadataIntegrityError) {
+      fail(error.path, error.reason);
+    }
+    throw error;
+  }
+}
+
 export function assertStructuredBlockMetadataIntegrity(type: BlockType, metadata: unknown) {
-  if (!["TABLE", "KANBAN", "DATABASE", "ACCORDION", "TIMETABLE", "GANTT", "BOOKMARK", "AI_CHAT"].includes(type)) return undefined;
   const root = parseMetadataRoot(metadata);
   if (!root) return null;
+
+  const structuredKey = structuredMetadataKeyByType[type];
+  assertAllowedKeys(root, "metadata", structuredKey ? [...sharedMetadataKeys, structuredKey] : sharedMetadataKeys);
+  assertSharedMetadata(root);
+
   if (type === "TABLE") assertTableMetadata(root);
   else if (type === "KANBAN") assertKanbanMetadata(root);
   else if (type === "DATABASE") assertDatabaseMetadata(root);
@@ -695,7 +779,9 @@ export function assertStructuredBlockMetadataIntegrity(type: BlockType, metadata
   else if (type === "TIMETABLE") assertTimetableMetadata(root);
   else if (type === "GANTT") assertGanttMetadata(root);
   else if (type === "BOOKMARK") assertBookmarkMetadata(root);
-  else assertAiChatMetadata(root);
+  else if (type === "AI_CHAT") assertAiChatMetadata(root);
+  else if (type === "ATTACHMENT") assertAttachmentMetadata(root);
+
   // MariaDB may return JSON columns as text. Return the validated object so
   // callers serialize it exactly once instead of storing a JSON string value.
   return root;
