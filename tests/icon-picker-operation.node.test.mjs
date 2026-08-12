@@ -11,6 +11,10 @@ import {
 test("icon-picker targets have stable page-scoped keys", () => {
   assert.equal(getIconPickerTargetKey({ type: "page", pageId: "page-one" }), "page:page-one");
   assert.equal(getIconPickerTargetKey({ type: "defaultCollection" }), "default-collection");
+  assert.equal(
+    getIconPickerTargetKey({ type: "accordionItem", pageId: "page-one", blockId: "block-one", itemId: "item-one" }),
+    "accordion:page-one:block-one:item-one"
+  );
   assert.equal(getIconPickerTargetKey({ type: "page", pageId: "" }), null);
   assert.equal(getIconPickerTargetKey(null), null);
 });

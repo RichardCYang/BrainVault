@@ -4187,6 +4187,14 @@ kbd {
   display: block;
 }
 
+.page-view.is-read-only .accordion-edit-surface {
+  display: none;
+}
+
+.page-view.is-read-only .accordion-block-preview {
+  display: block;
+}
+
 /*
  * In read mode, CALLOUT content is rendered as a complete .rendered-callout card.
  * Remove the editor-only outer callout surface so the rendered card is not
@@ -4228,6 +4236,9 @@ kbd {
 .page-view.is-read-only .kanban-card-tags,
 .page-view.is-read-only .kanban-card-emoji-input,
 .page-view.is-read-only .database-title-input,
+.page-view.is-read-only .accordion-title-input,
+.page-view.is-read-only .accordion-item-title-input,
+.page-view.is-read-only .accordion-item-content,
 .page-view.is-read-only .database-value-input,
 .page-view.is-read-only .gantt-title-input,
 .page-view.is-read-only .gantt-task-input,
@@ -5395,6 +5406,14 @@ kbd {
     display: block !important;
   }
 
+  body.pdf-export-mode .accordion-edit-surface {
+    display: none !important;
+  }
+
+  body.pdf-export-mode .accordion-block-preview {
+    display: block !important;
+  }
+
   body.pdf-export-mode .math-block-preview {
     border-color: transparent !important;
     background: transparent !important;
@@ -5432,7 +5451,7 @@ kbd {
     opacity: 0 !important;
   }
 
-  body.pdf-export-mode .editor-block-row:not([data-block-type="TABLE"]):not([data-block-type="KANBAN"]):not([data-block-type="DATABASE"]):not([data-block-type="TIMETABLE"]):not([data-block-type="GANTT"]),
+  body.pdf-export-mode .editor-block-row:not([data-block-type="TABLE"]):not([data-block-type="KANBAN"]):not([data-block-type="DATABASE"]):not([data-block-type="ACCORDION"]):not([data-block-type="TIMETABLE"]):not([data-block-type="GANTT"]),
   body.pdf-export-mode .attachment-block-card,
   body.pdf-export-mode .bookmark-gallery-card,
   body.pdf-export-mode .bookmark-list-item,
@@ -5457,6 +5476,9 @@ kbd {
   body.pdf-export-mode .kanban-card-description,
   body.pdf-export-mode .kanban-card-tags,
   body.pdf-export-mode .database-title-input,
+  body.pdf-export-mode .accordion-title-input,
+  body.pdf-export-mode .accordion-item-title-input,
+  body.pdf-export-mode .accordion-item-content,
   body.pdf-export-mode .database-value-input,
   body.pdf-export-mode .database-value-select,
   body.pdf-export-mode .gantt-title-input,
@@ -5489,6 +5511,206 @@ kbd {
 .editor-block-row[data-block-type="DATABASE"].is-menu-open {
   background: transparent;
   box-shadow: none;
+}
+
+.editor-block-row[data-block-type="ACCORDION"] .block-row-body,
+.editor-block-row[data-block-type="ACCORDION"] .block-editor-host {
+  min-width: 0;
+}
+
+.accordion-block-editor {
+  --accordion-ink: var(--ink);
+  --accordion-ink-strong: var(--ink-strong);
+  --accordion-muted: var(--muted);
+  --accordion-line: var(--line);
+  --accordion-line-strong: var(--line-strong);
+  --accordion-panel: var(--panel);
+  --accordion-panel-soft: var(--panel-soft);
+  --accordion-hover: var(--hover);
+  --accordion-accent: var(--accent);
+  --accordion-accent-hover: var(--accent-hover);
+  --accordion-accent-ink: var(--accent-ink);
+  --accordion-focus-soft: var(--focus-soft);
+  display: grid;
+  min-width: 0;
+  gap: 0;
+  padding: 0.28rem 0 0.45rem;
+  color: var(--accordion-ink);
+}
+
+.accordion-edit-surface,
+.rendered-accordion {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--accordion-line);
+  border-radius: 10px;
+  background: var(--accordion-panel);
+}
+
+.accordion-block-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.7rem 0.8rem;
+  border-bottom: 1px solid var(--accordion-line);
+  background: var(--accordion-panel-soft);
+}
+
+.accordion-title-input,
+.accordion-item-title-input,
+.accordion-item-content {
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--accordion-ink-strong);
+  font: inherit;
+}
+
+.accordion-title-input:hover,
+.accordion-title-input:focus,
+.accordion-item-title-input:hover,
+.accordion-item-title-input:focus,
+.accordion-item-content:hover,
+.accordion-item-content:focus {
+  border-color: var(--accordion-line-strong);
+  background: var(--accordion-panel);
+  outline: none;
+}
+
+.accordion-title-input:focus-visible,
+.accordion-item-title-input:focus-visible,
+.accordion-item-content:focus-visible,
+.accordion-item-icon-button:focus-visible,
+.accordion-item-toggle:focus-visible,
+.accordion-item-action:focus-visible,
+.accordion-item-drag-handle:focus-visible,
+.accordion-add-item:focus-visible,
+.rendered-accordion-summary:focus-visible {
+  outline: 2px solid var(--accordion-focus-soft);
+  outline-offset: 1px;
+}
+
+.accordion-title-input {
+  flex: 1 1 auto;
+  width: 100%;
+  padding: 0.18rem 0.24rem;
+  font-size: clamp(1.05rem, 2vw, 1.3rem);
+  font-weight: 700;
+  letter-spacing: -0.014em;
+}
+
+.accordion-add-item {
+  flex: 0 0 auto;
+  border: 1px solid var(--accordion-line-strong);
+  border-radius: 6px;
+  background: var(--accordion-panel);
+  color: var(--accordion-ink);
+  padding: 0.38rem 0.62rem;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.accordion-add-item:hover:not(:disabled) {
+  border-color: var(--accordion-accent);
+  color: var(--accordion-accent-hover);
+}
+
+.accordion-add-item:disabled { opacity: 0.45; cursor: default; }
+.accordion-items { display: grid; min-width: 0; }
+.accordion-item { position: relative; min-width: 0; border-top: 1px solid var(--accordion-line); background: var(--accordion-panel); }
+.accordion-item:first-child { border-top: 0; }
+.accordion-item.is-dragging { opacity: 0.46; }
+.accordion-item.drop-before::before,
+.accordion-item.drop-after::after { content: ""; position: absolute; z-index: 2; right: 0.55rem; left: 0.55rem; height: 2px; border-radius: 999px; background: var(--accordion-accent); }
+.accordion-item.drop-before::before { top: -1px; }
+.accordion-item.drop-after::after { bottom: -1px; }
+
+.accordion-item-header {
+  display: grid;
+  grid-template-columns: auto auto auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.28rem;
+  min-width: 0;
+  padding: 0.48rem 0.56rem;
+}
+
+.accordion-item-drag-handle,
+.accordion-item-icon-button,
+.accordion-item-toggle,
+.accordion-item-action {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accordion-muted);
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.accordion-item-drag-handle { cursor: grab; font-size: 1rem; }
+.accordion-item-drag-handle:active { cursor: grabbing; }
+.accordion-item-drag-handle:hover,
+.accordion-item-icon-button:hover,
+.accordion-item-toggle:hover,
+.accordion-item-action:hover { background: var(--accordion-hover); color: var(--accordion-ink-strong); }
+.accordion-item-action:disabled { opacity: 0.24; cursor: default; background: transparent; }
+.accordion-item-remove:hover { color: var(--danger, #c74440); }
+
+.accordion-item-order,
+.rendered-accordion-order {
+  display: none;
+  min-width: 1.65rem;
+  justify-content: flex-end;
+  color: var(--accordion-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+.accordion-block-editor.show-order .accordion-item-order { display: inline-flex; }
+
+.accordion-item-icon-button { color: var(--accordion-ink-strong); }
+.accordion-item-icon-button .app-icon-visual,
+.rendered-accordion-item-icon .app-icon-visual { width: 1.12rem; height: 1.12rem; }
+.accordion-item-toggle { width: 1.55rem; }
+.accordion-item-chevron { font-size: 1.05rem; line-height: 1; }
+.accordion-item-title-input { width: 100%; padding: 0.34rem 0.38rem; font-weight: 620; }
+.accordion-item-actions { display: inline-flex; align-items: center; gap: 0.05rem; }
+.accordion-item-panel { padding: 0 0.75rem 0.7rem 7.3rem; }
+.accordion-item-content { display: block; width: 100%; resize: vertical; padding: 0.56rem 0.62rem; border-color: var(--accordion-line); background: var(--accordion-panel-soft); line-height: 1.55; }
+.accordion-empty-state { padding: 1rem; color: var(--accordion-muted); font-size: 0.82rem; text-align: center; }
+.accordion-block-preview { display: none; }
+
+.rendered-accordion { color: var(--accordion-ink, var(--ink)); }
+.rendered-accordion-title { padding: 0.72rem 0.82rem; border-bottom: 1px solid var(--accordion-line, var(--line)); background: var(--accordion-panel-soft, var(--panel-soft)); color: var(--accordion-ink-strong, var(--ink-strong)); font-weight: 700; }
+.rendered-accordion-item { margin: 0; border: 0; border-top: 1px solid var(--accordion-line, var(--line)); background: var(--accordion-panel, var(--panel)); }
+.rendered-accordion-item:first-of-type { border-top: 0; }
+.rendered-accordion-summary { display: flex; min-width: 0; align-items: center; gap: 0.48rem; padding: 0.66rem 0.78rem; list-style: none; color: var(--accordion-ink-strong, var(--ink-strong)); cursor: pointer; }
+.rendered-accordion-summary::-webkit-details-marker { display: none; }
+.rendered-accordion-summary::before { content: "›"; flex: 0 0 1rem; color: var(--accordion-muted, var(--muted)); font-size: 1.05rem; line-height: 1; }
+.rendered-accordion-item[open] > .rendered-accordion-summary::before { content: "⌄"; }
+.rendered-accordion-order { display: inline-flex; flex: 0 0 auto; }
+.rendered-accordion-item-icon { display: inline-grid; flex: 0 0 1.3rem; place-items: center; min-width: 1.3rem; }
+.rendered-accordion-item-title { min-width: 0; flex: 1 1 auto; font-weight: 620; overflow-wrap: anywhere; }
+.rendered-accordion-content { padding: 0 0.82rem 0.82rem 3.65rem; color: var(--accordion-ink, var(--ink)); line-height: 1.6; overflow-wrap: anywhere; }
+.rendered-accordion-empty { display: block; min-height: 0.2rem; }
+
+@media (max-width: 640px) {
+  .accordion-item-header { grid-template-columns: auto auto auto minmax(0, 1fr) auto; gap: 0.16rem; }
+  .accordion-item-drag-handle { display: none; }
+  .accordion-item-order { min-width: 1.3rem; }
+  .accordion-item-panel { padding-left: 3.6rem; }
+  .accordion-item-actions { gap: 0; }
+  .accordion-item-action { width: 1.75rem; }
+  .accordion-add-item { padding-inline: 0.46rem; }
+  .rendered-accordion-content { padding-left: 2.7rem; }
 }
 
 .editor-block-row[data-block-type="DATABASE"] .block-row-body,
@@ -15452,6 +15674,9 @@ html[data-theme="dark"] .kanban-card-title,
 html[data-theme="dark"] .kanban-card-description,
 html[data-theme="dark"] .kanban-card-tags,
 html[data-theme="dark"] .database-title-input,
+html[data-theme="dark"] .accordion-title-input,
+html[data-theme="dark"] .accordion-item-title-input,
+html[data-theme="dark"] .accordion-item-content,
 html[data-theme="dark"] .database-value-input,
 html[data-theme="dark"] .gantt-title-input,
 html[data-theme="dark"] .gantt-task-input,

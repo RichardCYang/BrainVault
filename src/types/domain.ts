@@ -49,6 +49,7 @@ export type BlockType =
   | "QUOTE"
   | "CALLOUT"
   | "TOGGLE"
+  | "ACCORDION"
   | "TABLE"
   | "KANBAN"
   | "DATABASE"

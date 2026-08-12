@@ -4551,6 +4551,104 @@ for (const [language, addition] of Object.entries(listTranslationAdditions)) {
   catalog.slash.ORDERED_LIST = addition.orderedSlash;
 }
 
+const accordionTranslationAdditions = {
+  en: {
+    blockType: "Accordion",
+    slash: { label: "Accordion", hint: "Create collapsible items with icons", keywords: "accordion collapse expand faq details items" },
+    menu: { options: "Accordion options", showOrder: "Show item numbers" },
+    accordion: {
+      defaultTitle: "Accordion", defaultItemTitle: "Item {number}", titlePlaceholder: "Accordion title", titleAria: "Accordion title",
+      addItem: "Add item", dragItem: "Drag to reorder item", changeIcon: "Change icon", changeIconFor: "Change icon for {title}",
+      collapseItem: "Collapse item", expandItem: "Expand item", itemTitlePlaceholder: "Item title", itemTitleAria: "Title for item {number}",
+      moveUp: "Move item up", moveDown: "Move item down", removeItem: "Remove item", contentPlaceholder: "Add content…",
+      contentAria: "Content for {title}", emptyState: "No items yet. Add an item to get started.", iconSaved: "Accordion item icon saved.",
+      orderEnabled: "Item numbers are shown.", orderDisabled: "Item numbers are hidden."
+    }
+  },
+  ko: {
+    blockType: "아코디언", slash: { label: "아코디언", hint: "아이콘이 있는 접기/펼치기 항목 만들기", keywords: "accordion 아코디언 접기 펼치기 FAQ 항목" },
+    menu: { options: "아코디언 옵션", showOrder: "항목 순서 번호 표시" },
+    accordion: {
+      defaultTitle: "아코디언", defaultItemTitle: "항목 {number}", titlePlaceholder: "아코디언 제목", titleAria: "아코디언 제목",
+      addItem: "항목 추가", dragItem: "드래그하여 항목 순서 변경", changeIcon: "아이콘 변경", changeIconFor: "{title} 아이콘 변경",
+      collapseItem: "항목 접기", expandItem: "항목 펼치기", itemTitlePlaceholder: "항목 제목", itemTitleAria: "{number}번 항목 제목",
+      moveUp: "항목 위로 이동", moveDown: "항목 아래로 이동", removeItem: "항목 삭제", contentPlaceholder: "내용을 입력하세요…",
+      contentAria: "{title} 내용", emptyState: "아직 항목이 없습니다. 항목을 추가해보세요.", iconSaved: "아코디언 항목 아이콘을 저장했습니다.",
+      orderEnabled: "항목 순서 번호를 표시합니다.", orderDisabled: "항목 순서 번호를 숨깁니다."
+    }
+  },
+  ja: {
+    blockType: "アコーディオン", slash: { label: "アコーディオン", hint: "アイコン付きの折りたたみ項目を作成", keywords: "accordion アコーディオン 折りたたみ 展開 FAQ 項目" },
+    menu: { options: "アコーディオン設定", showOrder: "項目番号を表示" },
+    accordion: {
+      defaultTitle: "アコーディオン", defaultItemTitle: "項目 {number}", titlePlaceholder: "アコーディオンのタイトル", titleAria: "アコーディオンのタイトル",
+      addItem: "項目を追加", dragItem: "ドラッグして並べ替え", changeIcon: "アイコンを変更", changeIconFor: "{title} のアイコンを変更",
+      collapseItem: "項目を閉じる", expandItem: "項目を開く", itemTitlePlaceholder: "項目タイトル", itemTitleAria: "項目 {number} のタイトル",
+      moveUp: "上へ移動", moveDown: "下へ移動", removeItem: "項目を削除", contentPlaceholder: "内容を入力…",
+      contentAria: "{title} の内容", emptyState: "項目がありません。項目を追加してください。", iconSaved: "項目のアイコンを保存しました。",
+      orderEnabled: "項目番号を表示します。", orderDisabled: "項目番号を非表示にします。"
+    }
+  },
+  fr: {
+    blockType: "Accordéon", slash: { label: "Accordéon", hint: "Créer des éléments repliables avec icônes", keywords: "accordéon replier développer FAQ éléments" },
+    menu: { options: "Options de l’accordéon", showOrder: "Afficher les numéros" },
+    accordion: {
+      defaultTitle: "Accordéon", defaultItemTitle: "Élément {number}", titlePlaceholder: "Titre de l’accordéon", titleAria: "Titre de l’accordéon",
+      addItem: "Ajouter un élément", dragItem: "Faire glisser pour réordonner", changeIcon: "Changer l’icône", changeIconFor: "Changer l’icône de {title}",
+      collapseItem: "Replier l’élément", expandItem: "Développer l’élément", itemTitlePlaceholder: "Titre de l’élément", itemTitleAria: "Titre de l’élément {number}",
+      moveUp: "Déplacer vers le haut", moveDown: "Déplacer vers le bas", removeItem: "Supprimer l’élément", contentPlaceholder: "Ajouter du contenu…",
+      contentAria: "Contenu de {title}", emptyState: "Aucun élément. Ajoutez-en un pour commencer.", iconSaved: "Icône de l’élément enregistrée.",
+      orderEnabled: "Les numéros sont affichés.", orderDisabled: "Les numéros sont masqués."
+    }
+  },
+  de: {
+    blockType: "Akkordeon", slash: { label: "Akkordeon", hint: "Einklappbare Einträge mit Symbolen erstellen", keywords: "akkordeon einklappen ausklappen FAQ einträge" },
+    menu: { options: "Akkordeon-Optionen", showOrder: "Eintragsnummern anzeigen" },
+    accordion: {
+      defaultTitle: "Akkordeon", defaultItemTitle: "Eintrag {number}", titlePlaceholder: "Akkordeon-Titel", titleAria: "Akkordeon-Titel",
+      addItem: "Eintrag hinzufügen", dragItem: "Zum Sortieren ziehen", changeIcon: "Symbol ändern", changeIconFor: "Symbol für {title} ändern",
+      collapseItem: "Eintrag einklappen", expandItem: "Eintrag ausklappen", itemTitlePlaceholder: "Eintragstitel", itemTitleAria: "Titel für Eintrag {number}",
+      moveUp: "Nach oben verschieben", moveDown: "Nach unten verschieben", removeItem: "Eintrag entfernen", contentPlaceholder: "Inhalt hinzufügen…",
+      contentAria: "Inhalt für {title}", emptyState: "Noch keine Einträge. Fügen Sie einen Eintrag hinzu.", iconSaved: "Eintragssymbol gespeichert.",
+      orderEnabled: "Eintragsnummern werden angezeigt.", orderDisabled: "Eintragsnummern werden ausgeblendet."
+    }
+  },
+  es: {
+    blockType: "Acordeón", slash: { label: "Acordeón", hint: "Crear elementos plegables con iconos", keywords: "acordeón plegar expandir FAQ elementos" },
+    menu: { options: "Opciones del acordeón", showOrder: "Mostrar números de elemento" },
+    accordion: {
+      defaultTitle: "Acordeón", defaultItemTitle: "Elemento {number}", titlePlaceholder: "Título del acordeón", titleAria: "Título del acordeón",
+      addItem: "Añadir elemento", dragItem: "Arrastrar para reordenar", changeIcon: "Cambiar icono", changeIconFor: "Cambiar icono de {title}",
+      collapseItem: "Contraer elemento", expandItem: "Expandir elemento", itemTitlePlaceholder: "Título del elemento", itemTitleAria: "Título del elemento {number}",
+      moveUp: "Mover hacia arriba", moveDown: "Mover hacia abajo", removeItem: "Eliminar elemento", contentPlaceholder: "Añadir contenido…",
+      contentAria: "Contenido de {title}", emptyState: "Aún no hay elementos. Añade uno para empezar.", iconSaved: "Icono del elemento guardado.",
+      orderEnabled: "Se muestran los números de elemento.", orderDisabled: "Se ocultan los números de elemento."
+    }
+  },
+  pt: {
+    blockType: "Acordeão", slash: { label: "Acordeão", hint: "Criar itens recolhíveis com ícones", keywords: "acordeão recolher expandir FAQ itens" },
+    menu: { options: "Opções do acordeão", showOrder: "Mostrar números dos itens" },
+    accordion: {
+      defaultTitle: "Acordeão", defaultItemTitle: "Item {number}", titlePlaceholder: "Título do acordeão", titleAria: "Título do acordeão",
+      addItem: "Adicionar item", dragItem: "Arraste para reordenar", changeIcon: "Alterar ícone", changeIconFor: "Alterar ícone de {title}",
+      collapseItem: "Recolher item", expandItem: "Expandir item", itemTitlePlaceholder: "Título do item", itemTitleAria: "Título do item {number}",
+      moveUp: "Mover para cima", moveDown: "Mover para baixo", removeItem: "Remover item", contentPlaceholder: "Adicionar conteúdo…",
+      contentAria: "Conteúdo de {title}", emptyState: "Ainda não há itens. Adicione um item para começar.", iconSaved: "Ícone do item salvo.",
+      orderEnabled: "Os números dos itens são exibidos.", orderDisabled: "Os números dos itens estão ocultos."
+    }
+  }
+};
+
+for (const [language, addition] of Object.entries(accordionTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  catalog.blocks.types.ACCORDION = addition.blockType;
+  catalog.slash.ACCORDION = addition.slash;
+  catalog.menu.accordionOptions = addition.menu.options;
+  catalog.menu.accordionShowOrder = addition.menu.showOrder;
+  catalog.accordion = addition.accordion;
+}
+
 function readStorage(key) {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;

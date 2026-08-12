@@ -37,6 +37,7 @@ import {
   summarizeBookmarkData
 } from "../lib/bookmark.js";
 import { getAiChatData, summarizeAiChatData } from "../lib/ai-chat.js";
+import { getAccordionData, summarizeAccordionData } from "../lib/accordion.js";
 import {
   assertStructuredBlockMetadataIntegrity,
   StructuredMetadataIntegrityError
@@ -157,6 +158,13 @@ function prepareBlockContent(type: BlockRow["type"], markdown: string, metadata:
     return {
       markdown: summarizeAiChatData(getAiChatData(metadata)),
       // Derived markdown may be bounded; the authoritative metadata must remain exact.
+      metadata
+    };
+  }
+
+  if (type === "ACCORDION") {
+    return {
+      markdown: summarizeAccordionData(getAccordionData(metadata)),
       metadata
     };
   }

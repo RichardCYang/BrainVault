@@ -29,6 +29,7 @@ const COLLABORATIVE_BLOCK_TYPES = new Set([
   "QUOTE",
   "CALLOUT",
   "TOGGLE",
+  "ACCORDION",
   "TABLE",
   "KANBAN",
   "DATABASE",

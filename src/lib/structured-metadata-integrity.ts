@@ -54,6 +54,40 @@ const databaseLimits = {
   urlLength: 2_000,
   idLength: 64
 } as const;
+const accordionIconMaxLength = Math.ceil(((512 * 1024) * 4) / 3) + 256;
+const accordionBuiltInIconPattern = /^icon:[a-z0-9-]{1,27}$/;
+const accordionUploadedIconPattern = /^\/upload\/icons\/[A-Za-z0-9_-]{1,64}\/[A-Za-z0-9_-]{1,96}\.(?:png|jpg|webp|ico)$/;
+const accordionImageDataPattern = /^data:image\/(?:png|jpeg|webp|vnd\.microsoft\.icon|x-icon);base64,[A-Za-z0-9+/]+={0,2}$/i;
+
+function isValidAccordionIconValue(value: string) {
+  if (!value || value.length > accordionIconMaxLength) return false;
+  const normalized = value.trim();
+  if (!normalized) return false;
+  if (normalized.toLowerCase().startsWith("icon:")) {
+    return normalized === normalized.toLowerCase() && accordionBuiltInIconPattern.test(normalized);
+  }
+  if (normalized.startsWith("image:")) {
+    const source = normalized.slice("image:".length).trim();
+    if (accordionUploadedIconPattern.test(source) || accordionImageDataPattern.test(source)) return true;
+    if (source.length > 2_048) return false;
+    try {
+      const url = new URL(source);
+      return !url.username && !url.password && (url.protocol === "http:" || url.protocol === "https:");
+    } catch {
+      return false;
+    }
+  }
+  return normalized.length <= 32;
+}
+
+const accordionLimits = {
+  titleLength: 120,
+  items: 50,
+  itemTitleLength: 300,
+  itemContentLength: 8_000,
+  idLength: 64,
+  iconLength: accordionIconMaxLength
+} as const;
 const ganttLimits = {
   titleLength: 120,
   tasks: 200,
@@ -454,6 +488,29 @@ function parseExactIsoDay(value: unknown, path: string) {
   return Math.trunc(time / 86_400_000);
 }
 
+function assertAccordionMetadata(root: MetadataRecord) {
+  const accordion = optionalRecord(root.accordion, "metadata.accordion");
+  if (!accordion) return;
+  optionalString(accordion.title, "metadata.accordion.title", accordionLimits.titleLength);
+  optionalBoolean(accordion.showOrder, "metadata.accordion.showOrder");
+  const items = optionalArray(accordion.items, "metadata.accordion.items", accordionLimits.items);
+  if (!items) return;
+
+  const ids: string[] = [];
+  items.forEach((rawItem, itemIndex) => {
+    const path = `metadata.accordion.items[${itemIndex}]`;
+    const item = optionalRecord(rawItem, path);
+    if (!item) fail(path, "must be an object");
+    ids.push(assertIdentifier(item.id, `${path}.id`)!);
+    const icon = optionalString(item.icon, `${path}.icon`, accordionLimits.iconLength);
+    if (icon !== null && !isValidAccordionIconValue(icon)) fail(`${path}.icon`, "is not a valid icon value");
+    optionalString(item.title, `${path}.title`, accordionLimits.itemTitleLength);
+    optionalString(item.content, `${path}.content`, accordionLimits.itemContentLength);
+    optionalBoolean(item.open, `${path}.open`);
+  });
+  assertUnique(ids, "metadata.accordion.items");
+}
+
 function assertGanttMetadata(root: MetadataRecord) {
   const gantt = optionalRecord(root.gantt, "metadata.gantt");
   if (!gantt) return;
@@ -628,12 +685,13 @@ function assertAiChatMetadata(root: MetadataRecord) {
 }
 
 export function assertStructuredBlockMetadataIntegrity(type: BlockType, metadata: unknown) {
-  if (!["TABLE", "KANBAN", "DATABASE", "TIMETABLE", "GANTT", "BOOKMARK", "AI_CHAT"].includes(type)) return undefined;
+  if (!["TABLE", "KANBAN", "DATABASE", "ACCORDION", "TIMETABLE", "GANTT", "BOOKMARK", "AI_CHAT"].includes(type)) return undefined;
   const root = parseMetadataRoot(metadata);
   if (!root) return null;
   if (type === "TABLE") assertTableMetadata(root);
   else if (type === "KANBAN") assertKanbanMetadata(root);
   else if (type === "DATABASE") assertDatabaseMetadata(root);
+  else if (type === "ACCORDION") assertAccordionMetadata(root);
   else if (type === "TIMETABLE") assertTimetableMetadata(root);
   else if (type === "GANTT") assertGanttMetadata(root);
   else if (type === "BOOKMARK") assertBookmarkMetadata(root);

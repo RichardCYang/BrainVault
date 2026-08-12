@@ -10,6 +10,7 @@ import { renderTimetableHtml } from "./timetable.js";
 import { renderGanttHtml } from "./gantt.js";
 import { renderBookmarkHtml } from "./bookmark.js";
 import { getAiChatData, getAiProviderLabel } from "./ai-chat.js";
+import { renderAccordionHtml } from "./accordion.js";
 import { getCodeLanguage, renderHighlightedCode, renderMarkdownCodeFence } from "./code-highlighting.js";
 import { parseYouTubeVideoUrl } from "./youtube.js";
 
@@ -160,7 +161,7 @@ const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   img: ["src", "srcset", "alt", "title", "width", "height", "loading", "referrerpolicy"],
   pre: ["class"],
   code: ["class"],
-  span: ["class", "style", "data-latex", "data-math-display"],
+  span: ["class", "style", "data-latex", "data-math-display", "data-icon-value", "aria-hidden"],
   input: ["type", "checked", "disabled"],
   table: ["class"],
   thead: ["class"],
@@ -424,6 +425,8 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
     }
     case "TOGGLE":
       return renderToggle(markdownValue, metadata);
+    case "ACCORDION":
+      return sanitizeHtml(renderAccordionHtml(metadata), sanitizeOptions);
     case "TABLE":
       return renderTable(metadata);
     case "KANBAN":

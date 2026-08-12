@@ -4,6 +4,14 @@ export function getIconPickerTargetKey(target) {
   if (target.type === "page" && typeof target.pageId === "string" && target.pageId) {
     return `page:${target.pageId}`;
   }
+  if (
+    target.type === "accordionItem"
+    && typeof target.pageId === "string" && target.pageId
+    && typeof target.blockId === "string" && target.blockId
+    && typeof target.itemId === "string" && target.itemId
+  ) {
+    return `accordion:${target.pageId}:${target.blockId}:${target.itemId}`;
+  }
   return null;
 }
 

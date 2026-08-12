@@ -24,6 +24,15 @@ import {
   summarizeDatabaseData
 } from "./database-block.js";
 import {
+  createAccordionEditor,
+  createDefaultAccordionData,
+  extractAccordionData,
+  normalizeAccordionData,
+  setAccordionItemIcon,
+  setAccordionShowOrder,
+  summarizeAccordionData
+} from "./accordion-block.js";
+import {
   createGanttEditor,
   createDefaultGanttData,
   extractGanttData,
@@ -333,6 +342,7 @@ const blockTypeLabels = {
   QUOTE: "blocks.types.QUOTE",
   CALLOUT: "blocks.types.CALLOUT",
   TOGGLE: "blocks.types.TOGGLE",
+  ACCORDION: "blocks.types.ACCORDION",
   TABLE: "blocks.types.TABLE",
   KANBAN: "blocks.types.KANBAN",
   DATABASE: "blocks.types.DATABASE",
@@ -624,6 +634,7 @@ const slashCommands = [
   { type: "QUOTE", command: "/quote", icon: "quote" },
   { type: "CALLOUT", command: "/callout", icon: "callout" },
   { type: "TOGGLE", command: "/toggle", icon: "toggle" },
+  { type: "ACCORDION", command: "/accordion", icon: "accordion" },
   { type: "TABLE", command: "/table", icon: "table" },
   { type: "DATABASE", command: "/database", icon: "database" },
   { type: "TIMETABLE", command: "/timetable", icon: "timetable" },
@@ -643,11 +654,11 @@ const listBlockTypes = new Set(["UNORDERED_LIST", "ORDERED_LIST"]);
 
 // These block types cannot retain arbitrary source markdown. When their slash command is
 // used on a later line, insert a new sibling instead of replacing earlier note text.
-const slashInsertAfterTypes = new Set(["TABLE", "DATABASE", "TIMETABLE", "GANTT", "KANBAN", "BOOKMARK", "VIDEO", "DIVIDER"]);
+const slashInsertAfterTypes = new Set(["TABLE", "DATABASE", "ACCORDION", "TIMETABLE", "GANTT", "KANBAN", "BOOKMARK", "VIDEO", "DIVIDER"]);
 
 // Structured editors serialize their real content into metadata. Converting one in place
 // would make buildBlockPayload remove the source metadata for the newly selected type.
-const structuredBlockTypes = new Set(["TABLE", "DATABASE", "TIMETABLE", "GANTT", "KANBAN", "BOOKMARK", "AI_CHAT"]);
+const structuredBlockTypes = new Set(["TABLE", "DATABASE", "ACCORDION", "TIMETABLE", "GANTT", "KANBAN", "BOOKMARK", "AI_CHAT"]);
 
 function isStructuredBlockType(type) {
   return structuredBlockTypes.has(type);
@@ -712,6 +723,13 @@ const slashCommandIconShapes = {
     ["path", { d: "m8 9 4 4 4-4" }],
     ["path", { d: "M4 5h16" }],
     ["path", { d: "M4 19h16" }]
+  ],
+  accordion: [
+    ["path", { d: "m6 7 2 2 2-2" }],
+    ["path", { d: "M12 8h7" }],
+    ["path", { d: "m6 15 2 2 2-2" }],
+    ["path", { d: "M12 16h7" }],
+    ["path", { d: "M3 3h18v18H3z" }]
   ],
   table: [
     ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
@@ -1075,6 +1093,7 @@ const elements = {
   navigationAddSubpageButton: $("#navigation-add-subpage-button"),
   navigationDeleteLabel: $("#navigation-delete-label"),
   calloutTypeGroup: $("#callout-type-group"),
+  accordionOptionsGroup: $("#accordion-options-group"),
   inlineToolbar: $("#inline-toolbar"),
   emojiPickerLayer: $("#emoji-picker-layer"),
   emojiPicker: $("#emoji-picker"),
@@ -4181,6 +4200,12 @@ function renderIconValue(container, iconValue, fallback = "📄") {
   container.replaceChildren(createIconVisual(iconValue, fallback));
 }
 
+function hydrateAccordionIcons(root = document) {
+  root?.querySelectorAll?.(".rendered-accordion-item-icon[data-icon-value]").forEach((container) => {
+    renderIconValue(container, container.dataset.iconValue, "📄");
+  });
+}
+
 function renderIconLabel(container, iconValue, fallback, labelText) {
   const icon = document.createElement("span");
   icon.className = "app-inline-icon";
@@ -4751,6 +4776,24 @@ function closeEmojiPicker({ restoreFocus = true } = {}) {
   if (restoreFocus && returnFocus instanceof HTMLElement) returnFocus.focus();
 }
 
+function openAccordionItemIconPicker(row, itemId, trigger) {
+  if (!row?.dataset.blockId || !itemId || !state.selectedPage || !requireWritablePage()) return;
+  const data = extractAccordionData(row);
+  const item = data.items.find((candidate) => candidate.id === itemId);
+  if (!item) return;
+  openEmojiPicker(
+    {
+      type: "accordionItem",
+      pageId: state.selectedPage.id,
+      blockId: row.dataset.blockId,
+      itemId,
+      currentEmoji: item.icon ?? "📄",
+      defaultEmoji: "📄"
+    },
+    trigger
+  );
+}
+
 function openPageEmojiPicker(page, trigger) {
   if (!page) return;
   if (state.selectedPage?.id === page.id && !isCollectionPage(page) && !requireWritablePage()) return;
@@ -4800,6 +4843,22 @@ async function saveEmojiSelection(emoji, { operation = null } = {}) {
         elements.collectionIconButton.focus();
       }
       setStatus(t("emoji.collectionSaved"));
+      return;
+    }
+
+    if (target.type === "accordionItem") {
+      if (state.selectedPage?.id !== target.pageId || !requireWritablePage()) return;
+      const row = elements.blockList.querySelector(`[data-block-id="${CSS.escape(target.blockId)}"]`);
+      if (!row || row.dataset.blockType !== "ACCORDION" || !promoteBlockDraftConflict(row)) return;
+      if (!setAccordionItemIcon(row, target.itemId, emoji, renderIconValue)) return;
+      if (isEmojiIconValue(emoji)) rememberRecentEmoji(emoji);
+      else if (getCustomImageSource(emoji)) rememberCustomIconSelection(emoji);
+      await saveBlockRow(row, { quiet: true });
+      if (iconPickerOperationGuard.isCurrent(activeOperation, targetKey)) {
+        closeEmojiPicker({ restoreFocus: false });
+        row.querySelector(`[data-action="accordion-pick-icon"][data-accordion-item-id="${CSS.escape(target.itemId)}"]`)?.focus();
+      }
+      setStatus(t("accordion.iconSaved"));
       return;
     }
 
@@ -5662,7 +5721,7 @@ function syncBlockReadOnlyState(row, readOnly = isPageReadOnly() || isPageIntera
     }
   }
 
-  for (const details of row.querySelectorAll("details:not(.rendered-toggle)")) {
+  for (const details of row.querySelectorAll("details:not(.rendered-toggle):not(.rendered-accordion-item)")) {
     if (readOnly) details.removeAttribute("open");
   }
 }
@@ -8219,6 +8278,10 @@ function getBlockDatabaseData(block) {
   return normalizeDatabaseData(block?.metadata?.database);
 }
 
+function getBlockAccordionData(block) {
+  return normalizeAccordionData(block?.metadata?.accordion);
+}
+
 function getBlockTimetableData(block) {
   return normalizeTimetableData(block?.metadata?.timetable);
 }
@@ -9066,6 +9129,7 @@ function updateRenderedBlockPreview(row, block) {
   if (!block.htmlCache) preview.textContent = block.markdown ?? "";
   hydrateMathExpressions(preview);
   hydrateHighlightedCodeBlocks(preview);
+  hydrateAccordionIcons(preview);
 }
 
 function createTextBlockEditor(block) {
@@ -9590,6 +9654,13 @@ function mountBlockEditor(row, block) {
         ? createKanbanEditor(row, getBlockKanbanData(block))
         : block.type === "DATABASE"
           ? createDatabaseEditor(row, getBlockDatabaseData(block), { onDirty: () => scheduleBlockSave(row) })
+          : block.type === "ACCORDION"
+            ? createAccordionEditor(row, getBlockAccordionData(block), {
+                onDirty: () => scheduleBlockSave(row),
+                renderIcon: renderIconValue,
+                onPickIcon: ({ itemId, trigger }) => openAccordionItemIconPicker(row, itemId, trigger),
+                previewHtml: block.htmlCache ?? ""
+              })
           : block.type === "TIMETABLE"
             ? createTimetableEditor(row, getBlockTimetableData(block), { onDirty: () => scheduleBlockSave(row) })
             : block.type === "GANTT"
@@ -9785,6 +9856,7 @@ function buildBlockPayload(row) {
     delete metadata.gantt;
     delete metadata.bookmark;
     delete metadata.aiChat;
+    delete metadata.accordion;
     payload.markdown = table.rows.map((cells) => cells.join("\t")).join("\n").slice(0, 20_000);
     payload.metadata = metadata;
   } else if (type === "KANBAN") {
@@ -9796,6 +9868,7 @@ function buildBlockPayload(row) {
     delete metadata.gantt;
     delete metadata.bookmark;
     delete metadata.aiChat;
+    delete metadata.accordion;
     payload.markdown = summarizeKanbanData(kanban);
     payload.metadata = metadata;
   } else if (type === "DATABASE") {
@@ -9807,7 +9880,20 @@ function buildBlockPayload(row) {
     delete metadata.gantt;
     delete metadata.bookmark;
     delete metadata.aiChat;
+    delete metadata.accordion;
     payload.markdown = summarizeDatabaseData(database);
+    payload.metadata = metadata;
+  } else if (type === "ACCORDION") {
+    const accordion = extractAccordionData(row);
+    metadata.accordion = accordion;
+    delete metadata.table;
+    delete metadata.kanban;
+    delete metadata.database;
+    delete metadata.timetable;
+    delete metadata.gantt;
+    delete metadata.bookmark;
+    delete metadata.aiChat;
+    payload.markdown = summarizeAccordionData(accordion);
     payload.metadata = metadata;
   } else if (type === "TIMETABLE") {
     const timetable = extractTimetableData(row);
@@ -9818,6 +9904,7 @@ function buildBlockPayload(row) {
     delete metadata.gantt;
     delete metadata.bookmark;
     delete metadata.aiChat;
+    delete metadata.accordion;
     payload.markdown = summarizeTimetableData(timetable);
     payload.metadata = metadata;
   } else if (type === "GANTT") {
@@ -9829,6 +9916,7 @@ function buildBlockPayload(row) {
     delete metadata.timetable;
     delete metadata.bookmark;
     delete metadata.aiChat;
+    delete metadata.accordion;
     payload.markdown = summarizeGanttData(gantt);
     payload.metadata = metadata;
   } else if (type === "BOOKMARK") {
@@ -9840,6 +9928,7 @@ function buildBlockPayload(row) {
     delete metadata.timetable;
     delete metadata.gantt;
     delete metadata.aiChat;
+    delete metadata.accordion;
     payload.markdown = summarizeBookmarkData(bookmark);
     payload.metadata = metadata;
   } else if (type === "AI_CHAT") {
@@ -9851,6 +9940,7 @@ function buildBlockPayload(row) {
     delete metadata.timetable;
     delete metadata.gantt;
     delete metadata.bookmark;
+    delete metadata.accordion;
     payload.markdown = summarizeAiChatData(aiChat);
     payload.metadata = metadata;
   } else {
@@ -9861,6 +9951,7 @@ function buildBlockPayload(row) {
     if (metadata.gantt) delete metadata.gantt;
     if (metadata.bookmark) delete metadata.bookmark;
     if (metadata.aiChat) delete metadata.aiChat;
+    if (metadata.accordion) delete metadata.accordion;
     payload.metadata = Object.keys(metadata).length ? metadata : null;
   }
 
@@ -9956,7 +10047,7 @@ function getBlockInsertionIndex(clientY, candidates) {
 }
 
 function getBlockContextMenuItems() {
-  return [...elements.blockContextMenu.querySelectorAll('[role="menuitem"], [role="menuitemradio"]')].filter(
+  return [...elements.blockContextMenu.querySelectorAll('[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"]')].filter(
     (item) => !item.closest(".hidden")
   );
 }
@@ -9971,6 +10062,33 @@ function syncCalloutTypeMenu(row) {
     const isActive = button.dataset.calloutType === activeType;
     button.setAttribute("aria-checked", String(isActive));
     button.classList.toggle("is-selected", isActive);
+  }
+}
+
+function syncAccordionOptionsMenu(row) {
+  const isAccordion = row?.dataset.blockType === "ACCORDION";
+  elements.accordionOptionsGroup?.classList.toggle("hidden", !isAccordion);
+  if (!isAccordion) return;
+  const showOrder = extractAccordionData(row).showOrder;
+  const button = elements.accordionOptionsGroup.querySelector('[data-action="toggle-accordion-order"]');
+  button?.setAttribute("aria-checked", String(showOrder));
+  button?.classList.toggle("is-selected", showOrder);
+}
+
+async function changeAccordionOrderVisibility(row) {
+  if (!requireWritablePage() || !row?.dataset.blockId || row.dataset.blockType !== "ACCORDION") return;
+  if (!promoteBlockDraftConflict(row)) return;
+  const current = extractAccordionData(row).showOrder;
+  if (!setAccordionShowOrder(row, !current)) return;
+  if (!markBlockDirty(row)) return;
+  syncAccordionOptionsMenu(row);
+  try {
+    await saveBlockRow(row, { quiet: true });
+    closeBlockContextMenu({ restoreFocus: true });
+    setStatus(t(!current ? "accordion.orderEnabled" : "accordion.orderDisabled"));
+  } catch (error) {
+    syncAccordionOptionsMenu(row);
+    setStatus(error.message, true);
   }
 }
 
@@ -10062,6 +10180,7 @@ function openBlockContextMenu(row, handle, { focusFirst = false } = {}) {
   row.classList.add("is-menu-open");
   handle.setAttribute("aria-expanded", "true");
   syncCalloutTypeMenu(row);
+  syncAccordionOptionsMenu(row);
   positionBlockContextMenu(handle);
 
   if (focusFirst) getBlockContextMenuItems()[0]?.focus();
@@ -10234,6 +10353,7 @@ function setRowType(row, type, { markdown } = {}) {
   if (previousType === "TABLE") metadata.table = extractTableData(row);
   if (previousType === "KANBAN") metadata.kanban = extractKanbanData(row);
   if (previousType === "DATABASE") metadata.database = extractDatabaseData(row);
+  if (previousType === "ACCORDION") metadata.accordion = extractAccordionData(row);
   if (previousType === "TIMETABLE") metadata.timetable = extractTimetableData(row);
   if (previousType === "GANTT") metadata.gantt = extractGanttData(row);
   if (previousType === "BOOKMARK") metadata.bookmark = extractBookmarkData(row);
@@ -10246,6 +10366,7 @@ function setRowType(row, type, { markdown } = {}) {
   if (type === "TABLE" && !metadata.table) metadata.table = createDefaultTableData();
   if (type === "KANBAN" && !metadata.kanban) metadata.kanban = createDefaultKanbanData();
   if (type === "DATABASE" && !metadata.database) metadata.database = createDefaultDatabaseData();
+  if (type === "ACCORDION" && !metadata.accordion) metadata.accordion = createDefaultAccordionData();
   if (type === "TIMETABLE" && !metadata.timetable) metadata.timetable = createDefaultTimetableData();
   if (type === "GANTT" && !metadata.gantt) metadata.gantt = createDefaultGanttData();
   if (type === "BOOKMARK" && !metadata.bookmark) metadata.bookmark = createDefaultBookmarkData();
@@ -10272,7 +10393,7 @@ function setRowType(row, type, { markdown } = {}) {
   mountBlockEditor(row, {
     ...existing,
     type,
-    markdown: type === "TABLE" || type === "KANBAN" || type === "DATABASE" || type === "TIMETABLE" || type === "GANTT" || type === "BOOKMARK" || type === "AI_CHAT" ? "" : markdown ?? previousMarkdown,
+    markdown: type === "TABLE" || type === "KANBAN" || type === "DATABASE" || type === "ACCORDION" || type === "TIMETABLE" || type === "GANTT" || type === "BOOKMARK" || type === "AI_CHAT" ? "" : markdown ?? previousMarkdown,
     metadata
   });
 }
@@ -11381,6 +11502,8 @@ async function applySlashCommand(row, type) {
     row.querySelector(".kanban-title-input")?.focus();
   } else if (type === "DATABASE") {
     row.querySelector(".database-title-input")?.focus();
+  } else if (type === "ACCORDION") {
+    row.querySelector(".accordion-title-input")?.focus();
   } else if (type === "TIMETABLE") {
     row.querySelector(".timetable-title-input")?.focus();
   } else if (type === "GANTT") {
@@ -11909,7 +12032,7 @@ function clearPdfExportLayout() {
 }
 
 function expandToggleDetailsForPdf() {
-  const snapshots = [...elements.pageView.querySelectorAll("details.rendered-toggle")].map((details) => [
+  const snapshots = [...elements.pageView.querySelectorAll("details.rendered-toggle, details.rendered-accordion-item")].map((details) => [
     details,
     details.hasAttribute("open")
   ]);
@@ -11956,6 +12079,7 @@ async function exportCurrentPageToPdf() {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     elements.blockList.querySelectorAll("textarea").forEach(autoGrowTextarea);
     hydrateMathExpressions(elements.pageView);
+    hydrateAccordionIcons(elements.pageView);
     restoreToggleDetails = expandToggleDetailsForPdf();
     restoreComputedStyles = freezePdfExportComputedStyles();
 
@@ -12312,6 +12436,7 @@ function renderSelectedPage() {
   renderPages();
   requestAnimationFrame(() => {
     hydrateMathExpressions(elements.pageView);
+    hydrateAccordionIcons(elements.pageView);
     focusPendingBlock();
   });
 }
@@ -15346,6 +15471,11 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
       return;
     }
 
+    if (button.dataset.action === "toggle-accordion-order") {
+      await changeAccordionOrderVisibility(row);
+      return;
+    }
+
     if (button.dataset.action === "insert-block-before" || button.dataset.action === "insert-block-after") {
       const placement = button.dataset.action === "insert-block-before" ? "before" : "after";
       closeBlockContextMenu();
@@ -15631,4 +15761,7 @@ window.addEventListener("scroll", () => {
 
 boot();
 
-window.addEventListener("load", () => hydrateMathExpressions(document));
+window.addEventListener("load", () => {
+  hydrateMathExpressions(document);
+  hydrateAccordionIcons(document);
+});
