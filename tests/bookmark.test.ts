@@ -9,7 +9,6 @@ import {
   isRedditBookmarkUrl,
   isPrivateAddress,
   parseBookmarkPreview,
-  parseRedditOEmbedPayload,
   prioritizeResolvedAddresses,
   renderBookmarkHtml,
   summarizeBookmarkData
@@ -66,45 +65,20 @@ describe("bookmark OpenGraph parsing", () => {
   });
 });
 
-describe("Reddit bookmark metadata fallback", () => {
-  it("only routes Reddit-owned hostnames to the Reddit-specific fallback", () => {
+describe("Reddit bookmark OpenGraph fetching", () => {
+  it("only routes Reddit-owned hostnames to the Reddit-specific crawler User-Agent", () => {
     expect(isRedditBookmarkUrl("https://www.reddit.com/r/webdev/comments/abc123/example/")).toBe(true);
     expect(isRedditBookmarkUrl("https://redd.it/abc123")).toBe(true);
     expect(isRedditBookmarkUrl("https://reddit.com.evil.example/r/webdev/comments/abc123/example/")).toBe(false);
     expect(isRedditBookmarkUrl("https://evilreddit.com/r/webdev/comments/abc123/example/")).toBe(false);
+    expect(bookmarkSource).toContain('const redditBookmarkUserAgent = "Twitterbot/1.0"');
+    expect(bookmarkSource).toContain('"User-Agent": bookmarkFetchUserAgent(url)');
   });
 
-  it("maps Reddit oEmbed post metadata into bookmark title and description fields", () => {
-    expect(parseRedditOEmbedPayload(
-      {
-        author_name: "avitorio",
-        provider_name: "reddit",
-        title: "I built an open source content curation directory",
-        thumbnail_url: "https://preview.redd.it/example.png"
-      },
-      "https://www.reddit.com/r/webdev/comments/1sowvc7/i_built_an_open_source_content_curation_directory/"
-    )).toEqual({
-      url: "https://www.reddit.com/r/webdev/comments/1sowvc7/i_built_an_open_source_content_curation_directory/",
-      title: "I built an open source content curation directory",
-      description: "u/avitorio · r/webdev",
-      imageUrl: "https://preview.redd.it/example.png",
-      faviconUrl: "https://www.redditstatic.com/desktop2x/img/favicon/favicon-32x32.png",
-      siteName: "Reddit"
-    });
-  });
-
-  it("uses Reddit comment text as the bookmark description", () => {
-    expect(parseRedditOEmbedPayload(
-      {
-        author_name: "yankeltank",
-        title: "We should start keeping giraffes a secret from young children."
-      },
-      "https://www.reddit.com/r/Showerthoughts/comments/2safxv/we_should_start_keeping_giraffes_a_secret_from/cno7zic"
-    )).toMatchObject({
-      title: "Reddit comment by u/yankeltank",
-      description: "We should start keeping giraffes a secret from young children.",
-      siteName: "Reddit"
-    });
+  it("does not use the Reddit oEmbed fallback path", () => {
+    expect(bookmarkSource).not.toContain("https://www.reddit.com/oembed");
+    expect(bookmarkSource).not.toContain("fetchRedditOEmbedPreview");
+    expect(bookmarkSource).not.toContain("fetchJson(");
   });
 });
 
