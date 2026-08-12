@@ -19,7 +19,8 @@ export type CountryLoginBlockReason =
   | "VPN_DETECTED"
   | "VPN_GATE_DETECTED"
   | "PROXY_DETECTED"
-  | "TOR_DETECTED";
+  | "TOR_DETECTED"
+  | "TOTP_ATTEMPTS_EXCEEDED";
 
 export const defaultCountryBlockHistoryMonths = 3;
 export const maxCountryBlockHistoryMonths = 12;
@@ -204,6 +205,26 @@ export async function checkCountryLoginAccess(
   return { ...decision, policy, resolution };
 }
 
+export async function recordCountryLoginBlockStrict(
+  userId: string,
+  ipAddress: string,
+  countryCode: string | null,
+  reason: CountryLoginBlockReason,
+  client: DbClient = db
+) {
+  await client.execute(
+    `DELETE FROM user_country_login_blocks
+     WHERE user_id = ? AND blocked_at < DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL ${countryBlockHistoryRetentionMonths} MONTH)`,
+    [userId]
+  );
+  await client.execute(
+    `INSERT INTO user_country_login_blocks
+       (id, user_id, ip_address, country_code, reason)
+     VALUES (?, ?, ?, ?, ?)`,
+    [createId("cgb"), userId, ipAddress || "unknown", normalizeIsoCountryCode(countryCode), reason]
+  );
+}
+
 export async function recordCountryLoginBlock(
   userId: string,
   ipAddress: string,
@@ -212,17 +233,7 @@ export async function recordCountryLoginBlock(
   client: DbClient = db
 ) {
   try {
-    await client.execute(
-      `DELETE FROM user_country_login_blocks
-       WHERE user_id = ? AND blocked_at < DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL ${countryBlockHistoryRetentionMonths} MONTH)`,
-      [userId]
-    );
-    await client.execute(
-      `INSERT INTO user_country_login_blocks
-         (id, user_id, ip_address, country_code, reason)
-       VALUES (?, ?, ?, ?, ?)`,
-      [createId("cgb"), userId, ipAddress || "unknown", normalizeIsoCountryCode(countryCode), reason]
-    );
+    await recordCountryLoginBlockStrict(userId, ipAddress, countryCode, reason, client);
   } catch (error) {
     console.error("Failed to record a country-login block", {
       errorName: error instanceof Error ? error.name : typeof error,

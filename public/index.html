@@ -881,6 +881,9 @@
                 <button id="account-security-tab-blocks" type="button" role="tab" aria-selected="false" aria-controls="account-security-panel-blocks" data-security-panel="blocks" tabindex="-1">
                   <span data-i18n="account.blockHistoryTab">Block history</span>
                 </button>
+                <button id="account-security-tab-totp-blocks" type="button" role="tab" aria-selected="false" aria-controls="account-security-panel-totp-blocks" data-security-panel="totp-blocks" tabindex="-1">
+                  <span data-i18n="account.totpIpBlocksTab">TOTP blocked IPs</span>
+                </button>
               </div>
 
               <div id="account-security-panel-settings" class="account-security-panel" role="tabpanel" aria-labelledby="account-security-tab-settings" data-security-panel-content="settings">
@@ -959,6 +962,48 @@
                   <div id="account-passkey-support" class="field-help"></div>
                   <div id="account-passkey-list" class="passkey-list" aria-live="polite"></div>
                 </article>
+                </section>
+
+                <section class="account-security-section totp-ip-block-policy-section" aria-labelledby="account-totp-ip-block-title">
+                  <div class="account-security-section-heading">
+                    <div>
+                      <h4 id="account-totp-ip-block-title" data-i18n="account.totpIpBlockTitle">TOTP attempt limit</h4>
+                      <p data-i18n="account.totpIpBlockDescription">Permanently block the client IP after too many invalid authenticator codes.</p>
+                    </div>
+                    <span id="account-totp-ip-block-status" class="country-login-status totp-ip-block-status" data-i18n="account.totpIpBlockOff">Off</span>
+                  </div>
+
+                  <div class="totp-ip-block-policy-form">
+                    <div class="form-field">
+                      <label for="account-totp-ip-block-enabled" data-i18n="account.totpIpBlockMode">OTP attempt limiting</label>
+                      <select id="account-totp-ip-block-enabled">
+                        <option value="false" data-i18n="account.totpIpBlockOff">Off</option>
+                        <option value="true" data-i18n="account.totpIpBlockOn">On</option>
+                      </select>
+                    </div>
+
+                    <div class="form-field">
+                      <label for="account-totp-ip-block-threshold" data-i18n="account.totpIpBlockThreshold">Allowed invalid TOTP attempts</label>
+                      <input id="account-totp-ip-block-threshold" type="number" min="1" max="8" step="1" value="3" inputmode="numeric" />
+                      <p class="field-help" data-i18n="account.totpIpBlockThresholdHint">Default: 3. The attempt that reaches this number permanently blocks the IP.</p>
+                    </div>
+
+                    <div class="country-login-current">
+                      <span data-i18n="account.totpIpBlockCurrentIp">Current IP</span>
+                      <strong id="account-totp-ip-block-current-ip">—</strong>
+                    </div>
+
+                    <div class="form-field">
+                      <label for="account-totp-ip-block-password" data-i18n="account.totpIpBlockPassword">Current password to save this policy</label>
+                      <input id="account-totp-ip-block-password" type="password" autocomplete="current-password" maxlength="128" />
+                    </div>
+
+                    <p class="country-login-warning" data-i18n="account.totpIpBlockWarning">When enabled, consecutive invalid TOTP codes from the same IP are counted. Reaching the configured limit permanently denies that IP at the server before the login page or API is served. Existing permanent blocks remain until manually unblocked.</p>
+
+                    <div class="account-form-actions">
+                      <button id="account-totp-ip-block-save" type="button" data-i18n="account.totpIpBlockSave">Save OTP attempt limit</button>
+                    </div>
+                  </div>
                 </section>
 
                 <section class="account-security-section country-login-policy-section" aria-labelledby="account-country-login-title">
@@ -1147,6 +1192,40 @@
                   <p id="account-block-history-empty" class="login-history-empty hidden" data-i18n="account.blockHistoryEmpty">No security-policy blocks were recorded during this period.</p>
                 </div>
                 <p id="account-block-history-truncated" class="login-history-note hidden" data-i18n="account.blockHistoryTruncated">Only the latest 500 blocks are shown.</p>
+              </section>
+
+              <section id="account-security-panel-totp-blocks" class="account-security-panel hidden" role="tabpanel" aria-labelledby="account-security-tab-totp-blocks" data-security-panel-content="totp-blocks">
+                <div class="login-history-heading">
+                  <div>
+                    <h4 data-i18n="account.totpIpBlocksTitle">Permanently blocked TOTP IPs</h4>
+                    <p data-i18n="account.totpIpBlocksDescription">Use another unblocked network to review and manually release IPs permanently blocked by this account's TOTP attempt limit.</p>
+                  </div>
+                  <button id="account-totp-ip-blocks-refresh" class="secondary compact" type="button" data-i18n="account.totpIpBlocksRefresh">Refresh</button>
+                </div>
+
+                <div class="form-field totp-ip-unblock-password">
+                  <label for="account-totp-ip-unblock-password" data-i18n="account.totpIpUnblockPassword">Current password required to unblock</label>
+                  <input id="account-totp-ip-unblock-password" type="password" autocomplete="current-password" maxlength="128" />
+                  <p class="field-help" data-i18n="account.totpIpUnblockPasswordHint">Enter your current password, then choose Unblock next to an IP.</p>
+                </div>
+
+                <p id="account-totp-ip-blocks-summary" class="login-history-summary" aria-live="polite"></p>
+
+                <div class="login-history-table-wrap">
+                  <table class="login-history-table permanent-totp-blocks-table">
+                    <caption class="visually-hidden" data-i18n="account.totpIpBlocksTableCaption">Active permanent TOTP IP blocks</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col" data-i18n="account.loginHistoryTime">Time</th>
+                        <th scope="col" data-i18n="account.loginHistoryIp">IP address</th>
+                        <th scope="col" data-i18n="account.totpIpBlocksAttempts">Failed attempts</th>
+                        <th scope="col" data-i18n="account.totpIpBlocksAction">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody id="account-totp-ip-blocks-body"></tbody>
+                  </table>
+                  <p id="account-totp-ip-blocks-empty" class="login-history-empty hidden" data-i18n="account.totpIpBlocksEmpty">No IPs are currently permanently blocked by the TOTP attempt limit.</p>
+                </div>
               </section>
             </section>
           </div>

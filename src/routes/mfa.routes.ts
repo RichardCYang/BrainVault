@@ -13,12 +13,13 @@ import {
 } from "@simplewebauthn/server";
 import { env } from "../config/env.js";
 import { db, transaction, type DbClient } from "../lib/db.js";
-import { disconnectUserCollaborators } from "../lib/collaboration-server.js";
+import { disconnectIpCollaborators, disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
 import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
 import { enforceVpnAccessPolicy, getClientTimeZone, getClientWebRtcSignal } from "../lib/vpn-access-policy.js";
-import { getClientIpAddress, recordLoginAttempt } from "../lib/login-history.js";
+import { getClientIpAddress, recordLoginAttempt, type LoginAttemptOutcome } from "../lib/login-history.js";
+import { clearTotpIpFailures, recordTotpIpFailure } from "../lib/totp-ip-block.js";
 import { createId } from "../lib/id.js";
 import {
   buildTotpUri,
@@ -493,8 +494,11 @@ async function reserveMfaAttempt(mfaToken: string, sourceIp: string) {
   });
 }
 
-async function recordReservedMfaFailure(session: MfaSessionRow) {
-  await recordLoginAttempt(session.user_id, session.source_ip, "FAILURE");
+async function recordReservedMfaFailure(
+  session: MfaSessionRow,
+  outcome: LoginAttemptOutcome = "FAILURE"
+) {
+  await recordLoginAttempt(session.user_id, session.source_ip, outcome);
 }
 
 async function completeMfaSession(client: DbClient, mfaToken: string, userId: string) {
@@ -1011,6 +1015,7 @@ mfaRouter.post(
         if (Number(updated.affectedRows) !== 1) {
           throw new ApiError(401, "MFA_CODE_REUSED", "The verification code was already used");
         }
+        await clearTotpIpFailures(activeSession.user_id, activeSession.source_ip, client);
         await recordLoginAttempt(activeSession.user_id, activeSession.source_ip, "SUCCESS", client);
         await completeMfaSession(client, mfaToken, activeSession.user_id);
         return createMfaLoginResult(loginUser);
@@ -1019,12 +1024,26 @@ mfaRouter.post(
       setAuthSessionCookie(res, result.token);
       res.json({ user: result.user });
     } catch (error) {
-      if (
-        session
-        && error instanceof ApiError
-        && ["MFA_METHOD_UNAVAILABLE", "INVALID_MFA_CODE", "MFA_CODE_REUSED"].includes(error.code)
-      ) {
-        await recordReservedMfaFailure(session);
+      if (session && error instanceof ApiError) {
+        if (["INVALID_MFA_CODE", "MFA_CODE_REUSED"].includes(error.code)) {
+          try {
+            const attempt = await recordTotpIpFailure(session.user_id, session.source_ip);
+            await recordReservedMfaFailure(session, attempt.blocked ? "LOCKED" : "FAILURE");
+            if (attempt.blocked) {
+              disconnectIpCollaborators(session.source_ip, "Access from this IP is blocked");
+              next(new ApiError(403, "TOTP_IP_PERMANENTLY_BLOCKED", "This IP address was permanently blocked after too many invalid TOTP codes", {
+                attempts: attempt.attempts,
+                maxAttempts: attempt.maxAttempts
+              }));
+              return;
+            }
+          } catch (securityError) {
+            next(securityError);
+            return;
+          }
+        } else if (error.code === "MFA_METHOD_UNAVAILABLE") {
+          await recordReservedMfaFailure(session);
+        }
       }
       next(error);
     }

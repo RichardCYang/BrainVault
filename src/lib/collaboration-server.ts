@@ -39,6 +39,7 @@ import {
 } from "./collaboration-materialization.js";
 import { CollaborationDocumentError } from "./collaboration-document.js";
 import { getClientIpAddressFromTrustedProxyRequest, isHttpsRequestFromTrustedProxy } from "./reverse-proxy.js";
+import { isPermanentlyBlockedTotpIp } from "./totp-ip-block.js";
 import {
   assessInitialCollaborationBootstrap,
   invalidInitialCollaborationBootstrapSummary,
@@ -279,6 +280,14 @@ export class PageCollaborationHub {
     }
   }
 
+  disconnectIpEverywhere(ipAddress: string, reason = "Access from this IP is blocked") {
+    for (const room of this.rooms.values()) {
+      for (const client of room.clients.values()) {
+        if (client.ipAddress === ipAddress) client.socket.close(4003, reason);
+      }
+    }
+  }
+
   disconnectPage(pageId: string, reason = "Collaboration is no longer available") {
     const room = this.rooms.get(pageId);
     if (!room) return;
@@ -422,6 +431,10 @@ export class PageCollaborationHub {
         request,
         env.HTTPS_MODE === "proxy" ? env.TRUST_PROXY_ADDRESSES : []
       );
+      if (await isPermanentlyBlockedTotpIp(sourceIp)) {
+        rejectWebSocketUpgrade(socket, 403, "Access from this IP is blocked");
+        return;
+      }
       const webRtcSignal: ClientWebRtcSignal = {
         state: payload.webRtcState ?? "ABSENT",
         observedIps: payload.webRtcObservedIps ?? []
@@ -501,6 +514,10 @@ export class PageCollaborationHub {
       ) return;
 
       try {
+        if (await isPermanentlyBlockedTotpIp(sourceIp)) {
+          connection.close(4003, "Access from this IP is blocked");
+          return;
+        }
         const currentUser = await db.queryOne<{
           auth_version?: number;
           country_login_mode?: UserRow["country_login_mode"];
@@ -1248,6 +1265,10 @@ export class PageCollaborationHub {
         for (const client of room.clients.values()) {
           checks.push((async () => {
             try {
+              if (await isPermanentlyBlockedTotpIp(client.ipAddress)) {
+                client.socket.close(4003, "Access from this IP is blocked");
+                return;
+              }
               const currentUser = await db.queryOne<{
                 auth_version?: number;
                 country_login_mode?: UserRow["country_login_mode"];
@@ -1316,6 +1337,10 @@ export function disconnectPageCollaborators(pageId: string, reason?: string) {
 
 export function disconnectUserCollaborators(userId: string, reason?: string) {
   for (const hub of activeHubs) hub.disconnectUserEverywhere(userId, reason);
+}
+
+export function disconnectIpCollaborators(ipAddress: string, reason?: string) {
+  for (const hub of activeHubs) hub.disconnectIpEverywhere(ipAddress, reason);
 }
 
 export function broadcastCanonicalAttachment(pageId: string, block: unknown) {

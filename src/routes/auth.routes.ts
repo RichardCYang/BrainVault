@@ -36,6 +36,14 @@ import {
   maxLoginHistoryMonths,
   recordLoginAttempt
 } from "../lib/login-history.js";
+import {
+  defaultTotpIpBlockThreshold,
+  getTotpIpBlockPolicy,
+  listPermanentTotpIpBlocks,
+  maxTotpIpBlockThreshold,
+  minTotpIpBlockThreshold,
+  normalizeTotpBlockIpAddress
+} from "../lib/totp-ip-block.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { clearAuthSessionCookie, setAuthSessionCookie } from "../lib/session-cookie.js";
 import {
@@ -103,6 +111,22 @@ const countryBlockHistoryQuerySchema = z.object({
 const vpnBlockPolicySchema = z.object({
   currentPassword: passwordInputSchema(1),
   enabled: z.boolean()
+});
+
+const totpIpBlockPolicySchema = z.object({
+  currentPassword: passwordInputSchema(1),
+  enabled: z.boolean(),
+  maxAttempts: z.coerce.number().int().min(minTotpIpBlockThreshold).max(maxTotpIpBlockThreshold)
+});
+
+const totpIpBlockParamsSchema = z.object({
+  ipAddress: z.string().trim().min(2).max(64)
+    .transform((value) => normalizeTotpBlockIpAddress(value))
+    .refine((value) => value !== "unknown", "Invalid IP address")
+});
+
+const totpIpUnblockSchema = z.object({
+  currentPassword: passwordInputSchema(1)
 });
 
 const countryLoginPolicySchema = z
@@ -506,6 +530,145 @@ authRouter.get(
       const history = await listCountryLoginBlocks(user.id, months);
       res.setHeader("Cache-Control", "private, no-store");
       res.json(history);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+authRouter.get("/totp-ip-block-policy", requireAuth, async (req, res, next) => {
+  try {
+    const currentUser = requireUser(req.user);
+    const policy = await getTotpIpBlockPolicy(currentUser.id);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json({
+      enabled: policy.enabled,
+      maxAttempts: policy.maxAttempts,
+      defaultMaxAttempts: defaultTotpIpBlockThreshold,
+      minAttempts: minTotpIpBlockThreshold,
+      maxAllowedAttempts: maxTotpIpBlockThreshold,
+      currentIp: getClientIpAddress(req)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+authRouter.put(
+  "/totp-ip-block-policy",
+  requireAuth,
+  accountReauthenticationRateLimit,
+  validate({ body: totpIpBlockPolicySchema }),
+  async (req, res, next) => {
+    try {
+      const currentUser = requireUser(req.user);
+      const expectedAuthVersion = requireRequestAuthVersion(req);
+      const { currentPassword, enabled, maxAttempts } = req.body as z.infer<typeof totpIpBlockPolicySchema>;
+
+      const updatedUser = await transaction(async (client) => {
+        const user = await client.queryOne<UserRow>(
+          "SELECT * FROM users WHERE id = ? FOR UPDATE",
+          [currentUser.id]
+        );
+        if (!user) throw new ApiError(401, "UNAUTHENTICATED", "User no longer exists");
+        assertAuthenticationVersion(user, expectedAuthVersion);
+        if (!(await verifyPassword(currentPassword, user.password_hash))) {
+          throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
+        }
+
+        const authVersion = normalizeAuthVersion(user.auth_version) + 1;
+        await client.execute(
+          `UPDATE users
+           SET totp_ip_block_enabled = ?, totp_ip_block_threshold = ?, auth_version = ?
+           WHERE id = ?`,
+          [enabled ? 1 : 0, maxAttempts, authVersion, user.id]
+        );
+        // Changing the policy begins a fresh failure counter, but deliberately
+        // does not remove existing permanent blocks. Those require explicit
+        // manual unblocking from the separate blocked-IP list.
+        await client.execute("DELETE FROM user_totp_ip_failures WHERE user_id = ?", [user.id]);
+        await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [user.id]);
+        await client.execute("DELETE FROM webauthn_challenges WHERE user_id = ?", [user.id]);
+        await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [user.id]);
+        return {
+          ...user,
+          totp_ip_block_enabled: enabled ? 1 : 0,
+          totp_ip_block_threshold: maxAttempts,
+          auth_version: authVersion
+        };
+      });
+
+      disconnectUserCollaborators(updatedUser.id, "TOTP IP blocking policy changed");
+      const token = signAuthToken({
+        sub: updatedUser.id,
+        username: updatedUser.username,
+        authVersion: normalizeAuthVersion(updatedUser.auth_version)
+      });
+      setAuthSessionCookie(res, token);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json({
+        enabled,
+        maxAttempts,
+        defaultMaxAttempts: defaultTotpIpBlockThreshold,
+        minAttempts: minTotpIpBlockThreshold,
+        maxAllowedAttempts: maxTotpIpBlockThreshold,
+        currentIp: getClientIpAddress(req)
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+authRouter.get("/totp-ip-blocks", requireAuth, async (req, res, next) => {
+  try {
+    const currentUser = requireUser(req.user);
+    const result = await listPermanentTotpIpBlocks(currentUser.id);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+authRouter.delete(
+  "/totp-ip-blocks/:ipAddress",
+  requireAuth,
+  accountReauthenticationRateLimit,
+  validate({ params: totpIpBlockParamsSchema, body: totpIpUnblockSchema }),
+  async (req, res, next) => {
+    try {
+      const currentUser = requireUser(req.user);
+      const expectedAuthVersion = requireRequestAuthVersion(req);
+      const { ipAddress } = req.params as z.infer<typeof totpIpBlockParamsSchema>;
+      const { currentPassword } = req.body as z.infer<typeof totpIpUnblockSchema>;
+
+      await transaction(async (client) => {
+        const user = await client.queryOne<UserRow>(
+          "SELECT * FROM users WHERE id = ? FOR UPDATE",
+          [currentUser.id]
+        );
+        if (!user) throw new ApiError(401, "UNAUTHENTICATED", "User no longer exists");
+        assertAuthenticationVersion(user, expectedAuthVersion);
+        if (!(await verifyPassword(currentPassword, user.password_hash))) {
+          throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
+        }
+
+        const deleted = await client.execute<{ affectedRows: number }>(
+          "DELETE FROM user_totp_ip_blocks WHERE user_id = ? AND ip_address = ?",
+          [user.id, ipAddress]
+        );
+        if (Number(deleted.affectedRows) !== 1) {
+          throw new ApiError(404, "TOTP_IP_BLOCK_NOT_FOUND", "Permanent TOTP IP block not found");
+        }
+        await client.execute(
+          "DELETE FROM user_totp_ip_failures WHERE user_id = ? AND ip_address = ?",
+          [user.id, ipAddress]
+        );
+      });
+
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json({ ok: true, ipAddress });
     } catch (error) {
       next(error);
     }

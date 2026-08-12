@@ -10,6 +10,7 @@ import { attachPageCollaborationServer } from "./lib/collaboration-server.js";
 import { loadPoshAcmeTls } from "./lib/posh-acme-https.js";
 import { createExpressTrustProxySetting, describeExpressTrustProxySetting } from "./lib/reverse-proxy.js";
 import { assertSupportedNodeRuntime } from "./lib/runtime-security.js";
+import { initializePermanentTotpIpEnforcement } from "./lib/totp-ip-block.js";
 
 assertSupportedNodeRuntime();
 
@@ -30,6 +31,7 @@ async function start() {
 
   await recoverInterruptedDataRestores();
   await cleanupStaleAttachmentTempFiles();
+  await initializePermanentTotpIpEnforcement();
 
   const app = createApp();
   const displayHost = env.HOST === "0.0.0.0" || env.HOST === "::" ? "localhost" : env.HOST;

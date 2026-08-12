@@ -164,6 +164,8 @@ const authFlowTargetKey = "authentication-flow";
 const accountSecurityOperationGuards = Object.freeze({
   loginHistory: createAccountAvatarOperationGuard(),
   blockHistory: createAccountAvatarOperationGuard(),
+  totpIpPolicy: createAccountAvatarOperationGuard(),
+  totpIpBlocks: createAccountAvatarOperationGuard(),
   countryPolicy: createAccountAvatarOperationGuard(),
   vpnPolicy: createAccountAvatarOperationGuard(),
   mfaStatus: createAccountAvatarOperationGuard(),
@@ -237,6 +239,17 @@ const state = {
   activeSecurityPanel: "settings",
   loginHistory: { months: 3, attempts: [], truncated: false, loading: false, loadedMonths: null },
   blockHistory: { months: 3, blocks: [], truncated: false, loading: false, loadedMonths: null },
+  totpIpBlockPolicy: {
+    enabled: false,
+    maxAttempts: 3,
+    minAttempts: 1,
+    maxAllowedAttempts: 8,
+    currentIp: "unknown",
+    loading: false,
+    saving: false,
+    loaded: false
+  },
+  totpIpBlocks: { blocks: [], loading: false, loaded: false, unblockingIp: null },
   countryLoginPolicy: {
     mode: "OFF",
     countries: [],
@@ -857,6 +870,17 @@ const elements = {
   accountBlockHistoryBody: $("#account-block-history-body"),
   accountBlockHistoryEmpty: $("#account-block-history-empty"),
   accountBlockHistoryTruncated: $("#account-block-history-truncated"),
+  accountTotpIpBlockEnabled: $("#account-totp-ip-block-enabled"),
+  accountTotpIpBlockThreshold: $("#account-totp-ip-block-threshold"),
+  accountTotpIpBlockCurrentIp: $("#account-totp-ip-block-current-ip"),
+  accountTotpIpBlockPassword: $("#account-totp-ip-block-password"),
+  accountTotpIpBlockSave: $("#account-totp-ip-block-save"),
+  accountTotpIpBlockStatus: $("#account-totp-ip-block-status"),
+  accountTotpIpBlocksRefresh: $("#account-totp-ip-blocks-refresh"),
+  accountTotpIpBlocksSummary: $("#account-totp-ip-blocks-summary"),
+  accountTotpIpBlocksBody: $("#account-totp-ip-blocks-body"),
+  accountTotpIpBlocksEmpty: $("#account-totp-ip-blocks-empty"),
+  accountTotpIpUnblockPassword: $("#account-totp-ip-unblock-password"),
   accountCountryLoginMode: $("#account-country-login-mode"),
   accountCountryLoginCountry: $("#account-country-login-country"),
   accountCountryLoginAdd: $("#account-country-login-add"),
@@ -1621,6 +1645,7 @@ async function api(path, options = {}) {
       || (response.status === 403 && (
         data?.error?.code === "COUNTRY_LOGIN_BLOCKED"
         || data?.error?.code === "VPN_ACCESS_BLOCKED"
+        || data?.error?.code === "TOTP_IP_PERMANENTLY_BLOCKED"
       ));
     if (
       authenticationDenied
@@ -2105,6 +2130,12 @@ function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}
   state.loginHistory.loadedMonths = null;
   state.blockHistory.loading = false;
   state.blockHistory.loadedMonths = null;
+  state.totpIpBlockPolicy.loading = false;
+  state.totpIpBlockPolicy.saving = false;
+  state.totpIpBlockPolicy.loaded = false;
+  state.totpIpBlocks.loading = false;
+  state.totpIpBlocks.loaded = false;
+  state.totpIpBlocks.unblockingIp = null;
   state.countryLoginPolicy.loading = false;
   state.countryLoginPolicy.saving = false;
   state.countryLoginPolicy.loaded = false;
@@ -2117,6 +2148,17 @@ function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}
     const blockMonths = state.blockHistory.months || 3;
     state.loginHistory = { months, attempts: [], truncated: false, loading: false, loadedMonths: null };
     state.blockHistory = { months: blockMonths, blocks: [], truncated: false, loading: false, loadedMonths: null };
+    state.totpIpBlockPolicy = {
+      enabled: false,
+      maxAttempts: 3,
+      minAttempts: 1,
+      maxAllowedAttempts: 8,
+      currentIp: "unknown",
+      loading: false,
+      saving: false,
+      loaded: false
+    };
+    state.totpIpBlocks = { blocks: [], loading: false, loaded: false, unblockingIp: null };
     state.countryLoginPolicy = {
       mode: "OFF",
       countries: [],
@@ -2151,6 +2193,8 @@ function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}
   elements.accountTotpSetup.disabled = false;
   elements.accountTotpVerify.disabled = false;
   elements.accountTotpDisable.disabled = false;
+  elements.accountTotpIpBlockPassword.value = "";
+  elements.accountTotpIpUnblockPassword.value = "";
   elements.accountCountryLoginPassword.value = "";
   elements.accountVpnBlockPassword.value = "";
   setAccountPasskeyRegistering(false);
@@ -2325,7 +2369,8 @@ function renderBlockHistory() {
     VPN_DETECTED: "account.blockHistoryVpnDetected",
     VPN_GATE_DETECTED: "account.blockHistoryVpnGateDetected",
     PROXY_DETECTED: "account.blockHistoryProxyDetected",
-    TOR_DETECTED: "account.blockHistoryTorDetected"
+    TOR_DETECTED: "account.blockHistoryTorDetected",
+    TOTP_ATTEMPTS_EXCEEDED: "account.blockHistoryTotpAttemptsExceeded"
   };
 
   blocks.forEach((block) => {
@@ -2383,6 +2428,233 @@ async function loadBlockHistory({ force = false } = {}) {
     if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.blockHistory, operation)) {
       state.blockHistory.loading = false;
       renderBlockHistory();
+    }
+  }
+}
+
+function normalizeTotpIpBlockAttempts(value, fallback = 3) {
+  const parsed = Math.trunc(Number(value));
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(8, Math.max(1, parsed));
+}
+
+function applyTotpIpBlockPolicyResponse(data) {
+  state.totpIpBlockPolicy.enabled = Boolean(data?.enabled);
+  state.totpIpBlockPolicy.minAttempts = normalizeTotpIpBlockAttempts(data?.minAttempts, 1);
+  state.totpIpBlockPolicy.maxAllowedAttempts = normalizeTotpIpBlockAttempts(data?.maxAllowedAttempts, 8);
+  if (state.totpIpBlockPolicy.maxAllowedAttempts < state.totpIpBlockPolicy.minAttempts) {
+    state.totpIpBlockPolicy.minAttempts = 1;
+    state.totpIpBlockPolicy.maxAllowedAttempts = 8;
+  }
+  state.totpIpBlockPolicy.maxAttempts = Math.min(
+    state.totpIpBlockPolicy.maxAllowedAttempts,
+    Math.max(state.totpIpBlockPolicy.minAttempts, normalizeTotpIpBlockAttempts(data?.maxAttempts, 3))
+  );
+  state.totpIpBlockPolicy.currentIp = typeof data?.currentIp === "string" ? data.currentIp : "unknown";
+}
+
+function renderTotpIpBlockPolicy() {
+  const policy = state.totpIpBlockPolicy;
+  const busy = policy.loading || policy.saving;
+  elements.accountTotpIpBlockEnabled.value = String(policy.enabled);
+  elements.accountTotpIpBlockThreshold.min = String(policy.minAttempts);
+  elements.accountTotpIpBlockThreshold.max = String(policy.maxAllowedAttempts);
+  elements.accountTotpIpBlockThreshold.value = String(policy.maxAttempts);
+  elements.accountTotpIpBlockCurrentIp.textContent = policy.currentIp === "unknown"
+    ? t("account.loginHistoryUnknownIp")
+    : policy.currentIp;
+  elements.accountTotpIpBlockStatus.textContent = t(policy.enabled ? "account.totpIpBlockOn" : "account.totpIpBlockOff");
+  elements.accountTotpIpBlockStatus.dataset.mode = policy.enabled ? "enabled" : "disabled";
+  elements.accountTotpIpBlockEnabled.disabled = busy;
+  elements.accountTotpIpBlockThreshold.disabled = busy;
+  elements.accountTotpIpBlockPassword.disabled = busy;
+  elements.accountTotpIpBlockSave.disabled = busy;
+  elements.accountTotpIpBlockSave.textContent = t(policy.saving ? "account.totpIpBlockSaving" : "account.totpIpBlockSave");
+}
+
+async function loadTotpIpBlockPolicy({ force = false } = {}) {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey || !state.accountSettingsOpen || state.totpIpBlockPolicy.loading) return;
+  if (!force && state.totpIpBlockPolicy.loaded) {
+    renderTotpIpBlockPolicy();
+    return;
+  }
+
+  const operation = accountSecurityOperationGuards.totpIpPolicy.begin(targetKey);
+  state.totpIpBlockPolicy.loading = true;
+  renderTotpIpBlockPolicy();
+  setAccountMessage();
+  try {
+    const data = await api("/api/auth/totp-ip-block-policy");
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpIpPolicy, operation)) return;
+    applyTotpIpBlockPolicyResponse(data);
+    state.totpIpBlockPolicy.loaded = true;
+  } catch (error) {
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpIpPolicy, operation)) return;
+    state.totpIpBlockPolicy.loaded = false;
+    setAccountMessage(error.message, true);
+  } finally {
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpIpPolicy, operation)) {
+      state.totpIpBlockPolicy.loading = false;
+      renderTotpIpBlockPolicy();
+    }
+  }
+}
+
+async function saveTotpIpBlockPolicy() {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey || state.totpIpBlockPolicy.loading || state.totpIpBlockPolicy.saving) return;
+  const enabled = elements.accountTotpIpBlockEnabled.value === "true";
+  const maxAttempts = Math.min(
+    state.totpIpBlockPolicy.maxAllowedAttempts,
+    Math.max(
+      state.totpIpBlockPolicy.minAttempts,
+      normalizeTotpIpBlockAttempts(elements.accountTotpIpBlockThreshold.value, state.totpIpBlockPolicy.maxAttempts)
+    )
+  );
+
+  const operation = accountSecurityOperationGuards.totpIpPolicy.begin(targetKey);
+  state.totpIpBlockPolicy.enabled = enabled;
+  state.totpIpBlockPolicy.maxAttempts = maxAttempts;
+  state.totpIpBlockPolicy.saving = true;
+  renderTotpIpBlockPolicy();
+  setAccountMessage();
+  try {
+    const data = await api("/api/auth/totp-ip-block-policy", {
+      method: "PUT",
+      body: {
+        currentPassword: elements.accountTotpIpBlockPassword.value,
+        enabled,
+        maxAttempts
+      }
+    });
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpIpPolicy, operation)) return;
+    acceptRotatedAuthenticationSession();
+    applyTotpIpBlockPolicyResponse(data);
+    state.totpIpBlockPolicy.loaded = true;
+    elements.accountTotpIpBlockPassword.value = "";
+    state.blockHistory.loadedMonths = null;
+    setAccountMessage(t("account.totpIpBlockSaved"));
+  } catch (error) {
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpIpPolicy, operation)) return;
+    setAccountMessage(error.message, true);
+  } finally {
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpIpPolicy, operation)) {
+      state.totpIpBlockPolicy.saving = false;
+      renderTotpIpBlockPolicy();
+    }
+  }
+}
+
+function renderPermanentTotpIpBlocks() {
+  const { blocks, loading, unblockingIp } = state.totpIpBlocks;
+  elements.accountTotpIpBlocksBody.replaceChildren();
+  elements.accountTotpIpBlocksEmpty.classList.add("hidden");
+  elements.accountTotpIpBlocksRefresh.disabled = loading || Boolean(unblockingIp);
+  elements.accountTotpIpUnblockPassword.disabled = loading || Boolean(unblockingIp);
+
+  if (loading) {
+    const row = document.createElement("tr");
+    row.className = "login-history-loading";
+    const cell = document.createElement("td");
+    cell.colSpan = 4;
+    cell.textContent = t("account.totpIpBlocksLoading");
+    row.append(cell);
+    elements.accountTotpIpBlocksBody.append(row);
+    elements.accountTotpIpBlocksSummary.textContent = t("account.totpIpBlocksLoading");
+    return;
+  }
+
+  blocks.forEach((block) => {
+    const row = document.createElement("tr");
+    const timeCell = document.createElement("td");
+    timeCell.textContent = formatDate(block.blockedAt);
+    const ipCell = document.createElement("td");
+    ipCell.textContent = block.ipAddress === "unknown" ? t("account.loginHistoryUnknownIp") : block.ipAddress;
+    const attemptsCell = document.createElement("td");
+    attemptsCell.textContent = formatNumber(Number(block.failedAttempts) || 0);
+    const actionCell = document.createElement("td");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary compact";
+    button.dataset.unblockTotpIp = block.ipAddress;
+    button.disabled = Boolean(unblockingIp);
+    button.textContent = unblockingIp === block.ipAddress
+      ? t("account.totpIpUnblocking")
+      : t("account.totpIpUnblock");
+    actionCell.append(button);
+    row.append(timeCell, ipCell, attemptsCell, actionCell);
+    elements.accountTotpIpBlocksBody.append(row);
+  });
+
+  elements.accountTotpIpBlocksEmpty.classList.toggle("hidden", blocks.length > 0);
+  elements.accountTotpIpBlocksSummary.textContent = t("account.totpIpBlocksSummary", {
+    count: formatNumber(blocks.length)
+  });
+}
+
+async function loadPermanentTotpIpBlocks({ force = false } = {}) {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey || !state.accountSettingsOpen || state.totpIpBlocks.loading || state.totpIpBlocks.unblockingIp) return;
+  if (!force && state.totpIpBlocks.loaded) {
+    renderPermanentTotpIpBlocks();
+    return;
+  }
+
+  const operation = accountSecurityOperationGuards.totpIpBlocks.begin(targetKey);
+  state.totpIpBlocks.loading = true;
+  renderPermanentTotpIpBlocks();
+  setAccountMessage();
+  try {
+    const data = await api("/api/auth/totp-ip-blocks");
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpIpBlocks, operation)) return;
+    state.totpIpBlocks.blocks = Array.isArray(data?.blocks) ? data.blocks : [];
+    state.totpIpBlocks.loaded = true;
+  } catch (error) {
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpIpBlocks, operation)) return;
+    state.totpIpBlocks.blocks = [];
+    state.totpIpBlocks.loaded = false;
+    setAccountMessage(error.message, true);
+  } finally {
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpIpBlocks, operation)) {
+      state.totpIpBlocks.loading = false;
+      renderPermanentTotpIpBlocks();
+    }
+  }
+}
+
+async function unblockPermanentTotpIp(ipAddress) {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey || !ipAddress || state.totpIpBlocks.loading || state.totpIpBlocks.unblockingIp) return;
+  const currentPassword = elements.accountTotpIpUnblockPassword.value;
+  if (!currentPassword) {
+    setAccountMessage(t("account.totpIpUnblockPasswordRequired"), true);
+    elements.accountTotpIpUnblockPassword.focus();
+    return;
+  }
+  if (!window.confirm(t("account.totpIpUnblockConfirm", { ip: ipAddress }))) return;
+
+  const operation = accountSecurityOperationGuards.totpIpBlocks.begin(targetKey);
+  state.totpIpBlocks.unblockingIp = ipAddress;
+  renderPermanentTotpIpBlocks();
+  setAccountMessage();
+  try {
+    await api(`/api/auth/totp-ip-blocks/${encodeURIComponent(ipAddress)}`, {
+      method: "DELETE",
+      body: { currentPassword }
+    });
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpIpBlocks, operation)) return;
+    elements.accountTotpIpUnblockPassword.value = "";
+    state.totpIpBlocks.blocks = state.totpIpBlocks.blocks.filter((block) => block.ipAddress !== ipAddress);
+    state.totpIpBlocks.loaded = true;
+    setAccountMessage(t("account.totpIpUnblocked", { ip: ipAddress }));
+  } catch (error) {
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpIpBlocks, operation)) return;
+    setAccountMessage(error.message, true);
+  } finally {
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpIpBlocks, operation)) {
+      state.totpIpBlocks.unblockingIp = null;
+      renderPermanentTotpIpBlocks();
     }
   }
 }
@@ -2702,13 +2974,18 @@ function loadActiveSecurityPanel() {
     void loadBlockHistory();
     return;
   }
+  if (state.activeSecurityPanel === "totp-blocks") {
+    void loadPermanentTotpIpBlocks();
+    return;
+  }
   void loadMfaSettings();
+  void loadTotpIpBlockPolicy();
   void loadCountryLoginPolicy();
   void loadVpnBlockPolicy();
 }
 
 function setSecurityPanel(panel, { focusTab = false, load = true } = {}) {
-  const nextPanel = ["settings", "history", "blocks"].includes(panel) ? panel : "settings";
+  const nextPanel = ["settings", "history", "blocks", "totp-blocks"].includes(panel) ? panel : "settings";
   state.activeSecurityPanel = nextPanel;
   elements.accountSecurityTabs.forEach((tab) => {
     const selected = tab.dataset.securityPanel === nextPanel;
@@ -13106,6 +13383,39 @@ elements.accountBlockHistoryMonths.addEventListener("change", () => {
 elements.accountBlockHistoryRefresh.addEventListener("click", () => {
   state.blockHistory.loadedMonths = null;
   void loadBlockHistory({ force: true });
+});
+
+elements.accountTotpIpBlockEnabled.addEventListener("change", () => {
+  state.totpIpBlockPolicy.enabled = elements.accountTotpIpBlockEnabled.value === "true";
+  renderTotpIpBlockPolicy();
+  setAccountMessage();
+});
+
+elements.accountTotpIpBlockThreshold.addEventListener("change", () => {
+  state.totpIpBlockPolicy.maxAttempts = Math.min(
+    state.totpIpBlockPolicy.maxAllowedAttempts,
+    Math.max(
+      state.totpIpBlockPolicy.minAttempts,
+      normalizeTotpIpBlockAttempts(elements.accountTotpIpBlockThreshold.value, 3)
+    )
+  );
+  renderTotpIpBlockPolicy();
+  setAccountMessage();
+});
+
+elements.accountTotpIpBlockSave.addEventListener("click", () => {
+  void saveTotpIpBlockPolicy();
+});
+
+elements.accountTotpIpBlocksRefresh.addEventListener("click", () => {
+  state.totpIpBlocks.loaded = false;
+  void loadPermanentTotpIpBlocks({ force: true });
+});
+
+elements.accountTotpIpBlocksBody.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-unblock-totp-ip]");
+  if (!button) return;
+  void unblockPermanentTotpIp(button.dataset.unblockTotpIp);
 });
 
 elements.accountCountryLoginMode.addEventListener("change", () => {

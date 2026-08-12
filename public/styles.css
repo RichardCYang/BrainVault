@@ -12376,13 +12376,15 @@ body.search-dialog-open {
 }
 
 .country-login-policy-form,
-.vpn-block-policy-form {
+.vpn-block-policy-form,
+.totp-ip-block-policy-form {
   display: grid;
   gap: 0.95rem;
 }
 
 .country-login-policy-form .form-field,
-.vpn-block-policy-form .form-field {
+.vpn-block-policy-form .form-field,
+.totp-ip-block-policy-form .form-field {
   display: grid;
   gap: 0.42rem;
 }
@@ -12486,7 +12488,8 @@ body.search-dialog-open {
 
 .country-login-status[data-mode="allowlist"],
 .country-login-status[data-mode="blocklist"],
-.vpn-block-status[data-mode="enabled"] {
+.vpn-block-status[data-mode="enabled"],
+.totp-ip-block-status[data-mode="enabled"] {
   border-color: rgba(64, 137, 194, 0.28);
   background: rgba(64, 137, 194, 0.08);
   color: var(--accent-text);
@@ -12505,6 +12508,23 @@ body.search-dialog-open {
 
 .block-history-table td:last-child {
   min-width: 10rem;
+}
+
+.totp-ip-unblock-password {
+  display: grid;
+  gap: 0.42rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(247, 251, 253, 0.74);
+  padding: 0.8rem;
+}
+
+.permanent-totp-blocks-table td:last-child {
+  min-width: 7rem;
+}
+
+.permanent-totp-blocks-table button {
+  white-space: nowrap;
 }
 
 .account-security-section-heading,
