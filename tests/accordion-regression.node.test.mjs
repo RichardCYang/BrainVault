@@ -99,6 +99,13 @@ test("accordion UI, persistence, collaboration, backup, and structured integrity
   assert.match(index, /role="menuitemcheckbox"/);
   assert.match(styles, /\.accordion-block-editor\.show-order \.accordion-item-order/);
   assert.match(styles, /\.rendered-accordion-summary/);
+  assert.match(styles, /\.accordion-edit-surface,\s*\.rendered-accordion\s*\{[\s\S]*?border:\s*0;[\s\S]*?background:\s*transparent;/);
+  assert.match(styles, /\.accordion-block-heading\s*\{[^}]*background:\s*transparent;/);
+  assert.match(styles, /\.accordion-add-item\s*\{[^}]*background:\s*transparent;/);
+  assert.match(styles, /\.accordion-item\s*\{[^}]*background:\s*transparent;/);
+  assert.match(styles, /\.accordion-item-content\s*\{[^}]*background:\s*transparent;/);
+  assert.match(styles, /\.rendered-accordion-title\s*\{[^}]*background:\s*transparent;/);
+  assert.match(styles, /\.rendered-accordion-item\s*\{[^}]*background:\s*transparent;/);
   for (const source of sources) assert.match(source, /ACCORDION/);
 });
 
