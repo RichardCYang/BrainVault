@@ -124,3 +124,34 @@ test("WebSocket slow consumers are terminated before output buffering grows with
   assert.ok(socket.writes.length <= 32, `unexpected write count: ${socket.writes.length}`);
   assert.ok(socket.writableLength <= 2_100_000, `unexpected buffered bytes: ${socket.writableLength}`);
 });
+
+test("WebSocket receive buffering does not repeatedly concatenate a drip-fed frame", async () => {
+  const socket = new FakeSocket();
+  const connection = new WebSocketConnection(socket, 512 * 1024);
+  const frame = createClientFrame(0x2, Buffer.alloc(256 * 1024, 0x5a));
+  let message = null;
+  connection.onMessage((value) => {
+    message = value;
+  });
+  connection.start();
+
+  const originalConcat = Buffer.concat;
+  let concatCalls = 0;
+  Buffer.concat = function patchedConcat(...args) {
+    concatCalls += 1;
+    return originalConcat.apply(Buffer, args);
+  };
+  try {
+    for (let index = 0; index < frame.length; index += 1) {
+      socket.emit("data", frame.subarray(index, index + 1));
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    Buffer.concat = originalConcat;
+    connection.terminate();
+  }
+
+  assert.equal(concatCalls, 0, "drip-fed receive path must not recopy the accumulated buffer");
+  assert.equal(message?.type, "binary");
+  assert.equal(message?.data.length, 256 * 1024);
+});

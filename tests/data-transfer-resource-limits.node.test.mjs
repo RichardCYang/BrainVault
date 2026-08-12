@@ -27,22 +27,31 @@ test("backup manifest byte measurement rejects oversized JSON before aggregate s
   assert.throws(() => measureJsonUtf8BytesWithinLimit(sample, -1), /non-negative safe integer/);
 });
 
-test("data-import admission allows one operation per principal and caps server concurrency", () => {
+test("data-import admission caps processing without letting slow uploads consume global slots", () => {
   const gate = new DataImportAdmissionGate(2);
   assert.deepEqual(gate.tryAcquire("user-a"), { accepted: true });
   assert.deepEqual(gate.tryAcquire("user-a"), { accepted: false, reason: "principal-active" });
   assert.deepEqual(gate.tryAcquire("user-b"), { accepted: true });
-  assert.deepEqual(gate.tryAcquire("user-c"), { accepted: false, reason: "server-capacity" });
-  assert.equal(gate.activeCount, 2);
-  gate.release("user-a");
   assert.deepEqual(gate.tryAcquire("user-c"), { accepted: true });
+  assert.equal(gate.activeCount, 3);
+  assert.equal(gate.processingCount, 0);
+
+  assert.deepEqual(gate.tryBeginProcessing("user-a"), { accepted: true });
+  assert.deepEqual(gate.tryBeginProcessing("user-b"), { accepted: true });
+  assert.deepEqual(gate.tryBeginProcessing("user-c"), { accepted: false, reason: "server-capacity" });
+  assert.equal(gate.processingCount, 2);
+
   gate.release("user-a");
-  assert.equal(gate.activeCount, 2);
+  assert.deepEqual(gate.tryBeginProcessing("user-c"), { accepted: true });
+  assert.equal(gate.processingCount, 2);
+  gate.release("user-b");
+  gate.release("user-c");
 });
 
 test("data-import admission remains held after disconnect once restore processing begins", () => {
   const gate = new DataImportAdmissionGate(1);
   assert.deepEqual(gate.tryAcquire("user-a"), { accepted: true });
+  assert.deepEqual(gate.tryBeginProcessing("user-a"), { accepted: true });
   const lease = new DataImportAdmissionLease(() => gate.release("user-a"));
   assert.equal(lease.beginProcessing(), true);
   assert.equal(lease.releaseBeforeProcessing(), false);
@@ -108,8 +117,10 @@ test("backup route and manifest limits are applied before expensive import work"
   assert.ok(middlewareSource.includes("DATA_IMPORT_IN_PROGRESS"));
   assert.ok(middlewareSource.includes("DATA_IMPORT_BUSY"));
   assert.ok(middlewareSource.includes("beginDataImportProcessing"));
-  assert.ok(routeSource.includes("const releaseDataImport = beginDataImportProcessing(res)"));
-  assert.ok(routeSource.includes("releaseDataImport();"));
+  assert.ok(middlewareSource.includes("tryBeginProcessing(record.principal)"));
+  assert.ok(routeSource.includes("releaseDataImport = beginDataImportProcessing(res)"));
+  assert.ok(routeSource.indexOf('backupUpload.single("backup")') < routeSource.indexOf("releaseDataImport = beginDataImportProcessing(res)"));
+  assert.ok(routeSource.includes("releaseDataImport?.();"));
   assert.ok(transferSource.includes("DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024"));
   assert.ok(transferSource.includes("measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1)"));
   assert.ok(transferSource.includes("manifestEntry.uncompressedSize > BigInt(maxManifestBytes)"));

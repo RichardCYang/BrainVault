@@ -38,7 +38,15 @@ export async function evaluatePasswordLogin(
      FROM users WHERE id = ? FOR UPDATE`,
     [userId]
   );
-  if (!state) return "DENIED";
+  if (!state) {
+    // Keep the failed-login database work shape comparable for a synthetic
+    // non-existent account used by the authentication timing defense.
+    await client.execute(
+      "UPDATE users SET failed_login_attempts = failed_login_attempts WHERE id = ?",
+      [userId]
+    );
+    return "DENIED";
+  }
 
   if (passwordMatches) {
     await client.execute(
@@ -51,7 +59,13 @@ export async function evaluatePasswordLogin(
   }
 
   const lockedUntil = timestamp(state.login_locked_until);
-  if (lockedUntil !== null && lockedUntil > nowMs) return "LOCKED";
+  if (lockedUntil !== null && lockedUntil > nowMs) {
+    await client.execute(
+      "UPDATE users SET failed_login_attempts = failed_login_attempts WHERE id = ?",
+      [userId]
+    );
+    return "LOCKED";
+  }
 
   const lastFailure = timestamp(state.last_failed_login_at);
   const withinFailureWindow = lastFailure !== null && nowMs - lastFailure <= env.AUTH_LOGIN_FAILURE_RESET_MS;

@@ -292,12 +292,35 @@ function createBookmarkFetchAgent(url: URL, addresses: ResolvedAddress[]) {
     : new http.Agent(agentOptions);
 }
 
+function normalizeBookmarkFetchHostname(hostname: string) {
+  return hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+}
+
+export function isBookmarkFetchHostAllowed(
+  hostname: string,
+  allowedHosts: readonly string[] = env.BOOKMARK_FETCH_ALLOWED_HOSTS
+) {
+  const host = normalizeBookmarkFetchHostname(hostname);
+  const hostFamily = net.isIP(host);
+  return allowedHosts.some((allowedValue) => {
+    const allowed = normalizeBookmarkFetchHostname(allowedValue);
+    if (host === allowed) return true;
+    return hostFamily === 0 && net.isIP(allowed) === 0 && host.endsWith(`.${allowed}`);
+  });
+}
+
 async function validateFetchUrl(value: string | URL) {
   const normalized = normalizeBookmarkUrl(String(value));
   if (!normalized) {
     throw new ApiError(400, "BOOKMARK_URL_INVALID", "Enter a valid HTTP or HTTPS URL");
   }
   const url = new URL(normalized);
+  if (url.origin.toLowerCase() === env.PUBLIC_ORIGIN.toLowerCase()) {
+    throw new ApiError(403, "BOOKMARK_URL_BLOCKED", "Self-origin bookmark previews are not allowed");
+  }
+  if (!isBookmarkFetchHostAllowed(url.hostname)) {
+    throw new ApiError(403, "BOOKMARK_URL_BLOCKED", "Bookmark preview host is not approved for server-side fetching");
+  }
   const effectivePort = url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
   if (!env.BOOKMARK_FETCH_ALLOWED_PORTS.includes(effectivePort)) {
     throw new ApiError(400, "BOOKMARK_PORT_BLOCKED", "Bookmark previews are limited to approved web ports");

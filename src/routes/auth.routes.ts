@@ -76,6 +76,7 @@ import { passkeyLoginRouter } from "./passkey-login.routes.js";
 export const authRouter = Router();
 
 const dummyPasswordHash = hashPassword("brainvault-invalid-user-password");
+const syntheticLoginUserId = "usr_auth_timing_padding";
 const preferredLanguageSchema = z.enum(supportedProfileLanguages);
 const profileThemeSchema = z.enum(supportedProfileThemes);
 
@@ -200,10 +201,6 @@ function assertAuthenticationVersion(user: UserRow, expectedAuthVersion: number)
   }
 }
 
-function isDuplicateEntryError(error: unknown) {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "ER_DUP_ENTRY";
-}
-
 async function padRegistrationResponse(startedAt: number) {
   const targetDurationMs = 350 + randomInt(0, 76);
   const remainingMs = targetDurationMs - (Date.now() - startedAt);
@@ -231,24 +228,18 @@ authRouter.post(
 
       const startedAt = Date.now();
       const { username, password, name, preferredLanguage } = req.body as z.infer<typeof registerSchema>;
-      const existing = await db.queryOne<{ id: string }>("SELECT id FROM users WHERE username = ?", [username]);
-
-      if (!existing) {
-        const passwordHash = await hashPassword(password);
-        const id = createId("usr");
-        try {
-          await db.execute(
-            `INSERT INTO users (id, username, name, preferred_language, password_hash)
-             VALUES (?, ?, ?, ?, ?)`,
-            [id, username, name ?? null, preferredLanguage ?? null, passwordHash]
-          );
-        } catch (error) {
-          if (!isDuplicateEntryError(error)) throw error;
-        }
-      }
+      // Always perform the password hash and the same INSERT statement. INSERT IGNORE
+      // converts a username collision into the same success-shaped response without
+      // exposing a fast existing-account branch.
+      const passwordHash = await hashPassword(password);
+      const id = createId("usr");
+      await db.execute(
+        `INSERT IGNORE INTO users (id, username, name, preferred_language, password_hash)
+         VALUES (?, ?, ?, ?, ?)`,
+        [id, username, name ?? null, preferredLanguage ?? null, passwordHash]
+      );
 
       // Use the same status, response shape, and padded timing for new and existing usernames.
-      // Existing accounts do not trigger another expensive bcrypt hash.
       await padRegistrationResponse(startedAt);
       res.setHeader("Cache-Control", "private, no-store");
       res.status(202).json({ ok: true });
@@ -270,33 +261,24 @@ authRouter.post(
       const startedAt = Date.now();
       const { username, password } = req.body as z.infer<typeof loginSchema>;
       const sourceIp = getClientIpAddress(req);
-      const candidate = await db.queryOne<UserRow>("SELECT * FROM users WHERE username = ?", [username]);
-      let user: UserRow | undefined;
-      let passwordDecision: "ALLOWED" | "DENIED" | "LOCKED" = "DENIED";
-
-      if (!candidate) {
-        await verifyPassword(password, await dummyPasswordHash);
-      } else {
-        const result = await transaction(async (client) => {
-          const lockedUser = await client.queryOne<UserRow>(
-            "SELECT * FROM users WHERE id = ? FOR UPDATE",
-            [candidate.id]
-          );
-          const passwordMatches = await verifyPassword(
-            password,
-            lockedUser?.password_hash ?? (await dummyPasswordHash)
-          );
-          if (!lockedUser) return { user: undefined, decision: "DENIED" as const };
-
-          const decision = await evaluatePasswordLogin(client, lockedUser.id, passwordMatches);
-          if (decision !== "ALLOWED") {
-            await recordLoginAttempt(lockedUser.id, sourceIp, decision === "LOCKED" ? "LOCKED" : "FAILURE", client);
-          }
-          return { user: lockedUser, decision };
-        });
-        user = result.user;
-        passwordDecision = result.decision;
-      }
+      const result = await transaction(async (client) => {
+        const lockedUser = await client.queryOne<UserRow>(
+          "SELECT * FROM users WHERE username = ? FOR UPDATE",
+          [username]
+        );
+        const passwordMatches = await verifyPassword(
+          password,
+          lockedUser?.password_hash ?? (await dummyPasswordHash)
+        );
+        const workingUserId = lockedUser?.id ?? syntheticLoginUserId;
+        const decision = await evaluatePasswordLogin(client, workingUserId, Boolean(lockedUser) && passwordMatches);
+        if (decision !== "ALLOWED") {
+          await recordLoginAttempt(workingUserId, sourceIp, decision === "LOCKED" ? "LOCKED" : "FAILURE", client);
+        }
+        return { user: lockedUser, decision };
+      });
+      const user = result.user;
+      const passwordDecision = result.decision;
 
       if (!user || passwordDecision !== "ALLOWED") {
         await padFailedLoginResponse(startedAt);

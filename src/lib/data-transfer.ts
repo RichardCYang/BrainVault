@@ -1,5 +1,5 @@
 import path from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import type { Dirent } from "node:fs";
 import type { Writable } from "node:stream";
@@ -136,6 +136,12 @@ const restoreJournalSchema = z.discriminatedUnion("version", [
   restoreJournalV3Schema,
   restoreJournalV4Schema
 ]);
+const restoreJournalEnvelopeSchema = z.object({
+  format: z.literal("brainvault-restore-journal"),
+  integrityVersion: z.literal(1),
+  journal: restoreJournalSchema,
+  hmac: z.string().regex(/^[a-f0-9]{64}$/)
+}).strict();
 type RestoreJournal = z.infer<typeof restoreJournalSchema>;
 type RestoreJournalV2 = z.infer<typeof restoreJournalV2Schema>;
 type RestoreJournalV3 = z.infer<typeof restoreJournalV3Schema>;
@@ -2080,6 +2086,64 @@ async function importRows(
   }
 }
 
+const restoreJournalIntegrityDomain = "brainvault:data-restore-journal:v1";
+
+function serializeRestoreJournalForIntegrity(journal: RestoreJournal) {
+  if (journal.version === 1 || journal.version === 2) {
+    return JSON.stringify([
+      journal.version,
+      journal.userId,
+      journal.operationId,
+      journal.hadPreviousAttachments
+    ]);
+  }
+  if (journal.version === 3) {
+    return JSON.stringify([
+      journal.version,
+      journal.userId,
+      journal.operationId,
+      journal.hadPreviousAttachments,
+      journal.restoredAttachmentIds
+    ]);
+  }
+  return JSON.stringify([
+    journal.version,
+    journal.userId,
+    journal.operationId,
+    journal.hadPreviousAttachments,
+    journal.hadPreviousCustomIcons,
+    journal.restoredAttachmentIds,
+    journal.restoredCustomIconFiles
+  ]);
+}
+
+function restoreJournalHmac(journal: RestoreJournal) {
+  return createHmac("sha256", env.MFA_ENCRYPTION_KEY)
+    .update(restoreJournalIntegrityDomain, "utf8")
+    .update("\0", "utf8")
+    .update(serializeRestoreJournalForIntegrity(journal), "utf8")
+    .digest("hex");
+}
+
+function signRestoreJournal(journal: RestoreJournal) {
+  return {
+    format: "brainvault-restore-journal" as const,
+    integrityVersion: 1 as const,
+    journal,
+    hmac: restoreJournalHmac(journal)
+  };
+}
+
+function verifyRestoreJournalEnvelope(value: unknown) {
+  const envelope = restoreJournalEnvelopeSchema.parse(value);
+  const expected = Buffer.from(restoreJournalHmac(envelope.journal), "hex");
+  const actual = Buffer.from(envelope.hmac, "hex");
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+    throw new Error("Restore journal integrity check failed");
+  }
+  return envelope.journal;
+}
+
 function getRestorePaths(journal: RestoreJournal) {
   const safeUserId = journal.userId.replace(/[^a-zA-Z0-9_-]/g, "_");
   return {
@@ -2102,7 +2166,7 @@ async function writeRestoreJournal(journal: RestoreJournal) {
   try {
     const handle = await open(temporaryPath, "wx");
     try {
-      await handle.writeFile(`${JSON.stringify(journal)}\n`, "utf8");
+      await handle.writeFile(`${JSON.stringify(signRestoreJournal(journal))}\n`, "utf8");
       await handle.sync();
     } finally {
       await handle.close();
@@ -2570,8 +2634,15 @@ export async function recoverInterruptedDataRestores() {
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.startsWith(restoreJournalPrefix) || !entry.name.endsWith(".json")) continue;
     const journalPath = path.join(dataTransferTempDir, entry.name);
+    let journal: RestoreJournal;
     try {
-      const journal = restoreJournalSchema.parse(JSON.parse(await readFile(journalPath, "utf8")));
+      journal = verifyRestoreJournalEnvelope(JSON.parse(await readFile(journalPath, "utf8")));
+    } catch (error) {
+      console.error("Ignoring unauthenticated data restore journal", { journalPath, error });
+      continue;
+    }
+
+    try {
       if (getRestorePaths(journal).journalPath !== journalPath) {
         throw new Error("Restore journal filename does not match its operation ID");
       }
@@ -2580,6 +2651,40 @@ export async function recoverInterruptedDataRestores() {
     } catch (error) {
       console.error("Interrupted data restore requires manual recovery", { journalPath, error });
       throw error;
+    }
+  }
+}
+
+export async function cleanupStaleDataTransferTempFiles(nowMs = Date.now()) {
+  await ensureDataTransferDirectories();
+  const entries = await readdir(dataTransferTempDir, { withFileTypes: true });
+  const protectedOperationIds = new Set<string>();
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.startsWith(restoreJournalPrefix) || !entry.name.endsWith(".json")) continue;
+    const operationId = entry.name.slice(restoreJournalPrefix.length, -".json".length);
+    if (idSchema.safeParse(operationId).success) protectedOperationIds.add(operationId);
+  }
+
+  const cutoff = nowMs - env.ATTACHMENT_TEMP_MAX_AGE_MS;
+  for (const entry of entries) {
+    if (entry.name.startsWith(restoreJournalPrefix) && entry.name.endsWith(".json")) continue;
+    if (protectedOperationIds.has(entry.name)) continue;
+
+    const entryPath = path.join(dataTransferTempDir, entry.name);
+    let metadata;
+    try {
+      metadata = await stat(entryPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    if (metadata.mtimeMs > cutoff) continue;
+
+    if (entry.isDirectory()) {
+      await rm(entryPath, { recursive: true, force: true });
+    } else {
+      await rm(entryPath, { force: true });
     }
   }
 }

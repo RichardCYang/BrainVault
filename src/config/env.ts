@@ -87,6 +87,7 @@ const envSchema = z.object({
   BOOKMARK_FETCH_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(8_000),
   BOOKMARK_FETCH_MAX_BYTES: z.coerce.number().int().min(64 * 1024).max(768 * 1024).default(512 * 1024),
   BOOKMARK_FETCH_ALLOWED_PORTS: z.string().trim().min(1).default("80,443"),
+  BOOKMARK_FETCH_ALLOWED_HOSTS: z.string().trim().max(4_096).default(""),
   ATTACHMENT_UPLOAD_DIR: z.string().min(1).default("uploads"),
   ATTACHMENT_TEMP_MAX_AGE_MS: z.coerce.number().int().min(60_000).max(30 * 24 * 60 * 60_000).default(24 * 60 * 60_000),
   MAX_ATTACHMENT_SIZE_MB: z.coerce.number().int().min(1).max(500).default(25),
@@ -196,6 +197,30 @@ function parseBookmarkFetchAllowedPorts(value: string) {
   return [...new Set(ports)];
 }
 
+function normalizeBookmarkFetchHost(value: string) {
+  const candidate = value.trim().toLowerCase().replace(/\.$/, "");
+  if (!candidate || candidate.includes("://") || candidate.includes("/") || candidate.includes("@")) {
+    throw new Error(`BOOKMARK_FETCH_ALLOWED_HOSTS contains an invalid host: ${value}`);
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(`http://${candidate}`);
+  } catch {
+    throw new Error(`BOOKMARK_FETCH_ALLOWED_HOSTS contains an invalid host: ${value}`);
+  }
+
+  if (parsed.username || parsed.password || parsed.port || parsed.pathname !== "/" || parsed.search || parsed.hash) {
+    throw new Error(`BOOKMARK_FETCH_ALLOWED_HOSTS must contain hostnames only: ${value}`);
+  }
+  return parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+}
+
+function parseBookmarkFetchAllowedHosts(value: string) {
+  const hosts = value.split(",").map((item) => item.trim()).filter(Boolean).map(normalizeBookmarkFetchHost);
+  return [...new Set(hosts)];
+}
+
 const trustedProxyAddressGroups = new Set(["loopback", "linklocal", "uniquelocal"]);
 
 function assertTrustedProxyAddress(value: string) {
@@ -259,6 +284,7 @@ for (const origin of webAuthnOrigins) {
 
 const publicOrigin = parsePublicOrigin(parsedEnv.PUBLIC_ORIGIN ?? webAuthnOrigins[0]);
 const bookmarkFetchAllowedPorts = parseBookmarkFetchAllowedPorts(parsedEnv.BOOKMARK_FETCH_ALLOWED_PORTS);
+const bookmarkFetchAllowedHosts = parseBookmarkFetchAllowedHosts(parsedEnv.BOOKMARK_FETCH_ALLOWED_HOSTS);
 const httpsRedirect = parsedEnv.HTTPS_REDIRECT ?? parsedEnv.HTTPS_MODE === "proxy";
 const secureHttpsMode = parsedEnv.HTTPS_MODE !== "off";
 const trustedProxyAddresses = parsedEnv.TRUST_PROXY_ADDRESSES
@@ -299,6 +325,7 @@ export const env = {
   MFA_ENCRYPTION_KEY: mfaEncryptionKey,
   PUBLIC_ORIGIN: publicOrigin,
   BOOKMARK_FETCH_ALLOWED_PORTS: bookmarkFetchAllowedPorts,
+  BOOKMARK_FETCH_ALLOWED_HOSTS: bookmarkFetchAllowedHosts,
   HTTPS_REDIRECT: httpsRedirect,
   TRUST_PROXY_ADDRESSES: trustedProxyAddresses,
   AUTH_ALLOW_BEARER_TOKENS: parsedEnv.AUTH_ALLOW_BEARER_TOKENS ?? false,

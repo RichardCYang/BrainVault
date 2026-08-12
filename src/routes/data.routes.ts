@@ -101,9 +101,10 @@ dataRouter.post(
   dataImportConcurrencyLimit,
   backupUpload.single("backup"),
   async (req, res, next) => {
-    const releaseDataImport = beginDataImportProcessing(res);
     const uploadPath = req.file?.path ?? null;
+    let releaseDataImport: (() => void) | null = null;
     try {
+      releaseDataImport = beginDataImportProcessing(res);
       const user = requireUser(req.user);
       if (!uploadPath) throw new ApiError(400, "DATA_BACKUP_REQUIRED", "Select a BrainVault backup ZIP file");
       const extension = path.extname(req.file?.originalname ?? "").toLowerCase();
@@ -117,7 +118,7 @@ dataRouter.post(
       next(error);
     } finally {
       if (uploadPath) await rm(uploadPath, { force: true }).catch(() => undefined);
-      releaseDataImport();
+      releaseDataImport?.();
     }
   }
 );

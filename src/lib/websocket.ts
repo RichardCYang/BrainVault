@@ -55,6 +55,8 @@ export class WebSocketConnection {
   private readonly socket: Socket;
   private readonly maxMessageBytes: number;
   private readBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+  private readStart = 0;
+  private readEnd = 0;
   private fragmentOpcode: 1 | 2 | null = null;
   private fragmentParts: Buffer[] = [];
   private fragmentBytes = 0;
@@ -177,17 +179,61 @@ export class WebSocketConnection {
     this.close(code, reason);
   }
 
+  private unreadByteLength() {
+    return this.readEnd - this.readStart;
+  }
+
+  private ensureReadCapacity(extraBytes: number) {
+    const unreadBytes = this.unreadByteLength();
+    const neededBytes = unreadBytes + extraBytes;
+    if (neededBytes <= this.readBuffer.length) {
+      if (this.readEnd + extraBytes > this.readBuffer.length && this.readStart > 0) {
+        this.readBuffer.copy(this.readBuffer, 0, this.readStart, this.readEnd);
+        this.readStart = 0;
+        this.readEnd = unreadBytes;
+      }
+      return;
+    }
+
+    const maxBufferBytes = this.maxMessageBytes + 64 * 1024;
+    let nextCapacity = Math.max(64 * 1024, this.readBuffer.length || 1);
+    while (nextCapacity < neededBytes) {
+      nextCapacity = Math.min(maxBufferBytes, nextCapacity * 2);
+    }
+    const grown = Buffer.allocUnsafe(nextCapacity);
+    if (unreadBytes) this.readBuffer.copy(grown, 0, this.readStart, this.readEnd);
+    this.readBuffer = grown;
+    this.readStart = 0;
+    this.readEnd = unreadBytes;
+  }
+
+  private appendReadChunk(chunk: Buffer) {
+    this.ensureReadCapacity(chunk.length);
+    chunk.copy(this.readBuffer, this.readEnd);
+    this.readEnd += chunk.length;
+  }
+
+  private consumeReadBytes(byteCount: number) {
+    this.readStart += byteCount;
+    if (this.readStart === this.readEnd) {
+      this.readStart = 0;
+      this.readEnd = 0;
+    }
+  }
+
   private consume(chunk: Buffer) {
     if (!this.isOpen || !this.acceptingMessages || !chunk.length) return;
-    if (this.readBuffer.length + chunk.length > this.maxMessageBytes + 64 * 1024) {
+    if (this.unreadByteLength() + chunk.length > this.maxMessageBytes + 64 * 1024) {
       this.protocolError("WebSocket message is too large", 1009);
       return;
     }
-    this.readBuffer = this.readBuffer.length ? Buffer.concat([this.readBuffer, chunk]) : chunk;
+    this.appendReadChunk(chunk);
 
-    while (this.readBuffer.length >= 2 && this.isOpen && this.acceptingMessages) {
-      const first = this.readBuffer[0];
-      const second = this.readBuffer[1];
+    while (this.unreadByteLength() >= 2 && this.isOpen && this.acceptingMessages) {
+      const frameStart = this.readStart;
+      const availableBytes = this.readEnd - frameStart;
+      const first = this.readBuffer[frameStart];
+      const second = this.readBuffer[frameStart + 1];
       const fin = Boolean(first & 0x80);
       const rsv = first & 0x70;
       const opcode = first & 0x0f;
@@ -204,12 +250,12 @@ export class WebSocketConnection {
         return;
       }
       if (payloadLength === 126) {
-        if (this.readBuffer.length < 4) return;
-        payloadLength = this.readBuffer.readUInt16BE(2);
+        if (availableBytes < 4) return;
+        payloadLength = this.readBuffer.readUInt16BE(frameStart + 2);
         offset = 4;
       } else if (payloadLength === 127) {
-        if (this.readBuffer.length < 10) return;
-        const bigLength = this.readBuffer.readBigUInt64BE(2);
+        if (availableBytes < 10) return;
+        const bigLength = this.readBuffer.readBigUInt64BE(frameStart + 2);
         if (bigLength > BigInt(Number.MAX_SAFE_INTEGER) || bigLength > BigInt(this.maxMessageBytes)) {
           this.protocolError("WebSocket message is too large", 1009);
           return;
@@ -227,12 +273,13 @@ export class WebSocketConnection {
         this.protocolError("WebSocket message is too large", 1009);
         return;
       }
-      if (this.readBuffer.length < offset + 4 + payloadLength) return;
+      if (availableBytes < offset + 4 + payloadLength) return;
 
-      const mask = this.readBuffer.subarray(offset, offset + 4);
+      const mask = this.readBuffer.subarray(frameStart + offset, frameStart + offset + 4);
       offset += 4;
-      const payload = Buffer.from(this.readBuffer.subarray(offset, offset + payloadLength));
-      this.readBuffer = this.readBuffer.subarray(offset + payloadLength);
+      const payloadStart = frameStart + offset;
+      const payload = Buffer.from(this.readBuffer.subarray(payloadStart, payloadStart + payloadLength));
+      this.consumeReadBytes(offset + payloadLength);
       for (let index = 0; index < payload.length; index += 1) {
         payload[index] ^= mask[index % 4];
       }

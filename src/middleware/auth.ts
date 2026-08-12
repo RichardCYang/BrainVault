@@ -129,9 +129,8 @@ async function authenticateRequest(
       getClientWebRtcSignal(req)
     );
 
-    const authSessionId = source === "cookie"
-      ? await ensureAuthSessionForRequest(token, payload, req)
-      : payload.sessionId;
+    // Session revocation must apply uniformly to cookie and optional bearer credentials.
+    const authSessionId = await ensureAuthSessionForRequest(token, payload, req);
     req.auth = { authVersion };
     if (authSessionId) req.auth.sessionId = authSessionId;
     req.user = toPublicUser(user);

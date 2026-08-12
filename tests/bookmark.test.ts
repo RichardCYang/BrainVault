@@ -8,6 +8,7 @@ import {
   getBookmarkData,
   isRedditBookmarkUrl,
   isPrivateAddress,
+  isBookmarkFetchHostAllowed,
   parseBookmarkPreview,
   prioritizeResolvedAddresses,
   renderBookmarkHtml,
@@ -224,8 +225,15 @@ describe("bookmark network address selection", () => {
     ]);
   });
 
-  it("uses approved ports, requires an HTML content type, and normalizes blocked-target failures", () => {
+  it("requires an explicit host allowlist, uses approved ports, and normalizes blocked-target failures", () => {
+    expect(envSource).toContain('BOOKMARK_FETCH_ALLOWED_HOSTS');
     expect(envSource).toContain('BOOKMARK_FETCH_ALLOWED_PORTS');
+    expect(bookmarkSource).toContain('url.origin.toLowerCase() === env.PUBLIC_ORIGIN.toLowerCase()');
+    expect(isBookmarkFetchHostAllowed("example.com", ["example.com"])).toBe(true);
+    expect(isBookmarkFetchHostAllowed("cdn.example.com", ["example.com"])).toBe(true);
+    expect(isBookmarkFetchHostAllowed("example.com.evil.test", ["example.com"])).toBe(false);
+    expect(isBookmarkFetchHostAllowed("1.1.1.1", ["1.1.1.1"])).toBe(true);
+    expect(isBookmarkFetchHostAllowed("1.1.1.2", ["1.1.1.1"])).toBe(false);
     expect(bookmarkSource).toContain('BOOKMARK_PORT_BLOCKED');
     expect(bookmarkSource).toContain('if (!contentType || !/text\/html|application\/xhtml\+xml/i.test(contentType))');
     expect(bookmarkSource).toContain('blockedTarget ? "BOOKMARK_FETCH_FAILED" : error.code');

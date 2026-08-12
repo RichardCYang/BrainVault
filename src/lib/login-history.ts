@@ -48,8 +48,8 @@ export async function recordLoginAttempt(
     );
     await client.execute(
       `INSERT INTO user_login_attempts (id, user_id, ip_address, outcome)
-       VALUES (?, ?, ?, ?)`,
-      [createId("lga"), userId, ipAddress, outcome]
+       SELECT ?, id, ?, ? FROM users WHERE id = ?`,
+      [createId("lga"), ipAddress, outcome, userId]
     );
   } catch (error) {
     // Authentication must remain available even when the history table is temporarily unavailable.

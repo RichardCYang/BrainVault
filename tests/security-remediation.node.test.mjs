@@ -111,3 +111,57 @@ test("bookmark numeric entity decoding rejects invalid Unicode code points witho
   assert.match(source, /codePoint <= 0x10ffff/);
   assert.match(source, /!\(codePoint >= 0xd800 && codePoint <= 0xdfff\)/);
 });
+
+test("password account-enumeration paths perform comparable cryptographic and database work", () => {
+  const routes = read("src/routes/auth.routes.ts");
+  const lockout = read("src/lib/login-lockout.ts");
+  const history = read("src/lib/login-history.ts");
+
+  const registerStart = routes.indexOf('authRouter.post(\n  "/register"');
+  const loginStart = routes.indexOf('authRouter.post(\n  "/login"');
+  assert.ok(registerStart >= 0 && loginStart > registerStart);
+  const register = routes.slice(registerStart, loginStart);
+  assert.ok(register.indexOf("await hashPassword(password)") < register.indexOf("INSERT IGNORE INTO users"));
+  assert.doesNotMatch(register, /SELECT \* FROM users WHERE username/);
+
+  const login = routes.slice(loginStart, routes.indexOf('authRouter.post("/logout"', loginStart));
+  assert.match(login, /const result = await transaction/);
+  assert.match(login, /lockedUser\?\.id \?\? syntheticLoginUserId/);
+  assert.match(login, /evaluatePasswordLogin\(client, workingUserId/);
+  assert.match(login, /recordLoginAttempt\(workingUserId/);
+  assert.match(lockout, /UPDATE users SET failed_login_attempts = failed_login_attempts WHERE id = \?/);
+  assert.match(history, /SELECT \?, id, \?, \? FROM users WHERE id = \?/);
+});
+
+test("bearer authentication enforces the same revocable session row as cookie authentication", () => {
+  const source = read("src/middleware/auth.ts");
+  assert.match(source, /const authSessionId = await ensureAuthSessionForRequest\(token, payload, req\)/);
+  assert.doesNotMatch(source, /source === "cookie"[\s\S]{0,120}ensureAuthSessionForRequest/);
+});
+
+test("restore journals are authenticated before startup recovery can derive destructive paths", () => {
+  const transfer = read("src/lib/data-transfer.ts");
+  const recoveryStart = transfer.indexOf("export async function recoverInterruptedDataRestores");
+  const recovery = transfer.slice(recoveryStart, transfer.indexOf("export async function cleanupStaleDataTransferTempFiles", recoveryStart));
+  assert.match(transfer, /createHmac\("sha256", env\.MFA_ENCRYPTION_KEY\)/);
+  assert.match(transfer, /timingSafeEqual\(actual, expected\)/);
+  assert.match(transfer, /JSON\.stringify\(signRestoreJournal\(journal\)\)/);
+  assert.ok(recovery.indexOf("verifyRestoreJournalEnvelope") < recovery.indexOf("getRestorePaths(journal)"));
+  assert.match(recovery, /Ignoring unauthenticated data restore journal/);
+});
+
+test("data-transfer temp cleanup and collaboration lifecycle defenses are active", () => {
+  const transfer = read("src/lib/data-transfer.ts");
+  const server = read("src/server.ts");
+  const collaboration = read("src/lib/collaboration-server.ts");
+
+  assert.match(transfer, /export async function cleanupStaleDataTransferTempFiles/);
+  assert.match(transfer, /env\.ATTACHMENT_TEMP_MAX_AGE_MS/);
+  assert.match(server, /await cleanupStaleDataTransferTempFiles\(\)/);
+  assert.match(collaboration, /const bootstrapLeaderTimeoutMs = 15_000/);
+  assert.match(collaboration, /ensureBootstrapLeaderTimeout\(room\)/);
+  assert.match(collaboration, /const idleRoomTtlMs = 30_000/);
+  assert.match(collaboration, /idleRemovalTimer/);
+  assert.match(collaboration, /requiresDurableRecheck/);
+  assert.match(collaboration, /SELECT COALESCE\(MAX\(id\), 0\) AS max_update_id FROM page_yjs_updates/);
+});

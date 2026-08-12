@@ -74,6 +74,8 @@ const maxBytesPerMinute = 64 * 1024 * 1024;
 const heartbeatIntervalMs = 25_000;
 const heartbeatTimeoutMs = 75_000;
 const accessRecheckIntervalMs = 30_000;
+const bootstrapLeaderTimeoutMs = 15_000;
+const idleRoomTtlMs = 30_000;
 
 type YjsUpdateRow = {
   id: number;
@@ -124,7 +126,10 @@ type Room = {
   invalidated: boolean;
   loadPromise: Promise<void>;
   bootstrapLeaderId: string | null;
+  bootstrapLeaderTimer: NodeJS.Timeout | null;
   waitingForBootstrap: Set<string>;
+  idleRemovalTimer: NodeJS.Timeout | null;
+  requiresDurableRecheck: boolean;
   writeQueue: Promise<void>;
   pendingWrites: number;
   pendingWriteBytes: number;
@@ -259,6 +264,7 @@ export class PageCollaborationHub {
 
     const rooms = [...this.rooms.values()];
     for (const room of rooms) {
+      this.clearRoomTimers(room);
       for (const client of room.clients.values()) client.socket.close(1001, "Server is shutting down");
     }
     await Promise.allSettled(rooms.map((room) => room.writeQueue));
@@ -306,6 +312,7 @@ export class PageCollaborationHub {
     if (!room) return;
     room.invalidated = true;
     this.rooms.delete(pageId);
+    this.clearRoomTimers(room);
     room.bootstrapLeaderId = null;
     room.waitingForBootstrap.clear();
     for (const client of room.clients.values()) client.socket.close(4010, reason);
@@ -316,6 +323,7 @@ export class PageCollaborationHub {
     if (room.invalidated || this.rooms.get(room.pageId) !== room) return;
     room.invalidated = true;
     this.rooms.delete(room.pageId);
+    this.clearRoomTimers(room);
     room.bootstrapLeaderId = null;
     room.waitingForBootstrap.clear();
     for (const client of room.clients.values()) {
@@ -552,6 +560,22 @@ export class PageCollaborationHub {
         || !room.clients.has(client.id)
       ) return;
 
+      if (room.requiresDurableRecheck) {
+        const cursor = await db.queryOne<{ max_update_id: number | bigint | string | null }>(
+          "SELECT COALESCE(MAX(id), 0) AS max_update_id FROM page_yjs_updates WHERE page_id = ?",
+          [pageId]
+        );
+        const durableUpdateId = toSafeUpdateId(cursor?.max_update_id ?? 0);
+        if (durableUpdateId !== room.maxUpdateId) {
+          this.invalidateRoomForReload(
+            room,
+            "Collaboration state changed while the room was idle; reloading durable history"
+          );
+          return;
+        }
+        room.requiresDurableRecheck = false;
+      }
+
       try {
         if (await isPermanentlyBlockedTotpIp(sourceIp, payload.sub)) {
           connection.close(4003, "Access from this IP is blocked");
@@ -638,9 +662,11 @@ export class PageCollaborationHub {
           bootstrap: true,
           lastUpdateId: 0
         });
+        this.ensureBootstrapLeaderTimeout(room);
       } else {
         room.waitingForBootstrap.add(client.id);
         connection.sendJson({ type: "bootstrap-wait", connectionId: client.id });
+        this.ensureBootstrapLeaderTimeout(room);
       }
       this.broadcastPresenceUpdate(room, client, { includeIdentity: true });
     } finally {
@@ -650,11 +676,16 @@ export class PageCollaborationHub {
 
   private getOrCreateRoom(pageId: string, documentEpoch: string) {
     const existing = this.rooms.get(pageId);
-    if (existing && !existing.invalidated && existing.documentEpoch === documentEpoch) return existing;
+    if (existing && !existing.invalidated && existing.documentEpoch === documentEpoch) {
+      if (existing.idleRemovalTimer) existing.requiresDurableRecheck = true;
+      this.cancelIdleRoomRemoval(existing);
+      return existing;
+    }
     if (existing && !existing.invalidated) {
       this.invalidateRoomForLineageChange(existing);
     } else if (existing) {
       this.rooms.delete(pageId);
+      this.clearRoomTimers(existing);
       void existing.writeQueue.finally(() => existing.document.destroy());
     }
 
@@ -671,7 +702,10 @@ export class PageCollaborationHub {
       loadFailed: false,
       invalidated: false,
       bootstrapLeaderId: null,
+      bootstrapLeaderTimer: null,
       waitingForBootstrap: new Set<string>(),
+      idleRemovalTimer: null,
+      requiresDurableRecheck: false,
       writeQueue: Promise.resolve(),
       pendingWrites: 0,
       pendingWriteBytes: 0,
@@ -790,6 +824,7 @@ export class PageCollaborationHub {
       pendingLoadedDocument = null;
       room.loadFailed = true;
       room.invalidated = true;
+      this.clearRoomTimers(room);
       if (this.rooms.get(pageId) === room) this.rooms.delete(pageId);
       room.document.destroy();
       for (const client of room.clients.values()) client.socket.close(1011, "Unable to load collaboration history");
@@ -953,6 +988,7 @@ export class PageCollaborationHub {
           && room.pendingWrites === 0
         ) {
           room.bootstrapWritePending = false;
+          this.clearBootstrapLeaderTimer(room);
           room.bootstrapLeaderId = null;
           this.promoteBootstrapLeader(room);
         }
@@ -1154,6 +1190,7 @@ export class PageCollaborationHub {
         room.bootstrapWritePending = false;
         client.synced = false;
         if (room.bootstrapLeaderId === client.id) {
+          this.clearBootstrapLeaderTimer(room);
           room.bootstrapLeaderId = null;
           this.promoteBootstrapLeader(room);
         }
@@ -1214,6 +1251,7 @@ export class PageCollaborationHub {
 
     if (room.bootstrapLeaderId === client.id) {
       room.bootstrapWritePending = false;
+      this.clearBootstrapLeaderTimer(room);
       room.bootstrapLeaderId = null;
       for (const waitingId of room.waitingForBootstrap) {
         const waiting = room.clients.get(waitingId);
@@ -1244,6 +1282,61 @@ export class PageCollaborationHub {
     }
   }
 
+  private clearBootstrapLeaderTimer(room: Room) {
+    if (!room.bootstrapLeaderTimer) return;
+    clearTimeout(room.bootstrapLeaderTimer);
+    room.bootstrapLeaderTimer = null;
+  }
+
+  private cancelIdleRoomRemoval(room: Room) {
+    if (!room.idleRemovalTimer) return;
+    clearTimeout(room.idleRemovalTimer);
+    room.idleRemovalTimer = null;
+  }
+
+  private clearRoomTimers(room: Room) {
+    this.clearBootstrapLeaderTimer(room);
+    this.cancelIdleRoomRemoval(room);
+  }
+
+  private ensureBootstrapLeaderTimeout(room: Room) {
+    if (
+      room.bootstrapLeaderTimer
+      || this.closed
+      || room.invalidated
+      || this.rooms.get(room.pageId) !== room
+      || room.maxUpdateId > 0
+      || !room.bootstrapLeaderId
+      || room.bootstrapWritePending
+    ) return;
+
+    const leaderId = room.bootstrapLeaderId;
+    const timer = setTimeout(() => {
+      room.bootstrapLeaderTimer = null;
+      if (
+        this.closed
+        || room.invalidated
+        || this.rooms.get(room.pageId) !== room
+        || room.maxUpdateId > 0
+        || room.bootstrapWritePending
+        || room.bootstrapLeaderId !== leaderId
+        || room.waitingForBootstrap.size === 0
+      ) return;
+
+      const leader = room.clients.get(leaderId);
+      room.bootstrapLeaderId = null;
+      if (leader?.socket.isOpen) {
+        leader.synced = false;
+        room.waitingForBootstrap.add(leader.id);
+        leader.socket.sendJson({ type: "bootstrap-wait", connectionId: leader.id });
+        this.broadcastPresenceUpdate(room, leader);
+      }
+      this.promoteBootstrapLeader(room);
+    }, bootstrapLeaderTimeoutMs);
+    timer.unref();
+    room.bootstrapLeaderTimer = timer;
+  }
+
   private promoteBootstrapLeader(room: Room) {
     if (
       this.closed
@@ -1268,21 +1361,35 @@ export class PageCollaborationHub {
         bootstrap: true,
         lastUpdateId: 0
       });
+      this.ensureBootstrapLeaderTimeout(room);
       this.broadcastPresenceUpdate(room, next);
       return;
     }
   }
 
   private removeRoomWhenIdle(room: Room) {
-    if (
-      !room.clients.size
-      && room.pendingWrites === 0
-      && !room.bootstrapWritePending
-      && this.rooms.get(room.pageId) === room
-    ) {
+    const idle = !room.clients.size && room.pendingWrites === 0 && !room.bootstrapWritePending;
+    if (!idle || this.rooms.get(room.pageId) !== room || room.invalidated || this.closed) {
+      this.cancelIdleRoomRemoval(room);
+      return;
+    }
+    if (room.idleRemovalTimer) return;
+
+    const timer = setTimeout(() => {
+      room.idleRemovalTimer = null;
+      if (
+        room.clients.size
+        || room.pendingWrites !== 0
+        || room.bootstrapWritePending
+        || room.invalidated
+        || this.rooms.get(room.pageId) !== room
+      ) return;
+      this.clearBootstrapLeaderTimer(room);
       this.rooms.delete(room.pageId);
       room.document.destroy();
-    }
+    }, idleRoomTtlMs);
+    timer.unref();
+    room.idleRemovalTimer = timer;
   }
 
   private handleClientClose(room: Room, client: ClientContext) {
@@ -1296,6 +1403,7 @@ export class PageCollaborationHub {
       && room.maxUpdateId === 0
       && !room.bootstrapWritePending
     ) {
+      this.clearBootstrapLeaderTimer(room);
       room.bootstrapLeaderId = null;
       this.promoteBootstrapLeader(room);
     }
