@@ -13,6 +13,7 @@ import { ApiError } from "../lib/http.js";
 import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
 import { enforceVpnAccessPolicy, getClientTimeZone, getClientWebRtcSignal } from "../lib/vpn-access-policy.js";
 import { getClientIpAddress, recordLoginAttempt } from "../lib/login-history.js";
+import { isPermanentlyBlockedTotpIp } from "../lib/totp-ip-block.js";
 import {
   createOpaqueToken,
   hashOpaqueToken,
@@ -391,6 +392,13 @@ passkeyLoginRouter.post(
       if (!Number.isSafeInteger(newCounter) || newCounter < 0) throw loginFailure();
       if (previousCounter > 0 && newCounter <= previousCounter) throw loginFailure();
 
+      if (await isPermanentlyBlockedTotpIp(sourceIp, passkey.user_id)) {
+        throw new ApiError(
+          403,
+          "TOTP_IP_PERMANENTLY_BLOCKED",
+          "Access from this IP address is temporarily blocked for this account"
+        );
+      }
       await enforceCountryLoginPolicy(passkey.user_id, undefined, sourceIp);
       await enforceVpnAccessPolicy(passkey.user_id, undefined, sourceIp, getClientTimeZone(req), getClientWebRtcSignal(req));
 

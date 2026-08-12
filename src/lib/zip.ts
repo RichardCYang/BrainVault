@@ -66,7 +66,35 @@ function dosDateTime(date: Date) {
 }
 
 async function writeBuffer(output: Writable, data: Buffer) {
-  if (!output.write(data)) await once(output, "drain");
+  if (output.destroyed || output.writableEnded) {
+    throw new Error("ZIP output stream closed before the archive finished");
+  }
+  if (output.write(data)) return;
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      output.off("drain", onDrain);
+      output.off("close", onClose);
+      output.off("error", onError);
+    };
+    const settle = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
+    const onDrain = () => settle();
+    const onClose = () => settle(new Error("ZIP output stream closed before the archive finished"));
+    const onError = (error: Error) => settle(error);
+
+    output.once("drain", onDrain);
+    output.once("close", onClose);
+    output.once("error", onError);
+    // Close can race with write() returning false. Re-check after listeners exist.
+    if (output.destroyed || output.writableEnded) onClose();
+  });
 }
 
 export type ZipSource =

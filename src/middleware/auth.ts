@@ -7,6 +7,7 @@ import { ApiError } from "../lib/http.js";
 import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
 import { enforceVpnAccessPolicy, getClientTimeZone, getClientWebRtcSignal } from "../lib/vpn-access-policy.js";
 import { getClientIpAddress } from "../lib/login-history.js";
+import { isPermanentlyBlockedTotpIp } from "../lib/totp-ip-block.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { clearAuthSessionCookie, readAuthSessionCookie } from "../lib/session-cookie.js";
 import { isAllowedCorsOrigin } from "./cors.js";
@@ -67,7 +68,12 @@ export function requireJsonRequestBody(req: Request, _res: Response, next: NextF
   next();
 }
 
-export async function requireAuth(req: Request, res: Response, next: NextFunction) {
+async function authenticateRequest(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+  { allowTotpIpBlock = false }: { allowTotpIpBlock?: boolean } = {}
+) {
   setPrivateNoStoreCacheControl(res);
   let source: "bearer" | "cookie" | null = null;
   try {
@@ -104,11 +110,20 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       return;
     }
 
-    await enforceCountryLoginPolicy(user.id, user.country_login_mode, getClientIpAddress(req));
+    const clientIp = getClientIpAddress(req);
+    if (!allowTotpIpBlock && await isPermanentlyBlockedTotpIp(clientIp, user.id)) {
+      throw new ApiError(
+        403,
+        "TOTP_IP_PERMANENTLY_BLOCKED",
+        "Access from this IP address is temporarily blocked for this account"
+      );
+    }
+
+    await enforceCountryLoginPolicy(user.id, user.country_login_mode, clientIp);
     await enforceVpnAccessPolicy(
       user.id,
       user.vpn_block_enabled,
-      getClientIpAddress(req),
+      clientIp,
       getClientTimeZone(req),
       getClientWebRtcSignal(req)
     );
@@ -117,7 +132,18 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     req.user = toPublicUser(user);
     next();
   } catch (error) {
-    if (source === "cookie") clearAuthSessionCookie(res);
+    if (
+      source === "cookie"
+      && !(error instanceof ApiError && error.code === "TOTP_IP_PERMANENTLY_BLOCKED")
+    ) clearAuthSessionCookie(res);
     next(error);
   }
+}
+
+export function requireAuth(req: Request, res: Response, next: NextFunction) {
+  void authenticateRequest(req, res, next);
+}
+
+export function requireAuthAllowTotpIpBlock(req: Request, res: Response, next: NextFunction) {
+  void authenticateRequest(req, res, next, { allowTotpIpBlock: true });
 }

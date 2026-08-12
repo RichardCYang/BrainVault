@@ -13,6 +13,7 @@ import {
 import { getOwnedPage, getPageAccess, toAccessPayload, toCollaborationPayload } from "../lib/page-access.js";
 import {
   collaborationTicketTtlSeconds,
+  createCollaborationSessionBinding,
   signCollaborationToken
 } from "../lib/collaboration-token.js";
 import {
@@ -48,6 +49,7 @@ import {
 } from "../lib/collaboration-protocol.js";
 import { assessCollaborationHistoryReplay } from "../lib/collaboration-update-policy.js";
 import { getClientWebRtcSignal } from "../lib/vpn-access-policy.js";
+import { readAuthSessionCookie } from "../lib/session-cookie.js";
 import type { BlockRow, PageRow, UserRow } from "../types/domain.js";
 
 export const collaborationRouter = Router();
@@ -353,6 +355,14 @@ collaborationRouter.post(
       });
       const authVersion = req.auth?.authVersion;
       if (!authVersion) throw new ApiError(401, "UNAUTHENTICATED", "Authentication context is missing");
+      const authSessionToken = readAuthSessionCookie(req);
+      if (!authSessionToken) {
+        throw new ApiError(
+          401,
+          "COLLABORATION_COOKIE_SESSION_REQUIRED",
+          "Live collaboration requires the authenticated browser session cookie"
+        );
+      }
       const webRtcSignal = getClientWebRtcSignal(req);
       const ticket = signCollaborationToken({
         sub: user.id,
@@ -360,6 +370,7 @@ collaborationRouter.post(
         pageId,
         documentEpoch: session.collaborationState.document_epoch,
         authVersion,
+        sessionBinding: createCollaborationSessionBinding(authSessionToken),
         scope: "page:collaborate",
         webRtcState: webRtcSignal.state,
         webRtcObservedIps: webRtcSignal.observedIps

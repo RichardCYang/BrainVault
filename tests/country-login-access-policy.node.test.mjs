@@ -18,7 +18,8 @@ test("country login policy is enforced at every authentication/session boundary"
   assert.match(mfaRoutes, /await enforceCountryLoginPolicy\(pendingSession\.user_id, undefined, pendingSession\.source_ip\);/);
   assert.match(mfaRoutes, /await enforceCountryLoginPolicy\(session\.user_id, undefined, session\.source_ip\);/);
   assert.match(passkeyRoutes, /await enforceCountryLoginPolicy\(passkey\.user_id, undefined, sourceIp\);/);
-  assert.match(authMiddleware, /await enforceCountryLoginPolicy\(user\.id, user\.country_login_mode, getClientIpAddress\(req\)\);/);
+  assert.match(authMiddleware, /const clientIp = getClientIpAddress\(req\);/);
+  assert.match(authMiddleware, /await enforceCountryLoginPolicy\(user\.id, user\.country_login_mode, clientIp\);/);
   assert.match(authMiddleware, /country_login_mode/);
   assert.match(collaborationServer, /getClientIpAddressFromTrustedProxyRequest/);
   assert.match(collaborationServer, /await enforceCountryLoginPolicy\(user\.id, user\.country_login_mode, sourceIp\);/);

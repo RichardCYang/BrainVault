@@ -44,6 +44,15 @@ describe("bookmark OpenGraph parsing", () => {
     });
   });
 
+  it("does not throw on out-of-range or surrogate numeric HTML entities", () => {
+    const preview = parseBookmarkPreview(
+      `<html><head><meta property="og:title" content="Bad &#x200000; &#1114112; &#55296; entity"></head></html>`,
+      "https://example.com/source"
+    );
+
+    expect(preview.title).toBe("Bad &#x200000; &#1114112; &#55296; entity");
+  });
+
   it("falls back to the document title, hostname, and favicon path", () => {
     const preview = parseBookmarkPreview(
       "<html><head><title>  Plain page  </title></head></html>",

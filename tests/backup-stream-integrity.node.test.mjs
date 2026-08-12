@@ -134,3 +134,32 @@ test("ZIP export size calculation includes ZIP64 records at the sentinel boundar
   const expected = size + BigInt(30 + name.length + 20) + BigInt(46 + name.length + 20) + 56n + 20n + 22n;
   assert.equal(calculateZipArchiveSize([{ name, size }]), expected);
 });
+
+
+test("ZIP export rejects promptly when the destination closes during backpressure", async () => {
+  let writeCount = 0;
+  const output = new Writable({
+    highWaterMark: 1,
+    write(_chunk, _encoding, callback) {
+      writeCount += 1;
+      if (writeCount === 1) {
+        queueMicrotask(() => output.destroy());
+      }
+      // Do not complete the first write synchronously. The close event must
+      // settle the writer instead of leaving it waiting forever for drain.
+      setTimeout(callback, 25);
+    }
+  });
+  const data = Buffer.alloc(1024, 0x41);
+  const writer = new ZipWriter(output);
+
+  await assert.rejects(
+    writer.add({
+      name: "attachments/aborted.bin",
+      size: BigInt(data.length),
+      crc32: crc32(data),
+      source: { kind: "buffer", data }
+    }),
+    /ZIP output stream closed before the archive finished/
+  );
+});

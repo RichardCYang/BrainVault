@@ -17,7 +17,6 @@ import { customIconRouter } from "./routes/custom-icon.routes.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.js";
 import { requireAuth } from "./middleware/auth.js";
 import { createHttpsEnforcementMiddleware } from "./middleware/https.js";
-import { enforcePermanentTotpIpBlock } from "./middleware/totp-ip-block.js";
 import { setPrivateNoStoreCacheControl } from "./lib/cache-control.js";
 import { createExpressTrustProxySetting } from "./lib/reverse-proxy.js";
 import { customIconUploadRoot } from "./lib/custom-icons.js";
@@ -69,7 +68,6 @@ export function createApp() {
       }
     })
   );
-  app.use(enforcePermanentTotpIpBlock);
   app.use(
     createHttpsEnforcementMiddleware({
       enabled: env.HTTPS_MODE !== "off",

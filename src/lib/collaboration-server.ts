@@ -6,12 +6,15 @@ import { corsOrigins, env } from "../config/env.js";
 import { createExactHttpOriginSet, parseExactHttpOrigin } from "./request-origin.js";
 import { db, transaction } from "./db.js";
 import { getPageAccess } from "./page-access.js";
-import { verifyCollaborationToken } from "./collaboration-token.js";
+import { createCollaborationSessionBinding, verifyCollaborationToken } from "./collaboration-token.js";
 import {
   assertCollaborationDocumentEpoch,
   getCollaborationState
 } from "./collaboration-lineage.js";
 import { ApiError } from "./http.js";
+import { verifyAuthToken } from "./auth.js";
+import { authSessionCookieName } from "./session-cookie.js";
+import { readUniqueCookieValue } from "./session-cookie-policy.js";
 import { enforceCountryLoginPolicy } from "./country-login-policy.js";
 import { enforceVpnAccessPolicy, type ClientWebRtcSignal } from "./vpn-access-policy.js";
 import {
@@ -413,6 +416,26 @@ export class PageCollaborationHub {
       rejectWebSocketUpgrade(socket, 401, "The collaboration ticket does not match this page");
       return;
     }
+    const authSessionToken = readUniqueCookieValue(request.headers.cookie, authSessionCookieName);
+    if (!authSessionToken) {
+      rejectWebSocketUpgrade(socket, 401, "The authenticated browser session cookie is required");
+      return;
+    }
+    let authPayload;
+    try {
+      authPayload = verifyAuthToken(authSessionToken);
+    } catch {
+      rejectWebSocketUpgrade(socket, 401, "The authenticated browser session is invalid or expired");
+      return;
+    }
+    if (
+      authPayload.sub !== payload.sub
+      || authPayload.authVersion !== payload.authVersion
+      || createCollaborationSessionBinding(authSessionToken) !== payload.sessionBinding
+    ) {
+      rejectWebSocketUpgrade(socket, 401, "The collaboration ticket is not bound to this browser session");
+      return;
+    }
     if (!this.reserveUpgrade(payload.sub, pageId)) {
       this.rejectConnectionLimit(socket);
       return;
@@ -431,7 +454,7 @@ export class PageCollaborationHub {
         request,
         env.HTTPS_MODE === "proxy" ? env.TRUST_PROXY_ADDRESSES : []
       );
-      if (await isPermanentlyBlockedTotpIp(sourceIp)) {
+      if (await isPermanentlyBlockedTotpIp(sourceIp, payload.sub)) {
         rejectWebSocketUpgrade(socket, 403, "Access from this IP is blocked");
         return;
       }
@@ -514,7 +537,7 @@ export class PageCollaborationHub {
       ) return;
 
       try {
-        if (await isPermanentlyBlockedTotpIp(sourceIp)) {
+        if (await isPermanentlyBlockedTotpIp(sourceIp, payload.sub)) {
           connection.close(4003, "Access from this IP is blocked");
           return;
         }
@@ -935,6 +958,20 @@ export class PageCollaborationHub {
       maxCollaborationDocumentBytes,
       room.stateUpdate
     );
+    try {
+      // Yjs validates the binary CRDT encoding, not BrainVault's application schema.
+      // Reject any candidate state that cannot be materialized before it reaches
+      // the durable update log, otherwise one malformed frame can poison the page.
+      readCollaborationMaterialization(candidate.document);
+    } catch (error) {
+      candidate.document.destroy();
+      if (error instanceof CollaborationDocumentError) {
+        if (client.socket.isOpen) client.socket.close(1008, "Invalid collaboration update");
+        return;
+      }
+      throw error;
+    }
+
     const persistenceDecision = assessCollaborationUpdatePersistence({
       snapshot,
       documentChanged: candidate.changed,
@@ -1265,7 +1302,7 @@ export class PageCollaborationHub {
         for (const client of room.clients.values()) {
           checks.push((async () => {
             try {
-              if (await isPermanentlyBlockedTotpIp(client.ipAddress)) {
+              if (await isPermanentlyBlockedTotpIp(client.ipAddress, client.user.id)) {
                 client.socket.close(4003, "Access from this IP is blocked");
                 return;
               }

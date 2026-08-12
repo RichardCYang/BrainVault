@@ -13,7 +13,7 @@ import {
 } from "@simplewebauthn/server";
 import { env } from "../config/env.js";
 import { db, transaction, type DbClient } from "../lib/db.js";
-import { disconnectIpCollaborators, disconnectUserCollaborators } from "../lib/collaboration-server.js";
+import { disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
 import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
@@ -1030,8 +1030,8 @@ mfaRouter.post(
             const attempt = await recordTotpIpFailure(session.user_id, session.source_ip);
             await recordReservedMfaFailure(session, attempt.blocked ? "LOCKED" : "FAILURE");
             if (attempt.blocked) {
-              disconnectIpCollaborators(session.source_ip, "Access from this IP is blocked");
-              next(new ApiError(403, "TOTP_IP_PERMANENTLY_BLOCKED", "This IP address was permanently blocked after too many invalid TOTP codes", {
+              disconnectUserCollaborators(session.user_id, "Access from this IP is blocked for this account");
+              next(new ApiError(403, "TOTP_IP_PERMANENTLY_BLOCKED", "This IP address is temporarily blocked after too many invalid TOTP codes", {
                 attempts: attempt.attempts,
                 maxAttempts: attempt.maxAttempts
               }));

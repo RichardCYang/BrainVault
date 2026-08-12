@@ -469,6 +469,19 @@ export function evaluateVpnSignals(
     };
   }
 
+  if (!available.length) {
+    return {
+      verdict: "UNKNOWN",
+      blocked: false,
+      reason: null,
+      confidence: 0,
+      datacenter: false,
+      timezoneMismatch,
+      providerCount: 0,
+      supportingSignals: ["VPN_VERIFICATION_UNAVAILABLE", ...supportingSignals]
+    };
+  }
+
   if (vpnGateListed) {
     return {
       verdict: "UNKNOWN",
@@ -479,19 +492,6 @@ export function evaluateVpnSignals(
       timezoneMismatch,
       providerCount: available.length,
       supportingSignals: ["VPN_GATE_DIRECTORY_UNVERIFIED", ...supportingSignals]
-    };
-  }
-
-  if (!available.length) {
-    return {
-      verdict: "UNKNOWN",
-      blocked: false,
-      reason: null,
-      confidence: 0,
-      datacenter: false,
-      timezoneMismatch,
-      providerCount: 0,
-      supportingSignals
     };
   }
 
@@ -635,7 +635,7 @@ export async function resolveVpnAccessRisk(
   const torListMatch = torExits.has(normalizedIp);
   const primaryTimezoneMismatch = hasTimezoneMismatch(primary.timezone, clientTimeZone);
   const secondary = !vpnGate.dnsVerified
-    && (torListMatch || vpnGate.listed || webRtcAuxiliaryRisk
+    && (!primary.available || torListMatch || vpnGate.listed || webRtcAuxiliaryRisk
       || shouldCrossCheck(primary, primaryTimezoneMismatch, webRtcAuxiliaryRisk))
       ? await queryIpApi(normalizedIp)
       : emptyProviderSignal("ipapi");
@@ -695,6 +695,13 @@ export async function enforceVpnAccessPolicy(
   if (!enabled) return null;
 
   const resolution = await resolveVpnAccessRisk(ipAddress, clientTimeZone, clientWebRtcSignal);
+  if (resolution.supportingSignals.includes("VPN_VERIFICATION_UNAVAILABLE")) {
+    throw new ApiError(
+      503,
+      "VPN_VERIFICATION_UNAVAILABLE",
+      "VPN access policy could not be verified because the risk providers are unavailable"
+    );
+  }
   if (!resolution.blocked || !resolution.reason) return resolution;
 
   await recordCountryLoginBlock(

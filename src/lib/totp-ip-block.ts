@@ -8,6 +8,7 @@ export const defaultTotpIpBlockThreshold = 3;
 // configured value can actually be reached before the MFA session expires.
 export const maxTotpIpBlockThreshold = 8;
 export const minTotpIpBlockThreshold = 1;
+export const totpIpBlockDurationHours = 24;
 
 let permanentTotpIpEnforcementReady = false;
 
@@ -24,6 +25,7 @@ type TotpIpBlockRow = {
   ip_address: string;
   failed_attempts: unknown;
   blocked_at: string | Date;
+  expires_at: string | Date;
 };
 
 export type TotpIpBlockPolicy = {
@@ -52,7 +54,7 @@ export function normalizeTotpBlockIpAddress(value: unknown) {
 export async function initializePermanentTotpIpEnforcement(client: DbClient = db) {
   // Verify the migration exists before the HTTP listener is opened. createApp()
   // stays test-friendly, while the normal server entry point always enables it.
-  await client.queryOne<{ ok: number }>("SELECT 1 AS ok FROM user_totp_ip_blocks LIMIT 1");
+  await client.queryOne<{ expires_at: string | Date }>("SELECT expires_at FROM user_totp_ip_blocks LIMIT 1");
   permanentTotpIpEnforcementReady = true;
 }
 
@@ -64,12 +66,18 @@ export function resetPermanentTotpIpEnforcementForTests() {
   permanentTotpIpEnforcementReady = false;
 }
 
-export async function isPermanentlyBlockedTotpIp(ipAddress: string, client: DbClient = db) {
+export async function isPermanentlyBlockedTotpIp(
+  ipAddress: string,
+  userId: string | null | undefined,
+  client: DbClient = db
+) {
   const normalizedIp = normalizeTotpBlockIpAddress(ipAddress);
-  if (normalizedIp === "unknown") return false;
+  if (normalizedIp === "unknown" || !userId) return false;
   const row = await client.queryOne<{ blocked: number }>(
-    "SELECT 1 AS blocked FROM user_totp_ip_blocks WHERE ip_address = ? LIMIT 1",
-    [normalizedIp]
+    `SELECT 1 AS blocked FROM user_totp_ip_blocks
+     WHERE user_id = ? AND ip_address = ? AND expires_at > CURRENT_TIMESTAMP(3)
+     LIMIT 1`,
+    [userId, normalizedIp]
   );
   return Boolean(row);
 }
@@ -114,9 +122,14 @@ export async function recordTotpIpFailure(userId: string, ipAddress: string) {
       return { enabled: false, blocked: false, newlyBlocked: false, attempts: 0, maxAttempts };
     }
 
+    await client.execute(
+      `DELETE FROM user_totp_ip_blocks
+       WHERE user_id = ? AND ip_address = ? AND expires_at <= CURRENT_TIMESTAMP(3)`,
+      [userId, normalizedIp]
+    );
     const existingBlock = await client.queryOne<{ failed_attempts: unknown }>(
       `SELECT failed_attempts FROM user_totp_ip_blocks
-       WHERE user_id = ? AND ip_address = ? FOR UPDATE`,
+       WHERE user_id = ? AND ip_address = ? AND expires_at > CURRENT_TIMESTAMP(3) FOR UPDATE`,
       [userId, normalizedIp]
     );
     if (existingBlock) {
@@ -143,11 +156,15 @@ export async function recordTotpIpFailure(userId: string, ipAddress: string) {
 
     if (attempts >= maxAttempts) {
       const inserted = await client.execute<{ affectedRows: number }>(
-        `INSERT IGNORE INTO user_totp_ip_blocks (user_id, ip_address, failed_attempts)
-         VALUES (?, ?, ?)`,
+        `INSERT INTO user_totp_ip_blocks (user_id, ip_address, failed_attempts, expires_at)
+         VALUES (?, ?, ?, DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL ${totpIpBlockDurationHours} HOUR))
+         ON DUPLICATE KEY UPDATE
+           failed_attempts = VALUES(failed_attempts),
+           blocked_at = CURRENT_TIMESTAMP(3),
+           expires_at = VALUES(expires_at)`,
         [userId, normalizedIp, attempts]
       );
-      const newlyBlocked = Number(inserted.affectedRows) === 1;
+      const newlyBlocked = Number(inserted.affectedRows) > 0;
       await client.execute(
         "DELETE FROM user_totp_ip_failures WHERE user_id = ? AND ip_address = ?",
         [userId, normalizedIp]
@@ -193,9 +210,9 @@ export async function clearTotpIpFailures(
 
 export async function listPermanentTotpIpBlocks(userId: string, client: DbClient = db) {
   const rows = await client.query<TotpIpBlockRow>(
-    `SELECT ip_address, failed_attempts, blocked_at
+    `SELECT ip_address, failed_attempts, blocked_at, expires_at
      FROM user_totp_ip_blocks
-     WHERE user_id = ?
+     WHERE user_id = ? AND expires_at > CURRENT_TIMESTAMP(3)
      ORDER BY blocked_at DESC, ip_address ASC
      LIMIT 500`,
     [userId]
@@ -204,7 +221,8 @@ export async function listPermanentTotpIpBlocks(userId: string, client: DbClient
     blocks: rows.map((row) => ({
       ipAddress: row.ip_address,
       failedAttempts: Math.max(0, Number(row.failed_attempts ?? 0)),
-      blockedAt: row.blocked_at
+      blockedAt: row.blocked_at,
+      expiresAt: row.expires_at
     }))
   };
 }

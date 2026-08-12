@@ -65,3 +65,49 @@ test("the documented advisory hostname canonicalizes to the private IPv4 target"
   const parsed = new URL("http://012.0.0.1/");
   assert.equal(parsed.hostname, "10.0.0.1");
 });
+
+test("collaboration updates are semantically validated before durable persistence", () => {
+  const source = read("src/lib/collaboration-server.ts");
+  const applyIndex = source.indexOf("const candidate = applyValidatedYjsUpdate(");
+  const semanticIndex = source.indexOf("readCollaborationMaterialization(candidate.document);", applyIndex);
+  const insertIndex = source.indexOf("INSERT INTO page_yjs_updates", applyIndex);
+
+  assert.ok(applyIndex >= 0);
+  assert.ok(semanticIndex > applyIndex);
+  assert.ok(insertIndex > semanticIndex);
+  assert.match(source.slice(applyIndex, insertIndex), /CollaborationDocumentError/);
+  assert.match(source.slice(applyIndex, insertIndex), /client\.socket\.close\(1008, "Invalid collaboration update"\)/);
+});
+
+test("collaboration tickets are bound to the authenticated browser session", () => {
+  const tokenSource = read("src/lib/collaboration-token.ts");
+  const routeSource = read("src/routes/collaboration.routes.ts");
+  const serverSource = read("src/lib/collaboration-server.ts");
+
+  assert.match(tokenSource, /sessionBinding: string/);
+  assert.match(tokenSource, /createHash\("sha256"\).*?authSessionToken/s);
+  assert.match(routeSource, /const authSessionToken = readAuthSessionCookie\(req\)/);
+  assert.match(routeSource, /sessionBinding: createCollaborationSessionBinding\(authSessionToken\)/);
+  assert.match(serverSource, /const authSessionToken = readUniqueCookieValue\(request\.headers\.cookie, authSessionCookieName\)/);
+  assert.match(serverSource, /authPayload\.sub !== payload\.sub/);
+  assert.match(serverSource, /createCollaborationSessionBinding\(authSessionToken\) !== payload\.sessionBinding/);
+});
+
+test("failed password logins are padded after both existing and nonexistent account paths", () => {
+  const source = read("src/routes/auth.routes.ts");
+  const loginStart = source.indexOf('authRouter.post(\n  "/login"');
+  const paddingIndex = source.indexOf("await padFailedLoginResponse(startedAt);", loginStart);
+  const invalidCredentialIndex = source.indexOf('new ApiError(401, "INVALID_CREDENTIALS"', loginStart);
+
+  assert.ok(loginStart >= 0);
+  assert.ok(paddingIndex > loginStart);
+  assert.ok(invalidCredentialIndex > paddingIndex);
+  assert.match(source, /const targetDurationMs = 500 \+ randomInt\(0, 101\)/);
+});
+
+test("bookmark numeric entity decoding rejects invalid Unicode code points without throwing", () => {
+  const source = read("src/lib/bookmark.ts");
+  assert.match(source, /Number\.isSafeInteger\(codePoint\)/);
+  assert.match(source, /codePoint <= 0x10ffff/);
+  assert.match(source, /!\(codePoint >= 0xd800 && codePoint <= 0xdfff\)/);
+});

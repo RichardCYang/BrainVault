@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import jwt, { type Secret, type SignOptions } from "jsonwebtoken";
 import { env } from "../config/env.js";
 import { ApiError } from "./http.js";
@@ -12,10 +13,15 @@ export type CollaborationTokenPayload = {
   pageId: string;
   documentEpoch: string;
   authVersion: number;
+  sessionBinding: string;
   scope: "page:collaborate";
   webRtcState?: "ABSENT" | "AVAILABLE" | "DISABLED" | "UNAVAILABLE";
   webRtcObservedIps?: string[];
 };
+
+export function createCollaborationSessionBinding(authSessionToken: string) {
+  return createHash("sha256").update(authSessionToken, "utf8").digest("hex");
+}
 
 export function signCollaborationToken(payload: CollaborationTokenPayload) {
   const options: SignOptions = {
@@ -44,6 +50,8 @@ export function verifyCollaborationToken(token: string): CollaborationTokenPaylo
       decoded.documentEpoch.length > 64 ||
       !Number.isSafeInteger(Number(decoded.authVersion)) ||
       Number(decoded.authVersion) < 1 ||
+      typeof decoded.sessionBinding !== "string" ||
+      !/^[0-9a-f]{64}$/.test(decoded.sessionBinding) ||
       decoded.scope !== "page:collaborate"
     ) {
       throw new ApiError(401, "INVALID_COLLABORATION_TICKET", "Invalid collaboration ticket");
@@ -68,6 +76,7 @@ export function verifyCollaborationToken(token: string): CollaborationTokenPaylo
       pageId: String(decoded.pageId),
       documentEpoch: decoded.documentEpoch,
       authVersion: Number(decoded.authVersion),
+      sessionBinding: decoded.sessionBinding,
       scope: "page:collaborate",
       webRtcState: webRtcState as CollaborationTokenPayload["webRtcState"],
       webRtcObservedIps: webRtcObservedIps.map(String)

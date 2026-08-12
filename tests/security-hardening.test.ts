@@ -30,6 +30,7 @@ describe("authentication token separation", () => {
       pageId: "pag_security",
       documentEpoch: "epoch-security",
       authVersion: 3,
+      sessionBinding: "a".repeat(64),
       scope: "page:collaborate"
     });
 

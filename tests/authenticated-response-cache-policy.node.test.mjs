@@ -38,7 +38,7 @@ test("the authenticated response policy prohibits private and shared cache stora
 
 test("requireAuth applies cache isolation before every credential and database exit", () => {
   const source = read("src/middleware/auth.ts");
-  const functionStart = source.indexOf("export async function requireAuth");
+  const functionStart = source.indexOf("async function authenticateRequest");
   const policyIndex = source.indexOf("setPrivateNoStoreCacheControl(res);", functionStart);
   const credentialIndex = source.indexOf("const cookieToken = readAuthSessionCookie(req);", functionStart);
   const databaseIndex = source.indexOf("const user = await db.queryOne", functionStart);

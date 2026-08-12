@@ -42,7 +42,8 @@ import {
   listPermanentTotpIpBlocks,
   maxTotpIpBlockThreshold,
   minTotpIpBlockThreshold,
-  normalizeTotpBlockIpAddress
+  normalizeTotpBlockIpAddress,
+  isPermanentlyBlockedTotpIp
 } from "../lib/totp-ip-block.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { clearAuthSessionCookie, setAuthSessionCookie } from "../lib/session-cookie.js";
@@ -54,6 +55,7 @@ import {
 } from "../lib/profile.js";
 import {
   requireAuth,
+  requireAuthAllowTotpIpBlock,
   requireJsonRequestBody,
   requireSameOriginBrowserRequest
 } from "../middleware/auth.js";
@@ -207,6 +209,12 @@ async function padRegistrationResponse(startedAt: number) {
   if (remainingMs > 0) await new Promise((resolve) => setTimeout(resolve, remainingMs));
 }
 
+async function padFailedLoginResponse(startedAt: number) {
+  const targetDurationMs = 500 + randomInt(0, 101);
+  const remainingMs = targetDurationMs - (Date.now() - startedAt);
+  if (remainingMs > 0) await new Promise((resolve) => setTimeout(resolve, remainingMs));
+}
+
 authRouter.post(
   "/register",
   requireSameOriginBrowserRequest,
@@ -258,6 +266,7 @@ authRouter.post(
   validate({ body: loginSchema }),
   async (req, res, next) => {
     try {
+      const startedAt = Date.now();
       const { username, password } = req.body as z.infer<typeof loginSchema>;
       const sourceIp = getClientIpAddress(req);
       const candidate = await db.queryOne<UserRow>("SELECT * FROM users WHERE username = ?", [username]);
@@ -289,7 +298,15 @@ authRouter.post(
       }
 
       if (!user || passwordDecision !== "ALLOWED") {
+        await padFailedLoginResponse(startedAt);
         throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid ID or password");
+      }
+      if (await isPermanentlyBlockedTotpIp(sourceIp, user.id)) {
+        throw new ApiError(
+          403,
+          "TOTP_IP_PERMANENTLY_BLOCKED",
+          "Access from this IP address is temporarily blocked for this account"
+        );
       }
 
       await enforceCountryLoginPolicy(user.id, user.country_login_mode, sourceIp);
@@ -584,7 +601,7 @@ authRouter.put(
           [enabled ? 1 : 0, maxAttempts, authVersion, user.id]
         );
         // Changing the policy begins a fresh failure counter, but deliberately
-        // does not remove existing permanent blocks. Those require explicit
+        // does not remove active IP blocks. Those require explicit
         // manual unblocking from the separate blocked-IP list.
         await client.execute("DELETE FROM user_totp_ip_failures WHERE user_id = ?", [user.id]);
         await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [user.id]);
@@ -633,7 +650,7 @@ authRouter.get("/totp-ip-blocks", requireAuth, async (req, res, next) => {
 
 authRouter.delete(
   "/totp-ip-blocks/:ipAddress",
-  requireAuth,
+  requireAuthAllowTotpIpBlock,
   accountReauthenticationRateLimit,
   validate({ params: totpIpBlockParamsSchema, body: totpIpUnblockSchema }),
   async (req, res, next) => {
@@ -659,7 +676,7 @@ authRouter.delete(
           [user.id, ipAddress]
         );
         if (Number(deleted.affectedRows) !== 1) {
-          throw new ApiError(404, "TOTP_IP_BLOCK_NOT_FOUND", "Permanent TOTP IP block not found");
+          throw new ApiError(404, "TOTP_IP_BLOCK_NOT_FOUND", "TOTP IP block not found");
         }
         await client.execute(
           "DELETE FROM user_totp_ip_failures WHERE user_id = ? AND ip_address = ?",

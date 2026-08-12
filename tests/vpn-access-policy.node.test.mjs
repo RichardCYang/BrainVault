@@ -60,6 +60,10 @@ test("VPN detection uses free no-key network intelligence, Tor bulk data, VPN Ga
   assert.match(policy, /webRtcState === "DISABLED"[\s\S]*?Math\.min\(baseClearConfidence, 70\)/);
   assert.match(policy, /AVAILABLE:\$\{webRtcIpMismatch \? "MISMATCH" : "MATCH"\}/);
   assert.match(policy, /verdict: "UNKNOWN",\s*blocked: false/);
+  assert.match(policy, /!primary\.available/);
+  assert.match(policy, /VPN_VERIFICATION_UNAVAILABLE/);
+  assert.match(policy, /supportingSignals\.includes\("VPN_VERIFICATION_UNAVAILABLE"\)/);
+  assert.match(policy, /new ApiError\(\s*503,\s*"VPN_VERIFICATION_UNAVAILABLE"/s);
   assert.match(policy, /"VPN_ACCESS_BLOCKED"/);
 });
 
