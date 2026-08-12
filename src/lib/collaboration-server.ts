@@ -13,6 +13,7 @@ import {
 } from "./collaboration-lineage.js";
 import { ApiError } from "./http.js";
 import { verifyAuthToken } from "./auth.js";
+import { isAuthSessionActive, resolveAuthSessionId } from "./auth-sessions.js";
 import { authSessionCookieName } from "./session-cookie.js";
 import { readUniqueCookieValue } from "./session-cookie-policy.js";
 import { enforceCountryLoginPolicy } from "./country-login-policy.js";
@@ -99,6 +100,7 @@ type ClientContext = {
   socket: WebSocketConnection;
   user: CollaborationProfile;
   authVersion: number;
+  authSessionId: string;
   ipAddress: string;
   webRtcSignal: ClientWebRtcSignal;
   documentEpoch: string;
@@ -283,6 +285,14 @@ export class PageCollaborationHub {
     }
   }
 
+  disconnectAuthSessionEverywhere(userId: string, sessionId: string, reason = "Authentication session was revoked") {
+    for (const room of this.rooms.values()) {
+      for (const client of room.clients.values()) {
+        if (client.user.id === userId && client.authSessionId === sessionId) client.socket.close(4003, reason);
+      }
+    }
+  }
+
   disconnectIpEverywhere(ipAddress: string, reason = "Access from this IP is blocked") {
     for (const room of this.rooms.values()) {
       for (const client of room.clients.values()) {
@@ -436,6 +446,7 @@ export class PageCollaborationHub {
       rejectWebSocketUpgrade(socket, 401, "The collaboration ticket is not bound to this browser session");
       return;
     }
+    const authSessionId = resolveAuthSessionId(authSessionToken, authPayload);
     if (!this.reserveUpgrade(payload.sub, pageId)) {
       this.rejectConnectionLimit(socket);
       return;
@@ -479,6 +490,10 @@ export class PageCollaborationHub {
         rejectWebSocketUpgrade(socket, 401, "Authentication session was revoked");
         return;
       }
+      if (!await isAuthSessionActive(user.id, authSessionId, currentAuthVersion)) {
+        rejectWebSocketUpgrade(socket, 401, "Authentication session was revoked");
+        return;
+      }
       await enforceCountryLoginPolicy(user.id, user.country_login_mode, sourceIp);
       await enforceVpnAccessPolicy(user.id, user.vpn_block_enabled, sourceIp, null, webRtcSignal);
 
@@ -510,6 +525,7 @@ export class PageCollaborationHub {
         socket: connection,
         user,
         authVersion: payload.authVersion,
+        authSessionId,
         ipAddress: sourceIp,
         webRtcSignal,
         documentEpoch: payload.documentEpoch,
@@ -550,6 +566,10 @@ export class PageCollaborationHub {
           [payload.sub]
         );
         if (!currentUser || Number(currentUser.auth_version ?? 1) !== payload.authVersion) {
+          connection.close(4003, "Authentication session was revoked");
+          return;
+        }
+        if (!await isAuthSessionActive(payload.sub, authSessionId, payload.authVersion)) {
           connection.close(4003, "Authentication session was revoked");
           return;
         }
@@ -1318,6 +1338,10 @@ export class PageCollaborationHub {
                 client.socket.close(4003, "Authentication session was revoked");
                 return;
               }
+              if (!await isAuthSessionActive(client.user.id, client.authSessionId, client.authVersion)) {
+                client.socket.close(4003, "Authentication session was revoked");
+                return;
+              }
               await enforceCountryLoginPolicy(client.user.id, currentUser.country_login_mode, client.ipAddress);
               await enforceVpnAccessPolicy(
                 client.user.id,
@@ -1374,6 +1398,10 @@ export function disconnectPageCollaborators(pageId: string, reason?: string) {
 
 export function disconnectUserCollaborators(userId: string, reason?: string) {
   for (const hub of activeHubs) hub.disconnectUserEverywhere(userId, reason);
+}
+
+export function disconnectAuthSessionCollaborators(userId: string, sessionId: string, reason?: string) {
+  for (const hub of activeHubs) hub.disconnectAuthSessionEverywhere(userId, sessionId, reason);
 }
 
 export function disconnectIpCollaborators(ipAddress: string, reason?: string) {

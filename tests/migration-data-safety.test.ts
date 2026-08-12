@@ -60,6 +60,18 @@ describe("migration replay data safety", () => {
     }
   });
 
+  it("adds non-destructive per-device authentication session tracking", () => {
+    const sql = fs.readFileSync(
+      path.join(migrationsDir, "052_auth_device_sessions.sql"),
+      "utf8"
+    );
+
+    expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS user_auth_sessions/i);
+    expect(sql).toMatch(/revoked_at DATETIME\(3\) NULL/i);
+    expect(sql).toMatch(/FOREIGN KEY \(user_id\) REFERENCES users\(id\) ON DELETE CASCADE/i);
+    expect(sql).not.toMatch(/(?:^|\n)\s*(?:DELETE\s+FROM|DROP\b|TRUNCATE\b)/i);
+  });
+
   it("adds a non-destructive account authentication generation", () => {
     const sql = fs.readFileSync(
       path.join(migrationsDir, "024_auth_session_revocation.sql"),

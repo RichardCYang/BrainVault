@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { createId } from "./id.js";
 import jwt, { type Secret, type SignOptions } from "jsonwebtoken";
 import { env } from "../config/env.js";
 import { ApiError } from "./http.js";
@@ -14,6 +15,7 @@ export type AuthTokenPayload = {
   sub: string;
   username: string;
   authVersion: number;
+  sessionId?: string;
 };
 
 export function normalizeAuthVersion(value: unknown) {
@@ -49,7 +51,15 @@ export function signAuthToken(payload: AuthTokenPayload) {
     issuer: authIssuer,
     expiresIn: env.JWT_EXPIRES_IN as SignOptions["expiresIn"]
   };
-  return jwt.sign({ ...payload, authVersion: normalizeAuthVersion(payload.authVersion) }, env.JWT_SECRET as Secret, options);
+  const sessionId = payload.sessionId ?? createId("ses");
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(sessionId)) {
+    throw new ApiError(401, "INVALID_TOKEN", "Invalid authentication token");
+  }
+  return jwt.sign(
+    { ...payload, authVersion: normalizeAuthVersion(payload.authVersion), sessionId },
+    env.JWT_SECRET as Secret,
+    options
+  );
 }
 
 export function verifyAuthToken(token: string): AuthTokenPayload {
@@ -62,10 +72,15 @@ export function verifyAuthToken(token: string): AuthTokenPayload {
     if (typeof decoded !== "object" || !decoded.sub || !decoded.username) {
       throw new ApiError(401, "INVALID_TOKEN", "Invalid authentication token");
     }
+    const sessionId = decoded.sessionId === undefined ? undefined : String(decoded.sessionId);
+    if (sessionId !== undefined && !/^[a-zA-Z0-9_-]{1,64}$/.test(sessionId)) {
+      throw new ApiError(401, "INVALID_TOKEN", "Invalid authentication token");
+    }
     return {
       sub: String(decoded.sub),
       username: String(decoded.username),
-      authVersion: normalizeAuthVersion(decoded.authVersion)
+      authVersion: normalizeAuthVersion(decoded.authVersion),
+      ...(sessionId ? { sessionId } : {})
     };
   } catch (error) {
     if (error instanceof ApiError) throw error;

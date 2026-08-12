@@ -875,6 +875,9 @@
                 <button id="account-security-tab-settings" type="button" role="tab" aria-selected="true" aria-controls="account-security-panel-settings" data-security-panel="settings">
                   <span data-i18n="account.securitySettingsTab">Security settings</span>
                 </button>
+                <button id="account-security-tab-sessions" type="button" role="tab" aria-selected="false" aria-controls="account-security-panel-sessions" data-security-panel="sessions" tabindex="-1">
+                  <span data-i18n="account.activeSessionsTab">Logged-in devices</span>
+                </button>
                 <button id="account-security-tab-history" type="button" role="tab" aria-selected="false" aria-controls="account-security-panel-history" data-security-panel="history" tabindex="-1">
                   <span data-i18n="account.loginHistoryTab">Login history</span>
                 </button>
@@ -1125,6 +1128,35 @@
                   </form>
                 </section>
               </div>
+
+              <section id="account-security-panel-sessions" class="account-security-panel hidden" role="tabpanel" aria-labelledby="account-security-tab-sessions" data-security-panel-content="sessions">
+                <div class="login-history-heading">
+                  <div>
+                    <h4 data-i18n="account.activeSessionsTitle">Logged-in devices</h4>
+                    <p data-i18n="account.activeSessionsDescription">Review active browser sessions and sign out individual devices.</p>
+                  </div>
+                  <button id="account-active-sessions-refresh" class="secondary compact" type="button" data-i18n="account.activeSessionsRefresh">Refresh</button>
+                </div>
+
+                <p id="account-active-sessions-summary" class="login-history-summary" aria-live="polite"></p>
+
+                <div class="login-history-table-wrap">
+                  <table class="login-history-table active-sessions-table">
+                    <caption class="visually-hidden" data-i18n="account.activeSessionsTableCaption">Active account sessions</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col" data-i18n="account.activeSessionsDevice">Device / browser</th>
+                        <th scope="col" data-i18n="account.activeSessionsIp">IP address</th>
+                        <th scope="col" data-i18n="account.activeSessionsLastActive">Last active</th>
+                        <th scope="col" data-i18n="account.activeSessionsSignedIn">Signed in</th>
+                        <th scope="col" data-i18n="account.activeSessionsAction">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody id="account-active-sessions-body"></tbody>
+                  </table>
+                  <p id="account-active-sessions-empty" class="login-history-empty hidden" data-i18n="account.activeSessionsEmpty">No active sessions were found.</p>
+                </div>
+              </section>
 
               <section id="account-security-panel-history" class="account-security-panel hidden" role="tabpanel" aria-labelledby="account-security-tab-history" data-security-panel-content="history">
                 <div class="login-history-heading">

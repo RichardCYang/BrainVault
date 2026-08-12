@@ -3,6 +3,7 @@ declare global {
     interface Request {
       auth?: {
         authVersion: number;
+        sessionId?: string;
       };
       user?: {
         id: string;

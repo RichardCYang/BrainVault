@@ -10,6 +10,7 @@ import { getClientIpAddress } from "../lib/login-history.js";
 import { isPermanentlyBlockedTotpIp } from "../lib/totp-ip-block.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { clearAuthSessionCookie, readAuthSessionCookie } from "../lib/session-cookie.js";
+import { ensureAuthSessionForRequest } from "../lib/auth-sessions.js";
 import { isAllowedCorsOrigin } from "./cors.js";
 import type { UserRow } from "../types/domain.js";
 
@@ -128,7 +129,11 @@ async function authenticateRequest(
       getClientWebRtcSignal(req)
     );
 
+    const authSessionId = source === "cookie"
+      ? await ensureAuthSessionForRequest(token, payload, req)
+      : payload.sessionId;
     req.auth = { authVersion };
+    if (authSessionId) req.auth.sessionId = authSessionId;
     req.user = toPublicUser(user);
     next();
   } catch (error) {

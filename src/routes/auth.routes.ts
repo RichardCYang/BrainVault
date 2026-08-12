@@ -5,7 +5,7 @@ import { env } from "../config/env.js";
 import { db, transaction, type DbValue } from "../lib/db.js";
 import { createId } from "../lib/id.js";
 import { hashPassword, normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
-import { disconnectUserCollaborators } from "../lib/collaboration-server.js";
+import { disconnectAuthSessionCollaborators, disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { ApiError } from "../lib/http.js";
 import { iconMutationValueSchema, normalizeIconValue } from "../lib/icon-value.js";
 import { evaluatePasswordLogin } from "../lib/login-lockout.js";
@@ -47,6 +47,7 @@ import {
 } from "../lib/totp-ip-block.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { clearAuthSessionCookie, setAuthSessionCookie } from "../lib/session-cookie.js";
+import { listActiveAuthSessions, revokeAuthSession } from "../lib/auth-sessions.js";
 import {
   maxAvatarBytes,
   normalizeAvatarDataUrl,
@@ -518,6 +519,34 @@ authRouter.patch(
     }
   }
 );
+
+authRouter.get("/sessions", requireAuth, async (req, res, next) => {
+  try {
+    const user = requireUser(req.user);
+    const authVersion = requireRequestAuthVersion(req);
+    const result = await listActiveAuthSessions(user.id, authVersion, req.auth?.sessionId ?? null);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+authRouter.delete("/sessions/:sessionId", requireAuth, async (req, res, next) => {
+  try {
+    const user = requireUser(req.user);
+    const authVersion = requireRequestAuthVersion(req);
+    const sessionId = await revokeAuthSession(user.id, req.params.sessionId, authVersion);
+    const currentSession = Boolean(req.auth?.sessionId && req.auth.sessionId === sessionId);
+
+    disconnectAuthSessionCollaborators(user.id, sessionId, "Authentication session was revoked");
+    if (currentSession) clearAuthSessionCookie(res);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json({ ok: true, currentSession });
+  } catch (error) {
+    next(error);
+  }
+});
 
 authRouter.get(
   "/login-history",

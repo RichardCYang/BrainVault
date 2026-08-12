@@ -17042,3 +17042,63 @@ body.is-navigation-dragging {
     opacity: 0.72;
   }
 }
+
+.account-security-tabs {
+  overflow-x: auto;
+}
+
+.account-security-tabs button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.active-sessions-table {
+  min-width: 52rem;
+}
+
+.active-sessions-table td:first-child {
+  font-variant-numeric: normal;
+}
+
+.active-sessions-table td:nth-child(2) {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-strong);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.active-session-device {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 12rem;
+}
+
+.active-session-device strong {
+  color: var(--ink-strong);
+  font-size: 0.75rem;
+}
+
+.active-session-device small {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.active-session-current-badge {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 0.18rem;
+  border: 1px solid rgba(32, 139, 98, 0.22);
+  border-radius: 999px;
+  background: rgba(32, 139, 98, 0.08);
+  color: #16704d;
+  padding: 0.2rem 0.42rem;
+  font-size: 0.63rem;
+  font-weight: 760;
+}
+
+.active-session-current-row {
+  background: rgba(32, 139, 98, 0.035);
+}
+
+.active-session-logout {
+  white-space: nowrap;
+}

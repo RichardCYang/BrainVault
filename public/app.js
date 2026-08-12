@@ -162,6 +162,7 @@ const authenticatedSessionOperationGuard = createAccountAvatarOperationGuard();
 const accountDataOperationGuard = createAccountAvatarOperationGuard();
 const authFlowTargetKey = "authentication-flow";
 const accountSecurityOperationGuards = Object.freeze({
+  activeSessions: createAccountAvatarOperationGuard(),
   loginHistory: createAccountAvatarOperationGuard(),
   blockHistory: createAccountAvatarOperationGuard(),
   totpIpPolicy: createAccountAvatarOperationGuard(),
@@ -237,6 +238,7 @@ const state = {
   accountSettingsOpen: false,
   activeAccountPanel: "profile",
   activeSecurityPanel: "settings",
+  activeSessions: { sessions: [], loading: false, loaded: false, revokingSessionId: null },
   loginHistory: { months: 3, attempts: [], truncated: false, loading: false, loadedMonths: null },
   blockHistory: { months: 3, blocks: [], truncated: false, loading: false, loadedMonths: null },
   totpIpBlockPolicy: {
@@ -858,6 +860,10 @@ const elements = {
   accountSettingsPanels: [...document.querySelectorAll("[data-account-panel-content]")],
   accountSecurityTabs: [...document.querySelectorAll("[data-security-panel]")],
   accountSecurityPanels: [...document.querySelectorAll("[data-security-panel-content]")],
+  accountActiveSessionsRefresh: $("#account-active-sessions-refresh"),
+  accountActiveSessionsSummary: $("#account-active-sessions-summary"),
+  accountActiveSessionsBody: $("#account-active-sessions-body"),
+  accountActiveSessionsEmpty: $("#account-active-sessions-empty"),
   accountLoginHistoryMonths: $("#account-login-history-months"),
   accountLoginHistoryRefresh: $("#account-login-history-refresh"),
   accountLoginHistorySummary: $("#account-login-history-summary"),
@@ -1229,6 +1235,8 @@ function isCurrentAuthenticatedSessionScope(scope) {
 
 function acceptRotatedAuthenticationSession() {
   authenticationSessionGeneration += 1;
+  accountSecurityOperationGuards.activeSessions.invalidate();
+  state.activeSessions = { sessions: [], loading: false, loaded: false, revokingSessionId: null };
   pendingWorkspaceCreateTasks.clear();
   pendingPageVersionResetTasks.clear();
   pendingBlockCreateTasks.clear();
@@ -2126,6 +2134,9 @@ function isCurrentAccountSecurityOperation(guard, operation) {
 
 function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}) {
   Object.values(accountSecurityOperationGuards).forEach((guard) => guard.invalidate());
+  state.activeSessions.loading = false;
+  state.activeSessions.loaded = false;
+  state.activeSessions.revokingSessionId = null;
   state.loginHistory.loading = false;
   state.loginHistory.loadedMonths = null;
   state.blockHistory.loading = false;
@@ -2146,6 +2157,7 @@ function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}
   if (clearSensitiveState) {
     const months = state.loginHistory.months || 3;
     const blockMonths = state.blockHistory.months || 3;
+    state.activeSessions = { sessions: [], loading: false, loaded: false, revokingSessionId: null };
     state.loginHistory = { months, attempts: [], truncated: false, loading: false, loadedMonths: null };
     state.blockHistory = { months: blockMonths, blocks: [], truncated: false, loading: false, loadedMonths: null };
     state.totpIpBlockPolicy = {
@@ -2254,6 +2266,161 @@ function populateCountryLoginCountryOptions() {
   if (options.some(({ countryCode }) => countryCode === previousValue)) {
     elements.accountCountryLoginCountry.value = previousValue;
   }
+}
+
+function getActiveSessionDeviceTypeLabel(deviceType) {
+  const key = deviceType === "mobile"
+    ? "account.activeSessionsDeviceMobile"
+    : deviceType === "tablet"
+      ? "account.activeSessionsDeviceTablet"
+      : deviceType === "desktop"
+        ? "account.activeSessionsDeviceDesktop"
+        : "account.activeSessionsDeviceOther";
+  return t(key);
+}
+
+function renderActiveSessions() {
+  const { sessions, loading, revokingSessionId } = state.activeSessions;
+  elements.accountActiveSessionsBody.replaceChildren();
+  elements.accountActiveSessionsEmpty.classList.add("hidden");
+  elements.accountActiveSessionsRefresh.disabled = loading || Boolean(revokingSessionId);
+
+  if (loading) {
+    const row = document.createElement("tr");
+    row.className = "login-history-loading";
+    const cell = document.createElement("td");
+    cell.colSpan = 5;
+    cell.textContent = t("account.activeSessionsLoading");
+    row.append(cell);
+    elements.accountActiveSessionsBody.append(row);
+    elements.accountActiveSessionsSummary.textContent = t("account.activeSessionsLoading");
+    return;
+  }
+
+  sessions.forEach((session) => {
+    const row = document.createElement("tr");
+    if (session.isCurrent) row.classList.add("active-session-current-row");
+
+    const deviceCell = document.createElement("td");
+    const device = document.createElement("div");
+    device.className = "active-session-device";
+    const browser = document.createElement("strong");
+    const browserLabel = session.browserName === "Unknown browser"
+      ? t("account.activeSessionsUnknownBrowser")
+      : session.browserLabel || session.browserName || t("account.activeSessionsUnknownBrowser");
+    const osLabel = session.osName === "Unknown OS"
+      ? t("account.activeSessionsUnknownOs")
+      : session.osName || t("account.activeSessionsUnknownOs");
+    browser.textContent = browserLabel;
+    const details = document.createElement("small");
+    details.textContent = `${osLabel} · ${getActiveSessionDeviceTypeLabel(session.deviceType)}`;
+    device.append(browser, details);
+    if (session.isCurrent) {
+      const currentBadge = document.createElement("span");
+      currentBadge.className = "active-session-current-badge";
+      currentBadge.textContent = t("account.activeSessionsCurrent");
+      device.append(currentBadge);
+    }
+    deviceCell.append(device);
+
+    const ipCell = document.createElement("td");
+    ipCell.textContent = session.ipAddress === "unknown" ? t("account.loginHistoryUnknownIp") : session.ipAddress;
+
+    const lastActiveCell = document.createElement("td");
+    lastActiveCell.textContent = formatDate(session.lastSeenAt);
+    const signedInCell = document.createElement("td");
+    signedInCell.textContent = formatDate(session.createdAt);
+
+    const actionCell = document.createElement("td");
+    const logoutButton = document.createElement("button");
+    logoutButton.type = "button";
+    logoutButton.className = "secondary danger compact active-session-logout";
+    logoutButton.dataset.revokeSession = session.id;
+    const revoking = revokingSessionId === session.id;
+    logoutButton.disabled = Boolean(revokingSessionId);
+    logoutButton.textContent = t(revoking ? "account.activeSessionsLoggingOut" : "account.activeSessionsLogout");
+    actionCell.append(logoutButton);
+
+    row.append(deviceCell, ipCell, lastActiveCell, signedInCell, actionCell);
+    elements.accountActiveSessionsBody.append(row);
+  });
+
+  elements.accountActiveSessionsEmpty.classList.toggle("hidden", sessions.length > 0);
+  elements.accountActiveSessionsSummary.textContent = t("account.activeSessionsSummary", {
+    count: formatNumber(sessions.length)
+  });
+}
+
+async function loadActiveSessions({ force = false } = {}) {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey || !state.accountSettingsOpen || state.activeSessions.loading || state.activeSessions.revokingSessionId) return;
+  if (!force && state.activeSessions.loaded) {
+    renderActiveSessions();
+    return;
+  }
+
+  const operation = accountSecurityOperationGuards.activeSessions.begin(targetKey);
+  state.activeSessions.loading = true;
+  renderActiveSessions();
+  setAccountMessage();
+  try {
+    const data = await api("/api/auth/sessions");
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.activeSessions, operation)) return;
+    state.activeSessions.sessions = Array.isArray(data?.sessions) ? data.sessions : [];
+    state.activeSessions.loaded = true;
+  } catch (error) {
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.activeSessions, operation)) return;
+    state.activeSessions.sessions = [];
+    state.activeSessions.loaded = false;
+    setAccountMessage(error.message, true);
+  } finally {
+    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.activeSessions, operation)) {
+      state.activeSessions.loading = false;
+      renderActiveSessions();
+    }
+  }
+}
+
+async function revokeActiveSession(sessionId) {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  const session = state.activeSessions.sessions.find((item) => item?.id === sessionId);
+  if (!targetKey || !session || state.activeSessions.loading || state.activeSessions.revokingSessionId) return;
+
+  const ip = session.ipAddress === "unknown" ? t("account.loginHistoryUnknownIp") : session.ipAddress;
+  const confirmed = window.confirm(session.isCurrent
+    ? t("account.activeSessionsCurrentLogoutConfirm")
+    : t("account.activeSessionsLogoutConfirm", { browser: session.browserLabel || session.browserName, ip }));
+  if (!confirmed) return;
+
+  const run = async () => {
+    const operation = accountSecurityOperationGuards.activeSessions.begin(targetKey);
+    state.activeSessions.revokingSessionId = session.id;
+    renderActiveSessions();
+    setAccountMessage();
+    try {
+      const data = await api(`/api/auth/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
+      if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.activeSessions, operation)) return;
+      if (data?.currentSession) {
+        resetAuthenticationSessionState();
+        setStatus(t("status.loggedOut"));
+        return;
+      }
+      state.activeSessions.sessions = state.activeSessions.sessions.filter((item) => item.id !== session.id);
+      state.activeSessions.loaded = true;
+      setAccountMessage(t("account.activeSessionLoggedOut"));
+    } catch (error) {
+      if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.activeSessions, operation)) return;
+      setAccountMessage(error.message, true);
+    } finally {
+      if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.activeSessions, operation)) {
+        state.activeSessions.revokingSessionId = null;
+        renderActiveSessions();
+      }
+    }
+  };
+
+  if (session.isCurrent) return withPageEditLock(run);
+  return run();
 }
 
 function renderLoginHistory() {
@@ -2966,6 +3133,10 @@ async function saveVpnBlockPolicy() {
 }
 
 function loadActiveSecurityPanel() {
+  if (state.activeSecurityPanel === "sessions") {
+    void loadActiveSessions();
+    return;
+  }
   if (state.activeSecurityPanel === "history") {
     void loadLoginHistory();
     return;
@@ -2985,7 +3156,7 @@ function loadActiveSecurityPanel() {
 }
 
 function setSecurityPanel(panel, { focusTab = false, load = true } = {}) {
-  const nextPanel = ["settings", "history", "blocks", "totp-blocks"].includes(panel) ? panel : "settings";
+  const nextPanel = ["settings", "sessions", "history", "blocks", "totp-blocks"].includes(panel) ? panel : "settings";
   state.activeSecurityPanel = nextPanel;
   elements.accountSecurityTabs.forEach((tab) => {
     const selected = tab.dataset.securityPanel === nextPanel;
@@ -3420,6 +3591,7 @@ function fillAccountSettings() {
   populateCountryLoginCountryOptions();
   setSecurityPanel(state.activeSecurityPanel, { load: false });
   renderMfaSettings();
+  renderActiveSessions();
   renderLoginHistory();
   renderBlockHistory();
   renderCountryLoginPolicy();
@@ -13365,6 +13537,17 @@ elements.accountSecurityTabs.forEach((tab) => {
   tab.addEventListener("keydown", handleSecurityTabKeydown);
 });
 
+elements.accountActiveSessionsRefresh.addEventListener("click", () => {
+  state.activeSessions.loaded = false;
+  void loadActiveSessions({ force: true });
+});
+
+elements.accountActiveSessionsBody.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-revoke-session]");
+  if (!button) return;
+  void revokeActiveSession(button.dataset.revokeSession);
+});
+
 elements.accountLoginHistoryMonths.addEventListener("change", () => {
   state.loginHistory.loadedMonths = null;
   void loadLoginHistory({ force: true });
@@ -13945,7 +14128,8 @@ function refreshLocalizedUi() {
   populateCountryLoginCountryOptions();
   if (state.searchDialogOpen) renderSearchDialog();
   if (state.accountSettingsOpen) {
-    if (state.activeSecurityPanel === "history") renderLoginHistory();
+    if (state.activeSecurityPanel === "sessions") renderActiveSessions();
+    else if (state.activeSecurityPanel === "history") renderLoginHistory();
     else if (state.activeSecurityPanel === "blocks") renderBlockHistory();
     else {
       renderMfaSettings();

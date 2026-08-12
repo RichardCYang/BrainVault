@@ -11,6 +11,7 @@ const migration = readFileSync(new URL("../migrations/008_user_account_settings.
 const loginHistoryMigration = readFileSync(new URL("../migrations/025_login_history.sql", import.meta.url), "utf8");
 const loginHistoryOutcomeMigration = readFileSync(new URL("../migrations/033_login_history_locked_outcome.sql", import.meta.url), "utf8");
 const loginHistoryCountryMigration = readFileSync(new URL("../migrations/044_login_history_country.sql", import.meta.url), "utf8");
+const authSessionMigration = readFileSync(new URL("../migrations/052_auth_device_sessions.sql", import.meta.url), "utf8");
 const countryLoginPolicyMigration = readFileSync(new URL("../migrations/045_country_login_access_policy.sql", import.meta.url), "utf8");
 const themeMigration = readFileSync(new URL("../migrations/034_user_theme_preference.sql", import.meta.url), "utf8");
 const themeBootstrap = readFileSync(new URL("../public/theme-bootstrap.js", import.meta.url), "utf8");
@@ -30,6 +31,9 @@ describe("Account settings layer", () => {
     expect(index).toContain('value="light"');
     expect(index).toContain('value="dark"');
     expect(index).toContain('id="account-current-password"');
+    expect(index).toContain('data-security-panel="sessions"');
+    expect(index).toContain('id="account-active-sessions-body"');
+    expect(index).toContain('data-i18n="account.activeSessionsIp"');
     expect(index).toContain('data-security-panel="history"');
     expect(index).toContain('data-security-panel="blocks"');
     expect(index).toContain('id="account-login-history-months"');
@@ -54,6 +58,8 @@ describe("Account settings layer", () => {
     expect(client).toContain('canvas.toDataURL("image/webp", 0.86)');
     expect(client).toContain('api("/api/auth/profile"');
     expect(client).toContain('api("/api/auth/password"');
+    expect(client).toContain('api("/api/auth/sessions")');
+    expect(client).toContain('async function revokeActiveSession');
     expect(client).toContain('/api/auth/login-history?months=');
     expect(client).toContain("function renderLoginHistory");
     expect(client).toContain("function renderBlockHistory");
@@ -84,6 +90,8 @@ describe("Account settings layer", () => {
     expect(styles).toContain("border-radius: var(--radius-lg) var(--radius-lg) 0 0;");
     expect(i18n).toContain('open: "계정 설정 열기"');
     expect(i18n).toContain('passwordChanged: "비밀번호를 변경했습니다."');
+    expect(i18n).toContain('activeSessionsTab: "로그인된 기기"');
+    expect(i18n).toContain('activeSessionsIp: "IP 주소"');
     expect(i18n).toContain('loginHistoryTitle: "로그인 기록"');
     expect(i18n).toContain('loginHistorySummary: "최근 {months}개월 · 총 {count}건"');
     expect(i18n).toContain('loginHistoryCountry: "국가"');
@@ -95,6 +103,8 @@ describe("Account settings layer", () => {
     expect(i18n).toContain('themeDark: "다크 테마"');
     expect(authRoutes).toContain('authRouter.patch("/profile"');
     expect(authRoutes).toContain('authRouter.post("/password"');
+    expect(authRoutes).toContain('authRouter.get("/sessions", requireAuth');
+    expect(authRoutes).toContain('authRouter.delete("/sessions/:sessionId", requireAuth');
     expect(authRoutes).toContain('"/login-history"');
     expect(authRoutes).toContain('"/block-history"');
     expect(authRoutes).toContain('"/country-login-policy"');
@@ -111,6 +121,9 @@ describe("Account settings layer", () => {
     expect(loginHistoryOutcomeMigration).toContain("ENUM('SUCCESS', 'FAILURE', 'LOCKED')");
     expect(loginHistoryCountryMigration).toContain("country_code CHAR(2)");
     expect(loginHistoryCountryMigration).toContain("country_dataset_updated_at DATETIME(3)");
+    expect(authSessionMigration).toContain("CREATE TABLE IF NOT EXISTS user_auth_sessions");
+    expect(authSessionMigration).toContain("browser_name VARCHAR(64)");
+    expect(authSessionMigration).toContain("ip_address VARCHAR(45)");
     expect(countryLoginPolicyMigration).toContain("country_login_mode ENUM('OFF', 'ALLOWLIST', 'BLOCKLIST')");
     expect(countryLoginPolicyMigration).toContain("CREATE TABLE IF NOT EXISTS user_country_login_blocks");
     expect(themeMigration).toContain("ENUM('light', 'dark')");
