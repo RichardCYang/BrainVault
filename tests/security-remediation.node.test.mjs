@@ -250,3 +250,32 @@ test("password login account limiter bounds attacker-controlled username key car
   assert.equal((limiter.match(/return loginAccountOverflowKey\(ip, now\);/g) ?? []).length, 2);
   assert.match(limiter, /keyGenerator: usernameKey/);
 });
+
+test("collaboration awareness control frames are strictly validated before access revalidation", () => {
+  const source = read("src/lib/collaboration-server.ts");
+  const handlerStart = source.indexOf("private async handleTextMessage");
+  const handlerEnd = source.indexOf("private async revalidateClientPageAccess", handlerStart);
+  const handler = source.slice(handlerStart, handlerEnd);
+
+  assert.match(source, /const awarenessMessageSchema = z\.object\([\s\S]*?\)\.strict\(\);/);
+  assert.match(source, /const awarenessStateSchema = z\.object\([\s\S]*?\)\.strict\(\);/);
+  assert.match(handler, /awarenessMessageSchema\.safeParse\(value\)/);
+  assert.ok(handler.indexOf("awarenessMessageSchema.safeParse(value)") < handler.indexOf("revalidateClientPageAccess"));
+  assert.doesNotMatch(handler, /value as Record<string, unknown>/);
+  assert.doesNotMatch(source, /function normalizeAwareness/);
+});
+
+test("stored block metadata is revalidated before rendering and response projection", () => {
+  const integrity = read("src/lib/structured-metadata-integrity.ts");
+  const mappers = read("src/lib/mappers.ts");
+  const markdown = read("src/lib/markdown.ts");
+  const history = read("src/lib/page-version-history.ts");
+
+  assert.match(integrity, /export function validateStoredBlockMetadata/);
+  assert.match(integrity, /metadataSchema\.safeParse\(decoded\)/);
+  assert.match(integrity, /assertStructuredBlockMetadataIntegrity\(type, envelope\.data\)/);
+  assert.match(mappers, /const metadata = validateStoredBlockMetadata\(row\.type, row\.metadata\)/);
+  assert.match(mappers, /renderBlockHtml\(row\.type, row\.markdown, Boolean\(row\.checked\), metadata\)/);
+  assert.match(markdown, /const safeMetadata = validateStoredBlockMetadata\(type, metadata\)/);
+  assert.match(history, /metadata: validateStoredBlockMetadata\(block\.type, block\.metadata\)/);
+});

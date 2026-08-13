@@ -1,6 +1,7 @@
 import type { DbClient } from "./db.js";
 import { describePageCoverUrlForHistory } from "./page-cover.js";
 import type { BlockRow, PageRow, UserRow } from "../types/domain.js";
+import { validateStoredBlockMetadata } from "./structured-metadata-integrity.js";
 
 export type PageVersionActor = {
   id: string;
@@ -79,18 +80,6 @@ function parseJson<T>(value: string | T, fallback: T): T {
   }
 }
 
-function normalizeMetadata(value: BlockRow["metadata"]): Record<string, unknown> | null {
-  if (!value) return null;
-  if (typeof value !== "string") return value;
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : null;
-  } catch {
-    return null;
-  }
-}
 
 function isEqual(left: unknown, right: unknown) {
   return JSON.stringify(left) === JSON.stringify(right);
@@ -143,7 +132,7 @@ export function toPageVersionBlockState(block: BlockRow): PageVersionBlockState 
     markdown: block.markdown,
     checked: Boolean(block.checked),
     sortOrder: Number(block.sort_order),
-    metadata: normalizeMetadata(block.metadata)
+    metadata: validateStoredBlockMetadata(block.type, block.metadata)
   };
 }
 

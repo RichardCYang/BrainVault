@@ -1,5 +1,6 @@
 import net from "node:net";
 import type { BlockType } from "../types/domain.js";
+import { metadataSchema } from "../utils/schemas.js";
 import {
   assertLosslessAttachmentMetadata,
   AttachmentMetadataIntegrityError
@@ -785,6 +786,36 @@ export function assertStructuredBlockMetadataIntegrity(type: BlockType, metadata
   // MariaDB may return JSON columns as text. Return the validated object so
   // callers serialize it exactly once instead of storing a JSON string value.
   return root;
+}
+/**
+ * Treat persisted block metadata as untrusted at every read boundary.
+ *
+ * Re-apply both the generic metadata envelope policy and the block-type-specific
+ * integrity checks so legacy or externally modified rows cannot bypass the
+ * validation currently enforced on writes. Invalid stored metadata is ignored
+ * and rendered as the safe default rather than being propagated downstream.
+ */
+export function validateStoredBlockMetadata(type: BlockType, metadata: unknown): MetadataRecord | null {
+  if (metadata === null || metadata === undefined) return null;
+
+  let decoded: unknown = metadata;
+  if (typeof decoded === "string") {
+    try {
+      decoded = JSON.parse(decoded) as unknown;
+    } catch {
+      return null;
+    }
+  }
+
+  const envelope = metadataSchema.safeParse(decoded);
+  if (!envelope.success || envelope.data === undefined) return null;
+
+  try {
+    return assertStructuredBlockMetadataIntegrity(type, envelope.data);
+  } catch (error) {
+    if (error instanceof StructuredMetadataIntegrityError) return null;
+    throw error;
+  }
 }
 
 export type BackupBlockMetadataRecord = {

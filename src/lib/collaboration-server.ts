@@ -1,6 +1,7 @@
 import type { IncomingMessage, Server as HttpServer } from "node:http";
 import type { Server as HttpsServer } from "node:https";
 import type { Socket } from "node:net";
+import { z } from "zod";
 import { createId } from "./id.js";
 import { corsOrigins, env } from "../config/env.js";
 import { createExactHttpOriginSet, parseExactHttpOrigin } from "./request-origin.js";
@@ -90,12 +91,24 @@ type CollaborationHistoryStatsRow = {
 
 type CollaborationProfile = Pick<UserRow, "id" | "username" | "name" | "avatar_data">;
 
-type AwarenessState = {
-  blockId: string | null;
-  field: string | null;
-  control: string | null;
-  selection: { anchor: number; head: number } | null;
-};
+const awarenessSelectionSchema = z.object({
+  anchor: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  head: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
+}).strict();
+
+const awarenessStateSchema = z.object({
+  blockId: z.string().max(64).nullable(),
+  field: z.string().max(32).nullable(),
+  control: z.string().max(32).nullable(),
+  selection: awarenessSelectionSchema.nullable()
+}).strict();
+
+const awarenessMessageSchema = z.object({
+  type: z.literal("awareness"),
+  state: awarenessStateSchema
+}).strict();
+
+type AwarenessState = z.infer<typeof awarenessStateSchema>;
 
 type ClientContext = {
   id: string;
@@ -184,24 +197,6 @@ function toSafeHistoryMetric(value: unknown, label: string) {
   return metric;
 }
 
-function normalizeAwareness(value: unknown): AwarenessState {
-  const source = value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-  const selectionSource = source.selection && typeof source.selection === "object" && !Array.isArray(source.selection)
-    ? source.selection as Record<string, unknown>
-    : null;
-  const anchor = selectionSource ? Number(selectionSource.anchor) : NaN;
-  const head = selectionSource ? Number(selectionSource.head) : NaN;
-  return {
-    blockId: typeof source.blockId === "string" && source.blockId.length <= 64 ? source.blockId : null,
-    field: typeof source.field === "string" && source.field.length <= 32 ? source.field : null,
-    control: typeof source.control === "string" && source.control.length <= 32 ? source.control : null,
-    selection: Number.isSafeInteger(anchor) && anchor >= 0 && Number.isSafeInteger(head) && head >= 0
-      ? { anchor, head }
-      : null
-  };
-}
 
 function publicPresence(client: ClientContext, includeIdentity = true) {
   const presence = {
@@ -926,11 +921,14 @@ export class PageCollaborationHub {
       client.socket.close(1007, "Invalid collaboration control message");
       return;
     }
-    if (!value || typeof value !== "object" || Array.isArray(value)) return;
-    const body = value as Record<string, unknown>;
-    if (body.type !== "awareness" || !client.synced) return;
+    const result = awarenessMessageSchema.safeParse(value);
+    if (!result.success) {
+      client.socket.close(1003, "Invalid collaboration control message");
+      return;
+    }
+    if (!client.synced) return;
     if (!await this.revalidateClientPageAccess(room, client)) return;
-    client.awareness = normalizeAwareness(body.state);
+    client.awareness = result.data.state;
     this.broadcastPresenceUpdate(room, client);
   }
 

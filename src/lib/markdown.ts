@@ -13,6 +13,7 @@ import { getAiChatData, getAiProviderLabel } from "./ai-chat.js";
 import { renderAccordionHtml } from "./accordion.js";
 import { getCodeLanguage, renderHighlightedCode, renderMarkdownCodeFence } from "./code-highlighting.js";
 import { parseYouTubeVideoUrl } from "./youtube.js";
+import { validateStoredBlockMetadata } from "./structured-metadata-integrity.js";
 
 const markdown = new MarkdownIt({
   html: true,
@@ -405,60 +406,61 @@ export function renderMarkdown(raw: string) {
 
 export function renderBlockHtml(type: BlockType, raw: string, checked = false, metadata?: unknown) {
   const markdownValue = raw ?? "";
+  const safeMetadata = validateStoredBlockMetadata(type, metadata);
 
   switch (type) {
     case "HEADING_1":
-      return renderTextAlignment(renderMarkdown(`# ${stripHeadingMarks(markdownValue) || "제목 1"}`), metadata);
+      return renderTextAlignment(renderMarkdown(`# ${stripHeadingMarks(markdownValue) || "제목 1"}`), safeMetadata);
     case "HEADING_2":
-      return renderTextAlignment(renderMarkdown(`## ${stripHeadingMarks(markdownValue) || "제목 2"}`), metadata);
+      return renderTextAlignment(renderMarkdown(`## ${stripHeadingMarks(markdownValue) || "제목 2"}`), safeMetadata);
     case "HEADING_3":
-      return renderTextAlignment(renderMarkdown(`### ${stripHeadingMarks(markdownValue) || "제목 3"}`), metadata);
+      return renderTextAlignment(renderMarkdown(`### ${stripHeadingMarks(markdownValue) || "제목 3"}`), safeMetadata);
     case "TODO": {
       const checkbox = `<input type="checkbox" disabled${checked ? " checked" : ""}>`;
       return renderTextAlignment(
         sanitizeHtml(`<div class="rendered-todo">${checkbox}${renderMarkdown(markdownValue)}</div>`, sanitizeOptions),
-        metadata
+        safeMetadata
       );
     }
     case "UNORDERED_LIST":
     case "ORDERED_LIST":
       return renderListBlock(type, markdownValue);
     case "QUOTE":
-      return renderTextAlignment(renderMarkdown(`> ${stripBlockquoteMarks(markdownValue)}`), metadata);
+      return renderTextAlignment(renderMarkdown(`> ${stripBlockquoteMarks(markdownValue)}`), safeMetadata);
     case "CALLOUT": {
-      const calloutType = getCalloutType(metadata);
+      const calloutType = getCalloutType(safeMetadata);
       return renderTextAlignment(
         sanitizeHtml(
           `<div class="rendered-callout rendered-callout--${calloutType}">${renderMarkdown(markdownValue)}</div>`,
           sanitizeOptions
         ),
-        metadata
+        safeMetadata
       );
     }
     case "TOGGLE":
-      return renderToggle(markdownValue, metadata);
+      return renderToggle(markdownValue, safeMetadata);
     case "ACCORDION":
-      return sanitizeHtml(renderAccordionHtml(metadata), sanitizeOptions);
+      return sanitizeHtml(renderAccordionHtml(safeMetadata), sanitizeOptions);
     case "TABLE":
-      return renderTable(metadata);
+      return renderTable(safeMetadata);
     case "KANBAN":
-      return sanitizeHtml(renderKanbanHtml(metadata), sanitizeOptions);
+      return sanitizeHtml(renderKanbanHtml(safeMetadata), sanitizeOptions);
     case "DATABASE":
-      return sanitizeHtml(renderDatabaseHtml(metadata), sanitizeOptions);
+      return sanitizeHtml(renderDatabaseHtml(safeMetadata), sanitizeOptions);
     case "TIMETABLE":
-      return sanitizeHtml(renderTimetableHtml(metadata), sanitizeOptions);
+      return sanitizeHtml(renderTimetableHtml(safeMetadata), sanitizeOptions);
     case "GANTT":
-      return sanitizeHtml(renderGanttHtml(metadata), sanitizeOptions);
+      return sanitizeHtml(renderGanttHtml(safeMetadata), sanitizeOptions);
     case "BOOKMARK":
-      return sanitizeHtml(renderBookmarkHtml(metadata), sanitizeOptions);
+      return sanitizeHtml(renderBookmarkHtml(safeMetadata), sanitizeOptions);
     case "AI_CHAT":
-      return renderAiChat(metadata);
+      return renderAiChat(safeMetadata);
     case "MATH":
       return sanitizeHtml(renderMathPlaceholder(markdownValue, true), sanitizeOptions);
     case "CODE":
       return renderTextAlignment(
-        sanitizeHtml(renderHighlightedCode(stripFence(markdownValue), getCodeLanguage(metadata)), sanitizeOptions),
-        metadata
+        sanitizeHtml(renderHighlightedCode(stripFence(markdownValue), getCodeLanguage(safeMetadata)), sanitizeOptions),
+        safeMetadata
       );
     case "DIVIDER":
       return sanitizeHtml("<hr>", sanitizeOptions);
@@ -467,12 +469,12 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
     case "IMAGE": {
       const src = stripMarkdownImage(markdownValue);
       if (/^https?:\/\//i.test(src)) {
-        return renderTextAlignment(renderMarkdown(`![BrainVault image](${src})`), metadata);
+        return renderTextAlignment(renderMarkdown(`![BrainVault image](${src})`), safeMetadata);
       }
-      return renderTextAlignment(renderMarkdown(markdownValue), metadata);
+      return renderTextAlignment(renderMarkdown(markdownValue), safeMetadata);
     }
     case "ATTACHMENT": {
-      const info = getAttachmentInfo(metadata) ?? {
+      const info = getAttachmentInfo(safeMetadata) ?? {
         originalName: sanitizeAttachmentFilename(markdownValue),
         mimeType: "application/octet-stream",
         size: 0
@@ -487,6 +489,6 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
     }
     case "MARKDOWN":
     default:
-      return renderTextAlignment(renderMarkdown(markdownValue), metadata);
+      return renderTextAlignment(renderMarkdown(markdownValue), safeMetadata);
   }
 }
