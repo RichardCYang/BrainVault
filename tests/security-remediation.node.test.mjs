@@ -81,8 +81,13 @@ test("collaboration updates are semantically validated off the event loop before
   assert.match(worker, /readCollaborationMaterialization\(candidate\.document\)/);
   assert.match(pool, /maxPendingValidationTasks = 64/);
   assert.match(pool, /maxPendingValidationBytes = 128 \* 1024 \* 1024/);
+  assert.match(pool, /maxPendingValidationTasksPerPrincipal = 1/);
+  assert.match(pool, /resourceLimits:/);
+  assert.match(pool, /ERR_WORKER_OUT_OF_MEMORY/);
   assert.match(pool, /validationTaskTimeoutMs = 5_000/);
   assert.match(pool, /availableParallelism\(\)/);
+  assert.match(source, /principalKey: client\.user\.id/);
+  assert.match(read("src/lib/yjs-validation.ts"), /Y\.parseUpdateMeta\(update\)/);
 });
 
 test("collaboration tickets are bound to the authenticated browser session", () => {

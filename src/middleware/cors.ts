@@ -6,7 +6,7 @@ import { createExactHttpOriginSet, parseExactHttpOrigin } from "../lib/request-o
 const explicitCorsOrigins = createExactHttpOriginSet(corsOrigins);
 
 export function isAllowedCorsOrigin(_req: Request, origin?: string) {
-  if (!origin) return true;
+  if (!origin) return false;
   const parsedOrigin = parseExactHttpOrigin(origin);
   return parsedOrigin !== null && explicitCorsOrigins.has(parsedOrigin);
 }

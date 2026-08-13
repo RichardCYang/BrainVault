@@ -73,6 +73,10 @@ describe("CORS proxy-header hardening", () => {
     expect(isAllowedCorsOrigin(mockRequest({}), "http://localhost:4000")).toBe(true);
   });
 
+  it("fails closed when the Origin header is absent", () => {
+    expect(isAllowedCorsOrigin(mockRequest({}), undefined)).toBe(false);
+  });
+
   it("rejects unlisted loopback origins even outside production", () => {
     expect(isAllowedCorsOrigin(mockRequest({}), "http://localhost:9999")).toBe(false);
     expect(isAllowedCorsOrigin(mockRequest({}), "http://127.0.0.1:9999")).toBe(false);

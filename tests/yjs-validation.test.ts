@@ -13,6 +13,17 @@ function titleOf(document: Y.Doc) {
   return document.getText("title").toString();
 }
 
+function encodeVarUint(value: number) {
+  const bytes: number[] = [];
+  let remaining = value;
+  do {
+    const digit = remaining % 128;
+    remaining = Math.floor(remaining / 128);
+    bytes.push(digit | (remaining > 0 ? 0x80 : 0));
+  } while (remaining > 0);
+  return Uint8Array.from(bytes);
+}
+
 describe("server-side Yjs validation", () => {
   it("merges concurrent updates deterministically while leaving the live document isolated", () => {
     const base = new Y.Doc();
@@ -90,6 +101,13 @@ describe("server-side Yjs validation", () => {
 
   it("rejects malformed update bytes", () => {
     expect(() => createValidatedYjsDocument([Uint8Array.of(0xff, 0xff, 0xff)], limit)).toThrowError(
+      InvalidYjsUpdateError
+    );
+  });
+
+  it("rejects pathological declared client-section counts before Yjs apply", () => {
+    const pathologicalHeader = encodeVarUint(100_001);
+    expect(() => createValidatedYjsDocument([pathologicalHeader], limit)).toThrowError(
       InvalidYjsUpdateError
     );
   });

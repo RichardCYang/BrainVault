@@ -54,6 +54,7 @@ import { getCollaborationAvatarData } from "./collaboration-presence.js";
 import {
   CollaborationValidationCapacityError,
   CollaborationValidationPool,
+  CollaborationValidationResourceLimitError,
   CollaborationValidationTimeoutError,
   type CollaborationValidationResult
 } from "./collaboration-update-worker-pool.js";
@@ -987,6 +988,8 @@ export class PageCollaborationHub {
           if (client.socket.isOpen) client.socket.close(1013, "Collaboration validation capacity exceeded");
         } else if (error instanceof CollaborationValidationTimeoutError) {
           if (client.socket.isOpen) client.socket.close(1008, "Collaboration update exceeded the validation budget");
+        } else if (error instanceof CollaborationValidationResourceLimitError) {
+          if (client.socket.isOpen) client.socket.close(1008, "Collaboration update exceeded the validation memory budget");
         } else if (error instanceof InvalidYjsUpdateError) {
           console.warn("Rejected an invalid Yjs update", { pageId: room.pageId, userId: client.user.id, error });
           if (client.socket.isOpen) client.socket.close(1003, error.message);
@@ -1044,6 +1047,7 @@ export class PageCollaborationHub {
       // document is CPU-intensive. Keep that untrusted work off Node's shared
       // event loop and bound the number of validations admitted across rooms.
       validation = await this.validationPool.validate({
+        principalKey: client.user.id,
         currentState: room.stateUpdate,
         update,
         maxStateBytes: maxCollaborationDocumentBytes,

@@ -6,10 +6,15 @@ import { InvalidYjsUpdateError } from "./yjs-validation.js";
 
 const maxPendingValidationTasks = 64;
 const maxPendingValidationBytes = 128 * 1024 * 1024;
+const maxPendingValidationTasksPerPrincipal = 1;
+const maxPendingValidationBytesPerPrincipal = 32 * 1024 * 1024;
 const validationTaskTimeoutMs = 5_000;
 const maxValidationWorkers = 2;
+const validationWorkerOldGenerationMb = 128;
+const validationWorkerYoungGenerationMb = 32;
 
 type ValidationRequest = {
+  principalKey: string;
   currentState: Uint8Array;
   update: Uint8Array;
   maxStateBytes: number;
@@ -52,6 +57,7 @@ type WorkerResponse = WorkerSuccess | WorkerFailure;
 
 type PendingTask = {
   id: number;
+  principalKey: string;
   request: WorkerRequest;
   validationBytes: number;
   resolve: (result: CollaborationValidationResult) => void;
@@ -79,6 +85,13 @@ export class CollaborationValidationTimeoutError extends Error {
   }
 }
 
+export class CollaborationValidationResourceLimitError extends Error {
+  constructor() {
+    super("Collaboration update exceeded the validation memory budget");
+    this.name = "CollaborationValidationResourceLimitError";
+  }
+}
+
 function workerModuleUrl() {
   const extension = import.meta.url.endsWith(".ts") ? ".ts" : ".js";
   return new URL(`./collaboration-update-worker${extension}`, import.meta.url);
@@ -87,6 +100,11 @@ function workerModuleUrl() {
 function resolveWorkerCount() {
   const parallelism = availableParallelism();
   return Math.max(1, Math.min(maxValidationWorkers, parallelism > 1 ? parallelism - 1 : 1));
+}
+
+function isWorkerOutOfMemoryError(error: Error) {
+  return "code" in error
+    && (error as Error & { code?: unknown }).code === "ERR_WORKER_OUT_OF_MEMORY";
 }
 
 function toWorkerError(response: WorkerFailure) {
@@ -106,6 +124,8 @@ export class CollaborationValidationPool {
   private readonly workerCount: number;
   private nextTaskId = 1;
   private pendingValidationBytes = 0;
+  private readonly pendingValidationTasksByPrincipal = new Map<string, number>();
+  private readonly pendingValidationBytesByPrincipal = new Map<string, number>();
   private closed = false;
 
   constructor(workerCount = resolveWorkerCount()) {
@@ -114,12 +134,18 @@ export class CollaborationValidationPool {
 
   validate(request: ValidationRequest): Promise<CollaborationValidationResult> {
     if (this.closed) return Promise.reject(new Error("Collaboration validation pool is closed"));
+    const principalKey = request.principalKey.trim();
+    if (!principalKey) return Promise.reject(new CollaborationValidationCapacityError());
     this.ensureWorkers();
     const activeTasks = this.slots.reduce((count, slot) => count + (slot.activeTask ? 1 : 0), 0);
     const validationBytes = request.currentState.byteLength + request.update.byteLength;
+    const principalTasks = this.pendingValidationTasksByPrincipal.get(principalKey) ?? 0;
+    const principalBytes = this.pendingValidationBytesByPrincipal.get(principalKey) ?? 0;
     if (
       activeTasks + this.queue.length >= maxPendingValidationTasks
       || validationBytes > maxPendingValidationBytes - this.pendingValidationBytes
+      || principalTasks >= maxPendingValidationTasksPerPrincipal
+      || validationBytes > maxPendingValidationBytesPerPrincipal - principalBytes
     ) {
       return Promise.reject(new CollaborationValidationCapacityError());
     }
@@ -134,7 +160,9 @@ export class CollaborationValidationPool {
     };
     return new Promise((resolve, reject) => {
       this.pendingValidationBytes += validationBytes;
-      this.queue.push({ id, request: workerRequest, validationBytes, resolve, reject });
+      this.pendingValidationTasksByPrincipal.set(principalKey, principalTasks + 1);
+      this.pendingValidationBytesByPrincipal.set(principalKey, principalBytes + validationBytes);
+      this.queue.push({ id, principalKey, request: workerRequest, validationBytes, resolve, reject });
       this.dispatch();
     });
   }
@@ -146,7 +174,7 @@ export class CollaborationValidationPool {
     while (this.queue.length) {
       const task = this.queue.shift();
       if (!task) break;
-      this.releaseTaskBytes(task);
+      this.releaseTaskAccounting(task);
       task.reject(error);
     }
     await Promise.allSettled(this.slots.map(async (slot) => {
@@ -154,7 +182,7 @@ export class CollaborationValidationPool {
       if (slot.timeout) clearTimeout(slot.timeout);
       slot.timeout = null;
       if (slot.activeTask) {
-        this.releaseTaskBytes(slot.activeTask);
+        this.releaseTaskAccounting(slot.activeTask);
         slot.activeTask.reject(error);
       }
       slot.activeTask = null;
@@ -171,7 +199,12 @@ export class CollaborationValidationPool {
 
   private createWorkerSlot(index: number): WorkerSlot {
     const worker = new Worker(workerModuleUrl(), {
-      name: `brainvault-collab-${index + 1}`
+      name: `brainvault-collab-${index + 1}`,
+      resourceLimits: {
+        maxOldGenerationSizeMb: validationWorkerOldGenerationMb,
+        maxYoungGenerationSizeMb: validationWorkerYoungGenerationMb,
+        stackSizeMb: 4
+      }
     });
     const slot: WorkerSlot = { worker, activeTask: null, timeout: null, failed: false };
     worker.on("message", (response: WorkerResponse) => this.handleWorkerMessage(slot, response));
@@ -195,7 +228,7 @@ export class CollaborationValidationPool {
     slot.activeTask = null;
     if (slot.timeout) clearTimeout(slot.timeout);
     slot.timeout = null;
-    this.releaseTaskBytes(task);
+    this.releaseTaskAccounting(task);
     slot.worker.unref();
     if (response.ok) {
       task.resolve({
@@ -216,8 +249,10 @@ export class CollaborationValidationPool {
     if (slot.timeout) clearTimeout(slot.timeout);
     slot.timeout = null;
     if (slot.activeTask) {
-      this.releaseTaskBytes(slot.activeTask);
-      slot.activeTask.reject(error);
+      this.releaseTaskAccounting(slot.activeTask);
+      slot.activeTask.reject(
+        isWorkerOutOfMemoryError(error) ? new CollaborationValidationResourceLimitError() : error
+      );
     }
     slot.activeTask = null;
     slot.worker.removeAllListeners();
@@ -230,8 +265,16 @@ export class CollaborationValidationPool {
     }
   }
 
-  private releaseTaskBytes(task: PendingTask) {
+  private releaseTaskAccounting(task: PendingTask) {
     this.pendingValidationBytes = Math.max(0, this.pendingValidationBytes - task.validationBytes);
+
+    const principalTasks = Math.max(0, (this.pendingValidationTasksByPrincipal.get(task.principalKey) ?? 0) - 1);
+    if (principalTasks === 0) this.pendingValidationTasksByPrincipal.delete(task.principalKey);
+    else this.pendingValidationTasksByPrincipal.set(task.principalKey, principalTasks);
+
+    const principalBytes = Math.max(0, (this.pendingValidationBytesByPrincipal.get(task.principalKey) ?? 0) - task.validationBytes);
+    if (principalBytes === 0) this.pendingValidationBytesByPrincipal.delete(task.principalKey);
+    else this.pendingValidationBytesByPrincipal.set(task.principalKey, principalBytes);
   }
 
   private dispatch() {
@@ -254,7 +297,7 @@ export class CollaborationValidationPool {
         if (slot.timeout) clearTimeout(slot.timeout);
         slot.timeout = null;
         slot.activeTask = null;
-        this.releaseTaskBytes(task);
+        this.releaseTaskAccounting(task);
         slot.worker.unref();
         task.reject(error);
         this.failWorkerSlot(slot, error instanceof Error ? error : new Error(String(error)));
