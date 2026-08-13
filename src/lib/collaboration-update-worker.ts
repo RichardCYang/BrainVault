@@ -34,9 +34,10 @@ type CollaborationValidationFailure = {
   message: string;
 };
 
-if (!parentPort) throw new Error("Collaboration validation worker requires a parent port");
+const workerParentPort = parentPort;
+if (!workerParentPort) throw new Error("Collaboration validation worker requires a parent port");
 
-parentPort.on("message", (request: CollaborationValidationRequest) => {
+workerParentPort.on("message", (request: CollaborationValidationRequest) => {
   let candidate: ReturnType<typeof applyValidatedYjsStateUpdate> | null = null;
   try {
     candidate = applyValidatedYjsStateUpdate(
@@ -57,7 +58,7 @@ parentPort.on("message", (request: CollaborationValidationRequest) => {
       changed: candidate.changed,
       materialization: request.includeMaterialization ? materialization : null
     };
-    parentPort.postMessage(response, [stateUpdate.buffer, incrementalUpdate.buffer]);
+    workerParentPort.postMessage(response, [stateUpdate.buffer, incrementalUpdate.buffer]);
   } catch (error) {
     let response: CollaborationValidationFailure;
     if (error instanceof InvalidYjsUpdateError) {
@@ -83,7 +84,7 @@ parentPort.on("message", (request: CollaborationValidationRequest) => {
         message: error instanceof Error ? error.message : "Collaboration validation failed"
       };
     }
-    parentPort.postMessage(response);
+    workerParentPort.postMessage(response);
   } finally {
     candidate?.document.destroy();
   }
