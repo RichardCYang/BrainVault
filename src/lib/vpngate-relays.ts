@@ -134,9 +134,7 @@ async function fetchVpnGateCsv() {
   }
 }
 
-async function refreshVpnGateRelays() {
-  const now = Date.now();
-  if (vpnGateRelays.size > 0 && now - vpnGateRelaysFetchedAt < vpnGateRefreshMs) return vpnGateRelays;
+function startVpnGateRelayRefresh() {
   if (vpnGateRelaysInFlight) return vpnGateRelaysInFlight;
 
   vpnGateRelaysInFlight = (async () => {
@@ -158,6 +156,25 @@ async function refreshVpnGateRelays() {
   })();
 
   return vpnGateRelaysInFlight;
+}
+
+async function refreshVpnGateRelays() {
+  const now = Date.now();
+  const cacheAgeMs = now - vpnGateRelaysFetchedAt;
+  if (vpnGateRelays.size > 0 && cacheAgeMs < vpnGateRefreshMs) return vpnGateRelays;
+
+  // The directory is large (up to 8 MiB) and its refresh timeout is deliberately
+  // several seconds. Once a successfully fetched directory exists, do not put that
+  // network refresh on the critical path of the next authenticated document request.
+  // Serve the still-allowed stale snapshot immediately and refresh it in the
+  // background. A cold start, or data older than the existing stale-safety window,
+  // remains fail-closed on the synchronous refresh path.
+  if (vpnGateRelays.size > 0 && cacheAgeMs <= vpnGateStaleMs) {
+    void startVpnGateRelayRefresh();
+    return vpnGateRelays;
+  }
+
+  return startVpnGateRelayRefresh();
 }
 
 async function withDnsTimeout<T>(promise: Promise<T>) {

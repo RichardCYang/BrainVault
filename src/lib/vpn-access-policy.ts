@@ -213,11 +213,7 @@ async function queryIpApi(ipAddress: string): Promise<VpnProviderSignal> {
   }
 }
 
-async function refreshTorExitAddresses() {
-  const now = Date.now();
-  if (torExitAddresses.size > 0 && now - torExitListFetchedAt < torListRefreshMs) {
-    return torExitAddresses;
-  }
+function startTorExitAddressRefresh() {
   if (torExitListInFlight) return torExitListInFlight;
 
   torExitListInFlight = (async () => {
@@ -244,6 +240,25 @@ async function refreshTorExitAddresses() {
   })();
 
   return torExitListInFlight;
+}
+
+async function refreshTorExitAddresses() {
+  const now = Date.now();
+  const cacheAgeMs = now - torExitListFetchedAt;
+  if (torExitAddresses.size > 0 && cacheAgeMs < torListRefreshMs) {
+    return torExitAddresses;
+  }
+
+  // Keep the hourly bulk-list refresh off authenticated request latency once a
+  // valid list exists. The pre-existing six-hour stale bound is still enforced:
+  // only snapshots inside that safety window may be served while revalidation
+  // runs in the background.
+  if (torExitAddresses.size > 0 && cacheAgeMs <= torListStaleMs) {
+    void startTorExitAddressRefresh();
+    return torExitAddresses;
+  }
+
+  return startTorExitAddressRefresh();
 }
 
 function isValidTimeZone(value: string | null | undefined): value is string {
