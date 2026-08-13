@@ -1,7 +1,9 @@
+import { z } from "zod";
 import type { DbClient } from "./db.js";
 import { describePageCoverUrlForHistory } from "./page-cover.js";
 import type { BlockRow, PageRow, UserRow } from "../types/domain.js";
 import { validateStoredBlockMetadata } from "./structured-metadata-integrity.js";
+import { blockTypeSchema } from "../utils/schemas.js";
 
 export type PageVersionActor = {
   id: string;
@@ -55,6 +57,195 @@ export type PageVersionSummary = {
   blocksMoved: number;
 };
 
+const pageVersionHistoryMaxDepth = 16;
+const pageVersionHistoryMaxNodes = 100_000;
+const pageVersionHistoryMaxSerializedBytes = 4 * 1024 * 1024;
+const forbiddenPageVersionHistoryKeys = new Set(["__proto__", "constructor", "prototype"]);
+const historyIdSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
+const historyNullableIdSchema = historyIdSchema.nullable();
+const pageVersionActorSchema = z.object({
+  id: z.string().min(1).max(64),
+  username: z.string().min(1).max(50),
+  name: z.string().max(80).nullable()
+}).strict();
+const pageVersionActorsSchema = z.array(pageVersionActorSchema);
+const pageVersionSummarySchema = z.object({
+  baseline: z.number().int().min(0).max(0xffffffff),
+  pageCreated: z.number().int().min(0).max(0xffffffff),
+  pageFields: z.array(z.string().min(1).max(64)).max(64),
+  blocksCreated: z.number().int().min(0).max(0xffffffff),
+  blocksUpdated: z.number().int().min(0).max(0xffffffff),
+  blocksDeleted: z.number().int().min(0).max(0xffffffff),
+  blocksMoved: z.number().int().min(0).max(0xffffffff)
+}).strict();
+const pageVersionFieldChangeSchema = z.object({
+  field: z.string().min(1).max(64),
+  before: z.unknown(),
+  after: z.unknown()
+}).strict();
+const pageVersionPageStateSchema = z.object({
+  title: z.string().max(160),
+  icon: z.string().max(1024 * 1024).nullable(),
+  coverUrl: z.string().max(4096).nullable(),
+  coverPositionX: z.number().int().min(0).max(100),
+  coverPositionY: z.number().int().min(0).max(100),
+  isArchived: z.boolean(),
+  isCollection: z.boolean(),
+  parentPageId: historyNullableIdSchema,
+  tags: z.array(z.string().max(50)).max(20)
+}).strict();
+const pageVersionBlockStateSchema = z.object({
+  id: historyIdSchema,
+  parentBlockId: historyNullableIdSchema,
+  type: blockTypeSchema,
+  markdown: z.string().max(20_000),
+  checked: z.boolean(),
+  sortOrder: z.number().int(),
+  metadata: z.unknown().nullable()
+}).strict();
+const pageVersionChangeSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("history-started"),
+    page: pageVersionPageStateSchema.omit({ tags: true })
+  }).strict(),
+  z.object({
+    kind: z.literal("page-created"),
+    page: pageVersionPageStateSchema
+  }).strict(),
+  z.object({
+    kind: z.literal("page-updated"),
+    fields: z.array(pageVersionFieldChangeSchema)
+  }).strict(),
+  z.object({
+    kind: z.literal("block-created"),
+    block: pageVersionBlockStateSchema
+  }).strict(),
+  z.object({
+    kind: z.literal("block-updated"),
+    blockId: historyIdSchema,
+    blockType: blockTypeSchema,
+    fields: z.array(pageVersionFieldChangeSchema)
+  }).strict(),
+  z.object({
+    kind: z.literal("block-deleted"),
+    block: pageVersionBlockStateSchema
+  }).strict()
+]);
+const pageVersionChangesSchema = z.array(pageVersionChangeSchema);
+
+export class PageVersionHistoryIntegrityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PageVersionHistoryIntegrityError";
+  }
+}
+
+function inspectPageVersionHistoryJson(
+  value: unknown,
+  label: string,
+  depth = 0,
+  budget: { nodes: number } = { nodes: 0 }
+): void {
+  if (depth > pageVersionHistoryMaxDepth) {
+    throw new PageVersionHistoryIntegrityError(`${label} exceeds the maximum nesting depth`);
+  }
+  budget.nodes += 1;
+  if (budget.nodes > pageVersionHistoryMaxNodes) {
+    throw new PageVersionHistoryIntegrityError(`${label} exceeds the maximum node count`);
+  }
+
+  if (value === null) return;
+  if (Array.isArray(value)) {
+    for (const item of value) inspectPageVersionHistoryJson(item, label, depth + 1, budget);
+    return;
+  }
+
+  const valueType = typeof value;
+  if (valueType === "string" || valueType === "boolean") return;
+  if (valueType === "number") {
+    if (!Number.isFinite(value)) throw new PageVersionHistoryIntegrityError(`${label} contains a non-finite number`);
+    return;
+  }
+  if (valueType !== "object") {
+    throw new PageVersionHistoryIntegrityError(`${label} contains a non-JSON value`);
+  }
+
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (forbiddenPageVersionHistoryKeys.has(key)) {
+      throw new PageVersionHistoryIntegrityError(`${label} contains the forbidden key '${key}'`);
+    }
+    inspectPageVersionHistoryJson(child, label, depth + 1, budget);
+  }
+}
+
+function decodePageVersionHistoryJson(value: unknown, label: string) {
+  let decoded = value;
+  if (typeof value === "string") {
+    if (Buffer.byteLength(value, "utf8") > pageVersionHistoryMaxSerializedBytes) {
+      throw new PageVersionHistoryIntegrityError(`${label} exceeds the serialized byte limit`);
+    }
+    try {
+      decoded = JSON.parse(value) as unknown;
+    } catch {
+      throw new PageVersionHistoryIntegrityError(`${label} is not valid JSON`);
+    }
+  }
+
+  inspectPageVersionHistoryJson(decoded, label);
+  let serialized: string | undefined;
+  try {
+    serialized = JSON.stringify(decoded);
+  } catch {
+    throw new PageVersionHistoryIntegrityError(`${label} is not JSON serializable`);
+  }
+  if (serialized === undefined) {
+    throw new PageVersionHistoryIntegrityError(`${label} is not JSON serializable`);
+  }
+  if (Buffer.byteLength(serialized, "utf8") > pageVersionHistoryMaxSerializedBytes) {
+    throw new PageVersionHistoryIntegrityError(`${label} exceeds the serialized byte limit`);
+  }
+  return decoded;
+}
+
+function parseWithSchema<T>(value: unknown, label: string, schema: z.ZodTypeAny): T {
+  const decoded = decodePageVersionHistoryJson(value, label);
+  const parsed = schema.safeParse(decoded);
+  if (!parsed.success) {
+    throw new PageVersionHistoryIntegrityError(`${label} does not match the page-version history schema`);
+  }
+  return parsed.data as T;
+}
+
+function normalizePageVersionBlockState(block: z.infer<typeof pageVersionBlockStateSchema>): PageVersionBlockState {
+  const metadata = validateStoredBlockMetadata(block.type, block.metadata);
+  if (block.metadata !== null && metadata === null) {
+    throw new PageVersionHistoryIntegrityError("Page version block metadata is invalid");
+  }
+  return { ...block, metadata };
+}
+
+export function parsePageVersionActorsJson(value: string | PageVersionActor[]) {
+  return parseWithSchema<PageVersionActor[]>(value, "Page version actors", pageVersionActorsSchema);
+}
+
+export function parsePageVersionSummaryJson(value: string | PageVersionSummary) {
+  return parseWithSchema<PageVersionSummary>(value, "Page version summary", pageVersionSummarySchema);
+}
+
+export function parsePageVersionChangesJson(value: string | PageVersionChange[]) {
+  const changes = parseWithSchema<z.infer<typeof pageVersionChangesSchema>>(
+    value,
+    "Page version changes",
+    pageVersionChangesSchema
+  );
+  return changes.map((change): PageVersionChange => {
+    if (change.kind === "block-created" || change.kind === "block-deleted") {
+      return { ...change, block: normalizePageVersionBlockState(change.block) };
+    }
+    return change as PageVersionChange;
+  });
+}
+
 type PublicUserLike = Pick<UserRow, "id" | "username" | "name">;
 
 type PageVersionRow = {
@@ -71,15 +262,13 @@ type PageVersionRow = {
   created_at: string;
 };
 
-function parseJson<T>(value: string | T, fallback: T): T {
-  if (typeof value !== "string") return value;
+function parseStoredHistory<T>(parser: (value: string | T) => T, value: string | T, fallback: T): T {
   try {
-    return JSON.parse(value) as T;
+    return parser(value);
   } catch {
     return fallback;
   }
 }
-
 
 function isEqual(left: unknown, right: unknown) {
   return JSON.stringify(left) === JSON.stringify(right);
@@ -318,10 +507,10 @@ export function mapPageVersionListRow(row: PageVersionRow) {
     revision: Number(row.revision),
     pageVersion: Number(row.page_edit_version),
     contentVersion: Number(row.page_content_version),
-    actors: parseJson(row.actors, [] as PageVersionActor[]),
+    actors: parseStoredHistory(parsePageVersionActorsJson, row.actors, [] as PageVersionActor[]),
     source: row.source,
     changeCount: Number(row.change_count),
-    summary: parseJson(row.change_summary, {
+    summary: parseStoredHistory(parsePageVersionSummaryJson, row.change_summary, {
       baseline: 0,
       pageCreated: 0,
       pageFields: [],
@@ -337,7 +526,7 @@ export function mapPageVersionListRow(row: PageVersionRow) {
 export function mapPageVersionDetailRow(row: PageVersionRow) {
   return {
     ...mapPageVersionListRow(row),
-    changes: parseJson(row.changes ?? [], [] as PageVersionChange[])
+    changes: parseStoredHistory(parsePageVersionChangesJson, row.changes ?? [], [] as PageVersionChange[])
   };
 }
 

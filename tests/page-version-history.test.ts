@@ -3,8 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   diffPageVersionBlocks,
   diffPageVersionPage,
+  mapPageVersionDetailRow,
+  parsePageVersionChangesJson,
   resetPageVersionHistory
 } from "../src/lib/page-version-history.js";
+import type { PageVersionRow } from "../src/lib/page-version-history.js";
 import type { BlockRow, PageRow } from "../src/types/domain.js";
 
 const index = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
@@ -15,6 +18,7 @@ const pageRoutes = readFileSync(new URL("../src/routes/page.routes.ts", import.m
 const blockRoutes = readFileSync(new URL("../src/routes/block.routes.ts", import.meta.url), "utf8");
 const collaborationRoutes = readFileSync(new URL("../src/routes/collaboration.routes.ts", import.meta.url), "utf8");
 const pageVersionHistory = readFileSync(new URL("../src/lib/page-version-history.ts", import.meta.url), "utf8");
+const dataTransfer = readFileSync(new URL("../src/lib/data-transfer.ts", import.meta.url), "utf8");
 const migration = readFileSync(new URL("../migrations/027_page_version_history.sql", import.meta.url), "utf8");
 
 function page(overrides: Partial<PageRow> = {}): PageRow {
@@ -97,6 +101,62 @@ describe("Page version history", () => {
     expect(blockRoutes).toContain('source: "BLOCK_DELETE"');
     expect(collaborationRoutes).toContain('source: "COLLABORATION"');
     expect(collaborationRoutes).toContain("loadPageVersionActors");
+  });
+
+
+  it("rejects forbidden keys and excessive nesting in restored page-version JSON", () => {
+    const poisoned = `[{
+      "kind":"page-updated",
+      "fields":[{
+        "field":"title",
+        "before":"Before",
+        "after":"After",
+        "__proto__":{"polluted":true}
+      }]
+    }]`;
+    expect(() => parsePageVersionChangesJson(poisoned)).toThrow(/forbidden key/i);
+
+    let nested: unknown = "value";
+    for (let depth = 0; depth < 20; depth += 1) nested = { value: nested };
+    expect(() => parsePageVersionChangesJson(JSON.stringify([
+      { kind: "page-updated", fields: [{ field: "title", before: null, after: nested }] }
+    ]))).toThrow(/nesting depth/i);
+
+    expect(dataTransfer).toContain('pageVersionJsonColumnSchema("page version actors", parsePageVersionActorsJson)');
+    expect(dataTransfer).toContain('pageVersionJsonColumnSchema("page version summary", parsePageVersionSummaryJson)');
+    expect(dataTransfer).toContain('pageVersionJsonColumnSchema("page version changes", parsePageVersionChangesJson)');
+    expect(dataTransfer).toContain("JSON.stringify(parsePageVersionChangesJson(");
+  });
+
+  it("revalidates stored history at the read boundary and renders history values as text", () => {
+    const htmlShapedValue = '<img src=x onerror=alert(document.cookie)>';
+    const valid = parsePageVersionChangesJson(JSON.stringify([
+      {
+        kind: "page-updated",
+        fields: [{ field: "title", before: "Before", after: htmlShapedValue }]
+      }
+    ]));
+    expect(valid[0]).toMatchObject({
+      kind: "page-updated",
+      fields: [{ after: htmlShapedValue }]
+    });
+    expect(client).toContain("content.textContent = formatPageVersionValue(field, value);");
+
+    const row: PageVersionRow = {
+      id: 9,
+      page_id: "pag_history",
+      revision: 2,
+      page_edit_version: 2,
+      page_content_version: 2,
+      actors: '[{"id":"usr_owner","username":"owner","name":"Owner"}]',
+      source: "PAGE_UPDATE",
+      change_count: 1,
+      change_summary: '{"baseline":0,"pageCreated":0,"pageFields":["title"],"blocksCreated":0,"blocksUpdated":0,"blocksDeleted":0,"blocksMoved":0}',
+      changes: '[{"kind":"page-updated","fields":[{"field":"title","before":"Before","after":"After","constructor":{"prototype":{"polluted":true}}}]}]',
+      created_at: "2026-07-31 00:00:00.000"
+    };
+
+    expect(mapPageVersionDetailRow(row).changes).toEqual([]);
   });
 
   it("deletes prior rows and creates a new revision 1 baseline without resetting edit counters", async () => {

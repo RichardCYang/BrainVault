@@ -47,6 +47,11 @@ import {
   isRestorablePageShareTarget
 } from "./page-share-integrity.js";
 import { renderBlockHtml } from "./markdown.js";
+import {
+  parsePageVersionActorsJson,
+  parsePageVersionChangesJson,
+  parsePageVersionSummaryJson
+} from "./page-version-history.js";
 import { dataTransferResourceLimits, measureJsonUtf8BytesWithinLimit } from "./data-transfer-limits.js";
 import { blockSortOrderLimits } from "./block-order-integrity.js";
 import { maxAvatarBytes, normalizeAvatarDataUrl, supportedProfileLanguages } from "./profile.js";
@@ -250,31 +255,28 @@ const customIconLibraryRemovalSchema = z.object({
   value_hash: z.string().regex(/^[a-f0-9]{64}$/),
   removed_at: timestampSchema
 }).strict();
-const jsonArrayColumnSchema = z.string().min(1).max(maxManifestBytes).refine((value) => {
-  try {
-    return Array.isArray(JSON.parse(value));
-  } catch {
-    return false;
-  }
-}, "Backup JSON array is invalid");
-const jsonObjectColumnSchema = z.string().min(1).max(maxManifestBytes).refine((value) => {
-  try {
-    const parsed = JSON.parse(value);
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
-  } catch {
-    return false;
-  }
-}, "Backup JSON object is invalid");
+function pageVersionJsonColumnSchema(label: string, validateValue: (value: string) => unknown) {
+  return z.string().min(1).max(maxManifestBytes).superRefine((value, context) => {
+    try {
+      validateValue(value);
+    } catch (error) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: error instanceof Error ? error.message : `Backup ${label} is invalid`
+      });
+    }
+  });
+}
 const pageVersionSchema = z.object({
   page_id: idSchema,
   revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   page_edit_version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   page_content_version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-  actors: jsonArrayColumnSchema,
+  actors: pageVersionJsonColumnSchema("page version actors", parsePageVersionActorsJson),
   source: z.string().min(1).max(32),
   change_count: z.number().int().min(0).max(0xffffffff),
-  change_summary: jsonObjectColumnSchema,
-  changes: jsonArrayColumnSchema,
+  change_summary: pageVersionJsonColumnSchema("page version summary", parsePageVersionSummaryJson),
+  changes: pageVersionJsonColumnSchema("page version changes", parsePageVersionChangesJson),
   created_at: timestampSchema
 }).strict();
 
@@ -2030,11 +2032,15 @@ async function importRows(
           version.revision,
           version.page_edit_version,
           version.page_content_version,
-          rebindPageVersionActorsJson(version.actors, manifest.source.userId, userId),
+          JSON.stringify(parsePageVersionActorsJson(
+            rebindPageVersionActorsJson(version.actors, manifest.source.userId, userId)
+          )),
           version.source,
           version.change_count,
-          version.change_summary,
-          rebindPageVersionChangesJson(version.changes, manifest.source.userId, userId),
+          JSON.stringify(parsePageVersionSummaryJson(version.change_summary)),
+          JSON.stringify(parsePageVersionChangesJson(
+            rebindPageVersionChangesJson(version.changes, manifest.source.userId, userId)
+          )),
           version.created_at
         ]
       );
