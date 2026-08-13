@@ -64,6 +64,7 @@ import {
   accountReauthenticationRateLimit,
   loginAccountRateLimit,
   loginIpRateLimit,
+  navigationOrderRateLimit,
   registrationGlobalRateLimit,
   registrationRateLimit
 } from "../middleware/auth-rate-limit.js";
@@ -165,8 +166,10 @@ const navigationPreferenceSchema = z.object({
   collapsed: z.boolean()
 });
 
+const navigationOrderMaxPageIds = 4_096;
+
 const navigationOrderSchema = z.object({
-  pageIds: z.array(z.string().min(1).max(64)).min(1).max(20_000)
+  pageIds: z.array(z.string().min(1).max(64)).min(1).max(navigationOrderMaxPageIds)
 }).superRefine((value, context) => {
   if (new Set(value.pageIds).size !== value.pageIds.length) {
     context.addIssue({
@@ -447,6 +450,7 @@ authRouter.patch(
 authRouter.patch(
   "/navigation-order",
   requireAuth,
+  navigationOrderRateLimit,
   validate({ body: navigationOrderSchema }),
   async (req, res, next) => {
     try {
@@ -477,21 +481,17 @@ authRouter.patch(
           throw new ApiError(404, "NOT_FOUND", "Page not found");
         }
 
-        const chunkSize = 250;
-        for (let offset = 0; offset < pageIds.length; offset += chunkSize) {
-          const chunk = pageIds.slice(offset, offset + chunkSize);
-          const values = chunk.map(() => "(?, ?, ?)").join(", ");
-          const params: DbValue[] = [];
-          chunk.forEach((pageId, index) => {
-            params.push(currentUser.id, pageId, offset + index);
-          });
-          await client.execute(
-            `INSERT INTO user_navigation_page_order (user_id, page_id, sort_order)
-             VALUES ${values}
-             ON DUPLICATE KEY UPDATE sort_order = VALUES(sort_order), updated_at = CURRENT_TIMESTAMP(3)`,
-            params
-          );
-        }
+        const values = pageIds.map(() => "(?, ?, ?)").join(", ");
+        const params: DbValue[] = [];
+        pageIds.forEach((pageId, index) => {
+          params.push(currentUser.id, pageId, index);
+        });
+        await client.execute(
+          `INSERT INTO user_navigation_page_order (user_id, page_id, sort_order)
+           VALUES ${values}
+           ON DUPLICATE KEY UPDATE sort_order = VALUES(sort_order), updated_at = CURRENT_TIMESTAMP(3)`,
+          params
+        );
       });
 
       res.setHeader("Cache-Control", "private, no-store");

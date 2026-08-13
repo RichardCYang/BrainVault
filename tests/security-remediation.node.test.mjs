@@ -165,3 +165,52 @@ test("data-transfer temp cleanup and collaboration lifecycle defenses are active
   assert.match(collaboration, /requiresDurableRecheck/);
   assert.match(collaboration, /SELECT COALESCE\(MAX\(id\), 0\) AS max_update_id FROM page_yjs_updates/);
 });
+
+test("page sharing has dedicated account and IP abuse ceilings", () => {
+  const routes = read("src/routes/collaboration.routes.ts");
+  const limiter = read("src/middleware/auth-rate-limit.ts");
+  const env = read("src/config/env.ts");
+
+  const start = routes.indexOf('collaborationRouter.post(\n  "/pages/:pageId/shares"');
+  const end = routes.indexOf("collaborationRouter.delete(", start);
+  assert.ok(start >= 0 && end > start);
+  const route = routes.slice(start, end);
+  assert.match(route, /collaborationShareIpRateLimit/);
+  assert.match(route, /collaborationShareAccountRateLimit/);
+  assert.match(limiter, /keyGenerator: \(req\) => authenticatedAccountKey\("page-share-account", req\)/);
+  assert.match(limiter, /keyGenerator: clientIpKey/);
+  assert.match(env, /COLLABORATION_SHARE_ACCOUNT_MAX:[\s\S]*?default\(30\)/);
+  assert.match(env, /COLLABORATION_SHARE_IP_MAX:[\s\S]*?default\(60\)/);
+});
+
+test("navigation order writes are request-bounded, single-statement, and account-rate-limited", () => {
+  const routes = read("src/routes/auth.routes.ts");
+  const limiter = read("src/middleware/auth-rate-limit.ts");
+  const start = routes.indexOf('authRouter.patch(\n  "/navigation-order"');
+  const end = routes.indexOf('authRouter.get("/sessions"', start);
+  assert.ok(start >= 0 && end > start);
+  const route = routes.slice(start, end);
+
+  assert.match(routes, /const navigationOrderMaxPageIds = 4_096/);
+  assert.match(routes, /\.max\(navigationOrderMaxPageIds\)/);
+  assert.match(route, /navigationOrderRateLimit/);
+  assert.match(route, /const values = pageIds\.map\(\(\) => "\(\?, \?, \?\)"\)\.join\(", "\)/);
+  assert.doesNotMatch(route, /for \(let offset = 0; offset < pageIds\.length/);
+  assert.equal((route.match(/INSERT INTO user_navigation_page_order/g) ?? []).length, 1);
+  assert.match(limiter, /authenticatedAccountKey\("navigation-order-account", req\)/);
+});
+
+test("block reorder validates block and parent identifiers before request hashing", () => {
+  const routes = read("src/routes/block.routes.ts");
+  const schemaStart = routes.indexOf("const reorderSchema = z.object({");
+  const routeStart = routes.indexOf('blockRouter.post(\n  "/pages/:pageId/blocks/reorder"');
+  assert.ok(schemaStart >= 0 && routeStart > schemaStart);
+  const schema = routes.slice(schemaStart, routes.indexOf("const attachmentFormSchema", schemaStart));
+  const route = routes.slice(routeStart, routes.indexOf("blockRouter", routeStart + 20));
+
+  assert.match(schema, /id: routeIdSchema/);
+  assert.match(schema, /parentBlockId: routeIdSchema\.nullable\(\)\.optional\(\)/);
+  assert.match(route, /validate\(\{ params: idParamSchema, body: reorderSchema \}\)/);
+  assert.match(route, /createMutationRequestHash\(\{ pageId, items \}\)/);
+});
+

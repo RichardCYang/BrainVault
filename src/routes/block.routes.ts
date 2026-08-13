@@ -68,7 +68,7 @@ import {
 } from "../middleware/attachment-rate-limit.js";
 import { bookmarkPreviewRateLimit } from "../middleware/bookmark-rate-limit.js";
 import { validate } from "../middleware/validate.js";
-import { blockTypeSchema, idParamSchema, metadataSchema, requireUser } from "../utils/schemas.js";
+import { blockTypeSchema, idParamSchema, metadataSchema, requireUser, routeIdSchema } from "../utils/schemas.js";
 import type { BlockRow, PageRow } from "../types/domain.js";
 
 export const blockRouter = Router();
@@ -255,9 +255,9 @@ const reorderSchema = z.object({
   items: z
     .array(
       z.object({
-        id: z.string().min(1),
+        id: routeIdSchema,
         sortOrder: blockSortOrderSchema,
-        parentBlockId: z.string().min(1).nullable().optional(),
+        parentBlockId: routeIdSchema.nullable().optional(),
         expectedVersion: z.number().int().min(1)
       })
     )

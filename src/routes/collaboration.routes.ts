@@ -2,6 +2,10 @@ import { Router } from "express";
 import { z } from "zod";
 import { db, transaction, type DbClient } from "../lib/db.js";
 import { requireAuth } from "../middleware/auth.js";
+import {
+  collaborationShareAccountRateLimit,
+  collaborationShareIpRateLimit
+} from "../middleware/auth-rate-limit.js";
 import { validate } from "../middleware/validate.js";
 import { idParamSchema, requireUser, routeIdSchema, usernameSchema } from "../utils/schemas.js";
 import { ApiError, notFound } from "../lib/http.js";
@@ -194,6 +198,8 @@ collaborationRouter.get(
 
 collaborationRouter.post(
   "/pages/:pageId/shares",
+  collaborationShareIpRateLimit,
+  collaborationShareAccountRateLimit,
   validate({ params: idParamSchema, body: shareUserSchema }),
   async (req, res, next) => {
     try {

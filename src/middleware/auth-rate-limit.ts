@@ -42,6 +42,11 @@ function mfaSetupAccountKey(req: Request) {
   return userId ? hashRateLimitKey("mfa-setup", userId) : `ip:${clientIpKey(req)}`;
 }
 
+function authenticatedAccountKey(scope: string, req: Request) {
+  const userId = typeof req.user?.id === "string" ? req.user.id : "";
+  return userId ? hashRateLimitKey(scope, userId) : `ip:${clientIpKey(req)}`;
+}
+
 function authenticationRequestSucceeded(_req: Request, res: Response) {
   return res.statusCode < 400 && res.locals.authenticationPending !== true;
 }
@@ -154,3 +159,47 @@ export const registrationRateLimit = rateLimit({
   keyGenerator: clientIpKey,
   handler
 });
+
+const collaborationShareHandler = (_req: Request, res: Response) => {
+  res.status(429).json({
+    error: {
+      code: "PAGE_SHARE_RATE_LIMITED",
+      message: "Too many page sharing requests. Try again later."
+    }
+  });
+};
+
+export const collaborationShareIpRateLimit = rateLimit({
+  windowMs: env.COLLABORATION_SHARE_WINDOW_MS,
+  limit: env.COLLABORATION_SHARE_IP_MAX,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: clientIpKey,
+  handler: collaborationShareHandler
+});
+
+export const collaborationShareAccountRateLimit = rateLimit({
+  windowMs: env.COLLABORATION_SHARE_WINDOW_MS,
+  limit: env.COLLABORATION_SHARE_ACCOUNT_MAX,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: (req) => authenticatedAccountKey("page-share-account", req),
+  handler: collaborationShareHandler
+});
+
+export const navigationOrderRateLimit = rateLimit({
+  windowMs: env.NAVIGATION_ORDER_WINDOW_MS,
+  limit: env.NAVIGATION_ORDER_ACCOUNT_MAX,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: (req) => authenticatedAccountKey("navigation-order-account", req),
+  handler: (_req: Request, res: Response) => {
+    res.status(429).json({
+      error: {
+        code: "NAVIGATION_ORDER_RATE_LIMITED",
+        message: "Too many navigation order updates. Try again later."
+      }
+    });
+  }
+});
+
