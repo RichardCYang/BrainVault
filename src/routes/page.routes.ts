@@ -13,6 +13,7 @@ import {
 } from "../lib/page-version-reset-mutation.js";
 import { toBlock, toPage, toTag } from "../lib/mappers.js";
 import {
+  assertPageNotArchived,
   getOwnedPage,
   getPageAccess,
   pageSummaryProjection,
@@ -889,6 +890,12 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
         )
       ) return;
 
+      const isArchivedRestoreOnly =
+        updates.isArchived === false && tags === undefined && Object.keys(updates).length === 1;
+      if (existingPage.is_archived && !isArchivedRestoreOnly) {
+        assertPageNotArchived(existingPage);
+      }
+
       const beforeTags = (await getPageTags(pageId, client)).map((tag) => tag.name);
 
       if (updates.title !== undefined) {
@@ -1054,6 +1061,7 @@ pageRouter.put("/:pageId/tags", validate({ params: idParamSchema, body: tagSchem
         [pageId, user.id]
       );
       if (!existingPage) throw notFound("Page");
+      assertPageNotArchived(existingPage);
       const beforeTags = (await getPageTags(pageId, client)).map((tag) => tag.name);
       const result = await client.execute<{ affectedRows: number }>(
         "UPDATE pages SET edit_version = edit_version + 1 WHERE id = ? AND owner_id = ? AND edit_version = ?",

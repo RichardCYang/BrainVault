@@ -52,7 +52,7 @@ import {
   BlockPreserveChildrenIntegrityError,
   planBlockDeletePreservingChildren
 } from "../lib/block-preserve-children.js";
-import { getBlockAccess, getPageAccess, type PageAccess } from "../lib/page-access.js";
+import { assertPageNotArchived, getBlockAccess, getPageAccess, type PageAccess } from "../lib/page-access.js";
 import { broadcastCanonicalAttachment } from "../lib/collaboration-server.js";
 import {
   diffPageVersionBlocks,
@@ -816,6 +816,7 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
       }
 
       assertDirectBlockMutationAllowed(lockedAccess);
+      assertPageNotArchived(lockedAccess.page);
       await assertParentBlock(creation.parentBlockId, pageId, client);
       const lastBlock = await client.queryOne<{ sort_order: number }>(
         "SELECT sort_order FROM blocks WHERE page_id = ? AND parent_block_id <=> ? ORDER BY sort_order DESC LIMIT 1",
@@ -908,6 +909,8 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
       ) {
         return { block: existing, pageContentVersion: Number(lockedPage.content_version ?? 1) };
       }
+
+      assertPageNotArchived(lockedPage);
 
       if (Number(existing.edit_version ?? 1) !== body.expectedVersion) {
         throw new ApiError(
@@ -1085,6 +1088,7 @@ blockRouter.delete(
       const { block } = await assertAccessibleBlock(blockId, user.id, client);
       const lockedAccess = await getPageAccess(block.page_id, user.id, client, { lockPage: true });
       assertDirectBlockMutationAllowed(lockedAccess);
+      assertPageNotArchived(lockedAccess.page);
       const hierarchyRows = await client.query<BlockRow>(
         "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC FOR UPDATE",
         [block.page_id]
@@ -1194,6 +1198,8 @@ blockRouter.post(
             return { rows, pageContentVersion: Number(lockedPage.content_version ?? 1) };
           }
         }
+
+        assertPageNotArchived(lockedPage);
 
         const hierarchyRows = await client.query<BlockRow>(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",

@@ -214,3 +214,33 @@ test("block reorder validates block and parent identifiers before request hashin
   assert.match(route, /createMutationRequestHash\(\{ pageId, items \}\)/);
 });
 
+
+
+test("archived pages reject direct REST mutations while preserving the restore-only path", () => {
+  const access = read("src/lib/page-access.ts");
+  const blocks = read("src/routes/block.routes.ts");
+  const pages = read("src/routes/page.routes.ts");
+
+  assert.match(access, /export function assertPageNotArchived/);
+  assert.match(access, /throw new ApiError\(409, "PAGE_ARCHIVED"/);
+  assert.equal((blocks.match(/assertPageNotArchived\(/g) ?? []).length, 4);
+  assert.match(blocks, /assertDirectBlockMutationAllowed\(lockedAccess\);\n\s*assertPageNotArchived\(lockedAccess\.page\);/);
+  assert.match(blocks, /return \{ block: existing, pageContentVersion:[\s\S]*?\}\;\n\s*\}\n\n\s*assertPageNotArchived\(lockedPage\);/);
+  assert.match(pages, /updates\.isArchived === false && tags === undefined && Object\.keys\(updates\)\.length === 1/);
+  assert.match(pages, /if \(existingPage\.is_archived && !isArchivedRestoreOnly\)/);
+  assert.match(pages, /pageRouter\.put\("\/:pageId\/tags"[\s\S]*?assertPageNotArchived\(existingPage\);/);
+});
+
+test("password login account limiter bounds attacker-controlled username key cardinality", () => {
+  const limiter = read("src/middleware/auth-rate-limit.ts");
+
+  assert.match(limiter, /const maxDistinctLoginAccountKeysPerIpWindow = 50;/);
+  assert.match(limiter, /const maxTrackedLoginAccountIpNamespaces = 1_024;/);
+  assert.match(limiter, /const loginAccountKeysByIp = new Map<string, LoginAccountKeyNamespace>\(\);/);
+  assert.match(limiter, /expiresAt: now \+ env\.AUTH_LOGIN_ACCOUNT_WINDOW_MS/);
+  assert.match(limiter, /pruneExpiredLoginAccountKeyNamespaces\(now\)/);
+  assert.match(limiter, /namespace\.accountKeys\.size >= maxDistinctLoginAccountKeysPerIpWindow/);
+  assert.match(limiter, /Math\.floor\(now \/ Math\.max\(1, env\.AUTH_LOGIN_IP_WINDOW_MS\)\)/);
+  assert.equal((limiter.match(/return loginAccountOverflowKey\(ip, now\);/g) ?? []).length, 2);
+  assert.match(limiter, /keyGenerator: usernameKey/);
+});

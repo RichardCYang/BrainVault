@@ -13,6 +13,15 @@ export type PageAccess = {
   shareCount: number;
 };
 
+export function assertPageNotArchived(
+  page: Pick<PageRow, "is_archived">,
+  message = "Restore the page before editing it"
+): void {
+  if (page.is_archived) {
+    throw new ApiError(409, "PAGE_ARCHIVED", message);
+  }
+}
+
 function pageRowProjection(alias = "") {
   const column = (name: string) => alias ? `${alias}.${name}` : name;
   return [

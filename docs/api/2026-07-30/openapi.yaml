@@ -1520,7 +1520,7 @@ paths:
           description: Page with blocks
     patch:
       summary: Update page metadata
-      description: Owner only. Requires the last observed page version; stale writes are rejected with 409. Once a page has editor grants, title/block content changes must use the collaboration session instead of direct REST mutation.
+      description: Owner only. Requires the last observed page version; stale writes are rejected with 409. Once a page has editor grants, title/block content changes must use the collaboration session instead of direct REST mutation. Archived pages accept only a restore-only update with isArchived=false; other metadata or tag changes require restoring the page first.
       parameters:
         - in: path
           name: pageId
@@ -1537,7 +1537,7 @@ paths:
         '200':
           description: Updated page
         '409':
-          description: Page changed in another session
+          description: Page changed in another session, is archived for a non-restore mutation, or requires collaboration-aware title editing
     delete:
       summary: Archive or permanently delete a page
       description: When permanent is true, the page and every nested descendant page are deleted together, including their blocks and attachment files. Collection pages therefore delete all pages contained in that collection. Non-permanent archival requires expectedVersion; new clients should prefer PATCH with isArchived=true.
@@ -1935,7 +1935,7 @@ paths:
   /api/pages/{pageId}/blocks:
     post:
       summary: Create a block on an unshared owned page
-      description: Direct non-attachment block creation is rejected while Yjs collaboration is enabled. Clients can reuse mutationId with the exact same request after an ambiguous response; the original block is returned instead of creating a duplicate.
+      description: Direct non-attachment block creation is rejected while Yjs collaboration is enabled or the page is archived. Clients can reuse mutationId with the exact same request after an ambiguous response; the original block is returned instead of creating a duplicate.
       parameters:
         - in: path
           name: pageId
@@ -1952,7 +1952,7 @@ paths:
         '201':
           description: Created block or exact replay of the originally created block
         '409':
-          description: Mutation key reuse, unavailable replay target, collaboration-required mutation, or stale page ownership
+          description: Mutation key reuse, unavailable replay target, archived page, collaboration-required mutation, or stale page ownership
   /api/pages/{pageId}/attachments:
     post:
       summary: Upload a file and create a canonical attachment block
@@ -2028,7 +2028,7 @@ paths:
   /api/blocks/{blockId}:
     patch:
       summary: Update a block
-      description: Owner only for unshared pages. Direct mutation is rejected while Yjs collaboration is enabled; shared title/block edits use the collaboration WebSocket and snapshot endpoint.
+      description: Owner only for unshared, non-archived pages. Direct mutation is rejected while Yjs collaboration is enabled or the page is archived; shared title/block edits use the collaboration WebSocket and snapshot endpoint.
       parameters:
         - in: path
           name: blockId
@@ -2045,10 +2045,10 @@ paths:
         '200':
           description: Updated block
         '409':
-          description: Block changed in another session
+          description: Block changed in another session, page is archived, or direct mutation requires collaboration
     delete:
       summary: Delete a block, optionally preserving its nested children
-      description: Owner only for unshared pages. Requires an exact version snapshot of the block subtree. With preserveChildren, the page content version, child promotion, sibling renumbering, target deletion, and version history are handled in one transaction. An optional mutationId makes an exact retry after an ambiguous response acknowledge the original committed deletion; a different request reusing that ID is rejected. Shared document deletion is represented in one Yjs mutation and materialized atomically.
+      description: Owner only for unshared, non-archived pages. Requires an exact version snapshot of the block subtree. With preserveChildren, the page content version, child promotion, sibling renumbering, target deletion, and version history are handled in one transaction. An optional mutationId makes an exact retry after an ambiguous response acknowledge the original committed deletion; a different request reusing that ID is rejected. Shared document deletion is represented in one Yjs mutation and materialized atomically.
       parameters:
         - in: path
           name: blockId
@@ -2065,11 +2065,11 @@ paths:
         '204':
           description: Deleted, or an exact mutation replay was acknowledged without repeating the deletion
         '409':
-          description: Block subtree changed after the snapshot, or the mutation ID was reused for another request
+          description: Block subtree changed after the snapshot, page is archived, direct mutation requires collaboration, or the mutation ID was reused for another request
   /api/pages/{pageId}/blocks/reorder:
     post:
       summary: Reorder blocks or move blocks under another block
-      description: Owner only for unshared pages. Locks the page's block set and rejects stale per-block versions. While collaboration is enabled, reordering is synchronized through Yjs instead.
+      description: Owner only for unshared, non-archived pages. Locks the page's block set and rejects stale per-block versions. While collaboration is enabled, reordering is synchronized through Yjs instead.
       parameters:
         - in: path
           name: pageId
@@ -2086,7 +2086,7 @@ paths:
         '200':
           description: Reordered blocks
         '409':
-          description: One or more blocks changed in another session
+          description: One or more blocks changed in another session, the page is archived, or direct mutation requires collaboration
   /api/pages/{pageId}/render:
     get:
       summary: Render page blocks to sanitized HTML
