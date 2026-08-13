@@ -12,6 +12,7 @@ export class InvalidYjsUpdateError extends Error {
 export type ValidatedYjsUpdate = {
   document: Y.Doc;
   stateUpdate: Uint8Array;
+  incrementalUpdate: Uint8Array;
   changed: boolean;
 };
 
@@ -65,11 +66,14 @@ export function applyValidatedYjsUpdate(
       throw new InvalidYjsUpdateError("The current collaboration document is too large");
     }
     Y.applyUpdate(candidate, currentState);
+    const currentStateVector = Y.encodeStateVector(candidate);
     Y.applyUpdate(candidate, update);
     const stateUpdate = encodeBoundedState(candidate, maxStateBytes);
+    const incrementalUpdate = Y.encodeStateAsUpdate(candidate, currentStateVector);
     return {
       document: candidate,
       stateUpdate,
+      incrementalUpdate,
       changed: !Buffer.from(currentState).equals(Buffer.from(stateUpdate))
     };
   } catch (error) {

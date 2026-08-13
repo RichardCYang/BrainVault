@@ -1069,6 +1069,12 @@ export class PageCollaborationHub {
       documentChanged: candidate.changed,
       historyEntries: room.history.length
     });
+    // Never let a client choose the byte representation that is persisted or
+    // fanned out. A stale/full-state Yjs update can contain large amounts of
+    // information the room already has. Re-encode only the state missing from
+    // the pre-update state vector so database and peer cost tracks the actual
+    // document change rather than the untrusted wire payload size.
+    const canonicalIncrementalUpdate = Buffer.from(candidate.incrementalUpdate);
 
     // The first durable update must still pass the canonical SQL bootstrap
     // check, even when an empty page happens to encode to the empty Yjs state.
@@ -1089,9 +1095,9 @@ export class PageCollaborationHub {
       clientSnapshot: snapshot,
       historyEntries: room.history.length,
       historyBytes: room.historyBytes,
-      nextUpdateBytes: update.length
+      nextUpdateBytes: canonicalIncrementalUpdate.length
     });
-    const persistedUpdate = durableSnapshot ? Buffer.from(candidate.stateUpdate) : update;
+    const persistedUpdate = durableSnapshot ? Buffer.from(candidate.stateUpdate) : canonicalIncrementalUpdate;
     let result:
       | { accepted: true; updateId: number }
       | {
@@ -1268,9 +1274,9 @@ export class PageCollaborationHub {
       }
     } else {
       // Server-enforced compaction changes only the durable representation.
-      // Existing peers still receive the original incremental update while a
+      // Existing peers receive the server-normalized incremental update while a
       // reconnect receives the equivalent full-state snapshot from history.
-      const envelope = updateEnvelope(result.updateId, update);
+      const envelope = updateEnvelope(result.updateId, canonicalIncrementalUpdate);
       for (const target of room.clients.values()) target.socket.sendBinary(envelope);
       if (durableSnapshot) {
         // Reset cooperative client counters as well. Otherwise an honest client

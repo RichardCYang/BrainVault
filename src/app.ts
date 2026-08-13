@@ -24,6 +24,7 @@ import { canUserReadCustomIcon, customIconUploadRoot, getCustomIconFilePath } fr
 import {
   developmentAccessLogFormat,
   productionAccessLogFormat,
+  sanitizeAccessLogValue,
   stripUrlQueryAndFragment
 } from "./lib/access-log.js";
 
@@ -39,11 +40,15 @@ const configuredWebSocketOrigins = corsOrigins.map((origin) => {
 
 morgan.token("safe-url", (req) => {
   const request = req as Request;
-  return stripUrlQueryAndFragment(request.originalUrl ?? request.url, "/");
+  return sanitizeAccessLogValue(stripUrlQueryAndFragment(request.originalUrl ?? request.url, "/"), "/", 2048);
 });
 morgan.token("safe-referrer", (req) => {
   const referrer = req.headers.referer ?? req.headers.referrer;
-  return stripUrlQueryAndFragment(Array.isArray(referrer) ? referrer[0] : referrer);
+  return sanitizeAccessLogValue(stripUrlQueryAndFragment(Array.isArray(referrer) ? referrer[0] : referrer));
+});
+morgan.token("safe-user-agent", (req) => {
+  const userAgent = req.headers["user-agent"];
+  return sanitizeAccessLogValue(Array.isArray(userAgent) ? userAgent[0] : userAgent);
 });
 
 export function createApp() {

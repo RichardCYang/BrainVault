@@ -12,6 +12,7 @@ import {
 import {
   developmentAccessLogFormat,
   productionAccessLogFormat,
+  sanitizeAccessLogValue,
   stripUrlQueryAndFragment
 } from "../src/lib/access-log.ts";
 import {
@@ -82,8 +83,11 @@ test("access log tokens remove note search terms and referrer query data", () =>
   assert.equal(stripUrlQueryAndFragment("?q=secret"), "-");
   assert.match(productionAccessLogFormat, /:safe-url/);
   assert.match(productionAccessLogFormat, /:safe-referrer/);
-  assert.doesNotMatch(productionAccessLogFormat, /:url\b|:referrer\b/);
+  assert.match(productionAccessLogFormat, /:safe-user-agent/);
+  assert.doesNotMatch(productionAccessLogFormat, /:url\b|:referrer\b|:user-agent\b/);
   assert.match(developmentAccessLogFormat, /:safe-url/);
+  assert.equal(sanitizeAccessLogValue("Mozilla/5.0\u001b[31mRED\r\nforged"), "Mozilla/5.0 [31mRED  forged");
+  assert.equal(sanitizeAccessLogValue("x".repeat(600)).length, 512);
 });
 
 test("collaboration identity payloads have a strict avatar budget", () => {
@@ -206,6 +210,9 @@ test("the production wiring preserves identity while removing repeated high-cost
   const server = read("src/lib/collaboration-server.ts");
   const client = read("public/collaboration.js");
   const yjsValidation = read("src/lib/yjs-validation.ts");
+  const mappers = read("src/lib/mappers.ts");
+  const markdown = read("src/lib/markdown.ts");
+  const pageRoutes = read("src/routes/page.routes.ts");
   const collaborationRoutes = read("src/routes/collaboration.routes.ts");
   const sessionCookie = read("src/lib/session-cookie.ts");
   const app = read("src/app.ts");
@@ -226,10 +233,17 @@ test("the production wiring preserves identity while removing repeated high-cost
     server,
     /UPDATE page_yjs_updates[\s\S]*SET update_data = \?, is_snapshot = 1[\s\S]*WHERE page_id = \? AND id = \?/
   );
-  assert.match(server, /const envelope = updateEnvelope\(result\.updateId, update\)/);
+  assert.match(server, /const canonicalIncrementalUpdate = Buffer\.from\(candidate\.incrementalUpdate\)/);
+  assert.match(server, /const envelope = updateEnvelope\(result\.updateId, canonicalIncrementalUpdate\)/);
+  assert.match(server, /nextUpdateBytes: canonicalIncrementalUpdate\.length/);
   assert.match(server, /updateEnvelope\(room\.maxUpdateId, room\.stateUpdate\)/);
   assert.doesNotMatch(server, /for \(const row of room\.history\) connection\.sendBinary/);
   assert.match(yjsValidation, /canonicalCurrentState/);
+  assert.match(yjsValidation, /const currentStateVector = Y\.encodeStateVector\(candidate\)/);
+  assert.match(yjsValidation, /incrementalUpdate = Y\.encodeStateAsUpdate\(candidate, currentStateVector\)/);
+  assert.match(markdown, /export function sanitizeRenderedHtml/);
+  assert.match(mappers, /sanitizeRenderedHtml\(row\.html_cache\)/);
+  assert.match(pageRoutes, /sanitizeRenderedHtml\(block\.html_cache\)/);
   assert.match(collaborationRoutes, /COLLABORATION_HISTORY_REPLAY_LIMIT/);
   assert.match(collaborationRoutes, /SUM\(OCTET_LENGTH\(update_data\)\)/);
   assert.match(server, /type: "compaction-complete"/);
@@ -240,6 +254,7 @@ test("the production wiring preserves identity while removing repeated high-cost
   assert.match(sessionCookie, /getAuthSessionCookieName\(secureSessionCookie\)/);
   assert.match(sessionCookie, /readUniqueCookieValue/);
   assert.match(app, /productionAccessLogFormat : developmentAccessLogFormat/);
+  assert.match(app, /morgan\.token\("safe-user-agent"/);
   assert.doesNotMatch(app, /morgan\([^\n]*(?:"combined"|"dev")/);
   assert.match(envSource, /ATTACHMENT_STORAGE_MAX_MB:[^\n]+default\(2048\)/);
   assert.match(attachmentSource, /getAttachmentStorageUsage/);

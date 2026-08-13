@@ -177,6 +177,7 @@ contains("src/lib/collaboration-server.ts", [
   "pendingWriteBytes",
   "await write",
   "Collaboration write backlog exceeded",
+  "canonicalIncrementalUpdate",
   "this.accessRecheckRunning",
   'persistenceDecision.action === "ignore"',
   'persistenceDecision.action === "reject"',
@@ -195,7 +196,9 @@ contains("src/lib/collaboration-presence.ts", [
   'Buffer.byteLength(value, "utf8")'
 ]);
 contains("src/lib/yjs-validation.ts", [
-  "changed: !Buffer.from(currentState).equals(Buffer.from(stateUpdate))"
+  "changed: !Buffer.from(currentState).equals(Buffer.from(stateUpdate))",
+  "incrementalUpdate",
+  "Y.encodeStateAsUpdate(candidate, currentStateVector)"
 ]);
 contains("migrations/024_auth_session_revocation.sql", [
   /ADD COLUMN IF NOT EXISTS auth_version BIGINT UNSIGNED NOT NULL DEFAULT 1/i
@@ -296,8 +299,19 @@ contains("src/lib/session-cookie-policy.ts", [
 ]);
 contains("src/lib/access-log.ts", [
   "stripUrlQueryAndFragment",
+  "sanitizeAccessLogValue",
   ":safe-url",
-  ":safe-referrer"
+  ":safe-referrer",
+  ":safe-user-agent"
+]);
+contains("src/lib/markdown.ts", [
+  "export function sanitizeRenderedHtml"
+]);
+contains("src/lib/mappers.ts", [
+  "sanitizeRenderedHtml(row.html_cache)"
+]);
+contains("src/routes/page.routes.ts", [
+  "sanitizeRenderedHtml(block.html_cache)"
 ]);
 contains("src/middleware/auth-rate-limit.ts", [
   "loginIpRateLimit",
@@ -329,6 +343,7 @@ const appSource = contains("src/app.ts", [
   "productionAccessLogFormat : developmentAccessLogFormat",
   'morgan.token("safe-url"',
   'morgan.token("safe-referrer"',
+  'morgan.token("safe-user-agent"',
   "res.json({ ok: true })"
 ]);
 assert.ok(

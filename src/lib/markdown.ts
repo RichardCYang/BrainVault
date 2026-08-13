@@ -197,6 +197,18 @@ const sanitizeOptions: sanitizeHtml.IOptions = {
   }
 };
 
+/**
+ * Treat persisted/rendered HTML as untrusted at every read boundary.
+ *
+ * html_cache is a derived performance field, not an authorization or trust
+ * boundary. Re-sanitizing it prevents legacy rows, manual database changes, or
+ * output produced by an older sanitizer version from reaching DOM HTML sinks
+ * without passing through the currently configured policy.
+ */
+export function sanitizeRenderedHtml(value: unknown) {
+  return sanitizeHtml(typeof value === "string" ? value : "", sanitizeOptions);
+}
+
 const textAlignments = new Set(["left", "center", "right", "justify"]);
 
 function getTextAlign(metadata: unknown) {
@@ -388,7 +400,7 @@ function renderTable(metadata: unknown) {
 
 export function renderMarkdown(raw: string) {
   const html = markdown.render(raw ?? "");
-  return sanitizeHtml(html, sanitizeOptions);
+  return sanitizeRenderedHtml(html);
 }
 
 export function renderBlockHtml(type: BlockType, raw: string, checked = false, metadata?: unknown) {

@@ -3,7 +3,7 @@ import request from "supertest";
 import { z } from "zod";
 import { afterAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
-import { renderBlockHtml, renderMarkdown } from "../src/lib/markdown.js";
+import { renderBlockHtml, renderMarkdown, sanitizeRenderedHtml } from "../src/lib/markdown.js";
 import { closeDb } from "../src/lib/db.js";
 import { getTableData } from "../src/lib/table.js";
 import { getValidatedQuery, validate } from "../src/middleware/validate.js";
@@ -364,6 +364,15 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(html).toContain("위험");
     expect(html).not.toContain("position");
     expect(html).not.toContain("script");
+  });
+
+  it("re-sanitizes persisted rendered HTML before it reaches API DOM sinks", () => {
+    const html = sanitizeRenderedHtml(
+      '<p>safe</p><img src="x" onerror="alert(1)"><script>alert(2)</script><xmp><svg onload="alert(3)"></svg></xmp>'
+    );
+
+    expect(html).toContain("safe");
+    expect(html).not.toMatch(/onerror|onload|<script|alert\(/i);
   });
 
   it("does not expose internal project documentation by default", async () => {

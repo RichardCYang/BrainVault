@@ -56,6 +56,26 @@ describe("server-side Yjs validation", () => {
     }
   });
 
+  it("normalizes a redundant full-state client update to the actual missing delta", () => {
+    const base = new Y.Doc();
+    base.getText("title").insert(0, "x".repeat(64 * 1024));
+    const baseUpdate = Y.encodeStateAsUpdate(base);
+
+    const client = new Y.Doc();
+    Y.applyUpdate(client, baseUpdate);
+    client.getText("title").insert(client.getText("title").length, "!");
+    const redundantFullState = Y.encodeStateAsUpdate(client);
+
+    const live = createValidatedYjsDocument([baseUpdate], limit);
+    const candidate = applyValidatedYjsUpdate(live, redundantFullState, limit, baseUpdate);
+    expect(candidate.incrementalUpdate.byteLength).toBeLessThan(redundantFullState.byteLength / 10);
+
+    const replayed = createValidatedYjsDocument([baseUpdate, candidate.incrementalUpdate], limit);
+    expect(Buffer.from(Y.encodeStateAsUpdate(replayed))).toEqual(Buffer.from(candidate.stateUpdate));
+
+    for (const document of [base, client, live, candidate.document, replayed]) document.destroy();
+  });
+
   it("rejects a document whose canonical state exceeds the configured limit", () => {
     const source = new Y.Doc();
     source.getText("title").insert(0, "x".repeat(4096));
