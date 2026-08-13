@@ -2967,11 +2967,46 @@ kbd {
   min-width: 1.55rem;
   letter-spacing: 0.04em;
   opacity: 0;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .kanban-column:hover .kanban-column-menu,
 .kanban-column:focus-within .kanban-column-menu {
   opacity: 1;
+}
+
+.kanban-column-menu.is-pressed,
+body.is-kanban-column-dragging .kanban-column-menu[aria-grabbed="true"] {
+  cursor: grabbing;
+}
+
+.kanban-column.is-column-dragging {
+  opacity: 0.45;
+}
+
+.kanban-column-drop-indicator {
+  align-self: stretch;
+  width: 3px;
+  min-width: 3px;
+  flex: 0 0 3px;
+  margin-inline: calc(-0.5rem - 1.5px);
+  border-radius: 999px;
+  background: var(--focus);
+  pointer-events: none;
+}
+
+body.is-kanban-column-dragging {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .kanban-column-menu {
+    opacity: 0.72;
+  }
 }
 
 .kanban-card-list {

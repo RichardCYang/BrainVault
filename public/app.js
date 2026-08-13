@@ -844,8 +844,10 @@ const statusDismissDelay = 2400;
 const statusErrorDismissDelay = 6000;
 let activeBlockDrag = null;
 let activeKanbanCardDrag = null;
+let activeKanbanColumnDrag = null;
 let activeNavigationDrag = null;
 let suppressBlockHandleClickUntil = 0;
+let suppressKanbanColumnMenuClickUntil = 0;
 let suppressNavigationMenuClickUntil = 0;
 let navigationOrderSaving = false;
 let blockOrderSaving = false;
@@ -8572,6 +8574,7 @@ function createKanbanEditor(row, boardValue) {
       { columnId: column.id }
     );
     deleteColumn.classList.add("kanban-column-menu");
+    deleteColumn.setAttribute("aria-grabbed", "false");
     deleteColumn.disabled = boardData.columns.length <= 1;
 
     columnHeader.append(columnLabel, count, deleteColumn);
@@ -8892,6 +8895,117 @@ function handleKanbanAction(row, button) {
     targetColumn.cards.push(found.card);
     replaceKanbanData(row, data, { focusCardId: found.card.id });
   }
+}
+
+function getKanbanColumnInsertionIndex(clientX, candidates) {
+  for (let index = 0; index < candidates.length; index += 1) {
+    const rect = candidates[index].getBoundingClientRect();
+    if (clientX < rect.left + rect.width / 2) return index;
+  }
+  return candidates.length;
+}
+
+function placeKanbanColumnDropIndicator(drag) {
+  if (!drag?.indicator || !drag.board) return;
+  const candidate = drag.candidates[drag.targetIndex];
+  if (candidate) {
+    drag.board.insertBefore(drag.indicator, candidate);
+    return;
+  }
+  const last = drag.candidates.at(-1);
+  if (last) last.after(drag.indicator);
+  else drag.board.insertBefore(drag.indicator, drag.column);
+}
+
+function autoScrollForKanbanColumnDrag(clientX, drag) {
+  const scroller = drag?.scroller;
+  if (!scroller) return;
+  const rect = scroller.getBoundingClientRect();
+  const edge = Math.min(72, Math.max(40, rect.width * 0.12));
+  if (clientX < rect.left + edge) {
+    scroller.scrollBy(-Math.max(6, (rect.left + edge - clientX) * 0.2), 0);
+  } else if (clientX > rect.right - edge) {
+    scroller.scrollBy(Math.max(6, (clientX - (rect.right - edge)) * 0.2), 0);
+  }
+}
+
+function activateKanbanColumnDrag(event) {
+  const drag = activeKanbanColumnDrag;
+  if (!drag || drag.active) return false;
+
+  const columns = getKanbanColumns(drag.row);
+  if (columns.length < 2 || !columns.includes(drag.column)) return false;
+
+  closeKanbanCardStyleMenus();
+  drag.active = true;
+  drag.columns = columns;
+  drag.candidates = columns.filter((column) => column !== drag.column);
+  drag.initialIndex = columns.indexOf(drag.column);
+  drag.targetIndex = drag.initialIndex;
+  drag.indicator = document.createElement("div");
+  drag.indicator.className = "kanban-column-drop-indicator";
+  drag.indicator.setAttribute("aria-hidden", "true");
+
+  drag.column.classList.add("is-column-dragging");
+  drag.handle.classList.add("is-pressed");
+  drag.handle.setAttribute("aria-grabbed", "true");
+  document.body.classList.add("is-kanban-column-dragging");
+  placeKanbanColumnDropIndicator(drag);
+  event.preventDefault();
+  return true;
+}
+
+function updateKanbanColumnDrag(event) {
+  const drag = activeKanbanColumnDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+
+  if (!drag.active) {
+    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+    const threshold = event.pointerType === "touch" ? 7 : 4;
+    if (distance < threshold) return;
+    if (!activateKanbanColumnDrag(event)) return;
+  }
+
+  event.preventDefault();
+  drag.targetIndex = getKanbanColumnInsertionIndex(event.clientX, drag.candidates);
+  placeKanbanColumnDropIndicator(drag);
+  autoScrollForKanbanColumnDrag(event.clientX, drag);
+}
+
+function clearKanbanColumnDragVisuals(drag) {
+  if (!drag) return;
+  drag.column?.classList.remove("is-column-dragging");
+  drag.indicator?.remove();
+  drag.handle?.classList.remove("is-pressed");
+  drag.handle?.setAttribute("aria-grabbed", "false");
+  document.body.classList.remove("is-kanban-column-dragging");
+}
+
+function finishKanbanColumnDrag(event, { cancelled = false } = {}) {
+  const drag = activeKanbanColumnDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  activeKanbanColumnDrag = null;
+
+  if (drag.handle.hasPointerCapture?.(drag.pointerId)) {
+    drag.handle.releasePointerCapture(drag.pointerId);
+  }
+
+  if (!drag.active) {
+    drag.handle.classList.remove("is-pressed");
+    return;
+  }
+
+  event.preventDefault();
+  suppressKanbanColumnMenuClickUntil = Date.now() + 500;
+  clearKanbanColumnDragVisuals(drag);
+  if (cancelled || drag.targetIndex === drag.initialIndex || !drag.row.isConnected) return;
+
+  const data = extractKanbanData(drag.row);
+  const sourceIndex = data.columns.findIndex((column) => column.id === drag.column.dataset.columnId);
+  if (sourceIndex < 0) return;
+  const [column] = data.columns.splice(sourceIndex, 1);
+  data.columns.splice(Math.min(drag.targetIndex, data.columns.length), 0, column);
+  replaceKanbanData(drag.row, data);
 }
 
 function clearKanbanDropTargets({ clearDragging = true } = {}) {
@@ -15015,6 +15129,61 @@ elements.blockList.addEventListener("lostpointercapture", (event) => {
   finishBlockDrag(event, { cancelled: true }).catch((error) => setStatus(error.message, true));
 });
 
+elements.blockList.addEventListener("pointerdown", (event) => {
+  if (!requireWritablePage({ announce: false })) return;
+  const handle = event.target.closest(".kanban-column-menu");
+  if (!handle || activeKanbanColumnDrag || event.isPrimary === false) return;
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+
+  const column = handle.closest(".kanban-column");
+  const row = getBlockRow(column);
+  const board = column?.parentElement;
+  const scroller = board?.closest(".kanban-board-scroll");
+  if (
+    !column?.dataset.columnId
+    || !row
+    || row.dataset.blockType !== "KANBAN"
+    || !board?.classList.contains("kanban-board")
+    || getKanbanColumns(row).length < 2
+  ) return;
+
+  activeKanbanColumnDrag = {
+    pointerId: event.pointerId,
+    pointerType: event.pointerType,
+    handle,
+    row,
+    column,
+    board,
+    scroller,
+    startX: event.clientX,
+    startY: event.clientY,
+    active: false,
+    initialIndex: -1,
+    targetIndex: -1,
+    columns: [],
+    candidates: [],
+    indicator: null
+  };
+  handle.classList.add("is-pressed");
+  handle.setPointerCapture?.(event.pointerId);
+});
+
+elements.blockList.addEventListener("pointermove", (event) => {
+  updateKanbanColumnDrag(event);
+});
+
+elements.blockList.addEventListener("pointerup", (event) => {
+  finishKanbanColumnDrag(event);
+});
+
+elements.blockList.addEventListener("pointercancel", (event) => {
+  finishKanbanColumnDrag(event, { cancelled: true });
+});
+
+elements.blockList.addEventListener("lostpointercapture", (event) => {
+  if (!activeKanbanColumnDrag || activeKanbanColumnDrag.pointerId !== event.pointerId) return;
+  finishKanbanColumnDrag(event, { cancelled: true });
+});
 
 elements.blockList.addEventListener("dragstart", (event) => {
   if (!requireWritablePage({ announce: false })) {
@@ -15401,6 +15570,10 @@ elements.blockList.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-action]");
   if (!button || !state.selectedPage) return;
   if (button.classList.contains("block-handle") && Date.now() < suppressBlockHandleClickUntil) {
+    event.preventDefault();
+    return;
+  }
+  if (button.classList.contains("kanban-column-menu") && Date.now() < suppressKanbanColumnMenuClickUntil) {
     event.preventDefault();
     return;
   }
