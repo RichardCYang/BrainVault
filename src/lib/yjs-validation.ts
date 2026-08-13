@@ -48,20 +48,14 @@ export function createValidatedYjsDocument(
  * Apply an untrusted client update to an isolated copy of the current room.
  * The live room is only replaced after the candidate update commits to SQL.
  */
-export function applyValidatedYjsUpdate(
-  currentDocument: Y.Doc,
+export function applyValidatedYjsStateUpdate(
+  currentStateInput: Uint8Array,
   update: Uint8Array,
-  maxStateBytes: number,
-  canonicalCurrentState?: Uint8Array
+  maxStateBytes: number
 ): ValidatedYjsUpdate {
   const candidate = new Y.Doc();
   try {
-    // The collaboration room caches the server-generated canonical state. Using
-    // it here avoids re-encoding a potentially large document before every
-    // small update while preserving the isolated-candidate commit boundary.
-    const currentState = canonicalCurrentState === undefined
-      ? encodeBoundedState(currentDocument, maxStateBytes)
-      : Buffer.from(canonicalCurrentState);
+    const currentState = Buffer.from(currentStateInput);
     if (currentState.byteLength > maxStateBytes) {
       throw new InvalidYjsUpdateError("The current collaboration document is too large");
     }
@@ -81,4 +75,19 @@ export function applyValidatedYjsUpdate(
     if (error instanceof InvalidYjsUpdateError) throw error;
     throw new InvalidYjsUpdateError(undefined, { cause: error });
   }
+}
+
+export function applyValidatedYjsUpdate(
+  currentDocument: Y.Doc,
+  update: Uint8Array,
+  maxStateBytes: number,
+  canonicalCurrentState?: Uint8Array
+): ValidatedYjsUpdate {
+  // The collaboration room caches the server-generated canonical state. Using
+  // it here avoids re-encoding a potentially large document before every
+  // small update while preserving the isolated-candidate commit boundary.
+  const currentState = canonicalCurrentState === undefined
+    ? encodeBoundedState(currentDocument, maxStateBytes)
+    : canonicalCurrentState;
+  return applyValidatedYjsStateUpdate(currentState, update, maxStateBytes);
 }

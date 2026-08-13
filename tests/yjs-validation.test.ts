@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import {
+  applyValidatedYjsStateUpdate,
   applyValidatedYjsUpdate,
   createValidatedYjsDocument,
   InvalidYjsUpdateError
@@ -31,9 +32,11 @@ describe("server-side Yjs validation", () => {
     const live = createValidatedYjsDocument([baseUpdate], limit);
     const candidate = applyValidatedYjsUpdate(live, leftUpdate, limit);
     const cachedCandidate = applyValidatedYjsUpdate(live, leftUpdate, limit, baseUpdate);
+    const stateCandidate = applyValidatedYjsStateUpdate(baseUpdate, leftUpdate, limit);
     expect(titleOf(live)).toBe("BrainVault");
     expect(titleOf(candidate.document)).not.toBe(titleOf(live));
     expect(Buffer.from(cachedCandidate.stateUpdate)).toEqual(Buffer.from(candidate.stateUpdate));
+    expect(Buffer.from(stateCandidate.stateUpdate)).toEqual(Buffer.from(candidate.stateUpdate));
 
     const leftThenRight = createValidatedYjsDocument([candidate.stateUpdate, rightUpdate], limit);
     const rightThenLeft = createValidatedYjsDocument([baseUpdate, rightUpdate, leftUpdate], limit);
@@ -49,6 +52,7 @@ describe("server-side Yjs validation", () => {
       live,
       candidate.document,
       cachedCandidate.document,
+      stateCandidate.document,
       leftThenRight,
       rightThenLeft
     ]) {

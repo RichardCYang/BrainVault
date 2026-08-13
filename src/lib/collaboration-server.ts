@@ -28,7 +28,6 @@ import {
 import type { BlockRow, UserRow } from "../types/domain.js";
 import * as Y from "yjs";
 import {
-  applyValidatedYjsUpdate,
   createValidatedYjsDocument,
   InvalidYjsUpdateError
 } from "./yjs-validation.js";
@@ -38,16 +37,11 @@ import {
   maxCollaborationUpdateBytes,
   type CollaborationWriteRejectionReason
 } from "./collaboration-protocol.js";
-import {
-  readCollaborationMaterialization
-} from "./collaboration-materialization.js";
 import { CollaborationDocumentError } from "./collaboration-document.js";
 import { getClientIpAddressFromTrustedProxyRequest, isHttpsRequestFromTrustedProxy } from "./reverse-proxy.js";
 import { isPermanentlyBlockedTotpIp } from "./totp-ip-block.js";
 import {
   assessInitialCollaborationBootstrap,
-  invalidInitialCollaborationBootstrapSummary,
-  type CollaborationBootstrapAssessment,
   type CollaborationBootstrapMismatchSummary
 } from "./collaboration-bootstrap.js";
 import {
@@ -56,6 +50,12 @@ import {
   assessCollaborationWriteAdmission
 } from "./collaboration-resource-limits.js";
 import { getCollaborationAvatarData } from "./collaboration-presence.js";
+import {
+  CollaborationValidationCapacityError,
+  CollaborationValidationPool,
+  CollaborationValidationTimeoutError,
+  type CollaborationValidationResult
+} from "./collaboration-update-worker-pool.js";
 import {
   assessCollaborationHistoryReplay,
   assessCollaborationUpdatePersistence,
@@ -134,7 +134,6 @@ type Room = {
   pendingWrites: number;
   pendingWriteBytes: number;
   bootstrapWritePending: boolean;
-  document: Y.Doc;
 };
 
 const activeHubs = new Set<PageCollaborationHub>();
@@ -235,6 +234,7 @@ export class PageCollaborationHub {
   private pendingUpgradeCount = 0;
   private readonly pendingUpgradeUserCounts = new Map<string, number>();
   private readonly upgradedSockets = new WeakSet<Socket>();
+  private readonly validationPool = new CollaborationValidationPool();
   private readonly upgradeHandler: (request: IncomingMessage, socket: Socket, head: Buffer) => void;
 
   constructor(server: CollaborationNetworkServer) {
@@ -268,10 +268,8 @@ export class PageCollaborationHub {
       for (const client of room.clients.values()) client.socket.close(1001, "Server is shutting down");
     }
     await Promise.allSettled(rooms.map((room) => room.writeQueue));
-    for (const room of rooms) {
-      room.invalidated = true;
-      room.document.destroy();
-    }
+    await this.validationPool.close();
+    for (const room of rooms) room.invalidated = true;
     this.rooms.clear();
   }
 
@@ -316,7 +314,6 @@ export class PageCollaborationHub {
     room.bootstrapLeaderId = null;
     room.waitingForBootstrap.clear();
     for (const client of room.clients.values()) client.socket.close(4010, reason);
-    void room.writeQueue.finally(() => room.document.destroy());
   }
 
   private invalidateRoom(room: Room, code: number, reason: string) {
@@ -329,9 +326,8 @@ export class PageCollaborationHub {
     for (const client of room.clients.values()) {
       if (client.socket.isOpen) client.socket.close(code, reason);
     }
-    // Wait for every already-queued writer to stop before destroying the shared
-    // document. Reconnecting clients will build a fresh room from durable rows.
-    void room.writeQueue.finally(() => room.document.destroy());
+    // Already-queued writers re-check room invalidation before committing. A
+    // reconnect builds a fresh room from the durable update log.
   }
 
   private invalidateRoomForReload(room: Room, reason: string) {
@@ -687,7 +683,6 @@ export class PageCollaborationHub {
     } else if (existing) {
       this.rooms.delete(pageId);
       this.clearRoomTimers(existing);
-      void existing.writeQueue.finally(() => existing.document.destroy());
     }
 
     const room = {} as Room;
@@ -710,8 +705,7 @@ export class PageCollaborationHub {
       writeQueue: Promise.resolve(),
       pendingWrites: 0,
       pendingWriteBytes: 0,
-      bootstrapWritePending: false,
-      document: createValidatedYjsDocument([], maxCollaborationDocumentBytes)
+      bootstrapWritePending: false
     });
     let pendingLoadedDocument: Y.Doc | null = null;
     room.loadPromise = transaction(async (dbClient) => {
@@ -815,8 +809,7 @@ export class PageCollaborationHub {
       room.history = loaded.history;
       room.historyBytes = loaded.historyBytes;
       room.stateUpdate = loaded.stateUpdate;
-      room.document.destroy();
-      room.document = loaded.document;
+      loaded.document.destroy();
       pendingLoadedDocument = null;
       room.maxUpdateId = loaded.maxUpdateId;
       room.loaded = true;
@@ -827,7 +820,6 @@ export class PageCollaborationHub {
       room.invalidated = true;
       this.clearRoomTimers(room);
       if (this.rooms.get(pageId) === room) this.rooms.delete(pageId);
-      room.document.destroy();
       for (const client of room.clients.values()) client.socket.close(1011, "Unable to load collaboration history");
       console.error("Failed to load collaboration history", { pageId, error });
     });
@@ -993,7 +985,11 @@ export class PageCollaborationHub {
       try {
         await action();
       } catch (error) {
-        if (error instanceof InvalidYjsUpdateError) {
+        if (error instanceof CollaborationValidationCapacityError) {
+          if (client.socket.isOpen) client.socket.close(1013, "Collaboration validation capacity exceeded");
+        } else if (error instanceof CollaborationValidationTimeoutError) {
+          if (client.socket.isOpen) client.socket.close(1008, "Collaboration update exceeded the validation budget");
+        } else if (error instanceof InvalidYjsUpdateError) {
           console.warn("Rejected an invalid Yjs update", { pageId: room.pageId, userId: client.user.id, error });
           if (client.socket.isOpen) client.socket.close(1003, error.message);
         } else if (
@@ -1044,19 +1040,18 @@ export class PageCollaborationHub {
   ) {
     if (room.invalidated || this.rooms.get(room.pageId) !== room) return;
 
-    const candidate = applyValidatedYjsUpdate(
-      room.document,
-      update,
-      maxCollaborationDocumentBytes,
-      room.stateUpdate
-    );
+    let validation: CollaborationValidationResult;
     try {
-      // Yjs validates the binary CRDT encoding, not BrainVault's application schema.
-      // Reject any candidate state that cannot be materialized before it reaches
-      // the durable update log, otherwise one malformed frame can poison the page.
-      readCollaborationMaterialization(candidate.document);
+      // Reconstructing, re-encoding, and semantically materializing a large Yjs
+      // document is CPU-intensive. Keep that untrusted work off Node's shared
+      // event loop and bound the number of validations admitted across rooms.
+      validation = await this.validationPool.validate({
+        currentState: room.stateUpdate,
+        update,
+        maxStateBytes: maxCollaborationDocumentBytes,
+        includeMaterialization: room.maxUpdateId === 0
+      });
     } catch (error) {
-      candidate.document.destroy();
       if (error instanceof CollaborationDocumentError) {
         if (client.socket.isOpen) client.socket.close(1008, "Invalid collaboration update");
         return;
@@ -1064,22 +1059,23 @@ export class PageCollaborationHub {
       throw error;
     }
 
+    if (room.invalidated || this.rooms.get(room.pageId) !== room) return;
+
     const persistenceDecision = assessCollaborationUpdatePersistence({
       snapshot,
-      documentChanged: candidate.changed,
+      documentChanged: validation.changed,
       historyEntries: room.history.length
     });
     // Never let a client choose the byte representation that is persisted or
     // fanned out. A stale/full-state Yjs update can contain large amounts of
-    // information the room already has. Re-encode only the state missing from
+    // information the room already has. Persist only the state missing from
     // the pre-update state vector so database and peer cost tracks the actual
     // document change rather than the untrusted wire payload size.
-    const canonicalIncrementalUpdate = Buffer.from(candidate.incrementalUpdate);
+    const canonicalIncrementalUpdate = Buffer.from(validation.incrementalUpdate);
 
     // The first durable update must still pass the canonical SQL bootstrap
     // check, even when an empty page happens to encode to the empty Yjs state.
     if (!snapshot && room.maxUpdateId > 0 && persistenceDecision.action === "ignore") {
-      candidate.document.destroy();
       if (room.clients.has(client.id) && client.socket.isOpen) {
         client.socket.sendJson({
           type: "update-ack",
@@ -1097,7 +1093,7 @@ export class PageCollaborationHub {
       historyBytes: room.historyBytes,
       nextUpdateBytes: canonicalIncrementalUpdate.length
     });
-    const persistedUpdate = durableSnapshot ? Buffer.from(candidate.stateUpdate) : canonicalIncrementalUpdate;
+    const persistedUpdate = durableSnapshot ? Buffer.from(validation.stateUpdate) : canonicalIncrementalUpdate;
     let result:
       | { accepted: true; updateId: number }
       | {
@@ -1113,106 +1109,87 @@ export class PageCollaborationHub {
         }
       | null;
 
-    try {
-      result = await transaction(async (dbClient) => {
-        const access = await getPageAccess(room.pageId, client.user.id, dbClient, { lockPage: true });
-        if (room.invalidated || this.rooms.get(room.pageId) !== room) return null;
-        if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
-          throw new ApiError(403, "COLLABORATION_DISABLED", "Collaboration is not enabled for this page");
-        }
-        const collaborationState = await getCollaborationState(room.pageId, dbClient, { lock: true });
-        assertCollaborationDocumentEpoch(collaborationState, client.documentEpoch);
+    result = await transaction(async (dbClient) => {
+      const access = await getPageAccess(room.pageId, client.user.id, dbClient, { lockPage: true });
+      if (room.invalidated || this.rooms.get(room.pageId) !== room) return null;
+      if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
+        throw new ApiError(403, "COLLABORATION_DISABLED", "Collaboration is not enabled for this page");
+      }
+      const collaborationState = await getCollaborationState(room.pageId, dbClient, { lock: true });
+      assertCollaborationDocumentEpoch(collaborationState, client.documentEpoch);
 
-        const currentRow = await dbClient.queryOne<{ max_update_id: number | null }>(
-          "SELECT MAX(id) AS max_update_id FROM page_yjs_updates WHERE page_id = ?",
+      const currentRow = await dbClient.queryOne<{ max_update_id: number | null }>(
+        "SELECT MAX(id) AS max_update_id FROM page_yjs_updates WHERE page_id = ?",
+        [room.pageId]
+      );
+      const currentUpdateId = toSafeUpdateId(currentRow?.max_update_id ?? 0);
+      const checkpoint = assessCollaborationWriteCheckpoint({
+        durableUpdateId: currentUpdateId,
+        roomUpdateId: room.maxUpdateId,
+        snapshot,
+        snapshotBaseUpdateId: baseUpdateId
+      });
+      if (!checkpoint.accepted) return checkpoint;
+
+      if (snapshot && persistenceDecision.action === "reject") {
+        return {
+          accepted: false as const,
+          currentUpdateId,
+          reason: persistenceDecision.reason
+        };
+      }
+
+      if (currentUpdateId === 0) {
+        // The first durable Yjs state initializes collaboration from SQL. It
+        // must be an exact semantic copy, never a partial client document that
+        // later materialization could interpret as intentional block deletion.
+        const storedBlocks = await dbClient.query<BlockRow>(
+          "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",
           [room.pageId]
         );
-        const currentUpdateId = toSafeUpdateId(currentRow?.max_update_id ?? 0);
-        const checkpoint = assessCollaborationWriteCheckpoint({
-          durableUpdateId: currentUpdateId,
-          roomUpdateId: room.maxUpdateId,
-          snapshot,
-          snapshotBaseUpdateId: baseUpdateId
+        const candidateMaterialization = validation.materialization;
+        if (!candidateMaterialization) {
+          throw new Error("Collaboration bootstrap validation did not return materialized state");
+        }
+        const bootstrapAssessment = assessInitialCollaborationBootstrap({
+          pageTitle: access.page.title,
+          storedBlocks,
+          candidate: candidateMaterialization
         });
-        if (!checkpoint.accepted) return checkpoint;
-
-        if (snapshot && persistenceDecision.action === "reject") {
+        if (!bootstrapAssessment.accepted) {
           return {
             accepted: false as const,
-            currentUpdateId,
-            reason: persistenceDecision.reason
+            currentUpdateId: 0 as const,
+            reason: "bootstrap-mismatch" as const,
+            summary: bootstrapAssessment.summary
           };
         }
+      }
 
-        if (currentUpdateId === 0) {
-          // The first durable Yjs state initializes collaboration from SQL. It
-          // must be an exact semantic copy, never a partial client document that
-          // later materialization could interpret as intentional block deletion.
-          const storedBlocks = await dbClient.query<BlockRow>(
-            "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",
-            [room.pageId]
-          );
-          let bootstrapAssessment: CollaborationBootstrapAssessment;
-          try {
-            bootstrapAssessment = assessInitialCollaborationBootstrap({
-              pageTitle: access.page.title,
-              storedBlocks,
-              candidate: readCollaborationMaterialization(candidate.document)
-            });
-          } catch (error) {
-            if (error instanceof CollaborationDocumentError) {
-              bootstrapAssessment = {
-                accepted: false as const,
-                summary: invalidInitialCollaborationBootstrapSummary({
-                  storedBlockCount: storedBlocks.length
-                })
-              };
-            } else {
-              throw error;
-            }
-          }
-          if (!bootstrapAssessment.accepted) {
-            return {
-              accepted: false as const,
-              currentUpdateId: 0 as const,
-              reason: "bootstrap-mismatch" as const,
-              summary: bootstrapAssessment.summary
-            };
-          }
-        }
-
-        const insert = await dbClient.execute<{ insertId: number | bigint }>(
-          `INSERT INTO page_yjs_updates (page_id, user_id, update_data, is_snapshot)
-           VALUES (?, ?, ?, ?)`,
-          [room.pageId, client.user.id, persistedUpdate, durableSnapshot ? 1 : 0]
-        );
-        const updateId = toSafeUpdateId(insert.insertId);
-        if (durableSnapshot) {
-          await dbClient.execute("DELETE FROM page_yjs_updates WHERE page_id = ? AND id < ?", [room.pageId, updateId]);
-        }
-        return { accepted: true as const, updateId };
-      }).catch((error) => {
-        if (error instanceof ApiError && error.code === "COLLABORATION_LINEAGE_CHANGED") {
-          this.invalidateRoomForLineageChange(room);
-          return null;
-        }
-        if (error instanceof ApiError && [403, 404].includes(error.statusCode)) {
-          client.socket.close(error.statusCode === 404 ? 4003 : 4010, error.message);
-          return null;
-        }
-        throw error;
-      });
-    } catch (error) {
-      candidate.document.destroy();
+      const insert = await dbClient.execute<{ insertId: number | bigint }>(
+        `INSERT INTO page_yjs_updates (page_id, user_id, update_data, is_snapshot)
+         VALUES (?, ?, ?, ?)`,
+        [room.pageId, client.user.id, persistedUpdate, durableSnapshot ? 1 : 0]
+      );
+      const updateId = toSafeUpdateId(insert.insertId);
+      if (durableSnapshot) {
+        await dbClient.execute("DELETE FROM page_yjs_updates WHERE page_id = ? AND id < ?", [room.pageId, updateId]);
+      }
+      return { accepted: true as const, updateId };
+    }).catch((error) => {
+      if (error instanceof ApiError && error.code === "COLLABORATION_LINEAGE_CHANGED") {
+        this.invalidateRoomForLineageChange(room);
+        return null;
+      }
+      if (error instanceof ApiError && [403, 404].includes(error.statusCode)) {
+        client.socket.close(error.statusCode === 404 ? 4003 : 4010, error.message);
+        return null;
+      }
       throw error;
-    }
+    });
 
-    if (!result || room.invalidated || this.rooms.get(room.pageId) !== room) {
-      candidate.document.destroy();
-      return;
-    }
+    if (!result || room.invalidated || this.rooms.get(room.pageId) !== room) return;
     if (!result.accepted) {
-      candidate.document.destroy();
       if (result.reason === "room-stale") {
         console.warn("Invalidating a stale process-local collaboration room", {
           pageId: room.pageId,
@@ -1249,10 +1226,7 @@ export class PageCollaborationHub {
       return;
     }
 
-    const previousDocument = room.document;
-    room.document = candidate.document;
-    room.stateUpdate = Buffer.from(candidate.stateUpdate);
-    previousDocument.destroy();
+    room.stateUpdate = Buffer.from(validation.stateUpdate);
 
     const row: YjsUpdateRow = {
       id: result.updateId,
@@ -1428,7 +1402,6 @@ export class PageCollaborationHub {
       ) return;
       this.clearBootstrapLeaderTimer(room);
       this.rooms.delete(room.pageId);
-      room.document.destroy();
     }, idleRoomTtlMs);
     timer.unref();
     room.idleRemovalTimer = timer;

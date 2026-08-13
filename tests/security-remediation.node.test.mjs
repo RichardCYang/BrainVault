@@ -66,17 +66,23 @@ test("the documented advisory hostname canonicalizes to the private IPv4 target"
   assert.equal(parsed.hostname, "10.0.0.1");
 });
 
-test("collaboration updates are semantically validated before durable persistence", () => {
+test("collaboration updates are semantically validated off the event loop before durable persistence", () => {
   const source = read("src/lib/collaboration-server.ts");
-  const applyIndex = source.indexOf("const candidate = applyValidatedYjsUpdate(");
-  const semanticIndex = source.indexOf("readCollaborationMaterialization(candidate.document);", applyIndex);
-  const insertIndex = source.indexOf("INSERT INTO page_yjs_updates", applyIndex);
+  const worker = read("src/lib/collaboration-update-worker.ts");
+  const pool = read("src/lib/collaboration-update-worker-pool.ts");
+  const validationIndex = source.indexOf("validation = await this.validationPool.validate({");
+  const insertIndex = source.indexOf("INSERT INTO page_yjs_updates", validationIndex);
 
-  assert.ok(applyIndex >= 0);
-  assert.ok(semanticIndex > applyIndex);
-  assert.ok(insertIndex > semanticIndex);
-  assert.match(source.slice(applyIndex, insertIndex), /CollaborationDocumentError/);
-  assert.match(source.slice(applyIndex, insertIndex), /client\.socket\.close\(1008, "Invalid collaboration update"\)/);
+  assert.ok(validationIndex >= 0);
+  assert.ok(insertIndex > validationIndex);
+  assert.match(source.slice(validationIndex, insertIndex), /CollaborationDocumentError/);
+  assert.match(source.slice(validationIndex, insertIndex), /client\.socket\.close\(1008, "Invalid collaboration update"\)/);
+  assert.match(worker, /applyValidatedYjsStateUpdate/);
+  assert.match(worker, /readCollaborationMaterialization\(candidate\.document\)/);
+  assert.match(pool, /maxPendingValidationTasks = 64/);
+  assert.match(pool, /maxPendingValidationBytes = 128 \* 1024 \* 1024/);
+  assert.match(pool, /validationTaskTimeoutMs = 5_000/);
+  assert.match(pool, /availableParallelism\(\)/);
 });
 
 test("collaboration tickets are bound to the authenticated browser session", () => {

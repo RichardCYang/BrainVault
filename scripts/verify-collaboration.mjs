@@ -296,8 +296,8 @@ function verifySourceWiring() {
     "currentAccess = await getPageAccess",
     "maxCollaborationUpdateBytes",
     "maxCollaborationDocumentBytes",
-    "applyValidatedYjsUpdate",
-    "candidate.stateUpdate",
+    "validationPool.validate",
+    "validation.stateUpdate",
     "assessCollaborationWriteCheckpoint",
     "roomUpdateId: room.maxUpdateId",
     'result.reason === "room-stale"',
@@ -322,6 +322,7 @@ function verifySourceWiring() {
     'import * as Y from "yjs"',
     "createValidatedYjsDocument",
     "applyValidatedYjsUpdate",
+    "applyValidatedYjsStateUpdate",
     "Y.encodeStateAsUpdate",
     "Y.applyUpdate"
   ]);

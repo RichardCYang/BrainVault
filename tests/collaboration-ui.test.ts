@@ -160,8 +160,8 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(token).toContain("documentEpoch: string");
     expect(server).toContain("bootstrapWritePending");
     expect(server).toContain("pendingWrites");
-    expect(server).toContain("applyValidatedYjsUpdate");
-    expect(server).toContain("candidate.stateUpdate");
+    expect(server).toContain("validationPool.validate");
+    expect(server).toContain("validation.stateUpdate");
     expect(yjsValidation).toContain('import * as Y from "yjs"');
     expect(yjsValidation).toContain("Y.encodeStateAsUpdate");
     expect(materialization).toContain("materializeCollaborationUpdates");
