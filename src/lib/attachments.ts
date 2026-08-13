@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import path from "node:path";
-import { link, lstat, mkdir, open, readdir, rm, stat } from "node:fs/promises";
+import { link, lstat, mkdir, open, readdir, rm } from "node:fs/promises";
 import { env } from "../config/env.js";
 import { assessAttachmentFileCountLimit, assessAttachmentStorageLimit } from "./attachment-storage-limit.js";
 import { dataTransferResourceLimits } from "./data-transfer-limits.js";
@@ -388,7 +388,7 @@ export async function removeDeletedAttachmentFiles(ownerId: string, blockIds: st
 
 export async function attachmentFileExists(ownerId: string, blockId: string) {
   try {
-    const result = await stat(getAttachmentFilePath(ownerId, blockId));
+    const result = await lstat(getAttachmentFilePath(ownerId, blockId));
     return result.isFile();
   } catch {
     return false;

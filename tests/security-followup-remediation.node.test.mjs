@@ -41,6 +41,7 @@ test("deprecated IPv6 site-local addresses remain blocked as non-public SSRF tar
   assert.equal(isPrivateAddress("fec0::1"), true);
   assert.equal(isPrivateAddress("feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"), true);
   assert.equal(isPrivateAddress("ff00::1"), true);
+  assert.equal(isPrivateAddress("168.63.129.16"), true);
   assert.equal(isPrivateAddress("2606:4700:4700::1111"), false);
 });
 
@@ -212,6 +213,8 @@ test("the production wiring preserves identity while removing repeated high-cost
   const blockRoutes = read("src/routes/block.routes.ts");
   const dataTransfer = read("src/lib/data-transfer.ts");
   const envSource = read("src/config/env.ts");
+  const bookmarkSource = read("src/lib/bookmark.ts");
+  const reverseProxySource = read("src/lib/reverse-proxy.ts");
 
   assert.match(yjsValidation, /changed: !Buffer\.from\(currentState\)\.equals\(Buffer\.from\(stateUpdate\)\)/);
   assert.match(server, /persistenceDecision\.action === "ignore"/);
@@ -245,4 +248,16 @@ test("the production wiring preserves identity while removing repeated high-cost
   assert.match(blockRoutes, /currentAttachmentUsage\.bytes/);
   assert.match(blockRoutes, /currentAttachmentUsage\.files/);
   assert.match(dataTransfer, /assertAttachmentStorageLimit\([\s\S]*?restoredAttachmentBytes[\s\S]*?manifest\.attachments\.length \+ retainedAttachments\.length[\s\S]*?\)/);
+  assert.match(server, /await this\.revalidateClientPageAccess\(room, client\)/);
+  assert.match(server, /notifyCanonicalAttachment[\s\S]*revalidateClientPageAccess/);
+  assert.match(server, /rawBaseUpdateId > BigInt\(Number\.MAX_SAFE_INTEGER\)/);
+  assert.match(bookmarkSource, /isSelfOrSubdomainBookmarkFetchHost\(url\.hostname\)/);
+  assert.match(bookmarkSource, /Bookmark redirects must not downgrade from HTTPS to HTTP/);
+  assert.match(reverseProxySource, /const namedProxyRanges:[\s\S]*loopback:[\s\S]*127\.0\.0\.0\/8/);
+  assert.doesNotMatch(reverseProxySource, /uniquelocal|linklocal/);
+  assert.match(envSource, /const trustedProxyAddressGroups = new Set\(\["loopback"\]\)/);
+  assert.match(dataTransfer, /const comparisonKey = value\.toLowerCase\(\)/);
+  assert.match(dataTransfer, /const entryNamesCaseFolded = new Set<string>\(\)/);
+  assert.match(attachmentSource, /await lstat\(getAttachmentFilePath\(ownerId, blockId\)\)/);
+  assert.match(app, /const fileInfo = await lstat\(filePath\)\.catch/);
 });

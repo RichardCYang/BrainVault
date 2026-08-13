@@ -104,11 +104,11 @@ describe("Express reverse-proxy trust setting", () => {
     expect(() => createExpressTrustProxySetting(1, [])).toThrow(/TRUST_PROXY_HOPS must remain 0/);
   });
 
-  it("matches exact addresses, CIDRs, and named private ranges", () => {
+  it("matches exact addresses, CIDRs, and loopback while rejecting broad named private ranges", () => {
     expect(isTrustedProxyRemoteAddress("::ffff:127.0.0.1", ["loopback"])).toBe(true);
     expect(isTrustedProxyRemoteAddress("172.18.0.12", ["172.18.0.0/24"])).toBe(true);
     expect(isTrustedProxyRemoteAddress("172.18.1.12", ["172.18.0.0/24"])).toBe(false);
-    expect(isTrustedProxyRemoteAddress("fd00::12", ["uniquelocal"])).toBe(true);
+    expect(isTrustedProxyRemoteAddress("fd00::12", ["uniquelocal"])).toBe(false);
   });
 
   it("requires a trusted peer and one canonical forwarded HTTPS value", () => {

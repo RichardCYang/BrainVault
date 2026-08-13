@@ -103,9 +103,7 @@ function addressMatchesCidr(address: ParsedAddress, cidr: string) {
 }
 
 const namedProxyRanges: Record<string, string[]> = {
-  loopback: ["127.0.0.0/8", "::1/128"],
-  linklocal: ["169.254.0.0/16", "fe80::/10"],
-  uniquelocal: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"]
+  loopback: ["127.0.0.0/8", "::1/128"]
 };
 
 export function isTrustedProxyRemoteAddress(

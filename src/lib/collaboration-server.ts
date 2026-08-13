@@ -342,12 +342,13 @@ export class PageCollaborationHub {
     this.invalidateRoom(room, 4011, "The collaboration document was replaced");
   }
 
-  notifyCanonicalAttachment(pageId: string, block: unknown) {
+  async notifyCanonicalAttachment(pageId: string, block: unknown) {
     const room = this.rooms.get(pageId);
     if (!room || room.invalidated || this.rooms.get(pageId) !== room) return;
-    for (const client of room.clients.values()) {
+    await Promise.all([...room.clients.values()].map(async (client) => {
+      if (!await this.revalidateClientPageAccess(room, client)) return;
       if (client.socket.isOpen) client.socket.sendJson({ type: "canonical-attachment", block });
-    }
+    }));
   }
 
   private reserveUpgrade(userId: string, pageId: string) {
@@ -860,7 +861,7 @@ export class PageCollaborationHub {
         client.socket.close(1009, "Collaboration control message is too large");
         return;
       }
-      this.handleTextMessage(room, client, message.text);
+      await this.handleTextMessage(room, client, message.text);
       return;
     }
 
@@ -898,7 +899,12 @@ export class PageCollaborationHub {
         client.socket.close(1003, "Invalid collaboration snapshot");
         return;
       }
-      const baseUpdateId = toSafeUpdateId(message.data.readBigUInt64BE(1));
+      const rawBaseUpdateId = message.data.readBigUInt64BE(1);
+      if (rawBaseUpdateId > BigInt(Number.MAX_SAFE_INTEGER)) {
+        client.socket.close(1003, "Invalid collaboration snapshot");
+        return;
+      }
+      const baseUpdateId = Number(rawBaseUpdateId);
       const update = message.data.subarray(9);
       if (!update.length || update.length > maxCollaborationUpdateBytes) {
         client.socket.close(1009, "Yjs snapshot is too large");
@@ -920,7 +926,7 @@ export class PageCollaborationHub {
     client.socket.close(1003, "Unknown collaboration update type");
   }
 
-  private handleTextMessage(room: Room, client: ClientContext, text: string) {
+  private async handleTextMessage(room: Room, client: ClientContext, text: string) {
     let value: unknown;
     try {
       value = JSON.parse(text);
@@ -931,8 +937,38 @@ export class PageCollaborationHub {
     if (!value || typeof value !== "object" || Array.isArray(value)) return;
     const body = value as Record<string, unknown>;
     if (body.type !== "awareness" || !client.synced) return;
+    if (!await this.revalidateClientPageAccess(room, client)) return;
     client.awareness = normalizeAwareness(body.state);
     this.broadcastPresenceUpdate(room, client);
+  }
+
+  private async revalidateClientPageAccess(room: Room, client: ClientContext) {
+    if (
+      this.closed
+      || room.invalidated
+      || this.rooms.get(room.pageId) !== room
+      || !room.clients.has(client.id)
+      || !client.socket.isOpen
+    ) return false;
+
+    try {
+      const access = await getPageAccess(room.pageId, client.user.id);
+      if (
+        this.closed
+        || room.invalidated
+        || this.rooms.get(room.pageId) !== room
+        || !room.clients.has(client.id)
+        || !client.socket.isOpen
+      ) return false;
+      if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
+        client.socket.close(4010, "Collaboration is no longer available");
+        return false;
+      }
+      return true;
+    } catch {
+      if (client.socket.isOpen) client.socket.close(4003, "Page access was removed");
+      return false;
+    }
   }
 
   private enqueueRoomWrite(
@@ -1516,6 +1552,6 @@ export function disconnectIpCollaborators(ipAddress: string, reason?: string) {
   for (const hub of activeHubs) hub.disconnectIpEverywhere(ipAddress, reason);
 }
 
-export function broadcastCanonicalAttachment(pageId: string, block: unknown) {
-  for (const hub of activeHubs) hub.notifyCanonicalAttachment(pageId, block);
+export async function broadcastCanonicalAttachment(pageId: string, block: unknown) {
+  await Promise.all([...activeHubs].map((hub) => hub.notifyCanonicalAttachment(pageId, block)));
 }

@@ -1,6 +1,7 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import path from "node:path";
 import { type ServerResponse } from "node:http";
+import { lstat } from "node:fs/promises";
 import helmet from "helmet";
 import cors from "cors";
 import morgan from "morgan";
@@ -19,7 +20,7 @@ import { requireAuth } from "./middleware/auth.js";
 import { createHttpsEnforcementMiddleware } from "./middleware/https.js";
 import { setPrivateNoStoreCacheControl } from "./lib/cache-control.js";
 import { createExpressTrustProxySetting } from "./lib/reverse-proxy.js";
-import { canUserReadCustomIcon, customIconUploadRoot } from "./lib/custom-icons.js";
+import { canUserReadCustomIcon, customIconUploadRoot, getCustomIconFilePath } from "./lib/custom-icons.js";
 import {
   developmentAccessLogFormat,
   productionAccessLogFormat,
@@ -148,6 +149,16 @@ export function createApp() {
         const userId = req.user?.id;
         const publicPath = `${req.baseUrl}${req.path}`;
         if (!userId || !(await canUserReadCustomIcon(userId, publicPath))) {
+          res.sendStatus(404);
+          return;
+        }
+        const filePath = getCustomIconFilePath(publicPath);
+        if (!filePath) {
+          res.sendStatus(404);
+          return;
+        }
+        const fileInfo = await lstat(filePath).catch(() => null);
+        if (!fileInfo?.isFile()) {
           res.sendStatus(404);
           return;
         }

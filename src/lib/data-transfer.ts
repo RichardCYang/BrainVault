@@ -3,7 +3,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import type { Dirent } from "node:fs";
 import type { Writable } from "node:stream";
-import { access, copyFile, link, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, copyFile, link, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { z } from "zod";
 import { env } from "../config/env.js";
 import {
@@ -809,8 +809,9 @@ function assertExportCount(label: string, count: number, maximum: number) {
 function assertUnique(values: string[], label: string) {
   const seen = new Set<string>();
   for (const value of values) {
-    if (seen.has(value)) invalidBackup(`The backup contains a duplicate ${label}: ${value}`);
-    seen.add(value);
+    const comparisonKey = value.toLowerCase();
+    if (seen.has(comparisonKey)) invalidBackup(`The backup contains a duplicate ${label}: ${value}`);
+    seen.add(comparisonKey);
   }
 }
 
@@ -1314,7 +1315,7 @@ export async function prepareUserDataBackup(userId: string) {
         const sourcePath = getAttachmentFilePath(userId, block.id);
         const stagedPath = path.join(stagedAttachmentDir, block.id);
         try {
-          const fileStat = await stat(sourcePath);
+          const fileStat = await lstat(sourcePath);
           if (!fileStat.isFile()) throw new Error("not a file");
           if (stagedFileBytes + BigInt(fileStat.size) > maxTransferBytes) {
             throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
@@ -1384,7 +1385,7 @@ export async function prepareUserDataBackup(userId: string) {
 
         const sourcePath = getAttachmentFilePath(userId, entry.name);
         const stagedPath = path.join(stagedAttachmentDir, entry.name);
-        const fileStat = await stat(sourcePath);
+        const fileStat = await lstat(sourcePath);
         if (!fileStat.isFile()) {
           throw new ApiError(409, "BACKUP_ATTACHMENT_STORAGE_INVALID", `Retained attachment is not a file: ${entry.name}`);
         }
@@ -1461,7 +1462,7 @@ export async function prepareUserDataBackup(userId: string) {
           throw new ApiError(409, "BACKUP_CUSTOM_ICON_PATH_INVALID", `Custom icon path is invalid: ${entry.name}`);
         }
         const stagedPath = path.join(stagedCustomIconDir, entry.name);
-        const fileStat = await stat(sourcePath);
+        const fileStat = await lstat(sourcePath);
         if (!fileStat.isFile() || fileStat.size <= 0 || fileStat.size > maxCustomIconBytes) {
           throw new ApiError(409, "BACKUP_CUSTOM_ICON_INVALID", `Custom icon file is invalid: ${entry.name}`);
         }
@@ -2701,13 +2702,18 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
   }
 
   const entryByName = new Map<string, (typeof entries)[number]>();
+  const entryNamesCaseFolded = new Set<string>();
   let totalSize = 0n;
   for (const entry of entries) {
     if (!entry.name || entry.name.startsWith("/") || entry.name.includes("\\") || entry.name.split("/").includes("..")) {
       invalidBackup(`ZIP entry path is unsafe: ${entry.name}`);
     }
-    if (entryByName.has(entry.name)) invalidBackup(`ZIP entry is duplicated: ${entry.name}`);
+    const caseFoldedName = entry.name.toLowerCase();
+    if (entryByName.has(entry.name) || entryNamesCaseFolded.has(caseFoldedName)) {
+      invalidBackup(`ZIP entry is duplicated: ${entry.name}`);
+    }
     entryByName.set(entry.name, entry);
+    entryNamesCaseFolded.add(caseFoldedName);
     totalSize += entry.uncompressedSize;
   }
   const maxBytes = BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n;

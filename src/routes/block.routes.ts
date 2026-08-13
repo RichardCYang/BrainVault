@@ -732,7 +732,7 @@ blockRouter.post(
         cleanupPath = null;
       }
       const payload = toBlock(result.block);
-      broadcastCanonicalAttachment(pageId, payload);
+      await broadcastCanonicalAttachment(pageId, payload);
       res.status(201).json({ block: payload, pageContentVersion: result.pageContentVersion });
     } catch (error) {
       if (cleanupPath) await removeAttachmentPath(cleanupPath);

@@ -46,11 +46,11 @@ class SlowSocket extends FakeSocket {
   }
 }
 
-function createClientFrame(opcode, payload) {
+function createClientFrame(opcode, payload, fin = true) {
   const data = Buffer.from(payload);
   const mask = Buffer.from([0x12, 0x34, 0x56, 0x78]);
   const header = Buffer.alloc(2 + (data.length < 126 ? 0 : data.length <= 0xffff ? 2 : 8));
-  header[0] = 0x80 | opcode;
+  header[0] = (fin ? 0x80 : 0) | opcode;
   let offset = 2;
   if (data.length < 126) {
     header[1] = 0x80 | data.length;
@@ -108,6 +108,45 @@ test("WebSocket async handlers cannot accumulate an unbounded inbound message ba
   assert.equal(handledMessages, 1);
 
   releaseHandler();
+  connection.terminate();
+});
+
+test("WebSocket zero-length fragmented messages are bounded independently of payload bytes", () => {
+  const socket = new FakeSocket();
+  const connection = new WebSocketConnection(socket, 1024 * 1024);
+  const originalNow = Date.now;
+  let now = originalNow();
+  Date.now = () => now;
+  try {
+    connection.start();
+    socket.emit("data", createClientFrame(0x1, Buffer.alloc(0), false));
+    for (let index = 0; index < 2_000 && connection.isOpen; index += 1) {
+      now += 2; // stay below the transport frame/second limit while exercising fragment count
+      socket.emit("data", createClientFrame(0x0, Buffer.alloc(0), false));
+    }
+
+    assert.deepEqual(parseCloseFrame(socket.writes), {
+      code: 1009,
+      reason: "WebSocket fragmented message has too many fragments"
+    });
+  } finally {
+    Date.now = originalNow;
+    connection.terminate();
+  }
+});
+
+test("WebSocket raw control frames are subject to the transport frame rate limit", () => {
+  const socket = new FakeSocket();
+  const connection = new WebSocketConnection(socket, 1024 * 1024);
+  connection.start();
+  for (let index = 0; index < 700 && connection.isOpen; index += 1) {
+    socket.emit("data", createClientFrame(0x9, Buffer.alloc(0)));
+  }
+
+  assert.deepEqual(parseCloseFrame(socket.writes), {
+    code: 1008,
+    reason: "WebSocket frame rate limit exceeded"
+  });
   connection.terminate();
 });
 

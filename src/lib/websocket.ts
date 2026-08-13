@@ -7,6 +7,8 @@ const fatalUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const defaultMaxQueuedMessages = 64;
 const maxQueuedExtraBytes = 1024 * 1024;
 const maxFrameHeaderBytes = 10;
+const maxFragmentsPerMessage = 1_024;
+const maxTransportFramesPerSecond = 600;
 
 export type WebSocketMessage =
   | { type: "text"; text: string }
@@ -60,6 +62,8 @@ export class WebSocketConnection {
   private fragmentOpcode: 1 | 2 | null = null;
   private fragmentParts: Buffer[] = [];
   private fragmentBytes = 0;
+  private frameWindowStartedAt = Date.now();
+  private consumedFramesInWindow = 0;
   private messageHandler: MessageHandler | null = null;
   private closeHandler: CloseHandler | null = null;
   private messageQueue: WebSocketMessage[] = [];
@@ -179,6 +183,20 @@ export class WebSocketConnection {
     this.close(code, reason);
   }
 
+  private consumeFrameRateBudget() {
+    const now = Date.now();
+    if (now - this.frameWindowStartedAt >= 1_000) {
+      this.frameWindowStartedAt = now;
+      this.consumedFramesInWindow = 0;
+    }
+    this.consumedFramesInWindow += 1;
+    if (this.consumedFramesInWindow > maxTransportFramesPerSecond) {
+      this.protocolError("WebSocket frame rate limit exceeded", 1008);
+      return false;
+    }
+    return true;
+  }
+
   private unreadByteLength() {
     return this.readEnd - this.readStart;
   }
@@ -274,6 +292,7 @@ export class WebSocketConnection {
         return;
       }
       if (availableBytes < offset + 4 + payloadLength) return;
+      if (!this.consumeFrameRateBudget()) return;
 
       const mask = this.readBuffer.subarray(frameStart + offset, frameStart + offset + 4);
       offset += 4;
@@ -299,6 +318,10 @@ export class WebSocketConnection {
       if (opcode === 0x0) {
         if (this.fragmentOpcode === null) {
           this.protocolError("Unexpected continuation frame");
+          return;
+        }
+        if (this.fragmentParts.length >= maxFragmentsPerMessage) {
+          this.protocolError("WebSocket fragmented message has too many fragments", 1009);
           return;
         }
         this.fragmentParts.push(payload);

@@ -116,6 +116,8 @@ test("authentication route source retains all hardened ordering guarantees", asy
   assert.match(authMiddleware, /new ApiError\(403, "ORIGIN_REQUIRED"/);
   assert.match(authMiddleware, /assertBrowserRequestOrigin\(req, \{ requireOrigin: true \}\)/);
   assert.match(authMiddleware, /requiresCookieMutationOrigin\(req, selectedSource\)/);
+  assert.match(authMiddleware, /requirePublicOrigin: cookieMutation/);
+  assert.match(authMiddleware, /parsedOrigin !== env\.PUBLIC_ORIGIN/);
   const cookieCredentialIndex = authMiddleware.indexOf("const cookieToken = readAuthSessionCookie(req)");
   const bearerCredentialIndex = authMiddleware.indexOf("const bearerToken = cookieToken ? null : getBearerToken(req)");
   assert.ok(cookieCredentialIndex >= 0 && bearerCredentialIndex > cookieCredentialIndex);

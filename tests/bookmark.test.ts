@@ -170,6 +170,7 @@ describe("bookmark SSRF address filtering", () => {
     "172.16.10.4",
     "192.168.1.10",
     "169.254.169.254",
+    "168.63.129.16",
     "192.88.99.1",
     "240.0.0.1",
     "::1",
@@ -228,7 +229,7 @@ describe("bookmark network address selection", () => {
   it("requires an explicit host allowlist, uses approved ports, and normalizes blocked-target failures", () => {
     expect(envSource).toContain('BOOKMARK_FETCH_ALLOWED_HOSTS');
     expect(envSource).toContain('BOOKMARK_FETCH_ALLOWED_PORTS');
-    expect(bookmarkSource).toContain('url.origin.toLowerCase() === env.PUBLIC_ORIGIN.toLowerCase()');
+    expect(bookmarkSource).toContain('isSelfOrSubdomainBookmarkFetchHost(url.hostname)');
     expect(isBookmarkFetchHostAllowed("example.com", ["example.com"])).toBe(true);
     expect(isBookmarkFetchHostAllowed("cdn.example.com", ["example.com"])).toBe(true);
     expect(isBookmarkFetchHostAllowed("example.com.evil.test", ["example.com"])).toBe(false);

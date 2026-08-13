@@ -53,4 +53,20 @@ describe("Account password lockout", () => {
       login_locked_until: null
     });
   });
+
+  it("decays accumulated failures gradually instead of resetting them after one idle interval", async () => {
+    const startedAt = Date.parse("2026-08-01T12:00:00.000Z");
+    const state: LockState = {
+      failed_login_attempts: 6,
+      last_failed_login_at: new Date(startedAt),
+      login_locked_until: null
+    };
+    const client = createLockoutClient(state);
+
+    await expect(
+      evaluatePasswordLogin(client, "usr_decay", false, startedAt + env.AUTH_LOGIN_FAILURE_RESET_MS + 1)
+    ).resolves.toBe("DENIED");
+
+    expect(state.failed_login_attempts).toBe(6);
+  });
 });

@@ -309,13 +309,20 @@ export function isBookmarkFetchHostAllowed(
   });
 }
 
+function isSelfOrSubdomainBookmarkFetchHost(hostname: string) {
+  const host = normalizeBookmarkFetchHostname(hostname);
+  const publicHost = normalizeBookmarkFetchHostname(new URL(env.PUBLIC_ORIGIN).hostname);
+  if (host === publicHost) return true;
+  return net.isIP(host) === 0 && net.isIP(publicHost) === 0 && host.endsWith(`.${publicHost}`);
+}
+
 async function validateFetchUrl(value: string | URL) {
   const normalized = normalizeBookmarkUrl(String(value));
   if (!normalized) {
     throw new ApiError(400, "BOOKMARK_URL_INVALID", "Enter a valid HTTP or HTTPS URL");
   }
   const url = new URL(normalized);
-  if (url.origin.toLowerCase() === env.PUBLIC_ORIGIN.toLowerCase()) {
+  if (isSelfOrSubdomainBookmarkFetchHost(url.hostname)) {
     throw new ApiError(403, "BOOKMARK_URL_BLOCKED", "Self-origin bookmark previews are not allowed");
   }
   if (!isBookmarkFetchHostAllowed(url.hostname)) {
@@ -415,6 +422,10 @@ async function fetchHtml(
             nextUrl = new URL(location, url);
           } catch {
             rejectFetch(new ApiError(422, "BOOKMARK_FETCH_FAILED", "The bookmark page returned an invalid redirect"));
+            return;
+          }
+          if (url.protocol === "https:" && nextUrl.protocol !== "https:") {
+            rejectFetch(new ApiError(403, "BOOKMARK_URL_BLOCKED", "Bookmark redirects must not downgrade from HTTPS to HTTP"));
             return;
           }
           fetchHtml(nextUrl, redirectsLeft - 1, deadline).then(

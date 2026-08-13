@@ -36,12 +36,12 @@ Never commit a real `.env` file.
 | `RATE_LIMIT_MAX` | `120` | Maximum requests per global window |
 | `AUTH_LOGIN_IP_WINDOW_MS` | `900000` | Login IP throttling window |
 | `AUTH_LOGIN_IP_MAX` | `20` | Failed login requests allowed per IP window |
-| `AUTH_LOGIN_ACCOUNT_WINDOW_MS` | `3600000` | Account-keyed login throttling window |
+| `AUTH_LOGIN_ACCOUNT_WINDOW_MS` | `21600000` | Account-keyed login throttling window |
 | `AUTH_LOGIN_ACCOUNT_MAX` | `30` | Failed or MFA-pending login requests allowed per normalized account window |
 | `AUTH_LOGIN_LOCK_THRESHOLD` | `8` | Password failures before persisted account backoff begins |
 | `AUTH_LOGIN_LOCK_BASE_MS` | `30000` | Initial account lock duration |
 | `AUTH_LOGIN_LOCK_MAX_MS` | `900000` | Maximum exponential account lock duration |
-| `AUTH_LOGIN_FAILURE_RESET_MS` | `3600000` | Idle interval after which the password-failure count restarts |
+| `AUTH_LOGIN_FAILURE_RESET_MS` | `86400000` | Failure-count decay interval; one persisted failure is removed per idle interval |
 | `AUTH_MFA_IP_WINDOW_MS` | `900000` | MFA login verification IP window |
 | `AUTH_MFA_IP_MAX` | `15` | Failed MFA login verifications allowed per IP window |
 | `AUTH_MFA_ACCOUNT_WINDOW_MS` | `3600000` | MFA login account window and failure-carry interval |
@@ -56,7 +56,7 @@ Never commit a real `.env` file.
 | `AUTH_REGISTER_WINDOW_MS` | `3600000` | Registration throttling window |
 | `AUTH_REGISTER_MAX` | `5` | Registration requests allowed per IP window |
 | `AUTH_REGISTER_GLOBAL_MAX` | `20` | Registration requests allowed per process-wide window |
-| `TRUST_PROXY_ADDRESSES` | Empty | Comma-separated proxy IPs, narrow CIDRs, or `loopback`/`linklocal`/`uniquelocal`; required in proxy mode |
+| `TRUST_PROXY_ADDRESSES` | Empty | Comma-separated proxy IPs, narrow CIDRs, or `loopback`; required in proxy mode |
 | `TRUST_PROXY_HOPS` | `0` | Compatibility variable only; numeric hop trust is disabled and this value must remain `0` |
 | `BOOKMARK_PREVIEW_WINDOW_MS` | `60000` | Dedicated authenticated-user bookmark-preview limit window |
 | `BOOKMARK_PREVIEW_MAX` | `12` | Bookmark-preview requests allowed per authenticated user and window |

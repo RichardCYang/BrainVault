@@ -12,6 +12,7 @@ import { toPublicUser } from "../lib/mappers.js";
 import { clearAuthSessionCookie, readAuthSessionCookie } from "../lib/session-cookie.js";
 import { ensureAuthSessionForRequest } from "../lib/auth-sessions.js";
 import { isAllowedCorsOrigin } from "./cors.js";
+import { parseExactHttpOrigin } from "../lib/request-origin.js";
 import type { UserRow } from "../types/domain.js";
 
 function getBearerToken(req: Request) {
@@ -29,7 +30,10 @@ function getBearerToken(req: Request) {
 
 function assertBrowserRequestOrigin(
   req: Request,
-  { requireOrigin = false }: { requireOrigin?: boolean } = {}
+  {
+    requireOrigin = false,
+    requirePublicOrigin = false
+  }: { requireOrigin?: boolean; requirePublicOrigin?: boolean } = {}
 ) {
   const fetchSite = req.header("sec-fetch-site")?.trim().toLowerCase();
   if (fetchSite === "cross-site") {
@@ -43,8 +47,12 @@ function assertBrowserRequestOrigin(
     }
     return;
   }
-  if (!isAllowedCorsOrigin(req, origin)) {
+  const parsedOrigin = parseExactHttpOrigin(origin);
+  if (!parsedOrigin || !isAllowedCorsOrigin(req, parsedOrigin)) {
     throw new ApiError(403, "ORIGIN_NOT_ALLOWED", "Request origin is not allowed");
+  }
+  if (requirePublicOrigin && parsedOrigin !== env.PUBLIC_ORIGIN) {
+    throw new ApiError(403, "ORIGIN_MISMATCH", "Cookie-authenticated mutations must originate from the public application origin");
   }
 }
 
@@ -87,7 +95,8 @@ async function authenticateRequest(
       next(new ApiError(401, "UNAUTHENTICATED", "Authentication required"));
       return;
     }
-    assertBrowserRequestOrigin(req, { requireOrigin: requiresCookieMutationOrigin(req, selectedSource) });
+    const cookieMutation = requiresCookieMutationOrigin(req, selectedSource);
+    assertBrowserRequestOrigin(req, { requireOrigin: cookieMutation, requirePublicOrigin: cookieMutation });
     source = selectedSource;
 
     const payload = verifyAuthToken(token);

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { lstat, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { withUserAttachmentLock } from "./attachments.js";
 import { env } from "../config/env.js";
 import { assessCustomIconStorageLimit } from "./custom-icon-storage-limit.js";
@@ -210,7 +210,7 @@ export async function listCustomIcons(userId: string) {
         continue;
       }
       try {
-        const fileStat = await stat(filePath);
+        const fileStat = await lstat(filePath);
         if (!fileStat.isFile()) throw new Error("not a file");
         available.push({ value: `image:${row.file_path}`, lastUsedAt: toTimestamp(row.last_used_at) });
       } catch {
@@ -286,7 +286,7 @@ export async function restoreCustomIconToLibrary(userId: string, value: string) 
     const filePath = getCustomIconFilePath(publicPath);
     if (!filePath) return;
     try {
-      const fileStat = await stat(filePath);
+      const fileStat = await lstat(filePath);
       if (!fileStat.isFile()) return;
     } catch {
       return;

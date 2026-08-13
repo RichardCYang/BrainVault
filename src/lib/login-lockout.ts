@@ -68,8 +68,11 @@ export async function evaluatePasswordLogin(
   }
 
   const lastFailure = timestamp(state.last_failed_login_at);
-  const withinFailureWindow = lastFailure !== null && nowMs - lastFailure <= env.AUTH_LOGIN_FAILURE_RESET_MS;
-  const failures = (withinFailureWindow ? failedAttemptCount(state.failed_login_attempts) : 0) + 1;
+  const priorFailures = failedAttemptCount(state.failed_login_attempts);
+  const idleMs = lastFailure === null ? null : Math.max(0, nowMs - lastFailure);
+  const decaySteps = idleMs === null ? priorFailures : Math.floor(idleMs / env.AUTH_LOGIN_FAILURE_RESET_MS);
+  const retainedFailures = Math.max(0, priorFailures - decaySteps);
+  const failures = retainedFailures + 1;
   const lockDurationMs = calculateLockDurationMs(failures);
   const lockedUntilDate = lockDurationMs > 0 ? new Date(nowMs + lockDurationMs) : null;
 

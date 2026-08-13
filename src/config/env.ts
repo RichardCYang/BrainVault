@@ -67,12 +67,12 @@ const envSchema = z.object({
   NAVIGATION_ORDER_ACCOUNT_MAX: z.coerce.number().int().min(1).max(60).default(12),
   AUTH_LOGIN_IP_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60_000),
   AUTH_LOGIN_IP_MAX: z.coerce.number().int().positive().default(20),
-  AUTH_LOGIN_ACCOUNT_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60_000),
+  AUTH_LOGIN_ACCOUNT_WINDOW_MS: z.coerce.number().int().min(6 * 60 * 60_000).default(6 * 60 * 60_000),
   AUTH_LOGIN_ACCOUNT_MAX: z.coerce.number().int().positive().default(30),
   AUTH_LOGIN_LOCK_THRESHOLD: z.coerce.number().int().min(3).max(50).default(8),
   AUTH_LOGIN_LOCK_BASE_MS: z.coerce.number().int().min(1_000).max(60 * 60_000).default(30_000),
   AUTH_LOGIN_LOCK_MAX_MS: z.coerce.number().int().min(1_000).max(24 * 60 * 60_000).default(15 * 60_000),
-  AUTH_LOGIN_FAILURE_RESET_MS: z.coerce.number().int().min(60_000).max(7 * 24 * 60 * 60_000).default(60 * 60_000),
+  AUTH_LOGIN_FAILURE_RESET_MS: z.coerce.number().int().min(6 * 60 * 60_000).max(7 * 24 * 60 * 60_000).default(24 * 60 * 60_000),
   AUTH_MFA_IP_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60_000),
   AUTH_MFA_IP_MAX: z.coerce.number().int().positive().default(15),
   AUTH_MFA_ACCOUNT_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60_000),
@@ -226,7 +226,7 @@ function parseBookmarkFetchAllowedHosts(value: string) {
   return [...new Set(hosts)];
 }
 
-const trustedProxyAddressGroups = new Set(["loopback", "linklocal", "uniquelocal"]);
+const trustedProxyAddressGroups = new Set(["loopback"]);
 
 function assertTrustedProxyAddress(value: string) {
   if (trustedProxyAddressGroups.has(value.toLowerCase())) return;
