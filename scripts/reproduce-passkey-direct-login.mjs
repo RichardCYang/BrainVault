@@ -405,7 +405,8 @@ const staticContract = {
   boundedClientExtensions: /maxClientExtensionResultsBytes = 8 \* 1024/.test(routeSource)
     && /maxClientExtensionNodes = 256/.test(routeSource),
   boundedAnonymousRequestBody: /app\.use\("\/api\/auth\/passkey", express\.json\(\{ limit: "64kb" \}\)\)/
-    .test(appSource),
+    .test(appSource)
+    && /app\.use\("\/api\/auth\/mfa\/login\/passkey", express\.json\(\{ limit: "64kb" \}\)\)/.test(appSource),
   consumeBeforeFullValidation: routeSource.indexOf("consumePasskeyLoginChallenge(challengeToken, binding)")
     < routeSource.indexOf("verifySchema.safeParse(req.body)"),
   userHandleBinding: /equalBytes\(userHandle, passkey\.webauthn_user_id\)/.test(routeSource),

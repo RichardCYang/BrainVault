@@ -104,16 +104,26 @@ test("collaboration tickets are bound to the authenticated browser session", () 
   assert.match(serverSource, /createCollaborationSessionBinding\(authSessionToken\) !== payload\.sessionBinding/);
 });
 
-test("failed password logins are padded after both existing and nonexistent account paths", () => {
+test("password login outcomes use uniform padding and hide pre-auth policy denials", () => {
   const source = read("src/routes/auth.routes.ts");
   const loginStart = source.indexOf('authRouter.post(\n  "/login"');
-  const paddingIndex = source.indexOf("await padFailedLoginResponse(startedAt);", loginStart);
-  const invalidCredentialIndex = source.indexOf('new ApiError(401, "INVALID_CREDENTIALS"', loginStart);
+  const loginEnd = source.indexOf('authRouter.post("/logout"', loginStart);
+  const login = source.slice(loginStart, loginEnd);
 
-  assert.ok(loginStart >= 0);
-  assert.ok(paddingIndex > loginStart);
-  assert.ok(invalidCredentialIndex > paddingIndex);
+  assert.ok(loginStart >= 0 && loginEnd > loginStart);
+  assert.ok((login.match(/await padLoginResponse\(startedAt\);/g) ?? []).length >= 4);
   assert.match(source, /const targetDurationMs = 500 \+ randomInt\(0, 101\)/);
+  assert.match(login, /isPermanentlyBlockedTotpIp[\s\S]*?new ApiError\(401, "INVALID_CREDENTIALS"/);
+  assert.match(source, /error\.code === "COUNTRY_LOGIN_BLOCKED"/);
+  assert.match(source, /error\.code === "VPN_ACCESS_BLOCKED"/);
+  assert.doesNotMatch(login, /new ApiError\(\s*403,\s*"TOTP_IP_PERMANENTLY_BLOCKED"/);
+});
+
+test("backup import enforces the same preferred-language enum as profile mutations", () => {
+  const source = read("src/lib/data-transfer.ts");
+  assert.match(source, /supportedProfileLanguages/);
+  assert.match(source, /const preferredLanguageSchema = z\.enum\(supportedProfileLanguages\)/);
+  assert.match(source, /preferred_language: preferredLanguageSchema\.nullable\(\)/);
 });
 
 test("bookmark numeric entity decoding rejects invalid Unicode code points without throwing", () => {

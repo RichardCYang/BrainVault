@@ -55,6 +55,10 @@ test("discoverable-passkey login keeps the WebAuthn ceremony server-authoritativ
     app,
     /app\.use\("\/api\/auth\/passkey", express\.json\(\{ limit: "64kb" \}\)\)/
   );
+  assert.match(
+    app,
+    /app\.use\("\/api\/auth\/mfa\/login\/passkey", express\.json\(\{ limit: "64kb" \}\)\)/
+  );
 });
 
 test("new passkeys are discoverable and legacy WebAuthn boundaries are canonical", async () => {

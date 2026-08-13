@@ -49,7 +49,7 @@ import {
 import { renderBlockHtml } from "./markdown.js";
 import { dataTransferResourceLimits, measureJsonUtf8BytesWithinLimit } from "./data-transfer-limits.js";
 import { blockSortOrderLimits } from "./block-order-integrity.js";
-import { maxAvatarBytes, normalizeAvatarDataUrl } from "./profile.js";
+import { maxAvatarBytes, normalizeAvatarDataUrl, supportedProfileLanguages } from "./profile.js";
 import {
   assertLosslessBackupBlockMetadata,
   BackupMetadataIntegrityError
@@ -76,6 +76,7 @@ const maxManifestBytes = env.DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024;
 const idSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
 const timestampSchema = z.string().min(1).max(40);
 const profileThemeSchema = z.enum(["light", "dark"]);
+const preferredLanguageSchema = z.enum(supportedProfileLanguages);
 const nullableString = (max: number) => z.string().max(max).nullable();
 const backupAvatarSchema = z
   .string()
@@ -295,7 +296,7 @@ const manifestSchema = z.object({
   account: z.object({
     name: nullableString(80),
     avatar_data: backupAvatarSchema,
-    preferred_language: nullableString(10),
+    preferred_language: preferredLanguageSchema.nullable(),
     default_collection_icon: iconValueSchema.nullable(),
     // Optional only for backups exported before account themes were added.
     theme: profileThemeSchema.optional()

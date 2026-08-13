@@ -210,10 +210,18 @@ async function padRegistrationResponse(startedAt: number) {
   if (remainingMs > 0) await new Promise((resolve) => setTimeout(resolve, remainingMs));
 }
 
-async function padFailedLoginResponse(startedAt: number) {
+async function padLoginResponse(startedAt: number) {
   const targetDurationMs = 500 + randomInt(0, 101);
   const remainingMs = targetDurationMs - (Date.now() - startedAt);
   if (remainingMs > 0) await new Promise((resolve) => setTimeout(resolve, remainingMs));
+}
+
+function isPreAuthLoginPolicyDenial(error: unknown) {
+  return error instanceof ApiError
+    && (error.code === "COUNTRY_LOGIN_BLOCKED"
+      || error.code === "VPN_ACCESS_BLOCKED"
+      || error.code === "VPN_VERIFICATION_UNAVAILABLE"
+      || error.code === "VPN_POLICY_INVALID");
 }
 
 authRouter.post(
@@ -284,31 +292,37 @@ authRouter.post(
       const passwordDecision = result.decision;
 
       if (!user || passwordDecision !== "ALLOWED") {
-        await padFailedLoginResponse(startedAt);
+        await padLoginResponse(startedAt);
         throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid ID or password");
       }
-      if (await isPermanentlyBlockedTotpIp(sourceIp, user.id)) {
-        throw new ApiError(
-          403,
-          "TOTP_IP_PERMANENTLY_BLOCKED",
-          "Access from this IP address is temporarily blocked for this account"
-        );
-      }
 
-      await enforceCountryLoginPolicy(user.id, user.country_login_mode, sourceIp);
-      await enforceVpnAccessPolicy(
-        user.id,
-        user.vpn_block_enabled,
-        sourceIp,
-        getClientTimeZone(req),
-        getClientWebRtcSignal(req)
-      );
+      let policyDenied = await isPermanentlyBlockedTotpIp(sourceIp, user.id);
+      if (!policyDenied) {
+        try {
+          await enforceCountryLoginPolicy(user.id, user.country_login_mode, sourceIp);
+          await enforceVpnAccessPolicy(
+            user.id,
+            user.vpn_block_enabled,
+            sourceIp,
+            getClientTimeZone(req),
+            getClientWebRtcSignal(req)
+          );
+        } catch (error) {
+          if (!isPreAuthLoginPolicyDenial(error)) throw error;
+          policyDenied = true;
+        }
+      }
+      if (policyDenied) {
+        await padLoginResponse(startedAt);
+        throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid ID or password");
+      }
 
       const methods = await getMfaMethods(user.id);
       if (methods.totp || methods.passkey) {
         const mfaToken = await createMfaLoginSession(user.id, sourceIp);
         res.locals.authenticationPending = true;
         clearAuthSessionCookie(res);
+        await padLoginResponse(startedAt);
         res.setHeader("Cache-Control", "private, no-store");
         res.json({
           mfaRequired: true,
@@ -321,6 +335,7 @@ authRouter.post(
 
       await recordLoginAttempt(user.id, sourceIp, "SUCCESS");
       const token = signAuthToken({ sub: user.id, username: user.username, authVersion: normalizeAuthVersion(user.auth_version) });
+      await padLoginResponse(startedAt);
       setAuthSessionCookie(res, token);
       res.setHeader("Cache-Control", "private, no-store");
       res.json({ user: toPublicUser(user) });
