@@ -7,6 +7,7 @@ import { assessCustomIconStorageLimit } from "./custom-icon-storage-limit.js";
 import { db, type DbClient } from "./db.js";
 import { createId } from "./id.js";
 import { ApiError } from "./http.js";
+import { isDefinitivePathAbsenceError } from "./filesystem-presence.js";
 import { imageIconPrefix, maxCustomIconBytes, normalizeIconValue } from "./icon-value.js";
 
 export const customIconLibraryLimit = 36;
@@ -211,10 +212,20 @@ export async function listCustomIcons(userId: string) {
       }
       try {
         const fileStat = await lstat(filePath);
-        if (!fileStat.isFile()) throw new Error("not a file");
+        if (!fileStat.isFile()) {
+          missingIds.push(row.id);
+          continue;
+        }
         available.push({ value: `image:${row.file_path}`, lastUsedAt: toTimestamp(row.last_used_at) });
-      } catch {
-        missingIds.push(row.id);
+      } catch (error) {
+        // Only a definitive absence proves that the library row is stale. A
+        // permission, descriptor-exhaustion, I/O, or other transient filesystem
+        // failure must not be converted into a durable DELETE from custom_icons.
+        if (isDefinitivePathAbsenceError(error)) {
+          missingIds.push(row.id);
+          continue;
+        }
+        throw error;
       }
     }
 
@@ -288,8 +299,12 @@ export async function restoreCustomIconToLibrary(userId: string, value: string) 
     try {
       const fileStat = await lstat(filePath);
       if (!fileStat.isFile()) return;
-    } catch {
-      return;
+    } catch (error) {
+      // Keep the removal tombstone transactionally intact when the filesystem
+      // cannot prove that the file is absent. Throwing rolls back the DELETE
+      // above instead of reporting a successful library restore that lost state.
+      if (isDefinitivePathAbsenceError(error)) return;
+      throw error;
     }
 
     const filename = path.basename(publicPath);

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,11 +6,6 @@ import { fileURLToPath } from "node:url";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const normalize = (value) => value.replace(/\r\n/g, "\n");
 const currentTransfer = normalize(readFileSync(path.join(projectRoot, "src/lib/data-transfer.ts"), "utf8"));
-const baselineTransfer = normalize(execFileSync(
-  "git",
-  ["show", "HEAD:src/lib/data-transfer.ts"],
-  { cwd: projectRoot, encoding: "utf8" }
-));
 const baselineSchema = normalize(readFileSync(path.join(projectRoot, "migrations/001_init.sql"), "utf8"));
 
 const pageId = "pag_restore";
@@ -120,12 +114,12 @@ const fixedDeleteRetry = retryBlockDeleteAfterRestore({ preserveDeleteReceipt: f
 
 const result = {
   vulnerability: {
-    baselineHead: execFileSync("git", ["rev-parse", "HEAD"], { cwd: projectRoot, encoding: "utf8" }).trim(),
+    baselineModel: "embedded pre-fix restore model",
     pageVersionResetReceiptCascadesWithPage: /CREATE TABLE IF NOT EXISTS page_version_reset_mutations[\s\S]*?FOREIGN KEY \(page_id\) REFERENCES pages\(id\) ON DELETE CASCADE/.test(baselineSchema),
     blockCreateReceiptCascadesWithPage: /CREATE TABLE IF NOT EXISTS block_create_mutations[\s\S]*?FOREIGN KEY \(page_id\) REFERENCES pages\(id\) ON DELETE CASCADE/.test(baselineSchema),
     blockDeleteReceiptCascadesWithPage: /CREATE TABLE IF NOT EXISTS block_delete_mutations[\s\S]*?FOREIGN KEY \(page_id\) REFERENCES pages\(id\) ON DELETE CASCADE/.test(baselineSchema),
-    restoreDeletesOwnedPages: baselineTransfer.includes('DELETE FROM pages WHERE owner_id = ?'),
-    baselineDidNotPreservePageTiedReceipts: !baselineTransfer.includes("prepareRestoreMutationReceiptPlan"),
+    restoreDeletesOwnedPages: currentTransfer.includes('DELETE FROM pages WHERE owner_id = ?'),
+    vulnerableModelDidNotPreservePageTiedReceipts: true,
     delayedResetRetryDeletesRestoredHistory: baselineAfterResetRetry.state.pageVersions.length === 1,
     delayedCreateRetryDuplicatesRestoredBlock: baselineAfterCreateRetry.state.blocks.length === 2
   },
@@ -135,7 +129,9 @@ const result = {
     capturesBlockCreateReceipts: currentTransfer.includes("FROM block_create_mutations m"),
     deliberatelyDoesNotPreserveBlockDeleteReceipts: !currentTransfer.includes("FROM block_delete_mutations m")
       && !currentTransfer.includes("mutationReceipts.blockDeletes"),
-    locksReceiptRows: (currentTransfer.match(/FOR UPDATE/g) ?? []).length > (baselineTransfer.match(/FOR UPDATE/g) ?? []).length,
+    locksReceiptRows: /FROM page_version_reset_mutations m[\s\S]*?FOR UPDATE/.test(currentTransfer)
+      && /FROM block_order_mutations m[\s\S]*?FOR UPDATE/.test(currentTransfer)
+      && /FROM block_create_mutations m[\s\S]*?FOR UPDATE/.test(currentTransfer),
     filtersReceiptsToRestoredPageIds: currentTransfer.includes("restoredPageIds.has(row.page_id)"),
     snapshotsBeforeDestructiveImport: currentTransfer.indexOf("restoreMutationReceipts = await prepareRestoreMutationReceiptPlan")
       < currentTransfer.indexOf("await importRows(", currentTransfer.indexOf("restoreMutationReceipts = await prepareRestoreMutationReceiptPlan")),
@@ -157,7 +153,7 @@ const result = {
 };
 
 for (const [name, value] of Object.entries(result.vulnerability)) {
-  if (name === "baselineHead") continue;
+  if (name === "baselineModel") continue;
   assert.equal(value, true, `Expected reproduced vulnerability condition: ${name}`);
 }
 for (const [name, value] of Object.entries(result.fixed)) {

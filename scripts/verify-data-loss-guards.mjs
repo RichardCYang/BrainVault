@@ -198,6 +198,10 @@ const dataTransferSource = readFileSync(
   new URL("../src/lib/data-transfer.ts", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const customIconsSource = readFileSync(
+  new URL("../src/lib/custom-icons.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const zipSource = readFileSync(
   new URL("../src/lib/zip.ts", import.meta.url),
   "utf8"
@@ -557,6 +561,29 @@ assert(
     && restoreMutationReceiptReproduction.fixed.preservingDeleteReceiptWouldDeleteRestoredAttachment
     && restoreMutationReceiptReproduction.fixed.staleDeleteRetryConflictsWithoutTouchingRestoredAttachment,
   "The restore mutation-receipt reproduction did not prove both vulnerable and fixed states"
+);
+
+assert(
+  customIconsSource.includes('from "./filesystem-presence.js"')
+    && customIconsSource.includes("isDefinitivePathAbsenceError(error)")
+    && !/catch \{\s*missingIds\.push\(row\.id\);\s*\}/.test(customIconsSource),
+  "A transient custom-icon filesystem error can still be converted into permanent library-row deletion"
+);
+
+const customIconFilesystemReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [
+    "--experimental-strip-types",
+    fileURLToPath(new URL("./reproduce-custom-icon-library-fs-error-loss.mjs", import.meta.url))
+  ],
+  { encoding: "utf8" }
+));
+assert(
+  customIconFilesystemReproduction.vulnerability.transientFilesystemErrorWasMisclassifiedAsMissing
+    && customIconFilesystemReproduction.fixed.transientFilesystemErrorIsPropagated
+    && customIconFilesystemReproduction.fixed.definitiveAbsenceStillPrunesStaleRow
+    && customIconFilesystemReproduction.fixed.restoreRollsBackOnUncertainFilesystemError,
+  "The custom-icon filesystem uncertainty reproduction did not prove both vulnerable and fixed states"
 );
 
 const backupShareLossReproduction = JSON.parse(execFileSync(
@@ -1634,5 +1661,5 @@ assert(
 );
 
 console.log(
-  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified and length-framed backup ZIP integrity, identity-bound page-share backup/restore, archived-share backup round-trip integrity, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, atomic preserve-children block deletion, and fail-closed recovery inspection, plus owner-scoped idempotent page creation, actor-scoped idempotent block and attachment creation, actor-scoped idempotent block-delete replay, idempotent page-version reset replay, and authentication-scoped download completion."
+  "[verify-data-loss-guards] OK: durable-before-visible browser edits, destructive ordering, server-authoritative collaboration materialization, SQL-fenced first-document bootstrap, cross-instance durable-room freshness fencing, stale-SQL attachment-position fencing, provenance-fenced checkpoints, owner-scoped atomic browser exclusion, expiry-safe transition fencing, cross-tab recovery isolation, lossless malformed-record handling, seven locale messages, boundary-safe convergent storage snapshots, fail-closed block-order range preservation, strict transactional SQL sessions, stream-verified and length-framed backup ZIP integrity, identity-bound page-share backup/restore, archived-share backup round-trip integrity, fail-closed custom-icon filesystem uncertainty handling, fail-closed backup metadata restoration, attachment metadata/file binding, fail-closed structured metadata preservation, page-scoped parent cascade fencing, database fallback reference integrity, collaboration block-delete recovery fencing, atomic preserve-children block deletion, and fail-closed recovery inspection, plus owner-scoped idempotent page creation, actor-scoped idempotent block and attachment creation, actor-scoped idempotent block-delete replay, idempotent page-version reset replay, and authentication-scoped download completion."
 );

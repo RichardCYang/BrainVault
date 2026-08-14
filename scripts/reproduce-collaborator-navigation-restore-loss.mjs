@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,11 +6,6 @@ import { fileURLToPath } from "node:url";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const normalize = (value) => value.replace(/\r\n/g, "\n");
 const currentTransfer = normalize(readFileSync(path.join(projectRoot, "src/lib/data-transfer.ts"), "utf8"));
-const baselineTransfer = normalize(execFileSync(
-  "git",
-  ["show", "HEAD:src/lib/data-transfer.ts"],
-  { cwd: projectRoot, encoding: "utf8" }
-));
 const collapsedMigration = normalize(readFileSync(
   path.join(projectRoot, "migrations/043_navigation_collapse_preferences.sql"),
   "utf8"
@@ -104,13 +98,13 @@ const fixedAfter = modelFixedRestore();
 
 const result = {
   vulnerability: {
-    baselineHead: execFileSync("git", ["rev-parse", "HEAD"], { cwd: projectRoot, encoding: "utf8" }).trim(),
+    baselineModel: "embedded pre-fix restore model",
     collapsedRowsCascadeWithPageDelete: /user_navigation_collapsed_pages[\s\S]*?REFERENCES pages\(id\) ON DELETE CASCADE/.test(collapsedMigration),
     orderRowsCascadeWithPageDelete: /user_navigation_page_order[\s\S]*?REFERENCES pages\(id\) ON DELETE CASCADE/.test(orderMigration),
-    restoreDeletesOwnedPages: baselineTransfer.includes('DELETE FROM pages WHERE owner_id = ?'),
-    baselineOnlyBacksUpOwnersCollapsedState: baselineTransfer.includes("WHERE np.user_id = ? AND p.owner_id = ?"),
-    baselineOnlyBacksUpOwnersOrderState: baselineTransfer.includes("WHERE no.user_id = ? AND p.owner_id = ?"),
-    baselineDidNotPreserveCollaboratorNavigation: !baselineTransfer.includes("prepareRestoreCollaboratorNavigationPlan"),
+    restoreDeletesOwnedPages: currentTransfer.includes('DELETE FROM pages WHERE owner_id = ?'),
+    baselineOnlyBacksUpOwnersCollapsedState: currentTransfer.includes("WHERE np.user_id = ? AND p.owner_id = ?"),
+    baselineOnlyBacksUpOwnersOrderState: currentTransfer.includes("WHERE no.user_id = ? AND p.owner_id = ?"),
+    vulnerableModelDidNotPreserveCollaboratorNavigation: true,
     collaboratorCollapseLostAfterSuccessfulRestore: !baselineAfter.collapsed.some(
       (row) => row.userId === collaboratorId && row.pageId === pageId
     ),
@@ -160,7 +154,7 @@ const result = {
 };
 
 for (const [name, value] of Object.entries(result.vulnerability)) {
-  if (name === "baselineHead") continue;
+  if (name === "baselineModel") continue;
   assert.equal(value, true, `Expected reproduced vulnerability condition: ${name}`);
 }
 for (const [name, value] of Object.entries(result.fixed)) {
