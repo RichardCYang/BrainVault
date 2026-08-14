@@ -8821,6 +8821,7 @@ function replaceKanbanData(
   value,
   { focusCardId = null, focusStyleCardId = null, focusColumnId = null, focusBoardTitle = false } = {}
 ) {
+  if (!requireWritablePage({ announce: false })) return;
   if (!promoteBlockDraftConflict(row)) return;
   const data = normalizeKanbanData(value);
   const host = row?.querySelector(".block-editor-host");
@@ -9050,6 +9051,7 @@ function finishKanbanColumnDrag(event, { cancelled = false } = {}) {
   suppressKanbanColumnMenuClickUntil = Date.now() + 500;
   clearKanbanColumnDragVisuals(drag);
   if (cancelled || drag.targetIndex === drag.initialIndex || !drag.row.isConnected) return;
+  if (!requireWritablePage({ announce: false })) return;
 
   const data = extractKanbanData(drag.row);
   const sourceIndex = data.columns.findIndex((column) => column.id === drag.column.dataset.columnId);
@@ -9083,6 +9085,7 @@ function getKanbanDropIndex(list, clientY, draggedCardId) {
 
 function dropKanbanCard(row, list, clientY) {
   if (!activeKanbanCardDrag || activeKanbanCardDrag.row !== row) return;
+  if (!requireWritablePage({ announce: false })) return;
   const data = extractKanbanData(row);
   const found = findKanbanCard(data, activeKanbanCardDrag.cardId);
   const targetColumn = data.columns.find((column) => column.id === list.dataset.columnId);
@@ -10451,6 +10454,7 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
   clearBlockDragVisuals(drag);
 
   if (cancelled || drag.targetIndex === drag.initialIndex) return;
+  if (!requireWritablePage({ announce: false })) return;
 
   return withPageEditLock(async () => {
     const previousIds = getBlockSiblings(drag.parentBlockId).map((block) => block.id);

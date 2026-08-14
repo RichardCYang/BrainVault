@@ -142,6 +142,7 @@ export function createAccordionEditor(row, value, options = {}) {
   editor.className = "accordion-block-editor";
   editor.accordionData = data;
   editor.classList.toggle("show-order", data.showOrder);
+  const isReadOnly = () => row?.getAttribute("aria-readonly") === "true" || row?.classList.contains("is-read-only");
 
   const editSurface = document.createElement("div");
   editSurface.className = "accordion-edit-surface";
@@ -302,6 +303,7 @@ export function createAccordionEditor(row, value, options = {}) {
   };
 
   editor.addEventListener("input", (event) => {
+    if (isReadOnly()) return;
     if (event.target === titleInput) {
       data.title = titleInput.value.slice(0, accordionLimits.titleLength);
       editor.accordionData = data;
@@ -325,6 +327,7 @@ export function createAccordionEditor(row, value, options = {}) {
   });
 
   editor.addEventListener("click", (event) => {
+    if (isReadOnly()) return;
     const button = event.target.closest("button[data-action]");
     if (!button || !editor.contains(button)) return;
     const action = button.dataset.action;
@@ -386,6 +389,10 @@ export function createAccordionEditor(row, value, options = {}) {
   };
 
   list.addEventListener("dragstart", (event) => {
+    if (isReadOnly()) {
+      event.preventDefault();
+      return;
+    }
     const handle = event.target.closest(".accordion-item-drag-handle");
     if (!handle || !list.contains(handle)) return;
     draggedId = handle.dataset.accordionItemId;
@@ -397,6 +404,11 @@ export function createAccordionEditor(row, value, options = {}) {
 
   list.addEventListener("dragover", (event) => {
     if (!draggedId) return;
+    if (isReadOnly()) {
+      clearDropIndicators();
+      draggedId = null;
+      return;
+    }
     const target = event.target.closest(".accordion-item");
     if (!target || target.dataset.accordionItemId === draggedId) return;
     event.preventDefault();
@@ -408,6 +420,12 @@ export function createAccordionEditor(row, value, options = {}) {
 
   list.addEventListener("drop", (event) => {
     if (!draggedId) return;
+    if (isReadOnly()) {
+      event.preventDefault();
+      clearDropIndicators();
+      draggedId = null;
+      return;
+    }
     const target = event.target.closest(".accordion-item");
     if (!target || target.dataset.accordionItemId === draggedId) {
       clearDropIndicators();

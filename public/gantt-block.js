@@ -476,10 +476,11 @@ function createTimelineRow(editor, row, task, gantt, viewStartDay, setting, onDi
   const finishDrag = (commit) => {
     if (!drag) return;
     const current = drag;
+    const shouldCommit = commit && !isReadOnly();
     drag = null;
     bar.classList.remove("is-dragging");
     if (bar.hasPointerCapture?.(current.pointerId)) bar.releasePointerCapture(current.pointerId);
-    if (!commit || current.nextStartDay === current.startDay && current.nextEndDay === current.endDay) {
+    if (!shouldCommit || current.nextStartDay === current.startDay && current.nextEndDay === current.endDay) {
       positionTaskBar(bar, task, viewStartDay, setting.dayWidth);
       delete bar.dataset.previewStart;
       delete bar.dataset.previewEnd;
@@ -515,6 +516,10 @@ function createTimelineRow(editor, row, task, gantt, viewStartDay, setting, onDi
 
   bar.addEventListener("pointermove", (event) => {
     if (!drag || event.pointerId !== drag.pointerId) return;
+    if (isReadOnly()) {
+      finishDrag(false);
+      return;
+    }
     const deltaDays = Math.round((event.clientX - drag.originX) / setting.dayWidth);
     if (drag.edge === "start") {
       drag.nextStartDay = Math.min(drag.endDay, drag.startDay + deltaDays);
