@@ -7745,6 +7745,17 @@ async function startPageCollaboration(page = state.selectedPage) {
       recoverySourceId: pageDraftSourceId,
       recoveryStore: collaborationRecoveryStore,
       api,
+      onBeforeLocalRecoveryApply: () => {
+        if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) return false;
+        if (isPageReadOnly()) {
+          // A crash-recovery Yjs update is a real local edit. Make that transition
+          // explicit before collaboration.js applies or synchronizes the update.
+          state.pageMode = pageModes.WRITE;
+          state.pendingFocusBlockId = null;
+          syncPageModeUi();
+        }
+        return true;
+      },
       onSnapshot: (snapshot, context) => {
         if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) return;
         applyCollaborationSnapshot(snapshot, context);
@@ -11786,6 +11797,10 @@ async function submitBlockOrderTaskWithReplay(task, options = {}) {
 async function retryPendingBlockOrder({ keepalive = false } = {}) {
   const task = pendingBlockOrderTask;
   if (!task) return null;
+  // Recovery and retry timers can outlive the interaction that created them.
+  // A queued reorder must never become a write-mode bypass after the page has
+  // moved to READ mode (or after another page became selected).
+  if (!canPersistSelectedPage() || state.selectedPage?.id !== task.pageId) return null;
 
   blockOrderSaving = true;
   syncPageModeUi();
@@ -13450,7 +13465,9 @@ async function openPage(pageId, { skipFlush = false, requestedPageMode = null } 
       const recovery = isCollaborativePage(data.page)
         ? { title: null, blocks: [], blockOrder: null }
         : applyPersistedPageDraft(data.page);
-      if (!preserveMode && (recovery.title || recovery.blocks.length > 0 || recovery.blockOrder)) {
+      if (recovery.title || recovery.blocks.length > 0 || recovery.blockOrder) {
+        // Recovery content is itself an edit. Even when this is a same-page refresh,
+        // never activate a durable local draft while the UI still claims READ mode.
         state.pageMode = pageModes.WRITE;
       }
       state.selectedPage = data.page;

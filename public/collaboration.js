@@ -279,6 +279,7 @@ class PageCollaborationSession {
     this.onError = options.onError ?? (() => undefined);
     this.onAccessChanged = options.onAccessChanged ?? (() => undefined);
     this.onMaterialized = options.onMaterialized ?? (() => undefined);
+    this.onBeforeLocalRecoveryApply = options.onBeforeLocalRecoveryApply ?? (() => true);
     this.doc = new Y.Doc();
     this.localMutationDoc = null;
     this.title = this.doc.getText("title");
@@ -333,6 +334,14 @@ class PageCollaborationSession {
     if (!records.length) return false;
     const matchingRecords = records.filter((record) => record.documentEpoch === documentEpoch);
     const preservedRecords = records.filter((record) => record.documentEpoch !== documentEpoch);
+    if (!matchingRecords.length) return false;
+    // The host must be able to change its visible editability state before any
+    // recovered Yjs transaction is applied. Returning false preserves the local
+    // recovery bytes without mutating the live document.
+    if (this.onBeforeLocalRecoveryApply({
+      documentEpoch,
+      recordCount: matchingRecords.length
+    }) === false) return false;
     if (preservedRecords.length && !this.recoveryLineageWarningShown) {
       this.recoveryLineageWarningShown = true;
       this.onError(new Error(
