@@ -17363,3 +17363,106 @@ body.is-navigation-dragging {
 .active-session-logout {
   white-space: nowrap;
 }
+
+/* ========================================================================== 
+   UI/UX accessibility refinement
+   Improves keyboard bypass, text/icon contrast, and compact sidebar target
+   sizing without changing application behavior, persistence, or data flows.
+   ========================================================================== */
+:root {
+  --muted-light: #5b7387;
+}
+
+html[data-theme="dark"] {
+  --muted-light: #8f9aa7;
+}
+
+.skip-link {
+  position: fixed;
+  z-index: 1000;
+  top: max(0.75rem, env(safe-area-inset-top));
+  left: max(0.75rem, env(safe-area-inset-left));
+  transform: translateY(calc(-100% - 1.5rem));
+  border: 2px solid var(--focus);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink-strong);
+  padding: 0.7rem 0.9rem;
+  box-shadow: var(--shadow-popover);
+  font-weight: 700;
+  text-decoration: none;
+  transition: transform 120ms ease;
+}
+
+.auth-mode .skip-link {
+  display: none;
+}
+
+.app-mode .skip-link:focus,
+.app-mode .skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+.main:focus {
+  outline: none;
+}
+
+@media screen {
+  body.app-mode {
+    --chrome-text-faint: #6d6d69;
+    --sidebar-reference-muted: #6a6965;
+    --sidebar-reference-icon: #7a7975;
+  }
+
+  html[data-theme="dark"] body.app-mode {
+    --chrome-text-faint: #8f9aa7;
+    --sidebar-reference-muted: #9b9a95;
+    --sidebar-reference-icon: #9b9a95;
+  }
+
+  /* Primary page actions should not appear disabled before hover. */
+  .app-mode .page-toolbar .button-row {
+    opacity: 1;
+  }
+
+  /* Keep compact navigation while meeting the WCAG 2.5.8 minimum target size. */
+  .app-mode .collection-title-row {
+    min-height: 32px;
+    grid-template-columns: minmax(0, 1fr) 24px;
+  }
+
+  .app-mode .collection-title-button {
+    min-height: 32px;
+  }
+
+  .app-mode .sidebar-add-button,
+  .app-mode .navigation-more-button {
+    width: 24px;
+    height: 24px;
+  }
+
+  .app-mode .document-item-row {
+    min-height: 32px;
+    grid-template-columns: 24px minmax(0, 1fr) 24px;
+  }
+
+  .app-mode .document-item {
+    min-height: 32px;
+  }
+
+  .app-mode .doc-expand-button {
+    width: 24px;
+    height: 24px;
+  }
+
+  .app-mode .account-settings-chevron {
+    color: var(--sidebar-reference-icon);
+  }
+
+  .app-mode .sidebar-utility-button:hover svg,
+  .app-mode .sidebar-utility-button:focus-visible svg,
+  .app-mode .sidebar-utility-button.active svg,
+  .app-mode .sidebar-footer-button:hover svg {
+    stroke: var(--sidebar-reference-text);
+  }
+}

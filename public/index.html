@@ -32,6 +32,7 @@
     <script type="module" src="/app.js"></script>
   </head>
   <body class="auth-mode boot-mode">
+    <a class="skip-link" href="#main-content" data-i18n="sidebar.skipToContent">Skip to main content</a>
     <div id="status" class="status" role="status" aria-live="polite"></div>
 
     <div class="shell">
@@ -332,7 +333,7 @@
         tabindex="-1"
       ></button>
 
-      <main class="main">
+      <main id="main-content" class="main" tabindex="-1">
         <header class="mobile-app-header">
           <button
             id="mobile-sidebar-toggle"

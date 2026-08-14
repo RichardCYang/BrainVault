@@ -16,7 +16,7 @@ export const translationCatalogs = {
   en: {
     meta: { description: "BrainVault - a notes app built with Markdown blocks" },
     language: { label: "Language" },
-    sidebar: { aria: "BrainVault sidebar", homeAria: "BrainVault home", openAria: "Open navigation", closeAria: "Close navigation" },
+    sidebar: { aria: "BrainVault sidebar", homeAria: "BrainVault home", openAria: "Open navigation", closeAria: "Close navigation", skipToContent: "Skip to main content" },
     brand: { eyebrow: "Private workspace" },
     auth: {
       loginKicker: "Welcome back",
@@ -1009,7 +1009,7 @@ export const translationCatalogs = {
   ja: {
     meta: { description: "BrainVault - Markdownブロックを使ったノートアプリ" },
     language: { label: "言語" },
-    sidebar: { aria: "BrainVault サイドバー", homeAria: "BrainVault ホーム", openAria: "ナビゲーションを開く", closeAria: "ナビゲーションを閉じる" },
+    sidebar: { aria: "BrainVault サイドバー", homeAria: "BrainVault ホーム", openAria: "ナビゲーションを開く", closeAria: "ナビゲーションを閉じる", skipToContent: "メインコンテンツへ移動" },
     brand: { eyebrow: "プライベートワークスペース" },
     auth: {
       loginKicker: "おかえりなさい",
@@ -1410,7 +1410,7 @@ export const translationCatalogs = {
   ko: {
     meta: { description: "BrainVault - 마크다운 블록 기반 노트앱" },
     language: { label: "언어" },
-    sidebar: { aria: "BrainVault 사이드바", homeAria: "BrainVault 홈", openAria: "탐색 메뉴 열기", closeAria: "탐색 메뉴 닫기" },
+    sidebar: { aria: "BrainVault 사이드바", homeAria: "BrainVault 홈", openAria: "탐색 메뉴 열기", closeAria: "탐색 메뉴 닫기", skipToContent: "본문으로 건너뛰기" },
     brand: { eyebrow: "개인 워크스페이스" },
     auth: {
       loginKicker: "다시 오신 것을 환영합니다",
@@ -2193,7 +2193,7 @@ export const translationCatalogs = {
   fr: {
     meta: { description: "BrainVault - une application de notes basée sur des blocs Markdown" },
     language: { label: "Langue" },
-    sidebar: { aria: "Barre latérale BrainVault", homeAria: "Accueil BrainVault", openAria: "Ouvrir la navigation", closeAria: "Fermer la navigation" },
+    sidebar: { aria: "Barre latérale BrainVault", homeAria: "Accueil BrainVault", openAria: "Ouvrir la navigation", closeAria: "Fermer la navigation", skipToContent: "Aller au contenu principal" },
     brand: { eyebrow: "Espace de travail privé" },
     auth: {
       loginKicker: "Heureux de vous revoir",
@@ -2594,7 +2594,7 @@ export const translationCatalogs = {
   de: {
     meta: { description: "BrainVault – eine Notiz-App auf Basis von Markdown-Blöcken" },
     language: { label: "Sprache" },
-    sidebar: { aria: "BrainVault-Seitenleiste", homeAria: "BrainVault-Startseite", openAria: "Navigation öffnen", closeAria: "Navigation schließen" },
+    sidebar: { aria: "BrainVault-Seitenleiste", homeAria: "BrainVault-Startseite", openAria: "Navigation öffnen", closeAria: "Navigation schließen", skipToContent: "Zum Hauptinhalt springen" },
     brand: { eyebrow: "Privater Arbeitsbereich" },
     auth: {
       loginKicker: "Willkommen zurück",
@@ -2995,7 +2995,7 @@ export const translationCatalogs = {
   es: {
     meta: { description: "BrainVault: una aplicación de notas basada en bloques Markdown" },
     language: { label: "Idioma" },
-    sidebar: { aria: "Barra lateral de BrainVault", homeAria: "Inicio de BrainVault", openAria: "Abrir la navegación", closeAria: "Cerrar la navegación" },
+    sidebar: { aria: "Barra lateral de BrainVault", homeAria: "Inicio de BrainVault", openAria: "Abrir la navegación", closeAria: "Cerrar la navegación", skipToContent: "Saltar al contenido principal" },
     brand: { eyebrow: "Espacio de trabajo privado" },
     auth: {
       loginKicker: "Te damos la bienvenida",
@@ -3396,7 +3396,7 @@ export const translationCatalogs = {
   pt: {
     meta: { description: "BrainVault — um aplicativo de notas baseado em blocos Markdown" },
     language: { label: "Idioma" },
-    sidebar: { aria: "Barra lateral do BrainVault", homeAria: "Início do BrainVault", openAria: "Abrir a navegação", closeAria: "Fechar a navegação" },
+    sidebar: { aria: "Barra lateral do BrainVault", homeAria: "Início do BrainVault", openAria: "Abrir a navegação", closeAria: "Fechar a navegação", skipToContent: "Ir para o conteúdo principal" },
     brand: { eyebrow: "Espaço de trabalho privado" },
     auth: {
       loginKicker: "Boas-vindas de volta",
