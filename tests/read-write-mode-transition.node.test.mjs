@@ -39,6 +39,9 @@ function createHarness(blocks = [], { initialMode = "read", materialization = nu
     canEditSelectedPage() {
       return context.canPersistSelectedPage() && !state.pageModeChanging;
     },
+    isPageModeMutationFenced() {
+      return false;
+    },
     requireWritablePage() {
       return context.canEditSelectedPage();
     },

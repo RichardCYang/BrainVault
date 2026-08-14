@@ -194,6 +194,7 @@ const pendingPageVersionResetTasks = new Map();
 const pendingBlockCreateTasks = new Map();
 const pendingBlockDeleteTasks = new Map();
 const pendingAttachmentCreateTasks = new Map();
+const pageModeMutationFences = new Map();
 const navigationPreferenceSaveQueues = new Map();
 let pageCoverSaving = false;
 let pageCoverPositionDraft = null;
@@ -2082,6 +2083,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   pendingBlockCreateTasks.clear();
   pendingBlockDeleteTasks.clear();
   pendingAttachmentCreateTasks.clear();
+  pageModeMutationFences.clear();
   discardNavigationPreferenceSaves();
   closeAccountSettings({ restoreFocus: false, force: true });
   closeEmojiPicker({ restoreFocus: false });
@@ -5611,6 +5613,38 @@ function isWorkspacePersistenceTransitionLocked() {
   return transitionState.locked;
 }
 
+function isPageModeMutationFenced(page = state.selectedPage) {
+  if (!page?.id) return false;
+  return Boolean(pageModeMutationFences.get(page.id)?.size);
+}
+
+function lockPageModeMutationFence(pageId) {
+  if (!pageId) return null;
+  const token = Symbol(pageId);
+  const tokens = pageModeMutationFences.get(pageId) ?? new Set();
+  tokens.add(token);
+  pageModeMutationFences.set(pageId, tokens);
+  if (state.selectedPage?.id === pageId) syncPageModeUi();
+  return { pageId, token };
+}
+
+function unlockPageModeMutationFence(fence) {
+  if (!fence?.pageId || !fence.token) return;
+  const tokens = pageModeMutationFences.get(fence.pageId);
+  if (!tokens?.delete(fence.token)) return;
+  if (!tokens.size) pageModeMutationFences.delete(fence.pageId);
+  if (state.selectedPage?.id === fence.pageId) syncPageModeUi();
+}
+
+async function withPageModeMutationFence(pageId, action) {
+  const fence = lockPageModeMutationFence(pageId);
+  try {
+    return await action();
+  } finally {
+    unlockPageModeMutationFence(fence);
+  }
+}
+
 async function assertWorkspacePersistenceUnlocked() {
   const workspaceTransitionId = getWorkspaceTransitionId();
   if (!workspaceTransitionId) return;
@@ -5756,7 +5790,7 @@ function syncPageModeUi() {
   elements.blockList.setAttribute("aria-label", t(readOnly ? "page.readerAria" : "page.editorAria"));
   elements.blockEditorHelp.innerHTML = t(readOnly ? "page.readOnlyHelp" : "page.editorHelp");
 
-  elements.pageModeToggle.disabled = interactionLocked;
+  elements.pageModeToggle.disabled = interactionLocked || isPageModeMutationFenced();
   elements.pageModeToggle.setAttribute("aria-checked", String(!readOnly));
   elements.pageModeToggle.classList.toggle("is-write-mode", !readOnly);
   elements.pageModeToggleIcon.textContent = readOnly ? "◉" : "✎";
@@ -6244,7 +6278,12 @@ function applyMaterializedHtmlCaches(result) {
 }
 
 async function setPageMode(nextMode, { announce = true } = {}) {
-  if (!state.selectedPage || state.workspaceView !== "page" || state.pageModeChanging) return;
+  if (
+    !state.selectedPage
+    || state.workspaceView !== "page"
+    || state.pageModeChanging
+    || isPageModeMutationFenced()
+  ) return;
   const normalizedMode = nextMode === pageModes.WRITE ? pageModes.WRITE : pageModes.READ;
   if (state.pageMode === normalizedMode) return;
 
@@ -6569,7 +6608,7 @@ function renderPageVersionHistoryList() {
 
   elements.pageVersionHistoryMore.classList.toggle("hidden", !history.nextCursor);
   elements.pageVersionHistoryMore.disabled = history.loading || history.resetting;
-  elements.pageVersionHistoryReset.disabled = history.loading || history.resetting;
+  elements.pageVersionHistoryReset.disabled = history.loading || history.resetting || isPageReadOnly();
 }
 
 function renderPageVersionHistoryDetail(version) {
@@ -6660,7 +6699,7 @@ async function loadPageVersionHistory({ append = false } = {}) {
     if (requestId === state.pageVersionHistory.requestId) {
       state.pageVersionHistory.loading = false;
       elements.pageVersionHistoryMore.disabled = state.pageVersionHistory.resetting;
-      elements.pageVersionHistoryReset.disabled = state.pageVersionHistory.resetting;
+      elements.pageVersionHistoryReset.disabled = state.pageVersionHistory.resetting || isPageReadOnly();
     }
   }
 }
@@ -6670,6 +6709,7 @@ async function resetPageVersionHistory() {
   const page = state.selectedPage;
   const pageId = history.pageId;
   if (!pageId || !page || page.id !== pageId || !isPageOwner(page) || history.loading || history.resetting) return;
+  if (!requireWritablePage()) return;
 
   const title = page.title || t("newDocumentTitle");
   if (!window.confirm(t("versions.resetConfirm", { title }))) return;
@@ -6689,7 +6729,7 @@ async function resetPageVersionHistory() {
 
   let synchronized = false;
   try {
-    await submitPageVersionResetTask(task);
+    await withPageModeMutationFence(pageId, () => submitPageVersionResetTask(task));
     if (!isCurrentAuthenticatedSessionScope(task.scope) || pageId !== history.pageId) return;
 
     history.versions = [];
@@ -6719,7 +6759,7 @@ async function resetPageVersionHistory() {
     if (isCurrentAuthenticatedSessionScope(task.scope) && pageId === history.pageId) {
       const currentTask = getCurrentPageVersionResetTask(pageId);
       history.resetting = Boolean(currentTask?.inFlight);
-      elements.pageVersionHistoryReset.disabled = history.loading || history.resetting;
+      elements.pageVersionHistoryReset.disabled = history.loading || history.resetting || isPageReadOnly();
       if (history.resetting) elements.pageVersionHistoryReset.setAttribute("aria-busy", "true");
       else elements.pageVersionHistoryReset.removeAttribute("aria-busy");
       elements.pageVersionHistoryMore.disabled = history.loading || history.resetting;
@@ -6761,7 +6801,7 @@ function openPageVersionHistory() {
   state.pageVersionHistory.detailRequestId += 1;
   elements.pageVersionHistoryPageTitle.textContent = page.title || t("newDocumentTitle");
   elements.pageVersionHistoryReset.classList.toggle("hidden", !isPageOwner(page));
-  elements.pageVersionHistoryReset.disabled = state.pageVersionHistory.resetting;
+  elements.pageVersionHistoryReset.disabled = state.pageVersionHistory.resetting || isPageReadOnly();
   if (state.pageVersionHistory.resetting) {
     elements.pageVersionHistoryReset.setAttribute("aria-busy", "true");
   } else {
@@ -11377,6 +11417,7 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
   const pageId = state.selectedPage.id;
   const authenticationScope = captureAuthenticatedSessionScope();
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+  const pageModeMutationFence = lockPageModeMutationFence(pageId);
   const collaborationSessionAtStart = isCollaborativePage() ? state.collaborationSession : null;
   const blockId = row.dataset.blockId;
   const sourceEditRevision = Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0;
@@ -11494,6 +11535,7 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
     row.classList.remove("is-uploading");
     row.removeAttribute("aria-busy");
     if (row.isConnected && row.dataset.deleting !== "true") syncBlockReadOnlyState(row);
+    unlockPageModeMutationFence(pageModeMutationFence);
   }
 }
 
@@ -11907,7 +11949,10 @@ async function createEmptyBlock(
     ...(sortOrder === undefined ? {} : { sortOrder })
   };
   const task = getBlockCreateTask(authenticationScope, pageId, payload);
-  const data = await submitBlockCreateTask(task, authenticationScope);
+  const data = await withPageModeMutationFence(
+    pageId,
+    () => submitBlockCreateTask(task, authenticationScope)
+  );
   if (!data || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
   applyPageContentVersion(pageId, data.pageContentVersion);
   return data;
