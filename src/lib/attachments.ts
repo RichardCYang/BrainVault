@@ -12,6 +12,7 @@ import {
   getAttachmentInfo,
   isActiveAttachmentMimeType,
   isBlockedAttachmentFilename,
+  isSafeAttachmentMimeType,
   normalizeAttachmentMimeType,
   sanitizeAttachmentDownloadFilename,
   sanitizeAttachmentFilename,
@@ -22,6 +23,7 @@ import {
 export {
   getAttachmentInfo,
   isBlockedAttachmentFilename,
+  isSafeAttachmentMimeType,
   normalizeAttachmentMimeType,
   sanitizeAttachmentDownloadFilename,
   sanitizeAttachmentFilename,
@@ -172,6 +174,24 @@ async function readAttachmentHeader(filePath: string) {
   }
 }
 
+export async function inspectStoredAttachmentContent(filePath: string, declaredMimeType: string) {
+  const mimeType = canonicalizeAttachmentMimeType(declaredMimeType);
+  if (!isSafeAttachmentMimeType(mimeType) || isActiveAttachmentMimeType(mimeType)) {
+    throw new ApiError(415, "ATTACHMENT_MIME_NOT_ALLOWED", "This attachment media type is not allowed");
+  }
+
+  const signature = detectAttachmentSignature(await readAttachmentHeader(filePath));
+  if (signature === "executable") {
+    throw new ApiError(415, "ATTACHMENT_CONTENT_NOT_ALLOWED", "Executable attachment content is not allowed");
+  }
+
+  const expectedSignatures = signatureKindsByMimeType.get(mimeType);
+  if (expectedSignatures && (!signature || !expectedSignatures.has(signature))) {
+    throw new ApiError(415, "ATTACHMENT_CONTENT_TYPE_MISMATCH", "Attachment content does not match its declared media type");
+  }
+  return signature;
+}
+
 export async function inspectAttachmentUpload(
   temporaryPath: string,
   clientFilename: string,
@@ -188,15 +208,7 @@ export async function inspectAttachmentUpload(
   }
 
   let mimeType = normalizeAttachmentMimeType(canonicalMimeType);
-  const signature = detectAttachmentSignature(await readAttachmentHeader(temporaryPath));
-  if (signature === "executable") {
-    throw new ApiError(415, "ATTACHMENT_CONTENT_NOT_ALLOWED", "Executable attachment content is not allowed");
-  }
-
-  const expectedSignatures = signatureKindsByMimeType.get(mimeType);
-  if (expectedSignatures && (!signature || !expectedSignatures.has(signature))) {
-    throw new ApiError(415, "ATTACHMENT_CONTENT_TYPE_MISMATCH", "Attachment content does not match its declared media type");
-  }
+  const signature = await inspectStoredAttachmentContent(temporaryPath, mimeType);
 
   if (mimeType === "application/octet-stream" && signature) {
     mimeType = detectedMimeTypeBySignature.get(signature) ?? mimeType;

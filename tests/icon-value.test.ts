@@ -44,6 +44,9 @@ describe("page and collection icon values", () => {
     expect(isValidIconValue("image:javascript:alert(1)")).toBe(false);
     expect(isValidIconValue("image:/upload/icons/../../secret.png")).toBe(false);
     expect(isValidIconValue("image:https://user:secret@example.com/icon.png")).toBe(false);
+    expect(isValidIconValue("image:http://localhost:3000/icon.png")).toBe(false);
+    expect(isValidIconValue("image:http://db.internal/icon.png")).toBe(false);
+    expect(isValidIconValue("image:http://10.0.0.7/icon.png")).toBe(false);
     expect(isValidIconValue("image:data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=")).toBe(false);
     expect(isValidIconValue("image:data:image/png;base64,AAAA")).toBe(false);
     expect(isValidIconValue("image:data:image/vnd.microsoft.icon;base64,AAABAAEAAAAA")).toBe(false);

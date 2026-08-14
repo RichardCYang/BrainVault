@@ -22,6 +22,19 @@ export type ValidatedYjsUpdate = {
 // separate client-section cap also prevents a tiny payload from declaring an
 // excessive number of top-level update sections.
 const maxYjsClientSections = 100_000;
+const maxYjsTotalStructs = 100_000;
+
+class BoundedUpdateDecoderV1 extends Y.UpdateDecoderV1 {
+  private structsRead = 0;
+
+  readInfo() {
+    this.structsRead += 1;
+    if (this.structsRead > maxYjsTotalStructs) {
+      throw new InvalidYjsUpdateError("The collaboration update declares too many structs");
+    }
+    return super.readInfo();
+  }
+}
 
 function assertLeadingClientSectionCount(update: Uint8Array) {
   let value = 0;
@@ -48,10 +61,12 @@ function assertUpdatePreflight(update: Uint8Array, maxStateBytes: number) {
 
   assertLeadingClientSectionCount(update);
   try {
-    // parseUpdateMeta uses Yjs's lazy struct reader rather than decodeUpdate's
-    // materialized struct array. It validates the encoded struct stream before
-    // the update reaches applyUpdate's eager allocation path.
-    const metadata = Y.parseUpdateMeta(update);
+    // Yjs's lazy metadata reader calls UpdateDecoderV1.readInfo exactly once
+    // per encoded struct. Supplying a bounded decoder lets us stop after a
+    // fixed aggregate struct budget without materializing the update. This is
+    // deliberately checked before applyUpdate, whose V1 decoder eagerly
+    // allocates an array sized from the attacker-controlled per-section count.
+    const metadata = Y.parseUpdateMetaV2(update, BoundedUpdateDecoderV1);
     if (metadata.from.size > maxYjsClientSections || metadata.to.size > maxYjsClientSections) {
       throw new InvalidYjsUpdateError("The collaboration update references too many clients");
     }

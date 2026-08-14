@@ -106,6 +106,30 @@ export function isPrivateAddress(address: string) {
   return true;
 }
 
+export function isPrivateOrLocalHostname(hostname: string) {
+  const normalized = hostname
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "");
+  if (!normalized) return true;
+
+  const family = net.isIP(normalized);
+  if (family === 4 || family === 6) return isPrivateAddress(normalized);
+
+  // Single-label names are resolved through local DNS/search domains and are
+  // overwhelmingly intranet targets. The suffixes below cover common local,
+  // mDNS, and split-horizon naming conventions (including cloud metadata).
+  if (!normalized.includes(".")) return true;
+  return normalized === "localhost"
+    || normalized.endsWith(".localhost")
+    || normalized.endsWith(".local")
+    || normalized.endsWith(".internal")
+    || normalized.endsWith(".lan")
+    || normalized.endsWith(".home")
+    || normalized.endsWith(".home.arpa");
+}
+
 export function prioritizeResolvedAddresses(addresses: Array<{ address: string; family: number }>) {
   const unique = new Map<string, ResolvedAddress>();
   for (const item of addresses) {

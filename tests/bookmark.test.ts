@@ -9,6 +9,7 @@ import {
   isRedditBookmarkUrl,
   isPrivateAddress,
   isBookmarkFetchHostAllowed,
+  normalizeBookmarkUrl,
   parseBookmarkPreview,
   prioritizeResolvedAddresses,
   renderBookmarkHtml,
@@ -80,6 +81,16 @@ describe("Reddit bookmark OpenGraph fetching", () => {
     expect(bookmarkSource).not.toContain("https://www.reddit.com/oembed");
     expect(bookmarkSource).not.toContain("fetchRedditOEmbedPreview");
     expect(bookmarkSource).not.toContain("fetchJson(");
+  });
+});
+
+describe("bookmark stored URL boundary", () => {
+  it("rejects local, private, and single-label intranet targets before browser rendering", () => {
+    expect(normalizeBookmarkUrl("http://localhost:3000/private")).toBe("");
+    expect(normalizeBookmarkUrl("http://metadata.google.internal/latest/meta-data/")).toBe("");
+    expect(normalizeBookmarkUrl("http://10.0.0.7/private")).toBe("");
+    expect(normalizeBookmarkUrl("http://intranet/private")).toBe("");
+    expect(normalizeBookmarkUrl("https://example.com/public")).toBe("https://example.com/public");
   });
 });
 

@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +20,7 @@ vi.mock("../src/lib/db.js", () => ({
     fn({ query: database.query, queryOne: database.queryOne, execute: database.execute })
 }));
 
+import { env } from "../src/config/env.js";
 import { attachmentUploadRoot } from "../src/lib/attachments.js";
 import { customIconUploadRoot } from "../src/lib/custom-icons.js";
 import {
@@ -29,6 +31,42 @@ import {
 
 const userId = "usr_restore_recovery_test";
 let operationId = "";
+
+function signJournal(journal: Record<string, unknown> & { version: number }) {
+  let integrityValue: unknown[];
+  if (journal.version === 1 || journal.version === 2) {
+    integrityValue = [journal.version, journal.userId, journal.operationId, journal.hadPreviousAttachments];
+  } else if (journal.version === 3) {
+    integrityValue = [
+      journal.version,
+      journal.userId,
+      journal.operationId,
+      journal.hadPreviousAttachments,
+      journal.restoredAttachmentIds
+    ];
+  } else {
+    integrityValue = [
+      journal.version,
+      journal.userId,
+      journal.operationId,
+      journal.hadPreviousAttachments,
+      journal.hadPreviousCustomIcons,
+      journal.restoredAttachmentIds,
+      journal.restoredCustomIconFiles
+    ];
+  }
+  const hmac = createHmac("sha256", env.MFA_ENCRYPTION_KEY)
+    .update("brainvault:data-restore-journal:v1", "utf8")
+    .update("\0", "utf8")
+    .update(JSON.stringify(integrityValue), "utf8")
+    .digest("hex");
+  return {
+    format: "brainvault-restore-journal" as const,
+    integrityVersion: 1 as const,
+    journal,
+    hmac
+  };
+}
 
 function paths() {
   const safeUserId = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -56,8 +94,9 @@ async function writeFixture(hadPreviousAttachments: boolean) {
   }
   const journal = { version: 1 as const, userId, operationId, hadPreviousAttachments };
   await mkdir(dataTransferTempDir, { recursive: true });
-  await writeFile(value.journalPath, JSON.stringify(journal));
-  return journal;
+  const envelope = signJournal(journal);
+  await writeFile(value.journalPath, JSON.stringify(envelope));
+  return envelope;
 }
 
 async function writeVersionedFixture(options: {
@@ -93,8 +132,9 @@ async function writeVersionedFixture(options: {
     hadPreviousAttachments: options.hadPreviousAttachments
   };
   await mkdir(dataTransferTempDir, { recursive: true });
-  await writeFile(value.journalPath, JSON.stringify(journal));
-  return journal;
+  const envelope = signJournal(journal);
+  await writeFile(value.journalPath, JSON.stringify(envelope));
+  return envelope;
 }
 
 async function writeTrackedFixture(hadPreviousAttachments: boolean) {
@@ -118,8 +158,9 @@ async function writeTrackedFixture(hadPreviousAttachments: boolean) {
     restoredAttachmentIds: ["payload"]
   };
   await mkdir(dataTransferTempDir, { recursive: true });
-  await writeFile(value.journalPath, JSON.stringify(journal));
-  return journal;
+  const envelope = signJournal(journal);
+  await writeFile(value.journalPath, JSON.stringify(envelope));
+  return envelope;
 }
 
 async function writeTrackedAssetFixture(hadPrevious: boolean) {
@@ -154,8 +195,9 @@ async function writeTrackedAssetFixture(hadPrevious: boolean) {
     restoredCustomIconFiles: ["restored.png"]
   };
   await mkdir(dataTransferTempDir, { recursive: true });
-  await writeFile(value.journalPath, JSON.stringify(journal));
-  return journal;
+  const envelope = signJournal(journal);
+  await writeFile(value.journalPath, JSON.stringify(envelope));
+  return envelope;
 }
 
 beforeEach(() => {
@@ -185,6 +227,15 @@ afterEach(async () => {
 });
 
 describe("Interrupted data restore recovery", () => {
+  it("rejects a structurally valid but unauthenticated recovery journal", async () => {
+    await expect(recoverDataRestoreJournal({
+      version: 1,
+      userId,
+      operationId,
+      hadPreviousAttachments: false
+    })).rejects.toThrow();
+  });
+
   it("restores the previous attachment directory when the database transaction did not commit", async () => {
     const journal = await writeFixture(true);
 

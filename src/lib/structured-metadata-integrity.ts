@@ -1,4 +1,3 @@
-import net from "node:net";
 import type { BlockType } from "../types/domain.js";
 import { metadataSchema } from "../utils/schemas.js";
 import {
@@ -6,31 +5,7 @@ import {
   AttachmentMetadataIntegrityError
 } from "./attachment-metadata-integrity.js";
 import { normalizeCodeLanguage } from "./code-highlighting.js";
-
-const privateBookmarkAddressBlockList = new net.BlockList();
-const privateBookmarkIpv4Ranges = [
-  ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8],
-  ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24], ["192.0.2.0", 24],
-  ["192.88.99.0", 24], ["192.168.0.0", 16], ["198.18.0.0", 15], ["198.51.100.0", 24],
-  ["203.0.113.0", 24], ["224.0.0.0", 4], ["240.0.0.0", 4]
-] as const;
-for (const [base, prefix] of privateBookmarkIpv4Ranges) {
-  privateBookmarkAddressBlockList.addSubnet(base, prefix, "ipv4");
-  privateBookmarkAddressBlockList.addSubnet(`::ffff:${base}`, prefix + 96, "ipv6");
-}
-for (const [base, prefix] of [
-  ["::", 96], ["64:ff9b::", 96], ["64:ff9b:1::", 48], ["100::", 64],
-  ["100:0:0:1::", 64], ["2001::", 23], ["2001:db8::", 32], ["2002::", 16],
-  ["3fff::", 20], ["5f00::", 16], ["fc00::", 7], ["fe80::", 10], ["fec0::", 10], ["ff00::", 8]
-] as const) {
-  privateBookmarkAddressBlockList.addSubnet(base, prefix, "ipv6");
-}
-
-function isPrivateBookmarkIpLiteral(address: string) {
-  const family = net.isIP(address);
-  if (family !== 4 && family !== 6) return false;
-  return privateBookmarkAddressBlockList.check(address, family === 4 ? "ipv4" : "ipv6");
-}
+import { isPrivateOrLocalHostname } from "./network-address.js";
 
 const tableLimits = { rows: 50, columns: 20, cellLength: 4_000 } as const;
 const kanbanLimits = {
@@ -78,7 +53,10 @@ function isValidAccordionIconValue(value: string) {
     if (source.length > 2_048) return false;
     try {
       const url = new URL(source);
-      return !url.username && !url.password && (url.protocol === "http:" || url.protocol === "https:");
+      return !url.username
+        && !url.password
+        && (url.protocol === "http:" || url.protocol === "https:")
+        && !isPrivateOrLocalHostname(url.hostname);
     } catch {
       return false;
     }
@@ -289,9 +267,8 @@ function canonicalBookmarkUrl(value: unknown, path: string, baseUrl?: string) {
   if (!(["http:", "https:"] as string[]).includes(parsed.protocol) || parsed.username || parsed.password) {
     fail(path, "must be an HTTP(S) URL without embedded credentials");
   }
-  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (isPrivateBookmarkIpLiteral(hostname)) {
-    fail(path, "must not use a private or local IP address");
+  if (isPrivateOrLocalHostname(parsed.hostname)) {
+    fail(path, "must not use a private or local hostname or IP address");
   }
   if (parsed.hash) fail(path, "must not contain a fragment because fragments are discarded by the editor");
   const canonical = parsed.toString();

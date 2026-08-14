@@ -24,6 +24,24 @@ function encodeVarUint(value: number) {
   return Uint8Array.from(bytes);
 }
 
+function buildSkipFloodUpdate(structCount: number) {
+  const prefix = [
+    ...encodeVarUint(1),
+    ...encodeVarUint(structCount),
+    ...encodeVarUint(1),
+    ...encodeVarUint(0)
+  ];
+  const update = new Uint8Array(prefix.length + structCount * 2 + 1);
+  update.set(prefix, 0);
+  let offset = prefix.length;
+  for (let index = 0; index < structCount; index += 1) {
+    update[offset++] = 0x0a;
+    update[offset++] = 0x00;
+  }
+  update[offset] = 0x00;
+  return update;
+}
+
 describe("server-side Yjs validation", () => {
   it("merges concurrent updates deterministically while leaving the live document isolated", () => {
     const base = new Y.Doc();
@@ -108,6 +126,14 @@ describe("server-side Yjs validation", () => {
   it("rejects pathological declared client-section counts before Yjs apply", () => {
     const pathologicalHeader = encodeVarUint(100_001);
     expect(() => createValidatedYjsDocument([pathologicalHeader], limit)).toThrowError(
+      InvalidYjsUpdateError
+    );
+  });
+
+  it("rejects aggregate struct-count amplification before Yjs apply", () => {
+    const skipFlood = buildSkipFloodUpdate(100_001);
+    expect(skipFlood.byteLength).toBeLessThan(limit);
+    expect(() => createValidatedYjsDocument([skipFlood], limit)).toThrowError(
       InvalidYjsUpdateError
     );
   });

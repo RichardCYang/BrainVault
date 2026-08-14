@@ -10,6 +10,7 @@ import {
   assertAttachmentStorageLimit,
   attachmentUploadRoot,
   getAttachmentFilePath,
+  inspectStoredAttachmentContent,
   withUserAttachmentLock
 } from "./attachments.js";
 import {
@@ -2575,7 +2576,7 @@ async function recoverTrackedRestoreAssets(
 }
 
 export async function recoverDataRestoreJournal(journalInput: unknown) {
-  return recoverRestoreJournal(restoreJournalSchema.parse(journalInput));
+  return recoverRestoreJournal(verifyRestoreJournalEnvelope(journalInput));
 }
 
 async function recoverRestoreJournal(journal: RestoreJournal) {
@@ -2739,6 +2740,7 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
     invalidBackup("The backup manifest is invalid", error instanceof z.ZodError ? error.flatten() : undefined);
   }
   validateManifestRelations(manifest);
+  const restoreBlockById = new Map(manifest.data.blocks.map((block) => [block.id, block]));
   const restoresCustomIcons = manifest.version >= uploadedAssetBackupVersion;
   const retainedAttachments = manifest.retainedAttachments ?? [];
   const restoredAttachmentBytes = [...manifest.attachments, ...retainedAttachments].reduce(
@@ -2843,6 +2845,16 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
       if (inspection.sha256 !== attachment.sha256 || inspection.size.toString() !== attachment.size) {
         invalidBackup(`Attachment SHA-256 does not match: ${attachment.blockId}`);
       }
+      const block = restoreBlockById.get(attachment.blockId);
+      if (!block || block.type !== "ATTACHMENT") invalidBackup(`Attachment block is missing: ${attachment.blockId}`);
+      const attachmentInfo = assertLosslessAttachmentMetadata(block.metadata, attachment.size);
+      try {
+        await inspectStoredAttachmentContent(outputPath, attachmentInfo.mimeType);
+      } catch (error) {
+        invalidBackup(`Attachment content is not allowed: ${attachment.blockId}`, {
+          reason: error instanceof Error ? error.message : "invalid attachment content"
+        });
+      }
     }
     for (const retained of retainedAttachments) {
       const entry = entryByName.get(retained.path);
@@ -2860,6 +2872,15 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
       const inspection = await inspectFile(outputPath);
       if (inspection.sha256 !== retained.sha256 || inspection.size.toString() !== retained.size) {
         invalidBackup(`Retained attachment SHA-256 does not match: ${retained.fileName}`);
+      }
+      try {
+        // Retained files no longer have live metadata, but they still must not
+        // be usable as a restore-only executable smuggling channel.
+        await inspectStoredAttachmentContent(outputPath, "application/octet-stream");
+      } catch (error) {
+        invalidBackup(`Retained attachment content is not allowed: ${retained.fileName}`, {
+          reason: error instanceof Error ? error.message : "invalid attachment content"
+        });
       }
     }
     for (const pageCover of manifest.pageCovers ?? []) {

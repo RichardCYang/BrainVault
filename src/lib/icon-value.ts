@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ApiError } from "./http.js";
+import { isPrivateOrLocalHostname } from "./network-address.js";
 
 export const builtInIconPrefix = "icon:";
 export const imageIconPrefix = "image:";
@@ -48,7 +49,12 @@ function normalizeImageIconSource(source: string) {
   if (value.length <= maxRemoteIconUrlLength) {
     try {
       const url = new URL(value);
-      if ((url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password) {
+      if (
+        (url.protocol === "http:" || url.protocol === "https:")
+        && !url.username
+        && !url.password
+        && !isPrivateOrLocalHostname(url.hostname)
+      ) {
         return url.toString();
       }
     } catch {

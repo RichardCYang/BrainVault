@@ -4,10 +4,11 @@ import https from "node:https";
 import net, { type LookupFunction } from "node:net";
 import {
   isPrivateAddress,
+  isPrivateOrLocalHostname,
   prioritizeResolvedAddresses,
   type ResolvedAddress
 } from "./network-address.js";
-export { isPrivateAddress, prioritizeResolvedAddresses, type ResolvedAddress } from "./network-address.js";
+export { isPrivateAddress, isPrivateOrLocalHostname, prioritizeResolvedAddresses, type ResolvedAddress } from "./network-address.js";
 import { env } from "../config/env.js";
 import { ApiError } from "./http.js";
 import {
@@ -110,6 +111,7 @@ export function normalizeBookmarkUrl(value: unknown, baseUrl?: string | URL) {
     const url = baseUrl ? new URL(raw, baseUrl) : new URL(raw);
     if (!(["http:", "https:"] as string[]).includes(url.protocol)) return "";
     if (url.username || url.password) return "";
+    if (isPrivateOrLocalHostname(url.hostname)) return "";
     url.hash = "";
     return url.toString().slice(0, bookmarkLimits.urlLength);
   } catch {
@@ -221,14 +223,7 @@ export function renderBookmarkHtml(metadata: unknown) {
 
 async function resolvePublicAddresses(url: URL): Promise<ResolvedAddress[]> {
   const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (
-    hostname === "localhost" ||
-    hostname.endsWith(".localhost") ||
-    hostname.endsWith(".local") ||
-    hostname.endsWith(".internal") ||
-    hostname.endsWith(".lan") ||
-    hostname.endsWith(".home")
-  ) {
+  if (isPrivateOrLocalHostname(hostname)) {
     throw new ApiError(400, "BOOKMARK_URL_BLOCKED", "Local and private network addresses are not allowed");
   }
 

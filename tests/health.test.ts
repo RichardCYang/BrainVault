@@ -375,6 +375,11 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(html).not.toMatch(/onerror|onload|<script|alert\(/i);
   });
 
+  it("rejects protocol-relative URLs instead of bypassing the explicit scheme allowlist", () => {
+    const html = renderMarkdown("[tracker](//attacker.example/pixel)");
+    expect(html).not.toContain("//attacker.example");
+  });
+
   it("does not expose internal project documentation by default", async () => {
     await request(createApp()).get("/docs/api/2026-07-30/openapi.yaml").expect(404);
   });

@@ -189,6 +189,7 @@ const sanitizeOptions: sanitizeHtml.IOptions = {
       width: [/^(?:100|[1-9]?\d)%$/]
     }
   },
+  allowProtocolRelative: false,
   allowedSchemes: ["http", "https", "mailto"],
   allowedIframeHostnames: ["www.youtube-nocookie.com", "www.youtube.com"],
   exclusiveFilter: (frame) => frame.tag === "input" && frame.attribs.type !== "checkbox",

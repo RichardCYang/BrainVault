@@ -165,6 +165,10 @@ export function normalizeAttachmentMimeType(value: string) {
   return safeAttachmentMimeTypes.has(mimeType) ? mimeType : "application/octet-stream";
 }
 
+export function isSafeAttachmentMimeType(value: string) {
+  return safeAttachmentMimeTypes.has(canonicalizeAttachmentMimeType(value));
+}
+
 export function isActiveAttachmentMimeType(value: string) {
   return activeAttachmentMimeTypes.has(canonicalizeAttachmentMimeType(value));
 }
@@ -233,6 +237,9 @@ export function assertLosslessAttachmentMetadata(
   }
   if (isActiveAttachmentMimeType(mimeType)) {
     fail("metadata.attachment.mimeType", "uses an active web or executable MIME type");
+  }
+  if (!isSafeAttachmentMimeType(mimeType)) {
+    fail("metadata.attachment.mimeType", "uses a MIME type that is not allowed for attachments");
   }
 
   if (typeof attachment.size !== "number"

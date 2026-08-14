@@ -34,6 +34,7 @@ test("all built-in cover images are shipped and exposed by the picker", async ()
     assert.match(html, new RegExp(publicPath.replaceAll("/", "\\/")));
   }
   assert.match(serverValidation, /Array\.from\(\{ length: 5 \}[\s\S]*?`\/img\/default_cover\/coverimg\$\{index \+ 1\}\.png`/);
+  assert.match(serverValidation, /isPrivateOrLocalHostname\(parsed\.hostname\)/);
 
   let thumbnailBytes = 0;
   for (const relativePath of defaultCoverThumbnailPaths) {

@@ -1040,6 +1040,11 @@ export class PageCollaborationHub {
     baseUpdateId: number | null
   ) {
     if (room.invalidated || this.rooms.get(room.pageId) !== room) return;
+    // Re-check durable access before admitting expensive worker validation.
+    // The transaction below checks again under the page lock, closing the
+    // authorization race without allowing a revoked socket to spend the
+    // shared validation budget first.
+    if (!await this.revalidateClientPageAccess(room, client)) return;
 
     let validation: CollaborationValidationResult;
     try {
@@ -1240,10 +1245,22 @@ export class PageCollaborationHub {
     room.historyBytes = durableSnapshot
       ? persistedUpdate.length
       : room.historyBytes + persistedUpdate.length;
+
+    // A share can be revoked on another application process after this socket
+    // was admitted. Re-authorize every recipient against durable state before
+    // sending any newly committed collaboration data.
+    const authorizedTargets = (await Promise.all(
+      [...room.clients.values()].map(async (target) =>
+        await this.revalidateClientPageAccess(room, target) ? target : null
+      )
+    )).filter((target): target is ClientContext => target !== null);
+    if (room.invalidated || this.rooms.get(room.pageId) !== room) return;
+    const authorizedTargetIds = new Set(authorizedTargets.map((target) => target.id));
+
     if (snapshot) {
       // A compaction snapshot is proven state-equivalent before persistence.
       // Peers need only the new durable cursor, not a second full document.
-      for (const target of room.clients.values()) {
+      for (const target of authorizedTargets) {
         if (target.id !== client.id) {
           target.socket.sendJson({ type: "compaction-complete", updateId: result.updateId });
         }
@@ -1253,12 +1270,12 @@ export class PageCollaborationHub {
       // Existing peers receive the server-normalized incremental update while a
       // reconnect receives the equivalent full-state snapshot from history.
       const envelope = updateEnvelope(result.updateId, canonicalIncrementalUpdate);
-      for (const target of room.clients.values()) target.socket.sendBinary(envelope);
+      for (const target of authorizedTargets) target.socket.sendBinary(envelope);
       if (durableSnapshot) {
         // Reset cooperative client counters as well. Otherwise an honest client
         // could immediately submit a redundant snapshot after the server has
         // already compacted the same canonical state.
-        for (const target of room.clients.values()) {
+        for (const target of authorizedTargets) {
           target.socket.sendJson({ type: "compaction-complete", updateId: result.updateId });
         }
       }
@@ -1272,6 +1289,7 @@ export class PageCollaborationHub {
       this.clearBootstrapLeaderTimer(room);
       room.bootstrapLeaderId = null;
       for (const waitingId of room.waitingForBootstrap) {
+        if (!authorizedTargetIds.has(waitingId)) continue;
         const waiting = room.clients.get(waitingId);
         if (!waiting?.socket.isOpen) continue;
         waiting.synced = true;

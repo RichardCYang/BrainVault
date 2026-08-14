@@ -87,7 +87,12 @@ test("collaboration updates are semantically validated off the event loop before
   assert.match(pool, /validationTaskTimeoutMs = 5_000/);
   assert.match(pool, /availableParallelism\(\)/);
   assert.match(source, /principalKey: client\.user\.id/);
-  assert.match(read("src/lib/yjs-validation.ts"), /Y\.parseUpdateMeta\(update\)/);
+  const yjsValidation = read("src/lib/yjs-validation.ts");
+  assert.match(yjsValidation, /class BoundedUpdateDecoderV1 extends Y\.UpdateDecoderV1/);
+  assert.match(yjsValidation, /Y\.parseUpdateMetaV2\(update, BoundedUpdateDecoderV1\)/);
+  assert.ok(source.indexOf("revalidateClientPageAccess(room, client)") < validationIndex);
+  assert.match(source, /const authorizedTargets = \(await Promise\.all/);
+  assert.match(source, /for \(const target of authorizedTargets\) target\.socket\.sendBinary\(envelope\)/);
 });
 
 test("collaboration tickets are bound to the authenticated browser session", () => {
@@ -167,6 +172,7 @@ test("restore journals are authenticated before startup recovery can derive dest
   assert.match(transfer, /createHmac\("sha256", env\.MFA_ENCRYPTION_KEY\)/);
   assert.match(transfer, /timingSafeEqual\(actual, expected\)/);
   assert.match(transfer, /JSON\.stringify\(signRestoreJournal\(journal\)\)/);
+  assert.match(transfer, /recoverDataRestoreJournal\(journalInput: unknown\)[\s\S]{0,160}verifyRestoreJournalEnvelope\(journalInput\)/);
   assert.ok(recovery.indexOf("verifyRestoreJournalEnvelope") < recovery.indexOf("getRestorePaths(journal)"));
   assert.match(recovery, /Ignoring unauthenticated data restore journal/);
 });

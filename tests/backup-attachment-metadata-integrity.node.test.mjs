@@ -42,6 +42,7 @@ test("restore rejects missing, double-encoded, or normalizing attachment metadat
     [{ attachment: { ...validMetadata.attachment, mimeType: " Application/PDF " } }, "metadata.attachment.mimeType"],
     [{ attachment: { ...validMetadata.attachment, originalName: "payload.html" } }, "metadata.attachment.originalName"],
     [{ attachment: { ...validMetadata.attachment, mimeType: "text/html" } }, "metadata.attachment.mimeType"],
+    [{ attachment: { ...validMetadata.attachment, mimeType: "application/x-untrusted" } }, "metadata.attachment.mimeType"],
     [{ attachment: { ...validMetadata.attachment, size: Number.MAX_SAFE_INTEGER + 1 } }, "metadata.attachment.size"]
   ];
 
@@ -75,6 +76,8 @@ test("integration validates attachment metadata before restore identity checks a
   const prepare = source.slice(prepareStart, prepareEnd);
 
   assert.match(relation, /assertLosslessAttachmentMetadata\(block\.metadata, attachment\.size\)/);
+  assert.match(source, /inspectStoredAttachmentContent\(outputPath, attachmentInfo\.mimeType\)/);
+  assert.match(source, /inspectStoredAttachmentContent\(outputPath, "application\/octet-stream"\)/);
   assert.ok(
     source.indexOf("validateManifestRelations(manifest)")
       < source.indexOf("await assertNoForeignIdConflicts(userId, manifest)"),
