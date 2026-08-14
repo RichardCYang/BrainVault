@@ -501,6 +501,64 @@ assert(
   "Complete backup/restore can still erase shares or rebind them to an unrelated same-named account"
 );
 
+assert(
+  dataTransferSource.includes("prepareRestoreCollaboratorNavigationPlan")
+    && dataTransferSource.includes("restoredCollaboratorIds")
+    && dataTransferSource.includes("np.user_id IN (${placeholders})")
+    && dataTransferSource.includes("no.user_id IN (${placeholders})")
+    && dataTransferSource.includes("DATE_FORMAT(np.created_at")
+    && dataTransferSource.includes("DATE_FORMAT(no.updated_at")
+    && dataTransferSource.includes("restoredShareKeys.has(collaboratorNavigationKey")
+    && dataTransferSource.includes("for (const row of collaboratorNavigation.collapsed)")
+    && dataTransferSource.includes("for (const row of collaboratorNavigation.order)"),
+  "Workspace restore can still erase navigation preferences owned by surviving collaborators"
+);
+
+const collaboratorNavigationRestoreReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL("./reproduce-collaborator-navigation-restore-loss.mjs", import.meta.url))],
+  { encoding: "utf8" }
+));
+assert(
+  collaboratorNavigationRestoreReproduction.vulnerability.collaboratorCollapseLostAfterSuccessfulRestore
+    && collaboratorNavigationRestoreReproduction.vulnerability.collaboratorOrderLostAfterSuccessfulRestore
+    && collaboratorNavigationRestoreReproduction.fixed.collaboratorCollapsePreserved
+    && collaboratorNavigationRestoreReproduction.fixed.collaboratorOrderPreserved
+    && collaboratorNavigationRestoreReproduction.fixed.dormantPreferencePreservedWhenBackupRestoresShare
+    && collaboratorNavigationRestoreReproduction.fixed.removedShareDoesNotResurrectCollapsedState
+    && collaboratorNavigationRestoreReproduction.fixed.removedShareDoesNotResurrectOrderState,
+  "The collaborator-navigation restore reproduction did not prove both vulnerable and fixed states"
+);
+
+assert(
+  dataTransferSource.includes("prepareRestoreMutationReceiptPlan")
+    && dataTransferSource.includes("FROM page_version_reset_mutations m")
+    && dataTransferSource.includes("FROM block_order_mutations m")
+    && dataTransferSource.includes("FROM block_create_mutations m")
+    && !dataTransferSource.includes("FROM block_delete_mutations m")
+    && !dataTransferSource.includes("mutationReceipts.blockDeletes")
+    && dataTransferSource.includes("restoredPageIds.has(row.page_id)")
+    && dataTransferSource.includes("for (const row of mutationReceipts.pageVersionResets)")
+    && dataTransferSource.includes("for (const row of mutationReceipts.blockCreates)"),
+  "Workspace restore can still drop page-tied idempotency receipts and let stale retries cross the restore generation"
+);
+
+const restoreMutationReceiptReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL("./reproduce-restore-mutation-receipt-loss.mjs", import.meta.url))],
+  { encoding: "utf8" }
+));
+assert(
+  restoreMutationReceiptReproduction.vulnerability.delayedResetRetryDeletesRestoredHistory
+    && restoreMutationReceiptReproduction.vulnerability.delayedCreateRetryDuplicatesRestoredBlock
+    && restoreMutationReceiptReproduction.fixed.delayedResetRetryReplaysWithoutDeletingRestoredHistory
+    && restoreMutationReceiptReproduction.fixed.delayedCreateRetryReplaysWithoutDuplicate
+    && restoreMutationReceiptReproduction.fixed.createReceiptTombstoneBlocksResurrectionWhenBackupOmitsOriginalBlock
+    && restoreMutationReceiptReproduction.fixed.preservingDeleteReceiptWouldDeleteRestoredAttachment
+    && restoreMutationReceiptReproduction.fixed.staleDeleteRetryConflictsWithoutTouchingRestoredAttachment,
+  "The restore mutation-receipt reproduction did not prove both vulnerable and fixed states"
+);
+
 const backupShareLossReproduction = JSON.parse(execFileSync(
   process.execPath,
   [fileURLToPath(new URL("./reproduce-backup-share-loss.mjs", import.meta.url))],

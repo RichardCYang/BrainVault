@@ -490,6 +490,57 @@ type RestoreSharingPlan = {
   shares: RestoredPageShare[];
 };
 
+type CollaboratorNavigationCollapsedRow = {
+  user_id: string;
+  page_id: string;
+  created_at: string;
+};
+
+type CollaboratorNavigationOrderRow = {
+  user_id: string;
+  page_id: string;
+  sort_order: number;
+  updated_at: string;
+};
+
+type RestoreCollaboratorNavigationPlan = {
+  collapsed: CollaboratorNavigationCollapsedRow[];
+  order: CollaboratorNavigationOrderRow[];
+};
+
+type RestorePageVersionResetMutationRow = {
+  owner_id: string;
+  mutation_id: string;
+  page_id: string;
+  request_hash: string;
+  revision: number | null;
+  deleted_count: number | null;
+  created_at: string;
+};
+
+type RestoreBlockOrderMutationRow = {
+  owner_id: string;
+  mutation_id: string;
+  page_id: string;
+  request_hash: string | null;
+  created_at: string;
+};
+
+type RestoreBlockCreateMutationRow = {
+  actor_id: string;
+  mutation_id: string;
+  page_id: string;
+  block_id: string;
+  request_hash: string;
+  created_at: string;
+};
+
+type RestoreMutationReceiptPlan = {
+  pageVersionResets: RestorePageVersionResetMutationRow[];
+  blockOrders: RestoreBlockOrderMutationRow[];
+  blockCreates: RestoreBlockCreateMutationRow[];
+};
+
 type WorkspaceCollaborationStateRow = {
   page_id: string;
   latest_update_id: number | bigint | null;
@@ -1882,6 +1933,110 @@ async function prepareRestoreSharingPlan(
   return { mode: "backup", shares };
 }
 
+function collaboratorNavigationKey(userId: string, pageId: string) {
+  return `${userId}\u0000${pageId}`;
+}
+
+async function prepareRestoreCollaboratorNavigationPlan(
+  client: DbClient,
+  userId: string,
+  pageShares: RestoredPageShare[]
+): Promise<RestoreCollaboratorNavigationPlan> {
+  const restoredShareKeys = new Set(
+    pageShares.map((share) => collaboratorNavigationKey(share.userId, share.pageId))
+  );
+  const restoredCollaboratorIds = [...new Set(pageShares.map((share) => share.userId))];
+  if (!restoredShareKeys.size) return { collapsed: [], order: [] };
+
+  // Deleting the owner's pages cascades navigation rows for every account, not
+  // just the owner. Preserve preferences for every collaborator whose grant will
+  // exist after restore, including dormant preferences left from an older grant
+  // that the backup is restoring. prepareRestoreSharingPlan has already locked
+  // each final collaborator user row, matching the navigation mutation lock
+  // order, so their preference writes cannot cross this snapshot.
+  const collapsed: CollaboratorNavigationCollapsedRow[] = [];
+  const order: CollaboratorNavigationOrderRow[] = [];
+  for (const group of batch(restoredCollaboratorIds)) {
+    if (!group.length) continue;
+    const placeholders = group.map(() => "?").join(",");
+    collapsed.push(...await client.query<CollaboratorNavigationCollapsedRow>(
+      `SELECT np.user_id, np.page_id,
+              DATE_FORMAT(np.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
+       FROM user_navigation_collapsed_pages np
+       INNER JOIN pages p ON p.id = np.page_id
+       WHERE p.owner_id = ? AND np.user_id IN (${placeholders})
+       ORDER BY np.user_id ASC, np.page_id ASC
+       FOR UPDATE`,
+      [userId, ...group]
+    ));
+    order.push(...await client.query<CollaboratorNavigationOrderRow>(
+      `SELECT no.user_id, no.page_id, no.sort_order,
+              DATE_FORMAT(no.updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at
+       FROM user_navigation_page_order no
+       INNER JOIN pages p ON p.id = no.page_id
+       WHERE p.owner_id = ? AND no.user_id IN (${placeholders})
+       ORDER BY no.user_id ASC, no.sort_order ASC, no.page_id ASC
+       FOR UPDATE`,
+      [userId, ...group]
+    ));
+  }
+
+  return {
+    collapsed: collapsed.filter((row) => restoredShareKeys.has(collaboratorNavigationKey(row.user_id, row.page_id))),
+    order: order.filter((row) => restoredShareKeys.has(collaboratorNavigationKey(row.user_id, row.page_id)))
+  };
+}
+
+async function prepareRestoreMutationReceiptPlan(
+  client: DbClient,
+  userId: string,
+  manifest: BrainVaultBackup
+): Promise<RestoreMutationReceiptPlan> {
+  const restoredPageIds = new Set(manifest.data.pages.map((page) => page.id));
+  const pageVersionResets = await client.query<RestorePageVersionResetMutationRow>(
+    `SELECT m.owner_id, m.mutation_id, m.page_id, m.request_hash, m.revision, m.deleted_count,
+            DATE_FORMAT(m.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
+     FROM page_version_reset_mutations m
+     INNER JOIN pages p ON p.id = m.page_id
+     WHERE p.owner_id = ?
+     ORDER BY m.owner_id ASC, m.mutation_id ASC
+     FOR UPDATE`,
+    [userId]
+  );
+  const blockOrders = await client.query<RestoreBlockOrderMutationRow>(
+    `SELECT m.owner_id, m.mutation_id, m.page_id, m.request_hash,
+            DATE_FORMAT(m.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
+     FROM block_order_mutations m
+     INNER JOIN pages p ON p.id = m.page_id
+     WHERE p.owner_id = ?
+     ORDER BY m.owner_id ASC, m.mutation_id ASC
+     FOR UPDATE`,
+    [userId]
+  );
+  const blockCreates = await client.query<RestoreBlockCreateMutationRow>(
+    `SELECT m.actor_id, m.mutation_id, m.page_id, m.block_id, m.request_hash,
+            DATE_FORMAT(m.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
+     FROM block_create_mutations m
+     INNER JOIN pages p ON p.id = m.page_id
+     WHERE p.owner_id = ?
+     ORDER BY m.actor_id ASC, m.mutation_id ASC
+     FOR UPDATE`,
+    [userId]
+  );
+  // Receipts are runtime tombstones, not portable backup payload. Keep only
+  // no-side-effect replay receipts whose page identity survives this restore so
+  // delayed reset/create retries cannot cross the restore generation. A block
+  // delete receipt is intentionally NOT preserved: replaying its attachment_ids
+  // would run filesystem cleanup again and could delete an attachment resurrected
+  // by the backup. Stale deletes remain fenced by the restore-only block
+  // edit_version bump before any delete executes.
+  return {
+    pageVersionResets: pageVersionResets.filter((row) => restoredPageIds.has(row.page_id)),
+    blockOrders: blockOrders.filter((row) => restoredPageIds.has(row.page_id)),
+    blockCreates: blockCreates.filter((row) => restoredPageIds.has(row.page_id))
+  };
+}
+
 function getManifestMaxEditVersion(manifest: BrainVaultBackup) {
   let maximum = 0;
   for (const page of manifest.data.pages) {
@@ -1931,6 +2086,8 @@ async function importRows(
   manifest: BrainVaultBackup,
   restoreVersion: number,
   pageShares: RestoredPageShare[],
+  collaboratorNavigation: RestoreCollaboratorNavigationPlan,
+  mutationReceipts: RestoreMutationReceiptPlan,
   stagedPageCoverDir: string
 ) {
   const restoreIconValue = (value: string | null) => manifest.version >= uploadedAssetBackupVersion
@@ -1974,6 +2131,35 @@ async function importRows(
     );
   }
 
+  // Page replacement cascades page-tied mutation receipts. Recreate only the
+  // no-side-effect replay receipts selected above before commit so old reset,
+  // reorder, and create retries cannot cross the restore boundary as new work.
+  // Block-delete receipts stay absent so their old attachment cleanup scope can
+  // never be replayed against the newly restored filesystem generation.
+  for (const row of mutationReceipts.pageVersionResets) {
+    await client.execute(
+      `INSERT INTO page_version_reset_mutations
+         (owner_id, mutation_id, page_id, request_hash, revision, deleted_count, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [row.owner_id, row.mutation_id, row.page_id, row.request_hash, row.revision, row.deleted_count, row.created_at]
+    );
+  }
+  for (const row of mutationReceipts.blockOrders) {
+    await client.execute(
+      `INSERT INTO block_order_mutations
+         (owner_id, mutation_id, page_id, request_hash, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [row.owner_id, row.mutation_id, row.page_id, row.request_hash, row.created_at]
+    );
+  }
+  for (const row of mutationReceipts.blockCreates) {
+    await client.execute(
+      `INSERT INTO block_create_mutations
+         (actor_id, mutation_id, page_id, block_id, request_hash, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [row.actor_id, row.mutation_id, row.page_id, row.block_id, row.request_hash, row.created_at]
+    );
+  }
   const orderedBlocks = orderByParent(manifest.data.blocks, (item) => item.id, (item) => item.parent_block_id);
   for (const block of orderedBlocks) {
     await client.execute(
@@ -2019,6 +2205,23 @@ async function importRows(
       `INSERT INTO page_shares (page_id, user_id, permission, shared_by, created_at)
        VALUES (?, ?, ?, ?, ?)`,
       [share.pageId, share.userId, share.permission, userId, share.createdAt]
+    );
+  }
+
+  // The page delete above also cascades navigation preferences owned by other
+  // accounts. Reinsert the preferences captured for collaborators whose EDIT
+  // grant survived the restore; the owner's own preferences are restored from
+  // the backup manifest below and intentionally follow backup state instead.
+  for (const row of collaboratorNavigation.collapsed) {
+    await client.execute(
+      `INSERT INTO user_navigation_collapsed_pages (user_id, page_id, created_at) VALUES (?, ?, ?)`,
+      [row.user_id, row.page_id, row.created_at]
+    );
+  }
+  for (const row of collaboratorNavigation.order) {
+    await client.execute(
+      `INSERT INTO user_navigation_page_order (user_id, page_id, sort_order, updated_at) VALUES (?, ?, ?, ?)`,
+      [row.user_id, row.page_id, Number(row.sort_order), row.updated_at]
     );
   }
 
@@ -2821,6 +3024,10 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
   let journalWritten = false;
   let restoreJournal: RestoreJournal | null = null;
   let restoreSharingPlan: RestoreSharingPlan = { mode: "backup", shares: [] };
+  let restoreCollaboratorNavigation: RestoreCollaboratorNavigationPlan = { collapsed: [], order: [] };
+  let restoreMutationReceipts: RestoreMutationReceiptPlan = {
+    pageVersionResets: [], blockOrders: [], blockCreates: []
+  };
   await Promise.all([
     mkdir(stagedAttachmentDir, { recursive: true }),
     mkdir(stagedPageCoverDir, { recursive: true }),
@@ -2969,6 +3176,12 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
           manifest,
           lockedWorkspaceSnapshot.shares
         );
+        restoreCollaboratorNavigation = await prepareRestoreCollaboratorNavigationPlan(
+          client,
+          userId,
+          restoreSharingPlan.shares
+        );
+        restoreMutationReceipts = await prepareRestoreMutationReceiptPlan(client, userId, manifest);
         // Invalidate every live in-memory Yjs room while the owned page rows are
         // still locked. Otherwise an old owner session can append its pre-restore
         // document after commit and later materialize it over the restored backup.
@@ -3000,7 +3213,16 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
         await writeRestoreJournal(restoreJournal);
         journalWritten = true;
         const restoreVersion = await createRestoreEditVersion(client, userId, manifest);
-        await importRows(client, userId, manifest, restoreVersion, restoreSharingPlan.shares, stagedPageCoverDir);
+        await importRows(
+          client,
+          userId,
+          manifest,
+          restoreVersion,
+          restoreSharingPlan.shares,
+          restoreCollaboratorNavigation,
+          restoreMutationReceipts,
+          stagedPageCoverDir
+        );
 
         await mkdir(path.dirname(targetAttachmentDir), { recursive: true });
         if (await pathExists(targetAttachmentDir)) {
