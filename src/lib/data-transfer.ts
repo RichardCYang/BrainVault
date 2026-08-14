@@ -1568,7 +1568,7 @@ export async function prepareUserDataBackup(userId: string) {
       account: {
         name: snapshot.account.name,
         avatar_data: snapshot.account.avatar_data,
-        preferred_language: snapshot.account.preferred_language,
+        preferred_language: preferredLanguageSchema.nullable().parse(snapshot.account.preferred_language),
         default_collection_icon: normalizeIconValue(snapshot.account.default_collection_icon),
         theme: snapshot.account.theme
       },
