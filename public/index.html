@@ -758,6 +758,10 @@
                 <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12M8 11l4 4 4-4"></path><path d="M5 16v3h14v-3"></path></svg>
                 <span data-i18n="account.data">Data</span>
               </button>
+              <button id="account-tab-snapshots" type="button" role="tab" aria-selected="false" aria-controls="account-panel-snapshots" data-account-panel="snapshots" tabindex="-1">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 5 16.5z"></path><path d="M8 5V3h8v2M8 10h8M8 14h5"></path></svg>
+                <span data-i18n="account.snapshots">Snapshots</span>
+              </button>
             </div>
 
             <button id="logout-button" type="button" class="account-settings-logout">
@@ -864,6 +868,36 @@
                   </div>
                 </article>
               </div>
+            </section>
+
+            <section id="account-panel-snapshots" class="account-settings-panel hidden" role="tabpanel" aria-labelledby="account-tab-snapshots" data-account-panel-content="snapshots">
+              <div class="account-panel-heading account-snapshot-heading">
+                <div>
+                  <h3 data-i18n="account.snapshotsTitle">Snapshots</h3>
+                  <p data-i18n="account.snapshotsDescription">Capture a complete private copy of the current workspace and compare or restore it later.</p>
+                </div>
+                <button id="account-snapshot-refresh" class="secondary compact" type="button" data-i18n="account.snapshotRefresh">Refresh</button>
+              </div>
+
+              <article class="account-data-card account-snapshot-create-card">
+                <div>
+                  <h4 data-i18n="account.snapshotCreateTitle">Create snapshot</h4>
+                  <p data-i18n="account.snapshotCreateDescription">Stores the same complete workspace payload as a BrainVault backup, including pages, blocks, tags, sharing, version history, navigation state, attachments, page covers, and uploaded custom icons. Passwords and two-step verification are never included.</p>
+                </div>
+                <div class="account-data-actions">
+                  <button id="account-snapshot-create" type="button" data-i18n="account.snapshotCreateButton">Create snapshot now</button>
+                </div>
+              </article>
+
+              <div class="account-snapshot-list-heading">
+                <div>
+                  <h4 data-i18n="account.snapshotListTitle">Saved snapshots</h4>
+                  <p data-i18n="account.snapshotListDescription">Compare a snapshot with the current workspace, restore it, or delete it.</p>
+                </div>
+                <span id="account-snapshot-count" class="account-snapshot-count" aria-live="polite"></span>
+              </div>
+              <div id="account-snapshot-list" class="account-snapshot-list" aria-live="polite" aria-busy="false"></div>
+              <p id="account-snapshot-empty" class="account-snapshot-empty hidden" data-i18n="account.snapshotEmpty">No snapshots have been created yet.</p>
             </section>
 
             <section id="account-panel-security" class="account-settings-panel hidden" role="tabpanel" aria-labelledby="account-tab-security" data-account-panel-content="security">

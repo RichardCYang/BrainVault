@@ -1196,6 +1196,67 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
   }
 }
 
+export async function readUserDataBackupManifest(zipPath: string): Promise<BrainVaultBackup> {
+  let entries;
+  try {
+    entries = await readZipDirectory(zipPath, {
+      maxCentralDirectoryBytes: dataTransferResourceLimits.maxCentralDirectoryBytes,
+      maxEntries: dataTransferResourceLimits.maxZipEntries
+    });
+  } catch (error) {
+    invalidBackup(error instanceof Error ? error.message : "The ZIP archive is invalid");
+  }
+
+  const entryByName = new Map<string, (typeof entries)[number]>();
+  const entryNamesCaseFolded = new Set<string>();
+  let totalSize = 0n;
+  for (const entry of entries) {
+    if (!entry.name || entry.name.startsWith("/") || entry.name.includes("\\") || entry.name.split("/").includes("..")) {
+      invalidBackup(`ZIP entry path is unsafe: ${entry.name}`);
+    }
+    const caseFoldedName = entry.name.toLowerCase();
+    if (entryByName.has(entry.name) || entryNamesCaseFolded.has(caseFoldedName)) {
+      invalidBackup(`ZIP entry is duplicated: ${entry.name}`);
+    }
+    entryByName.set(entry.name, entry);
+    entryNamesCaseFolded.add(caseFoldedName);
+    totalSize += entry.uncompressedSize;
+  }
+
+  const maxBytes = BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n;
+  if (totalSize > maxBytes) {
+    throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
+  }
+
+  const manifestEntry = entryByName.get(manifestName);
+  if (!manifestEntry) invalidBackup(`${manifestName} is missing`);
+  if (manifestEntry.uncompressedSize > BigInt(maxManifestBytes)) {
+    throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup manifest exceeds the configured manifest limit");
+  }
+
+  let manifest: BrainVaultBackup;
+  try {
+    const buffer = await readZipEntryBuffer(zipPath, manifestEntry, maxManifestBytes);
+    manifest = manifestSchema.parse(JSON.parse(buffer.toString("utf8")));
+  } catch (error) {
+    invalidBackup("The backup manifest is invalid", error instanceof z.ZodError ? error.flatten() : undefined);
+  }
+  validateManifestRelations(manifest);
+
+  const allowedEntries = new Set([
+    manifestName,
+    ...manifest.attachments.map((item) => item.path),
+    ...(manifest.retainedAttachments ?? []).map((item) => item.path),
+    ...(manifest.pageCovers ?? []).map((item) => item.path),
+    ...(manifest.customIcons ?? []).map((item) => item.path)
+  ]);
+  for (const entry of entries) {
+    if (!allowedEntries.has(entry.name)) invalidBackup(`Unexpected ZIP entry: ${entry.name}`);
+  }
+  if (entries.length !== allowedEntries.size) invalidBackup("The ZIP archive is missing one or more declared entries");
+  return manifest;
+}
+
 export async function prepareUserDataBackup(userId: string) {
   await ensureDataTransferDirectories();
   const maxTransferBytes = BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n;

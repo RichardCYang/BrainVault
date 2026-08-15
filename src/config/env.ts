@@ -109,6 +109,8 @@ const envSchema = z.object({
   DATA_IMPORT_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60_000),
   DATA_IMPORT_MAX: z.coerce.number().int().min(1).max(100).default(3),
   DATA_IMPORT_MAX_CONCURRENT: z.coerce.number().int().min(1).max(32).default(2),
+  SNAPSHOT_MAX_COUNT: z.coerce.number().int().min(1).max(200).default(20),
+  SNAPSHOT_STORAGE_MAX_MB: z.coerce.number().int().min(1).max(1_048_576).default(4096),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
   TRUST_PROXY_ADDRESSES: z.string().trim().max(2_048).default("")
 });

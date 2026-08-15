@@ -15,6 +15,7 @@ import { searchRouter } from "./routes/search.routes.js";
 import { dataRouter } from "./routes/data.routes.js";
 import { collaborationRouter } from "./routes/collaboration.routes.js";
 import { customIconRouter } from "./routes/custom-icon.routes.js";
+import { snapshotRouter } from "./routes/snapshot.routes.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.js";
 import { requireAuth } from "./middleware/auth.js";
 import { createHttpsEnforcementMiddleware } from "./middleware/https.js";
@@ -224,6 +225,7 @@ export function createApp() {
   app.use("/api", blockRouter);
   app.use("/api/search", searchRouter);
   app.use("/api/data", dataRouter);
+  app.use("/api/snapshots", snapshotRouter);
   app.use("/api/custom-icons", customIconRouter);
 
   app.use(notFoundHandler);

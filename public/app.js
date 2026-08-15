@@ -260,6 +260,7 @@ const state = {
   authMode: window.location.hash === "#signup" ? "register" : "login",
   authOperationBusy: false,
   accountDataOperationBusy: false,
+  snapshots: { items: [], loaded: false, loading: false, diffById: new Map(), diffLoadingId: null },
   workspaceCreateBusy: false,
   activeSlashBlockId: null,
   activeSlashIndex: 0,
@@ -987,6 +988,11 @@ const elements = {
   accountDataInput: $("#account-data-input"),
   accountDataFileName: $("#account-data-file-name"),
   accountDataImport: $("#account-data-import"),
+  accountSnapshotCreate: $("#account-snapshot-create"),
+  accountSnapshotRefresh: $("#account-snapshot-refresh"),
+  accountSnapshotCount: $("#account-snapshot-count"),
+  accountSnapshotList: $("#account-snapshot-list"),
+  accountSnapshotEmpty: $("#account-snapshot-empty"),
   accountMfaPassword: $("#account-mfa-password"),
   accountMfaSummary: $("#account-mfa-summary"),
   accountTotpStatus: $("#account-totp-status"),
@@ -1347,7 +1353,10 @@ function syncAccountDataOperationControls() {
   elements.accountDataExport.disabled = busy;
   elements.accountDataInput.disabled = busy;
   elements.accountDataImport.disabled = busy || !(elements.accountDataInput.files?.length);
+  elements.accountSnapshotCreate.disabled = busy;
+  elements.accountSnapshotRefresh.disabled = busy || state.snapshots.loading;
   elements.accountSettingsClose.disabled = busy;
+  renderWorkspaceSnapshots();
 }
 
 function setAccountDataOperationBusy(busy) {
@@ -2025,30 +2034,382 @@ async function restoreUserDataBackup(file, { operation = null } = {}) {
       const formData = new FormData();
       formData.append("backup", file, file.name);
       const data = await api("/api/data/import", { method: "POST", body: formData });
-      if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
-      if (getAccountAvatarTargetKey(data?.user) !== targetKey) {
-        throw new Error(t("errors.invalidResponse"));
-      }
       // Preserve durable drafts from every tab. Restored rows receive fresh edit versions,
       // so pre-restore drafts are recovered as explicit conflicts instead of overwriting data.
-      state.user = data.user;
-      applyUserTheme();
-      await applyUserPreferredLanguage();
+      return applyRestoredWorkspaceData(data, targetKey, activeOperation);
+    })
+  );
+}
+
+
+function formatSnapshotSize(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes < 1024) return `${formatNumber(bytes)} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let amount = bytes / 1024;
+  let index = 0;
+  while (amount >= 1024 && index < units.length - 1) {
+    amount /= 1024;
+    index += 1;
+  }
+  return `${new Intl.NumberFormat(getLocale(), { maximumFractionDigits: amount >= 100 ? 0 : 1 }).format(amount)} ${units[index]}`;
+}
+
+function snapshotIntegrityLabel(integrity) {
+  if (integrity === "missing") return t("account.snapshotIntegrityMissing");
+  if (integrity === "size-mismatch") return t("account.snapshotIntegritySizeMismatch");
+  return t("account.snapshotIntegrityOk");
+}
+
+function snapshotChangeStatusLabel(status) {
+  if (status === "added") return t("account.snapshotAdded");
+  if (status === "removed") return t("account.snapshotRemoved");
+  return t("account.snapshotModified");
+}
+
+function snapshotFieldLabel(field) {
+  const key = `account.snapshotField${field.charAt(0).toUpperCase()}${field.slice(1)}`;
+  const label = t(key);
+  return label === key ? field : label;
+}
+
+function formatSnapshotDiffValue(value) {
+  if (value === null || value === undefined || value === "") return t("account.snapshotValueNone");
+  if (Array.isArray(value)) return value.length ? value.join(", ") : t("account.snapshotValueNone");
+  if (typeof value === "boolean") return t(value ? "account.snapshotValueYes" : "account.snapshotValueNo");
+  if (typeof value === "object" && Number.isFinite(value.length) && typeof value.sha256 === "string") {
+    return t("account.snapshotLongValue", {
+      excerpt: value.excerpt || t("account.snapshotValueNone"),
+      length: formatNumber(value.length),
+      hash: value.sha256.slice(0, 16)
+    });
+  }
+  return String(value);
+}
+
+function createSnapshotDiffValue(value, label) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "account-snapshot-diff-value";
+  const title = document.createElement("strong");
+  title.textContent = label;
+  const content = document.createElement("span");
+  content.textContent = formatSnapshotDiffValue(value);
+  wrapper.append(title, content);
+  return wrapper;
+}
+
+function createSnapshotFieldDifference(fieldDifference) {
+  const row = document.createElement("div");
+  row.className = "account-snapshot-field-diff";
+  const label = document.createElement("div");
+  label.className = "account-snapshot-field-name";
+  label.textContent = snapshotFieldLabel(fieldDifference.field);
+  const values = document.createElement("div");
+  values.className = "account-snapshot-field-values";
+  values.append(
+    createSnapshotDiffValue(fieldDifference.snapshot, t("account.snapshotFieldSnapshot")),
+    createSnapshotDiffValue(fieldDifference.current, t("account.snapshotFieldCurrent"))
+  );
+  row.append(label, values);
+  return row;
+}
+
+function createSnapshotBlockDifference(blockDifference) {
+  const details = document.createElement("details");
+  details.className = "account-snapshot-block-diff";
+  const summary = document.createElement("summary");
+  const status = document.createElement("span");
+  status.className = `account-snapshot-change-badge account-snapshot-change-badge--${blockDifference.status}`;
+  status.textContent = snapshotChangeStatusLabel(blockDifference.status);
+  const title = document.createElement("span");
+  const blockType = blockDifference.currentType ?? blockDifference.snapshotType ?? "";
+  title.textContent = t("account.snapshotBlockLabel", { type: blockType, id: blockDifference.blockId });
+  summary.append(status, title);
+  details.append(summary);
+  if (blockDifference.fields?.length) {
+    const fieldList = document.createElement("div");
+    fieldList.className = "account-snapshot-field-list";
+    blockDifference.fields.forEach((field) => fieldList.append(createSnapshotFieldDifference(field)));
+    details.append(fieldList);
+  }
+  return details;
+}
+
+function createSnapshotPageDifference(pageDifference) {
+  const details = document.createElement("details");
+  details.className = "account-snapshot-page-diff";
+  const summary = document.createElement("summary");
+  const status = document.createElement("span");
+  status.className = `account-snapshot-change-badge account-snapshot-change-badge--${pageDifference.status}`;
+  status.textContent = snapshotChangeStatusLabel(pageDifference.status);
+  const title = document.createElement("strong");
+  title.textContent = pageDifference.currentTitle ?? pageDifference.snapshotTitle ?? t("account.snapshotUntitledPage");
+  const blockSummary = pageDifference.blockSummary ?? { added: 0, removed: 0, modified: 0 };
+  const blockSummaryText = document.createElement("span");
+  blockSummaryText.className = "account-snapshot-page-block-summary";
+  blockSummaryText.textContent = t("account.snapshotBlockSummary", {
+    added: formatNumber(blockSummary.added ?? 0),
+    removed: formatNumber(blockSummary.removed ?? 0),
+    modified: formatNumber(blockSummary.modified ?? 0)
+  });
+  summary.append(status, title, blockSummaryText);
+  details.append(summary);
+
+  if (pageDifference.fields?.length) {
+    const fieldList = document.createElement("div");
+    fieldList.className = "account-snapshot-field-list";
+    pageDifference.fields.forEach((field) => fieldList.append(createSnapshotFieldDifference(field)));
+    details.append(fieldList);
+  }
+  if (pageDifference.blocks?.length) {
+    const blockList = document.createElement("div");
+    blockList.className = "account-snapshot-block-list";
+    pageDifference.blocks.forEach((block) => blockList.append(createSnapshotBlockDifference(block)));
+    details.append(blockList);
+  }
+  if (pageDifference.blockDetailsTruncated) {
+    const note = document.createElement("p");
+    note.className = "account-snapshot-truncated";
+    note.textContent = t("account.snapshotDiffTruncated");
+    details.append(note);
+  }
+  return details;
+}
+
+function createSnapshotDiffView(diff) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "account-snapshot-diff";
+  if (diff.identical) {
+    const identical = document.createElement("p");
+    identical.className = "account-snapshot-identical";
+    identical.textContent = t("account.snapshotIdentical");
+    wrapper.append(identical);
+    return wrapper;
+  }
+
+  const summary = document.createElement("p");
+  summary.className = "account-snapshot-diff-summary";
+  summary.textContent = t("account.snapshotDiffSummary", {
+    pagesAdded: formatNumber(diff.summary?.pages?.added ?? 0),
+    pagesRemoved: formatNumber(diff.summary?.pages?.removed ?? 0),
+    pagesModified: formatNumber(diff.summary?.pages?.modified ?? 0),
+    blocksAdded: formatNumber(diff.summary?.blocks?.added ?? 0),
+    blocksRemoved: formatNumber(diff.summary?.blocks?.removed ?? 0),
+    blocksModified: formatNumber(diff.summary?.blocks?.modified ?? 0)
+  });
+  wrapper.append(summary);
+  if (diff.workspace?.length) {
+    const workspaceDetails = document.createElement("details");
+    workspaceDetails.className = "account-snapshot-page-diff account-snapshot-workspace-diff";
+    const workspaceSummary = document.createElement("summary");
+    const workspaceTitle = document.createElement("strong");
+    workspaceTitle.textContent = t("account.snapshotWorkspaceChanges");
+    const workspaceCount = document.createElement("span");
+    workspaceCount.className = "account-snapshot-page-block-summary";
+    workspaceCount.textContent = t("account.snapshotWorkspaceChangeCount", { count: formatNumber(diff.workspace.length) });
+    workspaceSummary.append(workspaceTitle, workspaceCount);
+    workspaceDetails.append(workspaceSummary);
+    const workspaceFields = document.createElement("div");
+    workspaceFields.className = "account-snapshot-field-list";
+    diff.workspace.forEach((field) => workspaceFields.append(createSnapshotFieldDifference(field)));
+    workspaceDetails.append(workspaceFields);
+    wrapper.append(workspaceDetails);
+  }
+  const list = document.createElement("div");
+  list.className = "account-snapshot-page-list";
+  (diff.pages ?? []).forEach((page) => list.append(createSnapshotPageDifference(page)));
+  wrapper.append(list);
+  if (diff.detailsTruncated) {
+    const note = document.createElement("p");
+    note.className = "account-snapshot-truncated";
+    note.textContent = t("account.snapshotDiffTruncated");
+    wrapper.append(note);
+  }
+  return wrapper;
+}
+
+function renderWorkspaceSnapshots() {
+  if (!elements.accountSnapshotList) return;
+  elements.accountSnapshotList.setAttribute("aria-busy", String(state.snapshots.loading));
+  elements.accountSnapshotRefresh.disabled = state.accountDataOperationBusy || state.snapshots.loading;
+  elements.accountSnapshotCreate.disabled = state.accountDataOperationBusy || state.snapshots.loading;
+  elements.accountSnapshotList.replaceChildren();
+
+  if (state.snapshots.loading && !state.snapshots.loaded) {
+    const loading = document.createElement("p");
+    loading.className = "account-snapshot-loading";
+    loading.textContent = t("account.snapshotLoading");
+    elements.accountSnapshotList.append(loading);
+  }
+
+  const items = state.snapshots.items ?? [];
+  elements.accountSnapshotCount.textContent = state.snapshots.loaded
+    ? t("account.snapshotCount", { count: formatNumber(items.length) })
+    : "";
+  elements.accountSnapshotEmpty.classList.toggle("hidden", !state.snapshots.loaded || state.snapshots.loading || items.length > 0);
+
+  for (const snapshot of items) {
+    const card = document.createElement("article");
+    card.className = "account-snapshot-item";
+    card.dataset.snapshotId = snapshot.id;
+
+    const header = document.createElement("div");
+    header.className = "account-snapshot-item-header";
+    const heading = document.createElement("div");
+    const title = document.createElement("h5");
+    title.textContent = formatDate(snapshot.createdAt) || snapshot.createdAt;
+    const meta = document.createElement("p");
+    meta.textContent = t("account.snapshotItemMeta", {
+      pages: formatNumber(snapshot.pages ?? 0),
+      blocks: formatNumber(snapshot.blocks ?? 0),
+      attachments: formatNumber(snapshot.attachments ?? 0),
+      pageVersions: formatNumber(snapshot.pageVersions ?? 0),
+      size: formatSnapshotSize(snapshot.archiveSize)
+    });
+    heading.append(title, meta);
+    const integrity = document.createElement("span");
+    integrity.className = `account-snapshot-integrity account-snapshot-integrity--${snapshot.integrity || "ok"}`;
+    integrity.textContent = snapshotIntegrityLabel(snapshot.integrity);
+    header.append(heading, integrity);
+    card.append(header);
+
+    const digest = document.createElement("p");
+    digest.className = "account-snapshot-digest";
+    digest.textContent = t("account.snapshotIntegrityDigest", { digest: String(snapshot.archiveSha256 ?? "").slice(0, 16) });
+    card.append(digest);
+
+    const actions = document.createElement("div");
+    actions.className = "account-snapshot-actions";
+    const compareButton = document.createElement("button");
+    compareButton.type = "button";
+    compareButton.className = "secondary";
+    compareButton.dataset.snapshotAction = "compare";
+    compareButton.dataset.snapshotId = snapshot.id;
+    compareButton.textContent = state.snapshots.diffLoadingId === snapshot.id
+      ? t("account.snapshotComparing")
+      : t("account.snapshotCompare");
+    compareButton.disabled = state.accountDataOperationBusy || state.snapshots.loading || state.snapshots.diffLoadingId === snapshot.id || snapshot.integrity !== "ok";
+
+    const restoreButton = document.createElement("button");
+    restoreButton.type = "button";
+    restoreButton.className = "danger";
+    restoreButton.dataset.snapshotAction = "restore";
+    restoreButton.dataset.snapshotId = snapshot.id;
+    restoreButton.textContent = t("account.snapshotRestore");
+    restoreButton.disabled = state.accountDataOperationBusy || state.snapshots.loading || snapshot.integrity !== "ok";
+
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "secondary danger-outline";
+    deleteButton.dataset.snapshotAction = "delete";
+    deleteButton.dataset.snapshotId = snapshot.id;
+    deleteButton.textContent = t("account.snapshotDelete");
+    deleteButton.disabled = state.accountDataOperationBusy || state.snapshots.loading;
+    actions.append(compareButton, restoreButton, deleteButton);
+    card.append(actions);
+
+    const diff = state.snapshots.diffById.get(snapshot.id);
+    if (diff) card.append(createSnapshotDiffView(diff));
+    elements.accountSnapshotList.append(card);
+  }
+}
+
+async function loadWorkspaceSnapshots({ force = false, throwOnError = false } = {}) {
+  if (!state.user || state.snapshots.loading || (!force && state.snapshots.loaded)) return;
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey) return;
+  state.snapshots.loading = true;
+  renderWorkspaceSnapshots();
+  try {
+    const data = await api("/api/snapshots");
+    if (getAccountAvatarTargetKey(state.user) !== targetKey) return;
+    if (!Array.isArray(data?.snapshots)) throw new Error(t("errors.invalidResponse"));
+    state.snapshots.items = data.snapshots;
+    state.snapshots.loaded = true;
+    const ids = new Set(data.snapshots.map((snapshot) => snapshot.id));
+    state.snapshots.diffById = new Map([...state.snapshots.diffById].filter(([snapshotId]) => ids.has(snapshotId)));
+  } catch (error) {
+    if (getAccountAvatarTargetKey(state.user) === targetKey) setAccountMessage(error.message, true);
+    if (throwOnError) throw error;
+  } finally {
+    if (getAccountAvatarTargetKey(state.user) === targetKey) {
+      state.snapshots.loading = false;
+      renderWorkspaceSnapshots();
+    }
+  }
+}
+
+async function createWorkspaceSnapshotClient({ operation = null } = {}) {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  const activeOperation = operation ?? accountDataOperationGuard.begin(targetKey);
+  if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
+  return withPageEditLock(async () =>
+    withWorkspacePersistenceTransition("snapshot-create", async () => {
+      const ownedPageIds = await fetchOwnedWorkspacePageIds();
       if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
-      fillAccountSettings();
-      resetSearchDialogState();
-      state.searchQuery = "";
-      state.activeTag = "";
-      const pages = await fetchAllPageSummaries();
+      assertNoPendingLocalPageDraftsForPages(ownedPageIds);
+      assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds);
+      const data = await api("/api/snapshots", { method: "POST" });
       if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
-      await loadNavigationPreferences();
+      return { applied: true, snapshot: data.snapshot };
+    })
+  );
+}
+
+async function compareWorkspaceSnapshotClient(snapshotId, { operation = null } = {}) {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  const activeOperation = operation ?? accountDataOperationGuard.begin(targetKey);
+  if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
+  return withPageEditLock(async () =>
+    withWorkspacePersistenceTransition("snapshot-diff", async () => {
+      const ownedPageIds = await fetchOwnedWorkspacePageIds();
       if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
-      state.pages = pages;
-      state.allPages = pages;
-      renderPages();
-      await showHome({ skipFlush: true });
+      assertNoPendingLocalPageDraftsForPages(ownedPageIds);
+      assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds);
+      const data = await api(`/api/snapshots/${encodeURIComponent(snapshotId)}/diff`);
       if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
-      return { applied: true, counts: data.counts };
+      return { applied: true, diff: data.diff };
+    })
+  );
+}
+
+async function applyRestoredWorkspaceData(data, targetKey, activeOperation) {
+  if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
+  if (getAccountAvatarTargetKey(data?.user) !== targetKey) throw new Error(t("errors.invalidResponse"));
+  state.user = data.user;
+  state.snapshots.diffById = new Map();
+  applyUserTheme();
+  await applyUserPreferredLanguage();
+  if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
+  fillAccountSettings();
+  resetSearchDialogState();
+  state.searchQuery = "";
+  state.activeTag = "";
+  const pages = await fetchAllPageSummaries();
+  if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
+  await loadNavigationPreferences();
+  if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
+  state.pages = pages;
+  state.allPages = pages;
+  renderPages();
+  await showHome({ skipFlush: true });
+  if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
+  return { applied: true, counts: data.counts };
+}
+
+async function restoreWorkspaceSnapshotClient(snapshotId, { operation = null } = {}) {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  const activeOperation = operation ?? accountDataOperationGuard.begin(targetKey);
+  if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
+  return withPageEditLock(async () =>
+    withWorkspacePersistenceTransition("snapshot-restore", async () => {
+      const ownedPageIds = await fetchOwnedWorkspacePageIds();
+      if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
+      assertNoPendingLocalPageDraftsForPages(ownedPageIds, "status.destructiveLocalDraftsPending");
+      assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds);
+      const data = await api(`/api/snapshots/${encodeURIComponent(snapshotId)}/restore`, { method: "POST" });
+      return applyRestoredWorkspaceData(data, targetKey, activeOperation);
     })
   );
 }
@@ -2142,6 +2503,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   state.pageEditLockDepth = 0;
   state.authOperationBusy = false;
   state.accountDataOperationBusy = false;
+  state.snapshots = { items: [], loaded: false, loading: false, diffById: new Map(), diffLoadingId: null };
   state.workspaceCreateBusy = false;
   state.workspaceView = "home";
   state.activeCollectionId = null;
@@ -3246,7 +3608,7 @@ function handleSecurityTabKeydown(event) {
 }
 
 function setAccountPanel(panel, { focusTab = false } = {}) {
-  const nextPanel = ["profile", "preferences", "security", "data"].includes(panel) ? panel : "profile";
+  const nextPanel = ["profile", "preferences", "security", "data", "snapshots"].includes(panel) ? panel : "profile";
   state.activeAccountPanel = nextPanel;
   elements.accountSettingsTabs.forEach((tab) => {
     const selected = tab.dataset.accountPanel === nextPanel;
@@ -3259,6 +3621,7 @@ function setAccountPanel(panel, { focusTab = false } = {}) {
   });
   setAccountMessage();
   if (nextPanel === "security" && state.accountSettingsOpen) loadActiveSecurityPanel();
+  if (nextPanel === "snapshots" && state.accountSettingsOpen && !state.snapshots.loaded) void loadWorkspaceSnapshots();
 }
 
 function hideTotpSetup() {
@@ -3657,6 +4020,7 @@ function fillAccountSettings() {
   renderBlockHistory();
   renderCountryLoginPolicy();
   renderVpnBlockPolicy();
+  renderWorkspaceSnapshots();
   updateUserIdentityUi();
 }
 
@@ -14328,6 +14692,102 @@ elements.accountDataImport.addEventListener("click", async () => {
   }
 });
 
+
+elements.accountSnapshotRefresh.addEventListener("click", () => {
+  if (state.accountDataOperationBusy || state.snapshots.loading) return;
+  state.snapshots.loaded = false;
+  void loadWorkspaceSnapshots({ force: true });
+});
+
+elements.accountSnapshotCreate.addEventListener("click", async () => {
+  if (state.accountDataOperationBusy || state.snapshots.loading) return;
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey) return;
+  const operation = accountDataOperationGuard.begin(targetKey);
+  setAccountDataOperationBusy(true);
+  try {
+    setAccountMessage(t("account.snapshotCreatePending"));
+    const result = await createWorkspaceSnapshotClient({ operation });
+    if (!result?.applied || !isCurrentAccountDataOperation(operation)) return;
+    state.snapshots.loaded = false;
+    await loadWorkspaceSnapshots({ force: true, throwOnError: true });
+    if (!isCurrentAccountDataOperation(operation)) return;
+    setAccountMessage(t("account.snapshotCreated"));
+    setStatus(t("account.snapshotCreated"));
+  } catch (error) {
+    if (isCurrentAccountDataOperation(operation)) setAccountMessage(error.message, true);
+  } finally {
+    if (isCurrentAccountDataOperation(operation)) setAccountDataOperationBusy(false);
+  }
+});
+
+elements.accountSnapshotList.addEventListener("click", async (event) => {
+  if (state.snapshots.loading) return;
+  const button = event.target.closest("button[data-snapshot-action][data-snapshot-id]");
+  if (!button || state.accountDataOperationBusy) return;
+  const snapshotId = button.dataset.snapshotId;
+  const action = button.dataset.snapshotAction;
+  const snapshot = state.snapshots.items.find((item) => item.id === snapshotId);
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!snapshot || !targetKey) return;
+
+  if (action === "restore" && !window.confirm(t("account.snapshotRestoreConfirm", { date: formatDate(snapshot.createdAt) }))) return;
+  if (action === "delete" && !window.confirm(t("account.snapshotDeleteConfirm", { date: formatDate(snapshot.createdAt) }))) return;
+
+  const operation = accountDataOperationGuard.begin(targetKey);
+  setAccountDataOperationBusy(true);
+  if (action === "compare") state.snapshots.diffLoadingId = snapshotId;
+  renderWorkspaceSnapshots();
+  try {
+    if (action === "compare") {
+      setAccountMessage(t("account.snapshotComparing"));
+      const result = await compareWorkspaceSnapshotClient(snapshotId, { operation });
+      if (!result?.applied || !isCurrentAccountDataOperation(operation)) return;
+      state.snapshots.diffById.set(snapshotId, result.diff);
+      setAccountMessage(result.diff?.identical ? t("account.snapshotIdentical") : t("account.snapshotCompared"));
+      return;
+    }
+
+    if (action === "restore") {
+      setAccountMessage(t("account.snapshotRestoring"));
+      const result = await restoreWorkspaceSnapshotClient(snapshotId, { operation });
+      if (!result?.applied || !isCurrentAccountDataOperation(operation)) return;
+      state.snapshots.loaded = false;
+      await loadWorkspaceSnapshots({ force: true, throwOnError: true });
+      if (!isCurrentAccountDataOperation(operation)) return;
+      const counts = result.counts ?? {};
+      const message = t("account.snapshotRestored", {
+        pages: formatNumber(counts.pages ?? 0),
+        blocks: formatNumber(counts.blocks ?? 0),
+        attachments: formatNumber(counts.attachments ?? 0),
+        pageVersions: formatNumber(counts.pageVersions ?? 0)
+      });
+      setAccountMessage(message);
+      setStatus(message);
+      return;
+    }
+
+    if (action === "delete") {
+      setAccountMessage(t("account.snapshotDeleting"));
+      await api(`/api/snapshots/${encodeURIComponent(snapshotId)}`, { method: "DELETE" });
+      if (!isCurrentAccountDataOperation(operation)) return;
+      state.snapshots.diffById.delete(snapshotId);
+      state.snapshots.loaded = false;
+      await loadWorkspaceSnapshots({ force: true, throwOnError: true });
+      if (!isCurrentAccountDataOperation(operation)) return;
+      setAccountMessage(t("account.snapshotDeleted"));
+      setStatus(t("account.snapshotDeleted"));
+    }
+  } catch (error) {
+    if (isCurrentAccountDataOperation(operation)) setAccountMessage(error.message, true);
+  } finally {
+    if (isCurrentAccountDataOperation(operation)) {
+      if (state.snapshots.diffLoadingId === snapshotId) state.snapshots.diffLoadingId = null;
+      setAccountDataOperationBusy(false);
+    }
+  }
+});
+
 elements.accountAvatarInput.addEventListener("change", async () => {
   const [file] = elements.accountAvatarInput.files ?? [];
   if (!file) return;
@@ -14766,6 +15226,7 @@ function refreshLocalizedUi() {
       renderCountryLoginPolicy();
       renderVpnBlockPolicy();
     }
+    renderWorkspaceSnapshots();
   }
   if (state.mfaLogin?.methods?.passkey) syncAuthOperationControls();
   if (!elements.emojiPickerLayer.classList.contains("hidden") && emojiRecords.length > 0) renderEmojiPicker();

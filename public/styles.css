@@ -13768,6 +13768,316 @@ button.danger {
   color: var(--chrome-text-soft);
 }
 
+
+.account-snapshot-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.account-snapshot-heading > div {
+  min-width: 0;
+}
+
+.account-snapshot-heading .compact {
+  flex: 0 0 auto;
+}
+
+.account-snapshot-create-card {
+  margin-bottom: 1.15rem;
+}
+
+.account-snapshot-list-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.7rem;
+}
+
+.account-snapshot-list-heading h4 {
+  margin: 0 0 0.25rem;
+  color: var(--ink-strong);
+  font-size: 0.9rem;
+}
+
+.account-snapshot-list-heading p,
+.account-snapshot-empty,
+.account-snapshot-loading {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.account-snapshot-count {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.account-snapshot-list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.account-snapshot-item {
+  display: grid;
+  gap: 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(247, 251, 253, 0.6);
+  padding: 0.9rem;
+}
+
+.account-snapshot-item-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.account-snapshot-item-header h5 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: 0.84rem;
+}
+
+.account-snapshot-item-header p,
+.account-snapshot-digest {
+  margin: 0.18rem 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.account-snapshot-digest {
+  overflow-wrap: anywhere;
+}
+
+.account-snapshot-integrity,
+.account-snapshot-change-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.18rem 0.48rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.account-snapshot-integrity--ok {
+  border-color: rgba(44, 122, 88, 0.35);
+  background: rgba(44, 122, 88, 0.08);
+  color: #276c50;
+}
+
+.account-snapshot-integrity--missing,
+.account-snapshot-integrity--size-mismatch {
+  border-color: rgba(190, 67, 67, 0.35);
+  background: rgba(190, 67, 67, 0.08);
+  color: var(--danger);
+}
+
+.account-snapshot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.account-snapshot-actions button {
+  min-width: 7.2rem;
+}
+
+.account-snapshot-actions .danger-outline {
+  border-color: rgba(190, 67, 67, 0.35);
+  color: var(--danger);
+}
+
+.account-snapshot-diff {
+  display: grid;
+  gap: 0.65rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.75rem;
+}
+
+.account-snapshot-diff-summary,
+.account-snapshot-identical,
+.account-snapshot-truncated {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.account-snapshot-identical {
+  color: #276c50;
+  font-weight: 700;
+}
+
+.account-snapshot-truncated {
+  border-left: 3px solid #a27426;
+  background: rgba(162, 116, 38, 0.07);
+  padding: 0.55rem 0.65rem;
+}
+
+.account-snapshot-page-list,
+.account-snapshot-block-list,
+.account-snapshot-field-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.account-snapshot-page-diff,
+.account-snapshot-block-diff {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.44);
+  overflow: hidden;
+}
+
+.account-snapshot-page-diff > summary,
+.account-snapshot-block-diff > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  padding: 0.6rem 0.7rem;
+  color: var(--ink-strong);
+  font-size: 0.76rem;
+  list-style-position: inside;
+}
+
+.account-snapshot-page-diff > summary strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-snapshot-page-block-summary {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.account-snapshot-change-badge--added {
+  border-color: rgba(44, 122, 88, 0.35);
+  color: #276c50;
+}
+
+.account-snapshot-change-badge--removed {
+  border-color: rgba(190, 67, 67, 0.35);
+  color: var(--danger);
+}
+
+.account-snapshot-change-badge--modified {
+  border-color: rgba(162, 116, 38, 0.4);
+  color: #805c20;
+}
+
+.account-snapshot-field-list,
+.account-snapshot-block-list {
+  border-top: 1px solid var(--line);
+  padding: 0.6rem;
+}
+
+.account-snapshot-block-list {
+  margin: 0 0.6rem 0.6rem;
+  border: 0;
+  border-left: 2px solid var(--line);
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.account-snapshot-field-diff {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, 0.32fr) minmax(0, 1fr);
+  gap: 0.6rem;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.025);
+  padding: 0.5rem;
+}
+
+.account-snapshot-field-name {
+  color: var(--ink-strong);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.account-snapshot-field-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.account-snapshot-diff-value {
+  min-width: 0;
+}
+
+.account-snapshot-diff-value strong,
+.account-snapshot-diff-value span {
+  display: block;
+}
+
+.account-snapshot-diff-value strong {
+  margin-bottom: 0.14rem;
+  color: var(--muted);
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.account-snapshot-diff-value span {
+  overflow-wrap: anywhere;
+  color: var(--ink-strong);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.68rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.app-mode .account-snapshot-list-heading h4,
+.app-mode .account-snapshot-item-header h5,
+.app-mode .account-snapshot-page-diff > summary,
+.app-mode .account-snapshot-block-diff > summary,
+.app-mode .account-snapshot-field-name,
+.app-mode .account-snapshot-diff-value span {
+  color: var(--chrome-text);
+}
+
+.app-mode .account-snapshot-list-heading p,
+.app-mode .account-snapshot-empty,
+.app-mode .account-snapshot-loading,
+.app-mode .account-snapshot-count,
+.app-mode .account-snapshot-item-header p,
+.app-mode .account-snapshot-digest,
+.app-mode .account-snapshot-page-block-summary,
+.app-mode .account-snapshot-diff-summary,
+.app-mode .account-snapshot-diff-value strong {
+  color: var(--chrome-text-soft);
+}
+
+.app-mode .account-snapshot-item,
+.app-mode .account-snapshot-page-diff,
+.app-mode .account-snapshot-block-diff {
+  border-color: var(--chrome-line);
+  background: var(--chrome-surface-soft);
+}
+
+.app-mode .account-snapshot-diff,
+.app-mode .account-snapshot-field-list,
+.app-mode .account-snapshot-block-list {
+  border-color: var(--chrome-line);
+}
+
 @media (max-width: 520px) {
   .account-data-actions {
     justify-content: stretch;
@@ -13776,6 +14086,30 @@ button.danger {
   .account-data-actions button,
   .account-data-file-row .account-upload-button {
     width: 100%;
+  }
+
+  .account-snapshot-heading,
+  .account-snapshot-list-heading,
+  .account-snapshot-item-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .account-snapshot-actions {
+    justify-content: stretch;
+  }
+
+  .account-snapshot-actions button {
+    flex: 1 1 100%;
+  }
+
+  .account-snapshot-field-diff,
+  .account-snapshot-field-values {
+    grid-template-columns: 1fr;
+  }
+
+  .account-snapshot-page-block-summary {
+    display: none;
   }
 }
 
