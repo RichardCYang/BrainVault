@@ -4670,6 +4670,95 @@ for (const [language, addition] of Object.entries(accordionTranslationAdditions)
   catalog.accordion = addition.accordion;
 }
 
+const treeViewTranslationAdditions = {
+  en: {
+    blockType: "Tree view",
+    slash: { label: "Tree view", hint: "Build a hierarchy with a memo for every item", keywords: "tree hierarchy outline nodes memo" },
+    treeview: {
+      defaultTitle: "Tree view", defaultNodeTitle: "Item {number}", titlePlaceholder: "Tree view title", titleAria: "Tree view title",
+      nodeCount: "{count} items", addRoot: "Add root", addChild: "Add child", structure: "Structure", memo: "Memo",
+      memoFor: "Memo for {title}", nodeTitlePlaceholder: "Item title", nodeTitleAria: "Selected tree item title",
+      notePlaceholder: "Write a detailed memo for this item…", noteAria: "Selected tree item memo", emptyState: "No items yet. Add a root item to start.",
+      noSelection: "Select an item to write its memo.", moveUp: "Move up", moveDown: "Move down", indent: "Indent under previous item",
+      outdent: "Move one level up", deleteNode: "Delete item and keep its children", expandNode: "Expand item", collapseNode: "Collapse item"
+    }
+  },
+  ko: {
+    blockType: "트리뷰", slash: { label: "트리뷰", hint: "계층 구조와 항목별 상세 메모를 만듭니다", keywords: "트리 트리뷰 계층 구조 아웃라인 메모" },
+    treeview: {
+      defaultTitle: "트리뷰", defaultNodeTitle: "항목 {number}", titlePlaceholder: "트리뷰 제목", titleAria: "트리뷰 제목",
+      nodeCount: "항목 {count}개", addRoot: "최상위 항목 추가", addChild: "하위 항목 추가", structure: "트리 구조", memo: "상세 메모",
+      memoFor: "{title} 상세 메모", nodeTitlePlaceholder: "항목 제목", nodeTitleAria: "선택한 트리 항목 제목",
+      notePlaceholder: "이 항목에 대한 상세 메모를 작성하세요…", noteAria: "선택한 트리 항목의 상세 메모", emptyState: "아직 항목이 없습니다. 최상위 항목을 추가해 시작하세요.",
+      noSelection: "메모를 작성할 항목을 선택하세요.", moveUp: "위로 이동", moveDown: "아래로 이동", indent: "이전 항목의 하위로 들여쓰기",
+      outdent: "한 단계 상위로 내어쓰기", deleteNode: "항목 삭제(하위 항목 유지)", expandNode: "항목 펼치기", collapseNode: "항목 접기"
+    }
+  },
+  ja: {
+    blockType: "ツリービュー", slash: { label: "ツリービュー", hint: "階層構造と項目ごとの詳細メモを作成", keywords: "ツリー 階層 アウトライン メモ" },
+    treeview: {
+      defaultTitle: "ツリービュー", defaultNodeTitle: "項目 {number}", titlePlaceholder: "ツリービューのタイトル", titleAria: "ツリービューのタイトル",
+      nodeCount: "{count} 項目", addRoot: "ルートを追加", addChild: "子項目を追加", structure: "構造", memo: "詳細メモ",
+      memoFor: "{title} のメモ", nodeTitlePlaceholder: "項目タイトル", nodeTitleAria: "選択した項目のタイトル",
+      notePlaceholder: "この項目の詳細メモを入力…", noteAria: "選択した項目のメモ", emptyState: "項目がありません。ルート項目を追加してください。",
+      noSelection: "メモを書く項目を選択してください。", moveUp: "上へ移動", moveDown: "下へ移動", indent: "前の項目の子にする",
+      outdent: "1階層上へ移動", deleteNode: "項目を削除（子は保持）", expandNode: "展開", collapseNode: "折りたたむ"
+    }
+  },
+  fr: {
+    blockType: "Arborescence", slash: { label: "Arborescence", hint: "Créer une hiérarchie avec une note par élément", keywords: "arbre hiérarchie plan notes" },
+    treeview: {
+      defaultTitle: "Arborescence", defaultNodeTitle: "Élément {number}", titlePlaceholder: "Titre de l’arborescence", titleAria: "Titre de l’arborescence",
+      nodeCount: "{count} éléments", addRoot: "Ajouter une racine", addChild: "Ajouter un enfant", structure: "Structure", memo: "Note détaillée",
+      memoFor: "Note pour {title}", nodeTitlePlaceholder: "Titre de l’élément", nodeTitleAria: "Titre de l’élément sélectionné",
+      notePlaceholder: "Écrire une note détaillée pour cet élément…", noteAria: "Note de l’élément sélectionné", emptyState: "Aucun élément. Ajoutez une racine pour commencer.",
+      noSelection: "Sélectionnez un élément pour écrire sa note.", moveUp: "Monter", moveDown: "Descendre", indent: "Placer sous l’élément précédent",
+      outdent: "Remonter d’un niveau", deleteNode: "Supprimer l’élément et garder ses enfants", expandNode: "Développer", collapseNode: "Réduire"
+    }
+  },
+  de: {
+    blockType: "Baumansicht", slash: { label: "Baumansicht", hint: "Hierarchie mit einer Notiz pro Eintrag erstellen", keywords: "baum hierarchie gliederung notiz" },
+    treeview: {
+      defaultTitle: "Baumansicht", defaultNodeTitle: "Eintrag {number}", titlePlaceholder: "Titel der Baumansicht", titleAria: "Titel der Baumansicht",
+      nodeCount: "{count} Einträge", addRoot: "Wurzel hinzufügen", addChild: "Untereintrag hinzufügen", structure: "Struktur", memo: "Detailnotiz",
+      memoFor: "Notiz für {title}", nodeTitlePlaceholder: "Eintragstitel", nodeTitleAria: "Titel des ausgewählten Eintrags",
+      notePlaceholder: "Detailnotiz für diesen Eintrag schreiben…", noteAria: "Notiz des ausgewählten Eintrags", emptyState: "Noch keine Einträge. Fügen Sie eine Wurzel hinzu.",
+      noSelection: "Wählen Sie einen Eintrag für die Notiz aus.", moveUp: "Nach oben", moveDown: "Nach unten", indent: "Unter vorherigen Eintrag einrücken",
+      outdent: "Eine Ebene nach oben", deleteNode: "Eintrag löschen, Kinder behalten", expandNode: "Aufklappen", collapseNode: "Zuklappen"
+    }
+  },
+  es: {
+    blockType: "Vista de árbol", slash: { label: "Vista de árbol", hint: "Crear una jerarquía con una nota por elemento", keywords: "árbol jerarquía esquema notas" },
+    treeview: {
+      defaultTitle: "Vista de árbol", defaultNodeTitle: "Elemento {number}", titlePlaceholder: "Título de la vista de árbol", titleAria: "Título de la vista de árbol",
+      nodeCount: "{count} elementos", addRoot: "Añadir raíz", addChild: "Añadir hijo", structure: "Estructura", memo: "Nota detallada",
+      memoFor: "Nota de {title}", nodeTitlePlaceholder: "Título del elemento", nodeTitleAria: "Título del elemento seleccionado",
+      notePlaceholder: "Escribe una nota detallada para este elemento…", noteAria: "Nota del elemento seleccionado", emptyState: "Aún no hay elementos. Añade una raíz para empezar.",
+      noSelection: "Selecciona un elemento para escribir su nota.", moveUp: "Subir", moveDown: "Bajar", indent: "Anidar bajo el elemento anterior",
+      outdent: "Subir un nivel", deleteNode: "Eliminar elemento y conservar sus hijos", expandNode: "Expandir", collapseNode: "Contraer"
+    }
+  },
+  pt: {
+    blockType: "Visão em árvore", slash: { label: "Visão em árvore", hint: "Criar uma hierarquia com uma nota por item", keywords: "árvore hierarquia estrutura notas" },
+    treeview: {
+      defaultTitle: "Visão em árvore", defaultNodeTitle: "Item {number}", titlePlaceholder: "Título da árvore", titleAria: "Título da árvore",
+      nodeCount: "{count} itens", addRoot: "Adicionar raiz", addChild: "Adicionar filho", structure: "Estrutura", memo: "Nota detalhada",
+      memoFor: "Nota de {title}", nodeTitlePlaceholder: "Título do item", nodeTitleAria: "Título do item selecionado",
+      notePlaceholder: "Escreva uma nota detalhada para este item…", noteAria: "Nota do item selecionado", emptyState: "Ainda não há itens. Adicione uma raiz para começar.",
+      noSelection: "Selecione um item para escrever a nota.", moveUp: "Mover para cima", moveDown: "Mover para baixo", indent: "Recuar sob o item anterior",
+      outdent: "Subir um nível", deleteNode: "Excluir item e manter os filhos", expandNode: "Expandir", collapseNode: "Recolher"
+    }
+  }
+};
+
+for (const [language, addition] of Object.entries(treeViewTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  catalog.blocks.types.TREEVIEW = addition.blockType;
+  catalog.slash.TREEVIEW = addition.slash;
+  catalog.treeview = addition.treeview;
+}
+
 function readStorage(key) {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;

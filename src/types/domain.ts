@@ -53,6 +53,7 @@ export type BlockType =
   | "TABLE"
   | "KANBAN"
   | "DATABASE"
+  | "TREEVIEW"
   | "TIMETABLE"
   | "GANTT"
   | "BOOKMARK"

@@ -50,6 +50,12 @@ test("structured metadata rejects unknown fields at every validated object bound
       views: []
     }
   }, "metadata.database.rows[0].values.junk");
+  expectIntegrityFailure("TREEVIEW", {
+    treeView: {
+      title: "Outline",
+      nodes: [{ id: "root", parentId: null, title: "Root", note: "", expanded: true, junk: true }]
+    }
+  }, "metadata.treeView.nodes[0].junk");
 });
 
 test("metadata envelope rejects dangerous keys, excessive depth, and oversized payloads", () => {
@@ -105,6 +111,15 @@ test("normalized structured metadata remains accepted at exact limits", () => {
         hiddenPropertyIds: []
       }],
       activeViewId: "table-view"
+    }
+  }));
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("TREEVIEW", {
+    treeView: {
+      title: "Product plan",
+      nodes: [
+        { id: "root", parentId: null, title: "Root", note: "Overview", expanded: true },
+        { id: "child", parentId: "root", title: "Child", note: "Details", expanded: false }
+      ]
     }
   }));
   assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("ACCORDION", {
@@ -175,6 +190,36 @@ test("normalized structured metadata remains accepted at exact limits", () => {
   }));
 });
 
+
+
+test("tree view metadata rejects missing parents, duplicate ids, and hierarchy cycles", () => {
+  expectIntegrityFailure("TREEVIEW", {
+    treeView: {
+      title: "Tree",
+      nodes: [{ id: "child", parentId: "missing", title: "Child", note: "", expanded: true }]
+    }
+  }, "metadata.treeView.nodes.child.parentId");
+
+  expectIntegrityFailure("TREEVIEW", {
+    treeView: {
+      title: "Tree",
+      nodes: [
+        { id: "same", parentId: null, title: "One", note: "", expanded: true },
+        { id: "same", parentId: null, title: "Two", note: "", expanded: true }
+      ]
+    }
+  }, "metadata.treeView.nodes");
+
+  expectIntegrityFailure("TREEVIEW", {
+    treeView: {
+      title: "Tree",
+      nodes: [
+        { id: "a", parentId: "b", title: "A", note: "", expanded: true },
+        { id: "b", parentId: "a", title: "B", note: "", expanded: true }
+      ]
+    }
+  }, "metadata.treeView.nodes");
+});
 
 test("bookmark metadata validates list column counts from one through five", () => {
   assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("BOOKMARK", {

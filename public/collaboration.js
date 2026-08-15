@@ -33,6 +33,7 @@ const COLLABORATIVE_BLOCK_TYPES = new Set([
   "TABLE",
   "KANBAN",
   "DATABASE",
+  "TREEVIEW",
   "TIMETABLE",
   "GANTT",
   "BOOKMARK",

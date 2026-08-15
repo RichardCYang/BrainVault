@@ -34,6 +34,13 @@ import {
   summarizeAccordionData
 } from "./accordion-block.js";
 import {
+  createTreeViewEditor,
+  createDefaultTreeViewData,
+  extractTreeViewData,
+  normalizeTreeViewData,
+  summarizeTreeViewData
+} from "./treeview-block.js";
+import {
   createGanttEditor,
   createDefaultGanttData,
   extractGanttData,
@@ -361,6 +368,7 @@ const blockTypeLabels = {
   CALLOUT: "blocks.types.CALLOUT",
   TOGGLE: "blocks.types.TOGGLE",
   ACCORDION: "blocks.types.ACCORDION",
+  TREEVIEW: "blocks.types.TREEVIEW",
   TABLE: "blocks.types.TABLE",
   KANBAN: "blocks.types.KANBAN",
   DATABASE: "blocks.types.DATABASE",
@@ -653,6 +661,7 @@ const slashCommands = [
   { type: "CALLOUT", command: "/callout", icon: "callout" },
   { type: "TOGGLE", command: "/toggle", icon: "toggle" },
   { type: "ACCORDION", command: "/accordion", icon: "accordion" },
+  { type: "TREEVIEW", command: "/tree", icon: "treeview" },
   { type: "TABLE", command: "/table", icon: "table" },
   { type: "DATABASE", command: "/database", icon: "database" },
   { type: "TIMETABLE", command: "/timetable", icon: "timetable" },
@@ -672,11 +681,11 @@ const listBlockTypes = new Set(["UNORDERED_LIST", "ORDERED_LIST"]);
 
 // These block types cannot retain arbitrary source markdown. When their slash command is
 // used on a later line, insert a new sibling instead of replacing earlier note text.
-const slashInsertAfterTypes = new Set(["TABLE", "DATABASE", "ACCORDION", "TIMETABLE", "GANTT", "KANBAN", "BOOKMARK", "VIDEO", "DIVIDER"]);
+const slashInsertAfterTypes = new Set(["TABLE", "DATABASE", "ACCORDION", "TREEVIEW", "TIMETABLE", "GANTT", "KANBAN", "BOOKMARK", "VIDEO", "DIVIDER"]);
 
 // Structured editors serialize their real content into metadata. Converting one in place
 // would make buildBlockPayload remove the source metadata for the newly selected type.
-const structuredBlockTypes = new Set(["TABLE", "DATABASE", "ACCORDION", "TIMETABLE", "GANTT", "KANBAN", "BOOKMARK", "AI_CHAT"]);
+const structuredBlockTypes = new Set(["TABLE", "DATABASE", "ACCORDION", "TREEVIEW", "TIMETABLE", "GANTT", "KANBAN", "BOOKMARK", "AI_CHAT"]);
 
 function isStructuredBlockType(type) {
   return structuredBlockTypes.has(type);
@@ -748,6 +757,15 @@ const slashCommandIconShapes = {
     ["path", { d: "m6 15 2 2 2-2" }],
     ["path", { d: "M12 16h7" }],
     ["path", { d: "M3 3h18v18H3z" }]
+  ],
+  treeview: [
+    ["path", { d: "M6 4v16" }],
+    ["path", { d: "M6 8h5" }],
+    ["path", { d: "M6 16h5" }],
+    ["path", { d: "M11 8v4h5" }],
+    ["circle", { cx: "18", cy: "12", r: "2" }],
+    ["circle", { cx: "13", cy: "8", r: "2" }],
+    ["circle", { cx: "13", cy: "16", r: "2" }]
   ],
   table: [
     ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
@@ -5771,7 +5789,7 @@ function setControlReadOnlyState(control, readOnly) {
 
   if (control instanceof HTMLButtonElement || control instanceof HTMLSelectElement) {
     const allowedInReadMode = control.matches(
-      '[data-action="download-attachment"], [data-action="copy-ai-answer-code"]'
+      '[data-action="download-attachment"], [data-action="copy-ai-answer-code"], [data-action="treeview-select-node"], [data-action="treeview-toggle-node"]'
     );
     if (readOnly) {
       if (!control.dataset.pageModeWasDisabled) control.dataset.pageModeWasDisabled = String(control.disabled);
@@ -7893,6 +7911,7 @@ function getCollaborationField(target) {
   if (target?.classList?.contains("table-cell-input")) return "table";
   if (target?.closest?.(".kanban-block-editor")) return "kanban";
   if (target?.closest?.(".database-block-editor")) return "database";
+  if (target?.closest?.(".treeview-block-editor")) return "treeview";
   if (target?.closest?.(".gantt-block-editor")) return "gantt";
   if (target?.closest?.(".bookmark-block-editor")) return "bookmark";
   if (target?.closest?.(".ai-chat-block-editor")) return "ai-chat";
@@ -8413,6 +8432,10 @@ function getBlockDatabaseData(block) {
 
 function getBlockAccordionData(block) {
   return normalizeAccordionData(block?.metadata?.accordion);
+}
+
+function getBlockTreeViewData(block) {
+  return normalizeTreeViewData(block?.metadata?.treeView);
 }
 
 function getBlockTimetableData(block) {
@@ -9917,6 +9940,8 @@ function mountBlockEditor(row, block) {
                 onPickIcon: ({ itemId, trigger }) => openAccordionItemIconPicker(row, itemId, trigger),
                 previewHtml: block.htmlCache ?? ""
               })
+          : block.type === "TREEVIEW"
+            ? createTreeViewEditor(row, getBlockTreeViewData(block), { onDirty: () => scheduleBlockSave(row) })
           : block.type === "TIMETABLE"
             ? createTimetableEditor(row, getBlockTimetableData(block), { onDirty: () => scheduleBlockSave(row) })
             : block.type === "GANTT"
@@ -10113,6 +10138,7 @@ function buildBlockPayload(row) {
     delete metadata.bookmark;
     delete metadata.aiChat;
     delete metadata.accordion;
+    delete metadata.treeView;
     payload.markdown = table.rows.map((cells) => cells.join("\t")).join("\n").slice(0, 20_000);
     payload.metadata = metadata;
   } else if (type === "KANBAN") {
@@ -10125,6 +10151,7 @@ function buildBlockPayload(row) {
     delete metadata.bookmark;
     delete metadata.aiChat;
     delete metadata.accordion;
+    delete metadata.treeView;
     payload.markdown = summarizeKanbanData(kanban);
     payload.metadata = metadata;
   } else if (type === "DATABASE") {
@@ -10137,6 +10164,7 @@ function buildBlockPayload(row) {
     delete metadata.bookmark;
     delete metadata.aiChat;
     delete metadata.accordion;
+    delete metadata.treeView;
     payload.markdown = summarizeDatabaseData(database);
     payload.metadata = metadata;
   } else if (type === "ACCORDION") {
@@ -10145,11 +10173,25 @@ function buildBlockPayload(row) {
     delete metadata.table;
     delete metadata.kanban;
     delete metadata.database;
+    delete metadata.treeView;
     delete metadata.timetable;
     delete metadata.gantt;
     delete metadata.bookmark;
     delete metadata.aiChat;
     payload.markdown = summarizeAccordionData(accordion);
+    payload.metadata = metadata;
+  } else if (type === "TREEVIEW") {
+    const treeView = extractTreeViewData(row);
+    metadata.treeView = treeView;
+    delete metadata.table;
+    delete metadata.kanban;
+    delete metadata.database;
+    delete metadata.timetable;
+    delete metadata.gantt;
+    delete metadata.bookmark;
+    delete metadata.aiChat;
+    delete metadata.accordion;
+    payload.markdown = summarizeTreeViewData(treeView);
     payload.metadata = metadata;
   } else if (type === "TIMETABLE") {
     const timetable = extractTimetableData(row);
@@ -10161,6 +10203,7 @@ function buildBlockPayload(row) {
     delete metadata.bookmark;
     delete metadata.aiChat;
     delete metadata.accordion;
+    delete metadata.treeView;
     payload.markdown = summarizeTimetableData(timetable);
     payload.metadata = metadata;
   } else if (type === "GANTT") {
@@ -10173,6 +10216,7 @@ function buildBlockPayload(row) {
     delete metadata.bookmark;
     delete metadata.aiChat;
     delete metadata.accordion;
+    delete metadata.treeView;
     payload.markdown = summarizeGanttData(gantt);
     payload.metadata = metadata;
   } else if (type === "BOOKMARK") {
@@ -10185,6 +10229,7 @@ function buildBlockPayload(row) {
     delete metadata.gantt;
     delete metadata.aiChat;
     delete metadata.accordion;
+    delete metadata.treeView;
     payload.markdown = summarizeBookmarkData(bookmark);
     payload.metadata = metadata;
   } else if (type === "AI_CHAT") {
@@ -10197,6 +10242,7 @@ function buildBlockPayload(row) {
     delete metadata.gantt;
     delete metadata.bookmark;
     delete metadata.accordion;
+    delete metadata.treeView;
     payload.markdown = summarizeAiChatData(aiChat);
     payload.metadata = metadata;
   } else {
@@ -10208,6 +10254,7 @@ function buildBlockPayload(row) {
     if (metadata.bookmark) delete metadata.bookmark;
     if (metadata.aiChat) delete metadata.aiChat;
     if (metadata.accordion) delete metadata.accordion;
+    delete metadata.treeView;
     payload.metadata = Object.keys(metadata).length ? metadata : null;
   }
 
@@ -10611,6 +10658,7 @@ function setRowType(row, type, { markdown } = {}) {
   if (previousType === "KANBAN") metadata.kanban = extractKanbanData(row);
   if (previousType === "DATABASE") metadata.database = extractDatabaseData(row);
   if (previousType === "ACCORDION") metadata.accordion = extractAccordionData(row);
+  if (previousType === "TREEVIEW") metadata.treeView = extractTreeViewData(row);
   if (previousType === "TIMETABLE") metadata.timetable = extractTimetableData(row);
   if (previousType === "GANTT") metadata.gantt = extractGanttData(row);
   if (previousType === "BOOKMARK") metadata.bookmark = extractBookmarkData(row);
@@ -10624,6 +10672,7 @@ function setRowType(row, type, { markdown } = {}) {
   if (type === "KANBAN" && !metadata.kanban) metadata.kanban = createDefaultKanbanData();
   if (type === "DATABASE" && !metadata.database) metadata.database = createDefaultDatabaseData();
   if (type === "ACCORDION" && !metadata.accordion) metadata.accordion = createDefaultAccordionData();
+  if (type === "TREEVIEW" && !metadata.treeView) metadata.treeView = createDefaultTreeViewData();
   if (type === "TIMETABLE" && !metadata.timetable) metadata.timetable = createDefaultTimetableData();
   if (type === "GANTT" && !metadata.gantt) metadata.gantt = createDefaultGanttData();
   if (type === "BOOKMARK" && !metadata.bookmark) metadata.bookmark = createDefaultBookmarkData();
@@ -10650,7 +10699,7 @@ function setRowType(row, type, { markdown } = {}) {
   mountBlockEditor(row, {
     ...existing,
     type,
-    markdown: type === "TABLE" || type === "KANBAN" || type === "DATABASE" || type === "ACCORDION" || type === "TIMETABLE" || type === "GANTT" || type === "BOOKMARK" || type === "AI_CHAT" ? "" : markdown ?? previousMarkdown,
+    markdown: type === "TABLE" || type === "KANBAN" || type === "DATABASE" || type === "ACCORDION" || type === "TREEVIEW" || type === "TIMETABLE" || type === "GANTT" || type === "BOOKMARK" || type === "AI_CHAT" ? "" : markdown ?? previousMarkdown,
     metadata
   });
 }
@@ -11672,6 +11721,8 @@ function createInitialBlockMetadata(type) {
   if (type === "TABLE") return { table: createDefaultTableData() };
   if (type === "KANBAN") return { kanban: createDefaultKanbanData() };
   if (type === "DATABASE") return { database: createDefaultDatabaseData() };
+  if (type === "ACCORDION") return { accordion: createDefaultAccordionData() };
+  if (type === "TREEVIEW") return { treeView: createDefaultTreeViewData() };
   if (type === "TIMETABLE") return { timetable: createDefaultTimetableData() };
   if (type === "GANTT") return { gantt: createDefaultGanttData() };
   if (type === "BOOKMARK") return { bookmark: createDefaultBookmarkData() };
@@ -11763,6 +11814,8 @@ async function applySlashCommand(row, type) {
     row.querySelector(".database-title-input")?.focus();
   } else if (type === "ACCORDION") {
     row.querySelector(".accordion-title-input")?.focus();
+  } else if (type === "TREEVIEW") {
+    row.querySelector(".treeview-title-input")?.focus();
   } else if (type === "TIMETABLE") {
     row.querySelector(".timetable-title-input")?.focus();
   } else if (type === "GANTT") {

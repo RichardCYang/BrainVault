@@ -5486,7 +5486,7 @@ body.is-kanban-column-dragging {
     opacity: 0 !important;
   }
 
-  body.pdf-export-mode .editor-block-row:not([data-block-type="TABLE"]):not([data-block-type="KANBAN"]):not([data-block-type="DATABASE"]):not([data-block-type="ACCORDION"]):not([data-block-type="TIMETABLE"]):not([data-block-type="GANTT"]),
+  body.pdf-export-mode .editor-block-row:not([data-block-type="TABLE"]):not([data-block-type="KANBAN"]):not([data-block-type="DATABASE"]):not([data-block-type="ACCORDION"]):not([data-block-type="TREEVIEW"]):not([data-block-type="TIMETABLE"]):not([data-block-type="GANTT"]),
   body.pdf-export-mode .attachment-block-card,
   body.pdf-export-mode .bookmark-gallery-card,
   body.pdf-export-mode .bookmark-list-item,
@@ -5514,6 +5514,9 @@ body.is-kanban-column-dragging {
   body.pdf-export-mode .accordion-title-input,
   body.pdf-export-mode .accordion-item-title-input,
   body.pdf-export-mode .accordion-item-content,
+  body.pdf-export-mode .treeview-title-input,
+  body.pdf-export-mode .treeview-note-title-input,
+  body.pdf-export-mode .treeview-note-input,
   body.pdf-export-mode .database-value-input,
   body.pdf-export-mode .database-value-select,
   body.pdf-export-mode .gantt-title-input,
@@ -17525,5 +17528,524 @@ html[data-theme="dark"] {
   .app-mode .sidebar-utility-button.active svg,
   .app-mode .sidebar-footer-button:hover svg {
     stroke: var(--sidebar-reference-text);
+  }
+}
+
+/* Tree view block */
+.editor-block-row[data-block-type="TREEVIEW"] .block-row-body,
+.editor-block-row[data-block-type="TREEVIEW"] .block-editor-host {
+  min-width: 0;
+}
+
+.treeview-block-editor {
+  --treeview-ink: var(--ink);
+  --treeview-ink-strong: var(--ink-strong);
+  --treeview-muted: var(--muted);
+  --treeview-muted-light: var(--muted-light);
+  --treeview-line: var(--line);
+  --treeview-line-strong: var(--line-strong);
+  --treeview-hover: var(--hover);
+  --treeview-active: var(--active);
+  --treeview-panel-soft: var(--panel-soft);
+  --treeview-accent: var(--accent);
+  --treeview-accent-ink: var(--accent-ink);
+  --treeview-accent-soft: var(--accent-soft);
+  --treeview-focus-soft: var(--focus-soft);
+  display: grid;
+  min-width: 0;
+  gap: 0.7rem;
+  padding: 0.28rem 0 0.45rem;
+  color: var(--treeview-ink);
+  background: transparent;
+}
+
+.treeview-heading {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.55rem;
+  padding-inline: 0.08rem;
+  background: transparent;
+}
+
+.treeview-title-input,
+.treeview-note-title-input,
+.treeview-note-input {
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--treeview-ink);
+  font: inherit;
+}
+
+.treeview-title-input:hover,
+.treeview-title-input:focus,
+.treeview-note-title-input:hover,
+.treeview-note-title-input:focus,
+.treeview-note-input:hover,
+.treeview-note-input:focus {
+  border-color: var(--treeview-line-strong);
+  background: var(--treeview-panel-soft);
+  outline: none;
+}
+
+.treeview-title-input:focus-visible,
+.treeview-note-title-input:focus-visible,
+.treeview-note-input:focus-visible,
+.treeview-node-label:focus-visible,
+.treeview-node-toggle:focus-visible,
+.treeview-node-action:focus-visible,
+.treeview-add-root:focus-visible {
+  outline: 2px solid var(--treeview-focus-soft);
+  outline-offset: 1px;
+}
+
+.treeview-title-input {
+  flex: 1 1 auto;
+  width: 100%;
+  padding: 0.2rem 0.25rem;
+  color: var(--treeview-ink-strong);
+  font-size: clamp(1.16rem, 2.2vw, 1.52rem);
+  font-weight: 700;
+  letter-spacing: -0.018em;
+}
+
+.treeview-count {
+  flex: 0 0 auto;
+  color: var(--treeview-muted-light);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.treeview-add-root {
+  min-height: 2rem;
+  flex: 0 0 auto;
+  border: 1px solid var(--treeview-line-strong);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--treeview-ink);
+  padding: 0.32rem 0.58rem;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.treeview-add-root:hover,
+.treeview-add-root:focus-visible {
+  border-color: var(--treeview-accent);
+  color: var(--treeview-accent);
+}
+
+.treeview-add-root:disabled,
+.treeview-node-action:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.treeview-layout {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(13rem, 0.9fr) minmax(16rem, 1.35fr);
+  border: 1px solid var(--treeview-line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: transparent;
+}
+
+.treeview-tree-pane,
+.treeview-note-pane {
+  min-width: 0;
+  background: transparent;
+}
+
+.treeview-tree-pane {
+  border-right: 1px solid var(--treeview-line);
+  padding: 0.7rem 0.55rem 0.8rem;
+}
+
+.treeview-note-pane {
+  display: grid;
+  align-content: start;
+  gap: 0.55rem;
+  padding: 0.7rem 0.8rem 0.8rem;
+}
+
+.treeview-pane-heading,
+.treeview-note-heading {
+  display: flex;
+  min-height: 1.7rem;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--treeview-muted);
+  font-size: 0.72rem;
+  background: transparent;
+}
+
+.treeview-note-heading {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--treeview-line);
+  padding-bottom: 0.48rem;
+}
+
+.treeview-pane-heading strong,
+.treeview-note-heading strong {
+  color: var(--treeview-ink-strong);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.treeview-note-path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--treeview-muted-light);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.treeview-tree {
+  display: grid;
+  min-width: 0;
+  gap: 0.08rem;
+  padding-top: 0.28rem;
+  background: transparent;
+}
+
+.treeview-node-shell,
+.treeview-node-group {
+  min-width: 0;
+  background: transparent;
+}
+
+.treeview-node-group {
+  position: relative;
+  display: grid;
+  gap: 0.08rem;
+  margin-left: 0.76rem;
+  padding-left: 0.72rem;
+  border-left: 1px solid var(--treeview-line);
+}
+
+.treeview-node-group[hidden] {
+  display: none;
+}
+
+.treeview-node-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 1.45rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.08rem;
+  border-radius: 5px;
+  background: transparent;
+}
+
+.treeview-node-row:hover {
+  background: var(--treeview-hover);
+}
+
+.treeview-node-row.is-selected {
+  background: var(--treeview-accent-soft);
+}
+
+.treeview-node-toggle,
+.treeview-node-toggle-spacer {
+  display: inline-grid;
+  width: 1.45rem;
+  height: 1.7rem;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--treeview-muted-light);
+  font: inherit;
+}
+
+.treeview-node-toggle {
+  cursor: pointer;
+}
+
+.treeview-node-toggle:hover {
+  color: var(--treeview-accent);
+  background: var(--treeview-active);
+}
+
+.treeview-node-label {
+  display: flex;
+  min-width: 0;
+  min-height: 1.9rem;
+  align-items: center;
+  gap: 0.42rem;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--treeview-ink);
+  padding: 0.28rem 0.34rem;
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.treeview-node-row.is-selected .treeview-node-label {
+  color: var(--treeview-ink-strong);
+  font-weight: 600;
+}
+
+.treeview-node-dot {
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: 0 0 auto;
+  border: 1px solid var(--treeview-line-strong);
+  border-radius: 50%;
+  background: transparent;
+}
+
+.treeview-node-row.is-selected .treeview-node-dot {
+  border-color: var(--treeview-accent);
+  background: var(--treeview-accent);
+}
+
+.treeview-node-label-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.treeview-node-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.treeview-node-row:hover .treeview-node-actions,
+.treeview-node-row:focus-within .treeview-node-actions {
+  opacity: 1;
+}
+
+.treeview-node-action {
+  display: inline-grid;
+  width: 1.45rem;
+  height: 1.7rem;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--treeview-muted);
+  padding: 0;
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.treeview-node-action:hover,
+.treeview-node-action:focus-visible {
+  background: var(--treeview-active);
+  color: var(--treeview-accent);
+}
+
+.treeview-node-delete:hover,
+.treeview-node-delete:focus-visible {
+  color: var(--danger);
+}
+
+.treeview-note-title-input {
+  width: 100%;
+  padding: 0.38rem 0.42rem;
+  color: var(--treeview-ink-strong);
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.treeview-note-input {
+  width: 100%;
+  min-height: 11rem;
+  resize: vertical;
+  padding: 0.52rem 0.55rem;
+  line-height: 1.55;
+}
+
+.treeview-empty,
+.treeview-no-selection {
+  color: var(--treeview-muted-light);
+  padding: 0.8rem 0.35rem;
+  font-size: 0.78rem;
+}
+
+.page-view.is-read-only .treeview-add-root,
+.page-view.is-read-only .treeview-node-actions {
+  display: none !important;
+}
+
+.page-view.is-read-only .treeview-title-input:hover,
+.page-view.is-read-only .treeview-note-title-input:hover,
+.page-view.is-read-only .treeview-note-input:hover {
+  border-color: transparent;
+  background: transparent;
+}
+
+.rendered-treeview {
+  display: grid;
+  max-width: 100%;
+  gap: 0.65rem;
+  color: var(--ink);
+  background: transparent;
+}
+
+.rendered-treeview > header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  background: transparent;
+}
+
+.rendered-treeview > header h3 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: 1.05rem;
+}
+
+.rendered-treeview > header span {
+  color: var(--muted-light);
+  font-size: 0.72rem;
+}
+
+.rendered-treeview-layout {
+  display: grid;
+  grid-template-columns: minmax(12rem, 0.9fr) minmax(15rem, 1.35fr);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+}
+
+.rendered-treeview-tree,
+.rendered-treeview-notes {
+  min-width: 0;
+  padding: 0.72rem;
+  background: transparent;
+}
+
+.rendered-treeview-tree {
+  border-right: 1px solid var(--line);
+}
+
+.rendered-treeview-tree > strong,
+.rendered-treeview-notes > strong {
+  display: block;
+  margin-bottom: 0.45rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.rendered-treeview-branch {
+  display: grid;
+  gap: 0.14rem;
+  margin: 0;
+  padding: 0 0 0 0.8rem;
+  border-left: 1px solid var(--line);
+  list-style: none;
+}
+
+.rendered-treeview-tree > .rendered-treeview-branch {
+  border-left: 0;
+  padding-left: 0;
+}
+
+.rendered-treeview-node > div {
+  display: flex;
+  min-height: 1.7rem;
+  align-items: center;
+  gap: 0.42rem;
+  color: var(--ink);
+  font-size: 0.8rem;
+}
+
+.rendered-treeview-chevron,
+.rendered-treeview-leaf {
+  display: inline-grid;
+  width: 1rem;
+  place-items: center;
+  color: var(--accent);
+}
+
+.rendered-treeview-notes {
+  display: grid;
+  align-content: start;
+  gap: 0.5rem;
+}
+
+.rendered-treeview-note {
+  display: grid;
+  gap: 0.35rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.52rem;
+  background: transparent;
+}
+
+.rendered-treeview-note:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.rendered-treeview-note > header {
+  display: grid;
+  gap: 0.12rem;
+  background: transparent;
+}
+
+.rendered-treeview-note > header strong {
+  color: var(--ink-strong);
+  font-size: 0.82rem;
+}
+
+.rendered-treeview-note > header small {
+  color: var(--muted-light);
+  font-size: 0.66rem;
+}
+
+.rendered-treeview-note > div {
+  color: var(--ink);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.rendered-treeview-empty,
+.rendered-treeview-empty-note {
+  color: var(--muted-light);
+  font-size: 0.76rem;
+}
+
+@media (max-width: 720px) {
+  .treeview-heading {
+    flex-wrap: wrap;
+  }
+
+  .treeview-title-input {
+    flex-basis: calc(100% - 5rem);
+  }
+
+  .treeview-layout,
+  .rendered-treeview-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .treeview-tree-pane,
+  .rendered-treeview-tree {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .treeview-node-actions {
+    opacity: 1;
+  }
+
+  .treeview-node-action:nth-child(2),
+  .treeview-node-action:nth-child(3) {
+    display: none;
   }
 }

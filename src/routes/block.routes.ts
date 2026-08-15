@@ -38,6 +38,7 @@ import {
 } from "../lib/bookmark.js";
 import { getAiChatData, summarizeAiChatData } from "../lib/ai-chat.js";
 import { getAccordionData, summarizeAccordionData } from "../lib/accordion.js";
+import { getTreeViewData, summarizeTreeViewData } from "../lib/treeview.js";
 import {
   assertStructuredBlockMetadataIntegrity,
   StructuredMetadataIntegrityError
@@ -165,6 +166,13 @@ function prepareBlockContent(type: BlockRow["type"], markdown: string, metadata:
   if (type === "ACCORDION") {
     return {
       markdown: summarizeAccordionData(getAccordionData(metadata)),
+      metadata
+    };
+  }
+
+  if (type === "TREEVIEW") {
+    return {
+      markdown: summarizeTreeViewData(getTreeViewData(metadata)),
       metadata
     };
   }
@@ -955,7 +963,7 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
         fields.push("type = ?");
         values.push(body.type);
       }
-      if (body.markdown !== undefined || (contentChanged && (nextType === "BOOKMARK" || nextType === "AI_CHAT"))) {
+      if (body.markdown !== undefined || (contentChanged && (nextType === "BOOKMARK" || nextType === "AI_CHAT" || nextType === "ACCORDION" || nextType === "TREEVIEW"))) {
         fields.push("markdown = ?");
         values.push(prepared.markdown);
       }

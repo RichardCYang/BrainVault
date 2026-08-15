@@ -6,6 +6,7 @@ import { formatAttachmentSize, getAttachmentInfo, sanitizeAttachmentFilename } f
 import { getTableData } from "./table.js";
 import { renderKanbanHtml } from "./kanban.js";
 import { renderDatabaseHtml } from "./database.js";
+import { renderTreeViewHtml } from "./treeview.js";
 import { renderTimetableHtml } from "./timetable.js";
 import { renderGanttHtml } from "./gantt.js";
 import { renderBookmarkHtml } from "./bookmark.js";
@@ -476,6 +477,8 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
       return sanitizeHtml(renderKanbanHtml(safeMetadata), sanitizeOptions);
     case "DATABASE":
       return sanitizeHtml(renderDatabaseHtml(safeMetadata), sanitizeOptions);
+    case "TREEVIEW":
+      return sanitizeHtml(renderTreeViewHtml(safeMetadata), sanitizeOptions);
     case "TIMETABLE":
       return sanitizeHtml(renderTimetableHtml(safeMetadata), sanitizeOptions);
     case "GANTT":

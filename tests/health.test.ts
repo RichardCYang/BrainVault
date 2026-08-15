@@ -108,6 +108,9 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(css).toContain(".rendered-table");
     expect(css).toContain(".database-block-editor");
     expect(css).toContain(".rendered-database");
+    expect(css).toContain(".treeview-block-editor");
+    expect(css).toContain(".treeview-layout");
+    expect(css).toContain(".rendered-treeview");
     expect(css).not.toContain(".preview {");
     expect(css).toContain(".slash-menu-item");
     expect(css).toContain(".inline-toolbar");
@@ -180,6 +183,9 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(response.text).toContain("calloutTypePresets");
     expect(response.text).toContain('{ type: "TABLE", command: "/table"');
     expect(response.text).toContain('{ type: "DATABASE", command: "/database"');
+    expect(response.text).toContain('{ type: "TREEVIEW", command: "/tree"');
+    expect(response.text).toContain("createTreeViewEditor");
+    expect(response.text).toContain("extractTreeViewData");
     expect(response.text).toContain("createTableEditor");
     expect(response.text).toContain("createDatabaseEditor");
     expect(response.text).toContain("extractDatabaseData");
@@ -212,6 +218,17 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(response.text).toContain("normalizeDatabaseData");
     expect(response.text).toContain("applyDatabaseView");
     expect(response.text).toContain('view.type === "board"');
+  });
+
+
+  it("serves the tree view block editor module", async () => {
+    const response = await request(createApp()).get("/treeview-block.js").expect(200);
+
+    expect(response.headers["content-type"]).toContain("javascript");
+    expect(response.text).toContain("createTreeViewEditor");
+    expect(response.text).toContain("normalizeTreeViewData");
+    expect(response.text).toContain('setAttribute("role", "tree")');
+    expect(response.text).toContain('setAttribute("role", "treeitem")');
   });
 
   it("serves the browser i18n catalog", async () => {
@@ -264,25 +281,28 @@ describe("BrainVault web shell and health endpoint", () => {
   });
 
 
-  it("includes migrations for the TABLE, KANBAN, DATABASE, timetable, Gantt, BOOKMARK, AI chat, and math block enums", async () => {
+  it("includes migrations for the TABLE, KANBAN, DATABASE, tree view, timetable, Gantt, BOOKMARK, AI chat, and math block enums", async () => {
     const fs = await import("node:fs/promises");
     const baseline = await fs.readFile("migrations/001_init.sql", "utf8");
     const tableMigration = await fs.readFile("migrations/003_blocks_table_type.sql", "utf8");
     const kanbanMigration = await fs.readFile("migrations/004_blocks_kanban_type.sql", "utf8");
     const databaseMigration = await fs.readFile("migrations/006_blocks_database_type.sql", "utf8");
+    const treeViewMigration = await fs.readFile("migrations/054_blocks_treeview_type.sql", "utf8");
     const ganttMigration = await fs.readFile("migrations/028_blocks_gantt_type.sql", "utf8");
     const timetableMigration = await fs.readFile("migrations/029_blocks_timetable_type.sql", "utf8");
     const bookmarkMigration = await fs.readFile("migrations/007_blocks_bookmark_type.sql", "utf8");
     const aiChatMigration = await fs.readFile("migrations/011_blocks_ai_chat_type.sql", "utf8");
     const mathMigration = await fs.readFile("migrations/012_blocks_math_type.sql", "utf8");
 
-    expect(baseline).toContain("'CALLOUT', 'TOGGLE', 'TABLE', 'KANBAN', 'DATABASE', 'TIMETABLE', 'GANTT', 'BOOKMARK', 'AI_CHAT', 'MATH', 'CODE'");
+    expect(baseline).toContain("'CALLOUT', 'TOGGLE', 'ACCORDION', 'TABLE', 'KANBAN', 'DATABASE', 'TREEVIEW', 'TIMETABLE', 'GANTT', 'BOOKMARK', 'AI_CHAT', 'MATH', 'CODE'");
     expect(tableMigration).toContain("MODIFY COLUMN type ENUM");
     expect(tableMigration).toContain("'TABLE'");
     expect(kanbanMigration).toContain("MODIFY COLUMN type ENUM");
     expect(kanbanMigration).toContain("'KANBAN'");
     expect(databaseMigration).toContain("MODIFY COLUMN type ENUM");
     expect(databaseMigration).toContain("'DATABASE'");
+    expect(treeViewMigration).toContain("MODIFY COLUMN type ENUM");
+    expect(treeViewMigration).toContain("'TREEVIEW'");
     expect(timetableMigration).toContain("MODIFY COLUMN type ENUM");
     expect(timetableMigration).toContain("'TIMETABLE'");
     expect(ganttMigration).toContain("MODIFY COLUMN type ENUM");

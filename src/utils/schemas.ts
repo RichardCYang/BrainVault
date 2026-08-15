@@ -54,6 +54,7 @@ export const blockTypeSchema = z.enum([
   "TABLE",
   "KANBAN",
   "DATABASE",
+  "TREEVIEW",
   "TIMETABLE",
   "GANTT",
   "BOOKMARK",

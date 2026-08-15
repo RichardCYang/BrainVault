@@ -35,6 +35,13 @@ const databaseLimits = {
   urlLength: 2_000,
   idLength: 64
 } as const;
+const treeViewLimits = {
+  titleLength: 120,
+  nodes: 300,
+  nodeTitleLength: 300,
+  noteLength: 8_000,
+  idLength: 64
+} as const;
 const accordionIconMaxLength = Math.ceil(((512 * 1024) * 4) / 3) + 256;
 const accordionBuiltInIconPattern = /^icon:[a-z0-9-]{1,27}$/;
 const accordionUploadedIconPattern = /^\/upload\/icons\/[A-Za-z0-9_-]{1,64}\/[A-Za-z0-9_-]{1,96}\.(?:png|jpg|webp|ico)$/;
@@ -132,6 +139,7 @@ const structuredMetadataKeyByType: Partial<Record<BlockType, string>> = {
   TABLE: "table",
   KANBAN: "kanban",
   DATABASE: "database",
+  TREEVIEW: "treeView",
   ACCORDION: "accordion",
   TIMETABLE: "timetable",
   GANTT: "gantt",
@@ -502,6 +510,64 @@ function assertDatabaseMetadata(root: MetadataRecord) {
 }
 
 
+function assertTreeViewMetadata(root: MetadataRecord) {
+  const treeView = optionalRecord(root.treeView, "metadata.treeView");
+  if (!treeView) return;
+  assertAllowedKeys(treeView, "metadata.treeView", ["title", "nodes"]);
+  optionalString(treeView.title, "metadata.treeView.title", treeViewLimits.titleLength);
+  const nodes = optionalArray(treeView.nodes, "metadata.treeView.nodes", treeViewLimits.nodes);
+  if (!nodes) return;
+
+  const ids: string[] = [];
+  const parentById = new Map<string, string | null>();
+  nodes.forEach((rawNode, nodeIndex) => {
+    const path = `metadata.treeView.nodes[${nodeIndex}]`;
+    const node = optionalRecord(rawNode, path);
+    if (!node) fail(path, "must be an object");
+    assertAllowedKeys(node, path, ["id", "parentId", "title", "note", "expanded"]);
+
+    const id = assertIdentifier(node.id, `${path}.id`)!;
+    if (id.length > treeViewLimits.idLength) fail(`${path}.id`, `contains more than ${treeViewLimits.idLength} characters`);
+    if (id.trim() !== id) fail(`${path}.id`, "must not contain leading or trailing whitespace");
+    if (unsafeMetadataKeys.has(id)) fail(`${path}.id`, "uses a reserved object-key identifier");
+    ids.push(id);
+
+    let parentId: string | null = null;
+    if (node.parentId !== null && node.parentId !== undefined && node.parentId !== "") {
+      parentId = assertIdentifier(node.parentId, `${path}.parentId`)!;
+      if (parentId.length > treeViewLimits.idLength) {
+        fail(`${path}.parentId`, `contains more than ${treeViewLimits.idLength} characters`);
+      }
+      if (parentId.trim() !== parentId) fail(`${path}.parentId`, "must not contain leading or trailing whitespace");
+      if (parentId === id) fail(`${path}.parentId`, "cannot reference the node itself");
+    }
+    parentById.set(id, parentId);
+
+    optionalString(node.title, `${path}.title`, treeViewLimits.nodeTitleLength);
+    optionalString(node.note, `${path}.note`, treeViewLimits.noteLength);
+    optionalBoolean(node.expanded, `${path}.expanded`);
+  });
+
+  assertUnique(ids, "metadata.treeView.nodes");
+  const idSet = new Set(ids);
+  for (const [id, parentId] of parentById) {
+    if (parentId && !idSet.has(parentId)) {
+      fail(`metadata.treeView.nodes.${id}.parentId`, "references a missing parent node");
+    }
+  }
+
+  for (const id of ids) {
+    const seen = new Set<string>([id]);
+    let current = parentById.get(id) ?? null;
+    while (current) {
+      if (seen.has(current)) fail("metadata.treeView.nodes", "contains a parent cycle");
+      seen.add(current);
+      current = parentById.get(current) ?? null;
+    }
+  }
+}
+
+
 function parseExactIsoDay(value: unknown, path: string) {
   const text = optionalString(value, path, 10);
   if (text === null) return null;
@@ -753,6 +819,7 @@ export function assertStructuredBlockMetadataIntegrity(type: BlockType, metadata
   if (type === "TABLE") assertTableMetadata(root);
   else if (type === "KANBAN") assertKanbanMetadata(root);
   else if (type === "DATABASE") assertDatabaseMetadata(root);
+  else if (type === "TREEVIEW") assertTreeViewMetadata(root);
   else if (type === "ACCORDION") assertAccordionMetadata(root);
   else if (type === "TIMETABLE") assertTimetableMetadata(root);
   else if (type === "GANTT") assertGanttMetadata(root);

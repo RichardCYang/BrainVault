@@ -40,6 +40,12 @@ describe("migration replay data safety", () => {
     expect(sql).not.toMatch(/\b(?:DELETE|DROP|TRUNCATE|UPDATE\s+blocks)\b/i);
   });
 
+  it("adds the tree view enum value without deleting or rewriting block rows", () => {
+    const sql = fs.readFileSync(path.join(migrationsDir, "054_blocks_treeview_type.sql"), "utf8");
+    expect(sql).toMatch(/MODIFY COLUMN type ENUM\([\s\S]*'DATABASE', 'TREEVIEW', 'TIMETABLE'/i);
+    expect(sql).not.toMatch(/\b(?:DELETE|DROP|TRUNCATE|UPDATE\s+blocks)\b/i);
+  });
+
   it("runs SQL-level PREPARE through the connector text protocol", () => {
     const schemaSource = fs.readFileSync(path.resolve(process.cwd(), "src/lib/schema.ts"), "utf8");
     const migration = fs.readFileSync(
