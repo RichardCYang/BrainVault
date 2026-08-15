@@ -469,7 +469,7 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
     case "TOGGLE":
       return renderToggle(markdownValue, safeMetadata);
     case "ACCORDION":
-      return sanitizeHtml(renderAccordionHtml(safeMetadata), sanitizeOptions);
+      return sanitizeHtml(renderAccordionHtml(safeMetadata, renderMarkdown), sanitizeOptions);
     case "TABLE":
       return renderTable(safeMetadata);
     case "KANBAN":

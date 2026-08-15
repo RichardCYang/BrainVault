@@ -131,10 +131,12 @@ function escapeHtml(value: string) {
     .replaceAll("'", "&#39;");
 }
 
-function renderContent(value: string) {
+function renderPlainContent(value: string) {
   const content = escapeHtml(value).replace(/\r\n?|\n/g, "<br>");
   return content || '<span class="rendered-accordion-empty"></span>';
 }
+
+type AccordionContentRenderer = (value: string) => string;
 
 export function summarizeAccordionData(value: unknown) {
   const accordion = normalizeAccordionData(value);
@@ -147,7 +149,7 @@ export function summarizeAccordionData(value: unknown) {
     .slice(0, 20_000);
 }
 
-export function renderAccordionHtml(metadata: unknown) {
+export function renderAccordionHtml(metadata: unknown, renderContent: AccordionContentRenderer = renderPlainContent) {
   const accordion = getAccordionData(metadata);
   const title = escapeHtml(accordion.title || "Accordion");
   const items = accordion.items.map((item, index) => {
@@ -160,7 +162,7 @@ export function renderAccordionHtml(metadata: unknown) {
     const open = item.open ? " open" : "";
     return `<details class="rendered-accordion-item"${open}>
       <summary class="rendered-accordion-summary">${order}<span class="rendered-accordion-item-icon" data-icon-value="${icon}">${iconLabel}</span><span class="rendered-accordion-item-title">${itemTitle}</span></summary>
-      <div class="rendered-accordion-content">${renderContent(item.content)}</div>
+      <div class="rendered-accordion-content">${item.content ? renderContent(item.content) : renderPlainContent("")}</div>
     </details>`;
   }).join("");
 

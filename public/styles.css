@@ -5736,6 +5736,8 @@ body.is-kanban-column-dragging {
 .rendered-accordion-item-icon { display: inline-grid; flex: 0 0 1.3rem; place-items: center; min-width: 1.3rem; }
 .rendered-accordion-item-title { min-width: 0; flex: 1 1 auto; font-weight: 620; overflow-wrap: anywhere; }
 .rendered-accordion-content { padding: 0 0.82rem 0.82rem 3.65rem; color: var(--accordion-ink, var(--ink)); line-height: 1.6; overflow-wrap: anywhere; }
+.rendered-accordion-content > :first-child { margin-top: 0; }
+.rendered-accordion-content > :last-child { margin-bottom: 0; }
 .rendered-accordion-empty { display: block; min-height: 0.2rem; }
 
 @media (max-width: 640px) {

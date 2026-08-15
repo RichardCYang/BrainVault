@@ -35,6 +35,13 @@ describe("Accordion block UI integration", () => {
     expect(styles).toContain(".rendered-accordion-summary");
   });
 
+  it("renders accordion item content as Markdown in read mode through the standard HTML cache", () => {
+    expect(app).toContain('previewHtml: block.htmlCache ?? ""');
+    expect(editor).toContain('preview.innerHTML = previewHtml');
+    const markdown = readFileSync(new URL("../src/lib/markdown.ts", import.meta.url), "utf8");
+    expect(markdown).toContain('renderAccordionHtml(safeMetadata, renderMarkdown)');
+  });
+
   it("exposes a block option for clean numeric order labels and read/PDF rendering", () => {
     expect(indexHtml).toContain('data-action="toggle-accordion-order"');
     expect(indexHtml).toContain('role="menuitemcheckbox"');

@@ -63,7 +63,7 @@ describe("Accordion block rendering", () => {
           id: "one",
           icon: "icon:star",
           title: "First <img src=x onerror=alert(1)>",
-          content: "Line one\n<script>alert(2)</script>Line two",
+          content: "Line one with **bold**\n\n- First\n- Second\n\n<script>alert(2)</script>Line two",
           open: true
         },
         { id: "two", icon: "✅", title: "Second", content: "Done", open: false }
@@ -78,7 +78,7 @@ describe("Accordion block rendering", () => {
     expect(html).toContain('data-icon-value="icon:star"');
     expect(html).toMatch(/<details class="rendered-accordion-item" open>/);
     expect(html).toMatch(/<details class="rendered-accordion-item">[\s\S]*Second/);
-    expect(html).toContain("Line one<br>&lt;script&gt;alert(2)&lt;/script&gt;Line two");
+    expect(html).toContain("Line one with **bold**<br><br>- First<br>- Second<br><br>&lt;script&gt;alert(2)&lt;/script&gt;Line two");
   });
 
   it("is sanitized through the standard renderer without losing accordion attributes", () => {
@@ -88,7 +88,11 @@ describe("Accordion block rendering", () => {
     expect(html).not.toContain("<script>");
     expect(html).not.toContain("<img");
     expect(html).not.toContain("onerror=");
-    expect(html).toContain("&lt;script&gt;alert(2)&lt;/script&gt;");
+    expect(html).not.toContain("alert(2)");
+    expect(html).toContain("<strong>bold</strong>");
+    expect(html).toContain("<ul>");
+    expect(html).toContain("<li>First</li>");
+    expect(html).toContain("<li>Second</li>");
   });
 });
 
