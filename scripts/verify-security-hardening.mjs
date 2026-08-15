@@ -538,17 +538,35 @@ contains("src/lib/data-transfer.ts", [
   "stagedFileBytes + BigInt(fileStat.size) > maxTransferBytes",
   "measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1)"
 ]);
-contains("src/lib/code-highlighting.ts", [
+const codeHighlightingSource = contains("src/lib/code-highlighting.ts", [
   "maxSourceLength: 2_000",
-  "executionTimeoutMs: 25",
-  "runHighlightWithDeadline",
-  "timeout: highlightResourceLimits.executionTimeoutMs"
+  "return { definition, source, html: escapeHtml(source) }",
+  'class="language-${highlighted.definition.grammar}"'
 ]);
+for (const forbidden of ["node:vm", "vm.createContext", "vm.runInContext", "new vm.Script", "runInContext"]) {
+  assert.ok(!codeHighlightingSource.includes(forbidden), `server highlighting must not contain ${forbidden}`);
+}
 contains("public/code-highlighting.js", [
   "maxSourceLength: 2_000",
   "maxHydrationSourceLength: 8_000",
   "maxHydratedBlocks: 20",
   "source.length > highlightResourceLimits.maxSourceLength"
+]);
+const appCspSource = contains("src/app.ts", [
+  'imgSrc: ["\'self\'", "data:", "blob:"]'
+]);
+assert.doesNotMatch(appCspSource, /imgSrc:\s*\[[^\]]*(?:"http:"|"https:")/);
+const markdownImageSource = contains("src/lib/markdown.ts", [
+  "normalizeRenderedImageSource",
+  'allowedSchemesByTag: { img: ["data"] }',
+  "delete nextAttributes.srcset"
+]);
+assert.doesNotMatch(markdownImageSource, /img:\s*\[[^\]]*"srcset"/);
+contains("public/app.js", [
+  "function getRenderableImageSource",
+  "url.origin !== window.location.origin",
+  "const imageSource = getRenderableImageSource(item?.faviconUrl, { allowData: false })",
+  "const coverSource = getRenderableImageSource(page?.coverUrl)"
 ]);
 
 for (const address of [

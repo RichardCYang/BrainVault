@@ -6,6 +6,7 @@ import { signCollaborationToken, verifyCollaborationToken } from "../src/lib/col
 import { isAllowedCorsOrigin } from "../src/middleware/cors.js";
 import { readAuthSessionCookie } from "../src/lib/session-cookie.js";
 import { httpUrlSchema } from "../src/utils/schemas.js";
+import { renderMarkdown, sanitizeRenderedHtml } from "../src/lib/markdown.js";
 
 const pageAccessSource = readFileSync(new URL("../src/lib/page-access.ts", import.meta.url), "utf8");
 const pageRoutesSource = readFileSync(new URL("../src/routes/page.routes.ts", import.meta.url), "utf8");
@@ -110,5 +111,17 @@ describe("reported security hardening", () => {
   it("reads the HttpOnly session value from the Cookie header", () => {
     const request = mockRequest({ cookie: "theme=light; brainvault_session=header.payload.signature" });
     expect(readAuthSessionCookie(request)).toBe("header.payload.signature");
+  });
+
+  it("does not preserve third-party image loads in rendered content", () => {
+    const remoteMarkdown = renderMarkdown("![tracker](https://attacker.example/p.png)");
+    expect(remoteMarkdown).not.toContain("attacker.example");
+
+    const sanitized = sanitizeRenderedHtml(
+      '<img src="/img/default_cover/coverimg1.png" srcset="https://attacker.example/a.png 2x" alt="cover">'
+    );
+    expect(sanitized).toContain('src="/img/default_cover/coverimg1.png"');
+    expect(sanitized).not.toContain("srcset");
+    expect(sanitized).not.toContain("attacker.example");
   });
 });

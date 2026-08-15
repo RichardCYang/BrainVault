@@ -159,7 +159,7 @@ const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   header: ["class"],
   small: ["class"],
   p: ["class"],
-  img: ["src", "srcset", "alt", "title", "width", "height", "loading", "referrerpolicy"],
+  img: ["src", "alt", "title", "width", "height", "loading", "referrerpolicy"],
   pre: ["class"],
   code: ["class"],
   span: ["class", "style", "data-latex", "data-math-display", "data-icon-value", "aria-hidden"],
@@ -179,6 +179,22 @@ const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   li: ["class"]
 };
 
+function normalizeRenderedImageSource(value: unknown) {
+  const source = typeof value === "string" ? value.trim() : "";
+  if (!source) return "";
+
+  // Persisted HTML may render only same-origin application paths or bounded
+  // raster-image data URLs. Do not preserve absolute/protocol-relative URLs:
+  // collaborator-authored markup must never trigger third-party viewer egress.
+  if (source.startsWith("/") && !source.startsWith("//") && !source.includes("\\")) {
+    return source;
+  }
+  if (/^data:image\/(?:png|jpeg|webp|vnd\.microsoft\.icon|x-icon);base64,[a-z0-9+/]+={0,2}$/i.test(source)) {
+    return source;
+  }
+  return "";
+}
+
 const sanitizeOptions: sanitizeHtml.IOptions = {
   allowedTags,
   allowedAttributes,
@@ -191,11 +207,23 @@ const sanitizeOptions: sanitizeHtml.IOptions = {
   },
   allowProtocolRelative: false,
   allowedSchemes: ["http", "https", "mailto"],
+  allowedSchemesByTag: { img: ["data"] },
   allowedIframeHostnames: ["www.youtube-nocookie.com", "www.youtube.com"],
   exclusiveFilter: (frame) => frame.tag === "input" && frame.attribs.type !== "checkbox",
   transformTags: {
     a: sanitizeHtml.simpleTransform("a", { rel: "noopener noreferrer", target: "_blank" }),
-    img: sanitizeHtml.simpleTransform("img", { loading: "lazy", referrerpolicy: "no-referrer" })
+    img: (tagName, attribs) => {
+      const nextAttributes = {
+        ...attribs,
+        loading: "lazy",
+        referrerpolicy: "no-referrer"
+      };
+      const safeSource = normalizeRenderedImageSource(attribs.src);
+      if (safeSource) nextAttributes.src = safeSource;
+      else delete nextAttributes.src;
+      delete nextAttributes.srcset;
+      return { tagName, attribs: nextAttributes };
+    }
   }
 };
 

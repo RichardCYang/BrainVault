@@ -30,7 +30,6 @@ test("the long-code fallback still HTML-escapes the complete source", () => {
 
 test("server and browser highlighting limits remain aligned and bounded", () => {
   assert.equal(serverHighlightResourceLimits.maxSourceLength, 2_000);
-  assert.ok(serverHighlightResourceLimits.executionTimeoutMs <= 50);
   assert.equal(browserHighlightResourceLimits.maxSourceLength, serverHighlightResourceLimits.maxSourceLength);
   assert.ok(browserHighlightResourceLimits.maxHydrationSourceLength <= 8_000);
   assert.ok(browserHighlightResourceLimits.maxHydratedBlocks <= 20);

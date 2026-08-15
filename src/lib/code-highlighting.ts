@@ -1,7 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
-import vm from "node:vm";
-
 export type CodeLanguageDefinition = Readonly<{
   id: string;
   label: string;
@@ -56,83 +52,9 @@ for (const definition of codeLanguageDefinitions) {
   }
 }
 
-interface HighlightResult {
-  value: string;
-}
-
-interface HighlightJsRuntime {
-  highlight(code: string, options: { language: string; ignoreIllegals?: boolean }): HighlightResult;
-  getLanguage(name: string): unknown;
-  listLanguages(): string[];
-  versionString?: string;
-}
-
 export const highlightResourceLimits = Object.freeze({
-  maxSourceLength: 2_000,
-  executionTimeoutMs: 25
+  maxSourceLength: 2_000
 });
-
-type HighlightVmContext = ReturnType<typeof vm.createContext> & {
-  hljs?: HighlightJsRuntime;
-  __brainvaultSource?: string;
-  __brainvaultLanguage?: string;
-};
-
-type HighlightRuntime = Readonly<{
-  context: HighlightVmContext;
-  highlighter: HighlightJsRuntime;
-  script: vm.Script;
-}>;
-
-let cachedHighlightRuntime: HighlightRuntime | null = null;
-
-function getVendorPath(...segments: string[]) {
-  return path.resolve(process.cwd(), "public", "vendor", "highlight", ...segments);
-}
-
-function loadHighlightJs() {
-  if (cachedHighlightRuntime) return cachedHighlightRuntime;
-
-  const context = vm.createContext({ console }) as HighlightVmContext;
-  for (const filename of ["highlight.min.js", "brainvault-languages.js"]) {
-    const source = fs.readFileSync(getVendorPath(filename), "utf8");
-    vm.runInContext(source, context, { filename: getVendorPath(filename) });
-  }
-
-  const highlighter = context.hljs;
-  if (!highlighter?.highlight || !highlighter.getLanguage) {
-    throw new Error("Highlight.js failed to initialize from the vendored assets.");
-  }
-
-  const missing = [...new Set(codeLanguageDefinitions.map(({ grammar }) => grammar))]
-    .filter((grammar) => !highlighter.getLanguage(grammar));
-  if (missing.length) {
-    throw new Error(`Highlight.js grammars are missing: ${missing.join(", ")}`);
-  }
-
-  const script = new vm.Script(
-    "hljs.highlight(__brainvaultSource, { language: __brainvaultLanguage, ignoreIllegals: true }).value",
-    { filename: getVendorPath("brainvault-highlight-runner.vm.js") }
-  );
-  cachedHighlightRuntime = Object.freeze({ context, highlighter, script });
-  return cachedHighlightRuntime;
-}
-
-function runHighlightWithDeadline(source: string, grammar: string) {
-  const runtime = loadHighlightJs();
-  runtime.context.__brainvaultSource = source;
-  runtime.context.__brainvaultLanguage = grammar;
-  try {
-    const value = runtime.script.runInContext(runtime.context, {
-      timeout: highlightResourceLimits.executionTimeoutMs
-    }) as unknown;
-    if (typeof value !== "string") throw new Error("Highlight.js returned an invalid result.");
-    return value;
-  } finally {
-    delete runtime.context.__brainvaultSource;
-    delete runtime.context.__brainvaultLanguage;
-  }
-}
 
 function getMetadataRecord(metadata: unknown): Record<string, unknown> {
   if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
@@ -180,19 +102,11 @@ function escapeHtml(value: string) {
 export function highlightCode(value: unknown, language: unknown) {
   const definition = getCodeLanguageDefinition(language);
   const source = stripCodeFence(value);
-  const fallback = () => ({ definition, source, html: escapeHtml(source) });
-
-  // Highlight.js grammars execute complex regular expressions synchronously. Keep
-  // untrusted note content below a small input ceiling and a VM execution deadline.
-  if (definition.grammar === "plaintext" || source.length > highlightResourceLimits.maxSourceLength) {
-    return fallback();
-  }
-
-  try {
-    return { definition, source, html: runHighlightWithDeadline(source, definition.grammar) };
-  } catch {
-    return fallback();
-  }
+  // Server rendering is deliberately presentation-only. Syntax highlighting is
+  // upgraded in the browser from the locally vendored Highlight.js assets. This
+  // keeps attacker-controlled note content out of every server-side JavaScript
+  // execution context while preserving safe escaped HTML for API/PDF rendering.
+  return { definition, source, html: escapeHtml(source) };
 }
 
 export function renderHighlightedCode(value: unknown, language: unknown, { showLanguage = true } = {}) {
@@ -201,14 +115,10 @@ export function renderHighlightedCode(value: unknown, language: unknown, { showL
   const header = showLanguage
     ? `<div class="rendered-code-header"><span class="rendered-code-language">${label}</span></div>`
     : "";
-  return `<div class="rendered-code-shell">${header}<pre class="rendered-code-pre"><code class="hljs language-${highlighted.definition.grammar}">${highlighted.html}</code></pre></div>`;
+  return `<div class="rendered-code-shell">${header}<pre class="rendered-code-pre"><code class="language-${highlighted.definition.grammar}">${highlighted.html}</code></pre></div>`;
 }
 
 export function renderMarkdownCodeFence(value: unknown, language: unknown) {
   const highlighted = highlightCode(value, language);
-  return `<pre class="rendered-code-pre"><code class="hljs language-${highlighted.definition.grammar}">${highlighted.html}</code></pre>`;
-}
-
-export function getHighlightJsVersion() {
-  return loadHighlightJs().highlighter.versionString ?? "unknown";
+  return `<pre class="rendered-code-pre"><code class="language-${highlighted.definition.grammar}">${highlighted.html}</code></pre>`;
 }

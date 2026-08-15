@@ -4155,18 +4155,34 @@ function createBuiltInIconSvg(name) {
   return svg;
 }
 
+function getRenderableImageSource(value, { allowData = true } = {}) {
+  const source = typeof value === "string" ? value.trim() : "";
+  if (!source) return null;
+  if (
+    allowData
+    && /^data:image\/(?:png|jpeg|webp|vnd\.microsoft\.icon|x-icon);base64,[a-z0-9+/]+={0,2}$/i.test(source)
+  ) return source;
+
+  try {
+    const url = new URL(source, window.location.href);
+    if (
+      (url.protocol !== "http:" && url.protocol !== "https:")
+      || url.origin !== window.location.origin
+      || url.username
+      || url.password
+    ) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 function getCustomImageSource(iconValue) {
   if (typeof iconValue !== "string" || !iconValue.startsWith(imageIconPrefix)) return null;
   const source = iconValue.slice(imageIconPrefix.length).trim();
   if (/^\/upload\/icons\/[A-Za-z0-9_-]{1,64}\/[A-Za-z0-9_-]{1,96}\.(?:png|jpg|webp|ico)$/.test(source)) return source;
   if (/^data:image\/(?:png|jpeg|webp|vnd\.microsoft\.icon|x-icon);base64,[a-z0-9+/]+=*$/i.test(source)) return source;
-  try {
-    const url = new URL(source);
-    if (source.length > customIconMaxUrlLength || url.username || url.password) return null;
-    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 function createIconVisual(iconValue, fallback = "📄") {
@@ -4640,6 +4656,7 @@ function normalizeCustomIconUrl(value) {
     if (
       source.length > customIconMaxUrlLength ||
       (url.protocol !== "http:" && url.protocol !== "https:") ||
+      url.origin !== window.location.origin ||
       url.username ||
       url.password
     ) return null;
@@ -9481,9 +9498,16 @@ function createAttachmentEditor(block) {
 }
 
 function createBookmarkFavicon(item, className = "bookmark-favicon") {
+  const imageSource = getRenderableImageSource(item?.faviconUrl, { allowData: false });
+  if (!imageSource) {
+    const fallback = document.createElement("span");
+    fallback.className = className;
+    fallback.setAttribute("aria-hidden", "true");
+    return fallback;
+  }
   const image = document.createElement("img");
   image.className = className;
-  image.src = item.faviconUrl;
+  image.src = imageSource;
   image.alt = "";
   image.width = 20;
   image.height = 20;
@@ -9530,10 +9554,11 @@ function createBookmarkItem(item, view) {
     fallback.setAttribute("aria-hidden", "true");
     fallback.textContent = "🔖";
     media.append(fallback);
-    if (item.imageUrl) {
+    const imageSource = getRenderableImageSource(item.imageUrl, { allowData: false });
+    if (imageSource) {
       const image = document.createElement("img");
       image.className = "bookmark-card-image";
-      image.src = item.imageUrl;
+      image.src = imageSource;
       image.alt = "";
       image.loading = "lazy";
       image.referrerPolicy = "no-referrer";
@@ -12320,7 +12345,7 @@ function closePageCoverPositionEditor({ restore = false } = {}) {
 function syncPageCoverControls() {
   const page = state.workspaceView === "page" ? state.selectedPage : null;
   const hasCurrentPositionDraft = isPageCoverPositionDraftForPage(pageCoverPositionDraft, page?.id);
-  const hasCover = Boolean(page?.coverUrl);
+  const hasCover = Boolean(getRenderableImageSource(page?.coverUrl));
   const canEditCover = Boolean(
     page && hasCover && !isPageReadOnly() && isPageOwner(page) && !isPageInteractionLocked() && !pageCoverSaving
   );
@@ -12353,7 +12378,8 @@ function renderPageCover(page) {
   if (pageCoverPositionDraft && !isPageCoverPositionDraftForPage(pageCoverPositionDraft, page?.id)) {
     closePageCoverPositionEditor();
   }
-  const hasCover = Boolean(page?.coverUrl);
+  const coverSource = getRenderableImageSource(page?.coverUrl);
+  const hasCover = Boolean(coverSource);
   elements.pageViewHeader.classList.toggle("has-page-cover", hasCover);
   elements.pageView.classList.toggle("has-page-cover", hasCover);
   elements.pageCover.classList.toggle("hidden", !hasCover);
@@ -12365,8 +12391,8 @@ function renderPageCover(page) {
     return;
   }
 
-  if (elements.pageCoverImage.getAttribute("src") !== page.coverUrl) {
-    elements.pageCoverImage.setAttribute("src", page.coverUrl);
+  if (elements.pageCoverImage.getAttribute("src") !== coverSource) {
+    elements.pageCoverImage.setAttribute("src", coverSource);
   }
   elements.pageCoverImage.alt = t("cover.alt", { title: page.title || t("newDocumentTitle") });
   const draft = pageCoverPositionDraft?.pageId === page.id ? pageCoverPositionDraft : null;

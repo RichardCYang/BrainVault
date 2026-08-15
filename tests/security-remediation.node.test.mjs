@@ -61,6 +61,28 @@ test("the collaboration runtime is same-origin and the import map matches its CS
   assert.ok(!collaborationSource.includes("https://cdn.jsdelivr.net/npm/yjs@"));
 });
 
+test("server highlighting cannot execute code through a Node VM context", () => {
+  const source = read("src/lib/code-highlighting.ts");
+  assert.doesNotMatch(source, /node:vm|vm\.createContext|vm\.runInContext|new vm\.Script|runInContext/);
+  assert.match(source, /return \{ definition, source, html: escapeHtml\(source\) \}/);
+  assert.match(source, /<code class="language-\$\{highlighted\.definition\.grammar\}">/);
+});
+
+test("shared content cannot auto-load arbitrary third-party images", () => {
+  const app = read("src/app.ts");
+  const markdown = read("src/lib/markdown.ts");
+  const browser = read("public/app.js");
+
+  assert.match(app, /imgSrc: \["'self'", "data:", "blob:"\]/);
+  assert.doesNotMatch(app, /imgSrc:\s*\[[^\]]*(?:"http:"|"https:")/);
+  assert.match(markdown, /function normalizeRenderedImageSource/);
+  assert.match(markdown, /allowedSchemesByTag: \{ img: \["data"\] \}/);
+  assert.doesNotMatch(markdown, /img:\s*\[[^\]]*"srcset"/);
+  assert.match(browser, /url\.origin !== window\.location\.origin/);
+  assert.match(browser, /getRenderableImageSource\(item\?\.faviconUrl, \{ allowData: false \}\)/);
+  assert.match(browser, /getRenderableImageSource\(page\?\.coverUrl\)/);
+});
+
 test("the documented advisory hostname canonicalizes to the private IPv4 target", () => {
   const parsed = new URL("http://012.0.0.1/");
   assert.equal(parsed.hostname, "10.0.0.1");

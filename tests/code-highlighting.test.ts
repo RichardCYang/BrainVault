@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   codeLanguageDefinitions,
   getCodeLanguage,
-  getHighlightJsVersion,
   highlightCode,
   highlightResourceLimits,
   normalizeCodeLanguage,
@@ -61,15 +60,23 @@ describe("syntax highlighting", () => {
     expect(getCodeLanguage('{"codeLanguage":"TS"}')).toBe("typescript");
   });
 
-  it("loads every language exposed by the code-block selector", () => {
-    expect(getHighlightJsVersion()).not.toBe("unknown");
+  it("keeps every language exposed by the code-block selector available for client hydration", () => {
     expect(Object.keys(samples)).toHaveLength(codeLanguageDefinitions.length);
 
     for (const definition of codeLanguageDefinitions) {
       const result = highlightCode(samples[definition.id], definition.id);
       expect(result.definition.id).toBe(definition.id);
+      expect(result.source).toBe(samples[definition.id]);
       expect(result.html.length).toBeGreaterThan(0);
+      expect(result.html).not.toContain("hljs-");
     }
+  });
+
+  it("does not execute the highlighting runtime on the server", () => {
+    const source = readFileSync(new URL("../src/lib/code-highlighting.ts", import.meta.url), "utf8");
+    expect(source).not.toContain("node:vm");
+    expect(source).not.toContain("runInContext");
+    expect(source).not.toContain("new vm.Script");
   });
 
   it("falls back to escaped plaintext for code above the highlighting ceiling", () => {
@@ -91,14 +98,14 @@ describe("syntax highlighting", () => {
     const html = renderBlockHtml("CODE", "const answer = 42;", false, { codeLanguage: "javascript" });
     expect(html).toContain("rendered-code-shell");
     expect(html).toContain("language-javascript");
-    expect(html).toContain("hljs-keyword");
+    expect(html).not.toContain("hljs-keyword");
     expect(html).toContain("JavaScript");
   });
 
-  it("highlights fenced code inside Markdown", () => {
+  it("marks fenced code for browser-side highlighting", () => {
     const html = renderMarkdown("```python\ndef hello():\n    return True\n```");
     expect(html).toContain("language-python");
-    expect(html).toContain("hljs-keyword");
+    expect(html).not.toContain("hljs-keyword");
   });
 
   it("loads all highlighting assets locally before the app module", () => {

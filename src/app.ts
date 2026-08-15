@@ -60,7 +60,11 @@ export function createApp() {
     helmet({
       contentSecurityPolicy: {
         directives: {
-          imgSrc: ["'self'", "data:", "http:", "https:"],
+          // Images may come from BrainVault itself, validated inline data URLs,
+          // or local object URLs used while processing user-selected image files.
+          // Arbitrary remote origins are intentionally excluded so shared content
+          // cannot make a viewer's browser contact an attacker-controlled host.
+          imgSrc: ["'self'", "data:", "blob:"],
           scriptSrc: [
             "'self'",
             "'sha256-AQrGHmNf2ToDPODxkNyXldxWl9tWr2pnwbahY0pFneE='",
