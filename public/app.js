@@ -53,7 +53,11 @@ import {
   normalizeAiChatData,
   summarizeAiChatData
 } from "./ai-chat-block.js";
-import { emojiCategoryDefinitions, emojiRecords } from "./emoji-data.js";
+import {
+  emojiValueSet,
+  getLoadedEmojiPickerData,
+  loadEmojiPickerData
+} from "./emoji-data-loader.js";
 import { createEmojiVisual, renderEmojiVisual } from "./emoji-renderer.js";
 import { iconCategoryDefinitions, iconRecords, iconSvgNodes } from "./icon-data.js";
 import { createPageDraftStore } from "./draft-store.js";
@@ -201,11 +205,23 @@ let pageCoverPositionDraft = null;
 let pageCoverDragPointerId = null;
 let documentChildrenRenderId = 0;
 
-const emojiSearchIndex = emojiRecords.map((record) =>
-  `${record[0]} ${record[2]} ${record[3]} ${record[4]} ${record[5]}`.toLocaleLowerCase()
-);
-const emojiRecordByValue = new Map(emojiRecords.map((record, index) => [record[0], { record, index }]));
-const emojiCategoryById = new Map(emojiCategoryDefinitions.map((category) => [category.id, category]));
+let emojiCategoryDefinitions = [];
+let emojiRecords = [];
+let emojiSearchIndex = [];
+let emojiRecordByValue = new Map();
+let emojiCategoryById = new Map();
+let emojiPickerRenderGeneration = 0;
+
+function applyEmojiPickerData(data) {
+  emojiCategoryDefinitions = data.categoryDefinitions;
+  emojiRecords = data.records;
+  emojiSearchIndex = data.searchIndex;
+  emojiRecordByValue = data.recordByValue;
+  emojiCategoryById = data.categoryById;
+}
+
+const initiallyLoadedEmojiPickerData = getLoadedEmojiPickerData();
+if (initiallyLoadedEmojiPickerData) applyEmojiPickerData(initiallyLoadedEmojiPickerData);
 const iconSearchIndex = iconRecords.map((record) =>
   `${record.name} ${record.labelKo} ${record.labelEn} ${record.keywords}`.toLocaleLowerCase()
 );
@@ -4104,7 +4120,7 @@ function getDefaultCollectionEmoji() {
 function getRecentEmojis() {
   const values = readJsonStorage(getUserScopedStorageKey(recentEmojiStorageKey), []);
   if (!Array.isArray(values)) return [];
-  return values.filter((emoji) => typeof emoji === "string" && emojiRecordByValue.has(emoji)).slice(0, 36);
+  return values.filter((emoji) => typeof emoji === "string" && emojiValueSet.has(emoji)).slice(0, 36);
 }
 
 function rememberRecentEmoji(emoji) {
@@ -4207,7 +4223,7 @@ function createIconVisual(iconValue, fallback = "📄") {
   }
 
   const emojiValue = value.startsWith(imageIconPrefix) || value.startsWith(builtInIconPrefix) ? fallback : value;
-  if (emojiRecordByValue.has(emojiValue)) return createEmojiVisual(emojiValue);
+  if (emojiValueSet.has(emojiValue)) return createEmojiVisual(emojiValue);
 
   const emoji = document.createElement("span");
   emoji.className = "app-icon-emoji";
@@ -4386,7 +4402,7 @@ function rememberCustomIconSelection(value) {
 }
 
 function isEmojiIconValue(value) {
-  return typeof value === "string" && !value.startsWith(builtInIconPrefix) && !value.startsWith(imageIconPrefix) && emojiRecordByValue.has(value);
+  return typeof value === "string" && !value.startsWith(builtInIconPrefix) && !value.startsWith(imageIconPrefix) && emojiValueSet.has(value);
 }
 
 function getStoredEmojiSkinTone() {
@@ -4757,7 +4773,25 @@ function positionEmojiPicker(trigger) {
   elements.emojiPicker.style.setProperty("--emoji-picker-top", `${centerY}px`);
 }
 
+function setEmojiPickerDataLoading(loading) {
+  elements.emojiPicker.toggleAttribute("aria-busy", loading || state.emojiSaving);
+  elements.emojiSearchInput.disabled = loading;
+  elements.emojiSkinToneButton.disabled = loading;
+  for (const tab of [elements.emojiTabEmojis, elements.emojiTabIcons, elements.emojiTabCustom]) {
+    tab.disabled = loading;
+  }
+  if (loading) {
+    elements.emojiRandomButton.disabled = true;
+    elements.emojiCategoryList.replaceChildren();
+    elements.emojiRecentGrid.replaceChildren();
+    elements.emojiGrid.replaceChildren();
+    elements.emojiResultsCount.textContent = "";
+    elements.emojiEmpty.classList.add("hidden");
+  }
+}
+
 function openEmojiPicker(target, trigger) {
+  const renderGeneration = ++emojiPickerRenderGeneration;
   iconPickerOperationGuard.invalidate();
   state.emojiPickerTarget = target;
   state.emojiPickerReturnFocus = trigger instanceof HTMLElement ? trigger : null;
@@ -4777,12 +4811,38 @@ function openEmojiPicker(target, trigger) {
   elements.emojiResetButton.disabled = state.emojiSaving;
   elements.emojiCustomUrlButton.disabled = state.emojiSaving;
   elements.emojiCustomUploadButton.disabled = state.emojiSaving;
-  renderEmojiPicker();
   positionEmojiPicker(trigger);
-  requestAnimationFrame(() => elements.emojiSearchInput.focus());
+
+  const loadedData = getLoadedEmojiPickerData();
+  if (loadedData) {
+    applyEmojiPickerData(loadedData);
+    setEmojiPickerDataLoading(false);
+    renderEmojiPicker();
+    requestAnimationFrame(() => elements.emojiSearchInput.focus());
+    return;
+  }
+
+  setEmojiPickerDataLoading(true);
+  void loadEmojiPickerData()
+    .then((data) => {
+      if (
+        renderGeneration !== emojiPickerRenderGeneration
+        || elements.emojiPickerLayer.classList.contains("hidden")
+      ) return;
+      applyEmojiPickerData(data);
+      setEmojiPickerDataLoading(false);
+      renderEmojiPicker();
+      requestAnimationFrame(() => elements.emojiSearchInput.focus());
+    })
+    .catch((error) => {
+      if (renderGeneration !== emojiPickerRenderGeneration) return;
+      closeEmojiPicker();
+      setStatus(error?.message ?? "Unable to load emoji data", true);
+    });
 }
 
 function closeEmojiPicker({ restoreFocus = true } = {}) {
+  emojiPickerRenderGeneration += 1;
   if (elements.emojiPickerLayer.classList.contains("hidden")) return;
   iconPickerOperationGuard.invalidate();
   elements.emojiPickerLayer.classList.add("hidden");
@@ -14472,7 +14532,7 @@ function refreshLocalizedUi() {
     }
   }
   if (state.mfaLogin?.methods?.passkey) syncAuthOperationControls();
-  if (!elements.emojiPickerLayer.classList.contains("hidden")) renderEmojiPicker();
+  if (!elements.emojiPickerLayer.classList.contains("hidden") && emojiRecords.length > 0) renderEmojiPicker();
 
   if (!elements.slashMenu.classList.contains("hidden") && state.activeSlashBlockId) {
     const row = elements.blockList.querySelector(`[data-block-id="${CSS.escape(state.activeSlashBlockId)}"]`);
