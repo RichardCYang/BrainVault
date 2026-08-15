@@ -152,6 +152,14 @@ function makeActionButton(action, nodeId, label, text) {
   return button;
 }
 
+function syncNodeToggleButton(button, expanded) {
+  if (!button) return;
+  button.classList.toggle("is-expanded", expanded);
+  button.setAttribute("aria-expanded", String(expanded));
+  button.title = t(expanded ? "treeview.collapseNode" : "treeview.expandNode");
+  button.setAttribute("aria-label", button.title);
+}
+
 export function createTreeViewEditor(row, value, options = {}) {
   const { onDirty, selectedNodeId: requestedSelectedNodeId = null } = options;
   const data = normalizeTreeViewData(value);
@@ -214,7 +222,7 @@ export function createTreeViewEditor(row, value, options = {}) {
 
   const renderBranch = (parentId, level, host) => {
     const children = getChildren(data, parentId);
-    for (const node of children) {
+    for (const [childIndex, node] of children.entries()) {
       const shell = document.createElement("div");
       shell.className = "treeview-node-shell";
       shell.dataset.treeviewNodeId = node.id;
@@ -231,10 +239,11 @@ export function createTreeViewEditor(row, value, options = {}) {
         toggle.dataset.action = "treeview-toggle-node";
         toggle.dataset.treeviewNodeId = node.id;
         toggle.dataset.readModeAllowed = "true";
-        toggle.setAttribute("aria-expanded", String(node.expanded));
-        toggle.title = t(node.expanded ? "treeview.collapseNode" : "treeview.expandNode");
-        toggle.setAttribute("aria-label", toggle.title);
-        toggle.textContent = node.expanded ? "⌄" : "›";
+        const toggleIcon = document.createElement("span");
+        toggleIcon.className = "treeview-node-toggle-icon";
+        toggleIcon.setAttribute("aria-hidden", "true");
+        toggle.append(toggleIcon);
+        syncNodeToggleButton(toggle, node.expanded);
         rowElement.append(toggle);
       } else {
         const spacer = document.createElement("span");
@@ -251,6 +260,8 @@ export function createTreeViewEditor(row, value, options = {}) {
       label.dataset.readModeAllowed = "true";
       label.setAttribute("role", "treeitem");
       label.setAttribute("aria-level", String(level));
+      label.setAttribute("aria-posinset", String(childIndex + 1));
+      label.setAttribute("aria-setsize", String(children.length));
       label.setAttribute("aria-selected", String(node.id === selectedNodeId));
       if (nodeChildren.length) label.setAttribute("aria-expanded", String(node.expanded));
       label.tabIndex = node.id === selectedNodeId || (!selectedNodeId && data.nodes[0]?.id === node.id) ? 0 : -1;
@@ -410,10 +421,7 @@ export function createTreeViewEditor(row, value, options = {}) {
       const node = getNode(data, nodeId);
       if (!node || !getChildren(data, node.id).length) return;
       node.expanded = !node.expanded;
-      button.textContent = node.expanded ? "⌄" : "›";
-      button.setAttribute("aria-expanded", String(node.expanded));
-      button.title = t(node.expanded ? "treeview.collapseNode" : "treeview.expandNode");
-      button.setAttribute("aria-label", button.title);
+      syncNodeToggleButton(button, node.expanded);
       const shell = button.closest(".treeview-node-shell");
       const group = shell?.querySelector(":scope > .treeview-node-group");
       if (group) group.hidden = !node.expanded;
@@ -533,12 +541,7 @@ export function createTreeViewEditor(row, value, options = {}) {
         const group = shell?.querySelector(":scope > .treeview-node-group");
         if (group) group.hidden = false;
         const toggle = shell?.querySelector(':scope > .treeview-node-row [data-action="treeview-toggle-node"]');
-        if (toggle) {
-          toggle.textContent = "⌄";
-          toggle.setAttribute("aria-expanded", "true");
-          toggle.title = t("treeview.collapseNode");
-          toggle.setAttribute("aria-label", toggle.title);
-        }
+        if (toggle) syncNodeToggleButton(toggle, true);
         label.setAttribute("aria-expanded", "true");
         editor.treeViewData = data;
         if (!isReadOnly()) onDirty?.();
@@ -553,10 +556,7 @@ export function createTreeViewEditor(row, value, options = {}) {
         const group = shell?.querySelector(":scope > .treeview-node-group");
         if (group) group.hidden = true;
         const toggle = shell?.querySelector(':scope > .treeview-node-row [data-action="treeview-toggle-node"]');
-        if (toggle) {
-          toggle.textContent = "›";
-          toggle.setAttribute("aria-expanded", "false");
-        }
+        if (toggle) syncNodeToggleButton(toggle, false);
         label.setAttribute("aria-expanded", "false");
         editor.treeViewData = data;
         if (!isReadOnly()) onDirty?.();

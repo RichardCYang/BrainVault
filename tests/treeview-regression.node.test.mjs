@@ -78,8 +78,14 @@ test("tree view is wired through UI, accessibility, collaboration, backup, and m
   assert.match(clientModule, /event\.key === "ArrowRight"/);
   assert.match(clientModule, /event\.key === "ArrowLeft"/);
   assert.match(clientModule, /treeview-add-child/);
+  assert.match(clientModule, /aria-posinset/);
+  assert.match(clientModule, /aria-setsize/);
+  assert.match(clientModule, /treeview-node-toggle-icon/);
   assert.match(css, /\.treeview-layout[\s\S]*border: 1px solid var\(--treeview-line\)/);
   assert.match(css, /\.treeview-block-editor[\s\S]*background: transparent/);
+  assert.match(css, /\.treeview-node-group > \.treeview-node-shell::before/);
+  assert.match(css, /\.treeview-node-label[\s\S]*justify-content: flex-start/);
+  assert.match(css, /\.treeview-node-actions[\s\S]*position: absolute/);
   assert.match(collaboration, /"TREEVIEW"/);
   assert.match(transfer, /"DATABASE", "TREEVIEW", "TIMETABLE"/);
   assert.match(schema, /"DATABASE",\s*"TREEVIEW",\s*"TIMETABLE"/);
