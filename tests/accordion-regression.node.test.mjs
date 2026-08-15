@@ -5,6 +5,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   normalizeAccordionData,
+  setAccordionItemIcon,
+  setAccordionShowOrder,
   summarizeAccordionData
 } from "../public/accordion-block.js";
 import { setLanguage, t } from "../public/i18n.js";
@@ -39,6 +41,56 @@ test("accordion client metadata keeps order, icons, open state, and bounded deri
     }))
   });
   assert.equal(summary.length, 20_000);
+});
+
+test("accordion external controls preserve the editor's live data object", () => {
+  const data = normalizeAccordionData({
+    title: "FAQ",
+    showOrder: false,
+    items: [
+      { id: "first", icon: "📄", title: "First", content: "A", open: true },
+      { id: "second", icon: "📄", title: "Second", content: "B", open: true }
+    ]
+  });
+  const iconButton = {};
+  const editor = {
+    accordionData: data,
+    classList: { toggle() {} },
+    querySelector(selector) {
+      return selector.includes('data-action="accordion-pick-icon"') ? iconButton : null;
+    }
+  };
+  const row = {
+    querySelector(selector) {
+      return selector === ".accordion-block-editor" ? editor : null;
+    }
+  };
+  const previousCss = globalThis.CSS;
+  globalThis.CSS = { ...previousCss, escape: (value) => String(value) };
+
+  try {
+    let renderedIcon = null;
+    assert.equal(setAccordionItemIcon(row, "first", "🚀", (_target, value) => {
+      renderedIcon = value;
+    }), true);
+    assert.strictEqual(editor.accordionData, data);
+    assert.equal(data.items[0].icon, "🚀");
+    assert.equal(renderedIcon, "🚀");
+
+    assert.equal(setAccordionShowOrder(row, true), true);
+    assert.strictEqual(editor.accordionData, data);
+    assert.equal(data.showOrder, true);
+
+    // Structural editor actions (such as adding an item) use the data object
+    // captured when createAccordionEditor was mounted. It must still contain
+    // changes made by external controls before that structural action occurs.
+    data.items.push({ id: "third", icon: "📄", title: "Third", content: "", open: true });
+    assert.deepEqual(data.items.map((item) => item.icon), ["🚀", "📄", "📄"]);
+    assert.equal(editor.accordionData.items.length, 3);
+  } finally {
+    if (previousCss === undefined) delete globalThis.CSS;
+    else globalThis.CSS = previousCss;
+  }
 });
 
 test("accordion translations and item icon picker scope are complete", () => {

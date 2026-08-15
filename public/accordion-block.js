@@ -460,10 +460,26 @@ export function extractAccordionData(row) {
   return normalizeAccordionData(row?.querySelector(".accordion-block-editor")?.accordionData);
 }
 
+function normalizeEditorAccordionDataInPlace(editor) {
+  const current = recordValue(editor?.accordionData);
+  if (!current) return null;
+  const normalized = normalizeAccordionData(current);
+
+  // createAccordionEditor keeps `data` in its event-handler closure. External
+  // controls (icon picker / block menu) must therefore preserve that root
+  // object identity instead of replacing editor.accordionData with a clone.
+  current.title = normalized.title;
+  current.showOrder = normalized.showOrder;
+  current.items = normalized.items;
+  editor.accordionData = current;
+  return current;
+}
+
 export function setAccordionShowOrder(row, showOrder) {
   const editor = row?.querySelector(".accordion-block-editor");
   if (!editor) return false;
-  const data = normalizeAccordionData(editor.accordionData);
+  const data = normalizeEditorAccordionDataInPlace(editor);
+  if (!data) return false;
   data.showOrder = showOrder === true;
   editor.accordionData = data;
   editor.classList.toggle("show-order", data.showOrder);
@@ -473,7 +489,8 @@ export function setAccordionShowOrder(row, showOrder) {
 export function setAccordionItemIcon(row, itemId, icon, renderIcon) {
   const editor = row?.querySelector(".accordion-block-editor");
   if (!editor || !itemId) return false;
-  const data = normalizeAccordionData(editor.accordionData);
+  const data = normalizeEditorAccordionDataInPlace(editor);
+  if (!data) return false;
   const item = data.items.find((candidate) => candidate.id === itemId);
   if (!item) return false;
   item.icon = normalizeIcon(icon);
