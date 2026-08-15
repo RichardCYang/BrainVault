@@ -61,10 +61,16 @@ export function createApp() {
       contentSecurityPolicy: {
         directives: {
           // Images may come from BrainVault itself, validated inline data URLs,
-          // or local object URLs used while processing user-selected image files.
-          // Arbitrary remote origins are intentionally excluded so shared content
-          // cannot make a viewer's browser contact an attacker-controlled host.
-          imgSrc: ["'self'", "data:", "blob:"],
+          // local object URLs used while processing user-selected image files, or
+          // the version-pinned Twemoji SVG directory used by emoji-renderer.js.
+          // Arbitrary remote origins remain excluded so shared content cannot make
+          // a viewer's browser contact an attacker-controlled host.
+          imgSrc: [
+            "'self'",
+            "data:",
+            "blob:",
+            "https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.3/assets/svg/"
+          ],
           scriptSrc: [
             "'self'",
             "'sha256-AQrGHmNf2ToDPODxkNyXldxWl9tWr2pnwbahY0pFneE='",

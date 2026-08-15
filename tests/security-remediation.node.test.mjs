@@ -73,7 +73,7 @@ test("shared content cannot auto-load arbitrary third-party images", () => {
   const markdown = read("src/lib/markdown.ts");
   const browser = read("public/app.js");
 
-  assert.match(app, /imgSrc: \["'self'", "data:", "blob:"\]/);
+  assert.match(app, /imgSrc:\s*\[[^\]]*"'self'"[^\]]*"data:"[^\]]*"blob:"[^\]]*"https:\/\/cdn\.jsdelivr\.net\/gh\/jdecked\/twemoji@17\.0\.3\/assets\/svg\/"[^\]]*\]/);
   assert.doesNotMatch(app, /imgSrc:\s*\[[^\]]*(?:"http:"|"https:")/);
   assert.match(markdown, /function normalizeRenderedImageSource/);
   assert.match(markdown, /allowedSchemesByTag: \{ img: \["data"\] \}/);
