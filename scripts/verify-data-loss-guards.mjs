@@ -134,6 +134,10 @@ function oldThreePassForwardSnapshot(storage) {
 }
 
 const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const editorHistorySource = readFileSync(
+  new URL("../public/editor-history.js", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const collaborationClientSource = readFileSync(
   new URL("../public/collaboration.js", import.meta.url),
   "utf8"
@@ -254,6 +258,30 @@ const directBlockDeleteRouteSource = section(
   blockRouteSource,
   'blockRouter.delete(\n  "/blocks/:blockId"',
   'blockRouter.post(\n  "/pages/:pageId/blocks/reorder"'
+);
+
+assert(
+  editorHistorySource.includes("previous.captureGroup === next.captureGroup")
+    && client.includes("function getBlockEditorHistoryCaptureGroup(row)")
+    && client.includes('const controls = [...row.querySelectorAll("input, textarea")]')
+    && client.includes("captureGroup: captureGroup === null ? null : `${key}:${captureGroup}`")
+    && client.includes("coalesce: captureGroup !== null"),
+  "Rapid edits in distinct structured-block fields can still collapse into one destructive undo step"
+);
+const editorHistoryLossReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL("./reproduce-editor-history-cross-field-loss.mjs", import.meta.url))],
+  { encoding: "utf8" }
+));
+assert(
+  editorHistoryLossReproduction.historicalCallShape.undoDepth === 1
+    && editorHistoryLossReproduction.historicalCallShape.restoredNote === "old"
+    && editorHistoryLossReproduction.historicalCallShape.redoDepthAfterNextEdit === 0
+    && editorHistoryLossReproduction.fixedCallShape.undoDepth === 2
+    && editorHistoryLossReproduction.fixedCallShape.restoredNote === "important new"
+    && editorHistoryLossReproduction.fixedCallShape.restoredTitle === "A"
+    && editorHistoryLossReproduction.fixedCallShape.redoDepthAfterNextEdit === 0,
+  "The cross-field editor-history reproduction did not prove both vulnerable and fixed behavior"
 );
 
 assert(

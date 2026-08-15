@@ -75,15 +75,22 @@ export function createEditorHistory({
     }
   };
 
-  const buildEntry = ({ key, before, after, meta, timestamp }) => {
+  const buildEntry = ({ key, before, after, meta, captureGroup, timestamp }) => {
     const beforeValue = cloneHistoryValue(before);
     const afterValue = cloneHistoryValue(after);
-    const bytes = estimateSerializedBytes(serializeHistoryValue({ before: beforeValue, after: afterValue, meta }));
+    const normalizedCaptureGroup = typeof captureGroup === "string" && captureGroup ? captureGroup : null;
+    const bytes = estimateSerializedBytes(serializeHistoryValue({
+      before: beforeValue,
+      after: afterValue,
+      meta,
+      captureGroup: normalizedCaptureGroup
+    }));
     return {
       key,
       before: beforeValue,
       after: afterValue,
       meta: cloneHistoryValue(meta ?? null),
+      captureGroup: normalizedCaptureGroup,
       timestamp,
       captureEpoch,
       bytes
@@ -110,7 +117,7 @@ export function createEditorHistory({
       return true;
     },
 
-    record({ pageId, key, value, meta = null, coalesce = true, now = Date.now() }) {
+    record({ pageId, key, value, meta = null, captureGroup = key, coalesce = true, now = Date.now() }) {
       ensurePage(pageId);
       if (!key) return false;
       if (!baselines.has(key)) {
@@ -122,7 +129,7 @@ export function createEditorHistory({
       if (valuesMatch(before, value)) return false;
 
       const timestamp = Number.isFinite(now) ? Number(now) : Date.now();
-      const next = buildEntry({ key, before, after: value, meta, timestamp });
+      const next = buildEntry({ key, before, after: value, meta, captureGroup, timestamp });
       baselines.set(key, cloneHistoryValue(value));
       clearRedo();
 
@@ -136,6 +143,7 @@ export function createEditorHistory({
         coalesce
         && previous
         && previous.key === key
+        && previous.captureGroup === next.captureGroup
         && previous.captureEpoch === captureEpoch
         && timestamp - previous.timestamp >= 0
         && timestamp - previous.timestamp <= timeout
@@ -144,9 +152,12 @@ export function createEditorHistory({
         previous.after = next.after;
         previous.meta = next.meta;
         previous.timestamp = timestamp;
-        previous.bytes = estimateSerializedBytes(
-          serializeHistoryValue({ before: previous.before, after: previous.after, meta: previous.meta })
-        );
+        previous.bytes = estimateSerializedBytes(serializeHistoryValue({
+          before: previous.before,
+          after: previous.after,
+          meta: previous.meta,
+          captureGroup: previous.captureGroup
+        }));
         retainedBytes += previous.bytes;
       } else {
         undoStack.push(next);

@@ -29,6 +29,17 @@ test("keyboard and beforeinput undo/redo commands are supported", () => {
   assert.match(source, /isEditorHistoryTarget\(target\)/);
 });
 
+test("block history coalesces only text edits from the same editor field", () => {
+  const captureGroup = functionSource("getBlockEditorHistoryCaptureGroup", "recordBlockEditorHistory");
+  const recordBlock = functionSource("recordBlockEditorHistory", "recordPageTitleEditorHistory");
+  assert.match(captureGroup, /HTMLTextAreaElement/);
+  assert.match(captureGroup, /HTMLInputElement/);
+  assert.match(captureGroup, /row\.contains\(active\)/);
+  assert.match(captureGroup, /`field:\$\{controlIndex\}`/);
+  assert.match(recordBlock, /captureGroup: captureGroup === null \? null : `\$\{key\}:\$\{captureGroup\}`/);
+  assert.match(recordBlock, /coalesce: captureGroup !== null/);
+});
+
 test("collaboration and stale-state guards prevent overwriting newer content", () => {
   assert.match(source, /source !== "local" && \(blocksChanged \|\| titleChanged\)/);
   assert.match(source, /pageEditorHistory\.clear\(state\.selectedPage\.id\)/);

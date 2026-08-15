@@ -10285,6 +10285,17 @@ function getBlockEditorHistoryBaseline(block) {
   };
 }
 
+function getBlockEditorHistoryCaptureGroup(row) {
+  const active = document.activeElement;
+  const isTextArea = active instanceof HTMLTextAreaElement;
+  const isTextInput = active instanceof HTMLInputElement
+    && ["text", "search", "url", "email", "tel", "password", "number"].includes(String(active.type || "text").toLowerCase());
+  if ((!isTextArea && !isTextInput) || !row.contains(active)) return null;
+  const controls = [...row.querySelectorAll("input, textarea")];
+  const controlIndex = controls.indexOf(active);
+  return controlIndex >= 0 ? `field:${controlIndex}` : null;
+}
+
 function recordBlockEditorHistory(row, payload = null, baselineBlock = null) {
   if (applyingEditorHistory || !state.selectedPage?.id || !row?.dataset.blockId) return false;
   if (row.dataset.blockType === "ATTACHMENT") return false;
@@ -10292,12 +10303,15 @@ function recordBlockEditorHistory(row, payload = null, baselineBlock = null) {
   if (!block) return false;
   const pageId = state.selectedPage.id;
   const key = getBlockEditorHistoryKey(row.dataset.blockId);
+  const captureGroup = getBlockEditorHistoryCaptureGroup(row);
   pageEditorHistory.seed(pageId, key, getBlockEditorHistoryBaseline(block));
   return pageEditorHistory.record({
     pageId,
     key,
     value: payload ?? buildBlockPayload(row),
-    meta: { kind: "block", blockId: row.dataset.blockId }
+    meta: { kind: "block", blockId: row.dataset.blockId },
+    captureGroup: captureGroup === null ? null : `${key}:${captureGroup}`,
+    coalesce: captureGroup !== null
   });
 }
 

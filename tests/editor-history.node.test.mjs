@@ -21,6 +21,32 @@ test("editor history coalesces typing and supports undo/redo", () => {
   assert.equal(history.getState("page-1").undoDepth, 1);
 });
 
+test("editor history keeps distinct fields in the same block as separate undo steps", () => {
+  const history = createEditorHistory({ captureTimeout: 500 });
+  const baseline = { metadata: { treeView: { title: "A", note: "old" } } };
+  const noteEdited = { metadata: { treeView: { title: "A", note: "important new" } } };
+  const titleEdited = { metadata: { treeView: { title: "Renamed", note: "important new" } } };
+  history.seed("page-1", "block:b1", baseline);
+  history.record({
+    pageId: "page-1",
+    key: "block:b1",
+    value: noteEdited,
+    captureGroup: "block:b1:field:0",
+    now: 1000
+  });
+  history.record({
+    pageId: "page-1",
+    key: "block:b1",
+    value: titleEdited,
+    captureGroup: "block:b1:field:1",
+    now: 1200
+  });
+
+  assert.equal(history.getState("page-1").undoDepth, 2);
+  assert.deepEqual(history.peek("page-1", "undo").before, noteEdited);
+  assert.deepEqual(history.peek("page-1", "undo").after, titleEdited);
+});
+
 test("new edits after undo clear redo", () => {
   const history = createEditorHistory({ captureTimeout: 0 });
   history.seed("page-1", "title", "A");

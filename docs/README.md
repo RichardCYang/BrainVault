@@ -41,6 +41,10 @@ docs/<topic>/<YYYY-MM-DD>/<document>
 
 ## Data-loss and integrity reports
 
+### 2026-08-15
+
+- [Cross-field editor-history undo integrity review](data-loss/2026-08-15/editor-history-cross-field-undo-integrity.md)
+
 ### 2026-08-11
 
 - [Backup workspace-state round-trip integrity review](data-loss/2026-08-11/backup-workspace-state-roundtrip-integrity.md)
