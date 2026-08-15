@@ -195,12 +195,24 @@ function isWeekend(day: number) {
   return weekDay === 0 || weekDay === 6;
 }
 
+const compactDayLabelFormatter = new Intl.DateTimeFormat("en", {
+  timeZone: "UTC",
+  day: "numeric"
+});
+const fullDayLabelFormatter = new Intl.DateTimeFormat("en", {
+  timeZone: "UTC",
+  weekday: "narrow",
+  day: "numeric"
+});
+const monthGroupLabelFormatter = new Intl.DateTimeFormat("en", {
+  timeZone: "UTC",
+  month: "long",
+  year: "numeric"
+});
+
 function dayLabel(day: number, compact: boolean) {
   const date = new Date(day * millisecondsPerDay);
-  return new Intl.DateTimeFormat("en", {
-    timeZone: "UTC",
-    ...(compact ? { day: "numeric" } : { weekday: "narrow", day: "numeric" })
-  }).format(date);
+  return (compact ? compactDayLabelFormatter : fullDayLabelFormatter).format(date);
 }
 
 function monthGroups(startDay: number, days: number) {
@@ -212,7 +224,7 @@ function monthGroups(startDay: number, days: number) {
     if (current?.key === key) current.count += 1;
     else groups.push({
       key,
-      label: new Intl.DateTimeFormat("en", { timeZone: "UTC", month: "long", year: "numeric" }).format(date),
+      label: monthGroupLabelFormatter.format(date),
       start: index + 1,
       count: 1
     });
@@ -252,19 +264,20 @@ export function renderGanttHtml(metadata: unknown) {
     return `<div class="rendered-gantt-task-row"><div><span class="rendered-gantt-status rendered-gantt-status--${task.status}">${escapeHtml(statusLabel(task.status))}</span><strong>${escapeHtml(task.title || "Untitled task")}</strong>${owner}</div><span>${escapeHtml(task.start)} → ${escapeHtml(task.end)}</span><span>${task.progress}%</span></div>`;
   }).join("");
 
+  const weekendCells = gantt.showWeekends
+    ? Array.from({ length: setting.days }, (_, index) => isWeekend(startDay + index)
+      ? `<span class="rendered-gantt-weekend" style="grid-column: ${index + 1}"></span>`
+      : "").join("")
+    : "";
+  const todayLine = today >= startDay && today < startDay + setting.days
+    ? `<span class="rendered-gantt-today-line" style="grid-column: ${today - startDay + 1}"></span>`
+    : "";
+
   const timelineRows = gantt.tasks.map((task) => {
     const taskStart = parseIsoDay(task.start) ?? startDay;
     const taskEnd = Math.max(taskStart, parseIsoDay(task.end) ?? taskStart);
     const visibleStart = Math.max(taskStart, startDay);
     const visibleEnd = Math.min(taskEnd, startDay + setting.days - 1);
-    const weekendCells = gantt.showWeekends
-      ? Array.from({ length: setting.days }, (_, index) => isWeekend(startDay + index)
-        ? `<span class="rendered-gantt-weekend" style="grid-column: ${index + 1}"></span>`
-        : "").join("")
-      : "";
-    const todayLine = today >= startDay && today < startDay + setting.days
-      ? `<span class="rendered-gantt-today-line" style="grid-column: ${today - startDay + 1}"></span>`
-      : "";
     const bar = visibleStart <= visibleEnd
       ? `<span class="rendered-gantt-bar rendered-gantt-bar--${task.status}" style="grid-column: ${visibleStart - startDay + 1} / span ${visibleEnd - visibleStart + 1}"><span class="rendered-gantt-progress" style="width: ${task.progress}%"></span><strong>${escapeHtml(task.title || "Untitled task")}</strong></span>`
       : "";
