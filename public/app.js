@@ -70,6 +70,7 @@ import { createEmojiVisual, renderEmojiVisual } from "./emoji-renderer.js";
 import { iconCategoryDefinitions, iconRecords, iconSvgNodes } from "./icon-data.js";
 import { createPageDraftStore } from "./draft-store.js";
 import { createLatestWriteQueue } from "./save-queue.js";
+import { createEditorHistory } from "./editor-history.js";
 import { createAccountProfileMutationQueue } from "./account-profile-mutation-queue.js";
 import { createMutationId, submitWithFreshMutationIdOnReuse } from "./mutation-id.js";
 import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-rebase.js";
@@ -128,6 +129,8 @@ const recentEmojiStorageKey = "brainvault.recentEmojis";
 const emojiSkinToneStorageKey = "brainvault.emojiSkinTone";
 const themeStorageKey = "brainvault.theme";
 const supportedThemes = new Set(["light", "dark"]);
+const pageEditorHistory = createEditorHistory({ maxEntries: 80, maxBytes: 8 * 1024 * 1024, captureTimeout: 600 });
+let applyingEditorHistory = false;
 const themeColorByTheme = Object.freeze({ light: "#e7eef3", dark: "#17191d" });
 const emojiSkinToneModifiers = Object.freeze(["🏻", "🏼", "🏽", "🏾", "🏿"]);
 const emojiBatchSize = 240;
@@ -7599,6 +7602,11 @@ function applyCollaborationSnapshot(snapshot, { source = "remote" } = {}) {
 
   const blocksChanged = previousBlockSignature !== nextBlockSignature;
   const titleChanged = previousTitle !== nextTitle;
+  if (source !== "local" && (blocksChanged || titleChanged)) {
+    // Never replay a local whole-field snapshot across a peer update. That could
+    // overwrite newer collaborative content, so remote changes form a hard history boundary.
+    pageEditorHistory.clear(state.selectedPage.id);
+  }
   if (!blocksChanged) {
     if (titleChanged) {
       updateInputValuePreservingSelection(elements.pageTitle, nextTitle);
@@ -10261,6 +10269,152 @@ function buildBlockPayload(row) {
   return payload;
 }
 
+
+function getBlockEditorHistoryKey(blockId) {
+  return `block:${blockId}`;
+}
+
+function getBlockEditorHistoryBaseline(block) {
+  return {
+    type: block?.type ?? "MARKDOWN",
+    markdown: block?.markdown ?? "",
+    checked: Boolean(block?.checked),
+    metadata: block?.metadata && typeof block.metadata === "object" && !Array.isArray(block.metadata)
+      ? block.metadata
+      : null
+  };
+}
+
+function recordBlockEditorHistory(row, payload = null, baselineBlock = null) {
+  if (applyingEditorHistory || !state.selectedPage?.id || !row?.dataset.blockId) return false;
+  if (row.dataset.blockType === "ATTACHMENT") return false;
+  const block = baselineBlock ?? getBlockById(row.dataset.blockId);
+  if (!block) return false;
+  const pageId = state.selectedPage.id;
+  const key = getBlockEditorHistoryKey(row.dataset.blockId);
+  pageEditorHistory.seed(pageId, key, getBlockEditorHistoryBaseline(block));
+  return pageEditorHistory.record({
+    pageId,
+    key,
+    value: payload ?? buildBlockPayload(row),
+    meta: { kind: "block", blockId: row.dataset.blockId }
+  });
+}
+
+function recordPageTitleEditorHistory(baselineTitle = state.selectedPage?.title ?? "") {
+  if (applyingEditorHistory || !state.selectedPage?.id) return false;
+  const pageId = state.selectedPage.id;
+  pageEditorHistory.seed(pageId, "title", baselineTitle);
+  return pageEditorHistory.record({
+    pageId,
+    key: "title",
+    value: elements.pageTitle.value,
+    meta: { kind: "title" }
+  });
+}
+
+function copyBlockEditorHistoryRowState(source, target) {
+  for (const key of ["editRevision", "draftExpectedVersion", "draftSourceId", "draftConflict"]) {
+    if (source.dataset[key] !== undefined) target.dataset[key] = source.dataset[key];
+    else delete target.dataset[key];
+  }
+  for (const className of ["is-dirty", "is-saving", "save-error", "local-draft-recovered"]) {
+    target.classList.toggle(className, source.classList.contains(className));
+  }
+}
+
+function isEditorHistoryTarget(target) {
+  if (!(target instanceof Element)) return false;
+  if (target === elements.pageTitle) return true;
+  return elements.blockList.contains(target) && Boolean(target.closest(".editor-block-row"));
+}
+
+function getEditorHistoryKeyboardDirection(event) {
+  if (event.defaultPrevented || event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey)) return null;
+  const key = String(event.key ?? "").toLowerCase();
+  if (key === "z") return event.shiftKey ? "redo" : "undo";
+  if (key === "y" && !event.shiftKey) return "redo";
+  return null;
+}
+
+function getEditorHistoryInputDirection(event) {
+  if (event.inputType === "historyUndo") return "undo";
+  if (event.inputType === "historyRedo") return "redo";
+  return null;
+}
+
+function applyEditorHistoryEntry(entry, direction) {
+  if (!entry?.meta || !requireWritablePage({ announce: false })) return "blocked";
+  const expected = direction === "redo" ? entry.before : entry.after;
+  const nextValue = direction === "redo" ? entry.after : entry.before;
+
+  if (entry.meta.kind === "title") {
+    if (pageTitleDraftConflict) return "blocked";
+    if (elements.pageTitle.value !== expected) return "stale";
+    updateInputValuePreservingSelection(elements.pageTitle, String(nextValue ?? ""));
+    if (!schedulePageTitleSave({ allowConflictPrompt: false })) {
+      updateInputValuePreservingSelection(elements.pageTitle, String(expected ?? ""));
+      return "blocked";
+    }
+    updateCollaborationAwareness(elements.pageTitle);
+    scheduleRemoteCollaborationCaretRender();
+    return "applied";
+  }
+
+  if (entry.meta.kind !== "block" || typeof entry.meta.blockId !== "string") return "stale";
+  const row = findRenderedBlockRow(entry.meta.blockId);
+  const current = getBlockById(entry.meta.blockId);
+  if (!row || !current) return "stale";
+  if (row.dataset.draftConflict === "true" || row.dataset.deleting === "true") return "blocked";
+  if (!jsonValuesMatch(buildBlockPayload(row), expected)) return "stale";
+  if (!nextValue || typeof nextValue !== "object" || Array.isArray(nextValue)) return "stale";
+
+  const focus = captureCollaborationEditorFocus();
+  const replacement = renderBlock({ ...current, ...nextValue, htmlCache: null });
+  copyBlockEditorHistoryRowState(row, replacement);
+  row.replaceWith(replacement);
+  syncBlockReadOnlyState(replacement);
+  if (!scheduleBlockSave(replacement, { allowConflictPrompt: false })) {
+    restoreBlockRowFromDurableState(replacement);
+    return "blocked";
+  }
+  restoreCollaborationEditorFocus(focus);
+  updateCollaborationAwareness(document.activeElement);
+  scheduleRemoteCollaborationCaretRender();
+  return "applied";
+}
+
+function performEditorHistoryCommand(direction, target = document.activeElement) {
+  if (!isEditorHistoryTarget(target) || !state.selectedPage?.id || state.workspaceView !== "page") return false;
+  const pageId = state.selectedPage.id;
+  pageEditorHistory.setPage(pageId);
+  let hadHistoryEntry = false;
+
+  for (let attempts = 0; attempts < 80; attempts += 1) {
+    const entry = pageEditorHistory.peek(pageId, direction);
+    if (!entry) return hadHistoryEntry;
+    hadHistoryEntry = true;
+
+    pageEditorHistory.stopCapturing();
+    applyingEditorHistory = true;
+    let result;
+    try {
+      result = applyEditorHistoryEntry(entry, direction);
+    } finally {
+      applyingEditorHistory = false;
+    }
+
+    if (result === "stale") {
+      pageEditorHistory.discard(pageId, direction);
+      continue;
+    }
+    if (result !== "applied") return true;
+    pageEditorHistory.commit(pageId, direction);
+    return true;
+  }
+  return hadHistoryEntry;
+}
+
 function normalizeParentBlockId(value) {
   return value || null;
 }
@@ -10867,6 +11021,7 @@ function rejectLocalBlockMutation(row, error) {
 
 function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
   if (!row?.dataset.blockId) return false;
+  const historyPayload = buildBlockPayload(row);
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
     if (!session?.isReady) return false;
@@ -10875,7 +11030,7 @@ function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
     try {
       session.upsertBlock({
         ...current,
-        ...buildBlockPayload(row),
+        ...historyPayload,
         parentBlockId: normalizeParentBlockId(row.dataset.parentBlockId),
         sortOrder: Number(current.sortOrder ?? 0)
       });
@@ -10883,6 +11038,7 @@ function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
       rejectLocalBlockMutation(row, error);
       return false;
     }
+    recordBlockEditorHistory(row, historyPayload, current);
     row.classList.remove("is-dirty", "is-saving", "save-error");
     row.classList.add("is-saved");
     window.setTimeout(() => row.classList.remove("is-saved"), 450);
@@ -10899,6 +11055,7 @@ function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
     syncBeforeUnloadProtection();
     return false;
   }
+  recordBlockEditorHistory(row, historyPayload);
 
   if (row.dataset.draftConflict === "true") {
     row.classList.add("save-error");
@@ -11033,6 +11190,7 @@ async function saveBlockRow(
       rejectLocalBlockMutation(row, error);
       throw error;
     }
+    recordBlockEditorHistory(row, payload, current);
     row.classList.remove("is-dirty", "is-saving", "save-error");
     row.classList.add("is-saved");
     updateRenderedBlockPreview(row, { ...current, ...block });
@@ -11059,6 +11217,7 @@ async function saveBlockRow(
       syncBeforeUnloadProtection();
       throw new Error(t("status.localDraftStorageFailed"));
     }
+    recordBlockEditorHistory(row, payload);
     syncBeforeUnloadProtection();
     return null;
   }
@@ -11080,6 +11239,7 @@ async function saveBlockRow(
     syncBeforeUnloadProtection();
     throw new Error(t("status.localDraftStorageFailed"));
   }
+  recordBlockEditorHistory(row, payload);
   window.clearTimeout(blockSaveTimers.get(blockId));
   blockSaveTimers.delete(blockId);
   blockSaveRows.delete(blockId);
@@ -12692,6 +12852,7 @@ function renderSelectedPage() {
   const isHome = state.workspaceView === "home";
   const isCollection = state.workspaceView === "collection";
   const hasPage = state.workspaceView === "page" && Boolean(page);
+  pageEditorHistory.setPage(hasPage ? page.id : null);
   const renderedPageId = elements.blockList.dataset.pageId;
 
   if (
@@ -12811,6 +12972,7 @@ async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked =
       setStatus(getRejectedLocalMutationMessage(error), true);
       throw error;
     }
+    recordPageTitleEditorHistory(previousTitle);
     state.selectedPage.title = title;
     for (const pages of [state.pages, state.allPages]) {
       const page = pages.find((item) => item.id === pageId);
@@ -12826,6 +12988,7 @@ async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked =
   if (pageTitleEditRevision > 0 && !persistPageTitleDraft()) {
     throw new Error(t("status.localDraftStorageFailed"));
   }
+  recordPageTitleEditorHistory();
   const task = {
     userId: state.user?.id,
     draftSourceId: pageTitleDraftSourceId || pageDraftSourceId,
@@ -12850,17 +13013,19 @@ async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked =
 }
 
 function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
-  if (!requireWritablePage({ announce: false })) return;
+  if (!requireWritablePage({ announce: false })) return false;
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
-    if (!session?.isReady) return;
+    if (!session?.isReady) return false;
+    const previousTitle = state.selectedPage.title ?? "";
     const title = elements.pageTitle.value;
     // Keep an empty in-progress field local. The materialized document requires
     // a non-blank title, and the blur handler restores the localized default.
     if (!title.trim()) {
+      recordPageTitleEditorHistory(previousTitle);
       updateCollaborationAwareness(elements.pageTitle);
       syncBeforeUnloadProtection();
-      return;
+      return true;
     }
     try {
       session.setTitle(title);
@@ -12868,8 +13033,9 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
       updateInputValuePreservingSelection(elements.pageTitle, state.selectedPage.title ?? "");
       setStatus(getRejectedLocalMutationMessage(error), true);
       syncBeforeUnloadProtection();
-      return;
+      return false;
     }
+    recordPageTitleEditorHistory(previousTitle);
     state.selectedPage.title = title;
     for (const pages of [state.pages, state.allPages]) {
       const page = pages.find((item) => item.id === state.selectedPage.id);
@@ -12878,7 +13044,7 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
     renderPageHeader(state.selectedPage);
     updateCollaborationAwareness(elements.pageTitle);
     syncBeforeUnloadProtection();
-    return;
+    return true;
   }
   const previousRevision = pageTitleEditRevision;
   pageTitleEditRevision += 1;
@@ -12887,15 +13053,16 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
     pageTitleEditRevision = previousRevision;
     updateInputValuePreservingSelection(elements.pageTitle, state.selectedPage.title ?? "");
     syncBeforeUnloadProtection();
-    return;
+    return false;
   }
+  recordPageTitleEditorHistory();
 
   if (pageTitleDraftConflict) {
     if (!allowConflictPrompt || !promotePageTitleDraftConflict()) {
       window.clearTimeout(pageTitleSaveTimer);
       pageTitleSaveTimer = null;
       syncBeforeUnloadProtection();
-      return;
+      return false;
     }
   }
 
@@ -12907,6 +13074,7 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
     savePageTitleNow().catch((error) => setStatus(error.message, true));
   }, 650);
   syncBeforeUnloadProtection();
+  return true;
 }
 
 function normalizeRecoveredBlockPayload(payload, currentBlock) {
@@ -15127,6 +15295,12 @@ elements.pageCoverImage.addEventListener("pointercancel", (event) => {
   finishPageCoverPointerDrag(event);
 });
 
+elements.pageTitle.addEventListener("beforeinput", (event) => {
+  const direction = getEditorHistoryInputDirection(event);
+  if (!direction) return;
+  if (performEditorHistoryCommand(direction, event.target)) event.preventDefault();
+});
+
 elements.pageTitle.addEventListener("input", (event) => {
   if (!requireWritablePage({ announce: false })) return;
   schedulePageTitleSave({ allowConflictPrompt: !event.isComposing });
@@ -15448,6 +15622,11 @@ elements.blockList.addEventListener("dragend", () => {
 
 elements.blockList.addEventListener("beforeinput", (event) => {
   if (!requireWritablePage({ announce: false })) {
+    event.preventDefault();
+    return;
+  }
+  const historyDirection = getEditorHistoryInputDirection(event);
+  if (historyDirection && performEditorHistoryCommand(historyDirection, event.target)) {
     event.preventDefault();
     return;
   }
@@ -16098,6 +16277,12 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("#slash-menu") || event.target.closest("#inline-toolbar") || event.target.closest(".editor-block-row")) return;
   closeSlashMenu();
   closeInlineToolbar();
+});
+
+document.addEventListener("keydown", (event) => {
+  const direction = getEditorHistoryKeyboardDirection(event);
+  if (!direction) return;
+  if (performEditorHistoryCommand(direction, event.target)) event.preventDefault();
 });
 
 document.addEventListener("keydown", (event) => {
