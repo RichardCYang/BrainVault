@@ -1,4 +1,4 @@
-import { formatNumber, getLocale, t } from "./i18n.js";
+import { formatDateTime, formatNumber, t } from "./i18n.js";
 
 export const ganttLimits = Object.freeze({
   titleLength: 120,
@@ -165,19 +165,19 @@ function scaleLabel(scale) {
   return t(`gantt.scale.${normalizeScale(scale)}`);
 }
 
-function dateFormatter(options) {
-  return new Intl.DateTimeFormat(getLocale(), { timeZone: "UTC", ...options });
+function formatUtcDate(value, options) {
+  return formatDateTime(value, { timeZone: "UTC", ...options });
 }
 
 function formatDateLabel(day) {
-  return dateFormatter({ month: "short", day: "numeric" }).format(new Date(day * millisecondsPerDay));
+  return formatUtcDate(new Date(day * millisecondsPerDay), { month: "short", day: "numeric" });
 }
 
 function formatDayHeader(day, compact = false) {
   const date = new Date(day * millisecondsPerDay);
-  return dateFormatter(compact
+  return formatUtcDate(date, compact
     ? { day: "numeric" }
-    : { weekday: "narrow", day: "numeric" }).format(date);
+    : { weekday: "narrow", day: "numeric" });
 }
 
 function buildMonthGroups(startDay, count) {
@@ -191,7 +191,7 @@ function buildMonthGroups(startDay, count) {
     else groups.push({
       key,
       count: 1,
-      label: dateFormatter({ month: "long", year: "numeric" }).format(date)
+      label: formatUtcDate(date, { month: "long", year: "numeric" })
     });
   }
   return groups;

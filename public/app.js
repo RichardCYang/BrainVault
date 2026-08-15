@@ -1,6 +1,7 @@
 import { isoCountryCodes } from "./country-codes.js";
 import {
   applyDocumentTranslations,
+  formatDateTime,
   formatNumber,
   getLanguage,
   getLanguageLabel,
@@ -1590,7 +1591,7 @@ function normalizePasskeyRegistrationError(error, registrationTarget) {
 
 function formatDate(value) {
   if (!value) return "";
-  return new Intl.DateTimeFormat(getLocale(), { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  return formatDateTime(new Date(value), { dateStyle: "medium", timeStyle: "short" });
 }
 
 function formatLoginCountry(countryCode) {

@@ -4748,6 +4748,30 @@ export function formatNumber(value) {
   return getNumberFormatter(getLocale()).format(value);
 }
 
+const dateTimeFormattersByKey = new Map();
+
+function getDateTimeFormatOptionsKey(options) {
+  return Object.entries(options ?? {})
+    .filter(([, value]) => value !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join("&");
+}
+
+function getDateTimeFormatter(locale, options) {
+  const key = `${locale}\u0000${getDateTimeFormatOptionsKey(options)}`;
+  let formatter = dateTimeFormattersByKey.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, options);
+    dateTimeFormattersByKey.set(key, formatter);
+  }
+  return formatter;
+}
+
+export function formatDateTime(value, options) {
+  return getDateTimeFormatter(getLocale(), options).format(value);
+}
+
 export function populateLanguageSelect(select) {
   if (typeof HTMLSelectElement === "undefined" || !(select instanceof HTMLSelectElement)) return;
   select.replaceChildren(

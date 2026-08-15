@@ -1,4 +1,4 @@
-import { formatNumber, getLocale, t } from "./i18n.js";
+import { formatDateTime, formatNumber, t } from "./i18n.js";
 
 export const timetableLimits = Object.freeze({
   titleLength: 120,
@@ -250,13 +250,13 @@ function suggestedRange(timetable) {
 function formatSelectedDate(date) {
   const day = parseIsoDay(date);
   if (day === null) return date;
-  return new Intl.DateTimeFormat(getLocale(), {
+  return formatDateTime(new Date(day * millisecondsPerDay), {
     timeZone: "UTC",
     weekday: "short",
     year: "numeric",
     month: "short",
     day: "numeric"
-  }).format(new Date(day * millisecondsPerDay));
+  });
 }
 
 export function createTimetableEditor(row, value, { onDirty = () => {} } = {}) {

@@ -1,4 +1,4 @@
-import { getLocale, t } from "./i18n.js";
+import { formatDateTime, t } from "./i18n.js";
 
 export const aiProviderPresets = Object.freeze([
   { id: "chatgpt", label: "ChatGPT" },
@@ -185,7 +185,7 @@ function formatLocalDateTime(value) {
   const [hour, minute] = timePart.split(":").map(Number);
   const date = new Date(year, month - 1, day, hour, minute);
   try {
-    return new Intl.DateTimeFormat(getLocale(), { dateStyle: "medium", timeStyle: "short" }).format(date);
+    return formatDateTime(date, { dateStyle: "medium", timeStyle: "short" });
   } catch {
     return normalized.replace("T", " ");
   }
