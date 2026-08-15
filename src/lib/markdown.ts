@@ -214,7 +214,7 @@ const sanitizeOptions: sanitizeHtml.IOptions = {
   transformTags: {
     a: sanitizeHtml.simpleTransform("a", { rel: "noopener noreferrer", target: "_blank" }),
     img: (tagName, attribs) => {
-      const nextAttributes = {
+      const nextAttributes: sanitizeHtml.Attributes = {
         ...attribs,
         loading: "lazy",
         referrerpolicy: "no-referrer"
