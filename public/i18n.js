@@ -4733,8 +4733,19 @@ export function getLanguageLabel(code = currentLanguage) {
   return supportedLanguages.find((language) => language.code === normalizeLanguage(code))?.label ?? code;
 }
 
+const numberFormattersByLocale = new Map();
+
+function getNumberFormatter(locale) {
+  let formatter = numberFormattersByLocale.get(locale);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat(locale);
+    numberFormattersByLocale.set(locale, formatter);
+  }
+  return formatter;
+}
+
 export function formatNumber(value) {
-  return new Intl.NumberFormat(getLocale()).format(value);
+  return getNumberFormatter(getLocale()).format(value);
 }
 
 export function populateLanguageSelect(select) {
