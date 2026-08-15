@@ -833,7 +833,10 @@ export const translationCatalogs = {
       meta: "Block · {date}",
       completed: "Done",
       saving: "Saving",
-      saved: "Saved"
+      saved: "Saved",
+      copyCode: "Copy",
+      codeCopied: "Copied",
+      codeCopyFailed: "Copy failed"
     },
     empty: {
       noSearchResults: "No pages match your filters. Try a different search.",
@@ -1280,7 +1283,10 @@ export const translationCatalogs = {
       meta: "ブロック · {date}",
       completed: "完了",
       saving: "保存中",
-      saved: "保存済み"
+      saved: "保存済み",
+      copyCode: "コピー",
+      codeCopied: "コピー済み",
+      codeCopyFailed: "コピー失敗"
     },
     empty: {
       noSearchResults: "条件に一致するページがありません。検索語を変えてみてください。",
@@ -2017,7 +2023,10 @@ export const translationCatalogs = {
       meta: "블록 · {date}",
       completed: "완료",
       saving: "저장 중",
-      saved: "저장됨"
+      saved: "저장됨",
+      copyCode: "복사",
+      codeCopied: "복사됨",
+      codeCopyFailed: "복사 실패"
     },
     empty: {
       noSearchResults: "조건에 맞는 문서가 없습니다. 검색어를 바꿔보세요.",
@@ -2464,7 +2473,10 @@ export const translationCatalogs = {
       meta: "Bloc · {date}",
       completed: "Terminé",
       saving: "Enregistrement",
-      saved: "Enregistré"
+      saved: "Enregistré",
+      copyCode: "Copier",
+      codeCopied: "Copié",
+      codeCopyFailed: "Échec de la copie"
     },
     empty: {
       noSearchResults: "Aucune page ne correspond aux filtres. Essayez une autre recherche.",
@@ -2865,7 +2877,10 @@ export const translationCatalogs = {
       meta: "Block · {date}",
       completed: "Erledigt",
       saving: "Wird gespeichert",
-      saved: "Gespeichert"
+      saved: "Gespeichert",
+      copyCode: "Kopieren",
+      codeCopied: "Kopiert",
+      codeCopyFailed: "Kopieren fehlgeschlagen"
     },
     empty: {
       noSearchResults: "Keine Seiten entsprechen den Filtern. Versuche eine andere Suche.",
@@ -3266,7 +3281,10 @@ export const translationCatalogs = {
       meta: "Bloque · {date}",
       completed: "Hecho",
       saving: "Guardando",
-      saved: "Guardado"
+      saved: "Guardado",
+      copyCode: "Copiar",
+      codeCopied: "Copiado",
+      codeCopyFailed: "Error al copiar"
     },
     empty: {
       noSearchResults: "Ninguna página coincide con los filtros. Prueba otra búsqueda.",
@@ -3667,7 +3685,10 @@ export const translationCatalogs = {
       meta: "Bloco · {date}",
       completed: "Concluído",
       saving: "Salvando",
-      saved: "Salvo"
+      saved: "Salvo",
+      copyCode: "Copiar",
+      codeCopied: "Copiado",
+      codeCopyFailed: "Falha ao copiar"
     },
     empty: {
       noSearchResults: "Nenhuma página corresponde aos filtros. Tente outra pesquisa.",

@@ -14812,6 +14812,65 @@ body.pdf-export-mode .remote-collaboration-caret {
   white-space: pre;
 }
 
+.rendered-code-copy-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.rendered-code-copy-button {
+  position: absolute;
+  z-index: 2;
+  top: 0.46rem;
+  right: 0.5rem;
+  display: none;
+  min-height: 1.72rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border-radius: 0.42rem;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  padding: 0.2rem 0.52rem;
+  color: var(--muted);
+  box-shadow: 0 1px 5px rgba(18, 42, 58, 0.08);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+}
+
+.page-view.is-read-only .rendered-ai-chat-answer .rendered-code-copy-button {
+  display: inline-flex;
+}
+
+.page-view.is-read-only .rendered-ai-chat-answer .rendered-code-copy-shell .rendered-code-pre code.hljs {
+  padding-right: 4.35rem;
+}
+
+.rendered-code-copy-button:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+  color: var(--ink-strong);
+}
+
+.rendered-code-copy-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 2px;
+}
+
+.rendered-code-copy-button.is-copied {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--accent-text);
+}
+
+.rendered-code-copy-button.is-copy-error {
+  color: var(--danger);
+}
+
+body.pdf-export-mode .rendered-code-copy-button {
+  display: none !important;
+}
+
 .page-view.is-read-only .code-block-toolbar,
 body.pdf-export-mode .code-block-toolbar {
   display: none !important;

@@ -5709,7 +5709,9 @@ function setControlReadOnlyState(control, readOnly) {
   if (!(control instanceof HTMLElement)) return;
 
   if (control instanceof HTMLButtonElement || control instanceof HTMLSelectElement) {
-    const allowedInReadMode = control.matches('[data-action="download-attachment"]');
+    const allowedInReadMode = control.matches(
+      '[data-action="download-attachment"], [data-action="copy-ai-answer-code"]'
+    );
     if (readOnly) {
       if (!control.dataset.pageModeWasDisabled) control.dataset.pageModeWasDisabled = String(control.disabled);
       if (!allowedInReadMode) control.disabled = true;
@@ -12640,6 +12642,7 @@ function renderSelectedPage() {
   renderPages();
   requestAnimationFrame(() => {
     hydrateMathExpressions(elements.pageView);
+    if (isPageReadOnly()) hydrateHighlightedCodeBlocks(elements.pageView);
     hydrateAccordionIcons(elements.pageView);
     focusPendingBlock();
   });

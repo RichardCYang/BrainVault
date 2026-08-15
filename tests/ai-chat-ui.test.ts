@@ -9,6 +9,7 @@ import { renderBlockHtml } from "../src/lib/markdown.js";
 
 const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const moduleSource = readFileSync(new URL("../public/ai-chat-block.js", import.meta.url), "utf8");
+const highlighterSource = readFileSync(new URL("../public/code-highlighting.js", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../public/styles.css", import.meta.url), "utf8");
 const i18n = readFileSync(new URL("../public/i18n.js", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../src/utils/schemas.ts", import.meta.url), "utf8");
@@ -137,6 +138,20 @@ describe("AI conversation block", () => {
     expect(client).toContain("const materialization = await flushPendingPageEdits({ allowLocked: true });");
     expect(client).toContain("applyMaterializedHtmlCaches(materialization);");
     expect(client).toContain("updateRenderedBlockPreview(row, block);");
+  });
+
+  it("adds copy controls only to rendered AI answer code blocks in read mode", () => {
+    expect(highlighterSource).toContain('.rendered-ai-chat-answer .rendered-code-pre');
+    expect(highlighterSource).toContain('button.dataset.action = "copy-ai-answer-code"');
+    expect(highlighterSource).toContain('await copyTextToClipboard(code.textContent ?? "")');
+    expect(client).toContain('[data-action="copy-ai-answer-code"]');
+    expect(client).toContain('if (isPageReadOnly()) hydrateHighlightedCodeBlocks(elements.pageView);');
+    expect(styles).toMatch(/\.rendered-code-copy-button\s*\{[\s\S]*display:\s*none;/s);
+    expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-code-copy-button\s*\{[^}]*display:\s*inline-flex;/s);
+    expect(styles).toMatch(/body\.pdf-export-mode \.rendered-code-copy-button\s*\{[^}]*display:\s*none !important;/s);
+    expect(i18n).toContain('copyCode: "복사"');
+    expect(i18n).toContain('codeCopied: "복사됨"');
+    expect(i18n).toContain('codeCopyFailed: "복사 실패"');
   });
 
   it("includes Korean labels for titles and turn controls", () => {
