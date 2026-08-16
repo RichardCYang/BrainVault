@@ -27,7 +27,7 @@ export async function submitWithFreshMutationIdOnReuse(task, submit, onMutationI
   } catch (error) {
     if (error?.code !== "MUTATION_ID_REUSED") throw error;
     task.mutationId = createMutationId();
-    onMutationIdChanged?.(task);
+    await onMutationIdChanged?.(task);
     return submit();
   }
 }

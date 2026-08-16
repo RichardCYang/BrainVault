@@ -464,8 +464,9 @@ function verifySourceWiring() {
   assertContains("public/collaboration-exit-guard.js", ["assertCollaborationExitSafe"]);
   assertContains("public/collaboration-recovery-store.js", [
     "brainvault.collaborationRecovery.v1",
-    "const recoverySchemaVersion = 2",
-    "legacyRecoverySchemaVersion",
+    "const recoverySchemaVersion = 3",
+    "const base64RecoverySchemaVersion = 2",
+    "const legacyRecoverySchemaVersion = 1",
     "encodeURIComponent(documentEpoch)",
     "bytesToBase64",
     "base64ToBytes",

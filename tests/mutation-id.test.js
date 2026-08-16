@@ -42,4 +42,34 @@ describe("mutation id generation", () => {
     expect(seen[1]).not.toBe(seen[0]);
     expect(changed).toEqual([seen[1]]);
   });
+
+  it("waits for rotated mutation-id persistence before retrying", async () => {
+    const task = { mutationId: "mut_collision" };
+    const events = [];
+    let releasePersistence;
+    const persistenceBarrier = new Promise((resolve) => { releasePersistence = resolve; });
+
+    const resultPromise = submitWithFreshMutationIdOnReuse(
+      task,
+      async () => {
+        events.push("submit");
+        if (events.filter((event) => event === "submit").length === 1) {
+          throw Object.assign(new Error("collision"), { code: "MUTATION_ID_REUSED" });
+        }
+        return "saved";
+      },
+      async () => {
+        events.push("persist-start");
+        await persistenceBarrier;
+        events.push("persist-complete");
+      }
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(events).toEqual(["submit", "persist-start"]);
+    releasePersistence();
+    await expect(resultPromise).resolves.toBe("saved");
+    expect(events).toEqual(["submit", "persist-start", "persist-complete", "submit"]);
+  });
 });

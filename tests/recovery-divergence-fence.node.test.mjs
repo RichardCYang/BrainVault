@@ -76,6 +76,21 @@ test("divergent same-base title drafts are conflicts and cannot enter the auto-s
   assert.ok(conflictGate >= 0 && autoSave > conflictGate);
 });
 
+test("single same-base recovered title still requires explicit overwrite confirmation", () => {
+  const record = emptyRecord("tab-a");
+  record.title = { value: "Intermediate", expectedVersion: 5, revision: 1, updatedAt: 1000 };
+
+  const recovery = runRecovery({
+    page: { id: "page-1", title: "Original", version: 5, blocks: [] },
+    records: [record]
+  });
+
+  assert.equal(recovery.title.value, "Intermediate");
+  assert.equal(recovery.title.serverConflict, false);
+  assert.equal(recovery.title.conflict, true);
+  assert.equal(recovery.conflictCount, 1);
+});
+
 test("divergent same-base block drafts are marked conflicting before any automatic save", () => {
   const a = emptyRecord("tab-a");
   a.blocks = {

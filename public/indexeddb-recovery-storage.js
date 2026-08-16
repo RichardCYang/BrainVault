@@ -350,7 +350,7 @@ export async function createIndexedDbRecoveryStorage(
       transaction.objectStore(storeName).delete(key);
       await transactionComplete(transaction);
       publishChange("delete", key);
-    }, { operation: "delete", key }, { reportFailure: false });
+    }, { operation: "delete", key });
   }
 
   const api = {

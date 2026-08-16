@@ -134,6 +134,14 @@ function oldThreePassForwardSnapshot(storage) {
 }
 
 const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const mutationIdSource = readFileSync(
+  new URL("../public/mutation-id.js", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
+const indexedDbRecoveryStorageSource = readFileSync(
+  new URL("../public/indexeddb-recovery-storage.js", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const editorHistorySource = readFileSync(
   new URL("../public/editor-history.js", import.meta.url),
   "utf8"
@@ -967,6 +975,36 @@ assert(
   scheduleTitleSource.includes("pageDraftStore.removeTitle(scope.userId, scope.pageId, draftSourceId)"),
   "Clearing a title can leave an older durable draft eligible for recovery"
 );
+const blockOrderSubmissionSource = section(
+  client,
+  "async function requireBlockOrderRecoveryDurability(",
+  "async function retryPendingBlockOrder("
+);
+assertBefore(
+  blockOrderSubmissionSource,
+  "await requireBlockOrderRecoveryDurability({ allowRecoveryFailure });",
+  "return submitWithFreshMutationIdOnReuse(",
+  "direct block-order durability"
+);
+assert(
+  blockOrderSubmissionSource.includes("persistBlockOrderDraft(task);")
+    && blockOrderSubmissionSource.includes("await requireBlockOrderRecoveryDurability({ allowRecoveryFailure });"),
+  "A rotated block-order mutation id can still reach the server before its recovery record is durable"
+);
+assert(
+  mutationIdSource.includes("await onMutationIdChanged?.(task);"),
+  "Mutation-id reuse retry does not wait for caller persistence of the rotated identity"
+);
+const deleteRecordSource = section(
+  indexedDbRecoveryStorageSource,
+  "  function deleteRecord(key) {",
+  "  const api = {"
+);
+assert(
+  !deleteRecordSource.includes("reportFailure: false"),
+  "Recovery-record deletion failures are still silently suppressed"
+);
+
 const saveTitleNowSource = section(client, "async function savePageTitleNow(", "function schedulePageTitleSave(");
 assert(
   saveTitleNowSource.includes("if (!elements.pageTitle.value.trim()) return null;"),
@@ -1063,6 +1101,17 @@ assert(
     && recoveryWriteReproduction.fixed.success.durableBeforeVisible
     && recoveryWriteReproduction.fixed.permanentLossWindowClosed,
   "The recovery-write loss reproduction did not prove both vulnerable and fixed states"
+);
+
+const recoveredTitleSelection = section(
+  client,
+  "function applyPersistedPageDraft(page)",
+  "function findRenderedBlockRow"
+);
+assert(
+  recoveredTitleSelection.includes("const conflict = true;")
+    && recoveredTitleSelection.includes("recovery.conflictCount += 1;"),
+  "Recovered title state can still be silently promoted into an authoritative server write"
 );
 
 const recoveredDraftActivation = section(

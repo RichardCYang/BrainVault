@@ -6918,7 +6918,10 @@ async function flushPendingPageEdits({ keepalive = false, allowLocked = false, c
     return materialization;
   }
   if (pendingBlockOrderTask && canPersistSelectedPage()) {
-    await retryPendingBlockOrder({ keepalive });
+    await retryPendingBlockOrder({
+      keepalive,
+      allowRecoveryFailure: allowLocked && recoveryPersistenceDowngradeInFlight
+    });
   }
   if (!(allowLocked ? canPersistSelectedPage() : canEditSelectedPage())) return;
 
@@ -13082,22 +13085,41 @@ async function submitBlockOrderTask(task, { keepalive = false } = {}) {
   return data;
 }
 
-async function submitBlockOrderTaskWithReplay(task, options = {}) {
+async function requireBlockOrderRecoveryDurability({ allowRecoveryFailure = false } = {}) {
+  await requireDirectRecoveryDurability("direct-block-order-recovery", null, {
+    allowRecoveryFailure,
+    preserveInput: false
+  });
+}
+
+async function submitBlockOrderTaskWithReplay(
+  task,
+  { keepalive = false, allowRecoveryFailure = false } = {}
+) {
+  // persistBlockOrderDraft() has already admitted this task into the synchronous
+  // recovery mirror. Never let the network mutation outrun the strict IndexedDB
+  // transaction that makes the reorder recoverable after a crash.
+  await requireBlockOrderRecoveryDurability({ allowRecoveryFailure });
+
   return submitWithFreshMutationIdOnReuse(
     task,
     async () => {
       try {
-        return await submitBlockOrderTask(task, options);
+        return await submitBlockOrderTask(task, { keepalive });
       } catch (error) {
         if (!isAmbiguousApiError(error)) throw error;
-        return submitBlockOrderTask(task, options);
+        return submitBlockOrderTask(task, { keepalive });
       }
     },
-    () => persistBlockOrderDraft(task)
+    async () => {
+      // A rotated idempotency identity must itself be durable before retrying.
+      persistBlockOrderDraft(task);
+      await requireBlockOrderRecoveryDurability({ allowRecoveryFailure });
+    }
   );
 }
 
-async function retryPendingBlockOrder({ keepalive = false } = {}) {
+async function retryPendingBlockOrder({ keepalive = false, allowRecoveryFailure = false } = {}) {
   const task = pendingBlockOrderTask;
   if (!task) return null;
   // Recovery and retry timers can outlive the interaction that created them.
@@ -13109,7 +13131,7 @@ async function retryPendingBlockOrder({ keepalive = false } = {}) {
   syncPageModeUi();
   syncBeforeUnloadProtection();
   try {
-    const data = await submitBlockOrderTaskWithReplay(task, { keepalive });
+    const data = await submitBlockOrderTaskWithReplay(task, { keepalive, allowRecoveryFailure });
     acknowledgeBlockOrderDraft(task);
     if (pendingBlockOrderTask === task) pendingBlockOrderTask = null;
     if (state.selectedPage?.id === task.pageId) renderSelectedPage();
@@ -14238,11 +14260,21 @@ function applyPersistedPageDraft(page) {
       .slice(1)
       .filter((candidate) => candidate.draft.value !== selected.draft.value);
     const serverVersion = getPositiveVersion(page.version);
-    const conflict =
+    const serverConflict =
       serverVersion !== selected.draft.expectedVersion
       || divergentCandidates.length > 0;
-    recovery.title = { ...selected.draft, sourceId: selected.sourceId, serverVersion, conflict };
-    recovery.conflictCount += conflict ? 1 : 0;
+    // Recovered title text is uncommitted local state. Even when the saved base
+    // version still matches the server, never silently promote crash recovery into
+    // a new authoritative server write; require the existing overwrite confirmation.
+    const conflict = true;
+    recovery.title = {
+      ...selected.draft,
+      sourceId: selected.sourceId,
+      serverVersion,
+      serverConflict,
+      conflict
+    };
+    recovery.conflictCount += 1;
     page.title = selected.draft.value;
 
     for (const candidate of divergentCandidates) {

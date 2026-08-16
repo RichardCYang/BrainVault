@@ -16,10 +16,11 @@ function clone(value) {
 }
 
 class FakeIndexedDb {
-  constructor({ ignoreDurability = false, corruptReadbackKeys = [] } = {}) {
+  constructor({ ignoreDurability = false, corruptReadbackKeys = [], failDeleteKeys = [] } = {}) {
     this.databases = new Map();
     this.ignoreDurability = ignoreDurability;
     this.corruptReadbackKeys = new Set(corruptReadbackKeys);
+    this.failDeleteKeys = new Set(failDeleteKeys);
     this.transactions = [];
   }
   open(name) {
@@ -76,7 +77,14 @@ class FakeIndexedDb {
               return child;
             },
             put(record) { store.set(record.key, clone(record.value)); },
-            delete(key) { store.delete(key); },
+            delete: (key) => {
+              if (this.failDeleteKeys.has(key)) {
+                transaction.error = new Error(`simulated IndexedDB delete failure for ${key}`);
+                queueMicrotask(() => transaction.onabort?.());
+                return;
+              }
+              store.delete(key);
+            },
             clear() { store.clear(); }
           });
           setTimeout(() => transaction.oncomplete?.(), 0);
@@ -151,6 +159,32 @@ test("uses strict durability for every recovery write transaction", async () => 
   assert.ok(writeTransactions.every(({ requestedDurability }) => requestedDurability === "strict"));
   assert.ok(writeTransactions.every(({ durability }) => durability === "strict"));
   storage.close();
+});
+
+test("reports and flush-rejects failed recovery deletions instead of silently discarding them", async () => {
+  const key = "brainvault.pageDraft.v2:user:page:tab";
+  const indexedDb = new FakeIndexedDb();
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName: "delete-failure-test"
+  });
+  const writeErrors = [];
+  storage.onWriteError((error, context) => writeErrors.push({ error, context }));
+
+  storage.setItem(key, "durable-draft");
+  await storage.flush();
+  indexedDb.failDeleteKeys.add(key);
+
+  storage.removeItem(key);
+  await assert.rejects(storage.flush(), /simulated IndexedDB delete failure/);
+  assert.equal(writeErrors.at(-1)?.context?.operation, "delete");
+  storage.close();
+
+  indexedDb.failDeleteKeys.delete(key);
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName: "delete-failure-test"
+  });
+  assert.equal(reopened.getItem(key), "durable-draft");
+  reopened.close();
 });
 
 test("keeps the legacy recovery copy when post-commit migration verification fails", async () => {
