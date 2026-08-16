@@ -7898,6 +7898,17 @@ function appendOrphanedPageDraftRecovery() {
   appendPageDraftRecoveryPanel(elements.homeDocumentList, getOrphanedPageDrafts(), { home: true });
 }
 
+async function sha256BytesHex(bytes) {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error(t("errors.invalidResponse"));
+  }
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(
+    new Uint8Array(digest),
+    (byte) => byte.toString(16).padStart(2, "0")
+  ).join("");
+}
+
 async function downloadServerRecoveryCandidate(candidate) {
   const authenticationScope = captureAuthenticatedSessionScope();
   const headers = new Headers();
@@ -7925,7 +7936,21 @@ async function downloadServerRecoveryCandidate(candidate) {
       ambiguous: response.status >= 500
     });
   }
-  const blob = await response.blob();
+  const bytes = await response.arrayBuffer();
+  const expectedSha256 = String(candidate.payloadSha256 ?? "").trim().toLowerCase();
+  const servedSha256 = String(
+    response.headers.get("X-BrainVault-Recovery-SHA256") ?? ""
+  ).trim().toLowerCase();
+  const actualSha256 = await sha256BytesHex(bytes);
+  if (
+    !/^[a-f0-9]{64}$/.test(expectedSha256)
+    || actualSha256 !== expectedSha256
+    || servedSha256 !== expectedSha256
+  ) {
+    throw new Error(t("errors.invalidResponse"));
+  }
+
+  const blob = new Blob([bytes], { type: "application/octet-stream" });
   const url = URL.createObjectURL(blob);
   const download = document.createElement("a");
   download.href = url;

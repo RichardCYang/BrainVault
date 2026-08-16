@@ -210,3 +210,38 @@ test("browser recovery sync removes local orphan bytes only after a successful d
   assert.match(sync, /YJS_LEGACY_UPDATE/);
   assert.match(sync, /RECOVERY_GRANT_NOT_FOUND/);
 });
+
+test("recovery candidate deletion is owned exclusively by the recovery principal", () => {
+  const recovery = read("src/lib/recovery-candidates.ts");
+  const deletionStart = recovery.indexOf("export async function deleteRecoveryCandidate");
+  assert.notEqual(deletionStart, -1, "missing recovery candidate deletion function");
+  const deletion = recovery.slice(deletionStart);
+  assert.match(deletion, /WHERE id = \? AND principal_id = \?/);
+  assert.doesNotMatch(deletion, /owner_id/);
+  assert.match(deletion, /\[candidateId, principalId\]/);
+});
+
+test("recovery candidate bytes are verified on the server and again before browser download", () => {
+  const recovery = read("src/lib/recovery-candidates.ts");
+  const readCandidate = section(
+    recovery,
+    "export async function getRecoveryCandidate",
+    "export async function deleteRecoveryCandidate"
+  );
+  assert.match(readCandidate, /createHash\("sha256"\)\.update\(row\.payload\)\.digest\("hex"\)/);
+  assert.match(readCandidate, /RECOVERY_CANDIDATE_INTEGRITY_FAILED/);
+  assertBefore(readCandidate, "actualSha256 =", "return row", "server recovery integrity verification");
+
+  const app = read("public/app.js");
+  const download = section(
+    app,
+    "async function sha256BytesHex(bytes)",
+    "function appendServerRecoveryCandidatePanel()"
+  );
+  assert.match(download, /globalThis\.crypto\.subtle\.digest\("SHA-256", bytes\)/);
+  assert.match(download, /const bytes = await response\.arrayBuffer\(\)/);
+  assert.match(download, /X-BrainVault-Recovery-SHA256/);
+  assert.match(download, /actualSha256 !== expectedSha256/);
+  assert.match(download, /servedSha256 !== expectedSha256/);
+  assertBefore(download, "const actualSha256 = await sha256BytesHex(bytes)", "download.click()", "browser recovery integrity verification");
+});

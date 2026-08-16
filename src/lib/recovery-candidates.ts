@@ -299,14 +299,25 @@ export async function getRecoveryCandidate(candidateId: string, userId: string) 
     [candidateId, userId, userId]
   );
   if (!row) throw notFound("Recovery candidate");
+
+  const expectedSha256 = row.payload_sha256.trim().toLowerCase();
+  const actualSha256 = createHash("sha256").update(row.payload).digest("hex");
+  if (!/^[a-f0-9]{64}$/.test(expectedSha256) || actualSha256 !== expectedSha256) {
+    throw new ApiError(
+      500,
+      "RECOVERY_CANDIDATE_INTEGRITY_FAILED",
+      "Stored recovery candidate failed integrity verification"
+    );
+  }
+
   return row;
 }
 
-export async function deleteRecoveryCandidate(candidateId: string, userId: string) {
+export async function deleteRecoveryCandidate(candidateId: string, principalId: string) {
   const result = await db.execute<{ affectedRows: number }>(
     `DELETE FROM page_recovery_candidates
-     WHERE id = ? AND (principal_id = ? OR owner_id = ?)`,
-    [candidateId, userId, userId]
+     WHERE id = ? AND principal_id = ?`,
+    [candidateId, principalId]
   );
   if (Number(result.affectedRows) === 0) throw notFound("Recovery candidate");
 }
