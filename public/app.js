@@ -505,9 +505,28 @@ function normalizeKanbanTags(value) {
       ? value.split(",")
       : [];
   return [...new Set(tags
-    .map((tag) => normalizeKanbanText(tag, "", kanbanLimits.tagLength).trim())
-    .filter(Boolean))]
-    .slice(0, kanbanLimits.tagsPerCard);
+    .map((tag) => (typeof tag === "string" ? tag.trim() : ""))
+    .filter(Boolean))];
+}
+
+function validateKanbanTags(value) {
+  const tags = normalizeKanbanTags(value);
+  const sourceTags = Array.isArray(value)
+    ? value.map((tag) => (typeof tag === "string" ? tag.trim() : "")).filter(Boolean)
+    : typeof value === "string"
+      ? value.split(",").map((tag) => tag.trim()).filter(Boolean)
+      : [];
+
+  if (sourceTags.length > kanbanLimits.tagsPerCard) {
+    return t("kanban.tooManyTags", { count: kanbanLimits.tagsPerCard });
+  }
+  if (new Set(sourceTags).size !== sourceTags.length) {
+    return t("kanban.duplicateTags");
+  }
+  if (tags.some((tag) => tag.length > kanbanLimits.tagLength)) {
+    return t("kanban.tagTooLong", { count: kanbanLimits.tagLength });
+  }
+  return "";
 }
 
 function normalizeKanbanIcon(value) {
@@ -16511,7 +16530,16 @@ elements.blockList.addEventListener("input", (event) => {
   if (kanbanField) {
     if (kanbanField.classList.contains("kanban-card-description")) autoGrowTextarea(kanbanField);
     if (kanbanField.classList.contains("kanban-column-title")) sizeKanbanColumnTitle(kanbanField);
-    if (kanbanField.classList.contains("kanban-card-tags")) syncKanbanTagField(kanbanField);
+    if (kanbanField.classList.contains("kanban-card-tags")) {
+      syncKanbanTagField(kanbanField);
+      const tagValidationMessage = validateKanbanTags(kanbanField.value);
+      kanbanField.setCustomValidity(tagValidationMessage);
+      if (tagValidationMessage) {
+        kanbanField.reportValidity();
+        setStatus(tagValidationMessage, true);
+        return;
+      }
+    }
     if (kanbanField.classList.contains("kanban-card-emoji-input")) {
       const preview = kanbanField.closest(".kanban-card-style-menu")?.querySelector(".kanban-card-icon-preview");
       if (preview) preview.textContent = normalizeKanbanIcon(kanbanField.value) || "▦";

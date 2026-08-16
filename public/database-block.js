@@ -75,6 +75,127 @@ function normalizeOptions(value, propertyId) {
     }));
 }
 
+function createDatabaseOptionValidationError(code, details = {}) {
+  const error = new Error(code);
+  error.code = code;
+  Object.assign(error, details);
+  return error;
+}
+
+export function parseDatabaseOptionNames(value) {
+  const names = (typeof value === "string" ? value : "")
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+
+  if (names.length > databaseLimits.optionsPerProperty) {
+    throw createDatabaseOptionValidationError("too-many-options", {
+      maximum: databaseLimits.optionsPerProperty
+    });
+  }
+
+  const seen = new Set();
+  for (const name of names) {
+    if (name.length > databaseLimits.optionNameLength) {
+      throw createDatabaseOptionValidationError("option-name-too-long", {
+        maximum: databaseLimits.optionNameLength
+      });
+    }
+
+    const normalizedName = name.toLocaleLowerCase();
+    if (seen.has(normalizedName)) {
+      throw createDatabaseOptionValidationError("duplicate-option", { name });
+    }
+    seen.add(normalizedName);
+  }
+
+  return names;
+}
+
+function databaseOptionIsReferenced(database, property, optionId) {
+  const rowReference = database.rows.some((dataRow) => {
+    const value = dataRow.values[property.id];
+    if (property.type === "select") return value === optionId;
+    return Array.isArray(value) && value.includes(optionId);
+  });
+  if (rowReference) return true;
+
+  return database.views.some((view) => view.filters.some(
+    (filter) => filter.propertyId === property.id && filter.value === optionId
+  ));
+}
+
+export function reconcileDatabaseOptions(database, property, names) {
+  const previous = property.options;
+  const usedOptionIds = new Set();
+  const next = Array(names.length).fill(null);
+
+  names.forEach((name, index) => {
+    const normalizedName = name.toLocaleLowerCase();
+    const existing = previous.find(
+      (option) => !usedOptionIds.has(option.id)
+        && option.name.toLocaleLowerCase() === normalizedName
+    );
+    if (!existing) return;
+    next[index] = { ...existing, name };
+    usedOptionIds.add(existing.id);
+  });
+
+  let unmatchedOld = previous.filter((option) => !usedOptionIds.has(option.id));
+  let unmatchedNewIndexes = next
+    .map((option, index) => option ? null : index)
+    .filter((index) => index !== null);
+
+  // A single old/new mismatch is the only rename that the comma-separated
+  // editor can identify without ambiguity. Preserve the option ID so every
+  // existing row and filter continues to reference the same logical option.
+  if (unmatchedOld.length === 1 && unmatchedNewIndexes.length === 1) {
+    const oldOption = unmatchedOld[0];
+    const index = unmatchedNewIndexes[0];
+    next[index] = { ...oldOption, name: names[index] };
+    usedOptionIds.add(oldOption.id);
+    unmatchedOld = [];
+    unmatchedNewIndexes = [];
+  } else if (unmatchedOld.length > 0 && unmatchedNewIndexes.length > 0) {
+    throw createDatabaseOptionValidationError("ambiguous-option-edit");
+  }
+
+  for (const index of unmatchedNewIndexes) {
+    next[index] = {
+      id: createId("option"),
+      name: names[index],
+      color: databaseOptionColors[index % databaseOptionColors.length]
+    };
+  }
+
+  for (const option of unmatchedOld) {
+    if (databaseOptionIsReferenced(database, property, option.id)) {
+      throw createDatabaseOptionValidationError("referenced-option-removal", {
+        name: option.name
+      });
+    }
+  }
+
+  return next.filter(Boolean);
+}
+
+function databaseOptionValidationMessage(error) {
+  switch (error?.code) {
+    case "too-many-options":
+      return t("database.optionsTooMany", { count: error.maximum });
+    case "option-name-too-long":
+      return t("database.optionNameTooLong", { count: error.maximum });
+    case "duplicate-option":
+      return t("database.duplicateOption", { option: error.name });
+    case "ambiguous-option-edit":
+      return t("database.ambiguousOptionEdit");
+    case "referenced-option-removal":
+      return t("database.referencedOptionRemoval", { option: error.name });
+    default:
+      return t("database.invalidOptions");
+  }
+}
+
 function normalizePropertyValue(property, value) {
   if (property.type === "number") {
     if (value === null || value === "" || value === undefined) return null;
@@ -500,16 +621,18 @@ function createPropertyManager(editor, row, database, onDirty, replaceEditor) {
       options.placeholder = t("database.optionsPlaceholder");
       options.setAttribute("aria-label", t("database.options"));
       options.addEventListener("change", () => {
-        const names = [...new Set(options.value.split(",").map((value) => value.trim()).filter(Boolean))]
-          .slice(0, databaseLimits.optionsPerProperty);
-        property.options = names.map((optionName, index) => {
-          const existing = property.options.find((option) => option.name.toLocaleLowerCase() === optionName.toLocaleLowerCase());
-          return existing ?? { id: createId("option"), name: optionName, color: databaseOptionColors[index % databaseOptionColors.length] };
-        });
-        database.rows.forEach((dataRow) => {
-          dataRow.values[property.id] = normalizePropertyValue(property, dataRow.values[property.id]);
-        });
-        replaceEditor({ openProperties: true, focusPropertyId: property.id });
+        try {
+          const names = parseDatabaseOptionNames(options.value);
+          const nextOptions = reconcileDatabaseOptions(database, property, names);
+          options.setCustomValidity("");
+          property.options = nextOptions;
+          replaceEditor({ openProperties: true, focusPropertyId: property.id });
+        } catch (error) {
+          options.setCustomValidity(databaseOptionValidationMessage(error));
+          options.reportValidity();
+          // Fail closed: keep the user's raw input visible, do not mutate the
+          // canonical model, and do not trigger autosave.
+        }
       });
       item.append(options);
     }

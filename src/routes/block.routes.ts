@@ -148,6 +148,22 @@ function assertLosslessStructuredMetadata(type: BlockRow["type"], metadata: unkn
   }
 }
 
+function assertExistingMetadataSafeToOverwrite(existing: BlockRow) {
+  try {
+    assertStructuredBlockMetadataIntegrity(existing.type, existing.metadata);
+  } catch (error) {
+    if (error instanceof StructuredMetadataIntegrityError) {
+      throw new ApiError(
+        409,
+        "BLOCK_METADATA_RECOVERY_REQUIRED",
+        "Stored block metadata failed integrity validation. The original data was preserved and must be recovered or repaired explicitly.",
+        { path: error.path, reason: error.message }
+      );
+    }
+    throw error;
+  }
+}
+
 function prepareBlockContent(type: BlockRow["type"], markdown: string, metadata: unknown) {
   if (type === "BOOKMARK") {
     return {
@@ -1014,6 +1030,9 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
         body.markdown !== undefined ||
         body.checked !== undefined ||
         body.metadata !== undefined;
+      if (contentChanged) {
+        assertExistingMetadataSafeToOverwrite(existing);
+      }
       const nextType = body.type ?? existing.type;
       const sourceMetadata = body.metadata !== undefined ? body.metadata : existing.metadata;
       const nextMetadata = contentChanged
