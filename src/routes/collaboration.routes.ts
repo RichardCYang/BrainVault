@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, raw } from "express";
 import { z } from "zod";
 import { db, transaction, type DbClient } from "../lib/db.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -6,7 +6,7 @@ import {
   collaborationShareAccountRateLimit,
   collaborationShareIpRateLimit
 } from "../middleware/auth-rate-limit.js";
-import { validate } from "../middleware/validate.js";
+import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { idParamSchema, requireUser, routeIdSchema, usernameSchema } from "../utils/schemas.js";
 import { ApiError, notFound } from "../lib/http.js";
 import {
@@ -55,6 +55,21 @@ import { assessCollaborationHistoryReplay } from "../lib/collaboration-update-po
 import { getClientWebRtcSignal } from "../lib/vpn-access-policy.js";
 import { readAuthSessionCookie } from "../lib/session-cookie.js";
 import type { BlockRow, PageRow, UserRow } from "../types/domain.js";
+import { assertNoActiveCollaborationWriteLeases } from "../lib/collaboration-write-lease.js";
+import {
+  deleteRecoveryCandidate,
+  directRecoveryLineageKey,
+  getRecoveryCandidate,
+  grantDirectPageRecovery,
+  grantLegacyYjsPageRecovery,
+  grantYjsPageRecovery,
+  legacyYjsRecoveryLineageKey,
+  listRecoveryCandidates,
+  maxRecoveryCandidateBytes,
+  storeRecoveryCandidate,
+  yjsRecoveryLineageKey,
+  type RecoveryCandidateKind
+} from "../lib/recovery-candidates.js";
 
 export const collaborationRouter = Router();
 collaborationRouter.use(requireAuth);
@@ -78,6 +93,24 @@ const materializeSchema = z.object({
 const collaborationSessionSchema = z.object({
   documentEpochProtocol: z.literal(2)
 }).strict();
+
+const recoveryCandidateUploadQuerySchema = z.object({
+  kind: z.enum(["DIRECT_DRAFT", "YJS_UPDATE", "YJS_LEGACY_UPDATE"]),
+  documentEpoch: z.string().min(1).max(64).optional(),
+  sourceId: z.string().min(1).max(128),
+  generation: z.string().min(1).max(128)
+}).superRefine((value, context) => {
+  if (value.kind === "YJS_UPDATE" && !value.documentEpoch) {
+    context.addIssue({ code: "custom", path: ["documentEpoch"], message: "documentEpoch is required" });
+  }
+  if (value.kind !== "YJS_UPDATE" && value.documentEpoch) {
+    context.addIssue({ code: "custom", path: ["documentEpoch"], message: "documentEpoch is valid only for epoch-bound Yjs recovery" });
+  }
+});
+
+const recoveryCandidateParamsSchema = z.object({
+  candidateId: routeIdSchema
+});
 
 type ShareUserRow = Pick<
   UserRow,
@@ -236,6 +269,22 @@ collaborationRouter.post(
         );
         firstShare = Number(count?.share_count ?? 0) === 0;
         if (firstShare) {
+          // Another browser can hold a durable direct-edit draft that this
+          // browser cannot see. Preserve a server recovery admission before
+          // switching this page to a fresh collaboration lineage.
+          await grantDirectPageRecovery(client, {
+            pageId,
+            principalId: owner.id,
+            ownerId: owner.id,
+            reason: "SHARE_STARTED"
+          });
+          await grantLegacyYjsPageRecovery(client, {
+            pageId,
+            principalId: owner.id,
+            ownerId: owner.id,
+            reason: "SHARE_STARTED"
+          });
+          await assertNoActiveCollaborationWriteLeases(client, [pageId]);
           await client.execute("DELETE FROM page_yjs_updates WHERE page_id = ?", [pageId]);
           await client.execute("DELETE FROM page_collaboration_state WHERE page_id = ?", [pageId]);
           await ensureCollaborationState(pageId, client);
@@ -279,6 +328,53 @@ collaborationRouter.delete(
           [pageId, owner.id]
         );
         if (!page) throw notFound("Page");
+        await assertNoActiveCollaborationWriteLeases(client, [pageId]);
+        const existingShare = await client.queryOne<{ user_id: string }>(
+          `SELECT user_id FROM page_shares
+           WHERE page_id = ? AND user_id = ? AND permission = 'EDIT'
+           FOR UPDATE`,
+          [pageId, sharedUserId]
+        );
+        if (!existingShare) throw notFound("Page share");
+
+        // Register both possible local persistence lineages before revoking
+        // access. Uploads through these grants are quarantined as recovery
+        // candidates and can never mutate the current page automatically.
+        await grantDirectPageRecovery(client, {
+          pageId,
+          principalId: sharedUserId,
+          ownerId: owner.id,
+          reason: "SHARE_REMOVED"
+        });
+        await grantLegacyYjsPageRecovery(client, {
+          pageId,
+          principalId: sharedUserId,
+          ownerId: owner.id,
+          reason: "SHARE_REMOVED"
+        });
+        await grantLegacyYjsPageRecovery(client, {
+          pageId,
+          principalId: owner.id,
+          ownerId: owner.id,
+          reason: "SHARE_REMOVED"
+        });
+        const preRemovalState = await getCollaborationState(pageId, client, { lock: true });
+        if (preRemovalState) {
+          await grantYjsPageRecovery(client, {
+            pageId,
+            principalId: sharedUserId,
+            ownerId: owner.id,
+            documentEpoch: preRemovalState.document_epoch,
+            reason: "SHARE_REMOVED"
+          });
+          await grantYjsPageRecovery(client, {
+            pageId,
+            principalId: owner.id,
+            ownerId: owner.id,
+            documentEpoch: preRemovalState.document_epoch,
+            reason: "SHARE_REMOVED"
+          });
+        }
         const deletion = await client.execute<{ affectedRows: number }>(
           "DELETE FROM page_shares WHERE page_id = ? AND user_id = ? AND permission = 'EDIT'",
           [pageId, sharedUserId]
@@ -294,7 +390,7 @@ collaborationRouter.delete(
             "SELECT MAX(id) AS max_update_id FROM page_yjs_updates WHERE page_id = ?",
             [pageId]
           );
-          const collaborationState = await getCollaborationState(pageId, client, { lock: true });
+          const collaborationState = preRemovalState ?? await getCollaborationState(pageId, client, { lock: true });
           const latestUpdateId = Number(latestUpdateRow?.max_update_id ?? 0);
           const materializedUpdateId = Number(collaborationState?.materialized_update_id ?? 0);
           const materializationVersion = Number(collaborationState?.materialization_version ?? 0);
@@ -326,6 +422,103 @@ collaborationRouter.delete(
       disconnectSharedUser(pageId, sharedUserId);
       if (result === 0) disconnectPageCollaborators(pageId);
       res.json({ removed: true, count: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+collaborationRouter.post(
+  "/recovery/pages/:pageId/candidates",
+  validate({ params: idParamSchema, query: recoveryCandidateUploadQuerySchema }),
+  raw({ type: "application/octet-stream", limit: maxRecoveryCandidateBytes }),
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req.user);
+      const pageId = String(req.params.pageId);
+      const query = getValidatedQuery<{
+        kind: RecoveryCandidateKind;
+        documentEpoch?: string;
+        sourceId: string;
+        generation: string;
+      }>(req);
+      if (!Buffer.isBuffer(req.body) || !req.body.length) {
+        throw new ApiError(400, "RECOVERY_CANDIDATE_EMPTY", "A recovery candidate payload is required");
+      }
+      const lineageKey = query.kind === "YJS_UPDATE"
+        ? yjsRecoveryLineageKey(String(query.documentEpoch))
+        : query.kind === "YJS_LEGACY_UPDATE"
+          ? legacyYjsRecoveryLineageKey()
+          : directRecoveryLineageKey();
+      const stored = await storeRecoveryCandidate({
+        pageId,
+        principalId: user.id,
+        lineageKey,
+        kind: query.kind,
+        sourceId: query.sourceId,
+        generation: query.generation,
+        payload: req.body
+      });
+      res.setHeader("Cache-Control", "private, no-store");
+      res.status(stored.created ? 201 : 200).json({ candidate: stored });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+collaborationRouter.get("/recovery/candidates", async (req, res, next) => {
+  try {
+    const user = requireUser(req.user);
+    const candidates = await listRecoveryCandidates(user.id);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json({
+      candidates: candidates.map((candidate) => ({
+        id: candidate.id,
+        pageId: candidate.page_id,
+        principalId: candidate.principal_id,
+        ownerId: candidate.owner_id,
+        lineageKey: candidate.lineage_key,
+        kind: candidate.kind,
+        sourceId: candidate.source_id,
+        generation: candidate.generation,
+        payloadSha256: candidate.payload_sha256,
+        payloadBytes: Number(candidate.payload_bytes),
+        createdAt: candidate.created_at
+      }))
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+collaborationRouter.get(
+  "/recovery/candidates/:candidateId",
+  validate({ params: recoveryCandidateParamsSchema }),
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req.user);
+      const candidate = await getRecoveryCandidate(String(req.params.candidateId), user.id);
+      const safeFilename = `${candidate.id}-${candidate.kind === "DIRECT_DRAFT" ? "draft.json" : "yjs.bin"}`;
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Content-Type", "application/octet-stream");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}"`);
+      res.setHeader("X-BrainVault-Recovery-SHA256", candidate.payload_sha256);
+      res.send(candidate.payload);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+collaborationRouter.delete(
+  "/recovery/candidates/:candidateId",
+  validate({ params: recoveryCandidateParamsSchema }),
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req.user);
+      await deleteRecoveryCandidate(String(req.params.candidateId), user.id);
+      res.status(204).send();
     } catch (error) {
       next(error);
     }

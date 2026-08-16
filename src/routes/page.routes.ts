@@ -42,6 +42,8 @@ import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { buildBlockTree } from "../utils/blockTree.js";
 import { idParamSchema, requireUser, routeIdSchema, safeVersionSchema } from "../utils/schemas.js";
 import type { BlockRow, PageRow, TagRow } from "../types/domain.js";
+import { assertNoActiveCollaborationWriteLeases } from "../lib/collaboration-write-lease.js";
+import { preserveRecoveryGrantsForPages } from "../lib/recovery-candidates.js";
 
 export const pageRouter = Router();
 
@@ -1043,6 +1045,13 @@ pageRouter.delete(
           const blockRows = await getPageDeletionBlocks(client, subtreeRows, true);
           assertPageDeletionSnapshot(expectedSnapshot, subtreeRows, blockRows);
 
+          const pageIds = subtreeRows.map((row) => row.id);
+          // Page rows are already locked by getOwnedPageTreeRows(..., true).
+          // Reject deletion while a server-admitted collaboration write is
+          // validating, and preserve late-upload grants for offline browsers.
+          await assertNoActiveCollaborationWriteLeases(client, pageIds);
+          await preserveRecoveryGrantsForPages(client, user.id, pageIds, "PAGE_DELETED");
+
           for (const page of [...subtreeRows].reverse()) {
             await client.execute("DELETE FROM pages WHERE id = ? AND owner_id = ?", [page.id, user.id]);
           }
@@ -1050,7 +1059,6 @@ pageRouter.delete(
           const attachmentIds = blockRows
             .filter((row) => row.type === "ATTACHMENT")
             .map((row) => row.id);
-          const pageIds = subtreeRows.map((row) => row.id);
           await client.execute(
             `INSERT INTO page_delete_mutations
                (actor_id, mutation_id, page_id, request_hash, page_ids, attachment_ids)

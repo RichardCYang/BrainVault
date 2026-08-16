@@ -70,6 +70,8 @@ import {
   ZipWriter
 } from "./zip.js";
 import type { BlockType, UserRow } from "../types/domain.js";
+import { assertNoActiveCollaborationWriteLeases } from "./collaboration-write-lease.js";
+import { preserveRecoveryGrantsForPages } from "./recovery-candidates.js";
 
 export const dataTransferTempDir = path.join(attachmentUploadRoot, ".data-transfer");
 const manifestName = "brainvault-backup.json";
@@ -3243,6 +3245,16 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
           restoreSharingPlan.shares
         );
         restoreMutationReceipts = await prepareRestoreMutationReceiptPlan(client, userId, manifest);
+        // The workspace snapshot above holds the owned page-row locks. Fence
+        // any collaboration write already admitted on another process, then
+        // preserve recovery admissions for browsers that are still offline.
+        await assertNoActiveCollaborationWriteLeases(client, lockedWorkspaceSnapshot.pageIds);
+        await preserveRecoveryGrantsForPages(
+          client,
+          userId,
+          lockedWorkspaceSnapshot.pageIds,
+          "WORKSPACE_RESTORED"
+        );
         // Invalidate every live in-memory Yjs room while the owned page rows are
         // still locked. Otherwise an old owner session can append its pre-restore
         // document after commit and later materialize it over the restored backup.

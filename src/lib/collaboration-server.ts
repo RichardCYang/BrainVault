@@ -64,6 +64,10 @@ import {
   maxCollaborationRetainedHistoryBytes,
   shouldCompactCollaborationHistory
 } from "./collaboration-update-policy.js";
+import {
+  releaseCollaborationWriteLease,
+  reserveCollaborationWriteLease
+} from "./collaboration-write-lease.js";
 
 type CollaborationNetworkServer = HttpServer | HttpsServer;
 
@@ -1046,6 +1050,29 @@ export class PageCollaborationHub {
     // shared validation budget first.
     if (!await this.revalidateClientPageAccess(room, client)) return;
 
+    // Serialize validation-in-flight writes with share removal, hard deletion,
+    // and restore. Lease admission and those destructive transitions all lock
+    // the same page row before deciding which operation may proceed.
+    const writeLeaseId = await reserveCollaborationWriteLease(
+      room.pageId,
+      client.user.id,
+      client.documentEpoch
+    );
+    let writeLeaseReleased = false;
+    const releaseWriteLease = async () => {
+      if (writeLeaseReleased) return;
+      writeLeaseReleased = true;
+      await releaseCollaborationWriteLease(writeLeaseId).catch((error) => {
+        // A leaked lease is deliberately safer than treating a committed write
+        // as failed or opening a destructive race. It expires automatically.
+        console.error("Failed to release collaboration write lease", {
+          pageId: room.pageId,
+          writeLeaseId,
+          error
+        });
+      });
+    };
+
     let validation: CollaborationValidationResult;
     try {
       // Reconstructing, re-encoding, and semantically materializing a large Yjs
@@ -1060,13 +1087,18 @@ export class PageCollaborationHub {
       });
     } catch (error) {
       if (error instanceof CollaborationDocumentError) {
+        await releaseWriteLease();
         if (client.socket.isOpen) client.socket.close(1008, "Invalid collaboration update");
         return;
       }
+      await releaseWriteLease();
       throw error;
     }
 
-    if (room.invalidated || this.rooms.get(room.pageId) !== room) return;
+    if (room.invalidated || this.rooms.get(room.pageId) !== room) {
+      await releaseWriteLease();
+      return;
+    }
 
     const persistenceDecision = assessCollaborationUpdatePersistence({
       snapshot,
@@ -1091,6 +1123,7 @@ export class PageCollaborationHub {
           noChange: true
         });
       }
+      await releaseWriteLease();
       return;
     }
 
@@ -1116,84 +1149,88 @@ export class PageCollaborationHub {
         }
       | null;
 
-    result = await transaction(async (dbClient) => {
-      const access = await getPageAccess(room.pageId, client.user.id, dbClient, { lockPage: true });
-      if (room.invalidated || this.rooms.get(room.pageId) !== room) return null;
-      if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
-        throw new ApiError(403, "COLLABORATION_DISABLED", "Collaboration is not enabled for this page");
-      }
-      const collaborationState = await getCollaborationState(room.pageId, dbClient, { lock: true });
-      assertCollaborationDocumentEpoch(collaborationState, client.documentEpoch);
+    try {
+      result = await transaction(async (dbClient) => {
+        const access = await getPageAccess(room.pageId, client.user.id, dbClient, { lockPage: true });
+        if (room.invalidated || this.rooms.get(room.pageId) !== room) return null;
+        if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
+          throw new ApiError(403, "COLLABORATION_DISABLED", "Collaboration is not enabled for this page");
+        }
+        const collaborationState = await getCollaborationState(room.pageId, dbClient, { lock: true });
+        assertCollaborationDocumentEpoch(collaborationState, client.documentEpoch);
 
-      const currentRow = await dbClient.queryOne<{ max_update_id: number | null }>(
-        "SELECT MAX(id) AS max_update_id FROM page_yjs_updates WHERE page_id = ?",
-        [room.pageId]
-      );
-      const currentUpdateId = toSafeUpdateId(currentRow?.max_update_id ?? 0);
-      const checkpoint = assessCollaborationWriteCheckpoint({
-        durableUpdateId: currentUpdateId,
-        roomUpdateId: room.maxUpdateId,
-        snapshot,
-        snapshotBaseUpdateId: baseUpdateId
-      });
-      if (!checkpoint.accepted) return checkpoint;
-
-      if (snapshot && persistenceDecision.action === "reject") {
-        return {
-          accepted: false as const,
-          currentUpdateId,
-          reason: persistenceDecision.reason
-        };
-      }
-
-      if (currentUpdateId === 0) {
-        // The first durable Yjs state initializes collaboration from SQL. It
-        // must be an exact semantic copy, never a partial client document that
-        // later materialization could interpret as intentional block deletion.
-        const storedBlocks = await dbClient.query<BlockRow>(
-          "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",
+        const currentRow = await dbClient.queryOne<{ max_update_id: number | null }>(
+          "SELECT MAX(id) AS max_update_id FROM page_yjs_updates WHERE page_id = ?",
           [room.pageId]
         );
-        const candidateMaterialization = validation.materialization;
-        if (!candidateMaterialization) {
-          throw new Error("Collaboration bootstrap validation did not return materialized state");
-        }
-        const bootstrapAssessment = assessInitialCollaborationBootstrap({
-          pageTitle: access.page.title,
-          storedBlocks,
-          candidate: candidateMaterialization
+        const currentUpdateId = toSafeUpdateId(currentRow?.max_update_id ?? 0);
+        const checkpoint = assessCollaborationWriteCheckpoint({
+          durableUpdateId: currentUpdateId,
+          roomUpdateId: room.maxUpdateId,
+          snapshot,
+          snapshotBaseUpdateId: baseUpdateId
         });
-        if (!bootstrapAssessment.accepted) {
+        if (!checkpoint.accepted) return checkpoint;
+
+        if (snapshot && persistenceDecision.action === "reject") {
           return {
             accepted: false as const,
-            currentUpdateId: 0 as const,
-            reason: "bootstrap-mismatch" as const,
-            summary: bootstrapAssessment.summary
+            currentUpdateId,
+            reason: persistenceDecision.reason
           };
         }
-      }
 
-      const insert = await dbClient.execute<{ insertId: number | bigint }>(
-        `INSERT INTO page_yjs_updates (page_id, user_id, update_data, is_snapshot)
-         VALUES (?, ?, ?, ?)`,
-        [room.pageId, client.user.id, persistedUpdate, durableSnapshot ? 1 : 0]
-      );
-      const updateId = toSafeUpdateId(insert.insertId);
-      if (durableSnapshot) {
-        await dbClient.execute("DELETE FROM page_yjs_updates WHERE page_id = ? AND id < ?", [room.pageId, updateId]);
-      }
-      return { accepted: true as const, updateId };
-    }).catch((error) => {
-      if (error instanceof ApiError && error.code === "COLLABORATION_LINEAGE_CHANGED") {
-        this.invalidateRoomForLineageChange(room);
-        return null;
-      }
-      if (error instanceof ApiError && [403, 404].includes(error.statusCode)) {
-        client.socket.close(error.statusCode === 404 ? 4003 : 4010, error.message);
-        return null;
-      }
-      throw error;
-    });
+        if (currentUpdateId === 0) {
+          // The first durable Yjs state initializes collaboration from SQL. It
+          // must be an exact semantic copy, never a partial client document that
+          // later materialization could interpret as intentional block deletion.
+          const storedBlocks = await dbClient.query<BlockRow>(
+            "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",
+            [room.pageId]
+          );
+          const candidateMaterialization = validation.materialization;
+          if (!candidateMaterialization) {
+            throw new Error("Collaboration bootstrap validation did not return materialized state");
+          }
+          const bootstrapAssessment = assessInitialCollaborationBootstrap({
+            pageTitle: access.page.title,
+            storedBlocks,
+            candidate: candidateMaterialization
+          });
+          if (!bootstrapAssessment.accepted) {
+            return {
+              accepted: false as const,
+              currentUpdateId: 0 as const,
+              reason: "bootstrap-mismatch" as const,
+              summary: bootstrapAssessment.summary
+            };
+          }
+        }
+
+        const insert = await dbClient.execute<{ insertId: number | bigint }>(
+          `INSERT INTO page_yjs_updates (page_id, user_id, update_data, is_snapshot)
+           VALUES (?, ?, ?, ?)`,
+          [room.pageId, client.user.id, persistedUpdate, durableSnapshot ? 1 : 0]
+        );
+        const updateId = toSafeUpdateId(insert.insertId);
+        if (durableSnapshot) {
+          await dbClient.execute("DELETE FROM page_yjs_updates WHERE page_id = ? AND id < ?", [room.pageId, updateId]);
+        }
+        return { accepted: true as const, updateId };
+      }).catch((error) => {
+        if (error instanceof ApiError && error.code === "COLLABORATION_LINEAGE_CHANGED") {
+          this.invalidateRoomForLineageChange(room);
+          return null;
+        }
+        if (error instanceof ApiError && [403, 404].includes(error.statusCode)) {
+          client.socket.close(error.statusCode === 404 ? 4003 : 4010, error.message);
+          return null;
+        }
+        throw error;
+      });
+    } finally {
+      await releaseWriteLease();
+    }
 
     if (!result || room.invalidated || this.rooms.get(room.pageId) !== room) return;
     if (!result.accepted) {

@@ -581,6 +581,29 @@ export function createPageDraftStore(
     }
   }
 
+  function removePageIfUnchanged(expectedRecord) {
+    if (
+      !expectedRecord
+      || typeof expectedRecord !== "object"
+      || !isNonEmptyString(expectedRecord.userId)
+      || !isNonEmptyString(expectedRecord.pageId)
+      || !isNonEmptyString(expectedRecord.sourceId)
+    ) {
+      return false;
+    }
+    const prepared = prepareRecordMutation(
+      expectedRecord.userId,
+      expectedRecord.pageId,
+      expectedRecord.sourceId
+    );
+    if (!prepared.writable) return false;
+    if (!prepared.record) return true;
+    // A server upload can overlap a newer local edit. Delete only the exact
+    // record that was uploaded; otherwise retain the newer browser recovery.
+    if (JSON.stringify(prepared.record) !== JSON.stringify(expectedRecord)) return false;
+    return removePage(expectedRecord.userId, expectedRecord.pageId, expectedRecord.sourceId);
+  }
+
   function removePages(userId, pageIds, recordSourceId = sourceId) {
     let succeeded = true;
     for (const pageId of pageIds ?? []) {
@@ -649,6 +672,7 @@ export function createPageDraftStore(
     removeBlock,
     removeBlocks,
     removePage,
+    removePageIfUnchanged,
     removePages,
     clearBlocks,
     clearPage,

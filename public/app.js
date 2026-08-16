@@ -176,6 +176,8 @@ const pageTransitionLock = createPageTransitionLock(window.localStorage, {
 let activePageTransitionLease = null;
 let pageTransitionUnlockTimer = null;
 let collaborationRecoveryPanelGeneration = 0;
+let recoveryCandidateSyncPromise = null;
+let serverRecoveryCandidates = [];
 const pageCoverOperationGuard = createPageCoverOperationGuard();
 const iconPickerOperationGuard = createIconPickerOperationGuard();
 let customIconLibraryLoadGeneration = 0;
@@ -1697,7 +1699,8 @@ async function api(path, options = {}) {
   await applyClientNetworkVerificationHeaders(headers);
 
   let body = requestOptions.body;
-  if (body && typeof body === "object" && !(body instanceof FormData)) {
+  const binaryBody = body instanceof ArrayBuffer || ArrayBuffer.isView(body) || body instanceof Blob;
+  if (body && typeof body === "object" && !(body instanceof FormData) && !binaryBody) {
     headers.set("Content-Type", "application/json");
     body = JSON.stringify(body);
   }
@@ -2500,6 +2503,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   resetMfaLogin();
   setAuthenticated(false);
   state.user = null;
+  serverRecoveryCandidates = [];
   state.pages = [];
   state.allPages = [];
   state.selectedPage = null;
@@ -7752,6 +7756,106 @@ function serializePageDraftRecord(record, reason) {
   };
 }
 
+async function uploadServerRecoveryCandidate({
+  pageId,
+  kind,
+  documentEpoch = null,
+  sourceId,
+  generation,
+  payload
+}) {
+  const query = new URLSearchParams({ kind, sourceId, generation });
+  if (documentEpoch) query.set("documentEpoch", documentEpoch);
+  return api(
+    `/api/recovery/pages/${encodeURIComponent(pageId)}/candidates?${query.toString()}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: payload
+    }
+  );
+}
+
+async function reconcileServerRecoveryCandidates() {
+  if (!state.user?.id) return;
+  if (recoveryCandidateSyncPromise) return recoveryCandidateSyncPromise;
+  const accountId = state.user.id;
+
+  recoveryCandidateSyncPromise = (async () => {
+    const accessiblePageIds = new Set(state.allPages.map((page) => page.id));
+    const directInspection = pageDraftStore.inspectUserDrafts(accountId);
+    const collaborationInspection = collaborationRecoveryStore.inspectAccountRecords(accountId);
+
+    if (directInspection.reliable && !directInspection.unreadableKeys.length) {
+      for (const record of directInspection.records) {
+        const payload = new TextEncoder().encode(JSON.stringify(record));
+        try {
+          await uploadServerRecoveryCandidate({
+            pageId: record.pageId,
+            kind: "DIRECT_DRAFT",
+            sourceId: record.sourceId,
+            generation: `draft-${record.updatedAt}`,
+            payload
+          });
+          // If the page is still accessible, retain the browser draft so its
+          // normal optimistic-concurrency recovery path can still run. When the
+          // page is gone, the server candidate is now the durable successor.
+          if (!accessiblePageIds.has(record.pageId)) {
+            pageDraftStore.removePageIfUnchanged(record);
+          }
+        } catch (error) {
+          if (error?.code !== "RECOVERY_GRANT_NOT_FOUND") {
+            console.warn("Failed to preserve a direct recovery candidate on the server", error);
+          }
+        }
+      }
+    }
+
+    if (collaborationInspection.reliable && !collaborationInspection.unreadableKeys.length) {
+      for (const record of collaborationInspection.records) {
+        try {
+          await uploadServerRecoveryCandidate({
+            pageId: record.pageId,
+            kind: record.documentEpoch ? "YJS_UPDATE" : "YJS_LEGACY_UPDATE",
+            documentEpoch: record.documentEpoch,
+            sourceId: record.sourceId,
+            generation: record.generation,
+            payload: record.update
+          });
+          if (!accessiblePageIds.has(record.pageId)) {
+            collaborationRecoveryStore.remove(
+              accountId,
+              record.pageId,
+              record.sourceId,
+              record.documentEpoch,
+              record.generation
+            );
+          }
+        } catch (error) {
+          if (error?.code !== "RECOVERY_GRANT_NOT_FOUND") {
+            console.warn("Failed to preserve a collaboration recovery candidate on the server", error);
+          }
+        }
+      }
+    }
+
+    try {
+      const data = await api("/api/recovery/candidates");
+      if (state.user?.id === accountId) {
+        serverRecoveryCandidates = Array.isArray(data?.candidates) ? data.candidates : [];
+      }
+    } catch (error) {
+      console.warn("Failed to load server recovery candidates", error);
+    }
+
+    if (state.workspaceView === "home" && state.user?.id === accountId) renderHome();
+  })().finally(() => {
+    recoveryCandidateSyncPromise = null;
+  });
+
+  return recoveryCandidateSyncPromise;
+}
+
 function getCollaborativePageDrafts(pageId) {
   return getLocalPageDraftRecords(pageId).map((record) =>
     serializePageDraftRecord(record, "collaboration-enabled")
@@ -7792,6 +7896,85 @@ function appendPageDraftRecoveryPanel(container, drafts, { home = false, collabo
 
 function appendOrphanedPageDraftRecovery() {
   appendPageDraftRecoveryPanel(elements.homeDocumentList, getOrphanedPageDrafts(), { home: true });
+}
+
+async function downloadServerRecoveryCandidate(candidate) {
+  const authenticationScope = captureAuthenticatedSessionScope();
+  const headers = new Headers();
+  await applyClientNetworkVerificationHeaders(headers);
+  const response = await fetch(
+    `/api/recovery/candidates/${encodeURIComponent(candidate.id)}`,
+    { credentials: "include", headers }
+  );
+  if (!response.ok) {
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      // The shared API translator below will fall back to the status code.
+    }
+    if (
+      response.status === 401
+      && isCurrentAuthenticatedSessionScope(authenticationScope)
+    ) {
+      resetAuthenticationSessionState();
+    }
+    throw createApiRequestError(translateApiError(data, response.status), {
+      status: response.status,
+      code: data?.error?.code ?? null,
+      ambiguous: response.status >= 500
+    });
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const download = document.createElement("a");
+  download.href = url;
+  download.download = candidate.kind === "DIRECT_DRAFT"
+    ? `${candidate.id}-draft.json`
+    : `${candidate.id}-yjs.bin`;
+  download.hidden = true;
+  document.body.append(download);
+  download.click();
+  download.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
+
+function appendServerRecoveryCandidatePanel() {
+  if (!serverRecoveryCandidates.length) return;
+  const panel = document.createElement("section");
+  panel.className = "local-draft-recovery-panel server-recovery-candidate-panel";
+  panel.setAttribute("role", "status");
+
+  const heading = document.createElement("strong");
+  heading.textContent = t("status.serverRecoveryCandidates");
+  panel.append(heading);
+
+  for (const candidate of serverRecoveryCandidates) {
+    const details = document.createElement("pre");
+    details.tabIndex = 0;
+    details.textContent = JSON.stringify({
+      pageId: candidate.pageId,
+      kind: candidate.kind,
+      lineageKey: candidate.lineageKey,
+      payloadSha256: candidate.payloadSha256,
+      payloadBytes: candidate.payloadBytes,
+      createdAt: candidate.createdAt
+    }, null, 2);
+
+    const download = document.createElement("button");
+    download.type = "button";
+    download.className = "secondary-button";
+    download.textContent = t("attachment.download");
+    download.addEventListener("click", () => {
+      download.disabled = true;
+      downloadServerRecoveryCandidate(candidate)
+        .catch((error) => setStatus(error.message, true))
+        .finally(() => { download.disabled = false; });
+    });
+    panel.append(details, download);
+  }
+
+  elements.homeDocumentList.prepend(panel);
 }
 
 function getOrphanedCollaborationRecoveryGroups() {
@@ -7908,6 +8091,7 @@ function renderHome() {
   elements.homeDocumentList.replaceChildren();
   elements.homeCollectionList.replaceChildren();
   appendOrphanedPageDraftRecovery();
+  appendServerRecoveryCandidatePanel();
 
   if (!state.allPages.length) {
     elements.homeDocumentList.append(makeEmptyMessage(t("empty.noDocumentsHome")));
@@ -14194,6 +14378,7 @@ async function loadPages(query = state.searchQuery, tag = state.activeTag) {
   }
 
   renderPages();
+  void reconcileServerRecoveryCandidates();
 }
 
 function isCurrentWorkspaceNavigation(generation) {

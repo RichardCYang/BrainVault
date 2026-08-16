@@ -335,6 +335,15 @@ class PageCollaborationSession {
     if (!records.length) return false;
     const matchingRecords = records.filter((record) => record.documentEpoch === documentEpoch);
     const preservedRecords = records.filter((record) => record.documentEpoch !== documentEpoch);
+    // Old-lineage bytes are intentionally never merged into the current Yjs
+    // document, but they must still be surfaced even when there is no current-
+    // lineage record. Returning before this warning silently stranded recovery.
+    if (preservedRecords.length && !this.recoveryLineageWarningShown) {
+      this.recoveryLineageWarningShown = true;
+      this.onError(new Error(
+        `Preserved ${preservedRecords.length} local collaboration recovery record(s) from an earlier document version without merging them`
+      ));
+    }
     if (!matchingRecords.length) return false;
     // The host must be able to change its visible editability state before any
     // recovered Yjs transaction is applied. Returning false preserves the local
@@ -343,13 +352,6 @@ class PageCollaborationSession {
       documentEpoch,
       recordCount: matchingRecords.length
     }) === false) return false;
-    if (preservedRecords.length && !this.recoveryLineageWarningShown) {
-      this.recoveryLineageWarningShown = true;
-      this.onError(new Error(
-        `Preserved ${preservedRecords.length} local collaboration recovery record(s) from an earlier document version without merging them`
-      ));
-    }
-
     const recovered = [];
     for (const record of matchingRecords) {
       try {

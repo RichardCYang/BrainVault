@@ -396,9 +396,12 @@ function verifySourceWiring() {
     'disconnectPageCollaborators(pageId, "Workspace data is being restored")'
   ]);
   const dataTransferSource = read("src/lib/data-transfer.ts");
+  const restoreDisconnectIndex = dataTransferSource.indexOf(
+    'disconnectPageCollaborators(pageId, "Workspace data is being restored")'
+  );
+  const restoreImportIndex = dataTransferSource.indexOf("await importRows(", restoreDisconnectIndex);
   assert.ok(
-    dataTransferSource.indexOf('disconnectPageCollaborators(pageId, "Workspace data is being restored")')
-      < dataTransferSource.indexOf("await importRows(client, userId, manifest, restoreVersion, restoreSharingPlan.shares"),
+    restoreDisconnectIndex >= 0 && restoreImportIndex > restoreDisconnectIndex,
     "live collaboration rooms must be invalidated before restored rows replace the workspace"
   );
   assertContains("public/collaboration.js", [
