@@ -16,6 +16,8 @@ import {
 } from "../middleware/data-rate-limit.js";
 import { requireUser } from "../utils/schemas.js";
 
+type SnapshotRouteParams = { snapshotId: string };
+
 export const snapshotRouter = Router();
 snapshotRouter.use(requireAuth);
 
@@ -31,13 +33,13 @@ snapshotRouter.post("/", dataExportRateLimit, async (req, res) => {
   res.status(201).json({ snapshot });
 });
 
-snapshotRouter.get("/:snapshotId/diff", dataExportRateLimit, async (req, res) => {
+snapshotRouter.get<SnapshotRouteParams>("/:snapshotId/diff", dataExportRateLimit, async (req, res) => {
   const user = requireUser(req.user);
   const diff = await diffWorkspaceSnapshot(user.id, req.params.snapshotId);
   res.json({ diff });
 });
 
-snapshotRouter.post(
+snapshotRouter.post<SnapshotRouteParams>(
   "/:snapshotId/restore",
   dataImportRateLimit,
   dataImportConcurrencyLimit,
@@ -54,7 +56,7 @@ snapshotRouter.post(
   }
 );
 
-snapshotRouter.delete("/:snapshotId", async (req, res) => {
+snapshotRouter.delete<SnapshotRouteParams>("/:snapshotId", async (req, res) => {
   const user = requireUser(req.user);
   await deleteWorkspaceSnapshot(user.id, req.params.snapshotId);
   res.status(204).end();
