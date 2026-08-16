@@ -3958,6 +3958,12 @@ function closeSearchDialog({ restoreFocus = true } = {}) {
   if (restoreFocus && state.user) elements.sidebarSearchShortcut.focus();
 }
 
+function getSearchResultButtons() {
+  return [...elements.searchResults.querySelectorAll("button[data-search-result-index]")].filter((button) => {
+    return !button.disabled && button.getClientRects().length > 0;
+  });
+}
+
 function handleSearchDialogKeydown(event) {
   if (!state.searchDialogOpen) return;
   if (event.key === "Escape") {
@@ -3966,6 +3972,30 @@ function handleSearchDialogKeydown(event) {
     closeSearchDialog();
     return;
   }
+
+  const resultButtons = getSearchResultButtons();
+  if (event.key === "ArrowDown" && event.target === elements.searchInput && resultButtons.length) {
+    event.preventDefault();
+    resultButtons[0].focus();
+    return;
+  }
+
+  const focusedResultIndex = resultButtons.indexOf(document.activeElement);
+  if (focusedResultIndex >= 0 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+    event.preventDefault();
+    const direction = event.key === "ArrowDown" ? 1 : -1;
+    const nextIndex = (focusedResultIndex + direction + resultButtons.length) % resultButtons.length;
+    resultButtons[nextIndex].focus();
+    return;
+  }
+
+  if (focusedResultIndex >= 0 && (event.key === "Home" || event.key === "End")) {
+    event.preventDefault();
+    const target = event.key === "Home" ? resultButtons[0] : resultButtons.at(-1);
+    target?.focus();
+    return;
+  }
+
   if (event.key !== "Tab") return;
 
   const focusableElements = getSearchDialogFocusableElements();
@@ -3983,6 +4013,38 @@ function handleSearchDialogKeydown(event) {
     event.preventDefault();
     first.focus();
   }
+}
+
+function handleWorkspaceSearchShortcut(event) {
+  const key = String(event.key ?? "").toLowerCase();
+  if (
+    !state.user
+    || event.defaultPrevented
+    || event.isComposing
+    || event.altKey
+    || event.shiftKey
+    || key !== "k"
+    || !(event.ctrlKey || event.metaKey)
+  ) return;
+
+  if (
+    !state.searchDialogOpen
+    && (
+      state.accountSettingsOpen
+      || state.sharePageOpen
+      || Boolean(state.emojiPickerTarget)
+      || elements.pageCoverDialog.open
+      || elements.pageVersionHistoryDialog.open
+    )
+  ) return;
+
+  event.preventDefault();
+  if (state.searchDialogOpen) {
+    elements.searchInput.focus();
+    elements.searchInput.select();
+    return;
+  }
+  openSearchDialog();
 }
 
 async function performWorkspaceSearch() {
@@ -5473,6 +5535,8 @@ function renderDefaultCollection() {
   const isActive = state.workspaceView === "collection" && state.activeCollectionId === defaultCollectionKey;
   elements.defaultCollectionButton.classList.toggle("active", isActive);
   elements.defaultCollectionButton.closest(".collection-title-row")?.classList.toggle("active", isActive);
+  if (isActive) elements.defaultCollectionButton.setAttribute("aria-current", "page");
+  else elements.defaultCollectionButton.removeAttribute("aria-current");
 }
 
 function makeNavigationMenuButton({ id, kind, title }) {
@@ -5564,6 +5628,7 @@ function renderDocumentNode(page, groups, depth = 0) {
   button.className = "document-item";
   button.classList.toggle("active", isActive);
   button.dataset.pageId = page.id;
+  if (isActive) button.setAttribute("aria-current", "page");
 
   const icon = document.createElement("span");
   icon.className = "doc-icon";
@@ -5611,6 +5676,7 @@ function renderCollectionSection(collection, pages) {
   button.className = "collection-title-button";
   button.classList.toggle("active", isActive);
   button.dataset.collectionId = collection.id;
+  if (isActive) button.setAttribute("aria-current", "page");
 
   const title = document.createElement("span");
   title.className = "collection-title-main";
@@ -16428,6 +16494,7 @@ elements.searchResults.addEventListener("click", (event) => {
   void openSearchResult(Number.parseInt(target.dataset.searchResultIndex, 10));
 });
 document.addEventListener("keydown", handleSearchDialogKeydown);
+document.addEventListener("keydown", handleWorkspaceSearchShortcut);
 
 elements.defaultCollectionButton.addEventListener("click", async () => {
   closeMobileSidebar({ restoreFocus: true });

@@ -18539,3 +18539,111 @@ html[data-theme="dark"] {
   opacity: 0;
   pointer-events: none;
 }
+
+
+/* ========================================================================== 
+   UI/UX optimization pass
+   - clearer navigation state and larger interaction targets
+   - discoverable workspace search shortcut
+   - sticky-header-safe keyboard focus scrolling
+   ========================================================================== */
+.sidebar-shortcut-hint {
+  display: inline-flex;
+  min-width: max-content;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  border: 1px solid var(--sidebar-reference-line, var(--line));
+  border-radius: 4px;
+  background: transparent;
+  color: var(--sidebar-reference-muted, var(--muted-light));
+  padding: 1px 5px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 560;
+  line-height: 16px;
+  box-shadow: none;
+  white-space: nowrap;
+}
+
+@media screen {
+  .app-mode .sidebar-utility-button {
+    min-height: 34px;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    padding: 6px 8px;
+  }
+
+  .app-mode .collection-title-row,
+  .app-mode .document-item-row {
+    min-height: 34px;
+  }
+
+  .app-mode .collection-title-row {
+    grid-template-columns: minmax(0, 1fr) 28px;
+  }
+
+  .app-mode .document-item-row {
+    grid-template-columns: 28px minmax(0, 1fr) 28px;
+  }
+
+  .app-mode .collection-title-button,
+  .app-mode .document-item,
+  .app-mode .sidebar-footer-button {
+    min-height: 34px;
+  }
+
+  .app-mode .sidebar-add-button,
+  .app-mode .navigation-more-button,
+  .app-mode .doc-expand-button {
+    width: 28px;
+    height: 28px;
+  }
+
+  .app-mode .document-item-row.active,
+  .app-mode .collection-title-row.active,
+  .app-mode .sidebar-utility-button.active {
+    box-shadow: inset 2px 0 0 var(--focus);
+  }
+
+  .app-mode .document-item-row.active .doc-label {
+    font-weight: 680;
+  }
+}
+
+.page-actions-button {
+  width: 2.6rem;
+  height: 2.6rem;
+}
+
+.page-toolbar .button-row button,
+.page-mode-badge,
+.collaboration-indicator {
+  min-height: 2.35rem;
+}
+
+.page-toolbar .button-row button {
+  padding-inline: 0.72rem;
+}
+
+.page-view :is(button, input, textarea, select, [tabindex]) {
+  scroll-margin-top: 5.25rem;
+}
+
+@media (max-width: 760px) {
+  .sidebar-shortcut-hint {
+    display: none;
+  }
+
+  .page-actions-button,
+  .mobile-sidebar-toggle,
+  .app-mode .mobile-sidebar-close {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  .page-toolbar .button-row button,
+  .page-mode-badge,
+  .collaboration-indicator {
+    min-height: 2.75rem;
+  }
+}
