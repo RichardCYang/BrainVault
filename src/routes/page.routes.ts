@@ -994,7 +994,8 @@ pageRouter.delete(
             "Refresh the page deletion snapshot before permanently deleting this page."
           );
         }
-        if (!body.mutationId) {
+        const mutationId = body.mutationId;
+        if (!mutationId) {
           throw new ApiError(
             400,
             "MUTATION_ID_REQUIRED",
@@ -1023,7 +1024,7 @@ pageRouter.delete(
              FROM page_delete_mutations
              WHERE actor_id = ? AND mutation_id = ?
              FOR UPDATE`,
-            [user.id, body.mutationId]
+            [user.id, mutationId]
           );
           if (receipt) {
             const assessment = assessPageDeleteMutationReceipt(receipt, {
@@ -1077,7 +1078,7 @@ pageRouter.delete(
              VALUES (?, ?, ?, ?, ?, ?)`,
             [
               user.id,
-              body.mutationId,
+              mutationId,
               pageId,
               mutationHash,
               JSON.stringify(pageIds),
