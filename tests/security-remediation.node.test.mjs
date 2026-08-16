@@ -274,7 +274,7 @@ test("archived pages reject direct REST mutations while preserving the restore-o
   assert.match(access, /throw new ApiError\(409, "PAGE_ARCHIVED"/);
   assert.equal((blocks.match(/assertPageNotArchived\(/g) ?? []).length, 4);
   assert.match(blocks, /assertDirectBlockMutationAllowed\(lockedAccess\);\n\s*assertPageNotArchived\(lockedAccess\.page\);/);
-  assert.match(blocks, /return \{ block: existing, pageContentVersion:[\s\S]*?\}\;\n\s*\}\n\n\s*assertPageNotArchived\(lockedPage\);/);
+  assert.match(blocks, /isMatchingMutationReplay\([\s\S]*?isAuthoritativePartialMutationReplay\(basePageContentVersion, currentContentVersion\)[\s\S]*?assertPageNotArchived\(lockedPage\);/);
   assert.match(pages, /updates\.isArchived === false && tags === undefined && Object\.keys\(updates\)\.length === 1/);
   assert.match(pages, /if \(existingPage\.is_archived && !isArchivedRestoreOnly\)/);
   assert.match(pages, /pageRouter\.put\("\/:pageId\/tags"[\s\S]*?assertPageNotArchived\(existingPage\);/);

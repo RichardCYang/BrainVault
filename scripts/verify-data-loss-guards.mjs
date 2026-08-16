@@ -356,7 +356,7 @@ assert(
       "FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE"
     )
     && blockRouteSource.includes("mutationId: mutationIdSchema.optional()")
-    && directBlockCreateRouteSource.includes('createMutationRequestHash({ kind: "BLOCK", pageId, creation })')
+    && directBlockCreateRouteSource.includes('createMutationRequestHash({ kind: "BLOCK", pageId, basePageContentVersion, creation })')
     && directBlockCreateRouteSource.indexOf("reserveBlockCreateMutation")
       < directBlockCreateRouteSource.indexOf("INSERT INTO blocks")
     && attachmentCreateRouteSource.includes('kind: "ATTACHMENT"')
@@ -365,8 +365,10 @@ assert(
       < attachmentCreateRouteSource.indexOf("moveAttachmentFile")
     && client.includes("const pendingBlockCreateTasks = new Map()")
     && client.includes("const pendingAttachmentCreateTasks = new Map()")
-    && client.includes("body: { ...task.payload, mutationId: task.mutationId }")
+    && client.includes("basePageContentVersion: task.basePageContentVersion")
+    && client.includes('formData.set("basePageContentVersion", String(task.basePageContentVersion))')
     && client.includes('formData.set("mutationId", task.mutationId)')
+    && client.includes("applyAuthoritativePageContentVersion(pageId, data)")
     && client.includes("pendingBlockCreateTasks.clear()")
     && client.includes("pendingAttachmentCreateTasks.clear()"),
   "A lost block or attachment creation response can still duplicate committed content on retry"

@@ -40,7 +40,7 @@ test("ordinary and attachment creates reserve a receipt before durable side effe
 
   assert.match(route, /INSERT INTO block_create_mutations/);
   assert.match(route, /assessBlockCreateMutationReceipt/);
-  assert.match(ordinary, /createMutationRequestHash\(\{ kind: "BLOCK", pageId, creation \}\)/);
+  assert.match(ordinary, /createMutationRequestHash\(\{ kind: "BLOCK", pageId, basePageContentVersion, creation \}\)/);
   assert.ok(ordinary.indexOf("reserveBlockCreateMutation") < ordinary.indexOf("assertDirectBlockMutationAllowed"));
   assert.ok(ordinary.indexOf("reserveBlockCreateMutation") < ordinary.indexOf("INSERT INTO blocks"));
   assert.match(attachment, /kind: "ATTACHMENT"/);
@@ -66,9 +66,11 @@ test("browser retries ambiguous create responses with the same mutation id and f
   assert.match(ordinary, /const pendingTask = pendingBlockCreateTasks\.get\(taskKey\)/);
   assert.match(ordinary, /pendingTask && !pendingTask\.inFlight/);
   assert.equal((ordinary.match(/pendingBlockCreateTasks\.set/g) ?? []).length, 1);
-  assert.match(ordinary, /body: \{ \.\.\.task\.payload, mutationId: task\.mutationId \}/);
+  assert.match(ordinary, /basePageContentVersion: task\.basePageContentVersion/);
+  assert.match(ordinary, /mutationId: task\.mutationId/);
   assert.match(ordinary, /attempt < 2/);
   assert.match(ordinary, /isCurrentAuthenticatedSessionScope\(authenticationScope\)/);
+  assert.match(attachment, /formData\.set\("basePageContentVersion", String\(task\.basePageContentVersion\)\)/);
   assert.match(attachment, /formData\.set\("mutationId", task\.mutationId\)/);
   assert.match(attachment, /submitWithFreshMutationIdOnReuse/);
   assert.match(attachment, /pendingAttachmentCreateTasks\.get\(taskKey\)/);

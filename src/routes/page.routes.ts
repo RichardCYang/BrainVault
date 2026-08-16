@@ -867,7 +867,7 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
       values.push(updates.parentPageId);
     }
 
-    await transaction(async (client) => {
+    const page = await transaction(async (client) => {
       let existingPage: PageRow;
       if (updates.parentPageId !== undefined) {
         const lockedRows = await getOwnedPageTreeRows(user.id, client, true);
@@ -894,7 +894,9 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
           mutationId,
           mutationHash
         )
-      ) return;
+      ) {
+        return getPageResponse(pageId, user.id, client);
+      }
 
       const isArchivedRestoreOnly =
         updates.isArchived === false && tags === undefined && Object.keys(updates).length === 1;
@@ -932,6 +934,11 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
         if (mutationId && mutationHash) {
           updateFields.push("last_mutation_id = ?", "last_mutation_hash = ?");
           updateValues.push(mutationId, mutationHash);
+        } else {
+          // Any later edit that does not carry a mutation id must invalidate the
+          // previous replay marker. Otherwise a delayed retry can be mistaken
+          // for the latest page mutation and inherit an unrelated edit version.
+          updateFields.push("last_mutation_id = NULL", "last_mutation_hash = NULL");
         }
         const result = await client.execute<{ affectedRows: number }>(
           `UPDATE pages SET ${[...updateFields, "edit_version = edit_version + 1"].join(", ")} WHERE id = ? AND owner_id = ? AND edit_version = ?`,
@@ -955,10 +962,15 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
         source: updates.isArchived === true ? "ARCHIVE" : "PAGE_UPDATE",
         changes: diffPageVersionPage(existingPage, updatedPage, beforeTags, afterTags)
       });
+
+      // Materialize the response while the page row is still locked. Returning
+      // a post-COMMIT read would let an intervening writer donate its newer
+      // edit_version to this mutation's acknowledgement.
+      return getPageResponse(pageId, user.id, client);
     });
 
     if (updates.isArchived === true) disconnectPageCollaborators(pageId, "Page was archived");
-    res.json({ page: await getPageResponse(pageId, user.id) });
+    res.json({ page });
   } catch (error) {
     next(error);
   }
@@ -1101,7 +1113,10 @@ pageRouter.delete(
         await assertCollaborationMaterialized(client, [pageId]);
         const updateResult = await client.execute<{ affectedRows: number }>(
           `UPDATE pages
-           SET is_archived = 1, edit_version = edit_version + 1
+           SET is_archived = 1,
+               edit_version = edit_version + 1,
+               last_mutation_id = NULL,
+               last_mutation_hash = NULL
            WHERE id = ? AND owner_id = ? AND edit_version = ?`,
           [pageId, user.id, expectedVersion]
         );
@@ -1139,7 +1154,7 @@ pageRouter.put("/:pageId/tags", validate({ params: idParamSchema, body: tagSchem
     const pageId = String(req.params.pageId);
     await assertOwnedPage(pageId, user.id);
     const { tags, expectedVersion } = req.body as z.infer<typeof tagSchema>;
-    await transaction(async (client) => {
+    const result = await transaction(async (client) => {
       const existingPage = await client.queryOne<PageRow>(
         "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
         [pageId, user.id]
@@ -1147,11 +1162,15 @@ pageRouter.put("/:pageId/tags", validate({ params: idParamSchema, body: tagSchem
       if (!existingPage) throw notFound("Page");
       assertPageNotArchived(existingPage);
       const beforeTags = (await getPageTags(pageId, client)).map((tag) => tag.name);
-      const result = await client.execute<{ affectedRows: number }>(
-        "UPDATE pages SET edit_version = edit_version + 1 WHERE id = ? AND owner_id = ? AND edit_version = ?",
+      const updateResult = await client.execute<{ affectedRows: number }>(
+        `UPDATE pages
+         SET edit_version = edit_version + 1,
+             last_mutation_id = NULL,
+             last_mutation_hash = NULL
+         WHERE id = ? AND owner_id = ? AND edit_version = ?`,
         [pageId, user.id, expectedVersion]
       );
-      if (Number(result.affectedRows) === 0) {
+      if (Number(updateResult.affectedRows) === 0) {
         throw new ApiError(
           409,
           "PAGE_EDIT_CONFLICT",
@@ -1168,9 +1187,9 @@ pageRouter.put("/:pageId/tags", validate({ params: idParamSchema, body: tagSchem
         source: "TAGS",
         changes: diffPageVersionPage(existingPage, updatedPage, beforeTags, afterTags)
       });
+      return { tags: afterTags, version: Number(updatedPage.edit_version ?? 1) };
     });
-    const page = await assertOwnedPage(pageId, user.id);
-    res.json({ tags: await getPageTags(pageId), version: Number(page.edit_version ?? 1) });
+    res.json(result);
   } catch (error) {
     next(error);
   }

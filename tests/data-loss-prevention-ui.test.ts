@@ -45,7 +45,8 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain('document.addEventListener("visibilitychange"');
     expect(client).toContain('saveBlockRow(row, { quiet: true }).catch');
     expect(client).toContain('keepalive: task.keepalive === true');
-    expect(client).toContain('expectedVersion: currentVersion, mutationId: task.mutationId');
+    expect(client).toContain('expectedVersion: currentVersion');
+    expect(client).toContain('basePageContentVersion: task.basePageContentVersion');
     expect(client).toContain('mutationId: createMutationId()');
     expect(client).toContain('const blockSaveRows = new Map()');
     expect(client).toContain('const rowsToSave = new Map(blockSaveRows)');
@@ -62,7 +63,8 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain('withWorkspacePersistenceTransition("data-export"');
     expect(client).toContain("async function restoreUserDataBackup(file,");
     expect(client).toContain('withWorkspacePersistenceTransition("data-restore"');
-    expect(client).toContain('applyPageContentVersion(task.pageId, data.pageContentVersion)');
+    expect(client).toContain('applyAuthoritativePageContentVersion(task.pageId, data);');
+    expect(client).toContain('if (data?.pageContentVersionAuthoritative !== true) return;');
     expect(client).toContain('Math.max(Number(page.contentVersion ?? 1), version)');
     expect(client).toContain('const keepaliveSaveBudgetBytes = 60 * 1024;');
     expect(client).toContain('const pendingSavePayloadBytes = keepalive ? getPendingSavePayloadBytes');
@@ -482,6 +484,9 @@ describe("Data-loss prevention integration", () => {
     expect(blockRoutes).toContain("FOR UPDATE");
     expect(blockRoutes).toContain("receipt.request_hash !== mutationHash");
     expect(blockRoutes).toContain("last_mutation_hash = ?");
+    expect(blockRoutes).toContain("basePageContentVersion: safeVersionSchema.optional()");
+    expect(blockRoutes).toContain("pageContentVersionAuthoritative: authoritative");
+    expect(blockRoutes).toContain("isAuthoritativePartialMutationReplay");
     expect(blockRoutes).toContain(
       "INSERT INTO block_order_mutations (owner_id, mutation_id, page_id, request_hash)"
     );

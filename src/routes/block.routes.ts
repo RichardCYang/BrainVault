@@ -88,6 +88,7 @@ const createBlockSchema = z.object({
   parentBlockId: z.string().min(1).nullable().optional(),
   sortOrder: blockSortOrderSchema.optional(),
   metadata: metadataSchema,
+  basePageContentVersion: safeVersionSchema.optional(),
   mutationId: mutationIdSchema.optional()
 });
 
@@ -99,6 +100,7 @@ const updateBlockSchema = z.object({
   sortOrder: blockSortOrderSchema.optional(),
   metadata: metadataSchema.nullable().optional(),
   expectedVersion: safeVersionSchema,
+  basePageContentVersion: safeVersionSchema.optional(),
   mutationId: mutationIdSchema.optional()
 });
 
@@ -282,6 +284,10 @@ const attachmentFormSchema = z.object({
     (value) => (value === undefined || value === "" ? undefined : Number(value)),
     blockSortOrderSchema.optional()
   ),
+  basePageContentVersion: z.preprocess(
+    (value) => (value === undefined || value === "" ? undefined : Number(value)),
+    safeVersionSchema.optional()
+  ),
   mutationId: z.preprocess(
     (value) => (typeof value === "string" && value.trim() ? value.trim() : undefined),
     mutationIdSchema.optional()
@@ -423,6 +429,20 @@ async function advancePageContentVersion(client: DbClient, pageId: string, _user
   const page = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
   if (!page) throw notFound("Page");
   return Number(page.content_version ?? 1);
+}
+
+function partialMutationVersionPayload(pageContentVersion: number, authoritative: boolean) {
+  return {
+    // Omit the global token unless this response proves that the caller's full
+    // page snapshot was current. Older clients then fail conservatively too:
+    // Number(undefined) is not applied by applyPageContentVersion().
+    pageContentVersion: authoritative ? pageContentVersion : undefined,
+    pageContentVersionAuthoritative: authoritative
+  };
+}
+
+function isAuthoritativePartialMutationReplay(basePageContentVersion: number | undefined, currentVersion: number) {
+  return basePageContentVersion !== undefined && currentVersion === basePageContentVersion + 1;
 }
 
 async function assertParentBlock(parentBlockId: string | null | undefined, pageId: string, client: DbClient = db) {
@@ -591,6 +611,7 @@ blockRouter.post(
             pageId,
             parentBlockId: body.parentBlockId,
             sortOrder: body.sortOrder,
+            basePageContentVersion: body.basePageContentVersion,
             file: {
               originalName,
               mimeType: inspectedUpload.mimeType,
@@ -600,7 +621,11 @@ blockRouter.post(
           })
         : undefined;
 
-      let result: { block: BlockRow; pageContentVersion: number } | null = null;
+      let result: {
+        block: BlockRow;
+        pageContentVersion: number | undefined;
+        pageContentVersionAuthoritative: boolean;
+      } | null = null;
       try {
         result = await transaction(async (client) => {
           // Lock every user row before the page. This preserves the workspace
@@ -610,6 +635,7 @@ blockRouter.post(
           if (lockedAccess.page.owner_id !== ownerId) {
             throw new ApiError(409, "PAGE_OWNER_CHANGED", "The page owner changed while the attachment was uploading");
           }
+          const lockedContentVersion = Number(lockedAccess.page.content_version ?? 1);
           const reservation = await reserveBlockCreateMutation(client, {
             actorId: user.id,
             mutationId: body.mutationId,
@@ -620,7 +646,10 @@ blockRouter.post(
           if (reservation.kind === "replay") {
             return {
               block: reservation.block,
-              pageContentVersion: Number(lockedAccess.page.content_version ?? 1)
+              ...partialMutationVersionPayload(
+                lockedContentVersion,
+                isAuthoritativePartialMutationReplay(body.basePageContentVersion, lockedContentVersion)
+              )
             };
           }
 
@@ -664,7 +693,13 @@ blockRouter.post(
             source: "ATTACHMENT_CREATE",
             changes: diffPageVersionBlocks([], [createdBlock])
           });
-          return { block: createdBlock, pageContentVersion };
+          return {
+            block: createdBlock,
+            ...partialMutationVersionPayload(
+              pageContentVersion,
+              body.basePageContentVersion !== undefined && body.basePageContentVersion === lockedContentVersion
+            )
+          };
         });
         movedPath = null;
       } catch (error) {
@@ -683,9 +718,13 @@ blockRouter.post(
                 "SELECT content_version FROM pages WHERE id = ?",
                 [pageId]
               );
+              const confirmedContentVersion = Number(confirmedPage?.content_version ?? 1);
               result = {
                 block: confirmedBlock,
-                pageContentVersion: Number(confirmedPage?.content_version ?? 1)
+                ...partialMutationVersionPayload(
+                  confirmedContentVersion,
+                  isAuthoritativePartialMutationReplay(body.basePageContentVersion, confirmedContentVersion)
+                )
               };
               movedPath = null;
             } else {
@@ -741,7 +780,11 @@ blockRouter.post(
       }
       const payload = toBlock(result.block);
       await broadcastCanonicalAttachment(pageId, payload);
-      res.status(201).json({ block: payload, pageContentVersion: result.pageContentVersion });
+      res.status(201).json({
+        block: payload,
+        pageContentVersion: result.pageContentVersion,
+        pageContentVersionAuthoritative: result.pageContentVersionAuthoritative
+      });
     } catch (error) {
       if (cleanupPath) await removeAttachmentPath(cleanupPath);
       if (movedPath) {
@@ -789,7 +832,7 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
     const user = requireUser(req.user);
     const pageId = String(req.params.pageId);
     const body = req.body as z.infer<typeof createBlockSchema>;
-    const { mutationId, ...creation } = body;
+    const { mutationId, basePageContentVersion, ...creation } = body;
 
     if (creation.type === "ATTACHMENT") {
       throw new ApiError(400, "USE_ATTACHMENT_UPLOAD", "Create attachment blocks through the file upload endpoint");
@@ -799,7 +842,7 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
     const ownerId = access.page.owner_id;
     const id = createId("blk");
     const mutationHash = mutationId
-      ? createMutationRequestHash({ kind: "BLOCK", pageId, creation })
+      ? createMutationRequestHash({ kind: "BLOCK", pageId, basePageContentVersion, creation })
       : undefined;
     const losslessMetadata = assertLosslessStructuredMetadata(creation.type, creation.metadata);
     const prepared = prepareBlockContent(creation.type, creation.markdown, losslessMetadata);
@@ -809,6 +852,7 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
       if (lockedAccess.page.owner_id !== ownerId) {
         throw new ApiError(409, "PAGE_OWNER_CHANGED", "The page owner changed while the block was being created");
       }
+      const lockedContentVersion = Number(lockedAccess.page.content_version ?? 1);
       const reservation = await reserveBlockCreateMutation(client, {
         actorId: user.id,
         mutationId,
@@ -819,7 +863,10 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
       if (reservation.kind === "replay") {
         return {
           block: reservation.block,
-          pageContentVersion: Number(lockedAccess.page.content_version ?? 1)
+          ...partialMutationVersionPayload(
+            lockedContentVersion,
+            isAuthoritativePartialMutationReplay(basePageContentVersion, lockedContentVersion)
+          )
         };
       }
 
@@ -854,10 +901,20 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
         source: "BLOCK_CREATE",
         changes: diffPageVersionBlocks([], [block])
       });
-      return { block, pageContentVersion };
+      return {
+        block,
+        ...partialMutationVersionPayload(
+          pageContentVersion,
+          basePageContentVersion !== undefined && basePageContentVersion === lockedContentVersion
+        )
+      };
     });
 
-    res.status(201).json({ block: toBlock(result.block), pageContentVersion: result.pageContentVersion });
+    res.status(201).json({
+      block: toBlock(result.block),
+      pageContentVersion: result.pageContentVersion,
+      pageContentVersionAuthoritative: result.pageContentVersionAuthoritative
+    });
   } catch (error) {
     next(error);
   }
@@ -868,8 +925,10 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
     const user = requireUser(req.user);
     const blockId = String(req.params.blockId);
     const body = req.body as z.infer<typeof updateBlockSchema>;
-    const { mutationId, ...mutationPayload } = body;
-    const mutationHash = mutationId ? createMutationRequestHash(mutationPayload) : undefined;
+    const { mutationId, basePageContentVersion, ...mutationPayload } = body;
+    const mutationHash = mutationId
+      ? createMutationRequestHash({ basePageContentVersion, ...mutationPayload })
+      : undefined;
 
     const result = await transaction(async (client) => {
       const hierarchyChanged = body.parentBlockId !== undefined || body.sortOrder !== undefined;
@@ -915,7 +974,14 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
           mutationHash
         )
       ) {
-        return { block: existing, pageContentVersion: Number(lockedPage.content_version ?? 1) };
+        const currentContentVersion = Number(lockedPage.content_version ?? 1);
+        return {
+          block: existing,
+          ...partialMutationVersionPayload(
+            currentContentVersion,
+            isAuthoritativePartialMutationReplay(basePageContentVersion, currentContentVersion)
+          )
+        };
       }
 
       assertPageNotArchived(lockedPage);
@@ -940,6 +1006,7 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
         }
       }
 
+      const lockedContentVersion = Number(lockedPage.content_version ?? 1);
       const fields: string[] = [];
       const values: DbValue[] = [];
       const contentChanged =
@@ -988,12 +1055,16 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
         values.push(prepared.metadata ? JSON.stringify(prepared.metadata) : null);
       }
 
-      if (fields.length && mutationId && mutationHash) {
-        fields.push("last_mutation_id = ?", "last_mutation_hash = ?");
-        values.push(mutationId, mutationHash);
+      if (fields.length) {
+        if (mutationId && mutationHash) {
+          fields.push("last_mutation_id = ?", "last_mutation_hash = ?");
+          values.push(mutationId, mutationHash);
+        } else {
+          fields.push("last_mutation_id = NULL", "last_mutation_hash = NULL");
+        }
       }
 
-      let pageContentVersion = Number(lockedPage.content_version ?? 1);
+      let pageContentVersion = lockedContentVersion;
       if (fields.length) {
         const result = await client.execute<{ affectedRows: number }>(
           `UPDATE blocks SET ${[...fields, "edit_version = edit_version + 1"].join(", ")} WHERE id = ? AND edit_version = ?`,
@@ -1017,10 +1088,20 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
         source: "BLOCK_UPDATE",
         changes: diffPageVersionBlocks([existing], [updated])
       });
-      return { block: updated, pageContentVersion };
+      return {
+        block: updated,
+        ...partialMutationVersionPayload(
+          pageContentVersion,
+          basePageContentVersion !== undefined && basePageContentVersion === lockedContentVersion
+        )
+      };
     });
 
-    res.json({ block: toBlock(result.block), pageContentVersion: result.pageContentVersion });
+    res.json({
+      block: toBlock(result.block),
+      pageContentVersion: result.pageContentVersion,
+      pageContentVersionAuthoritative: result.pageContentVersionAuthoritative
+    });
   } catch (error) {
     next(error);
   }

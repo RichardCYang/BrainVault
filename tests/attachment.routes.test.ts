@@ -120,6 +120,7 @@ describe("Attachment routes", () => {
       .post(`/api/pages/${page.id}/attachments`)
       .set("Authorization", `Bearer ${token}`)
       .field("sortOrder", "0")
+      .field("basePageContentVersion", "1")
       .attach("file", Buffer.from("private attachment contents"), {
         filename: "report.txt",
         contentType: "text/plain"
@@ -129,6 +130,7 @@ describe("Attachment routes", () => {
     expect(upload.body.block.type).toBe("ATTACHMENT");
     expect(upload.body.block.markdown).toBe("report.txt");
     expect(upload.body.pageContentVersion).toBe(2);
+    expect(upload.body.pageContentVersionAuthoritative).toBe(true);
     expect(page.content_version).toBe(2);
     expect(upload.body.block.metadata.attachment).toMatchObject({
       originalName: "report.txt",

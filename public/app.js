@@ -11782,7 +11782,14 @@ function getBlockSaveQueue(blockId) {
       api(`/api/blocks/${blockId}`, {
         method: "PATCH",
         keepalive: task.keepalive === true,
-        body: { ...task.payload, expectedVersion: currentVersion, mutationId: task.mutationId }
+        body: {
+          ...task.payload,
+          expectedVersion: currentVersion,
+          ...(task.basePageContentVersion === null
+            ? {}
+            : { basePageContentVersion: task.basePageContentVersion }),
+          mutationId: task.mutationId
+        }
       })
     );
     if (task.userId) {
@@ -11810,7 +11817,7 @@ function getBlockSaveQueue(blockId) {
         }
       }
     }
-    applyPageContentVersion(task.pageId, data.pageContentVersion);
+    applyAuthoritativePageContentVersion(task.pageId, data);
 
     // A locale change or drag reorder can rebuild the editor while this request is in flight.
     // Always rebase the currently rendered row, not the detached row that started the request.
@@ -11945,6 +11952,7 @@ async function saveBlockRow(
     userId: state.user?.id,
     draftSourceId,
     pageId: state.selectedPage.id,
+    basePageContentVersion: getPositiveVersion(state.selectedPage.contentVersion),
     editRevision,
     expectedVersion: getLatestKnownVersion(
       row.dataset.draftExpectedVersion,
@@ -12360,6 +12368,9 @@ function getAttachmentCreateTask(
     requestKey,
     mutationId: createMutationId(),
     pageId,
+    basePageContentVersion: state.selectedPage?.id === pageId
+      ? getPositiveVersion(state.selectedPage.contentVersion)
+      : null,
     parentBlockId,
     sortOrder,
     file,
@@ -12382,6 +12393,9 @@ async function submitAttachmentCreateTask(task, authenticationScope) {
           formData.set("file", task.file, task.file.name);
           if (task.parentBlockId) formData.set("parentBlockId", task.parentBlockId);
           formData.set("sortOrder", String(task.sortOrder));
+          if (task.basePageContentVersion !== null) {
+            formData.set("basePageContentVersion", String(task.basePageContentVersion));
+          }
           formData.set("mutationId", task.mutationId);
           return api(`/api/pages/${task.pageId}/attachments`, {
             method: "POST",
@@ -12473,7 +12487,7 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
     });
     const data = await submitAttachmentCreateTask(task, authenticationScope);
     if (!data || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
-    applyPageContentVersion(pageId, data.pageContentVersion);
+    applyAuthoritativePageContentVersion(pageId, data);
 
     const sourceStillCurrent =
       state.selectedPage?.id === pageId && row.isConnected && row.dataset.blockId === blockId;
@@ -12877,6 +12891,9 @@ function getBlockCreateTask(authenticationScope, pageId, payload) {
     taskKey,
     targetKey: authenticationScope.targetKey,
     pageId,
+    basePageContentVersion: state.selectedPage?.id === pageId
+      ? getPositiveVersion(state.selectedPage.contentVersion)
+      : null,
     requestKey,
     mutationId: createMutationId(),
     payload: Object.freeze({ ...payload }),
@@ -12897,7 +12914,13 @@ async function submitBlockCreateTask(task, authenticationScope) {
           if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
           return api(`/api/pages/${task.pageId}/blocks`, {
             method: "POST",
-            body: { ...task.payload, mutationId: task.mutationId }
+            body: {
+              ...task.payload,
+              ...(task.basePageContentVersion === null
+                ? {}
+                : { basePageContentVersion: task.basePageContentVersion }),
+              mutationId: task.mutationId
+            }
           });
         });
         if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
@@ -12968,7 +12991,7 @@ async function createEmptyBlock(
     () => submitBlockCreateTask(task, authenticationScope)
   );
   if (!data || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
-  applyPageContentVersion(pageId, data.pageContentVersion);
+  applyAuthoritativePageContentVersion(pageId, data);
   return data;
 }
 
@@ -13647,6 +13670,11 @@ function applyPageContentVersion(pageId, contentVersion) {
   for (const pages of [state.pages, state.allPages]) {
     for (const page of pages) applyVersion(page);
   }
+}
+
+function applyAuthoritativePageContentVersion(pageId, data) {
+  if (data?.pageContentVersionAuthoritative !== true) return;
+  applyPageContentVersion(pageId, data.pageContentVersion);
 }
 
 async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked = false } = {}) {

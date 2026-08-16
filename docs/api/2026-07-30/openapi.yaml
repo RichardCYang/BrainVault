@@ -480,6 +480,10 @@ components:
               $ref: '#/components/schemas/BookmarkData'
             aiChat:
               $ref: '#/components/schemas/AiChatData'
+        basePageContentVersion:
+          type: integer
+          minimum: 1
+          description: Optional full-page snapshot generation observed before this partial block mutation. When it still matches under the page lock, the response certifies the new global page content version; otherwise the global token is omitted so stale unseen blocks are not treated as current.
         mutationId:
           type: string
           minLength: 1
@@ -1940,7 +1944,7 @@ paths:
   /api/pages/{pageId}/blocks:
     post:
       summary: Create a block on an unshared owned page
-      description: Direct non-attachment block creation is rejected while Yjs collaboration is enabled or the page is archived. Clients can reuse mutationId with the exact same request after an ambiguous response; the original block is returned instead of creating a duplicate.
+      description: Direct non-attachment block creation is rejected while Yjs collaboration is enabled or the page is archived. Clients can reuse mutationId with the exact same request after an ambiguous response; the original block is returned instead of creating a duplicate. Partial-mutation responses set pageContentVersionAuthoritative=true and include pageContentVersion only when basePageContentVersion proves the caller held a current full-page snapshot.
       parameters:
         - in: path
           name: pageId
@@ -1961,7 +1965,7 @@ paths:
   /api/pages/{pageId}/attachments:
     post:
       summary: Upload a file and create a canonical attachment block
-      description: Available only while the page is not participating in collaboration. Current page access, collaboration state, archive state, declared request size, per-account rate admission, and process-wide upload concurrency are checked before multipart bytes are written to temporary storage. The transaction repeats the authorization and page-state checks after intake. Stores the file outside the public web root, rejects active web or executable filenames and media types, validates stable file signatures, and applies the configured per-file size limit (25 MB by default), per-account committed-storage limit (2048 MB by default), and 5,000-file account limit. Exact retries reuse mutationId and are matched against normalized metadata plus the uploaded file SHA-256 digest.
+      description: Available only while the page is not participating in collaboration. Current page access, collaboration state, archive state, declared request size, per-account rate admission, and process-wide upload concurrency are checked before multipart bytes are written to temporary storage. The transaction repeats the authorization and page-state checks after intake. Stores the file outside the public web root, rejects active web or executable filenames and media types, validates stable file signatures, and applies the configured per-file size limit (25 MB by default), per-account committed-storage limit (2048 MB by default), and 5,000-file account limit. Exact retries reuse mutationId and are matched against normalized metadata plus the uploaded file SHA-256 digest. pageContentVersion is returned only when basePageContentVersion proves the caller's full-page snapshot was current.
       parameters:
         - in: path
           name: pageId
@@ -1984,6 +1988,10 @@ paths:
                 sortOrder:
                   type: integer
                   minimum: 0
+                basePageContentVersion:
+                  type: integer
+                  minimum: 1
+                  description: Optional full-page snapshot generation observed before upload. The returned pageContentVersion is authoritative only when this base was current under the page lock.
                 mutationId:
                   type: string
                   minLength: 1
@@ -2033,7 +2041,7 @@ paths:
   /api/blocks/{blockId}:
     patch:
       summary: Update a block
-      description: Owner only for unshared, non-archived pages. Direct mutation is rejected while Yjs collaboration is enabled or the page is archived; shared title/block edits use the collaboration WebSocket and snapshot endpoint.
+      description: Owner only for unshared, non-archived pages. Direct mutation is rejected while Yjs collaboration is enabled or the page is archived; shared title/block edits use the collaboration WebSocket and snapshot endpoint. For this partial-page response, pageContentVersion is included only when basePageContentVersion proves the caller held a current full-page snapshot; pageContentVersionAuthoritative reports that decision explicitly.
       parameters:
         - in: path
           name: blockId

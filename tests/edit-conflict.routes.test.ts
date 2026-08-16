@@ -6,7 +6,8 @@ const database = vi.hoisted(() => ({
   block: {} as Record<string, unknown>,
   query: vi.fn(),
   queryOne: vi.fn(),
-  execute: vi.fn()
+  execute: vi.fn(),
+  afterTransaction: null as null | (() => void | Promise<void>)
 }));
 
 vi.mock("../src/lib/db.js", () => ({
@@ -15,8 +16,11 @@ vi.mock("../src/lib/db.js", () => ({
     queryOne: database.queryOne,
     execute: database.execute
   },
-  transaction: async (fn: (client: unknown) => unknown) =>
-    fn({ query: database.query, queryOne: database.queryOne, execute: database.execute })
+  transaction: async (fn: (client: unknown) => unknown) => {
+    const result = await fn({ query: database.query, queryOne: database.queryOne, execute: database.execute });
+    await database.afterTransaction?.();
+    return result;
+  }
 }));
 
 import { createApp } from "../src/app.js";
@@ -68,6 +72,7 @@ beforeEach(() => {
   database.query.mockReset();
   database.queryOne.mockReset();
   database.execute.mockReset();
+  database.afterTransaction = null;
 
   database.query.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
     if (sql.includes("SELECT id, parent_block_id, type, edit_version FROM blocks") && sql.includes("FOR UPDATE")) {
@@ -130,11 +135,12 @@ describe("Optimistic edit conflict protection", () => {
     const first = await request(createApp())
       .patch(`/api/blocks/${database.block.id}`)
       .set("Authorization", `Bearer ${token}`)
-      .send({ markdown: "Newer block", expectedVersion: 1 })
+      .send({ markdown: "Newer block", expectedVersion: 1, basePageContentVersion: 1 })
       .expect(200);
 
     expect(first.body.block.version).toBe(2);
     expect(first.body.pageContentVersion).toBe(2);
+    expect(first.body.pageContentVersionAuthoritative).toBe(true);
     expect(database.page.content_version).toBe(2);
 
     const stale = await request(createApp())
@@ -152,18 +158,19 @@ describe("Optimistic edit conflict protection", () => {
     const first = await request(createApp())
       .patch(`/api/blocks/${database.block.id}`)
       .set("Authorization", `Bearer ${token}`)
-      .send({ markdown: "Committed block", expectedVersion: 1, mutationId })
+      .send({ markdown: "Committed block", expectedVersion: 1, basePageContentVersion: 1, mutationId })
       .expect(200);
 
     const replay = await request(createApp())
       .patch(`/api/blocks/${database.block.id}`)
       .set("Authorization", `Bearer ${token}`)
-      .send({ markdown: "Committed block", expectedVersion: 1, mutationId })
+      .send({ markdown: "Committed block", expectedVersion: 1, basePageContentVersion: 1, mutationId })
       .expect(200);
 
     expect(first.body.block.version).toBe(2);
     expect(replay.body.block.version).toBe(2);
     expect(replay.body.pageContentVersion).toBe(2);
+    expect(replay.body.pageContentVersionAuthoritative).toBe(true);
     expect(database.block.markdown).toBe("Committed block");
   });
 
@@ -172,17 +179,44 @@ describe("Optimistic edit conflict protection", () => {
     await request(createApp())
       .patch(`/api/blocks/${database.block.id}`)
       .set("Authorization", `Bearer ${token}`)
-      .send({ markdown: "Committed block", expectedVersion: 1, mutationId })
+      .send({ markdown: "Committed block", expectedVersion: 1, basePageContentVersion: 1, mutationId })
       .expect(200);
 
     const collision = await request(createApp())
       .patch(`/api/blocks/${database.block.id}`)
       .set("Authorization", `Bearer ${token}`)
-      .send({ markdown: "Silently lost block", expectedVersion: 1, mutationId })
+      .send({ markdown: "Silently lost block", expectedVersion: 1, basePageContentVersion: 1, mutationId })
       .expect(409);
 
     expect(collision.body.error.code).toBe("MUTATION_ID_REUSED");
     expect(database.block.markdown).toBe("Committed block");
+  });
+
+  it("does not certify a stale full-page snapshot after updating one still-current block", async () => {
+    database.page.content_version = 2;
+
+    const response = await request(createApp())
+      .patch(`/api/blocks/${database.block.id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ markdown: "Local block", expectedVersion: 1, basePageContentVersion: 1 })
+      .expect(200);
+
+    expect(database.page.content_version).toBe(3);
+    expect(response.body.pageContentVersionAuthoritative).toBe(false);
+    expect(response.body).not.toHaveProperty("pageContentVersion");
+    expect(response.body.block.markdown).toBe("Local block");
+  });
+
+  it("keeps legacy partial-mutation responses conservative when no page snapshot base is supplied", async () => {
+    const response = await request(createApp())
+      .patch(`/api/blocks/${database.block.id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ markdown: "Legacy client block", expectedVersion: 1 })
+      .expect(200);
+
+    expect(database.page.content_version).toBe(2);
+    expect(response.body.pageContentVersionAuthoritative).toBe(false);
+    expect(response.body).not.toHaveProperty("pageContentVersion");
   });
 
   it("rejects a stale page-title write instead of overwriting the newer title", async () => {
@@ -202,6 +236,26 @@ describe("Optimistic edit conflict protection", () => {
 
     expect(stale.body.error.code).toBe("PAGE_EDIT_CONFLICT");
     expect(database.page.title).toBe("Newer title");
+  });
+
+  it("returns the page version produced by its own transaction, not a later writer", async () => {
+    database.afterTransaction = () => {
+      database.page.title = "Intervening title";
+      database.page.edit_version = 3;
+      database.page.last_mutation_id = "mut_intervening";
+      database.page.last_mutation_hash = "f".repeat(64);
+    };
+
+    const response = await request(createApp())
+      .patch(`/api/pages/${database.page.id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ title: "Committed title", expectedVersion: 1 })
+      .expect(200);
+
+    expect(response.body.page.title).toBe("Committed title");
+    expect(response.body.page.version).toBe(2);
+    expect(database.page.title).toBe("Intervening title");
+    expect(database.page.edit_version).toBe(3);
   });
 
   it("returns the committed page update when the same mutation is retried", async () => {
