@@ -592,6 +592,11 @@ components:
           type: integer
           minimum: 1
           description: Required when the legacy DELETE endpoint archives rather than permanently deletes.
+        mutationId:
+          type: string
+          maxLength: 64
+          pattern: '^[a-zA-Z0-9_-]+$'
+          description: Required for permanent deletion. Retrying the exact same deletion with the same ID replays the committed receipt instead of deleting again.
     PageDeletionSnapshot:
       type: object
       required: [snapshot, pageIds, pages, counts]
@@ -1552,7 +1557,7 @@ paths:
           schema:
             type: boolean
       requestBody:
-        description: Supply expectedSnapshot for permanent deletion, or expectedVersion for legacy archival.
+        description: Supply expectedSnapshot and mutationId for permanent deletion, or expectedVersion for legacy archival.
         content:
           application/json:
             schema:

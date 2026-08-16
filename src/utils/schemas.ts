@@ -34,6 +34,8 @@ export const usernameSchema = z
 
 export const routeIdSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/, "Invalid resource identifier");
 
+export const safeVersionSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
+
 export const idParamSchema = z.object({
   pageId: routeIdSchema.optional(),
   blockId: routeIdSchema.optional()

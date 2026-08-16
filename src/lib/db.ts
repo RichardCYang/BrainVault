@@ -30,6 +30,10 @@ export const pool: Pool = mariadb.createPool({
   connectionLimit: env.DATABASE_CONNECTION_LIMIT,
   insertIdAsNumber: true,
   bigIntAsNumber: true,
+  // Version counters are BIGINT UNSIGNED. Never approximate a value outside
+  // JavaScript's exact integer range: an approximate optimistic-lock token can
+  // turn a stale write/delete into an accepted destructive mutation.
+  checkNumberRange: true,
   namedPlaceholders: false,
   // Never let an operator's permissive server default turn an invalid write
   // into a warning plus silent truncation/coercion.

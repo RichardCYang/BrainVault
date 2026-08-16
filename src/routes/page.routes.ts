@@ -7,6 +7,7 @@ import { removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { renderBlockHtml, sanitizeRenderedHtml } from "../lib/markdown.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
 import { assessPageCreateMutationReceipt, type PageCreateMutationReceipt } from "../lib/page-create-mutation.js";
+import { assessPageDeleteMutationReceipt, type PageDeleteMutationReceipt } from "../lib/page-delete-mutation.js";
 import {
   assessPageVersionResetMutationReceipt,
   type PageVersionResetMutationReceipt
@@ -39,12 +40,14 @@ import {
 import { requireAuth } from "../middleware/auth.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { buildBlockTree } from "../utils/blockTree.js";
-import { idParamSchema, requireUser, routeIdSchema } from "../utils/schemas.js";
+import { idParamSchema, requireUser, routeIdSchema, safeVersionSchema } from "../utils/schemas.js";
 import type { BlockRow, PageRow, TagRow } from "../types/domain.js";
 
 export const pageRouter = Router();
 
 pageRouter.use(requireAuth);
+
+const mutationIdSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
 
 const pageListCursorSchema = z.object({
   createdAt: z.string().regex(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/),
@@ -84,7 +87,7 @@ const createPageSchema = z.object({
   isCollection: z.boolean().optional().default(false),
   initialMarkdown: z.string().max(20_000).optional(),
   tags: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
-  mutationId: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/).optional()
+  mutationId: mutationIdSchema.optional()
 });
 
 const updatePageSchema = z.object({
@@ -96,13 +99,13 @@ const updatePageSchema = z.object({
   isArchived: z.boolean().optional(),
   parentPageId: z.string().min(1).nullable().optional(),
   tags: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
-  expectedVersion: z.number().int().min(1),
-  mutationId: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/).optional()
+  expectedVersion: safeVersionSchema,
+  mutationId: mutationIdSchema.optional()
 });
 
 const tagSchema = z.object({
   tags: z.array(z.string().trim().min(1).max(50)).max(20),
-  expectedVersion: z.number().int().min(1)
+  expectedVersion: safeVersionSchema
 });
 
 const deletePageQuerySchema = z.object({
@@ -115,7 +118,8 @@ const deletePageQuerySchema = z.object({
 const deletePageBodySchema = z
   .object({
     expectedSnapshot: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-    expectedVersion: z.number().int().min(1).optional()
+    expectedVersion: safeVersionSchema.optional(),
+    mutationId: mutationIdSchema.optional()
   })
   .default({});
 
@@ -130,7 +134,7 @@ const pageVersionParamsSchema = z.object({
 });
 
 const pageVersionResetSchema = z.object({
-  mutationId: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/)
+  mutationId: mutationIdSchema
 });
 
 function isDuplicateEntryError(error: unknown) {
@@ -967,7 +971,6 @@ pageRouter.delete(
       const pageId = String(req.params.pageId);
       const query = getValidatedQuery<z.infer<typeof deletePageQuerySchema>>(req);
       const body = req.body as z.infer<typeof deletePageBodySchema>;
-      await assertOwnedPage(pageId, user.id);
 
       if (query.permanent) {
         if (!body.expectedSnapshot) {
@@ -977,8 +980,63 @@ pageRouter.delete(
             "Refresh the page deletion snapshot before permanently deleting this page."
           );
         }
+        if (!body.mutationId) {
+          throw new ApiError(
+            400,
+            "MUTATION_ID_REQUIRED",
+            "A mutation id is required for permanent page deletion."
+          );
+        }
+
         const expectedSnapshot = body.expectedSnapshot;
+        const mutationHash = createMutationRequestHash({
+          kind: "PAGE_DELETE",
+          pageId,
+          expectedSnapshot
+        });
         const deletion = await transaction(async (client) => {
+          // Serialize receipt creation for this actor before taking page locks.
+          // The receipt deliberately has no FK to pages so it survives deletion
+          // and can reconcile an unknown COMMIT outcome.
+          const actor = await client.queryOne<{ id: string }>(
+            "SELECT id FROM users WHERE id = ? FOR UPDATE",
+            [user.id]
+          );
+          if (!actor) throw new ApiError(401, "UNAUTHENTICATED", "Authentication is required");
+
+          const receipt = await client.queryOne<PageDeleteMutationReceipt>(
+            `SELECT page_id, request_hash, page_ids, attachment_ids
+             FROM page_delete_mutations
+             WHERE actor_id = ? AND mutation_id = ?
+             FOR UPDATE`,
+            [user.id, body.mutationId]
+          );
+          if (receipt) {
+            const assessment = assessPageDeleteMutationReceipt(receipt, {
+              pageId,
+              requestHash: mutationHash
+            });
+            if (assessment.kind === "collision") {
+              throw new ApiError(
+                409,
+                "MUTATION_ID_REUSED",
+                "This mutation id was already used for a different page deletion request. No additional page was deleted."
+              );
+            }
+            if (assessment.kind === "incomplete") {
+              throw new ApiError(
+                500,
+                "PAGE_DELETE_RECEIPT_INCOMPLETE",
+                "The page deletion receipt is incomplete. The deletion was not repeated."
+              );
+            }
+            return {
+              attachmentIds: assessment.attachmentIds,
+              pageIds: assessment.pageIds,
+              replayed: true
+            };
+          }
+
           const treeRows = await getOwnedPageTreeRows(user.id, client, true);
           const subtreeRows = getPageSubtreeRows(pageId, treeRows);
           await assertCollaborationMaterialized(client, subtreeRows.map((page) => page.id));
@@ -988,18 +1046,36 @@ pageRouter.delete(
           for (const page of [...subtreeRows].reverse()) {
             await client.execute("DELETE FROM pages WHERE id = ? AND owner_id = ?", [page.id, user.id]);
           }
-          return {
-            attachmentIds: blockRows.filter((row) => row.type === "ATTACHMENT").map((row) => row.id),
-            pageIds: subtreeRows.map((row) => row.id)
-          };
+
+          const attachmentIds = blockRows
+            .filter((row) => row.type === "ATTACHMENT")
+            .map((row) => row.id);
+          const pageIds = subtreeRows.map((row) => row.id);
+          await client.execute(
+            `INSERT INTO page_delete_mutations
+               (actor_id, mutation_id, page_id, request_hash, page_ids, attachment_ids)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [
+              user.id,
+              body.mutationId,
+              pageId,
+              mutationHash,
+              JSON.stringify(pageIds),
+              JSON.stringify(attachmentIds)
+            ]
+          );
+          return { attachmentIds, pageIds, replayed: false };
         });
 
         for (const deletedPageId of deletion.pageIds) disconnectPageCollaborators(deletedPageId, "Page was deleted");
+        // Filesystem cleanup is idempotent and intentionally repeats on receipt
+        // replay in case the first response was lost immediately after COMMIT.
         await removeDeletedAttachmentFiles(user.id, deletion.attachmentIds);
         res.status(204).send();
         return;
       }
 
+      await assertOwnedPage(pageId, user.id);
       if (!body.expectedVersion) {
         throw new ApiError(
           400,

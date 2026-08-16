@@ -69,7 +69,7 @@ import {
 } from "../middleware/attachment-rate-limit.js";
 import { bookmarkPreviewRateLimit } from "../middleware/bookmark-rate-limit.js";
 import { validate } from "../middleware/validate.js";
-import { blockTypeSchema, idParamSchema, metadataSchema, requireUser, routeIdSchema } from "../utils/schemas.js";
+import { blockTypeSchema, idParamSchema, metadataSchema, requireUser, routeIdSchema, safeVersionSchema } from "../utils/schemas.js";
 import type { BlockRow, PageRow } from "../types/domain.js";
 
 export const blockRouter = Router();
@@ -98,20 +98,20 @@ const updateBlockSchema = z.object({
   parentBlockId: z.string().min(1).nullable().optional(),
   sortOrder: blockSortOrderSchema.optional(),
   metadata: metadataSchema.nullable().optional(),
-  expectedVersion: z.number().int().min(1),
+  expectedVersion: safeVersionSchema,
   mutationId: mutationIdSchema.optional()
 });
 
 const versionSnapshotSchema = z.object({
   id: z.string().min(1).max(64),
-  version: z.number().int().min(1)
+  version: safeVersionSchema
 });
 
 const deleteBlockSchema = z
   .object({
     expectedVersions: z.array(versionSnapshotSchema).max(10_000).optional(),
     preserveChildren: z.boolean().optional().default(false),
-    expectedPageContentVersion: z.number().int().min(1).optional(),
+    expectedPageContentVersion: safeVersionSchema.optional(),
     mutationId: mutationIdSchema.optional()
   })
   .superRefine((body, context) => {
@@ -266,7 +266,7 @@ const reorderSchema = z.object({
         id: routeIdSchema,
         sortOrder: blockSortOrderSchema,
         parentBlockId: routeIdSchema.nullable().optional(),
-        expectedVersion: z.number().int().min(1)
+        expectedVersion: safeVersionSchema
       })
     )
     .min(1)

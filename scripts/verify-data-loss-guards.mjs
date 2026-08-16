@@ -1143,13 +1143,13 @@ const permanentDelete = section(client, "async function deleteNavigationTarget()
 assertBefore(
   permanentDelete,
   "assertNoPendingLocalPageDraftsForPages(serverPageIds",
-  "await api(`/api/pages/${target.id}?permanent=true`",
+  "await submitPageDeleteTask(task, authenticationScope)",
   "permanent page deletion"
 );
 assertBefore(
   permanentDelete,
   "assertNoPendingLocalCollaborationRecoveryForPages(serverPageIds)",
-  "await api(`/api/pages/${target.id}?permanent=true`",
+  "await submitPageDeleteTask(task, authenticationScope)",
   "permanent page deletion Yjs recovery"
 );
 

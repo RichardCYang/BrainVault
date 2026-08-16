@@ -233,7 +233,7 @@ test("the production wiring preserves identity while removing repeated high-cost
     server,
     /UPDATE page_yjs_updates[\s\S]*SET update_data = \?, is_snapshot = 1[\s\S]*WHERE page_id = \? AND id = \?/
   );
-  assert.match(server, /const canonicalIncrementalUpdate = Buffer\.from\(candidate\.incrementalUpdate\)/);
+  assert.match(server, /const canonicalIncrementalUpdate = Buffer\.from\(validation\.incrementalUpdate\)/);
   assert.match(server, /const envelope = updateEnvelope\(result\.updateId, canonicalIncrementalUpdate\)/);
   assert.match(server, /nextUpdateBytes: canonicalIncrementalUpdate\.length/);
   assert.match(server, /updateEnvelope\(room\.maxUpdateId, room\.stateUpdate\)/);

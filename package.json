@@ -73,7 +73,9 @@
     "reproduce:block-preserve-children-delete": "node --experimental-strip-types scripts/reproduce-block-preserve-children-delete-race.mjs",
     "reproduce:authentication-credential-boundary": "node scripts/reproduce-authentication-credential-boundary.mjs",
     "reproduce:database-transport-security": "node --experimental-strip-types scripts/reproduce-database-transport-security.mjs",
-    "reproduce:custom-icon-resource-boundary": "node --experimental-strip-types scripts/reproduce-custom-icon-resource-boundary.mjs"
+    "reproduce:custom-icon-resource-boundary": "node --experimental-strip-types scripts/reproduce-custom-icon-resource-boundary.mjs",
+    "reproduce:page-delete-response-loss": "node scripts/reproduce-page-delete-response-loss.mjs",
+    "reproduce:bigint-version-collision": "node scripts/reproduce-bigint-version-collision.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.2",

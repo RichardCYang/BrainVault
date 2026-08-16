@@ -86,6 +86,7 @@ import {
 import { assertCollaborationExitSafe } from "./collaboration-exit-guard.js";
 import { createCollaborationRecoveryStore } from "./collaboration-recovery-store.js";
 import { createPageTransitionLock } from "./page-transition-lock.js";
+import { createRecoveryStoragePersistenceGuard } from "./recovery-storage-persistence.js";
 import {
   BLOCK_MARKDOWN_MAX_LENGTH,
   requirePageTitleWithinLimit
@@ -166,6 +167,7 @@ const pageDraftStore = createPageDraftStore(window.localStorage, { sourceId: pag
 const collaborationRecoveryStore = createCollaborationRecoveryStore(window.localStorage, {
   prefix: collaborationRecoveryStoragePrefix
 });
+const recoveryStoragePersistence = createRecoveryStoragePersistenceGuard(window.navigator.storage);
 const pageTransitionLock = createPageTransitionLock(window.localStorage, {
   prefix: pageTransitionStoragePrefix,
   sourceId: pageDraftSourceId,
@@ -208,6 +210,7 @@ const pendingWorkspaceCreateTasks = new Map();
 const pendingPageVersionResetTasks = new Map();
 const pendingBlockCreateTasks = new Map();
 const pendingBlockDeleteTasks = new Map();
+const pendingPageDeleteTasks = new Map();
 const pendingAttachmentCreateTasks = new Map();
 const pageModeMutationFences = new Map();
 const navigationPreferenceSaveQueues = new Map();
@@ -1307,6 +1310,7 @@ function acceptRotatedAuthenticationSession() {
   pendingPageVersionResetTasks.clear();
   pendingBlockCreateTasks.clear();
   pendingBlockDeleteTasks.clear();
+  pendingPageDeleteTasks.clear();
   pendingAttachmentCreateTasks.clear();
   setWorkspaceCreateBusy(false);
   setAuthenticated(true);
@@ -2481,6 +2485,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   pendingPageVersionResetTasks.clear();
   pendingBlockCreateTasks.clear();
   pendingBlockDeleteTasks.clear();
+  pendingPageDeleteTasks.clear();
   pendingAttachmentCreateTasks.clear();
   pageModeMutationFences.clear();
   discardNavigationPreferenceSaves();
@@ -5931,7 +5936,7 @@ function getPageActionsMenuItems() {
 }
 
 function isPageReadOnly() {
-  return state.pageMode !== pageModes.WRITE;
+  return state.pageMode !== pageModes.WRITE || !recoveryStoragePersistence.isPersistent();
 }
 
 function isPageOwner(page = state.selectedPage) {
@@ -6750,7 +6755,30 @@ async function setPageMode(nextMode, { announce = true } = {}) {
     || isPageModeMutationFenced()
   ) return;
   const normalizedMode = nextMode === pageModes.WRITE ? pageModes.WRITE : pageModes.READ;
-  if (state.pageMode === normalizedMode) return;
+
+  if (normalizedMode === pageModes.WRITE && !recoveryStoragePersistence.isPersistent()) {
+    state.pageModeChanging = true;
+    syncPageModeUi();
+    try {
+      if (!(await recoveryStoragePersistence.ensurePersistent())) {
+        state.pageMode = pageModes.READ;
+        state.pendingFocusBlockId = null;
+        if (announce) setStatus(t("status.durableRecoveryStorageUnavailable"), true);
+        return;
+      }
+    } finally {
+      state.pageModeChanging = false;
+      syncPageModeUi();
+    }
+  }
+
+  // A restored route or recovery flow can already desire WRITE while the
+  // effective UI remained read-only until persistence was granted.
+  if (state.pageMode === normalizedMode) {
+    syncPageModeUi();
+    if (announce && normalizedMode === pageModes.WRITE) setStatus(t("status.writeModeEnabled"));
+    return;
+  }
 
   state.pageModeChanging = true;
   syncPageModeUi();
@@ -7388,6 +7416,79 @@ async function createNavigationSubpage() {
   );
 }
 
+function findPendingPageDeleteTask(authenticationScope, pageId) {
+  for (const task of pendingPageDeleteTasks.values()) {
+    if (
+      task.pageId === pageId
+      && task.authenticationGeneration === authenticationScope.generation
+      && task.targetKey === authenticationScope.targetKey
+    ) return task;
+  }
+  return null;
+}
+
+function getPageDeleteTask(authenticationScope, pageId, expectedSnapshot, pageIds) {
+  const pendingTask = findPendingPageDeleteTask(authenticationScope, pageId);
+  if (pendingTask) return pendingTask;
+
+  const taskKey = [
+    authenticationScope.generation,
+    authenticationScope.targetKey,
+    pageId,
+    expectedSnapshot
+  ].join("\u0000");
+  const task = {
+    taskKey,
+    authenticationGeneration: authenticationScope.generation,
+    targetKey: authenticationScope.targetKey,
+    pageId,
+    mutationId: createMutationId(),
+    expectedSnapshot,
+    pageIds: Object.freeze([...pageIds]),
+    attempted: false,
+    inFlight: false
+  };
+  pendingPageDeleteTasks.set(taskKey, task);
+  return task;
+}
+
+async function submitPageDeleteTask(task, authenticationScope) {
+  if (task.inFlight) throw new Error(t("status.pageTransitionBusy"));
+  task.inFlight = true;
+  let attempt = 0;
+
+  try {
+    while (attempt < 2) {
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      try {
+        task.attempted = true;
+        const data = await submitWithFreshMutationIdOnReuse(task, () => {
+          if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+          return api(`/api/pages/${encodeURIComponent(task.pageId)}?permanent=true`, {
+            method: "DELETE",
+            body: { expectedSnapshot: task.expectedSnapshot, mutationId: task.mutationId }
+          });
+        });
+        if (data === null && !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        if (pendingPageDeleteTasks.get(task.taskKey) === task) pendingPageDeleteTasks.delete(task.taskKey);
+        return data;
+      } catch (error) {
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        attempt += 1;
+        if (!isAmbiguousApiError(error) || attempt >= 2) {
+          if (!isAmbiguousApiError(error) && pendingPageDeleteTasks.get(task.taskKey) === task) {
+            pendingPageDeleteTasks.delete(task.taskKey);
+          }
+          throw error;
+        }
+      }
+    }
+    return null;
+  } finally {
+    task.inFlight = false;
+  }
+}
+
 async function deleteNavigationTarget() {
   const target = state.activeNavigationMenuTarget;
   if (!target) return;
@@ -7412,39 +7513,69 @@ async function deleteNavigationTarget() {
     const fallbackCollectionId = isCollection
       ? defaultCollectionKey
       : getCollectionRootId(target.id) ?? defaultCollectionKey;
+    const authenticationScope = captureAuthenticatedSessionScope();
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
+      throw new Error(t("errors.UNAUTHENTICATED"));
+    }
 
-    const deletionSnapshot = await api(`/api/pages/${target.id}/deletion-snapshot`);
-    const localPageIds = [...subtreeIds].sort();
-    const serverPageIds = Array.isArray(deletionSnapshot.pageIds) ? [...deletionSnapshot.pageIds].sort() : [];
-    const serverPages = new Map(
-      (Array.isArray(deletionSnapshot.pages) ? deletionSnapshot.pages : []).map((page) => [page.id, page])
-    );
-    const localPages = new Map(
-      [...state.allPages, ...(state.selectedPage ? [state.selectedPage] : [])].map((page) => [page.id, page])
-    );
-    if (
-      localPageIds.length !== serverPageIds.length ||
-      localPageIds.some((pageId, index) => pageId !== serverPageIds[index]) ||
-      localPageIds.some((pageId) => {
-        const localPage = localPages.get(pageId);
-        const serverPage = serverPages.get(pageId);
-        return (
-          !localPage ||
-          !serverPage ||
-          Number(localPage.version ?? 1) !== Number(serverPage.version ?? 1) ||
-          Number(localPage.contentVersion ?? 1) !== Number(serverPage.contentVersion ?? 1)
-        );
-      })
-    ) {
-      closeNavigationContextMenu();
-      await loadPages(elements.searchInput.value.trim(), state.activeTag);
-      throw new Error(t("errors.PAGE_DELETE_SCOPE_CHANGED"));
+    // If a previous request reached COMMIT but its response was lost, querying
+    // a fresh snapshot first can return 404 and strand the only mutation id
+    // capable of reconciling the receipt. Reuse the pending task first.
+    let task = findPendingPageDeleteTask(authenticationScope, target.id);
+    let serverPageIds;
+
+    if (task) {
+      serverPageIds = [...task.pageIds];
+      const localPageIds = [...subtreeIds].sort();
+      const pendingPageIds = [...serverPageIds].sort();
+      if (
+        localPageIds.length !== pendingPageIds.length
+        || localPageIds.some((pageId, index) => pageId !== pendingPageIds[index])
+      ) {
+        closeNavigationContextMenu();
+        await loadPages(elements.searchInput.value.trim(), state.activeTag);
+        throw new Error(t("errors.PAGE_DELETE_SCOPE_CHANGED"));
+      }
+    } else {
+      const deletionSnapshot = await api(`/api/pages/${target.id}/deletion-snapshot`);
+      const localPageIds = [...subtreeIds].sort();
+      serverPageIds = Array.isArray(deletionSnapshot.pageIds) ? [...deletionSnapshot.pageIds].sort() : [];
+      const serverPages = new Map(
+        (Array.isArray(deletionSnapshot.pages) ? deletionSnapshot.pages : []).map((page) => [page.id, page])
+      );
+      const localPages = new Map(
+        [...state.allPages, ...(state.selectedPage ? [state.selectedPage] : [])].map((page) => [page.id, page])
+      );
+      if (
+        localPageIds.length !== serverPageIds.length
+        || localPageIds.some((pageId, index) => pageId !== serverPageIds[index])
+        || localPageIds.some((pageId) => {
+          const localPage = localPages.get(pageId);
+          const serverPage = serverPages.get(pageId);
+          return (
+            !localPage
+            || !serverPage
+            || Number(localPage.version ?? 1) !== Number(serverPage.version ?? 1)
+            || Number(localPage.contentVersion ?? 1) !== Number(serverPage.contentVersion ?? 1)
+          );
+        })
+      ) {
+        closeNavigationContextMenu();
+        await loadPages(elements.searchInput.value.trim(), state.activeTag);
+        throw new Error(t("errors.PAGE_DELETE_SCOPE_CHANGED"));
+      }
+      task = getPageDeleteTask(authenticationScope, target.id, deletionSnapshot.snapshot, serverPageIds);
     }
 
     const ok = window.confirm(
       t(isCollection ? "confirm.deleteCollection" : "confirm.deletePage", { title: target.title })
     );
-    if (!ok) return;
+    if (!ok) {
+      if (!task.attempted && pendingPageDeleteTasks.get(task.taskKey) === task) {
+        pendingPageDeleteTasks.delete(task.taskKey);
+      }
+      return;
+    }
 
     closeNavigationContextMenu();
     setStatus(t(isCollection ? "status.deletingCollection" : "status.deletingPage"));
@@ -7452,12 +7583,12 @@ async function deleteNavigationTarget() {
     await withWorkspacePersistenceTransition("page-delete", async () => {
       // Another tab may hold direct-mode drafts or a newer Yjs document that
       // has not reached the server and is absent from the deletion snapshot.
+      // Re-check this fence on every ambiguous retry as well: a new local-only
+      // edit made after the first response loss must never be deleted by the
+      // older snapshot.
       assertNoPendingLocalPageDraftsForPages(serverPageIds, "status.destructiveLocalDraftsPending");
       assertNoPendingLocalCollaborationRecoveryForPages(serverPageIds);
-      await api(`/api/pages/${target.id}?permanent=true`, {
-        method: "DELETE",
-        body: { expectedSnapshot: deletionSnapshot.snapshot }
-      });
+      await submitPageDeleteTask(task, authenticationScope);
     });
     if (state.user?.id) {
       checkDraftStoreWrite(pageDraftStore.removePages(state.user.id, serverPageIds, pageDraftSourceId));
@@ -8217,9 +8348,10 @@ async function startPageCollaboration(page = state.selectedPage) {
       api,
       onBeforeLocalRecoveryApply: () => {
         if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) return false;
-        if (isPageReadOnly()) {
+        if (isPageReadOnly() && recoveryStoragePersistence.isPersistent()) {
           // A crash-recovery Yjs update is a real local edit. Make that transition
-          // explicit before collaboration.js applies or synchronizes the update.
+          // explicit only when the origin has persistent recovery storage; otherwise
+          // show/synchronize the recovered data without enabling new local edits.
           state.pageMode = pageModes.WRITE;
           state.pendingFocusBlockId = null;
           syncPageModeUi();
@@ -14143,7 +14275,7 @@ async function openPage(pageId, { skipFlush = false, requestedPageMode = null } 
       if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
       closeSharePageDialog({ restoreFocus: false });
       const normalizedRequestedPageMode = requestedPageMode === pageModes.WRITE
-        ? pageModes.WRITE
+        ? (recoveryStoragePersistence.isPersistent() ? pageModes.WRITE : pageModes.READ)
         : requestedPageMode === pageModes.READ
           ? pageModes.READ
           : null;
@@ -14159,9 +14291,10 @@ async function openPage(pageId, { skipFlush = false, requestedPageMode = null } 
         ? { title: null, blocks: [], blockOrder: null }
         : applyPersistedPageDraft(data.page);
       if (recovery.title || recovery.blocks.length > 0 || recovery.blockOrder) {
-        // Recovery content is itself an edit. Even when this is a same-page refresh,
-        // never activate a durable local draft while the UI still claims READ mode.
-        state.pageMode = pageModes.WRITE;
+        // Recovery content is itself an edit. Only enable further local mutation if
+        // the origin is persistent; otherwise keep recovered content visible/read-only
+        // while the existing save/retry machinery attempts to synchronize it.
+        state.pageMode = recoveryStoragePersistence.isPersistent() ? pageModes.WRITE : pageModes.READ;
       }
       state.selectedPage = data.page;
       state.workspaceView = "page";
@@ -14219,6 +14352,7 @@ async function boot() {
   }
 
   if (result.outcome === "ready") {
+    await recoveryStoragePersistence.refresh();
     renderPages();
     await restoreWorkspaceLocationFromHash({ fallbackToHome: true });
     if (!isCurrent()) return;

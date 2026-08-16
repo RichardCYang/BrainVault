@@ -25,6 +25,10 @@ function createHarness(blocks = [], { initialMode = "read", materialization = nu
   const context = {
     state,
     pageModes,
+    recoveryStoragePersistence: {
+      isPersistent() { return true; },
+      async ensurePersistent() { return true; }
+    },
     syncPageModeUi() {},
     async flushPendingPageEdits() { return materialization; },
     applyMaterializedHtmlCaches(result) {

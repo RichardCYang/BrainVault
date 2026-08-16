@@ -180,10 +180,10 @@ describe("Data-loss prevention integration", () => {
     );
     expect(deleteBody).toContain("assertNoPendingLocalCollaborationRecoveryForPages(serverPageIds)");
     expect(deleteBody.indexOf("assertNoPendingLocalPageDraftsForPages(serverPageIds")).toBeLessThan(
-      deleteBody.indexOf('await api(`/api/pages/${target.id}?permanent=true`')
+      deleteBody.indexOf('await submitPageDeleteTask(task, authenticationScope)')
     );
     expect(deleteBody.indexOf("assertNoPendingLocalCollaborationRecoveryForPages(serverPageIds)")).toBeLessThan(
-      deleteBody.indexOf('await api(`/api/pages/${target.id}?permanent=true`')
+      deleteBody.indexOf('await submitPageDeleteTask(task, authenticationScope)')
     );
 
     const restoreStart = client.indexOf("async function restoreUserDataBackup(file,");

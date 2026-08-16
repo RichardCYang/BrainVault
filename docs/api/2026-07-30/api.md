@@ -57,6 +57,8 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 
 `POST /api/pages` accepts an optional `mutationId` (1–64 ASCII letters, digits, `_`, or `-`). The server reserves the owner-scoped mutation receipt in the same transaction as the page, its initial block, tags, and creation-history entry. Retrying the exact same body with the same ID returns the original page. Reusing the ID with different content is rejected with `409 MUTATION_ID_REUSED`. If the original page was later permanently deleted, a replay is rejected rather than silently creating a replacement.
 
+`DELETE /api/pages/:pageId?permanent=true` requires both the latest `expectedSnapshot` and a `mutationId` (1–64 ASCII letters, digits, `_`, or `-`). The deletion receipt is committed in the same transaction as the subtree deletion and intentionally survives the deleted page rows. If the database commit succeeds but the HTTP result is lost, retrying the same request with the same mutation ID returns success without repeating the deletion; reusing the mutation ID for a different request is rejected with `409 MUTATION_ID_REUSED`.
+
 ## Block and attachment creation retry integrity
 
 `POST /api/pages/:pageId/blocks` and multipart `POST /api/pages/:pageId/attachments` accept an optional `mutationId` (1–64 ASCII letters, digits, `_`, or `-`). The server reserves `(actor_id, mutation_id)` in the same transaction before inserting a block; attachment requests reserve the receipt before moving the uploaded file to its durable path. An exact retry returns the original block without adding another history entry, advancing the page content version again, or storing another attachment file.

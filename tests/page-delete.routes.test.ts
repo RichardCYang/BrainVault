@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const database = vi.hoisted(() => ({
   pages: new Map<string, Record<string, unknown>>(),
   blocks: new Map<string, Record<string, unknown>>(),
+  pageDeleteReceipts: new Map<string, Record<string, unknown>>(),
   query: vi.fn(),
   queryOne: vi.fn(),
   execute: vi.fn()
@@ -85,12 +86,16 @@ beforeEach(() => {
     ["blk_child_attachment", makeBlock("blk_child_attachment", "pag_child", "ATTACHMENT")],
     ["blk_grandchild", makeBlock("blk_grandchild", "pag_grandchild")]
   ]);
+  database.pageDeleteReceipts = new Map();
   database.query.mockReset();
   database.queryOne.mockReset();
   database.execute.mockReset();
 
   database.queryOne.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
     if (sql.includes("FROM users WHERE id = ?")) return user;
+    if (sql.includes("FROM page_delete_mutations")) {
+      return database.pageDeleteReceipts.get(`${String(params[0])}\0${String(params[1])}`);
+    }
     if (sql.includes("FROM pages WHERE id = ? AND owner_id = ?")) {
       return database.pages.get(String(params[0]));
     }
@@ -126,6 +131,15 @@ beforeEach(() => {
         if (block.page_id === pageId) database.blocks.delete(blockId);
       }
     }
+    if (sql.includes("INSERT INTO page_delete_mutations")) {
+      const [actorId, mutationId, pageId, requestHash, pageIds, attachmentIds] = params;
+      database.pageDeleteReceipts.set(`${String(actorId)}\0${String(mutationId)}`, {
+        page_id: pageId,
+        request_hash: requestHash,
+        page_ids: pageIds,
+        attachment_ids: attachmentIds
+      });
+    }
     return { affectedRows: 1 };
   });
 });
@@ -137,7 +151,7 @@ describe("Permanent page deletion", () => {
     await request(createApp())
       .delete("/api/pages/pag_collection?permanent=true")
       .set("Authorization", `Bearer ${token}`)
-      .send({ expectedSnapshot: snapshot })
+      .send({ expectedSnapshot: snapshot, mutationId: "mut_page_delete_success" })
       .expect(204);
 
     const deletedPageIds = database.execute.mock.calls
@@ -160,7 +174,7 @@ describe("Permanent page deletion", () => {
     const response = await request(createApp())
       .delete("/api/pages/pag_collection?permanent=true")
       .set("Authorization", `Bearer ${token}`)
-      .send({ expectedSnapshot: snapshot })
+      .send({ expectedSnapshot: snapshot, mutationId: "mut_page_delete_page_conflict" })
       .expect(409);
 
     expect(response.body.error.code).toBe("PAGE_EDIT_CONFLICT");
@@ -175,7 +189,7 @@ describe("Permanent page deletion", () => {
     const response = await request(createApp())
       .delete("/api/pages/pag_collection?permanent=true")
       .set("Authorization", `Bearer ${token}`)
-      .send({ expectedSnapshot: snapshot })
+      .send({ expectedSnapshot: snapshot, mutationId: "mut_page_delete_content_conflict" })
       .expect(409);
 
     expect(response.body.error.code).toBe("PAGE_EDIT_CONFLICT");
@@ -189,7 +203,7 @@ describe("Permanent page deletion", () => {
     const response = await request(createApp())
       .delete("/api/pages/pag_collection?permanent=true")
       .set("Authorization", `Bearer ${token}`)
-      .send({ expectedSnapshot: snapshot })
+      .send({ expectedSnapshot: snapshot, mutationId: "mut_page_delete_block_conflict" })
       .expect(409);
 
     expect(response.body.error.code).toBe("PAGE_EDIT_CONFLICT");
@@ -201,6 +215,33 @@ describe("Permanent page deletion", () => {
     );
   });
 
+  it("replays a committed permanent deletion from its mutation receipt without deleting twice", async () => {
+    const snapshot = await getDeletionSnapshot();
+    const mutationId = "mut_page_delete_replay";
+
+    await request(createApp())
+      .delete("/api/pages/pag_collection?permanent=true")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ expectedSnapshot: snapshot, mutationId })
+      .expect(204);
+
+    const deleteCallsAfterFirstCommit = database.execute.mock.calls.filter(([sql]) =>
+      String(sql).includes("DELETE FROM pages WHERE id = ? AND owner_id = ?")
+    ).length;
+
+    await request(createApp())
+      .delete("/api/pages/pag_collection?permanent=true")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ expectedSnapshot: snapshot, mutationId })
+      .expect(204);
+
+    const deleteCallsAfterReplay = database.execute.mock.calls.filter(([sql]) =>
+      String(sql).includes("DELETE FROM pages WHERE id = ? AND owner_id = ?")
+    ).length;
+    expect(deleteCallsAfterReplay).toBe(deleteCallsAfterFirstCommit);
+    expect(database.pages.size).toBe(0);
+  });
+
   it("requires a fresh deletion snapshot for permanent deletion", async () => {
     const response = await request(createApp())
       .delete("/api/pages/pag_collection?permanent=true")
@@ -208,6 +249,18 @@ describe("Permanent page deletion", () => {
       .expect(400);
 
     expect(response.body.error.code).toBe("PAGE_DELETE_SNAPSHOT_REQUIRED");
+    expect(database.pages.size).toBe(3);
+  });
+
+  it("requires a mutation id for permanent deletion after a snapshot is supplied", async () => {
+    const snapshot = await getDeletionSnapshot();
+    const response = await request(createApp())
+      .delete("/api/pages/pag_collection?permanent=true")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ expectedSnapshot: snapshot })
+      .expect(400);
+
+    expect(response.body.error.code).toBe("MUTATION_ID_REQUIRED");
     expect(database.pages.size).toBe(3);
   });
 });

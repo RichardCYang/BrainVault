@@ -35,7 +35,8 @@ test("POST /api/pages reserves an owner-scoped idempotency receipt before durabl
     .replace(/\r\n/g, "\n");
   const createRoute = section(route, 'pageRouter.post("/",', 'pageRouter.get("/:pageId/cover"');
 
-  assert.match(route, /mutationId: z\.string\(\)\.min\(1\)\.max\(64\)\.regex\(\/\^\[a-zA-Z0-9_-\]\+\$\/\)\.optional\(\)/);
+  assert.match(route, /const mutationIdSchema = z\.string\(\)\.min\(1\)\.max\(64\)\.regex\(\/\^\[a-zA-Z0-9_-\]\+\$\/\)/);
+  assert.match(route, /mutationId: mutationIdSchema\.optional\(\)/);
   assert.match(createRoute, /createMutationRequestHash\(creation\)/);
   assert.match(createRoute, /INSERT INTO page_create_mutations/);
   assert.match(createRoute, /if \(!isDuplicateEntryError\(error\)\) throw error;/);
