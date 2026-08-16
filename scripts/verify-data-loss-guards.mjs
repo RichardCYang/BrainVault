@@ -957,6 +957,26 @@ assertBefore(
   "applyPageSummaryUpdate(state.selectedPage.id, { title })",
   "direct title durability"
 );
+assertBefore(
+  scheduleTitleSource,
+  "if (!elements.pageTitle.value.trim()) {",
+  "const title = normalizePageTitle(elements.pageTitle.value);",
+  "transient blank title guard"
+);
+assert(
+  scheduleTitleSource.includes("pageDraftStore.removeTitle(scope.userId, scope.pageId, draftSourceId)"),
+  "Clearing a title can leave an older durable draft eligible for recovery"
+);
+const saveTitleNowSource = section(client, "async function savePageTitleNow(", "function schedulePageTitleSave(");
+assert(
+  saveTitleNowSource.includes("if (!elements.pageTitle.value.trim()) return null;"),
+  "A focused transient blank title can still be normalized and committed as the fallback title"
+);
+const toggleMarkdownSource = section(client, "function parseToggleMarkdown(", "function getToggleMarkdownFromRow(");
+assert(
+  !toggleMarkdownSource.includes("slice(0, toggleTitleMaxLength)"),
+  "Valid TOGGLE markdown can still be silently truncated by the editor round-trip"
+);
 
 let helperAppliedAfterRejectedWrite = false;
 let helperRejectedWithDurabilityError = false;

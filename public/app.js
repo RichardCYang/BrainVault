@@ -1885,7 +1885,10 @@ const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
     (pageTitleEditRevision > task.editRevision || pageTitleTaskId > task.taskId);
   const committedPage = rebaseCommittedPageTitle(
     data.page,
-    hasNewerLocalTitle ? latestStoredTitle?.value ?? normalizePageTitle(elements.pageTitle.value) : null
+    hasNewerLocalTitle
+      ? latestStoredTitle?.value
+        ?? (elements.pageTitle.value.trim() ? normalizePageTitle(elements.pageTitle.value) : currentPage?.title ?? data.page.title)
+      : null
   );
 
   if (state.selectedPage?.id === task.pageId) {
@@ -6349,7 +6352,10 @@ function syncPageModeUi() {
 function hasPendingPageEdits() {
   if (!state.selectedPage || state.workspaceView !== "page") return false;
   if (isCollaborativePage()) return Boolean(state.collaborationSession?.hasPendingChanges);
-  if (pageTitleSaveTimer !== null || pageTitleSaveQueue.busy || pageTitleSavedRevision < pageTitleEditRevision) return true;
+  const hasCommittableTitleEdit =
+    pageTitleSaveTimer !== null
+    || (pageTitleSavedRevision < pageTitleEditRevision && Boolean(elements.pageTitle.value.trim()));
+  if (pageTitleSaveQueue.busy || hasCommittableTitleEdit) return true;
   if (blockSaveTimers.size > 0) return true;
   if ([...blockSaveQueues.values()].some((queue) => queue.busy)) return true;
   if (pendingBlockOrderTask) return true;
@@ -6759,7 +6765,9 @@ async function flushPendingPageEdits({ keepalive = false, allowLocked = false, c
   if (!(allowLocked ? canPersistSelectedPage() : canEditSelectedPage())) return;
 
   const titleWasPending = pageTitleSaveTimer !== null;
-  const shouldSaveTitle = titleWasPending || pageTitleSavedRevision < pageTitleEditRevision;
+  const titleHasCommitValue = Boolean(elements.pageTitle.value.trim());
+  const shouldSaveTitle =
+    titleHasCommitValue && (titleWasPending || pageTitleSavedRevision < pageTitleEditRevision);
   window.clearTimeout(pageTitleSaveTimer);
   pageTitleSaveTimer = null;
 
@@ -8880,17 +8888,15 @@ function getBlockMetadata(block) {
 function parseToggleMarkdown(value) {
   const normalized = String(value ?? "").replace(/\r\n?/g, "\n");
   const newlineIndex = normalized.indexOf("\n");
-  if (newlineIndex < 0) return { title: normalized.slice(0, toggleTitleMaxLength), body: "" };
+  if (newlineIndex < 0) return { title: normalized, body: "" };
   return {
-    title: normalized.slice(0, newlineIndex).slice(0, toggleTitleMaxLength),
+    title: normalized.slice(0, newlineIndex),
     body: normalized.slice(newlineIndex + 1)
   };
 }
 
 function serializeToggleMarkdown(title, body) {
-  const safeTitle = String(title ?? "")
-    .replace(/[\r\n]+/g, " ")
-    .slice(0, toggleTitleMaxLength);
+  const safeTitle = String(title ?? "").replace(/[\r\n]+/g, " ");
   const safeBody = String(body ?? "").replace(/\r\n?/g, "\n");
   return safeBody ? `${safeTitle}\n${safeBody}` : safeTitle;
 }
@@ -13768,6 +13774,10 @@ function applyAuthoritativePageContentVersion(pageId, data) {
 async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked = false } = {}) {
   const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage({ announce: !quiet });
   if (!writable || pageTitleDraftConflict) return null;
+  // A blank focused title is an in-progress editor state, never an implicit request
+  // to overwrite a meaningful title with the localized fallback. The blur handler
+  // explicitly materializes that fallback when the user actually commits blank.
+  if (!elements.pageTitle.value.trim()) return null;
   const pageId = state.selectedPage.id;
   const title = normalizePageTitle(elements.pageTitle.value);
   if (isCollaborativePage()) {
@@ -13856,6 +13866,34 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
     syncBeforeUnloadProtection();
     return true;
   }
+  if (!elements.pageTitle.value.trim()) {
+    const previousRevision = pageTitleEditRevision;
+    pageTitleEditRevision += 1;
+    window.clearTimeout(pageTitleSaveTimer);
+    pageTitleSaveTimer = null;
+
+    // Do not let an earlier non-blank draft survive after the user has cleared the
+    // field. Recovery must fall back to the last server value rather than replaying
+    // an intermediate title or converting this transient blank into "Untitled".
+    if (!pageTitleDraftConflict) {
+      const scope = getDraftScope();
+      const draftSourceId = pageTitleDraftSourceId || pageDraftSourceId;
+      if (
+        !scope
+        || !checkDraftStoreWrite(pageDraftStore.removeTitle(scope.userId, scope.pageId, draftSourceId))
+      ) {
+        pageTitleEditRevision = previousRevision;
+        updateInputValuePreservingSelection(elements.pageTitle, state.selectedPage.title ?? "");
+        syncBeforeUnloadProtection();
+        return false;
+      }
+    }
+
+    recordPageTitleEditorHistory();
+    syncBeforeUnloadProtection();
+    return true;
+  }
+
   const previousRevision = pageTitleEditRevision;
   pageTitleEditRevision += 1;
   const title = normalizePageTitle(elements.pageTitle.value);
@@ -16237,7 +16275,17 @@ elements.pageTitle.addEventListener("input", (event) => {
 
 elements.pageTitle.addEventListener("blur", () => {
   if (!requireWritablePage({ announce: false })) return;
-  if (!elements.pageTitle.value.trim()) elements.pageTitle.value = t("newDocumentTitle");
+  const wasBlank = !elements.pageTitle.value.trim();
+  if (wasBlank) {
+    elements.pageTitle.value = t("newDocumentTitle");
+    // Direct-mode blank input intentionally skipped draft/autosave work while the
+    // field was focused. Blur is the explicit commit boundary, so establish the
+    // normal durable draft + conflict checks before issuing the save.
+    if (!isCollaborativePage() && !schedulePageTitleSave()) {
+      window.setTimeout(() => updateCollaborationAwareness(document.activeElement));
+      return;
+    }
+  }
   savePageTitleNow().catch((error) => setStatus(error.message, true));
   window.setTimeout(() => updateCollaborationAwareness(document.activeElement));
 });
