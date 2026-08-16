@@ -19,6 +19,47 @@ function transactionComplete(transaction) {
   });
 }
 
+function createStrictWriteTransaction(db, storeName) {
+  let transaction;
+  try {
+    transaction = db.transaction(storeName, "readwrite", { durability: "strict" });
+  } catch (cause) {
+    const error = new Error("Strict IndexedDB recovery durability is unavailable", { cause });
+    error.code = "RECOVERY_STRICT_DURABILITY_UNAVAILABLE";
+    throw error;
+  }
+
+  // Recovery records are the last-resort copy of unsynchronized note data.
+  // Fail closed when the browser ignores or cannot expose the requested strict
+  // durability hint instead of silently treating default durability as equivalent.
+  if (transaction?.durability !== "strict") {
+    try {
+      transaction?.abort?.();
+    } catch {
+      // Best effort only. Initialization/write failure below remains authoritative.
+    }
+    const error = new Error("Strict IndexedDB recovery durability could not be confirmed");
+    error.code = "RECOVERY_STRICT_DURABILITY_UNAVAILABLE";
+    throw error;
+  }
+
+  return transaction;
+}
+
+async function verifyMigratedRecords(db, storeName, expectedRecords) {
+  const transaction = db.transaction(storeName, "readonly");
+  const complete = transactionComplete(transaction);
+  const objectStore = transaction.objectStore(storeName);
+
+  await Promise.all(expectedRecords.map(async (expected) => {
+    const actual = await requestResult(objectStore.get(expected.key));
+    if (!actual || actual.key !== expected.key || actual.value !== expected.value) {
+      throw new Error(`IndexedDB recovery migration verification failed for ${expected.key}`);
+    }
+  }));
+  await complete;
+}
+
 function openDatabase(indexedDb, databaseName, storeName) {
   if (!indexedDb?.open) throw new Error("IndexedDB is unavailable");
   return new Promise((resolve, reject) => {
@@ -47,8 +88,8 @@ function cloneStoredValue(value) {
  * Creates a synchronous in-memory Storage-compatible view backed by IndexedDB.
  * Every mutation is serialized to IndexedDB and can be awaited with flush().
  * The synchronous view lets the existing recovery scanners remain deterministic;
- * callers that must not expose a mutation before physical browser persistence
- * completes must await flush().
+ * callers that must not expose a mutation before the browser's strongest
+ * requested persistence barrier completes must await flush().
  */
 export async function createIndexedDbRecoveryStorage(
   indexedDb,
@@ -62,6 +103,18 @@ export async function createIndexedDbRecoveryStorage(
   } = {}
 ) {
   const db = await openDatabase(indexedDb, databaseName, storeName);
+
+  // Probe the browser capability before exposing writable recovery storage.
+  // This no-op transaction intentionally fails initialization on engines that
+  // cannot confirm the strict durability hint.
+  try {
+    const durabilityProbe = createStrictWriteTransaction(db, storeName);
+    await transactionComplete(durabilityProbe);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+
   const records = new Map();
   const loadTransaction = db.transaction(storeName, "readonly");
   const loadComplete = transactionComplete(loadTransaction);
@@ -93,18 +146,28 @@ export async function createIndexedDbRecoveryStorage(
       migration.push({ key, value });
     }
     if (migration.length) {
-      const transaction = db.transaction(storeName, "readwrite");
-      const objectStore = transaction.objectStore(storeName);
-      for (const record of migration) objectStore.put(record);
-      await transactionComplete(transaction);
-      for (const record of migration) records.set(record.key, record.value);
-      for (const record of migration) {
-        try {
-          legacyStorage.removeItem(record.key);
-        } catch {
-          // A duplicate legacy copy is safe. Never treat cleanup failure as a
-          // reason to delete the newly durable IndexedDB record.
+      try {
+        const transaction = createStrictWriteTransaction(db, storeName);
+        const objectStore = transaction.objectStore(storeName);
+        for (const record of migration) objectStore.put(record);
+        await transactionComplete(transaction);
+
+        // Destructive legacy cleanup is allowed only after a fresh committed read
+        // confirms the replacement copy. If verification fails, localStorage is
+        // intentionally left untouched so recovery retains at least one copy.
+        await verifyMigratedRecords(db, storeName, migration);
+        for (const record of migration) records.set(record.key, record.value);
+        for (const record of migration) {
+          try {
+            legacyStorage.removeItem(record.key);
+          } catch {
+            // A duplicate legacy copy is safe. Never treat cleanup failure as a
+            // reason to delete the newly durable IndexedDB record.
+          }
         }
+      } catch (error) {
+        db.close();
+        throw error;
       }
     }
   }
@@ -274,7 +337,7 @@ export async function createIndexedDbRecoveryStorage(
 
   function putRecord(key, value) {
     return enqueue(async () => {
-      const transaction = db.transaction(storeName, "readwrite");
+      const transaction = createStrictWriteTransaction(db, storeName);
       transaction.objectStore(storeName).put({ key, value: cloneStoredValue(value) });
       await transactionComplete(transaction);
       publishChange("put", key);
@@ -283,7 +346,7 @@ export async function createIndexedDbRecoveryStorage(
 
   function deleteRecord(key) {
     return enqueue(async () => {
-      const transaction = db.transaction(storeName, "readwrite");
+      const transaction = createStrictWriteTransaction(db, storeName);
       transaction.objectStore(storeName).delete(key);
       await transactionComplete(transaction);
       publishChange("delete", key);
@@ -326,7 +389,7 @@ export async function createIndexedDbRecoveryStorage(
     clear() {
       records.clear();
       void enqueue(async () => {
-        const transaction = db.transaction(storeName, "readwrite");
+        const transaction = createStrictWriteTransaction(db, storeName);
         transaction.objectStore(storeName).clear();
         await transactionComplete(transaction);
         publishChange("clear", null);

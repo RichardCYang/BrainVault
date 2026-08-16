@@ -6507,16 +6507,50 @@ function checkDraftStoreWrite(succeeded) {
   return succeeded;
 }
 
-function preserveInputAfterRecoveryAdmissionFailure(row = null) {
-  const error = new Error(t("status.localDraftStorageFailed"));
+function preserveInputAfterRecoveryAdmissionFailure(
+  row = null,
+  cause = null,
+  context = { operation: "direct-recovery-admission" }
+) {
+  const error = cause instanceof Error ? cause : new Error(t("status.localDraftStorageFailed"));
   if (row) {
     row.classList.add("is-dirty", "save-error");
     row.classList.remove("is-saved", "is-saving");
   } else {
     elements.pageTitle?.classList.add("save-error");
   }
-  handleDurableRecoveryStorageWriteError(error, { operation: "direct-recovery-admission" });
+  handleDurableRecoveryStorageWriteError(error, context);
   syncBeforeUnloadProtection();
+}
+
+async function requireDirectRecoveryDurability(
+  operation,
+  row = null,
+  { allowRecoveryFailure = false, preserveInput = true } = {}
+) {
+  try {
+    await recoveryStorage.flush?.();
+    return true;
+  } catch (cause) {
+    const error = cause instanceof Error ? cause : new Error(String(cause));
+    if (preserveInput) {
+      preserveInputAfterRecoveryAdmissionFailure(row, error, { operation });
+    } else {
+      handleDurableRecoveryStorageWriteError(error, { operation });
+      syncBeforeUnloadProtection();
+    }
+
+    // During an already-started durability downgrade, the authoritative server
+    // drain must still be allowed to save edits that were accepted before local
+    // recovery failed. Outside that narrow path, never let an HTTP mutation or
+    // application-controlled transition outrun browser recovery admission.
+    if (allowRecoveryFailure) return false;
+
+    const admissionError = new Error(t("status.localDraftStorageFailed"), { cause: error });
+    admissionError.code = "DIRECT_RECOVERY_DURABILITY_FAILED";
+    admissionError.operation = operation;
+    throw admissionError;
+  }
 }
 
 function persistPageTitleDraft() {
@@ -6925,6 +6959,11 @@ async function flushPendingPageEdits({ keepalive = false, allowLocked = false, c
       .filter(([blockId]) => visibleBlockIds.has(blockId))
       .map(([, queue]) => queue.flush())
   );
+
+  await requireDirectRecoveryDurability("page-edit-flush", null, {
+    allowRecoveryFailure: allowLocked && recoveryPersistenceDowngradeInFlight,
+    preserveInput: false
+  });
   syncBeforeUnloadProtection();
   return null;
 }
@@ -12164,6 +12203,7 @@ async function saveBlockRow(
       preserveInputAfterRecoveryAdmissionFailure(row);
       throw new Error(t("status.localDraftStorageFailed"));
     }
+    await requireDirectRecoveryDurability("direct-block-conflict-recovery", row);
     recordBlockEditorHistory(row, payload);
     syncBeforeUnloadProtection();
     return null;
@@ -12187,6 +12227,9 @@ async function saveBlockRow(
       throw new Error(t("status.localDraftStorageFailed"));
     }
   }
+  await requireDirectRecoveryDurability("direct-block-recovery", row, {
+    allowRecoveryFailure: allowLocked && recoveryPersistenceDowngradeInFlight
+  });
   recordBlockEditorHistory(row, payload);
   window.clearTimeout(blockSaveTimers.get(blockId));
   blockSaveTimers.delete(blockId);
@@ -13968,6 +14011,11 @@ async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked =
     if (!(allowLocked && recoveryPersistenceDowngradeInFlight)) {
       throw new Error(t("status.localDraftStorageFailed"));
     }
+  }
+  if (pageTitleEditRevision > 0) {
+    await requireDirectRecoveryDurability("direct-title-recovery", null, {
+      allowRecoveryFailure: allowLocked && recoveryPersistenceDowngradeInFlight
+    });
   }
   recordPageTitleEditorHistory();
   const task = {

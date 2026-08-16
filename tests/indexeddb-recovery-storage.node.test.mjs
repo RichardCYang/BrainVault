@@ -16,7 +16,12 @@ function clone(value) {
 }
 
 class FakeIndexedDb {
-  constructor() { this.databases = new Map(); }
+  constructor({ ignoreDurability = false, corruptReadbackKeys = [] } = {}) {
+    this.databases = new Map();
+    this.ignoreDurability = ignoreDurability;
+    this.corruptReadbackKeys = new Set(corruptReadbackKeys);
+    this.transactions = [];
+  }
   open(name) {
     const request = {};
     queueMicrotask(() => {
@@ -31,8 +36,21 @@ class FakeIndexedDb {
         createObjectStore: (storeName) => {
           if (!state.stores.has(storeName)) state.stores.set(storeName, new Map());
         },
-        transaction: (storeName) => {
-          const transaction = { error: null, oncomplete: null, onabort: null, onerror: null };
+        transaction: (storeName, mode = "readonly", options = {}) => {
+          const requestedDurability = options?.durability ?? "default";
+          const durability = this.ignoreDurability ? "default" : requestedDurability;
+          const transaction = {
+            error: null,
+            oncomplete: null,
+            onabort: null,
+            onerror: null,
+            durability,
+            abort() {
+              transaction.error = new Error("Fake IndexedDB transaction aborted");
+              queueMicrotask(() => transaction.onabort?.());
+            }
+          };
+          this.transactions.push({ storeName, mode, requestedDurability, durability });
           const store = state.stores.get(storeName);
           if (!store) throw new Error(`Missing fake object store ${storeName}`);
           transaction.objectStore = () => ({
@@ -44,10 +62,15 @@ class FakeIndexedDb {
               });
               return child;
             },
-            get(key) {
+            get: (key) => {
               const child = { result: null, error: null, onsuccess: null, onerror: null };
               queueMicrotask(() => {
-                child.result = store.has(key) ? { key, value: clone(store.get(key)) } : undefined;
+                child.result = store.has(key)
+                  ? {
+                      key,
+                      value: this.corruptReadbackKeys.has(key) ? "__corrupted__" : clone(store.get(key))
+                    }
+                  : undefined;
                 child.onsuccess?.();
               });
               return child;
@@ -96,6 +119,55 @@ class FakeBroadcastHub {
 function nextTask() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
+
+test("fails closed when strict IndexedDB durability cannot be confirmed", async () => {
+  const indexedDb = new FakeIndexedDb({ ignoreDurability: true });
+
+  await assert.rejects(
+    createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+      databaseName: "strict-durability-rejected"
+    }),
+    (error) => error?.code === "RECOVERY_STRICT_DURABILITY_UNAVAILABLE"
+  );
+});
+
+test("uses strict durability for every recovery write transaction", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName: "strict-durability-write"
+  });
+
+  storage.setItem("brainvault.pageDraft.v2:user:page:tab", "draft");
+  await storage.flush();
+  storage.removeItem("brainvault.pageDraft.v2:user:page:tab");
+  await storage.flush();
+  storage.setObject("collaboration:large", { update: new Uint8Array([1, 2, 3]) });
+  await storage.flush();
+  storage.clear();
+  await storage.flush();
+
+  const writeTransactions = indexedDb.transactions.filter(({ mode }) => mode === "readwrite");
+  assert.ok(writeTransactions.length >= 5, "probe plus put/delete/put/clear writes should be observed");
+  assert.ok(writeTransactions.every(({ requestedDurability }) => requestedDurability === "strict"));
+  assert.ok(writeTransactions.every(({ durability }) => durability === "strict"));
+  storage.close();
+});
+
+test("keeps the legacy recovery copy when post-commit migration verification fails", async () => {
+  const key = "brainvault.pageDraft.v2:user:page:tab";
+  const legacyValue = JSON.stringify({ schemaVersion: 2, marker: "legacy" });
+  const indexedDb = new FakeIndexedDb({ corruptReadbackKeys: [key] });
+  const legacy = new MemoryStorage([[key, legacyValue]]);
+
+  await assert.rejects(
+    createIndexedDbRecoveryStorage(indexedDb, legacy, {
+      databaseName: "migration-verification-failure",
+      migrationPrefixes: ["brainvault.pageDraft.v2:"]
+    }),
+    /migration verification failed/
+  );
+  assert.equal(legacy.getItem(key), legacyValue);
+});
 
 test("migrates legacy recovery only after IndexedDB commit and removes the duplicate", async () => {
   const indexedDb = new FakeIndexedDb();
