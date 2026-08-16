@@ -198,13 +198,13 @@ test("browser recovery sync removes local orphan bytes only after a successful d
   assertBefore(
     sync,
     "await uploadServerRecoveryCandidate({",
-    "pageDraftStore.removePageIfUnchanged(record)",
+    "await pageDraftStore.removePageIfUnchangedDurably(record)",
     "direct orphan upload"
   );
   assertBefore(
     sync,
     "await uploadServerRecoveryCandidate({",
-    "collaborationRecoveryStore.remove(",
+    "await collaborationRecoveryStore.removeDurably(",
     "Yjs orphan upload"
   );
   assert.match(sync, /if \(!accessiblePageIds\.has\(record\.pageId\)\)/);

@@ -53,9 +53,30 @@ test("application-controlled page flush waits for queued recovery storage writes
 });
 
 test("recovery durability failures fail closed outside the authoritative server drain", () => {
-  const helper = section("async function requireDirectRecoveryDurability(", "function persistPageTitleDraft(");
+  const helper = section("async function requireDirectRecoveryDurability(", "function persistPageTitleDraftValue(");
   assert.match(helper, /await recoveryStorage\.flush\?\.\(\)/);
   assert.match(helper, /if \(allowRecoveryFailure\) return false;/);
   assert.match(helper, /admissionError\.code = "DIRECT_RECOVERY_DURABILITY_FAILED";/);
   assert.match(helper, /throw admissionError;/);
+});
+
+
+test("direct edits are hidden until their strict recovery transaction completes", () => {
+  const helper = section("function beginDirectRecoveryVisibilityAdmission(", "function persistPageTitleDraftValue(");
+  assert.match(helper, /classList\.add\("recovery-admission-pending"\)/);
+  assert.match(helper, /direct-title-visible-admission/);
+  assert.match(helper, /direct-block-visible-admission/);
+  assert.match(helper, /await recoveryStorage\.refresh\?\.\(\)/);
+
+  const markDirty = section("function markBlockDirty(", "function getBlockSaveQueue(");
+  assertBefore(markDirty, "beginDirectRecoveryVisibilityAdmission(row)", "persistBlockDraft(row, historyPayload)", "block visibility fence");
+  assertBefore(markDirty, "persistBlockDraft(row, historyPayload)", "scheduleDirectBlockRecoveryAdmission(row, recoveryAdmissionSequence)", "block durable admission");
+
+  const title = section("function schedulePageTitleSave(", "function normalizeRecoveredBlockPayload(");
+  assertBefore(title, "beginDirectRecoveryVisibilityAdmission(elements.pageTitle)", "persistPageTitleDraftValue(\"\")", "blank-title visibility fence");
+  assert.match(
+    title,
+    /if \(!persistPageTitleDraft\(\)\) \{[\s\S]*?scheduleDirectTitleRecoveryAdmission\(recoveryAdmissionSequence, pageId\);/
+  );
+  assert.doesNotMatch(title, /removeTitle\(scope\.userId, scope\.pageId/);
 });

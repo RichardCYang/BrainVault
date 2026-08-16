@@ -604,6 +604,33 @@ export function createPageDraftStore(
     return removePage(expectedRecord.userId, expectedRecord.pageId, expectedRecord.sourceId);
   }
 
+
+  async function removePageIfUnchangedDurably(expectedRecord) {
+    if (
+      !expectedRecord
+      || typeof expectedRecord !== "object"
+      || !isNonEmptyString(expectedRecord.userId)
+      || !isNonEmptyString(expectedRecord.pageId)
+      || !isNonEmptyString(expectedRecord.sourceId)
+      || typeof storage?.compareAndRemove !== "function"
+    ) return false;
+
+    const key = getKey(expectedRecord.userId, expectedRecord.pageId, expectedRecord.sourceId);
+    return storage.compareAndRemove(key, (storedValue) => {
+      if (typeof storedValue !== "string") return false;
+      try {
+        const current = normalizeRecord(
+          JSON.parse(storedValue),
+          expectedRecord.userId,
+          expectedRecord.pageId,
+          expectedRecord.sourceId
+        );
+        return Boolean(current) && JSON.stringify(current) === JSON.stringify(expectedRecord);
+      } catch {
+        return false;
+      }
+    });
+  }
   function removePages(userId, pageIds, recordSourceId = sourceId) {
     let succeeded = true;
     for (const pageId of pageIds ?? []) {
@@ -673,6 +700,7 @@ export function createPageDraftStore(
     removeBlocks,
     removePage,
     removePageIfUnchanged,
+    removePageIfUnchangedDurably,
     removePages,
     clearBlocks,
     clearPage,

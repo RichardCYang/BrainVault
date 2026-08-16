@@ -311,6 +311,56 @@ export function createCollaborationRecoveryStore(
     }
   }
 
+
+  async function removeDurably(accountId, pageId, sourceId, documentEpoch, expectedGeneration = null) {
+    if (
+      !storage
+      || typeof storage.compareAndRemove !== "function"
+      || !isNonEmptyString(accountId)
+      || !isNonEmptyString(pageId)
+      || !isNonEmptyString(sourceId)
+      || !(documentEpoch === null || isNonEmptyString(documentEpoch))
+    ) return false;
+
+    const keyInspection = inspectPageKeys(accountId, pageId);
+    if (!keyInspection.reliable) return false;
+
+    for (const key of keyInspection.keys) {
+      const parsedKey = parseStorageKey(key);
+      if (
+        !parsedKey
+        || parsedKey.accountId !== accountId
+        || parsedKey.pageId !== pageId
+        || parsedKey.sourceId !== sourceId
+        || parsedKey.documentEpoch !== documentEpoch
+      ) continue;
+
+      return storage.compareAndRemove(key, (storedValue) => {
+        try {
+          const storedRecord = typeof storedValue === "string" ? JSON.parse(storedValue) : storedValue;
+          if (!storedRecord || typeof storedRecord !== "object" || Array.isArray(storedRecord)) return false;
+          const isLegacy = storedRecord.schemaVersion === legacyRecoverySchemaVersion;
+          const isBase64 = storedRecord.schemaVersion === base64RecoverySchemaVersion;
+          const isBinary = storedRecord.schemaVersion === recoverySchemaVersion;
+          const currentDocumentEpoch = isLegacy ? null : storedRecord.documentEpoch;
+          const updateIsValid = isBinary
+            ? Boolean(asBytes(storedRecord.update)?.byteLength)
+            : ((isBase64 || isLegacy) && typeof storedRecord.update === "string" && storedRecord.update.length > 0);
+          return (isLegacy || isBase64 || isBinary)
+            && updateIsValid
+            && storedRecord.accountId === accountId
+            && storedRecord.pageId === pageId
+            && storedRecord.sourceId === sourceId
+            && currentDocumentEpoch === documentEpoch
+            && isNonEmptyString(storedRecord.generation)
+            && (!isNonEmptyString(expectedGeneration) || storedRecord.generation === expectedGeneration);
+        } catch {
+          return false;
+        }
+      });
+    }
+    return false;
+  }
   return {
     inspectAll,
     loadAll,
@@ -319,6 +369,7 @@ export function createCollaborationRecoveryStore(
     inspectAccountRecords,
     loadAccountRecords,
     save,
-    remove
+    remove,
+    removeDurably
   };
 }

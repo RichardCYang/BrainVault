@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createIndexedDbRecoveryStorage } from "../public/indexeddb-recovery-storage.js";
+import { createPageDraftStore } from "../public/draft-store.js";
+import { createCollaborationRecoveryStore } from "../public/collaboration-recovery-store.js";
 
 class MemoryStorage {
   constructor(entries = []) { this.values = new Map(entries); }
@@ -280,4 +282,61 @@ test("cross-tab mirrors refresh only after another tab commits IndexedDB recover
 
   first.close();
   second.close();
+});
+
+
+test("atomic compare-and-remove preserves a newer direct draft committed by another tab", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const options = { databaseName: "atomic-direct-cleanup", storageEventTarget: null };
+  const cleanupStorage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  const writerStorage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  const cleanupStore = createPageDraftStore(cleanupStorage, { sourceId: "cleanup-tab" });
+  const writerStore = createPageDraftStore(writerStorage, { sourceId: "writer-tab" });
+
+  assert.equal(writerStore.saveTitle({ userId: "user", pageId: "page", value: "old", expectedVersion: 1, revision: 1 }), true);
+  await writerStorage.flush();
+  await cleanupStorage.refresh();
+  const uploaded = cleanupStore.inspectUserDrafts("user").records.find((record) => record.sourceId === "writer-tab");
+  assert.ok(uploaded);
+
+  assert.equal(writerStore.saveTitle({ userId: "user", pageId: "page", value: "newest", expectedVersion: 1, revision: 2 }), true);
+  await writerStorage.flush();
+  assert.equal(cleanupStore.loadPage("user", "page", "writer-tab")?.title?.value, "old", "cleanup mirror must remain stale for the race");
+
+  assert.equal(await cleanupStore.removePageIfUnchangedDurably(uploaded), false);
+  assert.equal(cleanupStore.loadPage("user", "page", "writer-tab")?.title?.value, "newest");
+  cleanupStorage.close();
+  writerStorage.close();
+
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  const reopenedStore = createPageDraftStore(reopened, { sourceId: "reader" });
+  assert.equal(reopenedStore.loadPage("user", "page", "writer-tab")?.title?.value, "newest");
+  reopened.close();
+});
+
+test("atomic compare-and-remove preserves a newer collaboration generation committed by another tab", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const options = { databaseName: "atomic-yjs-cleanup", storageEventTarget: null };
+  const cleanupStorage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  const writerStorage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  const cleanupStore = createCollaborationRecoveryStore(cleanupStorage);
+  const writerStore = createCollaborationRecoveryStore(writerStorage);
+
+  const oldGeneration = await writerStore.save("acct", "page", "writer-tab", "epoch", new Uint8Array([1, 2, 3]));
+  await writerStorage.flush();
+  await cleanupStorage.refresh();
+  const uploaded = cleanupStore.loadAll("acct", "page").find((record) => record.sourceId === "writer-tab");
+  assert.equal(uploaded?.generation, oldGeneration);
+
+  const newGeneration = await writerStore.save("acct", "page", "writer-tab", "epoch", new Uint8Array([9, 8, 7]));
+  await writerStorage.flush();
+  assert.notEqual(newGeneration, oldGeneration);
+  assert.equal(cleanupStore.loadAll("acct", "page").find((record) => record.sourceId === "writer-tab")?.generation, oldGeneration);
+
+  assert.equal(await cleanupStore.removeDurably("acct", "page", "writer-tab", "epoch", oldGeneration), false);
+  const newest = cleanupStore.loadAll("acct", "page").find((record) => record.sourceId === "writer-tab");
+  assert.equal(newest?.generation, newGeneration);
+  assert.deepEqual([...newest.update], [9, 8, 7]);
+  cleanupStorage.close();
+  writerStorage.close();
 });

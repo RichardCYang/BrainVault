@@ -51,7 +51,7 @@ test("history is captured only after the existing durability boundary succeeds",
   const markBlockDirty = functionSource("markBlockDirty", "getBlockSaveQueue");
   const collabUpsert = markBlockDirty.indexOf("session.upsertBlock({");
   const collabRecord = markBlockDirty.indexOf("recordBlockEditorHistory(currentRow, historyPayload, current);");
-  const draftPersist = markBlockDirty.indexOf("persistBlockDraft(row)");
+  const draftPersist = markBlockDirty.indexOf("persistBlockDraft(row, historyPayload)");
   const draftRecord = markBlockDirty.indexOf("recordBlockEditorHistory(row, historyPayload);");
   assert.ok(collabUpsert !== -1 && collabRecord > collabUpsert);
   assert.ok(draftPersist !== -1 && draftRecord > draftPersist);

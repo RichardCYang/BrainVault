@@ -386,6 +386,55 @@ export async function createIndexedDbRecoveryStorage(
       records.delete(normalizedKey);
       void deleteRecord(normalizedKey).catch(() => undefined);
     },
+    compareAndRemove(key, matches) {
+      if (typeof matches !== "function") {
+        return Promise.reject(new TypeError("A recovery comparison function is required"));
+      }
+      const normalizedKey = String(key);
+      return enqueue(async () => {
+        const transaction = createStrictWriteTransaction(db, storeName);
+        const complete = transactionComplete(transaction);
+        const objectStore = transaction.objectStore(storeName);
+        let matched = false;
+        let currentExists = false;
+        let currentValue = null;
+
+        const comparison = new Promise((resolve, reject) => {
+          const request = objectStore.get(normalizedKey);
+          request.onerror = () => reject(request.error ?? new Error("IndexedDB recovery compare-read failed"));
+          request.onsuccess = () => {
+            const current = request.result;
+            if (current && current.key === normalizedKey) {
+              currentExists = true;
+              currentValue = cloneStoredValue(current.value);
+              try {
+                matched = matches(cloneStoredValue(current.value)) === true;
+              } catch (error) {
+                try { transaction.abort(); } catch { /* best effort */ }
+                reject(error);
+                return;
+              }
+              if (matched) objectStore.delete(normalizedKey);
+            }
+            resolve();
+          };
+        });
+
+        await Promise.all([comparison, complete]);
+        if (matched) {
+          records.delete(normalizedKey);
+          publishChange("delete", normalizedKey);
+        } else if (currentExists) {
+          // A different tab may have committed a newer recovery value while this
+          // tab's synchronous mirror was stale. Refresh the mirror from the exact
+          // record observed by the atomic compare transaction.
+          records.set(normalizedKey, currentValue);
+        } else {
+          records.delete(normalizedKey);
+        }
+        return matched;
+      }, { operation: "compare-delete", key: normalizedKey });
+    },
     clear() {
       records.clear();
       void enqueue(async () => {

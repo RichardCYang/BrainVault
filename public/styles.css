@@ -18530,3 +18530,12 @@ html[data-theme="dark"] {
     display: none;
   }
 }
+
+/* Recovery admission fence: direct-mode mutations remain non-visible until the
+   strict IndexedDB transaction containing them has committed. Layout and focus
+   are preserved so rapid input can continue while the newest recovery write queues. */
+.page-title-input.recovery-admission-pending,
+.editor-block-row.recovery-admission-pending {
+  opacity: 0;
+  pointer-events: none;
+}

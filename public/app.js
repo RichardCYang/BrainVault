@@ -922,6 +922,7 @@ let pageTitleDraftExpectedVersion = null;
 let pageTitleDraftSourceId = pageDraftSourceId;
 let pageTitleDraftConflict = false;
 let pageTitleConflictOrigin = null;
+let pageTitleLastDurableValue = "";
 let localDraftStorageWarningShown = false;
 let beforeUnloadProtectionActive = false;
 let statusClearTimer = null;
@@ -6553,9 +6554,71 @@ async function requireDirectRecoveryDurability(
   }
 }
 
-function persistPageTitleDraft() {
+function beginDirectRecoveryVisibilityAdmission(element) {
+  if (!(element instanceof HTMLElement)) return 0;
+  const sequence = (Number.parseInt(element.dataset.recoveryAdmissionSequence ?? "0", 10) || 0) + 1;
+  element.dataset.recoveryAdmissionSequence = String(sequence);
+  element.classList.add("recovery-admission-pending");
+  element.setAttribute("aria-busy", "true");
+  return sequence;
+}
+
+function finishDirectRecoveryVisibilityAdmission(element, sequence) {
+  if (!(element instanceof HTMLElement)) return false;
+  if ((Number.parseInt(element.dataset.recoveryAdmissionSequence ?? "0", 10) || 0) !== sequence) return false;
+  element.classList.remove("recovery-admission-pending");
+  element.removeAttribute("aria-busy");
+  return true;
+}
+
+function scheduleDirectTitleRecoveryAdmission(sequence, pageId) {
+  void requireDirectRecoveryDurability("direct-title-visible-admission", null, { preserveInput: false })
+    .then(() => {
+      if (state.selectedPage?.id !== pageId) return;
+      if (finishDirectRecoveryVisibilityAdmission(elements.pageTitle, sequence)) {
+        pageTitleLastDurableValue = elements.pageTitle.value;
+      }
+    })
+    .catch(async (error) => {
+      try { await recoveryStorage.refresh?.(); } catch { /* the original durability error remains authoritative */ }
+      if (state.selectedPage?.id !== pageId) return;
+      if ((Number.parseInt(elements.pageTitle.dataset.recoveryAdmissionSequence ?? "0", 10) || 0) !== sequence) return;
+      const scope = getDraftScope(pageId);
+      const draftSourceId = pageTitleDraftSourceId || pageDraftSourceId;
+      const durableDraft = scope
+        ? pageDraftStore.loadPage(scope.userId, scope.pageId, draftSourceId)?.title
+        : null;
+      const fallback = durableDraft?.value ?? pageTitleLastDurableValue ?? state.selectedPage?.title ?? "";
+      pageTitleEditRevision = durableDraft?.revision ?? pageTitleSavedRevision;
+      pageTitleDraftExpectedVersion = durableDraft?.expectedVersion ?? getPositiveVersion(state.selectedPage?.version);
+      updateInputValuePreservingSelection(elements.pageTitle, fallback);
+      applyPageSummaryUpdate(pageId, { title: fallback });
+      finishDirectRecoveryVisibilityAdmission(elements.pageTitle, sequence);
+      setStatus(error?.message || t("status.localDraftStorageFailed"), true);
+    });
+}
+
+function scheduleDirectBlockRecoveryAdmission(row, sequence) {
+  const blockId = row?.dataset.blockId;
+  if (!blockId) return;
+  void requireDirectRecoveryDurability("direct-block-visible-admission", row, { preserveInput: false })
+    .then(() => {
+      const currentRow = findRenderedBlockRow(blockId) ?? row;
+      finishDirectRecoveryVisibilityAdmission(currentRow, sequence);
+    })
+    .catch(async (error) => {
+      try { await recoveryStorage.refresh?.(); } catch { /* preserve the original failure */ }
+      const currentRow = findRenderedBlockRow(blockId) ?? row;
+      if ((Number.parseInt(currentRow?.dataset.recoveryAdmissionSequence ?? "0", 10) || 0) !== sequence) return;
+      const restored = restoreBlockRowFromDurableState(currentRow);
+      if (restored) finishDirectRecoveryVisibilityAdmission(restored, sequence);
+      setStatus(error?.message || t("status.localDraftStorageFailed"), true);
+    });
+}
+
+function persistPageTitleDraftValue(value) {
   const scope = getDraftScope();
-  if (!scope || !state.selectedPage) return false;
+  if (!scope || !state.selectedPage || typeof value !== "string") return false;
   const draftSourceId = pageTitleDraftSourceId || pageDraftSourceId;
   const storedDraft = pageDraftStore.loadPage(scope.userId, scope.pageId, draftSourceId)?.title;
   const expectedVersion = pageTitleDraftConflict
@@ -6567,11 +6630,15 @@ function persistPageTitleDraft() {
     pageDraftStore.saveTitle({
       ...scope,
       sourceId: draftSourceId,
-      value: normalizePageTitle(elements.pageTitle.value),
+      value,
       expectedVersion,
       revision: pageTitleEditRevision
     })
   );
+}
+
+function persistPageTitleDraft() {
+  return persistPageTitleDraftValue(normalizePageTitle(elements.pageTitle.value));
 }
 
 function persistBlockDraft(row, payload = null) {
@@ -6700,7 +6767,9 @@ function resetPageEditTracking() {
   blockSaveTaskIds.clear();
   pendingBlockOrderTask = null;
   blockOrderSaving = false;
-  elements.pageTitle.classList.remove("local-draft-recovered", "save-error");
+  elements.pageTitle.classList.remove("local-draft-recovered", "save-error", "recovery-admission-pending");
+  elements.pageTitle.removeAttribute("aria-busy");
+  delete elements.pageTitle.dataset.recoveryAdmissionSequence;
   disableBeforeUnloadProtection();
 }
 
@@ -8033,7 +8102,7 @@ async function reconcileServerRecoveryCandidates() {
           // normal optimistic-concurrency recovery path can still run. When the
           // page is gone, the server candidate is now the durable successor.
           if (!accessiblePageIds.has(record.pageId)) {
-            pageDraftStore.removePageIfUnchanged(record);
+            await pageDraftStore.removePageIfUnchangedDurably(record);
           }
         } catch (error) {
           if (error?.code !== "RECOVERY_GRANT_NOT_FOUND") {
@@ -8055,7 +8124,7 @@ async function reconcileServerRecoveryCandidates() {
             payload: record.update
           });
           if (!accessiblePageIds.has(record.pageId)) {
-            collaborationRecoveryStore.remove(
+            await collaborationRecoveryStore.removeDurably(
               accountId,
               record.pageId,
               record.sourceId,
@@ -12034,10 +12103,14 @@ function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
   row.dataset.editRevision = String(editRevision);
   row.classList.add("is-dirty");
   row.classList.remove("is-saved");
-  if (!persistBlockDraft(row)) {
-    preserveInputAfterRecoveryAdmissionFailure(row);
+  const recoveryAdmissionSequence = beginDirectRecoveryVisibilityAdmission(row);
+  if (!persistBlockDraft(row, historyPayload)) {
+    finishDirectRecoveryVisibilityAdmission(row, recoveryAdmissionSequence);
+    restoreBlockRowFromDurableState(row);
+    preserveInputAfterRecoveryAdmissionFailure();
     return false;
   }
+  scheduleDirectBlockRecoveryAdmission(row, recoveryAdmissionSequence);
   recordBlockEditorHistory(row, historyPayload);
 
   if (row.dataset.draftConflict === "true") {
@@ -13926,6 +13999,9 @@ function renderSelectedPage() {
   elements.pageKicker.textContent = formatDate(page.updatedAt);
   renderIconValue(elements.pageIconButton, page.icon, "📄");
   elements.pageTitle.value = page.title;
+  if (!elements.pageTitle.classList.contains("recovery-admission-pending")) {
+    pageTitleLastDurableValue = page.title;
+  }
   elements.blockCount.textContent = t("counts.blocks", { count: formatNumber(flatBlocks.length) });
 
   elements.blockList.replaceChildren();
@@ -14115,28 +14191,26 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
     syncBeforeUnloadProtection();
     return true;
   }
+  const pageId = state.selectedPage.id;
+  const recoveryAdmissionSequence = beginDirectRecoveryVisibilityAdmission(elements.pageTitle);
   if (!elements.pageTitle.value.trim()) {
     const previousRevision = pageTitleEditRevision;
     pageTitleEditRevision += 1;
     window.clearTimeout(pageTitleSaveTimer);
     pageTitleSaveTimer = null;
 
-    // Do not let an earlier non-blank draft survive after the user has cleared the
-    // field. Recovery must fall back to the last server value rather than replaying
-    // an intermediate title or converting this transient blank into "Untitled".
-    if (!pageTitleDraftConflict) {
-      const scope = getDraftScope();
-      const draftSourceId = pageTitleDraftSourceId || pageDraftSourceId;
-      if (
-        !scope
-        || !checkDraftStoreWrite(pageDraftStore.removeTitle(scope.userId, scope.pageId, draftSourceId))
-      ) {
-        pageTitleEditRevision = previousRevision;
-        preserveInputAfterRecoveryAdmissionFailure();
-        return false;
-      }
+    // A focused blank title is still user-authored state. Persist the exact blank
+    // recovery value instead of deleting the previous draft; otherwise a crash can
+    // resurrect an older intermediate title and erase the user's clear intent.
+    if (!persistPageTitleDraftValue("")) {
+      pageTitleEditRevision = previousRevision;
+      finishDirectRecoveryVisibilityAdmission(elements.pageTitle, recoveryAdmissionSequence);
+      updateInputValuePreservingSelection(elements.pageTitle, pageTitleLastDurableValue);
+      preserveInputAfterRecoveryAdmissionFailure();
+      return false;
     }
 
+    scheduleDirectTitleRecoveryAdmission(recoveryAdmissionSequence, pageId);
     recordPageTitleEditorHistory();
     syncBeforeUnloadProtection();
     return true;
@@ -14146,9 +14220,13 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
   pageTitleEditRevision += 1;
   const title = normalizePageTitle(elements.pageTitle.value);
   if (!persistPageTitleDraft()) {
+    pageTitleEditRevision = previousRevision;
+    finishDirectRecoveryVisibilityAdmission(elements.pageTitle, recoveryAdmissionSequence);
+    updateInputValuePreservingSelection(elements.pageTitle, pageTitleLastDurableValue);
     preserveInputAfterRecoveryAdmissionFailure();
     return false;
   }
+  scheduleDirectTitleRecoveryAdmission(recoveryAdmissionSequence, pageId);
   recordPageTitleEditorHistory();
 
   if (pageTitleDraftConflict) {
