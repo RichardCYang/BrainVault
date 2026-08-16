@@ -133,18 +133,31 @@ export function createCollaborationRecoveryStore(
     return inspectPageKeys(accountId, pageId).keys;
   }
 
-  function loadAll(accountId, pageId) {
-    if (!storage || !isNonEmptyString(accountId) || !isNonEmptyString(pageId)) return [];
-    const records = [];
-    for (const key of listPageKeys(accountId, pageId)) {
-      const record = readRecord(key, accountId, pageId);
-      if (record) records.push(record);
+  function inspectAll(accountId, pageId) {
+    if (!storage || !isNonEmptyString(accountId) || !isNonEmptyString(pageId)) {
+      return { records: [], reliable: false, unreadableKeys: [] };
     }
-    return records.sort((left, right) =>
-      left.updatedAt - right.updatedAt
-      || String(left.documentEpoch ?? "").localeCompare(String(right.documentEpoch ?? ""))
-      || left.sourceId.localeCompare(right.sourceId)
-    );
+    const keyInspection = inspectPageKeys(accountId, pageId);
+    const records = [];
+    const unreadableKeys = [];
+    for (const key of keyInspection.keys) {
+      const inspection = inspectRecord(key, accountId, pageId);
+      if (inspection.record) records.push(inspection.record);
+      else if (inspection.unreadable) unreadableKeys.push(key);
+    }
+    return {
+      records: records.sort((left, right) =>
+        left.updatedAt - right.updatedAt
+        || String(left.documentEpoch ?? "").localeCompare(String(right.documentEpoch ?? ""))
+        || left.sourceId.localeCompare(right.sourceId)
+      ),
+      reliable: keyInspection.reliable,
+      unreadableKeys
+    };
+  }
+
+  function loadAll(accountId, pageId) {
+    return inspectAll(accountId, pageId).records;
   }
 
   function inspectPageRecords(pageId) {
@@ -281,6 +294,7 @@ export function createCollaborationRecoveryStore(
   }
 
   return {
+    inspectAll,
     loadAll,
     inspectPageRecords,
     loadPageRecords,

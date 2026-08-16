@@ -167,7 +167,7 @@ const pageDraftStore = createPageDraftStore(window.localStorage, { sourceId: pag
 const collaborationRecoveryStore = createCollaborationRecoveryStore(window.localStorage, {
   prefix: collaborationRecoveryStoragePrefix
 });
-const recoveryStoragePersistence = createRecoveryStoragePersistenceGuard(window.navigator.storage);
+const recoveryStoragePersistence = createRecoveryStoragePersistenceGuard(window.navigator.storage, window.navigator.permissions);
 const pageTransitionLock = createPageTransitionLock(window.localStorage, {
   prefix: pageTransitionStoragePrefix,
   sourceId: pageDraftSourceId,
@@ -5962,6 +5962,45 @@ function isPageReadOnly() {
   return state.pageMode !== pageModes.WRITE || !recoveryStoragePersistence.isPersistent();
 }
 
+let recoveryPersistenceDowngradeInFlight = false;
+
+async function handleRecoveryStoragePersistenceChange(nextState) {
+  if (
+    nextState === "persistent"
+    || state.pageMode !== pageModes.WRITE
+    || recoveryPersistenceDowngradeInFlight
+  ) return;
+
+  // Fence new interaction immediately while the page still has WRITE state so
+  // already-accepted edits remain eligible for one final server flush.
+  recoveryPersistenceDowngradeInFlight = true;
+  state.pageModeChanging = true;
+  syncPageModeUi();
+  try {
+    await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false });
+  } catch (error) {
+    console.error("Failed to flush pending edits after recovery storage lost persistence", error);
+  } finally {
+    state.pageMode = pageModes.READ;
+    state.pendingFocusBlockId = null;
+    state.pageModeChanging = false;
+    recoveryPersistenceDowngradeInFlight = false;
+    syncPageModeUi();
+    if (state.user) setStatus(t("status.durableRecoveryStorageUnavailable"), true);
+  }
+}
+
+function revalidateRecoveryStoragePersistence() {
+  void recoveryStoragePersistence.refresh();
+}
+
+recoveryStoragePersistence.subscribe(handleRecoveryStoragePersistenceChange);
+window.addEventListener("focus", revalidateRecoveryStoragePersistence);
+window.addEventListener("pageshow", revalidateRecoveryStoragePersistence);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") revalidateRecoveryStoragePersistence();
+});
+
 function isPageOwner(page = state.selectedPage) {
   if (!page) return false;
   if (page.access && typeof page.access.isOwner === "boolean") return page.access.isOwner;
@@ -6779,7 +6818,7 @@ async function setPageMode(nextMode, { announce = true } = {}) {
   ) return;
   const normalizedMode = nextMode === pageModes.WRITE ? pageModes.WRITE : pageModes.READ;
 
-  if (normalizedMode === pageModes.WRITE && !recoveryStoragePersistence.isPersistent()) {
+  if (normalizedMode === pageModes.WRITE) {
     state.pageModeChanging = true;
     syncPageModeUi();
     try {
@@ -8607,6 +8646,11 @@ async function startPageCollaboration(page = state.selectedPage) {
           renderCollaborationChrome();
           if (error?.code === "COLLABORATION_RECOVERY_WRITE_FAILED") {
             setStatus(t("status.localDraftStorageFailed"), true);
+          } else if (
+            error?.code === "COLLABORATION_RECOVERY_INSPECTION_FAILED"
+            || error?.code === "COLLABORATION_RECOVERY_DECODE_FAILED"
+          ) {
+            setStatus(t("status.localRecoveryInspectionFailed"), true);
           }
         }
       },
@@ -13891,7 +13935,11 @@ function blockPayloadsMatch(block, payload) {
 
 function applyPersistedPageDraft(page) {
   const scope = getDraftScope(page?.id);
-  const records = scope ? pageDraftStore.loadPageDrafts(scope.userId, scope.pageId) : [];
+  const inspection = scope
+    ? pageDraftStore.inspectPageDrafts(scope.userId, scope.pageId)
+    : { records: [], reliable: true, unreadableKeys: [] };
+  if (scope) assertBrowserRecoveryInspectionSafe(inspection);
+  const records = inspection.records;
   const recovery = {
     scope,
     title: null,
@@ -13924,14 +13972,18 @@ function applyPersistedPageDraft(page) {
   titleCandidates.sort((left, right) => right.draft.updatedAt - left.draft.updatedAt);
   if (titleCandidates.length > 0) {
     const selected = titleCandidates[0];
+    const divergentCandidates = titleCandidates
+      .slice(1)
+      .filter((candidate) => candidate.draft.value !== selected.draft.value);
     const serverVersion = getPositiveVersion(page.version);
-    const conflict = serverVersion !== selected.draft.expectedVersion;
+    const conflict =
+      serverVersion !== selected.draft.expectedVersion
+      || divergentCandidates.length > 0;
     recovery.title = { ...selected.draft, sourceId: selected.sourceId, serverVersion, conflict };
     recovery.conflictCount += conflict ? 1 : 0;
     page.title = selected.draft.value;
 
-    for (const candidate of titleCandidates.slice(1)) {
-      if (candidate.draft.value === selected.draft.value) continue;
+    for (const candidate of divergentCandidates) {
       recovery.alternates.push({
         kind: "title",
         sourceId: candidate.sourceId,
@@ -13939,7 +13991,6 @@ function applyPersistedPageDraft(page) {
         expectedVersion: candidate.draft.expectedVersion,
         updatedAt: candidate.draft.updatedAt
       });
-      recovery.conflictCount += 1;
     }
   }
 
@@ -13986,8 +14037,13 @@ function applyPersistedPageDraft(page) {
     pending.sort((left, right) => right.draft.updatedAt - left.draft.updatedAt);
     if (pending.length === 0) continue;
     const selected = pending[0];
+    const divergentCandidates = pending
+      .slice(1)
+      .filter((candidate) => !jsonValuesMatch(candidate.payload, selected.payload));
     const serverVersion = getPositiveVersion(block.version);
-    const conflict = serverVersion !== selected.draft.expectedVersion;
+    const conflict =
+      serverVersion !== selected.draft.expectedVersion
+      || divergentCandidates.length > 0;
     recovery.blocks.push({
       blockId,
       draft: selected.draft,
@@ -13998,8 +14054,7 @@ function applyPersistedPageDraft(page) {
     recovery.conflictCount += conflict ? 1 : 0;
     Object.assign(block, selected.payload);
 
-    for (const candidate of pending.slice(1)) {
-      if (jsonValuesMatch(candidate.payload, selected.payload)) continue;
+    for (const candidate of divergentCandidates) {
       recovery.alternates.push({
         kind: "block",
         blockId,
@@ -14008,7 +14063,6 @@ function applyPersistedPageDraft(page) {
         expectedVersion: candidate.draft.expectedVersion,
         updatedAt: candidate.draft.updatedAt
       });
-      recovery.conflictCount += 1;
     }
   }
 
@@ -14036,6 +14090,9 @@ function applyPersistedPageDraft(page) {
 
   if (pendingOrderCandidates.length > 0) {
     const selected = pendingOrderCandidates[0];
+    const divergentCandidates = pendingOrderCandidates
+      .slice(1)
+      .filter((candidate) => !jsonValuesMatch(candidate.draft.orderedIds, selected.draft.orderedIds));
     const itemBlocks = selected.draft.items.map((item) => getBlockById(item.id, page.blocks ?? []));
     const siblings = getPageBlockSiblings(page, selected.draft.parentBlockId);
     const siblingIds = siblings.map((block) => block.id);
@@ -14047,18 +14104,21 @@ function applyPersistedPageDraft(page) {
           block &&
           Number(block.version ?? 1) === selected.draft.items[index].expectedVersion
       );
+    const hasDivergence = divergentCandidates.length > 0;
 
-    if (replayable && reorderPageBlockSiblings(page, selected.draft.parentBlockId, selected.draft.orderedIds)) {
+    if (
+      !hasDivergence
+      && replayable
+      && reorderPageBlockSiblings(page, selected.draft.parentBlockId, selected.draft.orderedIds)
+    ) {
       recovery.blockOrder = { sourceId: selected.sourceId, draft: selected.draft, serverIds: siblingIds };
     } else {
       recovery.orderConflicts.push({ sourceId: selected.sourceId, draft: selected.draft });
       recovery.conflictCount += 1;
     }
 
-    for (const candidate of pendingOrderCandidates.slice(1)) {
-      if (jsonValuesMatch(candidate.draft.orderedIds, selected.draft.orderedIds)) continue;
+    for (const candidate of divergentCandidates) {
       recovery.orderConflicts.push({ sourceId: candidate.sourceId, draft: candidate.draft });
-      recovery.conflictCount += 1;
     }
   }
 
@@ -14609,6 +14669,7 @@ async function boot() {
   }
 
   if (result.outcome === "ready") {
+    await recoveryStoragePersistence.monitorPermission();
     await recoveryStoragePersistence.refresh();
     renderPages();
     await restoreWorkspaceLocationFromHash({ fallbackToHome: true });

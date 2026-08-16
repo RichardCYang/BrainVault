@@ -331,7 +331,18 @@ class PageCollaborationSession {
   }
 
   restoreLocalRecovery(documentEpoch) {
-    const records = this.recoveryStore?.loadAll?.(this.accountId, this.page.id) ?? [];
+    const inspection = this.recoveryStore?.inspectAll?.(this.accountId, this.page.id) ?? {
+      records: [],
+      reliable: false,
+      unreadableKeys: []
+    };
+    if (!inspection.reliable || inspection.unreadableKeys.length > 0) {
+      const error = new Error("Local collaboration recovery could not be inspected safely");
+      error.code = "COLLABORATION_RECOVERY_INSPECTION_FAILED";
+      throw error;
+    }
+
+    const records = inspection.records;
     if (!records.length) return false;
     const matchingRecords = records.filter((record) => record.documentEpoch === documentEpoch);
     const preservedRecords = records.filter((record) => record.documentEpoch !== documentEpoch);
@@ -353,6 +364,7 @@ class PageCollaborationSession {
       recordCount: matchingRecords.length
     }) === false) return false;
     const recovered = [];
+    let decodeFailure = null;
     for (const record of matchingRecords) {
       try {
         this.Y.applyUpdate(this.doc, record.update, RECOVERY_ORIGIN);
@@ -364,10 +376,17 @@ class PageCollaborationSession {
       } catch (error) {
         // Preserve undecodable bytes for manual recovery. A newer application
         // or a forensic export may still be able to recover part of the state.
+        decodeFailure ??= error;
         this.onError(new Error(
           `A local collaboration recovery record could not be decoded and was preserved: ${error?.message || error}`
         ));
       }
+    }
+    if (decodeFailure) {
+      const error = new Error("A local collaboration recovery record cannot be decoded safely");
+      error.code = "COLLABORATION_RECOVERY_DECODE_FAILED";
+      error.cause = decodeFailure;
+      throw error;
     }
     if (!recovered.length) return false;
     this.recoveredLocalRecords = recovered;
@@ -950,7 +969,10 @@ class PageCollaborationSession {
     } catch (error) {
       this.onError(error);
       this.onStatus("error");
-      this.scheduleReconnect();
+      const recoveryIntegrityFailure =
+        error?.code === "COLLABORATION_RECOVERY_INSPECTION_FAILED"
+        || error?.code === "COLLABORATION_RECOVERY_DECODE_FAILED";
+      if (!recoveryIntegrityFailure) this.scheduleReconnect();
     } finally {
       this.connecting = false;
     }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createPageDraftStore } from "../public/draft-store.js";
+import { createCollaborationRecoveryStore } from "../public/collaboration-recovery-store.js";
 
 function read(relativePath) {
   return readFileSync(new URL(`../${relativePath}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
@@ -244,4 +245,59 @@ test("recovery candidate bytes are verified on the server and again before brows
   assert.match(download, /actualSha256 !== expectedSha256/);
   assert.match(download, /servedSha256 !== expectedSha256/);
   assertBefore(download, "const actualSha256 = await sha256BytesHex(bytes)", "download.click()", "browser recovery integrity verification");
+});
+
+
+test("direct page opening fails closed when browser recovery cannot be inspected safely", () => {
+  const app = read("public/app.js");
+  const recovery = section(app, "function applyPersistedPageDraft(page)", "function findRenderedBlockRow");
+  assertBefore(
+    recovery,
+    "pageDraftStore.inspectPageDrafts(scope.userId, scope.pageId)",
+    "const records = inspection.records",
+    "direct recovery strong inspection"
+  );
+  assertBefore(
+    recovery,
+    "assertBrowserRecoveryInspectionSafe(inspection)",
+    "const records = inspection.records",
+    "direct recovery fail-closed guard"
+  );
+  assert.doesNotMatch(recovery, /loadPageDrafts\(/);
+});
+
+test("collaboration account/page inspection preserves unreadable recovery evidence", () => {
+  const storage = new MemoryStorage();
+  const corruptKey = "brainvault.collaborationRecovery.v1:user-1:page-1:epoch-1:tab-corrupt";
+  storage.setItem(corruptKey, "{not-json");
+  const store = createCollaborationRecoveryStore(storage);
+  const inspection = store.inspectAll("user-1", "page-1");
+  assert.equal(inspection.reliable, true);
+  assert.deepEqual(inspection.records, []);
+  assert.deepEqual(inspection.unreadableKeys, [corruptKey]);
+  assert.deepEqual(store.loadAll("user-1", "page-1"), []);
+  assert.equal(storage.getItem(corruptKey), "{not-json");
+});
+
+test("collaboration startup treats unreadable or undecodable recovery as a non-retrying integrity failure", () => {
+  const collaboration = read("public/collaboration.js");
+  const restore = section(collaboration, "  restoreLocalRecovery(documentEpoch)", "  persistRecoveryState");
+  assert.match(restore, /this\.recoveryStore\?\.inspectAll\?\./);
+  assert.match(restore, /COLLABORATION_RECOVERY_INSPECTION_FAILED/);
+  assert.match(restore, /COLLABORATION_RECOVERY_DECODE_FAILED/);
+  assertBefore(
+    restore,
+    "if (decodeFailure)",
+    "this.recoveredLocalRecords = recovered",
+    "decode failure fence"
+  );
+
+  const connect = section(collaboration, "  async connect()", "  handleSocketMessage");
+  assertBefore(
+    connect,
+    "this.restoreLocalRecovery(documentEpoch)",
+    "const socket = new WebSocket",
+    "recovery before websocket"
+  );
+  assert.match(connect, /if \(!recoveryIntegrityFailure\) this\.scheduleReconnect\(\)/);
 });
