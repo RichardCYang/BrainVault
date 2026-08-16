@@ -1,6 +1,7 @@
 import mariadb, { type Pool, type PoolConnection, type RowsWithMeta, type UpsertResult } from "mariadb";
 import { env } from "../config/env.js";
 import { databaseOptionsWithSchema, parseDatabaseUrl } from "./database-url.js";
+import { assertMariaDbCrashDurabilityVariables, type MariaDbVariableRow } from "./database-durability.js";
 
 export type DbValue = string | number | boolean | null | Date | Buffer;
 
@@ -73,6 +74,19 @@ function createClient(target: Pool | PoolConnection): DbClient {
 }
 
 export const db = createClient(pool);
+
+export async function assertDatabaseCrashDurability(client: DbClient = db) {
+  const rows = await client.query<MariaDbVariableRow>(`
+    SHOW GLOBAL VARIABLES
+    WHERE Variable_name IN (
+      'innodb_flush_log_at_trx_commit',
+      'log_bin',
+      'sync_binlog',
+      'binlog_storage_engine'
+    )
+  `);
+  assertMariaDbCrashDurabilityVariables(rows);
+}
 
 export class TransactionCommitOutcomeUnknownError extends Error {
   readonly commitOutcomeUnknown = true;

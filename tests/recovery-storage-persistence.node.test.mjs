@@ -95,16 +95,39 @@ test("denied or unavailable persistence fails closed", async () => {
   assert.equal(unavailable.isPersistent(), false);
 });
 
-test("the app gates effective write mode and write transitions on persistent recovery storage", () => {
-  assert.match(client, /function isPageReadOnly\(\) \{\n  return state\.pageMode !== pageModes\.WRITE \|\| !recoveryStoragePersistence\.isPersistent\(\);/);
+test("the app gates new edits on durable recovery but keeps accepted edits drainable", () => {
+  assert.match(
+    client,
+    /function isPageReadOnly\(\) \{[\s\S]*!recoveryStoragePersistence\.isPersistent\(\)[\s\S]*!indexedDbRecoveryStorage[\s\S]*recoveryStorageWriteFailure/
+  );
   assert.match(client, /if \(normalizedMode === pageModes\.WRITE\) \{/);
   assert.match(client, /await recoveryStoragePersistence\.ensurePersistent\(\)/);
   assert.match(client, /recoveryStoragePersistence\.subscribe\(handleRecoveryStoragePersistenceChange\)/);
-  assert.match(client, /state\.pageModeChanging = true;[\s\S]*flushPendingPageEdits\(\{ allowLocked: true, collaborationCompact: false \}\)[\s\S]*state\.pageMode = pageModes\.READ;/);
+
+  const persistStart = client.indexOf("function canPersistSelectedPage()");
+  const persistEnd = client.indexOf("function canEditSelectedPage()", persistStart);
+  const persistSource = client.slice(persistStart, persistEnd);
+  assert.match(
+    persistSource,
+    /recoveryDrainAllowed = recoveryPersistenceDowngradeInFlight && state\.pageModeChanging/
+  );
+  assert.match(persistSource, /recoveryDurable \|\| recoveryDrainAllowed/);
+
+  const drainStart = client.indexOf("async function drainRecoveryPersistenceDowngrade()");
+  const drainEnd = client.indexOf("async function handleRecoveryStoragePersistenceChange", drainStart);
+  const drainSource = client.slice(drainStart, drainEnd);
+  const flushIndex = drainSource.indexOf("flushPendingPageEdits({ allowLocked: true, collaborationCompact: false })");
+  const pendingIndex = drainSource.indexOf("hasPendingPageEdits()");
+  const readIndex = drainSource.indexOf("state.pageMode = pageModes.READ");
+  assert.ok(flushIndex >= 0, "downgrade must attempt the authoritative server drain");
+  assert.ok(pendingIndex > flushIndex, "pending state must be checked after the drain attempt");
+  assert.ok(readIndex > pendingIndex, "READ mode must become permanent only after pending edits are gone");
+  assert.match(drainSource, /state\.pageModeChanging = true;[\s\S]*throw error;/);
+
   assert.match(client, /window\.addEventListener\("focus", revalidateRecoveryStoragePersistence\)/);
   assert.match(client, /window\.addEventListener\("pageshow", revalidateRecoveryStoragePersistence\)/);
   assert.match(client, /await recoveryStoragePersistence\.monitorPermission\(\)/);
-  assert.match(client, /state\.pageMode = pageModes\.READ;/);
   assert.match(client, /status\.durableRecoveryStorageUnavailable/);
   assert.match(client, /await recoveryStoragePersistence\.refresh\(\)/);
+  assert.match(client, /window\.addEventListener\("online", \(\) => \{[\s\S]*drainRecoveryPersistenceDowngrade\(\)/);
 });

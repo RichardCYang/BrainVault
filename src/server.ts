@@ -3,7 +3,7 @@ import { createServer as createHttpsServer } from "node:https";
 import { createApp } from "./app.js";
 import { env } from "./config/env.js";
 import { bootstrapDatabase } from "./lib/db-bootstrap.js";
-import { closeDb } from "./lib/db.js";
+import { assertDatabaseCrashDurability, closeDb } from "./lib/db.js";
 import { cleanupStaleDataTransferTempFiles, recoverInterruptedDataRestores } from "./lib/data-transfer.js";
 import { cleanupStaleAttachmentTempFiles } from "./lib/attachments.js";
 import { attachPageCollaborationServer } from "./lib/collaboration-server.js";
@@ -28,6 +28,11 @@ async function start() {
   } else {
     console.log("AUTO_BOOTSTRAP_DATABASE=false. Skipping database/schema bootstrap.");
   }
+
+  // Refuse to accept user writes if MariaDB can acknowledge commits that are
+  // not guaranteed to survive a server/OS crash. InnoDB-based binary logging
+  // makes sync_binlog irrelevant; traditional binary logging requires 1.
+  await assertDatabaseCrashDurability();
 
   await recoverInterruptedDataRestores();
   await cleanupStaleDataTransferTempFiles();

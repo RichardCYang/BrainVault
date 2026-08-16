@@ -27,12 +27,12 @@ function asNonEmptyUpdate(value, label) {
  * @param {{
  *   recoveryUpdate: Uint8Array | ArrayBuffer | ArrayLike<number>,
  *   liveUpdate: Uint8Array | ArrayBuffer | ArrayLike<number>,
- *   persistRecovery: (update: Uint8Array) => unknown,
+ *   persistRecovery: (update: Uint8Array) => unknown | Promise<unknown>,
  *   applyLiveUpdate: (update: Uint8Array) => void
  * }} options
- * @returns {string}
+ * @returns {Promise<string>}
  */
-export function commitPreparedCollaborationMutation({
+export async function commitPreparedCollaborationMutation({
   recoveryUpdate,
   liveUpdate,
   persistRecovery,
@@ -45,7 +45,7 @@ export function commitPreparedCollaborationMutation({
   const incrementalUpdate = asNonEmptyUpdate(liveUpdate, "liveUpdate");
   let generation;
   try {
-    generation = persistRecovery(durableUpdate);
+    generation = await persistRecovery(durableUpdate);
   } catch (error) {
     throw new CollaborationRecoveryWriteError(undefined, { cause: error });
   }

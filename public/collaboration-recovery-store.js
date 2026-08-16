@@ -1,6 +1,7 @@
 import { inspectStorageKeys } from "./storage-snapshot.js";
 
-const recoverySchemaVersion = 2;
+const recoverySchemaVersion = 3;
+const base64RecoverySchemaVersion = 2;
 const legacyRecoverySchemaVersion = 1;
 let generationSequence = 0;
 
@@ -22,6 +23,15 @@ function base64ToBytes(value) {
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
+}
+
+function asBytes(value) {
+  if (value instanceof Uint8Array) return new Uint8Array(value);
+  if (value instanceof ArrayBuffer) return new Uint8Array(value.slice(0));
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
+  }
+  return null;
 }
 
 function createGeneration() {
@@ -64,15 +74,27 @@ export function createCollaborationRecoveryStore(
     }
   }
 
+  function readRawRecord(key) {
+    const objectValue = storage?.getObject?.(key);
+    if (objectValue !== null && objectValue !== undefined) {
+      return typeof objectValue === "string" ? JSON.parse(objectValue) : objectValue;
+    }
+    const raw = storage?.getItem?.(key);
+    if (raw === null || raw === undefined) return null;
+    return JSON.parse(raw);
+  }
+
   function inspectRecord(key, accountId, pageId) {
     if (!storage) return { record: null, unreadable: true };
     try {
-      const raw = storage.getItem(key);
-      if (raw === null) return { record: null, unreadable: false };
-      const record = JSON.parse(raw);
+      const record = readRawRecord(key);
+      if (record === null) return { record: null, unreadable: false };
       const parsedKey = parseStorageKey(key);
       const isLegacy = record?.schemaVersion === legacyRecoverySchemaVersion;
-      const isCurrent = record?.schemaVersion === recoverySchemaVersion;
+      const isBase64 = record?.schemaVersion === base64RecoverySchemaVersion;
+      const isBinary = record?.schemaVersion === recoverySchemaVersion;
+      const isCurrent = isBase64 || isBinary;
+      const binaryUpdate = isBinary ? asBytes(record.update) : null;
       if (
         (!isLegacy && !isCurrent)
         || !parsedKey
@@ -86,13 +108,12 @@ export function createCollaborationRecoveryStore(
         || parsedKey.legacyKey !== isLegacy
         || !isNonEmptyString(record.generation)
         || (isCurrent && !isNonEmptyString(record.documentEpoch))
-        || typeof record.update !== "string"
-        || !record.update
+        || (isBinary ? !binaryUpdate?.byteLength : (typeof record.update !== "string" || !record.update))
       ) {
         return { record: null, unreadable: true };
       }
-      const update = base64ToBytes(record.update);
-      if (!update.byteLength) return { record: null, unreadable: true };
+      const update = isBinary ? binaryUpdate : base64ToBytes(record.update);
+      if (!update?.byteLength) return { record: null, unreadable: true };
       const updatedAt = Number(record.updatedAt);
       return {
         record: {
@@ -103,7 +124,7 @@ export function createCollaborationRecoveryStore(
           updatedAt: Number.isFinite(updatedAt) && updatedAt >= 0 && updatedAt <= 8_640_000_000_000_000
             ? updatedAt
             : 0,
-          encodedUpdate: record.update,
+          encodedUpdate: isBinary ? null : record.update,
           update
         },
         unreadable: false
@@ -116,10 +137,6 @@ export function createCollaborationRecoveryStore(
     }
   }
 
-  function readRecord(key, accountId, pageId) {
-    return inspectRecord(key, accountId, pageId).record;
-  }
-
   function inspectPageKeys(accountId, pageId) {
     const pagePrefix = getPagePrefix(accountId, pageId);
     const snapshot = snapshotStorageKeys();
@@ -127,10 +144,6 @@ export function createCollaborationRecoveryStore(
       keys: snapshot.keys.filter((key) => key.startsWith(pagePrefix)),
       reliable: snapshot.reliable
     };
-  }
-
-  function listPageKeys(accountId, pageId) {
-    return inspectPageKeys(accountId, pageId).keys;
   }
 
   function inspectAll(accountId, pageId) {
@@ -167,13 +180,10 @@ export function createCollaborationRecoveryStore(
     const snapshot = snapshotStorageKeys();
     const records = [];
     const unreadableKeys = [];
-
     for (const key of snapshot.keys) {
       if (!key.startsWith(storagePrefix)) continue;
       const parsedKey = parseStorageKey(key);
       if (!parsedKey) {
-        // The key belongs to this recovery namespace but its page cannot be
-        // proven. It may target the page being deleted, so fail closed.
         unreadableKeys.push(key);
         continue;
       }
@@ -182,7 +192,6 @@ export function createCollaborationRecoveryStore(
       if (inspection.record) records.push({ accountId: parsedKey.accountId, ...inspection.record });
       else if (inspection.unreadable) unreadableKeys.push(key);
     }
-
     return {
       records: records.sort((left, right) => left.updatedAt - right.updatedAt),
       reliable: snapshot.reliable,
@@ -202,7 +211,6 @@ export function createCollaborationRecoveryStore(
     const snapshot = snapshotStorageKeys();
     const records = [];
     const unreadableKeys = [];
-
     for (const key of snapshot.keys) {
       if (!key.startsWith(accountPrefix)) continue;
       const parsedKey = parseStorageKey(key);
@@ -214,7 +222,6 @@ export function createCollaborationRecoveryStore(
       if (inspection.record) records.push({ accountId, pageId: parsedKey.pageId, ...inspection.record });
       else if (inspection.unreadable) unreadableKeys.push(key);
     }
-
     return {
       records: records.sort((left, right) => left.updatedAt - right.updatedAt),
       reliable: snapshot.reliable,
@@ -234,7 +241,7 @@ export function createCollaborationRecoveryStore(
       || !isNonEmptyString(sourceId)
       || !isNonEmptyString(documentEpoch)
     ) return null;
-    const bytes = update instanceof Uint8Array ? update : new Uint8Array(update ?? 0);
+    const bytes = update instanceof Uint8Array ? new Uint8Array(update) : new Uint8Array(update ?? 0);
     if (!bytes.byteLength) return null;
     const key = getKey(accountId, pageId, documentEpoch, sourceId);
     const existing = inspectRecord(key, accountId, pageId);
@@ -247,17 +254,28 @@ export function createCollaborationRecoveryStore(
       ))
     ) return null;
     const generation = createGeneration();
+    const common = {
+      accountId,
+      pageId,
+      sourceId,
+      documentEpoch,
+      generation,
+      updatedAt: Date.now()
+    };
     try {
+      if (typeof storage.setObject === "function" && typeof storage.flush === "function") {
+        storage.setObject(key, {
+          schemaVersion: recoverySchemaVersion,
+          ...common,
+          update: bytes
+        });
+        return storage.flush().then(() => generation);
+      }
       storage.setItem(
         key,
         JSON.stringify({
-          schemaVersion: recoverySchemaVersion,
-          accountId,
-          pageId,
-          sourceId,
-          documentEpoch,
-          generation,
-          updatedAt: Date.now(),
+          schemaVersion: base64RecoverySchemaVersion,
+          ...common,
           update: bytesToBase64(bytes)
         })
       );

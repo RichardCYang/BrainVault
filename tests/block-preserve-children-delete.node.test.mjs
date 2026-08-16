@@ -114,7 +114,7 @@ test("the server promotes children and deletes the target inside one locked SQL 
 });
 
 test("collaboration promotes children and deletes their empty parent in one Yjs mutation", () => {
-  const deletion = section(collaboration, "  deleteBlock(blockId", "  adoptAttachment(");
+  const deletion = section(collaboration, "  async deleteBlock(blockId", "  adoptAttachment(");
   assert.match(deletion, /promoteChildren = false/);
   assert.match(deletion, /promotedOrder\.splice\(targetIndex, 0, \.\.\.children\)/);
   const mutation = section(deletion, "this.commitLocalMutation", "return [...ids]");

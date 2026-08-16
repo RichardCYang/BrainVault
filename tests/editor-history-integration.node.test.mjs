@@ -50,7 +50,7 @@ test("collaboration and stale-state guards prevent overwriting newer content", (
 test("history is captured only after the existing durability boundary succeeds", () => {
   const markBlockDirty = functionSource("markBlockDirty", "getBlockSaveQueue");
   const collabUpsert = markBlockDirty.indexOf("session.upsertBlock({");
-  const collabRecord = markBlockDirty.indexOf("recordBlockEditorHistory(row, historyPayload, current);");
+  const collabRecord = markBlockDirty.indexOf("recordBlockEditorHistory(currentRow, historyPayload, current);");
   const draftPersist = markBlockDirty.indexOf("persistBlockDraft(row)");
   const draftRecord = markBlockDirty.indexOf("recordBlockEditorHistory(row, historyPayload);");
   assert.ok(collabUpsert !== -1 && collabRecord > collabUpsert);

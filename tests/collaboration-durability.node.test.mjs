@@ -9,11 +9,11 @@ import {
 const recoveryUpdate = Uint8Array.of(1, 2, 3);
 const liveUpdate = Uint8Array.of(4, 5);
 
-test("a rejected recovery write prevents the live mutation", () => {
+test("a rejected recovery write prevents the live mutation", async () => {
   let applied = false;
 
-  assert.throws(
-    () => commitPreparedCollaborationMutation({
+  await assert.rejects(
+    commitPreparedCollaborationMutation({
       recoveryUpdate,
       liveUpdate,
       persistRecovery: () => null,
@@ -29,12 +29,12 @@ test("a rejected recovery write prevents the live mutation", () => {
   assert.equal(applied, false);
 });
 
-test("a thrown storage error is preserved as the recovery failure cause", () => {
+test("a thrown storage error is preserved as the recovery failure cause", async () => {
   const storageError = new Error("quota exceeded");
   let applied = false;
 
-  assert.throws(
-    () => commitPreparedCollaborationMutation({
+  await assert.rejects(
+    commitPreparedCollaborationMutation({
       recoveryUpdate,
       liveUpdate,
       persistRecovery: () => { throw storageError; },
@@ -51,13 +51,15 @@ test("a thrown storage error is preserved as the recovery failure cause", () => 
   assert.equal(applied, false);
 });
 
-test("the full recovery candidate becomes durable before the live update is exposed", () => {
+test("the durability promise settles before the live update is exposed", async () => {
   const order = [];
-  const generation = commitPreparedCollaborationMutation({
+  const generation = await commitPreparedCollaborationMutation({
     recoveryUpdate,
     liveUpdate,
-    persistRecovery: (update) => {
-      order.push(["persist", [...update]]);
+    persistRecovery: async (update) => {
+      order.push(["persist-start", [...update]]);
+      await Promise.resolve();
+      order.push(["persist-durable", [...update]]);
       return "generation-1";
     },
     applyLiveUpdate: (update) => {
@@ -67,20 +69,21 @@ test("the full recovery candidate becomes durable before the live update is expo
 
   assert.equal(generation, "generation-1");
   assert.deepEqual(order, [
-    ["persist", [1, 2, 3]],
+    ["persist-start", [1, 2, 3]],
+    ["persist-durable", [1, 2, 3]],
     ["apply", [4, 5]]
   ]);
 });
 
-test("an unexpected live-apply failure occurs only after recovery is durable", () => {
+test("an unexpected live-apply failure occurs only after recovery is durable", async () => {
   const applyError = new Error("simulated apply failure");
   let durable = false;
 
-  assert.throws(
-    () => commitPreparedCollaborationMutation({
+  await assert.rejects(
+    commitPreparedCollaborationMutation({
       recoveryUpdate,
       liveUpdate,
-      persistRecovery: () => {
+      persistRecovery: async () => {
         durable = true;
         return "generation-2";
       },
@@ -92,12 +95,12 @@ test("an unexpected live-apply failure occurs only after recovery is durable", (
   assert.equal(durable, true);
 });
 
-test("empty updates are rejected before storage or live state is touched", () => {
+test("empty updates are rejected before storage or live state is touched", async () => {
   let persisted = false;
   let applied = false;
 
-  assert.throws(
-    () => commitPreparedCollaborationMutation({
+  await assert.rejects(
+    commitPreparedCollaborationMutation({
       recoveryUpdate: new Uint8Array(),
       liveUpdate,
       persistRecovery: () => {

@@ -7,13 +7,8 @@ function reproduceVulnerableOrder() {
   const server = { value: "before edit" };
   const recovery = { value: "before edit", writeSucceeded: false };
   const live = { value: server.value };
-
-  // Vulnerable order: mutate the only live copy first, then attempt recovery.
   live.value = "critical edit";
   recovery.writeSucceeded = false;
-
-  // The socket drops before the server can durably accept the update, and the
-  // tab crashes. Reload can observe only the old server/recovery copies.
   const reloaded = recovery.writeSucceeded ? recovery.value : server.value;
   return {
     liveBeforeCrash: live.value,
@@ -24,13 +19,12 @@ function reproduceVulnerableOrder() {
   };
 }
 
-function reproduceFixedStorageFailure() {
+async function reproduceFixedStorageFailure() {
   const server = { value: "before edit" };
   const live = { value: server.value };
   let rejectedWithDurabilityError = false;
-
   try {
-    commitPreparedCollaborationMutation({
+    await commitPreparedCollaborationMutation({
       recoveryUpdate: Uint8Array.of(1),
       liveUpdate: Uint8Array.of(2),
       persistRecovery: () => null,
@@ -39,31 +33,30 @@ function reproduceFixedStorageFailure() {
   } catch (error) {
     rejectedWithDurabilityError = error instanceof CollaborationRecoveryWriteError;
   }
-
   return {
     rejectedWithDurabilityError,
     liveAfterRejectedEdit: live.value,
     serverAfterRejectedEdit: server.value,
     unprotectedEditBecameVisible: live.value !== server.value,
-    permanentLossWindowClosed:
-      rejectedWithDurabilityError
-      && live.value === server.value
+    permanentLossWindowClosed: rejectedWithDurabilityError && live.value === server.value
   };
 }
 
-function reproduceFixedSuccess() {
+async function reproduceFixedSuccess() {
   const server = { value: "before edit" };
   const recovery = { value: null, generation: null };
   const live = { value: server.value };
   const order = [];
 
-  const generation = commitPreparedCollaborationMutation({
+  const generation = await commitPreparedCollaborationMutation({
     recoveryUpdate: Uint8Array.of(1),
     liveUpdate: Uint8Array.of(2),
-    persistRecovery: () => {
+    persistRecovery: async () => {
       order.push("persist-full-recovery");
+      await Promise.resolve();
       recovery.value = "critical edit";
       recovery.generation = "generation-1";
+      order.push("recovery-durable");
       return recovery.generation;
     },
     applyLiveUpdate: () => {
@@ -72,8 +65,6 @@ function reproduceFixedSuccess() {
     }
   });
 
-  // Model a durable server acknowledgement, after which the browser copy may
-  // be cleared without losing the edit.
   order.push("server-commit-and-ack");
   server.value = live.value;
   recovery.value = null;
@@ -85,14 +76,14 @@ function reproduceFixedSuccess() {
     serverAfterAck: server.value,
     recoveryAfterAck: recovery.value,
     reloaded: server.value,
-    durableBeforeVisible: order.indexOf("persist-full-recovery") < order.indexOf("apply-live-update"),
+    durableBeforeVisible: order.indexOf("recovery-durable") < order.indexOf("apply-live-update"),
     acknowledgedEditSurvivesReload: server.value === "critical edit"
   };
 }
 
 const vulnerable = reproduceVulnerableOrder();
-const fixedStorageFailure = reproduceFixedStorageFailure();
-const fixedSuccess = reproduceFixedSuccess();
+const fixedStorageFailure = await reproduceFixedStorageFailure();
+const fixedSuccess = await reproduceFixedSuccess();
 
 console.log(JSON.stringify({
   vulnerable,

@@ -88,6 +88,10 @@ import { createCollaborationRecoveryStore } from "./collaboration-recovery-store
 import { createPageTransitionLock } from "./page-transition-lock.js";
 import { createRecoveryStoragePersistenceGuard } from "./recovery-storage-persistence.js";
 import {
+  createIndexedDbRecoveryStorage,
+  createReadOnlyRecoveryStorage
+} from "./indexeddb-recovery-storage.js";
+import {
   BLOCK_MARKDOWN_MAX_LENGTH,
   requirePageTitleWithinLimit
 } from "./editor-content-limits.js";
@@ -163,8 +167,23 @@ const pageTransitionStoragePrefix = "brainvault.pageTransition.v1";
 const collaborationRecoveryStoragePrefix = "brainvault.collaborationRecovery.v1";
 const workspaceTransitionPagePrefix = "__workspace__";
 const pageDraftSourceId = createPageDraftSourceId();
-const pageDraftStore = createPageDraftStore(window.localStorage, { sourceId: pageDraftSourceId });
-const collaborationRecoveryStore = createCollaborationRecoveryStore(window.localStorage, {
+let recoveryStorageInitializationError = null;
+let indexedDbRecoveryStorage = null;
+try {
+  indexedDbRecoveryStorage = await createIndexedDbRecoveryStorage(
+    window.indexedDB,
+    window.localStorage,
+    {
+      migrationPrefixes: [pageDraftStoragePrefix, collaborationRecoveryStoragePrefix]
+    }
+  );
+} catch (error) {
+  recoveryStorageInitializationError = error instanceof Error ? error : new Error(String(error));
+  console.error("Durable IndexedDB recovery storage could not be initialized", recoveryStorageInitializationError);
+}
+const recoveryStorage = indexedDbRecoveryStorage ?? createReadOnlyRecoveryStorage(window.localStorage);
+const pageDraftStore = createPageDraftStore(recoveryStorage, { sourceId: pageDraftSourceId });
+const collaborationRecoveryStore = createCollaborationRecoveryStore(recoveryStorage, {
   prefix: collaborationRecoveryStoragePrefix
 });
 const recoveryStoragePersistence = createRecoveryStoragePersistenceGuard(window.navigator.storage, window.navigator.permissions);
@@ -890,6 +909,8 @@ function createSlashCommandIcon(iconName) {
 const blockSaveTimers = new Map();
 const blockSaveRows = new Map();
 const blockSaveQueues = new Map();
+const collaborationBlockMutationPromises = new Map();
+let collaborationTitleMutationPromise = null;
 const blockSaveTaskIds = new Map();
 const blockDraftConflictOrigins = new Map();
 const blockDraftRenderSources = new Map();
@@ -5962,36 +5983,102 @@ function getPageActionsMenuItems() {
 }
 
 function isPageReadOnly() {
-  return state.pageMode !== pageModes.WRITE || !recoveryStoragePersistence.isPersistent();
+  return (
+    state.pageMode !== pageModes.WRITE
+    || !recoveryStoragePersistence.isPersistent()
+    || !indexedDbRecoveryStorage
+    || Boolean(recoveryStorageWriteFailure)
+  );
 }
 
 let recoveryPersistenceDowngradeInFlight = false;
+let recoveryPersistenceDrainPromise = null;
+let recoveryStorageWriteFailure = recoveryStorageInitializationError;
 
-async function handleRecoveryStoragePersistenceChange(nextState) {
-  if (
-    nextState === "persistent"
-    || state.pageMode !== pageModes.WRITE
-    || recoveryPersistenceDowngradeInFlight
-  ) return;
+async function drainRecoveryPersistenceDowngrade() {
+  if (!recoveryPersistenceDowngradeInFlight) return;
+  if (recoveryPersistenceDrainPromise) return recoveryPersistenceDrainPromise;
 
-  // Fence new interaction immediately while the page still has WRITE state so
-  // already-accepted edits remain eligible for one final server flush.
-  recoveryPersistenceDowngradeInFlight = true;
-  state.pageModeChanging = true;
-  syncPageModeUi();
-  try {
+  const pageId = state.selectedPage?.id ?? null;
+  recoveryPersistenceDrainPromise = (async () => {
     await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false });
-  } catch (error) {
-    console.error("Failed to flush pending edits after recovery storage lost persistence", error);
-  } finally {
+    // Wait for any already-enqueued browser recovery writes to settle. A failed
+    // local write does not invalidate a successful server drain; it only keeps
+    // the page read-only after the authoritative save completes.
+    try {
+      await recoveryStorage.flush?.();
+    } catch (error) {
+      recoveryStorageWriteFailure ??= error instanceof Error ? error : new Error(String(error));
+    }
+
+    if (!recoveryPersistenceDowngradeInFlight) return;
+    if (pageId && state.selectedPage?.id !== pageId) {
+      throw new Error("The selected page changed during the recovery durability drain");
+    }
+    if (hasPendingPageEdits()) {
+      throw new Error("Pending edits remain after the recovery durability drain");
+    }
+
     state.pageMode = pageModes.READ;
     state.pendingFocusBlockId = null;
     state.pageModeChanging = false;
     recoveryPersistenceDowngradeInFlight = false;
     syncPageModeUi();
     if (state.user) setStatus(t("status.durableRecoveryStorageUnavailable"), true);
+  })()
+    .catch((error) => {
+      // Keep logical WRITE state but fence all new interaction. Already accepted
+      // edits therefore remain eligible for a later server retry (for example
+      // when connectivity returns) instead of becoming stranded in the browser.
+      console.error("Failed to drain pending edits after recovery durability was lost", error);
+      state.pageModeChanging = true;
+      syncPageModeUi();
+      syncBeforeUnloadProtection();
+      if (state.user) setStatus(t("status.durableRecoveryStorageUnavailable"), true);
+      throw error;
+    })
+    .finally(() => {
+      recoveryPersistenceDrainPromise = null;
+    });
+
+  return recoveryPersistenceDrainPromise;
+}
+
+async function handleRecoveryStoragePersistenceChange(nextState) {
+  if (nextState === "persistent") {
+    if (recoveryPersistenceDowngradeInFlight && !recoveryStorageWriteFailure && indexedDbRecoveryStorage) {
+      recoveryPersistenceDowngradeInFlight = false;
+      state.pageModeChanging = false;
+      syncPageModeUi();
+    }
+    return;
+  }
+  if (state.pageMode !== pageModes.WRITE || recoveryPersistenceDowngradeInFlight) return;
+
+  recoveryPersistenceDowngradeInFlight = true;
+  state.pageModeChanging = true;
+  syncPageModeUi();
+  try {
+    await drainRecoveryPersistenceDowngrade();
+  } catch {
+    // The drain function deliberately retains the locked WRITE state for retry.
   }
 }
+
+function handleDurableRecoveryStorageWriteError(error, context = null) {
+  recoveryStorageWriteFailure = error instanceof Error ? error : new Error(String(error));
+  console.error("Durable browser recovery write failed", context, recoveryStorageWriteFailure);
+  if (state.pageMode !== pageModes.WRITE || recoveryPersistenceDowngradeInFlight) {
+    syncBeforeUnloadProtection();
+    return;
+  }
+  recoveryPersistenceDowngradeInFlight = true;
+  state.pageModeChanging = true;
+  syncPageModeUi();
+  void drainRecoveryPersistenceDowngrade().catch(() => undefined);
+}
+
+indexedDbRecoveryStorage?.onWriteError(handleDurableRecoveryStorageWriteError);
 
 function revalidateRecoveryStoragePersistence() {
   void recoveryStoragePersistence.refresh();
@@ -6200,7 +6287,18 @@ function isPageInteractionLocked() {
 }
 
 function canPersistSelectedPage() {
-  return Boolean(state.selectedPage && state.workspaceView === "page" && !isPageReadOnly());
+  const recoveryDrainAllowed = recoveryPersistenceDowngradeInFlight && state.pageModeChanging;
+  const recoveryDurable = Boolean(
+    indexedDbRecoveryStorage
+    && !recoveryStorageWriteFailure
+    && recoveryStoragePersistence.isPersistent()
+  );
+  return Boolean(
+    state.selectedPage
+    && state.workspaceView === "page"
+    && state.pageMode === pageModes.WRITE
+    && (recoveryDurable || recoveryDrainAllowed)
+  );
 }
 
 function canEditSelectedPage() {
@@ -6350,8 +6448,15 @@ function syncPageModeUi() {
 }
 
 function hasPendingPageEdits() {
+  if (recoveryStorage.hasPendingWrites?.()) return true;
   if (!state.selectedPage || state.workspaceView !== "page") return false;
-  if (isCollaborativePage()) return Boolean(state.collaborationSession?.hasPendingChanges);
+  if (isCollaborativePage()) {
+    return Boolean(
+      state.collaborationSession?.hasPendingChanges
+      || collaborationBlockMutationPromises.size
+      || collaborationTitleMutationPromise
+    );
+  }
   const hasCommittableTitleEdit =
     pageTitleSaveTimer !== null
     || (pageTitleSavedRevision < pageTitleEditRevision && Boolean(elements.pageTitle.value.trim()));
@@ -6400,6 +6505,18 @@ function reportLocalDraftStorageFailure() {
 function checkDraftStoreWrite(succeeded) {
   if (!succeeded) reportLocalDraftStorageFailure();
   return succeeded;
+}
+
+function preserveInputAfterRecoveryAdmissionFailure(row = null) {
+  const error = new Error(t("status.localDraftStorageFailed"));
+  if (row) {
+    row.classList.add("is-dirty", "save-error");
+    row.classList.remove("is-saved", "is-saving");
+  } else {
+    elements.pageTitle?.classList.add("save-error");
+  }
+  handleDurableRecoveryStorageWriteError(error, { operation: "direct-recovery-admission" });
+  syncBeforeUnloadProtection();
 }
 
 function persistPageTitleDraft() {
@@ -6470,7 +6587,7 @@ function promotePageTitleDraftConflict() {
     pageTitleDraftConflict = true;
     pageTitleDraftSourceId = previousSourceId;
     pageTitleDraftExpectedVersion = previousExpectedVersion;
-    elements.pageTitle.classList.add("save-error");
+    preserveInputAfterRecoveryAdmissionFailure();
     return false;
   }
   return true;
@@ -6507,7 +6624,7 @@ function promoteBlockDraftConflict(row) {
   row.classList.remove("save-error");
   if (!persistBlockDraft(row)) {
     if (conflictOrigin) conflictOrigin.resolved = previousResolved;
-    restoreBlockRowFromDurableState(row);
+    preserveInputAfterRecoveryAdmissionFailure(row);
     return false;
   }
   return true;
@@ -6752,6 +6869,13 @@ function getPendingSavePayloadBytes({ saveTitle, rowsToSave }) {
 async function flushPendingPageEdits({ keepalive = false, allowLocked = false, collaborationCompact = true } = {}) {
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
+    const pendingCollaborationMutations = [
+      collaborationTitleMutationPromise,
+      ...collaborationBlockMutationPromises.values()
+    ].filter(Boolean);
+    if (pendingCollaborationMutations.length) {
+      await Promise.all(pendingCollaborationMutations);
+    }
     assertCollaborationExitSafe(session, t("sharing.syncRequired"));
     const materialization = session?.isReady
       ? await session.flushMaterialization({ compact: collaborationCompact })
@@ -9107,7 +9231,7 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
   const preserveChildren = options.preserveChildren === true;
   if (isCollaborativePage()) {
     return withCollaborativeDestructiveTransition(pageId, "block-delete", async (session) => ({
-      deletedIds: session.deleteBlock(blockId, {
+      deletedIds: await session.deleteBlock(blockId, {
         cascade: options.includeDescendants !== false,
         promoteChildren: preserveChildren
       })
@@ -11802,7 +11926,16 @@ function restoreBlockRowFromDurableState(row) {
 
 function rejectLocalBlockMutation(row, error) {
   console.error("Rejected non-durable block mutation", error);
-  restoreBlockRowFromDurableState(row);
+  if (error?.code === "COLLABORATION_RECOVERY_WRITE_FAILED") {
+    // The live Yjs document was not changed, but the editor still contains the
+    // user's newest input. Preserve that visible copy and fence navigation/editing
+    // instead of replacing it with older durable content.
+    row?.classList.add("is-dirty", "save-error");
+    row?.classList.remove("is-saved", "is-saving");
+    handleDurableRecoveryStorageWriteError(error, { operation: "collaboration-recovery" });
+  } else {
+    restoreBlockRowFromDurableState(row);
+  }
   setStatus(getRejectedLocalMutationMessage(error), true);
   syncBeforeUnloadProtection();
 }
@@ -11813,10 +11946,12 @@ function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
     if (!session?.isReady) return false;
-    const current = getBlockById(row.dataset.blockId);
+    const blockId = row.dataset.blockId;
+    const current = getBlockById(blockId);
     if (!current) return false;
+    let mutation;
     try {
-      session.upsertBlock({
+      mutation = session.upsertBlock({
         ...current,
         ...historyPayload,
         parentBlockId: normalizeParentBlockId(row.dataset.parentBlockId),
@@ -11826,11 +11961,30 @@ function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
       rejectLocalBlockMutation(row, error);
       return false;
     }
-    recordBlockEditorHistory(row, historyPayload, current);
-    row.classList.remove("is-dirty", "is-saving", "save-error");
-    row.classList.add("is-saved");
-    window.setTimeout(() => row.classList.remove("is-saved"), 450);
-    updateCollaborationAwareness(document.activeElement);
+    collaborationBlockMutationPromises.set(blockId, mutation);
+    row.classList.add("is-dirty", "is-saving");
+    row.classList.remove("is-saved", "save-error");
+    void mutation.then(() => {
+      if (collaborationBlockMutationPromises.get(blockId) !== mutation) return;
+      collaborationBlockMutationPromises.delete(blockId);
+      const currentRow = findRenderedBlockRow(blockId) ?? row;
+      recordBlockEditorHistory(currentRow, historyPayload, current);
+      if (jsonValuesMatch(buildBlockPayload(currentRow), historyPayload)) {
+        currentRow.classList.remove("is-dirty", "is-saving", "save-error");
+        currentRow.classList.add("is-saved");
+        window.setTimeout(() => currentRow.classList.remove("is-saved"), 450);
+      } else {
+        currentRow.classList.remove("is-saving");
+        currentRow.classList.add("is-dirty");
+      }
+      updateCollaborationAwareness(document.activeElement);
+      syncBeforeUnloadProtection();
+    }).catch((error) => {
+      if (collaborationBlockMutationPromises.get(blockId) === mutation) {
+        collaborationBlockMutationPromises.delete(blockId);
+      }
+      rejectLocalBlockMutation(findRenderedBlockRow(blockId) ?? row, error);
+    });
     syncBeforeUnloadProtection();
     return true;
   }
@@ -11839,8 +11993,7 @@ function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
   row.classList.add("is-dirty");
   row.classList.remove("is-saved");
   if (!persistBlockDraft(row)) {
-    restoreBlockRowFromDurableState(row);
-    syncBeforeUnloadProtection();
+    preserveInputAfterRecoveryAdmissionFailure(row);
     return false;
   }
   recordBlockEditorHistory(row, historyPayload);
@@ -11975,7 +12128,7 @@ async function saveBlockRow(
     if (!current) return null;
     let block;
     try {
-      block = session.upsertBlock({
+      block = await session.upsertBlock({
         ...current,
         ...payload,
         parentBlockId: normalizeParentBlockId(row.dataset.parentBlockId),
@@ -12008,8 +12161,7 @@ async function saveBlockRow(
     row.dataset.editRevision = String(Math.max(1, conflictRevision));
     row.classList.add("is-dirty", "save-error");
     if (!persistBlockDraft(row, payload)) {
-      restoreBlockRowFromDurableState(row);
-      syncBeforeUnloadProtection();
+      preserveInputAfterRecoveryAdmissionFailure(row);
       throw new Error(t("status.localDraftStorageFailed"));
     }
     recordBlockEditorHistory(row, payload);
@@ -12030,9 +12182,10 @@ async function saveBlockRow(
   row.dataset.editRevision = String(editRevision);
   row.classList.add("is-dirty");
   if (!persistBlockDraft(row, payload)) {
-    restoreBlockRowFromDurableState(row);
-    syncBeforeUnloadProtection();
-    throw new Error(t("status.localDraftStorageFailed"));
+    preserveInputAfterRecoveryAdmissionFailure(row);
+    if (!(allowLocked && recoveryPersistenceDowngradeInFlight)) {
+      throw new Error(t("status.localDraftStorageFailed"));
+    }
   }
   recordBlockEditorHistory(row, payload);
   window.clearTimeout(blockSaveTimers.get(blockId));
@@ -12609,7 +12762,7 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
       } else {
         orderedIds.splice(effectiveInsertionIndex, 0, data.block.id);
       }
-      session.upsertBlock({
+      await session.upsertBlock({
         ...data.block,
         parentBlockId,
         sortOrder: effectiveInsertionIndex
@@ -12620,7 +12773,7 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
         if (!current) throw new Error(t("errors.currentBlockOrder"));
         return { ...current, parentBlockId: parentBlockId ?? null, sortOrder };
       });
-      session.upsertBlocks(orderUpdates, { allowDisconnected: true });
+      await session.upsertBlocks(orderUpdates, { allowDisconnected: true });
       state.pendingFocusBlockId = data.block.id;
       renderSelectedPage();
       setStatus(t("status.attachmentUploaded", { name: file.name }));
@@ -12947,7 +13100,7 @@ async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {
       if (!block) throw new Error(t("errors.currentBlockOrder"));
       return { ...block, parentBlockId: parentBlockId ?? null, sortOrder };
     });
-    session.upsertBlocks(updates);
+    await session.upsertBlocks(updates);
     return { blocks: updates };
   }
 
@@ -13067,7 +13220,7 @@ async function createEmptyBlock(
       updatedAt: new Date().toISOString(),
       children: []
     };
-    session.upsertBlock(block);
+    await session.upsertBlock(block);
     return { block, pageContentVersion: state.selectedPage?.contentVersion ?? 1 };
   }
   const authenticationScope = captureAuthenticatedSessionScope();
@@ -13786,9 +13939,14 @@ async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked =
     const previousTitle = state.selectedPage.title ?? "";
     elements.pageTitle.value = title;
     try {
-      session.setTitle(title);
+      await session.setTitle(title);
     } catch (error) {
-      elements.pageTitle.value = previousTitle;
+      if (error?.code === "COLLABORATION_RECOVERY_WRITE_FAILED") {
+        elements.pageTitle.classList.add("save-error");
+        handleDurableRecoveryStorageWriteError(error, { operation: "collaboration-title-recovery" });
+      } else {
+        elements.pageTitle.value = previousTitle;
+      }
       setStatus(getRejectedLocalMutationMessage(error), true);
       throw error;
     }
@@ -13806,7 +13964,10 @@ async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked =
   window.clearTimeout(pageTitleSaveTimer);
   pageTitleSaveTimer = null;
   if (pageTitleEditRevision > 0 && !persistPageTitleDraft()) {
-    throw new Error(t("status.localDraftStorageFailed"));
+    preserveInputAfterRecoveryAdmissionFailure();
+    if (!(allowLocked && recoveryPersistenceDowngradeInFlight)) {
+      throw new Error(t("status.localDraftStorageFailed"));
+    }
   }
   recordPageTitleEditorHistory();
   const task = {
@@ -13839,30 +14000,48 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
     if (!session?.isReady) return false;
     const previousTitle = state.selectedPage.title ?? "";
     const title = elements.pageTitle.value;
-    // Keep an empty in-progress field local. The materialized document requires
-    // a non-blank title, and the blur handler restores the localized default.
     if (!title.trim()) {
       recordPageTitleEditorHistory(previousTitle);
       updateCollaborationAwareness(elements.pageTitle);
       syncBeforeUnloadProtection();
       return true;
     }
+    const pageId = state.selectedPage.id;
+    let mutation;
     try {
-      session.setTitle(title);
+      mutation = session.setTitle(title);
     } catch (error) {
-      updateInputValuePreservingSelection(elements.pageTitle, state.selectedPage.title ?? "");
+      elements.pageTitle.classList.add("save-error");
       setStatus(getRejectedLocalMutationMessage(error), true);
-      syncBeforeUnloadProtection();
       return false;
     }
-    recordPageTitleEditorHistory(previousTitle);
-    state.selectedPage.title = title;
-    for (const pages of [state.pages, state.allPages]) {
-      const page = pages.find((item) => item.id === state.selectedPage.id);
-      if (page) page.title = title;
-    }
-    renderPageHeader(state.selectedPage);
-    updateCollaborationAwareness(elements.pageTitle);
+    collaborationTitleMutationPromise = mutation;
+    elements.pageTitle.classList.add("is-saving");
+    void mutation.then(() => {
+      if (collaborationTitleMutationPromise !== mutation) return;
+      collaborationTitleMutationPromise = null;
+      elements.pageTitle.classList.remove("is-saving", "save-error");
+      recordPageTitleEditorHistory(previousTitle);
+      if (state.selectedPage?.id === pageId) state.selectedPage.title = title;
+      for (const pages of [state.pages, state.allPages]) {
+        const page = pages.find((item) => item.id === pageId);
+        if (page) page.title = title;
+      }
+      if (state.selectedPage?.id === pageId) renderPageHeader(state.selectedPage);
+      updateCollaborationAwareness(elements.pageTitle);
+      syncBeforeUnloadProtection();
+    }).catch((error) => {
+      if (collaborationTitleMutationPromise === mutation) collaborationTitleMutationPromise = null;
+      elements.pageTitle.classList.remove("is-saving");
+      elements.pageTitle.classList.add("save-error");
+      if (error?.code === "COLLABORATION_RECOVERY_WRITE_FAILED") {
+        handleDurableRecoveryStorageWriteError(error, { operation: "collaboration-title-recovery" });
+      } else if (elements.pageTitle.value === title) {
+        updateInputValuePreservingSelection(elements.pageTitle, state.selectedPage?.title ?? previousTitle);
+      }
+      setStatus(getRejectedLocalMutationMessage(error), true);
+      syncBeforeUnloadProtection();
+    });
     syncBeforeUnloadProtection();
     return true;
   }
@@ -13883,8 +14062,7 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
         || !checkDraftStoreWrite(pageDraftStore.removeTitle(scope.userId, scope.pageId, draftSourceId))
       ) {
         pageTitleEditRevision = previousRevision;
-        updateInputValuePreservingSelection(elements.pageTitle, state.selectedPage.title ?? "");
-        syncBeforeUnloadProtection();
+        preserveInputAfterRecoveryAdmissionFailure();
         return false;
       }
     }
@@ -13898,9 +14076,7 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
   pageTitleEditRevision += 1;
   const title = normalizePageTitle(elements.pageTitle.value);
   if (!persistPageTitleDraft()) {
-    pageTitleEditRevision = previousRevision;
-    updateInputValuePreservingSelection(elements.pageTitle, state.selectedPage.title ?? "");
-    syncBeforeUnloadProtection();
+    preserveInputAfterRecoveryAdmissionFailure();
     return false;
   }
   recordPageTitleEditorHistory();
@@ -17076,9 +17252,39 @@ document.addEventListener("visibilitychange", () => {
 });
 
 window.addEventListener("online", () => {
+  if (recoveryPersistenceDowngradeInFlight) {
+    void drainRecoveryPersistenceDowngrade().catch(() => undefined);
+    return;
+  }
   if (!pendingBlockOrderTask) return;
   retryPendingBlockOrder().catch((error) => setStatus(error.message, true));
 });
+
+function handleRecoveryStorageExternalChange(key) {
+  if (key === null) {
+    if (state.workspaceView === "home") {
+      renderHome();
+      void refreshOrphanedCollaborationRecovery();
+    }
+    refreshCollaborativePageDraftRecovery();
+    return;
+  }
+  if (key?.startsWith(`${collaborationRecoveryStoragePrefix}:`)) {
+    if (state.workspaceView === "home") void refreshOrphanedCollaborationRecovery();
+    return;
+  }
+  if (!key?.startsWith(pageDraftStoragePrefix)) return;
+  if (state.workspaceView === "home") renderHome();
+  const page = state.selectedPage;
+  const selectedPageDraftPrefix = state.user?.id && page?.id
+    ? `${pageDraftStoragePrefix}${encodeURIComponent(state.user.id)}:${encodeURIComponent(page.id)}:`
+    : null;
+  if (selectedPageDraftPrefix && key.startsWith(selectedPageDraftPrefix)) {
+    refreshCollaborativePageDraftRecovery();
+  }
+}
+
+indexedDbRecoveryStorage?.subscribe(({ key }) => handleRecoveryStorageExternalChange(key));
 
 window.addEventListener("storage", (event) => {
   if (event.key?.startsWith(`${pageTransitionStoragePrefix}:`)) {
@@ -17104,19 +17310,7 @@ window.addEventListener("storage", (event) => {
     }
     return;
   }
-  if (event.key?.startsWith(`${collaborationRecoveryStoragePrefix}:`)) {
-    if (state.workspaceView === "home") void refreshOrphanedCollaborationRecovery();
-    return;
-  }
-  if (!event.key?.startsWith(pageDraftStoragePrefix)) return;
-  if (state.workspaceView === "home") renderHome();
-  const page = state.selectedPage;
-  const selectedPageDraftPrefix = state.user?.id && page?.id
-    ? `${pageDraftStoragePrefix}${encodeURIComponent(state.user.id)}:${encodeURIComponent(page.id)}:`
-    : null;
-  if (selectedPageDraftPrefix && event.key.startsWith(selectedPageDraftPrefix)) {
-    refreshCollaborativePageDraftRecovery();
-  }
+  handleRecoveryStorageExternalChange(event.key);
 });
 
 elements.blockContextMenu.addEventListener("keydown", (event) => {

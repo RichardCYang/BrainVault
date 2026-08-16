@@ -72,6 +72,7 @@ function loadCreateAndModeHarness() {
       return deferredCreate;
     },
     applyPageContentVersion() {},
+    applyAuthoritativePageContentVersion() {},
     t(key) {
       return key;
     },

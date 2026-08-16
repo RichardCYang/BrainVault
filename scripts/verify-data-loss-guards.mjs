@@ -916,8 +916,8 @@ assertBefore(
 const collaborationMutationSections = [
   ["setTitle(value)", section(collaborationClientSource, "  setTitle(value)", "  upsertBlock(block")],
   ["upsertBlock(block)", section(collaborationClientSource, "  upsertBlock(block", "  upsertBlocks(blocks")],
-  ["upsertBlocks(blocks)", section(collaborationClientSource, "  upsertBlocks(blocks", "  deleteBlock(blockId")],
-  ["deleteBlock(blockId)", section(collaborationClientSource, "  deleteBlock(blockId", "  adoptAttachment(block")]
+  ["upsertBlocks(blocks)", section(collaborationClientSource, "  upsertBlocks(blocks", "  async deleteBlock(blockId")],
+  ["deleteBlock(blockId)", section(collaborationClientSource, "  async deleteBlock(blockId", "  adoptAttachment(block")]
 ];
 for (const [methodName, methodSource] of collaborationMutationSections) {
   assert(
@@ -981,7 +981,7 @@ assert(
 let helperAppliedAfterRejectedWrite = false;
 let helperRejectedWithDurabilityError = false;
 try {
-  commitPreparedCollaborationMutation({
+  await commitPreparedCollaborationMutation({
     recoveryUpdate: new Uint8Array([1]),
     liveUpdate: new Uint8Array([2]),
     persistRecovery: () => null,
@@ -1283,7 +1283,7 @@ assert(
 
 const collaborativeBlockDelete = section(
   collaborationClientSource,
-  "  deleteBlock(blockId",
+  "  async deleteBlock(blockId",
   "  adoptAttachment("
 );
 assert(
