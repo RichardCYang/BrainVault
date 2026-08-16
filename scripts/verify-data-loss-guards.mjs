@@ -1193,6 +1193,15 @@ assert(
   "Page and workspace transitions do not share owner/page authoritative browser locks"
 );
 assert(
+  transitionLockSource.includes("function runWriterShared(pageId, action, { signal } = {})")
+    && transitionLockSource.includes("function runWriterExclusive(pageId, action, { signal } = {})")
+    && client.includes("pageTransitionLock.runWriterShared(")
+    && client.includes("pageTransitionLock.runWriterExclusive(")
+    && client.includes("await stopPageWriterSession({ flush: true });")
+    && !client.includes("waitForPageTransitionPropagation"),
+  "Cross-tab destructive transitions do not use an acknowledged writer-drain barrier"
+);
+assert(
   transitionLockSource.includes('? { status: "expired", record }')
     && transitionLockSource.includes("function releaseExpired(pageId)")
     && transitionLockSource.includes("|| !isExclusiveHeld(exclusiveId)")
@@ -1246,13 +1255,13 @@ const archive = section(
 assertBefore(
   archive,
   "assertNoPendingLocalPageDrafts(pageId",
-  "await api(`/api/pages/${pageId}`",
+  "await archivePageWithReconciliation(pageId, expectedVersion)",
   "page archive"
 );
 assertBefore(
   archive,
   "assertNoPendingLocalCollaborationRecovery(pageId)",
-  "await api(`/api/pages/${pageId}`",
+  "await archivePageWithReconciliation(pageId, expectedVersion)",
   "page archive Yjs recovery"
 );
 

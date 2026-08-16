@@ -28,6 +28,7 @@ export function createPageTransitionLock(
   const heldExclusiveIds = new Map();
   const getKey = (pageId) => `${prefix}:${encodeURIComponent(pageId)}`;
   const getExclusiveLockName = (pageId) => `${prefix}.exclusive:${encodeURIComponent(pageId)}`;
+  const getWriterLockName = (pageId) => `${prefix}.writer:${encodeURIComponent(pageId)}`;
 
   function parsePageIdFromKey(key) {
     if (!key.startsWith(storagePrefix)) return null;
@@ -248,6 +249,52 @@ export function createPageTransitionLock(
     return requestAt(0);
   }
 
+  async function runWriterLocks(pageId, mode, action, { signal } = {}) {
+    const requestedIds = Array.isArray(pageId) ? pageId : [pageId];
+    if (
+      !requestedIds.length
+      || requestedIds.some((writerId) => !isNonEmptyString(writerId))
+      || typeof action !== "function"
+      || !["shared", "exclusive"].includes(mode)
+    ) {
+      throw new TypeError("One or more pageIds, a writer lock mode, and an action are required");
+    }
+    if (typeof lockManager?.request !== "function") {
+      return {
+        acquired: false,
+        value: undefined,
+        reason: "lock-manager-unavailable"
+      };
+    }
+
+    const writerIds = [...new Set(requestedIds)].sort();
+    async function requestAt(index) {
+      if (index >= writerIds.length) {
+        return { acquired: true, value: await action() };
+      }
+      const options = { mode };
+      if (signal) options.signal = signal;
+      return lockManager.request(
+        getWriterLockName(writerIds[index]),
+        options,
+        async (lock) => {
+          if (!lock) return { acquired: false, value: undefined };
+          return requestAt(index + 1);
+        }
+      );
+    }
+
+    return requestAt(0);
+  }
+
+  function runWriterShared(pageId, action, { signal } = {}) {
+    return runWriterLocks(pageId, "shared", action, { signal });
+  }
+
+  function runWriterExclusive(pageId, action, { signal } = {}) {
+    return runWriterLocks(pageId, "exclusive", action, { signal });
+  }
+
   return {
     prefix,
     ttlMs: normalizedTtlMs,
@@ -260,6 +307,8 @@ export function createPageTransitionLock(
     renew,
     release,
     releaseExpired,
-    runExclusive
+    runExclusive,
+    runWriterShared,
+    runWriterExclusive
   };
 }

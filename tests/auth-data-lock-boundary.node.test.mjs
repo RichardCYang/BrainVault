@@ -67,7 +67,7 @@ test("old page-edit and transition finalizers cannot unlock a new authentication
   const app = (await readFile(new URL("../public/app.js", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
   assert.match(app, /let pageEditLockGeneration = 0;/);
 
-  const lock = section(app, "function lockPageEdits", "function waitForPageTransitionPropagation");
+  const lock = section(app, "function lockPageEdits", "async function withPagePersistenceTransition");
   assert.match(lock, /const generation = pageEditLockGeneration;/);
   assert.match(lock, /if \(generation !== pageEditLockGeneration\) return;/);
   assert.match(lock, /unlockPageEdits\(lockGeneration\);/);

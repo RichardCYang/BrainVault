@@ -193,6 +193,7 @@ const pageTransitionLock = createPageTransitionLock(window.localStorage, {
   lockManager: window.navigator.locks
 });
 let activePageTransitionLease = null;
+let activePageWriterSession = null;
 let pageTransitionUnlockTimer = null;
 let collaborationRecoveryPanelGeneration = 0;
 let recoveryCandidateSyncPromise = null;
@@ -234,6 +235,7 @@ const pendingBlockDeleteTasks = new Map();
 const pendingPageDeleteTasks = new Map();
 const pendingAttachmentCreateTasks = new Map();
 const pageModeMutationFences = new Map();
+const pageWriteOutcomeFences = new Set();
 const navigationPreferenceSaveQueues = new Map();
 let pageCoverSaving = false;
 let pageCoverPositionDraft = null;
@@ -2519,6 +2521,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
     pageTransitionLock.release(activePageTransitionLease);
     activePageTransitionLease = null;
   }
+  void stopPageWriterSession({ flush: false });
   void destroyPageCollaboration({ flush: false });
   closeSharePageDialog({ restoreFocus: false });
   closeSearchDialog({ restoreFocus: false });
@@ -2535,6 +2538,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   pendingPageDeleteTasks.clear();
   pendingAttachmentCreateTasks.clear();
   pageModeMutationFences.clear();
+  pageWriteOutcomeFences.clear();
   discardNavigationPreferenceSaves();
   closeAccountSettings({ restoreFocus: false, force: true });
   closeEmojiPicker({ restoreFocus: false });
@@ -6114,6 +6118,154 @@ function getPageWorkspaceTransitionId(page = state.selectedPage) {
   return getWorkspaceTransitionId(page?.ownerId ?? (isPageOwner(page) ? state.user?.id : null));
 }
 
+function getPageWriterLockIds(page = state.selectedPage) {
+  if (!page?.id) return [];
+  const workspaceTransitionId = getPageWorkspaceTransitionId(page);
+  return [...new Set([page.id, workspaceTransitionId].filter(Boolean))];
+}
+
+function getPageWriterSessionTarget(page = state.selectedPage) {
+  if (
+    !page?.id
+    || state.selectedPage?.id !== page.id
+    || state.workspaceView !== "page"
+    || state.pageMode !== pageModes.WRITE
+    || !canPersistSelectedPage()
+  ) return null;
+  const lockIds = getPageWriterLockIds(page);
+  if (!lockIds.length) return null;
+  return {
+    pageId: page.id,
+    key: lockIds.join("\u0000"),
+    lockIds
+  };
+}
+
+function isPageWriterSessionReady(page = state.selectedPage) {
+  const target = getPageWriterSessionTarget(page);
+  if (!target) return true;
+  const session = activePageWriterSession;
+  return Boolean(
+    session
+    && session.key === target.key
+    && !session.stopping
+    && (session.acquired || session.unavailable)
+  );
+}
+
+function startPageWriterSession(target) {
+  if (!target?.pageId || !target.lockIds?.length || activePageWriterSession) return null;
+  const controller = new AbortController();
+  let releaseLock;
+  const releasePromise = new Promise((resolve) => { releaseLock = resolve; });
+  const session = {
+    pageId: target.pageId,
+    key: target.key,
+    lockIds: target.lockIds,
+    controller,
+    acquired: false,
+    unavailable: false,
+    failed: false,
+    stopping: false,
+    stopPromise: null,
+    releaseLock,
+    runPromise: null
+  };
+  activePageWriterSession = session;
+
+  session.runPromise = pageTransitionLock.runWriterShared(
+    session.lockIds,
+    async () => {
+      if (session.stopping) return null;
+      session.acquired = true;
+      syncPageModeUi();
+      try {
+        await releasePromise;
+      } finally {
+        session.acquired = false;
+      }
+      return null;
+    },
+    { signal: controller.signal }
+  ).then((result) => {
+    if (result?.reason === "lock-manager-unavailable") {
+      // Destructive transitions already fail closed without Web Locks. Do not
+      // disable ordinary editing solely because this browser lacks the API.
+      session.unavailable = true;
+      syncPageModeUi();
+    } else if (!result?.acquired && !session.stopping) {
+      session.failed = true;
+      syncPageModeUi();
+    }
+    return result;
+  }).catch((error) => {
+    if (!(session.stopping && error?.name === "AbortError")) {
+      session.failed = true;
+      console.error("Page writer lock failed", error);
+      syncPageModeUi();
+    }
+    return null;
+  });
+
+  return session;
+}
+
+async function stopPageWriterSession({ flush = false } = {}) {
+  const session = activePageWriterSession;
+  if (!session) {
+    if (flush) await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false });
+    return;
+  }
+  if (session.stopPromise) return session.stopPromise;
+
+  session.stopping = true;
+  session.stopPromise = (async () => {
+    try {
+      if (flush) await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false });
+    } catch (error) {
+      // A failed durable flush must keep the shared writer lock held so a
+      // destructive exclusive waiter cannot pass the data-integrity barrier.
+      session.stopping = false;
+      throw error;
+    }
+
+    if (session.unavailable || session.failed) {
+      if (activePageWriterSession === session) activePageWriterSession = null;
+      return;
+    }
+
+    if (session.acquired) session.releaseLock();
+    else session.controller.abort();
+    await session.runPromise;
+    if (activePageWriterSession === session) activePageWriterSession = null;
+  })().finally(() => {
+    session.stopPromise = null;
+    syncPageModeUi();
+  });
+
+  return session.stopPromise;
+}
+
+function syncPageWriterSessionForCurrentPage() {
+  const target = getPageWriterSessionTarget();
+  const session = activePageWriterSession;
+
+  if (!target) {
+    if (session && !session.stopping) void stopPageWriterSession({ flush: false });
+    return;
+  }
+  if (session?.key === target.key) return;
+  if (session) {
+    if (!session.stopping) void stopPageWriterSession({ flush: false });
+    return;
+  }
+
+  // Existing transition leases fence interaction synchronously. Do not start a
+  // new shared session behind them; lease removal will re-run this synchronizer.
+  if (isPagePersistenceTransitionLocked() || isPageWriteOutcomeFenced()) return;
+  startPageWriterSession(target);
+}
+
 function isWorkspaceTransitionId(pageId) {
   return typeof pageId === "string" && pageId.startsWith(`${workspaceTransitionPagePrefix}:`);
 }
@@ -6239,6 +6391,21 @@ function isPageModeMutationFenced(page = state.selectedPage) {
   return Boolean(pageModeMutationFences.get(page.id)?.size);
 }
 
+function isPageWriteOutcomeFenced(page = state.selectedPage) {
+  return Boolean(page?.id && pageWriteOutcomeFences.has(page.id));
+}
+
+function lockPageWriteOutcomeFence(pageId) {
+  if (!pageId) return;
+  pageWriteOutcomeFences.add(pageId);
+  if (state.selectedPage?.id === pageId) syncPageModeUi();
+}
+
+function unlockPageWriteOutcomeFence(pageId) {
+  if (!pageId || !pageWriteOutcomeFences.delete(pageId)) return;
+  if (state.selectedPage?.id === pageId) syncPageModeUi();
+}
+
 function lockPageModeMutationFence(pageId) {
   if (!pageId) return null;
   const token = Symbol(pageId);
@@ -6283,6 +6450,8 @@ function isPageInteractionLocked() {
     state.pageEditLockDepth > 0 ||
     blockOrderSaving ||
     isPagePersistenceTransitionLocked() ||
+    isPageWriteOutcomeFenced() ||
+    (canPersistSelectedPage() && !isPageWriterSessionReady()) ||
     (isCollaborativePage() && !isCollaborationReady())
   );
 }
@@ -6398,6 +6567,7 @@ function syncBlockReadOnlyState(row, readOnly = isPageReadOnly() || isPageIntera
 
 function syncPageModeUi() {
   syncWorkspaceLocation();
+  syncPageWriterSessionForCurrentPage();
   const readOnly = isPageReadOnly();
   const interactionLocked = isPageInteractionLocked();
   const controlsReadOnly = readOnly || interactionLocked;
@@ -6830,10 +7000,6 @@ async function withPageEditLock(action, { flush = true } = {}) {
   }
 }
 
-function waitForPageTransitionPropagation() {
-  return new Promise((resolve) => window.setTimeout(resolve, 50));
-}
-
 async function withPagePersistenceTransition(pageId, kind, action) {
   const busyMessage = getPageTransitionBusyMessage(pageId);
   const page = state.selectedPage?.id === pageId
@@ -6888,15 +7054,32 @@ async function withPagePersistenceTransition(pageId, kind, action) {
     }, Math.max(1_000, Math.floor(pageTransitionLock.ttlMs / 3)));
     syncPageModeUi();
     try {
-      // Give other same-origin tabs a storage event turn. They lock their editor
-      // and flush any durable draft before this tab validates the transition.
-      await waitForPageTransitionPropagation();
+      // Every WRITE tab holds a shared writer lock. A tab releases it only after
+      // all accepted edits and recovery writes have durably drained. The
+      // destructive operation waits for the matching exclusive writer lock.
+      await stopPageWriterSession({ flush: true });
       if (workspaceTransitionId && pageId !== workspaceTransitionId) {
         const propagatedWorkspaceTransition = inspectPageTransitionSafely(workspaceTransitionId);
         if (propagatedWorkspaceTransition) throw new Error(busyMessage);
       }
       if (!pageTransitionLock.owns(currentLease)) throw new Error(busyMessage);
-      return await action();
+
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 10_000);
+      try {
+        const barrier = await pageTransitionLock.runWriterExclusive(
+          pageId,
+          action,
+          { signal: controller.signal }
+        );
+        if (!barrier?.acquired) throw new Error(busyMessage);
+        return barrier.value;
+      } catch (error) {
+        if (error?.name === "AbortError") throw new Error(busyMessage);
+        throw error;
+      } finally {
+        window.clearTimeout(timeout);
+      }
     } finally {
       window.clearInterval(renewalTimer);
       pageTransitionLock.release(currentLease);
@@ -11892,6 +12075,7 @@ function focusTableCell(row, rowIndex, columnIndex) {
 }
 
 function replaceTableData(row, value, { focusRow, focusColumn } = {}) {
+  if (!requireWritablePage({ announce: false })) return;
   if (!promoteBlockDraftConflict(row)) return;
   const data = normalizeTableData(value);
   const host = row.querySelector(".block-editor-host");
@@ -11901,7 +12085,10 @@ function replaceTableData(row, value, { focusRow, focusColumn } = {}) {
     Math.max(0, Math.min(focusColumn ?? 0, (data.rows[0]?.length ?? 1) - 1))
   );
   host.replaceChildren(createTableEditor(row, data));
-  scheduleBlockSave(row);
+  if (!scheduleBlockSave(row)) {
+    restoreBlockRowFromDurableState(row);
+    return;
+  }
   focusTableCell(row, Number(row.dataset.tableActiveRow), Number(row.dataset.tableActiveColumn));
 }
 
@@ -16595,13 +16782,27 @@ elements.pageCoverImage.addEventListener("pointercancel", (event) => {
 });
 
 elements.pageTitle.addEventListener("beforeinput", (event) => {
+  if (!requireWritablePage({ announce: false })) {
+    event.preventDefault();
+    return;
+  }
   const direction = getEditorHistoryInputDirection(event);
   if (!direction) return;
   if (performEditorHistoryCommand(direction, event.target)) event.preventDefault();
 });
 
 elements.pageTitle.addEventListener("input", (event) => {
-  if (!requireWritablePage({ announce: false })) return;
+  if (!requireWritablePage({ announce: false })) {
+    const scope = getDraftScope();
+    const durableDraft = scope
+      ? pageDraftStore.loadPage(scope.userId, scope.pageId, pageTitleDraftSourceId || pageDraftSourceId)?.title
+      : null;
+    updateInputValuePreservingSelection(
+      elements.pageTitle,
+      durableDraft?.value ?? pageTitleLastDurableValue ?? state.selectedPage?.title ?? ""
+    );
+    return;
+  }
   schedulePageTitleSave({ allowConflictPrompt: !event.isComposing });
   updateCollaborationAwareness(elements.pageTitle);
   scheduleRemoteCollaborationCaretRender();
@@ -16708,6 +16909,62 @@ elements.savePageButton.addEventListener("click", async () => {
   }
 });
 
+async function archivePageIdempotently(pageId, expectedVersion) {
+  const task = {
+    mutationId: createMutationId(),
+    attempted: false
+  };
+  let attempt = 0;
+
+  while (attempt < 2) {
+    try {
+      task.attempted = true;
+      return await submitWithFreshMutationIdOnReuse(task, () =>
+        api(`/api/pages/${encodeURIComponent(pageId)}`, {
+          method: "PATCH",
+          body: {
+            isArchived: true,
+            expectedVersion,
+            mutationId: task.mutationId
+          }
+        })
+      );
+    } catch (error) {
+      attempt += 1;
+      if (!isAmbiguousApiError(error) || attempt >= 2) throw error;
+    }
+  }
+  return null;
+}
+
+async function archivePageWithReconciliation(pageId, expectedVersion) {
+  lockPageWriteOutcomeFence(pageId);
+  let keepFence = false;
+  try {
+    try {
+      return await archivePageIdempotently(pageId, expectedVersion);
+    } catch (error) {
+      if (!isAmbiguousApiError(error)) throw error;
+      try {
+        const data = await api(`/api/pages/${encodeURIComponent(pageId)}`);
+        if (data?.page?.isArchived === true) return data;
+        if (data?.page?.isArchived === false) throw error;
+        keepFence = true;
+        throw error;
+      } catch (reconciliationError) {
+        if (reconciliationError === error) throw error;
+        // The archive may already be committed. Keep this page non-writable
+        // until a reload/reconciliation can establish authoritative state.
+        keepFence = true;
+        error.archiveOutcomeUnresolved = true;
+        throw error;
+      }
+    }
+  } finally {
+    if (!keepFence) unlockPageWriteOutcomeFence(pageId);
+  }
+}
+
 elements.archivePageButton.addEventListener("click", async () => {
   if (!requireWritablePage()) return;
   if (hasUnresolvedDraftConflicts()) {
@@ -16727,10 +16984,8 @@ elements.archivePageButton.addEventListener("click", async () => {
         await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false });
         assertNoPendingLocalPageDrafts(pageId, "status.destructiveLocalDraftsPending");
         assertNoPendingLocalCollaborationRecovery(pageId);
-        await api(`/api/pages/${pageId}`, {
-          method: "PATCH",
-          body: { isArchived: true, expectedVersion: state.selectedPage.version }
-        });
+        const expectedVersion = state.selectedPage.version;
+        await archivePageWithReconciliation(pageId, expectedVersion);
       });
       resetPageEditTracking();
       state.selectedPage = null;
@@ -16952,7 +17207,11 @@ elements.blockList.addEventListener("beforeinput", (event) => {
 });
 
 elements.blockList.addEventListener("input", (event) => {
-  if (!requireWritablePage({ announce: false })) return;
+  if (!requireWritablePage({ announce: false })) {
+    const row = getBlockRow(event.target);
+    if (row) restoreBlockRowFromDurableState(row);
+    return;
+  }
   const toggleTitle = event.target.closest(".toggle-title-input");
   if (toggleTitle) {
     const row = getBlockRow(toggleTitle);
@@ -17036,7 +17295,11 @@ elements.blockList.addEventListener("keyup", (event) => {
 });
 
 elements.blockList.addEventListener("change", (event) => {
-  if (!requireWritablePage()) return;
+  if (!requireWritablePage()) {
+    const row = getBlockRow(event.target);
+    if (row) restoreBlockRowFromDurableState(row);
+    return;
+  }
   const languageSelect = event.target.closest(".code-language-select");
   if (languageSelect) {
     const row = getBlockRow(languageSelect);
@@ -17462,7 +17725,7 @@ window.addEventListener("storage", (event) => {
       && (isCollaborativePage() ? state.collaborationSession : canPersistSelectedPage())
     );
     if (transitions.length && canFlushTransitionPage) {
-      flushPendingPageEdits({ allowLocked: true, collaborationCompact: false }).catch((error) =>
+      stopPageWriterSession({ flush: true }).catch((error) =>
         setStatus(error.message, true)
       );
     }

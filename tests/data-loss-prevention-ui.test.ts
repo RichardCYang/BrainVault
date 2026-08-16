@@ -100,6 +100,10 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain("function withPagePersistenceTransition(pageId, kind, action)");
     expect(client).toContain("const exclusiveTransitionId = workspaceTransitionId ?? pageId;");
     expect(client).toContain("pageTransitionLock.runExclusive(exclusiveTransitionIds");
+    expect(client).toContain("pageTransitionLock.runWriterShared(");
+    expect(client).toContain("pageTransitionLock.runWriterExclusive(");
+    expect(client).toContain("await stopPageWriterSession({ flush: true });");
+    expect(client).not.toContain("waitForPageTransitionPropagation");
     expect(client).toContain("status.exclusiveTransitionLockUnavailable");
     expect(client).toContain("lockManager: window.navigator.locks");
     expect(client).toContain("if (!pageTransitionLock.owns(currentLease))");
@@ -221,12 +225,21 @@ describe("Data-loss prevention integration", () => {
       'assertNoPendingLocalPageDrafts(pageId, "status.destructiveLocalDraftsPending")'
     );
     expect(archiveBody).toContain("assertNoPendingLocalCollaborationRecovery(pageId)");
+    expect(archiveBody).toContain("await archivePageWithReconciliation(pageId, expectedVersion)");
     expect(archiveBody.indexOf("assertNoPendingLocalPageDrafts(pageId")).toBeLessThan(
-      archiveBody.indexOf('await api(`/api/pages/${pageId}`')
+      archiveBody.indexOf("await archivePageWithReconciliation(pageId, expectedVersion)")
     );
     expect(archiveBody.indexOf("assertNoPendingLocalCollaborationRecovery(pageId)")).toBeLessThan(
-      archiveBody.indexOf('await api(`/api/pages/${pageId}`')
+      archiveBody.indexOf("await archivePageWithReconciliation(pageId, expectedVersion)")
     );
+
+    const archiveHelperStart = client.indexOf("async function archivePageIdempotently");
+    const archiveHelperEnd = client.indexOf("elements.archivePageButton.addEventListener", archiveHelperStart);
+    const archiveHelperBody = client.slice(archiveHelperStart, archiveHelperEnd);
+    expect(archiveHelperBody).toContain("mutationId: createMutationId()");
+    expect(archiveHelperBody).toContain("isAmbiguousApiError(error)");
+    expect(archiveHelperBody).toContain("archivePageWithReconciliation");
+    expect(archiveHelperBody).toContain("lockPageWriteOutcomeFence(pageId)");
 
     const blockDeleteStart = client.indexOf("async function deleteBlockWithVersionCheck");
     const blockDeleteEnd = client.indexOf("function updateBlockInState", blockDeleteStart);
