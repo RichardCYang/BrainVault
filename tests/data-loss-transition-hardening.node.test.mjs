@@ -191,4 +191,53 @@ test("UI mutation and archive paths contain the new fail-closed guards", async (
   assert.match(archiveSource, /archivePageWithReconciliation/);
   assert.match(archiveSource, /lockPageWriteOutcomeFence\(pageId\)/);
   assert.match(archiveSource, /data\?\.page\?\.isArchived === true/);
+  assert.match(archiveSource, /archivePageIdempotently\(pageId, expectedVersion, authenticationScope\)/);
+  assert.match(archiveSource, /if \(!isCurrentAuthenticatedSessionScope\(authenticationScope\)\) return null/);
+
+  const archiveClick = client.indexOf('elements.archivePageButton.addEventListener("click"');
+  const archiveClickEnd = client.indexOf('elements.deletePageButton.addEventListener("click"', archiveClick);
+  const archiveClickSource = client.slice(archiveClick, archiveClickEnd);
+  assert.match(archiveClickSource, /const authenticationScope = captureAuthenticatedSessionScope\(\)/);
+  assert.match(archiveClickSource, /archivePageWithReconciliation\(pageId, expectedVersion, authenticationScope\)/);
+  const archiveSubmit = archiveClickSource.indexOf("archivePageWithReconciliation(pageId, expectedVersion, authenticationScope)");
+  const staleCompletionFence = archiveClickSource.indexOf("if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;", archiveSubmit);
+  const archiveCleanup = archiveClickSource.indexOf("resetPageEditTracking()", archiveSubmit);
+  assert.ok(archiveSubmit >= 0 && staleCompletionFence > archiveSubmit && staleCompletionFence < archiveCleanup);
+});
+
+test("page archive auth rotation cannot cross a destructive persistence barrier", async () => {
+  async function simulateArchive({ guarded }) {
+    const barrierEntered = deferred();
+    const releaseBarrier = deferred();
+    let sessionGeneration = 1;
+    const scope = sessionGeneration;
+    let requests = 0;
+    let workspaceReset = false;
+
+    const operation = (async () => {
+      barrierEntered.resolve();
+      await releaseBarrier.promise;
+      if (guarded && scope !== sessionGeneration) return;
+      requests += 1;
+      if (guarded && scope !== sessionGeneration) return;
+      workspaceReset = true;
+    })();
+
+    await barrierEntered.promise;
+    sessionGeneration += 1;
+    releaseBarrier.resolve();
+    await operation;
+    return { requests, workspaceReset };
+  }
+
+  assert.deepEqual(
+    await simulateArchive({ guarded: false }),
+    { requests: 1, workspaceReset: true },
+    "the pre-fix behavior can submit and clear workspace state after auth rotation"
+  );
+  assert.deepEqual(
+    await simulateArchive({ guarded: true }),
+    { requests: 0, workspaceReset: false },
+    "the fixed behavior must abandon stale archive work before transport or UI cleanup"
+  );
 });

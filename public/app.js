@@ -17007,7 +17007,7 @@ elements.savePageButton.addEventListener("click", async () => {
   }
 });
 
-async function archivePageIdempotently(pageId, expectedVersion) {
+async function archivePageIdempotently(pageId, expectedVersion, authenticationScope) {
   const task = {
     mutationId: createMutationId(),
     attempted: false
@@ -17015,19 +17015,24 @@ async function archivePageIdempotently(pageId, expectedVersion) {
   let attempt = 0;
 
   while (attempt < 2) {
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
     try {
       task.attempted = true;
-      return await submitWithFreshMutationIdOnReuse(task, () =>
-        api(`/api/pages/${encodeURIComponent(pageId)}`, {
+      const data = await submitWithFreshMutationIdOnReuse(task, () => {
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        return api(`/api/pages/${encodeURIComponent(pageId)}`, {
           method: "PATCH",
           body: {
             isArchived: true,
             expectedVersion,
             mutationId: task.mutationId
           }
-        })
-      );
+        });
+      });
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      return data;
     } catch (error) {
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       attempt += 1;
       if (!isAmbiguousApiError(error) || attempt >= 2) throw error;
     }
@@ -17035,21 +17040,26 @@ async function archivePageIdempotently(pageId, expectedVersion) {
   return null;
 }
 
-async function archivePageWithReconciliation(pageId, expectedVersion) {
+async function archivePageWithReconciliation(pageId, expectedVersion, authenticationScope) {
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
   lockPageWriteOutcomeFence(pageId);
   let keepFence = false;
   try {
     try {
-      return await archivePageIdempotently(pageId, expectedVersion);
+      return await archivePageIdempotently(pageId, expectedVersion, authenticationScope);
     } catch (error) {
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       if (!isAmbiguousApiError(error)) throw error;
       try {
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         const data = await api(`/api/pages/${encodeURIComponent(pageId)}`);
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         if (data?.page?.isArchived === true) return data;
         if (data?.page?.isArchived === false) throw error;
         keepFence = true;
         throw error;
       } catch (reconciliationError) {
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         if (reconciliationError === error) throw error;
         // The archive may already be committed. Keep this page non-writable
         // until a reload/reconciliation can establish authoritative state.
@@ -17074,26 +17084,33 @@ elements.archivePageButton.addEventListener("click", async () => {
   if (!ok) return;
   const pageId = state.selectedPage.id;
   const parentCollectionId = getCollectionRootId(pageId) ?? defaultCollectionKey;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   try {
     await withPageEditLock(async () => {
       await withPagePersistenceTransition(pageId, "page-archive", async () => {
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         // Archiving disconnects every collaborator and makes the page unavailable
         // to them. Do not create an orphaned local Yjs state in another tab.
         await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false });
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         assertNoPendingLocalPageDrafts(pageId, "status.destructiveLocalDraftsPending");
         assertNoPendingLocalCollaborationRecovery(pageId);
         const expectedVersion = state.selectedPage.version;
-        await archivePageWithReconciliation(pageId, expectedVersion);
+        return archivePageWithReconciliation(pageId, expectedVersion, authenticationScope);
       });
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
       resetPageEditTracking();
       state.selectedPage = null;
       state.workspaceView = "collection";
       state.activeCollectionId = parentCollectionId;
       await loadPages(elements.searchInput.value.trim(), state.activeTag);
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
       renderSelectedPage();
       setStatus(t("status.pageArchived"));
     });
   } catch (error) {
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
     setStatus(error.message, true);
   }
 });
