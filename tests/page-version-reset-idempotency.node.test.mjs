@@ -139,6 +139,51 @@ test("browser retries ambiguous reset outcomes with the same task and fences sta
   assert.match(passwordRotation, /acceptRotatedAuthenticationSession\(\);/);
 });
 
+test("page-version reset retry stops when authentication rotates after an ambiguous request", async () => {
+  const app = (await readFile(new URL("../public/app.js", import.meta.url), "utf8"))
+    .replace(/\r\n/g, "\n");
+  const helperSource = section(
+    app,
+    "async function submitPageVersionResetTask",
+    "function renderPageVersionHistoryList"
+  );
+
+  let authenticationCurrent = true;
+  let apiCalls = 0;
+  const api = async () => {
+    apiCalls += 1;
+    if (apiCalls === 1) {
+      authenticationCurrent = false;
+      const error = new Error("network");
+      error.ambiguous = true;
+      throw error;
+    }
+    return { reset: true };
+  };
+  const factory = new Function(
+    "api",
+    "isAmbiguousApiError",
+    "isCurrentAuthenticatedSessionScope",
+    "t",
+    `${helperSource}\nreturn submitPageVersionResetTask;`
+  );
+  const submit = factory(
+    api,
+    (error) => error?.ambiguous === true,
+    () => authenticationCurrent,
+    () => "reset failed"
+  );
+
+  const result = await submit({
+    pageId: "pag_auth_rotation",
+    mutationId: "mut_auth_rotation",
+    scope: { generation: 1, targetKey: "user:original" }
+  });
+
+  assert.equal(result, null);
+  assert.equal(apiCalls, 1, "a stale authentication generation must not send the automatic destructive retry");
+});
+
 test("browser retires a reset task only after the post-reset history list is synchronized", async () => {
   const app = (await readFile(new URL("../public/app.js", import.meta.url), "utf8"))
     .replace(/\r\n/g, "\n");

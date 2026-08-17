@@ -7623,12 +7623,18 @@ function getOrCreatePageVersionResetTask(pageId) {
 
 async function submitPageVersionResetTask(task) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (!isCurrentAuthenticatedSessionScope(task.scope)) return null;
     try {
-      return await api(`/api/pages/${encodeURIComponent(task.pageId)}/versions`, {
+      const data = await api(`/api/pages/${encodeURIComponent(task.pageId)}/versions`, {
         method: "DELETE",
         body: { mutationId: task.mutationId }
       });
+      if (!isCurrentAuthenticatedSessionScope(task.scope)) return null;
+      return data;
     } catch (error) {
+      // An ambiguous request may overlap a password/session rotation. Never let
+      // its automatic retry cross into the replacement authentication context.
+      if (!isCurrentAuthenticatedSessionScope(task.scope)) return null;
       if (attempt === 0 && isAmbiguousApiError(error)) continue;
       throw error;
     }
