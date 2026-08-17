@@ -510,16 +510,6 @@ type RestoreCollaboratorNavigationPlan = {
   order: CollaboratorNavigationOrderRow[];
 };
 
-type RestorePageVersionResetMutationRow = {
-  owner_id: string;
-  mutation_id: string;
-  page_id: string;
-  request_hash: string;
-  revision: number | null;
-  deleted_count: number | null;
-  created_at: string;
-};
-
 type RestoreBlockOrderMutationRow = {
   owner_id: string;
   mutation_id: string;
@@ -528,19 +518,8 @@ type RestoreBlockOrderMutationRow = {
   created_at: string;
 };
 
-type RestoreBlockCreateMutationRow = {
-  actor_id: string;
-  mutation_id: string;
-  page_id: string;
-  block_id: string;
-  request_hash: string;
-  created_at: string;
-};
-
 type RestoreMutationReceiptPlan = {
-  pageVersionResets: RestorePageVersionResetMutationRow[];
   blockOrders: RestoreBlockOrderMutationRow[];
-  blockCreates: RestoreBlockCreateMutationRow[];
 };
 
 type WorkspaceCollaborationStateRow = {
@@ -2056,16 +2035,6 @@ async function prepareRestoreMutationReceiptPlan(
   manifest: BrainVaultBackup
 ): Promise<RestoreMutationReceiptPlan> {
   const restoredPageIds = new Set(manifest.data.pages.map((page) => page.id));
-  const pageVersionResets = await client.query<RestorePageVersionResetMutationRow>(
-    `SELECT m.owner_id, m.mutation_id, m.page_id, m.request_hash, m.revision, m.deleted_count,
-            DATE_FORMAT(m.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
-     FROM page_version_reset_mutations m
-     INNER JOIN pages p ON p.id = m.page_id
-     WHERE p.owner_id = ?
-     ORDER BY m.owner_id ASC, m.mutation_id ASC
-     FOR UPDATE`,
-    [userId]
-  );
   const blockOrders = await client.query<RestoreBlockOrderMutationRow>(
     `SELECT m.owner_id, m.mutation_id, m.page_id, m.request_hash,
             DATE_FORMAT(m.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
@@ -2076,27 +2045,17 @@ async function prepareRestoreMutationReceiptPlan(
      FOR UPDATE`,
     [userId]
   );
-  const blockCreates = await client.query<RestoreBlockCreateMutationRow>(
-    `SELECT m.actor_id, m.mutation_id, m.page_id, m.block_id, m.request_hash,
-            DATE_FORMAT(m.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
-     FROM block_create_mutations m
-     INNER JOIN pages p ON p.id = m.page_id
-     WHERE p.owner_id = ?
-     ORDER BY m.actor_id ASC, m.mutation_id ASC
-     FOR UPDATE`,
-    [userId]
-  );
-  // Receipts are runtime tombstones, not portable backup payload. Keep only
-  // no-side-effect replay receipts whose page identity survives this restore so
-  // delayed reset/create retries cannot cross the restore generation. A block
-  // delete receipt is intentionally NOT preserved: replaying its attachment_ids
-  // would run filesystem cleanup again and could delete an attachment resurrected
-  // by the backup. Stale deletes remain fenced by the restore-only block
-  // edit_version bump before any delete executes.
+  // Page-version-reset and block-create receipts are durable user-scoped
+  // tombstones with no page FK, so they survive page replacement automatically
+  // and must not be reinserted. Block-order receipts still cascade with pages;
+  // preserve only those whose page identity survives this restore.
+  //
+  // A block-delete receipt is intentionally NOT preserved: replaying its
+  // attachment_ids would run filesystem cleanup again and could delete an
+  // attachment resurrected by the backup. Stale deletes remain fenced by the
+  // restore-only block edit_version bump before any delete executes.
   return {
-    pageVersionResets: pageVersionResets.filter((row) => restoredPageIds.has(row.page_id)),
-    blockOrders: blockOrders.filter((row) => restoredPageIds.has(row.page_id)),
-    blockCreates: blockCreates.filter((row) => restoredPageIds.has(row.page_id))
+    blockOrders: blockOrders.filter((row) => restoredPageIds.has(row.page_id))
   };
 }
 
@@ -2194,33 +2153,16 @@ async function importRows(
     );
   }
 
-  // Page replacement cascades page-tied mutation receipts. Recreate only the
-  // no-side-effect replay receipts selected above before commit so old reset,
-  // reorder, and create retries cannot cross the restore boundary as new work.
+  // Reset/create replay tombstones have no page FK and therefore remain in
+  // place across page replacement. Only block-order receipts need recreation.
   // Block-delete receipts stay absent so their old attachment cleanup scope can
   // never be replayed against the newly restored filesystem generation.
-  for (const row of mutationReceipts.pageVersionResets) {
-    await client.execute(
-      `INSERT INTO page_version_reset_mutations
-         (owner_id, mutation_id, page_id, request_hash, revision, deleted_count, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [row.owner_id, row.mutation_id, row.page_id, row.request_hash, row.revision, row.deleted_count, row.created_at]
-    );
-  }
   for (const row of mutationReceipts.blockOrders) {
     await client.execute(
       `INSERT INTO block_order_mutations
          (owner_id, mutation_id, page_id, request_hash, created_at)
        VALUES (?, ?, ?, ?, ?)`,
       [row.owner_id, row.mutation_id, row.page_id, row.request_hash, row.created_at]
-    );
-  }
-  for (const row of mutationReceipts.blockCreates) {
-    await client.execute(
-      `INSERT INTO block_create_mutations
-         (actor_id, mutation_id, page_id, block_id, request_hash, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [row.actor_id, row.mutation_id, row.page_id, row.block_id, row.request_hash, row.created_at]
     );
   }
   const orderedBlocks = orderByParent(manifest.data.blocks, (item) => item.id, (item) => item.parent_block_id);
@@ -3089,7 +3031,7 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
   let restoreSharingPlan: RestoreSharingPlan = { mode: "backup", shares: [] };
   let restoreCollaboratorNavigation: RestoreCollaboratorNavigationPlan = { collapsed: [], order: [] };
   let restoreMutationReceipts: RestoreMutationReceiptPlan = {
-    pageVersionResets: [], blockOrders: [], blockCreates: []
+    blockOrders: []
   };
   await Promise.all([
     mkdir(stagedAttachmentDir, { recursive: true }),

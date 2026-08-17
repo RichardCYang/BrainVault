@@ -252,6 +252,10 @@ const blockDeleteMutationMigrationSource = readFileSync(
   new URL("../migrations/039_block_delete_mutation_receipts.sql", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const durableMutationReceiptMigrationSource = readFileSync(
+  new URL("../migrations/059_mutation_receipts_survive_page_recreation.sql", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const directBlockCreateRouteSource = section(
   blockRouteSource,
   'blockRouter.post("/pages/:pageId/blocks"',
@@ -337,8 +341,9 @@ assert(
     && pageVersionResetMutationMigrationSource.includes("PRIMARY KEY (owner_id, mutation_id)")
     && pageVersionResetMutationMigrationSource.includes("revision BIGINT UNSIGNED NULL")
     && pageVersionResetMutationMigrationSource.includes("deleted_count BIGINT UNSIGNED NULL")
-    && pageVersionResetMutationMigrationSource.includes(
-      "FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE"
+    && !pageVersionResetMutationMigrationSource.includes("FOREIGN KEY (page_id)")
+    && durableMutationReceiptMigrationSource.includes(
+      "DROP FOREIGN KEY fk_page_version_reset_mutations_page"
     )
     && pageRouteSource.includes("body: pageVersionResetSchema")
     && pageRouteSource.includes("createMutationRequestHash({ pageId })")
@@ -360,8 +365,9 @@ assert(
 assert(
   baselineSchemaSource.includes("CREATE TABLE IF NOT EXISTS block_create_mutations")
     && blockCreateMutationMigrationSource.includes("PRIMARY KEY (actor_id, mutation_id)")
-    && blockCreateMutationMigrationSource.includes(
-      "FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE"
+    && !blockCreateMutationMigrationSource.includes("FOREIGN KEY (page_id)")
+    && durableMutationReceiptMigrationSource.includes(
+      "DROP FOREIGN KEY fk_block_create_mutations_page"
     )
     && blockRouteSource.includes("mutationId: mutationIdSchema.optional()")
     && directBlockCreateRouteSource.includes('createMutationRequestHash({ kind: "BLOCK", pageId, basePageContentVersion, creation })')
@@ -574,15 +580,18 @@ assert(
 
 assert(
   dataTransferSource.includes("prepareRestoreMutationReceiptPlan")
-    && dataTransferSource.includes("FROM page_version_reset_mutations m")
+    && !dataTransferSource.includes("FROM page_version_reset_mutations m")
     && dataTransferSource.includes("FROM block_order_mutations m")
-    && dataTransferSource.includes("FROM block_create_mutations m")
+    && !dataTransferSource.includes("FROM block_create_mutations m")
     && !dataTransferSource.includes("FROM block_delete_mutations m")
+    && !dataTransferSource.includes("mutationReceipts.pageVersionResets")
+    && !dataTransferSource.includes("mutationReceipts.blockCreates")
     && !dataTransferSource.includes("mutationReceipts.blockDeletes")
-    && dataTransferSource.includes("restoredPageIds.has(row.page_id)")
-    && dataTransferSource.includes("for (const row of mutationReceipts.pageVersionResets)")
-    && dataTransferSource.includes("for (const row of mutationReceipts.blockCreates)"),
-  "Workspace restore can still drop page-tied idempotency receipts and let stale retries cross the restore generation"
+    && dataTransferSource.includes("blockOrders: blockOrders.filter((row) => restoredPageIds.has(row.page_id))")
+    && dataTransferSource.includes("for (const row of mutationReceipts.blockOrders)")
+    && durableMutationReceiptMigrationSource.includes("DROP FOREIGN KEY fk_page_version_reset_mutations_page")
+    && durableMutationReceiptMigrationSource.includes("DROP FOREIGN KEY fk_block_create_mutations_page"),
+  "Reset/create idempotency receipts can still be lost when a page is deleted before its identity is restored"
 );
 
 const restoreMutationReceiptReproduction = JSON.parse(execFileSync(
@@ -593,6 +602,8 @@ const restoreMutationReceiptReproduction = JSON.parse(execFileSync(
 assert(
   restoreMutationReceiptReproduction.vulnerability.delayedResetRetryDeletesRestoredHistory
     && restoreMutationReceiptReproduction.vulnerability.delayedCreateRetryDuplicatesRestoredBlock
+    && restoreMutationReceiptReproduction.fixed.pageVersionResetReceiptSurvivesPageDeletion
+    && restoreMutationReceiptReproduction.fixed.blockCreateReceiptSurvivesPageDeletion
     && restoreMutationReceiptReproduction.fixed.delayedResetRetryReplaysWithoutDeletingRestoredHistory
     && restoreMutationReceiptReproduction.fixed.delayedCreateRetryReplaysWithoutDuplicate
     && restoreMutationReceiptReproduction.fixed.createReceiptTombstoneBlocksResurrectionWhenBackupOmitsOriginalBlock

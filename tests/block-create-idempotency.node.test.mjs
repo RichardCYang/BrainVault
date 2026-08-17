@@ -80,13 +80,18 @@ test("browser retries ambiguous create responses with the same mutation id and f
   assert.match(client, /pendingAttachmentCreateTasks\.clear\(\)/);
 });
 
-test("baseline and incremental schemas both contain block creation receipts", () => {
+test("block creation receipts remain actor-scoped across page recreation", () => {
   for (const relative of ["../migrations/001_init.sql", "../migrations/038_block_create_mutation_receipts.sql"]) {
     const migration = read(relative);
     assert.match(migration, /CREATE TABLE IF NOT EXISTS block_create_mutations/);
     assert.match(migration, /PRIMARY KEY \(actor_id, mutation_id\)/);
-    assert.match(migration, /FOREIGN KEY \(page_id\) REFERENCES pages\(id\) ON DELETE CASCADE/);
+    assert.match(migration, /FOREIGN KEY \(actor_id\) REFERENCES users\(id\) ON DELETE CASCADE/);
+    assert.doesNotMatch(migration, /fk_block_create_mutations_page/);
   }
+  assert.match(
+    read("../migrations/059_mutation_receipts_survive_page_recreation.sql"),
+    /DROP FOREIGN KEY fk_block_create_mutations_page/
+  );
 });
 
 test("response-loss reproduction proves duplicate legacy writes and one fixed write", () => {

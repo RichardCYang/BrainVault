@@ -8,6 +8,5 @@ CREATE TABLE IF NOT EXISTS block_create_mutations (
   PRIMARY KEY (actor_id, mutation_id),
   KEY idx_block_create_mutations_page (page_id),
   KEY idx_block_create_mutations_block (block_id),
-  CONSTRAINT fk_block_create_mutations_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE CASCADE,
-  CONSTRAINT fk_block_create_mutations_page FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
+  CONSTRAINT fk_block_create_mutations_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

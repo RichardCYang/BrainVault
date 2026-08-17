@@ -82,11 +82,15 @@ test("DELETE /api/pages/:pageId/versions reserves and completes a receipt around
   );
 });
 
-test("fresh and upgraded databases install owner-scoped page-version reset receipts", async () => {
+test("fresh and upgraded databases keep page-version reset receipts across page recreation", async () => {
   const baseline = (await readFile(new URL("../migrations/001_init.sql", import.meta.url), "utf8"))
     .replace(/\r\n/g, "\n");
   const migration = (await readFile(
     new URL("../migrations/037_page_version_reset_mutation_receipts.sql", import.meta.url),
+    "utf8"
+  )).replace(/\r\n/g, "\n");
+  const durableMigration = (await readFile(
+    new URL("../migrations/059_mutation_receipts_survive_page_recreation.sql", import.meta.url),
     "utf8"
   )).replace(/\r\n/g, "\n");
 
@@ -96,8 +100,9 @@ test("fresh and upgraded databases install owner-scoped page-version reset recei
     assert.match(source, /revision BIGINT UNSIGNED NULL/);
     assert.match(source, /deleted_count BIGINT UNSIGNED NULL/);
     assert.match(source, /FOREIGN KEY \(owner_id\) REFERENCES users\(id\) ON DELETE CASCADE/);
-    assert.match(source, /FOREIGN KEY \(page_id\) REFERENCES pages\(id\) ON DELETE CASCADE/);
+    assert.doesNotMatch(source, /fk_page_version_reset_mutations_page/);
   }
+  assert.match(durableMigration, /DROP FOREIGN KEY fk_page_version_reset_mutations_page/);
 });
 
 test("browser retries ambiguous reset outcomes with the same task and fences stale authentication scopes", async () => {
