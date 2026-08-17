@@ -25,6 +25,7 @@ const samples: Record<string, string> = {
   bash: "#!/usr/bin/env bash\necho \"$HOME\"",
   powershell: "$items | Where-Object { $_.Enabled }",
   json: '{"ok": true}',
+  ini: "[editor]\ntheme = dark\nautosave = true",
   sql: "SELECT * FROM notes WHERE archived = FALSE;",
   xml: '<note id="1">Hello</note>',
   yaml: "note:\n  archived: false",
@@ -57,6 +58,7 @@ describe("syntax highlighting", () => {
     expect(normalizeCodeLanguage("POTRAN")).toBe("fortran");
     expect(normalizeCodeLanguage("objective-c")).toBe("objectivec");
     expect(normalizeCodeLanguage("xml")).toBe("xml");
+    expect(normalizeCodeLanguage("INI")).toBe("ini");
     expect(getCodeLanguage('{"codeLanguage":"TS"}')).toBe("typescript");
   });
 
@@ -106,6 +108,13 @@ describe("syntax highlighting", () => {
     const html = renderMarkdown("```python\ndef hello():\n    return True\n```");
     expect(html).toContain("language-python");
     expect(html).not.toContain("hljs-keyword");
+  });
+
+  it("renders INI code fences for browser-side highlighting", () => {
+    const html = renderMarkdown("```ini\n[editor]\ntheme = dark\n```");
+    expect(html).toContain("language-ini");
+    expect(html).toContain("[editor]");
+    expect(html).not.toContain("hljs-");
   });
 
   it("loads all highlighting assets locally before the app module", () => {

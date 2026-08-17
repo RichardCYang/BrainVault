@@ -15,6 +15,7 @@ const languageDefinitions = [
   { id: "bash", label: "Bash", grammar: "bash", aliases: ["sh", "shell", "zsh"] },
   { id: "powershell", label: "PowerShell", grammar: "powershell", aliases: ["pwsh", "ps1"] },
   { id: "json", label: "JSON", grammar: "json", aliases: [] },
+  { id: "ini", label: "INI", grammar: "ini", aliases: [] },
   { id: "sql", label: "SQL", grammar: "sql", aliases: [] },
   { id: "xml", label: "XML", grammar: "xml", aliases: [] },
   { id: "yaml", label: "YAML", grammar: "yaml", aliases: ["yml"] },
