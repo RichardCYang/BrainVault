@@ -922,6 +922,7 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
 
       if (updates.isArchived === true) {
         await assertCollaborationMaterialized(client, [pageId]);
+        await assertNoActiveCollaborationWriteLeases(client, [pageId]);
       }
 
       if (existingPage.is_collection && updates.parentPageId) {
@@ -1112,6 +1113,7 @@ pageRouter.delete(
         );
         if (!page) throw notFound("Page");
         await assertCollaborationMaterialized(client, [pageId]);
+        await assertNoActiveCollaborationWriteLeases(client, [pageId]);
         const updateResult = await client.execute<{ affectedRows: number }>(
           `UPDATE pages
            SET is_archived = 1,

@@ -26,7 +26,10 @@ function decodeJsonValue(value: unknown) {
 
 function decodeUniqueIds(value: unknown): string[] | null {
   const decoded = decodeJsonValue(value);
-  if (!Array.isArray(decoded) || decoded.length > 10_000) return null;
+  // Receipts are written from the server-computed deletion scope in the same
+  // transaction as the delete. Do not impose a smaller reader-only item limit:
+  // a valid large deletion must remain replayable after an ambiguous COMMIT.
+  if (!Array.isArray(decoded)) return null;
   if (decoded.some((item) => typeof item !== "string" || !item.length || item.length > 64)) return null;
   if (new Set(decoded).size !== decoded.length) return null;
   return [...decoded];

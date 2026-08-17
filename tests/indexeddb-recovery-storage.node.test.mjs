@@ -18,11 +18,12 @@ function clone(value) {
 }
 
 class FakeIndexedDb {
-  constructor({ ignoreDurability = false, corruptReadbackKeys = [], failDeleteKeys = [] } = {}) {
+  constructor({ ignoreDurability = false, corruptReadbackKeys = [], failDeleteKeys = [], failReadKeys = [] } = {}) {
     this.databases = new Map();
     this.ignoreDurability = ignoreDurability;
     this.corruptReadbackKeys = new Set(corruptReadbackKeys);
     this.failDeleteKeys = new Set(failDeleteKeys);
+    this.failReadKeys = new Set(failReadKeys);
     this.transactions = [];
   }
   open(name) {
@@ -68,6 +69,11 @@ class FakeIndexedDb {
             get: (key) => {
               const child = { result: null, error: null, onsuccess: null, onerror: null };
               queueMicrotask(() => {
+                if (this.failReadKeys.has(key)) {
+                  child.error = new Error(`simulated IndexedDB read failure for ${key}`);
+                  child.onerror?.();
+                  return;
+                }
                 child.result = store.has(key)
                   ? {
                       key,
@@ -282,6 +288,35 @@ test("cross-tab mirrors refresh only after another tab commits IndexedDB recover
 
   first.close();
   second.close();
+});
+
+test("cross-tab refresh failures stay unhealthy until a full IndexedDB reload succeeds", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const hub = new FakeBroadcastHub();
+  const options = {
+    databaseName: "cross-tab-refresh-failure",
+    broadcastChannelFactory: hub.create,
+    storageEventTarget: null
+  };
+  const writer = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  const reader = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  const key = "brainvault.pageDraft.v2:user:page:writer";
+
+  indexedDb.failReadKeys.add(key);
+  writer.setItem(key, "new durable draft");
+  await writer.flush();
+  await nextTask();
+
+  assert.equal(reader.getItem(key), null, "the failed notification refresh leaves the mirror stale");
+  await assert.rejects(reader.flush(), /simulated IndexedDB read failure/);
+
+  indexedDb.failReadKeys.delete(key);
+  await reader.refresh();
+  assert.equal(reader.getItem(key), "new durable draft");
+  await reader.flush();
+
+  writer.close();
+  reader.close();
 });
 
 

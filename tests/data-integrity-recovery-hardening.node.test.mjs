@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createPageDraftStore } from "../public/draft-store.js";
 import { createCollaborationRecoveryStore } from "../public/collaboration-recovery-store.js";
+import { shouldClearLocalRecoveryAfterAck } from "../public/collaboration.js";
 
 function read(relativePath) {
   return readFileSync(new URL(`../${relativePath}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
@@ -94,6 +95,80 @@ test("share removal, hard deletion, and restore fence active collaboration lease
     "await importRows(",
     "workspace restore"
   );
+});
+
+test("both page archive routes fence active collaboration write leases", () => {
+  const pageRoutes = read("src/routes/page.routes.ts");
+  const patchRoute = section(
+    pageRoutes,
+    'pageRouter.patch("/:pageId"',
+    'pageRouter.delete(\n  "/:pageId"'
+  );
+  const patchArchive = section(
+    patchRoute,
+    "if (updates.isArchived === true)",
+    "if (existingPage.is_collection && updates.parentPageId)"
+  );
+  assertBefore(
+    patchArchive,
+    "await assertCollaborationMaterialized(client, [pageId])",
+    "await assertNoActiveCollaborationWriteLeases(client, [pageId])",
+    "PATCH archive collaboration fence"
+  );
+
+  const deleteRoute = section(
+    pageRoutes,
+    'pageRouter.delete(\n  "/:pageId"',
+    'pageRouter.put("/:pageId/tags"'
+  );
+  const archiveBranch = section(
+    deleteRoute,
+    'SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE',
+    "const updateResult = await client.execute"
+  );
+  assertBefore(
+    archiveBranch,
+    "await assertCollaborationMaterialized(client, [pageId])",
+    "await assertNoActiveCollaborationWriteLeases(client, [pageId])",
+    "DELETE archive collaboration fence"
+  );
+});
+
+test("browser destructive transitions refresh durable recovery after acquiring the writer-exclusive barrier", () => {
+  const app = read("public/app.js");
+  const transition = section(
+    app,
+    "async function withPagePersistenceTransition(pageId, kind, action)",
+    "async function withWorkspacePersistenceTransition(kind, action)"
+  );
+  assertBefore(
+    transition,
+    "pageTransitionLock.runWriterExclusive(",
+    "await recoveryStorage.refresh();",
+    "writer-exclusive recovery refresh"
+  );
+  assertBefore(
+    transition,
+    "await recoveryStorage.refresh();",
+    "return action();",
+    "fresh recovery inspection before destructive action"
+  );
+  assert.match(transition, /status\.localRecoveryInspectionFailed/);
+});
+
+test("collaboration ACK cleanup is prepared-mutation fenced and generation-matched", () => {
+  const collaboration = read("public/collaboration.js");
+  const cleanup = section(collaboration, "  clearLocalRecovery()", "  get isReady()");
+  assert.match(collaboration, /this\.currentRecoveryGeneration = null/);
+  assert.match(collaboration, /this\.recoveryCleanupQueue = Promise\.resolve\(\)/);
+  assert.match(collaboration, /pendingPreparedLocalMutations === 0/);
+  assert.match(cleanup, /this\.recoveryStore\.removeDurably\(/);
+  assert.match(cleanup, /currentRecord\.generation/);
+  assert.doesNotMatch(cleanup, /this\.recoveryStore\.remove\(/);
+  assert.equal(shouldClearLocalRecoveryAfterAck(0, 1, false), false);
+  assert.equal(shouldClearLocalRecoveryAfterAck(0, 0, true), false);
+  assert.equal(shouldClearLocalRecoveryAfterAck(1, 0, false), false);
+  assert.equal(shouldClearLocalRecoveryAfterAck(0, 0, false), true);
 });
 
 test("destructive transitions preserve server recovery admission before deleting access or page rows", () => {

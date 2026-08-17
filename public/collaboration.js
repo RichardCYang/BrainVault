@@ -269,6 +269,8 @@ class PageCollaborationSession {
     this.recoverySourceId = typeof options.recoverySourceId === "string" ? options.recoverySourceId : "";
     this.recoveryStore = options.recoveryStore ?? null;
     this.recoveredLocalRecords = [];
+    this.currentRecoveryGeneration = null;
+    this.recoveryCleanupQueue = Promise.resolve();
     this.recoveryStorageWarningShown = false;
     this.recoveryLineageWarningShown = false;
     this.documentEpoch = null;
@@ -398,13 +400,33 @@ class PageCollaborationSession {
 
   persistRecoveryState(stateUpdate) {
     if (!this.recoveryStore || !this.accountId || !this.recoverySourceId || !this.documentEpoch) return null;
-    return this.recoveryStore.save(
+    const recoverySourceId = this.recoverySourceId;
+    const documentEpoch = this.documentEpoch;
+    const result = this.recoveryStore.save(
       this.accountId,
       this.page.id,
-      this.recoverySourceId,
-      this.documentEpoch,
+      recoverySourceId,
+      documentEpoch,
       stateUpdate
     );
+    const rememberGeneration = (generation) => {
+      if (
+        typeof generation === "string"
+        && generation.length > 0
+        && this.recoverySourceId === recoverySourceId
+        && this.documentEpoch === documentEpoch
+      ) {
+        this.currentRecoveryGeneration = generation;
+        // A best-effort recovery write can finish after its WebSocket update was
+        // already acknowledged. Re-check cleanup once the exact durable
+        // generation is known, but never while a prepared mutation is pending.
+        queueMicrotask(() => this.maybeClearLocalRecoveryAfterAck());
+      }
+      return generation;
+    };
+    return result && typeof result.then === "function"
+      ? result.then(rememberGeneration)
+      : rememberGeneration(result);
   }
 
   reportRecoveryStorageFailure(error = null) {
@@ -556,31 +578,79 @@ class PageCollaborationSession {
 
     const trackedOperation = operation.finally(() => {
       this.pendingPreparedLocalMutations = Math.max(0, this.pendingPreparedLocalMutations - 1);
+      this.maybeClearLocalRecoveryAfterAck();
     });
     this.localMutationQueue = trackedOperation.catch(() => undefined);
     return trackedOperation;
   }
 
   clearLocalRecovery() {
-    if (!this.recoveryStore || !this.accountId) return;
-    if (this.recoverySourceId && this.documentEpoch) {
-      this.recoveryStore.remove(
-        this.accountId,
-        this.page.id,
-        this.recoverySourceId,
-        this.documentEpoch
-      );
+    if (!this.recoveryStore || !this.accountId || typeof this.recoveryStore.removeDurably !== "function") {
+      return Promise.resolve(false);
     }
-    for (const record of this.recoveredLocalRecords) {
-      this.recoveryStore.remove(
-        this.accountId,
-        this.page.id,
-        record.sourceId,
-        record.documentEpoch,
-        record.generation
-      );
-    }
-    this.recoveredLocalRecords = [];
+
+    const currentRecord = (
+      this.recoverySourceId
+      && this.documentEpoch
+      && typeof this.currentRecoveryGeneration === "string"
+      && this.currentRecoveryGeneration.length > 0
+    ) ? {
+      sourceId: this.recoverySourceId,
+      documentEpoch: this.documentEpoch,
+      generation: this.currentRecoveryGeneration
+    } : null;
+    const recoveredRecords = this.recoveredLocalRecords.map((record) => ({ ...record }));
+
+    const operation = this.recoveryCleanupQueue.then(async () => {
+      if (currentRecord) {
+        const removed = await this.recoveryStore.removeDurably(
+          this.accountId,
+          this.page.id,
+          currentRecord.sourceId,
+          currentRecord.documentEpoch,
+          currentRecord.generation
+        );
+        if (removed && this.currentRecoveryGeneration === currentRecord.generation) {
+          this.currentRecoveryGeneration = null;
+        }
+      }
+
+      for (const record of recoveredRecords) {
+        await this.recoveryStore.removeDurably(
+          this.accountId,
+          this.page.id,
+          record.sourceId,
+          record.documentEpoch,
+          record.generation
+        );
+      }
+
+      if (recoveredRecords.length) {
+        const cleared = new Set(
+          recoveredRecords.map((record) => [record.sourceId, record.documentEpoch, record.generation].join("\u0000"))
+        );
+        this.recoveredLocalRecords = this.recoveredLocalRecords.filter((record) => !cleared.has(
+          [record.sourceId, record.documentEpoch, record.generation].join("\u0000")
+        ));
+      }
+      return true;
+    });
+    this.recoveryCleanupQueue = operation.catch(() => undefined);
+    return operation;
+  }
+
+  maybeClearLocalRecoveryAfterAck() {
+    if (!shouldClearLocalRecoveryAfterAck(
+      this.pendingLocalUpdates,
+      this.pendingPreparedLocalMutations,
+      this.needsRecovery
+    )) return false;
+    void this.clearLocalRecovery().catch((error) => {
+      this.onError(new Error(
+        `Acknowledged collaboration recovery could not be cleaned up safely and was preserved: ${error?.message || error}`
+      ));
+    });
+    return true;
   }
 
   get isReady() {
@@ -1074,9 +1144,7 @@ class PageCollaborationSession {
         // A different update may have failed to queue while this acknowledgement
         // was in flight. Keep the durable full-document recovery copy until every
         // local change is known to have reached the server.
-        if (shouldClearLocalRecoveryAfterAck(this.pendingLocalUpdates, this.needsRecovery)) {
-          this.clearLocalRecovery();
-        }
+        this.maybeClearLocalRecoveryAfterAck();
         this.resolvePendingWaiters();
         if (this.startupUpdatePending && !this.needsRecovery) {
           this.startupUpdatePending = false;
@@ -1285,10 +1353,17 @@ class PageCollaborationSession {
 
 /**
  * @param {number} pendingLocalUpdates
+ * @param {number} pendingPreparedLocalMutations
  * @param {boolean} needsRecovery
  */
-export function shouldClearLocalRecoveryAfterAck(pendingLocalUpdates, needsRecovery) {
-  return pendingLocalUpdates === 0 && needsRecovery !== true;
+export function shouldClearLocalRecoveryAfterAck(
+  pendingLocalUpdates,
+  pendingPreparedLocalMutations,
+  needsRecovery
+) {
+  return pendingLocalUpdates === 0
+    && pendingPreparedLocalMutations === 0
+    && needsRecovery !== true;
 }
 
 export async function decodeCollaborationRecoveryRecords(records) {

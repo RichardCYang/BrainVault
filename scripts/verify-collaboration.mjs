@@ -416,7 +416,9 @@ function verifySourceWiring() {
     "The collaboration recovery state could not be encoded for synchronization",
     "The collaboration snapshot could not be queued",
     "if (this.sendDocumentUpdate(fullStateUpdate)) this.needsRecovery = false",
-    "shouldClearLocalRecoveryAfterAck(this.pendingLocalUpdates, this.needsRecovery)",
+    "this.pendingPreparedLocalMutations,",
+    "this.recoveryStore.removeDurably(",
+    "this.currentRecoveryGeneration",
     "if (this.startupUpdatePending && !this.needsRecovery)",
     "if (flush && this.hasUnconfirmedLocalChanges && !this.isReady)",
     "canonical-attachment",
@@ -732,9 +734,10 @@ function verifyRecoveryLineageIsolation() {
 }
 
 function verifyRecoveryAcknowledgementSafety() {
-  assert.equal(shouldClearLocalRecoveryAfterAck(0, true), false);
-  assert.equal(shouldClearLocalRecoveryAfterAck(1, false), false);
-  assert.equal(shouldClearLocalRecoveryAfterAck(0, false), true);
+  assert.equal(shouldClearLocalRecoveryAfterAck(0, 0, true), false);
+  assert.equal(shouldClearLocalRecoveryAfterAck(1, 0, false), false);
+  assert.equal(shouldClearLocalRecoveryAfterAck(0, 1, false), false);
+  assert.equal(shouldClearLocalRecoveryAfterAck(0, 0, false), true);
 }
 
 function verifyDependencyPins() {

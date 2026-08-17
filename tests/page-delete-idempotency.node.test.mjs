@@ -73,6 +73,31 @@ test("malformed page-delete receipt scopes fail closed", () => {
   );
 });
 
+test("large valid page-delete receipts remain replayable past the old 10,000-id boundary", () => {
+  const pageIds = ["pag_root", ...Array.from({ length: 10_000 }, (_, index) => `pag_${index}`)];
+  const attachmentIds = Array.from({ length: 10_001 }, (_, index) => `att_${index}`);
+
+  assert.equal(decodePageDeletePageIds(pageIds)?.length, 10_001);
+  assert.equal(decodePageDeleteAttachmentIds(attachmentIds)?.length, 10_001);
+  assert.deepEqual(
+    assessPageDeleteMutationReceipt(
+      {
+        page_id: "pag_root",
+        request_hash: "hash_large",
+        page_ids: JSON.stringify(pageIds),
+        attachment_ids: JSON.stringify(attachmentIds)
+      },
+      { pageId: "pag_root", requestHash: "hash_large" }
+    ),
+    {
+      kind: "replay",
+      pageId: "pag_root",
+      pageIds,
+      attachmentIds
+    }
+  );
+});
+
 test("server reconciles a page-delete receipt before querying a page that may already be gone", () => {
   const deleteRoute = section(
     route,

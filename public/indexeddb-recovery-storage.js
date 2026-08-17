@@ -174,6 +174,7 @@ export async function createIndexedDbRecoveryStorage(
 
   let tail = Promise.resolve();
   let externalRefreshTail = Promise.resolve();
+  let externalRefreshFailure = null;
   let pendingWrites = 0;
   let failureSequence = 0;
   let observedFailureSequence = 0;
@@ -273,6 +274,7 @@ export async function createIndexedDbRecoveryStorage(
         external: true
       });
     }).catch((error) => {
+      externalRefreshFailure = error instanceof Error ? error : new Error(String(error));
       console.error("Failed to refresh cross-tab recovery storage state", error);
     });
   }
@@ -454,6 +456,7 @@ export async function createIndexedDbRecoveryStorage(
         observedFailureSequence = failureSequence;
         throw lastFailure ?? new Error("Recovery storage write failed");
       }
+      if (externalRefreshFailure) throw externalRefreshFailure;
     },
     onWriteError(listener) {
       if (typeof listener !== "function") return () => {};
@@ -467,7 +470,12 @@ export async function createIndexedDbRecoveryStorage(
     },
     async refresh() {
       await tail.catch(() => undefined);
+      await externalRefreshTail;
       await reloadAllRecords();
+      // Cross-tab refresh failures are sticky so synchronous inspections never
+      // mistake a stale mirror for an authoritative empty store. Only a full
+      // successful backing-store reload restores a healthy inspection state.
+      externalRefreshFailure = null;
     },
     close() {
       storageEventTarget?.removeEventListener?.("storage", onStorageEvent);
@@ -532,7 +540,9 @@ export function createReadOnlyRecoveryStorage(storage) {
     subscribe() {
       return () => {};
     },
-    async refresh() {},
+    async refresh() {
+      throw new Error("Durable recovery storage is unavailable");
+    },
     close() {}
   };
 }

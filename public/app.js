@@ -7125,7 +7125,21 @@ async function withPagePersistenceTransition(pageId, kind, action) {
       try {
         const barrier = await pageTransitionLock.runWriterExclusive(
           pageId,
-          action,
+          async () => {
+            // The exclusive writer lock proves every same-page writer has
+            // drained, but the synchronous recovery stores are only mirrors of
+            // IndexedDB. Reload the backing store after acquiring the barrier
+            // so a failed cross-tab notification can never make a destructive
+            // guard observe a stale empty snapshot.
+            try {
+              await recoveryStorage.refresh();
+            } catch (error) {
+              const failure = new Error(t("status.localRecoveryInspectionFailed"));
+              failure.cause = error;
+              throw failure;
+            }
+            return action();
+          },
           { signal: controller.signal }
         );
         if (!barrier?.acquired) throw new Error(busyMessage);
