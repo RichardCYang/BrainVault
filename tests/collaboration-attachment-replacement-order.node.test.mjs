@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import {
+  matchesCollaborativeBlockSnapshot,
   matchesCollaborativeReplacementSource,
   planCollaborativeBlockReplacement
 } from "../public/collaboration.js";
@@ -85,6 +86,52 @@ test("attachment replacement refuses to delete a source changed while upload is 
   );
 });
 
+test("attachment replacement preserves an attachment moved while upload completion is in flight", () => {
+  const source = block("target", null, 1);
+  const expectedAttachment = block("attachment", null, 1, "ATTACHMENT");
+  const movedAttachment = {
+    ...expectedAttachment,
+    parentBlockId: "other-parent",
+    sortOrder: 0
+  };
+
+  assert.equal(matchesCollaborativeBlockSnapshot(movedAttachment, expectedAttachment), false);
+  const plan = planCollaborativeBlockReplacement(
+    [
+      block("before", null, 0),
+      source,
+      block("other-parent", null, 2),
+      movedAttachment
+    ],
+    "target",
+    expectedAttachment,
+    {
+      expectedSourceBlock: source,
+      expectedReplacementBlock: expectedAttachment
+    }
+  );
+  assert.equal(
+    plan,
+    null,
+    "a delayed upload completion must not overwrite a collaborator's newer attachment position"
+  );
+});
+
+test("collaborative fallback revalidates the canonical attachment before changing sibling order", () => {
+  const collaboration = readFileSync(new URL("../public/collaboration.js", import.meta.url), "utf8")
+    .replace(/\r\n/g, "\n");
+  const start = collaboration.indexOf("  async placeAttachmentAfterSourceIfUnchanged");
+  const end = collaboration.indexOf("  adoptAttachment(", start);
+  assert.notEqual(start, -1);
+  assert.ok(end > start);
+  const placement = collaboration.slice(start, end);
+  assert.match(
+    placement,
+    /currentAttachment\s*&&\s*!matchesCollaborativeBlockSnapshot\(currentAttachment, attachment\)/
+  );
+  assert.match(placement, /preservedConcurrentPosition = true;\s*return;/);
+});
+
 test("the attachment replacement UI uses the atomic prepared-document mutation", () => {
   const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   const start = app.indexOf("async function uploadAttachmentFromRow");
@@ -99,7 +146,12 @@ test("the attachment replacement UI uses the atomic prepared-document mutation",
   assert.match(upload, /if \(replacementResult\?\.replaced\)/);
   assert.match(
     upload,
+    /if \(!shouldReplaceCurrentBlock\) \{[\s\S]*session\.placeAttachmentAfterSourceIfUnchanged\(/,
+    "a changed source must fall back through a prepared-document placement that preserves concurrent attachment moves"
+  );
+  assert.doesNotMatch(
+    upload,
     /if \(!shouldReplaceCurrentBlock\) \{[\s\S]*session\.upsertBlock\(/,
-    "a changed source must fall back to attachment insertion instead of deletion"
+    "the collaborative upload fallback must not replay a stale attachment slot through a blind upsert"
   );
 });

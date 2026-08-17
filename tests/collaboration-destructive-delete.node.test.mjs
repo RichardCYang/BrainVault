@@ -73,8 +73,13 @@ test("attachment replacement cannot bypass the collaborative deletion fence", ()
   assertBefore(
     upload,
     "await deleteBlockWithVersionCheck(blockId, {",
-    "session.upsertBlock({",
+    "session.placeAttachmentAfterSourceIfUnchanged(blockId, data.block",
     "collaborative attachment replacement"
+  );
+  assert.doesNotMatch(
+    upload,
+    /if \(!shouldReplaceCurrentBlock\) \{[\s\S]*session\.upsertBlock\(/,
+    "fallback placement must not bypass concurrent-position revalidation with a blind upsert"
   );
 });
 

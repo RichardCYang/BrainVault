@@ -225,7 +225,7 @@ function plainValuesEqual(left, right) {
   return false;
 }
 
-export function matchesCollaborativeReplacementSource(currentBlock, expectedBlock) {
+export function matchesCollaborativeBlockSnapshot(currentBlock, expectedBlock) {
   if (!currentBlock?.id || !expectedBlock?.id) return false;
   const current = normalizeBlock(currentBlock);
   const expected = normalizeBlock(expectedBlock);
@@ -240,11 +240,15 @@ export function matchesCollaborativeReplacementSource(currentBlock, expectedBloc
   );
 }
 
+export function matchesCollaborativeReplacementSource(currentBlock, expectedBlock) {
+  return matchesCollaborativeBlockSnapshot(currentBlock, expectedBlock);
+}
+
 export function planCollaborativeBlockReplacement(
   snapshot,
   targetId,
   replacementBlock,
-  { expectedSourceBlock = null } = {}
+  { expectedSourceBlock = null, expectedReplacementBlock = null } = {}
 ) {
   const replacement = normalizeBlock(replacementBlock);
   const normalizedTargetId = String(targetId ?? "");
@@ -254,10 +258,20 @@ export function planCollaborativeBlockReplacement(
 
   // The upload endpoint broadcasts the canonical attachment before returning its
   // HTTP response, so the replacement may already exist in the Yjs document.
-  // Exclude that canonical copy while locating the source block's actual slot.
-  const preparedSnapshot = (snapshot ?? [])
-    .map(normalizeBlock)
-    .filter((block) => block.id !== replacement.id);
+  // If a collaborator has moved or otherwise changed that attachment since the
+  // broadcast, a delayed upload completion must not overwrite the newer Yjs state.
+  const normalizedSnapshot = (snapshot ?? []).map(normalizeBlock);
+  const currentReplacement = normalizedSnapshot.find((block) => block.id === replacement.id);
+  if (
+    expectedReplacementBlock
+    && currentReplacement
+    && !matchesCollaborativeBlockSnapshot(currentReplacement, expectedReplacementBlock)
+  ) {
+    return null;
+  }
+
+  // Exclude the unchanged canonical copy while locating the source block's actual slot.
+  const preparedSnapshot = normalizedSnapshot.filter((block) => block.id !== replacement.id);
   const target = preparedSnapshot.find((block) => block.id === normalizedTargetId);
   if (!target) return null;
   if (expectedSourceBlock) {
@@ -927,7 +941,8 @@ class PageCollaborationSession {
         snapshot.push(normalizeBlock({ id, ...readYValue(this.Y, value) }));
       }
       const plan = planCollaborativeBlockReplacement(snapshot, blockId, replacement, {
-        expectedSourceBlock
+        expectedSourceBlock,
+        expectedReplacementBlock: replacement
       });
       // The source may have gained text, metadata, a new type, or a new position
       // while the upload was in flight. In that case preserve it and let the UI
@@ -965,6 +980,104 @@ class PageCollaborationSession {
       replaced = true;
     }, { allowDisconnected });
     return { deletedIds, replaced };
+  }
+
+  async placeAttachmentAfterSourceIfUnchanged(sourceBlockId, attachmentBlock, {
+    allowDisconnected = false
+  } = {}) {
+    const attachment = normalizeBlock(attachmentBlock);
+    if (attachment.type !== "ATTACHMENT") {
+      throw new Error("Collaborative attachment placement requires a canonical attachment block");
+    }
+
+    let placed = false;
+    let preservedConcurrentPosition = false;
+    await this.commitLocalMutation(({ blocks, deletedAttachments }) => {
+      const snapshot = [];
+      for (const [id, value] of blocks.entries()) {
+        if (!(value instanceof this.Y.Map)) continue;
+        snapshot.push(normalizeBlock({ id, ...readYValue(this.Y, value) }));
+      }
+
+      const currentAttachment = snapshot.find((block) => block.id === attachment.id);
+      if (
+        currentAttachment
+        && !matchesCollaborativeBlockSnapshot(currentAttachment, attachment)
+      ) {
+        // Another collaborator already moved or changed the canonical attachment.
+        // Preserve that newer state instead of replaying the uploader's stale slot.
+        preservedConcurrentPosition = true;
+        return;
+      }
+
+      const source = snapshot.find((block) => block.id === String(sourceBlockId ?? ""));
+      if (!source) {
+        // If the source disappeared concurrently, do not invent a new hierarchy
+        // decision. The server-canonical attachment can remain where it was created.
+        if (!currentAttachment) {
+          let map = blocks.get(attachment.id);
+          if (!(map instanceof this.Y.Map)) {
+            map = new this.Y.Map();
+            blocks.set(attachment.id, map);
+          }
+          reconcileYMap(this.Y, map, {
+            type: attachment.type,
+            markdown: attachment.markdown,
+            checked: attachment.checked,
+            parentBlockId: attachment.parentBlockId,
+            sortOrder: attachment.sortOrder,
+            metadata: attachment.metadata
+          });
+          deletedAttachments.delete(attachment.id);
+          placed = true;
+        }
+        return;
+      }
+
+      const siblings = snapshot
+        .filter((block) => block.id !== attachment.id && block.parentBlockId === source.parentBlockId)
+        .sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id));
+      const sourceIndex = siblings.findIndex((block) => block.id === source.id);
+      if (sourceIndex < 0) throw new Error("The collaborative block hierarchy is inconsistent");
+
+      const resultingSiblings = [...siblings];
+      resultingSiblings.splice(sourceIndex + 1, 0, {
+        ...attachment,
+        parentBlockId: source.parentBlockId
+      });
+      const snapshotById = new Map(snapshot.map((block) => [block.id, block]));
+
+      for (const [sortOrder, block] of resultingSiblings.entries()) {
+        let map = blocks.get(block.id);
+        if (block.id === attachment.id) {
+          if (!(map instanceof this.Y.Map)) {
+            map = new this.Y.Map();
+            blocks.set(attachment.id, map);
+          }
+          reconcileYMap(this.Y, map, {
+            type: attachment.type,
+            markdown: attachment.markdown,
+            checked: attachment.checked,
+            parentBlockId: source.parentBlockId,
+            sortOrder,
+            metadata: attachment.metadata
+          });
+          deletedAttachments.delete(attachment.id);
+          continue;
+        }
+
+        const current = snapshotById.get(block.id);
+        if (!(map instanceof this.Y.Map) || !current) continue;
+        reconcileYMap(this.Y, map, {
+          ...current,
+          parentBlockId: source.parentBlockId,
+          sortOrder
+        });
+      }
+      placed = true;
+    }, { allowDisconnected });
+
+    return { placed, preservedConcurrentPosition };
   }
 
   adoptAttachment(block) {

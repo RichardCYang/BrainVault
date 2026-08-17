@@ -13229,28 +13229,13 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
         }
       }
       if (!shouldReplaceCurrentBlock) {
-        const currentSnapshot = session.getSnapshot().blocks;
-        const currentSource = currentSnapshot.find((item) => item.id === blockId);
-        const insertionParentBlockId = currentSource?.parentBlockId ?? parentBlockId;
-        const orderedIds = currentSnapshot
-          .filter((item) => item.id !== data.block.id && item.parentBlockId === insertionParentBlockId)
-          .sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id))
-          .map((item) => item.id);
-        const currentSourceIndex = orderedIds.indexOf(blockId);
-        const insertionIndex = currentSourceIndex >= 0 ? currentSourceIndex + 1 : orderedIds.length;
-        orderedIds.splice(insertionIndex, 0, data.block.id);
-        await session.upsertBlock({
-          ...data.block,
-          parentBlockId: insertionParentBlockId,
-          sortOrder: insertionIndex
-        }, { allowDisconnected: true });
-        const snapshotById = new Map(session.getSnapshot().blocks.map((block) => [block.id, block]));
-        const orderUpdates = orderedIds.map((id, sortOrder) => {
-          const current = snapshotById.get(id);
-          if (!current) throw new Error(t("errors.currentBlockOrder"));
-          return { ...current, parentBlockId: insertionParentBlockId ?? null, sortOrder };
+        // Re-plan against the prepared collaboration document. The canonical
+        // attachment may already have been moved by another collaborator while
+        // this upload response was in flight; in that case preserve the newer
+        // location instead of replaying this tab's stale insertion slot.
+        await session.placeAttachmentAfterSourceIfUnchanged(blockId, data.block, {
+          allowDisconnected: true
         });
-        await session.upsertBlocks(orderUpdates, { allowDisconnected: true });
       }
       state.pendingFocusBlockId = data.block.id;
       renderSelectedPage();
