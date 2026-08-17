@@ -1,3 +1,4 @@
+import { BLOCK_MARKDOWN_MAX_LENGTH } from "./editor-content-limits.js";
 import { t } from "./i18n.js";
 
 const languageDefinitions = [
@@ -45,7 +46,9 @@ export const codeLanguageOptions = Object.freeze(languageDefinitions.map((defini
 export const highlightResourceLimits = Object.freeze({
   maxSourceLength: 2_000,
   maxHydrationSourceLength: 8_000,
-  maxHydratedBlocks: 20
+  maxHydratedBlocks: 20,
+  maxLuaSourceLength: BLOCK_MARKDOWN_MAX_LENGTH,
+  maxLuaHydrationSourceLength: BLOCK_MARKDOWN_MAX_LENGTH * 2
 });
 
 const languageById = new Map();
@@ -86,8 +89,141 @@ export function stripCodeFence(value) {
     .replace(/\n?```\s*$/, "");
 }
 
+const luaKeywords = new Set(
+  "and break do else elseif end for function goto if in local not or repeat return then until while".split(" ")
+);
+const luaLiterals = new Set(["true", "false", "nil"]);
+const luaBuiltIns = new Set(
+  (
+    "_G _VERSION assert collectgarbage dofile error getmetatable ipairs load loadfile next pairs pcall print " +
+    "rawequal rawget rawlen rawset require select setmetatable tonumber tostring type warn xpcall coroutine debug io " +
+    "math os package string table utf8"
+  ).split(" ")
+);
+
+function escapeHighlightedHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function wrapHighlightedToken(scope, value) {
+  return `<span class="hljs-${scope}">${escapeHighlightedHtml(value)}</span>`;
+}
+
+function getLuaLongBracketEnd(source, start) {
+  if (source[start] !== "[") return null;
+  let cursor = start + 1;
+  while (source[cursor] === "=") cursor += 1;
+  if (source[cursor] !== "[") return null;
+  const equals = source.slice(start + 1, cursor);
+  const closing = `]${equals}]`;
+  const closingIndex = source.indexOf(closing, cursor + 1);
+  return closingIndex === -1 ? source.length : closingIndex + closing.length;
+}
+
+function getLuaQuotedStringEnd(source, start) {
+  const quote = source[start];
+  let cursor = start + 1;
+  while (cursor < source.length) {
+    if (source[cursor] === "\\") {
+      cursor += 2;
+      continue;
+    }
+    if (source[cursor] === quote) return cursor + 1;
+    cursor += 1;
+  }
+  return source.length;
+}
+
+const luaHexNumberPattern = /0[xX](?:[0-9a-fA-F]+(?:\.(?!\.)[0-9a-fA-F]*)?|\.[0-9a-fA-F]+)(?:[pP][+-]?\d+)?/y;
+const luaDecimalNumberPattern = /(?:\d+(?:\.(?!\.)\d*)?|\.\d+)(?:[eE][+-]?\d+)?/y;
+
+function getLuaNumberLength(source, start) {
+  luaHexNumberPattern.lastIndex = start;
+  const hex = luaHexNumberPattern.exec(source);
+  if (hex) return hex[0].length;
+  luaDecimalNumberPattern.lastIndex = start;
+  return luaDecimalNumberPattern.exec(source)?.[0]?.length ?? 0;
+}
+
+export function highlightLuaSource(value) {
+  const source = String(value ?? "");
+  if (source.length > highlightResourceLimits.maxLuaSourceLength) return null;
+
+  const output = [];
+  let cursor = 0;
+  while (cursor < source.length) {
+    if (source.startsWith("--", cursor)) {
+      const longCommentEnd = getLuaLongBracketEnd(source, cursor + 2);
+      if (longCommentEnd !== null) {
+        output.push(wrapHighlightedToken("comment", source.slice(cursor, longCommentEnd)));
+        cursor = longCommentEnd;
+        continue;
+      }
+      const lineEnd = source.indexOf("\n", cursor + 2);
+      const end = lineEnd === -1 ? source.length : lineEnd;
+      output.push(wrapHighlightedToken("comment", source.slice(cursor, end)));
+      cursor = end;
+      continue;
+    }
+
+    const current = source[cursor];
+    if (current === "\"" || current === "'") {
+      const end = getLuaQuotedStringEnd(source, cursor);
+      output.push(wrapHighlightedToken("string", source.slice(cursor, end)));
+      cursor = end;
+      continue;
+    }
+
+    if (current === "[") {
+      const longStringEnd = getLuaLongBracketEnd(source, cursor);
+      if (longStringEnd !== null) {
+        output.push(wrapHighlightedToken("string", source.slice(cursor, longStringEnd)));
+        cursor = longStringEnd;
+        continue;
+      }
+    }
+
+    const numberLength = (current >= "0" && current <= "9") || (current === "." && source[cursor - 1] !== "." && /\d/.test(source[cursor + 1] ?? ""))
+      ? getLuaNumberLength(source, cursor)
+      : 0;
+    if (numberLength > 0) {
+      output.push(wrapHighlightedToken("number", source.slice(cursor, cursor + numberLength)));
+      cursor += numberLength;
+      continue;
+    }
+
+    if (/[A-Za-z_]/.test(current)) {
+      let end = cursor + 1;
+      while (end < source.length && /[A-Za-z0-9_]/.test(source[end])) end += 1;
+      const identifier = source.slice(cursor, end);
+      if (luaKeywords.has(identifier)) output.push(wrapHighlightedToken("keyword", identifier));
+      else if (luaLiterals.has(identifier)) output.push(wrapHighlightedToken("literal", identifier));
+      else if (luaBuiltIns.has(identifier)) output.push(wrapHighlightedToken("built_in", identifier));
+      else output.push(escapeHighlightedHtml(identifier));
+      cursor = end;
+      continue;
+    }
+
+    output.push(escapeHighlightedHtml(current));
+    cursor += 1;
+  }
+
+  return output.join("");
+}
+
 function highlightSource(source, definition) {
-  if (definition.grammar === "plaintext" || source.length > highlightResourceLimits.maxSourceLength) return null;
+  if (definition.grammar === "plaintext") return null;
+  // Lua code blocks can legally be as large as the editor's 20k character limit.
+  // The generic Highlight.js regex grammars stay capped at 2k for synchronous
+  // resource safety; Lua uses a small linear-time lexer so long scripts do not
+  // silently lose all syntax highlighting.
+  if (definition.grammar === "lua") return highlightLuaSource(source);
+  if (source.length > highlightResourceLimits.maxSourceLength) return null;
   const highlighter = globalThis.hljs;
   if (!highlighter?.highlight || !highlighter.getLanguage?.(definition.grammar)) return null;
   try {
@@ -99,6 +235,11 @@ function highlightSource(source, definition) {
     console.warn(`Syntax highlighting failed for ${definition.id}`, error);
     return null;
   }
+}
+
+export function highlightCodeForBrowser(value, language) {
+  const definition = getCodeLanguageDefinition(language);
+  return highlightSource(stripCodeFence(value), definition);
 }
 
 function createHighlightedCodeElement(source, definition) {
@@ -214,18 +355,23 @@ export function renderCodePreview(preview, value, language) {
 export function hydrateHighlightedCodeBlocks(root = document) {
   let attemptedBlocks = 0;
   let attemptedSourceLength = 0;
+  let attemptedLuaSourceLength = 0;
 
   for (const code of root.querySelectorAll("pre > code[class*='language-']:not(.hljs)")) {
     const className = [...code.classList].find((name) => name.startsWith("language-"));
     const definition = getCodeLanguageDefinition(className?.slice("language-".length));
     const source = code.textContent ?? "";
+    const isLua = definition.grammar === "lua";
     const withinHydrationBudget =
       attemptedBlocks < highlightResourceLimits.maxHydratedBlocks &&
-      attemptedSourceLength + source.length <= highlightResourceLimits.maxHydrationSourceLength;
+      (isLua
+        ? attemptedLuaSourceLength + source.length <= highlightResourceLimits.maxLuaHydrationSourceLength
+        : attemptedSourceLength + source.length <= highlightResourceLimits.maxHydrationSourceLength);
     let highlighted = null;
     if (withinHydrationBudget) {
       attemptedBlocks += 1;
-      attemptedSourceLength += source.length;
+      if (isLua) attemptedLuaSourceLength += source.length;
+      else attemptedSourceLength += source.length;
       highlighted = highlightSource(source, definition);
     }
     code.classList.add("hljs", `language-${definition.grammar}`);
