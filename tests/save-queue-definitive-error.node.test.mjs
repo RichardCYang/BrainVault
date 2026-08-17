@@ -93,3 +93,44 @@ test("the browser block queue wires HTTP-aware retry and structured supersession
     /shouldRetry: isAmbiguousApiError,\s*canSupersede: canSupersedeBlockSaveError/
   );
 });
+
+test("discard exposes a settlement barrier for an in-flight write and drops queued work", async () => {
+  const first = deferred();
+  const calls = [];
+  const queue = createLatestWriteQueue(async (task) => {
+    calls.push(task);
+    if (task === "running") return first.promise;
+    return task;
+  });
+
+  const running = queue.enqueue("running");
+  queue.enqueue("pending");
+  await Promise.resolve();
+
+  let barrierSettled = false;
+  const discarded = queue.discard().then(() => { barrierSettled = true; });
+  await Promise.resolve();
+  assert.equal(barrierSettled, false, "discard must wait for the request already on the wire");
+
+  first.resolve("committed");
+  await discarded;
+  assert.equal(await running, "committed");
+  assert.deepEqual(calls, ["running"], "the queued edit must remain discarded");
+  assert.equal(queue.busy, false);
+});
+
+test("direct block deletions await discarded in-flight saves before taking deletion snapshots", async () => {
+  const client = (await readFile(new URL("../public/app.js", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
+  const discardStart = client.indexOf("function discardBlockSave(blockId)");
+  const discardEnd = client.indexOf("function lockPageEdits", discardStart);
+  const discardSource = client.slice(discardStart, discardEnd);
+  assert.match(discardSource, /const discardedSaveSettlement = blockSaveQueues\.get\(blockId\)\?\.discard\(\) \?\? Promise\.resolve\(\);/);
+  assert.match(discardSource, /return discardedSaveSettlement;/);
+
+  const awaitedDiscards = [...client.matchAll(/await discardBlockSave\(blockId\);/g)];
+  assert.equal(awaitedDiscards.length, 3, "every direct destructive block-delete path must wait for settlement");
+  for (const match of awaitedDiscards) {
+    const after = client.slice(match.index, match.index + 220);
+    assert.match(after, /await deleteBlockWithVersionCheck\(blockId/);
+  }
+});

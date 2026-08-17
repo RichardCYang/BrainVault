@@ -64,6 +64,13 @@ export function createLatestWriteQueue(
       discardGeneration += 1;
       retryTask = null;
       pendingTask = null;
+      // A destructive caller may intentionally drop queued edits while a write is already
+      // on the wire. Expose a non-throwing settlement barrier so it can wait until that
+      // request can no longer race the version snapshot used by the destructive mutation.
+      const discardedRunningPromise = runningPromise;
+      return discardedRunningPromise
+        ? discardedRunningPromise.then(() => undefined, () => undefined)
+        : Promise.resolve();
     },
     get busy() {
       return retryTask !== null || pendingTask !== null || Boolean(runningPromise);

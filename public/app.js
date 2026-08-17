@@ -7027,10 +7027,11 @@ function discardBlockSave(blockId) {
   window.clearTimeout(blockSaveTimers.get(blockId));
   blockSaveTimers.delete(blockId);
   blockSaveRows.delete(blockId);
-  blockSaveQueues.get(blockId)?.discard();
+  const discardedSaveSettlement = blockSaveQueues.get(blockId)?.discard() ?? Promise.resolve();
   blockSaveQueues.delete(blockId);
   blockSaveTaskIds.delete(blockId);
   syncBeforeUnloadProtection();
+  return discardedSaveSettlement;
 }
 
 function lockPageEdits() {
@@ -13217,7 +13218,7 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
     const orderedIds = [...siblingIds];
     if (shouldReplaceCurrentBlock) {
       orderedIds.splice(referenceIndex, 1, data.block.id);
-      discardBlockSave(blockId);
+      await discardBlockSave(blockId);
       await deleteBlockWithVersionCheck(blockId, { includeDescendants: false });
       row.dataset.deleting = "true";
     } else {
@@ -13789,7 +13790,7 @@ async function deleteEmptyBlock(row) {
     const focusBlockId = previousBlockId ?? childIds[0] ?? nextBlockId;
 
     row.dataset.deleting = "true";
-    discardBlockSave(blockId);
+    await discardBlockSave(blockId);
     closeSlashMenu();
     closeInlineToolbar();
     closeBlockContextMenu();
@@ -17796,7 +17797,7 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
       const pageId = state.selectedPage.id;
       await withPageEditLock(async () => {
         row.dataset.deleting = "true";
-        discardBlockSave(blockId);
+        await discardBlockSave(blockId);
         try {
           await deleteBlockWithVersionCheck(blockId);
         } catch (error) {
