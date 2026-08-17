@@ -9699,7 +9699,13 @@ function updateBlockInState(updatedBlock, blocks = state.selectedPage?.blocks ??
 
 function autoGrowTextarea(textarea) {
   textarea.style.height = "auto";
-  textarea.style.height = `${Math.max(textarea.scrollHeight, 30)}px`;
+  const isPlainTextBlock = Boolean(
+    textarea.classList.contains("block-row-input")
+      && textarea.closest('.editor-block-row[data-block-type="MARKDOWN"]')
+  );
+  const cssMinimumHeight = Number.parseFloat(getComputedStyle(textarea).minHeight);
+  const minimumHeight = isPlainTextBlock && Number.isFinite(cssMinimumHeight) ? cssMinimumHeight : 30;
+  textarea.style.height = `${Math.max(textarea.scrollHeight, minimumHeight)}px`;
 }
 
 function getBlockTableData(block) {

@@ -2016,6 +2016,16 @@ kbd {
   gap: 0.48rem;
 }
 
+/* Keep ordinary text blocks visually balanced regardless of line count. */
+.editor-block-row[data-block-type="MARKDOWN"] .text-block-editor {
+  padding-block: 0.32rem;
+}
+
+.editor-block-row[data-block-type="MARKDOWN"] .block-row-input {
+  min-height: 1.5rem;
+  padding-block: 0;
+}
+
 .block-rendered-preview {
   display: none;
   min-width: 0;
