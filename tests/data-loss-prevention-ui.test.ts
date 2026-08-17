@@ -390,7 +390,10 @@ describe("Data-loss prevention integration", () => {
     expect(client).toContain('const sourceEditRevision = Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0;');
     expect(client).toContain('row.setAttribute("aria-busy", "true");');
     expect(client).toContain('syncBlockReadOnlyState(row, true);');
-    expect(client).toContain('const shouldReplaceCurrentBlock = replaceCurrentBlock && currentEditRevision === sourceEditRevision;');
+    expect(client).toContain('const collaborativeSourceSnapshotAtStart = collaborationSessionAtStart');
+    expect(client).toContain('expectedSourceBlock: collaborativeSourceSnapshotAtStart');
+    expect(client).toContain('if (replacementResult?.replaced)');
+    expect(client).toContain('if (!shouldReplaceCurrentBlock)');
     expect(client).toContain('if (row.isConnected && row.dataset.deleting !== "true") syncBlockReadOnlyState(row);');
     expect(client).toContain('const data = await api(`/api/pages/${pageId}/attachments`');
     expect(client).toContain(`if (state.selectedPage?.id === pageId) {\n      state.pendingFocusBlockId = data.block.id;`);

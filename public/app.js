@@ -9646,15 +9646,21 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
   const pageId = state.selectedPage.id;
   const preserveChildren = options.preserveChildren === true;
   const replacementBlock = options.replacementBlock ?? null;
+  const expectedSourceBlock = options.expectedSourceBlock ?? null;
   if (isCollaborativePage()) {
-    return withCollaborativeDestructiveTransition(pageId, "block-delete", async (session) => ({
-      deletedIds: replacementBlock
-        ? await session.replaceBlockWithAttachmentPreservingChildren(blockId, replacementBlock)
-        : await session.deleteBlock(blockId, {
-            cascade: options.includeDescendants !== false,
-            promoteChildren: preserveChildren
-          })
-    }));
+    return withCollaborativeDestructiveTransition(pageId, "block-delete", async (session) => {
+      if (replacementBlock) {
+        return session.replaceBlockWithAttachmentPreservingChildren(blockId, replacementBlock, {
+          expectedSourceBlock
+        });
+      }
+      return {
+        deletedIds: await session.deleteBlock(blockId, {
+          cascade: options.includeDescendants !== false,
+          promoteChildren: preserveChildren
+        })
+      };
+    });
   }
   // A replacement block is only safe when it is committed atomically with the
   // collaborative delete. If collaboration disappears between UI decisions,
@@ -13129,6 +13135,9 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
   const pageModeMutationFence = lockPageModeMutationFence(pageId);
   const collaborationSessionAtStart = isCollaborativePage() ? state.collaborationSession : null;
   const blockId = row.dataset.blockId;
+  const collaborativeSourceSnapshotAtStart = collaborationSessionAtStart
+    ?.getSnapshot()
+    .blocks.find((item) => item.id === blockId) ?? null;
   const sourceEditRevision = Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0;
   row.classList.add("is-uploading");
   row.setAttribute("aria-busy", "true");
@@ -13194,32 +13203,52 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
     if (isCollaborativePage()) {
       const session = state.collaborationSession ?? collaborationSessionAtStart;
       if (!session || session.isDestroyed) throw new Error(t("sharing.syncRequired"));
-      const shouldReplaceCurrentBlock = replaceCurrentBlock && currentEditRevision === sourceEditRevision;
+      let shouldReplaceCurrentBlock = (
+        replaceCurrentBlock
+        && currentEditRevision === sourceEditRevision
+        && Boolean(collaborativeSourceSnapshotAtStart)
+      );
       const effectiveInsertionIndex = shouldReplaceCurrentBlock ? referenceIndex : referenceIndex + 1;
       if (shouldReplaceCurrentBlock) {
-        await deleteBlockWithVersionCheck(blockId, {
+        const replacementResult = await deleteBlockWithVersionCheck(blockId, {
           includeDescendants: false,
           preserveChildren: true,
+          expectedSourceBlock: collaborativeSourceSnapshotAtStart,
           replacementBlock: {
             ...data.block,
             parentBlockId,
             sortOrder: effectiveInsertionIndex
           }
         });
-        row.dataset.deleting = "true";
-      } else {
-        const orderedIds = [...siblingIds];
-        orderedIds.splice(effectiveInsertionIndex, 0, data.block.id);
+        if (replacementResult?.replaced) {
+          row.dataset.deleting = "true";
+        } else {
+          // A collaborator changed the source after the upload began. Preserve
+          // that newer content and insert the attachment as a sibling instead.
+          shouldReplaceCurrentBlock = false;
+        }
+      }
+      if (!shouldReplaceCurrentBlock) {
+        const currentSnapshot = session.getSnapshot().blocks;
+        const currentSource = currentSnapshot.find((item) => item.id === blockId);
+        const insertionParentBlockId = currentSource?.parentBlockId ?? parentBlockId;
+        const orderedIds = currentSnapshot
+          .filter((item) => item.id !== data.block.id && item.parentBlockId === insertionParentBlockId)
+          .sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id))
+          .map((item) => item.id);
+        const currentSourceIndex = orderedIds.indexOf(blockId);
+        const insertionIndex = currentSourceIndex >= 0 ? currentSourceIndex + 1 : orderedIds.length;
+        orderedIds.splice(insertionIndex, 0, data.block.id);
         await session.upsertBlock({
           ...data.block,
-          parentBlockId,
-          sortOrder: effectiveInsertionIndex
+          parentBlockId: insertionParentBlockId,
+          sortOrder: insertionIndex
         }, { allowDisconnected: true });
         const snapshotById = new Map(session.getSnapshot().blocks.map((block) => [block.id, block]));
         const orderUpdates = orderedIds.map((id, sortOrder) => {
           const current = snapshotById.get(id);
           if (!current) throw new Error(t("errors.currentBlockOrder"));
-          return { ...current, parentBlockId: parentBlockId ?? null, sortOrder };
+          return { ...current, parentBlockId: insertionParentBlockId ?? null, sortOrder };
         });
         await session.upsertBlocks(orderUpdates, { allowDisconnected: true });
       }

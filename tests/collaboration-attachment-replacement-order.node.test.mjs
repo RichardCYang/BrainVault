@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { planCollaborativeBlockReplacement } from "../public/collaboration.js";
+import {
+  matchesCollaborativeReplacementSource,
+  planCollaborativeBlockReplacement
+} from "../public/collaboration.js";
 
 function block(id, parentBlockId, sortOrder, type = "MARKDOWN") {
   return {
@@ -60,6 +63,28 @@ test("attachment replacement keeps promoted children and sibling order dense in 
   );
 });
 
+test("attachment replacement refuses to delete a source changed while upload is in flight", () => {
+  const expectedSource = block("target", null, 1);
+  const changedSource = {
+    ...expectedSource,
+    markdown: "important collaborator edit"
+  };
+  const attachment = block("attachment", null, 1, "ATTACHMENT");
+
+  assert.equal(matchesCollaborativeReplacementSource(changedSource, expectedSource), false);
+  const plan = planCollaborativeBlockReplacement(
+    [block("before", null, 0), changedSource, block("after", null, 2), attachment],
+    "target",
+    attachment,
+    { expectedSourceBlock: expectedSource }
+  );
+  assert.equal(
+    plan,
+    null,
+    "a stale empty-source snapshot must never authorize deleting newer collaborative content"
+  );
+});
+
 test("the attachment replacement UI uses the atomic prepared-document mutation", () => {
   const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   const start = app.indexOf("async function uploadAttachmentFromRow");
@@ -68,11 +93,13 @@ test("the attachment replacement UI uses the atomic prepared-document mutation",
   assert.ok(end > start);
   const upload = app.slice(start, end);
 
+  assert.match(upload, /expectedSourceBlock:\s*collaborativeSourceSnapshotAtStart/);
   assert.match(upload, /replacementBlock:\s*\{/);
   assert.match(upload, /preserveChildren:\s*true/);
+  assert.match(upload, /if \(replacementResult\?\.replaced\)/);
   assert.match(
     upload,
-    /if \(shouldReplaceCurrentBlock\) \{[\s\S]*replacementBlock:[\s\S]*\} else \{[\s\S]*session\.upsertBlock\(/,
-    "replacement must be atomic while ordinary insertion may keep the existing upsert path"
+    /if \(!shouldReplaceCurrentBlock\) \{[\s\S]*session\.upsertBlock\(/,
+    "a changed source must fall back to attachment insertion instead of deletion"
   );
 });

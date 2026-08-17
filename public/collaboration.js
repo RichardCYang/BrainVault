@@ -205,7 +205,47 @@ function normalizeBlock(block) {
   };
 }
 
-export function planCollaborativeBlockReplacement(snapshot, targetId, replacementBlock) {
+function plainValuesEqual(left, right) {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((item, index) => plainValuesEqual(item, right[index]));
+  }
+  if (isPlainObject(left) || isPlainObject(right)) {
+    if (!isPlainObject(left) || !isPlainObject(right)) return false;
+    const leftKeys = Object.keys(left).sort();
+    const rightKeys = Object.keys(right).sort();
+    return leftKeys.length === rightKeys.length
+      && leftKeys.every((key, index) =>
+        key === rightKeys[index] && plainValuesEqual(left[key], right[key])
+      );
+  }
+  return false;
+}
+
+export function matchesCollaborativeReplacementSource(currentBlock, expectedBlock) {
+  if (!currentBlock?.id || !expectedBlock?.id) return false;
+  const current = normalizeBlock(currentBlock);
+  const expected = normalizeBlock(expectedBlock);
+  return (
+    current.id === expected.id
+    && current.type === expected.type
+    && current.markdown === expected.markdown
+    && current.checked === expected.checked
+    && current.parentBlockId === expected.parentBlockId
+    && current.sortOrder === expected.sortOrder
+    && plainValuesEqual(current.metadata, expected.metadata)
+  );
+}
+
+export function planCollaborativeBlockReplacement(
+  snapshot,
+  targetId,
+  replacementBlock,
+  { expectedSourceBlock = null } = {}
+) {
   const replacement = normalizeBlock(replacementBlock);
   const normalizedTargetId = String(targetId ?? "");
   if (!normalizedTargetId || replacement.id === normalizedTargetId) {
@@ -220,6 +260,12 @@ export function planCollaborativeBlockReplacement(snapshot, targetId, replacemen
     .filter((block) => block.id !== replacement.id);
   const target = preparedSnapshot.find((block) => block.id === normalizedTargetId);
   if (!target) return null;
+  if (expectedSourceBlock) {
+    if (String(expectedSourceBlock?.id ?? "") !== normalizedTargetId) {
+      throw new Error("The collaborative replacement source snapshot does not match the target block");
+    }
+    if (!matchesCollaborativeReplacementSource(target, expectedSourceBlock)) return null;
+  }
 
   const children = preparedSnapshot
     .filter((block) => block.parentBlockId === normalizedTargetId)
@@ -857,14 +903,19 @@ class PageCollaborationSession {
   }
 
   async replaceBlockWithAttachmentPreservingChildren(blockId, replacementBlock, {
+    expectedSourceBlock = null,
     allowDisconnected = false
   } = {}) {
     const replacement = normalizeBlock(replacementBlock);
     if (replacement.type !== "ATTACHMENT") {
       throw new Error("Collaborative attachment replacement requires a canonical attachment block");
     }
+    if (!expectedSourceBlock || String(expectedSourceBlock?.id ?? "") !== String(blockId ?? "")) {
+      throw new Error("Collaborative attachment replacement requires the source block snapshot captured before upload");
+    }
 
     let deletedIds = [];
+    let replaced = false;
     await this.commitLocalMutation(({ blocks, deletedAttachments }) => {
       // Plan the entire replacement against the prepared mutation document. The
       // source delete, child promotion, attachment placement, and dense sibling
@@ -875,7 +926,12 @@ class PageCollaborationSession {
         if (!(value instanceof this.Y.Map)) continue;
         snapshot.push(normalizeBlock({ id, ...readYValue(this.Y, value) }));
       }
-      const plan = planCollaborativeBlockReplacement(snapshot, blockId, replacement);
+      const plan = planCollaborativeBlockReplacement(snapshot, blockId, replacement, {
+        expectedSourceBlock
+      });
+      // The source may have gained text, metadata, a new type, or a new position
+      // while the upload was in flight. In that case preserve it and let the UI
+      // fall back to an ordinary attachment insertion instead of deleting data.
       if (!plan) return;
 
       const snapshotById = new Map(snapshot.map((block) => [block.id, block]));
@@ -906,8 +962,9 @@ class PageCollaborationSession {
       }
       blocks.delete(blockId);
       deletedIds = [blockId];
+      replaced = true;
     }, { allowDisconnected });
-    return deletedIds;
+    return { deletedIds, replaced };
   }
 
   adoptAttachment(block) {
