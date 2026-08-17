@@ -61,6 +61,16 @@ test("restore keeps reset/create mutation ids as durable tombstones across page 
   assert.doesNotMatch(transfer, /mutationReceipts\.blockDeletes/);
   assert.match(transfer, /block\.metadata, restoreVersion, block\.created_at/);
 
+  const pageDeleteReceiptInvalidationIndex = transfer.indexOf(
+    'DELETE FROM page_delete_mutations WHERE actor_id = ?'
+  );
+  const pageReplacementIndex = transfer.indexOf('DELETE FROM pages WHERE owner_id = ?');
+  assert.ok(
+    pageDeleteReceiptInvalidationIndex >= 0
+      && pageReplacementIndex > pageDeleteReceiptInvalidationIndex,
+    "restore must invalidate pre-restore page-delete receipts before replacing the page/filesystem generation"
+  );
+
   const captureIndex = transfer.indexOf("restoreMutationReceipts = await prepareRestoreMutationReceiptPlan");
   const importIndex = transfer.indexOf("await importRows(", captureIndex);
   assert.ok(captureIndex >= 0 && importIndex > captureIndex, "page-tied order receipts must be captured before page replacement");
@@ -90,4 +100,7 @@ test("standalone reproduction proves stale retries cross page deletion plus rest
   assert.equal(result.fixed.createReceiptTombstoneBlocksResurrectionWhenBackupOmitsOriginalBlock, true);
   assert.equal(result.fixed.preservingDeleteReceiptWouldDeleteRestoredAttachment, true);
   assert.equal(result.fixed.staleDeleteRetryConflictsWithoutTouchingRestoredAttachment, true);
+  assert.equal(result.fixed.restoreInvalidatesPageDeleteReceipts, true);
+  assert.equal(result.fixed.preservingPageDeleteReceiptWouldDeleteRetainedAttachment, true);
+  assert.equal(result.fixed.delayedPageDeleteRetryCannotDeleteRestoredRetainedAttachment, true);
 });

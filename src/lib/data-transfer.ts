@@ -2115,6 +2115,12 @@ async function importRows(
   const restoreIconValue = (value: string | null) => manifest.version >= uploadedAssetBackupVersion
     ? rebindCustomIconValue(value, manifest.source.userId, userId)
     : normalizeIconValue(value);
+  // Page-delete receipts can replay post-COMMIT attachment cleanup. A restore
+  // starts a new attachment filesystem generation and may intentionally restore
+  // unreferenced files as retainedAttachments, so pre-restore delete receipts
+  // must not be allowed to clean up that new generation. The caller holds the
+  // user row lock, matching permanent page deletion's receipt lock order.
+  await client.execute("DELETE FROM page_delete_mutations WHERE actor_id = ?", [userId]);
   await client.execute("DELETE FROM pages WHERE owner_id = ?", [userId]);
   await client.execute(
     `UPDATE users

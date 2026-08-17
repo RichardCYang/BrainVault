@@ -31,6 +31,7 @@ const resetMutationId = "mut_reset_response_lost";
 const createMutationId = "mut_create_response_lost";
 const createdBlockId = "blk_original";
 const restoredAttachmentId = "att_restored";
+const retainedOrphanAttachmentId = "att_retained_orphan";
 const oldDeleteExpectedVersion = 42;
 const restoreVersion = 9_000_000;
 
@@ -138,6 +139,46 @@ function retryBlockDeleteAfterRestore({ preserveDeleteReceipt }) {
 const unsafePreservedDeleteRetry = retryBlockDeleteAfterRestore({ preserveDeleteReceipt: true });
 const fixedDeleteRetry = retryBlockDeleteAfterRestore({ preserveDeleteReceipt: false });
 
+function retryPageDeleteAfterRestore({ invalidateReceiptOnRestore }) {
+  const state = {
+    pages: new Set(),
+    liveBlocks: new Set(),
+    files: new Set([retainedOrphanAttachmentId]),
+    receipt: invalidateReceiptOnRestore
+      ? null
+      : {
+          mutationId: "mut_page_delete_response_lost",
+          pageIds: ["pag_deleted_before_backup"],
+          attachmentIds: [retainedOrphanAttachmentId]
+        }
+  };
+
+  if (state.receipt) {
+    const superseded = state.receipt.pageIds.some((id) => state.pages.has(id));
+    if (!superseded) {
+      // removeDeletedAttachmentFiles() protects live block ids, but a retained
+      // attachment is intentionally unreferenced. Replaying a pre-restore page
+      // delete receipt would therefore erase recovery bytes from the new
+      // filesystem generation.
+      for (const id of state.receipt.attachmentIds) {
+        if (!state.liveBlocks.has(id)) state.files.delete(id);
+      }
+      return { replayed: true, missingPage: false, state };
+    }
+  }
+
+  // Once restore invalidates the old receipt, the delayed request falls through
+  // to normal page lookup. The old page is absent, so no cleanup side effect runs.
+  return { replayed: false, missingPage: true, state };
+}
+
+const unsafePreservedPageDeleteRetry = retryPageDeleteAfterRestore({
+  invalidateReceiptOnRestore: false
+});
+const fixedPageDeleteRetry = retryPageDeleteAfterRestore({
+  invalidateReceiptOnRestore: true
+});
+
 const result = {
   vulnerability: {
     baselineModel: "embedded pre-fix page-delete-before-restore model",
@@ -187,6 +228,14 @@ const result = {
       unsafePreservedDeleteRetry.replayed && !unsafePreservedDeleteRetry.state.files.has(restoredAttachmentId),
     staleDeleteRetryConflictsWithoutTouchingRestoredAttachment:
       fixedDeleteRetry.conflicted && fixedDeleteRetry.state.files.has(restoredAttachmentId),
+    restoreInvalidatesPageDeleteReceipts:
+      currentTransfer.includes('DELETE FROM page_delete_mutations WHERE actor_id = ?'),
+    preservingPageDeleteReceiptWouldDeleteRetainedAttachment:
+      unsafePreservedPageDeleteRetry.replayed
+      && !unsafePreservedPageDeleteRetry.state.files.has(retainedOrphanAttachmentId),
+    delayedPageDeleteRetryCannotDeleteRestoredRetainedAttachment:
+      fixedPageDeleteRetry.missingPage
+      && fixedPageDeleteRetry.state.files.has(retainedOrphanAttachmentId),
     delayedResetRetryReplaysWithoutDeletingRestoredHistory:
       fixedAfterResetRetry.replayed && fixedAfterResetRetry.state.pageVersions.length === 4,
     delayedCreateRetryReplaysWithoutDuplicate:
