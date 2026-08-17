@@ -8163,6 +8163,12 @@ async function deleteNavigationTarget() {
       assertNoPendingLocalCollaborationRecoveryForPages(serverPageIds);
       await submitPageDeleteTask(task, authenticationScope);
     });
+    // submitPageDeleteTask() intentionally returns without sending or applying
+    // anything when a password/session rotation supersedes this operation.
+    // Re-check the initiating authentication generation before deleting local
+    // recovery or mutating workspace state; otherwise an aborted server delete
+    // could still erase the same account's only local draft copy.
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
     if (state.user?.id) {
       checkDraftStoreWrite(pageDraftStore.removePages(state.user.id, serverPageIds, pageDraftSourceId));
     }

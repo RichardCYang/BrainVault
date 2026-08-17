@@ -148,6 +148,58 @@ test("browser retries ambiguous permanent page deletes with one auth-scoped muta
   );
 });
 
+test("page delete auth rotation cannot fall through into local draft cleanup", async () => {
+  const deleteClient = section(
+    client,
+    "async function deleteNavigationTarget()",
+    "function renderCollectionView"
+  );
+  const submitIndex = deleteClient.indexOf("await submitPageDeleteTask(task, authenticationScope);");
+  const completionFenceIndex = deleteClient.indexOf(
+    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;",
+    submitIndex
+  );
+  const cleanupIndex = deleteClient.indexOf("pageDraftStore.removePages", submitIndex);
+  assert.ok(submitIndex >= 0, "page delete must submit through the auth-scoped task");
+  assert.ok(
+    completionFenceIndex > submitIndex && completionFenceIndex < cleanupIndex,
+    "authentication must be revalidated after submit and before local draft cleanup"
+  );
+
+  async function reproduce({ fixed }) {
+    let currentAuthenticationScope = true;
+    let serverDeleteRequests = 0;
+    let localDraftPresent = true;
+
+    const submit = async () => {
+      if (!currentAuthenticationScope) return null;
+      serverDeleteRequests += 1;
+      return null;
+    };
+
+    // A same-account credential rotation can increment the authentication
+    // generation while the destructive transition is waiting on its barriers.
+    currentAuthenticationScope = false;
+    await submit();
+    if (fixed && !currentAuthenticationScope) {
+      return { serverDeleteRequests, localDraftPresent };
+    }
+    localDraftPresent = false;
+    return { serverDeleteRequests, localDraftPresent };
+  }
+
+  assert.deepEqual(
+    await reproduce({ fixed: false }),
+    { serverDeleteRequests: 0, localDraftPresent: false },
+    "the vulnerable ordering erases recovery even though no delete request was sent"
+  );
+  assert.deepEqual(
+    await reproduce({ fixed: true }),
+    { serverDeleteRequests: 0, localDraftPresent: true },
+    "the completion fence preserves recovery when authentication supersedes the delete"
+  );
+});
+
 test("baseline and upgrade schemas keep page-delete receipts after page rows are gone", () => {
   for (const sql of [baselineSchema, migration]) {
     const start = sql.indexOf("CREATE TABLE IF NOT EXISTS page_delete_mutations");
