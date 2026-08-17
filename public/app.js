@@ -6053,25 +6053,24 @@ function getPageActionsMenuItems() {
   );
 }
 
-function isPageReadOnly() {
-  return (
-    state.pageMode !== pageModes.WRITE
-    || !recoveryStoragePersistence.isPersistent()
-    || !indexedDbRecoveryStorage
-    || Boolean(recoveryStorageWriteFailure)
-  );
+function isRecoveryStorageWritable() {
+  return Boolean(indexedDbRecoveryStorage && !recoveryStorageWriteFailure);
 }
 
-let recoveryPersistenceDowngradeInFlight = false;
-let recoveryPersistenceDrainPromise = null;
+function isPageReadOnly() {
+  return state.pageMode !== pageModes.WRITE || !isRecoveryStorageWritable();
+}
+
+let recoveryStorageFailureDrainInFlight = false;
+let recoveryStorageFailureDrainPromise = null;
 let recoveryStorageWriteFailure = recoveryStorageInitializationError;
 
-async function drainRecoveryPersistenceDowngrade() {
-  if (!recoveryPersistenceDowngradeInFlight) return;
-  if (recoveryPersistenceDrainPromise) return recoveryPersistenceDrainPromise;
+async function drainRecoveryStorageFailure() {
+  if (!recoveryStorageFailureDrainInFlight) return;
+  if (recoveryStorageFailureDrainPromise) return recoveryStorageFailureDrainPromise;
 
   const pageId = state.selectedPage?.id ?? null;
-  recoveryPersistenceDrainPromise = (async () => {
+  recoveryStorageFailureDrainPromise = (async () => {
     await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false });
     // Wait for any already-enqueued browser recovery writes to settle. A failed
     // local write does not invalidate a successful server drain; it only keeps
@@ -6082,7 +6081,7 @@ async function drainRecoveryPersistenceDowngrade() {
       recoveryStorageWriteFailure ??= error instanceof Error ? error : new Error(String(error));
     }
 
-    if (!recoveryPersistenceDowngradeInFlight) return;
+    if (!recoveryStorageFailureDrainInFlight) return;
     if (pageId && state.selectedPage?.id !== pageId) {
       throw new Error("The selected page changed during the recovery durability drain");
     }
@@ -6093,60 +6092,55 @@ async function drainRecoveryPersistenceDowngrade() {
     state.pageMode = pageModes.READ;
     state.pendingFocusBlockId = null;
     state.pageModeChanging = false;
-    recoveryPersistenceDowngradeInFlight = false;
+    recoveryStorageFailureDrainInFlight = false;
     syncPageModeUi();
-    if (state.user) setStatus(t("status.durableRecoveryStorageUnavailable"), true);
+    if (state.user) setStatus(t("status.localDraftStorageFailed"), true);
   })()
     .catch((error) => {
       // Keep logical WRITE state but fence all new interaction. Already accepted
       // edits therefore remain eligible for a later server retry (for example
       // when connectivity returns) instead of becoming stranded in the browser.
-      console.error("Failed to drain pending edits after recovery durability was lost", error);
+      console.error("Failed to drain pending edits after recovery storage write failure", error);
       state.pageModeChanging = true;
       syncPageModeUi();
       syncBeforeUnloadProtection();
-      if (state.user) setStatus(t("status.durableRecoveryStorageUnavailable"), true);
+      if (state.user) setStatus(t("status.localDraftStorageFailed"), true);
       throw error;
     })
     .finally(() => {
-      recoveryPersistenceDrainPromise = null;
+      recoveryStorageFailureDrainPromise = null;
     });
 
-  return recoveryPersistenceDrainPromise;
+  return recoveryStorageFailureDrainPromise;
 }
 
 async function handleRecoveryStoragePersistenceChange(nextState) {
-  if (nextState === "persistent") {
-    if (recoveryPersistenceDowngradeInFlight && !recoveryStorageWriteFailure && indexedDbRecoveryStorage) {
-      recoveryPersistenceDowngradeInFlight = false;
-      state.pageModeChanging = false;
-      syncPageModeUi();
-    }
-    return;
-  }
-  if (state.pageMode !== pageModes.WRITE || recoveryPersistenceDowngradeInFlight) return;
-
-  recoveryPersistenceDowngradeInFlight = true;
-  state.pageModeChanging = true;
-  syncPageModeUi();
-  try {
-    await drainRecoveryPersistenceDowngrade();
-  } catch {
-    // The drain function deliberately retains the locked WRITE state for retry.
+  // Persistent storage protects browser recovery records from eviction, but it is
+  // not a prerequisite for a strict IndexedDB transaction. Private/incognito
+  // sessions commonly keep site storage session-scoped, so a denied persist()
+  // request must not be treated as a recovery write failure.
+  if (
+    nextState !== "persistent"
+    && state.pageMode === pageModes.WRITE
+    && !state.pageModeChanging
+    && isRecoveryStorageWritable()
+    && state.user
+  ) {
+    setStatus(t("status.sessionRecoveryStorageActive"));
   }
 }
 
 function handleDurableRecoveryStorageWriteError(error, context = null) {
   recoveryStorageWriteFailure = error instanceof Error ? error : new Error(String(error));
   console.error("Durable browser recovery write failed", context, recoveryStorageWriteFailure);
-  if (state.pageMode !== pageModes.WRITE || recoveryPersistenceDowngradeInFlight) {
+  if (state.pageMode !== pageModes.WRITE || recoveryStorageFailureDrainInFlight) {
     syncBeforeUnloadProtection();
     return;
   }
-  recoveryPersistenceDowngradeInFlight = true;
+  recoveryStorageFailureDrainInFlight = true;
   state.pageModeChanging = true;
   syncPageModeUi();
-  void drainRecoveryPersistenceDowngrade().catch(() => undefined);
+  void drainRecoveryStorageFailure().catch(() => undefined);
 }
 
 indexedDbRecoveryStorage?.onWriteError(handleDurableRecoveryStorageWriteError);
@@ -6523,17 +6517,13 @@ function isPageInteractionLocked() {
 }
 
 function canPersistSelectedPage() {
-  const recoveryDrainAllowed = recoveryPersistenceDowngradeInFlight && state.pageModeChanging;
-  const recoveryDurable = Boolean(
-    indexedDbRecoveryStorage
-    && !recoveryStorageWriteFailure
-    && recoveryStoragePersistence.isPersistent()
-  );
+  const recoveryDrainAllowed = recoveryStorageFailureDrainInFlight && state.pageModeChanging;
+  const recoveryWritable = isRecoveryStorageWritable();
   return Boolean(
     state.selectedPage
     && state.workspaceView === "page"
     && state.pageMode === pageModes.WRITE
-    && (recoveryDurable || recoveryDrainAllowed)
+    && (recoveryWritable || recoveryDrainAllowed)
   );
 }
 
@@ -7238,7 +7228,7 @@ async function flushPendingPageEdits({ keepalive = false, allowLocked = false, c
   if (pendingBlockOrderTask && canPersistSelectedPage()) {
     await retryPendingBlockOrder({
       keepalive,
-      allowRecoveryFailure: allowLocked && recoveryPersistenceDowngradeInFlight
+      allowRecoveryFailure: allowLocked && recoveryStorageFailureDrainInFlight
     });
   }
   if (!(allowLocked ? canPersistSelectedPage() : canEditSelectedPage())) return;
@@ -7282,7 +7272,7 @@ async function flushPendingPageEdits({ keepalive = false, allowLocked = false, c
   );
 
   await requireDirectRecoveryDurability("page-edit-flush", null, {
-    allowRecoveryFailure: allowLocked && recoveryPersistenceDowngradeInFlight,
+    allowRecoveryFailure: allowLocked && recoveryStorageFailureDrainInFlight,
     preserveInput: false
   });
   syncBeforeUnloadProtection();
@@ -7314,7 +7304,11 @@ async function setPageMode(nextMode, { announce = true } = {}) {
     state.pageModeChanging = true;
     syncPageModeUi();
     try {
-      if (!(await recoveryStoragePersistence.ensurePersistent())) {
+      // Request persistent storage as an extra eviction safeguard, but do not
+      // require it. In private/incognito browsing the browser may intentionally
+      // keep IndexedDB session-scoped even though strict transactions work.
+      await recoveryStoragePersistence.ensurePersistent();
+      if (!isRecoveryStorageWritable()) {
         state.pageMode = pageModes.READ;
         state.pendingFocusBlockId = null;
         if (announce) setStatus(t("status.durableRecoveryStorageUnavailable"), true);
@@ -7327,10 +7321,14 @@ async function setPageMode(nextMode, { announce = true } = {}) {
   }
 
   // A restored route or recovery flow can already desire WRITE while the
-  // effective UI remained read-only until persistence was granted.
+  // effective UI remained read-only until writable recovery storage was ready.
   if (state.pageMode === normalizedMode) {
     syncPageModeUi();
-    if (announce && normalizedMode === pageModes.WRITE) setStatus(t("status.writeModeEnabled"));
+    if (announce && normalizedMode === pageModes.WRITE) {
+      setStatus(t(recoveryStoragePersistence.isPersistent()
+        ? "status.writeModeEnabled"
+        : "status.sessionRecoveryStorageActive"));
+    }
     return;
   }
 
@@ -7357,7 +7355,14 @@ async function setPageMode(nextMode, { announce = true } = {}) {
       await openPage(state.selectedPage.id);
     }
 
-    if (announce) setStatus(t(normalizedMode === pageModes.READ ? "status.readModeEnabled" : "status.writeModeEnabled"));
+    if (announce) {
+      const statusKey = normalizedMode === pageModes.READ
+        ? "status.readModeEnabled"
+        : recoveryStoragePersistence.isPersistent()
+          ? "status.writeModeEnabled"
+          : "status.sessionRecoveryStorageActive";
+      setStatus(t(statusKey));
+    }
   } finally {
     state.pageModeChanging = false;
     syncPageModeUi();
@@ -9107,10 +9112,10 @@ async function startPageCollaboration(page = state.selectedPage) {
       api,
       onBeforeLocalRecoveryApply: () => {
         if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) return false;
-        if (isPageReadOnly() && recoveryStoragePersistence.isPersistent()) {
-          // A crash-recovery Yjs update is a real local edit. Make that transition
-          // explicit only when the origin has persistent recovery storage; otherwise
-          // show/synchronize the recovered data without enabling new local edits.
+        if (isPageReadOnly() && isRecoveryStorageWritable()) {
+          // A crash-recovery Yjs update is a real local edit. Enable continued
+          // editing only when strict IndexedDB recovery writes remain available;
+          // persistent-storage permission itself is only an eviction safeguard.
           state.pageMode = pageModes.WRITE;
           state.pendingFocusBlockId = null;
           syncPageModeUi();
@@ -12552,12 +12557,12 @@ async function saveBlockRow(
   row.classList.add("is-dirty");
   if (!persistBlockDraft(row, payload)) {
     preserveInputAfterRecoveryAdmissionFailure(row);
-    if (!(allowLocked && recoveryPersistenceDowngradeInFlight)) {
+    if (!(allowLocked && recoveryStorageFailureDrainInFlight)) {
       throw new Error(t("status.localDraftStorageFailed"));
     }
   }
   await requireDirectRecoveryDurability("direct-block-recovery", row, {
-    allowRecoveryFailure: allowLocked && recoveryPersistenceDowngradeInFlight
+    allowRecoveryFailure: allowLocked && recoveryStorageFailureDrainInFlight
   });
   recordBlockEditorHistory(row, payload);
   window.clearTimeout(blockSaveTimers.get(blockId));
@@ -14359,13 +14364,13 @@ async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked =
   pageTitleSaveTimer = null;
   if (pageTitleEditRevision > 0 && !persistPageTitleDraft()) {
     preserveInputAfterRecoveryAdmissionFailure();
-    if (!(allowLocked && recoveryPersistenceDowngradeInFlight)) {
+    if (!(allowLocked && recoveryStorageFailureDrainInFlight)) {
       throw new Error(t("status.localDraftStorageFailed"));
     }
   }
   if (pageTitleEditRevision > 0) {
     await requireDirectRecoveryDurability("direct-title-recovery", null, {
-      allowRecoveryFailure: allowLocked && recoveryPersistenceDowngradeInFlight
+      allowRecoveryFailure: allowLocked && recoveryStorageFailureDrainInFlight
     });
   }
   recordPageTitleEditorHistory();
@@ -15217,7 +15222,7 @@ async function openPage(pageId, { skipFlush = false, requestedPageMode = null } 
       if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
       closeSharePageDialog({ restoreFocus: false });
       const normalizedRequestedPageMode = requestedPageMode === pageModes.WRITE
-        ? (recoveryStoragePersistence.isPersistent() ? pageModes.WRITE : pageModes.READ)
+        ? (isRecoveryStorageWritable() ? pageModes.WRITE : pageModes.READ)
         : requestedPageMode === pageModes.READ
           ? pageModes.READ
           : null;
@@ -15233,10 +15238,10 @@ async function openPage(pageId, { skipFlush = false, requestedPageMode = null } 
         ? { title: null, blocks: [], blockOrder: null }
         : applyPersistedPageDraft(data.page);
       if (recovery.title || recovery.blocks.length > 0 || recovery.blockOrder) {
-        // Recovery content is itself an edit. Only enable further local mutation if
-        // the origin is persistent; otherwise keep recovered content visible/read-only
-        // while the existing save/retry machinery attempts to synchronize it.
-        state.pageMode = recoveryStoragePersistence.isPersistent() ? pageModes.WRITE : pageModes.READ;
+        // Recovery content is itself an edit. Continue local mutation only while
+        // strict IndexedDB recovery writes are available. A denied persistent
+        // storage request does not make the session recovery store unwritable.
+        state.pageMode = isRecoveryStorageWritable() ? pageModes.WRITE : pageModes.READ;
       }
       state.selectedPage = data.page;
       state.workspaceView = "page";
@@ -17740,8 +17745,8 @@ document.addEventListener("visibilitychange", () => {
 });
 
 window.addEventListener("online", () => {
-  if (recoveryPersistenceDowngradeInFlight) {
-    void drainRecoveryPersistenceDowngrade().catch(() => undefined);
+  if (recoveryStorageFailureDrainInFlight) {
+    void drainRecoveryStorageFailure().catch(() => undefined);
     return;
   }
   if (!pendingBlockOrderTask) return;

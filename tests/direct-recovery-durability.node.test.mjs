@@ -48,7 +48,7 @@ test("direct title HTTP saves cannot outrun strict browser recovery admission", 
 test("application-controlled page flush waits for queued recovery storage writes", () => {
   const flush = section("async function flushPendingPageEdits(", "function applyMaterializedHtmlCaches(");
   assert.match(flush, /await requireDirectRecoveryDurability\("page-edit-flush", null, \{/);
-  assert.match(flush, /allowRecoveryFailure: allowLocked && recoveryPersistenceDowngradeInFlight/);
+  assert.match(flush, /allowRecoveryFailure: allowLocked && recoveryStorageFailureDrainInFlight/);
   assert.match(flush, /preserveInput: false/);
 });
 

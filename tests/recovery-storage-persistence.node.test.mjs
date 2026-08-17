@@ -20,7 +20,7 @@ test("already-persistent origins are revalidated without requesting persistence 
   assert.equal(persistCalls, 0);
 });
 
-test("cached persistence is revalidated and a later revocation fails closed", async () => {
+test("cached persistence is revalidated and a later revocation is reported", async () => {
   let persisted = true;
   let persistedCalls = 0;
   let persistCalls = 0;
@@ -67,7 +67,7 @@ test("permission changes refresh the cached persistence state when supported", a
   assert.equal(guard.isPersistent(), false);
 });
 
-test("best-effort storage must be promoted before editing becomes durable", async () => {
+test("best-effort storage is promoted when the browser grants persistence", async () => {
   let persisted = false;
   let persistCalls = 0;
   const guard = createRecoveryStoragePersistenceGuard({
@@ -82,7 +82,7 @@ test("best-effort storage must be promoted before editing becomes durable", asyn
   assert.equal(persistCalls, 1);
 });
 
-test("denied or unavailable persistence fails closed", async () => {
+test("denied or unavailable persistence is reported without being misclassified as a write failure", async () => {
   const denied = createRecoveryStoragePersistenceGuard({
     async persisted() { return false; },
     async persist() { return false; }
@@ -95,13 +95,18 @@ test("denied or unavailable persistence fails closed", async () => {
   assert.equal(unavailable.isPersistent(), false);
 });
 
-test("the app gates new edits on durable recovery but keeps accepted edits drainable", () => {
+test("the app allows session-scoped editing while still gating writes on strict recovery storage", () => {
   assert.match(
     client,
-    /function isPageReadOnly\(\) \{[\s\S]*!recoveryStoragePersistence\.isPersistent\(\)[\s\S]*!indexedDbRecoveryStorage[\s\S]*recoveryStorageWriteFailure/
+    /function isRecoveryStorageWritable\(\) \{[\s\S]*indexedDbRecoveryStorage && !recoveryStorageWriteFailure/
+  );
+  assert.match(
+    client,
+    /function isPageReadOnly\(\) \{[\s\S]*state\.pageMode !== pageModes\.WRITE \|\| !isRecoveryStorageWritable\(\)/
   );
   assert.match(client, /if \(normalizedMode === pageModes\.WRITE\) \{/);
-  assert.match(client, /await recoveryStoragePersistence\.ensurePersistent\(\)/);
+  assert.match(client, /await recoveryStoragePersistence\.ensurePersistent\(\);[\s\S]*if \(!isRecoveryStorageWritable\(\)\)/);
+  assert.match(client, /status\.sessionRecoveryStorageActive/);
   assert.match(client, /recoveryStoragePersistence\.subscribe\(handleRecoveryStoragePersistenceChange\)/);
 
   const persistStart = client.indexOf("function canPersistSelectedPage()");
@@ -109,17 +114,27 @@ test("the app gates new edits on durable recovery but keeps accepted edits drain
   const persistSource = client.slice(persistStart, persistEnd);
   assert.match(
     persistSource,
-    /recoveryDrainAllowed = recoveryPersistenceDowngradeInFlight && state\.pageModeChanging/
+    /recoveryDrainAllowed = recoveryStorageFailureDrainInFlight && state\.pageModeChanging/
   );
-  assert.match(persistSource, /recoveryDurable \|\| recoveryDrainAllowed/);
+  assert.match(persistSource, /recoveryWritable = isRecoveryStorageWritable\(\)/);
+  assert.match(persistSource, /recoveryWritable \|\| recoveryDrainAllowed/);
+  assert.doesNotMatch(persistSource, /recoveryStoragePersistence\.isPersistent/);
 
-  const drainStart = client.indexOf("async function drainRecoveryPersistenceDowngrade()");
+  const persistenceStart = client.indexOf("async function handleRecoveryStoragePersistenceChange");
+  const persistenceEnd = client.indexOf("function handleDurableRecoveryStorageWriteError", persistenceStart);
+  const persistenceSource = client.slice(persistenceStart, persistenceEnd);
+  assert.match(persistenceSource, /nextState !== "persistent"/);
+  assert.match(persistenceSource, /isRecoveryStorageWritable\(\)/);
+  assert.doesNotMatch(persistenceSource, /drainRecoveryStorageFailure\(\)/);
+  assert.doesNotMatch(persistenceSource, /state\.pageMode = pageModes\.READ/);
+
+  const drainStart = client.indexOf("async function drainRecoveryStorageFailure()");
   const drainEnd = client.indexOf("async function handleRecoveryStoragePersistenceChange", drainStart);
   const drainSource = client.slice(drainStart, drainEnd);
   const flushIndex = drainSource.indexOf("flushPendingPageEdits({ allowLocked: true, collaborationCompact: false })");
   const pendingIndex = drainSource.indexOf("hasPendingPageEdits()");
   const readIndex = drainSource.indexOf("state.pageMode = pageModes.READ");
-  assert.ok(flushIndex >= 0, "downgrade must attempt the authoritative server drain");
+  assert.ok(flushIndex >= 0, "write failure must attempt the authoritative server drain");
   assert.ok(pendingIndex > flushIndex, "pending state must be checked after the drain attempt");
   assert.ok(readIndex > pendingIndex, "READ mode must become permanent only after pending edits are gone");
   assert.match(drainSource, /state\.pageModeChanging = true;[\s\S]*throw error;/);
@@ -129,5 +144,5 @@ test("the app gates new edits on durable recovery but keeps accepted edits drain
   assert.match(client, /await recoveryStoragePersistence\.monitorPermission\(\)/);
   assert.match(client, /status\.durableRecoveryStorageUnavailable/);
   assert.match(client, /await recoveryStoragePersistence\.refresh\(\)/);
-  assert.match(client, /window\.addEventListener\("online", \(\) => \{[\s\S]*drainRecoveryPersistenceDowngrade\(\)/);
+  assert.match(client, /window\.addEventListener\("online", \(\) => \{[\s\S]*drainRecoveryStorageFailure\(\)/);
 });

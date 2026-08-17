@@ -12,7 +12,10 @@ function loadSetPageMode() {
   return source.slice(start, end).trim();
 }
 
-function createHarness(blocks = [], { initialMode = "read", materialization = null } = {}) {
+function createHarness(
+  blocks = [],
+  { initialMode = "read", materialization = null, persistent = true, recoveryWritable = true } = {}
+) {
   const pageModes = Object.freeze({ READ: "read", WRITE: "write" });
   const state = {
     selectedPage: { id: "page-1", blocks },
@@ -22,13 +25,15 @@ function createHarness(blocks = [], { initialMode = "read", materialization = nu
     pendingFocusBlockId: null
   };
   const calls = { created: 0, opened: 0, appliedMaterialization: 0 };
+  const statuses = [];
   const context = {
     state,
     pageModes,
     recoveryStoragePersistence: {
-      isPersistent() { return true; },
-      async ensurePersistent() { return true; }
+      isPersistent() { return persistent; },
+      async ensurePersistent() { return persistent; }
     },
+    isRecoveryStorageWritable() { return recoveryWritable; },
     syncPageModeUi() {},
     async flushPendingPageEdits() { return materialization; },
     applyMaterializedHtmlCaches(result) {
@@ -56,13 +61,13 @@ function createHarness(blocks = [], { initialMode = "read", materialization = nu
       return { block: { id: "block-1" } };
     },
     async openPage() { calls.opened += 1; },
-    setStatus() {},
+    setStatus(message, isError = false) { statuses.push({ message, isError }); },
     t(key) { return key; }
   };
   vm.createContext(context);
   vm.runInContext(`${loadSetPageMode()}
 this.setPageMode = setPageMode;`, context);
-  return { context, state, pageModes, calls };
+  return { context, state, pageModes, calls, statuses };
 }
 
 test("empty pages enter write mode and create the first block under the transition lock", async () => {
@@ -80,6 +85,34 @@ test("pages with blocks enter write mode without creating another block", async 
   assert.equal(state.pageMode, pageModes.WRITE);
   assert.equal(state.pageModeChanging, false);
   assert.deepEqual(calls, { created: 0, opened: 0, appliedMaterialization: 0 });
+});
+
+
+test("write mode remains available when persistent storage is denied but strict recovery storage is writable", async () => {
+  const { context, state, pageModes, calls, statuses } = createHarness([{ id: "existing" }], {
+    persistent: false,
+    recoveryWritable: true
+  });
+
+  await context.setPageMode(pageModes.WRITE);
+
+  assert.equal(state.pageMode, pageModes.WRITE);
+  assert.equal(state.pageModeChanging, false);
+  assert.deepEqual(calls, { created: 0, opened: 0, appliedMaterialization: 0 });
+  assert.deepEqual(statuses.at(-1), { message: "status.sessionRecoveryStorageActive", isError: false });
+});
+
+test("write mode still fails closed when strict recovery storage itself is unavailable", async () => {
+  const { context, state, pageModes, statuses } = createHarness([{ id: "existing" }], {
+    persistent: false,
+    recoveryWritable: false
+  });
+
+  await context.setPageMode(pageModes.WRITE);
+
+  assert.equal(state.pageMode, pageModes.READ);
+  assert.equal(state.pageModeChanging, false);
+  assert.deepEqual(statuses.at(-1), { message: "status.durableRecoveryStorageUnavailable", isError: true });
 });
 
 test("entering read mode applies the materialized rendered cache before completing the transition", async () => {
