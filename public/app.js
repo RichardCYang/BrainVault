@@ -13191,7 +13191,10 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
       const orderedIds = [...siblingIds];
       if (shouldReplaceCurrentBlock) {
         orderedIds.splice(referenceIndex, 1, data.block.id);
-        await deleteBlockWithVersionCheck(blockId, { includeDescendants: false });
+        await deleteBlockWithVersionCheck(blockId, {
+          includeDescendants: false,
+          preserveChildren: true
+        });
         row.dataset.deleting = "true";
       } else {
         orderedIds.splice(effectiveInsertionIndex, 0, data.block.id);

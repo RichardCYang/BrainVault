@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { validateCollaborationBlockHierarchy } from "../src/lib/collaboration-document.ts";
 
 function section(source, start, end) {
   const startIndex = source.indexOf(start);
@@ -59,12 +60,48 @@ test("collaborative block deletion is fenced by cross-tab recovery and durable m
 test("attachment replacement cannot bypass the collaborative deletion fence", () => {
   const upload = section(client, "async function uploadAttachmentFromRow", "function requestAttachmentUpload");
   assert.doesNotMatch(upload, /session\.deleteBlock\(/);
-  assert.match(upload, /await deleteBlockWithVersionCheck\(blockId, \{ includeDescendants: false \}\)/);
+  assert.match(
+    upload,
+    /await deleteBlockWithVersionCheck\(blockId, \{\s*includeDescendants: false,\s*preserveChildren: true\s*\}\)/
+  );
   assertBefore(
     upload,
-    "await deleteBlockWithVersionCheck(blockId, { includeDescendants: false })",
+    "await deleteBlockWithVersionCheck(blockId, {",
     "session.upsertBlock({",
     "collaborative attachment replacement"
+  );
+});
+
+
+test("collaborative non-cascading deletes cannot orphan children", () => {
+  const invalidHierarchy = [
+    { id: "child", parentBlockId: "deleted-parent", sortOrder: 0 }
+  ];
+  assert.throws(
+    () => validateCollaborationBlockHierarchy(invalidHierarchy),
+    (error) => error?.code === "INVALID_PARENT_BLOCK"
+  );
+
+  const collaboration = readFileSync(new URL("../public/collaboration.js", import.meta.url), "utf8")
+    .replace(/\r\n/g, "\n");
+  const deletion = section(collaboration, "  async deleteBlock(blockId", "  adoptAttachment(");
+  const mutation = section(deletion, "await this.commitLocalMutation", "return deletedIds;");
+
+  assert.match(
+    mutation,
+    /for \(const \[id, value\] of blocks\.entries\(\)\)/,
+    "the delete plan must be built from the prepared mutation document"
+  );
+  assert.match(
+    mutation,
+    /if \(!cascade && !promoteChildren && children\.length\)/,
+    "non-cascading deletion must fail closed when children would be orphaned"
+  );
+  assertBefore(
+    mutation,
+    "if (!cascade && !promoteChildren && children.length)",
+    "blocks.delete(id)",
+    "collaborative orphan guard"
   );
 });
 

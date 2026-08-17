@@ -741,48 +741,55 @@ class PageCollaborationSession {
     promoteChildren = false,
     allowDisconnected = false
   } = {}) {
-    await this.localMutationQueue;
-    this.assertWritable({ allowDisconnected });
-    const snapshot = [];
-    for (const [id, value] of this.blocks.entries()) {
-      if (!(value instanceof this.Y.Map)) continue;
-      snapshot.push(normalizeBlock({ id, ...readYValue(this.Y, value) }));
-    }
-    const target = snapshot.find((block) => block.id === blockId);
-    if (!target) return [];
     if (cascade && promoteChildren) {
       throw new Error("A collaborative block deletion cannot cascade and promote children together");
     }
 
-    const ids = new Set([blockId]);
-    let changed = cascade;
-    while (changed) {
-      changed = false;
-      for (const block of snapshot) {
-        if (ids.has(block.id)) continue;
-        if (block.parentBlockId && ids.has(block.parentBlockId)) {
-          ids.add(block.id);
-          changed = true;
-        }
+    let deletedIds = [];
+    await this.commitLocalMutation(({ blocks, deletedAttachments }) => {
+      // Build the hierarchy from the prepared mutation document, not from the live
+      // document before the queued mutation starts. This keeps the delete plan aligned
+      // with any collaboration updates incorporated while waiting for prior local work.
+      const snapshot = [];
+      for (const [id, value] of blocks.entries()) {
+        if (!(value instanceof this.Y.Map)) continue;
+        snapshot.push(normalizeBlock({ id, ...readYValue(this.Y, value) }));
       }
-    }
+      const target = snapshot.find((block) => block.id === blockId);
+      if (!target) return;
 
-    let promotedOrder = [];
-    if (promoteChildren) {
-      const siblings = snapshot
-        .filter((block) => block.parentBlockId === target.parentBlockId)
-        .sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id));
       const children = snapshot
         .filter((block) => block.parentBlockId === blockId)
         .sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id));
-      const targetIndex = siblings.findIndex((block) => block.id === blockId);
-      if (targetIndex < 0) throw new Error("The collaborative block hierarchy is inconsistent");
-      promotedOrder = siblings.filter((block) => block.id !== blockId);
-      promotedOrder.splice(targetIndex, 0, ...children);
-    }
+      if (!cascade && !promoteChildren && children.length) {
+        throw new Error("A collaborative block with children cannot be deleted without cascading or promoting its children");
+      }
 
-    const snapshotById = new Map(snapshot.map((block) => [block.id, block]));
-    await this.commitLocalMutation(({ blocks, deletedAttachments }) => {
+      const ids = new Set([blockId]);
+      let changed = cascade;
+      while (changed) {
+        changed = false;
+        for (const block of snapshot) {
+          if (ids.has(block.id)) continue;
+          if (block.parentBlockId && ids.has(block.parentBlockId)) {
+            ids.add(block.id);
+            changed = true;
+          }
+        }
+      }
+
+      let promotedOrder = [];
+      if (promoteChildren) {
+        const siblings = snapshot
+          .filter((block) => block.parentBlockId === target.parentBlockId)
+          .sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id));
+        const targetIndex = siblings.findIndex((block) => block.id === blockId);
+        if (targetIndex < 0) throw new Error("The collaborative block hierarchy is inconsistent");
+        promotedOrder = siblings.filter((block) => block.id !== blockId);
+        promotedOrder.splice(targetIndex, 0, ...children);
+      }
+
+      const snapshotById = new Map(snapshot.map((block) => [block.id, block]));
       for (const [sortOrder, block] of promotedOrder.entries()) {
         const value = blocks.get(block.id);
         const current = snapshotById.get(block.id);
@@ -800,8 +807,9 @@ class PageCollaborationSession {
         }
         blocks.delete(id);
       }
+      deletedIds = [...ids];
     }, { allowDisconnected });
-    return [...ids];
+    return deletedIds;
   }
 
   adoptAttachment(block) {

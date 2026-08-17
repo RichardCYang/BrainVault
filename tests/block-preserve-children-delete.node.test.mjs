@@ -117,7 +117,7 @@ test("collaboration promotes children and deletes their empty parent in one Yjs 
   const deletion = section(collaboration, "  async deleteBlock(blockId", "  adoptAttachment(");
   assert.match(deletion, /promoteChildren = false/);
   assert.match(deletion, /promotedOrder\.splice\(targetIndex, 0, \.\.\.children\)/);
-  const mutation = section(deletion, "this.commitLocalMutation", "return [...ids]");
+  const mutation = section(deletion, "await this.commitLocalMutation", "return deletedIds;");
   assertBefore(
     mutation,
     "for (const [sortOrder, block] of promotedOrder.entries())",
