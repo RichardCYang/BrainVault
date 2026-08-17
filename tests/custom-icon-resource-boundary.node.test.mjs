@@ -62,7 +62,11 @@ test("custom icon uploads and backup restores enforce the same durable resource 
   );
   assert.match(dataTransfer, /const restoredCustomIconBytes =/);
   assert.match(dataTransfer, /assertCustomIconStorageLimit\([\s\S]*restoredCustomIconBytes/);
-  assert.match(customIconRoutes, /parts: 1/);
+  // Busboy raises partsLimit when the allowed count is reached, so parts: 1 rejects the
+  // endpoint's one legitimate file part. parts: 2 is the smallest safe sentinel while
+  // files: 1 and fields: 0 continue to reject every additional file or form field.
+  assert.match(customIconRoutes, /parts: 2/);
+  assert.doesNotMatch(customIconRoutes, /parts: 1/);
   assert.match(customIconRoutes, /fieldNestingDepth: 1/);
   assert.match(customIconRoutes, /headerPairs: 32/);
 });
