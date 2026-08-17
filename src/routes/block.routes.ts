@@ -1183,6 +1183,25 @@ blockRouter.delete(
             );
           }
           const replayAccess = await getPageAccess(assessment.pageId, user.id, client, { lockPage: true });
+          const currentPageContentVersion = Number(replayAccess.page.content_version ?? 1);
+          if (currentPageContentVersion !== assessment.pageContentVersion) {
+            throw new ApiError(
+              409,
+              "BLOCK_DELETE_REPLAY_SUPERSEDED",
+              "This deletion belongs to an older block generation. The page has changed since it completed, so the old deletion was not replayed. Refresh before deleting again."
+            );
+          }
+          const recreatedBlock = await client.queryOne<{ id: string }>(
+            "SELECT id FROM blocks WHERE id = ? AND page_id = ? FOR UPDATE",
+            [assessment.blockId, assessment.pageId]
+          );
+          if (recreatedBlock) {
+            throw new ApiError(
+              409,
+              "BLOCK_DELETE_REPLAY_SUPERSEDED",
+              "This deletion belongs to an older block generation. A block with the same id now exists and was not deleted. Refresh before deleting again."
+            );
+          }
           return {
             pageId: assessment.pageId,
             ownerId: replayAccess.page.owner_id,

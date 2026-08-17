@@ -97,6 +97,48 @@ test("server records and replays block deletion atomically before touching a mis
   );
 });
 
+test("stale block-delete receipts fail closed after the page generation advances", () => {
+  const deleteRoute = section(
+    route,
+    'blockRouter.delete(\n  "/blocks/:blockId"',
+    'blockRouter.post(\n  "/pages/:pageId/blocks/reorder"'
+  );
+  const replayStart = deleteRoute.indexOf("const replayAccess = await getPageAccess");
+  const replayEnd = deleteRoute.indexOf("replayed: true", replayStart);
+  assert.ok(replayStart >= 0 && replayEnd > replayStart, "receipt replay section must exist");
+  const replaySection = deleteRoute.slice(replayStart, replayEnd);
+
+  assert.match(replaySection, /currentPageContentVersion !== assessment\.pageContentVersion/);
+  assert.match(replaySection, /BLOCK_DELETE_REPLAY_SUPERSEDED/);
+  assert.match(replaySection, /SELECT id FROM blocks WHERE id = \? AND page_id = \? FOR UPDATE/);
+
+  function reproduce({ fixed }) {
+    const receiptPageContentVersion = 7;
+    const currentPageContentVersion = 8;
+    const recreatedBlockExists = true;
+    let localDraftPresent = true;
+
+    if (
+      fixed
+      && (
+        currentPageContentVersion !== receiptPageContentVersion
+        || recreatedBlockExists
+      )
+    ) {
+      return { status: 409, localDraftPresent };
+    }
+
+    // The vulnerable replay acknowledges the old receipt without applying a
+    // delete to the recreated block. The direct-mode client then treats 204 as
+    // authoritative and drops its local draft before refreshing the still-live block.
+    localDraftPresent = false;
+    return { status: 204, localDraftPresent };
+  }
+
+  assert.deepEqual(reproduce({ fixed: false }), { status: 204, localDraftPresent: false });
+  assert.deepEqual(reproduce({ fixed: true }), { status: 409, localDraftPresent: true });
+});
+
 test("browser retries ambiguous deletes with one auth-scoped mutation task", () => {
   const deleteClient = section(
     client,
