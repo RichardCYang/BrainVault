@@ -103,6 +103,12 @@ beforeEach(() => {
   });
 
   database.query.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
+    if (sql.includes("SELECT id FROM pages") && sql.includes("WHERE id IN")) {
+      const ids = new Set(params.map(String));
+      return [...database.pages.values()]
+        .filter((page) => ids.has(String(page.id)))
+        .map((page) => ({ id: page.id }));
+    }
     if (sql.includes("SELECT id, parent_page_id, edit_version") && sql.includes("WHERE owner_id = ?")) {
       return [...database.pages.values()]
         .filter((page) => page.owner_id === params[0])
@@ -240,6 +246,40 @@ describe("Permanent page deletion", () => {
     ).length;
     expect(deleteCallsAfterReplay).toBe(deleteCallsAfterFirstCommit);
     expect(database.pages.size).toBe(0);
+  });
+
+  it("rejects a stale deletion receipt after a backup restore recreates the deleted page ids", async () => {
+    const snapshot = await getDeletionSnapshot();
+    const mutationId = "mut_page_delete_stale_after_restore";
+
+    await request(createApp())
+      .delete("/api/pages/pag_collection?permanent=true")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ expectedSnapshot: snapshot, mutationId })
+      .expect(204);
+
+    const deleteCallsAfterFirstCommit = database.execute.mock.calls.filter(([sql]) =>
+      String(sql).includes("DELETE FROM pages WHERE id = ? AND owner_id = ?")
+    ).length;
+
+    database.pages = new Map([
+      ["pag_collection", makePage("pag_collection", null, true)],
+      ["pag_child", makePage("pag_child", "pag_collection")],
+      ["pag_grandchild", makePage("pag_grandchild", "pag_child")]
+    ]);
+
+    const response = await request(createApp())
+      .delete("/api/pages/pag_collection?permanent=true")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ expectedSnapshot: snapshot, mutationId })
+      .expect(409);
+
+    const deleteCallsAfterReplay = database.execute.mock.calls.filter(([sql]) =>
+      String(sql).includes("DELETE FROM pages WHERE id = ? AND owner_id = ?")
+    ).length;
+    expect(response.body.error.code).toBe("PAGE_DELETE_REPLAY_SUPERSEDED");
+    expect(deleteCallsAfterReplay).toBe(deleteCallsAfterFirstCommit);
+    expect([...database.pages.keys()].sort()).toEqual(["pag_child", "pag_collection", "pag_grandchild"]);
   });
 
   it("requires a fresh deletion snapshot for permanent deletion", async () => {

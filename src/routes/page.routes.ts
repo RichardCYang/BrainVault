@@ -272,6 +272,25 @@ function assertPageDeletionSnapshot(
   );
 }
 
+async function assertPageDeleteReplayNotSuperseded(client: DbClient, pageIds: readonly string[]) {
+  const uniquePageIds = [...new Set(pageIds.filter(Boolean))];
+  for (let offset = 0; offset < uniquePageIds.length; offset += 500) {
+    const group = uniquePageIds.slice(offset, offset + 500);
+    const rows = await client.query<{ id: string }>(
+      `SELECT id FROM pages
+       WHERE id IN (${group.map(() => "?").join(", ")})
+       FOR UPDATE`,
+      group
+    );
+    if (!rows.length) continue;
+    throw new ApiError(
+      409,
+      "PAGE_DELETE_REPLAY_SUPERSEDED",
+      "This deletion was already completed for an older page generation. A page with the same id now exists and was not deleted. Refresh before deleting again."
+    );
+  }
+}
+
 async function assertCollaborationMaterialized(client: DbClient, pageIds: string[]) {
   for (const pageId of pageIds) {
     const state = await client.queryOne<{
@@ -1079,6 +1098,10 @@ pageRouter.delete(
                 "The page deletion receipt is incomplete. The deletion was not repeated."
               );
             }
+            // Receipts deliberately survive page deletion. A restore can later
+            // recreate the same IDs, so an old response-loss retry must not be
+            // acknowledged as deleting the new generation.
+            await assertPageDeleteReplayNotSuperseded(client, assessment.pageIds);
             return {
               attachmentIds: assessment.attachmentIds,
               pageIds: assessment.pageIds,
@@ -1122,7 +1145,11 @@ pageRouter.delete(
           return { attachmentIds, pageIds, replayed: false };
         });
 
-        for (const deletedPageId of deletion.pageIds) disconnectPageCollaborators(deletedPageId, "Page was deleted");
+        // A receipt replay may be arbitrarily delayed. Never let it disconnect
+        // collaborators from a page generation created after the original delete.
+        if (!deletion.replayed) {
+          for (const deletedPageId of deletion.pageIds) disconnectPageCollaborators(deletedPageId, "Page was deleted");
+        }
         // Filesystem cleanup is idempotent and intentionally repeats on receipt
         // replay in case the first response was lost immediately after COMMIT.
         await removeDeletedAttachmentFiles(user.id, deletion.attachmentIds);

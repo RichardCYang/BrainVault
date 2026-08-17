@@ -122,6 +122,69 @@ test("server reconciles a page-delete receipt before querying a page that may al
   );
 });
 
+test("stale delete receipts fail closed when a restored page generation reuses the same ids", () => {
+  const replayGuard = section(
+    route,
+    "async function assertPageDeleteReplayNotSuperseded",
+    "async function assertCollaborationMaterialized"
+  );
+  const deleteRoute = section(
+    route,
+    'pageRouter.delete(\n  "/:pageId"',
+    'pageRouter.put("/:pageId/tags"'
+  );
+
+  assert.match(replayGuard, /SELECT id FROM pages/);
+  assert.match(replayGuard, /WHERE id IN/);
+  assert.match(replayGuard, /FOR UPDATE/);
+  assert.match(replayGuard, /PAGE_DELETE_REPLAY_SUPERSEDED/);
+
+  const receiptIndex = deleteRoute.indexOf("FROM page_delete_mutations");
+  const guardIndex = deleteRoute.indexOf("await assertPageDeleteReplayNotSuperseded");
+  const replayReturnIndex = deleteRoute.indexOf("replayed: true", guardIndex);
+  assert.ok(
+    receiptIndex >= 0 && guardIndex > receiptIndex && replayReturnIndex > guardIndex,
+    "a receipt replay must reject reused page ids before it can acknowledge the old deletion"
+  );
+
+  const disconnectIndex = deleteRoute.indexOf("disconnectPageCollaborators", replayReturnIndex);
+  const replayFenceIndex = deleteRoute.lastIndexOf("if (!deletion.replayed)", disconnectIndex);
+  assert.ok(
+    replayFenceIndex > replayReturnIndex && replayFenceIndex < disconnectIndex,
+    "a receipt replay must not disconnect collaborators from a later page generation"
+  );
+
+  function reproduce({ fixed }) {
+    const restoredPageIds = new Set(["pag_root", "pag_child"]);
+    let localDraftPresent = true;
+    let collaboratorsConnected = true;
+    const staleReceiptPageIds = ["pag_root", "pag_child"];
+    const superseded = staleReceiptPageIds.some((pageId) => restoredPageIds.has(pageId));
+
+    if (fixed && superseded) {
+      return { status: 409, localDraftPresent, collaboratorsConnected };
+    }
+
+    // The vulnerable server acknowledged the stale receipt as a successful
+    // delete, so the browser cleaned its draft and the server disconnected
+    // users even though the restored rows were never deleted.
+    localDraftPresent = false;
+    collaboratorsConnected = false;
+    return { status: 204, localDraftPresent, collaboratorsConnected };
+  }
+
+  assert.deepEqual(reproduce({ fixed: false }), {
+    status: 204,
+    localDraftPresent: false,
+    collaboratorsConnected: false
+  });
+  assert.deepEqual(reproduce({ fixed: true }), {
+    status: 409,
+    localDraftPresent: true,
+    collaboratorsConnected: true
+  });
+});
+
 test("browser retries ambiguous permanent page deletes with one auth-scoped mutation id", () => {
   const deleteClient = section(
     client,
