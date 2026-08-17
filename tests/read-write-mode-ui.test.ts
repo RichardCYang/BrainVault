@@ -57,6 +57,15 @@ describe("Page read/write mode", () => {
       /\.page-view\.is-read-only \.editor-block-row\[data-block-type="CALLOUT"\] \.block-row-body::before\s*\{[^}]*content:\s*none;/s
     );
     expect(styles).toMatch(/\.rendered-callout\s*\{[^}]*border:\s*1px solid/s);
+    expect(styles).toMatch(
+      /\.page-view\.is-read-only \.editor-block-row\[data-block-type="CALLOUT"\] \.rendered-callout\s*\{[^}]*padding-top:\s*0\.55rem;[^}]*padding-bottom:\s*0\.55rem;/s
+    );
+    expect(styles).toMatch(
+      /\.page-view\.is-read-only \.editor-block-row\[data-block-type="CALLOUT"\] \.rendered-callout > :first-child\s*\{[^}]*margin-top:\s*0;/s
+    );
+    expect(styles).toMatch(
+      /\.page-view\.is-read-only \.editor-block-row\[data-block-type="CALLOUT"\] \.rendered-callout > :last-child\s*\{[^}]*margin-bottom:\s*0;/s
+    );
   });
 
   it("guards page and block mutations behind write mode", () => {

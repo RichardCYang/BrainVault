@@ -4251,6 +4251,23 @@ body.is-kanban-column-dragging {
   content: none;
 }
 
+.page-view.is-read-only .editor-block-row[data-block-type="CALLOUT"] .rendered-callout {
+  padding-top: 0.55rem;
+  padding-bottom: 0.55rem;
+}
+
+.page-view.is-read-only .editor-block-row[data-block-type="CALLOUT"] .rendered-callout::before {
+  top: 0.52rem;
+}
+
+.page-view.is-read-only .editor-block-row[data-block-type="CALLOUT"] .rendered-callout > :first-child {
+  margin-top: 0;
+}
+
+.page-view.is-read-only .editor-block-row[data-block-type="CALLOUT"] .rendered-callout > :last-child {
+  margin-bottom: 0;
+}
+
 .page-view.is-read-only .inline-todo {
   display: none;
 }
