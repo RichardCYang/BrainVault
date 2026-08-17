@@ -9645,14 +9645,22 @@ async function submitBlockDeleteTask(task, authenticationScope) {
 async function deleteBlockWithVersionCheck(blockId, options = {}) {
   const pageId = state.selectedPage.id;
   const preserveChildren = options.preserveChildren === true;
+  const replacementBlock = options.replacementBlock ?? null;
   if (isCollaborativePage()) {
     return withCollaborativeDestructiveTransition(pageId, "block-delete", async (session) => ({
-      deletedIds: await session.deleteBlock(blockId, {
-        cascade: options.includeDescendants !== false,
-        promoteChildren: preserveChildren
-      })
+      deletedIds: replacementBlock
+        ? await session.replaceBlockWithAttachmentPreservingChildren(blockId, replacementBlock)
+        : await session.deleteBlock(blockId, {
+            cascade: options.includeDescendants !== false,
+            promoteChildren: preserveChildren
+          })
     }));
   }
+  // A replacement block is only safe when it is committed atomically with the
+  // collaborative delete. If collaboration disappears between UI decisions,
+  // fail closed rather than deleting the source and leaving the attachment
+  // placement as a separate, partially completed operation.
+  if (replacementBlock) throw new Error(t("sharing.syncRequired"));
   const expectedVersions = getBlockVersionSnapshot(blockId, {
     includeDescendants: preserveChildren || options.includeDescendants !== false
   });
@@ -13188,29 +13196,33 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
       if (!session || session.isDestroyed) throw new Error(t("sharing.syncRequired"));
       const shouldReplaceCurrentBlock = replaceCurrentBlock && currentEditRevision === sourceEditRevision;
       const effectiveInsertionIndex = shouldReplaceCurrentBlock ? referenceIndex : referenceIndex + 1;
-      const orderedIds = [...siblingIds];
       if (shouldReplaceCurrentBlock) {
-        orderedIds.splice(referenceIndex, 1, data.block.id);
         await deleteBlockWithVersionCheck(blockId, {
           includeDescendants: false,
-          preserveChildren: true
+          preserveChildren: true,
+          replacementBlock: {
+            ...data.block,
+            parentBlockId,
+            sortOrder: effectiveInsertionIndex
+          }
         });
         row.dataset.deleting = "true";
       } else {
+        const orderedIds = [...siblingIds];
         orderedIds.splice(effectiveInsertionIndex, 0, data.block.id);
+        await session.upsertBlock({
+          ...data.block,
+          parentBlockId,
+          sortOrder: effectiveInsertionIndex
+        }, { allowDisconnected: true });
+        const snapshotById = new Map(session.getSnapshot().blocks.map((block) => [block.id, block]));
+        const orderUpdates = orderedIds.map((id, sortOrder) => {
+          const current = snapshotById.get(id);
+          if (!current) throw new Error(t("errors.currentBlockOrder"));
+          return { ...current, parentBlockId: parentBlockId ?? null, sortOrder };
+        });
+        await session.upsertBlocks(orderUpdates, { allowDisconnected: true });
       }
-      await session.upsertBlock({
-        ...data.block,
-        parentBlockId,
-        sortOrder: effectiveInsertionIndex
-      }, { allowDisconnected: true });
-      const snapshotById = new Map(session.getSnapshot().blocks.map((block) => [block.id, block]));
-      const orderUpdates = orderedIds.map((id, sortOrder) => {
-        const current = snapshotById.get(id);
-        if (!current) throw new Error(t("errors.currentBlockOrder"));
-        return { ...current, parentBlockId: parentBlockId ?? null, sortOrder };
-      });
-      await session.upsertBlocks(orderUpdates, { allowDisconnected: true });
       state.pendingFocusBlockId = data.block.id;
       renderSelectedPage();
       setStatus(t("status.attachmentUploaded", { name: file.name }));

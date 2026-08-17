@@ -205,6 +205,50 @@ function normalizeBlock(block) {
   };
 }
 
+export function planCollaborativeBlockReplacement(snapshot, targetId, replacementBlock) {
+  const replacement = normalizeBlock(replacementBlock);
+  const normalizedTargetId = String(targetId ?? "");
+  if (!normalizedTargetId || replacement.id === normalizedTargetId) {
+    throw new Error("A collaborative replacement must use a distinct block id");
+  }
+
+  // The upload endpoint broadcasts the canonical attachment before returning its
+  // HTTP response, so the replacement may already exist in the Yjs document.
+  // Exclude that canonical copy while locating the source block's actual slot.
+  const preparedSnapshot = (snapshot ?? [])
+    .map(normalizeBlock)
+    .filter((block) => block.id !== replacement.id);
+  const target = preparedSnapshot.find((block) => block.id === normalizedTargetId);
+  if (!target) return null;
+
+  const children = preparedSnapshot
+    .filter((block) => block.parentBlockId === normalizedTargetId)
+    .sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id));
+  const siblings = preparedSnapshot
+    .filter((block) => block.parentBlockId === target.parentBlockId)
+    .sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id));
+  const targetIndex = siblings.findIndex((block) => block.id === normalizedTargetId);
+  if (targetIndex < 0) throw new Error("The collaborative block hierarchy is inconsistent");
+
+  const resultingSiblings = siblings.filter((block) => block.id !== normalizedTargetId);
+  resultingSiblings.splice(
+    targetIndex,
+    0,
+    { ...replacement, parentBlockId: target.parentBlockId },
+    ...children
+  );
+
+  return {
+    target,
+    children,
+    updates: resultingSiblings.map((block, sortOrder) => ({
+      ...block,
+      parentBlockId: target.parentBlockId,
+      sortOrder
+    }))
+  };
+}
+
 function readDocumentSnapshot(Y, title, blocks, deletedAttachments, updateId = 0) {
   const normalizedBlocks = [];
   const blockIds = new Set();
@@ -808,6 +852,60 @@ class PageCollaborationSession {
         blocks.delete(id);
       }
       deletedIds = [...ids];
+    }, { allowDisconnected });
+    return deletedIds;
+  }
+
+  async replaceBlockWithAttachmentPreservingChildren(blockId, replacementBlock, {
+    allowDisconnected = false
+  } = {}) {
+    const replacement = normalizeBlock(replacementBlock);
+    if (replacement.type !== "ATTACHMENT") {
+      throw new Error("Collaborative attachment replacement requires a canonical attachment block");
+    }
+
+    let deletedIds = [];
+    await this.commitLocalMutation(({ blocks, deletedAttachments }) => {
+      // Plan the entire replacement against the prepared mutation document. The
+      // source delete, child promotion, attachment placement, and dense sibling
+      // ordering therefore become one recoverable Yjs mutation instead of three
+      // independently acknowledged operations.
+      const snapshot = [];
+      for (const [id, value] of blocks.entries()) {
+        if (!(value instanceof this.Y.Map)) continue;
+        snapshot.push(normalizeBlock({ id, ...readYValue(this.Y, value) }));
+      }
+      const plan = planCollaborativeBlockReplacement(snapshot, blockId, replacement);
+      if (!plan) return;
+
+      const snapshotById = new Map(snapshot.map((block) => [block.id, block]));
+      for (const update of plan.updates) {
+        let value = blocks.get(update.id);
+        if (!(value instanceof this.Y.Map)) {
+          if (update.id !== replacement.id) {
+            throw new Error("The collaborative block hierarchy changed while replacing an attachment");
+          }
+          value = new this.Y.Map();
+          blocks.set(update.id, value);
+        }
+        const current = update.id === replacement.id ? replacement : snapshotById.get(update.id);
+        if (!current) {
+          throw new Error("The collaborative block hierarchy changed while replacing an attachment");
+        }
+        reconcileYMap(this.Y, value, {
+          ...current,
+          parentBlockId: update.parentBlockId,
+          sortOrder: update.sortOrder
+        });
+      }
+      deletedAttachments.delete(replacement.id);
+
+      const targetValue = blocks.get(blockId);
+      if (targetValue instanceof this.Y.Map && readYValue(this.Y, targetValue.get("type")) === "ATTACHMENT") {
+        deletedAttachments.set(blockId, true);
+      }
+      blocks.delete(blockId);
+      deletedIds = [blockId];
     }, { allowDisconnected });
     return deletedIds;
   }
