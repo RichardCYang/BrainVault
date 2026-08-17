@@ -111,8 +111,12 @@ describe("Attachment integration surface", () => {
 
     expect(routeSource).toContain('attachmentUpload.single("file")');
     expect(routeSource).toContain('"/blocks/:blockId/attachment"');
-    expect(routeSource).toContain("removeDeletedAttachmentFiles(deletion.ownerId, deletion.attachmentIds)");
-    expect(pageRouteSource).toContain("removeDeletedAttachmentFiles(user.id, deletion.attachmentIds)");
+    expect(routeSource).toMatch(
+      /removeDeletedAttachmentFiles\([\s\S]*deletion\.ownerId,[\s\S]*deletion\.attachmentIds,[\s\S]*deletion\.attachmentGeneration/
+    );
+    expect(pageRouteSource).toMatch(
+      /removeDeletedAttachmentFiles\([\s\S]*user\.id,[\s\S]*deletion\.attachmentIds,[\s\S]*deletion\.attachmentGeneration/
+    );
     const uploadStart = routeSource.indexOf('"/pages/:pageId/attachments"');
     const uploadEnd = routeSource.indexOf('"/blocks/:blockId/attachment"', uploadStart);
     const uploadSource = routeSource.slice(uploadStart, uploadEnd);

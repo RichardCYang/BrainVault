@@ -37,7 +37,7 @@ import {
   assertStructuredBlockMetadataIntegrity,
   StructuredMetadataIntegrityError
 } from "../lib/structured-metadata-integrity.js";
-import { removeDeletedAttachmentFiles } from "../lib/attachments.js";
+import { lockUserAttachmentGeneration, removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { CollaborationDocumentError } from "../lib/collaboration-document.js";
 import { materializeCollaborationUpdates } from "../lib/collaboration-materialization.js";
 import {
@@ -605,8 +605,24 @@ collaborationRouter.put(
       const body = req.body as z.infer<typeof materializeSchema>;
       const deletedFiles: string[] = [];
 
+      // Resolve and authorize the owner without taking a page lock. The
+      // transaction can then preserve the global user-before-page lock order
+      // used by workspace restore while re-checking access under the page lock.
+      const preflightAccess = await getPageAccess(pageId, user.id);
+      const attachmentOwnerId = preflightAccess.page.owner_id;
+
       const result = await transaction(async (client) => {
+        const attachmentGeneration = await lockUserAttachmentGeneration(client, attachmentOwnerId);
+        if (attachmentGeneration === undefined) throw notFound("Page");
+
         const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
+        if (access.page.owner_id !== attachmentOwnerId) {
+          throw new ApiError(
+            409,
+            "PAGE_OWNER_CHANGED",
+            "The page owner changed before collaboration materialization. Refresh and try again."
+          );
+        }
         assertShareablePage(access.page);
         if (access.shareCount < 1) {
           throw new ApiError(409, "COLLABORATION_DISABLED", "Collaboration is no longer enabled");
@@ -691,6 +707,7 @@ collaborationRouter.put(
             page: currentPage,
             blocks: currentBlocks,
             ownerId: currentPage.owner_id,
+            attachmentGeneration,
             materializedUpdateId
           };
         }
@@ -913,11 +930,18 @@ collaborationRouter.put(
           page: currentPage,
           blocks: currentBlocks,
           ownerId: currentPage.owner_id,
+          attachmentGeneration,
           materializedUpdateId: latestUpdateId
         };
       });
 
-      if (deletedFiles.length) await removeDeletedAttachmentFiles(result.ownerId, deletedFiles);
+      if (deletedFiles.length) {
+        await removeDeletedAttachmentFiles(
+          result.ownerId,
+          deletedFiles,
+          result.attachmentGeneration
+        );
+      }
       res.json({
         applied: result.applied,
         documentEpoch: body.documentEpoch,

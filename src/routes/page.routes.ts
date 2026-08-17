@@ -3,7 +3,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { db, transaction, type DbClient, type DbValue } from "../lib/db.js";
 import { createId } from "../lib/id.js";
-import { removeDeletedAttachmentFiles } from "../lib/attachments.js";
+import { lockUserAttachmentGeneration, removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { renderBlockHtml, sanitizeRenderedHtml } from "../lib/markdown.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
 import { assessPageCreateMutationReceipt, type PageCreateMutationReceipt } from "../lib/page-create-mutation.js";
@@ -1066,11 +1066,10 @@ pageRouter.delete(
           // Serialize receipt creation for this actor before taking page locks.
           // The receipt deliberately has no FK to pages so it survives deletion
           // and can reconcile an unknown COMMIT outcome.
-          const actor = await client.queryOne<{ id: string }>(
-            "SELECT id FROM users WHERE id = ? FOR UPDATE",
-            [user.id]
-          );
-          if (!actor) throw new ApiError(401, "UNAUTHENTICATED", "Authentication is required");
+          const attachmentGeneration = await lockUserAttachmentGeneration(client, user.id);
+          if (attachmentGeneration === undefined) {
+            throw new ApiError(401, "UNAUTHENTICATED", "Authentication is required");
+          }
 
           const receipt = await client.queryOne<PageDeleteMutationReceipt>(
             `SELECT page_id, request_hash, page_ids, attachment_ids
@@ -1105,6 +1104,7 @@ pageRouter.delete(
             return {
               attachmentIds: assessment.attachmentIds,
               pageIds: assessment.pageIds,
+              attachmentGeneration,
               replayed: true
             };
           }
@@ -1142,7 +1142,7 @@ pageRouter.delete(
               JSON.stringify(attachmentIds)
             ]
           );
-          return { attachmentIds, pageIds, replayed: false };
+          return { attachmentIds, pageIds, attachmentGeneration, replayed: false };
         });
 
         // A receipt replay may be arbitrarily delayed. Never let it disconnect
@@ -1152,7 +1152,11 @@ pageRouter.delete(
         }
         // Filesystem cleanup is idempotent and intentionally repeats on receipt
         // replay in case the first response was lost immediately after COMMIT.
-        await removeDeletedAttachmentFiles(user.id, deletion.attachmentIds);
+        await removeDeletedAttachmentFiles(
+          user.id,
+          deletion.attachmentIds,
+          deletion.attachmentGeneration
+        );
         res.status(204).send();
         return;
       }

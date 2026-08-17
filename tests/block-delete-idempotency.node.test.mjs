@@ -86,7 +86,10 @@ test("server records and replays block deletion atomically before touching a mis
   assert.match(deleteRoute, /assessBlockDeleteMutationReceipt/);
   assert.match(deleteRoute, /INSERT INTO block_delete_mutations/);
   assert.match(deleteRoute, /JSON\.stringify\(attachmentIds\)/);
-  assert.match(deleteRoute, /await removeDeletedAttachmentFiles\(deletion\.ownerId, deletion\.attachmentIds\)/);
+  assert.match(
+    deleteRoute,
+    /await removeDeletedAttachmentFiles\([\s\S]*deletion\.ownerId,[\s\S]*deletion\.attachmentIds,[\s\S]*deletion\.attachmentGeneration[\s\S]*\)/
+  );
   assert.ok(
     deleteRoute.indexOf("FROM block_delete_mutations") < deleteRoute.indexOf("assertAccessibleBlock(blockId"),
     "a committed delete must be replayable before the deleted block is queried"

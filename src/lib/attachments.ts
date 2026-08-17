@@ -364,25 +364,50 @@ export async function removeAttachmentFiles(ownerId: string, blockIds: string[])
   await Promise.all(blockIds.map((blockId) => removeAttachmentFile(ownerId, blockId)));
 }
 
+export async function lockUserAttachmentGeneration(
+  client: DbClient,
+  ownerId: string
+): Promise<number | undefined> {
+  const user = await client.queryOne<{ id: string; attachment_generation: number }>(
+    "SELECT id, attachment_generation FROM users WHERE id = ? FOR UPDATE",
+    [ownerId]
+  );
+  if (!user) return undefined;
+
+  const generation = Number(user.attachment_generation);
+  if (!Number.isSafeInteger(generation) || generation < 1) {
+    throw new Error(`Invalid attachment generation for owner: ${ownerId}`);
+  }
+  return generation;
+}
+
 export async function withUserAttachmentLock<Result>(
   ownerId: string,
-  fn: (client: DbClient) => Promise<Result>
+  fn: (client: DbClient, attachmentGeneration: number) => Promise<Result>
 ) {
   return transaction(async (client) => {
-    const user = await client.queryOne<{ id: string }>(
-      "SELECT id FROM users WHERE id = ? FOR UPDATE",
-      [ownerId]
-    );
-    if (!user) throw new Error(`Attachment owner does not exist: ${ownerId}`);
-    return fn(client);
+    const attachmentGeneration = await lockUserAttachmentGeneration(client, ownerId);
+    if (attachmentGeneration === undefined) {
+      throw new Error(`Attachment owner does not exist: ${ownerId}`);
+    }
+    return fn(client, attachmentGeneration);
   });
 }
 
-export async function removeDeletedAttachmentFiles(ownerId: string, blockIds: string[]) {
+export async function removeDeletedAttachmentFiles(
+  ownerId: string,
+  blockIds: string[],
+  expectedAttachmentGeneration: number
+) {
   const uniqueIds = [...new Set(blockIds)];
   if (!uniqueIds.length) return;
 
-  await withUserAttachmentLock(ownerId, async (client) => {
+  await withUserAttachmentLock(ownerId, async (client, currentAttachmentGeneration) => {
+    // A workspace restore replaces the complete attachment directory. Cleanup
+    // authorized by an older SQL generation must never mutate the new directory,
+    // including retained/orphan files that intentionally have no live block row.
+    if (currentAttachmentGeneration !== expectedAttachmentGeneration) return;
+
     const existingIds = new Set<string>();
     for (let index = 0; index < uniqueIds.length; index += 500) {
       const group = uniqueIds.slice(index, index + 500);

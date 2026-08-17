@@ -13,6 +13,7 @@ import {
   getAttachmentInfo,
   getAttachmentStorageUsage,
   inspectAttachmentUpload,
+  lockUserAttachmentGeneration,
   moveAttachmentFile,
   removeDeletedAttachmentFiles,
   removeAttachmentPath,
@@ -597,6 +598,7 @@ blockRouter.post(
   async (req, res, next) => {
     let cleanupPath = req.file?.path ?? null;
     let movedPath: string | null = null;
+    let movedAttachmentGeneration: number | null = null;
     let releaseAttachmentUpload: (() => void) | null = null;
     try {
       releaseAttachmentUpload = beginAttachmentUploadProcessing(res);
@@ -647,6 +649,9 @@ blockRouter.post(
           // Lock every user row before the page. This preserves the workspace
           // snapshot lock order while the receipt's actor FK is reserved.
           await lockBlockCreateUsers(client, [user.id, ownerId]);
+          const attachmentGeneration = await lockUserAttachmentGeneration(client, ownerId);
+          if (attachmentGeneration === undefined) throw notFound("User");
+
           const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
           if (lockedAccess.page.owner_id !== ownerId) {
             throw new ApiError(409, "PAGE_OWNER_CHANGED", "The page owner changed while the attachment was uploading");
@@ -686,6 +691,7 @@ blockRouter.post(
             [pageId, body.parentBlockId]
           );
           movedPath = await moveAttachmentFile(file.path, ownerId, id);
+          movedAttachmentGeneration = attachmentGeneration;
           cleanupPath = null;
           await client.execute(
             `INSERT INTO blocks (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata)
@@ -778,9 +784,14 @@ blockRouter.post(
                 : null
             });
           }
-          if (insertDefinitelyFailed && movedPath) {
+          if (insertDefinitelyFailed && movedPath && movedAttachmentGeneration !== null) {
             const failedMovedPath = movedPath;
-            await withUserAttachmentLock(ownerId, async () => {
+            const expectedAttachmentGeneration = movedAttachmentGeneration;
+            await withUserAttachmentLock(ownerId, async (_client, currentAttachmentGeneration) => {
+              // If restore replaced the owner's attachment directory after the
+              // failed INSERT released its lock, this path now belongs to the
+              // restored generation and must not be removed as upload rollback.
+              if (currentAttachmentGeneration !== expectedAttachmentGeneration) return;
               await removeAttachmentPath(failedMovedPath);
             });
             movedPath = null;
@@ -1152,10 +1163,14 @@ blockRouter.delete(
     }
     const expectedVersions = body.expectedVersions;
     const deletion = await transaction(async (client) => {
+      // Restore and attachment writes serialize on the owner/user row before
+      // page locks. Capture that filesystem generation before any delete work.
+      const attachmentGeneration = await lockUserAttachmentGeneration(client, user.id);
+      if (attachmentGeneration === undefined) {
+        throw new ApiError(401, "UNAUTHENTICATED", "Authentication is required");
+      }
+
       if (body.mutationId && mutationHash) {
-        // Block creation and workspace export lock users before pages. Keep the
-        // same order while serializing delete receipts for this actor.
-        await lockBlockCreateUsers(client, [user.id]);
         const receipt = await client.queryOne<BlockDeleteMutationReceipt>(
           `SELECT page_id, block_id, request_hash, page_content_version, attachment_ids
            FROM block_delete_mutations
@@ -1206,6 +1221,7 @@ blockRouter.delete(
             pageId: assessment.pageId,
             ownerId: replayAccess.page.owner_id,
             attachmentIds: assessment.attachmentIds,
+            attachmentGeneration,
             pageContentVersion: assessment.pageContentVersion,
             replayed: true
           };
@@ -1275,11 +1291,16 @@ blockRouter.delete(
         pageId: block.page_id,
         ownerId: lockedAccess.page.owner_id,
         attachmentIds,
+        attachmentGeneration,
         pageContentVersion,
         replayed: false
       };
     });
-    await removeDeletedAttachmentFiles(deletion.ownerId, deletion.attachmentIds);
+    await removeDeletedAttachmentFiles(
+      deletion.ownerId,
+      deletion.attachmentIds,
+      deletion.attachmentGeneration
+    );
     res.status(204).send();
   } catch (error) {
     next(error);

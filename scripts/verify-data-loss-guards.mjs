@@ -415,7 +415,9 @@ assert(
       < directBlockDeleteRouteSource.indexOf("assertAccessibleBlock(blockId")
     && directBlockDeleteRouteSource.includes("INSERT INTO block_delete_mutations")
     && directBlockDeleteRouteSource.includes("JSON.stringify(attachmentIds)")
-    && directBlockDeleteRouteSource.includes("await removeDeletedAttachmentFiles(deletion.ownerId, deletion.attachmentIds)")
+    && /await removeDeletedAttachmentFiles\([\s\S]*deletion\.ownerId,[\s\S]*deletion\.attachmentIds,[\s\S]*deletion\.attachmentGeneration/.test(
+      directBlockDeleteRouteSource
+    )
     && client.includes("const pendingBlockDeleteTasks = new Map()")
     && client.includes("async function submitBlockDeleteTask(task, authenticationScope)")
     && client.includes("while (attempt < 2)")

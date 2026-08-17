@@ -2124,7 +2124,8 @@ async function importRows(
   await client.execute("DELETE FROM pages WHERE owner_id = ?", [userId]);
   await client.execute(
     `UPDATE users
-     SET name = ?, avatar_data = ?, preferred_language = ?, default_collection_icon = ?, theme = COALESCE(?, theme)
+     SET name = ?, avatar_data = ?, preferred_language = ?, default_collection_icon = ?,
+         theme = COALESCE(?, theme), attachment_generation = attachment_generation + 1
      WHERE id = ?`,
     [
       manifest.account.name,
