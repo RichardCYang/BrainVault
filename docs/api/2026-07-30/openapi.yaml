@@ -742,7 +742,7 @@ components:
           pattern: '^\d+$'
     PageVersionResetInput:
       type: object
-      required: [mutationId]
+      required: [mutationId, expectedVersion, expectedContentVersion, expectedRevision]
       properties:
         mutationId:
           type: string
@@ -750,6 +750,21 @@ components:
           maxLength: 64
           pattern: '^[a-zA-Z0-9_-]+$'
           description: Owner-scoped idempotency key. Reuse only for an exact retry of the same page reset after an ambiguous outcome.
+        expectedVersion:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+          description: Page edit version returned by the version-history list the owner reviewed before confirming reset.
+        expectedContentVersion:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+          description: Page content version returned by the version-history list the owner reviewed before confirming reset.
+        expectedRevision:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          description: Latest history revision returned by the version-history list the owner reviewed before confirming reset.
     PageVersionResetResponse:
       type: object
       required: [revision, deletedCount, replayed]
@@ -1653,7 +1668,7 @@ paths:
           description: Page is not owned by the authenticated user
     delete:
       summary: Reset page version history
-      description: Owner only. Requires a mutation ID, deletes prior historical entries once, and writes a fresh revision-1 baseline without resetting optimistic-concurrency generations. Exact retries replay the first committed result and do not delete newer history.
+      description: Owner only. Requires a mutation ID plus the exact page edit/content versions and latest history revision the owner reviewed. A stale first attempt fails closed without deleting history. Exact retries replay the first committed result before stale-state checks, so an ambiguous committed reset remains acknowledgeable without deleting newer history.
       parameters:
         - in: path
           name: pageId
@@ -1675,11 +1690,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/PageVersionResetResponse'
         '400':
-          description: Missing or invalid mutation ID
+          description: Missing or invalid mutation ID or expected version snapshot
         '404':
           description: Page is not owned by the authenticated user
         '409':
-          description: Mutation ID was already used for a different reset request
+          description: The viewed page/history snapshot is stale, or the mutation ID was already used for a different reset request
   /api/pages/{pageId}/versions/{versionId}:
     get:
       summary: Read one page version

@@ -2,6 +2,25 @@ function vulnerableReset(history) {
   return [{ revision: 1, source: "RESET" }];
 }
 
+function fixedResetWithSnapshot({
+  history,
+  pageVersion,
+  contentVersion,
+  expectedVersion,
+  expectedContentVersion,
+  expectedRevision
+}) {
+  const currentRevision = history.reduce((max, entry) => Math.max(max, Number(entry.revision)), 0);
+  if (
+    pageVersion !== expectedVersion
+    || contentVersion !== expectedContentVersion
+    || currentRevision !== expectedRevision
+  ) {
+    return { history, conflict: true };
+  }
+  return { history: vulnerableReset(history), conflict: false };
+}
+
 function fixedReset({ history, receipts, mutationId, pageId }) {
   const existing = receipts.get(mutationId);
   if (existing) {
@@ -97,6 +116,23 @@ try {
 const vulnerableRefreshGap = reproduceClientRefreshGap({ retainTaskUntilRefresh: false });
 const fixedRefreshGap = reproduceClientRefreshGap({ retainTaskUntilRefresh: true });
 
+const observedSnapshot = {
+  expectedVersion: 7,
+  expectedContentVersion: 11,
+  expectedRevision: 3
+};
+const concurrentHistory = [
+  ...original,
+  { revision: 4, source: "EDIT_AFTER_USER_CONFIRMED_RESET" }
+];
+const vulnerableConcurrentHistory = vulnerableReset(concurrentHistory);
+const fixedConcurrent = fixedResetWithSnapshot({
+  history: concurrentHistory,
+  pageVersion: 7,
+  contentVersion: 12,
+  ...observedSnapshot
+});
+
 const output = {
   vulnerable: {
     responseLossFollowedByRetryDeletedNewHistory:
@@ -114,6 +150,13 @@ const output = {
   refreshGap: {
     vulnerable: vulnerableRefreshGap,
     fixed: fixedRefreshGap
+  },
+  concurrentEdit: {
+    vulnerableDeletedUnseenHistory:
+      !vulnerableConcurrentHistory.some((entry) => entry.source === "EDIT_AFTER_USER_CONFIRMED_RESET"),
+    fixedRejectedStaleReset: fixedConcurrent.conflict === true,
+    fixedPreservedUnseenHistory:
+      fixedConcurrent.history.some((entry) => entry.source === "EDIT_AFTER_USER_CONFIRMED_RESET")
   }
 };
 

@@ -136,7 +136,10 @@ const pageVersionParamsSchema = z.object({
 });
 
 const pageVersionResetSchema = z.object({
-  mutationId: mutationIdSchema
+  mutationId: mutationIdSchema,
+  expectedVersion: safeVersionSchema,
+  expectedContentVersion: safeVersionSchema,
+  expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
 });
 
 function isDuplicateEntryError(error: unknown) {
@@ -667,8 +670,14 @@ pageRouter.delete(
     try {
       const user = requireUser(req.user);
       const pageId = String(req.params.pageId);
-      const { mutationId } = req.body as z.infer<typeof pageVersionResetSchema>;
-      const requestHash = createMutationRequestHash({ pageId });
+      const { mutationId, expectedVersion, expectedContentVersion, expectedRevision } =
+        req.body as z.infer<typeof pageVersionResetSchema>;
+      const requestHash = createMutationRequestHash({
+        pageId,
+        expectedVersion,
+        expectedContentVersion,
+        expectedRevision
+      });
       const reset = await transaction(async (client) => {
         // Workspace export/restore and attachment cleanup lock the owner before pages.
         // Keep the same order before inserting the owner-referencing receipt.
@@ -732,6 +741,30 @@ pageRouter.delete(
             deletedCount: assessment.deletedCount,
             replayed: true
           };
+        }
+
+        const latestVersion = await client.queryOne<{ revision: number | bigint | null }>(
+          "SELECT MAX(revision) AS revision FROM page_versions WHERE page_id = ?",
+          [pageId]
+        );
+        const currentRevision = Number(latestVersion?.revision ?? 0);
+        if (!Number.isSafeInteger(currentRevision) || currentRevision < 0) {
+          throw new ApiError(
+            500,
+            "PAGE_VERSION_REVISION_INVALID",
+            "The current page-version revision is invalid"
+          );
+        }
+        if (
+          Number(page.edit_version ?? 1) !== expectedVersion
+          || Number(page.content_version ?? 1) !== expectedContentVersion
+          || currentRevision !== expectedRevision
+        ) {
+          throw new ApiError(
+            409,
+            "PAGE_VERSION_RESET_CONFLICT",
+            "This page or its version history changed in another session. The newer history was not reset."
+          );
         }
 
         const resetHistory = await resetPageVersionHistoryRecords(client, {

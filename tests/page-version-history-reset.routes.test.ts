@@ -39,6 +39,15 @@ function receiptKey(ownerId: unknown, mutationId: unknown) {
   return `${String(ownerId)}\u0000${String(mutationId)}`;
 }
 
+function resetBody(mutationId: string) {
+  return {
+    mutationId,
+    expectedVersion: 7,
+    expectedContentVersion: 11,
+    expectedRevision: 3
+  };
+}
+
 beforeEach(() => {
   database.page = {
     id: "pag_version_reset",
@@ -140,7 +149,7 @@ describe("Page version history reset", () => {
     const response = await request(createApp())
       .delete("/api/pages/pag_version_reset/versions")
       .set("Authorization", `Bearer ${ownerToken}`)
-      .send({ mutationId: "mut_reset_once" })
+      .send(resetBody("mut_reset_once"))
       .expect(200);
 
     expect(response.body).toEqual({ revision: 1, deletedCount: 3, replayed: false });
@@ -164,7 +173,7 @@ describe("Page version history reset", () => {
     await request(createApp())
       .delete("/api/pages/pag_version_reset/versions")
       .set("Authorization", `Bearer ${ownerToken}`)
-      .send({ mutationId: "mut_reset_lost_response" })
+      .send(resetBody("mut_reset_lost_response"))
       .expect(200);
 
     database.versions.push({
@@ -173,11 +182,12 @@ describe("Page version history reset", () => {
       revision: 2,
       source: "EDIT_AFTER_RESET"
     });
+    if (database.page) database.page.content_version = 12;
 
     const replay = await request(createApp())
       .delete("/api/pages/pag_version_reset/versions")
       .set("Authorization", `Bearer ${ownerToken}`)
-      .send({ mutationId: "mut_reset_lost_response" })
+      .send(resetBody("mut_reset_lost_response"))
       .expect(200);
 
     expect(replay.body).toEqual({ revision: 1, deletedCount: 3, replayed: true });
@@ -185,11 +195,35 @@ describe("Page version history reset", () => {
     expect(database.versions.some((version) => version.source === "EDIT_AFTER_RESET")).toBe(true);
   });
 
+  it("rejects a reset when an unseen concurrent edit advanced the viewed history snapshot", async () => {
+    if (database.page) database.page.content_version = 12;
+    database.versions.push({
+      id: 4,
+      page_id: "pag_version_reset",
+      revision: 4,
+      source: "CONCURRENT_EDIT"
+    });
+
+    const response = await request(createApp())
+      .delete("/api/pages/pag_version_reset/versions")
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send(resetBody("mut_reset_stale_snapshot"))
+      .expect(409);
+
+    expect(response.body.error.code).toBe("PAGE_VERSION_RESET_CONFLICT");
+    expect(database.versions).toHaveLength(4);
+    expect(database.versions.some((version) => version.source === "CONCURRENT_EDIT")).toBe(true);
+    expect(database.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining("DELETE FROM page_versions"),
+      expect.anything()
+    );
+  });
+
   it("does not allow a non-owner to erase the page history", async () => {
     const response = await request(createApp())
       .delete("/api/pages/pag_version_reset/versions")
       .set("Authorization", `Bearer ${otherToken}`)
-      .send({ mutationId: "mut_reset_other" })
+      .send(resetBody("mut_reset_other"))
       .expect(404);
 
     expect(response.body.error.code).toBe("NOT_FOUND");
@@ -204,7 +238,7 @@ describe("Page version history reset", () => {
     const response = await request(createApp())
       .delete("/api/pages/pag_version_reset/versions")
       .set("Authorization", `Bearer ${ownerToken}`)
-      .send({})
+      .send({ expectedVersion: 7, expectedContentVersion: 11, expectedRevision: 3 })
       .expect(400);
 
     expect(response.body.error.code).toBe("VALIDATION_ERROR");

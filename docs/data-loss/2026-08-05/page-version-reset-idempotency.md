@@ -33,14 +33,15 @@ The reproduction also covers an API-success/list-refresh-failure gap. The vulner
 
 Migration `037_page_version_reset_mutation_receipts.sql` creates `page_version_reset_mutations`, keyed by `(owner_id, mutation_id)`. Its result columns are nullable so the transaction can reserve the identity before the destructive statement and fill in the result afterward.
 
-`DELETE /api/pages/:pageId/versions` now requires `mutationId`. It first locks the owner row and then the owned page row, preserving the repository-wide owner-before-page order used by export, restore, and attachment cleanup. It then:
+`DELETE /api/pages/:pageId/versions` now requires `mutationId` plus the page edit version, content version, and latest history revision the owner reviewed. It first locks the owner row and then the owned page row, preserving the repository-wide owner-before-page order used by export, restore, and attachment cleanup. It then:
 
-1. Computes a canonical request hash bound to the page ID.
+1. Computes a canonical request hash bound to the page ID and expected version snapshot.
 2. Inserts the receipt before deleting any version row.
 3. On a duplicate key, locks and assesses the existing receipt.
-4. Replays a matching completed result without calling the reset function.
+4. Replays a matching completed result without calling the reset function or applying stale-state rejection.
 5. Rejects a page/hash collision and refuses to repeat an incomplete receipt.
-6. Deletes the old history, writes the revision-1 baseline, and completes the receipt in the same SQL transaction.
+6. For a newly reserved mutation, compares the locked page edit/content versions and current history revision with the expected snapshot, rejecting stale state before deletion.
+7. Deletes the old history, writes the revision-1 baseline, and completes the receipt in the same SQL transaction.
 
 A rollback removes both the reservation and destructive changes. A commit makes both the reset and replay result durable together.
 

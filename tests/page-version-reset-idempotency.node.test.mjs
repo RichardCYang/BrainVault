@@ -58,7 +58,8 @@ test("DELETE /api/pages/:pageId/versions reserves and completes a receipt around
   );
 
   assert.match(resetRoute, /validate\(\{ params: idParamSchema, body: pageVersionResetSchema \}\)/);
-  assert.match(resetRoute, /createMutationRequestHash\(\{ pageId \}\)/);
+  assert.match(route, /pageVersionResetSchema = z\.object\([\s\S]*expectedVersion: safeVersionSchema,[\s\S]*expectedContentVersion: safeVersionSchema,[\s\S]*expectedRevision:/);
+  assert.match(resetRoute, /createMutationRequestHash\(\{[\s\S]*pageId,[\s\S]*expectedVersion,[\s\S]*expectedContentVersion,[\s\S]*expectedRevision[\s\S]*\}\)/);
   assert.match(resetRoute, /SELECT id FROM users WHERE id = \? FOR UPDATE/);
   assert.ok(
     resetRoute.indexOf("SELECT id FROM users WHERE id = ? FOR UPDATE")
@@ -70,10 +71,22 @@ test("DELETE /api/pages/:pageId/versions reserves and completes a receipt around
   assert.match(resetRoute, /MUTATION_ID_REUSED/);
   assert.match(resetRoute, /PAGE_VERSION_RESET_RECEIPT_INCOMPLETE/);
   assert.match(resetRoute, /UPDATE page_version_reset_mutations/);
+  assert.match(resetRoute, /SELECT MAX\(revision\) AS revision FROM page_versions WHERE page_id = \?/);
+  assert.match(resetRoute, /PAGE_VERSION_RESET_CONFLICT/);
   assert.ok(
     resetRoute.indexOf("INSERT INTO page_version_reset_mutations")
       < resetRoute.indexOf("resetPageVersionHistoryRecords"),
     "the receipt must be reserved before deleting history"
+  );
+  assert.ok(
+    resetRoute.indexOf('assessment.kind !== "replay"')
+      < resetRoute.indexOf("PAGE_VERSION_RESET_CONFLICT"),
+    "a completed ambiguous retry must replay before stale-state checks"
+  );
+  assert.ok(
+    resetRoute.indexOf("PAGE_VERSION_RESET_CONFLICT")
+      < resetRoute.indexOf("resetPageVersionHistoryRecords"),
+    "a stale first attempt must fail before history is deleted"
   );
   assert.ok(
     resetRoute.indexOf("resetPageVersionHistoryRecords")
@@ -125,10 +138,15 @@ test("browser retries ambiguous reset outcomes with the same task and fences sta
 
   assert.match(app, /const pendingPageVersionResetTasks = new Map\(\);/);
   assert.match(helpers, /mutationId: createMutationId\(\)/);
-  assert.match(helpers, /body: \{ mutationId: task\.mutationId \}/);
+  assert.match(helpers, /expectedVersion,/);
+  assert.match(helpers, /expectedContentVersion,/);
+  assert.match(helpers, /expectedRevision,/);
+  assert.match(helpers, /mutationId: task\.mutationId,[\s\S]*expectedVersion: task\.expectedVersion,[\s\S]*expectedContentVersion: task\.expectedContentVersion,[\s\S]*expectedRevision: task\.expectedRevision/);
   assert.match(helpers, /attempt === 0 && isAmbiguousApiError\(error\)/);
   assert.doesNotMatch(helpers, /submitWithFreshMutationIdOnReuse/);
-  assert.match(reset, /getOrCreatePageVersionResetTask\(pageId\)/);
+  assert.match(reset, /getOrCreatePageVersionResetTask\(pageId, history\.current\)/);
+  assert.match(reset, /PAGE_VERSION_RESET_CONFLICT/);
+  assert.match(reset, /PAGE_VERSION_RESET_CONFLICT[\s\S]*loadPageVersionHistory\(\)/);
   const successfulReset = section(reset, "try {", "} catch (error)");
   assert.doesNotMatch(
     successfulReset,
@@ -182,6 +200,9 @@ test("page-version reset retry stops when authentication rotates after an ambigu
   const result = await submit({
     pageId: "pag_auth_rotation",
     mutationId: "mut_auth_rotation",
+    expectedVersion: 7,
+    expectedContentVersion: 11,
+    expectedRevision: 3,
     scope: { generation: 1, targetKey: "user:original" }
   });
 
@@ -227,4 +248,7 @@ test("standalone reproduction proves that a lost reset response used to erase la
   assert.equal(result.refreshGap.fixed.reusedOriginalMutationId, true);
   assert.equal(result.refreshGap.fixed.replayedOriginalReset, true);
   assert.equal(result.refreshGap.fixed.preservedLaterHistory, true);
+  assert.equal(result.concurrentEdit.vulnerableDeletedUnseenHistory, true);
+  assert.equal(result.concurrentEdit.fixedRejectedStaleReset, true);
+  assert.equal(result.concurrentEdit.fixedPreservedUnseenHistory, true);
 });

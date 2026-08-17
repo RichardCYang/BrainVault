@@ -123,6 +123,7 @@ describe("Version history disclosure regression", () => {
     const editorDelete = await request(createApp())
       .delete(`/api/pages/${page.id}/versions`)
       .set("Authorization", `Bearer ${tokenFor(editor)}`)
+      .send({ mutationId: "mut_editor_reset", expectedVersion: 4, expectedContentVersion: 4, expectedRevision: 3 })
       .expect(404);
     expect(editorDelete.body.error.code).toBe("NOT_FOUND");
   });

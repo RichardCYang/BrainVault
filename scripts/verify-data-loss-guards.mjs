@@ -346,17 +346,30 @@ assert(
       "DROP FOREIGN KEY fk_page_version_reset_mutations_page"
     )
     && pageRouteSource.includes("body: pageVersionResetSchema")
-    && pageRouteSource.includes("createMutationRequestHash({ pageId })")
+    && pageRouteSource.includes("expectedVersion: safeVersionSchema")
+    && pageRouteSource.includes("expectedContentVersion: safeVersionSchema")
+    && pageRouteSource.includes("expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)")
+    && pageRouteSource.includes("createMutationRequestHash({")
+    && pageRouteSource.includes("expectedRevision")
     && pageRouteSource.includes("SELECT id FROM users WHERE id = ? FOR UPDATE")
     && pageRouteSource.indexOf("SELECT id FROM users WHERE id = ? FOR UPDATE")
       < pageRouteSource.indexOf("SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE", pageRouteSource.indexOf("SELECT id FROM users WHERE id = ? FOR UPDATE"))
     && pageRouteSource.includes("INSERT INTO page_version_reset_mutations")
     && pageRouteSource.includes("assessPageVersionResetMutationReceipt(receipt, { pageId, requestHash })")
     && pageRouteSource.includes("UPDATE page_version_reset_mutations")
+    && pageRouteSource.includes("PAGE_VERSION_RESET_CONFLICT")
+    && pageRouteSource.includes("SELECT MAX(revision) AS revision FROM page_versions WHERE page_id = ?")
+    && pageRouteSource.indexOf('assessment.kind !== "replay"') < pageRouteSource.indexOf("PAGE_VERSION_RESET_CONFLICT")
+    && pageRouteSource.indexOf("PAGE_VERSION_RESET_CONFLICT")
+      < pageRouteSource.indexOf("const resetHistory = await resetPageVersionHistoryRecords")
     && pageRouteSource.indexOf("INSERT INTO page_version_reset_mutations")
       < pageRouteSource.indexOf("const resetHistory = await resetPageVersionHistoryRecords")
     && client.includes("const pendingPageVersionResetTasks = new Map()")
-    && client.includes("body: { mutationId: task.mutationId }")
+    && client.includes("expectedVersion: task.expectedVersion")
+    && client.includes("expectedContentVersion: task.expectedContentVersion")
+    && client.includes("expectedRevision: task.expectedRevision")
+    && client.includes("getOrCreatePageVersionResetTask(pageId, history.current)")
+    && client.includes('error?.code === "PAGE_VERSION_RESET_CONFLICT"')
     && client.includes("attempt === 0 && isAmbiguousApiError(error)")
     && client.includes("pendingPageVersionResetTasks.clear()"),
   "A lost page-version reset response can still cause a retry to erase history created after the first commit"
@@ -452,8 +465,11 @@ assert(
   pageVersionResetReproduction.vulnerable.responseLossFollowedByRetryDeletedNewHistory
     && pageVersionResetReproduction.fixed.replayReturnedOriginalResult
     && pageVersionResetReproduction.fixed.responseLossFollowedByRetryPreservedNewHistory
-    && pageVersionResetReproduction.fixed.mutationCollisionRejected,
-  "The page-version reset retry reproduction did not prove both vulnerable and fixed states"
+    && pageVersionResetReproduction.fixed.mutationCollisionRejected
+    && pageVersionResetReproduction.concurrentEdit.vulnerableDeletedUnseenHistory
+    && pageVersionResetReproduction.concurrentEdit.fixedRejectedStaleReset
+    && pageVersionResetReproduction.concurrentEdit.fixedPreservedUnseenHistory,
+  "The page-version reset retry/concurrency reproduction did not prove both vulnerable and fixed states"
 );
 
 assert(

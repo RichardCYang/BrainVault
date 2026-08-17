@@ -7603,17 +7603,28 @@ function getCurrentPageVersionResetTask(pageId) {
   return pendingPageVersionResetTasks.get(getPageVersionResetTaskKey(scope, pageId)) ?? null;
 }
 
-function getOrCreatePageVersionResetTask(pageId) {
+function getOrCreatePageVersionResetTask(pageId, currentSnapshot) {
   const scope = captureAuthenticatedSessionScope();
   if (!scope.targetKey) return null;
   const taskKey = getPageVersionResetTaskKey(scope, pageId);
   let task = pendingPageVersionResetTasks.get(taskKey);
   if (!task) {
+    const expectedVersion = Number(currentSnapshot?.pageVersion);
+    const expectedContentVersion = Number(currentSnapshot?.contentVersion);
+    const expectedRevision = Number(currentSnapshot?.revision);
+    if (
+      !Number.isSafeInteger(expectedVersion) || expectedVersion < 1
+      || !Number.isSafeInteger(expectedContentVersion) || expectedContentVersion < 1
+      || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0
+    ) return null;
     task = {
       taskKey,
       pageId,
       scope,
       mutationId: createMutationId(),
+      expectedVersion,
+      expectedContentVersion,
+      expectedRevision,
       inFlight: false
     };
     pendingPageVersionResetTasks.set(taskKey, task);
@@ -7627,7 +7638,12 @@ async function submitPageVersionResetTask(task) {
     try {
       const data = await api(`/api/pages/${encodeURIComponent(task.pageId)}/versions`, {
         method: "DELETE",
-        body: { mutationId: task.mutationId }
+        body: {
+          mutationId: task.mutationId,
+          expectedVersion: task.expectedVersion,
+          expectedContentVersion: task.expectedContentVersion,
+          expectedRevision: task.expectedRevision
+        }
       });
       if (!isCurrentAuthenticatedSessionScope(task.scope)) return null;
       return data;
@@ -7786,7 +7802,7 @@ async function resetPageVersionHistory() {
   const title = page.title || t("newDocumentTitle");
   if (!window.confirm(t("versions.resetConfirm", { title }))) return;
 
-  const task = getOrCreatePageVersionResetTask(pageId);
+  const task = getOrCreatePageVersionResetTask(pageId, history.current);
   if (!task || task.inFlight) return;
   task.inFlight = true;
   history.resetting = true;
@@ -7821,8 +7837,16 @@ async function resetPageVersionHistory() {
       pendingPageVersionResetTasks.delete(task.taskKey);
     }
     if (!isCurrentAuthenticatedSessionScope(task.scope) || pageId !== history.pageId) return;
+    const errorMessage = error?.message || t("versions.resetError");
     elements.pageVersionHistoryMessage.classList.add("error");
-    elements.pageVersionHistoryMessage.textContent = error?.message || t("versions.resetError");
+    elements.pageVersionHistoryMessage.textContent = errorMessage;
+    if (error?.status === 409 && error?.code === "PAGE_VERSION_RESET_CONFLICT") {
+      const loaded = await loadPageVersionHistory();
+      if (loaded && isCurrentAuthenticatedSessionScope(task.scope) && pageId === history.pageId) {
+        elements.pageVersionHistoryMessage.classList.add("error");
+        elements.pageVersionHistoryMessage.textContent = errorMessage;
+      }
+    }
   } finally {
     task.inFlight = false;
     if (synchronized && pendingPageVersionResetTasks.get(task.taskKey) === task) {

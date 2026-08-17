@@ -49,7 +49,7 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `GET` | `/api/pages/:pageId/render` | Render sanitized page HTML |
 | `GET` | `/api/pages/:pageId/versions` | List owner-only page version history; historical entries may contain deleted content |
 | `GET` | `/api/pages/:pageId/versions/:versionId` | Read one owner-only page version entry |
-| `DELETE` | `/api/pages/:pageId/versions` | Reset owner-only page version history once using a required idempotency key |
+| `DELETE` | `/api/pages/:pageId/versions` | Reset owner-only page version history once using an idempotency key plus the exact viewed page/content/history versions |
 | `GET` | `/api/search?q=...` | Search titles and block Markdown |
 
 
@@ -79,9 +79,9 @@ If the transaction commits but the HTTP response is lost, an exact retry is ackn
 
 ## Page-version reset retry integrity
 
-`DELETE /api/pages/:pageId/versions` requires a JSON body containing `mutationId` (1–64 ASCII letters, digits, `_`, or `-`). The server locks the owned page, reserves `(owner_id, mutation_id)` before deleting any history, writes the fresh revision-1 baseline, and completes the receipt with `revision` and `deletedCount` in the same transaction.
+`DELETE /api/pages/:pageId/versions` requires `mutationId` (1–64 ASCII letters, digits, `_`, or `-`) plus `expectedVersion`, `expectedContentVersion`, and `expectedRevision` from the version-history list the owner reviewed. The server locks the owner and owned page, reserves `(owner_id, mutation_id)`, and first replays any completed matching receipt. For a newly reserved mutation it compares all three expected generations with the locked current state; a mismatch returns `409 PAGE_VERSION_RESET_CONFLICT` before any history row is deleted.
 
-An exact retry for the same page returns the stored result with `replayed: true` and does not execute a second deletion. Reusing the ID for another page is rejected with `409 MUTATION_ID_REUSED`. This is important when the first transaction commits but its HTTP response is lost: edits recorded after that commit remain intact when the browser retries. Clients must not replace an ambiguous task with a new mutation ID; the built-in browser retries once automatically and retains the same task for a later manual retry.
+Only a matching fresh snapshot proceeds to delete the prior history, write the revision-1 baseline, and complete the receipt with `revision` and `deletedCount` in the same transaction. Exact retries return the stored result with `replayed: true` before the stale-state comparison, so a reset that committed but lost its HTTP response remains acknowledgeable and cannot delete history created afterward. Reusing the ID for another request is rejected with `409 MUTATION_ID_REUSED`. The browser keeps the viewed snapshot with the mutation task, retries ambiguous outcomes with the same body, and refreshes the history list after a stale-snapshot conflict before the owner can confirm another reset.
 
 ## Backup sharing integrity
 
