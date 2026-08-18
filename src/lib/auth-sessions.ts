@@ -191,7 +191,8 @@ export async function isAuthSessionActive(
   userId: string,
   sessionIdValue: unknown,
   authVersion: number,
-  client: DbClient = db
+  client: DbClient = db,
+  { lock = false }: { lock?: boolean } = {}
 ) {
   let sessionId: string;
   try {
@@ -206,7 +207,8 @@ export async function isAuthSessionActive(
        AND user_id = ?
        AND auth_version = ?
        AND revoked_at IS NULL
-       AND expires_at > CURRENT_TIMESTAMP(3)`,
+       AND expires_at > CURRENT_TIMESTAMP(3)
+     ${lock ? "FOR UPDATE" : ""}`,
     [sessionId, userId, authVersion]
   );
   return Boolean(row);

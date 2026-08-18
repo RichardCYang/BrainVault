@@ -92,6 +92,28 @@ test("destructive block actions stay bound to the initiating authentication gene
     /const authenticationScope = options\.authenticationScope \?\? captureAuthenticatedSessionScope\(\)/
   );
 
+  const directCapture = directDelete.indexOf(
+    "const authenticationScope = options.authenticationScope ?? captureAuthenticatedSessionScope()"
+  );
+  const collaborativeBranch = directDelete.indexOf("if (isCollaborativePage())");
+  assert.ok(
+    directCapture >= 0 && collaborativeBranch >= 0 && directCapture < collaborativeBranch,
+    "collaborative block deletion must bind authentication before choosing the Yjs transport"
+  );
+  const collaborativeAction = directDelete.slice(
+    collaborativeBranch,
+    directDelete.indexOf("// A replacement block", collaborativeBranch)
+  );
+  const collaborativeTransition = collaborativeAction.indexOf("withCollaborativeDestructiveTransition");
+  const collaborativePostWaitFence = collaborativeAction.indexOf(
+    "if (!isCurrentAuthenticatedSessionScope(authenticationScope))",
+    collaborativeTransition
+  );
+  assert.ok(
+    collaborativeTransition >= 0 && collaborativePostWaitFence > collaborativeTransition,
+    "collaborative block deletion must revalidate authentication after destructive-transition waits"
+  );
+
   const emptyDeleteStart = source.indexOf("async function deleteEmptyBlock");
   const emptyDeleteEnd = source.indexOf("function focusPendingBlock", emptyDeleteStart);
   const emptyDelete = source.slice(emptyDeleteStart, emptyDeleteEnd);
@@ -158,6 +180,40 @@ test("destructive block actions stay bound to the initiating authentication gene
   assert.match(contextDelete, /await deleteBlockWithVersionCheck\(blockId, \{ authenticationScope \}\)/);
 });
 
+test("collaboration writes revalidate auth and session state at the durable transaction boundary", async () => {
+  const server = await read("src/lib/collaboration-server.ts");
+  const sessions = await read("src/lib/auth-sessions.ts");
+
+  assert.match(
+    server,
+    /await assertCurrentCollaborationAuthentication\(client\);\s+const access = await getPageAccess\(room\.pageId, client\.user\.id\)/
+  );
+
+  const persistStart = server.indexOf("private async persistUpdate");
+  const persistEnd = server.indexOf("private async handleMessage", persistStart);
+  const persist = server.slice(persistStart, persistEnd >= 0 ? persistEnd : undefined);
+  const transactionalAuthFence = persist.indexOf(
+    "await assertCurrentCollaborationAuthentication(client, dbClient, { lock: true })"
+  );
+  const lockedPageAccess = persist.indexOf(
+    "getPageAccess(room.pageId, client.user.id, dbClient, { lockPage: true })"
+  );
+  assert.ok(
+    transactionalAuthFence >= 0
+      && lockedPageAccess > transactionalAuthFence,
+    "durable collaboration writes must lock the credential boundary before the page row"
+  );
+
+  assert.match(
+    sessions,
+    /\{ lock = false \}: \{ lock\?: boolean \} = \{\}/
+  );
+  assert.match(
+    sessions,
+    /\$\{lock \? "FOR UPDATE" : ""\}/
+  );
+});
+
 test("standalone reproduction demonstrates vulnerable and remediated outcomes", () => {
   const result = JSON.parse(execFileSync(
     process.execPath,
@@ -180,3 +236,17 @@ test("standalone reproduction demonstrates vulnerable and remediated outcomes", 
   assert.equal(result.vulnerable.rejectedBodyBytesParsedBeforeRateLimit, 131_072_000);
   assert.equal(result.fixed.rejectedBodyBytesParsedBeforeRateLimit, 0);
 });
+
+test("collaboration auth-rotation delete race reproduction is fenced at client and server", () => {
+  const result = JSON.parse(execFileSync(
+    process.execPath,
+    [fileURLToPath(new URL("../scripts/reproduce-collaboration-auth-rotation-delete-race.mjs", import.meta.url))],
+    { encoding: "utf8" }
+  ));
+
+  assert.equal(result.vulnerable.collaborativeDeleteCrossesAuthRotation, true);
+  assert.equal(result.vulnerable.staleSocketWritePersistsBeforePeriodicRecheck, true);
+  assert.equal(result.fixed.clientFenceRejectsStaleDelete, true);
+  assert.equal(result.fixed.serverWriteRejectsRevokedCredential, true);
+});
+

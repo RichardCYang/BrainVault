@@ -9650,8 +9650,18 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
   const preserveChildren = options.preserveChildren === true;
   const replacementBlock = options.replacementBlock ?? null;
   const expectedSourceBlock = options.expectedSourceBlock ?? null;
+  const authenticationScope = options.authenticationScope ?? captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
+    throw new Error(t("errors.UNAUTHENTICATED"));
+  }
   if (isCollaborativePage()) {
     return withCollaborativeDestructiveTransition(pageId, "block-delete", async (session) => {
+      // The transition can wait for queued local/peer persistence before this
+      // callback runs. Do not let a delete initiated under a replaced cookie
+      // cross that wait and become a write under the new credential generation.
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
+        throw new Error(t("errors.UNAUTHENTICATED"));
+      }
       if (replacementBlock) {
         return session.replaceBlockWithAttachmentPreservingChildren(blockId, replacementBlock, {
           expectedSourceBlock
@@ -9675,10 +9685,6 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
   });
   if (blockSnapshotHasUnresolvedDraftConflict(expectedVersions)) {
     throw new Error(t("status.resolveRecoveredDraftConflict"));
-  }
-  const authenticationScope = options.authenticationScope ?? captureAuthenticatedSessionScope();
-  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
-    throw new Error(t("errors.UNAUTHENTICATED"));
   }
   const task = getBlockDeleteTask(authenticationScope, pageId, blockId, {
     expectedVersions,

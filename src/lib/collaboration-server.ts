@@ -5,7 +5,7 @@ import { z } from "zod";
 import { createId } from "./id.js";
 import { corsOrigins, env } from "../config/env.js";
 import { createExactHttpOriginSet, parseExactHttpOrigin } from "./request-origin.js";
-import { db, transaction } from "./db.js";
+import { db, transaction, type DbClient } from "./db.js";
 import { getPageAccess } from "./page-access.js";
 import { createCollaborationSessionBinding, verifyCollaborationToken } from "./collaboration-token.js";
 import {
@@ -130,6 +130,29 @@ type ClientContext = {
   frameCount: number;
   byteCount: number;
 };
+
+async function assertCurrentCollaborationAuthentication(
+  client: ClientContext,
+  dbClient: DbClient = db,
+  { lock = false }: { lock?: boolean } = {}
+) {
+  const user = await dbClient.queryOne<{ auth_version?: number }>(
+    `SELECT auth_version FROM users WHERE id = ?${lock ? " FOR UPDATE" : ""}`,
+    [client.user.id]
+  );
+  if (!user || Number(user.auth_version ?? 1) !== client.authVersion) {
+    throw new ApiError(401, "SESSION_REVOKED", "Authentication session was revoked");
+  }
+  if (!await isAuthSessionActive(
+    client.user.id,
+    client.authSessionId,
+    client.authVersion,
+    dbClient,
+    { lock }
+  )) {
+    throw new ApiError(401, "SESSION_REVOKED", "Authentication session was revoked");
+  }
+}
 
 type Room = {
   pageId: string;
@@ -947,6 +970,11 @@ export class PageCollaborationHub {
     ) return false;
 
     try {
+      // A WebSocket can outlive a password/MFA rotation or an individual
+      // device-session revocation, especially across multiple server instances.
+      // Revalidate the credential boundary for every state-changing frame before
+      // admitting worker validation; the persistence transaction locks it again.
+      await assertCurrentCollaborationAuthentication(client);
       const access = await getPageAccess(room.pageId, client.user.id);
       if (
         this.closed
@@ -960,8 +988,15 @@ export class PageCollaborationHub {
         return false;
       }
       return true;
-    } catch {
-      if (client.socket.isOpen) client.socket.close(4003, "Page access was removed");
+    } catch (error) {
+      if (client.socket.isOpen) {
+        client.socket.close(
+          4003,
+          error instanceof ApiError && error.statusCode === 401
+            ? "Authentication session was revoked"
+            : "Page access was removed"
+        );
+      }
       return false;
     }
   }
@@ -1151,6 +1186,10 @@ export class PageCollaborationHub {
 
     try {
       result = await transaction(async (dbClient) => {
+        // Serialize each durable collaboration write with credential rotation
+        // and per-device session revocation before taking the page lock. If the
+        // revocation wins, this stale socket cannot persist the queued update.
+        await assertCurrentCollaborationAuthentication(client, dbClient, { lock: true });
         const access = await getPageAccess(room.pageId, client.user.id, dbClient, { lockPage: true });
         if (room.invalidated || this.rooms.get(room.pageId) !== room) return null;
         if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
@@ -1222,8 +1261,8 @@ export class PageCollaborationHub {
           this.invalidateRoomForLineageChange(room);
           return null;
         }
-        if (error instanceof ApiError && [403, 404].includes(error.statusCode)) {
-          client.socket.close(error.statusCode === 404 ? 4003 : 4010, error.message);
+        if (error instanceof ApiError && [401, 403, 404].includes(error.statusCode)) {
+          client.socket.close(error.statusCode === 403 ? 4010 : 4003, error.message);
           return null;
         }
         throw error;
