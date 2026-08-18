@@ -86,14 +86,20 @@ const authMiddlewareSource = contains("src/middleware/auth.ts", [
   "const bearerToken = cookieToken ? null : getBearerToken(req)",
   "const token = cookieToken ?? bearerToken"
 ]);
-const requireAuthStart = authMiddlewareSource.indexOf("export async function requireAuth");
-const authenticatedCachePolicyIndex = authMiddlewareSource.indexOf("setPrivateNoStoreCacheControl(res)", requireAuthStart);
-const cookieReadIndex = authMiddlewareSource.indexOf("const cookieToken = readAuthSessionCookie(req)", requireAuthStart);
-const bearerReadIndex = authMiddlewareSource.indexOf("const bearerToken = cookieToken ? null : getBearerToken(req)", requireAuthStart);
-assert.ok(requireAuthStart >= 0 && authenticatedCachePolicyIndex > requireAuthStart);
+const authenticateRequestStart = authMiddlewareSource.indexOf("async function authenticateRequest");
+const requireAuthStart = authMiddlewareSource.indexOf("export function requireAuth");
+const authenticatedCachePolicyIndex = authMiddlewareSource.indexOf("setPrivateNoStoreCacheControl(res)", authenticateRequestStart);
+const cookieReadIndex = authMiddlewareSource.indexOf("const cookieToken = readAuthSessionCookie(req)", authenticateRequestStart);
+const bearerReadIndex = authMiddlewareSource.indexOf("const bearerToken = cookieToken ? null : getBearerToken(req)", authenticateRequestStart);
+const requireAuthDelegateIndex = authMiddlewareSource.indexOf("void authenticateRequest(req, res, next)", requireAuthStart);
+assert.ok(authenticateRequestStart >= 0 && authenticatedCachePolicyIndex > authenticateRequestStart);
 assert.ok(
   authenticatedCachePolicyIndex < cookieReadIndex && cookieReadIndex < bearerReadIndex,
   "Authenticated responses must be no-store and cookie credentials must take precedence over optional bearer credentials"
+);
+assert.ok(
+  requireAuthStart >= 0 && requireAuthDelegateIndex > requireAuthStart,
+  "requireAuth must delegate to the hardened authenticateRequest flow"
 );
 const authRoutesSource = contains("src/routes/auth.routes.ts", [
   "SELECT * FROM users WHERE id = ? FOR UPDATE",
@@ -553,8 +559,13 @@ contains("public/code-highlighting.js", [
   "source.length > highlightResourceLimits.maxSourceLength"
 ]);
 const appCspSource = contains("src/app.ts", [
-  'imgSrc: ["\'self\'", "data:", "blob:"]'
+  "imgSrc: [",
+  '"https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.3/assets/svg/"'
 ]);
+assert.match(
+  appCspSource,
+  /imgSrc:\s*\[[^\]]*"'self'"[^\]]*"data:"[^\]]*"blob:"[^\]]*"https:\/\/cdn\.jsdelivr\.net\/gh\/jdecked\/twemoji@17\.0\.3\/assets\/svg\/"[^\]]*\]/
+);
 assert.doesNotMatch(appCspSource, /imgSrc:\s*\[[^\]]*(?:"http:"|"https:")/);
 const markdownImageSource = contains("src/lib/markdown.ts", [
   "normalizeRenderedImageSource",
