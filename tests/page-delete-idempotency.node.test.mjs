@@ -211,6 +211,62 @@ test("browser retries ambiguous permanent page deletes with one auth-scoped muta
   );
 });
 
+test("permanent page delete binds authentication before asynchronous save settlement", async () => {
+  const deleteClient = section(
+    client,
+    "async function deleteNavigationTarget()",
+    "function renderCollectionView"
+  );
+  const captureIndex = deleteClient.indexOf("const authenticationScope = captureAuthenticatedSessionScope()");
+  const workspaceBarrierIndex = deleteClient.indexOf("await assertWorkspacePersistenceUnlocked()");
+  const editLockIndex = deleteClient.indexOf("return withPageEditLock");
+  const postLockFenceIndex = deleteClient.indexOf(
+    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;",
+    editLockIndex
+  );
+  const snapshotRequestIndex = deleteClient.indexOf("deletion-snapshot", editLockIndex);
+
+  assert.ok(captureIndex >= 0, "page delete must capture its authentication generation");
+  assert.ok(
+    captureIndex < workspaceBarrierIndex && captureIndex < editLockIndex,
+    "page delete must bind auth before any asynchronous persistence/save barrier can rotate credentials"
+  );
+  assert.ok(
+    postLockFenceIndex > editLockIndex && postLockFenceIndex < snapshotRequestIndex,
+    "page delete must revalidate the initiating auth generation after edit-lock save settlement"
+  );
+
+  async function reproduce({ fixed }) {
+    let generation = 1;
+    let deleteRequests = 0;
+    const capture = () => generation;
+    const current = (scope) => scope === generation;
+    const settlePendingSaves = async () => {
+      // Simulate another tab changing the password while this tab waits for
+      // an already-running save to settle.
+      generation += 1;
+    };
+
+    const initiatingScope = fixed ? capture() : null;
+    await settlePendingSaves();
+    const destructiveScope = fixed ? initiatingScope : capture();
+    if (!current(destructiveScope)) return { deleteRequests, generation };
+    deleteRequests += 1;
+    return { deleteRequests, generation };
+  }
+
+  assert.deepEqual(
+    await reproduce({ fixed: false }),
+    { deleteRequests: 1, generation: 2 },
+    "capturing after the save barrier donates the replacement credential generation to the old delete click"
+  );
+  assert.deepEqual(
+    await reproduce({ fixed: true }),
+    { deleteRequests: 0, generation: 2 },
+    "capturing before the save barrier aborts the stale destructive action after credential rotation"
+  );
+});
+
 test("page delete auth rotation cannot fall through into local draft cleanup", async () => {
   const deleteClient = section(
     client,

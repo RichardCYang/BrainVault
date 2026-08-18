@@ -8096,7 +8096,11 @@ async function submitPageDeleteTask(task, authenticationScope) {
 async function deleteNavigationTarget() {
   const target = state.activeNavigationMenuTarget;
   if (!target) return;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+
   await assertWorkspacePersistenceUnlocked();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
 
   const subtreeIds = getPageSubtreeIds(target.id);
   if (isPageReadOnly() && state.selectedPage?.id && subtreeIds.has(state.selectedPage.id)) {
@@ -8111,16 +8115,14 @@ async function deleteNavigationTarget() {
   }
 
   return withPageEditLock(async () => {
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+
     const isCollection = target.kind === "collection";
     const selectedPageWasDeleted = Boolean(state.selectedPage?.id && subtreeIds.has(state.selectedPage.id));
     const activeCollectionWasDeleted = state.activeCollectionId === target.id;
     const fallbackCollectionId = isCollection
       ? defaultCollectionKey
       : getCollectionRootId(target.id) ?? defaultCollectionKey;
-    const authenticationScope = captureAuthenticatedSessionScope();
-    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
-      throw new Error(t("errors.UNAUTHENTICATED"));
-    }
 
     // If a previous request reached COMMIT but its response was lost, querying
     // a fresh snapshot first can return 404 and strand the only mutation id
@@ -8142,6 +8144,7 @@ async function deleteNavigationTarget() {
       }
     } else {
       const deletionSnapshot = await api(`/api/pages/${target.id}/deletion-snapshot`);
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
       const localPageIds = [...subtreeIds].sort();
       serverPageIds = Array.isArray(deletionSnapshot.pageIds) ? [...deletionSnapshot.pageIds].sort() : [];
       const serverPages = new Map(
