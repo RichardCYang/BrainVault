@@ -153,6 +153,15 @@ async function authenticateRequest(
   }
 }
 
+export function requireRequestAuthScope(req: Request) {
+  const authVersion = Number(req.auth?.authVersion);
+  const sessionId = req.auth?.sessionId;
+  if (!Number.isSafeInteger(authVersion) || authVersion < 1 || !sessionId) {
+    throw new ApiError(401, "UNAUTHENTICATED", "Authentication context is missing");
+  }
+  return Object.freeze({ authVersion, sessionId });
+}
+
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   void authenticateRequest(req, res, next);
 }

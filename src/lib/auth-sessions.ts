@@ -213,3 +213,33 @@ export async function isAuthSessionActive(
   );
   return Boolean(row);
 }
+
+export type AuthSessionBoundaryScope = Readonly<{
+  authVersion: number;
+  sessionId: string;
+}>;
+
+export async function assertCurrentAuthSessionBoundary(
+  userId: string,
+  scope: AuthSessionBoundaryScope,
+  client: DbClient = db
+) {
+  const authVersion = Number(scope.authVersion);
+  if (!Number.isSafeInteger(authVersion) || authVersion < 1) {
+    throw new ApiError(401, "UNAUTHENTICATED", "Authentication context is invalid");
+  }
+
+  const sessionId = normalizeAuthSessionId(scope.sessionId);
+  const account = await client.queryOne<{ auth_version?: number }>(
+    "SELECT auth_version FROM users WHERE id = ? FOR UPDATE",
+    [userId]
+  );
+  if (!account || Number(account.auth_version ?? 1) !== authVersion) {
+    throw new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid");
+  }
+
+  const active = await isAuthSessionActive(userId, sessionId, authVersion, client, { lock: true });
+  if (!active) {
+    throw new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid");
+  }
+}

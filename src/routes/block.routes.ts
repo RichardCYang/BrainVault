@@ -2,6 +2,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import multer from "multer";
 import { z } from "zod";
 import { db, transaction, type DbClient, type DbValue } from "../lib/db.js";
+import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { createId } from "../lib/id.js";
 import { env } from "../config/env.js";
 import {
@@ -62,7 +63,7 @@ import {
   toPageVersionActor
 } from "../lib/page-version-history.js";
 import { ApiError, notFound } from "../lib/http.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import {
   attachmentUploadConcurrencyLimit,
   attachmentUploadRateLimit,
@@ -603,6 +604,7 @@ blockRouter.post(
     try {
       releaseAttachmentUpload = beginAttachmentUploadProcessing(res);
       const user = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       const target = requireAttachmentUploadTarget(res, user.id, pageId);
       const file = req.file;
@@ -649,6 +651,7 @@ blockRouter.post(
           // Lock every user row before the page. This preserves the workspace
           // snapshot lock order while the receipt's actor FK is reserved.
           await lockBlockCreateUsers(client, [user.id, ownerId]);
+          await assertCurrentAuthSessionBoundary(user.id, authScope, client);
           const attachmentGeneration = await lockUserAttachmentGeneration(client, ownerId);
           if (attachmentGeneration === undefined) throw notFound("User");
 
@@ -857,6 +860,7 @@ blockRouter.get("/blocks/:blockId/attachment", validate({ params: idParamSchema 
 blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body: createBlockSchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
     const pageId = String(req.params.pageId);
     const body = req.body as z.infer<typeof createBlockSchema>;
     const { mutationId, basePageContentVersion, ...creation } = body;
@@ -875,6 +879,7 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
     const prepared = prepareBlockContent(creation.type, creation.markdown, losslessMetadata);
     const result = await transaction(async (client) => {
       await lockBlockCreateUsers(client, [user.id, ownerId]);
+      await assertCurrentAuthSessionBoundary(user.id, authScope, client);
       const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
       if (lockedAccess.page.owner_id !== ownerId) {
         throw new ApiError(409, "PAGE_OWNER_CHANGED", "The page owner changed while the block was being created");
@@ -950,6 +955,7 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
 blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: updateBlockSchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
     const blockId = String(req.params.blockId);
     const body = req.body as z.infer<typeof updateBlockSchema>;
     const { mutationId, basePageContentVersion, ...mutationPayload } = body;
@@ -958,6 +964,7 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
       : undefined;
 
     const result = await transaction(async (client) => {
+      await assertCurrentAuthSessionBoundary(user.id, authScope, client);
       const hierarchyChanged = body.parentBlockId !== undefined || body.sortOrder !== undefined;
       const { block: identity } = await assertAccessibleBlock(blockId, user.id, client);
       const lockedAccess = await getPageAccess(identity.page_id, user.id, client, { lockPage: true });
@@ -1143,6 +1150,7 @@ blockRouter.delete(
   async (req, res, next) => {
   try {
     const user = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
     const blockId = String(req.params.blockId);
     const body = req.body as z.infer<typeof deleteBlockSchema>;
     const mutationHash = body.mutationId
@@ -1169,6 +1177,7 @@ blockRouter.delete(
       if (attachmentGeneration === undefined) {
         throw new ApiError(401, "UNAUTHENTICATED", "Authentication is required");
       }
+      await assertCurrentAuthSessionBoundary(user.id, authScope, client);
 
       if (body.mutationId && mutationHash) {
         const receipt = await client.queryOne<BlockDeleteMutationReceipt>(
@@ -1314,11 +1323,13 @@ blockRouter.post(
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       const { items, mutationId } = req.body as z.infer<typeof reorderSchema>;
       const mutationHash = mutationId ? createMutationRequestHash({ pageId, items }) : undefined;
 
       const result = await transaction(async (client) => {
+        await assertCurrentAuthSessionBoundary(user.id, authScope, client);
         const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
         assertDirectBlockMutationAllowed(lockedAccess);
         const lockedPage = lockedAccess.page;

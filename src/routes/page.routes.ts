@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { db, transaction, type DbClient, type DbValue } from "../lib/db.js";
+import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { createId } from "../lib/id.js";
 import { lockUserAttachmentGeneration, removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { renderBlockHtml, sanitizeRenderedHtml } from "../lib/markdown.js";
@@ -37,7 +38,7 @@ import {
   toPageVersionActor,
   type PageVersionRow
 } from "../lib/page-version-history.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { buildBlockTree } from "../utils/blockTree.js";
 import { idParamSchema, requireUser, routeIdSchema, safeVersionSchema } from "../utils/schemas.js";
@@ -489,6 +490,7 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
 pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
     const body = req.body as z.infer<typeof createPageSchema>;
     const { mutationId, ...creation } = body;
     const mutationHash = mutationId ? createMutationRequestHash(creation) : undefined;
@@ -499,6 +501,7 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
     }
 
     const pageId = await transaction(async (client) => {
+      await assertCurrentAuthSessionBoundary(user.id, authScope, client);
       const id = createId("pag");
       if (mutationId && mutationHash) {
         let reserved = true;
@@ -688,6 +691,7 @@ pageRouter.delete(
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       const { mutationId, expectedVersion, expectedContentVersion, expectedRevision } =
         req.body as z.infer<typeof pageVersionResetSchema>;
@@ -705,6 +709,7 @@ pageRouter.delete(
           [user.id]
         );
         if (!lockedOwner) throw notFound("User");
+        await assertCurrentAuthSessionBoundary(user.id, authScope, client);
 
         const page = await client.queryOne<PageRow>(
           "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
@@ -881,6 +886,7 @@ pageRouter.get(
 pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageSchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
     const pageId = String(req.params.pageId);
     const body = req.body as z.infer<typeof updatePageSchema>;
     const { tags, expectedVersion, mutationId, ...updates } = body;
@@ -920,6 +926,7 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
     }
 
     const page = await transaction(async (client) => {
+      await assertCurrentAuthSessionBoundary(user.id, authScope, client);
       let existingPage: PageRow;
       if (updates.parentPageId !== undefined) {
         const lockedRows = await getOwnedPageTreeRows(user.id, client, true);
@@ -1035,6 +1042,7 @@ pageRouter.delete(
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       const query = getValidatedQuery<z.infer<typeof deletePageQuerySchema>>(req);
       const body = req.body as z.infer<typeof deletePageBodySchema>;
@@ -1070,6 +1078,7 @@ pageRouter.delete(
           if (attachmentGeneration === undefined) {
             throw new ApiError(401, "UNAUTHENTICATED", "Authentication is required");
           }
+          await assertCurrentAuthSessionBoundary(user.id, authScope, client);
 
           const receipt = await client.queryOne<PageDeleteMutationReceipt>(
             `SELECT page_id, request_hash, page_ids, attachment_ids
@@ -1171,6 +1180,7 @@ pageRouter.delete(
       }
       const expectedVersion = body.expectedVersion;
       const result = await transaction(async (client) => {
+        await assertCurrentAuthSessionBoundary(user.id, authScope, client);
         const page = await client.queryOne<PageRow>(
           "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
           [pageId, user.id]
@@ -1218,10 +1228,12 @@ pageRouter.delete(
 pageRouter.put("/:pageId/tags", validate({ params: idParamSchema, body: tagSchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
     const pageId = String(req.params.pageId);
     await assertOwnedPage(pageId, user.id);
     const { tags, expectedVersion } = req.body as z.infer<typeof tagSchema>;
     const result = await transaction(async (client) => {
+      await assertCurrentAuthSessionBoundary(user.id, authScope, client);
       const existingPage = await client.queryOne<PageRow>(
         "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
         [pageId, user.id]
