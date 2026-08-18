@@ -81,6 +81,49 @@ test("the browser fences responses started under the replaced cookie", async () 
   );
 });
 
+test("credential rotation cancels account-data work before stale restores can resume", async () => {
+  const source = await read("public/app.js");
+
+  const rotationStart = source.indexOf("function acceptRotatedAuthenticationSession()");
+  const rotationEnd = source.indexOf("function syncWorkspaceCreateControls", rotationStart);
+  const rotation = source.slice(rotationStart, rotationEnd);
+  const generationAdvance = rotation.indexOf("authenticationSessionGeneration += 1");
+  const dataOperationInvalidation = rotation.indexOf("accountDataOperationGuard.invalidate()");
+  const replacementSessionAcceptance = rotation.indexOf("setAuthenticated(true)");
+  assert.ok(
+    generationAdvance >= 0
+      && dataOperationInvalidation > generationAdvance
+      && replacementSessionAcceptance > dataOperationInvalidation,
+    "credential rotation must invalidate pending account-data work before accepting the replacement session"
+  );
+
+  for (const [name, startMarker, endMarker, requestMarker] of [
+    [
+      "backup restore",
+      "async function restoreUserDataBackup",
+      "function formatSnapshotSize",
+      'api("/api/data/import", { method: "POST", body: formData })'
+    ],
+    [
+      "snapshot restore",
+      "async function restoreWorkspaceSnapshotClient",
+      "function getUserInitials",
+      'api(`/api/snapshots/${encodeURIComponent(snapshotId)}/restore`, { method: "POST" })'
+    ]
+  ]) {
+    const start = source.indexOf(startMarker);
+    const end = source.indexOf(endMarker, start);
+    const operation = source.slice(start, end);
+    const wait = operation.indexOf("await fetchOwnedWorkspacePageIds()");
+    const postWaitFence = operation.indexOf("if (!isCurrentAccountDataOperation(activeOperation))", wait);
+    const request = operation.indexOf(requestMarker, postWaitFence);
+    assert.ok(
+      start >= 0 && end > start && wait >= 0 && postWaitFence > wait && request > postWaitFence,
+      `${name} must recheck the invalidatable operation guard after its workspace wait and before the destructive request`
+    );
+  }
+});
+
 test("authenticated API requests revalidate auth scope around async network preparation", async () => {
   const source = await read("public/app.js");
   const apiStart = source.indexOf("async function api(path, options = {})");

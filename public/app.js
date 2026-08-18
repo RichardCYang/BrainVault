@@ -1350,6 +1350,10 @@ function isCurrentAuthenticatedSessionScope(scope) {
 function acceptRotatedAuthenticationSession() {
   authenticationSessionGeneration += 1;
   accountSecurityOperationGuards.activeSessions.invalidate();
+  // Account data operations can be waiting on workspace persistence barriers before
+  // api() captures an authentication scope. Never let an operation initiated under
+  // the replaced credential generation resume by adopting the replacement cookie.
+  accountDataOperationGuard.invalidate();
   state.activeSessions = { sessions: [], loading: false, loaded: false, revokingSessionId: null };
   pendingWorkspaceCreateTasks.clear();
   pendingPageVersionResetTasks.clear();
