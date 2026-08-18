@@ -106,13 +106,21 @@ dataRouter.post(
     try {
       releaseDataImport = beginDataImportProcessing(res);
       const user = requireUser(req.user);
+      const authVersion = Number(req.auth?.authVersion);
+      const sessionId = req.auth?.sessionId;
+      if (!Number.isSafeInteger(authVersion) || authVersion < 1 || !sessionId) {
+        throw new ApiError(401, "UNAUTHENTICATED", "Authentication context is missing");
+      }
       if (!uploadPath) throw new ApiError(400, "DATA_BACKUP_REQUIRED", "Select a BrainVault backup ZIP file");
       const extension = path.extname(req.file?.originalname ?? "").toLowerCase();
       if (extension && extension !== ".zip") {
         throw new ApiError(400, "INVALID_DATA_BACKUP", "Select a .zip backup exported by BrainVault");
       }
 
-      const result = await importUserDataBackup(user.id, uploadPath);
+      const result = await importUserDataBackup(user.id, uploadPath, {
+        authVersion,
+        sessionId
+      });
       res.json({ user: toPublicUser(result.user), counts: result.counts, sharing: result.sharing });
     } catch (error) {
       next(error);

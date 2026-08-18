@@ -9,7 +9,8 @@ import {
   importUserDataBackup,
   prepareUserDataBackup,
   readUserDataBackupManifest,
-  writeUserDataBackup
+  writeUserDataBackup,
+  type DataRestoreAuthScope
 } from "./data-transfer.js";
 import { db, transaction, type DbClient } from "./db.js";
 import { ApiError } from "./http.js";
@@ -324,10 +325,14 @@ export async function deleteWorkspaceSnapshot(userId: string, snapshotId: string
   return { deleted: true };
 }
 
-export async function restoreWorkspaceSnapshot(userId: string, snapshotId: string) {
+export async function restoreWorkspaceSnapshot(
+  userId: string,
+  snapshotId: string,
+  authScope: DataRestoreAuthScope
+) {
   const row = await getOwnedSnapshotRow(userId, snapshotId);
   const filePath = await ensureSnapshotArchiveIntegrity(userId, row);
-  return importUserDataBackup(userId, filePath);
+  return importUserDataBackup(userId, filePath, authScope);
 }
 
 export async function diffWorkspaceSnapshot(userId: string, snapshotId: string) {

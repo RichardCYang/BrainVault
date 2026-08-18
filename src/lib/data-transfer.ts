@@ -28,6 +28,7 @@ import {
   isServerCustomIconPath
 } from "./custom-icons.js";
 import { db, transaction, type DbClient } from "./db.js";
+import { isAuthSessionActive } from "./auth-sessions.js";
 import { ApiError } from "./http.js";
 import { iconValueSchema, imageIconPrefix, maxCustomIconBytes, normalizeIconValue } from "./icon-value.js";
 import {
@@ -2913,7 +2914,41 @@ export async function cleanupStaleDataTransferTempFiles(nowMs = Date.now()) {
   }
 }
 
-export async function importUserDataBackup(userId: string, zipPath: string) {
+export type DataRestoreAuthScope = {
+  authVersion: number;
+  sessionId: string;
+};
+
+async function assertCurrentDataRestoreAuthentication(
+  client: DbClient,
+  userId: string,
+  authScope: DataRestoreAuthScope
+) {
+  const account = await client.queryOne<{ auth_version?: number }>(
+    "SELECT auth_version FROM users WHERE id = ? FOR UPDATE",
+    [userId]
+  );
+  if (!account || Number(account.auth_version ?? 1) !== authScope.authVersion) {
+    throw new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid");
+  }
+
+  const activeSession = await isAuthSessionActive(
+    userId,
+    authScope.sessionId,
+    authScope.authVersion,
+    client,
+    { lock: true }
+  );
+  if (!activeSession) {
+    throw new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid");
+  }
+}
+
+export async function importUserDataBackup(
+  userId: string,
+  zipPath: string,
+  authScope: DataRestoreAuthScope
+) {
   let entries;
   try {
     entries = await readZipDirectory(zipPath, {
@@ -3169,6 +3204,10 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
     let movedOldCustomIcons = false;
     try {
       await transaction(async (client) => {
+        // A backup upload and its integrity checks can outlive the login generation
+        // that admitted the request. Lock the credential and device-session boundary
+        // before taking workspace locks so a revoked request cannot replace data.
+        await assertCurrentDataRestoreAuthentication(client, userId, authScope);
         const lockedWorkspaceSnapshot = await createWorkspaceRestoreSnapshot(
           userId,
           client,
@@ -3235,6 +3274,10 @@ export async function importUserDataBackup(userId: string, zipPath: string) {
         await writeRestoreJournal(restoreJournal);
         journalWritten = true;
         const restoreVersion = await createRestoreEditVersion(client, userId, manifest);
+        // Re-check at the destructive boundary as well. The row locks acquired
+        // above serialize explicit revocation/credential rotation, while this
+        // second check also catches a session that expired during restore planning.
+        await assertCurrentDataRestoreAuthentication(client, userId, authScope);
         await importRows(
           client,
           userId,

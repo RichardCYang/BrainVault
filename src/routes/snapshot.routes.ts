@@ -7,6 +7,7 @@ import {
   restoreWorkspaceSnapshot
 } from "../lib/workspace-snapshots.js";
 import { toPublicUser } from "../lib/mappers.js";
+import { ApiError } from "../lib/http.js";
 import { requireAuth } from "../middleware/auth.js";
 import {
   beginDataImportProcessing,
@@ -48,7 +49,15 @@ snapshotRouter.post<SnapshotRouteParams>(
     try {
       releaseDataImport = beginDataImportProcessing(res);
       const user = requireUser(req.user);
-      const result = await restoreWorkspaceSnapshot(user.id, req.params.snapshotId);
+      const authVersion = Number(req.auth?.authVersion);
+      const sessionId = req.auth?.sessionId;
+      if (!Number.isSafeInteger(authVersion) || authVersion < 1 || !sessionId) {
+        throw new ApiError(401, "UNAUTHENTICATED", "Authentication context is missing");
+      }
+      const result = await restoreWorkspaceSnapshot(user.id, req.params.snapshotId, {
+        authVersion,
+        sessionId
+      });
       res.json({ user: toPublicUser(result.user), counts: result.counts, sharing: result.sharing });
     } finally {
       releaseDataImport?.();
