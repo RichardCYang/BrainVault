@@ -1738,8 +1738,16 @@ async function applyClientNetworkVerificationHeaders(headers) {
 async function api(path, options = {}) {
   const { skipAuthReset = false, ...requestOptions } = options;
   const authenticationScope = captureAuthenticatedSessionScope();
+  const startedAuthenticated = Boolean(state.authenticated && authenticationScope.targetKey);
   const headers = new Headers(requestOptions.headers ?? {});
   await applyClientNetworkVerificationHeaders(headers);
+  if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope)) {
+    throw createApiRequestError(t("errors.UNAUTHENTICATED"), {
+      status: 401,
+      code: "UNAUTHENTICATED",
+      ambiguous: false
+    });
+  }
 
   let body = requestOptions.body;
   const binaryBody = body instanceof ArrayBuffer || ArrayBuffer.isView(body) || body instanceof Blob;
@@ -1753,6 +1761,13 @@ async function api(path, options = {}) {
     response = await fetch(path, { ...requestOptions, credentials: "include", headers, body });
   } catch {
     throw createApiRequestError(t("errors.network"), { ambiguous: true });
+  }
+  if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope)) {
+    throw createApiRequestError(t("errors.UNAUTHENTICATED"), {
+      status: 401,
+      code: "UNAUTHENTICATED",
+      ambiguous: false
+    });
   }
   if (response.status === 204) return null;
 
@@ -1791,12 +1806,26 @@ async function api(path, options = {}) {
   return data;
 }
 
-function enqueueAccountProfilePatch(targetKey, body, { before } = {}) {
+async function enqueueAccountProfilePatch(targetKey, body, { before } = {}) {
   const payload = Object.freeze({ ...body });
-  return accountProfileMutationQueue.enqueue(targetKey, async () => {
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (
+    authenticationScope.targetKey !== targetKey
+    || !isCurrentAuthenticatedSessionScope(authenticationScope)
+  ) {
+    return Object.freeze({ applied: false });
+  }
+
+  const result = await accountProfileMutationQueue.enqueue(targetKey, async () => {
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
     if (typeof before === "function") await before();
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
     return api("/api/auth/profile", { method: "PATCH", body: payload });
   });
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
+    return Object.freeze({ applied: false });
+  }
+  return result;
 }
 
 async function loadNavigationPreferences() {
@@ -16753,17 +16782,23 @@ elements.sharePageForm.addEventListener("submit", async (event) => {
   setSharePageMessage(t("sharing.adding"));
   try {
     const pageId = state.selectedPage.id;
+    const authenticationScope = captureAuthenticatedSessionScope();
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
     await withPagePersistenceTransition(pageId, "share-add", async () => {
       // The durable page-draft store is shared by same-origin tabs. Recheck it
       // immediately before changing persistence modes so another tab's direct-edit
       // recovery copy cannot become invisible behind the collaboration editor.
       await flushPendingPageEdits({ allowLocked: true });
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       assertNoPendingLocalPageDrafts(pageId);
       const data = await api(`/api/pages/${encodeURIComponent(pageId)}/shares`, {
         method: "POST",
         body: { username }
       });
-      if (state.selectedPage?.id !== pageId) return;
+      if (
+        !isCurrentAuthenticatedSessionScope(authenticationScope)
+        || state.selectedPage?.id !== pageId
+      ) return null;
       state.sharePageEntries.push(data.share);
       elements.sharePageForm.reset();
       renderSharePageList();
@@ -16784,6 +16819,8 @@ elements.sharePageList.addEventListener("click", async (event) => {
   const pageId = state.selectedPage.id;
   const userId = button.dataset.userId;
   const username = button.dataset.username || "";
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   button.disabled = true;
   setSharePageMessage(t("sharing.removing", { username }));
   try {
@@ -16792,9 +16829,11 @@ elements.sharePageList.addEventListener("click", async (event) => {
       // state that has not been acknowledged by the server. Never remove access
       // while one is present; final removal would make that state unreachable.
       await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false });
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       assertNoPendingLocalCollaborationRecovery(pageId);
       if (state.sharePageEntries.length === 1) {
         if (state.collaborationSession) await destroyPageCollaboration({ flush: false });
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         // Closing the current session is asynchronous. Check once more before the
         // destructive request so a concurrent tab update cannot slip past the guard.
         assertNoPendingLocalCollaborationRecovery(pageId);
@@ -16803,7 +16842,10 @@ elements.sharePageList.addEventListener("click", async (event) => {
         `/api/pages/${encodeURIComponent(pageId)}/shares/${encodeURIComponent(userId)}`,
         { method: "DELETE" }
       );
-      if (state.selectedPage?.id !== pageId) return;
+      if (
+        !isCurrentAuthenticatedSessionScope(authenticationScope)
+        || state.selectedPage?.id !== pageId
+      ) return null;
       state.sharePageEntries = state.sharePageEntries.filter((share) => share.user?.id !== userId);
       renderSharePageList();
       await setSelectedPageShareCount(Number(data.count ?? state.sharePageEntries.length));

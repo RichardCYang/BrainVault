@@ -131,10 +131,25 @@ test("account profile callers share one authenticated mutation queue", async () 
   assert.match(app, /createAccountProfileMutationQueue/);
   assert.match(app, /const accountLanguageOperationGuard = createAccountAvatarOperationGuard\(\);/);
   assert.match(app, /const accountThemeOperationGuard = createAccountAvatarOperationGuard\(\);/);
-  assert.match(app, /function enqueueAccountProfilePatch\(/);
+  assert.match(app, /async function enqueueAccountProfilePatch\(/);
   assert.equal((app.match(/api\("\/api\/auth\/profile"/g) ?? []).length, 1);
   assert.ok((app.match(/enqueueAccountProfilePatch\(/g) ?? []).length >= 5);
   assert.match(app, /accountProfileMutationQueue\.invalidate\(\);/);
+
+  const enqueueStart = app.indexOf("async function enqueueAccountProfilePatch");
+  const enqueueEnd = app.indexOf("async function loadNavigationPreferences", enqueueStart);
+  const enqueueSource = app.slice(enqueueStart, enqueueEnd);
+  const captureScope = enqueueSource.indexOf("const authenticationScope = captureAuthenticatedSessionScope()");
+  const beforeAwait = enqueueSource.indexOf('if (typeof before === "function") await before()');
+  const postBeforeFence = enqueueSource.indexOf(
+    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;",
+    beforeAwait
+  );
+  const profileRequest = enqueueSource.indexOf('return api("/api/auth/profile"', postBeforeFence);
+  assert.ok(
+    captureScope >= 0 && beforeAwait > captureScope && postBeforeFence > beforeAwait && profileRequest > postBeforeFence,
+    "profile mutations must revalidate the initiating auth generation after queued pre-save waits and before sending the request"
+  );
 });
 
 test("standalone reproduction proves the preference ordering regression and correction", () => {

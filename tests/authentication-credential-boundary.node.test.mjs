@@ -81,6 +81,84 @@ test("the browser fences responses started under the replaced cookie", async () 
   );
 });
 
+test("authenticated API requests revalidate auth scope around async network preparation", async () => {
+  const source = await read("public/app.js");
+  const apiStart = source.indexOf("async function api(path, options = {})");
+  const apiEnd = source.indexOf("function enqueueAccountProfilePatch", apiStart);
+  const apiSource = source.slice(apiStart, apiEnd);
+
+  assert.ok(apiStart >= 0 && apiEnd > apiStart, "shared api helper is missing");
+  assert.match(apiSource, /const authenticationScope = captureAuthenticatedSessionScope\(\)/);
+  assert.match(apiSource, /const startedAuthenticated = Boolean\(state\.authenticated && authenticationScope\.targetKey\)/);
+
+  const headerAwait = apiSource.indexOf("await applyClientNetworkVerificationHeaders(headers)");
+  const preFetchFence = apiSource.indexOf(
+    "if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope))",
+    headerAwait
+  );
+  const fetchCall = apiSource.indexOf("response = await fetch(path", preFetchFence);
+  const postFetchFence = apiSource.indexOf(
+    "if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope))",
+    preFetchFence + 1
+  );
+  const firstResponseUse = apiSource.indexOf("if (response.status === 204)", postFetchFence);
+
+  assert.ok(
+    headerAwait >= 0 && headerAwait < preFetchFence && preFetchFence < fetchCall,
+    "an authenticated request must not reach fetch after its initiating auth generation changes during network-signal preparation"
+  );
+  assert.ok(
+    fetchCall >= 0 && fetchCall < postFetchFence && postFetchFence < firstResponseUse,
+    "a response from an obsolete auth generation must not be applied to the replacement session"
+  );
+});
+
+test("share mutations stay bound to the initiating authentication generation across persistence waits", async () => {
+  const source = await read("public/app.js");
+
+  const addStart = source.indexOf('elements.sharePageForm.addEventListener("submit"');
+  const addEnd = source.indexOf('elements.sharePageList.addEventListener("click"', addStart);
+  const addSource = source.slice(addStart, addEnd);
+  const addScope = addSource.indexOf("const authenticationScope = captureAuthenticatedSessionScope()");
+  const addFlush = addSource.indexOf("await flushPendingPageEdits({ allowLocked: true })");
+  const addPostWaitFence = addSource.indexOf(
+    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;",
+    addFlush
+  );
+  const addRequest = addSource.indexOf("/shares`, {", addPostWaitFence);
+  assert.ok(
+    addScope >= 0 && addFlush > addScope && addPostWaitFence > addFlush && addRequest > addPostWaitFence,
+    "share creation must revalidate the initiating auth generation after draft draining and before the request"
+  );
+
+  const removeStart = addEnd;
+  const removeEnd = source.indexOf('document.addEventListener("keydown"', removeStart);
+  const removeSource = source.slice(removeStart, removeEnd);
+  const removeScope = removeSource.indexOf("const authenticationScope = captureAuthenticatedSessionScope()");
+  const removeFlush = removeSource.indexOf(
+    "await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false })"
+  );
+  const removePostWaitFence = removeSource.indexOf(
+    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;",
+    removeFlush
+  );
+  const collaborationDestroy = removeSource.indexOf("await destroyPageCollaboration", removePostWaitFence);
+  const removePostDestroyFence = removeSource.indexOf(
+    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;",
+    collaborationDestroy
+  );
+  const removeRequest = removeSource.indexOf("{ method: \"DELETE\" }", removePostDestroyFence);
+  assert.ok(
+    removeScope >= 0
+      && removeFlush > removeScope
+      && removePostWaitFence > removeFlush
+      && collaborationDestroy > removePostWaitFence
+      && removePostDestroyFence > collaborationDestroy
+      && removeRequest > removePostDestroyFence,
+    "share removal must revalidate auth after draft draining and collaboration teardown before deleting access"
+  );
+});
+
 test("destructive block actions stay bound to the initiating authentication generation", async () => {
   const source = await read("public/app.js");
 
