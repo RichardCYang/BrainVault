@@ -81,6 +81,83 @@ test("the browser fences responses started under the replaced cookie", async () 
   );
 });
 
+test("destructive block actions stay bound to the initiating authentication generation", async () => {
+  const source = await read("public/app.js");
+
+  const directDeleteStart = source.indexOf("async function deleteBlockWithVersionCheck");
+  const directDeleteEnd = source.indexOf("function updateBlockInState", directDeleteStart);
+  const directDelete = source.slice(directDeleteStart, directDeleteEnd);
+  assert.match(
+    directDelete,
+    /const authenticationScope = options\.authenticationScope \?\? captureAuthenticatedSessionScope\(\)/
+  );
+
+  const emptyDeleteStart = source.indexOf("async function deleteEmptyBlock");
+  const emptyDeleteEnd = source.indexOf("function focusPendingBlock", emptyDeleteStart);
+  const emptyDelete = source.slice(emptyDeleteStart, emptyDeleteEnd);
+  const emptyCapture = emptyDelete.indexOf("const authenticationScope = captureAuthenticatedSessionScope()");
+  const emptyLock = emptyDelete.indexOf("return withPageEditLock");
+  const emptyDiscard = emptyDelete.indexOf("await discardBlockSave(blockId)");
+  const emptyPostDiscardFence = emptyDelete.indexOf(
+    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;",
+    emptyDiscard
+  );
+  const emptyRequest = emptyDelete.indexOf("await deleteBlockWithVersionCheck", emptyDiscard);
+  assert.ok(emptyCapture >= 0 && emptyCapture < emptyLock, "empty-block delete must bind auth before the edit-lock flush");
+  assert.ok(
+    emptyDiscard >= 0 && emptyDiscard < emptyPostDiscardFence && emptyPostDiscardFence < emptyRequest,
+    "empty-block delete must revalidate auth after waiting for queued saves"
+  );
+  assert.match(emptyDelete, /preserveChildren: true,\s+authenticationScope/);
+
+  const uploadStart = source.indexOf("async function uploadAttachmentFromRow");
+  const uploadEnd = source.indexOf("function requestAttachmentUpload", uploadStart);
+  const upload = source.slice(uploadStart, uploadEnd);
+  const uploadDirectStart = upload.indexOf(
+    "const shouldReplaceCurrentBlock = replaceCurrentBlock && currentEditRevision === sourceEditRevision;"
+  );
+  const uploadDirect = upload.slice(uploadDirectStart);
+  const uploadDiscard = uploadDirect.indexOf("await discardBlockSave(blockId)");
+  const uploadPostDiscardFence = uploadDirect.indexOf(
+    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;",
+    uploadDiscard
+  );
+  const uploadDelete = uploadDirect.indexOf("await deleteBlockWithVersionCheck", uploadDiscard);
+  const uploadPostDeleteFence = uploadDirect.indexOf(
+    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;",
+    uploadPostDiscardFence + 1
+  );
+  assert.ok(
+    uploadDiscard >= 0
+      && uploadDiscard < uploadPostDiscardFence
+      && uploadPostDiscardFence < uploadDelete
+      && uploadDelete < uploadPostDeleteFence,
+    "attachment replacement must not cross an auth rotation while settling or deleting its source block"
+  );
+  assert.match(uploadDirect, /includeDescendants: false,\s+authenticationScope/);
+
+  const contextDeleteStart = source.indexOf('if (button.dataset.action === "delete-block")');
+  const contextDeleteEnd = source.indexOf('document.addEventListener("visibilitychange"', contextDeleteStart);
+  const contextDelete = source.slice(contextDeleteStart, contextDeleteEnd);
+  const contextCapture = contextDelete.indexOf("const authenticationScope = captureAuthenticatedSessionScope()");
+  const contextLock = contextDelete.indexOf("await withPageEditLock");
+  const contextDiscard = contextDelete.indexOf("await discardBlockSave(blockId)");
+  const contextPostDiscardFence = contextDelete.indexOf(
+    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;",
+    contextDiscard
+  );
+  const contextRequest = contextDelete.indexOf("await deleteBlockWithVersionCheck", contextDiscard);
+  assert.ok(
+    contextCapture >= 0 && contextCapture < contextLock,
+    "context-menu delete must bind auth before the edit-lock flush"
+  );
+  assert.ok(
+    contextDiscard >= 0 && contextDiscard < contextPostDiscardFence && contextPostDiscardFence < contextRequest,
+    "context-menu delete must revalidate auth after waiting for queued saves"
+  );
+  assert.match(contextDelete, /await deleteBlockWithVersionCheck\(blockId, \{ authenticationScope \}\)/);
+});
+
 test("standalone reproduction demonstrates vulnerable and remediated outcomes", () => {
   const result = JSON.parse(execFileSync(
     process.execPath,

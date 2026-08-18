@@ -130,7 +130,8 @@ test("direct block deletions await discarded in-flight saves before taking delet
   const awaitedDiscards = [...client.matchAll(/await discardBlockSave\(blockId\);/g)];
   assert.equal(awaitedDiscards.length, 3, "every direct destructive block-delete path must wait for settlement");
   for (const match of awaitedDiscards) {
-    const after = client.slice(match.index, match.index + 220);
+    const after = client.slice(match.index, match.index + 700);
+    assert.match(after, /if \(!isCurrentAuthenticatedSessionScope\(authenticationScope\)\) return(?: null)?;/);
     assert.match(after, /await deleteBlockWithVersionCheck\(blockId/);
   }
 });

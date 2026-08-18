@@ -9673,7 +9673,7 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
   if (blockSnapshotHasUnresolvedDraftConflict(expectedVersions)) {
     throw new Error(t("status.resolveRecoveredDraftConflict"));
   }
-  const authenticationScope = captureAuthenticatedSessionScope();
+  const authenticationScope = options.authenticationScope ?? captureAuthenticatedSessionScope();
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
     throw new Error(t("errors.UNAUTHENTICATED"));
   }
@@ -13248,7 +13248,12 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
     if (shouldReplaceCurrentBlock) {
       orderedIds.splice(referenceIndex, 1, data.block.id);
       await discardBlockSave(blockId);
-      await deleteBlockWithVersionCheck(blockId, { includeDescendants: false });
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      await deleteBlockWithVersionCheck(blockId, {
+        includeDescendants: false,
+        authenticationScope
+      });
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       row.dataset.deleting = "true";
     } else {
       orderedIds.splice(effectiveInsertionIndex, 0, data.block.id);
@@ -13802,7 +13807,11 @@ async function deleteEmptyBlock(row) {
     return;
   }
 
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+
   return withPageEditLock(async () => {
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
     const blockId = row.dataset.blockId;
     if (!isCollaborativePage()) {
       assertNoPendingLocalBlockDrafts(state.selectedPage.id, [blockId], {
@@ -13818,16 +13827,22 @@ async function deleteEmptyBlock(row) {
     const nextBlockId = rows[rowIndex + groupRows.length]?.dataset.blockId ?? null;
     const focusBlockId = previousBlockId ?? childIds[0] ?? nextBlockId;
 
-    row.dataset.deleting = "true";
     await discardBlockSave(blockId);
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    row.dataset.deleting = "true";
     closeSlashMenu();
     closeInlineToolbar();
     closeBlockContextMenu();
 
     await deleteBlockWithVersionCheck(blockId, {
       includeDescendants: false,
-      preserveChildren: true
+      preserveChildren: true,
+      authenticationScope
     });
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
+      row.dataset.deleting = "false";
+      return;
+    }
 
     await refreshSelectedPageAfterBlockDeletion(state.selectedPage.id, { focusBlockId });
     setStatus(t("status.emptyBlockDeleted"));
@@ -17822,16 +17837,24 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
       }
       const ok = window.confirm(t("confirm.deleteBlock"));
       if (!ok) return;
+      const authenticationScope = captureAuthenticatedSessionScope();
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
       closeBlockContextMenu();
       const pageId = state.selectedPage.id;
       await withPageEditLock(async () => {
-        row.dataset.deleting = "true";
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
         await discardBlockSave(blockId);
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+        row.dataset.deleting = "true";
         try {
-          await deleteBlockWithVersionCheck(blockId);
+          await deleteBlockWithVersionCheck(blockId, { authenticationScope });
         } catch (error) {
           row.dataset.deleting = "false";
           throw error;
+        }
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
+          row.dataset.deleting = "false";
+          return;
         }
         await refreshSelectedPageAfterBlockDeletion(pageId);
         setStatus(t("status.blockDeleted"));
