@@ -911,6 +911,7 @@ function createSlashCommandIcon(iconName) {
 const blockSaveTimers = new Map();
 const blockSaveRows = new Map();
 const blockSaveQueues = new Map();
+const blockEditAuthenticationScopes = new Map();
 const collaborationBlockMutationPromises = new Map();
 let collaborationTitleMutationPromise = null;
 const blockSaveTaskIds = new Map();
@@ -924,6 +925,7 @@ let pageTitleDraftExpectedVersion = null;
 let pageTitleDraftSourceId = pageDraftSourceId;
 let pageTitleDraftConflict = false;
 let pageTitleConflictOrigin = null;
+let pageTitleEditAuthenticationScope = null;
 let pageTitleLastDurableValue = "";
 let localDraftStorageWarningShown = false;
 let beforeUnloadProtectionActive = false;
@@ -1345,6 +1347,15 @@ function isCurrentAuthenticatedSessionScope(scope) {
       && scope.targetKey !== null
       && scope.targetKey === getAccountAvatarTargetKey(state.user)
   );
+}
+
+function assertCurrentAuthenticatedSessionScope(scope) {
+  if (isCurrentAuthenticatedSessionScope(scope)) return scope;
+  throw createApiRequestError(t("errors.UNAUTHENTICATED"), {
+    status: 401,
+    code: "UNAUTHENTICATED",
+    ambiguous: false
+  });
 }
 
 function acceptRotatedAuthenticationSession() {
@@ -1776,6 +1787,13 @@ async function api(path, options = {}) {
   if (response.status === 204) return null;
 
   const text = await response.text();
+  if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope)) {
+    throw createApiRequestError(t("errors.UNAUTHENTICATED"), {
+      status: 401,
+      code: "UNAUTHENTICATED",
+      ambiguous: false
+    });
+  }
   let data = null;
   try {
     data = text ? JSON.parse(text) : null;
@@ -1892,6 +1910,7 @@ function persistNavigationPreference(pageId, collapsed) {
 }
 
 const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
+  assertCurrentAuthenticatedSessionScope(task.authenticationScope);
   const currentPage = state.selectedPage?.id === task.pageId
     ? state.selectedPage
     : state.allPages.find((page) => page.id === task.pageId);
@@ -1904,13 +1923,15 @@ const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
     task.expectedVersion,
     currentPage?.version
   );
-  const data = await submitWithFreshMutationIdOnReuse(task, () =>
-    api(`/api/pages/${task.pageId}`, {
+  const data = await submitWithFreshMutationIdOnReuse(task, () => {
+    assertCurrentAuthenticatedSessionScope(task.authenticationScope);
+    return api(`/api/pages/${task.pageId}`, {
       method: "PATCH",
       keepalive: task.keepalive === true,
       body: { title: task.title, expectedVersion, mutationId: task.mutationId }
-    })
-  );
+    });
+  });
+  assertCurrentAuthenticatedSessionScope(task.authenticationScope);
 
   if (task.userId) {
     checkDraftStoreWrite(
@@ -1962,6 +1983,7 @@ const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
     pageTitleSavedRevision = task.editRevision;
     pageTitleDraftExpectedVersion = null;
     pageTitleDraftSourceId = pageDraftSourceId;
+    pageTitleEditAuthenticationScope = null;
   } else if (hasNewerLocalTitle) {
     pageTitleDraftExpectedVersion = getPositiveVersion(data.page.version);
   }
@@ -7017,12 +7039,14 @@ function resetPageEditTracking() {
   pageTitleDraftSourceId = pageDraftSourceId;
   pageTitleDraftConflict = false;
   pageTitleConflictOrigin = null;
+  pageTitleEditAuthenticationScope = null;
   blockDraftConflictOrigins.clear();
   blockDraftRenderSources.clear();
   for (const timer of blockSaveTimers.values()) window.clearTimeout(timer);
   blockSaveTimers.clear();
   blockSaveRows.clear();
   blockSaveQueues.clear();
+  blockEditAuthenticationScopes.clear();
   blockSaveTaskIds.clear();
   pendingBlockOrderTask = null;
   blockOrderSaving = false;
@@ -7041,6 +7065,7 @@ function discardPendingPageEdits() {
   blockSaveRows.clear();
   for (const queue of blockSaveQueues.values()) queue.discard();
   blockSaveQueues.clear();
+  blockEditAuthenticationScopes.clear();
   blockSaveTaskIds.clear();
   pendingBlockOrderTask = null;
   blockOrderSaving = false;
@@ -7051,6 +7076,7 @@ function discardPendingPageEdits() {
   pageTitleDraftSourceId = pageDraftSourceId;
   pageTitleDraftConflict = false;
   pageTitleConflictOrigin = null;
+  pageTitleEditAuthenticationScope = null;
   blockDraftConflictOrigins.clear();
   blockDraftRenderSources.clear();
   disableBeforeUnloadProtection();
@@ -7062,6 +7088,7 @@ function discardBlockSave(blockId) {
   blockSaveRows.delete(blockId);
   const discardedSaveSettlement = blockSaveQueues.get(blockId)?.discard() ?? Promise.resolve();
   blockSaveQueues.delete(blockId);
+  blockEditAuthenticationScopes.delete(blockId);
   blockSaveTaskIds.delete(blockId);
   syncBeforeUnloadProtection();
   return discardedSaveSettlement;
@@ -12134,8 +12161,11 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
 
   if (cancelled || drag.targetIndex === drag.initialIndex) return;
   if (!requireWritablePage({ announce: false })) return;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
 
   return withPageEditLock(async () => {
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
     const previousIds = getBlockSiblings(drag.parentBlockId).map((block) => block.id);
     const orderedIds = drag.candidates.map((row) => row.dataset.blockId);
     orderedIds.splice(drag.targetIndex, 0, drag.row.dataset.blockId);
@@ -12144,7 +12174,7 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
         throw new Error(t("errors.currentBlockOrder"));
       }
       try {
-        await persistBlockOrder(drag.parentBlockId, orderedIds, {}, { allowLocked: true });
+        await persistBlockOrder(drag.parentBlockId, orderedIds, {}, { allowLocked: true, authenticationScope });
       } catch (error) {
         reorderBlockSiblingsInState(drag.parentBlockId, previousIds);
         renderSelectedPage();
@@ -12154,7 +12184,10 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
       setStatus(t("status.blockOrderChanged"));
       return;
     }
-    const task = createBlockOrderTask(drag.parentBlockId, orderedIds, {}, { previousIds });
+    const task = createBlockOrderTask(drag.parentBlockId, orderedIds, {}, {
+      previousIds,
+      authenticationScope
+    });
     persistBlockOrderDraft(task);
 
     if (!reorderBlockSiblingsInState(drag.parentBlockId, orderedIds)) {
@@ -12424,11 +12457,13 @@ function rejectLocalBlockMutation(row, error) {
 
 function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
   if (!row?.dataset.blockId) return false;
+  const blockId = row.dataset.blockId;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return false;
   const historyPayload = buildBlockPayload(row);
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
     if (!session?.isReady) return false;
-    const blockId = row.dataset.blockId;
     const current = getBlockById(blockId);
     if (!current) return false;
     let mutation;
@@ -12481,6 +12516,7 @@ function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
     preserveInputAfterRecoveryAdmissionFailure();
     return false;
   }
+  blockEditAuthenticationScopes.set(blockId, authenticationScope);
   scheduleDirectBlockRecoveryAdmission(row, recoveryAdmissionSequence);
   recordBlockEditorHistory(row, historyPayload);
 
@@ -12502,6 +12538,7 @@ function getBlockSaveQueue(blockId) {
   if (queue) return queue;
 
   queue = createLatestWriteQueue(async (task) => {
+    assertCurrentAuthenticatedSessionScope(task.authenticationScope);
     const storedExpectedVersion = task.userId
       ? pageDraftStore.loadPage(task.userId, task.pageId, task.draftSourceId)?.blocks?.[blockId]?.expectedVersion
       : null;
@@ -12511,8 +12548,9 @@ function getBlockSaveQueue(blockId) {
       task.expectedVersion,
       getBlockById(blockId)?.version
     );
-    const data = await submitWithFreshMutationIdOnReuse(task, () =>
-      api(`/api/blocks/${blockId}`, {
+    const data = await submitWithFreshMutationIdOnReuse(task, () => {
+      assertCurrentAuthenticatedSessionScope(task.authenticationScope);
+      return api(`/api/blocks/${blockId}`, {
         method: "PATCH",
         keepalive: task.keepalive === true,
         body: {
@@ -12523,8 +12561,9 @@ function getBlockSaveQueue(blockId) {
             : { basePageContentVersion: task.basePageContentVersion }),
           mutationId: task.mutationId
         }
-      })
-    );
+      });
+    });
+    assertCurrentAuthenticatedSessionScope(task.authenticationScope);
     if (task.userId) {
       checkDraftStoreWrite(
         pageDraftStore.acknowledgeBlock({
@@ -12579,6 +12618,7 @@ function getBlockSaveQueue(blockId) {
     if (currentRow?.dataset.blockId === blockId) updateRenderedBlockPreview(currentRow, committedBlock);
 
     if (currentRow && latestTaskId === task.taskId && currentEditRevision === task.editRevision) {
+      blockEditAuthenticationScopes.delete(blockId);
       currentRow.classList.remove("is-dirty", "save-error");
       currentRow.classList.add("is-saved");
       delete currentRow.dataset.draftExpectedVersion;
@@ -12598,14 +12638,21 @@ function getBlockSaveQueue(blockId) {
   return queue;
 }
 
-async function saveBlockRow(
-  row,
-  { quiet = false, keepalive = false, allowLocked = false, resolveConflict = false } = {}
-) {
+async function saveBlockRow(row, options = {}) {
+  const {
+    quiet = false,
+    keepalive = false,
+    allowLocked = false,
+    resolveConflict = false
+  } = options;
   const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage({ announce: !quiet });
   if (!writable || !row?.dataset.blockId || row.dataset.deleting === "true") return null;
 
   const blockId = row.dataset.blockId;
+  const authenticationScope = options.authenticationScope
+    ?? blockEditAuthenticationScopes.get(blockId)
+    ?? captureAuthenticatedSessionScope();
+  assertCurrentAuthenticatedSessionScope(authenticationScope);
   const payload = buildBlockPayload(row);
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
@@ -12620,6 +12667,7 @@ async function saveBlockRow(
         parentBlockId: normalizeParentBlockId(row.dataset.parentBlockId),
         sortOrder: Number(current.sortOrder ?? 0)
       });
+      assertCurrentAuthenticatedSessionScope(authenticationScope);
     } catch (error) {
       rejectLocalBlockMutation(row, error);
       throw error;
@@ -12677,6 +12725,7 @@ async function saveBlockRow(
   await requireDirectRecoveryDurability("direct-block-recovery", row, {
     allowRecoveryFailure: allowLocked && recoveryStorageFailureDrainInFlight
   });
+  assertCurrentAuthenticatedSessionScope(authenticationScope);
   recordBlockEditorHistory(row, payload);
   window.clearTimeout(blockSaveTimers.get(blockId));
   blockSaveTimers.delete(blockId);
@@ -12700,6 +12749,7 @@ async function saveBlockRow(
     payload,
     row,
     keepalive,
+    authenticationScope,
     mutationId: createMutationId()
   };
   const queue = getBlockSaveQueue(blockId);
@@ -12733,13 +12783,14 @@ function scheduleBlockSave(row, { allowConflictPrompt = true } = {}) {
     syncBeforeUnloadProtection();
     return false;
   }
+  const authenticationScope = blockEditAuthenticationScopes.get(blockId);
   window.clearTimeout(blockSaveTimers.get(blockId));
   blockSaveRows.set(blockId, row);
   blockSaveTimers.set(
     blockId,
     window.setTimeout(() => {
       blockSaveTimers.delete(blockId);
-      saveBlockRow(row, { quiet: true }).catch((error) => setStatus(error.message, true));
+      saveBlockRow(row, { quiet: true, authenticationScope }).catch((error) => setStatus(error.message, true));
     }, 700)
   );
   syncBeforeUnloadProtection();
@@ -13467,10 +13518,12 @@ function createBlockOrderTask(
     mutationId = createMutationId(),
     previousIds = null,
     recovered = false,
-    recoveredOrigin = null
+    recoveredOrigin = null,
+    authenticationScope = captureAuthenticatedSessionScope()
   } = {}
 ) {
   if (!pageId || !userId || !sourceId || !orderedIds.length) throw new Error(t("errors.currentBlockOrder"));
+  assertCurrentAuthenticatedSessionScope(authenticationScope);
   const items = orderedIds.map((id, index) => {
     const expectedVersion = Number(versionOverrides[id] ?? getBlockById(id)?.version);
     if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
@@ -13488,7 +13541,8 @@ function createBlockOrderTask(
     mutationId,
     items,
     recovered,
-    recoveredOrigin
+    recoveredOrigin,
+    authenticationScope
   };
 }
 
@@ -13530,11 +13584,13 @@ function acknowledgeBlockOrderDraft(task) {
 }
 
 async function submitBlockOrderTask(task, { keepalive = false } = {}) {
+  assertCurrentAuthenticatedSessionScope(task.authenticationScope);
   const data = await api(`/api/pages/${task.pageId}/blocks/reorder`, {
     method: "POST",
     keepalive,
     body: { mutationId: task.mutationId, items: task.items }
   });
+  assertCurrentAuthenticatedSessionScope(task.authenticationScope);
   applyPageContentVersion(task.pageId, data.pageContentVersion);
   if (state.selectedPage?.id === task.pageId) {
     for (const block of data.blocks ?? []) updateBlockInState(block);
@@ -13617,7 +13673,13 @@ async function retryPendingBlockOrder({ keepalive = false, allowRecoveryFailure 
   }
 }
 
-async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {}, { allowLocked = false } = {}) {
+async function persistBlockOrder(
+  parentBlockId,
+  orderedIds,
+  versionOverrides = {},
+  { allowLocked = false, authenticationScope = captureAuthenticatedSessionScope() } = {}
+) {
+  assertCurrentAuthenticatedSessionScope(authenticationScope);
   const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage();
   if (!writable || !orderedIds.length) return;
 
@@ -13630,10 +13692,11 @@ async function persistBlockOrder(parentBlockId, orderedIds, versionOverrides = {
       return { ...block, parentBlockId: parentBlockId ?? null, sortOrder };
     });
     await session.upsertBlocks(updates);
+    assertCurrentAuthenticatedSessionScope(authenticationScope);
     return { blocks: updates };
   }
 
-  const task = createBlockOrderTask(parentBlockId, orderedIds, versionOverrides);
+  const task = createBlockOrderTask(parentBlockId, orderedIds, versionOverrides, { authenticationScope });
   persistBlockOrderDraft(task);
   pendingBlockOrderTask = task;
   blockOrderSaving = true;
@@ -14466,7 +14529,13 @@ function applyAuthoritativePageContentVersion(pageId, data) {
   applyPageContentVersion(pageId, data.pageContentVersion);
 }
 
-async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked = false } = {}) {
+async function savePageTitleNow({
+  quiet = true,
+  keepalive = false,
+  allowLocked = false,
+  authenticationScope = pageTitleEditAuthenticationScope ?? captureAuthenticatedSessionScope()
+} = {}) {
+  assertCurrentAuthenticatedSessionScope(authenticationScope);
   const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage({ announce: !quiet });
   if (!writable || pageTitleDraftConflict) return null;
   // A blank focused title is an in-progress editor state, never an implicit request
@@ -14515,6 +14584,7 @@ async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked =
     await requireDirectRecoveryDurability("direct-title-recovery", null, {
       allowRecoveryFailure: allowLocked && recoveryStorageFailureDrainInFlight
     });
+    assertCurrentAuthenticatedSessionScope(authenticationScope);
   }
   recordPageTitleEditorHistory();
   const task = {
@@ -14527,6 +14597,7 @@ async function savePageTitleNow({ quiet = true, keepalive = false, allowLocked =
     recoveredConflictOrigin: pageTitleConflictOrigin,
     taskId: ++pageTitleTaskId,
     keepalive,
+    authenticationScope,
     mutationId: createMutationId()
   };
   syncBeforeUnloadProtection();
@@ -14593,6 +14664,10 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
     return true;
   }
   const pageId = state.selectedPage.id;
+  const previousAuthenticationScope = pageTitleEditAuthenticationScope;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return false;
+  pageTitleEditAuthenticationScope = authenticationScope;
   const recoveryAdmissionSequence = beginDirectRecoveryVisibilityAdmission(elements.pageTitle);
   if (!elements.pageTitle.value.trim()) {
     const previousRevision = pageTitleEditRevision;
@@ -14605,6 +14680,7 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
     // resurrect an older intermediate title and erase the user's clear intent.
     if (!persistPageTitleDraftValue("")) {
       pageTitleEditRevision = previousRevision;
+      pageTitleEditAuthenticationScope = previousAuthenticationScope;
       finishDirectRecoveryVisibilityAdmission(elements.pageTitle, recoveryAdmissionSequence);
       updateInputValuePreservingSelection(elements.pageTitle, pageTitleLastDurableValue);
       preserveInputAfterRecoveryAdmissionFailure();
@@ -14622,6 +14698,7 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
   const title = normalizePageTitle(elements.pageTitle.value);
   if (!persistPageTitleDraft()) {
     pageTitleEditRevision = previousRevision;
+    pageTitleEditAuthenticationScope = previousAuthenticationScope;
     finishDirectRecoveryVisibilityAdmission(elements.pageTitle, recoveryAdmissionSequence);
     updateInputValuePreservingSelection(elements.pageTitle, pageTitleLastDurableValue);
     preserveInputAfterRecoveryAdmissionFailure();
@@ -14644,7 +14721,7 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
   window.clearTimeout(pageTitleSaveTimer);
   pageTitleSaveTimer = window.setTimeout(() => {
     pageTitleSaveTimer = null;
-    savePageTitleNow().catch((error) => setStatus(error.message, true));
+    savePageTitleNow({ authenticationScope }).catch((error) => setStatus(error.message, true));
   }, 650);
   syncBeforeUnloadProtection();
   return true;
@@ -14964,6 +15041,8 @@ function activatePersistedPageDraft(recovery) {
     // cleanup after a confirmed server save.
     pageTitleDraftSourceId = pageDraftSourceId;
     persistPageTitleDraft();
+    pageTitleEditAuthenticationScope = captureAuthenticatedSessionScope();
+    assertCurrentAuthenticatedSessionScope(pageTitleEditAuthenticationScope);
     elements.pageTitle.classList.add("local-draft-recovered");
     if (recovery.title.conflict) {
       elements.pageTitle.classList.add("save-error");
@@ -14993,6 +15072,9 @@ function activatePersistedPageDraft(recovery) {
     }
     blockDraftRenderSources.set(recovered.blockId, row.dataset.draftSourceId);
     persistBlockDraft(row);
+    const authenticationScope = captureAuthenticatedSessionScope();
+    assertCurrentAuthenticatedSessionScope(authenticationScope);
+    blockEditAuthenticationScopes.set(recovered.blockId, authenticationScope);
     row.classList.add("is-dirty", "local-draft-recovered");
     if (recovered.conflict) {
       row.classList.add("save-error");
@@ -15003,7 +15085,7 @@ function activatePersistedPageDraft(recovery) {
       recovered.blockId,
       window.setTimeout(() => {
         blockSaveTimers.delete(recovered.blockId);
-        saveBlockRow(row, { quiet: true }).catch((error) => setStatus(error.message, true));
+        saveBlockRow(row, { quiet: true, authenticationScope }).catch((error) => setStatus(error.message, true));
       }, 200)
     );
   }

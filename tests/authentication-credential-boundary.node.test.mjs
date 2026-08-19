@@ -371,3 +371,113 @@ test("collaboration auth-rotation delete race reproduction is fenced at client a
   assert.equal(result.fixed.serverWriteRejectsRevokedCredential, true);
 });
 
+test("direct note saves and reorder retries stay bound to the edit's authentication generation", async () => {
+  const source = await read("public/app.js");
+
+  const titleQueueStart = source.indexOf("const pageTitleSaveQueue = createLatestWriteQueue");
+  const titleQueueEnd = source.indexOf("async function downloadAttachment", titleQueueStart);
+  const titleQueue = source.slice(titleQueueStart, titleQueueEnd);
+  assert.match(titleQueue, /assertCurrentAuthenticatedSessionScope\(task\.authenticationScope\)/);
+  assert.ok(
+    (titleQueue.match(/assertCurrentAuthenticatedSessionScope\(task\.authenticationScope\)/g) ?? []).length >= 3,
+    "title saves must fence queue start, every request attempt, and response application"
+  );
+
+  const titleSaveStart = source.indexOf("async function savePageTitleNow");
+  const titleSaveEnd = source.indexOf("function schedulePageTitleSave", titleSaveStart);
+  const titleSave = source.slice(titleSaveStart, titleSaveEnd);
+  assert.match(
+    titleSave,
+    /authenticationScope = pageTitleEditAuthenticationScope \?\? captureAuthenticatedSessionScope\(\)/
+  );
+  assert.match(titleSave, /authenticationScope,\s+mutationId: createMutationId\(\)/);
+
+  const titleScheduleStart = titleSaveEnd;
+  const titleScheduleEnd = source.indexOf("function normalizeRecoveredBlockPayload", titleScheduleStart);
+  const titleSchedule = source.slice(titleScheduleStart, titleScheduleEnd);
+  assert.match(titleSchedule, /pageTitleEditAuthenticationScope = authenticationScope/);
+  assert.match(titleSchedule, /savePageTitleNow\(\{ authenticationScope \}\)/);
+
+  const blockDirtyStart = source.indexOf("function markBlockDirty");
+  const blockQueueStart = source.indexOf("function getBlockSaveQueue", blockDirtyStart);
+  const blockDirty = source.slice(blockDirtyStart, blockQueueStart);
+  assert.match(blockDirty, /const authenticationScope = captureAuthenticatedSessionScope\(\)/);
+  assert.match(blockDirty, /blockEditAuthenticationScopes\.set\(blockId, authenticationScope\)/);
+
+  const blockSaveStart = source.indexOf("async function saveBlockRow", blockQueueStart);
+  const blockQueue = source.slice(blockQueueStart, blockSaveStart);
+  assert.ok(
+    (blockQueue.match(/assertCurrentAuthenticatedSessionScope\(task\.authenticationScope\)/g) ?? []).length >= 3,
+    "block saves must fence queue start, every request attempt, and response application"
+  );
+
+  const blockScheduleStart = source.indexOf("function scheduleBlockSave", blockSaveStart);
+  const blockSave = source.slice(blockSaveStart, blockScheduleStart);
+  assert.match(blockSave, /blockEditAuthenticationScopes\.get\(blockId\)/);
+  assert.match(blockSave, /assertCurrentAuthenticatedSessionScope\(authenticationScope\)/);
+  assert.match(blockSave, /authenticationScope,\s+mutationId: createMutationId\(\)/);
+
+  const blockScheduleEnd = source.indexOf("function getTextareaSelection", blockScheduleStart);
+  const blockSchedule = source.slice(blockScheduleStart, blockScheduleEnd);
+  assert.match(blockSchedule, /saveBlockRow\(row, \{ quiet: true, authenticationScope \}\)/);
+
+  const orderTaskStart = source.indexOf("function createBlockOrderTask");
+  const orderTaskEnd = source.indexOf("function persistBlockOrderDraft", orderTaskStart);
+  const orderTask = source.slice(orderTaskStart, orderTaskEnd);
+  assert.match(orderTask, /authenticationScope = captureAuthenticatedSessionScope\(\)/);
+  assert.match(orderTask, /assertCurrentAuthenticatedSessionScope\(authenticationScope\)/);
+  assert.match(orderTask, /recoveredOrigin,\s+authenticationScope/);
+
+  const orderSubmitStart = source.indexOf("async function submitBlockOrderTask", orderTaskEnd);
+  const orderSubmitEnd = source.indexOf("async function requireBlockOrderRecoveryDurability", orderSubmitStart);
+  const orderSubmit = source.slice(orderSubmitStart, orderSubmitEnd);
+  assert.ok(
+    (orderSubmit.match(/assertCurrentAuthenticatedSessionScope\(task\.authenticationScope\)/g) ?? []).length >= 2,
+    "reorder requests must fence both dispatch and response application"
+  );
+
+  const dragStart = source.indexOf("async function finishBlockDrag");
+  const dragEnd = source.indexOf("function setRowType", dragStart);
+  const drag = source.slice(dragStart, dragEnd);
+  const dragCapture = drag.indexOf("const authenticationScope = captureAuthenticatedSessionScope()");
+  const editLock = drag.indexOf("return withPageEditLock", dragCapture);
+  const postLockFence = drag.indexOf("if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;", editLock);
+  assert.ok(
+    dragCapture >= 0 && editLock > dragCapture && postLockFence > editLock,
+    "drag reorders must bind auth before queued-save draining and revalidate after that wait"
+  );
+});
+
+test("authenticated API responses revalidate auth scope after streaming the response body", async () => {
+  const source = await read("public/app.js");
+  const apiStart = source.indexOf("async function api(path, options = {})");
+  const apiEnd = source.indexOf("function enqueueAccountProfilePatch", apiStart);
+  const apiSource = source.slice(apiStart, apiEnd);
+
+  const responseText = apiSource.indexOf("const text = await response.text()");
+  const postBodyFence = apiSource.indexOf(
+    "if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope))",
+    responseText
+  );
+  const parseStart = apiSource.indexOf("data = text ? JSON.parse(text) : null", postBodyFence);
+  assert.ok(
+    responseText >= 0 && postBodyFence > responseText && parseStart > postBodyFence,
+    "a credential rotation while the response body is streaming must be rejected before stale data is parsed/applied"
+  );
+});
+
+test("standalone note-save auth-rotation reproduction rejects delayed stale writes", () => {
+  const result = JSON.parse(execFileSync(
+    process.execPath,
+    [fileURLToPath(new URL("../scripts/reproduce-note-save-auth-rotation-race.mjs", import.meta.url))],
+    { encoding: "utf8" }
+  ));
+
+  assert.equal(result.vulnerable.delayedTitleCrossesRotation, true);
+  assert.equal(result.vulnerable.queuedBlockSaveCrossesRotation, true);
+  assert.equal(result.vulnerable.reorderRetryCrossesRotation, true);
+  assert.equal(result.fixed.delayedTitleCrossesRotation, false);
+  assert.equal(result.fixed.queuedBlockSaveCrossesRotation, false);
+  assert.equal(result.fixed.reorderRetryCrossesRotation, false);
+  assert.equal(result.fixed.rejectedStaleWrites, 3);
+});
