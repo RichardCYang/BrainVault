@@ -449,6 +449,7 @@ collaborationRouter.post(
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       const query = getValidatedQuery<{
         kind: RecoveryCandidateKind;
@@ -464,14 +465,17 @@ collaborationRouter.post(
         : query.kind === "YJS_LEGACY_UPDATE"
           ? legacyYjsRecoveryLineageKey()
           : directRecoveryLineageKey();
-      const stored = await storeRecoveryCandidate({
-        pageId,
-        principalId: user.id,
-        lineageKey,
-        kind: query.kind,
-        sourceId: query.sourceId,
-        generation: query.generation,
-        payload: req.body
+      const stored = await transaction(async (client) => {
+        await assertCurrentAuthSessionBoundary(user.id, authScope, client);
+        return storeRecoveryCandidate({
+          pageId,
+          principalId: user.id,
+          lineageKey,
+          kind: query.kind,
+          sourceId: query.sourceId,
+          generation: query.generation,
+          payload: req.body
+        }, client);
       });
       res.setHeader("Cache-Control", "private, no-store");
       res.status(stored.created ? 201 : 200).json({ candidate: stored });
@@ -531,7 +535,12 @@ collaborationRouter.delete(
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
-      await deleteRecoveryCandidate(String(req.params.candidateId), user.id);
+      const authScope = requireRequestAuthScope(req);
+      const candidateId = String(req.params.candidateId);
+      await transaction(async (client) => {
+        await assertCurrentAuthSessionBoundary(user.id, authScope, client);
+        await deleteRecoveryCandidate(candidateId, user.id, client);
+      });
       res.status(204).send();
     } catch (error) {
       next(error);

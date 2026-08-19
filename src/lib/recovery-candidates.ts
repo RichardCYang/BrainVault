@@ -166,13 +166,13 @@ export async function storeRecoveryCandidate(input: {
   sourceId: string;
   generation: string;
   payload: Buffer;
-}) {
+}, client?: DbClient) {
   if (!input.payload.length || input.payload.length > maxRecoveryCandidateBytes) {
     throw new ApiError(413, "RECOVERY_CANDIDATE_TOO_LARGE", "The recovery candidate exceeds the supported size");
   }
   const payloadSha256 = createHash("sha256").update(input.payload).digest("hex");
 
-  return transaction(async (client) => {
+  const persist = async (client: DbClient) => {
     // Serialize quota accounting for this principal without coupling recovery
     // records to page foreign keys that disappear during hard deletion.
     const principal = await client.queryOne<{ id: string }>(
@@ -252,7 +252,9 @@ export async function storeRecoveryCandidate(input: {
       ]
     );
     return { id, created: true, payloadSha256 };
-  });
+  };
+
+  return client ? persist(client) : transaction(persist);
 }
 
 export async function listRecoveryCandidates(userId: string) {
@@ -313,8 +315,12 @@ export async function getRecoveryCandidate(candidateId: string, userId: string) 
   return row;
 }
 
-export async function deleteRecoveryCandidate(candidateId: string, principalId: string) {
-  const result = await db.execute<{ affectedRows: number }>(
+export async function deleteRecoveryCandidate(
+  candidateId: string,
+  principalId: string,
+  client: DbClient = db
+) {
+  const result = await client.execute<{ affectedRows: number }>(
     `DELETE FROM page_recovery_candidates
      WHERE id = ? AND principal_id = ?`,
     [candidateId, principalId]
