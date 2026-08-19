@@ -47,7 +47,11 @@ import {
 } from "../lib/totp-ip-block.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { clearAuthSessionCookie, setAuthSessionCookie } from "../lib/session-cookie.js";
-import { listActiveAuthSessions, revokeAuthSession } from "../lib/auth-sessions.js";
+import {
+  assertCurrentAuthSessionBoundary,
+  listActiveAuthSessions,
+  revokeAuthSession
+} from "../lib/auth-sessions.js";
 import {
   maxAvatarBytes,
   normalizeAvatarDataUrl,
@@ -58,6 +62,7 @@ import {
   requireAuth,
   requireAuthAllowTotpIpBlock,
   requireJsonRequestBody,
+  requireRequestAuthScope,
   requireSameOriginBrowserRequest
 } from "../middleware/auth.js";
 import {
@@ -417,6 +422,7 @@ authRouter.patch(
   async (req, res, next) => {
     try {
       const currentUser = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
       const { pageId, collapsed } = req.body as z.infer<typeof navigationPreferenceSchema>;
       await transaction(async (client) => {
         // Backup/restore uses the same per-user row lock. Serializing preference
@@ -427,6 +433,7 @@ authRouter.patch(
           [currentUser.id]
         );
         if (!lockedUser) throw new ApiError(404, "NOT_FOUND", "User not found");
+        await assertCurrentAuthSessionBoundary(currentUser.id, authScope, client);
 
         const page = await client.queryOne<{ id: string }>(
           `SELECT p.id
@@ -470,6 +477,7 @@ authRouter.patch(
   async (req, res, next) => {
     try {
       const currentUser = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
       const { pageIds } = req.body as z.infer<typeof navigationOrderSchema>;
       await transaction(async (client) => {
         // Serialize navigation mutations with backup/restore snapshots. The order
@@ -479,6 +487,7 @@ authRouter.patch(
           [currentUser.id]
         );
         if (!lockedUser) throw new ApiError(404, "NOT_FOUND", "User not found");
+        await assertCurrentAuthSessionBoundary(currentUser.id, authScope, client);
 
         const accessibleRows = await client.query<{ id: string }>(
           `SELECT p.id
@@ -920,6 +929,7 @@ authRouter.put(
 authRouter.patch("/profile", requireAuth, validate({ body: profileSchema }), async (req, res, next) => {
   try {
     const currentUser = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
     const body = req.body as z.infer<typeof profileSchema>;
     const fields: string[] = [];
     const values: DbValue[] = [];
@@ -945,9 +955,13 @@ authRouter.patch("/profile", requireAuth, validate({ body: profileSchema }), asy
       values.push(body.theme);
     }
 
-    await db.execute(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`, [...values, currentUser.id]);
-    const user = await db.queryOne<UserRow>("SELECT * FROM users WHERE id = ?", [currentUser.id]);
-    if (!user) throw new ApiError(404, "NOT_FOUND", "User not found");
+    const user = await transaction(async (client) => {
+      await assertCurrentAuthSessionBoundary(currentUser.id, authScope, client);
+      await client.execute(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`, [...values, currentUser.id]);
+      const updatedUser = await client.queryOne<UserRow>("SELECT * FROM users WHERE id = ?", [currentUser.id]);
+      if (!updatedUser) throw new ApiError(404, "NOT_FOUND", "User not found");
+      return updatedUser;
+    });
 
     res.json({ user: toPublicUser(user) });
   } catch (error) {

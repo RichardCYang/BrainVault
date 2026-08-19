@@ -45,6 +45,8 @@ function loadBlockDragFinishHarness({ writable }) {
     document: { body: { classList: { remove() {} } } },
     clearBlockDragVisuals() {},
     requireWritablePage() { return writable; },
+    captureAuthenticatedSessionScope() { return Object.freeze({ generation: 1, targetKey: "user-1" }); },
+    isCurrentAuthenticatedSessionScope(scope) { return scope?.generation === 1 && scope?.targetKey === "user-1"; },
     async withPageEditLock(callback) {
       lockCalls += 1;
       return callback();
