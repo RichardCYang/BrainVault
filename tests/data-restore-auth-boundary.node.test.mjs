@@ -12,6 +12,7 @@ test("workspace restore carries and revalidates its initiating authentication sc
   const routes = await read("src/routes/data.routes.ts");
   const snapshotRoutes = await read("src/routes/snapshot.routes.ts");
   const snapshotLib = await read("src/lib/workspace-snapshots.ts");
+  const authMiddleware = await read("src/middleware/auth.ts");
   const transfer = await read("src/lib/data-transfer.ts");
 
   assert.match(routes, /const authVersion = Number\(req\.auth\?\.authVersion\)/);
@@ -21,12 +22,16 @@ test("workspace restore carries and revalidates its initiating authentication sc
     /importUserDataBackup\(user\.id, uploadPath, \{\s*authVersion,\s*sessionId\s*\}\)/
   );
 
-  assert.match(snapshotRoutes, /const authVersion = Number\(req\.auth\?\.authVersion\)/);
-  assert.match(snapshotRoutes, /const sessionId = req\.auth\?\.sessionId/);
+  assert.match(snapshotRoutes, /import \{ requireAuth, requireRequestAuthScope \} from "\.\.\/middleware\/auth\.js"/);
+  assert.match(snapshotRoutes, /const authScope = requireRequestAuthScope\(req\)/);
   assert.match(
     snapshotRoutes,
-    /restoreWorkspaceSnapshot\(user\.id, req\.params\.snapshotId, \{\s*authVersion,\s*sessionId\s*\}\)/
+    /restoreWorkspaceSnapshot\(user\.id, req\.params\.snapshotId, authScope\)/
   );
+  assert.match(authMiddleware, /export function requireRequestAuthScope\(req: Request\)/);
+  assert.match(authMiddleware, /const authVersion = Number\(req\.auth\?\.authVersion\)/);
+  assert.match(authMiddleware, /const sessionId = req\.auth\?\.sessionId/);
+  assert.match(authMiddleware, /throw new ApiError\(401, "UNAUTHENTICATED", "Authentication context is missing"\)/);
   assert.match(
     snapshotLib,
     /return importUserDataBackup\(userId, filePath, authScope\)/

@@ -7,8 +7,7 @@ import {
   restoreWorkspaceSnapshot
 } from "../lib/workspace-snapshots.js";
 import { toPublicUser } from "../lib/mappers.js";
-import { ApiError } from "../lib/http.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import {
   beginDataImportProcessing,
   dataExportRateLimit,
@@ -30,7 +29,8 @@ snapshotRouter.get("/", async (req, res) => {
 
 snapshotRouter.post("/", dataExportRateLimit, async (req, res) => {
   const user = requireUser(req.user);
-  const snapshot = await createWorkspaceSnapshot(user.id);
+  const authScope = requireRequestAuthScope(req);
+  const snapshot = await createWorkspaceSnapshot(user.id, authScope);
   res.status(201).json({ snapshot });
 });
 
@@ -49,15 +49,8 @@ snapshotRouter.post<SnapshotRouteParams>(
     try {
       releaseDataImport = beginDataImportProcessing(res);
       const user = requireUser(req.user);
-      const authVersion = Number(req.auth?.authVersion);
-      const sessionId = req.auth?.sessionId;
-      if (!Number.isSafeInteger(authVersion) || authVersion < 1 || !sessionId) {
-        throw new ApiError(401, "UNAUTHENTICATED", "Authentication context is missing");
-      }
-      const result = await restoreWorkspaceSnapshot(user.id, req.params.snapshotId, {
-        authVersion,
-        sessionId
-      });
+      const authScope = requireRequestAuthScope(req);
+      const result = await restoreWorkspaceSnapshot(user.id, req.params.snapshotId, authScope);
       res.json({ user: toPublicUser(result.user), counts: result.counts, sharing: result.sharing });
     } finally {
       releaseDataImport?.();
@@ -67,6 +60,7 @@ snapshotRouter.post<SnapshotRouteParams>(
 
 snapshotRouter.delete<SnapshotRouteParams>("/:snapshotId", async (req, res) => {
   const user = requireUser(req.user);
-  await deleteWorkspaceSnapshot(user.id, req.params.snapshotId);
+  const authScope = requireRequestAuthScope(req);
+  await deleteWorkspaceSnapshot(user.id, req.params.snapshotId, authScope);
   res.status(204).end();
 });

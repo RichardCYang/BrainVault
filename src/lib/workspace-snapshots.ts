@@ -12,6 +12,7 @@ import {
   writeUserDataBackup,
   type DataRestoreAuthScope
 } from "./data-transfer.js";
+import { assertCurrentAuthSessionBoundary, type AuthSessionBoundaryScope } from "./auth-sessions.js";
 import { db, transaction, type DbClient } from "./db.js";
 import { ApiError } from "./http.js";
 import { createId } from "./id.js";
@@ -199,14 +200,19 @@ export async function listWorkspaceSnapshots(userId: string) {
   }));
 }
 
-export async function createWorkspaceSnapshot(userId: string) {
+export async function createWorkspaceSnapshot(
+  userId: string,
+  authScope: AuthSessionBoundaryScope
+) {
   const snapshotId = createId("snapshot");
   const { finalPath, inspection, counts } = await writeSnapshotArchive(userId, snapshotId);
 
   try {
     await transaction(async (client) => {
-      const user = await client.queryOne<{ id: string }>("SELECT id FROM users WHERE id = ? FOR UPDATE", [userId]);
-      if (!user) throw new ApiError(404, "NOT_FOUND", "User not found");
+      // Snapshot creation can spend substantial time streaming a workspace archive.
+      // Revalidate the exact credential/device session at the durable insertion
+      // boundary so a request admitted before revocation cannot persist recovery data.
+      await assertCurrentAuthSessionBoundary(userId, authScope, client);
       const usage = await client.queryOne<{ snapshot_count: number; snapshot_bytes: string | number | bigint }>(
         `SELECT COUNT(*) AS snapshot_count, COALESCE(SUM(archive_size), 0) AS snapshot_bytes
          FROM workspace_snapshots WHERE user_id = ?`,
@@ -268,7 +274,11 @@ export async function createWorkspaceSnapshot(userId: string) {
   return toSnapshotInfo(row);
 }
 
-export async function deleteWorkspaceSnapshot(userId: string, snapshotId: string) {
+export async function deleteWorkspaceSnapshot(
+  userId: string,
+  snapshotId: string,
+  authScope: AuthSessionBoundaryScope
+) {
   const id = safeSnapshotId(snapshotId);
   const directory = snapshotUserDirectory(userId);
   const finalPath = snapshotArchivePath(userId, id);
@@ -277,6 +287,10 @@ export async function deleteWorkspaceSnapshot(userId: string, snapshotId: string
 
   try {
     await transaction(async (client) => {
+      // Deleting a snapshot removes a recovery point from both SQL and the
+      // filesystem. Bind that destructive transition to the session that
+      // initiated it before locking or renaming the snapshot.
+      await assertCurrentAuthSessionBoundary(userId, authScope, client);
       await getOwnedSnapshotRow(userId, id, client, true);
       try {
         const fileInfo = await lstat(finalPath);
