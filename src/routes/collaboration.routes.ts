@@ -1,7 +1,8 @@
 import { Router, raw } from "express";
 import { z } from "zod";
 import { db, transaction, type DbClient } from "../lib/db.js";
-import { requireAuth } from "../middleware/auth.js";
+import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
+import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import {
   collaborationShareAccountRateLimit,
   collaborationShareIpRateLimit
@@ -73,6 +74,15 @@ import {
 
 export const collaborationRouter = Router();
 collaborationRouter.use(requireAuth);
+
+async function lockCollaborationMutationUsers(client: DbClient, userIds: string[]) {
+  const uniqueIds = [...new Set(userIds)].sort();
+  const rows = await client.query<{ id: string }>(
+    `SELECT id FROM users WHERE id IN (${uniqueIds.map(() => "?").join(", ")}) ORDER BY id ASC FOR UPDATE`,
+    uniqueIds
+  );
+  if (rows.length !== uniqueIds.length) throw notFound("User");
+}
 
 const shareUserSchema = z.object({
   username: usernameSchema
@@ -237,11 +247,13 @@ collaborationRouter.post(
   async (req, res, next) => {
     try {
       const owner = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       const username = String(req.body.username);
       let firstShare = false;
 
       const sharedUser = await transaction(async (client) => {
+        await assertCurrentAuthSessionBoundary(owner.id, authScope, client);
         const page = await client.queryOne<PageRow>(
           "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
           [pageId, owner.id]
@@ -320,9 +332,11 @@ collaborationRouter.delete(
   async (req, res, next) => {
     try {
       const owner = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       const sharedUserId = String(req.params.userId);
       const result = await transaction(async (client) => {
+        await assertCurrentAuthSessionBoundary(owner.id, authScope, client);
         const page = await client.queryOne<PageRow>(
           "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
           [pageId, owner.id]
@@ -531,6 +545,7 @@ collaborationRouter.post(
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       if (!collaborationSessionSchema.safeParse(req.body).success) {
         throw new ApiError(
@@ -539,7 +554,16 @@ collaborationRouter.post(
           "Refresh BrainVault before reconnecting to this collaboration document"
         );
       }
+      const authSessionToken = readAuthSessionCookie(req);
+      if (!authSessionToken) {
+        throw new ApiError(
+          401,
+          "COLLABORATION_COOKIE_SESSION_REQUIRED",
+          "Live collaboration requires the authenticated browser session cookie"
+        );
+      }
       const session = await transaction(async (client) => {
+        await assertCurrentAuthSessionBoundary(user.id, authScope, client);
         const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
         assertShareablePage(access.page);
         if (access.shareCount < 1) {
@@ -552,16 +576,7 @@ collaborationRouter.post(
         );
         return { access, collaborationState, documentBlocks };
       });
-      const authVersion = req.auth?.authVersion;
-      if (!authVersion) throw new ApiError(401, "UNAUTHENTICATED", "Authentication context is missing");
-      const authSessionToken = readAuthSessionCookie(req);
-      if (!authSessionToken) {
-        throw new ApiError(
-          401,
-          "COLLABORATION_COOKIE_SESSION_REQUIRED",
-          "Live collaboration requires the authenticated browser session cookie"
-        );
-      }
+      const authVersion = authScope.authVersion;
       const webRtcSignal = getClientWebRtcSignal(req);
       const ticket = signCollaborationToken({
         sub: user.id,
@@ -601,6 +616,7 @@ collaborationRouter.put(
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       const body = req.body as z.infer<typeof materializeSchema>;
       const deletedFiles: string[] = [];
@@ -612,6 +628,11 @@ collaborationRouter.put(
       const attachmentOwnerId = preflightAccess.page.owner_id;
 
       const result = await transaction(async (client) => {
+        // Shared editors can differ from the attachment owner. Lock every
+        // participating user row deterministically before the auth/session
+        // boundary and page row to preserve the global user-before-page order.
+        await lockCollaborationMutationUsers(client, [user.id, attachmentOwnerId]);
+        await assertCurrentAuthSessionBoundary(user.id, authScope, client);
         const attachmentGeneration = await lockUserAttachmentGeneration(client, attachmentOwnerId);
         if (attachmentGeneration === undefined) throw notFound("Page");
 

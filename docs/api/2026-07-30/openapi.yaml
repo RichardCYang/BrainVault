@@ -555,7 +555,7 @@ components:
           minimum: 1
     BlockDeleteInput:
       type: object
-      required: [expectedVersions]
+      required: [expectedVersions, mutationId]
       properties:
         expectedVersions:
           type: array
@@ -2076,7 +2076,7 @@ paths:
           description: Block changed in another session, page is archived, or direct mutation requires collaboration
     delete:
       summary: Delete a block, optionally preserving its nested children
-      description: Owner only for unshared, non-archived pages. Requires an exact version snapshot of the block subtree. With preserveChildren, the page content version, child promotion, sibling renumbering, target deletion, and version history are handled in one transaction. An optional mutationId makes an exact retry after an ambiguous response acknowledge the original committed deletion; a different request reusing that ID is rejected. Shared document deletion is represented in one Yjs mutation and materialized atomically.
+      description: Owner only for unshared, non-archived pages. Requires an exact version snapshot of the block subtree and a mutationId so every destructive request is covered by a durable replay receipt. With preserveChildren, the page content version, child promotion, sibling renumbering, target deletion, and version history are handled in one transaction. An exact retry after an ambiguous response acknowledges the original committed deletion; a different request reusing that ID is rejected. Shared document deletion is represented in one Yjs mutation and materialized atomically.
       parameters:
         - in: path
           name: blockId
@@ -2092,6 +2092,8 @@ paths:
       responses:
         '204':
           description: Deleted, or an exact mutation replay was acknowledged without repeating the deletion
+        '400':
+          description: Missing mutation ID or exact block-subtree version snapshot
         '409':
           description: Block subtree changed after the snapshot, page is archived, direct mutation requires collaboration, or the mutation ID was reused for another request
   /api/pages/{pageId}/blocks/reorder:

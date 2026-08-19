@@ -41,7 +41,7 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `POST` | `/api/bookmarks/preview` | Fetch sanitized OpenGraph metadata for a public URL under a dedicated authenticated-user rate limit |
 | `POST` | `/api/pages/:pageId/attachments` | Upload a screened file and create an attachment block; access, page state, request size, rate, and concurrency admission are checked before multipart bytes reach temporary storage; exact ambiguous retries reuse `mutationId` |
 | `PATCH` | `/api/blocks/:blockId` | Update a block |
-| `DELETE` | `/api/blocks/:blockId` | Delete a block and its descendants, including stored attachment files |
+| `DELETE` | `/api/blocks/:blockId` | Delete a block and its descendants using an exact version snapshot and required mutation ID |
 | `GET` | `/api/blocks/:blockId/attachment` | Download an attachment after current page-access verification, forced disposition, and active-content response hardening |
 | `GET` | `/api/data/export` | Stream a complete ZIP backup under a per-user rate limit, including page sharing grants bound to collaborator account ID and username |
 | `POST` | `/api/data/import` | Validate and restore a BrainVault backup ZIP; ID-bound grants are recreated; legacy grants are preserved only through verified current identities |
@@ -73,7 +73,7 @@ Partial block create/update/attachment requests may also send `basePageContentVe
 
 ## Block-deletion response-loss integrity
 
-`DELETE /api/blocks/:blockId` accepts an optional `mutationId` (1–64 ASCII letters, digits, `_`, or `-`) alongside the required exact version snapshot. The server stores `(actor_id, mutation_id)`, the normalized request hash, committed page content version, and deleted attachment IDs in the same transaction as the block deletion and version-history entry. The receipt deliberately has no foreign key to the deleted block, so it survives the operation it proves.
+`DELETE /api/blocks/:blockId` requires a `mutationId` (1–64 ASCII letters, digits, `_`, or `-`) alongside the required exact version snapshot. The server stores `(actor_id, mutation_id)`, the normalized request hash, committed page content version, and deleted attachment IDs in the same transaction as the block deletion and version-history entry. The receipt deliberately has no foreign key to the deleted block, so it survives the operation it proves.
 
 If the transaction commits but the HTTP response is lost, an exact retry is acknowledged with `204` without looking up or deleting the already-removed block again. Reusing the ID with a different block or request body is rejected with `409 MUTATION_ID_REUSED`, and malformed or incomplete receipts fail closed rather than repeating a destructive operation. Attachment-file cleanup is replay-safe and runs again after an acknowledged retry, which heals a process interruption between the database commit and filesystem cleanup. The browser keeps the original version snapshot and mutation ID, retries an ambiguous result once, and scopes pending work to the current authentication generation, account, page, block, and preserve/cascade mode.
 

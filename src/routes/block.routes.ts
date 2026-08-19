@@ -1153,15 +1153,21 @@ blockRouter.delete(
     const authScope = requireRequestAuthScope(req);
     const blockId = String(req.params.blockId);
     const body = req.body as z.infer<typeof deleteBlockSchema>;
-    const mutationHash = body.mutationId
-      ? createMutationRequestHash({
-          kind: "BLOCK_DELETE",
-          blockId,
-          expectedVersions: body.expectedVersions ?? [],
-          preserveChildren: body.preserveChildren,
-          expectedPageContentVersion: body.expectedPageContentVersion ?? null
-        })
-      : undefined;
+    if (!body.mutationId) {
+      throw new ApiError(
+        400,
+        "MUTATION_ID_REQUIRED",
+        "A mutation id is required for block deletion."
+      );
+    }
+    const mutationId = body.mutationId;
+    const mutationHash = createMutationRequestHash({
+      kind: "BLOCK_DELETE",
+      blockId,
+      expectedVersions: body.expectedVersions ?? [],
+      preserveChildren: body.preserveChildren,
+      expectedPageContentVersion: body.expectedPageContentVersion ?? null
+    });
     if (!body.expectedVersions?.length) {
       throw new ApiError(
         400,
@@ -1179,64 +1185,61 @@ blockRouter.delete(
       }
       await assertCurrentAuthSessionBoundary(user.id, authScope, client);
 
-      if (body.mutationId && mutationHash) {
-        const receipt = await client.queryOne<BlockDeleteMutationReceipt>(
-          `SELECT page_id, block_id, request_hash, page_content_version, attachment_ids
-           FROM block_delete_mutations
-           WHERE actor_id = ? AND mutation_id = ?
-           FOR UPDATE`,
-          [user.id, body.mutationId]
-        );
-        if (receipt) {
-          const assessment = assessBlockDeleteMutationReceipt(receipt, {
-            blockId,
-            requestHash: mutationHash
-          });
-          if (assessment.kind === "collision") {
-            throw new ApiError(
-              409,
-              "MUTATION_ID_REUSED",
-              "This mutation id was already used for a different block deletion request. No additional block was deleted."
-            );
-          }
-          if (assessment.kind === "incomplete") {
-            throw new ApiError(
-              500,
-              "BLOCK_DELETE_RECEIPT_INCOMPLETE",
-              "The block deletion receipt is incomplete. The deletion was not repeated."
-            );
-          }
-          const replayAccess = await getPageAccess(assessment.pageId, user.id, client, { lockPage: true });
-          const currentPageContentVersion = Number(replayAccess.page.content_version ?? 1);
-          if (currentPageContentVersion !== assessment.pageContentVersion) {
-            throw new ApiError(
-              409,
-              "BLOCK_DELETE_REPLAY_SUPERSEDED",
-              "This deletion belongs to an older block generation. The page has changed since it completed, so the old deletion was not replayed. Refresh before deleting again."
-            );
-          }
-          const recreatedBlock = await client.queryOne<{ id: string }>(
-            "SELECT id FROM blocks WHERE id = ? AND page_id = ? FOR UPDATE",
-            [assessment.blockId, assessment.pageId]
+      const receipt = await client.queryOne<BlockDeleteMutationReceipt>(
+        `SELECT page_id, block_id, request_hash, page_content_version, attachment_ids
+         FROM block_delete_mutations
+         WHERE actor_id = ? AND mutation_id = ?
+         FOR UPDATE`,
+        [user.id, mutationId]
+      );
+      if (receipt) {
+        const assessment = assessBlockDeleteMutationReceipt(receipt, {
+          blockId,
+          requestHash: mutationHash
+        });
+        if (assessment.kind === "collision") {
+          throw new ApiError(
+            409,
+            "MUTATION_ID_REUSED",
+            "This mutation id was already used for a different block deletion request. No additional block was deleted."
           );
-          if (recreatedBlock) {
-            throw new ApiError(
-              409,
-              "BLOCK_DELETE_REPLAY_SUPERSEDED",
-              "This deletion belongs to an older block generation. A block with the same id now exists and was not deleted. Refresh before deleting again."
-            );
-          }
-          return {
-            pageId: assessment.pageId,
-            ownerId: replayAccess.page.owner_id,
-            attachmentIds: assessment.attachmentIds,
-            attachmentGeneration,
-            pageContentVersion: assessment.pageContentVersion,
-            replayed: true
-          };
         }
+        if (assessment.kind === "incomplete") {
+          throw new ApiError(
+            500,
+            "BLOCK_DELETE_RECEIPT_INCOMPLETE",
+            "The block deletion receipt is incomplete. The deletion was not repeated."
+          );
+        }
+        const replayAccess = await getPageAccess(assessment.pageId, user.id, client, { lockPage: true });
+        const currentPageContentVersion = Number(replayAccess.page.content_version ?? 1);
+        if (currentPageContentVersion !== assessment.pageContentVersion) {
+          throw new ApiError(
+            409,
+            "BLOCK_DELETE_REPLAY_SUPERSEDED",
+            "This deletion belongs to an older block generation. The page has changed since it completed, so the old deletion was not replayed. Refresh before deleting again."
+          );
+        }
+        const recreatedBlock = await client.queryOne<{ id: string }>(
+          "SELECT id FROM blocks WHERE id = ? AND page_id = ? FOR UPDATE",
+          [assessment.blockId, assessment.pageId]
+        );
+        if (recreatedBlock) {
+          throw new ApiError(
+            409,
+            "BLOCK_DELETE_REPLAY_SUPERSEDED",
+            "This deletion belongs to an older block generation. A block with the same id now exists and was not deleted. Refresh before deleting again."
+          );
+        }
+        return {
+          pageId: assessment.pageId,
+          ownerId: replayAccess.page.owner_id,
+          attachmentIds: assessment.attachmentIds,
+          attachmentGeneration,
+          pageContentVersion: assessment.pageContentVersion,
+          replayed: true
+        };
       }
-
       const { block } = await assertAccessibleBlock(blockId, user.id, client);
       const lockedAccess = await getPageAccess(block.page_id, user.id, client, { lockPage: true });
       assertDirectBlockMutationAllowed(lockedAccess);
@@ -1280,22 +1283,20 @@ blockRouter.delete(
         source: "BLOCK_DELETE",
         changes: diffPageVersionBlocks(versionRows, afterRows)
       });
-      if (body.mutationId && mutationHash) {
-        await client.execute(
-          `INSERT INTO block_delete_mutations
-             (actor_id, mutation_id, page_id, block_id, request_hash, page_content_version, attachment_ids)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [
-            user.id,
-            body.mutationId,
-            block.page_id,
-            blockId,
-            mutationHash,
-            pageContentVersion,
-            JSON.stringify(attachmentIds)
-          ]
-        );
-      }
+      await client.execute(
+        `INSERT INTO block_delete_mutations
+           (actor_id, mutation_id, page_id, block_id, request_hash, page_content_version, attachment_ids)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          user.id,
+          mutationId,
+          block.page_id,
+          blockId,
+          mutationHash,
+          pageContentVersion,
+          JSON.stringify(attachmentIds)
+        ]
+      );
       return {
         pageId: block.page_id,
         ownerId: lockedAccess.page.owner_id,

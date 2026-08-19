@@ -81,6 +81,11 @@ test("server records and replays block deletion atomically before touching a mis
   );
 
   assert.match(route, /const deleteBlockSchema[\s\S]*mutationId: mutationIdSchema\.optional\(\)/);
+  assert.match(deleteRoute, /if \(!body\.mutationId\)[\s\S]*"MUTATION_ID_REQUIRED"/);
+  assert.ok(
+    deleteRoute.indexOf("MUTATION_ID_REQUIRED") < deleteRoute.indexOf("transaction(async (client)"),
+    "destructive deletion must reject missing mutation ids before opening the transaction"
+  );
   assert.match(deleteRoute, /kind: "BLOCK_DELETE"/);
   assert.match(deleteRoute, /FROM block_delete_mutations/);
   assert.match(deleteRoute, /assessBlockDeleteMutationReceipt/);
@@ -158,6 +163,32 @@ test("browser retries ambiguous deletes with one auth-scoped mutation task", () 
   assert.ok(
     (client.match(/pendingBlockDeleteTasks\.clear\(\)/g) ?? []).length >= 2,
     "delete retry tasks must be cleared on logout and credential rotation"
+  );
+});
+
+test("a stale unreceipted retry cannot delete a restored block generation", () => {
+  function reproduce({ mutationIdRequired }) {
+    let restoredBlockPresent = true;
+    const oldRequestHasMutationId = false;
+    const restoredBlockMatchesOldVersionSnapshot = true;
+
+    if (mutationIdRequired && !oldRequestHasMutationId) {
+      return { status: 400, restoredBlockPresent };
+    }
+    if (restoredBlockMatchesOldVersionSnapshot) {
+      restoredBlockPresent = false;
+      return { status: 204, restoredBlockPresent };
+    }
+    return { status: 409, restoredBlockPresent };
+  }
+
+  assert.deepEqual(
+    reproduce({ mutationIdRequired: false }),
+    { status: 204, restoredBlockPresent: false }
+  );
+  assert.deepEqual(
+    reproduce({ mutationIdRequired: true }),
+    { status: 400, restoredBlockPresent: true }
   );
 });
 
