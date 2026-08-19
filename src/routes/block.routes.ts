@@ -553,7 +553,8 @@ async function promoteBlockChildrenBeforeDelete(
     }
     const result = await client.execute<{ affectedRows: number }>(
       `UPDATE blocks
-       SET parent_block_id = ?, sort_order = ?, edit_version = edit_version + 1
+       SET parent_block_id = ?, sort_order = ?, last_mutation_id = NULL,
+           last_mutation_hash = NULL, edit_version = edit_version + 1
        WHERE id = ? AND edit_version = ?`,
       [update.parentBlockId, update.sortOrder, row.id, Number(row.edit_version ?? 1)]
     );
@@ -1393,13 +1394,15 @@ blockRouter.post(
           const result = item.parentBlockId !== undefined
             ? await client.execute<{ affectedRows: number }>(
                 `UPDATE blocks
-                 SET sort_order = ?, parent_block_id = ?, edit_version = edit_version + 1
+                 SET sort_order = ?, parent_block_id = ?, last_mutation_id = NULL,
+                     last_mutation_hash = NULL, edit_version = edit_version + 1
                  WHERE id = ? AND edit_version = ?`,
                 [item.sortOrder, item.parentBlockId, item.id, item.expectedVersion]
               )
             : await client.execute<{ affectedRows: number }>(
                 `UPDATE blocks
-                 SET sort_order = ?, edit_version = edit_version + 1
+                 SET sort_order = ?, last_mutation_id = NULL, last_mutation_hash = NULL,
+                     edit_version = edit_version + 1
                  WHERE id = ? AND edit_version = ?`,
                 [item.sortOrder, item.id, item.expectedVersion]
               );

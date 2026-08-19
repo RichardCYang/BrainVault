@@ -836,7 +836,7 @@ collaborationRouter.put(
           if (deletedExistingIds.has(row.id)) continue;
           if (!row.parent_block_id || !deletedExistingIds.has(row.parent_block_id)) continue;
           await client.execute(
-            "UPDATE blocks SET parent_block_id = NULL, edit_version = edit_version + 1 WHERE id = ? AND page_id = ?",
+            "UPDATE blocks SET parent_block_id = NULL, last_mutation_id = NULL, last_mutation_hash = NULL, edit_version = edit_version + 1 WHERE id = ? AND page_id = ?",
             [row.id, pageId]
           );
           row.parent_block_id = null;
@@ -860,7 +860,8 @@ collaborationRouter.put(
           if (existing?.type === "ATTACHMENT") {
             await client.execute(
               `UPDATE blocks
-               SET parent_block_id = ?, sort_order = ?, edit_version = edit_version + 1
+               SET parent_block_id = ?, sort_order = ?, last_mutation_id = NULL,
+                   last_mutation_hash = NULL, edit_version = edit_version + 1
                WHERE id = ? AND page_id = ?`,
               [block.parentBlockId, block.sortOrder, block.id, pageId]
             );
@@ -874,7 +875,8 @@ collaborationRouter.put(
             await client.execute(
               `UPDATE blocks
                SET parent_block_id = ?, type = ?, markdown = ?, html_cache = ?, checked = ?, sort_order = ?,
-                   metadata = ?, edit_version = edit_version + 1
+                   metadata = ?, last_mutation_id = NULL, last_mutation_hash = NULL,
+                   edit_version = edit_version + 1
                WHERE id = ? AND page_id = ?`,
               [
                 block.parentBlockId,
@@ -910,7 +912,8 @@ collaborationRouter.put(
 
         await client.execute(
           `UPDATE pages
-           SET title = ?, edit_version = edit_version + 1, content_version = content_version + 1
+           SET title = ?, last_mutation_id = NULL, last_mutation_hash = NULL,
+               edit_version = edit_version + 1, content_version = content_version + 1
            WHERE id = ?`,
           [materialization.title, pageId]
         );
