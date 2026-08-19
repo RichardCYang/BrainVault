@@ -5297,13 +5297,18 @@ async function validateCustomIconFileContents(file) {
   return Boolean(detectCustomIconMimeType(bytes));
 }
 
-async function uploadCustomIconFile(file) {
+async function uploadCustomIconFile(
+  file,
+  { authenticationScope = captureAuthenticatedSessionScope() } = {}
+) {
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
   const formData = new FormData();
   formData.append("icon", file, file.name || "icon");
   const data = await api("/api/custom-icons", {
     method: "POST",
     body: formData
   });
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
   const value = data?.icon?.value;
   if (typeof value !== "string" || !value.startsWith(`${imageIconPrefix}/upload/icons/`) || !getCustomImageSource(value)) {
     throw new Error(t("errors.invalidResponse"));
@@ -5450,9 +5455,12 @@ function openPageEmojiPicker(page, trigger) {
   );
 }
 
-async function saveEmojiSelection(emoji, { operation = null } = {}) {
+async function saveEmojiSelection(
+  emoji,
+  { operation = null, authenticationScope = captureAuthenticatedSessionScope() } = {}
+) {
   const target = state.emojiPickerTarget;
-  if (!target || state.emojiSaving) return;
+  if (!target || state.emojiSaving || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   const targetKey = getIconPickerTargetKey(target);
   const activeOperation = operation ?? iconPickerOperationGuard.begin(targetKey);
   if (!iconPickerOperationGuard.isCurrent(activeOperation, targetKey)) return;
@@ -5467,11 +5475,11 @@ async function saveEmojiSelection(emoji, { operation = null } = {}) {
   try {
     if (target.type === "defaultCollection") {
       const accountTargetKey = getAccountAvatarTargetKey(state.user);
-      if (!accountTargetKey) return;
+      if (!accountTargetKey || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
       const result = await enqueueAccountProfilePatch(accountTargetKey, {
         defaultCollectionIcon: emoji
       });
-      if (!result.applied) return;
+      if (!result.applied || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
       const data = result.value;
       state.user = data.user;
       if (isEmojiIconValue(emoji)) rememberRecentEmoji(emoji);
@@ -5494,7 +5502,8 @@ async function saveEmojiSelection(emoji, { operation = null } = {}) {
       if (!setAccordionItemIcon(row, target.itemId, emoji, renderIconValue)) return;
       if (isEmojiIconValue(emoji)) rememberRecentEmoji(emoji);
       else if (getCustomImageSource(emoji)) rememberCustomIconSelection(emoji);
-      await saveBlockRow(row, { quiet: true });
+      await saveBlockRow(row, { quiet: true, authenticationScope });
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
       if (iconPickerOperationGuard.isCurrent(activeOperation, targetKey)) {
         closeEmojiPicker({ restoreFocus: false });
         row.querySelector(`[data-action="accordion-pick-icon"][data-accordion-item-id="${CSS.escape(target.itemId)}"]`)?.focus();
@@ -5505,6 +5514,7 @@ async function saveEmojiSelection(emoji, { operation = null } = {}) {
 
     if (state.selectedPage?.id === target.pageId && !isCollectionPage(state.selectedPage) && !requireWritablePage()) return;
     const savePageEmoji = async () => {
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       const currentPage = state.selectedPage?.id === target.pageId
         ? state.selectedPage
         : state.allPages.find((page) => page.id === target.pageId);
@@ -5513,6 +5523,7 @@ async function saveEmojiSelection(emoji, { operation = null } = {}) {
         method: "PATCH",
         body: { icon: emoji, expectedVersion: currentPage?.version }
       });
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       if (state.selectedPage?.id === data.page.id) state.selectedPage = data.page;
       applyPageSummaryUpdate(data.page.id, {
         icon: data.page.icon,
@@ -14266,8 +14277,13 @@ function closePageCoverDialog() {
   if (elements.pageCoverDialog.open) elements.pageCoverDialog.close();
 }
 
-async function persistPageCover(updates, successKey, { operation = null } = {}) {
+async function persistPageCover(
+  updates,
+  successKey,
+  { operation = null, authenticationScope = captureAuthenticatedSessionScope() } = {}
+) {
   if (!requireWritablePage() || !isPageOwner() || pageCoverSaving) return null;
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
   const pageId = state.selectedPage.id;
   const activeOperation = operation ?? pageCoverOperationGuard.begin(pageId);
   if (!pageCoverOperationGuard.isCurrent(activeOperation, pageId)) return null;
@@ -14279,19 +14295,22 @@ async function persistPageCover(updates, successKey, { operation = null } = {}) 
       if (
         state.selectedPage?.id !== pageId
         || !pageCoverOperationGuard.isCurrent(activeOperation, pageId)
+        || !isCurrentAuthenticatedSessionScope(authenticationScope)
       ) return;
       const expectedVersion = state.selectedPage.version;
       const task = { mutationId: createMutationId() };
-      const data = await submitWithFreshMutationIdOnReuse(task, () =>
-        api(`/api/pages/${pageId}`, {
+      const data = await submitWithFreshMutationIdOnReuse(task, () => {
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        return api(`/api/pages/${pageId}`, {
           method: "PATCH",
           body: {
             ...updates,
             expectedVersion,
             mutationId: task.mutationId
           }
-        })
-      );
+        });
+      });
+      if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
       updatedPage = data.page;
       applyPageSummaryUpdate(pageId, {
         coverUrl: data.page.coverUrl,
@@ -15713,6 +15732,8 @@ async function applyCustomIconUrl() {
 
 async function applyCustomIconFile(file) {
   if (state.emojiSaving || !file) return;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   if (!isSupportedCustomIconFile(file)) {
     setCustomIconMessage(t("emoji.customInvalidFile"), true);
     return;
@@ -15727,12 +15748,19 @@ async function applyCustomIconFile(file) {
   try {
     setCustomIconMessage(t("emoji.customReading"));
     if (!(await validateCustomIconFileContents(file))) throw new Error("INVALID_CUSTOM_ICON_FILE");
-    if (!iconPickerOperationGuard.isCurrent(operation, getIconPickerTargetKey(state.emojiPickerTarget))) return;
-    const value = await uploadCustomIconFile(file);
-    if (!iconPickerOperationGuard.isCurrent(operation, getIconPickerTargetKey(state.emojiPickerTarget))) return;
+    if (
+      !isCurrentAuthenticatedSessionScope(authenticationScope)
+      || !iconPickerOperationGuard.isCurrent(operation, getIconPickerTargetKey(state.emojiPickerTarget))
+    ) return;
+    const value = await uploadCustomIconFile(file, { authenticationScope });
+    if (
+      !value
+      || !isCurrentAuthenticatedSessionScope(authenticationScope)
+      || !iconPickerOperationGuard.isCurrent(operation, getIconPickerTargetKey(state.emojiPickerTarget))
+    ) return;
     renderCustomIconPreview(value);
     setCustomIconMessage();
-    await saveEmojiSelection(value, { operation });
+    await saveEmojiSelection(value, { operation, authenticationScope });
   } catch (error) {
     if (iconPickerOperationGuard.isCurrent(operation, getIconPickerTargetKey(state.emojiPickerTarget))) {
       setCustomIconMessage(error?.message === "INVALID_CUSTOM_ICON_FILE" ? t("emoji.customInvalidFile") : error?.message ?? t("emoji.customInvalidFile"), true);
@@ -16992,16 +17020,21 @@ elements.pageCoverCustomInput.addEventListener("change", async () => {
   elements.pageCoverCustomInput.value = "";
   const pageId = state.selectedPage?.id ?? null;
   if (!file || !pageId || pageCoverSaving) return;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   const operation = pageCoverOperationGuard.begin(pageId);
   try {
     setStatus(t("cover.preparing"));
     const coverUrl = await prepareCustomCoverDataUrl(file);
-    if (!pageCoverOperationGuard.isCurrent(operation, state.selectedPage?.id)) return;
+    if (
+      !isCurrentAuthenticatedSessionScope(authenticationScope)
+      || !pageCoverOperationGuard.isCurrent(operation, state.selectedPage?.id)
+    ) return;
     setStatus(t("cover.applying"));
     const updated = await persistPageCover(
       { coverUrl, coverPositionX: 50, coverPositionY: 50 },
       "cover.customApplied",
-      { operation }
+      { operation, authenticationScope }
     );
     if (updated) closePageCoverDialog();
   } catch (error) {

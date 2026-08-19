@@ -30,6 +30,10 @@ type CustomIconLibraryRemovalRow = {
   value_hash: string;
 };
 
+type CustomIconMutationOptions = {
+  beforeMutation?: (client: DbClient) => Promise<void>;
+};
+
 function normalizeCustomIconLibraryValue(value: string) {
   const normalized = normalizeIconValue(value);
   if (!normalized?.startsWith(imageIconPrefix)) {
@@ -253,13 +257,18 @@ export async function listCustomIconLibraryRemovalKeys(userId: string) {
   return rows.map((row) => row.value_hash);
 }
 
-export async function removeCustomIconFromLibrary(userId: string, value: string) {
+export async function removeCustomIconFromLibrary(
+  userId: string,
+  value: string,
+  { beforeMutation }: CustomIconMutationOptions = {}
+) {
   const safeUserId = safeStorageSegment(userId);
   const normalized = normalizeCustomIconLibraryValue(value);
   const removedKey = getCustomIconLibraryRemovalKey(normalized);
   const publicPath = normalized.slice(imageIconPrefix.length);
 
   await withUserAttachmentLock(safeUserId, async (client) => {
+    await beforeMutation?.(client);
     await client.execute(
       `INSERT INTO custom_icon_library_removals (user_id, value_hash, removed_at)
        VALUES (?, ?, CURRENT_TIMESTAMP(3))
@@ -281,13 +290,18 @@ export async function removeCustomIconFromLibrary(userId: string, value: string)
   return { value: normalized, removedKey };
 }
 
-export async function restoreCustomIconToLibrary(userId: string, value: string) {
+export async function restoreCustomIconToLibrary(
+  userId: string,
+  value: string,
+  { beforeMutation }: CustomIconMutationOptions = {}
+) {
   const safeUserId = safeStorageSegment(userId);
   const normalized = normalizeCustomIconLibraryValue(value);
   const removedKey = getCustomIconLibraryRemovalKey(normalized);
   const publicPath = normalized.slice(imageIconPrefix.length);
 
   await withUserAttachmentLock(safeUserId, async (client) => {
+    await beforeMutation?.(client);
     await client.execute(
       "DELETE FROM custom_icon_library_removals WHERE user_id = ? AND value_hash = ?",
       [safeUserId, removedKey]
@@ -318,7 +332,11 @@ export async function restoreCustomIconToLibrary(userId: string, value: string) 
   });
 }
 
-export async function rememberCustomIconPaths(userId: string, iconValues: readonly string[]) {
+export async function rememberCustomIconPaths(
+  userId: string,
+  iconValues: readonly string[],
+  { beforeMutation }: CustomIconMutationOptions = {}
+) {
   const safeUserId = safeStorageSegment(userId);
   const paths = [...new Set(iconValues.flatMap((value) => {
     if (typeof value !== "string" || !value.startsWith("image:")) return [];
@@ -327,6 +345,7 @@ export async function rememberCustomIconPaths(userId: string, iconValues: readon
   }))].slice(0, customIconLibraryLimit);
 
   await withUserAttachmentLock(safeUserId, async (client) => {
+    await beforeMutation?.(client);
     for (const publicPath of paths) {
       await client.execute(
         `UPDATE custom_icons SET last_used_at = CURRENT_TIMESTAMP(3)
@@ -337,7 +356,11 @@ export async function rememberCustomIconPaths(userId: string, iconValues: readon
   });
 }
 
-export async function storeCustomIcon(userId: string, bytes: Buffer) {
+export async function storeCustomIcon(
+  userId: string,
+  bytes: Buffer,
+  { beforeMutation }: CustomIconMutationOptions = {}
+) {
   const safeUserId = safeStorageSegment(userId);
   const fileType = detectCustomIconFileType(bytes);
   if (!fileType) {
@@ -351,6 +374,7 @@ export async function storeCustomIcon(userId: string, bytes: Buffer) {
   const publicPath = `${customIconPublicPrefix}${safeUserId}/${filename}`;
 
   return withUserAttachmentLock(safeUserId, async (client) => {
+    await beforeMutation?.(client);
     const usage = await getCustomIconStorageUsage(safeUserId);
     assertCustomIconStorageLimit(usage.bytes, BigInt(bytes.length), usage.files, 1);
     await mkdir(ownerDirectory, { recursive: true });

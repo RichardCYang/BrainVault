@@ -10,9 +10,10 @@ import {
   restoreCustomIconToLibrary,
   storeCustomIcon
 } from "../lib/custom-icons.js";
+import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { ApiError } from "../lib/http.js";
 import { iconValueSchema, maxCustomIconBytes } from "../lib/icon-value.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { requireUser } from "../utils/schemas.js";
 
@@ -77,10 +78,13 @@ customIconRouter.get("/", async (req, res, next) => {
 customIconRouter.post("/", parseCustomIconUpload, async (req, res, next) => {
   try {
     const user = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
     if (!req.file?.buffer?.length) {
       throw new ApiError(400, "CUSTOM_ICON_REQUIRED", "Select an icon image to upload");
     }
-    const icon = await storeCustomIcon(user.id, req.file.buffer);
+    const icon = await storeCustomIcon(user.id, req.file.buffer, {
+      beforeMutation: (client) => assertCurrentAuthSessionBoundary(user.id, authScope, client)
+    });
     res.status(201).json({ icon });
   } catch (error) {
     next(error);
@@ -90,8 +94,11 @@ customIconRouter.post("/", parseCustomIconUpload, async (req, res, next) => {
 customIconRouter.post("/touch", validate({ body: touchCustomIconsSchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
     const body = req.body as z.infer<typeof touchCustomIconsSchema>;
-    await rememberCustomIconPaths(user.id, body.values);
+    await rememberCustomIconPaths(user.id, body.values, {
+      beforeMutation: (client) => assertCurrentAuthSessionBoundary(user.id, authScope, client)
+    });
     res.status(204).end();
   } catch (error) {
     next(error);
@@ -101,8 +108,11 @@ customIconRouter.post("/touch", validate({ body: touchCustomIconsSchema }), asyn
 customIconRouter.delete("/", validate({ body: customIconLibraryEntrySchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
     const body = req.body as z.infer<typeof customIconLibraryEntrySchema>;
-    res.json(await removeCustomIconFromLibrary(user.id, body.value));
+    res.json(await removeCustomIconFromLibrary(user.id, body.value, {
+      beforeMutation: (client) => assertCurrentAuthSessionBoundary(user.id, authScope, client)
+    }));
   } catch (error) {
     next(error);
   }
@@ -111,8 +121,11 @@ customIconRouter.delete("/", validate({ body: customIconLibraryEntrySchema }), a
 customIconRouter.post("/restore", validate({ body: customIconLibraryEntrySchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
     const body = req.body as z.infer<typeof customIconLibraryEntrySchema>;
-    await restoreCustomIconToLibrary(user.id, body.value);
+    await restoreCustomIconToLibrary(user.id, body.value, {
+      beforeMutation: (client) => assertCurrentAuthSessionBoundary(user.id, authScope, client)
+    });
     res.status(204).end();
   } catch (error) {
     next(error);

@@ -481,3 +481,157 @@ test("standalone note-save auth-rotation reproduction rejects delayed stale writ
   assert.equal(result.fixed.reorderRetryCrossesRotation, false);
   assert.equal(result.fixed.rejectedStaleWrites, 3);
 });
+
+test("note metadata mutations stay bound to the initiating authentication generation", async () => {
+  const source = await read("public/app.js");
+
+  const emojiStart = source.indexOf("async function saveEmojiSelection");
+  const emojiEnd = source.indexOf("function positionEmojiPicker", emojiStart);
+  const emoji = source.slice(emojiStart, emojiEnd);
+  assert.match(
+    emoji,
+    /\{ operation = null, authenticationScope = captureAuthenticatedSessionScope\(\) \} = \{\}/
+  );
+  const pageEmojiStart = emoji.indexOf("const savePageEmoji = async () =>");
+  const pageEmojiRequest = emoji.indexOf('api(`/api/pages/${target.pageId}`', pageEmojiStart);
+  const pageEmojiPreFence = emoji.indexOf(
+    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;",
+    pageEmojiStart
+  );
+  const pageEmojiPostFence = emoji.indexOf(
+    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;",
+    pageEmojiRequest
+  );
+  assert.ok(
+    pageEmojiStart >= 0
+      && pageEmojiPreFence > pageEmojiStart
+      && pageEmojiRequest > pageEmojiPreFence
+      && pageEmojiPostFence > pageEmojiRequest,
+    "page icon writes must revalidate the initiating auth scope before dispatch and response application"
+  );
+
+  const coverStart = source.indexOf("async function persistPageCover");
+  const coverEnd = source.indexOf("function loadCustomCoverImage", coverStart);
+  const cover = source.slice(coverStart, coverEnd);
+  assert.match(
+    cover,
+    /\{ operation = null, authenticationScope = captureAuthenticatedSessionScope\(\) \} = \{\}/
+  );
+  const coverLock = cover.indexOf("await withPageEditLock");
+  const coverFence = cover.indexOf("!isCurrentAuthenticatedSessionScope(authenticationScope)", coverLock);
+  const coverRetry = cover.indexOf("submitWithFreshMutationIdOnReuse", coverFence);
+  const retryFence = cover.indexOf("if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;", coverRetry);
+  const coverRequest = cover.indexOf('api(`/api/pages/${pageId}`', retryFence);
+  const coverPostFence = cover.indexOf(
+    "if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;",
+    coverRequest
+  );
+  assert.ok(
+    coverLock >= 0
+      && coverFence > coverLock
+      && coverRetry > coverFence
+      && retryFence > coverRetry
+      && coverRequest > retryFence
+      && coverPostFence > coverRequest,
+    "page cover writes must not cross auth rotation while draining edits or retrying a mutation"
+  );
+
+  const coverInputStart = source.indexOf('elements.pageCoverCustomInput.addEventListener("change"');
+  const coverInputEnd = source.indexOf('elements.pageCoverRemoveButton.addEventListener("click"', coverInputStart);
+  const coverInput = source.slice(coverInputStart, coverInputEnd);
+  const coverCapture = coverInput.indexOf("const authenticationScope = captureAuthenticatedSessionScope()");
+  const coverPrepare = coverInput.indexOf("await prepareCustomCoverDataUrl(file)");
+  const coverPostPrepare = coverInput.indexOf(
+    "!isCurrentAuthenticatedSessionScope(authenticationScope)",
+    coverPrepare
+  );
+  assert.ok(
+    coverCapture >= 0 && coverPrepare > coverCapture && coverPostPrepare > coverPrepare,
+    "custom cover preprocessing must preserve the credential generation from the file-selection event"
+  );
+  assert.match(coverInput, /\{ operation, authenticationScope \}/);
+
+  const uploadStart = source.indexOf("async function uploadCustomIconFile");
+  const uploadEnd = source.indexOf("function positionEmojiPicker", uploadStart);
+  const upload = source.slice(uploadStart, uploadEnd);
+  assert.match(upload, /authenticationScope = captureAuthenticatedSessionScope\(\)/);
+  assert.ok(
+    (upload.match(/isCurrentAuthenticatedSessionScope\(authenticationScope\)/g) ?? []).length >= 2,
+    "custom icon upload must fence both request dispatch and response application"
+  );
+
+  const fileStart = source.indexOf("async function applyCustomIconFile");
+  const fileEnd = source.indexOf('elements.emojiPickerClose.addEventListener', fileStart);
+  const fileHandler = source.slice(fileStart, fileEnd);
+  const fileCapture = fileHandler.indexOf("const authenticationScope = captureAuthenticatedSessionScope()");
+  const fileValidation = fileHandler.indexOf("await validateCustomIconFileContents(file)");
+  const filePostValidationFence = fileHandler.indexOf(
+    "!isCurrentAuthenticatedSessionScope(authenticationScope)",
+    fileValidation
+  );
+  const fileUpload = fileHandler.indexOf("await uploadCustomIconFile(file, { authenticationScope })", filePostValidationFence);
+  assert.ok(
+    fileCapture >= 0
+      && fileValidation > fileCapture
+      && filePostValidationFence > fileValidation
+      && fileUpload > filePostValidationFence,
+    "custom icon file validation must not allow a stale user action to adopt a replacement credential"
+  );
+  assert.match(fileHandler, /saveEmojiSelection\(value, \{ operation, authenticationScope \}\)/);
+});
+
+test("standalone metadata auth-rotation reproduction rejects stale delayed mutations", () => {
+  const result = JSON.parse(execFileSync(
+    process.execPath,
+    [fileURLToPath(new URL("../scripts/reproduce-note-metadata-auth-rotation-race.mjs", import.meta.url))],
+    { encoding: "utf8" }
+  ));
+
+  assert.equal(result.vulnerable.pageIconCrossesRotation, true);
+  assert.equal(result.vulnerable.pageCoverCrossesRotation, true);
+  assert.equal(result.vulnerable.customIconUploadCrossesRotation, true);
+  assert.equal(result.fixed.pageIconCrossesRotation, false);
+  assert.equal(result.fixed.pageCoverCrossesRotation, false);
+  assert.equal(result.fixed.customIconUploadCrossesRotation, false);
+  assert.equal(result.fixed.rejectedStaleMutations, 3);
+});
+
+test("custom icon mutations revalidate authentication inside the storage transaction", async () => {
+  const route = await read("src/routes/custom-icon.routes.ts");
+  const library = await read("src/lib/custom-icons.ts");
+
+  assert.match(route, /import \{ assertCurrentAuthSessionBoundary \} from "\.\.\/lib\/auth-sessions\.js"/);
+  assert.match(route, /import \{ requireAuth, requireRequestAuthScope \} from "\.\.\/middleware\/auth\.js"/);
+  assert.equal(
+    (route.match(/const authScope = requireRequestAuthScope\(req\);/g) ?? []).length,
+    4,
+    "every custom-icon write route must bind the request authentication scope"
+  );
+  assert.equal(
+    (route.match(/beforeMutation: \(client\) => assertCurrentAuthSessionBoundary\(user\.id, authScope, client\)/g) ?? []).length,
+    4,
+    "every custom-icon write route must carry the auth scope to its durable transaction"
+  );
+
+  for (const [name, endMarker] of [
+    ["removeCustomIconFromLibrary", "export async function restoreCustomIconToLibrary"],
+    ["restoreCustomIconToLibrary", "export async function rememberCustomIconPaths"],
+    ["rememberCustomIconPaths", "export async function storeCustomIcon"],
+    ["storeCustomIcon", null]
+  ]) {
+    const start = library.indexOf(`export async function ${name}`);
+    const end = endMarker ? library.indexOf(endMarker, start) : library.length;
+    const operation = library.slice(start, end);
+    const lock = operation.indexOf("withUserAttachmentLock");
+    const authFence = operation.indexOf("await beforeMutation?.(client)", lock);
+    const firstDurableMutation = Math.min(
+      ...["await client.execute(", "await writeFile("]
+        .map((marker) => operation.indexOf(marker, authFence))
+        .filter((index) => index >= 0)
+    );
+    assert.ok(
+      start >= 0 && lock >= 0 && authFence > lock && firstDurableMutation > authFence,
+      `${name} must revalidate credentials after acquiring the user lock and before durable mutation`
+    );
+  }
+});
