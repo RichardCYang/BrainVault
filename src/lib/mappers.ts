@@ -22,11 +22,21 @@ export function toPublicUser(
     | "preferred_language"
     | "default_collection_icon"
     | "theme"
+    | "attachment_generation"
     | "created_at"
     | "updated_at"
   >
 ) {
   const theme: "light" | "dark" = row.theme === "dark" ? "dark" : "light";
+  const workspaceGeneration = row.attachment_generation === undefined
+    ? null
+    : Number(row.attachment_generation);
+  if (
+    workspaceGeneration !== null
+    && (!Number.isSafeInteger(workspaceGeneration) || workspaceGeneration < 1)
+  ) {
+    throw new Error("Invalid workspace generation");
+  }
   return {
     id: row.id,
     username: row.username,
@@ -35,6 +45,7 @@ export function toPublicUser(
     preferredLanguage: row.preferred_language ?? null,
     defaultCollectionIcon: row.default_collection_icon ?? null,
     theme,
+    ...(workspaceGeneration === null ? {} : { workspaceGeneration }),
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

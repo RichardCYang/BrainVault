@@ -14,6 +14,7 @@ declare global {
         preferredLanguage: string | null;
         defaultCollectionIcon: string | null;
         theme: "light" | "dark";
+        workspaceGeneration?: number;
         createdAt: string;
         updatedAt: string;
       };

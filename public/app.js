@@ -1332,10 +1332,16 @@ function isCurrentAuthenticatedSessionOperation(operation) {
   );
 }
 
+function getUserWorkspaceGeneration(user = state.user) {
+  const value = Number(user?.workspaceGeneration);
+  return Number.isSafeInteger(value) && value >= 1 ? value : null;
+}
+
 function captureAuthenticatedSessionScope() {
   return Object.freeze({
     generation: authenticationSessionGeneration,
-    targetKey: getAccountAvatarTargetKey(state.user)
+    targetKey: getAccountAvatarTargetKey(state.user),
+    workspaceGeneration: getUserWorkspaceGeneration(state.user)
   });
 }
 
@@ -1346,6 +1352,8 @@ function isCurrentAuthenticatedSessionScope(scope) {
       && scope.generation === authenticationSessionGeneration
       && scope.targetKey !== null
       && scope.targetKey === getAccountAvatarTargetKey(state.user)
+      && scope.workspaceGeneration !== null
+      && scope.workspaceGeneration === getUserWorkspaceGeneration(state.user)
   );
 }
 
@@ -1762,6 +1770,12 @@ async function api(path, options = {}) {
       code: "UNAUTHENTICATED",
       ambiguous: false
     });
+  }
+  if (startedAuthenticated) {
+    headers.set(
+      "X-BrainVault-Workspace-Generation",
+      String(authenticationScope.workspaceGeneration)
+    );
   }
 
   let body = requestOptions.body;
@@ -2484,7 +2498,12 @@ async function compareWorkspaceSnapshotClient(snapshotId, { operation = null } =
 
 async function applyRestoredWorkspaceData(data, targetKey, activeOperation) {
   if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
-  if (getAccountAvatarTargetKey(data?.user) !== targetKey) throw new Error(t("errors.invalidResponse"));
+  if (
+    getAccountAvatarTargetKey(data?.user) !== targetKey
+    || getUserWorkspaceGeneration(data?.user) === null
+  ) {
+    throw new Error(t("errors.invalidResponse"));
+  }
   state.user = data.user;
   state.snapshots.diffById = new Map();
   applyUserTheme();
@@ -4387,7 +4406,7 @@ async function completeAuthenticatedLogin(data) {
   setAuthenticated(true);
   state.user = data.user;
   const targetKey = getAccountAvatarTargetKey(state.user);
-  if (!targetKey) {
+  if (!targetKey || getUserWorkspaceGeneration(state.user) === null) {
     const error = new Error(t("errors.invalidResponse"));
     resetAuthenticationSessionState();
     setStatus(error.message, true);

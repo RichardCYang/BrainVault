@@ -60,6 +60,19 @@ function requiresCookieMutationOrigin(req: Request, source: "bearer" | "cookie")
   return source === "cookie" && !["GET", "HEAD", "OPTIONS"].includes(req.method.toUpperCase());
 }
 
+function getClientWorkspaceGeneration(req: Request) {
+  const raw = req.header("x-brainvault-workspace-generation");
+  if (raw === undefined) return null;
+  if (!/^[1-9]\d*$/.test(raw)) {
+    throw new ApiError(400, "INVALID_WORKSPACE_GENERATION", "Workspace generation is invalid");
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new ApiError(400, "INVALID_WORKSPACE_GENERATION", "Workspace generation is invalid");
+  }
+  return value;
+}
+
 export function requireSameOriginBrowserRequest(req: Request, _res: Response, next: NextFunction) {
   try {
     assertBrowserRequestOrigin(req, { requireOrigin: true });
@@ -118,6 +131,7 @@ async function authenticateRequest(
     if (!Number.isSafeInteger(workspaceGeneration) || workspaceGeneration < 1) {
       throw new Error("Invalid workspace generation");
     }
+    const clientWorkspaceGeneration = getClientWorkspaceGeneration(req);
     if (payload.authVersion !== authVersion) {
       if (source === "cookie") clearAuthSessionCookie(res);
       next(new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid"));
@@ -145,6 +159,14 @@ async function authenticateRequest(
     // Session revocation must apply uniformly to cookie and optional bearer credentials.
     const authSessionId = await ensureAuthSessionForRequest(token, payload, req);
     req.auth = { authVersion, workspaceGeneration };
+    if (clientWorkspaceGeneration !== null) {
+      // A browser request may have been intentionally queued before another tab
+      // restored the workspace but dispatched only after the restore committed.
+      // Preserve the client's originating generation so the existing durable
+      // transaction boundary rejects that stale intent instead of adopting the
+      // newly restored generation at request admission time.
+      req.auth.workspaceGeneration = clientWorkspaceGeneration;
+    }
     if (authSessionId) req.auth.sessionId = authSessionId;
     req.user = toPublicUser(user);
     next();
