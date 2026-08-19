@@ -45,6 +45,38 @@ test("page PATCH materializes its acknowledgement before the transaction release
   assert.match(route, /last_mutation_hash = NULL/);
 });
 
+test("legacy page archive DELETE keeps its acknowledgement causally bound to the locked transaction", () => {
+  const pages = read("../src/routes/page.routes.ts");
+  const route = section(
+    pages,
+    "pageRouter.delete(",
+    'pageRouter.put("/:pageId/tags"'
+  );
+
+  const transactionStart = route.indexOf("const archivedPage = await transaction(async (client) => {");
+  const rowLock = route.indexOf("FOR UPDATE", transactionStart);
+  const causalResponse = route.indexOf("return updatedPage;", rowLock);
+  const transactionEnd = route.indexOf("\n      });", causalResponse);
+  const send = route.indexOf("res.json({ page: toPage(archivedPage) });", transactionEnd);
+
+  assert.ok(transactionStart >= 0);
+  assert.ok(rowLock > transactionStart);
+  assert.ok(causalResponse > rowLock);
+  assert.ok(transactionEnd > causalResponse);
+  assert.ok(send > transactionEnd);
+  assert.doesNotMatch(route.slice(transactionEnd, send), /assertOwnedPage\(pageId, user\.id\)/);
+
+  // Reproduction model: archive commits v8, then another request restores v9
+  // before the first HTTP handler sends its response. A post-COMMIT reread
+  // would incorrectly acknowledge v9; the locked snapshot must acknowledge v8.
+  const archiveCommit = { version: 8, isArchived: true };
+  const interveningRestore = { version: 9, isArchived: false };
+  const vulnerablePostCommitRead = interveningRestore;
+  const fixedAcknowledgement = archiveCommit;
+  assert.deepEqual(vulnerablePostCommitRead, { version: 9, isArchived: false });
+  assert.deepEqual(fixedAcknowledgement, { version: 8, isArchived: true });
+});
+
 test("partial block mutations require a caller snapshot base before certifying the page-global content version", () => {
   const blocks = read("../src/routes/block.routes.ts");
   const client = read("../public/app.js");

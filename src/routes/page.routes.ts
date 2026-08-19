@@ -1179,7 +1179,7 @@ pageRouter.delete(
         );
       }
       const expectedVersion = body.expectedVersion;
-      const result = await transaction(async (client) => {
+      const archivedPage = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
         const page = await client.queryOne<PageRow>(
           "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
@@ -1197,28 +1197,27 @@ pageRouter.delete(
            WHERE id = ? AND owner_id = ? AND edit_version = ?`,
           [pageId, user.id, expectedVersion]
         );
-        if (Number(updateResult.affectedRows) === 1) {
-          const updatedPage = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
-          if (!updatedPage) throw notFound("Page");
-          await recordPageVersion(client, {
-            pageId,
-            actors: [toPageVersionActor(user)],
-            source: "ARCHIVE",
-            changes: diffPageVersionPage(page, updatedPage)
-          });
+        if (Number(updateResult.affectedRows) === 0) {
+          throw new ApiError(
+            409,
+            "PAGE_EDIT_CONFLICT",
+            "This page was changed in another session. It was not archived."
+          );
         }
-        return updateResult;
+        const updatedPage = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
+        if (!updatedPage) throw notFound("Page");
+        await recordPageVersion(client, {
+          pageId,
+          actors: [toPageVersionActor(user)],
+          source: "ARCHIVE",
+          changes: diffPageVersionPage(page, updatedPage)
+        });
+        // Keep the acknowledgement causally bound to this archive transaction.
+        // A post-COMMIT read could otherwise return a later restore or edit.
+        return updatedPage;
       });
-      if (Number(result.affectedRows) === 0) {
-        throw new ApiError(
-          409,
-          "PAGE_EDIT_CONFLICT",
-          "This page was changed in another session. It was not archived."
-        );
-      }
       disconnectPageCollaborators(pageId, "Page was archived");
-      const page = await assertOwnedPage(pageId, user.id);
-      res.json({ page: toPage(page) });
+      res.json({ page: toPage(archivedPage) });
     } catch (error) {
       next(error);
     }
