@@ -8,19 +8,17 @@ const read = async (relativePath) => (
   await readFile(new URL(`../${relativePath}`, import.meta.url), "utf8")
 ).replace(/\r\n/g, "\n");
 
-test("workspace restore carries and revalidates its initiating authentication scope", async () => {
+test("workspace restore carries and revalidates auth, device-session, and workspace-generation scope", async () => {
   const routes = await read("src/routes/data.routes.ts");
   const snapshotRoutes = await read("src/routes/snapshot.routes.ts");
   const snapshotLib = await read("src/lib/workspace-snapshots.ts");
   const authMiddleware = await read("src/middleware/auth.ts");
   const transfer = await read("src/lib/data-transfer.ts");
+  const sessions = await read("src/lib/auth-sessions.ts");
 
-  assert.match(routes, /const authVersion = Number\(req\.auth\?\.authVersion\)/);
-  assert.match(routes, /const sessionId = req\.auth\?\.sessionId/);
-  assert.match(
-    routes,
-    /importUserDataBackup\(user\.id, uploadPath, \{\s*authVersion,\s*sessionId\s*\}\)/
-  );
+  assert.match(routes, /import \{ requireAuth, requireRequestAuthScope \} from "\.\.\/middleware\/auth\.js"/);
+  assert.match(routes, /const authScope = requireRequestAuthScope\(req\)/);
+  assert.match(routes, /importUserDataBackup\(user\.id, uploadPath, authScope\)/);
 
   assert.match(snapshotRoutes, /import \{ requireAuth, requireRequestAuthScope \} from "\.\.\/middleware\/auth\.js"/);
   assert.match(snapshotRoutes, /const authScope = requireRequestAuthScope\(req\)/);
@@ -28,24 +26,31 @@ test("workspace restore carries and revalidates its initiating authentication sc
     snapshotRoutes,
     /restoreWorkspaceSnapshot\(user\.id, req\.params\.snapshotId, authScope\)/
   );
-  assert.match(authMiddleware, /export function requireRequestAuthScope\(req: Request\)/);
-  assert.match(authMiddleware, /const authVersion = Number\(req\.auth\?\.authVersion\)/);
-  assert.match(authMiddleware, /const sessionId = req\.auth\?\.sessionId/);
-  assert.match(authMiddleware, /throw new ApiError\(401, "UNAUTHENTICATED", "Authentication context is missing"\)/);
+  assert.match(authMiddleware, /attachment_generation/);
+  assert.match(authMiddleware, /req\.auth = \{ authVersion, workspaceGeneration \}/);
+  assert.match(authMiddleware, /const workspaceGeneration = Number\(req\.auth\?\.workspaceGeneration\)/);
   assert.match(
-    snapshotLib,
-    /return importUserDataBackup\(userId, filePath, authScope\)/
+    authMiddleware,
+    /return Object\.freeze\(\{ authVersion, workspaceGeneration, sessionId \}\)/
   );
+  assert.match(snapshotLib, /return importUserDataBackup\(userId, filePath, authScope\)/);
 
-  assert.match(transfer, /import \{ isAuthSessionActive \} from "\.\/auth-sessions\.js"/);
-  assert.match(transfer, /async function assertCurrentDataRestoreAuthentication/);
   assert.match(
     transfer,
-    /SELECT auth_version FROM users WHERE id = \? FOR UPDATE/
+    /import \{\s*assertCurrentAuthSessionBoundary,\s*type AuthSessionBoundaryScope\s*\} from "\.\/auth-sessions\.js"/
+  );
+  assert.match(transfer, /export type DataRestoreAuthScope = AuthSessionBoundaryScope/);
+  assert.match(
+    transfer,
+    /assertCurrentDataRestoreAuthentication[\s\S]*await assertCurrentAuthSessionBoundary\(userId, authScope, client\)/
   );
   assert.match(
-    transfer,
-    /isAuthSessionActive\(\s*userId,\s*authScope\.sessionId,\s*authScope\.authVersion,\s*client,\s*\{ lock: true \}\s*\)/
+    sessions,
+    /SELECT auth_version, attachment_generation FROM users WHERE id = \? FOR UPDATE/
+  );
+  assert.match(
+    sessions,
+    /currentWorkspaceGeneration !== workspaceGeneration[\s\S]*"WORKSPACE_RESTORED"/
   );
 
   const transactionStart = transfer.indexOf("await transaction(async (client) => {", transfer.indexOf("export async function importUserDataBackup"));
@@ -65,7 +70,6 @@ test("workspace restore carries and revalidates its initiating authentication sc
   assert.ok(secondFence > firstFence && secondFence < importRowsCall,
     "restore must revalidate auth immediately before destructive import");
 });
-
 test("standalone model reproduces stale-session restore and the durable-boundary fix", () => {
   const result = JSON.parse(execFileSync(
     process.execPath,

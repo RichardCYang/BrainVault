@@ -28,7 +28,10 @@ import {
   isServerCustomIconPath
 } from "./custom-icons.js";
 import { db, transaction, type DbClient } from "./db.js";
-import { isAuthSessionActive } from "./auth-sessions.js";
+import {
+  assertCurrentAuthSessionBoundary,
+  type AuthSessionBoundaryScope
+} from "./auth-sessions.js";
 import { ApiError } from "./http.js";
 import { iconValueSchema, imageIconPrefix, maxCustomIconBytes, normalizeIconValue } from "./icon-value.js";
 import {
@@ -2914,34 +2917,14 @@ export async function cleanupStaleDataTransferTempFiles(nowMs = Date.now()) {
   }
 }
 
-export type DataRestoreAuthScope = {
-  authVersion: number;
-  sessionId: string;
-};
+export type DataRestoreAuthScope = AuthSessionBoundaryScope;
 
 async function assertCurrentDataRestoreAuthentication(
   client: DbClient,
   userId: string,
   authScope: DataRestoreAuthScope
 ) {
-  const account = await client.queryOne<{ auth_version?: number }>(
-    "SELECT auth_version FROM users WHERE id = ? FOR UPDATE",
-    [userId]
-  );
-  if (!account || Number(account.auth_version ?? 1) !== authScope.authVersion) {
-    throw new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid");
-  }
-
-  const activeSession = await isAuthSessionActive(
-    userId,
-    authScope.sessionId,
-    authScope.authVersion,
-    client,
-    { lock: true }
-  );
-  if (!activeSession) {
-    throw new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid");
-  }
+  await assertCurrentAuthSessionBoundary(userId, authScope, client);
 }
 
 export async function importUserDataBackup(

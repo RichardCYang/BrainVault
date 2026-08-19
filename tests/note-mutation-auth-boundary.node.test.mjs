@@ -16,11 +16,11 @@ function section(text, start, end) {
   return text.slice(startIndex, endIndex);
 }
 
-test("durable note mutations bind both auth_version and device session under row locks", () => {
+test("durable note mutations bind auth, device session, and workspace generation under row locks", () => {
   const sessions = source("src/lib/auth-sessions.ts");
   assert.match(
     sessions,
-    /export async function assertCurrentAuthSessionBoundary\([\s\S]*SELECT auth_version FROM users WHERE id = \? FOR UPDATE/
+    /export async function assertCurrentAuthSessionBoundary\([\s\S]*SELECT auth_version, attachment_generation FROM users WHERE id = \? FOR UPDATE/
   );
   assert.match(
     sessions,
@@ -30,10 +30,16 @@ test("durable note mutations bind both auth_version and device session under row
     sessions,
     /assertCurrentAuthSessionBoundary[\s\S]*isAuthSessionActive\(userId, sessionId, authVersion, client, \{ lock: true \}\)/
   );
+  assert.match(
+    sessions,
+    /currentWorkspaceGeneration !== workspaceGeneration[\s\S]*"WORKSPACE_RESTORED"/
+  );
 
   const middleware = source("src/middleware/auth.ts");
+  assert.match(middleware, /attachment_generation/);
+  assert.match(middleware, /req\.auth = \{ authVersion, workspaceGeneration \}/);
   assert.match(middleware, /export function requireRequestAuthScope\(req: Request\)/);
-  assert.match(middleware, /return Object\.freeze\(\{ authVersion, sessionId \}\)/);
+  assert.match(middleware, /return Object\.freeze\(\{ authVersion, workspaceGeneration, sessionId \}\)/);
 });
 
 test("page create, history reset, update, archive/delete, and tags revalidate request auth inside transactions", () => {

@@ -12,6 +12,7 @@ export type UserRow = {
   totp_ip_block_enabled?: 0 | 1 | boolean | number | string;
   totp_ip_block_threshold?: number | bigint | string;
   auth_version?: number;
+  attachment_generation?: number | bigint | string;
   failed_login_attempts?: number | bigint | string;
   last_failed_login_at?: string | Date | null;
   login_locked_until?: string | Date | null;

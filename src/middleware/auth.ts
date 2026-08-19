@@ -102,7 +102,7 @@ async function authenticateRequest(
     const payload = verifyAuthToken(token);
     const user = await db.queryOne<UserRow>(
       `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon, theme, country_login_mode,
-              password_hash, vpn_block_enabled, auth_version, created_at, updated_at
+              password_hash, vpn_block_enabled, auth_version, attachment_generation, created_at, updated_at
        FROM users WHERE id = ?`,
       [payload.sub]
     );
@@ -114,6 +114,10 @@ async function authenticateRequest(
     }
 
     const authVersion = normalizeAuthVersion(user.auth_version);
+    const workspaceGeneration = Number(user.attachment_generation ?? 1);
+    if (!Number.isSafeInteger(workspaceGeneration) || workspaceGeneration < 1) {
+      throw new Error("Invalid workspace generation");
+    }
     if (payload.authVersion !== authVersion) {
       if (source === "cookie") clearAuthSessionCookie(res);
       next(new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid"));
@@ -140,7 +144,7 @@ async function authenticateRequest(
 
     // Session revocation must apply uniformly to cookie and optional bearer credentials.
     const authSessionId = await ensureAuthSessionForRequest(token, payload, req);
-    req.auth = { authVersion };
+    req.auth = { authVersion, workspaceGeneration };
     if (authSessionId) req.auth.sessionId = authSessionId;
     req.user = toPublicUser(user);
     next();
@@ -155,11 +159,18 @@ async function authenticateRequest(
 
 export function requireRequestAuthScope(req: Request) {
   const authVersion = Number(req.auth?.authVersion);
+  const workspaceGeneration = Number(req.auth?.workspaceGeneration);
   const sessionId = req.auth?.sessionId;
-  if (!Number.isSafeInteger(authVersion) || authVersion < 1 || !sessionId) {
+  if (
+    !Number.isSafeInteger(authVersion)
+    || authVersion < 1
+    || !Number.isSafeInteger(workspaceGeneration)
+    || workspaceGeneration < 1
+    || !sessionId
+  ) {
     throw new ApiError(401, "UNAUTHENTICATED", "Authentication context is missing");
   }
-  return Object.freeze({ authVersion, sessionId });
+  return Object.freeze({ authVersion, workspaceGeneration, sessionId });
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {

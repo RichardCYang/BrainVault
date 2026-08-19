@@ -216,6 +216,7 @@ export async function isAuthSessionActive(
 
 export type AuthSessionBoundaryScope = Readonly<{
   authVersion: number;
+  workspaceGeneration: number;
   sessionId: string;
 }>;
 
@@ -225,21 +226,38 @@ export async function assertCurrentAuthSessionBoundary(
   client: DbClient = db
 ) {
   const authVersion = Number(scope.authVersion);
-  if (!Number.isSafeInteger(authVersion) || authVersion < 1) {
+  const workspaceGeneration = Number(scope.workspaceGeneration);
+  if (
+    !Number.isSafeInteger(authVersion)
+    || authVersion < 1
+    || !Number.isSafeInteger(workspaceGeneration)
+    || workspaceGeneration < 1
+  ) {
     throw new ApiError(401, "UNAUTHENTICATED", "Authentication context is invalid");
   }
 
   const sessionId = normalizeAuthSessionId(scope.sessionId);
-  const account = await client.queryOne<{ auth_version?: number }>(
-    "SELECT auth_version FROM users WHERE id = ? FOR UPDATE",
+  const account = await client.queryOne<{ auth_version?: number; attachment_generation?: number }>(
+    "SELECT auth_version, attachment_generation FROM users WHERE id = ? FOR UPDATE",
     [userId]
   );
   if (!account || Number(account.auth_version ?? 1) !== authVersion) {
     throw new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid");
   }
+  const currentWorkspaceGeneration = Number(account.attachment_generation ?? 1);
+  if (!Number.isSafeInteger(currentWorkspaceGeneration) || currentWorkspaceGeneration < 1) {
+    throw new Error(`Invalid workspace generation for user: ${userId}`);
+  }
 
   const active = await isAuthSessionActive(userId, sessionId, authVersion, client, { lock: true });
   if (!active) {
     throw new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid");
+  }
+  if (currentWorkspaceGeneration !== workspaceGeneration) {
+    throw new ApiError(
+      409,
+      "WORKSPACE_RESTORED",
+      "The workspace was restored while this request was in progress. Refresh before retrying."
+    );
   }
 }

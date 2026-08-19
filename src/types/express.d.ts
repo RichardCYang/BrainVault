@@ -3,6 +3,7 @@ declare global {
     interface Request {
       auth?: {
         authVersion: number;
+        workspaceGeneration: number;
         sessionId?: string;
       };
       user?: {
