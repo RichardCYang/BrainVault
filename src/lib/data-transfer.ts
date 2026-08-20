@@ -2218,9 +2218,9 @@ async function importRows(
 
   for (const share of pageShares) {
     await client.execute(
-      `INSERT INTO page_shares (page_id, user_id, permission, shared_by, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
-      [share.pageId, share.userId, share.permission, userId, share.createdAt]
+      `INSERT INTO page_shares (page_id, user_id, permission, shared_by, generation, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [share.pageId, share.userId, share.permission, userId, createId("share"), share.createdAt]
     );
   }
 

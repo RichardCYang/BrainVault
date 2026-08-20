@@ -190,7 +190,7 @@ test("share mutations stay bound to the initiating authentication generation acr
     "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;",
     collaborationDestroy
   );
-  const removeRequest = removeSource.indexOf("{ method: \"DELETE\" }", removePostDestroyFence);
+  const removeRequest = removeSource.indexOf('{ method: "DELETE", body: { expectedGeneration } }', removePostDestroyFence);
   assert.ok(
     removeScope >= 0
       && removeFlush > removeScope

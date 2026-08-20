@@ -10,6 +10,7 @@ import {
 import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { idParamSchema, requireUser, routeIdSchema, usernameSchema } from "../utils/schemas.js";
 import { ApiError, notFound } from "../lib/http.js";
+import { createId } from "../lib/id.js";
 import {
   assertCollaborationDocumentEpoch,
   ensureCollaborationState,
@@ -88,6 +89,10 @@ const shareUserSchema = z.object({
   username: usernameSchema
 });
 
+const removeShareSchema = z.object({
+  expectedGeneration: routeIdSchema
+});
+
 const shareParamsSchema = z.object({
   pageId: routeIdSchema,
   userId: routeIdSchema
@@ -122,7 +127,7 @@ const recoveryCandidateParamsSchema = z.object({
   candidateId: routeIdSchema
 });
 
-type ShareUserRow = Pick<
+type ShareTargetRow = Pick<
   UserRow,
   | "id"
   | "username"
@@ -133,7 +138,13 @@ type ShareUserRow = Pick<
   | "theme"
   | "created_at"
   | "updated_at"
-> & { permission: "EDIT"; shared_at: string };
+>;
+
+type ShareUserRow = ShareTargetRow & {
+  permission: "EDIT";
+  shared_at: string;
+  share_generation: string;
+};
 
 type CollaborationUpdateRow = {
   id: number | bigint;
@@ -170,7 +181,7 @@ function assertShareablePage(page: PageRow) {
 async function getShareRows(pageId: string, client: DbClient = db) {
   return client.query<ShareUserRow>(
     `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language, u.default_collection_icon, u.theme,
-            u.created_at, u.updated_at, ps.permission, ps.created_at AS shared_at
+            u.created_at, u.updated_at, ps.permission, ps.created_at AS shared_at, ps.generation AS share_generation
      FROM page_shares ps
      INNER JOIN users u ON u.id = ps.user_id
      WHERE ps.page_id = ? AND ps.permission = 'EDIT'
@@ -221,7 +232,8 @@ function toSharePayload(row: ShareUserRow) {
   return {
     user: toPublicUser(row),
     permission: row.permission,
-    sharedAt: row.shared_at
+    sharedAt: row.shared_at,
+    generation: row.share_generation
   };
 }
 
@@ -300,9 +312,9 @@ collaborationRouter.post(
         if (!page) throw notFound("Page");
         assertShareablePage(page);
 
-        const target = await client.queryOne<ShareUserRow>(
+        const target = await client.queryOne<ShareTargetRow>(
           `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language, u.default_collection_icon, u.theme,
-                  u.created_at, u.updated_at, 'EDIT' AS permission, u.created_at AS shared_at
+                  u.created_at, u.updated_at
            FROM users u
            WHERE u.username = ? AND u.id <> ?
              AND NOT EXISTS (
@@ -342,14 +354,15 @@ collaborationRouter.post(
           await client.execute("DELETE FROM page_collaboration_state WHERE page_id = ?", [pageId]);
           await ensureCollaborationState(pageId, client);
         }
+        const shareGeneration = createId("share");
         await client.execute(
-          `INSERT INTO page_shares (page_id, user_id, permission, shared_by)
-           VALUES (?, ?, 'EDIT', ?)`,
-          [pageId, target.id, owner.id]
+          `INSERT INTO page_shares (page_id, user_id, permission, shared_by, generation)
+           VALUES (?, ?, 'EDIT', ?, ?)`,
+          [pageId, target.id, owner.id, shareGeneration]
         );
         const created = await client.queryOne<ShareUserRow>(
           `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language, u.default_collection_icon, u.theme,
-                  u.created_at, u.updated_at, ps.permission, ps.created_at AS shared_at
+                  u.created_at, u.updated_at, ps.permission, ps.created_at AS shared_at, ps.generation AS share_generation
            FROM page_shares ps INNER JOIN users u ON u.id = ps.user_id
            WHERE ps.page_id = ? AND ps.user_id = ? AND ps.permission = 'EDIT'`,
           [pageId, target.id]
@@ -375,13 +388,14 @@ collaborationRouter.post(
 
 collaborationRouter.delete(
   "/pages/:pageId/shares/:userId",
-  validate({ params: shareParamsSchema }),
+  validate({ params: shareParamsSchema, body: removeShareSchema }),
   async (req, res, next) => {
     try {
       const owner = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       const sharedUserId = String(req.params.userId);
+      const expectedGeneration = String(req.body.expectedGeneration);
       const result = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(owner.id, authScope, client);
         const page = await client.queryOne<PageRow>(
@@ -390,13 +404,20 @@ collaborationRouter.delete(
         );
         if (!page) throw notFound("Page");
         await assertNoActiveCollaborationWriteLeases(client, [pageId]);
-        const existingShare = await client.queryOne<{ user_id: string }>(
-          `SELECT user_id FROM page_shares
+        const existingShare = await client.queryOne<{ user_id: string; generation: string }>(
+          `SELECT user_id, generation FROM page_shares
            WHERE page_id = ? AND user_id = ? AND permission = 'EDIT'
            FOR UPDATE`,
           [pageId, sharedUserId]
         );
         if (!existingShare) throw notFound("Page share");
+        if (existingShare.generation !== expectedGeneration) {
+          throw new ApiError(
+            409,
+            "PAGE_SHARE_GENERATION_CHANGED",
+            "The collaborator grant changed in another session. Refresh before removing it."
+          );
+        }
 
         // Register both possible local persistence lineages before revoking
         // access. Uploads through these grants are quarantined as recovery
@@ -437,10 +458,17 @@ collaborationRouter.delete(
           });
         }
         const deletion = await client.execute<{ affectedRows: number }>(
-          "DELETE FROM page_shares WHERE page_id = ? AND user_id = ? AND permission = 'EDIT'",
-          [pageId, sharedUserId]
+          `DELETE FROM page_shares
+           WHERE page_id = ? AND user_id = ? AND permission = 'EDIT' AND generation = ?`,
+          [pageId, sharedUserId, expectedGeneration]
         );
-        if (Number(deletion.affectedRows) === 0) throw notFound("Page share");
+        if (Number(deletion.affectedRows) === 0) {
+          throw new ApiError(
+            409,
+            "PAGE_SHARE_GENERATION_CHANGED",
+            "The collaborator grant changed in another session. Refresh before removing it."
+          );
+        }
         const count = await client.queryOne<{ share_count: number }>(
           "SELECT COUNT(*) AS share_count FROM page_shares WHERE page_id = ? AND permission = 'EDIT'",
           [pageId]

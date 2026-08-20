@@ -9423,6 +9423,7 @@ function renderSharePageList() {
     remove.className = "share-page-remove";
     remove.dataset.userId = share.user?.id;
     remove.dataset.username = share.user?.username;
+    remove.dataset.generation = share.generation ?? "";
     remove.textContent = t("sharing.remove");
     item.append(avatar, copy, remove);
     elements.sharePageList.append(item);
@@ -16991,6 +16992,11 @@ elements.sharePageList.addEventListener("click", async (event) => {
   const pageId = state.selectedPage.id;
   const userId = button.dataset.userId;
   const username = button.dataset.username || "";
+  const expectedGeneration = button.dataset.generation || "";
+  if (!expectedGeneration) {
+    setSharePageMessage("The collaborator list is stale. Refresh sharing before removing access.", true);
+    return;
+  }
   const authenticationScope = captureAuthenticatedSessionScope();
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   button.disabled = true;
@@ -17012,7 +17018,7 @@ elements.sharePageList.addEventListener("click", async (event) => {
       }
       const data = await api(
         `/api/pages/${encodeURIComponent(pageId)}/shares/${encodeURIComponent(userId)}`,
-        { method: "DELETE" }
+        { method: "DELETE", body: { expectedGeneration } }
       );
       if (
         !isCurrentAuthenticatedSessionScope(authenticationScope)

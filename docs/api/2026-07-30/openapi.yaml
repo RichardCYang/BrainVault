@@ -1014,7 +1014,7 @@ components:
           description: Existing BrainVault login ID. The owner cannot share a page with itself.
     PageShare:
       type: object
-      required: [user, permission, sharedAt]
+      required: [user, permission, sharedAt, generation]
       properties:
         user:
           $ref: '#/components/schemas/PublicUser'
@@ -1024,6 +1024,12 @@ components:
         sharedAt:
           type: string
           format: date-time
+        generation:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-zA-Z0-9_-]+$'
+          description: Causal token for this specific editor grant. Supply it when removing the grant.
     CollaborationBlock:
       type: object
       required: [id, type, markdown, checked, parentBlockId, sortOrder]
@@ -1843,7 +1849,7 @@ paths:
   /api/pages/{pageId}/shares/{userId}:
     delete:
       summary: Remove a page editor
-      description: Owner only. Active sockets for the removed user are closed immediately. Removing the final grant requires every accepted Yjs update to have been materialized.
+      description: Owner only. The caller must provide the generation from the current PageShare so a delayed request cannot revoke a replacement grant. Active sockets for the removed user are closed immediately. Removing the final grant requires every accepted Yjs update to have been materialized.
       parameters:
         - in: path
           name: pageId
@@ -1855,6 +1861,19 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedGeneration]
+              properties:
+                expectedGeneration:
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+                  pattern: '^[a-zA-Z0-9_-]+$'
       responses:
         '200':
           description: Grant removed
@@ -1871,7 +1890,7 @@ paths:
                     type: integer
                     minimum: 0
         '409':
-          description: Accepted collaboration updates are still pending materialization
+          description: The editor grant generation changed, or accepted collaboration updates are still pending materialization
   /api/pages/{pageId}/collaboration/session:
     post:
       summary: Create a short-lived authenticated collaboration session

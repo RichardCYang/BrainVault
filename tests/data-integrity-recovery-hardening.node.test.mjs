@@ -74,9 +74,10 @@ test("share removal, hard deletion, and restore fence active collaboration lease
   assertBefore(
     removeShare,
     "await assertNoActiveCollaborationWriteLeases(client, [pageId])",
-    'DELETE FROM page_shares WHERE page_id = ? AND user_id = ? AND permission = \'EDIT\'',
+    "DELETE FROM page_shares",
     "share removal"
   );
+  assert.match(removeShare, /permission = 'EDIT' AND generation = \?/);
 
   const pageRoutes = read("src/routes/page.routes.ts");
   const hardDelete = section(pageRoutes, "const pageIds = subtreeRows.map", "const attachmentIds = blockRows");

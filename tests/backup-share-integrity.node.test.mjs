@@ -20,7 +20,8 @@ test("complete backup includes and restores page sharing relationships", async (
   assert.match(source, /ps\.user_id AS shared_user_id/);
   assert.match(source, /u\.username AS shared_username/);
   assert.match(source, /pageShares: snapshot\.pageShares/);
-  assert.match(source, /INSERT INTO page_shares \(page_id, user_id, permission, shared_by, created_at\)/);
+  assert.match(source, /INSERT INTO page_shares \(page_id, user_id, permission, shared_by, generation, created_at\)/);
+  assert.match(source, /createId\("share"\)/);
   assert.match(source, /Shared account identity does not match this server/);
   assert.match(source, /Legacy sharing grant cannot be verified against a current exact account grant/);
   assert.match(routeSource, /sharing: result\.sharing/);
