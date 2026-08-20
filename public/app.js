@@ -5554,12 +5554,9 @@ async function saveEmojiSelection(
         body: { icon: emoji, expectedVersion: currentPage?.version }
       });
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
-      if (state.selectedPage?.id === data.page.id) state.selectedPage = data.page;
-      applyPageSummaryUpdate(data.page.id, {
+      applyPageMetadataMutationResult(data.page, {
         icon: data.page.icon,
-        isCollection: data.page.isCollection,
-        version: data.page.version,
-        updatedAt: data.page.updatedAt
+        isCollection: data.page.isCollection
       });
       if (isEmojiIconValue(emoji)) rememberRecentEmoji(emoji);
       else if (getCustomImageSource(emoji)) rememberCustomIconSelection(emoji);
@@ -14342,18 +14339,15 @@ async function persistPageCover(
       });
       if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
       updatedPage = data.page;
-      applyPageSummaryUpdate(pageId, {
+      applyPageMetadataMutationResult(data.page, {
         coverUrl: data.page.coverUrl,
         coverPositionX: data.page.coverPositionX,
-        coverPositionY: data.page.coverPositionY,
-        version: data.page.version,
-        updatedAt: data.page.updatedAt
+        coverPositionY: data.page.coverPositionY
       });
       if (
         state.selectedPage?.id === pageId
         && pageCoverOperationGuard.isCurrent(activeOperation, pageId)
       ) {
-        state.selectedPage = data.page;
         renderSelectedPage();
       }
     });
@@ -14558,6 +14552,33 @@ function applyPageSummaryUpdate(pageId, updates) {
   updateArray(state.allPages);
   renderDocumentTree();
   renderHome();
+}
+
+function applyPageMetadataMutationResult(committedPage, updates) {
+  const pageId = committedPage?.id;
+  if (!pageId) return;
+  const currentPage = state.selectedPage?.id === pageId
+    ? state.selectedPage
+    : state.allPages.find((page) => page.id === pageId)
+      ?? state.pages.find((page) => page.id === pageId)
+      ?? null;
+  const currentVersion = getPositiveVersion(currentPage?.version);
+  const committedVersion = getPositiveVersion(committedPage.version);
+  const newestVersion = getLatestKnownVersion(currentVersion, committedVersion) ?? 1;
+  const keepCurrentTimestamp =
+    currentVersion !== null
+    && committedVersion !== null
+    && currentVersion > committedVersion;
+
+  // Icon and cover mutations do not own title or block state. A collaborator can
+  // advance the live Yjs document while this HTTP request is in flight, so never
+  // replace the selected page with the response snapshot. Merge only the fields
+  // this mutation owns and keep optimistic-lock versions monotonic.
+  applyPageSummaryUpdate(pageId, {
+    ...updates,
+    version: newestVersion,
+    updatedAt: keepCurrentTimestamp ? currentPage?.updatedAt ?? committedPage.updatedAt : committedPage.updatedAt
+  });
 }
 
 function applyPageContentVersion(pageId, contentVersion) {

@@ -348,3 +348,62 @@ test("title acknowledgements keep the content-version token coupled to preserved
   assert.equal(fixedMerge.contentVersion, 4);
   assert.equal(fixedMerge.contentVersion === titleAcknowledgement.contentVersion, false);
 });
+
+test("page metadata acknowledgements preserve newer collaborative content", () => {
+  const client = read("../public/app.js");
+  const iconFlow = section(
+    client,
+    "const savePageEmoji = async () => {",
+    "} catch (error) {"
+  );
+  const coverFlow = section(
+    client,
+    "async function persistPageCover(",
+    "function readBlobAsDataUrl"
+  );
+  const metadataMerge = section(
+    client,
+    "function applyPageMetadataMutationResult(",
+    "function applyPageContentVersion"
+  );
+
+  assert.doesNotMatch(iconFlow, /state\.selectedPage\s*=\s*data\.page/);
+  assert.match(iconFlow, /applyPageMetadataMutationResult\(data\.page/);
+  assert.doesNotMatch(coverFlow, /state\.selectedPage\s*=\s*data\.page/);
+  assert.match(coverFlow, /applyPageMetadataMutationResult\(data\.page/);
+  assert.match(metadataMerge, /version: newestVersion/);
+  assert.match(metadataMerge, /\.\.\.updates/);
+
+  // Reproduction: tab A starts an icon/cover request from DB snapshot v4. While
+  // its response is delayed, collaborator B edits a block and A applies that
+  // Yjs update (visible-v5). Replacing selectedPage with the delayed response
+  // resurrects visible-v4; editing that stale UI can then write old text back.
+  const livePage = {
+    title: "Live title",
+    blocks: ["visible-v5"],
+    contentVersion: 5,
+    version: 7,
+    updatedAt: "2026-08-20T12:00:05.000Z"
+  };
+  const delayedMetadataAck = {
+    title: "Older title",
+    blocks: ["visible-v4"],
+    contentVersion: 4,
+    version: 6,
+    updatedAt: "2026-08-20T12:00:04.000Z",
+    icon: "🧠"
+  };
+  const vulnerable = { ...delayedMetadataAck };
+  assert.deepEqual(vulnerable.blocks, ["visible-v4"]);
+
+  const fixed = {
+    ...livePage,
+    icon: delayedMetadataAck.icon,
+    version: Math.max(livePage.version, delayedMetadataAck.version),
+    updatedAt: livePage.updatedAt
+  };
+  assert.deepEqual(fixed.blocks, ["visible-v5"]);
+  assert.equal(fixed.title, "Live title");
+  assert.equal(fixed.contentVersion, 5);
+  assert.equal(fixed.version, 7);
+});
