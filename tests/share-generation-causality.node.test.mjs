@@ -90,6 +90,40 @@ test("new and restored shares receive fresh generations, and clients send the di
   assert.match(migration, /MODIFY COLUMN generation VARCHAR\(64\) NOT NULL/);
 });
 
+test("workspace restore fingerprint treats share generation as causal state", () => {
+  const transferSource = read("../src/lib/data-transfer.ts");
+  const snapshot = section(
+    transferSource,
+    "async function createWorkspaceRestoreSnapshot",
+    "function invalidBackup("
+  );
+
+  assert.match(snapshot, /ps\.shared_by, ps\.generation,/);
+  assert.match(
+    snapshot,
+    /`share\\0\$\{share\.page_id\}\\0\$\{share\.user_id\}\\0\$\{share\.permission\}\\0\$\{share\.shared_by\}\\0\$\{share\.generation\}\\0\$\{share\.shared_at\}\\n`/
+  );
+
+  // Reproduction model: a grant can be replaced without changing legacy fingerprint fields.
+  // The generation is the causal identity that must make the restore snapshot change.
+  const base = {
+    pageId: "page_1",
+    userId: "user_1",
+    permission: "EDIT",
+    sharedBy: "owner_1",
+    sharedAt: "2026-08-20 23:28:01.123000",
+  };
+  const before = { ...base, generation: "share_g1" };
+  const after = { ...base, generation: "share_g2" };
+  const legacyKey = (share) =>
+    [share.pageId, share.userId, share.permission, share.sharedBy, share.sharedAt].join("\\0");
+  const fixedKey = (share) =>
+    [share.pageId, share.userId, share.permission, share.sharedBy, share.generation, share.sharedAt].join("\\0");
+
+  assert.equal(legacyKey(before), legacyKey(after));
+  assert.notEqual(fixedKey(before), fixedKey(after));
+});
+
 test("share UI continues to use safe text sinks for collaborator-controlled labels", () => {
   const appSource = read("../public/app.js");
   const render = section(

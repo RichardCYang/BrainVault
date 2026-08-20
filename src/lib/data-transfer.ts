@@ -456,6 +456,7 @@ type WorkspaceRestoreShareRow = {
   user_id: string;
   permission: "EDIT";
   shared_by: string;
+  generation: string;
   shared_at: string;
 };
 
@@ -718,7 +719,7 @@ async function createWorkspaceRestoreSnapshot(
     [userId]
   );
   const shares = await client.query<WorkspaceRestoreShareRow>(
-    `SELECT ps.page_id, ps.user_id, ps.permission, ps.shared_by,
+    `SELECT ps.page_id, ps.user_id, ps.permission, ps.shared_by, ps.generation,
             DATE_FORMAT(ps.created_at, '%Y-%m-%d %H:%i:%s.%f') AS shared_at
      FROM page_shares ps INNER JOIN pages p ON p.id = ps.page_id
      WHERE p.owner_id = ?
@@ -797,7 +798,7 @@ async function createWorkspaceRestoreSnapshot(
   }
   for (const share of shares) {
     hash.update(
-      `share\0${share.page_id}\0${share.user_id}\0${share.permission}\0${share.shared_by}\0${share.shared_at}\n`
+      `share\0${share.page_id}\0${share.user_id}\0${share.permission}\0${share.shared_by}\0${share.generation}\0${share.shared_at}\n`
     );
   }
   for (const version of pageVersions) {
