@@ -22,7 +22,10 @@ import {
   toAccessPayload,
   toCollaborationPayload
 } from "../lib/page-access.js";
-import { disconnectPageCollaborators } from "../lib/collaboration-server.js";
+import {
+  disconnectPageCollaborators,
+  disconnectPageCollaboratorsForDocumentEpoch
+} from "../lib/collaboration-server.js";
 import { needsCollaborationMaterialization } from "../lib/collaboration-protocol.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { iconMutationValueSchema, normalizeIconValue } from "../lib/icon-value.js";
@@ -322,34 +325,31 @@ async function disconnectArchivedPageCollaboratorsIfCurrent(
   }
 }
 
-async function disconnectDeletedPageCollaboratorsIfCurrent(pageIds: readonly string[]) {
+type PageCollaborationDocumentEpoch = {
+  pageId: string;
+  documentEpoch: string;
+};
+
+async function getPageCollaborationDocumentEpochs(
+  client: DbClient,
+  pageIds: readonly string[]
+): Promise<PageCollaborationDocumentEpoch[]> {
   const uniquePageIds = [...new Set(pageIds.filter(Boolean))];
+  const lineages: PageCollaborationDocumentEpoch[] = [];
   for (let offset = 0; offset < uniquePageIds.length; offset += 500) {
     const group = uniquePageIds.slice(offset, offset + 500);
-    try {
-      const existingRows = await db.query<{ id: string }>(
-        `SELECT id FROM pages
-         WHERE id IN (${group.map(() => "?").join(", ")})`,
-        group
-      );
-      const existingPageIds = new Set(existingRows.map((row) => row.id));
-
-      // Keep the existence check and local-hub invalidation in the same
-      // synchronous continuation. If a restore already recreated an id, its
-      // room is preserved; if it has not, only the deleted generation's room
-      // can exist locally before this loop yields again.
-      for (const pageId of group) {
-        if (!existingPageIds.has(pageId)) disconnectPageCollaborators(pageId, "Page was deleted");
-      }
-    } catch (error) {
-      // Do not let a best-effort post-COMMIT cleanup guess across a database
-      // error and disconnect a later page generation.
-      console.error("Failed to verify deleted pages before disconnecting collaborators", {
-        pageIds: group,
-        error
-      });
-    }
+    const rows = await client.query<{ page_id: string; document_epoch: string }>(
+      `SELECT page_id, document_epoch
+       FROM page_collaboration_state
+       WHERE page_id IN (${group.map(() => "?").join(", ")})`,
+      group
+    );
+    lineages.push(...rows.map((row) => ({
+      pageId: row.page_id,
+      documentEpoch: row.document_epoch
+    })));
   }
+  return lineages;
 }
 
 async function assertCollaborationMaterialized(client: DbClient, pageIds: string[]) {
@@ -1176,7 +1176,7 @@ pageRouter.delete(
               attachmentIds: assessment.attachmentIds,
               pageIds: assessment.pageIds,
               attachmentGeneration,
-              replayed: true
+              replayed: true as const
             };
           }
 
@@ -1187,6 +1187,12 @@ pageRouter.delete(
           assertPageDeletionSnapshot(expectedSnapshot, subtreeRows, blockRows);
 
           const pageIds = subtreeRows.map((row) => row.id);
+          // Capture the durable collaboration lineage while the owned page rows
+          // are still locked. Post-COMMIT cleanup can then invalidate only the
+          // room belonging to this deleted generation, even if restore has
+          // already recreated the same page id with a new document epoch.
+          const collaborationDocumentEpochs = await getPageCollaborationDocumentEpochs(client, pageIds);
+
           // Page rows are already locked by getOwnedPageTreeRows(..., true).
           // Reject deletion while a server-admitted collaboration write is
           // validating, and preserve late-upload grants for offline browsers.
@@ -1213,14 +1219,27 @@ pageRouter.delete(
               JSON.stringify(attachmentIds)
             ]
           );
-          return { attachmentIds, pageIds, attachmentGeneration, replayed: false };
+          return {
+            attachmentIds,
+            pageIds,
+            attachmentGeneration,
+            collaborationDocumentEpochs,
+            replayed: false as const
+          };
         });
 
-        // A receipt replay may be arbitrarily delayed, and even a fresh
-        // delete can race a restore after COMMIT. Re-check that every id is
-        // still absent before invalidating any local collaboration room.
+        // A receipt replay never owns a fresh collaboration cleanup. For a new
+        // delete, invalidate only the exact document lineage captured before
+        // the rows were removed. A restore reusing the same page id gets a new
+        // epoch and its room is therefore preserved.
         if (!deletion.replayed) {
-          await disconnectDeletedPageCollaboratorsIfCurrent(deletion.pageIds);
+          for (const lineage of deletion.collaborationDocumentEpochs) {
+            disconnectPageCollaboratorsForDocumentEpoch(
+              lineage.pageId,
+              lineage.documentEpoch,
+              "Page was deleted"
+            );
+          }
         }
         // Filesystem cleanup is idempotent and intentionally repeats on receipt
         // replay in case the first response was lost immediately after COMMIT.

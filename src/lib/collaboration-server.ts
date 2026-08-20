@@ -339,6 +339,16 @@ export class PageCollaborationHub {
     for (const client of room.clients.values()) client.socket.close(4010, reason);
   }
 
+  disconnectPageDocumentEpoch(
+    pageId: string,
+    documentEpoch: string,
+    reason = "Collaboration is no longer available"
+  ) {
+    const room = this.rooms.get(pageId);
+    if (!room || room.invalidated || room.documentEpoch !== documentEpoch) return;
+    this.disconnectPage(pageId, reason);
+  }
+
   private invalidateRoom(room: Room, code: number, reason: string) {
     if (room.invalidated || this.rooms.get(room.pageId) !== room) return;
     room.invalidated = true;
@@ -1613,6 +1623,14 @@ export function disconnectSharedUser(pageId: string, userId: string, reason?: st
 
 export function disconnectPageCollaborators(pageId: string, reason?: string) {
   for (const hub of activeHubs) hub.disconnectPage(pageId, reason);
+}
+
+export function disconnectPageCollaboratorsForDocumentEpoch(
+  pageId: string,
+  documentEpoch: string,
+  reason?: string
+) {
+  for (const hub of activeHubs) hub.disconnectPageDocumentEpoch(pageId, documentEpoch, reason);
 }
 
 export function disconnectUserCollaborators(userId: string, reason?: string) {

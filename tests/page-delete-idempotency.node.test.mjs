@@ -147,7 +147,10 @@ test("stale delete receipts fail closed when a restored page generation reuses t
     "a receipt replay must reject reused page ids before it can acknowledge the old deletion"
   );
 
-  const disconnectIndex = deleteRoute.indexOf("disconnectDeletedPageCollaboratorsIfCurrent", replayReturnIndex);
+  const disconnectIndex = deleteRoute.indexOf(
+    "disconnectPageCollaboratorsForDocumentEpoch",
+    replayReturnIndex
+  );
   const replayFenceIndex = deleteRoute.lastIndexOf("if (!deletion.replayed)", disconnectIndex);
   assert.ok(
     replayFenceIndex > replayReturnIndex && replayFenceIndex < disconnectIndex,
@@ -183,6 +186,41 @@ test("stale delete receipts fail closed when a restored page generation reuses t
     localDraftPresent: true,
     collaboratorsConnected: true
   });
+});
+
+test("fresh page deletes invalidate only the collaboration lineage that was deleted", () => {
+  const collaborationServer = source("../src/lib/collaboration-server.ts");
+  const deleteRoute = section(
+    route,
+    'pageRouter.delete(\n  "/:pageId"',
+    'pageRouter.put("/:pageId/tags"'
+  );
+
+  const captureIndex = deleteRoute.indexOf(
+    "const collaborationDocumentEpochs = await getPageCollaborationDocumentEpochs(client, pageIds)"
+  );
+  const deleteIndex = deleteRoute.indexOf('DELETE FROM pages WHERE id = ? AND owner_id = ?');
+  const postCommitIndex = deleteRoute.indexOf("if (!deletion.replayed)", deleteIndex);
+  const disconnectIndex = deleteRoute.indexOf(
+    "disconnectPageCollaboratorsForDocumentEpoch(",
+    postCommitIndex
+  );
+
+  assert.ok(captureIndex >= 0 && captureIndex < deleteIndex);
+  assert.ok(postCommitIndex > deleteIndex && disconnectIndex > postCommitIndex);
+  assert.match(collaborationServer, /room\.documentEpoch !== documentEpoch/);
+  assert.match(collaborationServer, /this\.disconnectPage\(pageId, reason\)/);
+
+  // Reproduction: delete commits lineage A, then restore recreates the same
+  // page id as lineage B before post-COMMIT cleanup. An existence-only check
+  // sees the restored row and leaves the old A room connected. The fixed
+  // cleanup targets A directly, while a B room is left untouched.
+  const deletedEpoch = "epoch_A";
+  const restoredEpoch = "epoch_B";
+  const disconnectForDeletedEpoch = (localRoomEpoch) => localRoomEpoch === deletedEpoch;
+
+  assert.equal(disconnectForDeletedEpoch(deletedEpoch), true);
+  assert.equal(disconnectForDeletedEpoch(restoredEpoch), false);
 });
 
 test("browser retries ambiguous permanent page deletes with one auth-scoped mutation id", () => {

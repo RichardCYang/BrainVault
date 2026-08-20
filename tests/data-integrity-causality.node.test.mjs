@@ -79,14 +79,15 @@ test("legacy page archive DELETE keeps its acknowledgement causally bound to the
 
 test("post-COMMIT page disconnects are fenced against a later restore generation", () => {
   const pages = read("../src/routes/page.routes.ts");
+  const collaborationServer = read("../src/lib/collaboration-server.ts");
   const archiveFence = section(
     pages,
     "async function disconnectArchivedPageCollaboratorsIfCurrent",
-    "async function disconnectDeletedPageCollaboratorsIfCurrent"
+    "type PageCollaborationDocumentEpoch"
   );
-  const deleteFence = section(
+  const deleteLineageCapture = section(
     pages,
-    "async function disconnectDeletedPageCollaboratorsIfCurrent",
+    "type PageCollaborationDocumentEpoch",
     "async function assertCollaborationMaterialized"
   );
   const patchRoute = section(
@@ -108,39 +109,65 @@ test("post-COMMIT page disconnects are fenced against a later restore generation
   assert.ok(archiveDisconnect > archiveVersionFence);
   assert.match(archiveFence, /owner_id = \?/);
 
-  const deleteRead = deleteFence.indexOf("SELECT id FROM pages");
-  const deletePresenceFence = deleteFence.indexOf("if (!existingPageIds.has(pageId))");
-  const deleteDisconnect = deleteFence.indexOf("disconnectPageCollaborators(pageId", deletePresenceFence);
-  assert.ok(deleteRead >= 0);
-  assert.ok(deletePresenceFence > deleteRead);
-  assert.ok(deleteDisconnect > deletePresenceFence);
-  assert.match(deleteFence, /offset \+= 500/);
+  assert.match(deleteLineageCapture, /SELECT page_id, document_epoch/);
+  assert.match(deleteLineageCapture, /FROM page_collaboration_state/);
+  assert.match(deleteLineageCapture, /offset \+= 500/);
+  assert.match(
+    collaborationServer,
+    /room\.invalidated \|\| room\.documentEpoch !== documentEpoch/
+  );
+  assert.match(
+    collaborationServer,
+    /hub\.disconnectPageDocumentEpoch\(pageId, documentEpoch, reason\)/
+  );
 
   assert.match(
     patchRoute,
     /await disconnectArchivedPageCollaboratorsIfCurrent\(pageId, user\.id, Number\(page\.version \?\? 1\)\)/
   );
-  assert.match(deleteRoute, /await disconnectDeletedPageCollaboratorsIfCurrent\(deletion\.pageIds\)/);
+  const captureIndex = deleteRoute.indexOf(
+    "const collaborationDocumentEpochs = await getPageCollaborationDocumentEpochs(client, pageIds)"
+  );
+  const relationalDeleteIndex = deleteRoute.indexOf('DELETE FROM pages WHERE id = ? AND owner_id = ?');
+  const transactionEnd = deleteRoute.indexOf("\n        });", relationalDeleteIndex);
+  const lineageDisconnectIndex = deleteRoute.indexOf(
+    "disconnectPageCollaboratorsForDocumentEpoch(",
+    transactionEnd
+  );
+  assert.ok(captureIndex >= 0 && captureIndex < relationalDeleteIndex);
+  assert.ok(transactionEnd > relationalDeleteIndex);
+  assert.ok(lineageDisconnectIndex > transactionEnd);
+  assert.match(deleteRoute, /if \(!deletion\.replayed\)/);
+  assert.match(deleteRoute, /lineage\.pageId/);
+  assert.match(deleteRoute, /lineage\.documentEpoch/);
   assert.match(deleteRoute, /Number\(archivedPage\.edit_version \?\? 1\)/);
   assert.equal(
     (pages.match(/disconnectPageCollaborators\(/g) ?? []).length,
-    2,
-    "page mutation handlers must not bypass the current-generation fences"
+    1,
+    "only the archive fence may disconnect by page id"
+  );
+  assert.equal(
+    (pages.match(/disconnectPageCollaboratorsForDocumentEpoch\(/g) ?? []).length,
+    1,
+    "permanent deletion must invalidate by captured document lineage"
   );
 
   // Reproduction model: the archive transaction commits v8, then a restore
   // commits v9 before the old handler performs its post-COMMIT disconnect.
-  // The old behavior keyed only on page id and evicted the v9 room.
   const shouldDisconnectArchived = (currentPage, archivedVersion) =>
     Boolean(currentPage?.isArchived && currentPage.version === archivedVersion);
   assert.equal(shouldDisconnectArchived({ isArchived: true, version: 8 }, 8), true);
   assert.equal(shouldDisconnectArchived({ isArchived: false, version: 9 }, 8), false);
 
-  // Permanent deletion has the analogous page-id reuse race: a restored row
-  // means that the old delete must no longer invalidate a room for that id.
-  const shouldDisconnectDeleted = (currentlyExistingIds, pageId) => !currentlyExistingIds.has(pageId);
-  assert.equal(shouldDisconnectDeleted(new Set(), "pag_root"), true);
-  assert.equal(shouldDisconnectDeleted(new Set(["pag_root"]), "pag_root"), false);
+  // Permanent deletion has a subtler page-id reuse race. The previous
+  // existence-only fence preserved the restored row but also left this
+  // process's old-generation room connected. Exact lineage matching evicts
+  // the stale room while preserving any room for the restored generation.
+  const deletedEpoch = "epoch_deleted";
+  const restoredEpoch = "epoch_restored";
+  const shouldDisconnectDeletedRoom = (roomEpoch) => roomEpoch === deletedEpoch;
+  assert.equal(shouldDisconnectDeletedRoom(deletedEpoch), true);
+  assert.equal(shouldDisconnectDeletedRoom(restoredEpoch), false);
 });
 
 test("partial block mutations require a caller snapshot base before certifying the page-global content version", () => {
