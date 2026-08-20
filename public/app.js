@@ -9234,15 +9234,22 @@ async function destroyPageCollaboration({ flush = true } = {}) {
 async function handleCollaborationAccessChanged(generation, pageId) {
   if (generation !== state.collaborationGeneration || state.selectedPage?.id !== pageId) return;
   setStatus(t("sharing.accessChanged"), true);
+  // destroyPageCollaboration advances the generation synchronously before awaiting
+  // session teardown. Capture that exact successor so a same-page navigation or
+  // replacement collaboration session cannot be mistaken for this refresh.
+  const refreshGeneration = generation + 1;
   await destroyPageCollaboration({ flush: false });
+  if (refreshGeneration !== state.collaborationGeneration || state.selectedPage?.id !== pageId) return;
   try {
     const data = await api(`/api/pages/${encodeURIComponent(pageId)}`);
-    if (state.selectedPage?.id !== pageId) return;
+    if (refreshGeneration !== state.collaborationGeneration || state.selectedPage?.id !== pageId) return;
     state.selectedPage = data.page;
     renderSelectedPage();
     if (isCollaborativePage(data.page)) await startPageCollaboration(data.page);
   } catch {
+    if (refreshGeneration !== state.collaborationGeneration || state.selectedPage?.id !== pageId) return;
     await loadPages(elements.searchInput.value.trim(), state.activeTag).catch(() => undefined);
+    if (refreshGeneration !== state.collaborationGeneration || state.selectedPage?.id !== pageId) return;
     await showHome({ skipFlush: true });
   }
 }
