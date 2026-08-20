@@ -24,7 +24,7 @@ import {
 import {
   collaborationTicketProtocolPrefix,
   collaborationWebSocketProtocol,
-  disconnectPageCollaborators,
+  disconnectPageCollaboratorsForDocumentEpoch,
   disconnectSharedUser
 } from "../lib/collaboration-server.js";
 import { toBlock, toPublicUser } from "../lib/mappers.js";
@@ -179,6 +179,44 @@ async function getShareRows(pageId: string, client: DbClient = db) {
   );
 }
 
+async function disconnectRemovedSharedUserIfCurrent(
+  pageId: string,
+  ownerId: string,
+  sharedUserId: string
+) {
+  try {
+    await transaction(async (client) => {
+      // Share creation/removal and collaboration-session admission all take the
+      // page-row lock. Keep the revocation check and synchronous local-room
+      // disconnect under that same lock so a later re-share cannot be mistaken
+      // for the share generation this handler just removed.
+      const currentPage = await client.queryOne<Pick<PageRow, "id">>(
+        "SELECT id FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
+        [pageId, ownerId]
+      );
+      if (!currentPage) return;
+
+      const currentShare = await client.queryOne<{ user_id: string }>(
+        `SELECT user_id FROM page_shares
+         WHERE page_id = ? AND user_id = ? AND permission = 'EDIT'`,
+        [pageId, sharedUserId]
+      );
+      if (currentShare) return;
+
+      disconnectSharedUser(pageId, sharedUserId, "Page access was removed");
+    });
+  } catch (error) {
+    // This is post-COMMIT cleanup. Never guess that a stale revocation is still
+    // current when the verification itself fails; periodic access rechecks are
+    // a safe fallback for the already-committed authorization change.
+    console.error("Failed to verify shared-user collaboration disconnect", {
+      pageId,
+      sharedUserId,
+      error
+    });
+  }
+}
+
 function toSharePayload(row: ShareUserRow) {
   return {
     user: toPublicUser(row),
@@ -251,6 +289,7 @@ collaborationRouter.post(
       const pageId = String(req.params.pageId);
       const username = String(req.body.username);
       let firstShare = false;
+      let previousDocumentEpoch: string | null = null;
 
       const sharedUser = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(owner.id, authScope, client);
@@ -281,6 +320,8 @@ collaborationRouter.post(
         );
         firstShare = Number(count?.share_count ?? 0) === 0;
         if (firstShare) {
+          const previousState = await getCollaborationState(pageId, client, { lock: true });
+          previousDocumentEpoch = previousState?.document_epoch ?? null;
           // Another browser can hold a durable direct-edit draft that this
           // browser cannot see. Preserve a server recovery admission before
           // switching this page to a fresh collaboration lineage.
@@ -317,7 +358,13 @@ collaborationRouter.post(
         return created;
       });
 
-      if (firstShare) disconnectPageCollaborators(pageId, "Collaboration state was initialized");
+      if (previousDocumentEpoch) {
+        disconnectPageCollaboratorsForDocumentEpoch(
+          pageId,
+          previousDocumentEpoch,
+          "Collaboration state was initialized"
+        );
+      }
       const rows = await getShareRows(pageId);
       res.status(201).json({ share: toSharePayload(sharedUser), count: rows.length });
     } catch (error) {
@@ -430,12 +477,24 @@ collaborationRouter.delete(
           await client.execute("DELETE FROM page_yjs_updates WHERE page_id = ?", [pageId]);
           await client.execute("DELETE FROM page_collaboration_state WHERE page_id = ?", [pageId]);
         }
-        return remaining;
+        return {
+          remaining,
+          removedDocumentEpoch: remaining === 0 ? (preRemovalState?.document_epoch ?? null) : null
+        };
       });
 
-      disconnectSharedUser(pageId, sharedUserId);
-      if (result === 0) disconnectPageCollaborators(pageId);
-      res.json({ removed: true, count: result });
+      if (result.remaining === 0) {
+        if (result.removedDocumentEpoch) {
+          disconnectPageCollaboratorsForDocumentEpoch(
+            pageId,
+            result.removedDocumentEpoch,
+            "Collaboration sharing ended"
+          );
+        }
+      } else {
+        await disconnectRemovedSharedUserIfCurrent(pageId, owner.id, sharedUserId);
+      }
+      res.json({ removed: true, count: result.remaining });
     } catch (error) {
       next(error);
     }

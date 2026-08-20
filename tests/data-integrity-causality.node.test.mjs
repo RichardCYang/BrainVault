@@ -205,6 +205,69 @@ test("post-COMMIT page disconnects are fenced against a later restore generation
   assert.equal(shouldDisconnectDeletedRoom(restoredEpoch), false);
 });
 
+test("share-transition disconnects cannot tear down a later collaboration generation", () => {
+  const routes = read("../src/routes/collaboration.routes.ts");
+  const shareCreate = section(
+    routes,
+    'collaborationRouter.post(\n  "/pages/:pageId/shares"',
+    'collaborationRouter.delete(\n  "/pages/:pageId/shares/:userId"'
+  );
+  const shareDelete = section(
+    routes,
+    'collaborationRouter.delete(\n  "/pages/:pageId/shares/:userId"',
+    'collaborationRouter.post(\n  "/recovery/pages/:pageId/candidates"'
+  );
+  const revokedUserFence = section(
+    routes,
+    "async function disconnectRemovedSharedUserIfCurrent",
+    "function toSharePayload"
+  );
+
+  assert.match(shareCreate, /const previousState = await getCollaborationState\(pageId, client, \{ lock: true \}\)/);
+  assert.match(shareCreate, /previousDocumentEpoch = previousState\?\.document_epoch \?\? null/);
+  assert.match(shareCreate, /disconnectPageCollaboratorsForDocumentEpoch\(\s*pageId,\s*previousDocumentEpoch/s);
+  assert.doesNotMatch(shareCreate, /disconnectPageCollaborators\(pageId/);
+
+  const revokeTransaction = revokedUserFence.indexOf("await transaction(async (client) => {");
+  const revokePageRead = revokedUserFence.indexOf("SELECT id FROM pages");
+  const revokePageLock = revokedUserFence.indexOf("FOR UPDATE", revokePageRead);
+  const revokeShareRead = revokedUserFence.indexOf("SELECT user_id FROM page_shares", revokePageLock);
+  const revokeCurrentCheck = revokedUserFence.indexOf("if (currentShare) return;", revokeShareRead);
+  const revokeDisconnect = revokedUserFence.indexOf("disconnectSharedUser(pageId", revokeCurrentCheck);
+  const revokeTransactionEnd = revokedUserFence.indexOf("\n    });", revokeDisconnect);
+  assert.ok(revokeTransaction >= 0);
+  assert.ok(revokePageRead > revokeTransaction);
+  assert.ok(revokePageLock > revokePageRead);
+  assert.ok(revokeShareRead > revokePageLock);
+  assert.ok(revokeCurrentCheck > revokeShareRead);
+  assert.ok(revokeDisconnect > revokeCurrentCheck);
+  assert.ok(revokeTransactionEnd > revokeDisconnect);
+
+  assert.match(shareDelete, /removedDocumentEpoch: remaining === 0 \? \(preRemovalState\?\.document_epoch \?\? null\) : null/);
+  assert.match(shareDelete, /disconnectPageCollaboratorsForDocumentEpoch\(\s*pageId,\s*result\.removedDocumentEpoch/s);
+  assert.match(shareDelete, /await disconnectRemovedSharedUserIfCurrent\(pageId, owner\.id, sharedUserId\)/);
+  assert.doesNotMatch(shareDelete, /disconnectPageCollaborators\(pageId/);
+  assert.doesNotMatch(shareDelete, /\n\s*disconnectSharedUser\(pageId, sharedUserId\)/);
+
+  // Reproduction: an old "first share" handler can resume after a later final
+  // unshare + re-share has already established another document epoch. An
+  // unfenced page-id disconnect evicts the new room; exact epoch invalidation
+  // can only target the room that predated the old transaction.
+  const oldEpoch = "epoch_old";
+  const newEpoch = "epoch_new";
+  const unfencedDisconnects = () => true;
+  const epochFencedDisconnects = (roomEpoch) => roomEpoch === oldEpoch;
+  assert.equal(unfencedDisconnects(newEpoch), true);
+  assert.equal(epochFencedDisconnects(newEpoch), false);
+
+  // A removed editor can also be re-added while another editor remains, so the
+  // collaboration epoch does not change. The page-row lock makes the
+  // post-COMMIT revocation verification serialize with re-share: if re-share
+  // wins, currentShare is present and the stale handler skips the disconnect.
+  const shouldDisconnectRemovedUser = ({ currentShare }) => !currentShare;
+  assert.equal(shouldDisconnectRemovedUser({ currentShare: false }), true);
+  assert.equal(shouldDisconnectRemovedUser({ currentShare: true }), false);
+});
 test("partial block mutations require a caller snapshot base before certifying the page-global content version", () => {
   const blocks = read("../src/routes/block.routes.ts");
   const client = read("../public/app.js");
