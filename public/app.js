@@ -1985,7 +1985,18 @@ const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
 
   if (state.selectedPage?.id === task.pageId) {
     const currentBlocks = state.selectedPage.blocks;
-    state.selectedPage = { ...committedPage, blocks: currentBlocks };
+    const currentBlocksContentVersion = state.selectedPage.contentVersion;
+    // The title acknowledgement contains a complete server snapshot, but this
+    // path intentionally preserves the browser's current block array so a newer
+    // local draft is never overwritten. Preserve the content-version token from
+    // that same block snapshot too; otherwise a remote block edit can donate a
+    // newer token to stale visible blocks and make destructive freshness checks
+    // incorrectly treat those stale blocks as current.
+    state.selectedPage = {
+      ...committedPage,
+      blocks: currentBlocks,
+      contentVersion: currentBlocksContentVersion
+    };
     applyPageSummaryUpdate(committedPage.id, {
       title: committedPage.title,
       version: committedPage.version,

@@ -303,3 +303,48 @@ test("stale partial responses cannot make a stale page snapshot appear current",
   assert.equal(isAuthoritativePartialMutationReplay(1, 2), true);
   assert.equal(isAuthoritativePartialMutationReplay(1, 3), false);
 });
+
+test("title acknowledgements keep the content-version token coupled to preserved blocks", () => {
+  const client = read("../public/app.js");
+  const titleQueue = section(
+    client,
+    "const pageTitleSaveQueue = createLatestWriteQueue",
+    "async function downloadAttachment"
+  );
+  const deleteFlow = section(
+    client,
+    "async function deleteNavigationTarget()",
+    "function renderCollectionView()"
+  );
+
+  assert.match(titleQueue, /const currentBlocks = state\.selectedPage\.blocks;/);
+  assert.match(titleQueue, /const currentBlocksContentVersion = state\.selectedPage\.contentVersion;/);
+  assert.match(
+    titleQueue,
+    /state\.selectedPage = \{[\s\S]*?blocks: currentBlocks,[\s\S]*?contentVersion: currentBlocksContentVersion[\s\S]*?\};/
+  );
+  assert.match(
+    deleteFlow,
+    /Number\(localPage\.contentVersion \?\? 1\) !== Number\(serverPage\.contentVersion \?\? 1\)/
+  );
+
+  // Reproduction: tab A still renders block snapshot v4. Tab B commits a block
+  // edit (v5) before tab A's delayed title request obtains its server snapshot.
+  // Keeping A's blocks but adopting the title response's v5 token defeats the
+  // permanent-delete freshness comparison even though A never rendered v5.
+  const localSnapshot = { blocks: ["visible-v4"], contentVersion: 4 };
+  const titleAcknowledgement = { title: "Renamed", blocks: ["server-v5"], contentVersion: 5 };
+  const vulnerableMerge = { ...titleAcknowledgement, blocks: localSnapshot.blocks };
+  assert.deepEqual(vulnerableMerge.blocks, ["visible-v4"]);
+  assert.equal(vulnerableMerge.contentVersion, 5);
+  assert.equal(vulnerableMerge.contentVersion === titleAcknowledgement.contentVersion, true);
+
+  const fixedMerge = {
+    ...titleAcknowledgement,
+    blocks: localSnapshot.blocks,
+    contentVersion: localSnapshot.contentVersion
+  };
+  assert.deepEqual(fixedMerge.blocks, ["visible-v4"]);
+  assert.equal(fixedMerge.contentVersion, 4);
+  assert.equal(fixedMerge.contentVersion === titleAcknowledgement.contentVersion, false);
+});
