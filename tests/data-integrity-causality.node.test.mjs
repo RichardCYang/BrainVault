@@ -101,12 +101,18 @@ test("post-COMMIT page disconnects are fenced against a later restore generation
     'pageRouter.put("/:pageId/tags"'
   );
 
-  const archiveRead = archiveFence.indexOf("SELECT is_archived, edit_version FROM pages");
+  const archiveTransaction = archiveFence.indexOf("await transaction(async (client) => {");
+  const archiveRead = archiveFence.indexOf("SELECT is_archived, edit_version");
+  const archiveRowLock = archiveFence.indexOf("FOR UPDATE", archiveRead);
   const archiveVersionFence = archiveFence.indexOf("Number(currentPage.edit_version ?? 1) !== archivedVersion");
   const archiveDisconnect = archiveFence.indexOf("disconnectPageCollaborators(pageId");
-  assert.ok(archiveRead >= 0);
-  assert.ok(archiveVersionFence > archiveRead);
+  const archiveTransactionEnd = archiveFence.indexOf("\n    });", archiveDisconnect);
+  assert.ok(archiveTransaction >= 0);
+  assert.ok(archiveRead > archiveTransaction);
+  assert.ok(archiveRowLock > archiveRead);
+  assert.ok(archiveVersionFence > archiveRowLock);
   assert.ok(archiveDisconnect > archiveVersionFence);
+  assert.ok(archiveTransactionEnd > archiveDisconnect);
   assert.match(archiveFence, /owner_id = \?/);
 
   assert.match(deleteLineageCapture, /SELECT page_id, document_epoch/);
@@ -152,12 +158,41 @@ test("post-COMMIT page disconnects are fenced against a later restore generation
     "permanent deletion must invalidate by captured document lineage"
   );
 
-  // Reproduction model: the archive transaction commits v8, then a restore
-  // commits v9 before the old handler performs its post-COMMIT disconnect.
-  const shouldDisconnectArchived = (currentPage, archivedVersion) =>
-    Boolean(currentPage?.isArchived && currentPage.version === archivedVersion);
-  assert.equal(shouldDisconnectArchived({ isArchived: true, version: 8 }, 8), true);
-  assert.equal(shouldDisconnectArchived({ isArchived: false, version: 9 }, 8), false);
+  // Reproduction model: without a row lock, the verification SELECT can read
+  // archived v8, a restore can commit v9 before the Node callback disconnects,
+  // and the stale handler can evict v9 collaborators. With FOR UPDATE, either
+  // the archive cleanup owns v8 until after disconnect, or restore wins first
+  // and the cleanup observes v9 and skips the disconnect.
+  function reproduceArchiveDisconnectRace({ locked }) {
+    let page = { isArchived: true, version: 8 };
+    let restoredRoomConnected = false;
+    let oldHandlerObserved = null;
+
+    oldHandlerObserved = { ...page };
+    if (!locked) {
+      page = { isArchived: false, version: 9 };
+      restoredRoomConnected = true;
+    }
+
+    const shouldDisconnect =
+      oldHandlerObserved.isArchived && oldHandlerObserved.version === 8;
+    if (shouldDisconnect) restoredRoomConnected = false;
+
+    if (locked) {
+      page = { isArchived: false, version: 9 };
+      restoredRoomConnected = true;
+    }
+    return { page, restoredRoomConnected };
+  }
+
+  assert.deepEqual(reproduceArchiveDisconnectRace({ locked: false }), {
+    page: { isArchived: false, version: 9 },
+    restoredRoomConnected: false
+  });
+  assert.deepEqual(reproduceArchiveDisconnectRace({ locked: true }), {
+    page: { isArchived: false, version: 9 },
+    restoredRoomConnected: true
+  });
 
   // Permanent deletion has a subtler page-id reuse race. The previous
   // existence-only fence preserved the restored row but also left this

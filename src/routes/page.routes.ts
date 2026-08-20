@@ -301,22 +301,30 @@ async function disconnectArchivedPageCollaboratorsIfCurrent(
   archivedVersion: number
 ) {
   try {
-    const currentPage = await db.queryOne<Pick<PageRow, "is_archived" | "edit_version">>(
-      "SELECT is_archived, edit_version FROM pages WHERE id = ? AND owner_id = ?",
-      [pageId, ownerId]
-    );
-    if (
-      !currentPage
-      || !currentPage.is_archived
-      || Number(currentPage.edit_version ?? 1) !== archivedVersion
-    ) {
-      return;
-    }
+    await transaction(async (client) => {
+      // Keep the generation check and process-local room invalidation under the
+      // same page-row lock. Without the lock, the SELECT can observe the
+      // archived generation, a concurrent restore can commit, and this stale
+      // handler can then disconnect collaborators from the restored page.
+      const currentPage = await client.queryOne<Pick<PageRow, "is_archived" | "edit_version">>(
+        `SELECT is_archived, edit_version
+         FROM pages
+         WHERE id = ? AND owner_id = ?
+         FOR UPDATE`,
+        [pageId, ownerId]
+      );
+      if (
+        !currentPage
+        || !currentPage.is_archived
+        || Number(currentPage.edit_version ?? 1) !== archivedVersion
+      ) {
+        return;
+      }
 
-    // The state check above resumes on this process's event loop immediately
-    // before this synchronous local-hub invalidation. A restored page cannot
-    // establish a newer local room between the check and the disconnect.
-    disconnectPageCollaborators(pageId, "Page was archived");
+      // Restore and collaboration-session admission both need this page row.
+      // They cannot cross this synchronous disconnect until the lock releases.
+      disconnectPageCollaborators(pageId, "Page was archived");
+    });
   } catch (error) {
     // A failed post-COMMIT verification must not guess that this page id still
     // denotes the archived generation; skipping the disconnect is safer than
