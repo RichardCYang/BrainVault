@@ -292,6 +292,66 @@ async function assertPageDeleteReplayNotSuperseded(client: DbClient, pageIds: re
   }
 }
 
+async function disconnectArchivedPageCollaboratorsIfCurrent(
+  pageId: string,
+  ownerId: string,
+  archivedVersion: number
+) {
+  try {
+    const currentPage = await db.queryOne<Pick<PageRow, "is_archived" | "edit_version">>(
+      "SELECT is_archived, edit_version FROM pages WHERE id = ? AND owner_id = ?",
+      [pageId, ownerId]
+    );
+    if (
+      !currentPage
+      || !currentPage.is_archived
+      || Number(currentPage.edit_version ?? 1) !== archivedVersion
+    ) {
+      return;
+    }
+
+    // The state check above resumes on this process's event loop immediately
+    // before this synchronous local-hub invalidation. A restored page cannot
+    // establish a newer local room between the check and the disconnect.
+    disconnectPageCollaborators(pageId, "Page was archived");
+  } catch (error) {
+    // A failed post-COMMIT verification must not guess that this page id still
+    // denotes the archived generation; skipping the disconnect is safer than
+    // evicting collaborators from a page that may already have been restored.
+    console.error("Failed to verify archived page before disconnecting collaborators", { pageId, error });
+  }
+}
+
+async function disconnectDeletedPageCollaboratorsIfCurrent(pageIds: readonly string[]) {
+  const uniquePageIds = [...new Set(pageIds.filter(Boolean))];
+  for (let offset = 0; offset < uniquePageIds.length; offset += 500) {
+    const group = uniquePageIds.slice(offset, offset + 500);
+    try {
+      const existingRows = await db.query<{ id: string }>(
+        `SELECT id FROM pages
+         WHERE id IN (${group.map(() => "?").join(", ")})`,
+        group
+      );
+      const existingPageIds = new Set(existingRows.map((row) => row.id));
+
+      // Keep the existence check and local-hub invalidation in the same
+      // synchronous continuation. If a restore already recreated an id, its
+      // room is preserved; if it has not, only the deleted generation's room
+      // can exist locally before this loop yields again.
+      for (const pageId of group) {
+        if (!existingPageIds.has(pageId)) disconnectPageCollaborators(pageId, "Page was deleted");
+      }
+    } catch (error) {
+      // Do not let a best-effort post-COMMIT cleanup guess across a database
+      // error and disconnect a later page generation.
+      console.error("Failed to verify deleted pages before disconnecting collaborators", {
+        pageIds: group,
+        error
+      });
+    }
+  }
+}
+
 async function assertCollaborationMaterialized(client: DbClient, pageIds: string[]) {
   for (const pageId of pageIds) {
     const state = await client.queryOne<{
@@ -1029,7 +1089,9 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
       return getPageResponse(pageId, user.id, client);
     });
 
-    if (updates.isArchived === true) disconnectPageCollaborators(pageId, "Page was archived");
+    if (updates.isArchived === true) {
+      await disconnectArchivedPageCollaboratorsIfCurrent(pageId, user.id, Number(page.version ?? 1));
+    }
     res.json({ page });
   } catch (error) {
     next(error);
@@ -1154,10 +1216,11 @@ pageRouter.delete(
           return { attachmentIds, pageIds, attachmentGeneration, replayed: false };
         });
 
-        // A receipt replay may be arbitrarily delayed. Never let it disconnect
-        // collaborators from a page generation created after the original delete.
+        // A receipt replay may be arbitrarily delayed, and even a fresh
+        // delete can race a restore after COMMIT. Re-check that every id is
+        // still absent before invalidating any local collaboration room.
         if (!deletion.replayed) {
-          for (const deletedPageId of deletion.pageIds) disconnectPageCollaborators(deletedPageId, "Page was deleted");
+          await disconnectDeletedPageCollaboratorsIfCurrent(deletion.pageIds);
         }
         // Filesystem cleanup is idempotent and intentionally repeats on receipt
         // replay in case the first response was lost immediately after COMMIT.
@@ -1216,7 +1279,11 @@ pageRouter.delete(
         // A post-COMMIT read could otherwise return a later restore or edit.
         return updatedPage;
       });
-      disconnectPageCollaborators(pageId, "Page was archived");
+      await disconnectArchivedPageCollaboratorsIfCurrent(
+        pageId,
+        user.id,
+        Number(archivedPage.edit_version ?? 1)
+      );
       res.json({ page: toPage(archivedPage) });
     } catch (error) {
       next(error);

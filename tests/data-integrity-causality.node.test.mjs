@@ -77,6 +77,72 @@ test("legacy page archive DELETE keeps its acknowledgement causally bound to the
   assert.deepEqual(fixedAcknowledgement, { version: 8, isArchived: true });
 });
 
+test("post-COMMIT page disconnects are fenced against a later restore generation", () => {
+  const pages = read("../src/routes/page.routes.ts");
+  const archiveFence = section(
+    pages,
+    "async function disconnectArchivedPageCollaboratorsIfCurrent",
+    "async function disconnectDeletedPageCollaboratorsIfCurrent"
+  );
+  const deleteFence = section(
+    pages,
+    "async function disconnectDeletedPageCollaboratorsIfCurrent",
+    "async function assertCollaborationMaterialized"
+  );
+  const patchRoute = section(
+    pages,
+    'pageRouter.patch("/:pageId"',
+    "pageRouter.delete("
+  );
+  const deleteRoute = section(
+    pages,
+    "pageRouter.delete(",
+    'pageRouter.put("/:pageId/tags"'
+  );
+
+  const archiveRead = archiveFence.indexOf("SELECT is_archived, edit_version FROM pages");
+  const archiveVersionFence = archiveFence.indexOf("Number(currentPage.edit_version ?? 1) !== archivedVersion");
+  const archiveDisconnect = archiveFence.indexOf("disconnectPageCollaborators(pageId");
+  assert.ok(archiveRead >= 0);
+  assert.ok(archiveVersionFence > archiveRead);
+  assert.ok(archiveDisconnect > archiveVersionFence);
+  assert.match(archiveFence, /owner_id = \?/);
+
+  const deleteRead = deleteFence.indexOf("SELECT id FROM pages");
+  const deletePresenceFence = deleteFence.indexOf("if (!existingPageIds.has(pageId))");
+  const deleteDisconnect = deleteFence.indexOf("disconnectPageCollaborators(pageId", deletePresenceFence);
+  assert.ok(deleteRead >= 0);
+  assert.ok(deletePresenceFence > deleteRead);
+  assert.ok(deleteDisconnect > deletePresenceFence);
+  assert.match(deleteFence, /offset \+= 500/);
+
+  assert.match(
+    patchRoute,
+    /await disconnectArchivedPageCollaboratorsIfCurrent\(pageId, user\.id, Number\(page\.version \?\? 1\)\)/
+  );
+  assert.match(deleteRoute, /await disconnectDeletedPageCollaboratorsIfCurrent\(deletion\.pageIds\)/);
+  assert.match(deleteRoute, /Number\(archivedPage\.edit_version \?\? 1\)/);
+  assert.equal(
+    (pages.match(/disconnectPageCollaborators\(/g) ?? []).length,
+    2,
+    "page mutation handlers must not bypass the current-generation fences"
+  );
+
+  // Reproduction model: the archive transaction commits v8, then a restore
+  // commits v9 before the old handler performs its post-COMMIT disconnect.
+  // The old behavior keyed only on page id and evicted the v9 room.
+  const shouldDisconnectArchived = (currentPage, archivedVersion) =>
+    Boolean(currentPage?.isArchived && currentPage.version === archivedVersion);
+  assert.equal(shouldDisconnectArchived({ isArchived: true, version: 8 }, 8), true);
+  assert.equal(shouldDisconnectArchived({ isArchived: false, version: 9 }, 8), false);
+
+  // Permanent deletion has the analogous page-id reuse race: a restored row
+  // means that the old delete must no longer invalidate a room for that id.
+  const shouldDisconnectDeleted = (currentlyExistingIds, pageId) => !currentlyExistingIds.has(pageId);
+  assert.equal(shouldDisconnectDeleted(new Set(), "pag_root"), true);
+  assert.equal(shouldDisconnectDeleted(new Set(["pag_root"]), "pag_root"), false);
+});
+
 test("partial block mutations require a caller snapshot base before certifying the page-global content version", () => {
   const blocks = read("../src/routes/block.routes.ts");
   const client = read("../public/app.js");

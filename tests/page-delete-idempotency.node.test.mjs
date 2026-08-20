@@ -147,7 +147,7 @@ test("stale delete receipts fail closed when a restored page generation reuses t
     "a receipt replay must reject reused page ids before it can acknowledge the old deletion"
   );
 
-  const disconnectIndex = deleteRoute.indexOf("disconnectPageCollaborators", replayReturnIndex);
+  const disconnectIndex = deleteRoute.indexOf("disconnectDeletedPageCollaboratorsIfCurrent", replayReturnIndex);
   const replayFenceIndex = deleteRoute.lastIndexOf("if (!deletion.replayed)", disconnectIndex);
   assert.ok(
     replayFenceIndex > replayReturnIndex && replayFenceIndex < disconnectIndex,
