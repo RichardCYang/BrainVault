@@ -46,6 +46,12 @@ const page = {
   updated_at: "2026-07-14T00:00:00.000Z"
 };
 const token = signAuthToken({ sub: user.id, username: user.username, authVersion: 1 });
+const collaborationState = {
+  page_id: page.id,
+  document_epoch: "epoch_attachment_test",
+  materialized_update_id: 0,
+  materialization_version: 0
+};
 let shareCount = 0;
 
 beforeEach(async () => {
@@ -59,6 +65,7 @@ beforeEach(async () => {
 
   database.queryOne.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
     if (sql.includes("COUNT(*) AS share_count FROM page_shares")) return { share_count: shareCount };
+    if (sql.includes("FROM page_collaboration_state")) return collaborationState;
     if (sql.includes("FROM users WHERE id = ?")) return user;
     if (sql.includes("FROM pages WHERE id = ? AND owner_id = ?")) return page;
     if (sql.includes("SELECT * FROM pages WHERE id = ?")) return page;
@@ -162,20 +169,26 @@ describe("Attachment routes", () => {
     await expect(stat(getAttachmentFilePath(user.id, blockId))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("rejects direct attachment writes once a page participates in collaboration", async () => {
+  it("allows the canonical attachment upload path while a page participates in collaboration", async () => {
     shareCount = 1;
 
     const response = await request(createApp())
       .post(`/api/pages/${page.id}/attachments`)
       .set("Authorization", `Bearer ${token}`)
-      .attach("file", Buffer.from("blocked collaborative attachment"), {
-        filename: "blocked.txt",
+      .field("basePageContentVersion", "1")
+      .attach("file", Buffer.from("collaborative attachment"), {
+        filename: "shared.txt",
         contentType: "text/plain"
       })
-      .expect(409);
+      .expect(201);
 
-    expect(response.body.error.code).toBe("COLLABORATION_REQUIRED");
-    expect(database.blocks.size).toBe(0);
+    expect(response.body.block).toMatchObject({
+      type: "ATTACHMENT",
+      markdown: "shared.txt"
+    });
+    expect(response.body.pageContentVersion).toBe(2);
+    expect(response.body.pageContentVersionAuthoritative).toBe(true);
+    expect(database.blocks.size).toBe(1);
   });
 
   it("rejects active web attachment names and media types", async () => {

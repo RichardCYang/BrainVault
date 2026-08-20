@@ -371,11 +371,25 @@ export class PageCollaborationHub {
     this.invalidateRoom(room, 4011, "The collaboration document was replaced");
   }
 
-  async notifyCanonicalAttachment(pageId: string, block: unknown) {
+  async notifyCanonicalAttachment(pageId: string, documentEpoch: string, block: unknown) {
     const room = this.rooms.get(pageId);
-    if (!room || room.invalidated || this.rooms.get(pageId) !== room) return;
+    if (
+      !room
+      || room.invalidated
+      || this.rooms.get(pageId) !== room
+      || room.documentEpoch !== documentEpoch
+    ) return;
     await Promise.all([...room.clients.values()].map(async (client) => {
       if (!await this.revalidateClientPageAccess(room, client)) return;
+      // Access revalidation awaits the database. The page can be replaced and
+      // a new room installed during that gap, so re-check both identity and lineage
+      // immediately before publishing the canonical block.
+      if (
+        room.invalidated
+        || this.rooms.get(pageId) !== room
+        || room.documentEpoch !== documentEpoch
+        || client.documentEpoch !== documentEpoch
+      ) return;
       if (client.socket.isOpen) client.socket.sendJson({ type: "canonical-attachment", block });
     }));
   }
@@ -1645,6 +1659,12 @@ export function disconnectIpCollaborators(ipAddress: string, reason?: string) {
   for (const hub of activeHubs) hub.disconnectIpEverywhere(ipAddress, reason);
 }
 
-export async function broadcastCanonicalAttachment(pageId: string, block: unknown) {
-  await Promise.all([...activeHubs].map((hub) => hub.notifyCanonicalAttachment(pageId, block)));
+export async function broadcastCanonicalAttachment(
+  pageId: string,
+  documentEpoch: string,
+  block: unknown
+) {
+  await Promise.all(
+    [...activeHubs].map((hub) => hub.notifyCanonicalAttachment(pageId, documentEpoch, block))
+  );
 }

@@ -57,6 +57,7 @@ import {
 } from "../lib/block-preserve-children.js";
 import { assertPageNotArchived, getBlockAccess, getPageAccess, type PageAccess } from "../lib/page-access.js";
 import { broadcastCanonicalAttachment } from "../lib/collaboration-server.js";
+import { ensureCollaborationState } from "../lib/collaboration-lineage.js";
 import {
   diffPageVersionBlocks,
   recordPageVersion,
@@ -415,7 +416,6 @@ async function authorizeAttachmentUploadTarget(req: Request, res: Response, next
     const user = requireUser(req.user);
     const pageId = String(req.params.pageId);
     const access = await assertAccessiblePage(pageId, user.id);
-    assertDirectBlockMutationAllowed(access);
     if (access.page.is_archived) {
       throw new ApiError(409, "PAGE_ARCHIVED", "Restore the page before adding an attachment");
     }
@@ -642,6 +642,7 @@ blockRouter.post(
           })
         : undefined;
 
+      let collaborationDocumentEpochAtWrite: string | null = null;
       let result: {
         block: BlockRow;
         pageContentVersion: number | undefined;
@@ -668,6 +669,9 @@ blockRouter.post(
             blockId: id,
             requestHash: mutationHash
           });
+          collaborationDocumentEpochAtWrite = lockedAccess.shareCount > 0
+            ? (await ensureCollaborationState(pageId, client)).document_epoch
+            : null;
           if (reservation.kind === "replay") {
             return {
               block: reservation.block,
@@ -678,7 +682,9 @@ blockRouter.post(
             };
           }
 
-          assertDirectBlockMutationAllowed(lockedAccess);
+          // Canonical attachment creation is intentionally allowed while shared:
+          // Yjs materialization refuses to mint attachment rows itself and adopts
+          // this server-validated binary row into the active collaboration document.
           if (lockedAccess.page.is_archived) {
             throw new ApiError(409, "PAGE_ARCHIVED", "Restore the page before adding an attachment");
           }
@@ -810,7 +816,9 @@ blockRouter.post(
         cleanupPath = null;
       }
       const payload = toBlock(result.block);
-      await broadcastCanonicalAttachment(pageId, payload);
+      if (collaborationDocumentEpochAtWrite) {
+        await broadcastCanonicalAttachment(pageId, collaborationDocumentEpochAtWrite, payload);
+      }
       res.status(201).json({
         block: payload,
         pageContentVersion: result.pageContentVersion,

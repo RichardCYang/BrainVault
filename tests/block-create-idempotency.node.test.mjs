@@ -45,7 +45,7 @@ test("ordinary and attachment creates reserve a receipt before durable side effe
   assert.ok(ordinary.indexOf("reserveBlockCreateMutation") < ordinary.indexOf("INSERT INTO blocks"));
   assert.match(attachment, /kind: "ATTACHMENT"/);
   assert.match(attachment, /sha256: fileHash/);
-  assert.ok(attachment.indexOf("reserveBlockCreateMutation") < attachment.indexOf("assertDirectBlockMutationAllowed"));
+  assert.ok(attachment.indexOf("reserveBlockCreateMutation") < attachment.indexOf("ensureCollaborationState"));
   assert.ok(attachment.indexOf("reserveBlockCreateMutation") < attachment.indexOf("moveAttachmentFile"));
   assert.ok(attachment.indexOf("reserveBlockCreateMutation") < attachment.indexOf("INSERT INTO blocks"));
   assert.match(attachment, /if \(cleanupPath\)[\s\S]*removeAttachmentPath\(cleanupPath\)/);

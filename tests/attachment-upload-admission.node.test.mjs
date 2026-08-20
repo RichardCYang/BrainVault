@@ -73,12 +73,13 @@ test("attachment authorization and resource admission run before Multer writes t
   const authorizationEnd = routeSource.indexOf("function requireAttachmentUploadTarget", authorizationStart);
   const authorizationSource = routeSource.slice(authorizationStart, authorizationEnd);
   assert.ok(authorizationSource.includes("await assertAccessiblePage(pageId, user.id)"));
-  assert.ok(authorizationSource.includes("assertDirectBlockMutationAllowed(access)"));
+  assert.ok(!authorizationSource.includes("assertDirectBlockMutationAllowed(access)"));
   assert.ok(authorizationSource.includes("access.page.is_archived"));
   assert.ok(authorizationSource.includes("res.locals.attachmentUploadTarget"));
   assert.ok(uploadRoute.includes("beginAttachmentUploadProcessing(res)"));
   assert.ok(uploadRoute.includes("releaseAttachmentUpload?.()"));
-  assert.ok(uploadRoute.includes("assertDirectBlockMutationAllowed(lockedAccess)"));
+  assert.ok(uploadRoute.includes("lockedAccess.shareCount > 0"));
+  assert.ok(uploadRoute.includes("ensureCollaborationState(pageId, client)"));
   assert.ok(uploadRoute.includes("lockedAccess.page.is_archived"));
 
   assert.match(envSource, /ATTACHMENT_UPLOAD_WINDOW_MS:[^\n]+default\(60_000\)/);
@@ -97,8 +98,8 @@ test("default admission changes unauthorized temporary-write exposure from gigab
   assert.equal(legacyUnauthorizedTemporaryBytesPerMinute, 3_145_728_000);
   assert.ok(legacyUnauthorizedTemporaryBytesPerMinute > 2 * 1024 * 1024 * 1024);
 
-  // The patched route resolves page access, collaboration mode, and archive state
-  // before Multer receives the request stream, so rejected targets write no file bytes.
+  // The patched route resolves page access and archive state before Multer receives
+  // the request stream, so unauthorized or archived targets write no file bytes.
   const patchedUnauthorizedTemporaryBytesPerMinute = 0;
   assert.equal(patchedUnauthorizedTemporaryBytesPerMinute, 0);
 });
