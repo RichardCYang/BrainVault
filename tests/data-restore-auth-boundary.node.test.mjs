@@ -33,7 +33,7 @@ test("workspace restore carries and revalidates auth, device-session, and worksp
     authMiddleware,
     /return Object\.freeze\(\{ authVersion, workspaceGeneration, sessionId \}\)/
   );
-  assert.match(snapshotLib, /return importUserDataBackup\(userId, filePath, authScope\)/);
+  assert.match(snapshotLib, /return importUserDataBackup\(userId, filePath, authScope, async \(client\) =>/);
 
   assert.match(
     transfer,

@@ -58,6 +58,74 @@ test("snapshot create and delete revalidate the exact device session before dura
   );
 });
 
+test("snapshot restore revalidates and locks its exact source at the destructive commit boundary", async () => {
+  const [snapshots, transfer] = await Promise.all([
+    readFile(new URL("../src/lib/workspace-snapshots.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/lib/data-transfer.ts", import.meta.url), "utf8")
+  ]).then((values) => values.map(normalize));
+
+  const restore = section(
+    snapshots,
+    "export async function restoreWorkspaceSnapshot(",
+    "export async function diffWorkspaceSnapshot("
+  );
+  assert.match(restore, /importUserDataBackup\(userId, filePath, authScope, async \(client\) =>/);
+  assert.match(restore, /getOwnedSnapshotRow\(userId, row\.id, client, true\)/);
+  assert.match(restore, /SNAPSHOT_RESTORE_CONFLICT/);
+
+  const importer = section(transfer, "export async function importUserDataBackup(");
+  const transactionStart = importer.indexOf("await transaction(async (client) => {");
+  const authFence = importer.indexOf(
+    "await assertCurrentDataRestoreAuthentication(client, userId, authScope)",
+    transactionStart
+  );
+  const sourceFence = importer.indexOf("await commitBoundaryGuard?.(client)", authFence);
+  const workspaceLock = importer.indexOf("const lockedWorkspaceSnapshot = await createWorkspaceRestoreSnapshot", sourceFence);
+  const destructiveImport = importer.indexOf("await importRows(", workspaceLock);
+  assert.ok(
+    transactionStart >= 0
+      && authFence > transactionStart
+      && sourceFence > authFence
+      && workspaceLock > sourceFence
+      && destructiveImport > workspaceLock,
+    "source deletion must be fenced after auth and before workspace replacement"
+  );
+});
+
+test("snapshot deletion supersedes a restore that has not crossed its commit boundary", () => {
+  function simulateRestore(fixed) {
+    const state = {
+      snapshotExists: true,
+      stagedArchive: "snapshot-workspace",
+      workspace: "current-workspace"
+    };
+
+    // The restore request admitted and staged the archive, then another tab
+    // deleted the same recovery point before the restore transaction began.
+    state.snapshotExists = false;
+
+    if (fixed && !state.snapshotExists) {
+      return { outcome: "rejected", ...state };
+    }
+
+    state.workspace = state.stagedArchive;
+    return { outcome: "restored", ...state };
+  }
+
+  assert.deepEqual(simulateRestore(false), {
+    outcome: "restored",
+    snapshotExists: false,
+    stagedArchive: "snapshot-workspace",
+    workspace: "snapshot-workspace"
+  });
+  assert.deepEqual(simulateRestore(true), {
+    outcome: "rejected",
+    snapshotExists: false,
+    stagedArchive: "snapshot-workspace",
+    workspace: "current-workspace"
+  });
+});
+
 test("snapshot deletion cannot strand a live row if the process crashes before SQL commit", () => {
   function simulateDelete(fixed) {
     const state = { row: true, finalArchive: true, tombstone: false };

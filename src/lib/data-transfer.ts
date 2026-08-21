@@ -2928,10 +2928,13 @@ async function assertCurrentDataRestoreAuthentication(
   await assertCurrentAuthSessionBoundary(userId, authScope, client);
 }
 
+type DataRestoreCommitBoundaryGuard = (client: DbClient) => Promise<void>;
+
 export async function importUserDataBackup(
   userId: string,
   zipPath: string,
-  authScope: DataRestoreAuthScope
+  authScope: DataRestoreAuthScope,
+  commitBoundaryGuard?: DataRestoreCommitBoundaryGuard
 ) {
   let entries;
   try {
@@ -3192,6 +3195,10 @@ export async function importUserDataBackup(
         // that admitted the request. Lock the credential and device-session boundary
         // before taking workspace locks so a revoked request cannot replace data.
         await assertCurrentDataRestoreAuthentication(client, userId, authScope);
+        // A server-side restore source can disappear while its archive is being
+        // validated and staged. Revalidate/lock that source at the same durable
+        // boundary as the workspace replacement so a superseding delete wins.
+        await commitBoundaryGuard?.(client);
         const lockedWorkspaceSnapshot = await createWorkspaceRestoreSnapshot(
           userId,
           client,

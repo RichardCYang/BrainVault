@@ -357,7 +357,35 @@ export async function restoreWorkspaceSnapshot(
 ) {
   const row = await getOwnedSnapshotRow(userId, snapshotId);
   const filePath = await ensureSnapshotArchiveIntegrity(userId, row);
-  return importUserDataBackup(userId, filePath, authScope);
+  return importUserDataBackup(userId, filePath, authScope, async (client) => {
+    let current: SnapshotRow;
+    try {
+      // Keep the source row locked through the destructive restore transaction.
+      // A concurrent delete either commits first (and this restore is rejected)
+      // or waits until this already-admitted restore has committed.
+      current = await getOwnedSnapshotRow(userId, row.id, client, true);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "SNAPSHOT_NOT_FOUND") {
+        throw new ApiError(
+          409,
+          "SNAPSHOT_RESTORE_CONFLICT",
+          "The snapshot was deleted while the restore was being prepared. No data was replaced."
+        );
+      }
+      throw error;
+    }
+
+    if (
+      BigInt(current.archive_size) !== BigInt(row.archive_size)
+      || current.archive_sha256 !== row.archive_sha256
+    ) {
+      throw new ApiError(
+        409,
+        "SNAPSHOT_RESTORE_CONFLICT",
+        "The snapshot changed while the restore was being prepared. No data was replaced."
+      );
+    }
+  });
 }
 
 export async function diffWorkspaceSnapshot(userId: string, snapshotId: string) {

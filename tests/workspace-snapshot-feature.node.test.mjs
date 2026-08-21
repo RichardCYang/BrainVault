@@ -49,7 +49,7 @@ test("snapshot creation and restore reuse the complete validated backup boundary
 
   assert.match(snapshotLib, /prepareUserDataBackup\(userId\)/);
   assert.match(snapshotLib, /writeUserDataBackup\(plan, stream\)/);
-  assert.match(snapshotLib, /importUserDataBackup\(userId, filePath, authScope\)/);
+  assert.match(snapshotLib, /importUserDataBackup\(userId, filePath, authScope, async \(client\) =>/);
   assert.match(snapshotLib, /readUserDataBackupManifest\(filePath\)/);
   assert.match(dataTransfer, /export async function readUserDataBackupManifest/);
   assert.match(dataTransfer, /validateManifestRelations\(manifest\)/);
