@@ -246,6 +246,9 @@ let activeBlockMoveId = null;
 let activeBlockMoveSourcePageId = null;
 let blockMoveReturnFocus = null;
 let blockMoveSubmitting = false;
+let activePageMoveSourcePageId = null;
+let pageMoveReturnFocus = null;
+let pageMoveSubmitting = false;
 
 let emojiCategoryDefinitions = [];
 let emojiRecords = [];
@@ -1201,7 +1204,15 @@ const elements = {
   blockMoveSubmit: $("#block-move-submit"),
   navigationContextMenu: $("#navigation-context-menu"),
   navigationAddSubpageButton: $("#navigation-add-subpage-button"),
+  navigationMovePageButton: $("#navigation-move-page-button"),
   navigationDeleteLabel: $("#navigation-delete-label"),
+  pageMoveDialog: $("#page-move-dialog"),
+  pageMoveForm: $("#page-move-form"),
+  pageMoveClose: $("#page-move-close"),
+  pageMovePageSelect: $("#page-move-page-select"),
+  pageMoveMessage: $("#page-move-message"),
+  pageMoveCancel: $("#page-move-cancel"),
+  pageMoveSubmit: $("#page-move-submit"),
   calloutTypeGroup: $("#callout-type-group"),
   accordionOptionsGroup: $("#accordion-options-group"),
   inlineToolbar: $("#inline-toolbar"),
@@ -2645,6 +2656,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   closeNavigationContextMenu();
   closeBlockContextMenu();
   closeBlockMoveDialog({ restoreFocus: false, force: true });
+  closePageMoveDialog({ restoreFocus: false, force: true });
   closePageActionsMenu();
   closeInlineToolbar();
   closeSlashMenu();
@@ -8113,6 +8125,8 @@ function openNavigationContextMenu(trigger, { focusFirst = false } = {}) {
   );
   elements.navigationAddSubpageButton.classList.toggle("hidden", kind !== "page");
   elements.navigationAddSubpageButton.disabled = state.workspaceCreateBusy;
+  elements.navigationMovePageButton.classList.toggle("hidden", kind !== "page");
+  elements.navigationMovePageButton.disabled = kind !== "page" || pageMoveSubmitting;
   elements.navigationDeleteLabel.textContent = t(
     kind === "collection" ? "navigationMenu.deleteCollection" : "navigationMenu.deletePage"
   );
@@ -8131,6 +8145,210 @@ async function createNavigationSubpage() {
   return createWorkspacePage(
     { title: t("newDocumentTitle"), icon: "📄", parentPageId },
     { creatingKey: "status.creatingSubpage", createdKey: "status.subpageCreated" }
+  );
+}
+
+function canMoveNavigationPage(page) {
+  return Boolean(
+    page?.id
+    && !page.isArchived
+    && !isCollectionPage(page)
+    && isPageOwner(page)
+  );
+}
+
+function getPageMoveDestinationPages(sourcePage) {
+  if (!canMoveNavigationPage(sourcePage)) return [];
+  const subtreeIds = getPageSubtreeIds(sourcePage.id);
+  return state.allPages
+    .filter((page) => (
+      page?.id
+      && !subtreeIds.has(page.id)
+      && page.id !== sourcePage.parentPageId
+      && page.ownerId === sourcePage.ownerId
+      && !page.isArchived
+      && !isCollectionPage(page)
+      && isPageOwner(page)
+    ))
+    .sort((left, right) => (
+      getPageMoveDestinationLabel(left).localeCompare(getPageMoveDestinationLabel(right), getLocale())
+    ));
+}
+
+function getPageMoveDestinationLabel(page) {
+  return getPagePathSegments(page).map(({ title }) => title).join(" / ");
+}
+
+function setPageMoveMessage(message = "", isError = false) {
+  elements.pageMoveMessage.textContent = message;
+  elements.pageMoveMessage.classList.toggle("is-error", Boolean(isError));
+}
+
+function setPageMoveSubmitting(submitting) {
+  pageMoveSubmitting = Boolean(submitting);
+  const sourcePage = state.selectedPage?.id === activePageMoveSourcePageId
+    ? state.selectedPage
+    : state.allPages.find((page) => page.id === activePageMoveSourcePageId);
+  const destinations = getPageMoveDestinationPages(sourcePage);
+  elements.pageMoveClose.disabled = pageMoveSubmitting;
+  elements.pageMoveCancel.disabled = pageMoveSubmitting;
+  elements.pageMovePageSelect.disabled = pageMoveSubmitting || destinations.length === 0;
+  elements.pageMoveSubmit.disabled = pageMoveSubmitting || destinations.length === 0;
+  elements.pageMoveSubmit.textContent = t(pageMoveSubmitting ? "pageMove.moving" : "pageMove.submit");
+}
+
+function renderPageMoveDestinations() {
+  const sourcePage = state.selectedPage?.id === activePageMoveSourcePageId
+    ? state.selectedPage
+    : state.allPages.find((page) => page.id === activePageMoveSourcePageId);
+  const destinations = getPageMoveDestinationPages(sourcePage);
+  elements.pageMovePageSelect.replaceChildren();
+
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = t("pageMove.choose");
+  placeholder.selected = true;
+  placeholder.disabled = true;
+  elements.pageMovePageSelect.append(placeholder);
+
+  for (const page of destinations) {
+    const option = document.createElement("option");
+    option.value = page.id;
+    option.textContent = getPageMoveDestinationLabel(page);
+    elements.pageMovePageSelect.append(option);
+  }
+
+  setPageMoveMessage(destinations.length ? "" : t("pageMove.noDestinations"), destinations.length === 0);
+  setPageMoveSubmitting(false);
+  return destinations;
+}
+
+function closePageMoveDialog({ restoreFocus = true, force = false } = {}) {
+  if (pageMoveSubmitting && !force) return;
+  const returnFocus = pageMoveReturnFocus;
+  if (elements.pageMoveDialog.open) elements.pageMoveDialog.close();
+  activePageMoveSourcePageId = null;
+  pageMoveReturnFocus = null;
+  pageMoveSubmitting = false;
+  setPageMoveMessage();
+  elements.pageMoveForm.reset();
+  if (restoreFocus && returnFocus?.isConnected) returnFocus.focus();
+}
+
+function openPageMoveDialog(pageId, returnFocus = null) {
+  const sourcePage = state.selectedPage?.id === pageId
+    ? state.selectedPage
+    : state.allPages.find((page) => page.id === pageId);
+  if (!canMoveNavigationPage(sourcePage)) {
+    setStatus(t("pageMove.unavailable"), true);
+    return;
+  }
+
+  activePageMoveSourcePageId = pageId;
+  pageMoveReturnFocus = returnFocus;
+  renderPageMoveDestinations();
+  if (!elements.pageMoveDialog.open) elements.pageMoveDialog.showModal();
+  if (elements.pageMovePageSelect.disabled) elements.pageMoveCancel.focus();
+  else elements.pageMovePageSelect.focus();
+}
+
+async function submitPageMoveMutation(pageId, targetPageId, expectedVersion, authenticationScope) {
+  const task = { mutationId: createMutationId(), attempted: false };
+  let lastError = null;
+  let sawAmbiguousOutcome = false;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+    try {
+      task.attempted = true;
+      const data = await submitWithFreshMutationIdOnReuse(task, () => {
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        return api(`/api/pages/${encodeURIComponent(pageId)}`, {
+          method: "PATCH",
+          body: {
+            parentPageId: targetPageId,
+            expectedVersion,
+            mutationId: task.mutationId
+          }
+        });
+      });
+      if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      return data;
+    } catch (error) {
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      lastError = error;
+      if (!isAmbiguousApiError(error)) {
+        if (!sawAmbiguousOutcome) throw error;
+        break;
+      }
+      sawAmbiguousOutcome = true;
+    }
+  }
+
+  // A timed-out PATCH may have committed even if both responses were lost.
+  // Re-read the authoritative parent before reporting failure so a successful
+  // hierarchy mutation is never retried later as a different operation.
+  if (sawAmbiguousOutcome && isCurrentAuthenticatedSessionScope(authenticationScope)) {
+    try {
+      const reconciled = await api(`/api/pages/${encodeURIComponent(pageId)}`);
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      if (reconciled?.page?.parentPageId === targetPageId) return reconciled;
+    } catch {
+      // Keep the original ambiguous error: it carries the most useful request context.
+    }
+  }
+
+  throw lastError ?? new Error(t("errors.unknown"));
+}
+
+function applyPageMoveMutationResult(committedPage) {
+  if (!committedPage?.id) return;
+  applyPageMetadataMutationResult(committedPage, { parentPageId: committedPage.parentPageId ?? null });
+  renderDefaultCollection();
+  renderCollectionView();
+  renderPagePath(state.selectedPage);
+  renderSubpageIndex(state.selectedPage);
+}
+
+async function moveNavigationPageToParent(pageId, targetPageId, { authenticationScope } = {}) {
+  const scope = authenticationScope ?? captureAuthenticatedSessionScope();
+  if (!pageId || !targetPageId || !isCurrentAuthenticatedSessionScope(scope)) {
+    throw new Error(t("pageMove.destinationUnavailable"));
+  }
+
+  await assertWorkspacePersistenceUnlocked();
+  if (!isCurrentAuthenticatedSessionScope(scope)) return null;
+
+  const sourceIsSelected = state.selectedPage?.id === pageId;
+  if (sourceIsSelected && hasUnresolvedDraftConflicts()) {
+    throw new Error(t("status.resolveRecoveredDraftConflict"));
+  }
+
+  return withPageEditLock(
+    async () => {
+      if (!isCurrentAuthenticatedSessionScope(scope)) return null;
+      const sourcePage = state.selectedPage?.id === pageId
+        ? state.selectedPage
+        : state.allPages.find((page) => page.id === pageId);
+      if (!canMoveNavigationPage(sourcePage)) throw new Error(t("pageMove.unavailable"));
+
+      const targetPage = getPageMoveDestinationPages(sourcePage).find((page) => page.id === targetPageId);
+      if (!targetPage) throw new Error(t("pageMove.destinationUnavailable"));
+
+      const expectedVersion = getPositiveVersion(sourcePage.version);
+      if (expectedVersion === null) throw new Error(t("errors.invalidResponse"));
+
+      const data = await submitPageMoveMutation(pageId, targetPageId, expectedVersion, scope);
+      if (data === null || !isCurrentAuthenticatedSessionScope(scope)) return null;
+      if (data?.page?.id !== pageId || data.page.parentPageId !== targetPageId) {
+        throw new Error(t("errors.invalidResponse"));
+      }
+
+      applyPageMoveMutationResult(data.page);
+      setNavigationSubpagesExpanded(targetPageId, true);
+      return data;
+    },
+    { flush: sourceIsSelected }
   );
 }
 
@@ -16872,6 +17090,10 @@ function refreshLocalizedUi() {
   if (elements.blockMoveDialog.open && blockMoveSubmitting) {
     elements.blockMoveSubmit.textContent = t("blockMove.moving");
   }
+  if (elements.pageMoveDialog.open && !pageMoveSubmitting) renderPageMoveDestinations();
+  if (elements.pageMoveDialog.open && pageMoveSubmitting) {
+    elements.pageMoveSubmit.textContent = t("pageMove.moving");
+  }
 
   if (!elements.slashMenu.classList.contains("hidden") && state.activeSlashBlockId) {
     const row = elements.blockList.querySelector(`[data-block-id="${CSS.escape(state.activeSlashBlockId)}"]`);
@@ -18323,6 +18545,53 @@ elements.blockMoveForm.addEventListener("submit", async (event) => {
   }
 });
 
+elements.pageMoveClose.addEventListener("click", () => closePageMoveDialog());
+elements.pageMoveCancel.addEventListener("click", () => closePageMoveDialog());
+elements.pageMoveDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closePageMoveDialog();
+});
+
+elements.pageMoveForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (pageMoveSubmitting) return;
+
+  const sourcePageId = activePageMoveSourcePageId;
+  const targetPageId = elements.pageMovePageSelect.value;
+  const sourcePage = state.selectedPage?.id === sourcePageId
+    ? state.selectedPage
+    : state.allPages.find((page) => page.id === sourcePageId);
+  const targetPage = getPageMoveDestinationPages(sourcePage).find((page) => page.id === targetPageId);
+
+  if (!sourcePageId || !sourcePage || !targetPage) {
+    setPageMoveMessage(t("pageMove.destinationUnavailable"), true);
+    return;
+  }
+
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
+    setPageMoveMessage(t("errors.UNAUTHENTICATED"), true);
+    return;
+  }
+
+  setPageMoveSubmitting(true);
+  setPageMoveMessage(t("pageMove.moving"));
+  try {
+    const data = await moveNavigationPageToParent(sourcePageId, targetPageId, { authenticationScope });
+    if (data === null && !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+
+    const destinationTitle = targetPage.title || t("newDocumentTitle");
+    setPageMoveSubmitting(false);
+    closePageMoveDialog({ restoreFocus: false });
+    setStatus(t("pageMove.moved", { title: destinationTitle }));
+  } catch (error) {
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    setPageMoveSubmitting(false);
+    setPageMoveMessage(error?.message ?? t("errors.unknown"), true);
+  }
+});
+
 elements.blockContextMenu.addEventListener("click", async (event) => {
   if (!requireWritablePage()) return;
   const button = event.target.closest("button[data-action]");
@@ -18525,6 +18794,14 @@ elements.navigationContextMenu.addEventListener("click", async (event) => {
   try {
     if (button.dataset.action === "add-navigation-subpage") {
       await createNavigationSubpage();
+      return;
+    }
+    if (button.dataset.action === "move-navigation-page") {
+      const target = state.activeNavigationMenuTarget;
+      const returnFocus = state.activeNavigationMenuTrigger;
+      if (!target || target.kind !== "page") return;
+      closeNavigationContextMenu();
+      openPageMoveDialog(target.id, returnFocus);
       return;
     }
     if (button.dataset.action === "delete-navigation-item") await deleteNavigationTarget();

@@ -300,6 +300,7 @@ export const translationCatalogs = {
       openPage: "Open actions for page “{title}”",
       openCollection: "Open actions for collection “{title}”",
       addSubpage: "Add subpage",
+      movePage: "Move to another page",
       deletePage: "Delete page",
       deleteCollection: "Delete collection"
     },
@@ -574,6 +575,21 @@ export const translationCatalogs = {
       destinationUnavailable: "That destination is no longer available. Choose another page.",
       moved: "Moved the block to “{title}”.",
       close: "Close move dialog"
+    },
+    pageMove: {
+      kicker: "Page action",
+      title: "Move to another page",
+      description: "Move this page and its complete subpage tree under another page without changing page content, blocks, attachments, tags, sharing data, or structured data.",
+      destination: "Destination parent page",
+      choose: "Choose a page",
+      cancel: "Cancel",
+      submit: "Move page",
+      moving: "Moving page...",
+      noDestinations: "No eligible destination pages are available. Choose or create another page outside this page’s subtree.",
+      unavailable: "Only pages owned by this account can be moved under another page.",
+      destinationUnavailable: "That destination is no longer available. Choose another page.",
+      moved: "Moved this page under “{title}”.",
+      close: "Close page move dialog"
     },
     toolbar: {
       aria: "Format selected text",
@@ -1107,6 +1123,7 @@ export const translationCatalogs = {
       openPage: "ページ「{title}」の操作を開く",
       openCollection: "コレクション「{title}」の操作を開く",
       addSubpage: "サブページを追加",
+      movePage: "別のページへ移動",
       deletePage: "ページを削除",
       deleteCollection: "コレクションを削除"
     },
@@ -1545,6 +1562,7 @@ export const translationCatalogs = {
       openPage: "“{title}” 페이지 메뉴 열기",
       openCollection: "“{title}” 컬렉션 메뉴 열기",
       addSubpage: "하위 페이지 추가",
+      movePage: "다른 페이지로 이동하기",
       deletePage: "페이지 삭제",
       deleteCollection: "컬렉션 삭제"
     },
@@ -1819,6 +1837,21 @@ export const translationCatalogs = {
       destinationUnavailable: "선택한 페이지로 더 이상 이동할 수 없습니다. 다른 페이지를 선택하세요.",
       moved: "블록을 “{title}” 페이지로 이동했습니다.",
       close: "이동 창 닫기"
+    },
+    pageMove: {
+      kicker: "페이지 작업",
+      title: "다른 페이지로 이동하기",
+      description: "이 페이지와 모든 하위 페이지를 내용, 블록, 첨부파일, 태그, 공유 데이터, 구조화 데이터를 변경하지 않고 선택한 페이지의 하위로 이동합니다.",
+      destination: "이동할 상위 페이지",
+      choose: "페이지를 선택하세요",
+      cancel: "취소",
+      submit: "페이지 이동",
+      moving: "페이지를 이동하는 중입니다...",
+      noDestinations: "이동할 수 있는 다른 페이지가 없습니다. 현재 페이지의 하위가 아닌 다른 페이지를 선택하거나 만들어 주세요.",
+      unavailable: "내 계정이 소유한 일반 페이지만 다른 페이지의 하위로 이동할 수 있습니다.",
+      destinationUnavailable: "선택한 페이지로 더 이상 이동할 수 없습니다. 다른 페이지를 선택하세요.",
+      moved: "이 페이지를 “{title}” 페이지의 하위로 이동했습니다.",
+      close: "페이지 이동 창 닫기"
     },
     toolbar: {
       aria: "선택 텍스트 서식",
@@ -2333,6 +2366,7 @@ export const translationCatalogs = {
       openPage: "Ouvrir les actions de la page « {title} »",
       openCollection: "Ouvrir les actions de la collection « {title} »",
       addSubpage: "Ajouter une sous-page",
+      movePage: "Déplacer vers une autre page",
       deletePage: "Supprimer la page",
       deleteCollection: "Supprimer la collection"
     },
@@ -2743,6 +2777,7 @@ export const translationCatalogs = {
       openPage: "Aktionen für die Seite „{title}“ öffnen",
       openCollection: "Aktionen für die Sammlung „{title}“ öffnen",
       addSubpage: "Unterseite hinzufügen",
+      movePage: "Auf eine andere Seite verschieben",
       deletePage: "Seite löschen",
       deleteCollection: "Sammlung löschen"
     },
@@ -3153,6 +3188,7 @@ export const translationCatalogs = {
       openPage: "Abrir acciones de la página «{title}»",
       openCollection: "Abrir acciones de la colección «{title}»",
       addSubpage: "Añadir subpágina",
+      movePage: "Mover a otra página",
       deletePage: "Eliminar página",
       deleteCollection: "Eliminar colección"
     },
@@ -3563,6 +3599,7 @@ export const translationCatalogs = {
       openPage: "Abrir ações da página “{title}”",
       openCollection: "Abrir ações da coleção “{title}”",
       addSubpage: "Adicionar subpágina",
+      movePage: "Mover para outra página",
       deletePage: "Excluir página",
       deleteCollection: "Excluir coleção"
     },
