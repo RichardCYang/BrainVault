@@ -91,6 +91,25 @@ describe("Database block data", () => {
 
     expect(applyDatabaseView(database).map((row) => row.id)).toEqual(["two", "three"]);
   });
+
+  it("preserves URL field source data exactly and does not persist preview metadata", () => {
+    const sourceUrl = "https://example.com/path?utm_source=brainvault&item=1#section";
+    const database = getDatabaseData({
+      database: {
+        title: "Links",
+        properties: [
+          { id: "title", name: "Name", type: "title" },
+          { id: "link", name: "Link", type: "url" }
+        ],
+        rows: [{ id: "row", values: { title: "Example", link: sourceUrl } }],
+        views: [{ id: "table", name: "Table", type: "table", filters: [], sorts: [] }],
+        activeViewId: "table"
+      }
+    });
+
+    expect(database.rows[0].values.link).toBe(sourceUrl);
+    expect(JSON.stringify(database)).not.toMatch(/favicon|preview|pageTitle/i);
+  });
 });
 
 describe("Database block rendering", () => {

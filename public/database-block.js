@@ -506,9 +506,143 @@ function sortDirectionLabel(direction) {
   return t(`database.sortDirections.${direction}`);
 }
 
+const databaseUrlPreviewCache = new Map();
+const databaseUrlPreviewObservers = new WeakMap();
+
+function getDatabasePreviewUrl(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return null;
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+function getDatabasePreviewImageUrl(value) {
+  const url = getDatabasePreviewUrl(value);
+  return url?.toString() ?? "";
+}
+
+function resetDatabaseUrlPreview(preview, value) {
+  const raw = typeof value === "string" ? value : "";
+  const url = getDatabasePreviewUrl(raw);
+  preview.replaceChildren();
+  preview.classList.toggle("is-empty", !raw);
+  preview.classList.toggle("is-invalid", Boolean(raw) && !url);
+  preview.dataset.previewState = url ? "pending" : "idle";
+
+  if (url) {
+    const normalizedUrl = url.toString();
+    preview.href = normalizedUrl;
+    preview.dataset.url = normalizedUrl;
+  } else {
+    preview.removeAttribute("href");
+    delete preview.dataset.url;
+  }
+
+  const faviconSlot = document.createElement("span");
+  faviconSlot.className = "database-url-preview-favicon";
+  faviconSlot.setAttribute("aria-hidden", "true");
+
+  const title = document.createElement("span");
+  title.className = "database-url-preview-title";
+  title.textContent = url ? url.hostname : raw;
+  preview.append(faviconSlot, title);
+}
+
+function applyDatabaseUrlPreview(preview, previewData, requestedUrl) {
+  if (!preview?.isConnected || preview.dataset.url !== requestedUrl) return;
+  const title = typeof previewData?.title === "string" ? previewData.title.trim() : "";
+  const titleElement = preview.querySelector(".database-url-preview-title");
+  if (titleElement && title) titleElement.textContent = title;
+
+  const faviconUrl = getDatabasePreviewImageUrl(previewData?.faviconUrl);
+  const faviconSlot = preview.querySelector(".database-url-preview-favicon");
+  if (faviconSlot) {
+    faviconSlot.replaceChildren();
+    if (faviconUrl) {
+      const image = document.createElement("img");
+      image.src = faviconUrl;
+      image.alt = "";
+      image.width = 16;
+      image.height = 16;
+      image.loading = "lazy";
+      image.referrerPolicy = "no-referrer";
+      image.addEventListener("error", () => image.remove(), { once: true });
+      faviconSlot.append(image);
+    }
+  }
+  preview.dataset.previewState = "loaded";
+}
+
+function getDatabaseUrlPreviewRequest(url, fetchPreview) {
+  const cached = databaseUrlPreviewCache.get(url);
+  if (cached) return cached;
+
+  const request = Promise.resolve()
+    .then(() => fetchPreview(url))
+    .then((value) => value?.preview ?? value ?? null)
+    .catch(() => null)
+    .then((value) => {
+      if (!value) databaseUrlPreviewCache.delete(url);
+      return value;
+    });
+  databaseUrlPreviewCache.set(url, request);
+  if (databaseUrlPreviewCache.size > 250) {
+    const oldest = databaseUrlPreviewCache.keys().next().value;
+    if (oldest) databaseUrlPreviewCache.delete(oldest);
+  }
+  return request;
+}
+
+async function hydrateDatabaseUrlPreview(preview, fetchPreview) {
+  const url = preview?.dataset?.url;
+  if (!url || preview.dataset.previewState === "loading" || preview.dataset.previewState === "loaded") return;
+  preview.dataset.previewState = "loading";
+  const previewData = await getDatabaseUrlPreviewRequest(url, fetchPreview);
+  if (!preview?.isConnected || preview.dataset.url !== url) return;
+  if (!previewData) {
+    preview.dataset.previewState = "failed";
+    return;
+  }
+  applyDatabaseUrlPreview(preview, previewData, url);
+}
+
+export function hydrateDatabaseUrlPreviews(root, fetchPreview) {
+  if (!root || typeof fetchPreview !== "function") return;
+  const previews = [...root.querySelectorAll(".database-url-preview[data-url]")]
+    .filter((preview) => !["loading", "loaded"].includes(preview.dataset.previewState));
+  if (!previews.length) return;
+
+  if (typeof IntersectionObserver !== "function") {
+    previews.forEach((preview) => { void hydrateDatabaseUrlPreview(preview, fetchPreview); });
+    return;
+  }
+
+  let observerState = databaseUrlPreviewObservers.get(root);
+  if (!observerState || observerState.fetchPreview !== fetchPreview) {
+    observerState?.observer?.disconnect();
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        observer.unobserve(entry.target);
+        void hydrateDatabaseUrlPreview(entry.target, fetchPreview);
+      });
+    }, { rootMargin: "160px" });
+    observerState = { observer, fetchPreview };
+    databaseUrlPreviewObservers.set(root, observerState);
+  }
+  previews.forEach((preview) => observerState.observer.observe(preview));
+}
+
 function createValueEditor(dataRow, property, { compact = false, onDirty, onStructuralChange = null } = {}) {
   const value = dataRow.values[property.id];
   let control;
+  let urlPreview = null;
+  let urlValue = null;
 
   if (property.type === "checkbox") {
     control = document.createElement("input");
@@ -541,6 +675,19 @@ function createValueEditor(dataRow, property, { compact = false, onDirty, onStru
   control.dataset.propertyId = property.id;
   control.setAttribute("aria-label", t("database.valueAria", { property: property.name }));
 
+  if (property.type === "url") {
+    urlValue = document.createElement("span");
+    urlValue.className = "database-url-value";
+    if (compact) urlValue.classList.add("is-compact");
+    urlPreview = document.createElement("a");
+    urlPreview.className = "database-url-preview";
+    urlPreview.target = "_blank";
+    urlPreview.rel = "noopener noreferrer";
+    urlPreview.referrerPolicy = "no-referrer";
+    resetDatabaseUrlPreview(urlPreview, control.value);
+    urlValue.append(control, urlPreview);
+  }
+
   const updateEvent = property.type === "checkbox" || property.type === "select" || property.type === "date" ? "change" : "input";
   const update = () => {
     if (property.type === "checkbox") dataRow.values[property.id] = control.checked;
@@ -552,13 +699,14 @@ function createValueEditor(dataRow, property, { compact = false, onDirty, onStru
         .map((option) => option.id);
     } else dataRow.values[property.id] = control.value;
     if (property.type === "select") control.dataset.optionColor = getOption(property, control.value)?.color ?? "gray";
+    if (urlPreview) resetDatabaseUrlPreview(urlPreview, control.value);
     onDirty();
     if (onStructuralChange && updateEvent === "change") onStructuralChange();
   };
 
   control.addEventListener(updateEvent, update);
   if (onStructuralChange && updateEvent === "input") control.addEventListener("change", onStructuralChange);
-  return control;
+  return urlValue ?? control;
 }
 
 function createPropertyManager(editor, row, database, onDirty, replaceEditor) {

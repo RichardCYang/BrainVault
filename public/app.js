@@ -21,6 +21,7 @@ import {
   createDatabaseEditor,
   createDefaultDatabaseData,
   extractDatabaseData,
+  hydrateDatabaseUrlPreviews,
   normalizeDatabaseData,
   summarizeDatabaseData
 } from "./database-block.js";
@@ -1865,6 +1866,15 @@ async function api(path, options = {}) {
   }
 
   return data;
+}
+
+async function fetchDatabaseUrlPreview(url) {
+  const response = await api("/api/bookmarks/preview", {
+    method: "POST",
+    body: { url },
+    skipAuthReset: true
+  });
+  return response?.preview ?? null;
 }
 
 async function enqueueAccountProfilePatch(targetKey, body, { before } = {}) {
@@ -6784,6 +6794,7 @@ function syncPageModeUi() {
   for (const row of elements.blockList.querySelectorAll(".editor-block-row")) {
     syncBlockReadOnlyState(row, controlsReadOnly);
   }
+  if (readOnly) hydrateDatabaseUrlPreviews(elements.pageView, fetchDatabaseUrlPreview);
   renderCollaborationChrome();
   requestAnimationFrame(() => hydrateMathExpressions(elements.pageView));
 
