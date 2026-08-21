@@ -159,6 +159,8 @@ type PageDeletionPageRow = {
   parent_page_id: string | null;
   edit_version: number;
   content_version: number;
+  is_archived: 0 | 1;
+  is_collection: 0 | 1;
 };
 
 type PageDeletionBlockRow = {
@@ -182,7 +184,7 @@ type PageDeletionCollaborationRow = {
 
 async function getOwnedPageTreeRows(ownerId: string, client: DbClient = db, lock = false) {
   return client.query<PageDeletionPageRow>(
-    `SELECT id, parent_page_id, edit_version, content_version
+    `SELECT id, parent_page_id, edit_version, content_version, is_archived, is_collection
      FROM pages
      WHERE owner_id = ?
      ORDER BY id ASC${lock ? " FOR UPDATE" : ""}`,
@@ -225,8 +227,15 @@ function assertPageParentFromLockedRows(
 ) {
   if (!parentPageId) return;
   const rowById = new Map(rows.map((row) => [row.id, row]));
-  if (!rowById.has(parentPageId)) {
+  const parent = rowById.get(parentPageId);
+  if (!parent) {
     throw new ApiError(400, "INVALID_PARENT_PAGE", "Parent page does not exist");
+  }
+  if (parent.is_archived) {
+    throw new ApiError(409, "PARENT_PAGE_ARCHIVED", "Restore the destination page before moving this page");
+  }
+  if (parent.is_collection) {
+    throw new ApiError(400, "INVALID_PARENT_PAGE", "A collection cannot be used as a page-move destination");
   }
 
   let currentId: string | null = parentPageId;

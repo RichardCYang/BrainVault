@@ -27,8 +27,18 @@ test("page parent move does not rewrite page content or child records", () => {
   assert.match(patchRoute, /recordPageVersion\(client, \{/);
 });
 
-test("server rejects missing parents and hierarchy cycles before applying a parent update", () => {
+test("server rejects invalid page-move destinations before applying a parent update", () => {
   assert.match(route, /throw new ApiError\(400, "INVALID_PARENT_PAGE", "Parent page does not exist"\)/);
+  assert.match(route, /if \(parent\.is_archived\)/);
+  assert.match(
+    route,
+    /throw new ApiError\(409, "PARENT_PAGE_ARCHIVED", "Restore the destination page before moving this page"\)/
+  );
+  assert.match(route, /if \(parent\.is_collection\)/);
+  assert.match(
+    route,
+    /throw new ApiError\(400, "INVALID_PARENT_PAGE", "A collection cannot be used as a page-move destination"\)/
+  );
   assert.match(route, /throw new ApiError\(400, "INVALID_PARENT_PAGE", "Page hierarchy cannot contain a cycle"\)/);
   assert.match(route, /if \(existingPage\.is_collection && updates\.parentPageId\)/);
 });
