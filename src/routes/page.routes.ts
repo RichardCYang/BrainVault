@@ -175,6 +175,11 @@ type PageDeletionShareRow = {
   generation: string;
 };
 
+type PageDeletionCollaborationRow = {
+  page_id: string;
+  document_epoch: string;
+};
+
 async function getOwnedPageTreeRows(ownerId: string, client: DbClient = db, lock = false) {
   return client.query<PageDeletionPageRow>(
     `SELECT id, parent_page_id, edit_version, content_version
@@ -273,10 +278,32 @@ async function getPageDeletionShares(
   return shares;
 }
 
+async function getPageDeletionCollaborationStates(
+  client: DbClient,
+  subtreeRows: PageDeletionPageRow[],
+  lock = false
+) {
+  const pageIds = [...new Set(subtreeRows.map((page) => page.id).filter(Boolean))];
+  const states: PageDeletionCollaborationRow[] = [];
+  for (let offset = 0; offset < pageIds.length; offset += 500) {
+    const group = pageIds.slice(offset, offset + 500);
+    const rows = await client.query<PageDeletionCollaborationRow>(
+      `SELECT page_id, document_epoch
+       FROM page_collaboration_state
+       WHERE page_id IN (${group.map(() => "?").join(", ")})
+       ORDER BY page_id ASC${lock ? " FOR UPDATE" : ""}`,
+      group
+    );
+    states.push(...rows);
+  }
+  return states;
+}
+
 function createPageDeletionSnapshot(
   pages: PageDeletionPageRow[],
   blocks: PageDeletionBlockRow[],
-  shares: PageDeletionShareRow[]
+  shares: PageDeletionShareRow[],
+  collaborationStates: PageDeletionCollaborationRow[]
 ) {
   const hash = createHash("sha256");
   for (const page of [...pages].sort((left, right) => left.id.localeCompare(right.id))) {
@@ -294,6 +321,11 @@ function createPageDeletionSnapshot(
       `share\0${share.page_id}\0${share.user_id}\0${share.permission}\0${share.generation}\n`
     );
   }
+  for (const state of [...collaborationStates].sort((left, right) =>
+    left.page_id.localeCompare(right.page_id)
+  )) {
+    hash.update(`collaboration\0${state.page_id}\0${state.document_epoch}\n`);
+  }
   return hash.digest("hex");
 }
 
@@ -301,9 +333,10 @@ function assertPageDeletionSnapshot(
   expectedSnapshot: string,
   pages: PageDeletionPageRow[],
   blocks: PageDeletionBlockRow[],
-  shares: PageDeletionShareRow[]
+  shares: PageDeletionShareRow[],
+  collaborationStates: PageDeletionCollaborationRow[]
 ) {
-  if (createPageDeletionSnapshot(pages, blocks, shares) === expectedSnapshot) return;
+  if (createPageDeletionSnapshot(pages, blocks, shares, collaborationStates) === expectedSnapshot) return;
   throw new ApiError(
     409,
     "PAGE_EDIT_CONFLICT",
@@ -966,8 +999,9 @@ pageRouter.get(
         const subtreeRows = getPageSubtreeRows(pageId, treeRows);
         const blockRows = await getPageDeletionBlocks(client, subtreeRows);
         const shareRows = await getPageDeletionShares(client, subtreeRows);
+        const collaborationRows = await getPageDeletionCollaborationStates(client, subtreeRows);
         return {
-          snapshot: createPageDeletionSnapshot(subtreeRows, blockRows, shareRows),
+          snapshot: createPageDeletionSnapshot(subtreeRows, blockRows, shareRows, collaborationRows),
           pageIds: subtreeRows.map((page) => page.id).sort((left, right) => left.localeCompare(right)),
           pages: subtreeRows
             .map((page) => ({
@@ -1232,7 +1266,18 @@ pageRouter.delete(
           // the exact grant generations while those page locks are held so a
           // stale delete cannot erase a page whose sharing lineage changed.
           const shareRows = await getPageDeletionShares(client, subtreeRows, true);
-          assertPageDeletionSnapshot(expectedSnapshot, subtreeRows, blockRows, shareRows);
+          // A restored shared page can legitimately have no collaboration-state
+          // row until its first post-restore session is opened. Session admission
+          // creates a fresh document epoch without changing page/block/share
+          // versions, so bind permanent deletion to that lineage as well.
+          const collaborationRows = await getPageDeletionCollaborationStates(client, subtreeRows, true);
+          assertPageDeletionSnapshot(
+            expectedSnapshot,
+            subtreeRows,
+            blockRows,
+            shareRows,
+            collaborationRows
+          );
 
           const pageIds = subtreeRows.map((row) => row.id);
           // Capture the durable collaboration lineage while the owned page rows

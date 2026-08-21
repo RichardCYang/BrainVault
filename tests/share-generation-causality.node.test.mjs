@@ -148,17 +148,29 @@ test("permanent page deletion snapshot binds destructive intent to share generat
     /`share\\0\$\{share\.page_id\}\\0\$\{share\.user_id\}\\0\$\{share\.permission\}\\0\$\{share\.generation\}\\n`/
   );
   assert.match(snapshotRoute, /getPageDeletionShares\(client, subtreeRows\)/);
-  assert.match(snapshotRoute, /createPageDeletionSnapshot\(subtreeRows, blockRows, shareRows\)/);
+  assert.match(snapshotRoute, /getPageDeletionCollaborationStates\(client, subtreeRows\)/);
+  assert.match(
+    snapshotRoute,
+    /createPageDeletionSnapshot\(subtreeRows, blockRows, shareRows, collaborationRows\)/
+  );
 
   const pageLock = deleteRoute.indexOf("getOwnedPageTreeRows(user.id, client, true)");
   const shareLock = deleteRoute.indexOf("getPageDeletionShares(client, subtreeRows, true)");
-  const snapshotFence = deleteRoute.indexOf(
-    "assertPageDeletionSnapshot(expectedSnapshot, subtreeRows, blockRows, shareRows)"
+  const collaborationLock = deleteRoute.indexOf(
+    "getPageDeletionCollaborationStates(client, subtreeRows, true)"
   );
+  const snapshotFence = deleteRoute.indexOf("assertPageDeletionSnapshot(");
   const destructiveDelete = deleteRoute.indexOf('DELETE FROM pages WHERE id = ? AND owner_id = ?');
   assert.ok(pageLock >= 0);
   assert.ok(shareLock > pageLock, "share generations must be read after the owned page tree is locked");
-  assert.ok(snapshotFence > shareLock, "the share generation must participate in stale-delete validation");
+  assert.ok(
+    collaborationLock > shareLock,
+    "collaboration lineage must be read after the owned page tree is locked"
+  );
+  assert.ok(
+    snapshotFence > collaborationLock,
+    "share and collaboration generations must participate in stale-delete validation"
+  );
   assert.ok(destructiveDelete > snapshotFence, "validation must happen before any page is deleted");
 
   // Reproduction model: sharing does not need to change page/block edit versions.
@@ -186,4 +198,64 @@ test("share UI continues to use safe text sinks for collaborator-controlled labe
   assert.match(render, /meta\.textContent = `@\$\{share\.user\?\.username\}/);
   assert.doesNotMatch(render, /\.innerHTML\s*=/);
   assert.doesNotMatch(render, /insertAdjacentHTML/);
+});
+
+
+test("permanent page deletion snapshot binds destructive intent to collaboration document lineage", () => {
+  const pageSource = read("../src/routes/page.routes.ts");
+  const helpers = section(
+    pageSource,
+    "async function getPageDeletionCollaborationStates(",
+    "async function assertPageDeleteReplayNotSuperseded("
+  );
+  const deleteRoute = section(
+    pageSource,
+    'pageRouter.delete(\n  "/:pageId",',
+    'pageRouter.put("/:pageId/tags"'
+  );
+  const snapshotRoute = section(
+    pageSource,
+    'pageRouter.get(\n  "/:pageId/deletion-snapshot",',
+    'pageRouter.patch("/:pageId"'
+  );
+
+  assert.match(
+    helpers,
+    /SELECT page_id, document_epoch\n\s+FROM page_collaboration_state/
+  );
+  assert.match(
+    helpers,
+    /`collaboration\\0\$\{state\.page_id\}\\0\$\{state\.document_epoch\}\\n`/
+  );
+  assert.match(
+    snapshotRoute,
+    /getPageDeletionCollaborationStates\(client, subtreeRows\)/
+  );
+  assert.match(
+    deleteRoute,
+    /getPageDeletionCollaborationStates\(client, subtreeRows, true\)/
+  );
+
+  // Reproduction model:
+  // 1. Restore recreates a shared page and its grant, but not page_collaboration_state.
+  // 2. The owner obtains a permanent-deletion snapshot while no state row exists.
+  // 3. A collaborator opens the first session; ensureCollaborationState() creates
+  //    a fresh document epoch without changing page/block/share generations.
+  // 4. The legacy snapshot is unchanged, so the stale delete can cross that new
+  //    collaboration lineage. Hashing the epoch makes the destructive intent stale.
+  const structuralAndShareState =
+    "page\\0page_1\\0\\01\\01\n"
+    + "block\\0blk_1\\0page_1\\01\n"
+    + "share\\0page_1\\0user_2\\0EDIT\\0share_g1\n";
+  const beforeSession = { collaboration: null };
+  const afterSession = { collaboration: { pageId: "page_1", documentEpoch: "epoch_new" } };
+
+  const legacySnapshotInput = () => structuralAndShareState;
+  const fixedSnapshotInput = (state) =>
+    `${structuralAndShareState}${state.collaboration
+      ? `collaboration\\0${state.collaboration.pageId}\\0${state.collaboration.documentEpoch}\n`
+      : ""}`;
+
+  assert.equal(legacySnapshotInput(beforeSession), legacySnapshotInput(afterSession));
+  assert.notEqual(fixedSnapshotInput(beforeSession), fixedSnapshotInput(afterSession));
 });
