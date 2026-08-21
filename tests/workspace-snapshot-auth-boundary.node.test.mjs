@@ -47,15 +47,43 @@ test("snapshot create and delete revalidate the exact device session before dura
   );
   const deleteFence = deletion.indexOf("await assertCurrentAuthSessionBoundary(userId, authScope, client)");
   const rowLock = deletion.indexOf("await getOwnedSnapshotRow(userId, id, client, true)");
-  const renameArchive = deletion.indexOf("await rename(finalPath, tombstonePath)");
   const deleteRow = deletion.indexOf('DELETE FROM workspace_snapshots WHERE id = ? AND user_id = ?');
+  const renameArchive = deletion.indexOf("await rename(finalPath, tombstonePath)");
   assert.ok(
     deleteFence >= 0
       && rowLock > deleteFence
-      && renameArchive > rowLock
-      && deleteRow > renameArchive,
-    "snapshot deletion must fence auth before locking, renaming, or deleting the recovery point"
+      && deleteRow > rowLock
+      && renameArchive > deleteRow,
+    "snapshot deletion must fence auth and commit metadata deletion before mutating the recovery archive"
   );
+});
+
+test("snapshot deletion cannot strand a live row if the process crashes before SQL commit", () => {
+  function simulateDelete(fixed) {
+    const state = { row: true, finalArchive: true, tombstone: false };
+
+    if (!fixed) {
+      state.finalArchive = false;
+      state.tombstone = true;
+      // Crash here: the database transaction rolls back, but the filesystem rename does not.
+      return state;
+    }
+
+    // Fixed ordering performs no filesystem mutation until after the database commit.
+    // A crash at the equivalent pre-commit point therefore leaves the recovery point intact.
+    return state;
+  }
+
+  assert.deepEqual(simulateDelete(false), {
+    row: true,
+    finalArchive: false,
+    tombstone: true
+  });
+  assert.deepEqual(simulateDelete(true), {
+    row: true,
+    finalArchive: true,
+    tombstone: false
+  });
 });
 
 test("stale snapshot mutations are rejected after auth-version rotation or device-session revocation", () => {

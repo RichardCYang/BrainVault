@@ -283,13 +283,12 @@ export async function deleteWorkspaceSnapshot(
   const directory = snapshotUserDirectory(userId);
   const finalPath = snapshotArchivePath(userId, id);
   const tombstonePath = path.join(directory, `.${id}.${createId("delete")}.zip`);
-  let moved = false;
 
   try {
     await transaction(async (client) => {
-      // Deleting a snapshot removes a recovery point from both SQL and the
-      // filesystem. Bind that destructive transition to the session that
-      // initiated it before locking or renaming the snapshot.
+      // A snapshot is a recovery point. Do not move or remove its only archive
+      // until the SQL deletion is durably committed: a process crash before
+      // commit must leave both the row and canonical archive intact.
       await assertCurrentAuthSessionBoundary(userId, authScope, client);
       await getOwnedSnapshotRow(userId, id, client, true);
       try {
@@ -297,20 +296,12 @@ export async function deleteWorkspaceSnapshot(
         if (!fileInfo.isFile()) {
           throw new ApiError(409, "SNAPSHOT_INTEGRITY_FAILED", "Snapshot archive is not a regular file");
         }
-        await rename(finalPath, tombstonePath);
-        moved = true;
-        await syncPath(directory);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
       await client.execute("DELETE FROM workspace_snapshots WHERE id = ? AND user_id = ?", [id, userId]);
     });
   } catch (error) {
-    if (moved) {
-      await rename(tombstonePath, finalPath).catch(() => undefined);
-      await syncPath(directory).catch(() => undefined);
-    }
-
     let stillExists: { id: string } | undefined;
     try {
       stillExists = await db.queryOne<{ id: string }>(
@@ -318,7 +309,7 @@ export async function deleteWorkspaceSnapshot(
         [id, userId]
       );
     } catch (verificationError) {
-      console.error("Snapshot deletion outcome could not be verified; preserving archive when possible", {
+      console.error("Snapshot deletion outcome could not be verified; preserving archive", {
         userId,
         snapshotId: id,
         verificationError
@@ -326,16 +317,36 @@ export async function deleteWorkspaceSnapshot(
       throw new ApiError(
         500,
         "SNAPSHOT_DELETE_OUTCOME_UNKNOWN",
-        "Snapshot deletion outcome could not be verified. Snapshot bytes were preserved when possible."
+        "Snapshot deletion outcome could not be verified. The archive was preserved for recovery."
       );
     }
     if (stillExists) throw error;
-    await rm(finalPath, { force: true }).catch(() => undefined);
-    await rm(tombstonePath, { force: true }).catch(() => undefined);
-    return { deleted: true };
   }
 
-  await rm(tombstonePath, { force: true }).catch(() => undefined);
+  // SQL is now known to be absent (either the transaction returned normally or
+  // outcome verification proved it committed). Filesystem cleanup is therefore
+  // post-commit only. A crash here can leave an orphan file, but cannot strand
+  // a live snapshot row whose canonical archive has been renamed away.
+  try {
+    await rename(finalPath, tombstonePath);
+    await syncPath(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.error("Snapshot archive cleanup could not be staged after SQL deletion; preserving bytes", {
+        userId,
+        snapshotId: id,
+        error
+      });
+      return { deleted: true };
+    }
+  }
+  await rm(tombstonePath, { force: true }).catch((error) => {
+    console.error("Snapshot tombstone cleanup failed after SQL deletion; preserving bytes", {
+      userId,
+      snapshotId: id,
+      error
+    });
+  });
   return { deleted: true };
 }
 

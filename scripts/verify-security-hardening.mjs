@@ -73,7 +73,7 @@ assert.notEqual(
 const authMiddlewareSource = contains("src/middleware/auth.ts", [
   "payload.authVersion !== authVersion",
   'new ApiError(401, "SESSION_REVOKED"',
-  "req.auth = { authVersion }",
+  "req.auth = { authVersion, workspaceGeneration }",
   'new ApiError(403, "ORIGIN_REQUIRED"',
   "assertBrowserRequestOrigin(req, { requireOrigin: true })",
   "requiresCookieMutationOrigin(req, selectedSource)",
