@@ -555,8 +555,25 @@ export const translationCatalogs = {
       insertBefore: "Add block above",
       insertAfter: "Add block below",
       calloutType: "Callout type",
+      moveBlock: "Move to another page",
       saveBlock: "Save block",
       deleteBlock: "Delete block"
+    },
+    blockMove: {
+      kicker: "Block action",
+      title: "Move to another page",
+      description: "Move this block and every nested block without changing their content or structured data.",
+      destination: "Destination page",
+      choose: "Choose a page",
+      chooseDifferent: "Choose a different destination page.",
+      cancel: "Cancel",
+      submit: "Move block",
+      moving: "Moving block...",
+      noDestinations: "No eligible destination pages are available. Create another unshared page first.",
+      unavailable: "Blocks can only be moved between unshared pages owned by the same account.",
+      destinationUnavailable: "That destination is no longer available. Choose another page.",
+      moved: "Moved the block to “{title}”.",
+      close: "Close move dialog"
     },
     toolbar: {
       aria: "Format selected text",
@@ -1783,8 +1800,25 @@ export const translationCatalogs = {
       insertBefore: "상단에 블록 추가",
       insertAfter: "하단에 블록 추가",
       calloutType: "콜아웃 타입",
+      moveBlock: "다른 페이지로 이동하기",
       saveBlock: "블록 저장",
       deleteBlock: "블록 삭제"
+    },
+    blockMove: {
+      kicker: "블록 작업",
+      title: "다른 페이지로 이동하기",
+      description: "이 블록과 모든 하위 블록을 내용·구조화 데이터 변경 없이 다른 페이지로 이동합니다.",
+      destination: "이동할 페이지",
+      choose: "페이지를 선택하세요",
+      chooseDifferent: "현재 페이지가 아닌 다른 페이지를 선택하세요.",
+      cancel: "취소",
+      submit: "블록 이동",
+      moving: "블록을 이동하는 중입니다...",
+      noDestinations: "이동할 수 있는 다른 페이지가 없습니다. 공유되지 않은 일반 페이지를 먼저 만들어 주세요.",
+      unavailable: "블록 이동은 같은 계정이 소유한 공유되지 않은 페이지 사이에서만 사용할 수 있습니다.",
+      destinationUnavailable: "선택한 페이지로 더 이상 이동할 수 없습니다. 다른 페이지를 선택하세요.",
+      moved: "블록을 “{title}” 페이지로 이동했습니다.",
+      close: "이동 창 닫기"
     },
     toolbar: {
       aria: "선택 텍스트 서식",

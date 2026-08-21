@@ -130,6 +130,23 @@ const deleteBlockSchema = z
   })
   .default({});
 
+const moveBlockSchema = z.object({
+  targetPageId: routeIdSchema,
+  expectedVersions: z.array(versionSnapshotSchema).min(1).max(10_000),
+  expectedSourcePageContentVersion: safeVersionSchema,
+  mutationId: mutationIdSchema
+});
+
+type BlockMoveMutationReceipt = {
+  block_id: string;
+  source_page_id: string;
+  target_page_id: string;
+  request_hash: string;
+  moved_block_ids: string | string[];
+  source_page_content_version: number;
+  target_page_content_version: number;
+};
+
 const bookmarkPreviewSchema = z.object({
   url: z.string().trim().min(1).max(2_048)
 });
@@ -570,7 +587,8 @@ async function promoteBlockChildrenBeforeDelete(
 
 function assertBlockVersionSnapshot(
   rows: Array<{ id: string; edit_version?: number }>,
-  expectedVersions: Array<{ id: string; version: number }>
+  expectedVersions: Array<{ id: string; version: number }>,
+  message = "This block subtree changed in another session. It was not deleted."
 ) {
 
   const expectedById = new Map(expectedVersions.map((item) => [item.id, item.version]));
@@ -584,9 +602,104 @@ function assertBlockVersionSnapshot(
     throw new ApiError(
       409,
       "BLOCK_EDIT_CONFLICT",
-      "This block subtree changed in another session. It was not deleted."
+      message
     );
   }
+}
+
+function parseMovedBlockIds(value: unknown) {
+  let parsed = value;
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      throw new ApiError(
+        500,
+        "BLOCK_MOVE_RECEIPT_INCOMPLETE",
+        "The block move receipt is incomplete. The move was not repeated."
+      );
+    }
+  }
+  if (
+    !Array.isArray(parsed)
+    || parsed.length === 0
+    || parsed.some((id) => typeof id !== "string" || !routeIdSchema.safeParse(id).success)
+    || new Set(parsed).size !== parsed.length
+  ) {
+    throw new ApiError(
+      500,
+      "BLOCK_MOVE_RECEIPT_INCOMPLETE",
+      "The block move receipt is incomplete. The move was not repeated."
+    );
+  }
+  return parsed as string[];
+}
+
+function comparableBlockMetadata(value: BlockRow["metadata"]) {
+  if (typeof value !== "string") return JSON.stringify(value ?? null);
+  try {
+    return JSON.stringify(JSON.parse(value));
+  } catch {
+    return value;
+  }
+}
+
+function assertMovedBlockDataPreserved(
+  beforeRows: BlockRow[],
+  afterRows: BlockRow[],
+  rootBlockId: string,
+  targetPageId: string,
+  targetRootSortOrder: number
+) {
+  if (beforeRows.length !== afterRows.length) {
+    throw new ApiError(
+      500,
+      "BLOCK_MOVE_INTEGRITY_FAILED",
+      "The block move failed its integrity check. No block was moved."
+    );
+  }
+
+  const beforeById = new Map(beforeRows.map((row) => [row.id, row]));
+  const afterById = new Map(afterRows.map((row) => [row.id, row]));
+  const contentFields = ["type", "markdown", "html_cache", "checked", "created_at"] as const;
+
+  for (const [id, before] of beforeById) {
+    const after = afterById.get(id);
+    const expectedParentId = id === rootBlockId ? null : before.parent_block_id;
+    const expectedSortOrder = id === rootBlockId ? targetRootSortOrder : before.sort_order;
+    const preserved =
+      Boolean(after)
+      && after!.page_id === targetPageId
+      && after!.parent_block_id === expectedParentId
+      && Number(after!.sort_order) === Number(expectedSortOrder)
+      && Number(after!.edit_version ?? 1) === Number(before.edit_version ?? 1) + 1
+      && comparableBlockMetadata(after!.metadata) === comparableBlockMetadata(before.metadata)
+      && contentFields.every((field) => after![field] === before[field]);
+
+    if (!preserved) {
+      throw new ApiError(
+        500,
+        "BLOCK_MOVE_INTEGRITY_FAILED",
+        "The block move failed its integrity check. No block was moved."
+      );
+    }
+  }
+}
+
+async function lockMovePages(
+  client: DbClient,
+  userId: string,
+  sourcePageId: string,
+  targetPageId: string
+) {
+  const accessById = new Map<string, PageAccess>();
+  for (const pageId of [sourcePageId, targetPageId].sort()) {
+    accessById.set(pageId, await getPageAccess(pageId, userId, client, { lockPage: true }));
+  }
+  return {
+    sourceAccess: accessById.get(sourcePageId)!,
+    targetAccess: accessById.get(targetPageId)!
+  };
 }
 
 blockRouter.post(
@@ -1152,6 +1265,311 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
     next(error);
   }
 });
+
+blockRouter.post(
+  "/blocks/:blockId/move",
+  validate({ params: idParamSchema, body: moveBlockSchema }),
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
+      const blockId = String(req.params.blockId);
+      const body = req.body as z.infer<typeof moveBlockSchema>;
+      const normalizedExpectedVersions = [...body.expectedVersions]
+        .sort((left, right) => left.id.localeCompare(right.id));
+      const mutationHash = createMutationRequestHash({
+        kind: "BLOCK_MOVE",
+        blockId,
+        targetPageId: body.targetPageId,
+        expectedVersions: normalizedExpectedVersions,
+        expectedSourcePageContentVersion: body.expectedSourcePageContentVersion
+      });
+
+      const move = await transaction(async (client) => {
+        // Mutation receipt FKs reference the actor. Lock that row before any
+        // page row so account restore/import operations keep a consistent lock order.
+        await lockBlockCreateUsers(client, [user.id]);
+        await assertCurrentAuthSessionBoundary(user.id, authScope, client);
+
+        const receipt = await client.queryOne<BlockMoveMutationReceipt>(
+          `SELECT block_id, source_page_id, target_page_id, request_hash, moved_block_ids,
+                  source_page_content_version, target_page_content_version
+           FROM block_move_mutations
+           WHERE actor_id = ? AND mutation_id = ?
+           FOR UPDATE`,
+          [user.id, body.mutationId]
+        );
+
+        if (receipt) {
+          if (
+            receipt.block_id !== blockId
+            || receipt.target_page_id !== body.targetPageId
+            || receipt.request_hash !== mutationHash
+          ) {
+            throw new ApiError(
+              409,
+              "MUTATION_ID_REUSED",
+              "This mutation id was already used for a different block move. No block was moved."
+            );
+          }
+
+          const movedBlockIds = parseMovedBlockIds(receipt.moved_block_ids);
+          const replayAccess = await getPageAccess(receipt.target_page_id, user.id, client, { lockPage: true });
+          if (replayAccess.role !== "OWNER" || replayAccess.page.owner_id !== user.id) {
+            throw new ApiError(
+              409,
+              "BLOCK_MOVE_REPLAY_SUPERSEDED",
+              "The completed block move belongs to an older workspace state and was not repeated."
+            );
+          }
+
+          const placeholders = movedBlockIds.map(() => "?").join(", ");
+          const replayRows = await client.query<BlockRow>(
+            `SELECT * FROM blocks
+             WHERE page_id = ? AND id IN (${placeholders})
+             ORDER BY sort_order ASC, id ASC
+             FOR UPDATE`,
+            [receipt.target_page_id, ...movedBlockIds]
+          );
+          if (replayRows.length !== movedBlockIds.length) {
+            throw new ApiError(
+              409,
+              "BLOCK_MOVE_REPLAY_SUPERSEDED",
+              "The completed block move belongs to an older block generation and was not repeated."
+            );
+          }
+          const replayRoot = replayRows.find((row) => row.id === blockId);
+          if (!replayRoot) {
+            throw new ApiError(
+              409,
+              "BLOCK_MOVE_REPLAY_SUPERSEDED",
+              "The completed block move belongs to an older block generation and was not repeated."
+            );
+          }
+
+          return {
+            block: replayRoot,
+            sourcePageId: receipt.source_page_id,
+            targetPageId: receipt.target_page_id,
+            movedBlockIds,
+            sourcePageContentVersion: Number(receipt.source_page_content_version),
+            targetPageContentVersion: Number(receipt.target_page_content_version),
+            replayed: true
+          };
+        }
+
+        // Resolve the current source only after the durable receipt check.
+        // A response-loss retry runs after the block is already on the target
+        // page, so checking "same page" before the receipt would turn a
+        // committed success into a false failure.
+        const currentIdentity = await assertAccessibleBlock(blockId, user.id, client);
+        const sourcePageId = currentIdentity.block.page_id;
+        if (sourcePageId === body.targetPageId) {
+          throw new ApiError(400, "BLOCK_MOVE_SAME_PAGE", "Choose a different destination page.");
+        }
+
+        const { sourceAccess, targetAccess } = await lockMovePages(
+          client,
+          user.id,
+          sourcePageId,
+          body.targetPageId
+        );
+        if (
+          sourceAccess.role !== "OWNER"
+          || targetAccess.role !== "OWNER"
+          || sourceAccess.page.owner_id !== user.id
+          || targetAccess.page.owner_id !== user.id
+          || sourceAccess.page.owner_id !== targetAccess.page.owner_id
+        ) {
+          throw new ApiError(
+            403,
+            "BLOCK_MOVE_OWNER_REQUIRED",
+            "Blocks can only be moved between pages owned by the same account."
+          );
+        }
+        assertDirectBlockMutationAllowed(sourceAccess);
+        assertDirectBlockMutationAllowed(targetAccess);
+        assertPageNotArchived(sourceAccess.page, "Restore the source page before moving a block");
+        assertPageNotArchived(targetAccess.page, "Restore the destination page before moving a block");
+        if (sourceAccess.page.is_collection || targetAccess.page.is_collection) {
+          throw new ApiError(
+            400,
+            "BLOCK_MOVE_PAGE_REQUIRED",
+            "Blocks can only be moved between regular pages."
+          );
+        }
+        if (Number(sourceAccess.page.content_version ?? 1) !== body.expectedSourcePageContentVersion) {
+          throw new ApiError(
+            409,
+            "BLOCK_EDIT_CONFLICT",
+            "The source page changed in another session. No block was moved."
+          );
+        }
+
+        const sourceRows = await client.query<BlockRow>(
+          "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC FOR UPDATE",
+          [sourcePageId]
+        );
+        const root = sourceRows.find((row) => row.id === blockId);
+        if (!root) {
+          throw new ApiError(
+            409,
+            "BLOCK_EDIT_CONFLICT",
+            "The block moved or changed in another session. No block was moved."
+          );
+        }
+        const subtreeRows = collectBlockSubtreeRows(blockId, sourceRows);
+        assertBlockVersionSnapshot(
+          subtreeRows,
+          body.expectedVersions,
+          "This block subtree changed in another session. No block was moved."
+        );
+
+        const targetRows = await client.query<BlockRow>(
+          "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC FOR UPDATE",
+          [body.targetPageId]
+        );
+        const lastTargetRoot = targetRows
+          .filter((row) => row.parent_block_id === null)
+          .sort((left, right) => Number(left.sort_order) - Number(right.sort_order) || left.id.localeCompare(right.id))
+          .at(-1);
+        const targetRootSortOrder = getNextBlockSortOrder(lastTargetRoot?.sort_order);
+        const movedBlockIds = subtreeRows.map((row) => row.id);
+        const placeholders = movedBlockIds.map(() => "?").join(", ");
+
+        // The parent/page FK intentionally forbids cross-page parent references.
+        // Temporarily detach the whole subtree inside this transaction, change
+        // only page ownership, then restore its internal hierarchy. No block row
+        // is deleted or re-created, so IDs and authoritative data stay intact.
+        await client.execute(
+          `UPDATE blocks SET parent_block_id = NULL WHERE id IN (${placeholders})`,
+          movedBlockIds
+        );
+        const pageUpdate = await client.execute<{ affectedRows: number }>(
+          `UPDATE blocks SET page_id = ? WHERE id IN (${placeholders}) AND page_id = ?`,
+          [body.targetPageId, ...movedBlockIds, sourcePageId]
+        );
+        if (Number(pageUpdate.affectedRows) !== movedBlockIds.length) {
+          throw new ApiError(
+            409,
+            "BLOCK_EDIT_CONFLICT",
+            "The block subtree changed while it was being moved. No block was moved."
+          );
+        }
+
+        for (const before of subtreeRows) {
+          const parentBlockId = before.id === blockId ? null : before.parent_block_id;
+          const sortOrder = before.id === blockId ? targetRootSortOrder : before.sort_order;
+          const restored = await client.execute<{ affectedRows: number }>(
+            `UPDATE blocks
+             SET parent_block_id = ?, sort_order = ?, last_mutation_id = NULL,
+                 last_mutation_hash = NULL, edit_version = edit_version + 1
+             WHERE id = ? AND page_id = ? AND edit_version = ?`,
+            [
+              parentBlockId,
+              sortOrder,
+              before.id,
+              body.targetPageId,
+              Number(before.edit_version ?? 1)
+            ]
+          );
+          if (Number(restored.affectedRows) === 0) {
+            throw new ApiError(
+              409,
+              "BLOCK_EDIT_CONFLICT",
+              "The block subtree changed while it was being moved. No block was moved."
+            );
+          }
+        }
+
+        const movedRows = await client.query<BlockRow>(
+          `SELECT * FROM blocks
+           WHERE page_id = ? AND id IN (${placeholders})
+           ORDER BY sort_order ASC, id ASC`,
+          [body.targetPageId, ...movedBlockIds]
+        );
+        assertMovedBlockDataPreserved(
+          subtreeRows,
+          movedRows,
+          blockId,
+          body.targetPageId,
+          targetRootSortOrder
+        );
+
+        const sourcePageContentVersion = await advancePageContentVersion(client, sourcePageId, user.id);
+        const targetPageContentVersion = await advancePageContentVersion(client, body.targetPageId, user.id);
+        const sourceAfterRows = await client.query<BlockRow>(
+          "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC",
+          [sourcePageId]
+        );
+        const targetAfterRows = await client.query<BlockRow>(
+          "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC",
+          [body.targetPageId]
+        );
+        await recordPageVersion(client, {
+          pageId: sourcePageId,
+          actors: [toPageVersionActor(user)],
+          source: "BLOCK_MOVE_OUT",
+          changes: diffPageVersionBlocks(sourceRows, sourceAfterRows)
+        });
+        await recordPageVersion(client, {
+          pageId: body.targetPageId,
+          actors: [toPageVersionActor(user)],
+          source: "BLOCK_MOVE_IN",
+          changes: diffPageVersionBlocks(targetRows, targetAfterRows)
+        });
+
+        await client.execute(
+          `INSERT INTO block_move_mutations
+             (actor_id, mutation_id, block_id, source_page_id, target_page_id, request_hash,
+              moved_block_ids, source_page_content_version, target_page_content_version)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            user.id,
+            body.mutationId,
+            blockId,
+            sourcePageId,
+            body.targetPageId,
+            mutationHash,
+            JSON.stringify(movedBlockIds),
+            sourcePageContentVersion,
+            targetPageContentVersion
+          ]
+        );
+
+        const movedRoot = movedRows.find((row) => row.id === blockId);
+        if (!movedRoot) {
+          throw new ApiError(
+            500,
+            "BLOCK_MOVE_INTEGRITY_FAILED",
+            "The block move failed its integrity check. No block was moved."
+          );
+        }
+        return {
+          block: movedRoot,
+          sourcePageId,
+          targetPageId: body.targetPageId,
+          movedBlockIds,
+          sourcePageContentVersion,
+          targetPageContentVersion,
+          replayed: false
+        };
+      });
+
+      res.json({
+        block: toBlock(move.block),
+        sourcePageId: move.sourcePageId,
+        targetPageId: move.targetPageId,
+        movedBlockIds: move.movedBlockIds,
+        sourcePageContentVersion: move.sourcePageContentVersion,
+        targetPageContentVersion: move.targetPageContentVersion,
+        replayed: move.replayed
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 blockRouter.delete(
   "/blocks/:blockId",

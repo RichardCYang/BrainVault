@@ -1495,6 +1495,10 @@
         </button>
         <div class="block-menu-separator" role="separator"></div>
       </div>
+      <button id="block-move-menu-item" type="button" data-action="move-block-to-page" role="menuitem">
+        <span aria-hidden="true">↗</span>
+        <span data-i18n="menu.moveBlock">Move to another page</span>
+      </button>
       <button type="button" data-action="save-block" role="menuitem">
         <span aria-hidden="true">✓</span>
         <span data-i18n="menu.saveBlock">Save block</span>
@@ -1504,6 +1508,38 @@
         <span data-i18n="menu.deleteBlock">Delete block</span>
       </button>
     </div>
+    <dialog
+      id="block-move-dialog"
+      class="block-move-dialog"
+      aria-labelledby="block-move-title"
+      aria-describedby="block-move-description"
+    >
+      <form id="block-move-form" class="block-move-dialog-surface" method="dialog">
+        <header class="block-move-dialog-header">
+          <div>
+            <p class="kicker" data-i18n="blockMove.kicker">Block action</p>
+            <h2 id="block-move-title" data-i18n="blockMove.title">Move to another page</h2>
+            <p id="block-move-description" data-i18n="blockMove.description">Move this block and every nested block without changing their content or structured data.</p>
+          </div>
+          <button
+            id="block-move-close"
+            class="block-move-dialog-close"
+            type="button"
+            aria-label="Close move dialog"
+            data-i18n-aria-label="blockMove.close"
+          >×</button>
+        </header>
+        <label class="block-move-field" for="block-move-page-select">
+          <span data-i18n="blockMove.destination">Destination page</span>
+          <select id="block-move-page-select" required></select>
+        </label>
+        <p id="block-move-message" class="block-move-message" role="status" aria-live="polite"></p>
+        <div class="block-move-actions">
+          <button id="block-move-cancel" type="button" class="secondary" data-i18n="blockMove.cancel">Cancel</button>
+          <button id="block-move-submit" type="submit" data-i18n="blockMove.submit">Move block</button>
+        </div>
+      </form>
+    </dialog>
     <div id="inline-toolbar" class="inline-toolbar hidden" role="toolbar" aria-label="Format selected text" data-i18n-aria-label="toolbar.aria">
       <button type="button" data-format="bold" aria-label="Bold" title="Bold" data-i18n-aria-label="toolbar.bold" data-i18n-title="toolbar.bold">B</button>
       <button type="button" data-format="italic" aria-label="Italic" title="Italic" data-i18n-aria-label="toolbar.italic" data-i18n-title="toolbar.italic"><em>I</em></button>

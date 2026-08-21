@@ -232,6 +232,7 @@ const pendingWorkspaceCreateTasks = new Map();
 const pendingPageVersionResetTasks = new Map();
 const pendingBlockCreateTasks = new Map();
 const pendingBlockDeleteTasks = new Map();
+const pendingBlockMoveTasks = new Map();
 const pendingPageDeleteTasks = new Map();
 const pendingAttachmentCreateTasks = new Map();
 const pageModeMutationFences = new Map();
@@ -241,6 +242,10 @@ let pageCoverSaving = false;
 let pageCoverPositionDraft = null;
 let pageCoverDragPointerId = null;
 let documentChildrenRenderId = 0;
+let activeBlockMoveId = null;
+let activeBlockMoveSourcePageId = null;
+let blockMoveReturnFocus = null;
+let blockMoveSubmitting = false;
 
 let emojiCategoryDefinitions = [];
 let emojiRecords = [];
@@ -1186,6 +1191,14 @@ const elements = {
   blockList: $("#block-list"),
   slashMenu: $("#slash-menu"),
   blockContextMenu: $("#block-context-menu"),
+  blockMoveMenuItem: $("#block-move-menu-item"),
+  blockMoveDialog: $("#block-move-dialog"),
+  blockMoveForm: $("#block-move-form"),
+  blockMoveClose: $("#block-move-close"),
+  blockMovePageSelect: $("#block-move-page-select"),
+  blockMoveMessage: $("#block-move-message"),
+  blockMoveCancel: $("#block-move-cancel"),
+  blockMoveSubmit: $("#block-move-submit"),
   navigationContextMenu: $("#navigation-context-menu"),
   navigationAddSubpageButton: $("#navigation-add-subpage-button"),
   navigationDeleteLabel: $("#navigation-delete-label"),
@@ -1378,6 +1391,7 @@ function acceptRotatedAuthenticationSession() {
   pendingPageVersionResetTasks.clear();
   pendingBlockCreateTasks.clear();
   pendingBlockDeleteTasks.clear();
+  pendingBlockMoveTasks.clear();
   pendingPageDeleteTasks.clear();
   pendingAttachmentCreateTasks.clear();
   setWorkspaceCreateBusy(false);
@@ -2620,6 +2634,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   pendingPageVersionResetTasks.clear();
   pendingBlockCreateTasks.clear();
   pendingBlockDeleteTasks.clear();
+  pendingBlockMoveTasks.clear();
   pendingPageDeleteTasks.clear();
   pendingAttachmentCreateTasks.clear();
   pageModeMutationFences.clear();
@@ -2629,6 +2644,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   closeEmojiPicker({ restoreFocus: false });
   closeNavigationContextMenu();
   closeBlockContextMenu();
+  closeBlockMoveDialog({ restoreFocus: false, force: true });
   closePageActionsMenu();
   closeInlineToolbar();
   closeSlashMenu();
@@ -9751,6 +9767,130 @@ async function submitBlockDeleteTask(task, authenticationScope) {
   }
 }
 
+function getBlockMoveTask(authenticationScope, pageId, blockId, targetPageId, payload) {
+  const taskKey = [
+    authenticationScope.generation,
+    authenticationScope.targetKey,
+    pageId,
+    blockId,
+    targetPageId
+  ].join("\u0000");
+  const pendingTask = pendingBlockMoveTasks.get(taskKey);
+  if (pendingTask) return pendingTask;
+
+  const task = {
+    taskKey,
+    targetKey: authenticationScope.targetKey,
+    pageId,
+    blockId,
+    targetPageId,
+    mutationId: createMutationId(),
+    payload: Object.freeze({
+      ...payload,
+      expectedVersions: Object.freeze(payload.expectedVersions.map((item) => Object.freeze({ ...item })))
+    }),
+    attempted: false,
+    inFlight: false
+  };
+  pendingBlockMoveTasks.set(taskKey, task);
+  return task;
+}
+
+async function submitBlockMoveTask(task, authenticationScope) {
+  if (task.inFlight) throw new Error(t("status.pageTransitionBusy"));
+  task.inFlight = true;
+  let attempt = 0;
+
+  try {
+    while (attempt < 2) {
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      try {
+        task.attempted = true;
+        const data = await submitWithFreshMutationIdOnReuse(task, () => {
+          if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+          return api(`/api/blocks/${encodeURIComponent(task.blockId)}/move`, {
+            method: "POST",
+            body: { ...task.payload, mutationId: task.mutationId }
+          });
+        });
+        if (data === null && !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        if (pendingBlockMoveTasks.get(task.taskKey) === task) {
+          pendingBlockMoveTasks.delete(task.taskKey);
+        }
+        return data;
+      } catch (error) {
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        attempt += 1;
+        if (!isAmbiguousApiError(error) || attempt >= 2) {
+          if (!isAmbiguousApiError(error) && pendingBlockMoveTasks.get(task.taskKey) === task) {
+            pendingBlockMoveTasks.delete(task.taskKey);
+          }
+          throw error;
+        }
+      }
+    }
+    return null;
+  } finally {
+    task.inFlight = false;
+  }
+}
+
+async function moveBlockToPage(blockId, targetPageId, { authenticationScope, sourcePageId } = {}) {
+  const scope = authenticationScope ?? captureAuthenticatedSessionScope();
+  const pageId = sourcePageId ?? state.selectedPage?.id;
+  if (!pageId || state.selectedPage?.id !== pageId) throw new Error(t("errors.currentBlockOrder"));
+  if (!isCurrentAuthenticatedSessionScope(scope)) throw new Error(t("errors.UNAUTHENTICATED"));
+  if (!isPageOwner(state.selectedPage) || isCollaborativePage(state.selectedPage)) {
+    throw new Error(t("blockMove.unavailable"));
+  }
+  if (!targetPageId || targetPageId === pageId) throw new Error(t("blockMove.chooseDifferent"));
+
+  return withPagePersistenceTransition(pageId, "block-move", async () => {
+    if (!isCurrentAuthenticatedSessionScope(scope)) throw new Error(t("errors.UNAUTHENTICATED"));
+    if (state.selectedPage?.id !== pageId) throw new Error(t("errors.currentBlockOrder"));
+
+    const expectedVersions = getBlockVersionSnapshot(blockId, { includeDescendants: true });
+    if (!expectedVersions.length) throw new Error(t("errors.currentBlockOrder"));
+    if (blockSnapshotHasUnresolvedDraftConflict(expectedVersions)) {
+      throw new Error(t("status.resolveRecoveredDraftConflict"));
+    }
+
+    assertNoPendingLocalBlockDrafts(
+      pageId,
+      expectedVersions.map(({ id }) => id),
+      { excludeSourceId: pageDraftSourceId }
+    );
+
+    const task = getBlockMoveTask(scope, pageId, blockId, targetPageId, {
+      targetPageId,
+      expectedVersions,
+      expectedSourcePageContentVersion: Number(state.selectedPage?.contentVersion ?? 1)
+    });
+    const data = await submitBlockMoveTask(task, scope);
+    if (data === null && !isCurrentAuthenticatedSessionScope(scope)) return null;
+
+    const movedIds = Array.isArray(data?.movedBlockIds)
+      ? data.movedBlockIds
+      : task.payload.expectedVersions.map(({ id }) => id);
+    for (const movedId of movedIds) {
+      blockDraftRenderSources.delete(movedId);
+      blockDraftConflictOrigins.delete(movedId);
+    }
+    const draftScope = getDraftScope();
+    if (draftScope) {
+      checkDraftStoreWrite(
+        pageDraftStore.removeBlocks(
+          draftScope.userId,
+          draftScope.pageId,
+          movedIds,
+          pageDraftSourceId
+        )
+      );
+    }
+    return data;
+  });
+}
+
 async function deleteBlockWithVersionCheck(blockId, options = {}) {
   const pageId = state.selectedPage.id;
   const preserveChildren = options.preserveChildren === true;
@@ -12044,6 +12184,109 @@ async function changeCalloutType(row, type) {
   }
 }
 
+function canMoveBlockFromPage(page = state.selectedPage) {
+  return Boolean(
+    page
+    && !page.isArchived
+    && !isCollectionPage(page)
+    && isPageOwner(page)
+    && !isCollaborativePage(page)
+  );
+}
+
+function getBlockMoveDestinationPages(sourcePage = state.selectedPage) {
+  if (!canMoveBlockFromPage(sourcePage)) return [];
+  return state.allPages
+    .filter((page) => (
+      page?.id
+      && page.id !== sourcePage.id
+      && page.ownerId === sourcePage.ownerId
+      && !page.isArchived
+      && !isCollectionPage(page)
+      && isPageOwner(page)
+      && !isCollaborativePage(page)
+    ))
+    .sort((left, right) => {
+      const leftLabel = getPagePathSegments(left).map(({ title }) => title).join(" / ");
+      const rightLabel = getPagePathSegments(right).map(({ title }) => title).join(" / ");
+      return leftLabel.localeCompare(rightLabel, getLocale());
+    });
+}
+
+function getBlockMoveDestinationLabel(page) {
+  return getPagePathSegments(page).map(({ title }) => title).join(" / ");
+}
+
+function setBlockMoveMessage(message = "", isError = false) {
+  elements.blockMoveMessage.textContent = message;
+  elements.blockMoveMessage.classList.toggle("is-error", Boolean(isError));
+}
+
+function setBlockMoveSubmitting(submitting) {
+  blockMoveSubmitting = Boolean(submitting);
+  const destinations = getBlockMoveDestinationPages(
+    state.allPages.find((page) => page.id === activeBlockMoveSourcePageId) ?? state.selectedPage
+  );
+  elements.blockMoveClose.disabled = blockMoveSubmitting;
+  elements.blockMoveCancel.disabled = blockMoveSubmitting;
+  elements.blockMovePageSelect.disabled = blockMoveSubmitting || destinations.length === 0;
+  elements.blockMoveSubmit.disabled = blockMoveSubmitting || destinations.length === 0;
+  elements.blockMoveSubmit.textContent = t(blockMoveSubmitting ? "blockMove.moving" : "blockMove.submit");
+}
+
+function renderBlockMoveDestinations() {
+  const sourcePage = state.allPages.find((page) => page.id === activeBlockMoveSourcePageId) ?? state.selectedPage;
+  const destinations = getBlockMoveDestinationPages(sourcePage);
+  elements.blockMovePageSelect.replaceChildren();
+
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = t("blockMove.choose");
+  placeholder.selected = true;
+  placeholder.disabled = true;
+  elements.blockMovePageSelect.append(placeholder);
+
+  for (const page of destinations) {
+    const option = document.createElement("option");
+    option.value = page.id;
+    option.textContent = getBlockMoveDestinationLabel(page);
+    elements.blockMovePageSelect.append(option);
+  }
+
+  setBlockMoveMessage(destinations.length ? "" : t("blockMove.noDestinations"), destinations.length === 0);
+  setBlockMoveSubmitting(false);
+  return destinations;
+}
+
+function closeBlockMoveDialog({ restoreFocus = true, force = false } = {}) {
+  if (blockMoveSubmitting && !force) return;
+  const returnFocus = blockMoveReturnFocus;
+  if (elements.blockMoveDialog.open) elements.blockMoveDialog.close();
+  activeBlockMoveId = null;
+  activeBlockMoveSourcePageId = null;
+  blockMoveReturnFocus = null;
+  blockMoveSubmitting = false;
+  setBlockMoveMessage();
+  elements.blockMoveForm.reset();
+  if (restoreFocus && returnFocus?.isConnected) returnFocus.focus();
+}
+
+function openBlockMoveDialog(blockId, returnFocus = null) {
+  const sourcePage = state.selectedPage;
+  if (!blockId || !canMoveBlockFromPage(sourcePage)) {
+    setStatus(t("blockMove.unavailable"), true);
+    return;
+  }
+
+  activeBlockMoveId = blockId;
+  activeBlockMoveSourcePageId = sourcePage.id;
+  blockMoveReturnFocus = returnFocus;
+  renderBlockMoveDestinations();
+  if (!elements.blockMoveDialog.open) elements.blockMoveDialog.showModal();
+  if (elements.blockMovePageSelect.disabled) elements.blockMoveCancel.focus();
+  else elements.blockMovePageSelect.focus();
+}
+
 function closeBlockContextMenu({ restoreFocus = false } = {}) {
   const handle = state.activeBlockMenuHandle;
   getBlockRow(handle)?.classList.remove("is-menu-open");
@@ -12101,6 +12344,7 @@ function openBlockContextMenu(row, handle, { focusFirst = false } = {}) {
   handle.setAttribute("aria-expanded", "true");
   syncCalloutTypeMenu(row);
   syncAccordionOptionsMenu(row);
+  elements.blockMoveMenuItem.classList.toggle("hidden", !canMoveBlockFromPage());
   positionBlockContextMenu(handle);
 
   if (focusFirst) getBlockContextMenuItems()[0]?.focus();
@@ -16624,6 +16868,10 @@ function refreshLocalizedUi() {
   }
   if (state.mfaLogin?.methods?.passkey) syncAuthOperationControls();
   if (!elements.emojiPickerLayer.classList.contains("hidden") && emojiRecords.length > 0) renderEmojiPicker();
+  if (elements.blockMoveDialog.open && !blockMoveSubmitting) renderBlockMoveDestinations();
+  if (elements.blockMoveDialog.open && blockMoveSubmitting) {
+    elements.blockMoveSubmit.textContent = t("blockMove.moving");
+  }
 
   if (!elements.slashMenu.classList.contains("hidden") && state.activeSlashBlockId) {
     const row = elements.blockList.querySelector(`[data-block-id="${CSS.escape(state.activeSlashBlockId)}"]`);
@@ -18022,6 +18270,59 @@ elements.blockList.addEventListener("click", async (event) => {
 });
 
 
+elements.blockMoveClose.addEventListener("click", () => closeBlockMoveDialog());
+elements.blockMoveCancel.addEventListener("click", () => closeBlockMoveDialog());
+elements.blockMoveDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeBlockMoveDialog();
+});
+
+elements.blockMoveForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (blockMoveSubmitting) return;
+
+  const blockId = activeBlockMoveId;
+  const sourcePageId = activeBlockMoveSourcePageId;
+  const targetPageId = elements.blockMovePageSelect.value;
+  const sourcePage = state.selectedPage?.id === sourcePageId ? state.selectedPage : null;
+  const targetPage = getBlockMoveDestinationPages(sourcePage)
+    .find((page) => page.id === targetPageId);
+
+  if (!blockId || !sourcePageId || !sourcePage || !targetPage) {
+    setBlockMoveMessage(t("blockMove.destinationUnavailable"), true);
+    return;
+  }
+
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
+    setBlockMoveMessage(t("errors.UNAUTHENTICATED"), true);
+    return;
+  }
+
+  setBlockMoveSubmitting(true);
+  setBlockMoveMessage(t("blockMove.moving"));
+  try {
+    const data = await moveBlockToPage(blockId, targetPageId, {
+      authenticationScope,
+      sourcePageId
+    });
+    if (data === null && !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+
+    const destinationTitle = targetPage.title || t("newDocumentTitle");
+    setBlockMoveSubmitting(false);
+    closeBlockMoveDialog({ restoreFocus: false });
+    if (state.selectedPage?.id === sourcePageId) {
+      await refreshSelectedPageAfterBlockDeletion(sourcePageId);
+    }
+    setStatus(t("blockMove.moved", { title: destinationTitle }));
+  } catch (error) {
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    setBlockMoveSubmitting(false);
+    setBlockMoveMessage(error?.message ?? t("errors.unknown"), true);
+  }
+});
+
 elements.blockContextMenu.addEventListener("click", async (event) => {
   if (!requireWritablePage()) return;
   const button = event.target.closest("button[data-action]");
@@ -18050,6 +18351,13 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
         if (row.dataset.draftConflict === "true") return;
       }
       await insertBlockRelative(row, placement);
+      return;
+    }
+
+    if (button.dataset.action === "move-block-to-page") {
+      const returnFocus = state.activeBlockMenuHandle;
+      closeBlockContextMenu();
+      openBlockMoveDialog(blockId, returnFocus);
       return;
     }
 
