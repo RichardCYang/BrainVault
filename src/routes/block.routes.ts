@@ -1195,7 +1195,7 @@ blockRouter.delete(
       await assertCurrentAuthSessionBoundary(user.id, authScope, client);
 
       const receipt = await client.queryOne<BlockDeleteMutationReceipt>(
-        `SELECT page_id, block_id, request_hash, page_content_version, attachment_ids
+        `SELECT page_id, block_id, request_hash, page_content_version, attachment_ids, attachment_generation
          FROM block_delete_mutations
          WHERE actor_id = ? AND mutation_id = ?
          FOR UPDATE`,
@@ -1244,7 +1244,7 @@ blockRouter.delete(
           pageId: assessment.pageId,
           ownerId: replayAccess.page.owner_id,
           attachmentIds: assessment.attachmentIds,
-          attachmentGeneration,
+          attachmentGeneration: assessment.attachmentGeneration,
           pageContentVersion: assessment.pageContentVersion,
           replayed: true
         };
@@ -1294,8 +1294,8 @@ blockRouter.delete(
       });
       await client.execute(
         `INSERT INTO block_delete_mutations
-           (actor_id, mutation_id, page_id, block_id, request_hash, page_content_version, attachment_ids)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (actor_id, mutation_id, page_id, block_id, request_hash, page_content_version, attachment_ids, attachment_generation)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           user.id,
           mutationId,
@@ -1303,7 +1303,8 @@ blockRouter.delete(
           blockId,
           mutationHash,
           pageContentVersion,
-          JSON.stringify(attachmentIds)
+          JSON.stringify(attachmentIds),
+          attachmentGeneration
         ]
       );
       return {
@@ -1315,11 +1316,16 @@ blockRouter.delete(
         replayed: false
       };
     });
-    await removeDeletedAttachmentFiles(
-      deletion.ownerId,
-      deletion.attachmentIds,
-      deletion.attachmentGeneration
-    );
+    // A pre-migration receipt has no trustworthy filesystem generation.
+    // Replay the already-committed SQL delete, but never let that legacy receipt
+    // authorize filesystem cleanup in whichever workspace generation exists now.
+    if (deletion.attachmentGeneration !== undefined) {
+      await removeDeletedAttachmentFiles(
+        deletion.ownerId,
+        deletion.attachmentIds,
+        deletion.attachmentGeneration
+      );
+    }
     res.status(204).send();
   } catch (error) {
     next(error);

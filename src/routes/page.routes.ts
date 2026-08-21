@@ -1221,7 +1221,7 @@ pageRouter.delete(
           await assertCurrentAuthSessionBoundary(user.id, authScope, client);
 
           const receipt = await client.queryOne<PageDeleteMutationReceipt>(
-            `SELECT page_id, request_hash, page_ids, attachment_ids
+            `SELECT page_id, request_hash, page_ids, attachment_ids, attachment_generation
              FROM page_delete_mutations
              WHERE actor_id = ? AND mutation_id = ?
              FOR UPDATE`,
@@ -1253,7 +1253,7 @@ pageRouter.delete(
             return {
               attachmentIds: assessment.attachmentIds,
               pageIds: assessment.pageIds,
-              attachmentGeneration,
+              attachmentGeneration: assessment.attachmentGeneration,
               replayed: true as const
             };
           }
@@ -1301,15 +1301,16 @@ pageRouter.delete(
             .map((row) => row.id);
           await client.execute(
             `INSERT INTO page_delete_mutations
-               (actor_id, mutation_id, page_id, request_hash, page_ids, attachment_ids)
-             VALUES (?, ?, ?, ?, ?, ?)`,
+               (actor_id, mutation_id, page_id, request_hash, page_ids, attachment_ids, attachment_generation)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
             [
               user.id,
               mutationId,
               pageId,
               mutationHash,
               JSON.stringify(pageIds),
-              JSON.stringify(attachmentIds)
+              JSON.stringify(attachmentIds),
+              attachmentGeneration
             ]
           );
           return {
@@ -1334,13 +1335,16 @@ pageRouter.delete(
             );
           }
         }
-        // Filesystem cleanup is idempotent and intentionally repeats on receipt
-        // replay in case the first response was lost immediately after COMMIT.
-        await removeDeletedAttachmentFiles(
-          user.id,
-          deletion.attachmentIds,
-          deletion.attachmentGeneration
-        );
+        // Filesystem cleanup is idempotent and may repeat on receipt replay,
+        // but only with the generation captured by the original destructive
+        // transaction. Legacy receipts intentionally skip filesystem cleanup.
+        if (deletion.attachmentGeneration !== undefined) {
+          await removeDeletedAttachmentFiles(
+            user.id,
+            deletion.attachmentIds,
+            deletion.attachmentGeneration
+          );
+        }
         res.status(204).send();
         return;
       }

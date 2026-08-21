@@ -24,13 +24,15 @@ const route = source("../src/routes/page.routes.ts");
 const client = source("../public/app.js");
 const baselineSchema = source("../migrations/001_init.sql");
 const migration = source("../migrations/056_page_delete_mutation_receipts.sql");
+const attachmentGenerationMigration = source("../migrations/062_delete_receipt_attachment_generation.sql");
 
 test("page deletion receipts replay only the exact request and retain cleanup scope", () => {
   const receipt = {
     page_id: "pag_root",
     request_hash: "hash_1",
     page_ids: '["pag_root","pag_child"]',
-    attachment_ids: '["att_1","att_2"]'
+    attachment_ids: '["att_1","att_2"]',
+    attachment_generation: 4
   };
 
   assert.deepEqual(
@@ -39,7 +41,8 @@ test("page deletion receipts replay only the exact request and retain cleanup sc
       kind: "replay",
       pageId: "pag_root",
       pageIds: ["pag_root", "pag_child"],
-      attachmentIds: ["att_1", "att_2"]
+      attachmentIds: ["att_1", "att_2"],
+      attachmentGeneration: 4
     }
   );
   assert.deepEqual(
@@ -49,6 +52,36 @@ test("page deletion receipts replay only the exact request and retain cleanup sc
   assert.deepEqual(
     assessPageDeleteMutationReceipt(receipt, { pageId: "pag_root", requestHash: "hash_other" }),
     { kind: "collision" }
+  );
+});
+
+test("page-delete receipt attachment generations are durable but legacy receipts remain replayable without cleanup authority", () => {
+  const legacyReceipt = {
+    page_id: "pag_root",
+    request_hash: "hash_legacy",
+    page_ids: '["pag_root"]',
+    attachment_ids: '["att_legacy"]'
+  };
+
+  assert.deepEqual(
+    assessPageDeleteMutationReceipt(legacyReceipt, {
+      pageId: "pag_root",
+      requestHash: "hash_legacy"
+    }),
+    {
+      kind: "replay",
+      pageId: "pag_root",
+      pageIds: ["pag_root"],
+      attachmentIds: ["att_legacy"]
+    }
+  );
+
+  assert.deepEqual(
+    assessPageDeleteMutationReceipt({ ...legacyReceipt, attachment_generation: 0 }, {
+      pageId: "pag_root",
+      requestHash: "hash_legacy"
+    }),
+    { kind: "incomplete" }
   );
 });
 
@@ -107,11 +140,15 @@ test("server reconciles a page-delete receipt before querying a page that may al
 
   assert.match(deleteRoute, /MUTATION_ID_REQUIRED/);
   assert.match(deleteRoute, /kind: "PAGE_DELETE"/);
-  assert.match(deleteRoute, /FROM page_delete_mutations/);
+  assert.match(deleteRoute, /SELECT page_id, request_hash, page_ids, attachment_ids, attachment_generation/);
   assert.match(deleteRoute, /assessPageDeleteMutationReceipt/);
+  assert.match(deleteRoute, /attachmentGeneration: assessment\.attachmentGeneration/);
   assert.match(deleteRoute, /INSERT INTO page_delete_mutations/);
+  assert.match(deleteRoute, /attachment_ids, attachment_generation/);
   assert.match(deleteRoute, /JSON\.stringify\(pageIds\)/);
   assert.match(deleteRoute, /JSON\.stringify\(attachmentIds\)/);
+  assert.match(deleteRoute, /attachmentGeneration\s*\]/);
+  assert.match(deleteRoute, /deletion\.attachmentGeneration !== undefined/);
   assert.ok(
     deleteRoute.indexOf("FROM page_delete_mutations") < deleteRoute.indexOf("getOwnedPageTreeRows(user.id"),
     "a committed delete must be replayable before the deleted page tree is queried"
@@ -370,6 +407,11 @@ test("baseline and upgrade schemas keep page-delete receipts after page rows are
     assert.match(tableSql, /attachment_ids JSON NOT NULL/);
     assert.doesNotMatch(tableSql, /FOREIGN KEY \(page_id\)/);
   }
+
+  assert.match(
+    attachmentGenerationMigration,
+    /ALTER TABLE page_delete_mutations[\s\S]*attachment_generation BIGINT UNSIGNED NULL/
+  );
 });
 
 test("response-loss reproduction shows vulnerable 404 and fixed receipt replay", () => {

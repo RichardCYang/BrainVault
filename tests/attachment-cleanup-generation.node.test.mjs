@@ -116,6 +116,48 @@ test("deferred attachment cleanup is fenced from workspace restore generations",
   );
 });
 
+test("delete receipt replay keeps the original attachment generation across workspace restores", async () => {
+  const [pageRoute, blockRoute, receiptMigration] = await Promise.all([
+    readFile(new URL("../src/routes/page.routes.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/routes/block.routes.ts", import.meta.url), "utf8"),
+    readFile(new URL("../migrations/062_delete_receipt_attachment_generation.sql", import.meta.url), "utf8")
+  ]).then((values) => values.map(normalize));
+
+  for (const [name, source] of [
+    ["page delete", pageRoute],
+    ["block delete", blockRoute]
+  ]) {
+    assert.match(
+      source,
+      /attachmentGeneration: assessment\.attachmentGeneration/,
+      `${name} receipt replay must reuse the generation captured by the original delete`
+    );
+    assert.match(
+      source,
+      /deletion\.attachmentGeneration !== undefined/,
+      `${name} must skip filesystem cleanup for legacy receipts with no trustworthy generation`
+    );
+  }
+
+  assert.match(
+    receiptMigration,
+    /ALTER TABLE page_delete_mutations[\s\S]*attachment_generation BIGINT UNSIGNED NULL/
+  );
+  assert.match(
+    receiptMigration,
+    /ALTER TABLE block_delete_mutations[\s\S]*attachment_generation BIGINT UNSIGNED NULL/
+  );
+
+  const cleanupAuthorized = (receiptGeneration, currentGeneration) =>
+    receiptGeneration !== undefined && receiptGeneration === currentGeneration;
+
+  const originalGeneration = 4;
+  const restoredGeneration = 5;
+  assert.equal(cleanupAuthorized(restoredGeneration, restoredGeneration), true);
+  assert.equal(cleanupAuthorized(originalGeneration, restoredGeneration), false);
+  assert.equal(cleanupAuthorized(undefined, restoredGeneration), false);
+});
+
 test("standalone reproduction loses a retained restore file before the fence but not after it", () => {
   const output = execFileSync(
     process.execPath,

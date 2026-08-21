@@ -23,6 +23,7 @@ const route = source("../src/routes/block.routes.ts");
 const client = source("../public/app.js");
 const baselineSchema = source("../migrations/001_init.sql");
 const migration = source("../migrations/039_block_delete_mutation_receipts.sql");
+const attachmentGenerationMigration = source("../migrations/062_delete_receipt_attachment_generation.sql");
 
 test("block deletion receipts replay only the exact request and retain cleanup scope", () => {
   const receipt = {
@@ -30,7 +31,8 @@ test("block deletion receipts replay only the exact request and retain cleanup s
     block_id: "blk_1",
     request_hash: "hash_1",
     page_content_version: 7,
-    attachment_ids: '["att_1","att_2"]'
+    attachment_ids: '["att_1","att_2"]',
+    attachment_generation: 4
   };
 
   assert.deepEqual(
@@ -40,7 +42,8 @@ test("block deletion receipts replay only the exact request and retain cleanup s
       pageId: "pag_1",
       blockId: "blk_1",
       pageContentVersion: 7,
-      attachmentIds: ["att_1", "att_2"]
+      attachmentIds: ["att_1", "att_2"],
+      attachmentGeneration: 4
     }
   );
   assert.deepEqual(
@@ -50,6 +53,33 @@ test("block deletion receipts replay only the exact request and retain cleanup s
   assert.deepEqual(
     assessBlockDeleteMutationReceipt(receipt, { blockId: "blk_1", requestHash: "hash_other" }),
     { kind: "collision" }
+  );
+});
+
+test("delete receipt attachment generations are durable but legacy receipts remain replayable without cleanup authority", () => {
+  const legacyReceipt = {
+    page_id: "pag_1",
+    block_id: "blk_1",
+    request_hash: "hash_legacy",
+    page_content_version: 7,
+    attachment_ids: '["att_1"]'
+  };
+  assert.deepEqual(
+    assessBlockDeleteMutationReceipt(legacyReceipt, { blockId: "blk_1", requestHash: "hash_legacy" }),
+    {
+      kind: "replay",
+      pageId: "pag_1",
+      blockId: "blk_1",
+      pageContentVersion: 7,
+      attachmentIds: ["att_1"]
+    }
+  );
+  assert.deepEqual(
+    assessBlockDeleteMutationReceipt(
+      { ...legacyReceipt, request_hash: "hash_invalid", attachment_generation: 0 },
+      { blockId: "blk_1", requestHash: "hash_invalid" }
+    ),
+    { kind: "incomplete" }
   );
 });
 
@@ -88,9 +118,13 @@ test("server records and replays block deletion atomically before touching a mis
   );
   assert.match(deleteRoute, /kind: "BLOCK_DELETE"/);
   assert.match(deleteRoute, /FROM block_delete_mutations/);
+  assert.match(deleteRoute, /attachment_ids, attachment_generation/);
   assert.match(deleteRoute, /assessBlockDeleteMutationReceipt/);
+  assert.match(deleteRoute, /attachmentGeneration: assessment\.attachmentGeneration/);
   assert.match(deleteRoute, /INSERT INTO block_delete_mutations/);
-  assert.match(deleteRoute, /JSON\.stringify\(attachmentIds\)/);
+  assert.match(deleteRoute, /attachment_ids, attachment_generation/);
+  assert.match(deleteRoute, /JSON\.stringify\(attachmentIds\),\s*attachmentGeneration/);
+  assert.match(deleteRoute, /if \(deletion\.attachmentGeneration !== undefined\)/);
   assert.match(
     deleteRoute,
     /await removeDeletedAttachmentFiles\([\s\S]*deletion\.ownerId,[\s\S]*deletion\.attachmentIds,[\s\S]*deletion\.attachmentGeneration[\s\S]*\)/
@@ -200,6 +234,10 @@ test("baseline and upgrade schemas retain deletion receipts after the block row 
     assert.match(sql, /page_content_version BIGINT UNSIGNED NOT NULL/);
     assert.doesNotMatch(sql, /FOREIGN KEY \(block_id\)/);
   }
+  assert.match(
+    attachmentGenerationMigration,
+    /ALTER TABLE block_delete_mutations\s+ADD COLUMN IF NOT EXISTS attachment_generation BIGINT UNSIGNED NULL/i
+  );
 });
 
 test("response-loss reproduction shows vulnerable 404 and fixed receipt replay", () => {

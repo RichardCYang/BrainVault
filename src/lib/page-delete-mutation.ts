@@ -3,6 +3,7 @@ export type PageDeleteMutationReceipt = {
   request_hash: string | null;
   page_ids: unknown;
   attachment_ids: unknown;
+  attachment_generation?: number | null;
 };
 
 export type PageDeleteMutationAssessment =
@@ -11,6 +12,7 @@ export type PageDeleteMutationAssessment =
       pageId: string;
       pageIds: string[];
       attachmentIds: string[];
+      attachmentGeneration?: number;
     }
   | { kind: "collision" }
   | { kind: "incomplete" };
@@ -44,6 +46,13 @@ export function decodePageDeleteAttachmentIds(value: unknown): string[] | null {
   return decodeUniqueIds(value);
 }
 
+function decodeAttachmentGeneration(value: unknown): number | null | undefined {
+  if (value === undefined || value === null) return undefined;
+  const generation = Number(value);
+  if (!Number.isSafeInteger(generation) || generation < 1) return null;
+  return generation;
+}
+
 export function assessPageDeleteMutationReceipt(
   receipt: PageDeleteMutationReceipt,
   request: { pageId: string; requestHash: string }
@@ -54,7 +63,13 @@ export function assessPageDeleteMutationReceipt(
 
   const pageIds = decodePageDeletePageIds(receipt.page_ids);
   const attachmentIds = decodePageDeleteAttachmentIds(receipt.attachment_ids);
-  if (!pageIds || !pageIds.includes(receipt.page_id) || attachmentIds === null) {
+  const attachmentGeneration = decodeAttachmentGeneration(receipt.attachment_generation);
+  if (
+    !pageIds
+    || !pageIds.includes(receipt.page_id)
+    || attachmentIds === null
+    || attachmentGeneration === null
+  ) {
     return { kind: "incomplete" };
   }
 
@@ -62,6 +77,7 @@ export function assessPageDeleteMutationReceipt(
     kind: "replay",
     pageId: receipt.page_id,
     pageIds,
-    attachmentIds
+    attachmentIds,
+    ...(attachmentGeneration === undefined ? {} : { attachmentGeneration })
   };
 }

@@ -4,6 +4,7 @@ export type BlockDeleteMutationReceipt = {
   request_hash: string | null;
   page_content_version: number;
   attachment_ids: unknown;
+  attachment_generation?: number | null;
 };
 
 export type BlockDeleteMutationAssessment =
@@ -13,6 +14,7 @@ export type BlockDeleteMutationAssessment =
       blockId: string;
       pageContentVersion: number;
       attachmentIds: string[];
+      attachmentGeneration?: number;
     }
   | { kind: "collision" }
   | { kind: "incomplete" };
@@ -34,6 +36,13 @@ export function decodeBlockDeleteAttachmentIds(value: unknown): string[] | null 
   return [...decoded];
 }
 
+function decodeAttachmentGeneration(value: unknown): number | null | undefined {
+  if (value === undefined || value === null) return undefined;
+  const generation = Number(value);
+  if (!Number.isSafeInteger(generation) || generation < 1) return null;
+  return generation;
+}
+
 export function assessBlockDeleteMutationReceipt(
   receipt: BlockDeleteMutationReceipt,
   request: { blockId: string; requestHash: string }
@@ -44,11 +53,13 @@ export function assessBlockDeleteMutationReceipt(
 
   const pageContentVersion = Number(receipt.page_content_version);
   const attachmentIds = decodeBlockDeleteAttachmentIds(receipt.attachment_ids);
+  const attachmentGeneration = decodeAttachmentGeneration(receipt.attachment_generation);
   if (
     !receipt.page_id
     || !Number.isSafeInteger(pageContentVersion)
     || pageContentVersion < 1
     || attachmentIds === null
+    || attachmentGeneration === null
   ) {
     return { kind: "incomplete" };
   }
@@ -58,6 +69,7 @@ export function assessBlockDeleteMutationReceipt(
     pageId: receipt.page_id,
     blockId: receipt.block_id,
     pageContentVersion,
-    attachmentIds
+    attachmentIds,
+    ...(attachmentGeneration === undefined ? {} : { attachmentGeneration })
   };
 }
