@@ -266,7 +266,7 @@ assert.equal(packageJson.engines?.node, supportedNodeRange, "package.json must r
 assert.equal(packageLock.packages?.[""]?.engines?.node, supportedNodeRange, "package-lock.json must mirror the Node security floor");
 assert.equal(
   packageJson.scripts?.["reproduce:runtime-security-floor"],
-  "node --experimental-strip-types scripts/reproduce-runtime-security-floor.mjs",
+  "node --import=tsx scripts/reproduce-runtime-security-floor.mjs",
   "package.json must expose the runtime-floor reproduction"
 );
 assert.match(

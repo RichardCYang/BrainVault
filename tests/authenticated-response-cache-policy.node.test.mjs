@@ -60,7 +60,7 @@ test("authenticated static documentation cannot override no-store with public ca
 test("the HTTP reproduction demonstrates legacy cross-user disclosure and fixed isolation", () => {
   const result = JSON.parse(execFileSync(
     process.execPath,
-    ["--experimental-strip-types", "scripts/reproduce-authenticated-cache-isolation.mjs"],
+    ["--import=tsx", "scripts/reproduce-authenticated-cache-isolation.mjs"],
     { cwd: rootDir, encoding: "utf8" }
   ));
 

@@ -58,7 +58,7 @@ test("the standalone reproduction demonstrates the metadata gap and the fail-clo
   const result = JSON.parse(execFileSync(
     process.execPath,
     [
-      "--experimental-strip-types",
+      "--import=tsx",
       fileURLToPath(new URL("../scripts/reproduce-runtime-security-floor.mjs", import.meta.url))
     ],
     { encoding: "utf8" }

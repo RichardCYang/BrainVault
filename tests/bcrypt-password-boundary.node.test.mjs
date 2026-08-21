@@ -49,7 +49,7 @@ test("standalone reproduction shows the vulnerable collision and remediated reje
   const result = JSON.parse(execFileSync(
     process.execPath,
     [
-      "--experimental-strip-types",
+      "--import=tsx",
       fileURLToPath(new URL("../scripts/reproduce-bcrypt-password-boundary.mjs", import.meta.url))
     ],
     { encoding: "utf8" }

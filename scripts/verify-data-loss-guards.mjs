@@ -504,7 +504,7 @@ assert(
 const backupStreamIntegrityReproduction = JSON.parse(execFileSync(
   process.execPath,
   [
-    "--experimental-strip-types",
+    "--import=tsx",
     fileURLToPath(new URL("./reproduce-backup-stream-integrity-loss.mjs", import.meta.url))
   ],
   { encoding: "utf8" }
@@ -537,7 +537,7 @@ assert(
 const backupTransportTruncationReproduction = JSON.parse(execFileSync(
   process.execPath,
   [
-    "--experimental-strip-types",
+    "--import=tsx",
     fileURLToPath(new URL("./reproduce-backup-transport-truncation.mjs", import.meta.url))
   ],
   { encoding: "utf8" }
@@ -640,7 +640,7 @@ assert(
 const customIconFilesystemReproduction = JSON.parse(execFileSync(
   process.execPath,
   [
-    "--experimental-strip-types",
+    "--import=tsx",
     fileURLToPath(new URL("./reproduce-custom-icon-library-fs-error-loss.mjs", import.meta.url))
   ],
   { encoding: "utf8" }
@@ -670,7 +670,7 @@ assert(
 const backupShareIdentityReproduction = JSON.parse(execFileSync(
   process.execPath,
   [
-    "--experimental-strip-types",
+    "--import=tsx",
     fileURLToPath(new URL("./reproduce-backup-share-identity-rebinding.mjs", import.meta.url))
   ],
   { encoding: "utf8" }
@@ -706,7 +706,7 @@ assert(
 const archivedShareBackupLossReproduction = JSON.parse(execFileSync(
   process.execPath,
   [
-    "--experimental-strip-types",
+    "--import=tsx",
     fileURLToPath(new URL("./reproduce-archived-share-backup-loss.mjs", import.meta.url))
   ],
   { encoding: "utf8" }
@@ -723,7 +723,7 @@ assert(
 const backupMetadataLossReproduction = JSON.parse(execFileSync(
   process.execPath,
   [
-    "--experimental-strip-types",
+    "--import=tsx",
     fileURLToPath(new URL("./reproduce-backup-metadata-loss.mjs", import.meta.url))
   ],
   { encoding: "utf8" }
@@ -738,7 +738,7 @@ assert(
 const backupAttachmentMetadataLossReproduction = JSON.parse(execFileSync(
   process.execPath,
   [
-    "--experimental-strip-types",
+    "--import=tsx",
     fileURLToPath(new URL("./reproduce-backup-attachment-metadata-loss.mjs", import.meta.url))
   ],
   { encoding: "utf8" }
@@ -764,7 +764,7 @@ assert(
 const blockOrderReproduction = JSON.parse(execFileSync(
   process.execPath,
   [
-    "--experimental-strip-types",
+    "--import=tsx",
     fileURLToPath(new URL("./reproduce-block-sort-order-overflow-loss.mjs", import.meta.url))
   ],
   { encoding: "utf8" }
@@ -1077,7 +1077,7 @@ assert(
 const bootstrapReproduction = JSON.parse(execFileSync(
   process.execPath,
   [
-    "--experimental-strip-types",
+    "--import=tsx",
     fileURLToPath(new URL("./reproduce-collaboration-bootstrap-loss.mjs", import.meta.url))
   ],
   { encoding: "utf8" }
@@ -1384,7 +1384,7 @@ assert(
 const preserveChildrenDeleteReproduction = JSON.parse(execFileSync(
   process.execPath,
   [
-    "--experimental-strip-types",
+    "--import=tsx",
     fileURLToPath(new URL("./reproduce-block-preserve-children-delete-race.mjs", import.meta.url))
   ],
   { encoding: "utf8" }

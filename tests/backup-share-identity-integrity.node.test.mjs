@@ -85,7 +85,7 @@ test("identity-rebinding reproducer proves vulnerable and fixed states", () => {
   const output = execFileSync(
     process.execPath,
     [
-      "--experimental-strip-types",
+      "--import=tsx",
       fileURLToPath(new URL("../scripts/reproduce-backup-share-identity-rebinding.mjs", import.meta.url))
     ],
     { encoding: "utf8" }

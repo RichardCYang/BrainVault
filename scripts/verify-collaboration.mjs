@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import {
   WebSocketConnection,
   acceptWebSocketUpgrade,
@@ -550,7 +551,7 @@ function verifyInitialBootstrapFence() {
 
   const reproduction = JSON.parse(execFileSync(
     process.execPath,
-    ["--experimental-strip-types", join(rootDir, "scripts/reproduce-collaboration-bootstrap-loss.mjs")],
+    ["--import=tsx", join(rootDir, "scripts/reproduce-collaboration-bootstrap-loss.mjs")],
     { cwd: rootDir, encoding: "utf8" }
   ));
   assert.equal(reproduction.vulnerable.permanentLossWindowReproduced, true);
@@ -755,13 +756,32 @@ function verifyDependencyPins() {
 }
 
 function checkSyntax(path) {
-  const args = path.endsWith(".ts")
-    ? ["--experimental-strip-types", "--check", path]
-    : ["--check", path];
+  if (path.endsWith(".ts")) {
+    const source = readFileSync(path, "utf8");
+    const result = ts.transpileModule(source, {
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.NodeNext
+      },
+      fileName: path,
+      reportDiagnostics: true
+    });
+    const errors = (result.diagnostics ?? []).filter(
+      (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error
+    );
+    if (errors.length > 0) {
+      const details = errors
+        .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"))
+        .join("\n");
+      return Promise.reject(new Error(`Syntax check failed for ${path}:\n${details}`));
+    }
+    return Promise.resolve();
+  }
+
   return new Promise((resolve, reject) => {
     execFile(
       process.execPath,
-      args,
+      ["--check", path],
       {
         encoding: "utf8",
         timeout: 30_000,

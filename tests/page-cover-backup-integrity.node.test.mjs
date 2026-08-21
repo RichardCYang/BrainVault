@@ -62,7 +62,7 @@ test("standalone reproduction proves the vulnerable and corrected backup states"
   const result = JSON.parse(execFileSync(
     process.execPath,
     [
-      "--experimental-strip-types",
+      "--import=tsx",
       fileURLToPath(new URL("../scripts/reproduce-page-cover-backup-manifest-loss.mjs", import.meta.url))
     ],
     { encoding: "utf8" }
