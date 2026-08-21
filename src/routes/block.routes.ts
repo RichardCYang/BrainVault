@@ -25,6 +25,7 @@ import {
 } from "../lib/attachments.js";
 import { renderBlockHtml } from "../lib/markdown.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
+import { areEquivalentPersistedValues } from "../lib/block-move-integrity.js";
 import {
   assessBlockDeleteMutationReceipt,
   type BlockDeleteMutationReceipt
@@ -674,7 +675,7 @@ function assertMovedBlockDataPreserved(
       && Number(after!.sort_order) === Number(expectedSortOrder)
       && Number(after!.edit_version ?? 1) === Number(before.edit_version ?? 1) + 1
       && comparableBlockMetadata(after!.metadata) === comparableBlockMetadata(before.metadata)
-      && contentFields.every((field) => after![field] === before[field]);
+      && contentFields.every((field) => areEquivalentPersistedValues(after![field], before[field]));
 
     if (!preserved) {
       throw new ApiError(

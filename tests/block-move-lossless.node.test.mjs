@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { areEquivalentPersistedValues } from "../src/lib/block-move-integrity.ts";
 
 const [routes, app, index, i18n, baseline, migration] = await Promise.all([
   readFile(new URL("../src/routes/block.routes.ts", import.meta.url), "utf8"),
@@ -70,9 +71,22 @@ test("server moves existing rows atomically instead of delete-and-recreate", () 
 test("post-move integrity guard compares authoritative content and hierarchy", () => {
   assert.match(routes, /contentFields = \["type", "markdown", "html_cache", "checked", "created_at"\]/);
   assert.match(routes, /comparableBlockMetadata\(after!\.metadata\) === comparableBlockMetadata\(before\.metadata\)/);
+  assert.match(routes, /areEquivalentPersistedValues\(after!\[field\], before\[field\]\)/);
   assert.match(routes, /after!\.page_id === targetPageId/);
   assert.match(routes, /after!\.parent_block_id === expectedParentId/);
   assert.match(routes, /after!\.edit_version \?\? 1\) === Number\(before\.edit_version \?\? 1\) \+ 1/);
+});
+
+test("post-move integrity treats equal MariaDB DATETIME values as preserved", () => {
+  const before = new Date("2026-08-21T12:00:00.123Z");
+  const reread = new Date("2026-08-21T12:00:00.123Z");
+  const changed = new Date("2026-08-21T12:00:00.124Z");
+
+  assert.notStrictEqual(before, reread, "separate connector reads produce distinct Date objects");
+  assert.equal(areEquivalentPersistedValues(before, reread), true);
+  assert.equal(areEquivalentPersistedValues(before, changed), false);
+  assert.equal(areEquivalentPersistedValues("MARKDOWN", "MARKDOWN"), true);
+  assert.equal(areEquivalentPersistedValues("MARKDOWN", "TODO"), false);
 });
 
 test("mutation receipts survive page recreation and do not cascade with page deletion", () => {
