@@ -121,6 +121,8 @@ markdown.block.ruler.before("fence", "math_block", mathBlockRule, {
 markdown.renderer.rules.math_inline = (tokens, index) => renderMathPlaceholder(tokens[index].content, false);
 markdown.renderer.rules.math_block = (tokens, index) => `${renderMathPlaceholder(tokens[index].content, true)}\n`;
 
+const forbiddenRenderedTags = new Set(["script", "style", "svg", "math", "textarea", "xmp"]);
+
 const allowedTags = sanitizeHtml.defaults.allowedTags.concat([
   "div",
   "img",
@@ -149,7 +151,7 @@ const allowedTags = sanitizeHtml.defaults.allowedTags.concat([
   "iframe",
   "details",
   "summary"
-]);
+]).filter((tagName) => !forbiddenRenderedTags.has(tagName));
 
 const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   ...sanitizeHtml.defaults.allowedAttributes,

@@ -83,6 +83,13 @@ test("shared content cannot auto-load arbitrary third-party images", () => {
   assert.match(browser, /getRenderableImageSource\(page\?\.coverUrl\)/);
 });
 
+test("rendered HTML explicitly excludes foreign and raw-text parser contexts", () => {
+  const markdown = read("src/lib/markdown.ts");
+
+  assert.ok(markdown.includes('const forbiddenRenderedTags = new Set(["script", "style", "svg", "math", "textarea", "xmp"]);'));
+  assert.ok(markdown.includes(".filter((tagName) => !forbiddenRenderedTags.has(tagName))"));
+});
+
 test("the documented advisory hostname canonicalizes to the private IPv4 target", () => {
   const parsed = new URL("http://012.0.0.1/");
   assert.equal(parsed.hostname, "10.0.0.1");
