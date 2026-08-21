@@ -489,11 +489,17 @@ async function assertOwnedParentPage(
   lock = false
 ) {
   if (!parentPageId) return;
-  const parent = await client.queryOne(
-    `SELECT id FROM pages WHERE id = ? AND owner_id = ?${lock ? " FOR UPDATE" : ""}`,
+  const parent = await client.queryOne<Pick<PageDeletionPageRow, "id" | "is_archived" | "is_collection">>(
+    `SELECT id, is_archived, is_collection FROM pages WHERE id = ? AND owner_id = ?${lock ? " FOR UPDATE" : ""}`,
     [parentPageId, ownerId]
   );
   if (!parent) throw new ApiError(400, "INVALID_PARENT_PAGE", "Parent page does not exist");
+  if (parent.is_archived) {
+    throw new ApiError(409, "PARENT_PAGE_ARCHIVED", "Restore the destination page before creating a subpage");
+  }
+  if (parent.is_collection) {
+    throw new ApiError(400, "INVALID_PARENT_PAGE", "A collection cannot be used as a page-create destination");
+  }
 }
 
 async function getPageTags(pageId: string, client: DbClient = db) {
@@ -1087,15 +1093,15 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
     const page = await transaction(async (client) => {
       await assertCurrentAuthSessionBoundary(user.id, authScope, client);
       let existingPage: PageRow;
+      let lockedRows: PageDeletionPageRow[] | undefined;
       if (updates.parentPageId !== undefined) {
-        const lockedRows = await getOwnedPageTreeRows(user.id, client, true);
+        lockedRows = await getOwnedPageTreeRows(user.id, client, true);
         const lockedPage = await client.queryOne<PageRow>(
           "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
           [pageId, user.id]
         );
         if (!lockedPage) throw notFound("Page");
         existingPage = lockedPage;
-        assertPageParentFromLockedRows(pageId, updates.parentPageId, lockedRows);
       } else {
         const lockedPage = await client.queryOne<PageRow>(
           "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
@@ -1114,6 +1120,16 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
         )
       ) {
         return getPageResponse(pageId, user.id, client);
+      }
+
+      // Exact response-loss replays must be resolved before validating the
+      // destination's current mutable state. The original move may have
+      // committed before the destination was archived or otherwise changed.
+      if (updates.parentPageId !== undefined) {
+        if (!lockedRows) {
+          throw new ApiError(500, "PAGE_HIERARCHY_LOCK_MISSING", "Page hierarchy validation is unavailable");
+        }
+        assertPageParentFromLockedRows(pageId, updates.parentPageId, lockedRows);
       }
 
       const isArchivedRestoreOnly =

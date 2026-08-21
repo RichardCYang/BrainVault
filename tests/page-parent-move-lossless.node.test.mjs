@@ -13,6 +13,10 @@ test("page parent move is an in-place hierarchy mutation guarded by owner-wide r
   assert.match(patchRoute, /values\.push\(updates\.parentPageId\)/);
   assert.match(patchRoute, /getOwnedPageTreeRows\(user\.id, client, true\)/);
   assert.match(patchRoute, /assertPageParentFromLockedRows\(pageId, updates\.parentPageId, lockedRows\)/);
+  assert.ok(
+    patchRoute.indexOf("isMatchingMutationReplay") < patchRoute.indexOf("assertPageParentFromLockedRows"),
+    "exact response-loss replays must resolve before mutable destination validation"
+  );
   assert.match(patchRoute, /WHERE id = \? AND owner_id = \? AND edit_version = \?/);
   assert.match(patchRoute, /edit_version = edit_version \+ 1/);
 });
