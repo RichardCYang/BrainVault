@@ -168,6 +168,13 @@ type PageDeletionBlockRow = {
   edit_version: number;
 };
 
+type PageDeletionShareRow = {
+  page_id: string;
+  user_id: string;
+  permission: string;
+  generation: string;
+};
+
 async function getOwnedPageTreeRows(ownerId: string, client: DbClient = db, lock = false) {
   return client.query<PageDeletionPageRow>(
     `SELECT id, parent_page_id, edit_version, content_version
@@ -247,9 +254,29 @@ async function getPageDeletionBlocks(
   return blocks;
 }
 
+async function getPageDeletionShares(
+  client: DbClient,
+  subtreeRows: PageDeletionPageRow[],
+  lock = false
+) {
+  const shares: PageDeletionShareRow[] = [];
+  for (const page of subtreeRows) {
+    const rows = await client.query<PageDeletionShareRow>(
+      `SELECT page_id, user_id, permission, generation
+       FROM page_shares
+       WHERE page_id = ?
+       ORDER BY user_id ASC${lock ? " FOR UPDATE" : ""}`,
+      [page.id]
+    );
+    shares.push(...rows);
+  }
+  return shares;
+}
+
 function createPageDeletionSnapshot(
   pages: PageDeletionPageRow[],
-  blocks: PageDeletionBlockRow[]
+  blocks: PageDeletionBlockRow[],
+  shares: PageDeletionShareRow[]
 ) {
   const hash = createHash("sha256");
   for (const page of [...pages].sort((left, right) => left.id.localeCompare(right.id))) {
@@ -260,15 +287,23 @@ function createPageDeletionSnapshot(
   for (const block of [...blocks].sort((left, right) => left.id.localeCompare(right.id))) {
     hash.update(`block\0${block.id}\0${block.page_id}\0${Number(block.edit_version ?? 1)}\n`);
   }
+  for (const share of [...shares].sort((left, right) =>
+    left.page_id.localeCompare(right.page_id) || left.user_id.localeCompare(right.user_id)
+  )) {
+    hash.update(
+      `share\0${share.page_id}\0${share.user_id}\0${share.permission}\0${share.generation}\n`
+    );
+  }
   return hash.digest("hex");
 }
 
 function assertPageDeletionSnapshot(
   expectedSnapshot: string,
   pages: PageDeletionPageRow[],
-  blocks: PageDeletionBlockRow[]
+  blocks: PageDeletionBlockRow[],
+  shares: PageDeletionShareRow[]
 ) {
-  if (createPageDeletionSnapshot(pages, blocks) === expectedSnapshot) return;
+  if (createPageDeletionSnapshot(pages, blocks, shares) === expectedSnapshot) return;
   throw new ApiError(
     409,
     "PAGE_EDIT_CONFLICT",
@@ -930,8 +965,9 @@ pageRouter.get(
         const treeRows = await getOwnedPageTreeRows(user.id, client);
         const subtreeRows = getPageSubtreeRows(pageId, treeRows);
         const blockRows = await getPageDeletionBlocks(client, subtreeRows);
+        const shareRows = await getPageDeletionShares(client, subtreeRows);
         return {
-          snapshot: createPageDeletionSnapshot(subtreeRows, blockRows),
+          snapshot: createPageDeletionSnapshot(subtreeRows, blockRows, shareRows),
           pageIds: subtreeRows.map((page) => page.id).sort((left, right) => left.localeCompare(right)),
           pages: subtreeRows
             .map((page) => ({
@@ -1192,7 +1228,11 @@ pageRouter.delete(
           const subtreeRows = getPageSubtreeRows(pageId, treeRows);
           await assertCollaborationMaterialized(client, subtreeRows.map((page) => page.id));
           const blockRows = await getPageDeletionBlocks(client, subtreeRows, true);
-          assertPageDeletionSnapshot(expectedSnapshot, subtreeRows, blockRows);
+          // Share creation/removal also serializes on the owned page row. Hash
+          // the exact grant generations while those page locks are held so a
+          // stale delete cannot erase a page whose sharing lineage changed.
+          const shareRows = await getPageDeletionShares(client, subtreeRows, true);
+          assertPageDeletionSnapshot(expectedSnapshot, subtreeRows, blockRows, shareRows);
 
           const pageIds = subtreeRows.map((row) => row.id);
           // Capture the durable collaboration lineage while the owned page rows

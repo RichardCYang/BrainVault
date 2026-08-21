@@ -124,6 +124,56 @@ test("workspace restore fingerprint treats share generation as causal state", ()
   assert.notEqual(fixedKey(before), fixedKey(after));
 });
 
+test("permanent page deletion snapshot binds destructive intent to share generations", () => {
+  const pageSource = read("../src/routes/page.routes.ts");
+  const helpers = section(
+    pageSource,
+    "async function getPageDeletionBlocks(",
+    "async function assertPageDeleteReplayNotSuperseded("
+  );
+  const deleteRoute = section(
+    pageSource,
+    'pageRouter.delete(\n  "/:pageId",',
+    'pageRouter.put("/:pageId/tags"'
+  );
+  const snapshotRoute = section(
+    pageSource,
+    'pageRouter.get(\n  "/:pageId/deletion-snapshot",',
+    'pageRouter.patch("/:pageId"'
+  );
+
+  assert.match(helpers, /SELECT page_id, user_id, permission, generation\n\s+FROM page_shares/);
+  assert.match(
+    helpers,
+    /`share\\0\$\{share\.page_id\}\\0\$\{share\.user_id\}\\0\$\{share\.permission\}\\0\$\{share\.generation\}\\n`/
+  );
+  assert.match(snapshotRoute, /getPageDeletionShares\(client, subtreeRows\)/);
+  assert.match(snapshotRoute, /createPageDeletionSnapshot\(subtreeRows, blockRows, shareRows\)/);
+
+  const pageLock = deleteRoute.indexOf("getOwnedPageTreeRows(user.id, client, true)");
+  const shareLock = deleteRoute.indexOf("getPageDeletionShares(client, subtreeRows, true)");
+  const snapshotFence = deleteRoute.indexOf(
+    "assertPageDeletionSnapshot(expectedSnapshot, subtreeRows, blockRows, shareRows)"
+  );
+  const destructiveDelete = deleteRoute.indexOf('DELETE FROM pages WHERE id = ? AND owner_id = ?');
+  assert.ok(pageLock >= 0);
+  assert.ok(shareLock > pageLock, "share generations must be read after the owned page tree is locked");
+  assert.ok(snapshotFence > shareLock, "the share generation must participate in stale-delete validation");
+  assert.ok(destructiveDelete > snapshotFence, "validation must happen before any page is deleted");
+
+  // Reproduction model: sharing does not need to change page/block edit versions.
+  // A replacement grant is therefore invisible to the legacy deletion token.
+  const structuralState = "page\\0page_1\\01\\01\nblock\\0blk_1\\0page_1\\01\n";
+  const grantV1 = { pageId: "page_1", userId: "user_2", permission: "EDIT", generation: "share_g1" };
+  const grantV2 = { ...grantV1, generation: "share_g2" };
+  const legacySnapshot = () => structuralState;
+  const fixedSnapshot = (share) =>
+    `${structuralState}share\\0${share.pageId}\\0${share.userId}\\0${share.permission}\\0${share.generation}\n`;
+
+  assert.equal(legacySnapshot(grantV1), legacySnapshot(grantV2));
+  assert.notEqual(fixedSnapshot(grantV1), fixedSnapshot(grantV2));
+});
+
 test("share UI continues to use safe text sinks for collaborator-controlled labels", () => {
   const appSource = read("../public/app.js");
   const render = section(
