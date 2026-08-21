@@ -324,3 +324,16 @@ test("stored block metadata is revalidated before rendering and response project
   assert.match(markdown, /const safeMetadata = validateStoredBlockMetadata\(type, metadata\)/);
   assert.match(history, /metadata: validateStoredBlockMetadata\(block\.type, block\.metadata\)/);
 });
+
+test("declared markdown and sanitizer dependency floors stay on patched releases", () => {
+  const packageJson = JSON.parse(read("package.json"));
+  const packageLock = JSON.parse(read("package-lock.json"));
+
+  assert.equal(packageJson.dependencies?.["markdown-it"], "^14.3.0");
+  assert.equal(packageLock.packages?.[""]?.dependencies?.["markdown-it"], "^14.3.0");
+  assert.equal(packageLock.packages?.["node_modules/markdown-it"]?.version, "14.3.0");
+
+  assert.equal(packageJson.dependencies?.["sanitize-html"], "^2.17.5");
+  assert.equal(packageLock.packages?.[""]?.dependencies?.["sanitize-html"], "^2.17.5");
+  assert.equal(packageLock.packages?.["node_modules/sanitize-html"]?.version, "2.17.5");
+});
