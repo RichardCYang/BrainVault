@@ -473,9 +473,17 @@ async function assertCollaborationMaterialized(client: DbClient, pageIds: string
   }
 }
 
-async function assertOwnedParentPage(parentPageId: string | null | undefined, ownerId: string, client: DbClient = db) {
+async function assertOwnedParentPage(
+  parentPageId: string | null | undefined,
+  ownerId: string,
+  client: DbClient = db,
+  lock = false
+) {
   if (!parentPageId) return;
-  const parent = await client.queryOne("SELECT id FROM pages WHERE id = ? AND owner_id = ?", [parentPageId, ownerId]);
+  const parent = await client.queryOne(
+    `SELECT id FROM pages WHERE id = ? AND owner_id = ?${lock ? " FOR UPDATE" : ""}`,
+    [parentPageId, ownerId]
+  );
   if (!parent) throw new ApiError(400, "INVALID_PARENT_PAGE", "Parent page does not exist");
 }
 
@@ -630,8 +638,6 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
     const body = req.body as z.infer<typeof createPageSchema>;
     const { mutationId, ...creation } = body;
     const mutationHash = mutationId ? createMutationRequestHash(creation) : undefined;
-    await assertOwnedParentPage(creation.parentPageId, user.id);
-
     if (creation.isCollection && creation.parentPageId) {
       throw new ApiError(400, "INVALID_COLLECTION_PARENT", "A collection cannot have a parent page");
     }
@@ -684,6 +690,12 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
           return assessment.pageId;
         }
       }
+
+      // Exact idempotent replays must be resolved before validating mutable
+      // hierarchy state. For a fresh create, lock and revalidate the parent
+      // in this transaction so deletion/reparenting races cannot make the
+      // insert depend on a stale pre-transaction existence check.
+      await assertOwnedParentPage(creation.parentPageId, user.id, client, true);
 
       await client.execute(
         `INSERT INTO pages
