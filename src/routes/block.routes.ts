@@ -420,6 +420,56 @@ async function assertAccessibleBlock(blockId: string, userId: string, client: Db
   return getBlockAccess(blockId, userId, client);
 }
 
+type PageMutationAdmission = Readonly<{
+  ownerId: string;
+  ownerWorkspaceGeneration: number;
+  isArchived: boolean;
+}>;
+
+async function capturePageMutationAdmission(pageId: string, userId: string): Promise<PageMutationAdmission> {
+  const row = await db.queryOne<{
+    owner_id: string;
+    attachment_generation: number | bigint | string;
+    is_archived: number | boolean;
+  }>(
+    `SELECT p.owner_id, u.attachment_generation, p.is_archived
+     FROM pages p
+     INNER JOIN users u ON u.id = p.owner_id
+     WHERE p.id = ?
+       AND (
+         p.owner_id = ?
+         OR EXISTS (
+           SELECT 1
+           FROM page_shares ps
+           WHERE ps.page_id = p.id
+             AND ps.user_id = ?
+             AND ps.permission = 'EDIT'
+         )
+       )`,
+    [pageId, userId, userId]
+  );
+  if (!row) throw notFound("Page");
+
+  const ownerWorkspaceGeneration = Number(row.attachment_generation);
+  if (!Number.isSafeInteger(ownerWorkspaceGeneration) || ownerWorkspaceGeneration < 1) {
+    throw new Error(`Invalid workspace generation for page owner: ${row.owner_id}`);
+  }
+  return Object.freeze({
+    ownerId: row.owner_id,
+    ownerWorkspaceGeneration,
+    isArchived: Boolean(row.is_archived)
+  });
+}
+
+function assertPageOwnerWorkspaceGeneration(expected: number, current: number) {
+  if (current === expected) return;
+  throw new ApiError(
+    409,
+    "WORKSPACE_RESTORED",
+    "The page owner's workspace was restored while this request was in progress. Refresh before retrying."
+  );
+}
+
 function assertDirectBlockMutationAllowed(access: Pick<PageAccess, "shareCount">) {
   if (access.shareCount > 0) {
     throw new ApiError(
@@ -434,20 +484,22 @@ type AttachmentUploadTarget = Readonly<{
   actorId: string;
   pageId: string;
   ownerId: string;
+  ownerWorkspaceGeneration: number;
 }>;
 
 async function authorizeAttachmentUploadTarget(req: Request, res: Response, next: NextFunction) {
   try {
     const user = requireUser(req.user);
     const pageId = String(req.params.pageId);
-    const access = await assertAccessiblePage(pageId, user.id);
-    if (access.page.is_archived) {
+    const admission = await capturePageMutationAdmission(pageId, user.id);
+    if (admission.isArchived) {
       throw new ApiError(409, "PAGE_ARCHIVED", "Restore the page before adding an attachment");
     }
     res.locals.attachmentUploadTarget = Object.freeze({
       actorId: user.id,
       pageId,
-      ownerId: access.page.owner_id
+      ownerId: admission.ownerId,
+      ownerWorkspaceGeneration: admission.ownerWorkspaceGeneration
     } satisfies AttachmentUploadTarget);
     next();
   } catch (error) {
@@ -777,6 +829,7 @@ blockRouter.post(
           await assertCurrentAuthSessionBoundary(user.id, authScope, client);
           const attachmentGeneration = await lockUserAttachmentGeneration(client, ownerId);
           if (attachmentGeneration === undefined) throw notFound("User");
+          assertPageOwnerWorkspaceGeneration(target.ownerWorkspaceGeneration, attachmentGeneration);
 
           const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
           if (lockedAccess.page.owner_id !== ownerId) {

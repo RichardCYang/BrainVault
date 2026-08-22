@@ -72,9 +72,10 @@ test("attachment authorization and resource admission run before Multer writes t
   const authorizationStart = routeSource.indexOf("async function authorizeAttachmentUploadTarget");
   const authorizationEnd = routeSource.indexOf("function requireAttachmentUploadTarget", authorizationStart);
   const authorizationSource = routeSource.slice(authorizationStart, authorizationEnd);
-  assert.ok(authorizationSource.includes("await assertAccessiblePage(pageId, user.id)"));
-  assert.ok(!authorizationSource.includes("assertDirectBlockMutationAllowed(access)"));
-  assert.ok(authorizationSource.includes("access.page.is_archived"));
+  assert.ok(authorizationSource.includes("await capturePageMutationAdmission(pageId, user.id)"));
+  assert.ok(!authorizationSource.includes("assertDirectBlockMutationAllowed"));
+  assert.ok(authorizationSource.includes("admission.isArchived"));
+  assert.ok(authorizationSource.includes("ownerWorkspaceGeneration: admission.ownerWorkspaceGeneration"));
   assert.ok(authorizationSource.includes("res.locals.attachmentUploadTarget"));
   assert.ok(uploadRoute.includes("beginAttachmentUploadProcessing(res)"));
   assert.ok(uploadRoute.includes("releaseAttachmentUpload?.()"));
