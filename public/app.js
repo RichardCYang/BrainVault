@@ -10105,7 +10105,7 @@ async function submitBlockDeleteTask(task, authenticationScope) {
             body: { ...task.payload, mutationId: task.mutationId }
           });
         });
-        if (data === null && !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         if (pendingBlockDeleteTasks.get(task.taskKey) === task) {
           pendingBlockDeleteTasks.delete(task.taskKey);
         }
@@ -10318,7 +10318,7 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
         { excludeSourceId: pageDraftSourceId }
       );
       const data = await submitBlockDeleteTask(task, authenticationScope);
-      if (data === null && !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       for (const { id } of deletedVersions) blockDraftRenderSources.delete(id);
       if (scope) {
         checkDraftStoreWrite(
