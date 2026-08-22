@@ -120,6 +120,7 @@ type ClientContext = {
   socket: WebSocketConnection;
   user: CollaborationProfile;
   authVersion: number;
+  workspaceGeneration: number;
   authSessionId: string;
   ipAddress: string;
   webRtcSignal: ClientWebRtcSignal;
@@ -136,12 +137,26 @@ async function assertCurrentCollaborationAuthentication(
   dbClient: DbClient = db,
   { lock = false }: { lock?: boolean } = {}
 ) {
-  const user = await dbClient.queryOne<{ auth_version?: number }>(
-    `SELECT auth_version FROM users WHERE id = ?${lock ? " FOR UPDATE" : ""}`,
+  const user = await dbClient.queryOne<{
+    auth_version?: number;
+    attachment_generation?: number | bigint | string;
+  }>(
+    `SELECT auth_version, attachment_generation FROM users WHERE id = ?${lock ? " FOR UPDATE" : ""}`,
     [client.user.id]
   );
   if (!user || Number(user.auth_version ?? 1) !== client.authVersion) {
     throw new ApiError(401, "SESSION_REVOKED", "Authentication session was revoked");
+  }
+  const currentWorkspaceGeneration = Number(user.attachment_generation ?? 1);
+  if (!Number.isSafeInteger(currentWorkspaceGeneration) || currentWorkspaceGeneration < 1) {
+    throw new Error(`Invalid workspace generation for collaboration user: ${client.user.id}`);
+  }
+  if (currentWorkspaceGeneration !== client.workspaceGeneration) {
+    throw new ApiError(
+      409,
+      "WORKSPACE_RESTORED",
+      "The workspace was restored after this collaboration session started. Reconnect before editing again."
+    );
   }
   if (!await isAuthSessionActive(
     client.user.id,
@@ -527,10 +542,11 @@ export class PageCollaborationHub {
       };
       const user = await db.queryOne<CollaborationProfile & {
         auth_version?: number;
+        attachment_generation?: number | bigint | string;
         country_login_mode?: UserRow["country_login_mode"];
         vpn_block_enabled?: UserRow["vpn_block_enabled"];
       }>(
-        "SELECT id, username, name, avatar_data, auth_version, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
+        "SELECT id, username, name, avatar_data, auth_version, attachment_generation, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
         [payload.sub]
       );
       if (!user) {
@@ -540,6 +556,15 @@ export class PageCollaborationHub {
       const currentAuthVersion = Number(user.auth_version ?? 1);
       if (!Number.isSafeInteger(currentAuthVersion) || currentAuthVersion < 1 || currentAuthVersion !== payload.authVersion) {
         rejectWebSocketUpgrade(socket, 401, "Authentication session was revoked");
+        return;
+      }
+      const currentWorkspaceGeneration = Number(user.attachment_generation ?? 1);
+      if (
+        !Number.isSafeInteger(currentWorkspaceGeneration)
+        || currentWorkspaceGeneration < 1
+        || currentWorkspaceGeneration !== payload.workspaceGeneration
+      ) {
+        rejectWebSocketUpgrade(socket, 409, "Workspace was restored; request a new collaboration session");
         return;
       }
       if (!await isAuthSessionActive(user.id, authSessionId, currentAuthVersion)) {
@@ -577,6 +602,7 @@ export class PageCollaborationHub {
         socket: connection,
         user,
         authVersion: payload.authVersion,
+        workspaceGeneration: payload.workspaceGeneration,
         authSessionId,
         ipAddress: sourceIp,
         webRtcSignal,
@@ -627,14 +653,19 @@ export class PageCollaborationHub {
         }
         const currentUser = await db.queryOne<{
           auth_version?: number;
+          attachment_generation?: number | bigint | string;
           country_login_mode?: UserRow["country_login_mode"];
           vpn_block_enabled?: UserRow["vpn_block_enabled"];
         }>(
-          "SELECT auth_version, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
+          "SELECT auth_version, attachment_generation, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
           [payload.sub]
         );
         if (!currentUser || Number(currentUser.auth_version ?? 1) !== payload.authVersion) {
           connection.close(4003, "Authentication session was revoked");
+          return;
+        }
+        if (Number(currentUser.attachment_generation ?? 1) !== payload.workspaceGeneration) {
+          connection.close(4003, "Workspace was restored; reconnect before editing again");
           return;
         }
         if (!await isAuthSessionActive(payload.sub, authSessionId, payload.authVersion)) {
@@ -996,8 +1027,8 @@ export class PageCollaborationHub {
     try {
       // A WebSocket can outlive a password/MFA rotation or an individual
       // device-session revocation, especially across multiple server instances.
-      // Revalidate the credential boundary for every state-changing frame before
-      // admitting worker validation; the persistence transaction locks it again.
+      // Revalidate the credential and workspace-generation boundary for every
+      // state-changing frame before worker validation; persistence locks it again.
       await assertCurrentCollaborationAuthentication(client);
       const access = await getPageAccess(room.pageId, client.user.id);
       if (
@@ -1018,7 +1049,9 @@ export class PageCollaborationHub {
           4003,
           error instanceof ApiError && error.statusCode === 401
             ? "Authentication session was revoked"
-            : "Page access was removed"
+            : error instanceof ApiError && error.code === "WORKSPACE_RESTORED"
+              ? "Workspace was restored; reconnect before editing again"
+              : "Page access was removed"
         );
       }
       return false;
@@ -1210,9 +1243,10 @@ export class PageCollaborationHub {
 
     try {
       result = await transaction(async (dbClient) => {
-        // Serialize each durable collaboration write with credential rotation
-        // and per-device session revocation before taking the page lock. If the
-        // revocation wins, this stale socket cannot persist the queued update.
+        // Serialize each durable collaboration write with credential rotation,
+        // per-device session revocation, and workspace restore generation before
+        // taking the page lock. If either boundary wins, this stale socket cannot
+        // persist the queued update.
         await assertCurrentCollaborationAuthentication(client, dbClient, { lock: true });
         const access = await getPageAccess(room.pageId, client.user.id, dbClient, { lockPage: true });
         if (room.invalidated || this.rooms.get(room.pageId) !== room) return null;
@@ -1571,14 +1605,19 @@ export class PageCollaborationHub {
               }
               const currentUser = await db.queryOne<{
                 auth_version?: number;
+                attachment_generation?: number | bigint | string;
                 country_login_mode?: UserRow["country_login_mode"];
                 vpn_block_enabled?: UserRow["vpn_block_enabled"];
               }>(
-                "SELECT auth_version, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
+                "SELECT auth_version, attachment_generation, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
                 [client.user.id]
               );
               if (!currentUser || Number(currentUser.auth_version ?? 1) !== client.authVersion) {
                 client.socket.close(4003, "Authentication session was revoked");
+                return;
+              }
+              if (Number(currentUser.attachment_generation ?? 1) !== client.workspaceGeneration) {
+                client.socket.close(4003, "Workspace was restored; reconnect before editing again");
                 return;
               }
               if (!await isAuthSessionActive(client.user.id, client.authSessionId, client.authVersion)) {

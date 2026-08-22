@@ -13,6 +13,7 @@ export type CollaborationTokenPayload = {
   pageId: string;
   documentEpoch: string;
   authVersion: number;
+  workspaceGeneration: number;
   sessionBinding: string;
   scope: "page:collaborate";
   webRtcState?: "ABSENT" | "AVAILABLE" | "DISABLED" | "UNAVAILABLE";
@@ -50,6 +51,8 @@ export function verifyCollaborationToken(token: string): CollaborationTokenPaylo
       decoded.documentEpoch.length > 64 ||
       !Number.isSafeInteger(Number(decoded.authVersion)) ||
       Number(decoded.authVersion) < 1 ||
+      !Number.isSafeInteger(Number(decoded.workspaceGeneration)) ||
+      Number(decoded.workspaceGeneration) < 1 ||
       typeof decoded.sessionBinding !== "string" ||
       !/^[0-9a-f]{64}$/.test(decoded.sessionBinding) ||
       decoded.scope !== "page:collaborate"
@@ -76,6 +79,7 @@ export function verifyCollaborationToken(token: string): CollaborationTokenPaylo
       pageId: String(decoded.pageId),
       documentEpoch: decoded.documentEpoch,
       authVersion: Number(decoded.authVersion),
+      workspaceGeneration: Number(decoded.workspaceGeneration),
       sessionBinding: decoded.sessionBinding,
       scope: "page:collaborate",
       webRtcState: webRtcState as CollaborationTokenPayload["webRtcState"],

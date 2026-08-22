@@ -33,6 +33,38 @@ function runRestoreRace(enforceWorkspaceGeneration) {
   };
 }
 
+function persistCollaborationUpdate(state, admittedScope, { enforceWorkspaceGeneration }) {
+  if (
+    enforceWorkspaceGeneration
+    && admittedScope.workspaceGeneration !== state.workspaceGeneration
+  ) {
+    return "rejected";
+  }
+  state.collaborationUpdates += 1;
+  return "committed";
+}
+
+function runCollaborationRestoreRace(enforceWorkspaceGeneration) {
+  const state = {
+    workspaceGeneration: 31,
+    collaborationUpdates: 0
+  };
+  const socketScope = {
+    workspaceGeneration: state.workspaceGeneration
+  };
+
+  // The collaborator restores their own workspace while an edit-capable socket
+  // to another user's shared page remains connected on this server instance.
+  state.workspaceGeneration += 1;
+
+  const outcome = persistCollaborationUpdate(state, socketScope, { enforceWorkspaceGeneration });
+  return {
+    outcome,
+    staleUpdatesCommitted: state.collaborationUpdates,
+    workspaceGeneration: state.workspaceGeneration
+  };
+}
+
 function runSameGenerationConcurrentCreates() {
   const state = {
     workspaceGeneration: 21,
@@ -62,6 +94,10 @@ console.log(JSON.stringify({
   restoreRace: {
     vulnerable: runRestoreRace(false),
     fixed: runRestoreRace(true)
+  },
+  collaborationRestoreRace: {
+    vulnerable: runCollaborationRestoreRace(false),
+    fixed: runCollaborationRestoreRace(true)
   },
   sameGenerationConcurrentCreates: runSameGenerationConcurrentCreates()
 }, null, 2));

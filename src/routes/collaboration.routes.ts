@@ -680,6 +680,7 @@ collaborationRouter.post(
         pageId,
         documentEpoch: session.collaborationState.document_epoch,
         authVersion,
+        workspaceGeneration: authScope.workspaceGeneration,
         sessionBinding: createCollaborationSessionBinding(authSessionToken),
         scope: "page:collaborate",
         webRtcState: webRtcSignal.state,
