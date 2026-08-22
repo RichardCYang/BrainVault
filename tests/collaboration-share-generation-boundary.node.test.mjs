@@ -58,3 +58,40 @@ test("revoke then re-add reproducer rejects the old grant and accepts the replac
   assert.equal(result.fixed.replacementGrantAccepted, true);
   assert.equal(result.verified, true);
 });
+test("attachment uploads stay bound to the collaborator grant admitted before multipart intake", () => {
+  const blockRoute = readFileSync(new URL("../src/routes/block.routes.ts", import.meta.url), "utf8")
+    .replace(/\r\n/g, "\n");
+
+  const admissionStart = blockRoute.indexOf("async function capturePageMutationAdmission");
+  const admissionEnd = blockRoute.indexOf("function assertPageOwnerWorkspaceGeneration", admissionStart);
+  const admission = blockRoute.slice(admissionStart, admissionEnd);
+  assert.match(admission, /access_share_generation/);
+  assert.match(admission, /actorShareGeneration/);
+
+  const uploadStart = blockRoute.indexOf('"/pages/:pageId/attachments"');
+  const uploadEnd = blockRoute.indexOf('blockRouter.get("/blocks/:blockId/attachment"', uploadStart);
+  const upload = blockRoute.slice(uploadStart, uploadEnd);
+  const pageLock = upload.indexOf("getPageAccess(pageId, user.id, client, { lockPage: true })");
+  const grantFence = upload.indexOf("lockedAccess.shareGeneration !== target.actorShareGeneration");
+  const fileMove = upload.indexOf("moveAttachmentFile(file.path, ownerId, id)");
+  const insert = upload.indexOf("INSERT INTO blocks");
+
+  assert.ok(pageLock >= 0, "attachment creation must re-resolve page access under the page lock");
+  assert.ok(
+    grantFence > pageLock && fileMove > grantFence && insert > grantFence,
+    "the admitted collaborator grant must be revalidated before moving a file or inserting a block"
+  );
+});
+
+test("attachment revoke-then-readd reproducer rejects the stale upload grant", () => {
+  const output = execFileSync(
+    process.execPath,
+    [new URL("../scripts/reproduce-attachment-share-generation-revival.mjs", import.meta.url).pathname],
+    { encoding: "utf8" }
+  );
+  const result = JSON.parse(output);
+  assert.equal(result.vulnerable.staleUploadAccepted, true);
+  assert.equal(result.fixed.staleUploadAccepted, false);
+  assert.equal(result.fixed.replacementUploadAccepted, true);
+  assert.equal(result.verified, true);
+});

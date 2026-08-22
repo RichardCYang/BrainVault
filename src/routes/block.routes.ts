@@ -423,6 +423,7 @@ async function assertAccessibleBlock(blockId: string, userId: string, client: Db
 type PageMutationAdmission = Readonly<{
   ownerId: string;
   ownerWorkspaceGeneration: number;
+  actorShareGeneration: string | null;
   isArchived: boolean;
 }>;
 
@@ -430,23 +431,20 @@ async function capturePageMutationAdmission(pageId: string, userId: string): Pro
   const row = await db.queryOne<{
     owner_id: string;
     attachment_generation: number | bigint | string;
+    access_share_generation: string | null;
     is_archived: number | boolean;
   }>(
-    `SELECT p.owner_id, u.attachment_generation, p.is_archived
+    `SELECT p.owner_id, u.attachment_generation, p.is_archived,
+            CASE WHEN p.owner_id = ? THEN NULL ELSE ps.generation END AS access_share_generation
      FROM pages p
      INNER JOIN users u ON u.id = p.owner_id
+     LEFT JOIN page_shares ps
+       ON ps.page_id = p.id
+      AND ps.user_id = ?
+      AND ps.permission = 'EDIT'
      WHERE p.id = ?
-       AND (
-         p.owner_id = ?
-         OR EXISTS (
-           SELECT 1
-           FROM page_shares ps
-           WHERE ps.page_id = p.id
-             AND ps.user_id = ?
-             AND ps.permission = 'EDIT'
-         )
-       )`,
-    [pageId, userId, userId]
+       AND (p.owner_id = ? OR ps.user_id IS NOT NULL)`,
+    [userId, userId, pageId, userId]
   );
   if (!row) throw notFound("Page");
 
@@ -454,9 +452,14 @@ async function capturePageMutationAdmission(pageId: string, userId: string): Pro
   if (!Number.isSafeInteger(ownerWorkspaceGeneration) || ownerWorkspaceGeneration < 1) {
     throw new Error(`Invalid workspace generation for page owner: ${row.owner_id}`);
   }
+  const actorShareGeneration = row.owner_id === userId ? null : row.access_share_generation;
+  if (row.owner_id !== userId && !actorShareGeneration) {
+    throw new Error(`Missing collaborator share generation for page: ${pageId}`);
+  }
   return Object.freeze({
     ownerId: row.owner_id,
     ownerWorkspaceGeneration,
+    actorShareGeneration,
     isArchived: Boolean(row.is_archived)
   });
 }
@@ -485,6 +488,7 @@ type AttachmentUploadTarget = Readonly<{
   pageId: string;
   ownerId: string;
   ownerWorkspaceGeneration: number;
+  actorShareGeneration: string | null;
 }>;
 
 async function authorizeAttachmentUploadTarget(req: Request, res: Response, next: NextFunction) {
@@ -499,7 +503,8 @@ async function authorizeAttachmentUploadTarget(req: Request, res: Response, next
       actorId: user.id,
       pageId,
       ownerId: admission.ownerId,
-      ownerWorkspaceGeneration: admission.ownerWorkspaceGeneration
+      ownerWorkspaceGeneration: admission.ownerWorkspaceGeneration,
+      actorShareGeneration: admission.actorShareGeneration
     } satisfies AttachmentUploadTarget);
     next();
   } catch (error) {
@@ -834,6 +839,13 @@ blockRouter.post(
           const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
           if (lockedAccess.page.owner_id !== ownerId) {
             throw new ApiError(409, "PAGE_OWNER_CHANGED", "The page owner changed while the attachment was uploading");
+          }
+          if (lockedAccess.shareGeneration !== target.actorShareGeneration) {
+            throw new ApiError(
+              409,
+              "PAGE_SHARE_GENERATION_CHANGED",
+              "The collaborator grant changed while this attachment was uploading. Refresh before retrying."
+            );
           }
           const lockedContentVersion = Number(lockedAccess.page.content_version ?? 1);
           const reservation = await reserveBlockCreateMutation(client, {
