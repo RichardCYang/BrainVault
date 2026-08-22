@@ -107,7 +107,7 @@ test("block PATCH fences invalid stored metadata before accepting replacement me
   assert.match(source, /409,\s*\n\s*"BLOCK_METADATA_RECOVERY_REQUIRED"/);
 });
 
-test("collaboration materialization fences invalid stored metadata before relational writes", async () => {
+test("collaboration materialization fences all stored non-attachment metadata before relational writes", async () => {
   const source = await fs.readFile(
     new URL("../src/routes/collaboration.routes.ts", import.meta.url),
     "utf8"
@@ -115,13 +115,25 @@ test("collaboration materialization fences invalid stored metadata before relati
 
   const helperStart = source.indexOf("function assertExistingMetadataSafeToMaterialize(existing: BlockRow)");
   const materializationStart = source.indexOf("const existingById = new Map", helperStart);
-  const guard = source.indexOf("assertExistingMetadataSafeToMaterialize(existing);", materializationStart);
+  const existingRowsGuardLoop = source.indexOf("for (const existing of existingRows) {", materializationStart);
+  const guard = source.indexOf("assertExistingMetadataSafeToMaterialize(existing);", existingRowsGuardLoop);
   const firstRelationalMutation = source.indexOf("const deletedExistingIds = new Set", materializationStart);
 
   assert.ok(helperStart >= 0, "collaboration route must define a stored-metadata recovery guard");
   assert.ok(materializationStart > helperStart, "materialization must follow the recovery guard definition");
-  assert.ok(guard > materializationStart, "materialization must validate raw stored metadata");
-  assert.ok(firstRelationalMutation > guard, "stored metadata must be validated before any relational mutation");
+  assert.ok(
+    existingRowsGuardLoop > materializationStart,
+    "materialization must validate the full stored row set, including blocks omitted from orderedBlocks"
+  );
+  assert.ok(
+    guard > existingRowsGuardLoop && guard < firstRelationalMutation,
+    "all raw stored non-attachment metadata must be validated before delete planning or relational writes"
+  );
+  assert.match(
+    source.slice(existingRowsGuardLoop, guard),
+    /existing\.type !== "ATTACHMENT"/,
+    "attachment rows may be excluded because collaboration never rewrites their metadata"
+  );
 
   const helperSource = source.slice(helperStart, materializationStart);
   assert.match(

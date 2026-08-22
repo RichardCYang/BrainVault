@@ -928,7 +928,14 @@ collaborationRouter.put(
           if (existing && existing.type !== "ATTACHMENT" && block.type === "ATTACHMENT") {
             throw new ApiError(400, "ATTACHMENT_TYPE_IMMUTABLE", "Blocks cannot be converted into attachments");
           }
-          if (existing && existing.type !== "ATTACHMENT") {
+        }
+
+        // Materialization can rewrite or delete any canonical non-attachment row based
+        // on the Yjs document. Validate the full raw relational set first so a
+        // recoverable block omitted from orderedBlocks cannot bypass the guard and be
+        // deleted below before explicit recovery or repair.
+        for (const existing of existingRows) {
+          if (existing.type !== "ATTACHMENT") {
             assertExistingMetadataSafeToMaterialize(existing);
           }
         }

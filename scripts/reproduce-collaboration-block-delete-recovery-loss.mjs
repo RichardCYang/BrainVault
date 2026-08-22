@@ -135,7 +135,7 @@ const sourceVerification = {
   collaborativeDeleteUsesGuard:
     deletion.includes('withCollaborativeDestructiveTransition(pageId, "block-delete"'),
   attachmentReplacementUsesGuardedDelete:
-    attachmentUpload.includes("await deleteBlockWithVersionCheck(blockId, { includeDescendants: false })")
+    /await deleteBlockWithVersionCheck\(blockId,\s*\{[\s\S]*?includeDescendants:\s*false/.test(attachmentUpload)
       && !attachmentUpload.includes("session.deleteBlock(")
 };
 
