@@ -60,7 +60,8 @@ test("every block-order write surface shares the bounded contract", async () => 
   assert.match(blockRoute, /const blockSortOrderSchema = z\.number\(\)\.int\(\)[\s\S]*?\.max\(blockSortOrderLimits\.max\)/);
   assert.equal((blockRoute.match(/sortOrder: blockSortOrderSchema/g) ?? []).length, 3);
   assert.match(blockRoute, /sortOrder: z\.preprocess\([\s\S]*?blockSortOrderSchema\.optional\(\)/);
-  assert.equal((blockRoute.match(/getNextBlockSortOrder\(lastBlock\?\.sort_order\)/g) ?? []).length, 2);
+  assert.equal((blockRoute.match(/getNextBlockSortOrder\(lastBlock\?\.sort_order\)/g) ?? []).length, 1);
+  assert.equal((blockRoute.match(/const createSortOrder = await getCollisionFreeBlockCreateSortOrder\(/g) ?? []).length, 2);
   assert.match(dataTransfer, /sort_order: z\.number\(\)\.int\(\)[\s\S]*?\.max\(blockSortOrderLimits\.max\)/);
   assert.match(database, /initSql: strictTransactionalSqlMode/);
   assert.match(database, /STRICT_TRANS_TABLES/);

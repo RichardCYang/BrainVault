@@ -412,6 +412,33 @@ function getNextBlockSortOrder(lastSortOrder: number | null | undefined) {
   }
 }
 
+async function getCollisionFreeBlockCreateSortOrder(
+  client: DbClient,
+  pageId: string,
+  parentBlockId: string | null | undefined,
+  requestedSortOrder: number | undefined
+) {
+  if (requestedSortOrder !== undefined) {
+    const collision = await client.queryOne<{ id: string }>(
+      `SELECT id FROM blocks
+       WHERE page_id = ? AND parent_block_id <=> ? AND sort_order = ?
+       LIMIT 1`,
+      [pageId, parentBlockId ?? null, requestedSortOrder]
+    );
+    if (!collision) return requestedSortOrder;
+  }
+
+  // Block creation is a sparse mutation: it must never manufacture duplicate
+  // sibling positions while waiting for the caller's complete reorder snapshot.
+  // If the requested slot is occupied, append without changing existing sibling
+  // edit versions; the reorder endpoint can then apply the intended full order.
+  const lastBlock = await client.queryOne<{ sort_order: number }>(
+    "SELECT sort_order FROM blocks WHERE page_id = ? AND parent_block_id <=> ? ORDER BY sort_order DESC LIMIT 1",
+    [pageId, parentBlockId ?? null]
+  );
+  return getNextBlockSortOrder(lastBlock?.sort_order);
+}
+
 async function assertAccessiblePage(pageId: string, userId: string, client: DbClient = db) {
   return getPageAccess(pageId, userId, client);
 }
@@ -882,9 +909,11 @@ blockRouter.post(
             currentAttachmentUsage.files,
             1
           );
-          const lastBlock = await client.queryOne<{ sort_order: number }>(
-            "SELECT sort_order FROM blocks WHERE page_id = ? AND parent_block_id <=> ? ORDER BY sort_order DESC LIMIT 1",
-            [pageId, body.parentBlockId]
+          const createSortOrder = await getCollisionFreeBlockCreateSortOrder(
+            client,
+            pageId,
+            body.parentBlockId,
+            body.sortOrder
           );
           movedPath = await moveAttachmentFile(file.path, ownerId, id);
           movedAttachmentGeneration = attachmentGeneration;
@@ -898,7 +927,7 @@ blockRouter.post(
               body.parentBlockId,
               originalName,
               renderBlockHtml("ATTACHMENT", originalName, false, metadata),
-              body.sortOrder ?? getNextBlockSortOrder(lastBlock?.sort_order),
+              createSortOrder,
               JSON.stringify(metadata)
             ]
           );
@@ -1100,9 +1129,11 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
       assertDirectBlockMutationAllowed(lockedAccess);
       assertPageNotArchived(lockedAccess.page);
       await assertParentBlock(creation.parentBlockId, pageId, client);
-      const lastBlock = await client.queryOne<{ sort_order: number }>(
-        "SELECT sort_order FROM blocks WHERE page_id = ? AND parent_block_id <=> ? ORDER BY sort_order DESC LIMIT 1",
-        [pageId, creation.parentBlockId ?? null]
+      const createSortOrder = await getCollisionFreeBlockCreateSortOrder(
+        client,
+        pageId,
+        creation.parentBlockId,
+        creation.sortOrder
       );
       await client.execute(
         `INSERT INTO blocks (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata)
@@ -1115,7 +1146,7 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
           prepared.markdown,
           renderBlockHtml(creation.type, prepared.markdown, Boolean(creation.checked), prepared.metadata),
           creation.checked ? 1 : 0,
-          creation.sortOrder ?? getNextBlockSortOrder(lastBlock?.sort_order),
+          createSortOrder,
           prepared.metadata ? JSON.stringify(prepared.metadata) : null
         ]
       );
@@ -1166,9 +1197,10 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
       assertDirectBlockMutationAllowed(lockedAccess);
       const lockedPage = lockedAccess.page;
       let existing: BlockRow;
+      let hierarchyRows: BlockRow[] | null = null;
 
       if (hierarchyChanged) {
-        const hierarchyRows = await client.query<BlockRow>(
+        hierarchyRows = await client.query<BlockRow>(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",
           [identity.page_id]
         );
@@ -1236,6 +1268,38 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
       }
 
       const lockedContentVersion = Number(lockedPage.content_version ?? 1);
+      if (hierarchyChanged) {
+        if (basePageContentVersion === undefined) {
+          throw new ApiError(
+            400,
+            "BLOCK_HIERARCHY_VERSION_REQUIRED",
+            "Changing a block's hierarchy requires the page content version from the complete sibling snapshot."
+          );
+        }
+        if (basePageContentVersion !== lockedContentVersion) {
+          throw new ApiError(
+            409,
+            "BLOCK_EDIT_CONFLICT",
+            "The block hierarchy changed in another session. Your stale position was not applied."
+          );
+        }
+
+        const nextParentBlockId = body.parentBlockId === undefined ? existing.parent_block_id : body.parentBlockId;
+        const nextSortOrder = body.sortOrder === undefined ? Number(existing.sort_order) : body.sortOrder;
+        const siblingPositionOccupied = hierarchyRows!.some(
+          (row) => row.id !== blockId
+            && row.parent_block_id === nextParentBlockId
+            && Number(row.sort_order) === nextSortOrder
+        );
+        if (siblingPositionOccupied) {
+          throw new ApiError(
+            409,
+            "BLOCK_EDIT_CONFLICT",
+            "That sibling position is already occupied. Use the reorder endpoint with the complete sibling list."
+          );
+        }
+      }
+
       const fields: string[] = [];
       const values: DbValue[] = [];
       const contentChanged =

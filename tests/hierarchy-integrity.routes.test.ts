@@ -39,6 +39,7 @@ function page(id: string, parentPageId: string | null) {
     owner_id: user.id,
     parent_page_id: parentPageId,
     edit_version: 1,
+    content_version: 1,
     created_at: "2026-07-17T00:00:00.000Z",
     updated_at: "2026-07-17T00:00:00.000Z"
   };
@@ -125,6 +126,28 @@ describe("Hierarchy and archive integrity", () => {
       .expect(400);
 
     expect(response.body.error.code).toBe("INVALID_PARENT_BLOCK");
+    expect(database.execute).not.toHaveBeenCalled();
+  });
+
+  it("requires a current page snapshot before applying a sparse hierarchy patch", async () => {
+    const response = await request(createApp())
+      .patch("/api/blocks/blk_b")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ parentBlockId: null, sortOrder: 1, expectedVersion: 1 })
+      .expect(400);
+
+    expect(response.body.error.code).toBe("BLOCK_HIERARCHY_VERSION_REQUIRED");
+    expect(database.execute).not.toHaveBeenCalled();
+  });
+
+  it("rejects a sparse hierarchy patch that would duplicate a sibling position", async () => {
+    const response = await request(createApp())
+      .patch("/api/blocks/blk_b")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ parentBlockId: null, sortOrder: 0, expectedVersion: 1, basePageContentVersion: 1 })
+      .expect(409);
+
+    expect(response.body.error.code).toBe("BLOCK_EDIT_CONFLICT");
     expect(database.execute).not.toHaveBeenCalled();
   });
 

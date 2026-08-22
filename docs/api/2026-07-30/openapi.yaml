@@ -470,6 +470,7 @@ components:
           type: [string, 'null']
         sortOrder:
           type: integer
+          description: Requested sibling coordinate. Create endpoints keep it only when unoccupied; on collision they append the new block so duplicate sibling positions are never persisted. Use the reorder endpoint to apply an exact complete sibling order.
         metadata:
           type: object
           additionalProperties: true
@@ -483,7 +484,7 @@ components:
         basePageContentVersion:
           type: integer
           minimum: 1
-          description: Optional full-page snapshot generation observed before this partial block mutation. When it still matches under the page lock, the response certifies the new global page content version; otherwise the global token is omitted so stale unseen blocks are not treated as current.
+          description: Full-page snapshot generation observed before this partial block mutation. It is optional for content-only writes and controls whether the response can certify the new global page version; it is required and must still match for PATCH requests that change parentBlockId or sortOrder.
         mutationId:
           type: string
           minLength: 1
@@ -2091,7 +2092,7 @@ paths:
   /api/blocks/{blockId}:
     patch:
       summary: Update a block
-      description: Owner only for unshared, non-archived pages. Direct mutation is rejected while Yjs collaboration is enabled or the page is archived; shared title/block edits use the collaboration WebSocket and snapshot endpoint. For this partial-page response, pageContentVersion is included only when basePageContentVersion proves the caller held a current full-page snapshot; pageContentVersionAuthoritative reports that decision explicitly.
+      description: Owner only for unshared, non-archived pages. Direct mutation is rejected while Yjs collaboration is enabled or the page is archived; shared title/block edits use the collaboration WebSocket and snapshot endpoint. For this partial-page response, pageContentVersion is included only when basePageContentVersion proves the caller held a current full-page snapshot; pageContentVersionAuthoritative reports that decision explicitly. Structural changes to parentBlockId or sortOrder require that current basePageContentVersion and reject an occupied sibling coordinate; use the reorder endpoint for complete sibling-order changes.
       parameters:
         - in: path
           name: blockId
@@ -2108,7 +2109,7 @@ paths:
         '200':
           description: Updated block
         '409':
-          description: Block changed in another session, page is archived, or direct mutation requires collaboration
+          description: Block or hierarchy changed in another session, requested sibling position is occupied, page is archived, or direct mutation requires collaboration
     delete:
       summary: Delete a block, optionally preserving its nested children
       description: Owner only for unshared, non-archived pages. Requires an exact version snapshot of the block subtree and a mutationId so every destructive request is covered by a durable replay receipt. With preserveChildren, the page content version, child promotion, sibling renumbering, target deletion, and version history are handled in one transaction. An exact retry after an ambiguous response acknowledges the original committed deletion; a different request reusing that ID is rejected. Shared document deletion is represented in one Yjs mutation and materialized atomically.
