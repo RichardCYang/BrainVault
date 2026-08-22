@@ -58,6 +58,28 @@ describe("migration replay data safety", () => {
     expect(schemaSource).not.toContain("await client.execute(statement);");
   });
 
+  it("keeps page parent relationships inside the owning workspace without rewriting rows", () => {
+    const baseline = fs.readFileSync(path.join(migrationsDir, "001_init.sql"), "utf8");
+    const migration = fs.readFileSync(
+      path.join(migrationsDir, "064_page_parent_owner_integrity.sql"),
+      "utf8"
+    );
+
+    expect(baseline).toMatch(/CONSTRAINT uq_pages_id_owner UNIQUE \(id, owner_id\)/i);
+    expect(baseline).toMatch(
+      /FOREIGN KEY \(parent_page_id, owner_id\) REFERENCES pages\(id, owner_id\) ON DELETE CASCADE/i
+    );
+    expect(baseline).not.toMatch(
+      /FOREIGN KEY \(parent_page_id\) REFERENCES pages\(id\) ON DELETE SET NULL/i
+    );
+    expect(migration).toContain(
+      "ALTER TABLE pages DROP FOREIGN KEY fk_pages_parent, ADD CONSTRAINT fk_pages_parent_owner FOREIGN KEY (parent_page_id, owner_id) REFERENCES pages(id, owner_id) ON DELETE CASCADE"
+    );
+    expect(migration).toMatch(/information_schema\.TABLE_CONSTRAINTS/i);
+    expect(migration).not.toMatch(/\bUPDATE\s+pages\b/i);
+    expect(migration).not.toMatch(/\bDELETE\s+FROM\s+pages\b/i);
+  });
+
   it("keeps a composite index for the immutable page-list scan", () => {
     const baseline = fs.readFileSync(path.join(migrationsDir, "001_init.sql"), "utf8");
     const migration = fs.readFileSync(

@@ -36,8 +36,10 @@ CREATE TABLE IF NOT EXISTS pages (
   last_mutation_hash CHAR(64) NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  CONSTRAINT uq_pages_id_owner UNIQUE (id, owner_id),
   CONSTRAINT fk_pages_owner FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
-  CONSTRAINT fk_pages_parent FOREIGN KEY (parent_page_id) REFERENCES pages(id) ON DELETE SET NULL
+  CONSTRAINT fk_pages_parent_owner
+    FOREIGN KEY (parent_page_id, owner_id) REFERENCES pages(id, owner_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_navigation_collapsed_pages (

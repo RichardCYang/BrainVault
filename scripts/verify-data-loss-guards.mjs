@@ -234,6 +234,10 @@ const blockParentIntegrityMigrationSource = readFileSync(
   new URL("../migrations/023_blocks_parent_page_integrity.sql", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const pageParentOwnerIntegrityMigrationSource = readFileSync(
+  new URL("../migrations/064_page_parent_owner_integrity.sql", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 
 const pageCreateMutationMigrationSource = readFileSync(
   new URL("../migrations/036_page_create_mutation_receipts.sql", import.meta.url),
@@ -499,6 +503,36 @@ assert(
     && crossPageParentReproduction.fixed.validSamePageCascadePreserved
     && crossPageParentReproduction.fixed.permanentCrossPageLossClosed,
   "The cross-page parent cascade reproduction did not prove both vulnerable and fixed states"
+);
+
+assert(
+  baselineSchemaSource.includes("CONSTRAINT uq_pages_id_owner UNIQUE (id, owner_id)")
+    && baselineSchemaSource.includes(
+      "FOREIGN KEY (parent_page_id, owner_id) REFERENCES pages(id, owner_id) ON DELETE CASCADE"
+    )
+    && !baselineSchemaSource.includes(
+      "FOREIGN KEY (parent_page_id) REFERENCES pages(id) ON DELETE SET NULL"
+    )
+    && pageParentOwnerIntegrityMigrationSource.includes(
+      "ALTER TABLE pages DROP FOREIGN KEY fk_pages_parent, ADD CONSTRAINT fk_pages_parent_owner FOREIGN KEY (parent_page_id, owner_id) REFERENCES pages(id, owner_id) ON DELETE CASCADE"
+    )
+    && pageParentOwnerIntegrityMigrationSource.includes("information_schema.TABLE_CONSTRAINTS")
+    && !/\bUPDATE\s+pages\b/i.test(pageParentOwnerIntegrityMigrationSource)
+    && !/\bDELETE\s+FROM\s+pages\b/i.test(pageParentOwnerIntegrityMigrationSource),
+  "A malformed cross-owner page parent can still modify unrelated hierarchy data"
+);
+
+const crossOwnerPageParentReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL("./reproduce-cross-owner-page-parent-integrity-loss.mjs", import.meta.url))],
+  { encoding: "utf8" }
+));
+assert(
+  crossOwnerPageParentReproduction.vulnerability.crossOwnerHierarchyModificationReproduced
+    && crossOwnerPageParentReproduction.fixed.crossOwnerParentRejected
+    && crossOwnerPageParentReproduction.fixed.validSameOwnerSubtreeCascadePreserved
+    && crossOwnerPageParentReproduction.fixed.crossOwnerHierarchyModificationClosed,
+  "The cross-owner page-parent reproduction did not prove both vulnerable and fixed states"
 );
 
 const backupStreamIntegrityReproduction = JSON.parse(execFileSync(

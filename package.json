@@ -47,6 +47,7 @@
     "reproduce:structured-metadata-loss": "node --import=tsx scripts/reproduce-structured-metadata-truncation.mjs",
     "reproduce:block-order-loss": "node --import=tsx scripts/reproduce-block-sort-order-overflow-loss.mjs",
     "reproduce:cross-page-parent-loss": "node scripts/reproduce-cross-page-parent-cascade-loss.mjs",
+    "reproduce:cross-owner-page-parent-loss": "node scripts/reproduce-cross-owner-page-parent-integrity-loss.mjs",
     "reproduce:backup-stream-integrity-loss": "node --import=tsx scripts/reproduce-backup-stream-integrity-loss.mjs",
     "reproduce:backup-transport-truncation": "node --import=tsx scripts/reproduce-backup-transport-truncation.mjs",
     "reproduce:page-cover-backup-manifest": "node --import=tsx scripts/reproduce-page-cover-backup-manifest-loss.mjs",
