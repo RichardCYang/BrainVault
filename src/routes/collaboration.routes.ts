@@ -26,7 +26,7 @@ import {
   collaborationTicketProtocolPrefix,
   collaborationWebSocketProtocol,
   disconnectPageCollaboratorsForDocumentEpoch,
-  disconnectSharedUser
+  disconnectSharedUserGrant
 } from "../lib/collaboration-server.js";
 import { toBlock, toPublicUser } from "../lib/mappers.js";
 import { renderBlockHtml } from "../lib/markdown.js";
@@ -188,44 +188,6 @@ async function getShareRows(pageId: string, client: DbClient = db) {
      ORDER BY ps.created_at ASC, u.username ASC`,
     [pageId]
   );
-}
-
-async function disconnectRemovedSharedUserIfCurrent(
-  pageId: string,
-  ownerId: string,
-  sharedUserId: string
-) {
-  try {
-    await transaction(async (client) => {
-      // Share creation/removal and collaboration-session admission all take the
-      // page-row lock. Keep the revocation check and synchronous local-room
-      // disconnect under that same lock so a later re-share cannot be mistaken
-      // for the share generation this handler just removed.
-      const currentPage = await client.queryOne<Pick<PageRow, "id">>(
-        "SELECT id FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
-        [pageId, ownerId]
-      );
-      if (!currentPage) return;
-
-      const currentShare = await client.queryOne<{ user_id: string }>(
-        `SELECT user_id FROM page_shares
-         WHERE page_id = ? AND user_id = ? AND permission = 'EDIT'`,
-        [pageId, sharedUserId]
-      );
-      if (currentShare) return;
-
-      disconnectSharedUser(pageId, sharedUserId, "Page access was removed");
-    });
-  } catch (error) {
-    // This is post-COMMIT cleanup. Never guess that a stale revocation is still
-    // current when the verification itself fails; periodic access rechecks are
-    // a safe fallback for the already-committed authorization change.
-    console.error("Failed to verify shared-user collaboration disconnect", {
-      pageId,
-      sharedUserId,
-      error
-    });
-  }
 }
 
 function toSharePayload(row: ShareUserRow) {
@@ -527,6 +489,7 @@ collaborationRouter.delete(
         }
         return {
           remaining,
+          removedShareGeneration: existingShare.generation,
           removedDocumentEpoch: remaining === 0 ? (preRemovalState?.document_epoch ?? null) : null
         };
       });
@@ -540,7 +503,12 @@ collaborationRouter.delete(
           );
         }
       } else {
-        await disconnectRemovedSharedUserIfCurrent(pageId, owner.id, sharedUserId);
+        disconnectSharedUserGrant(
+          pageId,
+          sharedUserId,
+          result.removedShareGeneration,
+          "Page access was removed"
+        );
       }
       res.json({ removed: true, count: result.remaining });
     } catch (error) {
@@ -699,6 +667,7 @@ collaborationRouter.post(
         username: user.username,
         pageId,
         documentEpoch: session.collaborationState.document_epoch,
+        shareGeneration: session.access.shareGeneration,
         authVersion,
         workspaceGeneration: authScope.workspaceGeneration,
         sessionBinding: createCollaborationSessionBinding(authSessionToken),

@@ -12,6 +12,7 @@ export type CollaborationTokenPayload = {
   username: string;
   pageId: string;
   documentEpoch: string;
+  shareGeneration: string | null;
   authVersion: number;
   workspaceGeneration: number;
   sessionBinding: string;
@@ -49,6 +50,14 @@ export function verifyCollaborationToken(token: string): CollaborationTokenPaylo
       typeof decoded.documentEpoch !== "string" ||
       !decoded.documentEpoch ||
       decoded.documentEpoch.length > 64 ||
+      (
+        decoded.shareGeneration !== null
+        && (
+          typeof decoded.shareGeneration !== "string"
+          || !decoded.shareGeneration
+          || decoded.shareGeneration.length > 64
+        )
+      ) ||
       !Number.isSafeInteger(Number(decoded.authVersion)) ||
       Number(decoded.authVersion) < 1 ||
       !Number.isSafeInteger(Number(decoded.workspaceGeneration)) ||
@@ -78,6 +87,7 @@ export function verifyCollaborationToken(token: string): CollaborationTokenPaylo
       username: String(decoded.username),
       pageId: String(decoded.pageId),
       documentEpoch: decoded.documentEpoch,
+      shareGeneration: decoded.shareGeneration === null ? null : decoded.shareGeneration,
       authVersion: Number(decoded.authVersion),
       workspaceGeneration: Number(decoded.workspaceGeneration),
       sessionBinding: decoded.sessionBinding,

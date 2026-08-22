@@ -6,7 +6,7 @@ import { createId } from "./id.js";
 import { corsOrigins, env } from "../config/env.js";
 import { createExactHttpOriginSet, parseExactHttpOrigin } from "./request-origin.js";
 import { db, transaction, type DbClient } from "./db.js";
-import { getPageAccess } from "./page-access.js";
+import { getPageAccess, type PageAccess } from "./page-access.js";
 import { createCollaborationSessionBinding, verifyCollaborationToken } from "./collaboration-token.js";
 import {
   assertCollaborationDocumentEpoch,
@@ -121,6 +121,7 @@ type ClientContext = {
   user: CollaborationProfile;
   authVersion: number;
   workspaceGeneration: number;
+  shareGeneration: string | null;
   authSessionId: string;
   ipAddress: string;
   webRtcSignal: ClientWebRtcSignal;
@@ -167,6 +168,25 @@ async function assertCurrentCollaborationAuthentication(
   )) {
     throw new ApiError(401, "SESSION_REVOKED", "Authentication session was revoked");
   }
+}
+
+function assertCurrentCollaborationGrant(
+  access: Pick<PageAccess, "role" | "shareGeneration">,
+  expectedShareGeneration: string | null
+) {
+  if (access.role === "OWNER") {
+    if (expectedShareGeneration === null) return;
+  } else if (
+    expectedShareGeneration !== null
+    && access.shareGeneration === expectedShareGeneration
+  ) {
+    return;
+  }
+  throw new ApiError(
+    403,
+    "COLLABORATION_GRANT_REPLACED",
+    "This collaboration grant is no longer current. Request a new collaboration session."
+  );
 }
 
 type Room = {
@@ -316,6 +336,21 @@ export class PageCollaborationHub {
     if (!room) return;
     for (const client of room.clients.values()) {
       if (client.user.id === userId) client.socket.close(4003, reason);
+    }
+  }
+
+  disconnectUserGrant(
+    pageId: string,
+    userId: string,
+    shareGeneration: string,
+    reason = "Page access was removed"
+  ) {
+    const room = this.rooms.get(pageId);
+    if (!room) return;
+    for (const client of room.clients.values()) {
+      if (client.user.id === userId && client.shareGeneration === shareGeneration) {
+        client.socket.close(4003, reason);
+      }
     }
   }
 
@@ -522,6 +557,7 @@ export class PageCollaborationHub {
     let upgradeReserved = true;
     try {
       const access = await getPageAccess(pageId, payload.sub);
+      assertCurrentCollaborationGrant(access, payload.shareGeneration);
       if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
         rejectWebSocketUpgrade(socket, 403, "Collaboration is not enabled for this page");
         return;
@@ -603,6 +639,7 @@ export class PageCollaborationHub {
         user,
         authVersion: payload.authVersion,
         workspaceGeneration: payload.workspaceGeneration,
+        shareGeneration: payload.shareGeneration,
         authSessionId,
         ipAddress: sourceIp,
         webRtcSignal,
@@ -675,6 +712,7 @@ export class PageCollaborationHub {
         await enforceCountryLoginPolicy(payload.sub, currentUser.country_login_mode, sourceIp);
         await enforceVpnAccessPolicy(payload.sub, currentUser.vpn_block_enabled, sourceIp, null, webRtcSignal);
         const currentAccess = await getPageAccess(pageId, payload.sub);
+        assertCurrentCollaborationGrant(currentAccess, payload.shareGeneration);
         if (currentAccess.page.is_collection || currentAccess.page.is_archived || currentAccess.shareCount < 1) {
           connection.close(4010, "Collaboration is no longer available");
           return;
@@ -1031,6 +1069,7 @@ export class PageCollaborationHub {
       // state-changing frame before worker validation; persistence locks it again.
       await assertCurrentCollaborationAuthentication(client);
       const access = await getPageAccess(room.pageId, client.user.id);
+      assertCurrentCollaborationGrant(access, client.shareGeneration);
       if (
         this.closed
         || room.invalidated
@@ -1249,6 +1288,7 @@ export class PageCollaborationHub {
         // persist the queued update.
         await assertCurrentCollaborationAuthentication(client, dbClient, { lock: true });
         const access = await getPageAccess(room.pageId, client.user.id, dbClient, { lockPage: true });
+        assertCurrentCollaborationGrant(access, client.shareGeneration);
         if (room.invalidated || this.rooms.get(room.pageId) !== room) return null;
         if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
           throw new ApiError(403, "COLLABORATION_DISABLED", "Collaboration is not enabled for this page");
@@ -1633,6 +1673,7 @@ export class PageCollaborationHub {
                 client.webRtcSignal
               );
               const access = await getPageAccess(room.pageId, client.user.id);
+              assertCurrentCollaborationGrant(access, client.shareGeneration);
               if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
                 client.socket.close(4010, "Collaboration is no longer available");
                 return;
@@ -1672,6 +1713,15 @@ export function attachPageCollaborationServer(server: CollaborationNetworkServer
 
 export function disconnectSharedUser(pageId: string, userId: string, reason?: string) {
   for (const hub of activeHubs) hub.disconnectUser(pageId, userId, reason);
+}
+
+export function disconnectSharedUserGrant(
+  pageId: string,
+  userId: string,
+  shareGeneration: string,
+  reason?: string
+) {
+  for (const hub of activeHubs) hub.disconnectUserGrant(pageId, userId, shareGeneration, reason);
 }
 
 export function disconnectPageCollaborators(pageId: string, reason?: string) {

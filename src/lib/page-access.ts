@@ -9,6 +9,7 @@ export type PageAccessRole = "OWNER" | "EDITOR";
 export type PageAccess = {
   page: PageRow;
   role: PageAccessRole;
+  shareGeneration: string | null;
   owner: ReturnType<typeof toPublicUser>;
   shareCount: number;
 };
@@ -61,14 +62,17 @@ export async function getPageAccess(
     [pageId, userId]
   );
   let role: PageAccessRole = "OWNER";
+  let shareGeneration: string | null = null;
   if (!page) {
-    page = await client.queryOne<PageRow>(
-      `SELECT ${pageRowProjection("p")}
+    const sharedPage = await client.queryOne<PageRow & { access_share_generation: string }>(
+      `SELECT ${pageRowProjection("p")}, ps.generation AS access_share_generation
        FROM pages p
        INNER JOIN page_shares ps ON ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
        WHERE p.id = ?${lockPage ? " FOR UPDATE" : ""}`,
       [userId, pageId]
     );
+    page = sharedPage;
+    shareGeneration = sharedPage?.access_share_generation ?? null;
     role = "EDITOR";
   }
   if (!page) throw notFound("Page");
@@ -87,6 +91,7 @@ export async function getPageAccess(
   return {
     page,
     role,
+    shareGeneration,
     owner: toPublicUser(owner),
     shareCount: Number(shareCountRow?.share_count ?? 0)
   };
