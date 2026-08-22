@@ -281,12 +281,17 @@ describe("bookmark network address selection", () => {
     ]);
   });
 
-  it("requires an explicit host allowlist, uses approved ports, and normalizes blocked-target failures", () => {
+  it("allows public-web bookmark hosts by default, preserves optional host restrictions, and keeps SSRF guards", () => {
     expect(envSource).toContain('BOOKMARK_FETCH_ALLOWED_HOSTS');
     expect(envSource).toContain('BOOKMARK_FETCH_ALLOWED_PORTS');
     expect(bookmarkSource).toContain('isSelfOrSubdomainBookmarkFetchHost(url.hostname)');
-    expect(bookmarkSource).toContain('if (hostPolicy === "allowlist" && !isBookmarkFetchHostAllowed(url.hostname))');
+    expect(bookmarkSource).toContain('if (hostPolicy === "bookmark" && !isBookmarkFetchHostAllowed(url.hostname))');
+    expect(bookmarkSource).toContain('const addresses = await resolvePublicAddresses(url)');
+    expect(bookmarkSource).toContain('lookup: createPinnedLookup(addresses)');
+    expect(bookmarkSource).toContain('fetchHtml(nextUrl, redirectsLeft - 1, deadline, hostPolicy)');
     expect(bookmarkSource).toContain('fetchHtml(value, bookmarkLimits.redirects, deadline, "public")');
+    expect(isBookmarkFetchHostAllowed("example.com", [])).toBe(true);
+    expect(isBookmarkFetchHostAllowed("unlisted.example.net", [])).toBe(true);
     expect(isBookmarkFetchHostAllowed("example.com", ["example.com"])).toBe(true);
     expect(isBookmarkFetchHostAllowed("cdn.example.com", ["example.com"])).toBe(true);
     expect(isBookmarkFetchHostAllowed("example.com.evil.test", ["example.com"])).toBe(false);

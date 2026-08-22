@@ -1766,7 +1766,7 @@ paths:
   /api/bookmarks/preview:
     post:
       summary: Fetch bookmark or database-URL preview metadata
-      description: In the default bookmark mode, fetches sanitized bookmark metadata using the configured bookmark-host allowlist. In database-url mode, fetches an arbitrary public HTTP(S) page, reads the literal HTML <title>, resolves declared favicon links with /favicon.ico fallback, and returns a bounded signature-validated favicon as a data URL so the existing image CSP does not need to allow arbitrary remote image origins. Both modes keep protocol, port, self-origin, private-address, DNS-pinning, redirect, timeout, content-type, and response-size defenses.
+      description: In the default bookmark mode, fetches sanitized bookmark metadata from arbitrary public HTTP(S) hosts after SSRF validation; BOOKMARK_FETCH_ALLOWED_HOSTS is an optional operator egress restriction rather than a prerequisite. In database-url mode, fetches an arbitrary public HTTP(S) page, reads the literal HTML <title>, resolves declared favicon links with /favicon.ico fallback, and returns a bounded signature-validated favicon as a data URL so the existing image CSP does not need to allow arbitrary remote image origins. Both modes keep protocol, port, self-origin, private/special-address, DNS-pinning, redirect, timeout, content-type, and response-size defenses.
       requestBody:
         required: true
         content:

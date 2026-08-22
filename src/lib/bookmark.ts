@@ -3,6 +3,10 @@ import http from "node:http";
 import https from "node:https";
 import net, { type LookupFunction } from "node:net";
 import {
+  isBookmarkFetchHostAllowedByOptionalAllowlist,
+  normalizeBookmarkFetchHostname
+} from "./bookmark-host-policy.js";
+import {
   isPrivateAddress,
   isPrivateOrLocalHostname,
   prioritizeResolvedAddresses,
@@ -287,21 +291,11 @@ function createBookmarkFetchAgent(url: URL, addresses: ResolvedAddress[]) {
     : new http.Agent(agentOptions);
 }
 
-function normalizeBookmarkFetchHostname(hostname: string) {
-  return hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
-}
-
 export function isBookmarkFetchHostAllowed(
   hostname: string,
   allowedHosts: readonly string[] = env.BOOKMARK_FETCH_ALLOWED_HOSTS
 ) {
-  const host = normalizeBookmarkFetchHostname(hostname);
-  const hostFamily = net.isIP(host);
-  return allowedHosts.some((allowedValue) => {
-    const allowed = normalizeBookmarkFetchHostname(allowedValue);
-    if (host === allowed) return true;
-    return hostFamily === 0 && net.isIP(allowed) === 0 && host.endsWith(`.${allowed}`);
-  });
+  return isBookmarkFetchHostAllowedByOptionalAllowlist(hostname, allowedHosts);
 }
 
 function isSelfOrSubdomainBookmarkFetchHost(hostname: string) {
@@ -311,11 +305,11 @@ function isSelfOrSubdomainBookmarkFetchHost(hostname: string) {
   return net.isIP(host) === 0 && net.isIP(publicHost) === 0 && host.endsWith(`.${publicHost}`);
 }
 
-type BookmarkFetchHostPolicy = "allowlist" | "public";
+type BookmarkFetchHostPolicy = "bookmark" | "public";
 
 async function validateFetchUrl(
   value: string | URL,
-  hostPolicy: BookmarkFetchHostPolicy = "allowlist"
+  hostPolicy: BookmarkFetchHostPolicy = "bookmark"
 ) {
   const normalized = normalizeBookmarkUrl(String(value));
   if (!normalized) {
@@ -325,8 +319,8 @@ async function validateFetchUrl(
   if (isSelfOrSubdomainBookmarkFetchHost(url.hostname)) {
     throw new ApiError(403, "BOOKMARK_URL_BLOCKED", "Self-origin bookmark previews are not allowed");
   }
-  if (hostPolicy === "allowlist" && !isBookmarkFetchHostAllowed(url.hostname)) {
-    throw new ApiError(403, "BOOKMARK_URL_BLOCKED", "Bookmark preview host is not approved for server-side fetching");
+  if (hostPolicy === "bookmark" && !isBookmarkFetchHostAllowed(url.hostname)) {
+    throw new ApiError(403, "BOOKMARK_URL_BLOCKED", "Bookmark preview host is blocked by the configured outbound host restriction");
   }
   const effectivePort = url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
   if (!env.BOOKMARK_FETCH_ALLOWED_PORTS.includes(effectivePort)) {
@@ -366,7 +360,7 @@ async function fetchHtml(
   value: string | URL,
   redirectsLeft: number = bookmarkLimits.redirects,
   deadline: number = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS,
-  hostPolicy: BookmarkFetchHostPolicy = "allowlist"
+  hostPolicy: BookmarkFetchHostPolicy = "bookmark"
 ): Promise<HtmlResponse> {
   const { url, addresses } = await validateFetchUrl(value, hostPolicy);
   const client = url.protocol === "https:" ? https : http;
@@ -834,9 +828,8 @@ async function fetchDatabaseFaviconBytes(
 
 export async function fetchDatabaseUrlPreview(value: string): Promise<DatabaseUrlPreview> {
   const deadline = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS;
-  // Database URL properties intentionally support arbitrary public-web URLs. This mode keeps
-  // the same protocol/port/private-address/DNS-pinning/redirect protections as bookmarks but
-  // does not apply the operator bookmark host allowlist, which cannot enumerate user-entered URLs.
+  // Database URL properties use the same public-web SSRF gate as bookmarks. The explicit
+  // "public" policy only bypasses the optional operator hostname restriction, when configured.
   const response = await fetchHtml(value, bookmarkLimits.redirects, deadline, "public");
   const metadata = parseDatabaseUrlDocumentMetadata(response.html, response.url);
   let faviconUrl = "";
