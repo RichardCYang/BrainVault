@@ -106,3 +106,28 @@ test("block PATCH fences invalid stored metadata before accepting replacement me
   assert.ok(replacementSelection > guardCall);
   assert.match(source, /409,\s*\n\s*"BLOCK_METADATA_RECOVERY_REQUIRED"/);
 });
+
+test("collaboration materialization fences invalid stored metadata before relational writes", async () => {
+  const source = await fs.readFile(
+    new URL("../src/routes/collaboration.routes.ts", import.meta.url),
+    "utf8"
+  );
+
+  const helperStart = source.indexOf("function assertExistingMetadataSafeToMaterialize(existing: BlockRow)");
+  const materializationStart = source.indexOf("const existingById = new Map", helperStart);
+  const guard = source.indexOf("assertExistingMetadataSafeToMaterialize(existing);", materializationStart);
+  const firstRelationalMutation = source.indexOf("const deletedExistingIds = new Set", materializationStart);
+
+  assert.ok(helperStart >= 0, "collaboration route must define a stored-metadata recovery guard");
+  assert.ok(materializationStart > helperStart, "materialization must follow the recovery guard definition");
+  assert.ok(guard > materializationStart, "materialization must validate raw stored metadata");
+  assert.ok(firstRelationalMutation > guard, "stored metadata must be validated before any relational mutation");
+
+  const helperSource = source.slice(helperStart, materializationStart);
+  assert.match(
+    helperSource,
+    /assertStructuredBlockMetadataIntegrity\(existing\.type, existing\.metadata\)/,
+    "the guard must validate the raw relational metadata instead of the sanitized API projection"
+  );
+  assert.match(helperSource, /BLOCK_METADATA_RECOVERY_REQUIRED/);
+});

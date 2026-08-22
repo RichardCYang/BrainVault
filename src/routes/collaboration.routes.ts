@@ -254,6 +254,26 @@ function assertLosslessStructuredMetadata(type: BlockRow["type"], metadata: unkn
   }
 }
 
+function assertExistingMetadataSafeToMaterialize(existing: BlockRow) {
+  try {
+    assertStructuredBlockMetadataIntegrity(existing.type, existing.metadata);
+  } catch (error) {
+    if (error instanceof StructuredMetadataIntegrityError) {
+      throw new ApiError(
+        409,
+        "BLOCK_METADATA_RECOVERY_REQUIRED",
+        "Stored block metadata failed integrity validation. The original data was preserved and must be recovered or repaired explicitly.",
+        {
+          blockId: existing.id,
+          path: error.path,
+          reason: error.message
+        }
+      );
+    }
+    throw error;
+  }
+}
+
 function prepareBlockContent(type: BlockRow["type"], markdown: string, metadata: unknown) {
   if (type === "BOOKMARK") {
     return {
@@ -907,6 +927,9 @@ collaborationRouter.put(
           }
           if (existing && existing.type !== "ATTACHMENT" && block.type === "ATTACHMENT") {
             throw new ApiError(400, "ATTACHMENT_TYPE_IMMUTABLE", "Blocks cannot be converted into attachments");
+          }
+          if (existing && existing.type !== "ATTACHMENT") {
+            assertExistingMetadataSafeToMaterialize(existing);
           }
         }
 
