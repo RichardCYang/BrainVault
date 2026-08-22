@@ -7261,6 +7261,8 @@ function discardPendingPageEdits() {
   window.clearTimeout(pageTitleSaveTimer);
   pageTitleSaveTimer = null;
   pageTitleSaveQueue.discard();
+  collaborationTitleMutationPromise = null;
+  collaborationBlockMutationPromises.clear();
   for (const timer of blockSaveTimers.values()) window.clearTimeout(timer);
   blockSaveTimers.clear();
   blockSaveRows.clear();
@@ -13059,6 +13061,14 @@ function getRejectedLocalMutationMessage(error) {
   return error?.message || t("status.localDraftStorageFailed");
 }
 
+function isCurrentCollaborationMutationContext(authenticationScope, pageId, session) {
+  return Boolean(
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+      && state.selectedPage?.id === pageId
+      && state.collaborationSession === session
+  );
+}
+
 function cancelScheduledBlockSave(blockId) {
   if (!blockId) return;
   window.clearTimeout(blockSaveTimers.get(blockId));
@@ -13114,6 +13124,8 @@ function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
     if (!session?.isReady) return false;
+    const pageId = state.selectedPage?.id;
+    if (!pageId) return false;
     const current = getBlockById(blockId);
     if (!current) return false;
     let mutation;
@@ -13134,6 +13146,10 @@ function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
     void mutation.then(() => {
       if (collaborationBlockMutationPromises.get(blockId) !== mutation) return;
       collaborationBlockMutationPromises.delete(blockId);
+      if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) {
+        syncBeforeUnloadProtection();
+        return;
+      }
       const currentRow = findRenderedBlockRow(blockId) ?? row;
       recordBlockEditorHistory(currentRow, historyPayload, current);
       if (jsonValuesMatch(buildBlockPayload(currentRow), historyPayload)) {
@@ -13147,8 +13163,11 @@ function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
       updateCollaborationAwareness(document.activeElement);
       syncBeforeUnloadProtection();
     }).catch((error) => {
-      if (collaborationBlockMutationPromises.get(blockId) === mutation) {
-        collaborationBlockMutationPromises.delete(blockId);
+      if (collaborationBlockMutationPromises.get(blockId) !== mutation) return;
+      collaborationBlockMutationPromises.delete(blockId);
+      if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) {
+        syncBeforeUnloadProtection();
+        return;
       }
       rejectLocalBlockMutation(findRenderedBlockRow(blockId) ?? row, error);
     });
@@ -15330,6 +15349,7 @@ async function savePageTitleNow({
     try {
       await session.setTitle(title);
     } catch (error) {
+      if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;
       if (error?.code === "COLLABORATION_RECOVERY_WRITE_FAILED") {
         elements.pageTitle.classList.add("save-error");
         handleDurableRecoveryStorageWriteError(error, { operation: "collaboration-title-recovery" });
@@ -15339,6 +15359,7 @@ async function savePageTitleNow({
       setStatus(getRejectedLocalMutationMessage(error), true);
       throw error;
     }
+    if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;
     recordPageTitleEditorHistory(previousTitle);
     state.selectedPage.title = title;
     for (const pages of [state.pages, state.allPages]) {
@@ -15403,6 +15424,8 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
       return true;
     }
     const pageId = state.selectedPage.id;
+    const authenticationScope = captureAuthenticatedSessionScope();
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return false;
     let mutation;
     try {
       mutation = session.setTitle(title);
@@ -15416,6 +15439,10 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
     void mutation.then(() => {
       if (collaborationTitleMutationPromise !== mutation) return;
       collaborationTitleMutationPromise = null;
+      if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) {
+        syncBeforeUnloadProtection();
+        return;
+      }
       elements.pageTitle.classList.remove("is-saving", "save-error");
       recordPageTitleEditorHistory(previousTitle);
       if (state.selectedPage?.id === pageId) state.selectedPage.title = title;
@@ -15427,7 +15454,12 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
       updateCollaborationAwareness(elements.pageTitle);
       syncBeforeUnloadProtection();
     }).catch((error) => {
-      if (collaborationTitleMutationPromise === mutation) collaborationTitleMutationPromise = null;
+      if (collaborationTitleMutationPromise !== mutation) return;
+      collaborationTitleMutationPromise = null;
+      if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) {
+        syncBeforeUnloadProtection();
+        return;
+      }
       elements.pageTitle.classList.remove("is-saving");
       elements.pageTitle.classList.add("save-error");
       if (error?.code === "COLLABORATION_RECOVERY_WRITE_FAILED") {

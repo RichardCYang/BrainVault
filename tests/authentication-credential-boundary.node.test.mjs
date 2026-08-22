@@ -705,3 +705,87 @@ test("block move response application stays fenced to the initiating authenticat
     "the fixed disjunction rejects the stale response and preserves local recovery state"
   );
 });
+
+
+test("collaboration mutation completions stay bound to their initiating auth/page/session context", async () => {
+  const source = await read("public/app.js");
+
+  const discardStart = source.indexOf("function discardPendingPageEdits");
+  const discardEnd = source.indexOf("function discardBlockSave", discardStart);
+  const discard = source.slice(discardStart, discardEnd);
+  assert.match(discard, /collaborationTitleMutationPromise = null;/);
+  assert.match(discard, /collaborationBlockMutationPromises\.clear\(\);/);
+
+  const helperStart = source.indexOf("function isCurrentCollaborationMutationContext");
+  const helperEnd = source.indexOf("function cancelScheduledBlockSave", helperStart);
+  const helper = source.slice(helperStart, helperEnd);
+  assert.match(helper, /isCurrentAuthenticatedSessionScope\(authenticationScope\)/);
+  assert.match(helper, /state\.selectedPage\?\.id === pageId/);
+  assert.match(helper, /state\.collaborationSession === session/);
+
+  const blockStart = source.indexOf("function markBlockDirty");
+  const blockEnd = source.indexOf("function getBlockSaveQueue", blockStart);
+  const block = source.slice(blockStart, blockEnd);
+  assert.match(block, /const pageId = state\.selectedPage\?\.id;/);
+  assert.ok(
+    (block.match(/isCurrentCollaborationMutationContext\(authenticationScope, pageId, session\)/g) ?? []).length >= 2,
+    "both successful and rejected collaboration block mutations must revalidate their initiating context"
+  );
+  const blockCatch = block.indexOf("}).catch((error) =>");
+  const blockCatchIdentityFence = block.indexOf(
+    "if (collaborationBlockMutationPromises.get(blockId) !== mutation) return;",
+    blockCatch
+  );
+  const blockCatchUi = block.indexOf("rejectLocalBlockMutation(", blockCatch);
+  assert.ok(
+    blockCatch >= 0 && blockCatchIdentityFence > blockCatch && blockCatchUi > blockCatchIdentityFence,
+    "a superseded collaboration block rejection must not restore or rerender the current workspace"
+  );
+
+  const saveTitleStart = source.indexOf("async function savePageTitleNow");
+  const scheduleTitleStart = source.indexOf("function schedulePageTitleSave", saveTitleStart);
+  const saveTitle = source.slice(saveTitleStart, scheduleTitleStart);
+  const awaitedTitleMutation = saveTitle.indexOf("await session.setTitle(title)");
+  const rejectedFence = saveTitle.indexOf(
+    "if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;",
+    awaitedTitleMutation
+  );
+  const rejectedUi = saveTitle.indexOf('elements.pageTitle.classList.add("save-error")', awaitedTitleMutation);
+  const throwIndex = saveTitle.indexOf("throw error;", awaitedTitleMutation);
+  const resolvedFence = saveTitle.indexOf(
+    "if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;",
+    throwIndex
+  );
+  const resolvedUi = saveTitle.indexOf("state.selectedPage.title = title", throwIndex);
+  assert.ok(
+    awaitedTitleMutation >= 0
+      && rejectedFence > awaitedTitleMutation
+      && rejectedUi > rejectedFence
+      && resolvedFence > throwIndex
+      && resolvedUi > resolvedFence,
+    "awaited collaboration title completion must be fenced before either failure recovery or success state application"
+  );
+
+  const scheduleTitleEnd = source.indexOf("function normalizeRecoveredBlockPayload", scheduleTitleStart);
+  const scheduledTitle = source.slice(scheduleTitleStart, scheduleTitleEnd);
+  const scheduledCapture = scheduledTitle.indexOf("const authenticationScope = captureAuthenticatedSessionScope()");
+  const scheduledDispatch = scheduledTitle.indexOf("mutation = session.setTitle(title)");
+  assert.ok(
+    scheduledCapture >= 0 && scheduledDispatch > scheduledCapture,
+    "scheduled collaboration title writes must retain the initiating authentication generation"
+  );
+  assert.ok(
+    (scheduledTitle.match(/isCurrentCollaborationMutationContext\(authenticationScope, pageId, session\)/g) ?? []).length >= 2,
+    "both scheduled title resolution and rejection must revalidate auth, page, and collaboration session"
+  );
+  const titleCatch = scheduledTitle.indexOf("}).catch((error) =>");
+  const titleCatchIdentityFence = scheduledTitle.indexOf(
+    "if (collaborationTitleMutationPromise !== mutation) return;",
+    titleCatch
+  );
+  const titleCatchUi = scheduledTitle.indexOf('elements.pageTitle.classList.remove("is-saving")', titleCatch);
+  assert.ok(
+    titleCatch >= 0 && titleCatchIdentityFence > titleCatch && titleCatchUi > titleCatchIdentityFence,
+    "a superseded collaboration title rejection must not rewrite the active title editor"
+  );
+});
