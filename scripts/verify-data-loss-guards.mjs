@@ -630,20 +630,35 @@ assert(
   "The collaborator-navigation restore reproduction did not prove both vulnerable and fixed states"
 );
 
+const restorePageDeleteReceiptInvalidationIndex = dataTransferSource.indexOf(
+  'DELETE FROM page_delete_mutations WHERE actor_id = ?'
+);
+const restoreBlockOrderReceiptInvalidationIndex = dataTransferSource.indexOf(
+  'DELETE FROM block_order_mutations WHERE owner_id = ?'
+);
+const restoreBlockMoveReceiptInvalidationIndex = dataTransferSource.indexOf(
+  'DELETE FROM block_move_mutations WHERE actor_id = ?'
+);
+const restoreOwnedPageReplacementIndex = dataTransferSource.indexOf(
+  'DELETE FROM pages WHERE owner_id = ?'
+);
 assert(
-  dataTransferSource.includes("prepareRestoreMutationReceiptPlan")
+  !dataTransferSource.includes("prepareRestoreMutationReceiptPlan")
     && !dataTransferSource.includes("FROM page_version_reset_mutations m")
-    && dataTransferSource.includes("FROM block_order_mutations m")
+    && !dataTransferSource.includes("FROM block_order_mutations m")
     && !dataTransferSource.includes("FROM block_create_mutations m")
     && !dataTransferSource.includes("FROM block_delete_mutations m")
     && !dataTransferSource.includes("mutationReceipts.pageVersionResets")
+    && !dataTransferSource.includes("mutationReceipts.blockOrders")
     && !dataTransferSource.includes("mutationReceipts.blockCreates")
     && !dataTransferSource.includes("mutationReceipts.blockDeletes")
-    && dataTransferSource.includes("blockOrders: blockOrders.filter((row) => restoredPageIds.has(row.page_id))")
-    && dataTransferSource.includes("for (const row of mutationReceipts.blockOrders)")
+    && restorePageDeleteReceiptInvalidationIndex >= 0
+    && restoreBlockOrderReceiptInvalidationIndex > restorePageDeleteReceiptInvalidationIndex
+    && restoreBlockMoveReceiptInvalidationIndex > restoreBlockOrderReceiptInvalidationIndex
+    && restoreOwnedPageReplacementIndex > restoreBlockMoveReceiptInvalidationIndex
     && durableMutationReceiptMigrationSource.includes("DROP FOREIGN KEY fk_page_version_reset_mutations_page")
     && durableMutationReceiptMigrationSource.includes("DROP FOREIGN KEY fk_block_create_mutations_page"),
-  "Reset/create idempotency receipts can still be lost when a page is deleted before its identity is restored"
+  "Workspace restore mutation-receipt generation guards have drifted from the safe invalidation/preservation design"
 );
 
 const restoreMutationReceiptReproduction = JSON.parse(execFileSync(

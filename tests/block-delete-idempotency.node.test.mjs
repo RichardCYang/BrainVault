@@ -117,6 +117,27 @@ test("server records and replays block deletion atomically before touching a mis
     "destructive deletion must reject missing mutation ids before opening the transaction"
   );
   assert.match(deleteRoute, /kind: "BLOCK_DELETE"/);
+  assert.ok(
+    deleteRoute.indexOf("BLOCK_DELETE_SNAPSHOT_REQUIRED")
+      < deleteRoute.indexOf("const mutationHash = createMutationRequestHash"),
+    "the exact delete snapshot must be validated before hashing"
+  );
+  assert.match(
+    deleteRoute,
+    /const normalizedExpectedVersions = \[\.\.\.expectedVersions\]\s*\.sort\(\(left, right\) => left\.id\.localeCompare\(right\.id\)\)/
+  );
+  assert.match(
+    deleteRoute,
+    /const mutationRequest = \{[\s\S]*expectedVersions: normalizedExpectedVersions[\s\S]*\};[\s\S]*const mutationHash = createMutationRequestHash\(mutationRequest\)/
+  );
+  assert.match(
+    deleteRoute,
+    /const legacyMutationHash = createMutationRequestHash\(\{[\s\S]*\.\.\.mutationRequest,[\s\S]*expectedVersions[\s\S]*\}\)/
+  );
+  assert.match(
+    deleteRoute,
+    /assessment\.kind === "collision" && legacyMutationHash !== mutationHash[\s\S]*requestHash: legacyMutationHash/
+  );
   assert.match(deleteRoute, /FROM block_delete_mutations/);
   assert.match(deleteRoute, /attachment_ids, attachment_generation/);
   assert.match(deleteRoute, /assessBlockDeleteMutationReceipt/);

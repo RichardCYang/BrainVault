@@ -1725,13 +1725,6 @@ blockRouter.delete(
       );
     }
     const mutationId = body.mutationId;
-    const mutationHash = createMutationRequestHash({
-      kind: "BLOCK_DELETE",
-      blockId,
-      expectedVersions: body.expectedVersions ?? [],
-      preserveChildren: body.preserveChildren,
-      expectedPageContentVersion: body.expectedPageContentVersion ?? null
-    });
     if (!body.expectedVersions?.length) {
       throw new ApiError(
         400,
@@ -1740,6 +1733,23 @@ blockRouter.delete(
       );
     }
     const expectedVersions = body.expectedVersions;
+    const normalizedExpectedVersions = [...expectedVersions]
+      .sort((left, right) => left.id.localeCompare(right.id));
+    const mutationRequest = {
+      kind: "BLOCK_DELETE",
+      blockId,
+      expectedVersions: normalizedExpectedVersions,
+      preserveChildren: body.preserveChildren,
+      expectedPageContentVersion: body.expectedPageContentVersion ?? null
+    };
+    const mutationHash = createMutationRequestHash(mutationRequest);
+    // Older receipts hashed the caller-provided snapshot order. Keep same-order
+    // retries replayable across this deployment while new receipts use a
+    // canonical set order and therefore survive harmless snapshot reordering.
+    const legacyMutationHash = createMutationRequestHash({
+      ...mutationRequest,
+      expectedVersions
+    });
     const deletion = await transaction(async (client) => {
       // Restore and attachment writes serialize on the owner/user row before
       // page locks. Capture that filesystem generation before any delete work.
@@ -1757,10 +1767,19 @@ blockRouter.delete(
         [user.id, mutationId]
       );
       if (receipt) {
-        const assessment = assessBlockDeleteMutationReceipt(receipt, {
+        let assessment = assessBlockDeleteMutationReceipt(receipt, {
           blockId,
           requestHash: mutationHash
         });
+        if (assessment.kind === "collision" && legacyMutationHash !== mutationHash) {
+          const legacyAssessment = assessBlockDeleteMutationReceipt(receipt, {
+            blockId,
+            requestHash: legacyMutationHash
+          });
+          if (legacyAssessment.kind !== "collision") {
+            assessment = legacyAssessment;
+          }
+        }
         if (assessment.kind === "collision") {
           throw new ApiError(
             409,
