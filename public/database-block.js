@@ -42,7 +42,9 @@ function uniqueId(value, seen, fallbackPrefix) {
   let id = value;
   let attempt = 1;
   while (seen.has(id)) {
-    id = `${fallbackPrefix}-${attempt}`.slice(0, 64);
+    const suffix = `-${attempt}`;
+    const prefixLength = Math.max(0, 64 - suffix.length);
+    id = `${fallbackPrefix.slice(0, prefixLength)}${suffix}`;
     attempt += 1;
   }
   seen.add(id);

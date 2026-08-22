@@ -244,6 +244,9 @@ function assertIdentifier(value: unknown, path: string, { required = true } = {}
   }
   const id = optionalString(value, path, 64)!;
   if (!id.trim()) fail(path, "must be a non-empty identifier");
+  if (id.trim() !== id) {
+    fail(path, "must not contain leading or trailing whitespace that would be normalized and lose references");
+  }
   return id;
 }
 

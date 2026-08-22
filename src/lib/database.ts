@@ -130,7 +130,9 @@ function uniqueId(requested: string, seen: Set<string>, fallbackPrefix: string) 
   let id = requested;
   let attempt = 1;
   while (seen.has(id)) {
-    id = `${fallbackPrefix}-${attempt}`.slice(0, databaseLimits.idLength);
+    const suffix = `-${attempt}`;
+    const prefixLength = Math.max(0, databaseLimits.idLength - suffix.length);
+    id = `${fallbackPrefix.slice(0, prefixLength)}${suffix}`;
     attempt += 1;
   }
   seen.add(id);

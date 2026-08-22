@@ -268,6 +268,8 @@ test("bookmark metadata rejects private IP literals in stored page and asset URL
   expectIntegrityFailure("BOOKMARK", metadata({ imageUrl: "http://[::ffff:192.168.1.1]/admin.png" }), "metadata.bookmark.items[0].imageUrl");
   expectIntegrityFailure("BOOKMARK", metadata({ url: "http://127.0.0.1/" }), "metadata.bookmark.items[0].url");
   expectIntegrityFailure("BOOKMARK", metadata({ url: "http://[fec0::1]/" }), "metadata.bookmark.items[0].url");
+  expectIntegrityFailure("BOOKMARK", metadata({ url: "https://user:pass@example.com/private" }), "metadata.bookmark.items[0].url");
+  expectIntegrityFailure("BOOKMARK", metadata({ url: "javascript://user:pass@example.com/%0Aalert(1)" }), "metadata.bookmark.items[0].url");
   assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("BOOKMARK", metadata({ imageUrl: "https://cdn.example.com/image.png" })));
   assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("BOOKMARK", metadata({ imageUrl: "http://[::ffff:808:808]/image.png" })));
 });
@@ -297,6 +299,46 @@ test("database fallback views never retain references to missing properties", ()
     assert.ok(view.hiddenPropertyIds.every((propertyId) => propertyIds.has(propertyId)));
   }
   assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("DATABASE", { database: normalized }));
+});
+
+test("database identifiers that normalizers would trim are rejected before references can be lost", () => {
+  expectIntegrityFailure("DATABASE", {
+    database: {
+      properties: [
+        { id: "title", name: "Name", type: "title", options: [] },
+        { id: " status ", name: "Status", type: "text", options: [] }
+      ],
+      rows: [{ id: "row-1", values: { title: "Task", " status ": "KEEP-ME" } }],
+      views: []
+    }
+  }, "metadata.database.properties[1].id");
+});
+
+test("database duplicate-id repair keeps its distinguishing suffix inside the id limit", () => {
+  const longId = "p".repeat(64);
+  const normalized = getDatabaseData({
+    database: {
+      properties: [{
+        id: longId,
+        name: "Long property",
+        type: "select",
+        options: [
+          { id: longId, name: "First", color: "gray" },
+          { id: longId, name: "Second", color: "blue" }
+        ]
+      }],
+      rows: [],
+      views: []
+    }
+  });
+  const normalizedProperty = normalized.properties.find((property) => property.id === longId);
+  assert.ok(normalizedProperty);
+  const optionIds = normalizedProperty.options.map((option) => option.id);
+  assert.equal(optionIds.length, 2);
+  assert.equal(optionIds[0], longId);
+  assert.equal(optionIds[1].length, 64);
+  assert.match(optionIds[1], /-1$/);
+  assert.notEqual(optionIds[0], optionIds[1]);
 });
 
 test("AI metadata that the old save path silently truncated is rejected atomically", () => {
