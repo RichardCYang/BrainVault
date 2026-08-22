@@ -1869,7 +1869,13 @@ async function reconcileCanonicalCreatedBlock(
     // reorder response, or refresh must not turn that durable existence into an
     // apparent failed create that a user can duplicate by retrying.
     console.warn("BrainVault retained a committed created block after refresh failed.", error);
-    renderSelectedPage();
+
+    // openPage() flushes pending editor work before it fetches canonical state.
+    // If that flush failed, a full render would rebuild controls from state and
+    // could erase the only live DOM copy of an edit whose recovery write also
+    // failed. Keep the live editor intact; the adopted committed block remains
+    // in state and will appear on the next safe render/refresh.
+    if (!hasPendingPageEdits()) renderSelectedPage();
   }
 }
 

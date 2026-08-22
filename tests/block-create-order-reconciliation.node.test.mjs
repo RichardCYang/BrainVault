@@ -163,6 +163,107 @@ test("local committed-create fallback preserves successful order and replacement
   assert.deepEqual(page.blocks.map((block) => block.id), ["attachment", "next"]);
 });
 
+test("committed-create fallback preserves an unsaved live editor when refresh flushing fails", async () => {
+  const start = client.indexOf("function adoptCommittedCreatedBlockLocally(");
+  const end = client.indexOf("\n\nfunction canSupersedeBlockSaveError", start);
+  assert.ok(start >= 0 && end > start, "committed-create reconciliation source should be extractable");
+  const helperSource = client.slice(start, end);
+
+  const page = {
+    id: "page-1",
+    blocks: [{ id: "source", markdown: "server-old", sortOrder: 0, parentBlockId: null, children: [] }]
+  };
+  const state = { workspaceView: "page", selectedPage: page, pendingFocusBlockId: null };
+  const find = (id) => page.blocks.find((block) => block.id === id) ?? null;
+  let liveEditorMarkdown = "unsaved-local-edit";
+  let renders = 0;
+
+  const reconcile = new Function(
+    "state",
+    "normalizeParentBlockId",
+    "getBlockById",
+    "getBlockSiblings",
+    "reorderPageBlockSiblings",
+    "openPage",
+    "isCurrentAuthenticatedSessionScope",
+    "hasPendingPageEdits",
+    "renderSelectedPage",
+    "console",
+    `${helperSource}; return reconcileCanonicalCreatedBlock;`
+  )(
+    state,
+    (value) => value || null,
+    find,
+    () => page.blocks,
+    () => true,
+    async () => {
+      const error = new Error("local recovery persistence failed while flushing an unrelated edit");
+      error.code = "DIRECT_RECOVERY_DURABILITY_FAILED";
+      throw error;
+    },
+    () => true,
+    () => true,
+    () => {
+      renders += 1;
+      liveEditorMarkdown = find("source")?.markdown ?? "";
+    },
+    { warn() {} }
+  );
+
+  await reconcile(
+    "page-1",
+    { id: "created", markdown: "", sortOrder: 1, parentBlockId: null, children: [] },
+    { authenticationScope: { generation: 1 } }
+  );
+
+  assert.equal(renders, 0, "pending editor work must prevent the fallback full-page render");
+  assert.equal(liveEditorMarkdown, "unsaved-local-edit", "the only live copy of the edit must remain untouched");
+  assert.equal(find("created")?.id, "created", "the already committed create is still adopted into local state");
+});
+
+test("committed-create fallback still renders immediately when no editor work is pending", async () => {
+  const start = client.indexOf("function adoptCommittedCreatedBlockLocally(");
+  const end = client.indexOf("\n\nfunction canSupersedeBlockSaveError", start);
+  const helperSource = client.slice(start, end);
+  const page = { id: "page-1", blocks: [] };
+  const state = { workspaceView: "page", selectedPage: page, pendingFocusBlockId: null };
+  let renders = 0;
+
+  const reconcile = new Function(
+    "state",
+    "normalizeParentBlockId",
+    "getBlockById",
+    "getBlockSiblings",
+    "reorderPageBlockSiblings",
+    "openPage",
+    "isCurrentAuthenticatedSessionScope",
+    "hasPendingPageEdits",
+    "renderSelectedPage",
+    "console",
+    `${helperSource}; return reconcileCanonicalCreatedBlock;`
+  )(
+    state,
+    (value) => value || null,
+    (id) => page.blocks.find((block) => block.id === id) ?? null,
+    () => page.blocks,
+    () => true,
+    async () => { throw new Error("network refresh failed"); },
+    () => true,
+    () => false,
+    () => { renders += 1; },
+    { warn() {} }
+  );
+
+  await reconcile(
+    "page-1",
+    { id: "created", markdown: "", sortOrder: 0, parentBlockId: null, children: [] },
+    { authenticationScope: { generation: 1 } }
+  );
+
+  assert.equal(renders, 1);
+  assert.equal(page.blocks[0]?.id, "created");
+});
+
 test("ordinary creates and attachment uploads reconcile stale post-create ordering without weakening the server fence", () => {
   assert.match(client, /function shouldReconcileCanonicalCreatedBlockOrder\(data\)/);
   assert.match(client, /return data\?\.pageContentVersionAuthoritative === false/);

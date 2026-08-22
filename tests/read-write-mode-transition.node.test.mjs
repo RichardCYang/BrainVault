@@ -60,7 +60,12 @@ function createHarness(
       calls.created += 1;
       return { block: { id: "block-1" } };
     },
-    async openPage() { calls.opened += 1; },
+    captureAuthenticatedSessionScope() { return { generation: 1 }; },
+    isCurrentAuthenticatedSessionScope() { return true; },
+    async reconcileCanonicalCreatedBlock(_pageId, block) {
+      state.pendingFocusBlockId = block.id;
+      calls.opened += 1;
+    },
     setStatus(message, isError = false) { statuses.push({ message, isError }); },
     t(key) { return key; }
   };

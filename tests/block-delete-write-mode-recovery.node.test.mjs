@@ -55,6 +55,12 @@ function createHarness({ collaborative = false, pageMode = "write", backendBlock
       persistedBlocks = [block];
       if (collaborative) state.selectedPage.blocks = [block];
       return { block };
+    },
+    captureAuthenticatedSessionScope() { return { generation: 1 }; },
+    isCurrentAuthenticatedSessionScope() { return true; },
+    async reconcileCanonicalCreatedBlock(pageId, _block, options) {
+      assert.equal(options?.skipFlush, true);
+      await context.openPage(pageId, { skipFlush: true });
     }
   };
   vm.createContext(context);
