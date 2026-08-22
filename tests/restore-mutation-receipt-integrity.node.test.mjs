@@ -64,12 +64,16 @@ test("restore keeps durable reset/create tombstones but invalidates page-generat
   const blockOrderReceiptInvalidationIndex = transfer.indexOf(
     'DELETE FROM block_order_mutations WHERE owner_id = ?'
   );
+  const blockMoveReceiptInvalidationIndex = transfer.indexOf(
+    'DELETE FROM block_move_mutations WHERE actor_id = ?'
+  );
   const pageReplacementIndex = transfer.indexOf('DELETE FROM pages WHERE owner_id = ?');
   assert.ok(
     pageDeleteReceiptInvalidationIndex >= 0
       && blockOrderReceiptInvalidationIndex > pageDeleteReceiptInvalidationIndex
-      && pageReplacementIndex > blockOrderReceiptInvalidationIndex,
-    "restore must invalidate pre-restore page-delete/order receipts before replacing the page/filesystem generation"
+      && blockMoveReceiptInvalidationIndex > blockOrderReceiptInvalidationIndex
+      && pageReplacementIndex > blockMoveReceiptInvalidationIndex,
+    "restore must invalidate pre-restore page-delete/order/move receipts before replacing the page/filesystem generation"
   );
 });
 

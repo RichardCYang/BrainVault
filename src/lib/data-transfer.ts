@@ -2088,6 +2088,11 @@ async function importRows(
   // pre-restore reorder must conflict against restoreVersion instead of being
   // falsely acknowledged by an old receipt before version validation.
   await client.execute("DELETE FROM block_order_mutations WHERE owner_id = ?", [userId]);
+  // Block-move receipts are also page-generation scoped, but their actor-only
+  // foreign key means they survive page replacement unless restore invalidates
+  // them explicitly. Otherwise a delayed move retry can be acknowledged before
+  // the restored block/page versions are checked.
+  await client.execute("DELETE FROM block_move_mutations WHERE actor_id = ?", [userId]);
   await client.execute("DELETE FROM pages WHERE owner_id = ?", [userId]);
   await client.execute(
     `UPDATE users
