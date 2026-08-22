@@ -1871,7 +1871,7 @@ async function api(path, options = {}) {
 async function fetchDatabaseUrlPreview(url) {
   const response = await api("/api/bookmarks/preview", {
     method: "POST",
-    body: { url },
+    body: { url, mode: "database-url" },
     skipAuthReset: true
   });
   return response?.preview ?? null;

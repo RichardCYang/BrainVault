@@ -36,6 +36,7 @@ import {
 } from "../lib/block-create-mutation.js";
 import {
   fetchBookmarkPreviewWithFallback,
+  fetchDatabaseUrlPreview,
   getBookmarkData,
   summarizeBookmarkData
 } from "../lib/bookmark.js";
@@ -149,7 +150,8 @@ type BlockMoveMutationReceipt = {
 };
 
 const bookmarkPreviewSchema = z.object({
-  url: z.string().trim().min(1).max(2_048)
+  url: z.string().trim().min(1).max(2_048),
+  mode: z.enum(["bookmark", "database-url"]).default("bookmark")
 });
 
 function assertLosslessStructuredMetadata(type: BlockRow["type"], metadata: unknown) {
@@ -381,6 +383,11 @@ blockRouter.post(
   validate({ body: bookmarkPreviewSchema }),
   async (req, res, next) => {
     try {
+      if (req.body.mode === "database-url") {
+        const preview = await fetchDatabaseUrlPreview(String(req.body.url));
+        res.json({ preview });
+        return;
+      }
       const result = await fetchBookmarkPreviewWithFallback(String(req.body.url));
       res.json(result);
     } catch (error) {

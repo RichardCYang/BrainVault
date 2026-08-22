@@ -521,8 +521,16 @@ function getDatabasePreviewUrl(value) {
   }
 }
 
+const databaseUrlPreviewFaviconDataUrlMaxLength = Math.ceil((128 * 1024 * 4) / 3) + 128;
+const databaseUrlPreviewFaviconDataPattern = /^data:image\/(?:png|jpeg|gif|webp|vnd\.microsoft\.icon);base64,[a-z0-9+/]+={0,2}$/i;
+
 function getDatabasePreviewImageUrl(value) {
-  const url = getDatabasePreviewUrl(value);
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (
+    raw.length <= databaseUrlPreviewFaviconDataUrlMaxLength
+    && databaseUrlPreviewFaviconDataPattern.test(raw)
+  ) return raw;
+  const url = getDatabasePreviewUrl(raw);
   return url?.toString() ?? "";
 }
 

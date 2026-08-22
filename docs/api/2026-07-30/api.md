@@ -38,7 +38,7 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `PUT` | `/api/pages/:pageId/collaboration/snapshot` | Materialize the locked durable Yjs log into page/block tables; request content is not trusted |
 | `WS` | `/api/collaboration/:pageId` | Authenticated binary Yjs updates plus JSON presence/control messages |
 | `POST` | `/api/pages/:pageId/blocks` | Add a non-attachment block; exact ambiguous retries reuse `mutationId` |
-| `POST` | `/api/bookmarks/preview` | Fetch sanitized OpenGraph metadata for a public URL under a dedicated authenticated-user rate limit |
+| `POST` | `/api/bookmarks/preview` | Fetch bookmark OpenGraph metadata, or database-URL document `<title>`/favicon metadata when `mode: "database-url"` is requested, under a dedicated authenticated-user rate limit |
 | `POST` | `/api/pages/:pageId/attachments` | Upload a screened file and create an attachment block; access, page state, request size, rate, and concurrency admission are checked before multipart bytes reach temporary storage; exact ambiguous retries reuse `mutationId` |
 | `PATCH` | `/api/blocks/:blockId` | Update a block |
 | `DELETE` | `/api/blocks/:blockId` | Delete a block and its descendants using an exact version snapshot and required mutation ID |

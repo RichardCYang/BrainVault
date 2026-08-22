@@ -2,8 +2,10 @@ import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
+  createDatabaseFaviconDataUrl,
   createFallbackBookmarkPreview,
   createPinnedLookup,
+  databaseUrlPreviewFaviconMaxBytes,
   enforceAbsoluteRequestDeadline,
   getBookmarkData,
   isRedditBookmarkUrl,
@@ -11,6 +13,7 @@ import {
   isBookmarkFetchHostAllowed,
   normalizeBookmarkUrl,
   parseBookmarkPreview,
+  parseDatabaseUrlDocumentMetadata,
   prioritizeResolvedAddresses,
   renderBookmarkHtml,
   summarizeBookmarkData
@@ -64,6 +67,47 @@ describe("bookmark OpenGraph parsing", () => {
     expect(preview.siteName).toBe("docs.example.org");
     expect(preview.faviconUrl).toBe("https://docs.example.org/favicon.ico");
     expect(preview.imageUrl).toBe("");
+  });
+});
+
+describe("database URL document metadata", () => {
+  it("uses the literal document <title> instead of OpenGraph title and resolves favicon links", () => {
+    const metadata = parseDatabaseUrlDocumentMetadata(
+      `<!doctype html><html><head>
+        <meta property="og:title" content="OpenGraph title must not win">
+        <title>Actual &amp; Document Title</title>
+        <base href="https://assets.example.com/app/">
+        <link rel="icon" href="first.ico" sizes="16x16">
+        <link rel="icon" href="/last.ico" sizes="32x32">
+        <link rel="apple-touch-icon" href="touch.png">
+      </head></html>`,
+      "https://www.example.com/path/page"
+    );
+
+    expect(metadata.title).toBe("Actual & Document Title");
+    expect(metadata.faviconUrls).toEqual([
+      "https://assets.example.com/last.ico",
+      "https://assets.example.com/app/first.ico",
+      "https://assets.example.com/app/touch.png",
+      "https://www.example.com/favicon.ico"
+    ]);
+  });
+
+  it("falls back to the hostname title and conventional /favicon.ico when metadata is absent", () => {
+    expect(parseDatabaseUrlDocumentMetadata("<html><head></head></html>", "https://docs.example.org/guide")).toEqual({
+      title: "docs.example.org",
+      faviconUrls: ["https://docs.example.org/favicon.ico"]
+    });
+  });
+
+  it("converts only bounded passive favicon image formats to CSP-compatible data URLs", () => {
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlR0y8AAAAASUVORK5CYII=",
+      "base64"
+    );
+    expect(createDatabaseFaviconDataUrl(png)).toBe(`data:image/png;base64,${png.toString("base64")}`);
+    expect(createDatabaseFaviconDataUrl(Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'></svg>"))).toBe("");
+    expect(createDatabaseFaviconDataUrl(Buffer.alloc(databaseUrlPreviewFaviconMaxBytes + 1, 0))).toBe("");
   });
 });
 
@@ -241,6 +285,8 @@ describe("bookmark network address selection", () => {
     expect(envSource).toContain('BOOKMARK_FETCH_ALLOWED_HOSTS');
     expect(envSource).toContain('BOOKMARK_FETCH_ALLOWED_PORTS');
     expect(bookmarkSource).toContain('isSelfOrSubdomainBookmarkFetchHost(url.hostname)');
+    expect(bookmarkSource).toContain('if (hostPolicy === "allowlist" && !isBookmarkFetchHostAllowed(url.hostname))');
+    expect(bookmarkSource).toContain('fetchHtml(value, bookmarkLimits.redirects, deadline, "public")');
     expect(isBookmarkFetchHostAllowed("example.com", ["example.com"])).toBe(true);
     expect(isBookmarkFetchHostAllowed("cdn.example.com", ["example.com"])).toBe(true);
     expect(isBookmarkFetchHostAllowed("example.com.evil.test", ["example.com"])).toBe(false);

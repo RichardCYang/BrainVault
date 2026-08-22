@@ -311,7 +311,12 @@ function isSelfOrSubdomainBookmarkFetchHost(hostname: string) {
   return net.isIP(host) === 0 && net.isIP(publicHost) === 0 && host.endsWith(`.${publicHost}`);
 }
 
-async function validateFetchUrl(value: string | URL) {
+type BookmarkFetchHostPolicy = "allowlist" | "public";
+
+async function validateFetchUrl(
+  value: string | URL,
+  hostPolicy: BookmarkFetchHostPolicy = "allowlist"
+) {
   const normalized = normalizeBookmarkUrl(String(value));
   if (!normalized) {
     throw new ApiError(400, "BOOKMARK_URL_INVALID", "Enter a valid HTTP or HTTPS URL");
@@ -320,7 +325,7 @@ async function validateFetchUrl(value: string | URL) {
   if (isSelfOrSubdomainBookmarkFetchHost(url.hostname)) {
     throw new ApiError(403, "BOOKMARK_URL_BLOCKED", "Self-origin bookmark previews are not allowed");
   }
-  if (!isBookmarkFetchHostAllowed(url.hostname)) {
+  if (hostPolicy === "allowlist" && !isBookmarkFetchHostAllowed(url.hostname)) {
     throw new ApiError(403, "BOOKMARK_URL_BLOCKED", "Bookmark preview host is not approved for server-side fetching");
   }
   const effectivePort = url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
@@ -360,9 +365,10 @@ function bookmarkFetchUserAgent(url: URL) {
 async function fetchHtml(
   value: string | URL,
   redirectsLeft: number = bookmarkLimits.redirects,
-  deadline: number = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS
+  deadline: number = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS,
+  hostPolicy: BookmarkFetchHostPolicy = "allowlist"
 ): Promise<HtmlResponse> {
-  const { url, addresses } = await validateFetchUrl(value);
+  const { url, addresses } = await validateFetchUrl(value, hostPolicy);
   const client = url.protocol === "https:" ? https : http;
   const remainingTime = deadline - Date.now();
   if (remainingTime <= 0) {
@@ -423,7 +429,7 @@ async function fetchHtml(
             rejectFetch(new ApiError(403, "BOOKMARK_URL_BLOCKED", "Bookmark redirects must not downgrade from HTTPS to HTTP"));
             return;
           }
-          fetchHtml(nextUrl, redirectsLeft - 1, deadline).then(
+          fetchHtml(nextUrl, redirectsLeft - 1, deadline, hostPolicy).then(
             (result) => {
               if (settled) return;
               settled = true;
@@ -611,6 +617,242 @@ export function parseBookmarkPreview(html: string, pageUrl: string | URL): Bookm
     faviconUrl,
     siteName
   };
+}
+
+export type DatabaseUrlDocumentMetadata = {
+  title: string;
+  faviconUrls: string[];
+};
+
+export type DatabaseUrlPreview = {
+  title: string;
+  faviconUrl: string;
+};
+
+export const databaseUrlPreviewFaviconMaxBytes = 128 * 1024;
+
+function validIcoStructure(bytes: Buffer) {
+  if (bytes.length < 22 || bytes.readUInt16LE(0) !== 0 || bytes.readUInt16LE(2) !== 1) return false;
+  const imageCount = bytes.readUInt16LE(4);
+  const directoryEnd = 6 + imageCount * 16;
+  if (!imageCount || directoryEnd > bytes.length) return false;
+  for (let index = 0; index < imageCount; index += 1) {
+    const offset = 6 + index * 16;
+    const imageSize = bytes.readUInt32LE(offset + 8);
+    const imageOffset = bytes.readUInt32LE(offset + 12);
+    if (!imageSize || imageOffset < directoryEnd || imageOffset > bytes.length || imageSize > bytes.length - imageOffset) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function detectDatabaseFaviconMimeType(bytes: Buffer) {
+  if (!bytes.length || bytes.length > databaseUrlPreviewFaviconMaxBytes) return "";
+  if (
+    bytes.length >= 8
+    && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+  ) return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP") {
+    return "image/webp";
+  }
+  if (bytes.length >= 6) {
+    const signature = bytes.toString("ascii", 0, 6);
+    if (signature === "GIF87a" || signature === "GIF89a") return "image/gif";
+  }
+  if (validIcoStructure(bytes)) return "image/vnd.microsoft.icon";
+  return "";
+}
+
+export function createDatabaseFaviconDataUrl(bytes: Buffer) {
+  const mimeType = detectDatabaseFaviconMimeType(bytes);
+  return mimeType ? `data:${mimeType};base64,${bytes.toString("base64")}` : "";
+}
+
+export function parseDatabaseUrlDocumentMetadata(html: string, pageUrl: string | URL): DatabaseUrlDocumentMetadata {
+  const finalUrl = new URL(pageUrl);
+  const head = html.slice(0, bookmarkLimits.htmlBytes);
+  const titleTag = /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i.exec(head)?.[1] ?? "";
+  const title = normalizeText(
+    decodeHtmlEntities(titleTag.replace(/<[^>]+>/g, " ")),
+    bookmarkLimits.titleLength
+  ) || finalUrl.hostname;
+
+  let linkBaseUrl = finalUrl.toString();
+  const baseTag = /<base\b[^>]*>/i.exec(head)?.[0];
+  if (baseTag) {
+    const baseHref = parseAttributes(baseTag).href;
+    if (baseHref) linkBaseUrl = normalizeBookmarkUrl(baseHref, finalUrl) || linkBaseUrl;
+  }
+
+  const iconUrls: string[] = [];
+  const appleTouchIconUrls: string[] = [];
+  for (const tag of head.match(/<link\b[^>]*>/gi) ?? []) {
+    const attributes = parseAttributes(tag);
+    if (!attributes.href) continue;
+    const rel = (attributes.rel ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+    const resolved = normalizeBookmarkUrl(attributes.href, linkBaseUrl);
+    if (!resolved) continue;
+    if (rel.includes("icon")) iconUrls.push(resolved);
+    else if (rel.includes("apple-touch-icon") || rel.includes("apple-touch-icon-precomposed")) {
+      appleTouchIconUrls.push(resolved);
+    }
+  }
+
+  // When several equally suitable icons exist, browsers prefer the last one in tree order.
+  // Try regular favicon links before touch icons, then the conventional origin favicon path.
+  const faviconUrls = [
+    ...iconUrls.reverse(),
+    ...appleTouchIconUrls.reverse(),
+    new URL("/favicon.ico", finalUrl).toString()
+  ].filter((value, index, values) => values.indexOf(value) === index);
+
+  return { title, faviconUrls };
+}
+
+async function fetchDatabaseFaviconBytes(
+  value: string | URL,
+  redirectsLeft: number,
+  deadline: number
+): Promise<Buffer> {
+  const { url, addresses } = await validateFetchUrl(value, "public");
+  const client = url.protocol === "https:" ? https : http;
+  const remainingTime = deadline - Date.now();
+  if (remainingTime <= 0) throw createBookmarkFetchTimeoutError();
+
+  return new Promise<Buffer>((resolve, reject) => {
+    let settled = false;
+    const rejectFetch = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      if (error instanceof ApiError) {
+        reject(error);
+        return;
+      }
+      const systemCode = error && typeof error === "object" && "code" in error ? String(error.code) : undefined;
+      reject(new ApiError(422, "BOOKMARK_FETCH_FAILED", "The URL preview favicon could not be fetched", {
+        reason: "network",
+        systemCode
+      }));
+    };
+
+    const request = client.request(
+      url,
+      {
+        method: "GET",
+        headers: {
+          Accept: "image/avif,image/webp,image/png,image/jpeg,image/gif,image/x-icon,image/vnd.microsoft.icon,*/*;q=0.1",
+          "Accept-Encoding": "identity",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+          "User-Agent": bookmarkFetchUserAgent(url)
+        },
+        lookup: createPinnedLookup(addresses),
+        agent: createBookmarkFetchAgent(url, addresses)
+      },
+      (response) => {
+        const status = response.statusCode ?? 0;
+        const location = response.headers.location;
+        if (status >= 300 && status < 400 && location) {
+          response.resume();
+          if (redirectsLeft <= 0) {
+            rejectFetch(new ApiError(422, "BOOKMARK_REDIRECT_LIMIT", "The favicon URL redirected too many times"));
+            return;
+          }
+          let nextUrl: URL;
+          try {
+            nextUrl = new URL(location, url);
+          } catch {
+            rejectFetch(new ApiError(422, "BOOKMARK_FETCH_FAILED", "The favicon URL returned an invalid redirect"));
+            return;
+          }
+          if (url.protocol === "https:" && nextUrl.protocol !== "https:") {
+            rejectFetch(new ApiError(403, "BOOKMARK_URL_BLOCKED", "Favicon redirects must not downgrade from HTTPS to HTTP"));
+            return;
+          }
+          fetchDatabaseFaviconBytes(nextUrl, redirectsLeft - 1, deadline).then(
+            (result) => {
+              if (settled) return;
+              settled = true;
+              resolve(result);
+            },
+            rejectFetch
+          );
+          return;
+        }
+
+        if (status < 200 || status >= 300) {
+          response.resume();
+          rejectFetch(new ApiError(422, "BOOKMARK_FETCH_FAILED", `The favicon URL returned HTTP ${status || "error"}`));
+          return;
+        }
+
+        const contentEncoding = String(response.headers["content-encoding"] ?? "").toLowerCase().trim();
+        if (contentEncoding && contentEncoding !== "identity") {
+          response.resume();
+          rejectFetch(new ApiError(422, "BOOKMARK_FETCH_FAILED", "The favicon response ignored the requested encoding"));
+          return;
+        }
+
+        const declaredLength = Number(response.headers["content-length"] ?? 0);
+        if (Number.isFinite(declaredLength) && declaredLength > databaseUrlPreviewFaviconMaxBytes) {
+          response.resume();
+          rejectFetch(new ApiError(422, "BOOKMARK_PAGE_TOO_LARGE", "The favicon is too large"));
+          return;
+        }
+
+        const chunks: Buffer[] = [];
+        let total = 0;
+        response.on("data", (rawChunk: Buffer | string) => {
+          if (settled) return;
+          const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
+          total += chunk.length;
+          if (total > databaseUrlPreviewFaviconMaxBytes) {
+            response.destroy();
+            rejectFetch(new ApiError(422, "BOOKMARK_PAGE_TOO_LARGE", "The favicon is too large"));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        response.on("end", () => {
+          if (settled) return;
+          settled = true;
+          resolve(Buffer.concat(chunks));
+        });
+        response.on("aborted", () => rejectFetch(new Error("The favicon response was aborted")));
+        response.on("error", rejectFetch);
+      }
+    );
+
+    enforceAbsoluteRequestDeadline(request, remainingTime);
+    request.setTimeout(remainingTime, () => request.destroy(createBookmarkFetchTimeoutError()));
+    request.on("error", rejectFetch);
+    request.end();
+  });
+}
+
+export async function fetchDatabaseUrlPreview(value: string): Promise<DatabaseUrlPreview> {
+  const deadline = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS;
+  // Database URL properties intentionally support arbitrary public-web URLs. This mode keeps
+  // the same protocol/port/private-address/DNS-pinning/redirect protections as bookmarks but
+  // does not apply the operator bookmark host allowlist, which cannot enumerate user-entered URLs.
+  const response = await fetchHtml(value, bookmarkLimits.redirects, deadline, "public");
+  const metadata = parseDatabaseUrlDocumentMetadata(response.html, response.url);
+  let faviconUrl = "";
+
+  for (const candidate of metadata.faviconUrls.slice(0, 8)) {
+    try {
+      faviconUrl = createDatabaseFaviconDataUrl(
+        await fetchDatabaseFaviconBytes(candidate, bookmarkLimits.redirects, deadline)
+      );
+      if (faviconUrl) break;
+    } catch {
+      // A broken/blocked icon must not discard an otherwise valid document title.
+    }
+  }
+
+  return { title: metadata.title, faviconUrl };
 }
 
 async function normalizePublicPreviewUrl(value: string, fallback = "") {

@@ -49,5 +49,6 @@ describe("Database block UI", () => {
     expect(client).toContain('return normalizeDatabaseData(row?.querySelector(".database-block-editor")?.databaseData);');
     expect(app).toContain('hydrateDatabaseUrlPreviews(elements.pageView, fetchDatabaseUrlPreview)');
     expect(app).toContain('api("/api/bookmarks/preview"');
+    expect(app).toContain('body: { url, mode: "database-url" }');
   });
 });
