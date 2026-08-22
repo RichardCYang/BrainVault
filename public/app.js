@@ -10172,7 +10172,7 @@ async function submitBlockMoveTask(task, authenticationScope) {
             body: { ...task.payload, mutationId: task.mutationId }
           });
         });
-        if (data === null && !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         if (pendingBlockMoveTasks.get(task.taskKey) === task) {
           pendingBlockMoveTasks.delete(task.taskKey);
         }
@@ -10226,7 +10226,7 @@ async function moveBlockToPage(blockId, targetPageId, { authenticationScope, sou
       expectedSourcePageContentVersion: Number(state.selectedPage?.contentVersion ?? 1)
     });
     const data = await submitBlockMoveTask(task, scope);
-    if (data === null && !isCurrentAuthenticatedSessionScope(scope)) return null;
+    if (data === null || !isCurrentAuthenticatedSessionScope(scope)) return null;
 
     const movedIds = Array.isArray(data?.movedBlockIds)
       ? data.movedBlockIds

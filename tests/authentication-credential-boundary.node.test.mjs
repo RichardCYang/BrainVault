@@ -635,3 +635,73 @@ test("custom icon mutations revalidate authentication inside the storage transac
     );
   }
 });
+
+test("block move response application stays fenced to the initiating authentication generation", async () => {
+  const source = await read("public/app.js");
+
+  const submitStart = source.indexOf("async function submitBlockMoveTask");
+  const moveStart = source.indexOf("async function moveBlockToPage", submitStart);
+  const deleteStart = source.indexOf("async function deleteBlockWithVersionCheck", moveStart);
+  assert.ok(submitStart >= 0 && moveStart > submitStart && deleteStart > moveStart);
+
+  const submit = source.slice(submitStart, moveStart);
+  const move = source.slice(moveStart, deleteStart);
+
+  const submitResponseIndex = submit.indexOf("const data = await submitWithFreshMutationIdOnReuse");
+  const submitFenceIndex = submit.indexOf(
+    "if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;",
+    submitResponseIndex
+  );
+  const submitTaskCleanupIndex = submit.indexOf("pendingBlockMoveTasks.delete", submitResponseIndex);
+  assert.ok(
+    submitResponseIndex >= 0
+      && submitFenceIndex > submitResponseIndex
+      && submitTaskCleanupIndex > submitFenceIndex,
+    "a completed block-move response must be rejected after auth rotation before its retry task is acknowledged"
+  );
+
+  const moveResponseIndex = move.indexOf("const data = await submitBlockMoveTask(task, scope);");
+  const moveFenceIndex = move.indexOf(
+    "if (data === null || !isCurrentAuthenticatedSessionScope(scope)) return null;",
+    moveResponseIndex
+  );
+  const localCleanupIndex = move.indexOf("pageDraftStore.removeBlocks", moveResponseIndex);
+  assert.ok(
+    moveResponseIndex >= 0 && moveFenceIndex > moveResponseIndex && localCleanupIndex > moveFenceIndex,
+    "the initiating auth generation must be revalidated before moved-block recovery drafts are removed"
+  );
+
+  async function reproduce({ fixed }) {
+    let currentAuthenticationScope = true;
+    let localDraftPresent = true;
+    const response = { movedBlockIds: ["blk_1"] };
+
+    // The API response can pass its own boundary check and then yield. A
+    // credential-rotation continuation may run before the caller applies the
+    // response or removes local recovery state.
+    await Promise.resolve();
+    currentAuthenticationScope = false;
+
+    if (fixed) {
+      if (response === null || !currentAuthenticationScope) {
+        return { localDraftPresent, responseApplied: false };
+      }
+    } else if (response === null && !currentAuthenticationScope) {
+      return { localDraftPresent, responseApplied: false };
+    }
+
+    localDraftPresent = false;
+    return { localDraftPresent, responseApplied: true };
+  }
+
+  assert.deepEqual(
+    await reproduce({ fixed: false }),
+    { localDraftPresent: false, responseApplied: true },
+    "the old conjunction permits a stale successful JSON response to erase local recovery state"
+  );
+  assert.deepEqual(
+    await reproduce({ fixed: true }),
+    { localDraftPresent: true, responseApplied: false },
+    "the fixed disjunction rejects the stale response and preserves local recovery state"
+  );
+});
