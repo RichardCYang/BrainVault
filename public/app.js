@@ -8546,7 +8546,7 @@ async function submitPageDeleteTask(task, authenticationScope) {
             body: { expectedSnapshot: task.expectedSnapshot, mutationId: task.mutationId }
           });
         });
-        if (data === null && !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         if (pendingPageDeleteTasks.get(task.taskKey) === task) pendingPageDeleteTasks.delete(task.taskKey);
         return data;
       } catch (error) {
