@@ -1391,6 +1391,16 @@ function assertCurrentAuthenticatedSessionScope(scope) {
   });
 }
 
+function clearWorkspaceScopedPendingMutationTasks() {
+  pendingWorkspaceCreateTasks.clear();
+  pendingPageVersionResetTasks.clear();
+  pendingBlockCreateTasks.clear();
+  pendingBlockDeleteTasks.clear();
+  pendingBlockMoveTasks.clear();
+  pendingPageDeleteTasks.clear();
+  pendingAttachmentCreateTasks.clear();
+}
+
 function acceptRotatedAuthenticationSession() {
   authenticationSessionGeneration += 1;
   accountSecurityOperationGuards.activeSessions.invalidate();
@@ -2550,6 +2560,10 @@ async function applyRestoredWorkspaceData(data, targetKey, activeOperation) {
   ) {
     throw new Error(t("errors.invalidResponse"));
   }
+  // A committed restore replaces the workspace generation. Mutation receipts
+  // and optimistic versions from the previous generation must not be adopted by
+  // restored page/block identities, even when the backup reuses the same IDs.
+  clearWorkspaceScopedPendingMutationTasks();
   state.user = data.user;
   state.snapshots.diffById = new Map();
   applyUserTheme();
@@ -7731,7 +7745,7 @@ function createPageVersionChangeCard(change) {
 }
 
 function getPageVersionResetTaskKey(scope, pageId) {
-  return `${scope.generation}\u0000${scope.targetKey}\u0000${pageId}`;
+  return `${scope.generation}\u0000${scope.targetKey}\u0000${scope.workspaceGeneration}\u0000${pageId}`;
 }
 
 function getCurrentPageVersionResetTask(pageId) {
@@ -8369,6 +8383,7 @@ function findPendingPageDeleteTask(authenticationScope, pageId) {
       task.pageId === pageId
       && task.authenticationGeneration === authenticationScope.generation
       && task.targetKey === authenticationScope.targetKey
+      && task.workspaceGeneration === authenticationScope.workspaceGeneration
     ) return task;
   }
   return null;
@@ -8381,6 +8396,7 @@ function getPageDeleteTask(authenticationScope, pageId, expectedSnapshot, pageId
   const taskKey = [
     authenticationScope.generation,
     authenticationScope.targetKey,
+    authenticationScope.workspaceGeneration,
     pageId,
     expectedSnapshot
   ].join("\u0000");
@@ -8388,6 +8404,7 @@ function getPageDeleteTask(authenticationScope, pageId, expectedSnapshot, pageId
     taskKey,
     authenticationGeneration: authenticationScope.generation,
     targetKey: authenticationScope.targetKey,
+    workspaceGeneration: authenticationScope.workspaceGeneration,
     pageId,
     mutationId: createMutationId(),
     expectedSnapshot,
@@ -9933,6 +9950,7 @@ function getBlockDeleteTask(authenticationScope, pageId, blockId, payload) {
   const taskKey = [
     authenticationScope.generation,
     authenticationScope.targetKey,
+    authenticationScope.workspaceGeneration,
     pageId,
     blockId,
     payload.preserveChildren ? "preserve" : "cascade"
@@ -10000,6 +10018,7 @@ function getBlockMoveTask(authenticationScope, pageId, blockId, targetPageId, pa
   const taskKey = [
     authenticationScope.generation,
     authenticationScope.targetKey,
+    authenticationScope.workspaceGeneration,
     pageId,
     blockId,
     targetPageId
@@ -13659,7 +13678,7 @@ function getAttachmentCreateTask(
       lastModified: file.lastModified
     }
   });
-  const taskKey = `${authenticationScope.targetKey}\n${requestKey}`;
+  const taskKey = `${authenticationScope.generation}\n${authenticationScope.targetKey}\n${authenticationScope.workspaceGeneration}\n${requestKey}`;
   const pendingTask = pendingAttachmentCreateTasks.get(taskKey);
   if (pendingTask && !pendingTask.inFlight) {
     // A newly selected File with the same browser fingerprint may still contain
@@ -14241,7 +14260,7 @@ async function persistBlockOrder(
 
 function getBlockCreateTask(authenticationScope, pageId, payload) {
   const requestKey = JSON.stringify({ pageId, payload });
-  const taskKey = `${authenticationScope.targetKey}\n${requestKey}`;
+  const taskKey = `${authenticationScope.generation}\n${authenticationScope.targetKey}\n${authenticationScope.workspaceGeneration}\n${requestKey}`;
   const pendingTask = pendingBlockCreateTasks.get(taskKey);
   if (pendingTask && !pendingTask.inFlight) return pendingTask;
 
@@ -15679,7 +15698,7 @@ function getWorkspaceCreateRequestKey(payload) {
 
 function getWorkspaceCreateTask(authenticationScope, payload) {
   const requestKey = getWorkspaceCreateRequestKey(payload);
-  const taskKey = `${authenticationScope.targetKey}\n${requestKey}`;
+  const taskKey = `${authenticationScope.generation}\n${authenticationScope.targetKey}\n${authenticationScope.workspaceGeneration}\n${requestKey}`;
   const pendingTask = pendingWorkspaceCreateTasks.get(taskKey);
   if (pendingTask) return pendingTask;
 
