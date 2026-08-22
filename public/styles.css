@@ -4391,7 +4391,7 @@ body.is-kanban-column-dragging {
   overflow: auto;
   border: 0;
   border-radius: 16px;
-  background: var(--surface);
+  background: var(--panel);
   color: var(--ink);
   padding: 0;
   box-shadow: 0 32px 100px rgba(15, 23, 42, 0.34);
@@ -4474,7 +4474,7 @@ body.is-kanban-column-dragging {
   min-height: 2.65rem;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: var(--surface);
+  background: var(--panel);
   color: var(--ink);
   padding: 0.55rem 0.7rem;
   font: inherit;
@@ -17258,7 +17258,7 @@ html[data-theme="dark"] .rendered-gantt-status--blocked { background: #513529; c
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--surface);
+  background: var(--panel);
   padding: 0;
   box-shadow: none;
 }
@@ -17308,7 +17308,7 @@ html[data-theme="dark"] .rendered-gantt-status--blocked { background: #513529; c
   gap: 1rem;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--surface-soft);
+  background: var(--panel-soft);
   padding: 0.9rem;
 }
 
