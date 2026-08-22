@@ -742,6 +742,30 @@ test("collaboration mutation completions stay bound to their initiating auth/pag
     "a superseded collaboration block rejection must not restore or rerender the current workspace"
   );
 
+  const awaitedBlockStart = source.indexOf("async function saveBlockRow");
+  const awaitedBlockEnd = source.indexOf("function scheduleBlockSave", awaitedBlockStart);
+  const awaitedBlock = source.slice(awaitedBlockStart, awaitedBlockEnd);
+  const awaitedBlockMutation = awaitedBlock.indexOf("block = await session.upsertBlock");
+  const awaitedBlockCatch = awaitedBlock.indexOf("} catch (error) {", awaitedBlockMutation);
+  const awaitedBlockRejectedFence = awaitedBlock.indexOf(
+    "if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;",
+    awaitedBlockCatch
+  );
+  const awaitedBlockRejectedUi = awaitedBlock.indexOf("rejectLocalBlockMutation(row, error)", awaitedBlockCatch);
+  const awaitedBlockResolvedFence = awaitedBlock.indexOf(
+    "if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;",
+    awaitedBlockRejectedUi
+  );
+  const awaitedBlockResolvedUi = awaitedBlock.indexOf("recordBlockEditorHistory(row, payload, current)", awaitedBlockRejectedUi);
+  assert.ok(
+    awaitedBlockMutation >= 0
+      && awaitedBlockRejectedFence > awaitedBlockCatch
+      && awaitedBlockRejectedUi > awaitedBlockRejectedFence
+      && awaitedBlockResolvedFence > awaitedBlockRejectedUi
+      && awaitedBlockResolvedUi > awaitedBlockResolvedFence,
+    "awaited collaboration block saves must fence stale session completions before recovery or editor-history changes"
+  );
+
   const saveTitleStart = source.indexOf("async function savePageTitleNow");
   const scheduleTitleStart = source.indexOf("function schedulePageTitleSave", saveTitleStart);
   const saveTitle = source.slice(saveTitleStart, scheduleTitleStart);

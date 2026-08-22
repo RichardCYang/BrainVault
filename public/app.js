@@ -13326,6 +13326,8 @@ async function saveBlockRow(row, options = {}) {
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
     if (!session?.isReady) throw new Error(t("sharing.syncRequired"));
+    const pageId = state.selectedPage?.id;
+    if (!pageId) return null;
     const current = getBlockById(blockId);
     if (!current) return null;
     let block;
@@ -13336,11 +13338,18 @@ async function saveBlockRow(row, options = {}) {
         parentBlockId: normalizeParentBlockId(row.dataset.parentBlockId),
         sortOrder: Number(current.sortOrder ?? 0)
       });
-      assertCurrentAuthenticatedSessionScope(authenticationScope);
     } catch (error) {
+      // Access/share refreshes can replace the collaboration session while this
+      // awaited write is settling. An obsolete rejection must not restore or
+      // rerender the replacement editor.
+      if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;
       rejectLocalBlockMutation(row, error);
       throw error;
     }
+    // The old session may resolve after a same-page collaboration generation
+    // has been replaced. Never seed editor history or mutate the active UI from
+    // a write that belongs to that obsolete session.
+    if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;
     recordBlockEditorHistory(row, payload, current);
     row.classList.remove("is-dirty", "is-saving", "save-error");
     row.classList.add("is-saved");
