@@ -1893,6 +1893,60 @@ blockRouter.post(
             throw new ApiError(400, "INVALID_PARENT_BLOCK", "A block cannot be its own parent");
           }
         }
+
+        // Reorders are sibling-list snapshots, not sparse position patches. A block
+        // can be created or moved into one of these parents without changing the
+        // edit_version of any block named by this stale request. Require each
+        // affected final sibling list to be complete before writing so an unlisted
+        // concurrent sibling cannot be assigned a duplicate/obsolete position.
+        const requestedParentById = new Map<string, string | null>();
+        const affectedParentIds = new Set<string | null>();
+        for (const item of items) {
+          const current = rowById.get(item.id)!;
+          const requestedParentId =
+            item.parentBlockId === undefined ? current.parent_block_id : item.parentBlockId;
+          requestedParentById.set(item.id, requestedParentId);
+          affectedParentIds.add(current.parent_block_id);
+          affectedParentIds.add(requestedParentId);
+        }
+
+        for (const parentBlockId of affectedParentIds) {
+          const requestedSiblings = items.filter(
+            (item) => requestedParentById.get(item.id) === parentBlockId
+          );
+          const requestedSiblingIds = new Set(requestedSiblings.map((item) => item.id));
+          const finalSiblingIds = hierarchyRows
+            .filter((row) => {
+              const finalParentId = requestedParentById.has(row.id)
+                ? requestedParentById.get(row.id)!
+                : row.parent_block_id;
+              return finalParentId === parentBlockId;
+            })
+            .map((row) => row.id);
+
+          if (
+            finalSiblingIds.length !== requestedSiblings.length
+            || finalSiblingIds.some((id) => !requestedSiblingIds.has(id))
+          ) {
+            throw new ApiError(
+              409,
+              "BLOCK_EDIT_CONFLICT",
+              "The sibling list changed in another session. Your stale order was not applied."
+            );
+          }
+
+          const requestedSortOrders = requestedSiblings
+            .map((item) => item.sortOrder)
+            .sort((left, right) => left - right);
+          if (requestedSortOrders.some((sortOrder, index) => sortOrder !== index)) {
+            throw new ApiError(
+              400,
+              "INVALID_BLOCK_ORDER",
+              "Each affected sibling list must use every sort position exactly once."
+            );
+          }
+        }
+
         assertReorderDoesNotCreateCycle(hierarchyRows, items);
 
         for (const item of items) {

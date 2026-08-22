@@ -194,6 +194,41 @@ describe("Block reorder conflict protection", () => {
     expect(page.content_version).toBe(2);
   });
 
+  it("rejects a stale sibling snapshot when a concurrent block was inserted", async () => {
+    database.blocks.set("blk_concurrent", makeBlock("blk_concurrent", 0));
+    page.content_version = 2;
+
+    const response = await request(createApp())
+      .post(`/api/pages/${page.id}/blocks/reorder`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(reorderBody())
+      .expect(409);
+
+    expect(response.body.error.code).toBe("BLOCK_EDIT_CONFLICT");
+    expect(database.blocks.get("blk_first")?.sort_order).toBe(0);
+    expect(database.blocks.get("blk_second")?.sort_order).toBe(1);
+    expect(database.blocks.get("blk_concurrent")?.sort_order).toBe(0);
+    expect(database.execute).not.toHaveBeenCalled();
+    expect(page.content_version).toBe(2);
+  });
+
+  it("rejects malformed sibling snapshots with duplicate sort positions", async () => {
+    const response = await request(createApp())
+      .post(`/api/pages/${page.id}/blocks/reorder`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        items: [
+          { id: "blk_first", sortOrder: 0, parentBlockId: null, expectedVersion: 1 },
+          { id: "blk_second", sortOrder: 0, parentBlockId: null, expectedVersion: 1 }
+        ]
+      })
+      .expect(400);
+
+    expect(response.body.error.code).toBe("INVALID_BLOCK_ORDER");
+    expect(database.execute).not.toHaveBeenCalled();
+    expect(page.content_version).toBe(1);
+  });
+
   it("rejects a stale reorder instead of overwriting a newer order", async () => {
     await request(createApp())
       .post(`/api/pages/${page.id}/blocks/reorder`)

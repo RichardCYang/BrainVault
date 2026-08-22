@@ -268,6 +268,17 @@ test("block reorder validates block and parent identifiers before request hashin
   assert.match(schema, /parentBlockId: routeIdSchema\.nullable\(\)\.optional\(\)/);
   assert.match(route, /validate\(\{ params: idParamSchema, body: reorderSchema \}\)/);
   assert.match(route, /createMutationRequestHash\(\{ pageId, items \}\)/);
+  assert.match(route, /const requestedParentById = new Map<string, string \| null>\(\)/);
+  assert.match(route, /const affectedParentIds = new Set<string \| null>\(\)/);
+  assert.match(route, /finalSiblingIds\.length !== requestedSiblings\.length/);
+  assert.match(route, /finalSiblingIds\.some\(\(id\) => !requestedSiblingIds\.has\(id\)\)/);
+  assert.match(route, /"The sibling list changed in another session\. Your stale order was not applied\."/);
+  assert.match(route, /requestedSortOrders\.some\(\(sortOrder, index\) => sortOrder !== index\)/);
+  assert.match(route, /"INVALID_BLOCK_ORDER"/);
+
+  const snapshotFence = route.indexOf("const requestedParentById");
+  const firstWrite = route.indexOf("UPDATE blocks");
+  assert.ok(snapshotFence >= 0 && firstWrite > snapshotFence);
 });
 
 
