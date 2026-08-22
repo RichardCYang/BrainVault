@@ -1769,10 +1769,6 @@ function isDefinitiveApiError(error) {
   return Number.isInteger(status) && status >= 400 && status < 500;
 }
 
-function isBlockEditConflict(error) {
-  return isDefinitiveApiError(error) && error?.code === "BLOCK_EDIT_CONFLICT";
-}
-
 function shouldReconcileCanonicalCreatedBlockOrder(data) {
   // Mid-list creates deliberately append canonically when the requested slot is
   // occupied, then rely on the complete reorder snapshot to place the new row.
@@ -1781,10 +1777,100 @@ function shouldReconcileCanonicalCreatedBlockOrder(data) {
   return data?.pageContentVersionAuthoritative === false;
 }
 
-async function reconcileCanonicalCreatedBlock(pageId, blockId) {
-  if (state.selectedPage?.id !== pageId) return;
-  state.pendingFocusBlockId = blockId;
-  await openPage(pageId);
+function adoptCommittedCreatedBlockLocally(
+  pageId,
+  committedBlock,
+  { orderedIds = null, removedBlockIds = [] } = {}
+) {
+  if (
+    state.workspaceView !== "page"
+    || state.selectedPage?.id !== pageId
+    || !committedBlock?.id
+  ) return false;
+
+  const parentBlockId = normalizeParentBlockId(committedBlock.parentBlockId);
+  if (parentBlockId && !getBlockById(parentBlockId)) return false;
+
+  const siblings = getBlockSiblings(parentBlockId);
+  const removedIds = new Set(removedBlockIds.filter(Boolean));
+  if (removedIds.size) {
+    for (let index = siblings.length - 1; index >= 0; index -= 1) {
+      if (removedIds.has(siblings[index]?.id)) siblings.splice(index, 1);
+    }
+  }
+
+  const existing = getBlockById(committedBlock.id);
+  if (existing) {
+    Object.assign(existing, committedBlock, { children: existing.children ?? [] });
+  } else {
+    siblings.push({
+      ...committedBlock,
+      parentBlockId,
+      children: Array.isArray(committedBlock.children) ? committedBlock.children : []
+    });
+  }
+
+  if (
+    Array.isArray(orderedIds)
+    && orderedIds.length === siblings.length
+    && orderedIds.includes(committedBlock.id)
+    && siblings.every((block) => orderedIds.includes(block.id))
+  ) {
+    reorderPageBlockSiblings(state.selectedPage, parentBlockId, orderedIds);
+    return true;
+  }
+
+  siblings.sort((left, right) => {
+    const leftOrder = Number(left?.sortOrder);
+    const rightOrder = Number(right?.sortOrder);
+    if (Number.isFinite(leftOrder) && Number.isFinite(rightOrder) && leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+    return String(left?.id ?? "").localeCompare(String(right?.id ?? ""));
+  });
+  return true;
+}
+
+async function reconcileCanonicalCreatedBlock(
+  pageId,
+  committedBlock,
+  {
+    authenticationScope = null,
+    orderedIds = null,
+    removedBlockIds = [],
+    skipFlush = false
+  } = {}
+) {
+  if (state.selectedPage?.id !== pageId || !committedBlock?.id) return;
+  state.pendingFocusBlockId = committedBlock.id;
+
+  try {
+    await openPage(pageId, { skipFlush });
+  } catch (error) {
+    const status = Number(error?.status ?? 0);
+    const authenticationStillCurrent =
+      !authenticationScope || isCurrentAuthenticatedSessionScope(authenticationScope);
+    const mayKeepCommittedCreateVisible =
+      authenticationStillCurrent
+      && state.workspaceView === "page"
+      && state.selectedPage?.id === pageId
+      && status !== 401
+      && status !== 403
+      && status !== 404;
+
+    if (
+      !mayKeepCommittedCreateVisible
+      || !adoptCommittedCreatedBlockLocally(pageId, committedBlock, { orderedIds, removedBlockIds })
+    ) {
+      throw error;
+    }
+
+    // The create/upload POST has already committed. A failed follow-up save,
+    // reorder response, or refresh must not turn that durable existence into an
+    // apparent failed create that a user can duplicate by retrying.
+    console.warn("BrainVault retained a committed created block after refresh failed.", error);
+    renderSelectedPage();
+  }
 }
 
 function canSupersedeBlockSaveError(error) {
@@ -7533,10 +7619,11 @@ async function setPageMode(nextMode, { announce = true } = {}) {
     if (normalizedMode === pageModes.WRITE && !hasBlocks) {
       // The mode transition intentionally holds pageModeChanging until the first editor block is ready.
       // Bypass only that self-owned interaction lock; createEmptyBlock still requires active write mode.
-      const data = await createEmptyBlock(state.selectedPage.id, { allowLocked: true });
-      if (!data) return;
-      state.pendingFocusBlockId = data.block.id;
-      await openPage(state.selectedPage.id);
+      const pageId = state.selectedPage.id;
+      const authenticationScope = captureAuthenticatedSessionScope();
+      const data = await createEmptyBlock(pageId, { allowLocked: true });
+      if (!data || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+      await reconcileCanonicalCreatedBlock(pageId, data.block, { authenticationScope });
     }
 
     if (announce) {
@@ -13843,7 +13930,7 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
     // result instead of sending a stale complete-sibling snapshot and then
     // telling the user the upload failed.
     if (!collaborativeAtStart && shouldReconcileCanonicalCreatedBlockOrder(data)) {
-      await reconcileCanonicalCreatedBlock(pageId, data.block.id);
+      await reconcileCanonicalCreatedBlock(pageId, data.block, { authenticationScope });
       setStatus(t("status.attachmentUploaded", { name: file.name }));
       return data;
     }
@@ -13916,11 +14003,11 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
           authenticationScope
         });
       } catch (error) {
-        // The attachment itself is already committed. A stale source-block
-        // replacement must preserve both canonical rows and reconcile the UI,
-        // not convert a successful upload into a retryable duplicate upload.
-        if (!isBlockEditConflict(error)) throw error;
-        await reconcileCanonicalCreatedBlock(pageId, data.block.id);
+        // The attachment itself is already committed. Any later source-block
+        // replacement failure must preserve that canonical upload and reconcile
+        // the UI, not convert a successful upload into a retryable duplicate.
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) throw error;
+        await reconcileCanonicalCreatedBlock(pageId, data.block, { authenticationScope });
         setStatus(t("status.attachmentUploaded", { name: file.name }));
         return data;
       }
@@ -13932,18 +14019,21 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
     try {
       await persistBlockOrder(parentBlockId, orderedIds, { [data.block.id]: data.block.version });
     } catch (error) {
-      // A concurrent sibling change can make the complete reorder snapshot stale
-      // after the upload has committed. Keep the one canonical upload and refresh
-      // its server-selected position instead of surfacing a false upload failure.
-      if (!isBlockEditConflict(error)) throw error;
-      await reconcileCanonicalCreatedBlock(pageId, data.block.id);
+      // The upload is already durable. A stale or ambiguous follow-up reorder is
+      // only a placement problem; reconcile the canonical create instead of
+      // reporting a failed upload that a retry could duplicate.
+      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) throw error;
+      await reconcileCanonicalCreatedBlock(pageId, data.block, { authenticationScope });
       setStatus(t("status.attachmentUploaded", { name: file.name }));
       return data;
     }
 
     if (state.selectedPage?.id === pageId) {
-      state.pendingFocusBlockId = data.block.id;
-      await openPage(pageId);
+      await reconcileCanonicalCreatedBlock(pageId, data.block, {
+        authenticationScope,
+        orderedIds,
+        removedBlockIds: shouldReplaceCurrentBlock ? [blockId] : []
+      });
     }
     setStatus(t("status.attachmentUploaded", { name: file.name }));
     return data;
@@ -14435,6 +14525,8 @@ async function insertBlockRelative(
 ) {
   if (!requireWritablePage() || !referenceRow?.dataset.blockId) return;
 
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   const parentBlockId = normalizeParentBlockId(referenceRow.dataset.parentBlockId);
   const siblingIds = getBlockSiblings(parentBlockId).map((block) => block.id);
   const referenceIndex = siblingIds.indexOf(referenceRow.dataset.blockId);
@@ -14449,20 +14541,22 @@ async function insertBlockRelative(
     markdown,
     metadata
   });
-  if (!data) return null;
+  if (!data || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
   const orderedIds = [...siblingIds];
   orderedIds.splice(insertionIndex, 0, data.block.id);
 
   let canonicalOrderReconciled = false;
   if (!isCollaborativePage() && shouldReconcileCanonicalCreatedBlockOrder(data)) {
-    await reconcileCanonicalCreatedBlock(pageId, data.block.id);
+    await reconcileCanonicalCreatedBlock(pageId, data.block, { authenticationScope });
     canonicalOrderReconciled = true;
   } else {
     try {
       await persistBlockOrder(parentBlockId, orderedIds, { [data.block.id]: data.block.version });
     } catch (error) {
-      if (!isBlockEditConflict(error) || isCollaborativePage()) throw error;
-      await reconcileCanonicalCreatedBlock(pageId, data.block.id);
+      if (isCollaborativePage() || !isCurrentAuthenticatedSessionScope(authenticationScope)) throw error;
+      // The create POST has already committed. Any follow-up reorder failure is
+      // now a reconciliation problem, not a failed create that should be retried.
+      await reconcileCanonicalCreatedBlock(pageId, data.block, { authenticationScope });
       canonicalOrderReconciled = true;
     }
   }
@@ -14470,7 +14564,12 @@ async function insertBlockRelative(
   if (!canonicalOrderReconciled) {
     state.pendingFocusBlockId = data.block.id;
     if (isCollaborativePage()) renderSelectedPage();
-    else await openPage(pageId);
+    else {
+      await reconcileCanonicalCreatedBlock(pageId, data.block, {
+        authenticationScope,
+        orderedIds
+      });
+    }
   }
   setStatus(
     t("status.blockInserted", {
@@ -14484,22 +14583,25 @@ async function appendBlock(afterRow = null) {
   if (!requireWritablePage()) return;
   if (afterRow) return insertBlockRelative(afterRow, "after");
 
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   const siblingIds = getBlockSiblings(null).map((block) => block.id);
   const pageId = state.selectedPage.id;
   const requestedSortOrder = siblingIds.length;
   const data = await createEmptyBlock(pageId, { sortOrder: requestedSortOrder });
-  if (!data) return;
+  if (!data || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
 
+  const orderedIds = [...siblingIds, data.block.id];
   let canonicalOrderReconciled = false;
   if (!isCollaborativePage() && shouldReconcileCanonicalCreatedBlockOrder(data)) {
-    await reconcileCanonicalCreatedBlock(pageId, data.block.id);
+    await reconcileCanonicalCreatedBlock(pageId, data.block, { authenticationScope });
     canonicalOrderReconciled = true;
   } else {
     try {
-      await persistBlockOrder(null, [...siblingIds, data.block.id], { [data.block.id]: data.block.version });
+      await persistBlockOrder(null, orderedIds, { [data.block.id]: data.block.version });
     } catch (error) {
-      if (!isBlockEditConflict(error) || isCollaborativePage()) throw error;
-      await reconcileCanonicalCreatedBlock(pageId, data.block.id);
+      if (isCollaborativePage() || !isCurrentAuthenticatedSessionScope(authenticationScope)) throw error;
+      await reconcileCanonicalCreatedBlock(pageId, data.block, { authenticationScope });
       canonicalOrderReconciled = true;
     }
   }
@@ -14507,7 +14609,12 @@ async function appendBlock(afterRow = null) {
   if (!canonicalOrderReconciled) {
     state.pendingFocusBlockId = data.block.id;
     if (isCollaborativePage()) renderSelectedPage();
-    else await openPage(pageId);
+    else {
+      await reconcileCanonicalCreatedBlock(pageId, data.block, {
+        authenticationScope,
+        orderedIds
+      });
+    }
   }
   setStatus(t("status.blockAppended"));
 }
@@ -14525,11 +14632,17 @@ async function refreshSelectedPageAfterBlockDeletion(pageId, { focusBlockId = nu
   );
   if (!needsStarterBlock) return;
 
+  const authenticationScope = captureAuthenticatedSessionScope();
   const starter = await createEmptyBlock(pageId, { allowLocked: true });
-  if (!starter) return;
+  if (!starter || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   state.pendingFocusBlockId = starter.block.id;
   if (isCollaborativePage()) renderSelectedPage();
-  else await openPage(pageId, { skipFlush: true });
+  else {
+    await reconcileCanonicalCreatedBlock(pageId, starter.block, {
+      authenticationScope,
+      skipFlush: true
+    });
+  }
 }
 
 async function deleteEmptyBlock(row) {

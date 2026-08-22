@@ -63,13 +63,113 @@ test("fixed client reconciles the one durable create instead of retrying it as a
   assert.equal(duplicateRetryIssued, false);
 });
 
+test("reproduction: a committed create followed by a failed refresh can be duplicated by an apparent retry", () => {
+  const durableBlocks = ["created-1"];
+  const createPostCommitted = true;
+  const followUpRefreshSucceeded = false;
+
+  const vulnerableUiReportedFailure = createPostCommitted && !followUpRefreshSucceeded;
+  assert.equal(vulnerableUiReportedFailure, true);
+
+  if (vulnerableUiReportedFailure) durableBlocks.push("created-2");
+  assert.deepEqual(durableBlocks, ["created-1", "created-2"]);
+});
+
+test("fixed client keeps a committed create visible when a non-auth refresh fails", () => {
+  assert.match(client, /function adoptCommittedCreatedBlockLocally\(/);
+  assert.match(client, /status !== 401\n\s+&& status !== 403\n\s+&& status !== 404/);
+  assert.match(client, /retained a committed created block after refresh failed/);
+  assert.match(
+    client,
+    /adoptCommittedCreatedBlockLocally\(pageId, committedBlock, \{ orderedIds, removedBlockIds \}\)/
+  );
+  assert.ok(
+    (client.match(/reconcileCanonicalCreatedBlock\(pageId, data\.block, \{ authenticationScope \}\)/g) ?? []).length >= 4,
+    "post-create conflict paths must reconcile the already committed block rather than retry creation"
+  );
+});
+
+test("local committed-create fallback preserves successful order and replacement semantics", () => {
+  const start = client.indexOf("function adoptCommittedCreatedBlockLocally(");
+  const end = client.indexOf("\n\nasync function reconcileCanonicalCreatedBlock(", start);
+  assert.ok(start >= 0 && end > start, "fallback helper source should be extractable");
+  const helperSource = client.slice(start, end);
+
+  const page = {
+    id: "page-1",
+    blocks: [
+      { id: "a", sortOrder: 0, parentBlockId: null, children: [] },
+      { id: "b", sortOrder: 1, parentBlockId: null, children: [] }
+    ]
+  };
+  const state = { workspaceView: "page", selectedPage: page };
+  const find = (id, blocks = page.blocks) => {
+    for (const block of blocks) {
+      if (block.id === id) return block;
+      const nested = find(id, block.children ?? []);
+      if (nested) return nested;
+    }
+    return null;
+  };
+  const siblings = (parentId) => parentId ? (find(parentId)?.children ?? []) : page.blocks;
+  const reorder = (_page, parentId, orderedIds) => {
+    const rows = siblings(parentId);
+    if (rows.length !== orderedIds.length) return false;
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const next = orderedIds.map((id) => byId.get(id));
+    if (next.some((row) => !row)) return false;
+    next.forEach((row, index) => { row.sortOrder = index; });
+    rows.splice(0, rows.length, ...next);
+    return true;
+  };
+
+  const adopt = new Function(
+    "state",
+    "normalizeParentBlockId",
+    "getBlockById",
+    "getBlockSiblings",
+    "reorderPageBlockSiblings",
+    `${helperSource}; return adoptCommittedCreatedBlockLocally;`
+  )(
+    state,
+    (value) => value || null,
+    (id) => find(id),
+    (parentId) => siblings(parentId),
+    reorder
+  );
+
+  assert.equal(
+    adopt("page-1", { id: "created", sortOrder: 2, parentBlockId: null }, {
+      orderedIds: ["a", "created", "b"]
+    }),
+    true
+  );
+  assert.deepEqual(page.blocks.map((block) => block.id), ["a", "created", "b"]);
+  assert.deepEqual(page.blocks.map((block) => block.sortOrder), [0, 1, 2]);
+
+  page.blocks.splice(
+    0,
+    page.blocks.length,
+    { id: "source", sortOrder: 0, parentBlockId: null, children: [] },
+    { id: "next", sortOrder: 1, parentBlockId: null, children: [] }
+  );
+  assert.equal(
+    adopt("page-1", { id: "attachment", sortOrder: 1, parentBlockId: null }, {
+      orderedIds: ["attachment", "next"],
+      removedBlockIds: ["source"]
+    }),
+    true
+  );
+  assert.deepEqual(page.blocks.map((block) => block.id), ["attachment", "next"]);
+});
+
 test("ordinary creates and attachment uploads reconcile stale post-create ordering without weakening the server fence", () => {
   assert.match(client, /function shouldReconcileCanonicalCreatedBlockOrder\(data\)/);
   assert.match(client, /return data\?\.pageContentVersionAuthoritative === false/);
   assert.equal((client.match(/shouldReconcileCanonicalCreatedBlockOrder\(data\)/g) ?? []).length, 4);
-  assert.match(client, /if \(!isBlockEditConflict\(error\) \|\| isCollaborativePage\(\)\) throw error/);
-  assert.match(client, /The upload POST is already durable before the follow-up sibling reorder/);
-  assert.match(client, /not convert a successful upload into a retryable duplicate upload/);
+  assert.match(client, /The create POST has already committed\. Any follow-up reorder failure is/);
+  assert.match(client, /The upload is already durable\. A stale or ambiguous follow-up reorder is/);
+  assert.match(client, /not convert a successful upload into a retryable duplicate/);
 
   assert.match(server, /finalSiblingIds\.length !== requestedSiblings\.length/);
   assert.match(server, /"The sibling list changed in another session\. Your stale order was not applied\."/);
