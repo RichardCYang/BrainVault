@@ -179,6 +179,32 @@ const fixedPageDeleteRetry = retryPageDeleteAfterRestore({
   invalidateReceiptOnRestore: true
 });
 
+function retryBlockOrderAfterRestore({ preserveOrderReceipt }) {
+  const state = {
+    orderedIds: ["blk_backup_b", "blk_backup_a"],
+    restoredEditVersion: restoreVersion,
+    receipt: preserveOrderReceipt ? { mutationId: "mut_order_response_lost" } : null,
+    localRecoveryDraft: true
+  };
+
+  if (state.receipt) {
+    // The real reorder endpoint resolves a matching receipt before loading the
+    // current block versions. A preserved old-generation receipt therefore
+    // reports success even though restore replaced the requested order.
+    state.localRecoveryDraft = false;
+    return { replayed: true, conflicted: false, state };
+  }
+  if (state.restoredEditVersion !== oldDeleteExpectedVersion) {
+    return { replayed: false, conflicted: true, state };
+  }
+  state.orderedIds = ["blk_backup_a", "blk_backup_b"];
+  state.localRecoveryDraft = false;
+  return { replayed: false, conflicted: false, state };
+}
+
+const unsafePreservedOrderRetry = retryBlockOrderAfterRestore({ preserveOrderReceipt: true });
+const fixedOrderRetry = retryBlockOrderAfterRestore({ preserveOrderReceipt: false });
+
 const result = {
   vulnerability: {
     baselineModel: "embedded pre-fix page-delete-before-restore model",
@@ -189,7 +215,9 @@ const result = {
     restoreDeletesOwnedPages: currentTransfer.includes('DELETE FROM pages WHERE owner_id = ?'),
     vulnerableModelDidNotPreservePageTiedReceipts: true,
     delayedResetRetryDeletesRestoredHistory: baselineAfterResetRetry.state.pageVersions.length === 1,
-    delayedCreateRetryDuplicatesRestoredBlock: baselineAfterCreateRetry.state.blocks.length === 2
+    delayedCreateRetryDuplicatesRestoredBlock: baselineAfterCreateRetry.state.blocks.length === 2,
+    preservingOrderReceiptFalselyAcknowledgesRestoredGeneration:
+      unsafePreservedOrderRetry.replayed && !unsafePreservedOrderRetry.state.localRecoveryDraft
   },
   fixed: {
     pageVersionResetReceiptSurvivesPageDeletion:
@@ -210,20 +238,16 @@ const result = {
       && !currentTransfer.includes("FROM block_create_mutations m")
       && !currentTransfer.includes("mutationReceipts.pageVersionResets")
       && !currentTransfer.includes("mutationReceipts.blockCreates"),
-    capturesBlockOrderReceipts: currentTransfer.includes("FROM block_order_mutations m"),
+    restoreInvalidatesBlockOrderReceipts:
+      currentTransfer.includes('DELETE FROM block_order_mutations WHERE owner_id = ?')
+      && !currentTransfer.includes("FROM block_order_mutations m")
+      && !currentTransfer.includes("INSERT INTO block_order_mutations"),
     deliberatelyDoesNotPreserveBlockDeleteReceipts:
       !currentTransfer.includes("FROM block_delete_mutations m")
       && !currentTransfer.includes("mutationReceipts.blockDeletes"),
-    filtersPageTiedOrderReceiptsToRestoredPageIds:
-      currentTransfer.includes("blockOrders: blockOrders.filter((row) => restoredPageIds.has(row.page_id))"),
-    snapshotsBeforeDestructiveImport:
-      currentTransfer.indexOf("restoreMutationReceipts = await prepareRestoreMutationReceiptPlan")
-      < currentTransfer.indexOf(
-        "await importRows(",
-        currentTransfer.indexOf("restoreMutationReceipts = await prepareRestoreMutationReceiptPlan")
-      ),
-    reinsertsBlockOrderReceipts: currentTransfer.includes("INSERT INTO block_order_mutations"),
     restoreBumpsBlockEditVersions: currentTransfer.includes("block.metadata, restoreVersion, block.created_at"),
+    staleOrderRetryConflictsAfterRestore:
+      fixedOrderRetry.conflicted && fixedOrderRetry.state.localRecoveryDraft,
     preservingDeleteReceiptWouldDeleteRestoredAttachment:
       unsafePreservedDeleteRetry.replayed && !unsafePreservedDeleteRetry.state.files.has(restoredAttachmentId),
     staleDeleteRetryConflictsWithoutTouchingRestoredAttachment:

@@ -515,18 +515,6 @@ type RestoreCollaboratorNavigationPlan = {
   order: CollaboratorNavigationOrderRow[];
 };
 
-type RestoreBlockOrderMutationRow = {
-  owner_id: string;
-  mutation_id: string;
-  page_id: string;
-  request_hash: string | null;
-  created_at: string;
-};
-
-type RestoreMutationReceiptPlan = {
-  blockOrders: RestoreBlockOrderMutationRow[];
-};
-
 type WorkspaceCollaborationStateRow = {
   page_id: string;
   latest_update_id: number | bigint | null;
@@ -2034,36 +2022,6 @@ async function prepareRestoreCollaboratorNavigationPlan(
   };
 }
 
-async function prepareRestoreMutationReceiptPlan(
-  client: DbClient,
-  userId: string,
-  manifest: BrainVaultBackup
-): Promise<RestoreMutationReceiptPlan> {
-  const restoredPageIds = new Set(manifest.data.pages.map((page) => page.id));
-  const blockOrders = await client.query<RestoreBlockOrderMutationRow>(
-    `SELECT m.owner_id, m.mutation_id, m.page_id, m.request_hash,
-            DATE_FORMAT(m.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
-     FROM block_order_mutations m
-     INNER JOIN pages p ON p.id = m.page_id
-     WHERE p.owner_id = ?
-     ORDER BY m.owner_id ASC, m.mutation_id ASC
-     FOR UPDATE`,
-    [userId]
-  );
-  // Page-version-reset and block-create receipts are durable user-scoped
-  // tombstones with no page FK, so they survive page replacement automatically
-  // and must not be reinserted. Block-order receipts still cascade with pages;
-  // preserve only those whose page identity survives this restore.
-  //
-  // A block-delete receipt is intentionally NOT preserved: replaying its
-  // attachment_ids would run filesystem cleanup again and could delete an
-  // attachment resurrected by the backup. Stale deletes remain fenced by the
-  // restore-only block edit_version bump before any delete executes.
-  return {
-    blockOrders: blockOrders.filter((row) => restoredPageIds.has(row.page_id))
-  };
-}
-
 function getManifestMaxEditVersion(manifest: BrainVaultBackup) {
   let maximum = 0;
   for (const page of manifest.data.pages) {
@@ -2114,7 +2072,6 @@ async function importRows(
   restoreVersion: number,
   pageShares: RestoredPageShare[],
   collaboratorNavigation: RestoreCollaboratorNavigationPlan,
-  mutationReceipts: RestoreMutationReceiptPlan,
   stagedPageCoverDir: string
 ) {
   const restoreIconValue = (value: string | null) => manifest.version >= uploadedAssetBackupVersion
@@ -2126,6 +2083,11 @@ async function importRows(
   // must not be allowed to clean up that new generation. The caller holds the
   // user row lock, matching permanent page deletion's receipt lock order.
   await client.execute("DELETE FROM page_delete_mutations WHERE actor_id = ?", [userId]);
+  // Block-order receipts are page-generation scoped. A full restore replaces every
+  // owned page/block with a new optimistic-version generation, so a delayed
+  // pre-restore reorder must conflict against restoreVersion instead of being
+  // falsely acknowledged by an old receipt before version validation.
+  await client.execute("DELETE FROM block_order_mutations WHERE owner_id = ?", [userId]);
   await client.execute("DELETE FROM pages WHERE owner_id = ?", [userId]);
   await client.execute(
     `UPDATE users
@@ -2166,17 +2128,9 @@ async function importRows(
   }
 
   // Reset/create replay tombstones have no page FK and therefore remain in
-  // place across page replacement. Only block-order receipts need recreation.
-  // Block-delete receipts stay absent so their old attachment cleanup scope can
-  // never be replayed against the newly restored filesystem generation.
-  for (const row of mutationReceipts.blockOrders) {
-    await client.execute(
-      `INSERT INTO block_order_mutations
-         (owner_id, mutation_id, page_id, request_hash, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
-      [row.owner_id, row.mutation_id, row.page_id, row.request_hash, row.created_at]
-    );
-  }
+  // place across page replacement. Page-generation-scoped order/delete receipts
+  // intentionally stay invalidated so stale retries must pass current version
+  // checks before they can affect or acknowledge the restored workspace.
   const orderedBlocks = orderByParent(manifest.data.blocks, (item) => item.id, (item) => item.parent_block_id);
   for (const block of orderedBlocks) {
     await client.execute(
@@ -3059,9 +3013,6 @@ export async function importUserDataBackup(
   let restoreJournal: RestoreJournal | null = null;
   let restoreSharingPlan: RestoreSharingPlan = { mode: "backup", shares: [] };
   let restoreCollaboratorNavigation: RestoreCollaboratorNavigationPlan = { collapsed: [], order: [] };
-  let restoreMutationReceipts: RestoreMutationReceiptPlan = {
-    blockOrders: []
-  };
   await Promise.all([
     mkdir(stagedAttachmentDir, { recursive: true }),
     mkdir(stagedPageCoverDir, { recursive: true }),
@@ -3223,7 +3174,6 @@ export async function importUserDataBackup(
           userId,
           restoreSharingPlan.shares
         );
-        restoreMutationReceipts = await prepareRestoreMutationReceiptPlan(client, userId, manifest);
         // The workspace snapshot above holds the owned page-row locks. Fence
         // any collaboration write already admitted on another process, then
         // preserve recovery admissions for browsers that are still offline.
@@ -3276,7 +3226,6 @@ export async function importUserDataBackup(
           restoreVersion,
           restoreSharingPlan.shares,
           restoreCollaboratorNavigation,
-          restoreMutationReceipts,
           stagedPageCoverDir
         );
 

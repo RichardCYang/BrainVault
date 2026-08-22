@@ -12,7 +12,7 @@ function tableDefinition(source, tableName) {
   return match[0];
 }
 
-test("restore keeps reset/create mutation ids as durable tombstones across page recreation", async () => {
+test("restore keeps durable reset/create tombstones but invalidates page-generation mutation receipts", async () => {
   const [transfer, baseline, resetMigration, createMigration, durableMigration] = await Promise.all([
     readFile(new URL("../src/lib/data-transfer.ts", import.meta.url), "utf8"),
     readFile(new URL("../migrations/001_init.sql", import.meta.url), "utf8"),
@@ -45,18 +45,15 @@ test("restore keeps reset/create mutation ids as durable tombstones across page 
   assert.match(durableMigration, /DROP FOREIGN KEY fk_page_version_reset_mutations_page/);
   assert.match(durableMigration, /DROP FOREIGN KEY fk_block_create_mutations_page/);
 
-  assert.match(transfer, /async function prepareRestoreMutationReceiptPlan/);
   assert.doesNotMatch(transfer, /FROM page_version_reset_mutations m/);
   assert.doesNotMatch(transfer, /FROM block_create_mutations m/);
   assert.doesNotMatch(transfer, /mutationReceipts\.pageVersionResets/);
   assert.doesNotMatch(transfer, /mutationReceipts\.blockCreates/);
 
-  assert.match(
-    transfer,
-    /FROM block_order_mutations m[\s\S]*?INNER JOIN pages p ON p\.id = m\.page_id[\s\S]*?WHERE p\.owner_id = \?[\s\S]*?FOR UPDATE/
-  );
-  assert.match(transfer, /INSERT INTO block_order_mutations/);
-  assert.match(transfer, /blockOrders: blockOrders\.filter\(\(row\) => restoredPageIds\.has\(row\.page_id\)\)/);
+  assert.doesNotMatch(transfer, /FROM block_order_mutations m/);
+  assert.doesNotMatch(transfer, /INSERT INTO block_order_mutations/);
+  assert.doesNotMatch(transfer, /prepareRestoreMutationReceiptPlan/);
+  assert.doesNotMatch(transfer, /restoreMutationReceipts/);
   assert.doesNotMatch(transfer, /FROM block_delete_mutations m/);
   assert.doesNotMatch(transfer, /mutationReceipts\.blockDeletes/);
   assert.match(transfer, /block\.metadata, restoreVersion, block\.created_at/);
@@ -64,16 +61,39 @@ test("restore keeps reset/create mutation ids as durable tombstones across page 
   const pageDeleteReceiptInvalidationIndex = transfer.indexOf(
     'DELETE FROM page_delete_mutations WHERE actor_id = ?'
   );
+  const blockOrderReceiptInvalidationIndex = transfer.indexOf(
+    'DELETE FROM block_order_mutations WHERE owner_id = ?'
+  );
   const pageReplacementIndex = transfer.indexOf('DELETE FROM pages WHERE owner_id = ?');
   assert.ok(
     pageDeleteReceiptInvalidationIndex >= 0
-      && pageReplacementIndex > pageDeleteReceiptInvalidationIndex,
-    "restore must invalidate pre-restore page-delete receipts before replacing the page/filesystem generation"
+      && blockOrderReceiptInvalidationIndex > pageDeleteReceiptInvalidationIndex
+      && pageReplacementIndex > blockOrderReceiptInvalidationIndex,
+    "restore must invalidate pre-restore page-delete/order receipts before replacing the page/filesystem generation"
   );
+});
 
-  const captureIndex = transfer.indexOf("restoreMutationReceipts = await prepareRestoreMutationReceiptPlan");
-  const importIndex = transfer.indexOf("await importRows(", captureIndex);
-  assert.ok(captureIndex >= 0 && importIndex > captureIndex, "page-tied order receipts must be captured before page replacement");
+test("a delayed pre-restore block reorder conflicts with the restored generation instead of being falsely acknowledged", () => {
+  const oldRequest = {
+    mutationId: "mut_order_response_lost",
+    expectedVersion: 42
+  };
+  const restoredBlock = {
+    editVersion: 9_000_000
+  };
+
+  const replayDecision = ({ receiptPreserved }) => {
+    // The reorder route recognizes its receipt before it reaches the per-block
+    // optimistic version checks. Preserving the receipt therefore skips the
+    // restoreVersion fence and falsely acknowledges an operation from the old
+    // workspace generation.
+    if (receiptPreserved) return "replay";
+    if (restoredBlock.editVersion !== oldRequest.expectedVersion) return "conflict";
+    return "apply";
+  };
+
+  assert.equal(replayDecision({ receiptPreserved: true }), "replay");
+  assert.equal(replayDecision({ receiptPreserved: false }), "conflict");
 });
 
 test("standalone reproduction proves stale retries cross page deletion plus restore before the fix but not after it", () => {
