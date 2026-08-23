@@ -30,6 +30,10 @@ function createHarness({ collaborative = false, pageMode = "write", backendBlock
   const context = {
     state,
     Boolean,
+    workspaceNavigationGeneration: 1,
+    isCurrentWorkspaceNavigation(generation) {
+      return generation === context.workspaceNavigationGeneration;
+    },
     flattenBlocks(blocks) {
       return blocks;
     },
@@ -46,8 +50,10 @@ function createHarness({ collaborative = false, pageMode = "write", backendBlock
       assert.equal(pageId, "page-1");
       assert.equal(options?.skipFlush, true);
       calls.opened += 1;
+      context.workspaceNavigationGeneration += 1;
       state.selectedPage.blocks = persistedBlocks.map((block) => ({ ...block }));
       if (rotateAuthDuringOpen && calls.opened === 1) authenticationGeneration += 1;
+      return context.workspaceNavigationGeneration;
     },
     async createEmptyBlock(pageId, options) {
       assert.equal(pageId, "page-1");
@@ -132,10 +138,10 @@ test("both keyboard-empty and context-menu deletion paths share the recovery hel
   const contextDeleteSource = appSource.slice(contextDeleteStart, contextDeleteEnd);
   assert.match(
     emptyDeleteSource,
-    /await refreshSelectedPageAfterBlockDeletion\(state\.selectedPage\.id, \{\s*focusBlockId,\s*authenticationScope\s*\}\)/
+    /refreshSelectedPageAfterBlockDeletion\(pageId, \{\s*focusBlockId,\s*authenticationScope,\s*navigationGeneration\s*\}\)/
   );
   assert.match(
     contextDeleteSource,
-    /await refreshSelectedPageAfterBlockDeletion\(pageId, \{ authenticationScope \}\)/
+    /refreshSelectedPageAfterBlockDeletion\(pageId, \{\s*authenticationScope,\s*navigationGeneration\s*\}\)/
   );
 });

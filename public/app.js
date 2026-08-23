@@ -14714,25 +14714,39 @@ async function refreshSelectedPageAfterBlockDeletion(
   pageId,
   {
     focusBlockId = null,
-    authenticationScope = captureAuthenticatedSessionScope()
+    authenticationScope = captureAuthenticatedSessionScope(),
+    navigationGeneration = workspaceNavigationGeneration
   } = {}
 ) {
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+  if (!isCurrentWorkspaceNavigation(navigationGeneration) || state.selectedPage?.id !== pageId) return false;
+
   state.pendingFocusBlockId = focusBlockId;
+  let reconciliationNavigationGeneration = navigationGeneration;
   if (isCollaborativePage()) renderSelectedPage();
-  else await openPage(pageId, { skipFlush: true });
+  else {
+    reconciliationNavigationGeneration = await openPage(pageId, { skipFlush: true });
+  }
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+  if (
+    !isCurrentWorkspaceNavigation(reconciliationNavigationGeneration)
+      || state.selectedPage?.id !== pageId
+  ) return false;
 
   const needsStarterBlock = Boolean(
-    state.selectedPage?.id === pageId
-    && state.workspaceView === "page"
+    state.workspaceView === "page"
     && !isPageReadOnly()
     && flattenBlocks(state.selectedPage.blocks).length === 0
   );
-  if (!needsStarterBlock) return;
+  if (!needsStarterBlock) return true;
 
   const starter = await createEmptyBlock(pageId, { allowLocked: true });
-  if (!starter || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+  if (!starter || !isCurrentAuthenticatedSessionScope(authenticationScope)) return false;
+  if (
+    !isCurrentWorkspaceNavigation(reconciliationNavigationGeneration)
+      || state.selectedPage?.id !== pageId
+  ) return false;
+
   state.pendingFocusBlockId = starter.block.id;
   if (isCollaborativePage()) renderSelectedPage();
   else {
@@ -14742,6 +14756,7 @@ async function refreshSelectedPageAfterBlockDeletion(
     });
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   }
+  return true;
 }
 
 async function deleteEmptyBlock(row) {
@@ -14752,13 +14767,17 @@ async function deleteEmptyBlock(row) {
   }
 
   const authenticationScope = captureAuthenticatedSessionScope();
-  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+  const pageId = state.selectedPage?.id;
+  const navigationGeneration = workspaceNavigationGeneration;
+  if (!pageId || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
 
   return withPageEditLock(async () => {
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    if (!isCurrentWorkspaceNavigation(navigationGeneration) || state.selectedPage?.id !== pageId) return;
+
     const blockId = row.dataset.blockId;
     if (!isCollaborativePage()) {
-      assertNoPendingLocalBlockDrafts(state.selectedPage.id, [blockId], {
+      assertNoPendingLocalBlockDrafts(pageId, [blockId], {
         excludeSourceId: pageDraftSourceId
       });
     }
@@ -14773,6 +14792,7 @@ async function deleteEmptyBlock(row) {
 
     await discardBlockSave(blockId);
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    if (!isCurrentWorkspaceNavigation(navigationGeneration) || state.selectedPage?.id !== pageId) return;
     row.dataset.deleting = "true";
     closeSlashMenu();
     closeInlineToolbar();
@@ -14788,11 +14808,12 @@ async function deleteEmptyBlock(row) {
       return;
     }
 
-    await refreshSelectedPageAfterBlockDeletion(state.selectedPage.id, {
+    const reconciled = await refreshSelectedPageAfterBlockDeletion(pageId, {
       focusBlockId,
-      authenticationScope
+      authenticationScope,
+      navigationGeneration
     });
-    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    if (!reconciled || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
     setStatus(t("status.emptyBlockDeleted"));
   });
 }
@@ -16304,7 +16325,7 @@ async function showCollection(
 async function openPage(pageId, { skipFlush = false, requestedPageMode = null } = {}) {
   const navigationGeneration = ++workspaceNavigationGeneration;
   const shouldFlush = !skipFlush || state.pageEditLockDepth === 0;
-  return withPageEditLock(
+  await withPageEditLock(
     async () => {
       if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
       const preserveMode = state.workspaceView === "page" && state.selectedPage?.id === pageId;
@@ -16373,6 +16394,7 @@ async function openPage(pageId, { skipFlush = false, requestedPageMode = null } 
     },
     { flush: shouldFlush }
   );
+  return navigationGeneration;
 }
 
 async function boot() {
@@ -18866,6 +18888,7 @@ elements.blockMoveForm.addEventListener("submit", async (event) => {
   }
 
   const authenticationScope = captureAuthenticatedSessionScope();
+  const navigationGeneration = workspaceNavigationGeneration;
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
     setBlockMoveMessage(t("errors.UNAUTHENTICATED"), true);
     return;
@@ -18884,8 +18907,14 @@ elements.blockMoveForm.addEventListener("submit", async (event) => {
     const destinationTitle = targetPage.title || t("newDocumentTitle");
     setBlockMoveSubmitting(false);
     closeBlockMoveDialog({ restoreFocus: false });
-    if (state.selectedPage?.id === sourcePageId) {
-      await refreshSelectedPageAfterBlockDeletion(sourcePageId, { authenticationScope });
+    if (
+      isCurrentWorkspaceNavigation(navigationGeneration)
+        && state.selectedPage?.id === sourcePageId
+    ) {
+      await refreshSelectedPageAfterBlockDeletion(sourcePageId, {
+        authenticationScope,
+        navigationGeneration
+      });
     }
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
     setStatus(t("blockMove.moved", { title: destinationTitle }));
@@ -19003,10 +19032,13 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
       closeBlockContextMenu();
       const pageId = state.selectedPage.id;
+      const navigationGeneration = workspaceNavigationGeneration;
       await withPageEditLock(async () => {
         if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+        if (!isCurrentWorkspaceNavigation(navigationGeneration) || state.selectedPage?.id !== pageId) return;
         await discardBlockSave(blockId);
         if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+        if (!isCurrentWorkspaceNavigation(navigationGeneration) || state.selectedPage?.id !== pageId) return;
         row.dataset.deleting = "true";
         try {
           await deleteBlockWithVersionCheck(blockId, { authenticationScope });
@@ -19018,8 +19050,11 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
           row.dataset.deleting = "false";
           return;
         }
-        await refreshSelectedPageAfterBlockDeletion(pageId, { authenticationScope });
-        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+        const reconciled = await refreshSelectedPageAfterBlockDeletion(pageId, {
+          authenticationScope,
+          navigationGeneration
+        });
+        if (!reconciled || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
         setStatus(t("status.blockDeleted"));
       });
     }
