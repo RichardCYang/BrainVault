@@ -17,7 +17,7 @@ test("block delete response application stays fenced to the initiating authentic
   const submit = source.slice(submitStart, moveTaskStart);
   const remove = source.slice(deleteStart, updateStart);
   const responseFence =
-    "if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;";
+    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;";
 
   const submitResponseIndex = submit.indexOf("const data = await submitWithFreshMutationIdOnReuse");
   const submitFenceIndex = submit.indexOf(responseFence, submitResponseIndex);
@@ -48,17 +48,31 @@ test("block delete response application stays fenced to the initiating authentic
   );
 });
 
-test("auth rotation reproducer shows why OR is required for a successful stale response", () => {
-  const successfulResponse = { ok: true };
-  const initiatingScopeIsCurrent = false;
+test("204 no-content is accepted only while the initiating authentication scope is current", () => {
+  const noContentResponse = null;
+  const currentScopeIsCurrent = true;
+  const staleScopeIsCurrent = false;
 
-  const oldAndGuardReturns =
-    successfulResponse === null && !initiatingScopeIsCurrent;
-  const fixedOrGuardReturns =
-    successfulResponse === null || !initiatingScopeIsCurrent;
+  const buggyOrGuardReturnsOnCurrent204 =
+    noContentResponse === null || !currentScopeIsCurrent;
+  const fixedAuthGuardReturnsOnCurrent204 = !currentScopeIsCurrent;
+  const fixedAuthGuardReturnsOnStale204 = !staleScopeIsCurrent;
 
-  assert.equal(oldAndGuardReturns, false, "old AND guard falls through on stale successful responses");
-  assert.equal(fixedOrGuardReturns, true, "OR guard rejects stale successful responses");
+  assert.equal(
+    buggyOrGuardReturnsOnCurrent204,
+    true,
+    "the OR guard mistakes a successful current-scope 204 response for an aborted delete"
+  );
+  assert.equal(
+    fixedAuthGuardReturnsOnCurrent204,
+    false,
+    "a current-scope 204 must fall through to retry-task acknowledgement and local recovery cleanup"
+  );
+  assert.equal(
+    fixedAuthGuardReturnsOnStale204,
+    true,
+    "auth rotation must still reject a 204 response before applying client-side cleanup"
+  );
 });
 
 test("post-delete reconciliation remains bound to the initiating authentication generation", async () => {
