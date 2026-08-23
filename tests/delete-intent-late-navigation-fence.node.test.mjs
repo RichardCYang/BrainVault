@@ -132,3 +132,66 @@ test("standalone block-delete reproduction covers transition and request-preflig
     assert.equal(result.fixed[stage].newerNavigationPreserved, true);
   }
 });
+
+test("attachment replacement keeps destructive follow-up bound to the upload navigation and auth scope", async () => {
+  const source = (await readFile(appUrl, "utf8")).replace(/\r\n/g, "\n");
+  const upload = section(source, "async function uploadAttachmentFromRow", "\nfunction requestAttachmentUpload");
+
+  assert.match(upload, /const navigationGeneration = workspaceNavigationGeneration;/);
+
+  const uploadCommitIndex = upload.indexOf("applyAuthoritativePageContentVersion(pageId, data);");
+  const firstNavigationFenceIndex = upload.indexOf(
+    "!isCurrentWorkspaceNavigation(navigationGeneration)",
+    uploadCommitIndex
+  );
+  const canonicalReconcileIndex = upload.indexOf(
+    "shouldReconcileCanonicalCreatedBlockOrder(data)",
+    uploadCommitIndex
+  );
+  assert.ok(
+    uploadCommitIndex >= 0
+      && firstNavigationFenceIndex > uploadCommitIndex
+      && canonicalReconcileIndex > firstNavigationFenceIndex
+  );
+
+  assert.match(
+    upload,
+    /deleteBlockWithVersionCheck\(blockId, \{[\s\S]*?preserveChildren: true,[\s\S]*?authenticationScope,[\s\S]*?navigationGeneration,[\s\S]*?replacementBlock:/
+  );
+  assert.match(
+    upload,
+    /deleteBlockWithVersionCheck\(blockId, \{\s*includeDescendants: false,\s*authenticationScope,\s*navigationGeneration\s*\}\);/
+  );
+
+  const discardIndex = upload.indexOf("await discardBlockSave(blockId);");
+  const directDeleteIndex = upload.indexOf("await deleteBlockWithVersionCheck(blockId", discardIndex);
+  assert.ok(discardIndex >= 0 && directDeleteIndex > discardIndex);
+  assert.match(
+    upload.slice(discardIndex, directDeleteIndex),
+    /!isCurrentWorkspaceNavigation\(navigationGeneration\)/
+  );
+
+  assert.match(
+    upload,
+    /if \(isCurrentWorkspaceNavigation\(navigationGeneration\) && state\.selectedPage\?\.id === pageId\) \{\s*await reconcileCanonicalCreatedBlock/
+  );
+});
+
+test("standalone attachment replacement reproduction covers late navigation and auth rotation", () => {
+  const result = JSON.parse(execFileSync(
+    process.execPath,
+    [fileURLToPath(new URL("../scripts/reproduce-attachment-replacement-delete-race.mjs", import.meta.url))],
+    { encoding: "utf8" }
+  ));
+
+  assert.equal(result.vulnerable.navigation.staleSourceDeleteSent, true);
+  assert.equal(result.fixed.navigation.staleSourceDeleteSent, false);
+  assert.equal(result.fixed.navigation.newerNavigationPreserved, true);
+
+  assert.equal(result.vulnerable.authentication.staleSourceDeleteSent, true);
+  assert.equal(result.fixed.authentication.staleSourceDeleteSent, false);
+  assert.notEqual(
+    result.fixed.authentication.deletionAuthenticationGeneration,
+    result.fixed.authentication.authenticationGeneration
+  );
+});

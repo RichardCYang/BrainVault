@@ -296,7 +296,7 @@ test("permanent page delete binds authentication before asynchronous save settle
   const workspaceBarrierIndex = deleteClient.indexOf("await assertWorkspacePersistenceUnlocked()");
   const editLockIndex = deleteClient.indexOf("return withPageEditLock");
   const postLockFenceIndex = deleteClient.indexOf(
-    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;",
+    "!isCurrentAuthenticatedSessionScope(authenticationScope)",
     editLockIndex
   );
   const snapshotRequestIndex = deleteClient.indexOf("deletion-snapshot", editLockIndex);
@@ -348,7 +348,7 @@ test("page delete auth rotation cannot fall through into local draft cleanup", a
     "async function deleteNavigationTarget()",
     "function renderCollectionView"
   );
-  const submitIndex = deleteClient.indexOf("await submitPageDeleteTask(task, authenticationScope);");
+  const submitIndex = deleteClient.indexOf("submitPageDeleteTask(task, authenticationScope, {");
   const completionFenceIndex = deleteClient.indexOf(
     "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;",
     submitIndex

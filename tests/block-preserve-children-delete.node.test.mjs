@@ -76,7 +76,7 @@ test("the UI sends one preserve-children deletion instead of committing a reorde
   assert.doesNotMatch(emptyDelete, /persistBlockOrder\(/);
   assert.match(
     emptyDelete,
-    /deleteBlockWithVersionCheck\(blockId, \{\s*includeDescendants: false,\s*preserveChildren: true,\s*authenticationScope\s*\}\)/
+    /deleteBlockWithVersionCheck\(blockId, \{\s*includeDescendants: false,\s*preserveChildren: true,\s*authenticationScope,\s*navigationGeneration\s*\}\)/
   );
 
   const deletion = section(client, "async function deleteBlockWithVersionCheck", "function updateBlockInState");

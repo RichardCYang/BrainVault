@@ -62,7 +62,7 @@ test("attachment replacement cannot bypass the collaborative deletion fence", ()
   assert.doesNotMatch(upload, /session\.deleteBlock\(/);
   assert.match(
     upload,
-    /await deleteBlockWithVersionCheck\(blockId, \{\s*includeDescendants: false,\s*preserveChildren: true,\s*expectedSourceBlock:\s*collaborativeSourceSnapshotAtStart,\s*replacementBlock:\s*\{/
+    /await deleteBlockWithVersionCheck\(blockId, \{\s*includeDescendants: false,\s*preserveChildren: true,\s*authenticationScope,\s*navigationGeneration,\s*expectedSourceBlock:\s*collaborativeSourceSnapshotAtStart,\s*replacementBlock:\s*\{/
   );
   const deletion = section(client, "async function deleteBlockWithVersionCheck", "function updateBlockInState");
   assert.match(

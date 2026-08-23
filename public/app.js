@@ -14039,6 +14039,7 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
 
   const pageId = state.selectedPage.id;
   const authenticationScope = captureAuthenticatedSessionScope();
+  const navigationGeneration = workspaceNavigationGeneration;
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   const pageModeMutationFence = lockPageModeMutationFence(pageId);
   const collaborativeAtStart = isCollaborativePage();
@@ -14096,6 +14097,18 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
     if (!data || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
     applyAuthoritativePageContentVersion(pageId, data);
 
+    // The upload itself is already durable, but replacing its source block is a
+    // separate destructive follow-up. A newer navigation must not let that old
+    // upload intent delete or reorder content on the page the user is leaving.
+    if (!isCurrentWorkspaceNavigation(navigationGeneration) || state.selectedPage?.id !== pageId) {
+      collaborationSessionAtStart?.adoptAttachment({
+        ...data.block,
+        parentBlockId,
+        sortOrder: referenceIndex + 1
+      });
+      return data;
+    }
+
     // The upload POST is already durable before the follow-up sibling reorder.
     // If the create observed a newer page generation, refresh that canonical
     // result instead of sending a stale complete-sibling snapshot and then
@@ -14132,6 +14145,8 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
         const replacementResult = await deleteBlockWithVersionCheck(blockId, {
           includeDescendants: false,
           preserveChildren: true,
+          authenticationScope,
+          navigationGeneration,
           expectedSourceBlock: collaborativeSourceSnapshotAtStart,
           replacementBlock: {
             ...data.block,
@@ -14139,6 +14154,20 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
             sortOrder: effectiveInsertionIndex
           }
         });
+        if (
+          !isCurrentAuthenticatedSessionScope(authenticationScope)
+          || !isCurrentWorkspaceNavigation(navigationGeneration)
+          || state.selectedPage?.id !== pageId
+        ) {
+          if (!replacementResult?.replaced) {
+            collaborationSessionAtStart?.adoptAttachment({
+              ...data.block,
+              parentBlockId,
+              sortOrder: referenceIndex + 1
+            });
+          }
+          return data;
+        }
         if (replacementResult?.replaced) {
           row.dataset.deleting = "true";
         } else {
@@ -14156,6 +14185,11 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
           allowDisconnected: true
         });
       }
+      if (
+        !isCurrentAuthenticatedSessionScope(authenticationScope)
+        || !isCurrentWorkspaceNavigation(navigationGeneration)
+        || state.selectedPage?.id !== pageId
+      ) return data;
       state.pendingFocusBlockId = data.block.id;
       renderSelectedPage();
       setStatus(t("status.attachmentUploaded", { name: file.name }));
@@ -14167,22 +14201,34 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
     if (shouldReplaceCurrentBlock) {
       orderedIds.splice(referenceIndex, 1, data.block.id);
       await discardBlockSave(blockId);
-      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      if (
+        !isCurrentAuthenticatedSessionScope(authenticationScope)
+        || !isCurrentWorkspaceNavigation(navigationGeneration)
+        || state.selectedPage?.id !== pageId
+      ) return data;
       try {
         await deleteBlockWithVersionCheck(blockId, {
           includeDescendants: false,
-          authenticationScope
+          authenticationScope,
+          navigationGeneration
         });
       } catch (error) {
         // The attachment itself is already committed. Any later source-block
         // replacement failure must preserve that canonical upload and reconcile
         // the UI, not convert a successful upload into a retryable duplicate.
         if (!isCurrentAuthenticatedSessionScope(authenticationScope)) throw error;
+        if (!isCurrentWorkspaceNavigation(navigationGeneration) || state.selectedPage?.id !== pageId) {
+          return data;
+        }
         await reconcileCanonicalCreatedBlock(pageId, data.block, { authenticationScope });
         setStatus(t("status.attachmentUploaded", { name: file.name }));
         return data;
       }
-      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      if (
+        !isCurrentAuthenticatedSessionScope(authenticationScope)
+        || !isCurrentWorkspaceNavigation(navigationGeneration)
+        || state.selectedPage?.id !== pageId
+      ) return data;
       row.dataset.deleting = "true";
     } else {
       orderedIds.splice(effectiveInsertionIndex, 0, data.block.id);
@@ -14194,12 +14240,15 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
       // only a placement problem; reconcile the canonical create instead of
       // reporting a failed upload that a retry could duplicate.
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) throw error;
+      if (!isCurrentWorkspaceNavigation(navigationGeneration) || state.selectedPage?.id !== pageId) {
+        return data;
+      }
       await reconcileCanonicalCreatedBlock(pageId, data.block, { authenticationScope });
       setStatus(t("status.attachmentUploaded", { name: file.name }));
       return data;
     }
 
-    if (state.selectedPage?.id === pageId) {
+    if (isCurrentWorkspaceNavigation(navigationGeneration) && state.selectedPage?.id === pageId) {
       await reconcileCanonicalCreatedBlock(pageId, data.block, {
         authenticationScope,
         orderedIds,
