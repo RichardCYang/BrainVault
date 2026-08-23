@@ -60,3 +60,51 @@ test("auth rotation reproducer shows why OR is required for a successful stale r
   assert.equal(oldAndGuardReturns, false, "old AND guard falls through on stale successful responses");
   assert.equal(fixedOrGuardReturns, true, "OR guard rejects stale successful responses");
 });
+
+test("post-delete reconciliation remains bound to the initiating authentication generation", async () => {
+  const source = await readFile(appUrl, "utf8");
+
+  const refreshStart = source.indexOf("async function refreshSelectedPageAfterBlockDeletion");
+  const deleteEmptyStart = source.indexOf("async function deleteEmptyBlock", refreshStart);
+  assert.ok(refreshStart >= 0 && deleteEmptyStart > refreshStart);
+  const refresh = source.slice(refreshStart, deleteEmptyStart);
+
+  assert.match(
+    refresh,
+    /authenticationScope = captureAuthenticatedSessionScope\(\)/,
+    "the helper may default to the current scope only when it is called outside an existing mutation"
+  );
+
+  const reloadIndex = refresh.indexOf("await openPage(pageId, { skipFlush: true });");
+  const postReloadFenceIndex = refresh.indexOf(
+    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;",
+    reloadIndex
+  );
+  const starterIndex = refresh.indexOf("const starter = await createEmptyBlock", reloadIndex);
+  assert.ok(
+    reloadIndex >= 0 && postReloadFenceIndex > reloadIndex && starterIndex > postReloadFenceIndex,
+    "auth rotation during the reload must be rejected before a replacement starter block is created"
+  );
+
+  const recaptureAfterReloadIndex = refresh.indexOf(
+    "const authenticationScope = captureAuthenticatedSessionScope()",
+    reloadIndex
+  );
+  assert.equal(
+    recaptureAfterReloadIndex,
+    -1,
+    "post-delete reconciliation must not adopt a replacement authentication generation after reloading"
+  );
+
+  const callMatches = [...source.matchAll(/refreshSelectedPageAfterBlockDeletion\([^;]+\);/g)]
+    .map((match) => match[0])
+    .filter((call) => !call.startsWith("refreshSelectedPageAfterBlockDeletion(\r\n  pageId"));
+  assert.equal(callMatches.length, 3, "expected all three mutation call sites to remain covered");
+  for (const call of callMatches) {
+    assert.match(
+      call,
+      /authenticationScope/,
+      "delete/move callers must propagate the scope captured before the mutation"
+    );
+  }
+});

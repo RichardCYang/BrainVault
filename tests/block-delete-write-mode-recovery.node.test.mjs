@@ -13,8 +13,9 @@ function loadRefreshAfterDeletion() {
   return appSource.slice(start, end).trim();
 }
 
-function createHarness({ collaborative = false, pageMode = "write", backendBlocks = [] } = {}) {
+function createHarness({ collaborative = false, pageMode = "write", backendBlocks = [], rotateAuthDuringOpen = false } = {}) {
   let persistedBlocks = backendBlocks.map((block) => ({ ...block }));
+  let authenticationGeneration = 1;
   const state = {
     selectedPage: {
       id: "page-1",
@@ -46,6 +47,7 @@ function createHarness({ collaborative = false, pageMode = "write", backendBlock
       assert.equal(options?.skipFlush, true);
       calls.opened += 1;
       state.selectedPage.blocks = persistedBlocks.map((block) => ({ ...block }));
+      if (rotateAuthDuringOpen && calls.opened === 1) authenticationGeneration += 1;
     },
     async createEmptyBlock(pageId, options) {
       assert.equal(pageId, "page-1");
@@ -56,8 +58,10 @@ function createHarness({ collaborative = false, pageMode = "write", backendBlock
       if (collaborative) state.selectedPage.blocks = [block];
       return { block };
     },
-    captureAuthenticatedSessionScope() { return { generation: 1 }; },
-    isCurrentAuthenticatedSessionScope() { return true; },
+    captureAuthenticatedSessionScope() { return { generation: authenticationGeneration }; },
+    isCurrentAuthenticatedSessionScope(scope) {
+      return scope?.generation === authenticationGeneration;
+    },
     async reconcileCanonicalCreatedBlock(pageId, _block, options) {
       assert.equal(options?.skipFlush, true);
       await context.openPage(pageId, { skipFlush: true });
@@ -106,6 +110,18 @@ test("collaborative last-block deletion restores the starter without a page relo
   assert.deepEqual(state.selectedPage.blocks, [{ id: "starter-block" }]);
 });
 
+test("auth rotation during deletion refresh cannot create a starter block under the replacement session", async () => {
+  const { context, state, calls } = createHarness({
+    backendBlocks: [],
+    rotateAuthDuringOpen: true
+  });
+
+  await context.refreshSelectedPageAfterBlockDeletion("page-1");
+
+  assert.equal(state.pendingFocusBlockId, null);
+  assert.deepEqual(calls, { opened: 1, rendered: 0, created: 0 });
+});
+
 test("both keyboard-empty and context-menu deletion paths share the recovery helper", () => {
   const emptyDeleteStart = appSource.indexOf("async function deleteEmptyBlock");
   const emptyDeleteEnd = appSource.indexOf("function focusPendingBlock", emptyDeleteStart);
@@ -114,6 +130,12 @@ test("both keyboard-empty and context-menu deletion paths share the recovery hel
 
   const emptyDeleteSource = appSource.slice(emptyDeleteStart, emptyDeleteEnd);
   const contextDeleteSource = appSource.slice(contextDeleteStart, contextDeleteEnd);
-  assert.match(emptyDeleteSource, /await refreshSelectedPageAfterBlockDeletion\(state\.selectedPage\.id, \{ focusBlockId \}\)/);
-  assert.match(contextDeleteSource, /await refreshSelectedPageAfterBlockDeletion\(pageId\)/);
+  assert.match(
+    emptyDeleteSource,
+    /await refreshSelectedPageAfterBlockDeletion\(state\.selectedPage\.id, \{\s*focusBlockId,\s*authenticationScope\s*\}\)/
+  );
+  assert.match(
+    contextDeleteSource,
+    /await refreshSelectedPageAfterBlockDeletion\(pageId, \{ authenticationScope \}\)/
+  );
 });

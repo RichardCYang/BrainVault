@@ -14684,10 +14684,18 @@ async function appendBlock(afterRow = null) {
   setStatus(t("status.blockAppended"));
 }
 
-async function refreshSelectedPageAfterBlockDeletion(pageId, { focusBlockId = null } = {}) {
+async function refreshSelectedPageAfterBlockDeletion(
+  pageId,
+  {
+    focusBlockId = null,
+    authenticationScope = captureAuthenticatedSessionScope()
+  } = {}
+) {
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   state.pendingFocusBlockId = focusBlockId;
   if (isCollaborativePage()) renderSelectedPage();
   else await openPage(pageId, { skipFlush: true });
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
 
   const needsStarterBlock = Boolean(
     state.selectedPage?.id === pageId
@@ -14697,7 +14705,6 @@ async function refreshSelectedPageAfterBlockDeletion(pageId, { focusBlockId = nu
   );
   if (!needsStarterBlock) return;
 
-  const authenticationScope = captureAuthenticatedSessionScope();
   const starter = await createEmptyBlock(pageId, { allowLocked: true });
   if (!starter || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   state.pendingFocusBlockId = starter.block.id;
@@ -14707,6 +14714,7 @@ async function refreshSelectedPageAfterBlockDeletion(pageId, { focusBlockId = nu
       authenticationScope,
       skipFlush: true
     });
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   }
 }
 
@@ -14754,7 +14762,11 @@ async function deleteEmptyBlock(row) {
       return;
     }
 
-    await refreshSelectedPageAfterBlockDeletion(state.selectedPage.id, { focusBlockId });
+    await refreshSelectedPageAfterBlockDeletion(state.selectedPage.id, {
+      focusBlockId,
+      authenticationScope
+    });
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
     setStatus(t("status.emptyBlockDeleted"));
   });
 }
@@ -18847,8 +18859,9 @@ elements.blockMoveForm.addEventListener("submit", async (event) => {
     setBlockMoveSubmitting(false);
     closeBlockMoveDialog({ restoreFocus: false });
     if (state.selectedPage?.id === sourcePageId) {
-      await refreshSelectedPageAfterBlockDeletion(sourcePageId);
+      await refreshSelectedPageAfterBlockDeletion(sourcePageId, { authenticationScope });
     }
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
     setStatus(t("blockMove.moved", { title: destinationTitle }));
   } catch (error) {
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
@@ -18979,7 +18992,8 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
           row.dataset.deleting = "false";
           return;
         }
-        await refreshSelectedPageAfterBlockDeletion(pageId);
+        await refreshSelectedPageAfterBlockDeletion(pageId, { authenticationScope });
+        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
         setStatus(t("status.blockDeleted"));
       });
     }
