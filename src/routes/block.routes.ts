@@ -1194,7 +1194,6 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
       const hierarchyChanged = body.parentBlockId !== undefined || body.sortOrder !== undefined;
       const { block: identity } = await assertAccessibleBlock(blockId, user.id, client);
       const lockedAccess = await getPageAccess(identity.page_id, user.id, client, { lockPage: true });
-      assertDirectBlockMutationAllowed(lockedAccess);
       const lockedPage = lockedAccess.page;
       let existing: BlockRow;
       let hierarchyRows: BlockRow[] | null = null;
@@ -1245,6 +1244,10 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
         };
       }
 
+      // An exact response-loss replay is read-only. Resolve it before enforcing
+      // the current shared-page write path so a mutation committed while the
+      // page was private remains replayable after sharing is enabled.
+      assertDirectBlockMutationAllowed(lockedAccess);
       assertPageNotArchived(lockedPage);
 
       if (Number(existing.edit_version ?? 1) !== body.expectedVersion) {
@@ -1921,7 +1924,6 @@ blockRouter.post(
       const result = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
         const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
-        assertDirectBlockMutationAllowed(lockedAccess);
         const lockedPage = lockedAccess.page;
 
         if (mutationId) {
@@ -1948,6 +1950,9 @@ blockRouter.post(
           }
         }
 
+        // Like block create/delete/move receipts, a completed reorder receipt is
+        // safe to replay after the page becomes shared because no write occurs.
+        assertDirectBlockMutationAllowed(lockedAccess);
         assertPageNotArchived(lockedPage);
 
         const hierarchyRows = await client.query<BlockRow>(

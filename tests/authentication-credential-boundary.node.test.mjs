@@ -262,13 +262,13 @@ test("destructive block actions stay bound to the initiating authentication gene
   const uploadDirect = upload.slice(uploadDirectStart);
   const uploadDiscard = uploadDirect.indexOf("await discardBlockSave(blockId)");
   const uploadPostDiscardFence = uploadDirect.indexOf(
-    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;",
+    "!isCurrentAuthenticatedSessionScope(authenticationScope)",
     uploadDiscard
   );
   const uploadDelete = uploadDirect.indexOf("await deleteBlockWithVersionCheck", uploadDiscard);
   const uploadPostDeleteFence = uploadDirect.indexOf(
-    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;",
-    uploadPostDiscardFence + 1
+    "!isCurrentAuthenticatedSessionScope(authenticationScope)",
+    uploadDelete
   );
   assert.ok(
     uploadDiscard >= 0
@@ -663,9 +663,9 @@ test("block move response application stays fenced to the initiating authenticat
     "a completed block-move response must be rejected after auth rotation before its retry task is acknowledged"
   );
 
-  const moveResponseIndex = move.indexOf("const data = await submitBlockMoveTask(task, scope);");
+  const moveResponseIndex = move.indexOf("const data = await submitBlockMoveTask(task, scope");
   const moveFenceIndex = move.indexOf(
-    "if (data === null || !isCurrentAuthenticatedSessionScope(scope)) return null;",
+    "!isCurrentAuthenticatedSessionScope(scope)",
     moveResponseIndex
   );
   const localCleanupIndex = move.indexOf("pageDraftStore.removeBlocks", moveResponseIndex);

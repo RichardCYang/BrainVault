@@ -8316,11 +8316,16 @@ async function createNavigationSubpage() {
   if (!target || target.kind !== "page") return { applied: false };
 
   const parentPageId = target.id;
+  const navigationGeneration = workspaceNavigationGeneration;
   closeNavigationContextMenu();
   setNavigationSubpagesExpanded(parentPageId, true);
   return createWorkspacePage(
     { title: t("newDocumentTitle"), icon: "📄", parentPageId },
-    { creatingKey: "status.creatingSubpage", createdKey: "status.subpageCreated" }
+    {
+      creatingKey: "status.creatingSubpage",
+      createdKey: "status.subpageCreated",
+      navigationGeneration
+    }
   );
 }
 
@@ -16276,23 +16281,44 @@ function getWorkspaceCreateTask(authenticationScope, payload) {
     targetKey: authenticationScope.targetKey,
     requestKey,
     mutationId: createMutationId(),
-    payload: Object.freeze({ ...payload })
+    payload: Object.freeze({ ...payload }),
+    attempted: false
   };
 }
 
-async function submitWorkspacePageCreate(task, authenticationScope) {
+async function submitWorkspacePageCreate(
+  task,
+  authenticationScope,
+  { requestGuard = null } = {}
+) {
+  if (requestGuard?.() === false) return skippedApiRequest;
   pendingWorkspaceCreateTasks.set(task.taskKey, task);
   let attempt = 0;
   while (attempt < 2) {
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+    if (requestGuard?.() === false) return skippedApiRequest;
     try {
       const data = await submitWithFreshMutationIdOnReuse(task, () => {
         if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         return api("/api/pages", {
           method: "POST",
-          body: { ...task.payload, mutationId: task.mutationId }
+          body: { ...task.payload, mutationId: task.mutationId },
+          beforeFetch: () => {
+            if (
+              !isCurrentAuthenticatedSessionScope(authenticationScope)
+              || requestGuard?.() === false
+            ) return false;
+            task.attempted = true;
+            return true;
+          }
         });
       });
+      if (data === skippedApiRequest) {
+        if (!task.attempted && pendingWorkspaceCreateTasks.get(task.taskKey) === task) {
+          pendingWorkspaceCreateTasks.delete(task.taskKey);
+        }
+        return data;
+      }
       if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       return data;
     } catch (error) {
@@ -16304,35 +16330,83 @@ async function submitWorkspacePageCreate(task, authenticationScope) {
         }
         throw error;
       }
+      // A retry is a fresh write attempt. If a newer navigation superseded this
+      // subpage intent, preserve the mutation id for later reconciliation but do
+      // not send another request from the stale interaction.
+      if (requestGuard?.() === false) return skippedApiRequest;
     }
   }
   return null;
 }
 
-async function createWorkspacePage(payload, { creatingKey, createdKey, createdArgs = {} }) {
+async function createWorkspacePage(
+  payload,
+  {
+    creatingKey,
+    createdKey,
+    createdArgs = {},
+    navigationGeneration = null
+  }
+) {
   if (state.workspaceCreateBusy) return { applied: false };
   const authenticationScope = captureAuthenticatedSessionScope();
-  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
+  const isCreateIntentCurrent = () => (
+    navigationGeneration === null || isCurrentWorkspaceNavigation(navigationGeneration)
+  );
+  if (
+    !isCurrentAuthenticatedSessionScope(authenticationScope)
+    || !isCreateIntentCurrent()
+  ) return { applied: false };
   const task = getWorkspaceCreateTask(authenticationScope, payload);
+  const clearAcknowledgedTask = () => {
+    if (pendingWorkspaceCreateTasks.get(task.taskKey) === task) {
+      pendingWorkspaceCreateTasks.delete(task.taskKey);
+    }
+  };
 
   setWorkspaceCreateBusy(true);
   try {
     await assertWorkspacePersistenceUnlocked();
-    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
+    if (
+      !isCurrentAuthenticatedSessionScope(authenticationScope)
+      || !isCreateIntentCurrent()
+    ) return { applied: false };
     await flushPendingPageEdits();
-    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
+    if (
+      !isCurrentAuthenticatedSessionScope(authenticationScope)
+      || !isCreateIntentCurrent()
+    ) return { applied: false };
     await assertWorkspacePersistenceUnlocked();
-    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
+    if (
+      !isCurrentAuthenticatedSessionScope(authenticationScope)
+      || !isCreateIntentCurrent()
+    ) return { applied: false };
 
     setStatus(t(creatingKey));
-    const data = await submitWorkspacePageCreate(task, authenticationScope);
-    if (!data || !isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
+    const data = await submitWorkspacePageCreate(task, authenticationScope, {
+      requestGuard: isCreateIntentCurrent
+    });
+    if (
+      data === skippedApiRequest
+      || !data
+      || !isCurrentAuthenticatedSessionScope(authenticationScope)
+    ) return { applied: false };
     if (!data.page?.id || data.page.ownerId !== state.user?.id) {
       throw new Error(t("errors.invalidResponse"));
+    }
+    if (!isCreateIntentCurrent()) {
+      // The POST is acknowledged and durable, so no retry receipt is needed.
+      // Do not let its stale response replace the user's newer navigation.
+      clearAcknowledgedTask();
+      return { applied: false, page: data.page };
     }
 
     const pages = await fetchAllPageSummaries();
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
+    if (!isCreateIntentCurrent()) {
+      clearAcknowledgedTask();
+      return { applied: false, page: data.page };
+    }
     resetSearchDialogState();
     state.searchQuery = "";
     state.activeTag = "";
@@ -16340,12 +16414,16 @@ async function createWorkspacePage(payload, { creatingKey, createdKey, createdAr
     state.allPages = pages;
     renderPages();
 
+    // No await occurs between this final fence and the navigation call. The
+    // intended open/show operation synchronously claims the next generation.
+    if (!isCreateIntentCurrent()) {
+      clearAcknowledgedTask();
+      return { applied: false, page: data.page };
+    }
     if (payload.isCollection) await showCollection(data.page.id, { skipFlush: true });
     else await openPage(data.page.id, { skipFlush: true });
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
-    if (pendingWorkspaceCreateTasks.get(task.taskKey) === task) {
-      pendingWorkspaceCreateTasks.delete(task.taskKey);
-    }
+    clearAcknowledgedTask();
     setStatus(t(createdKey, createdArgs));
     return { applied: true, page: data.page };
   } finally {
