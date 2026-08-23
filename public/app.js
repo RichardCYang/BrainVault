@@ -8601,10 +8601,14 @@ async function deleteNavigationTarget() {
   const target = state.activeNavigationMenuTarget;
   if (!target) return;
   const authenticationScope = captureAuthenticatedSessionScope();
+  const navigationGeneration = workspaceNavigationGeneration;
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
 
   await assertWorkspacePersistenceUnlocked();
-  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+  if (
+    !isCurrentAuthenticatedSessionScope(authenticationScope)
+    || !isCurrentWorkspaceNavigation(navigationGeneration)
+  ) return;
 
   const subtreeIds = getPageSubtreeIds(target.id);
   if (isPageReadOnly() && state.selectedPage?.id && subtreeIds.has(state.selectedPage.id)) {
@@ -8619,11 +8623,14 @@ async function deleteNavigationTarget() {
   }
 
   return withPageEditLock(async () => {
-    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    if (
+      !isCurrentAuthenticatedSessionScope(authenticationScope)
+      || !isCurrentWorkspaceNavigation(navigationGeneration)
+    ) return;
 
-    // Permanent deletion can commit after the user navigates elsewhere. Bind
-    // only the post-COMMIT selection/fallback reconciliation to this view.
-    const navigationGeneration = workspaceNavigationGeneration;
+    // Bind the destructive intent before any asynchronous persistence wait.
+    // Navigation during a pending flush must cancel this stale delete instead
+    // of letting it inherit the newer view's generation and delete an old target.
     const isCollection = target.kind === "collection";
     const selectedPageWasDeleted = Boolean(state.selectedPage?.id && subtreeIds.has(state.selectedPage.id));
     const activeCollectionWasDeleted = state.activeCollectionId === target.id;
