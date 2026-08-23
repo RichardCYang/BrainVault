@@ -229,6 +229,7 @@ const accountSecurityOperationGuards = Object.freeze({
 let workspaceNavigationGeneration = 0;
 let authenticationSessionGeneration = 0;
 let sharePageRequestGeneration = 0;
+let sharePageNavigationGeneration = null;
 let pageEditLockGeneration = 0;
 const pendingWorkspaceCreateTasks = new Map();
 const pendingPageVersionResetTasks = new Map();
@@ -10028,6 +10029,8 @@ function renderSharePageList() {
 function isCurrentSharePageRequest(requestGeneration, pageId) {
   return Boolean(
     requestGeneration === sharePageRequestGeneration
+      && sharePageNavigationGeneration !== null
+      && isCurrentWorkspaceNavigation(sharePageNavigationGeneration)
       && state.sharePageOpen
       && state.selectedPage?.id === pageId
       && isPageOwner()
@@ -10053,13 +10056,16 @@ async function loadPageShares(pageId, requestGeneration) {
 async function openSharePageDialog() {
   const pageId = state.selectedPage?.id;
   if (!pageId || !isPageOwner()) return;
+  const navigationGeneration = workspaceNavigationGeneration;
   const requestGeneration = ++sharePageRequestGeneration;
   await flushPendingPageEdits();
   if (
     requestGeneration !== sharePageRequestGeneration
+      || !isCurrentWorkspaceNavigation(navigationGeneration)
       || state.selectedPage?.id !== pageId
       || !isPageOwner()
   ) return;
+  sharePageNavigationGeneration = navigationGeneration;
   state.sharePageOpen = true;
   state.sharePageEntries = [];
   elements.sharePageLayer.classList.remove("hidden");
@@ -10075,6 +10081,7 @@ async function openSharePageDialog() {
 
 function closeSharePageDialog({ restoreFocus = true } = {}) {
   sharePageRequestGeneration += 1;
+  sharePageNavigationGeneration = null;
   if (!state.sharePageOpen) return;
   state.sharePageOpen = false;
   state.sharePageEntries = [];
@@ -18262,38 +18269,44 @@ elements.sharePageForm.addEventListener("submit", async (event) => {
   if (!state.selectedPage || !isPageOwner()) return;
   const username = elements.sharePageUsername.value.trim();
   if (!username) return;
+  const pageId = state.selectedPage.id;
+  const requestGeneration = sharePageRequestGeneration;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  const isShareMutationCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+      && isCurrentSharePageRequest(requestGeneration, pageId)
+  );
+  if (!isShareMutationCurrent()) return;
   elements.sharePageSubmit.disabled = true;
   setSharePageMessage(t("sharing.adding"));
   try {
-    const pageId = state.selectedPage.id;
-    const authenticationScope = captureAuthenticatedSessionScope();
-    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
     await withPagePersistenceTransition(pageId, "share-add", async () => {
+      if (!isShareMutationCurrent()) return null;
       // The durable page-draft store is shared by same-origin tabs. Recheck it
       // immediately before changing persistence modes so another tab's direct-edit
       // recovery copy cannot become invisible behind the collaboration editor.
       await flushPendingPageEdits({ allowLocked: true });
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      if (!isShareMutationCurrent()) return null;
       assertNoPendingLocalPageDrafts(pageId);
       const data = await api(`/api/pages/${encodeURIComponent(pageId)}/shares`, {
         method: "POST",
-        body: { username }
+        body: { username },
+        beforeFetch: isShareMutationCurrent
       });
-      if (
-        !isCurrentAuthenticatedSessionScope(authenticationScope)
-        || state.selectedPage?.id !== pageId
-      ) return null;
+      if (data === skippedApiRequest || !isShareMutationCurrent()) return null;
       state.sharePageEntries.push(data.share);
       elements.sharePageForm.reset();
       renderSharePageList();
       await setSelectedPageShareCount(Number(data.count ?? state.sharePageEntries.length));
+      if (!isShareMutationCurrent()) return null;
       setSharePageMessage(t("sharing.added", { username: data.share?.user?.username ?? username }));
     });
   } catch (error) {
-    setSharePageMessage(error.message, true);
+    if (isShareMutationCurrent()) setSharePageMessage(error.message, true);
   } finally {
     elements.sharePageSubmit.disabled = false;
-    elements.sharePageUsername.focus();
+    if (isShareMutationCurrent()) elements.sharePageUsername.focus();
   }
 });
 
@@ -18308,44 +18321,61 @@ elements.sharePageList.addEventListener("click", async (event) => {
     setSharePageMessage("The collaborator list is stale. Refresh sharing before removing access.", true);
     return;
   }
+  const requestGeneration = sharePageRequestGeneration;
   const authenticationScope = captureAuthenticatedSessionScope();
-  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+  const isShareMutationCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+      && isCurrentSharePageRequest(requestGeneration, pageId)
+  );
+  if (!isShareMutationCurrent()) return;
   button.disabled = true;
   setSharePageMessage(t("sharing.removing", { username }));
   try {
     await withPagePersistenceTransition(pageId, "share-remove", async () => {
+      if (!isShareMutationCurrent()) return null;
       // A recovery record from this or another same-origin tab represents a Yjs
       // state that has not been acknowledged by the server. Never remove access
       // while one is present; final removal would make that state unreachable.
       await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false });
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      if (!isShareMutationCurrent()) return null;
       assertNoPendingLocalCollaborationRecovery(pageId);
       if (state.sharePageEntries.length === 1) {
         if (state.collaborationSession) await destroyPageCollaboration({ flush: false });
         if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        if (!isShareMutationCurrent()) return null;
         // Closing the current session is asynchronous. Check once more before the
         // destructive request so a concurrent tab update cannot slip past the guard.
         assertNoPendingLocalCollaborationRecovery(pageId);
       }
       const data = await api(
         `/api/pages/${encodeURIComponent(pageId)}/shares/${encodeURIComponent(userId)}`,
-        { method: "DELETE", body: { expectedGeneration } }
+        {
+          method: "DELETE",
+          body: { expectedGeneration },
+          beforeFetch: isShareMutationCurrent
+        }
       );
-      if (
-        !isCurrentAuthenticatedSessionScope(authenticationScope)
-        || state.selectedPage?.id !== pageId
-      ) return null;
+      if (data === skippedApiRequest || !isShareMutationCurrent()) return null;
       state.sharePageEntries = state.sharePageEntries.filter((share) => share.user?.id !== userId);
       renderSharePageList();
       await setSelectedPageShareCount(Number(data.count ?? state.sharePageEntries.length));
+      if (!isShareMutationCurrent()) return null;
       setSharePageMessage(t("sharing.removed", { username }));
     });
   } catch (error) {
-    button.disabled = false;
-    if (isCollaborativePage() && !state.collaborationSession) {
+    if (!isShareMutationCurrent()) return;
+    setSharePageMessage(error.message, true);
+  } finally {
+    if (button.isConnected) button.disabled = false;
+    if (
+      isCurrentAuthenticatedSessionScope(authenticationScope)
+      && state.selectedPage?.id === pageId
+      && isCollaborativePage()
+      && !state.collaborationSession
+    ) {
       void startPageCollaboration(state.selectedPage);
     }
-    setSharePageMessage(error.message, true);
   }
 });
 

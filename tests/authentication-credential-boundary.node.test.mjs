@@ -190,14 +190,18 @@ test("share mutations stay bound to the initiating authentication generation acr
     "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;",
     collaborationDestroy
   );
-  const removeRequest = removeSource.indexOf('{ method: "DELETE", body: { expectedGeneration } }', removePostDestroyFence);
+  const removeRequest = removeSource.indexOf('method: "DELETE"', removePostDestroyFence);
+  const removeRequestGeneration = removeSource.indexOf("body: { expectedGeneration }", removeRequest);
+  const removePreFetchFence = removeSource.indexOf("beforeFetch: isShareMutationCurrent", removeRequestGeneration);
   assert.ok(
     removeScope >= 0
       && removeFlush > removeScope
       && removePostWaitFence > removeFlush
       && collaborationDestroy > removePostWaitFence
       && removePostDestroyFence > collaborationDestroy
-      && removeRequest > removePostDestroyFence,
+      && removeRequest > removePostDestroyFence
+      && removeRequestGeneration > removeRequest
+      && removePreFetchFence > removeRequestGeneration,
     "share removal must revalidate auth after draft draining and collaboration teardown before deleting access"
   );
 });
