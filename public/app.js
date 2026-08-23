@@ -5687,13 +5687,36 @@ function openPageEmojiPicker(page, trigger) {
 
 async function saveEmojiSelection(
   emoji,
-  { operation = null, authenticationScope = captureAuthenticatedSessionScope() } = {}
+  {
+    operation = null,
+    authenticationScope = captureAuthenticatedSessionScope(),
+    navigationGeneration = undefined
+  } = {}
 ) {
   const target = state.emojiPickerTarget;
   if (!target || state.emojiSaving || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   const targetKey = getIconPickerTargetKey(target);
   const activeOperation = operation ?? iconPickerOperationGuard.begin(targetKey);
-  if (!iconPickerOperationGuard.isCurrent(activeOperation, targetKey)) return;
+  const pageNavigationGeneration = navigationGeneration === undefined
+    ? (
+        target.type === "page" && state.selectedPage?.id === target.pageId
+          ? workspaceNavigationGeneration
+          : null
+      )
+    : navigationGeneration;
+  const isPageIconIntentCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+    && iconPickerOperationGuard.isCurrent(activeOperation, targetKey)
+    && (
+      pageNavigationGeneration === null
+      || (
+        isCurrentWorkspaceNavigation(pageNavigationGeneration)
+        && state.workspaceView === "page"
+        && state.selectedPage?.id === target.pageId
+      )
+    )
+  );
+  if (!isPageIconIntentCurrent()) return;
 
   state.emojiSaving = true;
   elements.emojiPicker.setAttribute("aria-busy", "true");
@@ -5744,28 +5767,36 @@ async function saveEmojiSelection(
 
     if (state.selectedPage?.id === target.pageId && !isCollectionPage(state.selectedPage) && !requireWritablePage()) return;
     const savePageEmoji = async () => {
-      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      if (!isPageIconIntentCurrent()) return null;
       const currentPage = state.selectedPage?.id === target.pageId
         ? state.selectedPage
         : state.allPages.find((page) => page.id === target.pageId);
 
       const data = await api(`/api/pages/${target.pageId}`, {
         method: "PATCH",
-        body: { icon: emoji, expectedVersion: currentPage?.version }
+        body: { icon: emoji, expectedVersion: currentPage?.version },
+        // withPageEditLock() and api() can both wait asynchronously. Recheck
+        // the picker operation and page navigation immediately before fetch so
+        // closing/replacing the picker or leaving the page cancels an unsent write.
+        beforeFetch: isPageIconIntentCurrent
       });
-      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      if (
+        data === skippedApiRequest
+        || data === null
+        || !isCurrentAuthenticatedSessionScope(authenticationScope)
+      ) return null;
       applyPageMetadataMutationResult(data.page, {
         icon: data.page.icon,
         isCollection: data.page.isCollection
       });
       if (isEmojiIconValue(emoji)) rememberRecentEmoji(emoji);
       else if (getCustomImageSource(emoji)) rememberCustomIconSelection(emoji);
-      renderSelectedPage();
-      if (iconPickerOperationGuard.isCurrent(activeOperation, targetKey)) {
+      if (state.selectedPage?.id === target.pageId) renderSelectedPage();
+      if (isPageIconIntentCurrent()) {
         closeEmojiPicker({ restoreFocus: false });
         (target.isCollection ? elements.collectionIconButton : elements.pageIconButton).focus();
+        setStatus(t(target.isCollection ? "emoji.collectionSaved" : "emoji.pageSaved"));
       }
-      setStatus(t(target.isCollection ? "emoji.collectionSaved" : "emoji.pageSaved"));
     };
 
     if (state.selectedPage?.id === target.pageId) await withPageEditLock(savePageEmoji);
@@ -17050,6 +17081,19 @@ async function applyCustomIconFile(file) {
   if (state.emojiSaving || !file) return;
   const authenticationScope = captureAuthenticatedSessionScope();
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+  const pickerTarget = state.emojiPickerTarget;
+  const navigationGeneration = pickerTarget?.type === "page" && state.selectedPage?.id === pickerTarget.pageId
+    ? workspaceNavigationGeneration
+    : null;
+  const isCustomIconNavigationCurrent = () => (
+    navigationGeneration === null
+    || (
+      isCurrentWorkspaceNavigation(navigationGeneration)
+      && state.workspaceView === "page"
+      && state.selectedPage?.id === pickerTarget?.pageId
+    )
+  );
+  if (!isCustomIconNavigationCurrent()) return;
   if (!isSupportedCustomIconFile(file)) {
     setCustomIconMessage(t("emoji.customInvalidFile"), true);
     return;
@@ -17066,17 +17110,19 @@ async function applyCustomIconFile(file) {
     if (!(await validateCustomIconFileContents(file))) throw new Error("INVALID_CUSTOM_ICON_FILE");
     if (
       !isCurrentAuthenticatedSessionScope(authenticationScope)
+      || !isCustomIconNavigationCurrent()
       || !iconPickerOperationGuard.isCurrent(operation, getIconPickerTargetKey(state.emojiPickerTarget))
     ) return;
     const value = await uploadCustomIconFile(file, { authenticationScope });
     if (
       !value
       || !isCurrentAuthenticatedSessionScope(authenticationScope)
+      || !isCustomIconNavigationCurrent()
       || !iconPickerOperationGuard.isCurrent(operation, getIconPickerTargetKey(state.emojiPickerTarget))
     ) return;
     renderCustomIconPreview(value);
     setCustomIconMessage();
-    await saveEmojiSelection(value, { operation, authenticationScope });
+    await saveEmojiSelection(value, { operation, authenticationScope, navigationGeneration });
   } catch (error) {
     if (iconPickerOperationGuard.isCurrent(operation, getIconPickerTargetKey(state.emojiPickerTarget))) {
       setCustomIconMessage(error?.message === "INVALID_CUSTOM_ICON_FILE" ? t("emoji.customInvalidFile") : error?.message ?? t("emoji.customInvalidFile"), true);

@@ -491,26 +491,26 @@ test("note metadata mutations stay bound to the initiating authentication genera
   const emojiStart = source.indexOf("async function saveEmojiSelection");
   const emojiEnd = source.indexOf("function positionEmojiPicker", emojiStart);
   const emoji = source.slice(emojiStart, emojiEnd);
+  assert.match(emoji, /authenticationScope = captureAuthenticatedSessionScope\(\)/);
   assert.match(
     emoji,
-    /\{ operation = null, authenticationScope = captureAuthenticatedSessionScope\(\) \} = \{\}/
+    /const isPageIconIntentCurrent = \(\) => \([\s\S]*?isCurrentAuthenticatedSessionScope\(authenticationScope\)/
   );
   const pageEmojiStart = emoji.indexOf("const savePageEmoji = async () =>");
-  const pageEmojiRequest = emoji.indexOf('api(`/api/pages/${target.pageId}`', pageEmojiStart);
-  const pageEmojiPreFence = emoji.indexOf(
-    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;",
-    pageEmojiStart
-  );
+  const pageEmojiPreFence = emoji.indexOf("if (!isPageIconIntentCurrent()) return null;", pageEmojiStart);
+  const pageEmojiRequest = emoji.indexOf('api(`/api/pages/${target.pageId}`', pageEmojiPreFence);
+  const pageEmojiPreflightFence = emoji.indexOf("beforeFetch: isPageIconIntentCurrent", pageEmojiRequest);
   const pageEmojiPostFence = emoji.indexOf(
-    "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;",
-    pageEmojiRequest
+    "!isCurrentAuthenticatedSessionScope(authenticationScope)",
+    pageEmojiPreflightFence
   );
   assert.ok(
     pageEmojiStart >= 0
       && pageEmojiPreFence > pageEmojiStart
       && pageEmojiRequest > pageEmojiPreFence
-      && pageEmojiPostFence > pageEmojiRequest,
-    "page icon writes must revalidate the initiating auth scope before dispatch and response application"
+      && pageEmojiPreflightFence > pageEmojiRequest
+      && pageEmojiPostFence > pageEmojiPreflightFence,
+    "page icon writes must revalidate the initiating auth scope before dispatch, fetch, and response application"
   );
 
   const coverStart = source.indexOf("async function persistPageCover");
@@ -584,7 +584,7 @@ test("note metadata mutations stay bound to the initiating authentication genera
       && fileUpload > filePostValidationFence,
     "custom icon file validation must not allow a stale user action to adopt a replacement credential"
   );
-  assert.match(fileHandler, /saveEmojiSelection\(value, \{ operation, authenticationScope \}\)/);
+  assert.match(fileHandler, /saveEmojiSelection\(value, \{ operation, authenticationScope, navigationGeneration \}\)/);
 });
 
 test("standalone metadata auth-rotation reproduction rejects stale delayed mutations", () => {

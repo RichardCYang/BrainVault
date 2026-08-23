@@ -61,7 +61,7 @@ test("custom icon file reads and save completion UI remain scoped to the origina
   assert.match(customFile, /const authenticationScope = captureAuthenticatedSessionScope\(\);/);
   assert.match(customFile, /const operation = iconPickerOperationGuard\.begin\(targetKey\);[\s\S]*?await validateCustomIconFileContents\(file\)[\s\S]*?await uploadCustomIconFile\(file, \{ authenticationScope \}\);/);
   assert.match(customFile, /!isCurrentAuthenticatedSessionScope\(authenticationScope\)[\s\S]*?!iconPickerOperationGuard\.isCurrent\(operation, getIconPickerTargetKey\(state\.emojiPickerTarget\)\)[\s\S]*?return;/);
-  assert.match(customFile, /saveEmojiSelection\(value, \{ operation, authenticationScope \}\)/);
+  assert.match(customFile, /saveEmojiSelection\(value, \{ operation, authenticationScope, navigationGeneration \}\)/);
 });
 
 test("standalone reproduction demonstrates stale custom-icon file application", () => {
