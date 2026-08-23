@@ -8621,6 +8621,9 @@ async function deleteNavigationTarget() {
   return withPageEditLock(async () => {
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
 
+    // Permanent deletion can commit after the user navigates elsewhere. Bind
+    // only the post-COMMIT selection/fallback reconciliation to this view.
+    const navigationGeneration = workspaceNavigationGeneration;
     const isCollection = target.kind === "collection";
     const selectedPageWasDeleted = Boolean(state.selectedPage?.id && subtreeIds.has(state.selectedPage.id));
     const activeCollectionWasDeleted = state.activeCollectionId === target.id;
@@ -8711,14 +8714,28 @@ async function deleteNavigationTarget() {
       checkDraftStoreWrite(pageDraftStore.removePages(state.user.id, serverPageIds, pageDraftSourceId));
     }
 
-    if (selectedPageWasDeleted) {
+    const shouldClearDeletedSelection = Boolean(
+      selectedPageWasDeleted
+      && isCurrentWorkspaceNavigation(navigationGeneration)
+      && state.selectedPage?.id
+      && subtreeIds.has(state.selectedPage.id)
+    );
+    const shouldLeaveDeletedCollection = Boolean(
+      activeCollectionWasDeleted
+      && isCurrentWorkspaceNavigation(navigationGeneration)
+      && state.workspaceView === "collection"
+      && state.activeCollectionId === target.id
+    );
+    if (shouldClearDeletedSelection) {
       resetPageEditTracking();
       state.selectedPage = null;
     }
     await loadPages(elements.searchInput.value.trim(), state.activeTag);
+    if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
 
-    if (selectedPageWasDeleted || activeCollectionWasDeleted) {
-      await showCollection(fallbackCollectionId, { skipFlush: true });
+    if (shouldClearDeletedSelection || shouldLeaveDeletedCollection) {
+      await showCollection(fallbackCollectionId, { skipFlush: true, navigationGeneration });
+      if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
     }
 
     setStatus(t(isCollection ? "status.collectionDeleted" : "status.pageDeleted"));
