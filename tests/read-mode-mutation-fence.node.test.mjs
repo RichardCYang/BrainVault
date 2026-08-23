@@ -43,6 +43,8 @@ function loadCreateAndModeHarness() {
   const context = {
     state,
     pageModes,
+    workspaceNavigationGeneration: 1,
+    skippedApiRequest: Symbol("skipped-api-request"),
     pageModeMutationFences: new Map(),
     syncPageModeUi() {},
     canPersistSelectedPage() {
@@ -63,6 +65,9 @@ function loadCreateAndModeHarness() {
     },
     isCurrentAuthenticatedSessionScope() {
       return true;
+    },
+    isCurrentWorkspaceNavigation(generation) {
+      return generation === context.workspaceNavigationGeneration;
     },
     getBlockCreateTask(_scope, pageId, payload) {
       return { pageId, payload };

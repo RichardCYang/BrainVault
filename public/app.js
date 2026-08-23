@@ -7615,6 +7615,16 @@ async function setPageMode(nextMode, { announce = true } = {}) {
     || isPageModeMutationFenced()
   ) return;
   const normalizedMode = nextMode === pageModes.WRITE ? pageModes.WRITE : pageModes.READ;
+  const pageId = state.selectedPage.id;
+  const navigationGeneration = workspaceNavigationGeneration;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  const isPageModeIntentCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+    && isCurrentWorkspaceNavigation(navigationGeneration)
+    && state.workspaceView === "page"
+    && state.selectedPage?.id === pageId
+  );
+  if (!isPageModeIntentCurrent()) return;
 
   if (normalizedMode === pageModes.WRITE) {
     state.pageModeChanging = true;
@@ -7624,6 +7634,7 @@ async function setPageMode(nextMode, { announce = true } = {}) {
       // require it. In private/incognito browsing the browser may intentionally
       // keep IndexedDB session-scoped even though strict transactions work.
       await recoveryStoragePersistence.ensurePersistent();
+      if (!isPageModeIntentCurrent()) return;
       if (!isRecoveryStorageWritable()) {
         state.pageMode = pageModes.READ;
         state.pendingFocusBlockId = null;
@@ -7635,6 +7646,8 @@ async function setPageMode(nextMode, { announce = true } = {}) {
       syncPageModeUi();
     }
   }
+
+  if (!isPageModeIntentCurrent()) return;
 
   // A restored route or recovery flow can already desire WRITE while the
   // effective UI remained read-only until writable recovery storage was ready.
@@ -7651,10 +7664,13 @@ async function setPageMode(nextMode, { announce = true } = {}) {
   state.pageModeChanging = true;
   syncPageModeUi();
   try {
+    if (!isPageModeIntentCurrent()) return;
     if (normalizedMode === pageModes.READ) {
       const materialization = await flushPendingPageEdits({ allowLocked: true });
+      if (!isPageModeIntentCurrent()) return;
       applyMaterializedHtmlCaches(materialization);
     }
+    if (!isPageModeIntentCurrent()) return;
     state.pageMode = normalizedMode;
     state.pendingFocusBlockId = null;
     syncPageModeUi();
@@ -7665,14 +7681,17 @@ async function setPageMode(nextMode, { announce = true } = {}) {
     if (normalizedMode === pageModes.WRITE && !hasBlocks) {
       // The mode transition intentionally holds pageModeChanging until the first editor block is ready.
       // Bypass only that self-owned interaction lock; createEmptyBlock still requires active write mode.
-      const pageId = state.selectedPage.id;
-      const authenticationScope = captureAuthenticatedSessionScope();
-      const data = await createEmptyBlock(pageId, { allowLocked: true });
-      if (!data || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+      const data = await createEmptyBlock(pageId, {
+        allowLocked: true,
+        authenticationScope,
+        navigationGeneration
+      });
+      if (!data || !isPageModeIntentCurrent()) return;
       await reconcileCanonicalCreatedBlock(pageId, data.block, { authenticationScope });
+      if (!isPageModeIntentCurrent()) return;
     }
 
-    if (announce) {
+    if (announce && isPageModeIntentCurrent()) {
       const statusKey = normalizedMode === pageModes.READ
         ? "status.readModeEnabled"
         : recoveryStoragePersistence.isPersistent()
@@ -14749,13 +14768,19 @@ function getBlockCreateTask(authenticationScope, pageId, payload) {
   };
 }
 
-async function submitBlockCreateTask(task, authenticationScope) {
+async function submitBlockCreateTask(
+  task,
+  authenticationScope,
+  { requestGuard = null } = {}
+) {
+  if (requestGuard?.() === false) return skippedApiRequest;
   task.inFlight = true;
   let attempt = 0;
 
   try {
     while (attempt < 2) {
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      if (requestGuard?.() === false) return skippedApiRequest;
 
       try {
         const data = await submitWithFreshMutationIdOnReuse(task, () => {
@@ -14768,9 +14793,14 @@ async function submitBlockCreateTask(task, authenticationScope) {
                 ? {}
                 : { basePageContentVersion: task.basePageContentVersion }),
               mutationId: task.mutationId
-            }
+            },
+            beforeFetch: () => (
+              isCurrentAuthenticatedSessionScope(authenticationScope)
+              && requestGuard?.() !== false
+            )
           });
         });
+        if (data === skippedApiRequest) return data;
         if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         if (pendingBlockCreateTasks.get(task.taskKey) === task) {
           pendingBlockCreateTasks.delete(task.taskKey);
@@ -14784,6 +14814,13 @@ async function submitBlockCreateTask(task, authenticationScope) {
             pendingBlockCreateTasks.delete(task.taskKey);
           }
           throw error;
+        }
+        // Header preparation and a failed network attempt can both outlive the
+        // initiating page view. Keep the mutation id for reconciliation, but
+        // never issue a fresh retry from a navigation that is already stale.
+        if (requestGuard?.() === false) {
+          pendingBlockCreateTasks.set(task.taskKey, task);
+          return skippedApiRequest;
         }
       }
     }
@@ -14801,8 +14838,25 @@ async function submitBlockCreateTask(task, authenticationScope) {
 
 async function createEmptyBlock(
   pageId,
-  { parentBlockId = null, sortOrder, allowLocked = false, type = "MARKDOWN", markdown = "", metadata } = {}
+  {
+    parentBlockId = null,
+    sortOrder,
+    allowLocked = false,
+    type = "MARKDOWN",
+    markdown = "",
+    metadata,
+    authenticationScope = captureAuthenticatedSessionScope(),
+    navigationGeneration = workspaceNavigationGeneration
+  } = {}
 ) {
+  const isCreateIntentCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+    && isCurrentWorkspaceNavigation(navigationGeneration)
+    && state.workspaceView === "page"
+    && state.selectedPage?.id === pageId
+  );
+  if (!isCreateIntentCurrent()) return null;
+
   const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage();
   if (!writable) throw new Error(t("errors.readOnlyPage"));
   if (isCollaborativePage()) {
@@ -14821,11 +14875,12 @@ async function createEmptyBlock(
       updatedAt: new Date().toISOString(),
       children: []
     };
+    if (!isCreateIntentCurrent()) return null;
     await session.upsertBlock(block);
+    if (!isCreateIntentCurrent()) return null;
     return { block, pageContentVersion: state.selectedPage?.contentVersion ?? 1 };
   }
-  const authenticationScope = captureAuthenticatedSessionScope();
-  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+
   const payload = {
     type,
     markdown,
@@ -14836,9 +14891,15 @@ async function createEmptyBlock(
   const task = getBlockCreateTask(authenticationScope, pageId, payload);
   const data = await withPageModeMutationFence(
     pageId,
-    () => submitBlockCreateTask(task, authenticationScope)
+    () => submitBlockCreateTask(task, authenticationScope, {
+      requestGuard: isCreateIntentCurrent
+    })
   );
-  if (!data || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+  if (
+    data === skippedApiRequest
+    || !data
+    || !isCreateIntentCurrent()
+  ) return null;
   applyAuthoritativePageContentVersion(pageId, data);
   return data;
 }
@@ -14974,7 +15035,11 @@ async function refreshSelectedPageAfterBlockDeletion(
   );
   if (!needsStarterBlock) return true;
 
-  const starter = await createEmptyBlock(pageId, { allowLocked: true });
+  const starter = await createEmptyBlock(pageId, {
+    allowLocked: true,
+    authenticationScope,
+    navigationGeneration: reconciliationNavigationGeneration
+  });
   if (!starter || !isCurrentAuthenticatedSessionScope(authenticationScope)) return false;
   if (
     !isCurrentWorkspaceNavigation(reconciliationNavigationGeneration)

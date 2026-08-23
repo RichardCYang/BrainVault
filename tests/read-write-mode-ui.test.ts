@@ -78,7 +78,11 @@ describe("Page read/write mode", () => {
 
   it("allows the write-mode transition to create the first block while its own transition lock is active", () => {
     const setPageMode = client.match(/async function setPageMode\(nextMode, \{ announce = true \} = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? "";
-    expect(setPageMode).toContain("createEmptyBlock(state.selectedPage.id, { allowLocked: true })");
+    expect(setPageMode).toContain("const pageId = state.selectedPage.id;");
+    expect(setPageMode).toContain("const navigationGeneration = workspaceNavigationGeneration;");
+    expect(setPageMode).toContain("const isPageModeIntentCurrent = () => (");
+    expect(setPageMode).toContain("const data = await createEmptyBlock(pageId, {");
+    expect(setPageMode).toContain("navigationGeneration");
   });
 
   it("does not create a block merely by opening an empty page", () => {

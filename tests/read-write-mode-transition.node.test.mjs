@@ -14,7 +14,13 @@ function loadSetPageMode() {
 
 function createHarness(
   blocks = [],
-  { initialMode = "read", materialization = null, persistent = true, recoveryWritable = true } = {}
+  {
+    initialMode = "read",
+    materialization = null,
+    persistent = true,
+    recoveryWritable = true,
+    ensurePersistent = null
+  } = {}
 ) {
   const pageModes = Object.freeze({ READ: "read", WRITE: "write" });
   const state = {
@@ -29,9 +35,12 @@ function createHarness(
   const context = {
     state,
     pageModes,
+    workspaceNavigationGeneration: 1,
     recoveryStoragePersistence: {
       isPersistent() { return persistent; },
-      async ensurePersistent() { return persistent; }
+      async ensurePersistent() {
+        return typeof ensurePersistent === "function" ? ensurePersistent() : persistent;
+      }
     },
     isRecoveryStorageWritable() { return recoveryWritable; },
     syncPageModeUi() {},
@@ -50,6 +59,9 @@ function createHarness(
     },
     isPageModeMutationFenced() {
       return false;
+    },
+    isCurrentWorkspaceNavigation(generation) {
+      return generation === context.workspaceNavigationGeneration;
     },
     requireWritablePage() {
       return context.canEditSelectedPage();
@@ -132,4 +144,32 @@ test("entering read mode applies the materialized rendered cache before completi
   assert.equal(state.pageMode, pageModes.READ);
   assert.equal(state.pageModeChanging, false);
   assert.deepEqual(calls, { created: 0, opened: 0, appliedMaterialization: 1 });
+});
+
+
+test("navigation during write-mode persistence discovery cannot mutate the newer page", async () => {
+  let releasePersistence;
+  const persistenceGate = new Promise((resolve) => {
+    releasePersistence = resolve;
+  });
+  const { context, state, pageModes, calls } = createHarness([], {
+    ensurePersistent: async () => {
+      await persistenceGate;
+      return true;
+    }
+  });
+
+  const transition = context.setPageMode(pageModes.WRITE);
+  assert.equal(state.pageModeChanging, true);
+
+  context.workspaceNavigationGeneration += 1;
+  state.selectedPage = { id: "page-2", blocks: [] };
+  state.pageMode = pageModes.READ;
+  releasePersistence();
+  await transition;
+
+  assert.equal(state.selectedPage.id, "page-2");
+  assert.equal(state.pageMode, pageModes.READ);
+  assert.equal(state.pageModeChanging, false);
+  assert.deepEqual(calls, { created: 0, opened: 0, appliedMaterialization: 0 });
 });
