@@ -131,7 +131,13 @@ test("direct block deletions await discarded in-flight saves before taking delet
   assert.equal(awaitedDiscards.length, 3, "every direct destructive block-delete path must wait for settlement");
   for (const match of awaitedDiscards) {
     const after = client.slice(match.index, match.index + 700);
-    assert.match(after, /if \(!isCurrentAuthenticatedSessionScope\(authenticationScope\)\) return(?: null)?;/);
+    // Auth may be revalidated in a combined auth/navigation guard; the key
+    // invariant is that settlement is followed by a fail-closed auth check
+    // before any destructive delete request is submitted.
+    assert.match(
+      after,
+      /if\s*\([\s\S]{0,260}!isCurrentAuthenticatedSessionScope\(authenticationScope\)[\s\S]{0,260}\)\s*return(?: data)?;/
+    );
     assert.match(after, /await deleteBlockWithVersionCheck\(blockId/);
   }
 });
