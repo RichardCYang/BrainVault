@@ -193,13 +193,16 @@ function createEntryRow(entry) {
 
   const timeCell = document.createElement("td");
   timeCell.className = "timetable-time-cell";
+  const timeFields = document.createElement("div");
+  timeFields.className = "timetable-time-fields";
   const start = createTimeInput(entry, "start");
   const arrow = document.createElement("span");
   arrow.className = "timetable-time-arrow";
   arrow.textContent = "→";
   arrow.setAttribute("aria-hidden", "true");
   const end = createTimeInput(entry, "end");
-  timeCell.append(start, arrow, end);
+  timeFields.append(start, arrow, end);
+  timeCell.append(timeFields);
 
   const titleCell = document.createElement("td");
   const title = document.createElement("input");

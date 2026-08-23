@@ -38,6 +38,16 @@ describe("Timetable block", () => {
     expect(moduleSource).toContain('makeButton("timetable-next-day"');
   });
 
+  it("keeps every editable timetable column on the same row height", () => {
+    expect(moduleSource).toContain('timeFields.className = "timetable-time-fields"');
+    expect(moduleSource).toContain("timeFields.append(start, arrow, end)");
+    expect(moduleSource).toContain("timeCell.append(timeFields)");
+    expect(styles).toMatch(/\.timetable-time-cell\s*\{[^}]*min-width:\s*13\.2rem;[^}]*padding-inline:\s*0\.18rem\s*!important;[^}]*\}/s);
+    expect(styles).not.toMatch(/\.timetable-time-cell\s*\{[^}]*display:\s*grid;/s);
+    expect(styles).toMatch(/\.timetable-time-fields\s*\{[^}]*display:\s*grid;[^}]*min-height:\s*2\.55rem;[^}]*align-items:\s*stretch;/s);
+    expect(styles).toMatch(/\.timetable-time-input\s*\{[^}]*min-height:\s*2\.55rem;/s);
+  });
+
   it("normalizes invalid ranges, duplicate IDs, and chronological order", () => {
     const data = getTimetableData({
       timetable: {

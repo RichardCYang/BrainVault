@@ -15012,15 +15012,20 @@ body.pdf-export-mode .remote-collaboration-caret {
 }
 
 .timetable-time-cell {
-  display: grid;
   min-width: 13.2rem;
-  grid-template-columns: minmax(5.6rem, 1fr) auto minmax(5.6rem, 1fr);
-  align-items: center;
-  gap: 0.2rem;
   padding-inline: 0.18rem !important;
 }
 
+.timetable-time-fields {
+  display: grid;
+  min-height: 2.55rem;
+  grid-template-columns: minmax(5.6rem, 1fr) auto minmax(5.6rem, 1fr);
+  align-items: stretch;
+  gap: 0.2rem;
+}
+
 .timetable-time-arrow {
+  align-self: center;
   color: var(--timetable-muted-light);
   font-size: 0.68rem;
 }
@@ -15034,7 +15039,7 @@ body.pdf-export-mode .remote-collaboration-caret {
 }
 
 .timetable-time-input {
-  min-height: 2.1rem;
+  min-height: 2.55rem;
   border-radius: 4px;
   padding: 0.35rem 0.42rem;
   color: var(--timetable-muted);
