@@ -15468,37 +15468,52 @@ function closePageCoverDialog() {
 async function persistPageCover(
   updates,
   successKey,
-  { operation = null, authenticationScope = captureAuthenticatedSessionScope() } = {}
+  {
+    operation = null,
+    authenticationScope = captureAuthenticatedSessionScope(),
+    navigationGeneration = workspaceNavigationGeneration
+  } = {}
 ) {
   if (!requireWritablePage() || !isPageOwner() || pageCoverSaving) return null;
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
   const pageId = state.selectedPage.id;
   const activeOperation = operation ?? pageCoverOperationGuard.begin(pageId);
-  if (!pageCoverOperationGuard.isCurrent(activeOperation, pageId)) return null;
+  const isCoverIntentCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+    && isCurrentWorkspaceNavigation(navigationGeneration)
+    && state.workspaceView === "page"
+    && state.selectedPage?.id === pageId
+    && pageCoverOperationGuard.isCurrent(activeOperation, pageId)
+  );
+  if (!isCoverIntentCurrent()) return null;
   pageCoverSaving = true;
   syncPageCoverControls();
   try {
     let updatedPage = null;
     await withPageEditLock(async () => {
-      if (
-        state.selectedPage?.id !== pageId
-        || !pageCoverOperationGuard.isCurrent(activeOperation, pageId)
-        || !isCurrentAuthenticatedSessionScope(authenticationScope)
-      ) return;
+      if (!isCoverIntentCurrent()) return;
       const expectedVersion = state.selectedPage.version;
       const task = { mutationId: createMutationId() };
       const data = await submitWithFreshMutationIdOnReuse(task, () => {
-        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        if (!isCoverIntentCurrent()) return skippedApiRequest;
         return api(`/api/pages/${pageId}`, {
           method: "PATCH",
           body: {
             ...updates,
             expectedVersion,
             mutationId: task.mutationId
-          }
+          },
+          // api() performs asynchronous network-verification work before fetch.
+          // Recheck the page/navigation intent after that work so a cover edit
+          // cannot be sent for a page the user has already started leaving.
+          beforeFetch: isCoverIntentCurrent
         });
       });
-      if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+      if (
+        data === skippedApiRequest
+        || data === null
+        || !isCurrentAuthenticatedSessionScope(authenticationScope)
+      ) return;
       updatedPage = data.page;
       applyPageMetadataMutationResult(data.page, {
         coverUrl: data.page.coverUrl,
@@ -18335,6 +18350,7 @@ elements.pageCoverCustomInput.addEventListener("change", async () => {
   const pageId = state.selectedPage?.id ?? null;
   if (!file || !pageId || pageCoverSaving) return;
   const authenticationScope = captureAuthenticatedSessionScope();
+  const navigationGeneration = workspaceNavigationGeneration;
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   const operation = pageCoverOperationGuard.begin(pageId);
   try {
@@ -18342,13 +18358,16 @@ elements.pageCoverCustomInput.addEventListener("change", async () => {
     const coverUrl = await prepareCustomCoverDataUrl(file);
     if (
       !isCurrentAuthenticatedSessionScope(authenticationScope)
+      || !isCurrentWorkspaceNavigation(navigationGeneration)
+      || state.workspaceView !== "page"
+      || state.selectedPage?.id !== pageId
       || !pageCoverOperationGuard.isCurrent(operation, state.selectedPage?.id)
     ) return;
     setStatus(t("cover.applying"));
     const updated = await persistPageCover(
       { coverUrl, coverPositionX: 50, coverPositionY: 50 },
       "cover.customApplied",
-      { operation, authenticationScope }
+      { operation, authenticationScope, navigationGeneration }
     );
     if (updated) closePageCoverDialog();
   } catch (error) {

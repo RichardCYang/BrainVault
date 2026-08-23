@@ -516,18 +516,21 @@ test("note metadata mutations stay bound to the initiating authentication genera
   const coverStart = source.indexOf("async function persistPageCover");
   const coverEnd = source.indexOf("function loadCustomCoverImage", coverStart);
   const cover = source.slice(coverStart, coverEnd);
+  assert.match(cover, /authenticationScope = captureAuthenticatedSessionScope\(\)/);
+  assert.match(cover, /navigationGeneration = workspaceNavigationGeneration/);
   assert.match(
     cover,
-    /\{ operation = null, authenticationScope = captureAuthenticatedSessionScope\(\) \} = \{\}/
+    /const isCoverIntentCurrent = \(\) => \([\s\S]*?isCurrentAuthenticatedSessionScope\(authenticationScope\)/
   );
   const coverLock = cover.indexOf("await withPageEditLock");
-  const coverFence = cover.indexOf("!isCurrentAuthenticatedSessionScope(authenticationScope)", coverLock);
+  const coverFence = cover.indexOf("if (!isCoverIntentCurrent()) return;", coverLock);
   const coverRetry = cover.indexOf("submitWithFreshMutationIdOnReuse", coverFence);
-  const retryFence = cover.indexOf("if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;", coverRetry);
+  const retryFence = cover.indexOf("if (!isCoverIntentCurrent()) return skippedApiRequest;", coverRetry);
   const coverRequest = cover.indexOf('api(`/api/pages/${pageId}`', retryFence);
+  const coverPreflightFence = cover.indexOf("beforeFetch: isCoverIntentCurrent", coverRequest);
   const coverPostFence = cover.indexOf(
-    "if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;",
-    coverRequest
+    "!isCurrentAuthenticatedSessionScope(authenticationScope)",
+    coverPreflightFence
   );
   assert.ok(
     coverLock >= 0
@@ -535,8 +538,9 @@ test("note metadata mutations stay bound to the initiating authentication genera
       && coverRetry > coverFence
       && retryFence > coverRetry
       && coverRequest > retryFence
-      && coverPostFence > coverRequest,
-    "page cover writes must not cross auth rotation while draining edits or retrying a mutation"
+      && coverPreflightFence > coverRequest
+      && coverPostFence > coverPreflightFence,
+    "page cover writes must not cross auth rotation or stale navigation while draining edits or preparing a request"
   );
 
   const coverInputStart = source.indexOf('elements.pageCoverCustomInput.addEventListener("change"');
@@ -552,7 +556,7 @@ test("note metadata mutations stay bound to the initiating authentication genera
     coverCapture >= 0 && coverPrepare > coverCapture && coverPostPrepare > coverPrepare,
     "custom cover preprocessing must preserve the credential generation from the file-selection event"
   );
-  assert.match(coverInput, /\{ operation, authenticationScope \}/);
+  assert.match(coverInput, /\{ operation, authenticationScope, navigationGeneration \}/);
 
   const uploadStart = source.indexOf("async function uploadCustomIconFile");
   const uploadEnd = source.indexOf("function positionEmojiPicker", uploadStart);
