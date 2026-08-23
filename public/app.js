@@ -154,6 +154,7 @@ const customCoverSourceMaxBytes = 20 * 1024 * 1024;
 const customCoverMaxWidth = 2400;
 const customCoverMaxHeight = 1600;
 const mobileSidebarMedia = window.matchMedia("(max-width: 760px)");
+const desktopSidebarMedia = window.matchMedia("(min-width: 761px)");
 const pageModes = Object.freeze({ READ: "read", WRITE: "write" });
 const keepaliveSaveBudgetBytes = 60 * 1024;
 
@@ -967,6 +968,7 @@ const elements = {
   mobileSidebarToggle: $("#mobile-sidebar-toggle"),
   mobileSidebarClose: $("#mobile-sidebar-close"),
   mobileSidebarBackdrop: $("#mobile-sidebar-backdrop"),
+  desktopSidebarToggle: $("#desktop-sidebar-toggle"),
   languageSelect: $("#language-select"),
   themeSelect: $("#theme-select"),
   accountSettingsTrigger: $("#account-settings-trigger"),
@@ -1267,6 +1269,32 @@ function isMobileSidebarOpen() {
   return isMobileSidebarLayout() && document.body.classList.contains("mobile-sidebar-open");
 }
 
+function isDesktopSidebarLayout() {
+  return desktopSidebarMedia.matches && document.body.classList.contains("app-mode");
+}
+
+function syncDesktopSidebarAccessibility() {
+  const desktopLayout = isDesktopSidebarLayout();
+  const collapsed = desktopLayout && document.body.classList.contains("desktop-sidebar-collapsed");
+
+  elements.desktopSidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+  const labelKey = collapsed ? "sidebar.openAria" : "sidebar.closeAria";
+  const label = t(labelKey);
+  elements.desktopSidebarToggle.setAttribute("aria-label", label);
+  elements.desktopSidebarToggle.setAttribute("title", label);
+
+  if (!desktopLayout) return;
+  elements.appSidebar.inert = collapsed;
+  if (collapsed) elements.appSidebar.setAttribute("aria-hidden", "true");
+  else elements.appSidebar.removeAttribute("aria-hidden");
+}
+
+function toggleDesktopSidebar() {
+  if (!isDesktopSidebarLayout()) return;
+  document.body.classList.toggle("desktop-sidebar-collapsed");
+  syncMobileSidebarAccessibility();
+}
+
 function suppressMobileSidebarTransition() {
   document.body.classList.add("mobile-sidebar-no-transition");
   window.requestAnimationFrame(() => {
@@ -1285,6 +1313,8 @@ function syncMobileSidebarAccessibility() {
 
   if (mobileLayout) elements.appSidebar.setAttribute("aria-hidden", String(!open));
   else elements.appSidebar.removeAttribute("aria-hidden");
+
+  syncDesktopSidebarAccessibility();
 }
 
 function getMobileSidebarFocusableElements() {
@@ -2748,6 +2778,7 @@ function renderShell() {
   if (!authenticated && state.accountSettingsOpen) closeAccountSettings({ restoreFocus: false });
   document.body.classList.toggle("auth-mode", !authenticated);
   document.body.classList.toggle("app-mode", authenticated);
+  if (!authenticated) document.body.classList.remove("desktop-sidebar-collapsed");
   elements.authPanel.classList.toggle("hidden", authenticated);
   elements.workspacePanel.classList.toggle("hidden", !authenticated);
   if (authenticated) updateUserIdentityUi();
@@ -16387,6 +16418,7 @@ elements.sidebarSearchShortcut.addEventListener("click", openSearchDialog);
 elements.sidebarSettingsShortcut.addEventListener("click", () => openAccountSettings("profile"));
 elements.mobileHomeBrandButton.addEventListener("click", openHomeFromBrand);
 elements.mobileSidebarToggle.addEventListener("click", toggleMobileSidebar);
+elements.desktopSidebarToggle.addEventListener("click", toggleDesktopSidebar);
 elements.mobileSidebarClose.addEventListener("click", () => closeMobileSidebar({ restoreFocus: true }));
 elements.mobileSidebarBackdrop.addEventListener("click", () => closeMobileSidebar({ restoreFocus: true }));
 document.addEventListener("keydown", handleMobileSidebarKeydown);
@@ -16394,6 +16426,7 @@ mobileSidebarMedia.addEventListener("change", () => {
   suppressMobileSidebarTransition();
   closeMobileSidebar();
 });
+desktopSidebarMedia.addEventListener("change", syncMobileSidebarAccessibility);
 
 elements.pagePath.addEventListener("click", async (event) => {
   const target = event.target.closest("button[data-page-path-id]");
