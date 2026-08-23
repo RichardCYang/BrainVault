@@ -802,7 +802,7 @@ class PageCollaborationSession {
     });
   }
 
-  upsertBlock(block, { allowDisconnected = false } = {}) {
+  upsertBlock(block, { allowDisconnected = false, beforeCommit = null } = {}) {
     const normalized = normalizeBlock(block);
     return this.commitLocalMutation(({ blocks, deletedAttachments }) => {
       let map = blocks.get(normalized.id);
@@ -819,7 +819,7 @@ class PageCollaborationSession {
         metadata: normalized.metadata
       });
       if (normalized.type === "ATTACHMENT") deletedAttachments.delete(normalized.id);
-    }, { allowDisconnected }).then(() => normalized);
+    }, { allowDisconnected, beforeCommit }).then(() => normalized);
   }
 
   upsertBlocks(blocks, { allowDisconnected = false } = {}) {

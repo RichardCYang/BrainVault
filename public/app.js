@@ -14876,7 +14876,7 @@ async function createEmptyBlock(
       children: []
     };
     if (!isCreateIntentCurrent()) return null;
-    await session.upsertBlock(block);
+    await session.upsertBlock(block, { beforeCommit: isCreateIntentCurrent });
     if (!isCreateIntentCurrent()) return null;
     return { block, pageContentVersion: state.selectedPage?.contentVersion ?? 1 };
   }

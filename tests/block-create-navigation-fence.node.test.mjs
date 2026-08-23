@@ -123,3 +123,74 @@ test("createEmptyBlock binds block creation to the initiating page and navigatio
   assert.match(source, /requestGuard: isCreateIntentCurrent/);
   assert.match(source, /data === skippedApiRequest/);
 });
+
+test("collaborative block creation rechecks navigation inside the queued Yjs commit", async () => {
+  const source = extractBetween(
+    "async function createEmptyBlock",
+    "async function insertBlockRelative"
+  );
+
+  let currentNavigationGeneration = 41;
+  let enteredCommit;
+  let releaseCommit;
+  const entered = new Promise((resolve) => {
+    enteredCommit = resolve;
+  });
+  const gate = new Promise((resolve) => {
+    releaseCommit = resolve;
+  });
+  const committed = [];
+  const state = {
+    workspaceView: "page",
+    selectedPage: { id: "page-A", contentVersion: 1 },
+    collaborationSession: {
+      isReady: true,
+      async upsertBlock(block, options) {
+        enteredCommit(options);
+        await gate;
+        if (options?.beforeCommit?.() === false) return block;
+        committed.push(block);
+        return block;
+      }
+    }
+  };
+  const context = {
+    state,
+    workspaceNavigationGeneration: 41,
+    captureAuthenticatedSessionScope() { return { generation: 1 }; },
+    isCurrentAuthenticatedSessionScope() { return true; },
+    isCurrentWorkspaceNavigation(generation) {
+      return generation === currentNavigationGeneration;
+    },
+    canPersistSelectedPage() { return true; },
+    requireWritablePage() { return true; },
+    isCollaborativePage() { return true; },
+    createClientId() { return "blk-stale"; },
+    getBlockSiblings() { return []; },
+    t(key) { return key; },
+    getBlockCreateTask() { throw new Error("direct create branch must not run"); },
+    withPageModeMutationFence() { throw new Error("direct create branch must not run"); },
+    submitBlockCreateTask() { throw new Error("direct create branch must not run"); },
+    applyAuthoritativePageContentVersion() {},
+    skippedApiRequest: Symbol("skip"),
+    Date
+  };
+
+  vm.createContext(context);
+  vm.runInContext(`${source}\nthis.createEmptyBlock = createEmptyBlock;`, context);
+
+  const pending = context.createEmptyBlock("page-A", {
+    authenticationScope: { generation: 1 },
+    navigationGeneration: 41
+  });
+  const options = await entered;
+
+  assert.equal(typeof options?.beforeCommit, "function");
+  currentNavigationGeneration = 42;
+  state.selectedPage = { id: "page-B", contentVersion: 1 };
+  releaseCommit();
+
+  const result = await pending;
+  assert.equal(result, null);
+  assert.equal(committed.length, 0, "a queued create from the previous page must not commit after navigation");
+});
