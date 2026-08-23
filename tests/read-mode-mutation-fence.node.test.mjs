@@ -173,7 +173,10 @@ test("read mode blocks destructive page-version history reset while keeping hist
   );
 
   assert.match(resetSource, /if \(!requireWritablePage\(\)\) return;/);
-  assert.match(resetSource, /withPageModeMutationFence\(pageId, \(\) => submitPageVersionResetTask\(task\)\)/);
+  assert.match(
+    resetSource,
+    /withPageModeMutationFence\([\s\S]*pageId,[\s\S]*submitPageVersionResetTask\(task, \{ requestGuard: isResetIntentCurrent \}\)/
+  );
 
   let writableChecks = 0;
   const context = {

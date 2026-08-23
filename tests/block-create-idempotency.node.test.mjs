@@ -65,7 +65,15 @@ test("browser retries ambiguous create responses with the same mutation id and f
 
   assert.match(ordinary, /const pendingTask = pendingBlockCreateTasks\.get\(taskKey\)/);
   assert.match(ordinary, /pendingTask && !pendingTask\.inFlight/);
-  assert.equal((ordinary.match(/pendingBlockCreateTasks\.set/g) ?? []).length, 1);
+  assert.equal((ordinary.match(/pendingBlockCreateTasks\.set/g) ?? []).length, 2);
+  assert.match(
+    ordinary,
+    /if \(requestGuard\?\.\(\) === false\) \{\s*pendingBlockCreateTasks\.set\(task\.taskKey, task\);\s*return skippedApiRequest;/
+  );
+  assert.match(
+    ordinary,
+    /isAmbiguousApiError\(error\)[\s\S]*pendingBlockCreateTasks\.set\(task\.taskKey, task\)/
+  );
   assert.match(ordinary, /basePageContentVersion: task\.basePageContentVersion/);
   assert.match(ordinary, /mutationId: task\.mutationId/);
   assert.match(ordinary, /attempt < 2/);

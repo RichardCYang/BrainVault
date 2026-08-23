@@ -101,10 +101,15 @@ test("browser page creation and downloads remain bound to the initiating authent
   assert.match(submission, /pendingWorkspaceCreateTasks\.set\(task\.taskKey, task\)/);
   assert.match(submission, /body: \{ \.\.\.task\.payload, mutationId: task\.mutationId \}/);
   const successfulSubmission = section(submission, "try {", "} catch (error)");
+  assert.match(
+    successfulSubmission,
+    /if \(!task\.attempted && pendingWorkspaceCreateTasks\.get\(task\.taskKey\) === task\) \{\s*pendingWorkspaceCreateTasks\.delete\(task\.taskKey\);/,
+    "a task may be discarded only when beforeFetch proves no POST was attempted"
+  );
   assert.doesNotMatch(
     successfulSubmission,
-    /pendingWorkspaceCreateTasks\.delete\(task\.taskKey\)/,
-    "a successful POST must not forget its receipt before list refresh and navigation complete"
+    /if \(pendingWorkspaceCreateTasks\.get\(task\.taskKey\) === task\) \{\s*pendingWorkspaceCreateTasks\.delete\(task\.taskKey\);/,
+    "an attempted POST must keep its receipt until list refresh and navigation complete"
   );
 
   const creation = section(app, "async function createWorkspacePage", "async function createCollection");
@@ -114,9 +119,10 @@ test("browser page creation and downloads remain bound to the initiating authent
   assert.match(creation, /pendingWorkspaceCreateTasks\.delete\(task\.taskKey\)/);
   assert.doesNotMatch(creation, /await loadPages\("", ""\)/);
   const navigationIndex = Math.max(creation.indexOf("await showCollection"), creation.indexOf("await openPage"));
+  const successfulRetirementIndex = creation.lastIndexOf("clearAcknowledgedTask();");
   assert.ok(
-    navigationIndex >= 0 && navigationIndex < creation.indexOf("pendingWorkspaceCreateTasks.delete"),
-    "the mutation task must remain available until the created page is listed and opened"
+    navigationIndex >= 0 && successfulRetirementIndex > navigationIndex,
+    "the current-path mutation task must remain available until the created page is listed and opened"
   );
 
   const reset = section(app, "function resetAuthenticationSessionState", "function setAccountMessage");

@@ -141,17 +141,34 @@ test("browser retries ambiguous reset outcomes with the same task and fences sta
   assert.match(helpers, /expectedVersion,/);
   assert.match(helpers, /expectedContentVersion,/);
   assert.match(helpers, /expectedRevision,/);
+  assert.match(helpers, /attempted: false,/);
   assert.match(helpers, /mutationId: task\.mutationId,[\s\S]*expectedVersion: task\.expectedVersion,[\s\S]*expectedContentVersion: task\.expectedContentVersion,[\s\S]*expectedRevision: task\.expectedRevision/);
+  assert.match(helpers, /\{ requestGuard = null \} = \{\}/);
+  assert.match(helpers, /beforeFetch: \(\) => \{/);
+  assert.match(helpers, /requestGuard\?\.\(\) === false/);
+  assert.match(helpers, /task\.attempted = true;/);
+  assert.match(helpers, /data === skippedApiRequest/);
   assert.match(helpers, /attempt === 0 && isAmbiguousApiError\(error\)/);
   assert.doesNotMatch(helpers, /submitWithFreshMutationIdOnReuse/);
+  assert.match(reset, /const navigationGeneration = workspaceNavigationGeneration;/);
+  assert.match(reset, /const isResetIntentCurrent = \(\) =>/);
+  assert.match(reset, /isCurrentWorkspaceNavigation\(navigationGeneration\)/);
   assert.match(reset, /getOrCreatePageVersionResetTask\(pageId, history\.current\)/);
+  assert.match(reset, /requestGuard: isResetIntentCurrent/);
+  assert.match(reset, /data === skippedApiRequest/);
+  assert.match(reset, /!task\.attempted[\s\S]*pendingPageVersionResetTasks\.delete\(task\.taskKey\)/);
   assert.match(reset, /PAGE_VERSION_RESET_CONFLICT/);
   assert.match(reset, /PAGE_VERSION_RESET_CONFLICT[\s\S]*loadPageVersionHistory\(\)/);
   const successfulReset = section(reset, "try {", "} catch (error)");
+  assert.match(
+    successfulReset,
+    /if \(!task\.attempted && pendingPageVersionResetTasks\.get\(task\.taskKey\) === task\) \{\s*pendingPageVersionResetTasks\.delete\(task\.taskKey\);/,
+    "a stale task may be discarded only when beforeFetch proves no reset request was attempted"
+  );
   assert.doesNotMatch(
     successfulReset,
-    /pendingPageVersionResetTasks\.delete/,
-    "a committed reset task must remain visible until post-response history refresh completes"
+    /if \(pendingPageVersionResetTasks\.get\(task\.taskKey\) === task\) \{\s*pendingPageVersionResetTasks\.delete\(task\.taskKey\);/,
+    "an attempted reset must keep its receipt until post-response history refresh completes"
   );
   assert.match(reset, /isDefinitiveApiError\(error\)/);
   assert.match(reset, /isCurrentAuthenticatedSessionScope\(task\.scope\)/);
@@ -183,10 +200,12 @@ test("page-version reset retry stops when authentication rotates after an ambigu
     }
     return { reset: true };
   };
+  const skippedApiRequest = Symbol("skipped-api-request");
   const factory = new Function(
     "api",
     "isAmbiguousApiError",
     "isCurrentAuthenticatedSessionScope",
+    "skippedApiRequest",
     "t",
     `${helperSource}\nreturn submitPageVersionResetTask;`
   );
@@ -194,6 +213,7 @@ test("page-version reset retry stops when authentication rotates after an ambigu
     api,
     (error) => error?.ambiguous === true,
     () => authenticationCurrent,
+    skippedApiRequest,
     () => "reset failed"
   );
 
@@ -203,11 +223,115 @@ test("page-version reset retry stops when authentication rotates after an ambigu
     expectedVersion: 7,
     expectedContentVersion: 11,
     expectedRevision: 3,
+    attempted: false,
     scope: { generation: 1, targetKey: "user:original" }
   });
 
   assert.equal(result, null);
   assert.equal(apiCalls, 1, "a stale authentication generation must not send the automatic destructive retry");
+});
+
+test("page-version reset is canceled if navigation changes during async request preparation", async () => {
+  const app = (await readFile(new URL("../public/app.js", import.meta.url), "utf8"))
+    .replace(/\r\n/g, "\n");
+  const helperSource = section(
+    app,
+    "async function submitPageVersionResetTask",
+    "function renderPageVersionHistoryList"
+  );
+
+  const skippedApiRequest = Symbol("skipped-api-request");
+  let navigationCurrent = true;
+  let sentRequests = 0;
+  const api = async (_path, options) => {
+    // Simulate async network-header preparation yielding to a newer navigation.
+    navigationCurrent = false;
+    if (options.beforeFetch?.() === false) return skippedApiRequest;
+    sentRequests += 1;
+    return { reset: true };
+  };
+  const factory = new Function(
+    "api",
+    "isAmbiguousApiError",
+    "isCurrentAuthenticatedSessionScope",
+    "skippedApiRequest",
+    "t",
+    `${helperSource}\nreturn submitPageVersionResetTask;`
+  );
+  const submit = factory(
+    api,
+    (error) => error?.ambiguous === true,
+    () => true,
+    skippedApiRequest,
+    () => "reset failed"
+  );
+
+  const task = {
+    pageId: "pag_navigation",
+    mutationId: "mut_navigation",
+    expectedVersion: 7,
+    expectedContentVersion: 11,
+    expectedRevision: 3,
+    attempted: false,
+    scope: { generation: 1, targetKey: "user:current" }
+  };
+  const result = await submit(task, { requestGuard: () => navigationCurrent });
+
+  assert.equal(result, skippedApiRequest);
+  assert.equal(sentRequests, 0, "a reset that became stale before fetch must not delete history");
+  assert.equal(task.attempted, false);
+});
+
+test("page-version reset ambiguous retry does not cross a newer navigation", async () => {
+  const app = (await readFile(new URL("../public/app.js", import.meta.url), "utf8"))
+    .replace(/\r\n/g, "\n");
+  const helperSource = section(
+    app,
+    "async function submitPageVersionResetTask",
+    "function renderPageVersionHistoryList"
+  );
+
+  const skippedApiRequest = Symbol("skipped-api-request");
+  let navigationCurrent = true;
+  let sentRequests = 0;
+  const api = async (_path, options) => {
+    if (options.beforeFetch?.() === false) return skippedApiRequest;
+    sentRequests += 1;
+    navigationCurrent = false;
+    const error = new Error("network");
+    error.ambiguous = true;
+    throw error;
+  };
+  const factory = new Function(
+    "api",
+    "isAmbiguousApiError",
+    "isCurrentAuthenticatedSessionScope",
+    "skippedApiRequest",
+    "t",
+    `${helperSource}\nreturn submitPageVersionResetTask;`
+  );
+  const submit = factory(
+    api,
+    (error) => error?.ambiguous === true,
+    () => true,
+    skippedApiRequest,
+    () => "reset failed"
+  );
+
+  const task = {
+    pageId: "pag_retry_navigation",
+    mutationId: "mut_retry_navigation",
+    expectedVersion: 7,
+    expectedContentVersion: 11,
+    expectedRevision: 3,
+    attempted: false,
+    scope: { generation: 1, targetKey: "user:current" }
+  };
+  const result = await submit(task, { requestGuard: () => navigationCurrent });
+
+  assert.equal(result, skippedApiRequest);
+  assert.equal(sentRequests, 1, "a stale navigation must suppress the automatic destructive retry");
+  assert.equal(task.attempted, true, "the mutation receipt must be retained after an ambiguous send");
 });
 
 test("browser retires a reset task only after the post-reset history list is synchronized", async () => {

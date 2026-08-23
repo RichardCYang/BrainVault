@@ -7947,6 +7947,7 @@ function getOrCreatePageVersionResetTask(pageId, currentSnapshot) {
       expectedVersion,
       expectedContentVersion,
       expectedRevision,
+      attempted: false,
       inFlight: false
     };
     pendingPageVersionResetTasks.set(taskKey, task);
@@ -7954,9 +7955,14 @@ function getOrCreatePageVersionResetTask(pageId, currentSnapshot) {
   return task;
 }
 
-async function submitPageVersionResetTask(task) {
+async function submitPageVersionResetTask(
+  task,
+  { requestGuard = null } = {}
+) {
+  if (requestGuard?.() === false) return skippedApiRequest;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (!isCurrentAuthenticatedSessionScope(task.scope)) return null;
+    if (requestGuard?.() === false) return skippedApiRequest;
     try {
       const data = await api(`/api/pages/${encodeURIComponent(task.pageId)}/versions`, {
         method: "DELETE",
@@ -7965,14 +7971,25 @@ async function submitPageVersionResetTask(task) {
           expectedVersion: task.expectedVersion,
           expectedContentVersion: task.expectedContentVersion,
           expectedRevision: task.expectedRevision
+        },
+        beforeFetch: () => {
+          if (
+            !isCurrentAuthenticatedSessionScope(task.scope)
+            || requestGuard?.() === false
+          ) return false;
+          task.attempted = true;
+          return true;
         }
       });
+      if (data === skippedApiRequest) return data;
       if (!isCurrentAuthenticatedSessionScope(task.scope)) return null;
       return data;
     } catch (error) {
-      // An ambiguous request may overlap a password/session rotation. Never let
-      // its automatic retry cross into the replacement authentication context.
+      // An ambiguous request may overlap a password/session rotation or a
+      // navigation change. Never let an automatic destructive retry cross
+      // either boundary.
       if (!isCurrentAuthenticatedSessionScope(task.scope)) return null;
+      if (requestGuard?.() === false) return skippedApiRequest;
       if (attempt === 0 && isAmbiguousApiError(error)) continue;
       throw error;
     }
@@ -8124,6 +8141,15 @@ async function resetPageVersionHistory() {
   const title = page.title || t("newDocumentTitle");
   if (!window.confirm(t("versions.resetConfirm", { title }))) return;
 
+  const navigationGeneration = workspaceNavigationGeneration;
+  const isResetIntentCurrent = () => (
+    isCurrentWorkspaceNavigation(navigationGeneration)
+    && state.workspaceView === "page"
+    && state.selectedPage?.id === pageId
+    && state.pageVersionHistory.pageId === pageId
+  );
+  if (!isResetIntentCurrent()) return;
+
   const task = getOrCreatePageVersionResetTask(pageId, history.current);
   if (!task || task.inFlight) return;
   task.inFlight = true;
@@ -8139,7 +8165,16 @@ async function resetPageVersionHistory() {
 
   let synchronized = false;
   try {
-    await withPageModeMutationFence(pageId, () => submitPageVersionResetTask(task));
+    const data = await withPageModeMutationFence(
+      pageId,
+      () => submitPageVersionResetTask(task, { requestGuard: isResetIntentCurrent })
+    );
+    if (data === skippedApiRequest) {
+      if (!task.attempted && pendingPageVersionResetTasks.get(task.taskKey) === task) {
+        pendingPageVersionResetTasks.delete(task.taskKey);
+      }
+      return;
+    }
     if (!isCurrentAuthenticatedSessionScope(task.scope) || pageId !== history.pageId) return;
 
     history.versions = [];
