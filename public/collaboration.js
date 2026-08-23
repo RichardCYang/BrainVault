@@ -615,10 +615,14 @@ class PageCollaborationSession {
     }
   }
 
-  commitLocalMutation(mutator, { allowDisconnected = false } = {}) {
+  commitLocalMutation(mutator, { allowDisconnected = false, beforeCommit = null } = {}) {
     this.pendingPreparedLocalMutations += 1;
     const operation = this.localMutationQueue.then(async () => {
       this.assertWritable({ allowDisconnected });
+      // A queued destructive intent may have been superseded while waiting for
+      // earlier local mutations. Evaluate its caller-provided fence immediately
+      // before touching the prepared Yjs document.
+      if (beforeCommit?.() === false) return false;
       const prepared = this.prepareLocalMutationDoc();
       const updates = [];
       const captureUpdate = (update, origin) => {
@@ -843,7 +847,8 @@ class PageCollaborationSession {
   async deleteBlock(blockId, {
     cascade = true,
     promoteChildren = false,
-    allowDisconnected = false
+    allowDisconnected = false,
+    beforeCommit = null
   } = {}) {
     if (cascade && promoteChildren) {
       throw new Error("A collaborative block deletion cannot cascade and promote children together");
@@ -912,13 +917,14 @@ class PageCollaborationSession {
         blocks.delete(id);
       }
       deletedIds = [...ids];
-    }, { allowDisconnected });
+    }, { allowDisconnected, beforeCommit });
     return deletedIds;
   }
 
   async replaceBlockWithAttachmentPreservingChildren(blockId, replacementBlock, {
     expectedSourceBlock = null,
-    allowDisconnected = false
+    allowDisconnected = false,
+    beforeCommit = null
   } = {}) {
     const replacement = normalizeBlock(replacementBlock);
     if (replacement.type !== "ATTACHMENT") {
@@ -978,7 +984,7 @@ class PageCollaborationSession {
       blocks.delete(blockId);
       deletedIds = [blockId];
       replaced = true;
-    }, { allowDisconnected });
+    }, { allowDisconnected, beforeCommit });
     return { deletedIds, replaced };
   }
 

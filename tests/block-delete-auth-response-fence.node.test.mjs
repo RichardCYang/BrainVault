@@ -30,7 +30,7 @@ test("block delete response application stays fenced to the initiating authentic
   );
 
   const deleteResponseIndex = remove.indexOf(
-    "const data = await submitBlockDeleteTask(task, authenticationScope);"
+    "const data = await submitBlockDeleteTask(task, authenticationScope, {"
   );
   const deleteFenceIndex = remove.indexOf(responseFence, deleteResponseIndex);
   const firstRecoveryCleanupIndex = Math.min(

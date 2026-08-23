@@ -298,7 +298,10 @@ test("destructive block actions stay bound to the initiating authentication gene
     contextDiscard >= 0 && contextDiscard < contextPostDiscardFence && contextPostDiscardFence < contextRequest,
     "context-menu delete must revalidate auth after waiting for queued saves"
   );
-  assert.match(contextDelete, /await deleteBlockWithVersionCheck\(blockId, \{ authenticationScope \}\)/);
+  assert.match(
+    contextDelete,
+    /await deleteBlockWithVersionCheck\(blockId, \{ authenticationScope, navigationGeneration \}\)/
+  );
 });
 
 test("collaboration writes revalidate auth and session state at the durable transaction boundary", async () => {

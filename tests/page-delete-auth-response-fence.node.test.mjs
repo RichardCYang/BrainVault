@@ -35,7 +35,7 @@ test("page delete recovery cleanup remains fenced after the delete request compl
 
   const remove = source.slice(deleteStart, nextFunctionStart);
   const deleteResponseIndex = remove.indexOf(
-    "await submitPageDeleteTask(task, authenticationScope);"
+    "return submitPageDeleteTask(task, authenticationScope, {"
   );
   const deleteFenceIndex = remove.indexOf(
     "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;",

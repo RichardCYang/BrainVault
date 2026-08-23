@@ -1934,8 +1934,10 @@ async function applyClientNetworkVerificationHeaders(headers) {
   return headers;
 }
 
+const skippedApiRequest = Symbol("skipped-api-request");
+
 async function api(path, options = {}) {
-  const { skipAuthReset = false, ...requestOptions } = options;
+  const { skipAuthReset = false, beforeFetch = null, ...requestOptions } = options;
   const authenticationScope = captureAuthenticatedSessionScope();
   const startedAuthenticated = Boolean(state.authenticated && authenticationScope.targetKey);
   const headers = new Headers(requestOptions.headers ?? {});
@@ -1960,6 +1962,11 @@ async function api(path, options = {}) {
     headers.set("Content-Type", "application/json");
     body = JSON.stringify(body);
   }
+
+  // Some destructive callers bind intent to a navigation generation. Header
+  // verification can itself wait on WebRTC discovery, so evaluate their gate
+  // only after all asynchronous request preparation and immediately before fetch.
+  if (beforeFetch?.() === false) return skippedApiRequest;
 
   let response;
   try {
@@ -8560,7 +8567,7 @@ function getPageDeleteTask(authenticationScope, pageId, expectedSnapshot, pageId
   return task;
 }
 
-async function submitPageDeleteTask(task, authenticationScope) {
+async function submitPageDeleteTask(task, authenticationScope, { requestGuard = null } = {}) {
   if (task.inFlight) throw new Error(t("status.pageTransitionBusy"));
   task.inFlight = true;
   let attempt = 0;
@@ -8569,14 +8576,22 @@ async function submitPageDeleteTask(task, authenticationScope) {
     while (attempt < 2) {
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       try {
-        task.attempted = true;
         const data = await submitWithFreshMutationIdOnReuse(task, () => {
           if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
           return api(`/api/pages/${encodeURIComponent(task.pageId)}?permanent=true`, {
             method: "DELETE",
-            body: { expectedSnapshot: task.expectedSnapshot, mutationId: task.mutationId }
+            body: { expectedSnapshot: task.expectedSnapshot, mutationId: task.mutationId },
+            beforeFetch: () => {
+              if (
+                !isCurrentAuthenticatedSessionScope(authenticationScope)
+                || requestGuard?.() === false
+              ) return false;
+              task.attempted = true;
+              return true;
+            }
           });
         });
+        if (data === skippedApiRequest) return data;
         if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         if (pendingPageDeleteTasks.get(task.taskKey) === task) pendingPageDeleteTasks.delete(task.taskKey);
         return data;
@@ -8658,7 +8673,10 @@ async function deleteNavigationTarget() {
       }
     } else {
       const deletionSnapshot = await api(`/api/pages/${target.id}/deletion-snapshot`);
-      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+      if (
+        !isCurrentAuthenticatedSessionScope(authenticationScope)
+        || !isCurrentWorkspaceNavigation(navigationGeneration)
+      ) return;
       const localPageIds = [...subtreeIds].sort();
       serverPageIds = Array.isArray(deletionSnapshot.pageIds) ? [...deletionSnapshot.pageIds].sort() : [];
       const serverPages = new Map(
@@ -8701,7 +8719,15 @@ async function deleteNavigationTarget() {
     closeNavigationContextMenu();
     setStatus(t(isCollection ? "status.deletingCollection" : "status.deletingPage"));
 
-    await withWorkspacePersistenceTransition("page-delete", async () => {
+    const deleteResult = await withWorkspacePersistenceTransition("page-delete", async () => {
+      // The transition can wait for every tab's writer lock and IndexedDB
+      // recovery refresh. Navigation during that wait cancels an unsubmitted
+      // destructive intent instead of carrying it into the newer workspace view.
+      if (
+        !isCurrentAuthenticatedSessionScope(authenticationScope)
+        || !isCurrentWorkspaceNavigation(navigationGeneration)
+      ) return skippedApiRequest;
+
       // Another tab may hold direct-mode drafts or a newer Yjs document that
       // has not reached the server and is absent from the deletion snapshot.
       // Re-check this fence on every ambiguous retry as well: a new local-only
@@ -8709,8 +8735,18 @@ async function deleteNavigationTarget() {
       // older snapshot.
       assertNoPendingLocalPageDraftsForPages(serverPageIds, "status.destructiveLocalDraftsPending");
       assertNoPendingLocalCollaborationRecoveryForPages(serverPageIds);
-      await submitPageDeleteTask(task, authenticationScope);
+      return submitPageDeleteTask(task, authenticationScope, {
+        requestGuard: () => isCurrentWorkspaceNavigation(navigationGeneration)
+      });
     });
+    if (deleteResult === skippedApiRequest) {
+      // A never-sent task has no receipt to reconcile. An already-attempted
+      // task may have committed behind an ambiguous response, so preserve it.
+      if (!task.attempted && pendingPageDeleteTasks.get(task.taskKey) === task) {
+        pendingPageDeleteTasks.delete(task.taskKey);
+      }
+      return;
+    }
     // submitPageDeleteTask() intentionally returns without sending or applying
     // anything when a password/session rotation supersedes this operation.
     // Re-check the initiating authentication generation before deleting local
@@ -10143,7 +10179,7 @@ function getBlockDeleteTask(authenticationScope, pageId, blockId, payload) {
   return task;
 }
 
-async function submitBlockDeleteTask(task, authenticationScope) {
+async function submitBlockDeleteTask(task, authenticationScope, { requestGuard = null } = {}) {
   if (task.inFlight) throw new Error(t("status.pageTransitionBusy"));
   task.inFlight = true;
   let attempt = 0;
@@ -10152,14 +10188,22 @@ async function submitBlockDeleteTask(task, authenticationScope) {
     while (attempt < 2) {
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       try {
-        task.attempted = true;
         const data = await submitWithFreshMutationIdOnReuse(task, () => {
           if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
           return api(`/api/blocks/${encodeURIComponent(task.blockId)}`, {
             method: "DELETE",
-            body: { ...task.payload, mutationId: task.mutationId }
+            body: { ...task.payload, mutationId: task.mutationId },
+            beforeFetch: () => {
+              if (
+                !isCurrentAuthenticatedSessionScope(authenticationScope)
+                || requestGuard?.() === false
+              ) return false;
+              task.attempted = true;
+              return true;
+            }
           });
         });
+        if (data === skippedApiRequest) return data;
         if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         if (pendingBlockDeleteTasks.get(task.taskKey) === task) {
           pendingBlockDeleteTasks.delete(task.taskKey);
@@ -10313,9 +10357,22 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
   const replacementBlock = options.replacementBlock ?? null;
   const expectedSourceBlock = options.expectedSourceBlock ?? null;
   const authenticationScope = options.authenticationScope ?? captureAuthenticatedSessionScope();
+  const navigationGeneration = options.navigationGeneration ?? null;
+  const isDeleteNavigationCurrent = () => (
+    navigationGeneration === null
+    || (
+      isCurrentWorkspaceNavigation(navigationGeneration)
+      && state.selectedPage?.id === pageId
+    )
+  );
+  const isDeleteIntentCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+    && isDeleteNavigationCurrent()
+  );
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
     throw new Error(t("errors.UNAUTHENTICATED"));
   }
+  if (!isDeleteNavigationCurrent()) return null;
   if (isCollaborativePage()) {
     return withCollaborativeDestructiveTransition(pageId, "block-delete", async (session) => {
       // The transition can wait for queued local/peer persistence before this
@@ -10324,15 +10381,18 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
         throw new Error(t("errors.UNAUTHENTICATED"));
       }
+      if (!isDeleteNavigationCurrent()) return null;
       if (replacementBlock) {
         return session.replaceBlockWithAttachmentPreservingChildren(blockId, replacementBlock, {
-          expectedSourceBlock
+          expectedSourceBlock,
+          beforeCommit: isDeleteIntentCurrent
         });
       }
       return {
         deletedIds: await session.deleteBlock(blockId, {
           cascade: options.includeDescendants !== false,
-          promoteChildren: preserveChildren
+          promoteChildren: preserveChildren,
+          beforeCommit: isDeleteIntentCurrent
         })
       };
     });
@@ -10363,7 +10423,14 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
     .filter(({ origin }) => Boolean(origin));
   const scope = getDraftScope();
   try {
-    return await withPagePersistenceTransition(pageId, "block-delete", async () => {
+    const result = await withPagePersistenceTransition(pageId, "block-delete", async () => {
+      // The transition can wait for writer drainage and IndexedDB recovery.
+      // Re-check the initiating view only after those waits have completed.
+      if (
+        !isCurrentAuthenticatedSessionScope(authenticationScope)
+        || !isDeleteNavigationCurrent()
+      ) return skippedApiRequest;
+
       // The server version snapshot cannot observe a draft that only exists in a
       // different tab. Keep that draft attached to its live block instead of
       // deleting the block and relegating the edit to manual orphan recovery.
@@ -10372,7 +10439,10 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
         task.payload.expectedVersions.map(({ id }) => id),
         { excludeSourceId: pageDraftSourceId }
       );
-      const data = await submitBlockDeleteTask(task, authenticationScope);
+      const data = await submitBlockDeleteTask(task, authenticationScope, {
+        requestGuard: isDeleteNavigationCurrent
+      });
+      if (data === skippedApiRequest) return data;
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       for (const { id } of deletedVersions) blockDraftRenderSources.delete(id);
       if (scope) {
@@ -10400,6 +10470,13 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
       }
       return data;
     });
+    if (result === skippedApiRequest) {
+      if (!task.attempted && pendingBlockDeleteTasks.get(task.taskKey) === task) {
+        pendingBlockDeleteTasks.delete(task.taskKey);
+      }
+      return null;
+    }
+    return result;
   } catch (error) {
     if (!task.attempted && pendingBlockDeleteTasks.get(task.taskKey) === task) {
       pendingBlockDeleteTasks.delete(task.taskKey);
@@ -14825,7 +14902,8 @@ async function deleteEmptyBlock(row) {
     await deleteBlockWithVersionCheck(blockId, {
       includeDescendants: false,
       preserveChildren: true,
-      authenticationScope
+      authenticationScope,
+      navigationGeneration
     });
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
       row.dataset.deleting = "false";
@@ -19065,7 +19143,7 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
         if (!isCurrentWorkspaceNavigation(navigationGeneration) || state.selectedPage?.id !== pageId) return;
         row.dataset.deleting = "true";
         try {
-          await deleteBlockWithVersionCheck(blockId, { authenticationScope });
+          await deleteBlockWithVersionCheck(blockId, { authenticationScope, navigationGeneration });
         } catch (error) {
           row.dataset.deleting = "false";
           throw error;

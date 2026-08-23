@@ -67,7 +67,7 @@ test("attachment replacement cannot bypass the collaborative deletion fence", ()
   const deletion = section(client, "async function deleteBlockWithVersionCheck", "function updateBlockInState");
   assert.match(
     deletion,
-    /session\.replaceBlockWithAttachmentPreservingChildren\(blockId, replacementBlock, \{\s*expectedSourceBlock\s*\}\)/,
+    /session\.replaceBlockWithAttachmentPreservingChildren\(blockId, replacementBlock, \{\s*expectedSourceBlock,\s*beforeCommit: isDeleteIntentCurrent\s*\}\)/,
     "replacement must stay inside the collaborative destructive transition"
   );
   assertBefore(
