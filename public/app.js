@@ -8428,15 +8428,21 @@ function openPageMoveDialog(pageId, returnFocus = null) {
   else elements.pageMovePageSelect.focus();
 }
 
-async function submitPageMoveMutation(pageId, targetPageId, expectedVersion, authenticationScope) {
+async function submitPageMoveMutation(
+  pageId,
+  targetPageId,
+  expectedVersion,
+  authenticationScope,
+  { requestGuard = null } = {}
+) {
   const task = { mutationId: createMutationId(), attempted: false };
   let lastError = null;
   let sawAmbiguousOutcome = false;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+    if (requestGuard?.() === false) return skippedApiRequest;
     try {
-      task.attempted = true;
       const data = await submitWithFreshMutationIdOnReuse(task, () => {
         if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         return api(`/api/pages/${encodeURIComponent(pageId)}`, {
@@ -8445,9 +8451,18 @@ async function submitPageMoveMutation(pageId, targetPageId, expectedVersion, aut
             parentPageId: targetPageId,
             expectedVersion,
             mutationId: task.mutationId
+          },
+          beforeFetch: () => {
+            if (
+              !isCurrentAuthenticatedSessionScope(authenticationScope)
+              || requestGuard?.() === false
+            ) return false;
+            task.attempted = true;
+            return true;
           }
         });
       });
+      if (data === skippedApiRequest) return data;
       if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       return data;
     } catch (error) {
@@ -8458,6 +8473,10 @@ async function submitPageMoveMutation(pageId, targetPageId, expectedVersion, aut
         break;
       }
       sawAmbiguousOutcome = true;
+      // Do not turn an ambiguous old intent into a new write after navigation
+      // has superseded the dialog. A read-only reconciliation below may still
+      // confirm that the first request committed.
+      if (requestGuard?.() === false) break;
     }
   }
 
@@ -8474,6 +8493,7 @@ async function submitPageMoveMutation(pageId, targetPageId, expectedVersion, aut
     }
   }
 
+  if (requestGuard?.() === false) return skippedApiRequest;
   throw lastError ?? new Error(t("errors.unknown"));
 }
 
@@ -8486,14 +8506,23 @@ function applyPageMoveMutationResult(committedPage) {
   renderSubpageIndex(state.selectedPage);
 }
 
-async function moveNavigationPageToParent(pageId, targetPageId, { authenticationScope } = {}) {
+async function moveNavigationPageToParent(
+  pageId,
+  targetPageId,
+  { authenticationScope, navigationGeneration = null } = {}
+) {
   const scope = authenticationScope ?? captureAuthenticatedSessionScope();
   if (!pageId || !targetPageId || !isCurrentAuthenticatedSessionScope(scope)) {
     throw new Error(t("pageMove.destinationUnavailable"));
   }
 
+  const isPageMoveNavigationCurrent = () => (
+    navigationGeneration === null || isCurrentWorkspaceNavigation(navigationGeneration)
+  );
+  if (!isPageMoveNavigationCurrent()) return null;
+
   await assertWorkspacePersistenceUnlocked();
-  if (!isCurrentAuthenticatedSessionScope(scope)) return null;
+  if (!isCurrentAuthenticatedSessionScope(scope) || !isPageMoveNavigationCurrent()) return null;
 
   const sourceIsSelected = state.selectedPage?.id === pageId;
   if (sourceIsSelected && hasUnresolvedDraftConflicts()) {
@@ -8502,7 +8531,10 @@ async function moveNavigationPageToParent(pageId, targetPageId, { authentication
 
   return withPageEditLock(
     async () => {
-      if (!isCurrentAuthenticatedSessionScope(scope)) return null;
+      // withPageEditLock() may flush the initiating editor before this callback
+      // runs. A navigation during that wait supersedes the sidebar mutation.
+      if (!isCurrentAuthenticatedSessionScope(scope) || !isPageMoveNavigationCurrent()) return null;
+
       const sourcePage = state.selectedPage?.id === pageId
         ? state.selectedPage
         : state.allPages.find((page) => page.id === pageId);
@@ -8514,8 +8546,15 @@ async function moveNavigationPageToParent(pageId, targetPageId, { authentication
       const expectedVersion = getPositiveVersion(sourcePage.version);
       if (expectedVersion === null) throw new Error(t("errors.invalidResponse"));
 
-      const data = await submitPageMoveMutation(pageId, targetPageId, expectedVersion, scope);
-      if (data === null || !isCurrentAuthenticatedSessionScope(scope)) return null;
+      const data = await submitPageMoveMutation(pageId, targetPageId, expectedVersion, scope, {
+        requestGuard: isPageMoveNavigationCurrent
+      });
+      if (
+        data === skippedApiRequest
+        || data === null
+        || !isCurrentAuthenticatedSessionScope(scope)
+        || !isPageMoveNavigationCurrent()
+      ) return null;
       if (data?.page?.id !== pageId || data.page.parentPageId !== targetPageId) {
         throw new Error(t("errors.invalidResponse"));
       }
@@ -18349,7 +18388,12 @@ elements.savePageButton.addEventListener("click", async () => {
   }
 });
 
-async function archivePageIdempotently(pageId, expectedVersion, authenticationScope) {
+async function archivePageIdempotently(
+  pageId,
+  expectedVersion,
+  authenticationScope,
+  { requestGuard = null } = {}
+) {
   const task = {
     mutationId: createMutationId(),
     attempted: false
@@ -18358,8 +18402,8 @@ async function archivePageIdempotently(pageId, expectedVersion, authenticationSc
 
   while (attempt < 2) {
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+    if (requestGuard?.() === false) return skippedApiRequest;
     try {
-      task.attempted = true;
       const data = await submitWithFreshMutationIdOnReuse(task, () => {
         if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         return api(`/api/pages/${encodeURIComponent(pageId)}`, {
@@ -18368,27 +18412,45 @@ async function archivePageIdempotently(pageId, expectedVersion, authenticationSc
             isArchived: true,
             expectedVersion,
             mutationId: task.mutationId
+          },
+          beforeFetch: () => {
+            if (
+              !isCurrentAuthenticatedSessionScope(authenticationScope)
+              || requestGuard?.() === false
+            ) return false;
+            task.attempted = true;
+            return true;
           }
         });
       });
+      if (data === skippedApiRequest) return data;
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       return data;
     } catch (error) {
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       attempt += 1;
       if (!isAmbiguousApiError(error) || attempt >= 2) throw error;
+      // A retry is a fresh write attempt. If navigation has superseded the
+      // archive intent, stop here rather than archiving an old page later.
+      if (requestGuard?.() === false) return skippedApiRequest;
     }
   }
   return null;
 }
 
-async function archivePageWithReconciliation(pageId, expectedVersion, authenticationScope) {
+async function archivePageWithReconciliation(
+  pageId,
+  expectedVersion,
+  authenticationScope,
+  { requestGuard = null } = {}
+) {
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+  if (requestGuard?.() === false) return skippedApiRequest;
   lockPageWriteOutcomeFence(pageId);
   let keepFence = false;
   try {
     try {
-      return await archivePageIdempotently(pageId, expectedVersion, authenticationScope);
+      return await archivePageIdempotently(pageId, expectedVersion, authenticationScope, { requestGuard });
     } catch (error) {
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       if (!isAmbiguousApiError(error)) throw error;
@@ -18424,35 +18486,60 @@ elements.archivePageButton.addEventListener("click", async () => {
   closePageActionsMenu({ restoreFocus: true });
   const ok = window.confirm(t("confirm.archivePage"));
   if (!ok) return;
+
+  // Bind the archive to the exact page/view generation that the user confirmed
+  // before any persistence/transition wait. The edit version is read only after
+  // the pending save flush, and only while this same page generation is current.
   const pageId = state.selectedPage.id;
   const parentCollectionId = getCollectionRootId(pageId) ?? defaultCollectionKey;
   const authenticationScope = captureAuthenticatedSessionScope();
-  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+  const navigationGeneration = workspaceNavigationGeneration;
+  const isArchiveIntentCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+    && isCurrentWorkspaceNavigation(navigationGeneration)
+    && state.selectedPage?.id === pageId
+  );
+  if (!isArchiveIntentCurrent()) return;
+
   try {
     await withPageEditLock(async () => {
-      await withPagePersistenceTransition(pageId, "page-archive", async () => {
-        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      if (!isArchiveIntentCurrent()) return;
+
+      const archiveResult = await withPagePersistenceTransition(pageId, "page-archive", async () => {
+        if (!isArchiveIntentCurrent()) return skippedApiRequest;
         // Archiving disconnects every collaborator and makes the page unavailable
         // to them. Do not create an orphaned local Yjs state in another tab.
         await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false });
-        if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        if (!isArchiveIntentCurrent()) return skippedApiRequest;
         assertNoPendingLocalPageDrafts(pageId, "status.destructiveLocalDraftsPending");
         assertNoPendingLocalCollaborationRecovery(pageId);
         const expectedVersion = state.selectedPage.version;
-        return archivePageWithReconciliation(pageId, expectedVersion, authenticationScope);
+        return archivePageWithReconciliation(pageId, expectedVersion, authenticationScope, {
+          requestGuard: isArchiveIntentCurrent
+        });
       });
-      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+
+      if (
+        archiveResult === skippedApiRequest
+        || archiveResult === null
+        || !isArchiveIntentCurrent()
+      ) return;
+
       resetPageEditTracking();
       state.selectedPage = null;
       state.workspaceView = "collection";
       state.activeCollectionId = parentCollectionId;
       await loadPages(elements.searchInput.value.trim(), state.activeTag);
-      if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+      if (
+        !isCurrentAuthenticatedSessionScope(authenticationScope)
+        || !isCurrentWorkspaceNavigation(navigationGeneration)
+      ) return;
       renderSelectedPage();
       setStatus(t("status.pageArchived"));
     });
   } catch (error) {
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
     setStatus(error.message, true);
   }
 });
@@ -19152,6 +19239,7 @@ elements.pageMoveForm.addEventListener("submit", async (event) => {
   }
 
   const authenticationScope = captureAuthenticatedSessionScope();
+  const navigationGeneration = workspaceNavigationGeneration;
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
     setPageMoveMessage(t("errors.UNAUTHENTICATED"), true);
     return;
@@ -19160,9 +19248,20 @@ elements.pageMoveForm.addEventListener("submit", async (event) => {
   setPageMoveSubmitting(true);
   setPageMoveMessage(t("pageMove.moving"));
   try {
-    const data = await moveNavigationPageToParent(sourcePageId, targetPageId, { authenticationScope });
-    if (data === null && !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
-    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    const data = await moveNavigationPageToParent(sourcePageId, targetPageId, {
+      authenticationScope,
+      navigationGeneration
+    });
+    if (
+      data === null
+      || !isCurrentAuthenticatedSessionScope(authenticationScope)
+      || !isCurrentWorkspaceNavigation(navigationGeneration)
+    ) {
+      if (isCurrentAuthenticatedSessionScope(authenticationScope)) {
+        closePageMoveDialog({ restoreFocus: false, force: true });
+      }
+      return;
+    }
 
     const destinationTitle = targetPage.title || t("newDocumentTitle");
     setPageMoveSubmitting(false);
@@ -19170,6 +19269,10 @@ elements.pageMoveForm.addEventListener("submit", async (event) => {
     setStatus(t("pageMove.moved", { title: destinationTitle }));
   } catch (error) {
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    if (!isCurrentWorkspaceNavigation(navigationGeneration)) {
+      closePageMoveDialog({ restoreFocus: false, force: true });
+      return;
+    }
     setPageMoveSubmitting(false);
     setPageMoveMessage(error?.message ?? t("errors.unknown"), true);
   }

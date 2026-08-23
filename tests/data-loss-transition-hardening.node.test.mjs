@@ -191,16 +191,16 @@ test("UI mutation and archive paths contain the new fail-closed guards", async (
   assert.match(archiveSource, /archivePageWithReconciliation/);
   assert.match(archiveSource, /lockPageWriteOutcomeFence\(pageId\)/);
   assert.match(archiveSource, /data\?\.page\?\.isArchived === true/);
-  assert.match(archiveSource, /archivePageIdempotently\(pageId, expectedVersion, authenticationScope\)/);
+  assert.match(archiveSource, /archivePageIdempotently\(pageId, expectedVersion, authenticationScope, \{ requestGuard \}\)/);
   assert.match(archiveSource, /if \(!isCurrentAuthenticatedSessionScope\(authenticationScope\)\) return null/);
 
   const archiveClick = client.indexOf('elements.archivePageButton.addEventListener("click"');
   const archiveClickEnd = client.indexOf('elements.deletePageButton.addEventListener("click"', archiveClick);
   const archiveClickSource = client.slice(archiveClick, archiveClickEnd);
   assert.match(archiveClickSource, /const authenticationScope = captureAuthenticatedSessionScope\(\)/);
-  assert.match(archiveClickSource, /archivePageWithReconciliation\(pageId, expectedVersion, authenticationScope\)/);
-  const archiveSubmit = archiveClickSource.indexOf("archivePageWithReconciliation(pageId, expectedVersion, authenticationScope)");
-  const staleCompletionFence = archiveClickSource.indexOf("if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;", archiveSubmit);
+  assert.match(archiveClickSource, /archivePageWithReconciliation\(pageId, expectedVersion, authenticationScope, \{/);
+  const archiveSubmit = archiveClickSource.indexOf("archivePageWithReconciliation(pageId, expectedVersion, authenticationScope, {");
+  const staleCompletionFence = archiveClickSource.indexOf("|| !isArchiveIntentCurrent()", archiveSubmit);
   const archiveCleanup = archiveClickSource.indexOf("resetPageEditTracking()", archiveSubmit);
   assert.ok(archiveSubmit >= 0 && staleCompletionFence > archiveSubmit && staleCompletionFence < archiveCleanup);
 });

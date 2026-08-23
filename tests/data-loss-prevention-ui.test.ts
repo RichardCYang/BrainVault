@@ -225,12 +225,12 @@ describe("Data-loss prevention integration", () => {
       'assertNoPendingLocalPageDrafts(pageId, "status.destructiveLocalDraftsPending")'
     );
     expect(archiveBody).toContain("assertNoPendingLocalCollaborationRecovery(pageId)");
-    expect(archiveBody).toContain("await archivePageWithReconciliation(pageId, expectedVersion)");
+    expect(archiveBody).toContain("return archivePageWithReconciliation(pageId, expectedVersion, authenticationScope, {");
     expect(archiveBody.indexOf("assertNoPendingLocalPageDrafts(pageId")).toBeLessThan(
-      archiveBody.indexOf("await archivePageWithReconciliation(pageId, expectedVersion)")
+      archiveBody.indexOf("return archivePageWithReconciliation(pageId, expectedVersion, authenticationScope, {")
     );
     expect(archiveBody.indexOf("assertNoPendingLocalCollaborationRecovery(pageId)")).toBeLessThan(
-      archiveBody.indexOf("await archivePageWithReconciliation(pageId, expectedVersion)")
+      archiveBody.indexOf("return archivePageWithReconciliation(pageId, expectedVersion, authenticationScope, {")
     );
 
     const archiveHelperStart = client.indexOf("async function archivePageIdempotently");

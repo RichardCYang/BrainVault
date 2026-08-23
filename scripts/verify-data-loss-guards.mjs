@@ -1333,13 +1333,13 @@ const archive = section(
 assertBefore(
   archive,
   "assertNoPendingLocalPageDrafts(pageId",
-  "await archivePageWithReconciliation(pageId, expectedVersion)",
+  "return archivePageWithReconciliation(pageId, expectedVersion, authenticationScope, {",
   "page archive"
 );
 assertBefore(
   archive,
   "assertNoPendingLocalCollaborationRecovery(pageId)",
-  "await archivePageWithReconciliation(pageId, expectedVersion)",
+  "return archivePageWithReconciliation(pageId, expectedVersion, authenticationScope, {",
   "page archive Yjs recovery"
 );
 

@@ -29,7 +29,7 @@ describe("Lossless page move from the sidebar navigation menu", () => {
   });
 
   it("changes only the page parent through the existing optimistic/idempotent page mutation path", () => {
-    expect(client).toContain('async function submitPageMoveMutation(pageId, targetPageId, expectedVersion, authenticationScope)');
+    expect(client).toContain('async function submitPageMoveMutation(');
     expect(client).toContain('method: "PATCH"');
     expect(client).toContain("parentPageId: targetPageId");
     expect(client).toContain("expectedVersion,");

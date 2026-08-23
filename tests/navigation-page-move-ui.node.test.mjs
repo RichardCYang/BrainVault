@@ -59,7 +59,7 @@ test("production destination-filter function excludes unsafe parents and keeps v
 test("page move submits only parent metadata and keeps retry reconciliation idempotent", () => {
   const submitMove = extractBetween(
     client,
-    "async function submitPageMoveMutation(pageId, targetPageId, expectedVersion, authenticationScope)",
+    "async function submitPageMoveMutation(",
     "function applyPageMoveMutationResult(committedPage)"
   );
   assert.match(submitMove, /method:\s*"PATCH"/);
@@ -74,7 +74,7 @@ test("page move submits only parent metadata and keeps retry reconciliation idem
 test("moving the currently edited page flushes it before the hierarchy mutation", () => {
   const moveFlow = extractBetween(
     client,
-    "async function moveNavigationPageToParent(pageId, targetPageId, { authenticationScope } = {})",
+    "async function moveNavigationPageToParent(",
     "function findPendingPageDeleteTask"
   );
   assert.match(moveFlow, /await assertWorkspacePersistenceUnlocked\(\)/);
