@@ -423,7 +423,7 @@ assert(
       directBlockDeleteRouteSource
     )
     && client.includes("const pendingBlockDeleteTasks = new Map()")
-    && client.includes("async function submitBlockDeleteTask(task, authenticationScope)")
+    && client.includes("async function submitBlockDeleteTask(task, authenticationScope, { requestGuard = null } = {})")
     && client.includes("while (attempt < 2)")
     && client.includes("body: { ...task.payload, mutationId: task.mutationId }")
     && client.includes("pendingBlockDeleteTasks.clear()"),
