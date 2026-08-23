@@ -137,7 +137,12 @@ test("pending block-order retries cannot persist while the page is read-only", a
     workspaceView: "page",
     pageMode: pageModes.READ
   };
-  const task = { pageId: "page-1", parentBlockId: null, previousIds: ["a", "b"] };
+  const task = {
+    pageId: "page-1",
+    parentBlockId: null,
+    previousIds: ["a", "b"],
+    authenticationScope: { generation: 1 }
+  };
   let submitCount = 0;
   const context = {
     state,
@@ -158,6 +163,8 @@ test("pending block-order retries cannot persist while the page is read-only", a
     renderSelectedPage: () => {},
     setStatus: () => {},
     t: (key) => key,
+    isCurrentAuthenticatedSessionScope: () => true,
+    assertCurrentAuthenticatedSessionScope: () => {},
     isDefinitiveApiError: () => false,
     reorderBlockSiblingsInState: () => {}
   };

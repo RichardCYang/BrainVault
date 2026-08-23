@@ -12886,10 +12886,15 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
 
     try {
       await submitBlockOrderTaskWithReplay(task);
+      assertCurrentAuthenticatedSessionScope(task.authenticationScope);
       acknowledgeBlockOrderDraft(task);
       pendingBlockOrderTask = null;
       setStatus(t("status.blockOrderChanged"));
     } catch (error) {
+      if (!isCurrentAuthenticatedSessionScope(task.authenticationScope)) {
+        if (pendingBlockOrderTask === task) pendingBlockOrderTask = null;
+        return;
+      }
       if (isDefinitiveApiError(error)) {
         acknowledgeBlockOrderDraft(task);
         pendingBlockOrderTask = null;
@@ -14389,18 +14394,34 @@ async function retryPendingBlockOrder({ keepalive = false, allowRecoveryFailure 
   // A queued reorder must never become a write-mode bypass after the page has
   // moved to READ mode (or after another page became selected).
   if (!canPersistSelectedPage() || state.selectedPage?.id !== task.pageId) return null;
+  // Credential rotation makes the original request outcome unknowable from this
+  // task's point of view. Drop only the live retry handle and keep its durable
+  // recovery record so a later page recovery can reconcile/replay the same
+  // mutation id under an explicitly current session.
+  if (!isCurrentAuthenticatedSessionScope(task.authenticationScope)) {
+    if (pendingBlockOrderTask === task) pendingBlockOrderTask = null;
+    blockOrderSaving = false;
+    syncPageModeUi();
+    syncBeforeUnloadProtection();
+    return null;
+  }
 
   blockOrderSaving = true;
   syncPageModeUi();
   syncBeforeUnloadProtection();
   try {
     const data = await submitBlockOrderTaskWithReplay(task, { keepalive, allowRecoveryFailure });
+    assertCurrentAuthenticatedSessionScope(task.authenticationScope);
     acknowledgeBlockOrderDraft(task);
     if (pendingBlockOrderTask === task) pendingBlockOrderTask = null;
     if (state.selectedPage?.id === task.pageId) renderSelectedPage();
     setStatus(t("status.blockOrderChanged"));
     return data;
   } catch (error) {
+    if (!isCurrentAuthenticatedSessionScope(task.authenticationScope)) {
+      if (pendingBlockOrderTask === task) pendingBlockOrderTask = null;
+      return null;
+    }
     if (isDefinitiveApiError(error)) {
       acknowledgeBlockOrderDraft(task);
       if (pendingBlockOrderTask === task) {
@@ -14451,10 +14472,15 @@ async function persistBlockOrder(
 
   try {
     const data = await submitBlockOrderTaskWithReplay(task);
+    assertCurrentAuthenticatedSessionScope(task.authenticationScope);
     acknowledgeBlockOrderDraft(task);
     if (pendingBlockOrderTask === task) pendingBlockOrderTask = null;
     return data;
   } catch (error) {
+    if (!isCurrentAuthenticatedSessionScope(task.authenticationScope)) {
+      if (pendingBlockOrderTask === task) pendingBlockOrderTask = null;
+      throw error;
+    }
     if (isDefinitiveApiError(error)) {
       acknowledgeBlockOrderDraft(task);
       if (pendingBlockOrderTask === task) {

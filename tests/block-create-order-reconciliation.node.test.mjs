@@ -278,7 +278,7 @@ test("ordinary creates and attachment uploads reconcile stale post-create orderi
 
 test("definitively rejected block-order drafts are removed from crash-recovery storage", () => {
   const definitiveCatchCleanup = client.match(
-    /catch \(error\) \{\n\s+if \(isDefinitiveApiError\(error\)\) \{\n\s+acknowledgeBlockOrderDraft\(task\);/g
+    /if \(isDefinitiveApiError\(error\)\) \{\n\s+acknowledgeBlockOrderDraft\(task\);/g
   ) ?? [];
   assert.ok(
     definitiveCatchCleanup.length >= 3,
