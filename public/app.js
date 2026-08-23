@@ -10256,7 +10256,7 @@ function getBlockMoveTask(authenticationScope, pageId, blockId, targetPageId, pa
   return task;
 }
 
-async function submitBlockMoveTask(task, authenticationScope) {
+async function submitBlockMoveTask(task, authenticationScope, { requestGuard = null } = {}) {
   if (task.inFlight) throw new Error(t("status.pageTransitionBusy"));
   task.inFlight = true;
   let attempt = 0;
@@ -10265,14 +10265,22 @@ async function submitBlockMoveTask(task, authenticationScope) {
     while (attempt < 2) {
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       try {
-        task.attempted = true;
         const data = await submitWithFreshMutationIdOnReuse(task, () => {
           if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
           return api(`/api/blocks/${encodeURIComponent(task.blockId)}/move`, {
             method: "POST",
-            body: { ...task.payload, mutationId: task.mutationId }
+            body: { ...task.payload, mutationId: task.mutationId },
+            beforeFetch: () => {
+              if (
+                !isCurrentAuthenticatedSessionScope(authenticationScope)
+                || requestGuard?.() === false
+              ) return false;
+              task.attempted = true;
+              return true;
+            }
           });
         });
+        if (data === skippedApiRequest) return data;
         if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         if (pendingBlockMoveTasks.get(task.taskKey) === task) {
           pendingBlockMoveTasks.delete(task.taskKey);
@@ -10295,7 +10303,11 @@ async function submitBlockMoveTask(task, authenticationScope) {
   }
 }
 
-async function moveBlockToPage(blockId, targetPageId, { authenticationScope, sourcePageId } = {}) {
+async function moveBlockToPage(
+  blockId,
+  targetPageId,
+  { authenticationScope, sourcePageId, navigationGeneration = null } = {}
+) {
   const scope = authenticationScope ?? captureAuthenticatedSessionScope();
   const pageId = sourcePageId ?? state.selectedPage?.id;
   if (!pageId || state.selectedPage?.id !== pageId) throw new Error(t("errors.currentBlockOrder"));
@@ -10305,9 +10317,21 @@ async function moveBlockToPage(blockId, targetPageId, { authenticationScope, sou
   }
   if (!targetPageId || targetPageId === pageId) throw new Error(t("blockMove.chooseDifferent"));
 
+  const isBlockMoveNavigationCurrent = () => (
+    navigationGeneration === null
+    || (
+      isCurrentWorkspaceNavigation(navigationGeneration)
+      && state.selectedPage?.id === pageId
+    )
+  );
+  if (!isBlockMoveNavigationCurrent()) return null;
+  const sourceDraftScope = getDraftScope(pageId);
+
   return withPagePersistenceTransition(pageId, "block-move", async () => {
     if (!isCurrentAuthenticatedSessionScope(scope)) throw new Error(t("errors.UNAUTHENTICATED"));
-    if (state.selectedPage?.id !== pageId) throw new Error(t("errors.currentBlockOrder"));
+    // Writer drainage and IndexedDB recovery refresh can wait. A navigation
+    // during that wait cancels an unsubmitted structural mutation.
+    if (!isBlockMoveNavigationCurrent()) return null;
 
     const expectedVersions = getBlockVersionSnapshot(blockId, { includeDescendants: true });
     if (!expectedVersions.length) throw new Error(t("errors.currentBlockOrder"));
@@ -10326,22 +10350,38 @@ async function moveBlockToPage(blockId, targetPageId, { authenticationScope, sou
       expectedVersions,
       expectedSourcePageContentVersion: Number(state.selectedPage?.contentVersion ?? 1)
     });
-    const data = await submitBlockMoveTask(task, scope);
+    const data = await submitBlockMoveTask(task, scope, {
+      requestGuard: isBlockMoveNavigationCurrent
+    });
+    if (data === skippedApiRequest) {
+      // A never-sent task has no receipt to reconcile. Preserve an attempted
+      // task because an earlier ambiguous response may hide a committed move.
+      if (!task.attempted && pendingBlockMoveTasks.get(task.taskKey) === task) {
+        pendingBlockMoveTasks.delete(task.taskKey);
+      }
+      return null;
+    }
     if (data === null || !isCurrentAuthenticatedSessionScope(scope)) return null;
 
     const movedIds = Array.isArray(data?.movedBlockIds)
       ? data.movedBlockIds
       : task.payload.expectedVersions.map(({ id }) => id);
-    for (const movedId of movedIds) {
-      blockDraftRenderSources.delete(movedId);
-      blockDraftConflictOrigins.delete(movedId);
+    // These maps describe the currently rendered editor. If navigation changed
+    // after fetch, do not let the old response clear recovery metadata created
+    // by the newer view for the same globally unique block IDs.
+    if (isBlockMoveNavigationCurrent()) {
+      for (const movedId of movedIds) {
+        blockDraftRenderSources.delete(movedId);
+        blockDraftConflictOrigins.delete(movedId);
+      }
     }
-    const draftScope = getDraftScope();
-    if (draftScope) {
+    // The durable cleanup belongs to the page that initiated the move, not to
+    // whichever page happens to be selected when the response arrives.
+    if (sourceDraftScope) {
       checkDraftStoreWrite(
         pageDraftStore.removeBlocks(
-          draftScope.userId,
-          draftScope.pageId,
+          sourceDraftScope.userId,
+          sourceDraftScope.pageId,
           movedIds,
           pageDraftSourceId
         )
@@ -19050,10 +19090,22 @@ elements.blockMoveForm.addEventListener("submit", async (event) => {
   try {
     const data = await moveBlockToPage(blockId, targetPageId, {
       authenticationScope,
-      sourcePageId
+      sourcePageId,
+      navigationGeneration
     });
-    if (data === null && !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
-    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) {
+      if (isCurrentAuthenticatedSessionScope(authenticationScope)) {
+        closeBlockMoveDialog({ restoreFocus: false, force: true });
+      }
+      return;
+    }
+    if (
+      !isCurrentWorkspaceNavigation(navigationGeneration)
+      || state.selectedPage?.id !== sourcePageId
+    ) {
+      closeBlockMoveDialog({ restoreFocus: false, force: true });
+      return;
+    }
 
     const destinationTitle = targetPage.title || t("newDocumentTitle");
     setBlockMoveSubmitting(false);
