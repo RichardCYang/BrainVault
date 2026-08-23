@@ -10286,14 +10286,14 @@ async function withCollaborativeDestructiveTransition(pageId, kind, action) {
   });
 }
 
-function getBlockDeleteTask(authenticationScope, pageId, blockId, payload) {
+function getBlockDeleteTask(authenticationScope, pageId, blockId, payload, deleteScope) {
   const taskKey = [
     authenticationScope.generation,
     authenticationScope.targetKey,
     authenticationScope.workspaceGeneration,
     pageId,
     blockId,
-    payload.preserveChildren ? "preserve" : "cascade"
+    deleteScope
   ].join("\u0000");
   const pendingTask = pendingBlockDeleteTasks.get(taskKey);
   if (pendingTask) return pendingTask;
@@ -10578,8 +10578,14 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
   // fail closed rather than deleting the source and leaving the attachment
   // placement as a separate, partially completed operation.
   if (replacementBlock) throw new Error(t("sharing.syncRequired"));
+  // Retry tasks must distinguish the exact destructive intent. A root-only
+  // replacement check is deliberately fail-closed when descendants exist and
+  // must never inherit an older ambiguous subtree-delete snapshot.
+  const deleteScope = preserveChildren
+    ? "preserve-children"
+    : (options.includeDescendants === false ? "root-only" : "subtree");
   const expectedVersions = getBlockVersionSnapshot(blockId, {
-    includeDescendants: preserveChildren || options.includeDescendants !== false
+    includeDescendants: deleteScope !== "root-only"
   });
   if (blockSnapshotHasUnresolvedDraftConflict(expectedVersions)) {
     throw new Error(t("status.resolveRecoveredDraftConflict"));
@@ -10590,7 +10596,7 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
     ...(preserveChildren
       ? { expectedPageContentVersion: Number(state.selectedPage?.contentVersion ?? 1) }
       : {})
-  });
+  }, deleteScope);
   const deletedVersions = task.payload.preserveChildren
     ? task.payload.expectedVersions.filter(({ id }) => id === blockId)
     : task.payload.expectedVersions;

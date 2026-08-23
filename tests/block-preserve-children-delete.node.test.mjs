@@ -80,7 +80,11 @@ test("the UI sends one preserve-children deletion instead of committing a reorde
   );
 
   const deletion = section(client, "async function deleteBlockWithVersionCheck", "function updateBlockInState");
-  assert.match(deletion, /includeDescendants: preserveChildren \|\| options\.includeDescendants !== false/);
+  assert.match(
+    deletion,
+    /const deleteScope = preserveChildren\s*\? "preserve-children"\s*:\s*\(options\.includeDescendants === false \? "root-only" : "subtree"\)/
+  );
+  assert.match(deletion, /includeDescendants: deleteScope !== "root-only"/);
   assert.match(deletion, /const preserveChildren = options\.preserveChildren === true/);
   assert.match(deletion, /\n    preserveChildren,\n/);
   assert.match(deletion, /expectedPageContentVersion: Number\(state\.selectedPage\?\.contentVersion \?\? 1\)/);
