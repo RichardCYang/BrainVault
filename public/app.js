@@ -13175,7 +13175,8 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
     setStatus(t("status.savingBlockOrder"));
 
     try {
-      await submitBlockOrderTaskWithReplay(task);
+      const data = await submitBlockOrderTaskWithReplay(task);
+      if (data === skippedApiRequest) return;
       assertCurrentAuthenticatedSessionScope(task.authenticationScope);
       acknowledgeBlockOrderDraft(task);
       pendingBlockOrderTask = null;
@@ -14638,7 +14639,8 @@ function createBlockOrderTask(
     previousIds = null,
     recovered = false,
     recoveredOrigin = null,
-    authenticationScope = captureAuthenticatedSessionScope()
+    authenticationScope = captureAuthenticatedSessionScope(),
+    navigationGeneration = workspaceNavigationGeneration
   } = {}
 ) {
   if (!pageId || !userId || !sourceId || !orderedIds.length) throw new Error(t("errors.currentBlockOrder"));
@@ -14661,7 +14663,8 @@ function createBlockOrderTask(
     items,
     recovered,
     recoveredOrigin,
-    authenticationScope
+    authenticationScope,
+    navigationGeneration
   };
 }
 
@@ -14702,13 +14705,19 @@ function acknowledgeBlockOrderDraft(task) {
   );
 }
 
-async function submitBlockOrderTask(task, { keepalive = false } = {}) {
+async function submitBlockOrderTask(task, { keepalive = false, requestGuard = null } = {}) {
   assertCurrentAuthenticatedSessionScope(task.authenticationScope);
+  if (requestGuard?.() === false) return skippedApiRequest;
   const data = await api(`/api/pages/${task.pageId}/blocks/reorder`, {
     method: "POST",
     keepalive,
-    body: { mutationId: task.mutationId, items: task.items }
+    body: { mutationId: task.mutationId, items: task.items },
+    beforeFetch: () => (
+      isCurrentAuthenticatedSessionScope(task.authenticationScope)
+      && requestGuard?.() !== false
+    )
   });
+  if (data === skippedApiRequest) return data;
   assertCurrentAuthenticatedSessionScope(task.authenticationScope);
   applyPageContentVersion(task.pageId, data.pageContentVersion);
   if (state.selectedPage?.id === task.pageId) {
@@ -14735,19 +14744,30 @@ async function submitBlockOrderTaskWithReplay(
   task,
   { keepalive = false, allowRecoveryFailure = false } = {}
 ) {
+  const isRequestCurrent = () => (
+    isCurrentAuthenticatedSessionScope(task.authenticationScope)
+    && isCurrentWorkspaceNavigation(task.navigationGeneration)
+    && canPersistSelectedPage()
+    && state.selectedPage?.id === task.pageId
+  );
+
   // persistBlockOrderDraft() has already admitted this task into the synchronous
   // recovery mirror. Never let the network mutation outrun the strict IndexedDB
   // transaction that makes the reorder recoverable after a crash.
   await requireBlockOrderRecoveryDurability({ allowRecoveryFailure });
+  if (!isRequestCurrent()) return skippedApiRequest;
 
   return submitWithFreshMutationIdOnReuse(
     task,
     async () => {
       try {
-        return await submitBlockOrderTask(task, { keepalive });
+        return await submitBlockOrderTask(task, { keepalive, requestGuard: isRequestCurrent });
       } catch (error) {
         if (!isAmbiguousApiError(error)) throw error;
-        return submitBlockOrderTask(task, { keepalive });
+        // The first request may have committed. Preserve the idempotent identity,
+        // but never issue its retry from a page view that is already stale.
+        if (!isRequestCurrent()) return skippedApiRequest;
+        return submitBlockOrderTask(task, { keepalive, requestGuard: isRequestCurrent });
       }
     },
     async () => {
@@ -14782,6 +14802,7 @@ async function retryPendingBlockOrder({ keepalive = false, allowRecoveryFailure 
   syncBeforeUnloadProtection();
   try {
     const data = await submitBlockOrderTaskWithReplay(task, { keepalive, allowRecoveryFailure });
+    if (data === skippedApiRequest) return null;
     assertCurrentAuthenticatedSessionScope(task.authenticationScope);
     acknowledgeBlockOrderDraft(task);
     if (pendingBlockOrderTask === task) pendingBlockOrderTask = null;
@@ -14843,6 +14864,7 @@ async function persistBlockOrder(
 
   try {
     const data = await submitBlockOrderTaskWithReplay(task);
+    if (data === skippedApiRequest) return null;
     assertCurrentAuthenticatedSessionScope(task.authenticationScope);
     acknowledgeBlockOrderDraft(task);
     if (pendingBlockOrderTask === task) pendingBlockOrderTask = null;

@@ -148,6 +148,7 @@ test("pending block-order retries cannot persist while the page is read-only", a
     state,
     pendingBlockOrderTask: task,
     blockOrderSaving: false,
+    skippedApiRequest: Symbol("skipped-api-request"),
     canPersistSelectedPage: () => Boolean(
       state.selectedPage
       && state.workspaceView === "page"
