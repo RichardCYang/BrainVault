@@ -121,6 +121,32 @@ describe("AI conversation block", () => {
     expect(html).not.toContain("script");
   });
 
+  it("renders Markdown tables as readable tables inside AI answers", () => {
+    const html = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        model: "GPT Test",
+        turns: [
+          {
+            answeredAt: "2026-08-24T18:30",
+            question: "Compare the options",
+            answer: "| Option | Score |\n| --- | --- |\n| **Alpha** | 9 |\n| Beta | 7 |"
+          }
+        ]
+      }
+    });
+
+    expect(html).toContain("<table>");
+    expect(html).toContain("<thead>");
+    expect(html).toContain("<tbody>");
+    expect(html).toContain("<th>Option</th>");
+    expect(html).toContain("<strong>Alpha</strong>");
+    expect(html).toContain("<td>9</td>");
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content\s*\{[^}]*overflow-x:\s*auto;/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content table\s*\{[^}]*min-width:\s*100%;[^}]*border:/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content th,[\s\S]*\.rendered-ai-chat-answer \.rendered-ai-chat-content td\s*\{[^}]*border-bottom:/s);
+  });
+
   it("uses content-sized questions and swaps editor for preview in read mode", () => {
     expect(styles).toContain(".ai-chat-message--question");
     expect(styles).toContain(".ai-chat-message--answer");

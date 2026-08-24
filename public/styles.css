@@ -13880,6 +13880,48 @@ button.danger {
   overflow-x: auto;
 }
 
+/* Markdown tables inside AI answers are emitted as plain <table> elements by
+   markdown-it, so give them the same readable table treatment as native table
+   blocks without changing the stored Markdown or HTML cache format. */
+.rendered-ai-chat-answer .rendered-ai-chat-content {
+  overflow-x: auto;
+}
+
+.rendered-ai-chat-answer .rendered-ai-chat-content table {
+  width: max-content;
+  min-width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--panel);
+  font-size: 0.86rem;
+}
+
+.rendered-ai-chat-answer .rendered-ai-chat-content th,
+.rendered-ai-chat-answer .rendered-ai-chat-content td {
+  min-width: 7rem;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 0.48rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.rendered-ai-chat-answer .rendered-ai-chat-content th {
+  background: var(--panel-soft);
+  color: var(--ink-strong);
+  font-weight: 650;
+}
+
+.rendered-ai-chat-answer .rendered-ai-chat-content tr > :last-child {
+  border-right: 0;
+}
+
+.rendered-ai-chat-answer .rendered-ai-chat-content tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
 @media (max-width: 820px) {
   .ai-chat-settings {
     grid-template-columns: minmax(0, 1fr);
