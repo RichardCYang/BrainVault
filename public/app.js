@@ -14163,17 +14163,24 @@ function getAttachmentCreateTask(
   };
 }
 
-async function submitAttachmentCreateTask(task, authenticationScope) {
+async function submitAttachmentCreateTask(
+  task,
+  authenticationScope,
+  { requestGuard = null } = {}
+) {
+  if (requestGuard?.() === false) return skippedApiRequest;
   task.inFlight = true;
   let attempt = 0;
 
   try {
     while (attempt < 2) {
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+      if (requestGuard?.() === false) return skippedApiRequest;
 
       try {
         const data = await submitWithFreshMutationIdOnReuse(task, () => {
           if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+          if (requestGuard?.() === false) return skippedApiRequest;
           const formData = new FormData();
           formData.set("file", task.file, task.file.name);
           if (task.parentBlockId) formData.set("parentBlockId", task.parentBlockId);
@@ -14184,9 +14191,14 @@ async function submitAttachmentCreateTask(task, authenticationScope) {
           formData.set("mutationId", task.mutationId);
           return api(`/api/pages/${task.pageId}/attachments`, {
             method: "POST",
-            body: formData
+            body: formData,
+            beforeFetch: () => (
+              isCurrentAuthenticatedSessionScope(authenticationScope)
+              && requestGuard?.() !== false
+            )
           });
         });
+        if (data === skippedApiRequest) return data;
         if (data === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         if (pendingAttachmentCreateTasks.get(task.taskKey) === task) {
           pendingAttachmentCreateTasks.delete(task.taskKey);
@@ -14200,6 +14212,13 @@ async function submitAttachmentCreateTask(task, authenticationScope) {
             pendingAttachmentCreateTasks.delete(task.taskKey);
           }
           throw error;
+        }
+        // A failed upload attempt can outlive the page view that initiated it.
+        // Preserve its mutation id for later reconciliation, but never issue a
+        // retry from a navigation that is already stale.
+        if (requestGuard?.() === false) {
+          pendingAttachmentCreateTasks.set(task.taskKey, task);
+          return skippedApiRequest;
         }
       }
     }
@@ -14222,7 +14241,13 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
   const pageId = state.selectedPage.id;
   const authenticationScope = captureAuthenticatedSessionScope();
   const navigationGeneration = workspaceNavigationGeneration;
-  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+  const isUploadIntentCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+    && isCurrentWorkspaceNavigation(navigationGeneration)
+    && state.workspaceView === "page"
+    && state.selectedPage?.id === pageId
+  );
+  if (!isUploadIntentCurrent()) return;
   const pageModeMutationFence = lockPageModeMutationFence(pageId);
   const collaborativeAtStart = isCollaborativePage();
   const collaborationSessionAtStart = collaborativeAtStart ? state.collaborationSession : null;
@@ -14266,6 +14291,7 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
     if (!replaceCurrentBlock && blockSaveQueues.get(blockId)?.busy) {
       await blockSaveQueues.get(blockId).flush();
     }
+    if (!isUploadIntentCurrent()) return null;
 
     const insertionIndex = replaceCurrentBlock ? referenceIndex : referenceIndex + 1;
     const task = getAttachmentCreateTask(authenticationScope, {
@@ -14275,8 +14301,14 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
       sortOrder: insertionIndex,
       file
     });
-    const data = await submitAttachmentCreateTask(task, authenticationScope);
-    if (!data || !isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+    const data = await submitAttachmentCreateTask(task, authenticationScope, {
+      requestGuard: isUploadIntentCurrent
+    });
+    if (
+      data === skippedApiRequest
+      || !data
+      || !isCurrentAuthenticatedSessionScope(authenticationScope)
+    ) return null;
     applyAuthoritativePageContentVersion(pageId, data);
 
     // The upload itself is already durable, but replacing its source block is a
