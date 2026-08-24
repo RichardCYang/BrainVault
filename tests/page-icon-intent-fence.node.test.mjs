@@ -13,22 +13,34 @@ function section(source, startNeedle, endNeedle) {
   return source.slice(start, end);
 }
 
-test("page-icon writes revalidate picker and navigation intent through fetch preflight", async () => {
+test("page and collection icon writes revalidate picker and navigation intent through fetch preflight", async () => {
   const source = (await readFile(appUrl, "utf8")).replace(/\r\n/g, "\n");
+  const navigationTarget = section(
+    source,
+    "function isPageIconNavigationTargetCurrent(",
+    "async function saveEmojiSelection("
+  );
   const save = section(
     source,
     "async function saveEmojiSelection(",
     "function handleEmojiPickerKeydown"
   );
 
+  assert.match(navigationTarget, /target\?\.type !== "page"/);
+  assert.match(navigationTarget, /isCurrentWorkspaceNavigation\(navigationGeneration\)/);
+  assert.match(navigationTarget, /target\.isCollection === true/);
+  assert.match(navigationTarget, /state\.workspaceView === "collection"/);
+  assert.match(navigationTarget, /state\.activeCollectionId === target\.pageId/);
+  assert.match(navigationTarget, /state\.workspaceView === "page"/);
+  assert.match(navigationTarget, /state\.selectedPage\?\.id === target\.pageId/);
+
   assert.match(save, /navigationGeneration = undefined/);
   assert.match(save, /const pageNavigationGeneration = navigationGeneration === undefined/);
+  assert.match(save, /target\.type === "page" \? workspaceNavigationGeneration : null/);
   assert.match(save, /const isPageIconIntentCurrent = \(\) =>/);
   assert.match(save, /isCurrentAuthenticatedSessionScope\(authenticationScope\)/);
   assert.match(save, /iconPickerOperationGuard\.isCurrent\(activeOperation, targetKey\)/);
-  assert.match(save, /isCurrentWorkspaceNavigation\(pageNavigationGeneration\)/);
-  assert.match(save, /state\.workspaceView === "page"/);
-  assert.match(save, /state\.selectedPage\?\.id === target\.pageId/);
+  assert.match(save, /isPageIconNavigationTargetCurrent\(target, pageNavigationGeneration\)/);
 
   const queuedSave = section(
     save,
@@ -57,6 +69,14 @@ test("custom-icon preprocessing keeps the navigation generation from file-select
   assert.ok(captureIndex >= 0 && validateIndex > captureIndex);
   assert.ok(postValidateFence > validateIndex && saveIndex > postValidateFence);
   assert.match(
+    customFile,
+    /pickerTarget\?\.type === "page"[\s\S]*?\? workspaceNavigationGeneration[\s\S]*?: null/
+  );
+  assert.match(
+    customFile,
+    /isPageIconNavigationTargetCurrent\(pickerTarget, navigationGeneration\)/
+  );
+  assert.match(
     customFile.slice(saveIndex),
     /\{ operation, authenticationScope, navigationGeneration \}/
   );
@@ -77,4 +97,6 @@ test("reproduction: closed picker or changed navigation cannot release an unsent
   assert.equal(result.fetchPreflight.fixed.requestReachedFetch, false);
   assert.equal(result.customFilePreparation.vulnerable.saveWouldStart, true);
   assert.equal(result.customFilePreparation.fixed.saveWouldStart, false);
+  assert.equal(result.collectionNavigation.vulnerable.requestWouldStart, true);
+  assert.equal(result.collectionNavigation.fixed.requestWouldStart, false);
 });

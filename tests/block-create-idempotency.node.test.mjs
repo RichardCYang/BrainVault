@@ -83,7 +83,11 @@ test("browser retries ambiguous create responses with the same mutation id and f
   assert.match(attachment, /submitWithFreshMutationIdOnReuse/);
   assert.match(attachment, /pendingAttachmentCreateTasks\.get\(taskKey\)/);
   assert.match(attachment, /pendingTask && !pendingTask\.inFlight/);
-  assert.equal((attachment.match(/pendingAttachmentCreateTasks\.set/g) ?? []).length, 1);
+  assert.equal((attachment.match(/pendingAttachmentCreateTasks\.set/g) ?? []).length, 2);
+  assert.match(
+    attachment,
+    /if \(requestGuard\?\.\(\) === false\) \{\s*pendingAttachmentCreateTasks\.set\(task\.taskKey, task\);\s*return skippedApiRequest;/
+  );
   assert.match(client, /pendingBlockCreateTasks\.clear\(\)/);
   assert.match(client, /pendingAttachmentCreateTasks\.clear\(\)/);
 });

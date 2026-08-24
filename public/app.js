@@ -5686,6 +5686,24 @@ function openPageEmojiPicker(page, trigger) {
   );
 }
 
+function isPageIconNavigationTargetCurrent(target, navigationGeneration) {
+  if (target?.type !== "page") return true;
+  if (
+    navigationGeneration === null
+    || !isCurrentWorkspaceNavigation(navigationGeneration)
+  ) return false;
+  if (target.isCollection === true) {
+    return (
+      state.workspaceView === "collection"
+      && state.activeCollectionId === target.pageId
+    );
+  }
+  return (
+    state.workspaceView === "page"
+    && state.selectedPage?.id === target.pageId
+  );
+}
+
 async function saveEmojiSelection(
   emoji,
   {
@@ -5699,23 +5717,12 @@ async function saveEmojiSelection(
   const targetKey = getIconPickerTargetKey(target);
   const activeOperation = operation ?? iconPickerOperationGuard.begin(targetKey);
   const pageNavigationGeneration = navigationGeneration === undefined
-    ? (
-        target.type === "page" && state.selectedPage?.id === target.pageId
-          ? workspaceNavigationGeneration
-          : null
-      )
+    ? (target.type === "page" ? workspaceNavigationGeneration : null)
     : navigationGeneration;
   const isPageIconIntentCurrent = () => (
     isCurrentAuthenticatedSessionScope(authenticationScope)
     && iconPickerOperationGuard.isCurrent(activeOperation, targetKey)
-    && (
-      pageNavigationGeneration === null
-      || (
-        isCurrentWorkspaceNavigation(pageNavigationGeneration)
-        && state.workspaceView === "page"
-        && state.selectedPage?.id === target.pageId
-      )
-    )
+    && isPageIconNavigationTargetCurrent(target, pageNavigationGeneration)
   );
   if (!isPageIconIntentCurrent()) return;
 
@@ -17127,16 +17134,11 @@ async function applyCustomIconFile(file) {
   const authenticationScope = captureAuthenticatedSessionScope();
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   const pickerTarget = state.emojiPickerTarget;
-  const navigationGeneration = pickerTarget?.type === "page" && state.selectedPage?.id === pickerTarget.pageId
+  const navigationGeneration = pickerTarget?.type === "page"
     ? workspaceNavigationGeneration
     : null;
   const isCustomIconNavigationCurrent = () => (
-    navigationGeneration === null
-    || (
-      isCurrentWorkspaceNavigation(navigationGeneration)
-      && state.workspaceView === "page"
-      && state.selectedPage?.id === pickerTarget?.pageId
-    )
+    isPageIconNavigationTargetCurrent(pickerTarget, navigationGeneration)
   );
   if (!isCustomIconNavigationCurrent()) return;
   if (!isSupportedCustomIconFile(file)) {

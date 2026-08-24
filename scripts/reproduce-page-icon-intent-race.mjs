@@ -82,6 +82,43 @@ function simulateCustomFilePreparationNavigation({ fixed }) {
   };
 }
 
+function simulateCollectionNavigation({ fixed }) {
+  let navigationGeneration = 40;
+  const capturedNavigation = navigationGeneration;
+  const capturedCollectionId = "collection-A";
+  let workspaceView = "collection";
+  let activeCollectionId = capturedCollectionId;
+  const selectedPageId = null;
+  const operationCurrent = true;
+
+  // Collection pages use the page PATCH route, but collection view intentionally
+  // has no selectedPage. The vulnerable code therefore captured null instead of
+  // the current workspace navigation generation.
+  const vulnerableCapturedNavigation =
+    selectedPageId === capturedCollectionId ? capturedNavigation : null;
+
+  // The user navigates away during icon preprocessing or API request preflight.
+  navigationGeneration += 1;
+  workspaceView = "page";
+  activeCollectionId = null;
+
+  const vulnerableGuardPassed =
+    operationCurrent
+    && vulnerableCapturedNavigation === null;
+  const fixedGuardPassed =
+    operationCurrent
+    && navigationGeneration === capturedNavigation
+    && workspaceView === "collection"
+    && activeCollectionId === capturedCollectionId;
+
+  return {
+    requestWouldStart: fixed ? fixedGuardPassed : vulnerableGuardPassed,
+    vulnerableCapturedNavigation,
+    navigationGeneration,
+    capturedNavigation
+  };
+}
+
 console.log(JSON.stringify({
   queuedPickerClose: {
     vulnerable: simulateQueuedEditLockRace({ fixed: false, invalidateBy: "picker-close" }),
@@ -98,5 +135,9 @@ console.log(JSON.stringify({
   customFilePreparation: {
     vulnerable: simulateCustomFilePreparationNavigation({ fixed: false }),
     fixed: simulateCustomFilePreparationNavigation({ fixed: true })
+  },
+  collectionNavigation: {
+    vulnerable: simulateCollectionNavigation({ fixed: false }),
+    fixed: simulateCollectionNavigation({ fixed: true })
   }
 }, null, 2));
