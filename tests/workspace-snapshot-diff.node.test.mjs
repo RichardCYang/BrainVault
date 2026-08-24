@@ -110,6 +110,49 @@ test("identical canonical manifests compare as identical even when export timest
   assert.equal(result.summary.workspace, 0);
 });
 
+test("restore-only concurrency rebasing and regenerated HTML cache do not modify unchanged pages", () => {
+  const before = manifest();
+  const current = structuredClone(before);
+  const restoreVersion = 1_900_000_000_000_000;
+
+  current.data.pages[0].edit_version = restoreVersion;
+  current.data.pages[0].content_version = restoreVersion;
+  current.data.blocks[0].edit_version = restoreVersion;
+  current.data.blocks[0].html_cache = "<p>attachment</p>\n";
+
+  const result = diffWorkspaceManifests(before, current);
+  assert.equal(result.identical, true);
+  assert.deepEqual(result.summary.pages, { added: 0, removed: 0, modified: 0 });
+  assert.deepEqual(result.summary.blocks, { added: 0, removed: 0, modified: 0 });
+  assert.equal(result.pages.length, 0);
+});
+
+test("restore-generation metadata stays visible when a semantic page or block change exists", () => {
+  const before = manifest();
+  const current = structuredClone(before);
+  const restoreVersion = 1_900_000_000_000_000;
+
+  current.data.pages[0].title = "Changed after restore";
+  current.data.pages[0].edit_version = restoreVersion;
+  current.data.pages[0].content_version = restoreVersion + 1;
+  current.data.blocks[0].markdown = "changed attachment";
+  current.data.blocks[0].html_cache = "<p>changed attachment</p>";
+  current.data.blocks[0].edit_version = restoreVersion + 1;
+
+  const result = diffWorkspaceManifests(before, current);
+  assert.equal(result.identical, false);
+  assert.deepEqual(result.summary.pages, { added: 0, removed: 0, modified: 1 });
+  assert.deepEqual(result.summary.blocks, { added: 0, removed: 0, modified: 1 });
+  const pageDiff = result.pages[0];
+  assert.ok(pageDiff.fields.some((field) => field.field === "title"));
+  assert.ok(pageDiff.fields.some((field) => field.field === "editVersion"));
+  assert.ok(pageDiff.fields.some((field) => field.field === "contentVersion"));
+  const blockDiff = pageDiff.blocks[0];
+  assert.ok(blockDiff.fields.some((field) => field.field === "markdown"));
+  assert.ok(blockDiff.fields.some((field) => field.field === "htmlCache"));
+  assert.ok(blockDiff.fields.some((field) => field.field === "editVersion"));
+});
+
 test("page, history, block body, attachment bytes, and account-level differences are all detected", () => {
   const before = manifest();
   const current = structuredClone(before);

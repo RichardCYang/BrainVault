@@ -68,6 +68,20 @@ function fieldDifference(field: string, snapshot: DiffValue, current: DiffValue)
   return { field, snapshot, current };
 }
 
+function compactFieldDifferences(values: Array<FieldDifference | null>) {
+  return values.filter((value): value is FieldDifference => Boolean(value));
+}
+
+function includeContextualDifferences(
+  semantic: Array<FieldDifference | null>,
+  contextual: Array<FieldDifference | null>,
+  hasRelatedSemanticChange = false
+) {
+  const semanticDifferences = compactFieldDifferences(semantic);
+  if (!semanticDifferences.length && !hasRelatedSemanticChange) return [];
+  return [...semanticDifferences, ...compactFieldDifferences(contextual)];
+}
+
 function longTextFieldDifference(field: string, snapshot: string | null, current: string | null): FieldDifference | null {
   if ((snapshot ?? "") === (current ?? "")) return null;
   const summary = summarizeTextDifference(snapshot, current);
@@ -263,19 +277,26 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
         blockSummary.removed += 1;
         difference = { blockId, status: "removed", snapshotType: beforeBlock.type, currentType: null, fields: [] };
       } else if (beforeBlock && afterBlock) {
-        const fields = [
+        // html_cache is regenerated from the canonical block payload during a
+        // restore, and edit_version is deliberately rebased to the restore
+        // generation so stale optimistic writes cannot cross that boundary.
+        // Neither value alone means the user's block state changed. Keep them
+        // as useful context when a semantic block field changed, but do not let
+        // restore-only operational metadata mark every block as modified.
+        const fields = includeContextualDifferences([
           fieldDifference("type", beforeBlock.type, afterBlock.type),
           fieldDifference("parentBlockId", beforeBlock.parent_block_id, afterBlock.parent_block_id),
           longTextFieldDifference("markdown", beforeBlock.markdown, afterBlock.markdown),
-          longTextFieldDifference("htmlCache", beforeBlock.html_cache, afterBlock.html_cache),
           fieldDifference("checked", Boolean(beforeBlock.checked), Boolean(afterBlock.checked)),
           fieldDifference("sortOrder", Number(beforeBlock.sort_order), Number(afterBlock.sort_order)),
           longTextFieldDifference("metadata", beforeBlock.metadata, afterBlock.metadata),
-          fieldDifference("editVersion", beforeBlock.edit_version ?? null, afterBlock.edit_version ?? null),
           fieldDifference("attachmentFile", attachmentDescription(snapshot, blockId), attachmentDescription(current, blockId)),
           fieldDifference("createdAt", beforeBlock.created_at, afterBlock.created_at),
           fieldDifference("updatedAt", beforeBlock.updated_at, afterBlock.updated_at)
-        ].filter((value): value is FieldDifference => Boolean(value));
+        ], [
+          longTextFieldDifference("htmlCache", beforeBlock.html_cache, afterBlock.html_cache),
+          fieldDifference("editVersion", beforeBlock.edit_version ?? null, afterBlock.edit_version ?? null)
+        ]);
         if (fields.length) {
           localBlockSummary.modified += 1;
           blockSummary.modified += 1;
@@ -327,7 +348,15 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
     } else if (beforePage && afterPage) {
       const beforeHistory = pageVersionState(snapshot, pageId);
       const afterHistory = pageVersionState(current, pageId);
-      const fields = [
+      const hasBlockChanges = Boolean(
+        localBlockSummary.added || localBlockSummary.removed || localBlockSummary.modified
+      );
+      // Restore intentionally assigns a fresh common optimistic-concurrency
+      // generation to every page's edit/content versions. Treat those tokens as
+      // contextual metadata: expose them when the page really changed, but do
+      // not let a restore fence by itself turn an otherwise identical page into
+      // a user-visible modification.
+      const fields = includeContextualDifferences([
         fieldDifference("title", beforePage.title, afterPage.title),
         fieldDifference("icon", beforePage.icon, afterPage.icon),
         fieldDifference("cover", pageCoverDescription(snapshot, pageId, beforePage.cover_url), pageCoverDescription(current, pageId, afterPage.cover_url)),
@@ -336,8 +365,6 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
         fieldDifference("archived", Boolean(beforePage.is_archived), Boolean(afterPage.is_archived)),
         fieldDifference("collection", Boolean(beforePage.is_collection), Boolean(afterPage.is_collection)),
         fieldDifference("parentPageId", beforePage.parent_page_id, afterPage.parent_page_id),
-        fieldDifference("editVersion", beforePage.edit_version ?? null, afterPage.edit_version ?? null),
-        fieldDifference("contentVersion", beforePage.content_version ?? null, afterPage.content_version ?? null),
         fieldDifference("tags", tagNamesForPage(snapshot, pageId), tagNamesForPage(current, pageId)),
         longTextFieldDifference("tagState", stableJson(tagStateForPage(snapshot, pageId)), stableJson(tagStateForPage(current, pageId))),
         fieldDifference("sharedWith", sharedUsernamesForPage(snapshot, pageId), sharedUsernamesForPage(current, pageId)),
@@ -348,8 +375,11 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
         longTextFieldDifference("historyData", pageHistoryJson(snapshot, pageId), pageHistoryJson(current, pageId)),
         fieldDifference("createdAt", beforePage.created_at, afterPage.created_at),
         fieldDifference("updatedAt", beforePage.updated_at, afterPage.updated_at)
-      ].filter((value): value is FieldDifference => Boolean(value));
-      if (fields.length || localBlockSummary.added || localBlockSummary.removed || localBlockSummary.modified) {
+      ], [
+        fieldDifference("editVersion", beforePage.edit_version ?? null, afterPage.edit_version ?? null),
+        fieldDifference("contentVersion", beforePage.content_version ?? null, afterPage.content_version ?? null)
+      ], hasBlockChanges);
+      if (fields.length || hasBlockChanges) {
         pageSummary.modified += 1;
         pageDifference = {
           pageId,
