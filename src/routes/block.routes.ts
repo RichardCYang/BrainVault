@@ -1798,6 +1798,13 @@ blockRouter.delete(
           );
         }
         const replayAccess = await getPageAccess(assessment.pageId, user.id, client, { lockPage: true });
+        if (replayAccess.role !== "OWNER" || replayAccess.page.owner_id !== user.id) {
+          throw new ApiError(
+            409,
+            "BLOCK_DELETE_REPLAY_SUPERSEDED",
+            "This deletion belongs to an older page ownership generation and was not replayed."
+          );
+        }
         const currentPageContentVersion = Number(replayAccess.page.content_version ?? 1);
         if (currentPageContentVersion !== assessment.pageContentVersion) {
           throw new ApiError(
@@ -1819,7 +1826,7 @@ blockRouter.delete(
         }
         return {
           pageId: assessment.pageId,
-          ownerId: replayAccess.page.owner_id,
+          ownerId: user.id,
           attachmentIds: assessment.attachmentIds,
           attachmentGeneration: assessment.attachmentGeneration,
           pageContentVersion: assessment.pageContentVersion,
