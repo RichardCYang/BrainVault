@@ -1,6 +1,8 @@
 export const aiProviderIds = ["chatgpt", "gemini", "claude", "deepseek", "grok"] as const;
+export const aiChatLayouts = ["stacked", "paginated"] as const;
 
 export type AiProviderId = (typeof aiProviderIds)[number];
+export type AiChatLayout = (typeof aiChatLayouts)[number];
 
 export type AiChatTurn = {
   answeredAt: string;
@@ -12,6 +14,7 @@ export type AiChatData = {
   title: string;
   provider: AiProviderId;
   model: string;
+  layout: AiChatLayout;
   turns: AiChatTurn[];
 };
 
@@ -51,6 +54,10 @@ function normalizeText(value: unknown, maxLength: number) {
 function normalizeProvider(value: unknown): AiProviderId {
   const candidate = typeof value === "string" ? value.toLowerCase() : "";
   return (aiProviderIds as readonly string[]).includes(candidate) ? (candidate as AiProviderId) : "chatgpt";
+}
+
+function normalizeLayout(value: unknown): AiChatLayout {
+  return value === "paginated" ? "paginated" : "stacked";
 }
 
 function normalizeAnsweredAt(value: unknown) {
@@ -97,6 +104,7 @@ export function getAiChatData(metadata: unknown): AiChatData {
     title: normalizeText(source.title, limits.titleLength).trim(),
     provider: normalizeProvider(source.provider),
     model: normalizeText(source.model, limits.modelLength).trim(),
+    layout: normalizeLayout(source.layout),
     turns: turns.length ? turns : [normalizeTurn({})]
   };
 }

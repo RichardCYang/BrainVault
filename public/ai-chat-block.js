@@ -8,6 +8,8 @@ export const aiProviderPresets = Object.freeze([
   { id: "grok", label: "Grok" }
 ]);
 
+export const aiChatLayouts = Object.freeze(["stacked", "paginated"]);
+
 export const aiChatLimits = Object.freeze({
   titleLength: 120,
   turns: 50,
@@ -55,6 +57,10 @@ function normalizeLocalDateTime(value) {
   return normalized;
 }
 
+function normalizeLayout(value) {
+  return value === "paginated" ? "paginated" : "stacked";
+}
+
 export function getAiProviderPreset(value) {
   return providerById.get(typeof value === "string" ? value.toLowerCase() : "") ?? aiProviderPresets[0];
 }
@@ -73,6 +79,7 @@ export function createDefaultAiChatData({ question = "", answeredAt = "" } = {})
     title: "",
     provider: "chatgpt",
     model: "",
+    layout: "stacked",
     turns: [normalizeTurn({ question, answeredAt }, { fallbackAnsweredAt: answeredAt })]
   };
 }
@@ -90,6 +97,7 @@ export function normalizeAiChatData(value, { fallbackAnsweredAt = "" } = {}) {
     title: normalizeText(source.title, aiChatLimits.titleLength).trim(),
     provider: getAiProviderPreset(source.provider).id,
     model: normalizeText(source.model, aiChatLimits.modelLength).trim(),
+    layout: normalizeLayout(source.layout),
     turns: turns.length ? turns : [normalizeTurn({}, { fallbackAnsweredAt })]
   };
 }
@@ -223,6 +231,62 @@ function syncEditorPreview(editor) {
   });
 }
 
+function syncEditorPagination(editor, requestedPage) {
+  const layout = normalizeLayout(editor.dataset.aiLayout);
+  const turns = [...editor.querySelectorAll(".ai-chat-turn")];
+  const conversation = editor.querySelector(".ai-chat-conversation");
+  const pagination = editor.querySelector(".ai-chat-pagination");
+  const layoutButtons = [...editor.querySelectorAll(".ai-chat-layout-option")];
+  const rawPage = requestedPage ?? Number.parseInt(editor.dataset.aiPage ?? "0", 10);
+  const page = Math.min(Math.max(Number.isInteger(rawPage) ? rawPage : 0, 0), Math.max(0, turns.length - 1));
+
+  editor.dataset.aiLayout = layout;
+  editor.dataset.aiPage = String(page);
+  layoutButtons.forEach((button) => {
+    const selected = button.dataset.aiLayout === layout;
+    button.classList.toggle("is-selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+
+  if (conversation) {
+    conversation.style.transform = layout === "paginated" ? `translateX(-${page * 100}%)` : "";
+  }
+
+  turns.forEach((turn, index) => {
+    const active = layout !== "paginated" || index === page;
+    turn.classList.toggle("is-active", active);
+    if (layout === "paginated") turn.setAttribute("aria-hidden", String(!active));
+    else turn.removeAttribute("aria-hidden");
+  });
+
+  if (!pagination) return;
+  pagination.hidden = layout !== "paginated" || turns.length <= 1;
+  pagination.setAttribute("aria-label", t("aiChat.paginationAria"));
+
+  let pageButtons = [...pagination.querySelectorAll(".ai-chat-page-button")];
+  if (pageButtons.length !== turns.length) {
+    const fragment = document.createDocumentFragment();
+    turns.forEach((_, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "ai-chat-page-button";
+      button.dataset.aiChatPage = String(index);
+      button.textContent = String(index + 1);
+      fragment.append(button);
+    });
+    pagination.replaceChildren(fragment);
+    pageButtons = [...pagination.querySelectorAll(".ai-chat-page-button")];
+  }
+
+  pageButtons.forEach((button, index) => {
+    const selected = index === page;
+    button.classList.toggle("is-current", selected);
+    button.setAttribute("aria-label", t("aiChat.pageAria", { count: index + 1 }));
+    if (selected) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+}
+
 function syncTurnControls(editor) {
   const turns = [...editor.querySelectorAll(".ai-chat-turn")];
   const addTurnButton = editor.querySelector(".ai-chat-add-turn");
@@ -249,6 +313,8 @@ function syncTurnControls(editor) {
       removeButton.setAttribute("aria-label", t("aiChat.removeTurnNumbered", { count: index + 1 }));
     }
   });
+
+  syncEditorPagination(editor);
 }
 
 function createTurnEditor(editor, row, turnData, { onDirty } = {}) {
@@ -353,6 +419,8 @@ export function createAiChatEditor(row, value, { onDirty, htmlCache = "" } = {})
   const editor = document.createElement("section");
   editor.className = "ai-chat-block-editor";
   editor.dataset.aiProvider = data.provider;
+  editor.dataset.aiLayout = data.layout;
+  editor.dataset.aiPage = "0";
   editor.setAttribute("aria-label", t("aiChat.editorAria"));
 
   const editingSurface = document.createElement("div");
@@ -409,15 +477,60 @@ export function createAiChatEditor(row, value, { onDirty, htmlCache = "" } = {})
   modelInput.setAttribute("aria-label", t("aiChat.modelAria"));
   modelInput.autocomplete = "off";
 
+  const layoutField = document.createElement("div");
+  layoutField.className = "ai-chat-layout-field";
+  const layoutCaption = document.createElement("span");
+  layoutCaption.className = "ai-chat-setting-caption";
+  layoutCaption.textContent = t("aiChat.layoutLabel");
+  const layoutOptions = document.createElement("div");
+  layoutOptions.className = "ai-chat-layout-options";
+  layoutOptions.setAttribute("role", "group");
+  layoutOptions.setAttribute("aria-label", t("aiChat.layoutAria"));
+  [
+    ["stacked", t("aiChat.layoutStacked")],
+    ["paginated", t("aiChat.layoutPaginated")]
+  ].forEach(([layout, label]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ai-chat-layout-option";
+    button.dataset.aiLayout = layout;
+    button.textContent = label;
+    button.setAttribute("aria-pressed", String(layout === data.layout));
+    button.addEventListener("click", () => {
+      const nextLayout = normalizeLayout(layout);
+      if (editor.dataset.aiLayout === nextLayout) return;
+      editor.dataset.aiLayout = nextLayout;
+      syncEditorPagination(editor);
+      onDirty?.(row);
+    });
+    layoutOptions.append(button);
+  });
+  layoutField.append(layoutCaption, layoutOptions);
+
   settings.append(
     providerField,
-    createLabeledField(t("aiChat.modelLabel"), modelInput)
+    createLabeledField(t("aiChat.modelLabel"), modelInput),
+    layoutField
   );
 
+  const conversationViewport = document.createElement("div");
+  conversationViewport.className = "ai-chat-conversation-viewport";
   const conversation = document.createElement("div");
   conversation.className = "ai-chat-conversation";
   data.turns.forEach((turnData) => {
     conversation.append(createTurnEditor(editor, row, turnData, { onDirty }));
+  });
+  conversationViewport.append(conversation);
+
+  const pagination = document.createElement("nav");
+  pagination.className = "ai-chat-pagination";
+  pagination.setAttribute("aria-label", t("aiChat.paginationAria"));
+  pagination.addEventListener("click", (event) => {
+    const button = event.target.closest("button.ai-chat-page-button");
+    if (!button || !pagination.contains(button)) return;
+    const page = Number.parseInt(button.dataset.aiChatPage ?? "", 10);
+    if (!Number.isInteger(page)) return;
+    syncEditorPagination(editor, page);
   });
 
   const actions = document.createElement("div");
@@ -431,6 +544,7 @@ export function createAiChatEditor(row, value, { onDirty, htmlCache = "" } = {})
     if (conversation.querySelectorAll(".ai-chat-turn").length >= aiChatLimits.turns) return;
     const turn = createTurnEditor(editor, row, normalizeTurn({ answeredAt: createLocalDateTimeValue() }), { onDirty });
     conversation.append(turn);
+    editor.dataset.aiPage = String(conversation.querySelectorAll(".ai-chat-turn").length - 1);
     syncTurnControls(editor);
     syncEditorPreview(editor);
     onDirty?.(row);
@@ -441,8 +555,9 @@ export function createAiChatEditor(row, value, { onDirty, htmlCache = "" } = {})
   const preview = document.createElement("div");
   preview.className = "block-rendered-preview ai-chat-rendered-preview";
   preview.innerHTML = htmlCache || "";
+  hydrateRenderedAiChatPagination(preview);
 
-  editingSurface.append(titleRow, settings, conversation, actions);
+  editingSurface.append(titleRow, settings, conversationViewport, pagination, actions);
   editor.append(editingSurface, preview);
 
   const handleInput = () => {
@@ -466,10 +581,52 @@ export function extractAiChatData(row) {
     title: editor.querySelector(".ai-chat-title-input")?.value ?? "",
     provider: editor.dataset.aiProvider,
     model: editor.querySelector(".ai-chat-model-input")?.value ?? "",
+    layout: editor.dataset.aiLayout,
     turns: [...editor.querySelectorAll(".ai-chat-turn")].map((turn) => ({
       answeredAt: turn.querySelector(".ai-chat-time-input")?.value ?? "",
       question: turn.querySelector(".ai-chat-question-input")?.value ?? "",
       answer: turn.querySelector(".ai-chat-answer-input")?.value ?? ""
     }))
+  });
+}
+
+export function setRenderedAiChatPage(chat, requestedPage) {
+  if (!(chat instanceof Element) || !chat.classList.contains("rendered-ai-chat--paginated")) return false;
+  const track = chat.querySelector(".rendered-ai-chat-track");
+  const turns = [...chat.querySelectorAll(".rendered-ai-chat-track > .rendered-ai-chat-turn")];
+  if (!track || turns.length === 0) return false;
+
+  const parsedPage = Number.parseInt(String(requestedPage), 10);
+  if (!Number.isInteger(parsedPage)) return false;
+  const page = Math.min(Math.max(parsedPage, 0), turns.length - 1);
+  track.style.transform = `translateX(-${page * 100}%)`;
+
+  turns.forEach((turn, index) => {
+    const active = index === page;
+    turn.classList.toggle("is-active", active);
+    turn.setAttribute("aria-hidden", String(!active));
+  });
+
+  chat.querySelectorAll(".rendered-ai-chat-page").forEach((button, index) => {
+    const active = index === page;
+    button.classList.toggle("is-current", active);
+    button.setAttribute("aria-label", t("aiChat.pageAria", { count: index + 1 }));
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  return true;
+}
+
+export function hydrateRenderedAiChatPagination(root = document) {
+  const chats = [];
+  if (root instanceof Element && root.matches(".rendered-ai-chat--paginated")) chats.push(root);
+  root.querySelectorAll?.(".rendered-ai-chat--paginated").forEach((chat) => chats.push(chat));
+
+  chats.forEach((chat) => {
+    const pagination = chat.querySelector(".rendered-ai-chat-pagination");
+    pagination?.setAttribute("aria-label", t("aiChat.paginationAria"));
+    const current = [...chat.querySelectorAll(".rendered-ai-chat-page")]
+      .findIndex((button) => button.getAttribute("aria-current") === "page");
+    setRenderedAiChatPage(chat, current >= 0 ? current : 0);
   });
 }

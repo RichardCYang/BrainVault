@@ -181,6 +181,7 @@ test("normalized structured metadata remains accepted at exact limits", () => {
       title: "t".repeat(120),
       provider: "chatgpt",
       model: "gpt-test",
+      layout: "paginated",
       turns: [{
         answeredAt: "2026-07-30T09:28",
         question: "q".repeat(8_000),
@@ -374,6 +375,35 @@ test("multi-turn AI metadata enforces title, turn, and per-turn limits", () => {
       turns: [{ answeredAt: "", question: "", answer: "a".repeat(12_001) }]
     }
   }, "metadata.aiChat.turns[0].answer");
+});
+
+test("AI chat display layout is losslessly validated while legacy single-turn metadata remains compatible", () => {
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("AI_CHAT", {
+    aiChat: {
+      provider: "chatgpt",
+      model: "",
+      layout: "stacked",
+      turns: [{ answeredAt: "", question: "Question", answer: "Answer" }]
+    }
+  }));
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("AI_CHAT", {
+    aiChat: {
+      provider: "gemini",
+      model: "Gemini Test",
+      layout: "paginated",
+      answeredAt: "2026-08-25T15:28",
+      question: "Legacy question",
+      answer: "Legacy answer"
+    }
+  }));
+  expectIntegrityFailure("AI_CHAT", {
+    aiChat: {
+      provider: "chatgpt",
+      model: "",
+      layout: "carousel",
+      turns: [{ answeredAt: "", question: "Question", answer: "Answer" }]
+    }
+  }, "metadata.aiChat.layout");
 });
 
 

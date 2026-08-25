@@ -37,7 +37,10 @@ describe("AI conversation block", () => {
     expect(moduleSource).toContain('answerInput.className = "ai-chat-answer-input"');
     expect(moduleSource).toContain('addTurnButton.className = "ai-chat-add-turn"');
     expect(moduleSource).toContain('removeButton.className = "ai-chat-remove-turn"');
+    expect(moduleSource).toContain('button.className = "ai-chat-layout-option"');
+    expect(moduleSource).toContain('pagination.className = "ai-chat-pagination"');
     expect(moduleSource).toContain('turns: [...editor.querySelectorAll(".ai-chat-turn")]');
+    expect(moduleSource).toContain('layout: editor.dataset.aiLayout');
   });
 
   it("normalizes legacy single-pair metadata without losing searchability", () => {
@@ -57,6 +60,7 @@ describe("AI conversation block", () => {
     expect(data.title).toBe("");
     expect(data.provider).toBe("gemini");
     expect(data.model).toBe("Gemini Pro");
+    expect(data.layout).toBe("stacked");
     expect(data.turns).toHaveLength(1);
     expect(data.turns[0].answeredAt).toBe("2026-07-17T12:34");
     expect(data.turns[0].question).toBe("How does this work?");
@@ -71,6 +75,7 @@ describe("AI conversation block", () => {
         title: "Research session",
         provider: "claude",
         model: "Claude Test",
+        layout: "paginated",
         turns: [
           { answeredAt: "2026-08-10T10:00", question: "First question", answer: "First answer" },
           { answeredAt: "2026-08-10T10:05", question: "Second question", answer: "Second answer" }
@@ -80,10 +85,68 @@ describe("AI conversation block", () => {
     const summary = summarizeAiChatData(data);
 
     expect(data.title).toBe("Research session");
+    expect(data.layout).toBe("paginated");
     expect(data.turns).toHaveLength(2);
     expect(summary).toContain("Research session");
     expect(summary).toContain("First question");
     expect(summary).toContain("Second answer");
+  });
+
+  it("keeps continuous layout as the default and renders pagination only when selected", () => {
+    const stacked = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        model: "GPT Test",
+        turns: [
+          { answeredAt: "", question: "One", answer: "First" },
+          { answeredAt: "", question: "Two", answer: "Second" }
+        ]
+      }
+    });
+    const paginated = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        model: "GPT Test",
+        layout: "paginated",
+        turns: [
+          { answeredAt: "", question: "One", answer: "First" },
+          { answeredAt: "", question: "Two", answer: "Second" }
+        ]
+      }
+    });
+
+    expect(stacked).not.toContain("rendered-ai-chat--paginated");
+    expect(stacked).not.toContain("rendered-ai-chat-pagination");
+    expect(paginated).toContain('class="rendered-ai-chat rendered-ai-chat--paginated"');
+    expect(paginated).toContain('class="rendered-ai-chat-track"');
+    expect(paginated.match(/class="rendered-ai-chat-page/g)).toHaveLength(2);
+    expect(paginated).toContain('data-ai-chat-page="0"');
+    expect(paginated).toContain('data-ai-chat-page="1"');
+    expect(paginated).toContain('aria-current="page"');
+    expect(paginated.match(/class="rendered-ai-chat-turn/g)).toHaveLength(2);
+    expect(paginated).toContain('class="rendered-ai-chat-turn is-active" aria-hidden="false"');
+    expect(paginated).toContain('class="rendered-ai-chat-turn" aria-hidden="true"');
+  });
+
+  it("does not let AI Markdown forge pagination controls", () => {
+    const html = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        layout: "paginated",
+        turns: [
+          {
+            answeredAt: "",
+            question: '<button class="rendered-ai-chat-page" data-ai-chat-page="49">forged</button>Question',
+            answer: "Answer"
+          },
+          { answeredAt: "", question: "Second", answer: "Second answer" }
+        ]
+      }
+    });
+
+    expect(html).not.toContain("forged</button>");
+    expect(html.match(/data-ai-chat-page=/g)).toHaveLength(2);
+    expect(html).toContain("forgedQuestion");
   });
 
   it("renders sanitized Markdown and LaTeX placeholders for every turn", () => {
@@ -159,6 +222,21 @@ describe("AI conversation block", () => {
     expect(styles).toMatch(/@media \(max-width: 640px\)[\s\S]*\.ai-chat-message,[\s\S]*width:\s*100%;/s);
   });
 
+  it("uses a horizontal one-pair viewport with numbered navigation and preserves all pairs for print", () => {
+    expect(styles).toMatch(/\.ai-chat-block-editor\[data-ai-layout="paginated"\] \.ai-chat-conversation\s*\{[^}]*flex-direction:\s*row;/s);
+    expect(styles).toMatch(/\.rendered-ai-chat--paginated \.rendered-ai-chat-track\s*\{[^}]*flex-direction:\s*row;/s);
+    expect(styles).toMatch(/\.rendered-ai-chat--paginated \.rendered-ai-chat-turn:not\(\.is-active\)\s*\{[^}]*height:\s*0;[^}]*visibility:\s*hidden;/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-pagination\s*\{[\s\S]*overflow-x:\s*auto;/s);
+    expect(styles).toMatch(/body\.pdf-export-mode \.rendered-ai-chat--paginated \.rendered-ai-chat-track\s*\{[^}]*flex-direction:\s*column !important;[^}]*transform:\s*none !important;/s);
+    expect(styles).toMatch(/body\.pdf-export-mode \.rendered-ai-chat-pagination\s*\{[^}]*display:\s*none !important;/s);
+    expect(styles).toMatch(/@media print[\s\S]*\.rendered-ai-chat--paginated \.rendered-ai-chat-track\s*\{[^}]*flex-direction:\s*column !important;[^}]*transform:\s*none !important;/s);
+    expect(styles).toMatch(/@media print[\s\S]*\.rendered-ai-chat-pagination\s*\{[^}]*display:\s*none !important;/s);
+    expect(client).toContain('hydrateRenderedAiChatPagination(preview);');
+    expect(client).toContain('button.rendered-ai-chat-page');
+    expect(client).toContain('setRenderedAiChatPage(chat, page);');
+    expect(client).toContain('.rendered-ai-chat-page');
+  });
+
   it("hydrates final collaborative HTML cache before entering read mode", () => {
     expect(client).toContain("function applyMaterializedHtmlCaches(result)");
     expect(client).toContain("const materialization = await flushPendingPageEdits({ allowLocked: true });");
@@ -185,6 +263,10 @@ describe("AI conversation block", () => {
     expect(i18n).toContain('providerLabel: "AI 아이콘"');
     expect(i18n).toContain('titlePlaceholder: "AI 대화 블록 제목"');
     expect(i18n).toContain('timeLabel: "답변 일시"');
+    expect(i18n).toContain('layoutLabel: "표시 방식"');
+    expect(i18n).toContain('layoutStacked: "연속"');
+    expect(i18n).toContain('layoutPaginated: "페이지"');
+    expect(i18n).toContain('pageAria: "{count}번째 질문·답변 쌍 보기"');
     expect(i18n).toContain('addTurn: "+ 다음 질문·답변 추가"');
     expect(i18n).toContain('answerPlaceholder: "AI 답변을 붙여넣거나 입력하세요…"');
   });

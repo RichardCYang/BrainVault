@@ -59,7 +59,9 @@ import {
   createAiChatEditor,
   createDefaultAiChatData,
   extractAiChatData,
+  hydrateRenderedAiChatPagination,
   normalizeAiChatData,
+  setRenderedAiChatPage,
   summarizeAiChatData
 } from "./ai-chat-block.js";
 import {
@@ -6882,7 +6884,7 @@ function setControlReadOnlyState(control, readOnly) {
 
   if (control instanceof HTMLButtonElement || control instanceof HTMLSelectElement) {
     const allowedInReadMode = control.matches(
-      '[data-action="download-attachment"], [data-action="copy-ai-answer-code"], [data-action="treeview-select-node"], [data-action="treeview-toggle-node"]'
+      '[data-action="download-attachment"], [data-action="copy-ai-answer-code"], [data-action="treeview-select-node"], [data-action="treeview-toggle-node"], .rendered-ai-chat-page'
     );
     if (readOnly) {
       if (!control.dataset.pageModeWasDisabled) control.dataset.pageModeWasDisabled = String(control.disabled);
@@ -11680,6 +11682,7 @@ function updateRenderedBlockPreview(row, block) {
   hydrateMathExpressions(preview);
   hydrateHighlightedCodeBlocks(preview);
   hydrateAccordionIcons(preview);
+  hydrateRenderedAiChatPagination(preview);
 }
 
 function createTextBlockEditor(block) {
@@ -19437,6 +19440,17 @@ elements.blockList.addEventListener("focusout", (event) => {
 });
 
 elements.blockList.addEventListener("click", async (event) => {
+  const aiChatPageButton = event.target.closest("button.rendered-ai-chat-page");
+  if (aiChatPageButton) {
+    const pagination = aiChatPageButton.closest(".rendered-ai-chat-pagination");
+    const chat = pagination?.closest(".rendered-ai-chat--paginated");
+    const page = Number.parseInt(aiChatPageButton.dataset.aiChatPage ?? "", 10);
+    if (pagination?.contains(aiChatPageButton) && chat && Number.isInteger(page)) {
+      setRenderedAiChatPage(chat, page);
+    }
+    return;
+  }
+
   const downloadButton = event.target.closest('button[data-action="download-attachment"]');
   const renderedToggleSummary = event.target.closest(".rendered-toggle-summary");
   if (isPageReadOnly() && !downloadButton) {

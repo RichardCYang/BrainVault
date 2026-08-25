@@ -131,6 +131,7 @@ const ganttScales = new Set(["week", "month", "quarter"]);
 const ganttStatuses = new Set(["not_started", "in_progress", "review", "done", "blocked"]);
 const timetableIntervals = new Set([1, 15, 30, 60]);
 const aiProviderIds = new Set(["chatgpt", "gemini", "claude", "deepseek", "grok"]);
+const aiChatLayouts = new Set(["stacked", "paginated"]);
 const unsafeMetadataKeys = new Set(["__proto__", "constructor", "prototype"]);
 const sharedMetadataKeys = ["textAlign", "toggleOpen", "calloutType", "codeLanguage"] as const;
 const textAlignments = new Set(["left", "center", "right", "justify"]);
@@ -765,9 +766,12 @@ function assertAiChatTurn(turn: MetadataRecord, path: string) {
 function assertAiChatMetadata(root: MetadataRecord) {
   const aiChat = optionalRecord(root.aiChat, "metadata.aiChat");
   if (!aiChat) return;
-  assertAllowedKeys(aiChat, "metadata.aiChat", ["title", "provider", "model", "turns", "answeredAt", "question", "answer"]);
+  assertAllowedKeys(aiChat, "metadata.aiChat", ["title", "provider", "model", "layout", "turns", "answeredAt", "question", "answer"]);
   if (aiChat.provider !== null && aiChat.provider !== undefined && !aiProviderIds.has(aiChat.provider as string)) {
     fail("metadata.aiChat.provider", "is not a supported AI provider");
+  }
+  if (aiChat.layout !== null && aiChat.layout !== undefined && !aiChatLayouts.has(aiChat.layout as string)) {
+    fail("metadata.aiChat.layout", "is not a supported AI chat layout");
   }
   const title = optionalString(aiChat.title, "metadata.aiChat.title", aiChatLimits.titleLength);
   if (title !== null && (title.includes("\u0000") || title.trim() !== title)) {
@@ -794,7 +798,11 @@ function assertAiChatMetadata(root: MetadataRecord) {
   }
 
   // Legacy single-turn metadata remains valid and is migrated by the editor on the next save.
-  assertAiChatTurn(aiChat, "metadata.aiChat");
+  assertAiChatTurn({
+    answeredAt: aiChat.answeredAt,
+    question: aiChat.question,
+    answer: aiChat.answer
+  }, "metadata.aiChat");
 }
 
 function assertAttachmentMetadata(root: MetadataRecord) {
