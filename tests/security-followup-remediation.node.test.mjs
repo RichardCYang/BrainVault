@@ -242,8 +242,9 @@ test("the production wiring preserves identity while removing repeated high-cost
   assert.match(yjsValidation, /const currentStateVector = Y\.encodeStateVector\(candidate\)/);
   assert.match(yjsValidation, /incrementalUpdate = Y\.encodeStateAsUpdate\(candidate, currentStateVector\)/);
   assert.match(markdown, /export function sanitizeRenderedHtml/);
-  assert.match(mappers, /sanitizeRenderedHtml\(row\.html_cache\)/);
-  assert.match(pageRoutes, /sanitizeRenderedHtml\(block\.html_cache\)/);
+  assert.match(markdown, /export function sanitizeRenderedBlockHtml/);
+  assert.match(mappers, /sanitizeRenderedBlockHtml\(row\.type, row\.html_cache\)/);
+  assert.match(pageRoutes, /sanitizeRenderedBlockHtml\(block\.type, block\.html_cache\)/);
   assert.match(collaborationRoutes, /COLLABORATION_HISTORY_REPLAY_LIMIT/);
   assert.match(collaborationRoutes, /SUM\(OCTET_LENGTH\(update_data\)\)/);
   assert.match(server, /type: "compaction-complete"/);
