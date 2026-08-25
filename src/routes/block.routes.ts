@@ -1862,7 +1862,17 @@ blockRouter.delete(
         await promoteBlockChildrenBeforeDelete(client, target, hierarchyRows);
       }
 
-      await client.execute("DELETE FROM blocks WHERE id = ?", [blockId]);
+      const deleteResult = await client.execute<{ affectedRows: number }>(
+        "DELETE FROM blocks WHERE id = ? AND page_id = ?",
+        [blockId, block.page_id]
+      );
+      if (Number(deleteResult.affectedRows) !== 1) {
+        throw new ApiError(
+          409,
+          "BLOCK_EDIT_CONFLICT",
+          "The block changed before deletion completed. Nothing was deleted."
+        );
+      }
       const pageContentVersion = await advancePageContentVersion(client, block.page_id, user.id);
       const afterRows = body.preserveChildren
         ? await client.query<BlockRow>(
