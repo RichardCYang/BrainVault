@@ -1,5 +1,5 @@
 import type { BlockRow, PageRow, TagRow, UserRow } from "../types/domain.js";
-import { renderBlockHtml, sanitizeRenderedHtml } from "./markdown.js";
+import { renderBlockHtml, sanitizeRenderedBlockHtml } from "./markdown.js";
 import { validateStoredBlockMetadata } from "./structured-metadata-integrity.js";
 
 const storedCustomPageCoverSentinel = "custom-image:stored";
@@ -74,7 +74,7 @@ export function toBlock(row: BlockRow) {
   const metadata = validateStoredBlockMetadata(row.type, row.metadata);
   const renderedHtml = row.html_cache === null
     ? renderBlockHtml(row.type, row.markdown, Boolean(row.checked), metadata)
-    : sanitizeRenderedHtml(row.html_cache);
+    : sanitizeRenderedBlockHtml(row.type, row.html_cache);
   return {
     id: row.id,
     pageId: row.page_id,

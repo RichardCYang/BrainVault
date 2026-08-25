@@ -257,6 +257,18 @@ export function sanitizeRenderedHtml(value: unknown) {
   return sanitizeHtml(typeof value === "string" ? value : "", sanitizeOptions);
 }
 
+/**
+ * Re-sanitize a persisted block cache with the policy for that block type.
+ *
+ * AI_CHAT is the only block that intentionally renders server-generated
+ * pagination controls. Keeping that allowance type-scoped preserves those
+ * controls without broadening the generic Markdown/read-boundary policy.
+ */
+export function sanitizeRenderedBlockHtml(type: BlockType, value: unknown) {
+  const options = type === "AI_CHAT" ? aiChatSanitizeOptions : sanitizeOptions;
+  return sanitizeHtml(typeof value === "string" ? value : "", options);
+}
+
 const textAlignments = new Set(["left", "center", "right", "justify"]);
 
 function getTextAlign(metadata: unknown) {

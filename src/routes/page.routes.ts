@@ -5,7 +5,7 @@ import { db, transaction, type DbClient, type DbValue } from "../lib/db.js";
 import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { createId } from "../lib/id.js";
 import { lockUserAttachmentGeneration, removeDeletedAttachmentFiles } from "../lib/attachments.js";
-import { renderBlockHtml, sanitizeRenderedHtml } from "../lib/markdown.js";
+import { renderBlockHtml, sanitizeRenderedBlockHtml } from "../lib/markdown.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
 import { assessPageCreateMutationReceipt, type PageCreateMutationReceipt } from "../lib/page-create-mutation.js";
 import { assessPageDeleteMutationReceipt, type PageDeleteMutationReceipt } from "../lib/page-delete-mutation.js";
@@ -1516,7 +1516,7 @@ pageRouter.get("/:pageId/render", validate({ params: idParamSchema }), async (re
       .map((block) => {
         const blockHtml = block.type === "CALLOUT" || block.html_cache === null
           ? renderBlockHtml(block.type, block.markdown, Boolean(block.checked), block.metadata)
-          : sanitizeRenderedHtml(block.html_cache);
+          : sanitizeRenderedBlockHtml(block.type, block.html_cache);
         return `<section data-block-id="${escapeHtmlAttribute(block.id)}" data-block-type="${escapeHtmlAttribute(block.type)}">${blockHtml}</section>`;
       })
       .join("\n");
