@@ -4,6 +4,7 @@ import test from "node:test";
 import vm from "node:vm";
 
 const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
+const collaboration = readFileSync(new URL("../public/collaboration.js", import.meta.url), "utf8");
 
 function sliceBetween(source, startText, endText) {
   const start = source.indexOf(startText);
@@ -192,4 +193,146 @@ test("block-order callers preserve durable recovery when a stale dispatch is ski
   const persistSkip = persist.indexOf("if (data === skippedApiRequest) return null;", persistSubmit);
   const persistAck = persist.indexOf("acknowledgeBlockOrderDraft(task)", persistSubmit);
   assert.ok(persistSubmit >= 0 && persistSkip > persistSubmit && persistAck > persistSkip);
+});
+
+
+test("block drag keeps the navigation generation captured before the page-edit flush", async () => {
+  const dragSource = sliceBetween(client, "async function finishBlockDrag", "function setRowType");
+  let persistCalls = 0;
+  let taskCreationCalls = 0;
+
+  const context = {
+    activeBlockDrag: {
+      pointerId: 1,
+      active: true,
+      targetIndex: 1,
+      initialIndex: 0,
+      parentBlockId: null,
+      candidates: [{ dataset: { blockId: "block-b" } }],
+      row: { dataset: { blockId: "block-a" } },
+      handle: {
+        hasPointerCapture: () => false,
+        classList: { remove: () => {} }
+      }
+    },
+    suppressBlockHandleClickUntil: 0,
+    Date,
+    state: {
+      selectedPage: { id: "page-a" },
+      workspaceView: "page"
+    },
+    workspaceNavigationGeneration: 7,
+    clearBlockDragVisuals: () => {},
+    requireWritablePage: () => true,
+    captureAuthenticatedSessionScope: () => ({ generation: 1 }),
+    isCurrentAuthenticatedSessionScope: () => true,
+    isCurrentWorkspaceNavigation(generation) {
+      return generation === context.workspaceNavigationGeneration;
+    },
+    canPersistSelectedPage: () => true,
+    withPageEditLock: async (action) => {
+      // Model a navigation intent that starts while withPageEditLock() is
+      // awaiting its pre-action flush. selectedPage intentionally still points
+      // at page-a because the newer navigation is waiting on the same lock.
+      context.workspaceNavigationGeneration = 8;
+      return action();
+    },
+    getBlockSiblings: () => [],
+    isCollaborativePage: () => false,
+    createBlockOrderTask: () => {
+      taskCreationCalls += 1;
+      return {};
+    },
+    persistBlockOrder: async () => {
+      persistCalls += 1;
+      return null;
+    },
+    t: (key) => key,
+    skippedApiRequest: Symbol("skipped-api-request")
+  };
+  vm.createContext(context);
+  vm.runInContext(`${dragSource}\nthis.finishBlockDrag = finishBlockDrag;`, context);
+
+  await context.finishBlockDrag({
+    pointerId: 1,
+    preventDefault: () => {}
+  });
+
+  assert.equal(taskCreationCalls, 0, "a stale drag must not create a reorder task after the flush");
+  assert.equal(persistCalls, 0, "a stale drag must not dispatch a reorder after the flush");
+});
+
+test("collaborative block reorder rechecks navigation immediately before the queued Yjs commit", async () => {
+  const persistSource = sliceBetween(client, "async function persistBlockOrder", "function getBlockCreateTask");
+  const skippedApiRequest = Symbol("skipped-api-request");
+  let releaseCommit;
+  let commitCount = 0;
+
+  const context = {
+    state: {
+      selectedPage: { id: "page-a" },
+      workspaceView: "page",
+      collaborationSession: {
+        isReady: true,
+        upsertBlocks: async (_updates, { beforeCommit } = {}) => {
+          await new Promise((resolve) => {
+            releaseCommit = resolve;
+          });
+          if (beforeCommit?.() === false) return [];
+          commitCount += 1;
+          return [];
+        }
+      }
+    },
+    workspaceNavigationGeneration: 7,
+    skippedApiRequest,
+    captureAuthenticatedSessionScope: () => ({ generation: 1 }),
+    isCurrentAuthenticatedSessionScope: () => true,
+    assertCurrentAuthenticatedSessionScope: () => {},
+    isCurrentWorkspaceNavigation(generation) {
+      return generation === context.workspaceNavigationGeneration;
+    },
+    canPersistSelectedPage: () => true,
+    requireWritablePage: () => true,
+    isCollaborativePage: () => true,
+    getBlockById: (id) => ({ id, version: 1, parentBlockId: null, sortOrder: 0 }),
+    t: (key) => key
+  };
+  vm.createContext(context);
+  vm.runInContext(`${persistSource}\nthis.persistBlockOrder = persistBlockOrder;`, context);
+
+  const pending = context.persistBlockOrder(
+    null,
+    ["block-a", "block-b"],
+    {},
+    {
+      authenticationScope: { generation: 1 },
+      navigationGeneration: 7,
+      pageId: "page-a"
+    }
+  );
+  await Promise.resolve();
+
+  context.workspaceNavigationGeneration = 8;
+  releaseCommit?.();
+
+  const result = await pending;
+  assert.equal(result, skippedApiRequest);
+  assert.equal(commitCount, 0, "stale collaborative reorder must be rejected before the Yjs commit");
+});
+
+test("collaboration upsertBlocks forwards caller mutation fences to commitLocalMutation", () => {
+  const upsertBlocks = sliceBetween(
+    collaboration,
+    "  upsertBlocks(blocks,",
+    "\n  async deleteBlock("
+  );
+  assert.match(
+    upsertBlocks,
+    /upsertBlocks\(blocks,\s*\{\s*allowDisconnected = false,\s*beforeCommit = null\s*\}\s*=\s*\{\}\)/
+  );
+  assert.match(
+    upsertBlocks,
+    /\},\s*\{\s*allowDisconnected,\s*beforeCommit\s*\}\)\.then/
+  );
 });

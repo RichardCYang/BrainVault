@@ -13134,10 +13134,22 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
   if (cancelled || drag.targetIndex === drag.initialIndex) return;
   if (!requireWritablePage({ announce: false })) return;
   const authenticationScope = captureAuthenticatedSessionScope();
-  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+  const pageId = state.selectedPage?.id;
+  const navigationGeneration = workspaceNavigationGeneration;
+  const isDragIntentCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+    && isCurrentWorkspaceNavigation(navigationGeneration)
+    && canPersistSelectedPage()
+    && state.selectedPage?.id === pageId
+  );
+  if (!pageId || !isDragIntentCurrent()) return;
 
   return withPageEditLock(async () => {
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    // withPageEditLock() drains pending saves before this callback runs. A newer
+    // navigation can begin during that await while the selected page still points
+    // at the old note, so retain the generation captured with the drag intent.
+    if (!isDragIntentCurrent()) return;
     const previousIds = getBlockSiblings(drag.parentBlockId).map((block) => block.id);
     const orderedIds = drag.candidates.map((row) => row.dataset.blockId);
     orderedIds.splice(drag.targetIndex, 0, drag.row.dataset.blockId);
@@ -13146,7 +13158,13 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
         throw new Error(t("errors.currentBlockOrder"));
       }
       try {
-        await persistBlockOrder(drag.parentBlockId, orderedIds, {}, { allowLocked: true, authenticationScope });
+        const data = await persistBlockOrder(drag.parentBlockId, orderedIds, {}, {
+          allowLocked: true,
+          authenticationScope,
+          navigationGeneration,
+          pageId
+        });
+        if (data === skippedApiRequest || !isDragIntentCurrent()) return;
       } catch (error) {
         reorderBlockSiblingsInState(drag.parentBlockId, previousIds);
         renderSelectedPage();
@@ -13157,8 +13175,10 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
       return;
     }
     const task = createBlockOrderTask(drag.parentBlockId, orderedIds, {}, {
+      pageId,
       previousIds,
-      authenticationScope
+      authenticationScope,
+      navigationGeneration
     });
     persistBlockOrderDraft(task);
 
@@ -13180,7 +13200,7 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
       assertCurrentAuthenticatedSessionScope(task.authenticationScope);
       acknowledgeBlockOrderDraft(task);
       pendingBlockOrderTask = null;
-      setStatus(t("status.blockOrderChanged"));
+      if (isDragIntentCurrent()) setStatus(t("status.blockOrderChanged"));
     } catch (error) {
       if (!isCurrentAuthenticatedSessionScope(task.authenticationScope)) {
         if (pendingBlockOrderTask === task) pendingBlockOrderTask = null;
@@ -13192,7 +13212,7 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
         reorderBlockSiblingsInState(drag.parentBlockId, previousIds);
         renderSelectedPage();
       }
-      setStatus(error.message, true);
+      if (isDragIntentCurrent()) setStatus(error.message, true);
     } finally {
       blockOrderSaving = Boolean(pendingBlockOrderTask);
       syncPageModeUi();
@@ -14836,9 +14856,22 @@ async function persistBlockOrder(
   parentBlockId,
   orderedIds,
   versionOverrides = {},
-  { allowLocked = false, authenticationScope = captureAuthenticatedSessionScope() } = {}
+  {
+    allowLocked = false,
+    authenticationScope = captureAuthenticatedSessionScope(),
+    navigationGeneration = workspaceNavigationGeneration,
+    pageId = state.selectedPage?.id
+  } = {}
 ) {
   assertCurrentAuthenticatedSessionScope(authenticationScope);
+  const isOrderIntentCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+    && isCurrentWorkspaceNavigation(navigationGeneration)
+    && canPersistSelectedPage()
+    && state.selectedPage?.id === pageId
+  );
+  if (!isOrderIntentCurrent()) return skippedApiRequest;
+
   const writable = allowLocked ? canPersistSelectedPage() : requireWritablePage();
   if (!writable || !orderedIds.length) return;
 
@@ -14850,12 +14883,17 @@ async function persistBlockOrder(
       if (!block) throw new Error(t("errors.currentBlockOrder"));
       return { ...block, parentBlockId: parentBlockId ?? null, sortOrder };
     });
-    await session.upsertBlocks(updates);
+    await session.upsertBlocks(updates, { beforeCommit: isOrderIntentCurrent });
     assertCurrentAuthenticatedSessionScope(authenticationScope);
+    if (!isOrderIntentCurrent()) return skippedApiRequest;
     return { blocks: updates };
   }
 
-  const task = createBlockOrderTask(parentBlockId, orderedIds, versionOverrides, { authenticationScope });
+  const task = createBlockOrderTask(parentBlockId, orderedIds, versionOverrides, {
+    pageId,
+    authenticationScope,
+    navigationGeneration
+  });
   persistBlockOrderDraft(task);
   pendingBlockOrderTask = task;
   blockOrderSaving = true;

@@ -71,6 +71,14 @@ function loadBlockDragFinishHarness({ writable }) {
     isDefinitiveApiError() { return false; },
     blockOrderSaving: false,
     pendingBlockOrderTask: null,
+    state: {
+      selectedPage: { id: "page-a" },
+      workspaceView: "page"
+    },
+    workspaceNavigationGeneration: 7,
+    isCurrentWorkspaceNavigation(generation) { return generation === context.workspaceNavigationGeneration; },
+    canPersistSelectedPage() { return writable; },
+    skippedApiRequest: Symbol("skipped-api-request"),
     suppressBlockHandleClickUntil: 0
   };
 
