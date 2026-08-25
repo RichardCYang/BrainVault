@@ -664,10 +664,10 @@ async function promoteBlockChildrenBeforeDelete(
       `UPDATE blocks
        SET parent_block_id = ?, sort_order = ?, last_mutation_id = NULL,
            last_mutation_hash = NULL, edit_version = edit_version + 1
-       WHERE id = ? AND edit_version = ?`,
-      [update.parentBlockId, update.sortOrder, row.id, Number(row.edit_version ?? 1)]
+       WHERE id = ? AND page_id = ? AND edit_version = ?`,
+      [update.parentBlockId, update.sortOrder, row.id, row.page_id, Number(row.edit_version ?? 1)]
     );
-    if (Number(result.affectedRows) === 0) {
+    if (Number(result.affectedRows) !== 1) {
       throw new ApiError(
         409,
         "BLOCK_EDIT_CONFLICT",
@@ -1366,10 +1366,10 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
       let pageContentVersion = lockedContentVersion;
       if (fields.length) {
         const result = await client.execute<{ affectedRows: number }>(
-          `UPDATE blocks SET ${[...fields, "edit_version = edit_version + 1"].join(", ")} WHERE id = ? AND edit_version = ?`,
-          [...values, blockId, body.expectedVersion]
+          `UPDATE blocks SET ${[...fields, "edit_version = edit_version + 1"].join(", ")} WHERE id = ? AND page_id = ? AND edit_version = ?`,
+          [...values, blockId, existing.page_id, body.expectedVersion]
         );
-        if (Number(result.affectedRows) === 0) {
+        if (Number(result.affectedRows) !== 1) {
           throw new ApiError(
             409,
             "BLOCK_EDIT_CONFLICT",
@@ -1379,7 +1379,10 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
         pageContentVersion = await advancePageContentVersion(client, existing.page_id, user.id);
       }
 
-      const updated = await client.queryOne<BlockRow>("SELECT * FROM blocks WHERE id = ?", [blockId]);
+      const updated = await client.queryOne<BlockRow>(
+        "SELECT * FROM blocks WHERE id = ? AND page_id = ?",
+        [blockId, existing.page_id]
+      );
       if (!updated) throw notFound("Block");
       await recordPageVersion(client, {
         pageId: existing.page_id,
@@ -2060,17 +2063,17 @@ blockRouter.post(
                 `UPDATE blocks
                  SET sort_order = ?, parent_block_id = ?, last_mutation_id = NULL,
                      last_mutation_hash = NULL, edit_version = edit_version + 1
-                 WHERE id = ? AND edit_version = ?`,
-                [item.sortOrder, item.parentBlockId, item.id, item.expectedVersion]
+                 WHERE id = ? AND page_id = ? AND edit_version = ?`,
+                [item.sortOrder, item.parentBlockId, item.id, pageId, item.expectedVersion]
               )
             : await client.execute<{ affectedRows: number }>(
                 `UPDATE blocks
                  SET sort_order = ?, last_mutation_id = NULL, last_mutation_hash = NULL,
                      edit_version = edit_version + 1
-                 WHERE id = ? AND edit_version = ?`,
-                [item.sortOrder, item.id, item.expectedVersion]
+                 WHERE id = ? AND page_id = ? AND edit_version = ?`,
+                [item.sortOrder, item.id, pageId, item.expectedVersion]
               );
-          if (Number(result.affectedRows) === 0) {
+          if (Number(result.affectedRows) !== 1) {
             throw new ApiError(
               409,
               "BLOCK_EDIT_CONFLICT",

@@ -74,3 +74,32 @@ test("the final delete sink does not retain the old id-only destructive statemen
     /DELETE FROM blocks WHERE id = \?(?=["`])/
   );
 });
+
+test("authorized block write sinks stay scoped to the locked page", () => {
+  const mutationRoute = section(
+    route,
+    'blockRouter.patch("/blocks/:blockId"',
+    'blockRouter.post(\n  "/blocks/:blockId/move"'
+  );
+  assert.match(
+    mutationRoute,
+    /WHERE id = \? AND page_id = \? AND edit_version = \?/
+  );
+  assert.match(
+    mutationRoute,
+    /\[\.\.\.values, blockId, existing\.page_id, body\.expectedVersion\]/
+  );
+  assert.match(
+    mutationRoute,
+    /SELECT \* FROM blocks WHERE id = \? AND page_id = \?/
+  );
+
+  const reorderStart = route.indexOf('blockRouter.post(\n  "/pages/:pageId/blocks/reorder"');
+  assert.notEqual(reorderStart, -1, "missing reorder route");
+  const reorderRoute = route.slice(reorderStart);
+  const scopedReorderWrites = reorderRoute.match(
+    /WHERE id = \? AND page_id = \? AND edit_version = \?/g
+  ) ?? [];
+  assert.equal(scopedReorderWrites.length, 2);
+  assert.doesNotMatch(reorderRoute, /WHERE id = \? AND edit_version = \?/);
+});
