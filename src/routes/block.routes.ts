@@ -1585,8 +1585,8 @@ blockRouter.post(
         // only page ownership, then restore its internal hierarchy. No block row
         // is deleted or re-created, so IDs and authoritative data stay intact.
         await client.execute(
-          `UPDATE blocks SET parent_block_id = NULL WHERE id IN (${placeholders})`,
-          movedBlockIds
+          `UPDATE blocks SET parent_block_id = NULL WHERE id IN (${placeholders}) AND page_id = ?`,
+          [...movedBlockIds, sourcePageId]
         );
         const pageUpdate = await client.execute<{ affectedRows: number }>(
           `UPDATE blocks SET page_id = ? WHERE id IN (${placeholders}) AND page_id = ?`,
