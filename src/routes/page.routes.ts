@@ -26,7 +26,10 @@ import {
   disconnectPageCollaborators,
   disconnectPageCollaboratorsForDocumentEpoch
 } from "../lib/collaboration-server.js";
-import { needsCollaborationMaterialization } from "../lib/collaboration-protocol.js";
+import {
+  isUnsupportedCollaborationMaterializationVersion,
+  needsCollaborationMaterialization
+} from "../lib/collaboration-protocol.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { iconMutationValueSchema, normalizeIconValue } from "../lib/icon-value.js";
 import { inspectCustomCoverDataUrl, pageCoverPositionSchema, pageCoverUrlSchema } from "../lib/page-cover.js";
@@ -465,6 +468,14 @@ async function assertCollaborationMaterialized(client: DbClient, pageIds: string
         500,
         "INVALID_COLLABORATION_STATE",
         "Collaboration update id exceeded the supported range"
+      );
+    }
+    if (isUnsupportedCollaborationMaterializationVersion(materializationVersion)) {
+      throw new ApiError(
+        409,
+        "COLLABORATION_MATERIALIZATION_VERSION_UNSUPPORTED",
+        "This collaboration state was written by a newer BrainVault version. Upgrade this server before archiving or deleting the page.",
+        { pageId, materializationVersion }
       );
     }
     if (needsCollaborationMaterialization({

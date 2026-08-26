@@ -18,7 +18,10 @@ import {
   AttachmentMetadataIntegrityError
 } from "./attachment-metadata-integrity.js";
 import { disconnectPageCollaborators } from "./collaboration-server.js";
-import { needsCollaborationMaterialization } from "./collaboration-protocol.js";
+import {
+  isUnsupportedCollaborationMaterializationVersion,
+  needsCollaborationMaterialization
+} from "./collaboration-protocol.js";
 import {
   assertCustomIconStorageLimit,
   customIconPublicPrefix,
@@ -615,6 +618,14 @@ async function assertWorkspaceCollaborationMaterialized(client: DbClient, pageId
       const latestUpdateId = parseCollaborationUpdateId(row.latest_update_id);
       const materializedUpdateId = parseCollaborationUpdateId(row.materialized_update_id);
       const materializationVersion = parseCollaborationUpdateId(row.materialization_version);
+      if (isUnsupportedCollaborationMaterializationVersion(materializationVersion)) {
+        throw new ApiError(
+          409,
+          "COLLABORATION_MATERIALIZATION_VERSION_UNSUPPORTED",
+          "Collaboration state was written by a newer BrainVault version. Upgrade this server before exporting or replacing workspace data.",
+          { pageId: row.page_id, materializationVersion }
+        );
+      }
       if (needsCollaborationMaterialization({
         latestUpdateId,
         materializedUpdateId,

@@ -51,6 +51,7 @@ import {
 } from "../lib/page-version-history.js";
 import {
   currentCollaborationMaterializationVersion,
+  isUnsupportedCollaborationMaterializationVersion,
   needsCollaborationMaterialization
 } from "../lib/collaboration-protocol.js";
 import { assessCollaborationHistoryReplay } from "../lib/collaboration-update-policy.js";
@@ -454,6 +455,16 @@ collaborationRouter.delete(
           reason: "SHARE_REMOVED"
         });
         const preRemovalState = await getCollaborationState(pageId, client, { lock: true });
+        if (
+          preRemovalState
+          && isUnsupportedCollaborationMaterializationVersion(preRemovalState.materialization_version)
+        ) {
+          throw new ApiError(
+            409,
+            "COLLABORATION_MATERIALIZATION_VERSION_UNSUPPORTED",
+            "This collaboration state was written by a newer BrainVault version. Upgrade this server before removing access."
+          );
+        }
         if (preRemovalState) {
           await grantYjsPageRecovery(client, {
             pageId,
@@ -841,6 +852,13 @@ collaborationRouter.put(
         assertCollaborationDocumentEpoch(state, body.documentEpoch);
         const materializedUpdateId = Number(state.materialized_update_id ?? 0);
         const materializationVersion = Number(state.materialization_version ?? 0);
+        if (isUnsupportedCollaborationMaterializationVersion(materializationVersion)) {
+          throw new ApiError(
+            409,
+            "COLLABORATION_MATERIALIZATION_VERSION_UNSUPPORTED",
+            "This collaboration state was written by a newer BrainVault version. Upgrade this server before materializing the page."
+          );
+        }
         if (materializedUpdateId > latestUpdateId) {
           throw new ApiError(
             500,

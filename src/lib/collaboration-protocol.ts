@@ -63,6 +63,15 @@ export function assessCollaborationWriteCheckpoint({
  */
 export const currentCollaborationMaterializationVersion = 2;
 
+/**
+ * A checkpoint written by a newer materializer must never be reinterpreted or
+ * downgraded by an older server. Newer releases may attach stronger invariants
+ * or canonical fields that this build does not understand.
+ */
+export function isUnsupportedCollaborationMaterializationVersion(materializationVersion: number) {
+  return materializationVersion > currentCollaborationMaterializationVersion;
+}
+
 export type CollaborationMaterializationState = {
   latestUpdateId: number;
   materializedUpdateId: number;
