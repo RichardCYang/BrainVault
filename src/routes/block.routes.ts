@@ -547,13 +547,16 @@ function requireAttachmentUploadTarget(res: Response, actorId: string, pageId: s
   return target;
 }
 
-async function advancePageContentVersion(client: DbClient, pageId: string, _userId: string) {
+async function advancePageContentVersion(client: DbClient, pageId: string, ownerId: string) {
   const result = await client.execute<{ affectedRows: number }>(
-    "UPDATE pages SET content_version = content_version + 1 WHERE id = ?",
-    [pageId]
+    "UPDATE pages SET content_version = content_version + 1 WHERE id = ? AND owner_id = ?",
+    [pageId, ownerId]
   );
-  if (Number(result.affectedRows) === 0) throw notFound("Page");
-  const page = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
+  if (Number(result.affectedRows) !== 1) throw notFound("Page");
+  const page = await client.queryOne<PageRow>(
+    "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
+    [pageId, ownerId]
+  );
   if (!page) throw notFound("Page");
   return Number(page.content_version ?? 1);
 }
@@ -931,7 +934,7 @@ blockRouter.post(
               JSON.stringify(metadata)
             ]
           );
-          const pageContentVersion = await advancePageContentVersion(client, pageId, user.id);
+          const pageContentVersion = await advancePageContentVersion(client, pageId, ownerId);
           const createdBlock = await client.queryOne<BlockRow>("SELECT * FROM blocks WHERE id = ?", [id]);
           if (!createdBlock) throw new ApiError(500, "BLOCK_CREATE_FAILED", "Attachment block was not created");
           await recordPageVersion(client, {
@@ -1150,7 +1153,7 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
           prepared.metadata ? JSON.stringify(prepared.metadata) : null
         ]
       );
-      const pageContentVersion = await advancePageContentVersion(client, pageId, user.id);
+      const pageContentVersion = await advancePageContentVersion(client, pageId, ownerId);
       const block = await client.queryOne<BlockRow>("SELECT * FROM blocks WHERE id = ?", [id]);
       if (!block) throw new ApiError(500, "BLOCK_CREATE_FAILED", "Block was not created");
       await recordPageVersion(client, {
@@ -1376,7 +1379,7 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
             "This block was changed in another session. Your local edits were not overwritten."
           );
         }
-        pageContentVersion = await advancePageContentVersion(client, existing.page_id, user.id);
+        pageContentVersion = await advancePageContentVersion(client, existing.page_id, lockedAccess.page.owner_id);
       }
 
       const updated = await client.queryOne<BlockRow>(
@@ -1673,8 +1676,8 @@ blockRouter.post(
           targetRootSortOrder
         );
 
-        const sourcePageContentVersion = await advancePageContentVersion(client, sourcePageId, user.id);
-        const targetPageContentVersion = await advancePageContentVersion(client, body.targetPageId, user.id);
+        const sourcePageContentVersion = await advancePageContentVersion(client, sourcePageId, sourceAccess.page.owner_id);
+        const targetPageContentVersion = await advancePageContentVersion(client, body.targetPageId, targetAccess.page.owner_id);
         const sourceAfterRows = await client.query<BlockRow>(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC",
           [sourcePageId]
@@ -1910,7 +1913,7 @@ blockRouter.delete(
           "The block changed before deletion completed. Nothing was deleted."
         );
       }
-      const pageContentVersion = await advancePageContentVersion(client, block.page_id, user.id);
+      const pageContentVersion = await advancePageContentVersion(client, block.page_id, lockedAccess.page.owner_id);
       const afterRows = body.preserveChildren
         ? await client.query<BlockRow>(
             "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC",
@@ -2116,7 +2119,7 @@ blockRouter.post(
           }
         }
 
-        const pageContentVersion = await advancePageContentVersion(client, pageId, user.id);
+        const pageContentVersion = await advancePageContentVersion(client, pageId, lockedAccess.page.owner_id);
         if (mutationId && mutationHash) {
           await client.execute(
             `INSERT INTO block_order_mutations (owner_id, mutation_id, page_id, request_hash)
