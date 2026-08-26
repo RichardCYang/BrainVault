@@ -106,12 +106,12 @@ test("the server promotes children and deletes the target inside one locked SQL 
   assertBefore(
     deletion,
     "await promoteBlockChildrenBeforeDelete",
-    'await client.execute("DELETE FROM blocks WHERE id = ?"',
+    '"DELETE FROM blocks WHERE id = ? AND page_id = ?"',
     "atomic preserve-children deletion"
   );
   assertBefore(
     deletion,
-    'await client.execute("DELETE FROM blocks WHERE id = ?"',
+    '"DELETE FROM blocks WHERE id = ? AND page_id = ?"',
     "await recordPageVersion",
     "atomic preserve-children deletion"
   );

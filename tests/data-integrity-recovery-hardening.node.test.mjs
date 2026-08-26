@@ -84,7 +84,7 @@ test("share removal, hard deletion, and restore fence active collaboration lease
   assertBefore(
     hardDelete,
     "await assertNoActiveCollaborationWriteLeases(client, pageIds)",
-    'await client.execute("DELETE FROM pages WHERE id = ? AND owner_id = ?"',
+    '"DELETE FROM pages WHERE id = ? AND owner_id = ?"',
     "hard deletion"
   );
 
@@ -187,7 +187,7 @@ test("destructive transitions preserve server recovery admission before deleting
   assertBefore(
     hardDelete,
     'await preserveRecoveryGrantsForPages(client, user.id, pageIds, "PAGE_DELETED")',
-    'await client.execute("DELETE FROM pages WHERE id = ? AND owner_id = ?"',
+    '"DELETE FROM pages WHERE id = ? AND owner_id = ?"',
     "hard-delete recovery grant"
   );
 

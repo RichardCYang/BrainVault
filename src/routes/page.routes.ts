@@ -1330,7 +1330,17 @@ pageRouter.delete(
           await preserveRecoveryGrantsForPages(client, user.id, pageIds, "PAGE_DELETED");
 
           for (const page of [...subtreeRows].reverse()) {
-            await client.execute("DELETE FROM pages WHERE id = ? AND owner_id = ?", [page.id, user.id]);
+            const deleteResult = await client.execute<{ affectedRows: number }>(
+              "DELETE FROM pages WHERE id = ? AND owner_id = ?",
+              [page.id, user.id]
+            );
+            if (Number(deleteResult.affectedRows) !== 1) {
+              throw new ApiError(
+                409,
+                "PAGE_EDIT_CONFLICT",
+                "The page tree changed before deletion completed. Nothing was deleted."
+              );
+            }
           }
 
           const attachmentIds = blockRows
