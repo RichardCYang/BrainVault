@@ -700,18 +700,37 @@ collaborationRouter.put(
   "/pages/:pageId/collaboration/snapshot",
   validate({ params: idParamSchema, body: materializeSchema }),
   async (req, res, next) => {
+    const deletedFiles: string[] = [];
+    let attachmentCleanupOwnerId: string | null = null;
+    let attachmentCleanupGeneration: number | null = null;
+    let attachmentCleanupCompleted = false;
+    const reconcileDeletedAttachmentFiles = async () => {
+      if (
+        attachmentCleanupCompleted
+        || !deletedFiles.length
+        || attachmentCleanupOwnerId === null
+        || attachmentCleanupGeneration === null
+      ) return;
+      await removeDeletedAttachmentFiles(
+        attachmentCleanupOwnerId,
+        deletedFiles,
+        attachmentCleanupGeneration
+      );
+      attachmentCleanupCompleted = true;
+    };
+
     try {
       const user = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       const body = req.body as z.infer<typeof materializeSchema>;
-      const deletedFiles: string[] = [];
 
       // Resolve and authorize the owner without taking a page lock. The
       // transaction can then preserve the global user-before-page lock order
       // used by workspace restore while re-checking access under the page lock.
       const preflightAccess = await getPageAccess(pageId, user.id);
       const attachmentOwnerId = preflightAccess.page.owner_id;
+      attachmentCleanupOwnerId = attachmentOwnerId;
 
       const result = await transaction(async (client) => {
         // Shared editors can differ from the attachment owner. Lock every
@@ -721,6 +740,7 @@ collaborationRouter.put(
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
         const attachmentGeneration = await lockUserAttachmentGeneration(client, attachmentOwnerId);
         if (attachmentGeneration === undefined) throw notFound("Page");
+        attachmentCleanupGeneration = attachmentGeneration;
 
         const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
         if (access.page.owner_id !== attachmentOwnerId) {
@@ -1104,13 +1124,7 @@ collaborationRouter.put(
         };
       });
 
-      if (deletedFiles.length) {
-        await removeDeletedAttachmentFiles(
-          result.ownerId,
-          deletedFiles,
-          result.attachmentGeneration
-        );
-      }
+      await reconcileDeletedAttachmentFiles();
       res.json({
         applied: result.applied,
         documentEpoch: body.documentEpoch,
@@ -1121,6 +1135,19 @@ collaborationRouter.put(
         blocks: result.blocks.map(toBlock)
       });
     } catch (error) {
+      try {
+        // The SQL transaction may have committed even when COMMIT acknowledgement
+        // was lost. Reconcile against the live canonical rows before surfacing
+        // the original error so a successful attachment tombstone cannot strand
+        // bytes forever. The helper is generation-scoped and reference-aware,
+        // so a rollback or workspace restore keeps any still-live/new-generation file.
+        await reconcileDeletedAttachmentFiles();
+      } catch (cleanupError) {
+        console.error("Failed to reconcile collaboration attachment cleanup after materialization failure", {
+          errorName: cleanupError instanceof Error ? cleanupError.name : typeof cleanupError,
+          deletedFileCount: deletedFiles.length
+        });
+      }
       next(error);
     }
   }

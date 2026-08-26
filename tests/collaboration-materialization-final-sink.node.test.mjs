@@ -89,3 +89,43 @@ test("zero-row survivor detachment cannot commit a cascading data-loss checkpoin
   assert.equal(fixedCheckpointAdvanced, false);
   assert.deepEqual(fixedRows, originalRows);
 });
+
+test("ambiguous materialization commits reconcile tombstoned attachment files", () => {
+  assert.match(
+    materialization,
+    /const reconcileDeletedAttachmentFiles = async \(\) => \{[\s\S]*?await removeDeletedAttachmentFiles\([\s\S]*?attachmentCleanupOwnerId,[\s\S]*?deletedFiles,[\s\S]*?attachmentCleanupGeneration[\s\S]*?\)/
+  );
+  assert.match(
+    materialization,
+    /attachmentCleanupGeneration = attachmentGeneration;/
+  );
+  assert.match(
+    materialization,
+    /\} catch \(error\) \{[\s\S]*?await reconcileDeletedAttachmentFiles\(\);[\s\S]*?next\(error\);/
+  );
+});
+
+test("attachment cleanup reconciliation fails closed across rollback and restore races", () => {
+  const shouldRemoveFile = ({ databaseStillReferencesBlock, generationMatches }) =>
+    generationMatches && !databaseStillReferencesBlock;
+
+  // COMMIT took effect but its acknowledgement was lost: reconcile the committed
+  // tombstone and remove the now-unreferenced same-generation file.
+  assert.equal(
+    shouldRemoveFile({ databaseStillReferencesBlock: false, generationMatches: true }),
+    true
+  );
+
+  // A real rollback leaves the canonical block live, so the file must remain.
+  assert.equal(
+    shouldRemoveFile({ databaseStillReferencesBlock: true, generationMatches: true }),
+    false
+  );
+
+  // A workspace restore advances the attachment generation. Even if the old block
+  // remains absent, stale cleanup must not touch the new generation's directory.
+  assert.equal(
+    shouldRemoveFile({ databaseStillReferencesBlock: false, generationMatches: false }),
+    false
+  );
+});
