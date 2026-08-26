@@ -1466,6 +1466,16 @@ blockRouter.post(
             );
           }
 
+          const currentTargetPageContentVersion = Number(replayAccess.page.content_version ?? 1);
+          const receiptTargetPageContentVersion = Number(receipt.target_page_content_version);
+          if (currentTargetPageContentVersion !== receiptTargetPageContentVersion) {
+            throw new ApiError(
+              409,
+              "BLOCK_MOVE_REPLAY_SUPERSEDED",
+              "The completed block move belongs to an older destination-page generation and was not replayed. Refresh before moving again."
+            );
+          }
+
           const placeholders = movedBlockIds.map(() => "?").join(", ");
           const replayRows = await client.query<BlockRow>(
             `SELECT * FROM blocks

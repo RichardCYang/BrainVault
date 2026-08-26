@@ -37,3 +37,27 @@ test("block move keeps the actual page transfer source-page scoped", () => {
     /UPDATE blocks SET page_id = \? WHERE id IN \(\$\{placeholders\}\) AND page_id = \?/
   );
 });
+
+test("block move receipt replay rejects a superseded destination-page generation", () => {
+  const moveSource = blockMoveRouteSource();
+  const receiptBranchStart = moveSource.indexOf("if (receipt) {");
+  const freshMoveStart = moveSource.indexOf(
+    "// Resolve the current source only after the durable receipt check.",
+    receiptBranchStart
+  );
+  assert.ok(
+    receiptBranchStart >= 0 && freshMoveStart > receiptBranchStart,
+    "receipt replay branch should be present"
+  );
+
+  const replaySource = moveSource.slice(receiptBranchStart, freshMoveStart);
+  assert.match(
+    replaySource,
+    /const currentTargetPageContentVersion = Number\(replayAccess\.page\.content_version \?\? 1\);/
+  );
+  assert.match(
+    replaySource,
+    /currentTargetPageContentVersion !== receiptTargetPageContentVersion/
+  );
+  assert.match(replaySource, /BLOCK_MOVE_REPLAY_SUPERSEDED/);
+});
