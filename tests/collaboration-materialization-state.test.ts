@@ -13,7 +13,8 @@ describe("collaboration materialization provenance", () => {
     })).toBe(false);
   });
 
-  it("blocks stale, ahead-of-history, and legacy unbound checkpoints", () => {
+  it("blocks stale, ahead-of-history, and pre-verification checkpoints", () => {
+    expect(currentCollaborationMaterializationVersion).toBe(2);
     expect(needsCollaborationMaterialization({
       latestUpdateId: 9,
       materializedUpdateId: 8,
@@ -28,6 +29,11 @@ describe("collaboration materialization provenance", () => {
       latestUpdateId: 9,
       materializedUpdateId: 9,
       materializationVersion: 0
+    })).toBe(true);
+    expect(needsCollaborationMaterialization({
+      latestUpdateId: 9,
+      materializedUpdateId: 9,
+      materializationVersion: 1
     })).toBe(true);
   });
 

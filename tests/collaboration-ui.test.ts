@@ -169,7 +169,7 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(materialization).toContain("materializeCollaborationUpdates");
     expect(materialization).toContain("createValidatedYjsDocument");
     expect(materialization).toContain("INVALID_COLLABORATION_DOCUMENT");
-    expect(collaborationProtocol).toContain("currentCollaborationMaterializationVersion = 1");
+    expect(collaborationProtocol).toContain("currentCollaborationMaterializationVersion = 2");
     expect(collaborationProtocol).toContain("latestUpdateId !== state.materializedUpdateId");
     expect(server).toContain("room.writeQueue");
     expect(server).toContain("currentAccess = await getPageAccess");

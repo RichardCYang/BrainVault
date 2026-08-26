@@ -328,7 +328,7 @@ function verifySourceWiring() {
     "Y.applyUpdate"
   ]);
   assertContains("src/lib/collaboration-protocol.ts", [
-    "currentCollaborationMaterializationVersion = 1",
+    "currentCollaborationMaterializationVersion = 2",
     "latestUpdateId !== state.materializedUpdateId",
     "state.materializationVersion !== currentCollaborationMaterializationVersion",
     "roomUpdateId !== durableUpdateId",

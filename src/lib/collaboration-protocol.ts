@@ -50,12 +50,18 @@ export function assessCollaborationWriteCheckpoint({
 }
 
 /**
- * Version 1 means that materialized_update_id was advanced only after the
- * server rebuilt the relational snapshot from the durable Yjs update log.
- * Version 0 is deliberately reserved for rows written by older builds that
- * trusted a browser-supplied duplicate snapshot.
+ * Version 2 means that materialized_update_id was advanced only after the
+ * server rebuilt the relational snapshot from the durable Yjs update log and
+ * verified the complete persisted canonical state before checkpointing.
+ *
+ * Version 0 is reserved for builds that trusted a browser-supplied duplicate
+ * snapshot. Version 1 is also intentionally stale: older server-authoritative
+ * builds could advance the checkpoint after an incomplete/stale relational
+ * write or after verifying only block IDs. Treating both versions as pending
+ * forces one lossless rematerialization before destructive operations can
+ * trust those historical checkpoints.
  */
-export const currentCollaborationMaterializationVersion = 1;
+export const currentCollaborationMaterializationVersion = 2;
 
 export type CollaborationMaterializationState = {
   latestUpdateId: number;

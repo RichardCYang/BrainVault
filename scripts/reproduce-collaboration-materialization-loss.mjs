@@ -91,26 +91,32 @@ const vulnerableDestructiveGuardAllowsHistoryDeletion =
   durable.updateId <= vulnerableSql.materializedUpdateId;
 
 // Fixed data-flow model: request content is absent, SQL is derived from the
-// durable update log, and a legacy version-0 marker cannot authorize deletion.
+// durable update log, and pre-verification version-0/1 markers cannot authorize
+// destructive operations until version 2 rematerializes and validates the full
+// canonical relational state.
 const fixedSql = {
   title: durable.title,
   blocks: durable.blocks,
   materializedUpdateId: durable.updateId,
-  materializationVersion: 1
+  materializationVersion: 2
 };
 const fixedPreservesDurableContent =
   fixedSql.title === durable.title
   && fixedSql.blocks.length === durable.blocks.length;
 const legacyCheckpointAllowsDestruction =
   durable.updateId === durable.updateId && 0 === fixedSql.materializationVersion;
+const preVerificationCheckpointAllowsDestruction =
+  durable.updateId === fixedSql.materializedUpdateId
+  && 1 === fixedSql.materializationVersion;
 const authoritativeCheckpointAllowsDestruction =
   durable.updateId === fixedSql.materializedUpdateId
-  && fixedSql.materializationVersion === 1;
+  && fixedSql.materializationVersion === 2;
 
 assert.equal(vulnerableSql.blocks.length, 0);
 assert.equal(vulnerableDestructiveGuardAllowsHistoryDeletion, true);
 assert.equal(fixedPreservesDurableContent, true);
 assert.equal(legacyCheckpointAllowsDestruction, false);
+assert.equal(preVerificationCheckpointAllowsDestruction, false);
 assert.equal(authoritativeCheckpointAllowsDestruction, true);
 
 console.log(JSON.stringify({
@@ -127,6 +133,7 @@ console.log(JSON.stringify({
     materializationSource: "ordered page_yjs_updates",
     relationalBlockCountAfterMaterialization: fixedSql.blocks.length,
     legacyCheckpointRequiresRematerialization: !legacyCheckpointAllowsDestruction,
+    preVerificationCheckpointRequiresRematerialization: !preVerificationCheckpointAllowsDestruction,
     authoritativeCheckpointAllowsDestruction,
     permanentLossWindowClosed: fixedPreservesDurableContent
   }
