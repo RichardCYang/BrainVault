@@ -959,16 +959,29 @@ blockRouter.post(
 
         if (commitOutcomeUnknown) {
           try {
-            const confirmedBlock = await db.queryOne<BlockRow>(
-              "SELECT * FROM blocks WHERE id = ? AND page_id = ?",
-              [id, pageId]
+            const confirmedBlock = await withUserAttachmentLock(
+              ownerId,
+              async (client, currentAttachmentGeneration) => {
+                if (
+                  movedAttachmentGeneration === null
+                  || currentAttachmentGeneration !== movedAttachmentGeneration
+                ) {
+                  return null;
+                }
+                return client.queryOne<BlockRow & { page_content_version: number | bigint | string }>(
+                  `SELECT b.*, p.content_version AS page_content_version
+                   FROM blocks b
+                   INNER JOIN pages p ON p.id = b.page_id
+                   WHERE b.id = ? AND b.page_id = ? AND p.owner_id = ?`,
+                  [id, pageId, ownerId]
+                );
+              }
             );
             if (confirmedBlock) {
-              const confirmedPage = await db.queryOne<{ content_version: number }>(
-                "SELECT content_version FROM pages WHERE id = ?",
-                [pageId]
-              );
-              const confirmedContentVersion = Number(confirmedPage?.content_version ?? 1);
+              const confirmedContentVersion = Number(confirmedBlock.page_content_version);
+              if (!Number.isSafeInteger(confirmedContentVersion) || confirmedContentVersion < 1) {
+                throw new Error(`Invalid page content version during attachment commit verification: ${pageId}`);
+              }
               result = {
                 block: confirmedBlock,
                 ...partialMutationVersionPayload(
@@ -1001,7 +1014,13 @@ blockRouter.post(
         } else {
           let insertDefinitelyFailed = false;
           try {
-            insertDefinitelyFailed = !(await db.queryOne<{ id: string }>("SELECT id FROM blocks WHERE id = ?", [id]));
+            insertDefinitelyFailed = !(await db.queryOne<{ id: string }>(
+              `SELECT b.id
+               FROM blocks b
+               INNER JOIN pages p ON p.id = b.page_id
+               WHERE b.id = ? AND b.page_id = ? AND p.owner_id = ?`,
+              [id, pageId, ownerId]
+            ));
           } catch (verificationError) {
             console.error("Attachment insert outcome is unknown; preserving the moved file", {
               id,

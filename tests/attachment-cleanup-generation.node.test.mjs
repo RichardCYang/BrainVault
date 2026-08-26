@@ -174,3 +174,79 @@ test("standalone reproduction loses a retained restore file before the fence but
   assert.equal(result.fixed.sameGenerationCleanupStillRemovesDeletedAttachment, true);
   assert.equal(result.fixed.sameGenerationCleanupStillPreservesLiveAttachment, true);
 });
+
+test("ambiguous attachment commit verification stays atomic across owner and workspace generations", async () => {
+  const blockRoute = normalize(await readFile(new URL("../src/routes/block.routes.ts", import.meta.url), "utf8"));
+  const uploadStart = blockRoute.indexOf('"/pages/:pageId/attachments"');
+  const ambiguousStart = blockRoute.indexOf("if (commitOutcomeUnknown)", uploadStart);
+  const ambiguousEnd = blockRoute.indexOf("} else {", blockRoute.indexOf("catch (verificationError)", ambiguousStart));
+  assert.ok(uploadStart >= 0 && ambiguousStart > uploadStart && ambiguousEnd > ambiguousStart);
+  const ambiguousVerification = blockRoute.slice(ambiguousStart, ambiguousEnd);
+
+  assert.match(ambiguousVerification, /withUserAttachmentLock\(\s*ownerId/);
+  assert.match(
+    ambiguousVerification,
+    /currentAttachmentGeneration !== movedAttachmentGeneration/
+  );
+  assert.match(
+    ambiguousVerification,
+    /FROM blocks b[\s\S]*?INNER JOIN pages p ON p\.id = b\.page_id[\s\S]*?p\.owner_id = \?/
+  );
+  assert.doesNotMatch(
+    ambiguousVerification,
+    /SELECT content_version FROM pages WHERE id = \?/
+  );
+  assert.doesNotMatch(ambiguousVerification, /confirmedPage\?\.content_version \?\? 1/);
+});
+
+test("reproduction: delete or restore between ambiguous commit reads cannot be acknowledged as success", () => {
+  const legacyReconcile = ({ blockRead, pageRead }) => {
+    if (!blockRead) return { applied: false };
+    return {
+      applied: true,
+      pageContentVersion: pageRead?.contentVersion ?? 1
+    };
+  };
+
+  // The old two-query flow can observe the block, then lose/rebind the page before
+  // its second query and still manufacture a successful acknowledgement.
+  assert.deepEqual(legacyReconcile({ blockRead: true, pageRead: null }), {
+    applied: true,
+    pageContentVersion: 1
+  });
+  assert.deepEqual(
+    legacyReconcile({ blockRead: true, pageRead: { ownerId: "owner-b", contentVersion: 9 } }),
+    { applied: true, pageContentVersion: 9 }
+  );
+
+  const fixedReconcile = ({ expectedOwner, expectedGeneration, currentGeneration, joinedRow }) => {
+    if (currentGeneration !== expectedGeneration) return { applied: false };
+    if (!joinedRow || joinedRow.ownerId !== expectedOwner) return { applied: false };
+    return { applied: true, pageContentVersion: joinedRow.contentVersion };
+  };
+
+  assert.deepEqual(fixedReconcile({
+    expectedOwner: "owner-a",
+    expectedGeneration: 4,
+    currentGeneration: 5,
+    joinedRow: { ownerId: "owner-a", contentVersion: 9 }
+  }), { applied: false });
+  assert.deepEqual(fixedReconcile({
+    expectedOwner: "owner-a",
+    expectedGeneration: 4,
+    currentGeneration: 4,
+    joinedRow: { ownerId: "owner-b", contentVersion: 9 }
+  }), { applied: false });
+  assert.deepEqual(fixedReconcile({
+    expectedOwner: "owner-a",
+    expectedGeneration: 4,
+    currentGeneration: 4,
+    joinedRow: null
+  }), { applied: false });
+  assert.deepEqual(fixedReconcile({
+    expectedOwner: "owner-a",
+    expectedGeneration: 4,
+    currentGeneration: 4,
+    joinedRow: { ownerId: "owner-a", contentVersion: 7 }
+  }), { applied: true, pageContentVersion: 7 });
+});
