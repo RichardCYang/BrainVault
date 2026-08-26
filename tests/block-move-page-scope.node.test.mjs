@@ -38,7 +38,7 @@ test("block move keeps the actual page transfer source-page scoped", () => {
   );
 });
 
-test("block move receipt replay rejects a superseded destination-page generation", () => {
+test("block move receipt replay rejects superseded source or destination page generations", () => {
   const moveSource = blockMoveRouteSource();
   const receiptBranchStart = moveSource.indexOf("if (receipt) {");
   const freshMoveStart = moveSource.indexOf(
@@ -53,7 +53,19 @@ test("block move receipt replay rejects a superseded destination-page generation
   const replaySource = moveSource.slice(receiptBranchStart, freshMoveStart);
   assert.match(
     replaySource,
-    /const currentTargetPageContentVersion = Number\(replayAccess\.page\.content_version \?\? 1\);/
+    /sourceAccess: replaySourceAccess,[\s\S]*targetAccess: replayTargetAccess[\s\S]*await lockMovePages\(/
+  );
+  assert.match(
+    replaySource,
+    /const currentSourcePageContentVersion = Number\(replaySourceAccess\.page\.content_version \?\? 1\);/
+  );
+  assert.match(
+    replaySource,
+    /currentSourcePageContentVersion !== receiptSourcePageContentVersion/
+  );
+  assert.match(
+    replaySource,
+    /const currentTargetPageContentVersion = Number\(replayTargetAccess\.page\.content_version \?\? 1\);/
   );
   assert.match(
     replaySource,

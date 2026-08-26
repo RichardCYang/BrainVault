@@ -1457,8 +1457,22 @@ blockRouter.post(
           }
 
           const movedBlockIds = parseMovedBlockIds(receipt.moved_block_ids);
-          const replayAccess = await getPageAccess(receipt.target_page_id, user.id, client, { lockPage: true });
-          if (replayAccess.role !== "OWNER" || replayAccess.page.owner_id !== user.id) {
+          const {
+            sourceAccess: replaySourceAccess,
+            targetAccess: replayTargetAccess
+          } = await lockMovePages(
+            client,
+            user.id,
+            receipt.source_page_id,
+            receipt.target_page_id
+          );
+          if (
+            replaySourceAccess.role !== "OWNER"
+            || replayTargetAccess.role !== "OWNER"
+            || replaySourceAccess.page.owner_id !== user.id
+            || replayTargetAccess.page.owner_id !== user.id
+            || replaySourceAccess.page.owner_id !== replayTargetAccess.page.owner_id
+          ) {
             throw new ApiError(
               409,
               "BLOCK_MOVE_REPLAY_SUPERSEDED",
@@ -1466,7 +1480,17 @@ blockRouter.post(
             );
           }
 
-          const currentTargetPageContentVersion = Number(replayAccess.page.content_version ?? 1);
+          const currentSourcePageContentVersion = Number(replaySourceAccess.page.content_version ?? 1);
+          const receiptSourcePageContentVersion = Number(receipt.source_page_content_version);
+          if (currentSourcePageContentVersion !== receiptSourcePageContentVersion) {
+            throw new ApiError(
+              409,
+              "BLOCK_MOVE_REPLAY_SUPERSEDED",
+              "The completed block move belongs to an older source-page generation and was not replayed. Refresh before moving again."
+            );
+          }
+
+          const currentTargetPageContentVersion = Number(replayTargetAccess.page.content_version ?? 1);
           const receiptTargetPageContentVersion = Number(receipt.target_page_content_version);
           if (currentTargetPageContentVersion !== receiptTargetPageContentVersion) {
             throw new ApiError(
