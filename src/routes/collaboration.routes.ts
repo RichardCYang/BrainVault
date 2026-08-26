@@ -252,6 +252,37 @@ function prepareBlockContent(type: BlockRow["type"], markdown: string, metadata:
   return { markdown, metadata };
 }
 
+function canonicalJsonForComparison(value: unknown): string | null | undefined {
+  if (value === null || value === undefined) return null;
+
+  let decoded: unknown = value;
+  if (typeof decoded === "string") {
+    try {
+      decoded = JSON.parse(decoded) as unknown;
+    } catch {
+      return undefined;
+    }
+  }
+
+  const normalize = (candidate: unknown): unknown => {
+    if (Array.isArray(candidate)) return candidate.map(normalize);
+    if (candidate && typeof candidate === "object") {
+      return Object.fromEntries(
+        Object.entries(candidate as Record<string, unknown>)
+          .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+          .map(([key, entry]) => [key, normalize(entry)])
+      );
+    }
+    return candidate;
+  };
+
+  try {
+    return JSON.stringify(normalize(decoded));
+  } catch {
+    return undefined;
+  }
+}
+
 
 collaborationRouter.get(
   "/pages/:pageId/shares",
@@ -1054,8 +1085,10 @@ collaborationRouter.put(
         }
 
         // Do not advance the durable materialization checkpoint until the canonical
-        // relational block set exactly matches the collaboration document. Attachments
-        // omitted from Yjs are intentionally retained unless explicitly tombstoned.
+        // relational state exactly matches the collaboration document. Checking IDs
+        // alone can certify a same-ID row whose content or hierarchy was not persisted
+        // as intended. Attachments omitted from Yjs are intentionally retained unless
+        // explicitly tombstoned, so verify their retained hierarchy separately.
         const currentPage = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
         const currentBlocks = await client.query<BlockRow>(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
@@ -1071,11 +1104,64 @@ collaborationRouter.put(
         const currentBlockIds = new Set(currentBlocks.map((row) => row.id));
         const canonicalBlockSetMatches = currentBlockIds.size === expectedFinalBlockIds.size
           && [...expectedFinalBlockIds].every((blockId) => currentBlockIds.has(blockId));
-        if (!canonicalBlockSetMatches) {
+        const currentBlocksById = new Map(currentBlocks.map((row) => [row.id, row]));
+        let canonicalMaterializedStateMatches = currentPage.title === materialization.title;
+
+        for (const block of orderedBlocks) {
+          if (!canonicalMaterializedStateMatches) break;
+          const current = currentBlocksById.get(block.id);
+          if (
+            !current
+            || current.type !== block.type
+            || current.parent_block_id !== block.parentBlockId
+            || Number(current.sort_order) !== Number(block.sortOrder)
+          ) {
+            canonicalMaterializedStateMatches = false;
+            break;
+          }
+
+          // Attachment payload metadata is owned by the upload route. Collaboration
+          // materialization is authoritative only for its hierarchy/order.
+          if (block.type === "ATTACHMENT") continue;
+
+          const prepared = prepareBlockContent(block.type, block.markdown, block.metadata);
+          const expectedHtml = renderBlockHtml(block.type, prepared.markdown, block.checked, prepared.metadata);
+          if (
+            current.markdown !== prepared.markdown
+            || current.html_cache !== expectedHtml
+            || Number(current.checked) !== (block.checked ? 1 : 0)
+            || canonicalJsonForComparison(current.metadata) !== canonicalJsonForComparison(prepared.metadata)
+          ) {
+            canonicalMaterializedStateMatches = false;
+            break;
+          }
+        }
+
+        if (canonicalMaterializedStateMatches) {
+          for (const row of existingRows) {
+            if (
+              row.type !== "ATTACHMENT"
+              || deletedAttachmentIds.has(row.id)
+              || activeIds.has(row.id)
+            ) continue;
+            const current = currentBlocksById.get(row.id);
+            if (
+              !current
+              || current.type !== "ATTACHMENT"
+              || current.parent_block_id !== row.parent_block_id
+              || Number(current.sort_order) !== Number(row.sort_order)
+            ) {
+              canonicalMaterializedStateMatches = false;
+              break;
+            }
+          }
+        }
+
+        if (!canonicalBlockSetMatches || !canonicalMaterializedStateMatches) {
           throw new ApiError(
             409,
             "COLLABORATION_MATERIALIZATION_CONFLICT",
-            "The canonical block set did not match the collaboration document"
+            "The canonical page state did not match the collaboration document"
           );
         }
 

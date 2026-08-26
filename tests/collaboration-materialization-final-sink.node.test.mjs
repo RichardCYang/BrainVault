@@ -39,17 +39,63 @@ test("collaboration materialization fails closed on zero-row canonical writes", 
   );
 });
 
-test("the canonical block set is verified before the durable checkpoint advances", () => {
+test("canonical page content and hierarchy are verified before the durable checkpoint advances", () => {
   assert.match(
     materialization,
-    /const expectedFinalBlockIds = new Set\(activeIds\);[\s\S]*?const canonicalBlockSetMatches = currentBlockIds\.size === expectedFinalBlockIds\.size[\s\S]*?if \(!canonicalBlockSetMatches\)/
+    /const expectedFinalBlockIds = new Set\(activeIds\);[\s\S]*?const canonicalBlockSetMatches = currentBlockIds\.size === expectedFinalBlockIds\.size/
+  );
+  assert.match(
+    materialization,
+    /let canonicalMaterializedStateMatches = currentPage\.title === materialization\.title;[\s\S]*?current\.markdown !== prepared\.markdown[\s\S]*?current\.html_cache !== expectedHtml[\s\S]*?canonicalJsonForComparison\(current\.metadata\) !== canonicalJsonForComparison\(prepared\.metadata\)/
+  );
+  assert.match(
+    materialization,
+    /current\.parent_block_id !== block\.parentBlockId[\s\S]*?Number\(current\.sort_order\) !== Number\(block\.sortOrder\)/
+  );
+  assert.match(
+    materialization,
+    /if \(!canonicalBlockSetMatches \|\| !canonicalMaterializedStateMatches\)/
   );
   assertBefore(
     materialization,
-    "const expectedFinalBlockIds = new Set(activeIds)",
+    "let canonicalMaterializedStateMatches = currentPage.title === materialization.title",
     "const checkpoint = await client.execute<{ affectedRows: number }>",
-    "collaboration final-sink verification"
+    "collaboration canonical-state verification"
   );
+});
+
+test("same-id canonical corruption cannot be certified as materialized", () => {
+  const expected = {
+    title: "Roadmap",
+    blocks: new Map([
+      ["block-1", { parentId: null, type: "TEXT", markdown: "Keep this text", checked: 0, sortOrder: 100 }]
+    ])
+  };
+  const corrupted = {
+    title: "Roadmap",
+    blocks: new Map([
+      ["block-1", { parentId: null, type: "TEXT", markdown: "Different text", checked: 0, sortOrder: 100 }]
+    ])
+  };
+
+  const vulnerableIdOnlyVerification =
+    corrupted.blocks.size === expected.blocks.size
+    && [...expected.blocks.keys()].every((id) => corrupted.blocks.has(id));
+  assert.equal(vulnerableIdOnlyVerification, true);
+
+  const fixedCanonicalVerification =
+    corrupted.title === expected.title
+    && corrupted.blocks.size === expected.blocks.size
+    && [...expected.blocks].every(([id, block]) => {
+      const persisted = corrupted.blocks.get(id);
+      return persisted
+        && persisted.parentId === block.parentId
+        && persisted.type === block.type
+        && persisted.markdown === block.markdown
+        && persisted.checked === block.checked
+        && persisted.sortOrder === block.sortOrder;
+    });
+  assert.equal(fixedCanonicalVerification, false);
 });
 
 test("zero-row survivor detachment cannot commit a cascading data-loss checkpoint", () => {
