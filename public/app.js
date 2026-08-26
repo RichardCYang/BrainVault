@@ -9649,15 +9649,35 @@ function applyCollaborationSnapshot(snapshot, { source = "remote" } = {}) {
 
 function applyCollaborationMaterialization(result) {
   if (!state.selectedPage || !result) return;
-  state.selectedPage.version = Number(result.pageVersion ?? state.selectedPage.version ?? 1);
-  state.selectedPage.contentVersion = Number(result.pageContentVersion ?? state.selectedPage.contentVersion ?? 1);
-  if (result.pageUpdatedAt) state.selectedPage.updatedAt = result.pageUpdatedAt;
+  const currentPageVersion = getPositiveVersion(state.selectedPage.version);
+  const materializedPageVersion = getPositiveVersion(result.pageVersion);
+  const currentContentVersion = getPositiveVersion(state.selectedPage.contentVersion);
+  const materializedContentVersion = getPositiveVersion(result.pageContentVersion);
+  const materializationIsStale = (
+    (currentPageVersion !== null
+      && materializedPageVersion !== null
+      && currentPageVersion > materializedPageVersion)
+    || (currentContentVersion !== null
+      && materializedContentVersion !== null
+      && currentContentVersion > materializedContentVersion)
+  );
+
+  // Collaboration materialization is serialized only against other materializations.
+  // A page metadata write or canonical attachment insert can commit while this HTTP
+  // response is in flight, so a delayed acknowledgement must never roll the newer
+  // optimistic-lock tokens (or timestamp) backward.
+  state.selectedPage.version = getLatestKnownVersion(currentPageVersion, materializedPageVersion) ?? 1;
+  state.selectedPage.contentVersion =
+    getLatestKnownVersion(currentContentVersion, materializedContentVersion) ?? 1;
+  if (result.pageUpdatedAt && !materializationIsStale) {
+    state.selectedPage.updatedAt = result.pageUpdatedAt;
+  }
 
   const serverBlocks = new Map((result.blocks ?? []).map((block) => [block.id, block]));
   for (const block of flattenBlocks(state.selectedPage.blocks ?? [])) {
     const serverBlock = serverBlocks.get(block.id);
     if (!serverBlock) continue;
-    block.version = Number(serverBlock.version ?? block.version ?? 1);
+    block.version = getLatestKnownVersion(block.version, serverBlock.version) ?? 1;
     block.updatedAt = serverBlock.updatedAt ?? block.updatedAt;
     block.createdAt = serverBlock.createdAt ?? block.createdAt;
     if (block.type === "ATTACHMENT") {

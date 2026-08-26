@@ -392,3 +392,62 @@ test("page metadata acknowledgements preserve newer collaborative content", () =
   assert.equal(fixed.contentVersion, 5);
   assert.equal(fixed.version, 7);
 });
+test("delayed collaboration materialization acknowledgements cannot roll freshness tokens backward", () => {
+  const client = read("../public/app.js");
+  const materializationMerge = section(
+    client,
+    "function applyCollaborationMaterialization(",
+    "function getCollaborationStatusLabel"
+  );
+
+  assert.match(
+    materializationMerge,
+    /getLatestKnownVersion\(currentPageVersion, materializedPageVersion\)/
+  );
+  assert.match(
+    materializationMerge,
+    /getLatestKnownVersion\(currentContentVersion, materializedContentVersion\)/
+  );
+  assert.match(
+    materializationMerge,
+    /block\.version = getLatestKnownVersion\(block\.version, serverBlock\.version\)/
+  );
+  assert.match(
+    materializationMerge,
+    /if \(result\.pageUpdatedAt && !materializationIsStale\)/
+  );
+
+  // Reproduction: materialization v8/c11 commits first, but its response is
+  // delayed. A concurrent metadata/attachment write then advances the live page
+  // to v9/c12. Applying the older acknowledgement by assignment rolls both
+  // freshness tokens backward and can poison the next optimistic/destructive
+  // check even though the UI has already observed the newer state.
+  const livePage = {
+    version: 9,
+    contentVersion: 12,
+    updatedAt: "2026-08-26T12:00:12.000Z"
+  };
+  const delayedMaterialization = {
+    pageVersion: 8,
+    pageContentVersion: 11,
+    pageUpdatedAt: "2026-08-26T12:00:11.000Z"
+  };
+  const vulnerable = {
+    ...livePage,
+    version: delayedMaterialization.pageVersion,
+    contentVersion: delayedMaterialization.pageContentVersion,
+    updatedAt: delayedMaterialization.pageUpdatedAt
+  };
+  assert.equal(vulnerable.version, 8);
+  assert.equal(vulnerable.contentVersion, 11);
+
+  const fixed = {
+    ...livePage,
+    version: Math.max(livePage.version, delayedMaterialization.pageVersion),
+    contentVersion: Math.max(livePage.contentVersion, delayedMaterialization.pageContentVersion),
+    updatedAt: livePage.updatedAt
+  };
+  assert.equal(fixed.version, 9);
+  assert.equal(fixed.contentVersion, 12);
+  assert.equal(fixed.updatedAt, "2026-08-26T12:00:12.000Z");
+});
