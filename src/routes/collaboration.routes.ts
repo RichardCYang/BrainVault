@@ -922,10 +922,17 @@ collaborationRouter.put(
         for (const row of existingRows) {
           if (deletedExistingIds.has(row.id)) continue;
           if (!row.parent_block_id || !deletedExistingIds.has(row.parent_block_id)) continue;
-          await client.execute(
+          const detachedSurvivor = await client.execute<{ affectedRows: number }>(
             "UPDATE blocks SET parent_block_id = NULL, last_mutation_id = NULL, last_mutation_hash = NULL, edit_version = edit_version + 1 WHERE id = ? AND page_id = ?",
             [row.id, pageId]
           );
+          if (Number(detachedSurvivor.affectedRows) !== 1) {
+            throw new ApiError(
+              409,
+              "COLLABORATION_MATERIALIZATION_CONFLICT",
+              "A canonical block changed before collaboration materialization completed"
+            );
+          }
           row.parent_block_id = null;
         }
 
@@ -945,13 +952,20 @@ collaborationRouter.put(
         for (const block of orderedBlocks) {
           const existing = existingById.get(block.id);
           if (existing?.type === "ATTACHMENT") {
-            await client.execute(
+            const attachmentUpdate = await client.execute<{ affectedRows: number }>(
               `UPDATE blocks
                SET parent_block_id = ?, sort_order = ?, last_mutation_id = NULL,
                    last_mutation_hash = NULL, edit_version = edit_version + 1
                WHERE id = ? AND page_id = ?`,
               [block.parentBlockId, block.sortOrder, block.id, pageId]
             );
+            if (Number(attachmentUpdate.affectedRows) !== 1) {
+              throw new ApiError(
+                409,
+                "COLLABORATION_MATERIALIZATION_CONFLICT",
+                "A canonical attachment changed before collaboration materialization completed"
+              );
+            }
             continue;
           }
 
@@ -959,7 +973,7 @@ collaborationRouter.put(
           const html = renderBlockHtml(block.type, prepared.markdown, block.checked, prepared.metadata);
           const metadata = prepared.metadata ? JSON.stringify(prepared.metadata) : null;
           if (existing) {
-            await client.execute(
+            const blockUpdate = await client.execute<{ affectedRows: number }>(
               `UPDATE blocks
                SET parent_block_id = ?, type = ?, markdown = ?, html_cache = ?, checked = ?, sort_order = ?,
                    metadata = ?, last_mutation_id = NULL, last_mutation_hash = NULL,
@@ -977,6 +991,13 @@ collaborationRouter.put(
                 pageId
               ]
             );
+            if (Number(blockUpdate.affectedRows) !== 1) {
+              throw new ApiError(
+                409,
+                "COLLABORATION_MATERIALIZATION_CONFLICT",
+                "A canonical block changed before collaboration materialization completed"
+              );
+            }
           } else {
             await client.execute(
               `INSERT INTO blocks
@@ -997,13 +1018,47 @@ collaborationRouter.put(
           }
         }
 
-        await client.execute(
+        const pageUpdate = await client.execute<{ affectedRows: number }>(
           `UPDATE pages
            SET title = ?, last_mutation_id = NULL, last_mutation_hash = NULL,
                edit_version = edit_version + 1, content_version = content_version + 1
            WHERE id = ?`,
           [materialization.title, pageId]
         );
+        if (Number(pageUpdate.affectedRows) !== 1) {
+          throw new ApiError(
+            409,
+            "COLLABORATION_MATERIALIZATION_CONFLICT",
+            "The canonical page changed before collaboration materialization completed"
+          );
+        }
+
+        // Do not advance the durable materialization checkpoint until the canonical
+        // relational block set exactly matches the collaboration document. Attachments
+        // omitted from Yjs are intentionally retained unless explicitly tombstoned.
+        const currentPage = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
+        const currentBlocks = await client.query<BlockRow>(
+          "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
+          [pageId]
+        );
+        if (!currentPage) throw notFound("Page");
+        const expectedFinalBlockIds = new Set(activeIds);
+        for (const row of existingRows) {
+          if (row.type === "ATTACHMENT" && !deletedAttachmentIds.has(row.id)) {
+            expectedFinalBlockIds.add(row.id);
+          }
+        }
+        const currentBlockIds = new Set(currentBlocks.map((row) => row.id));
+        const canonicalBlockSetMatches = currentBlockIds.size === expectedFinalBlockIds.size
+          && [...expectedFinalBlockIds].every((blockId) => currentBlockIds.has(blockId));
+        if (!canonicalBlockSetMatches) {
+          throw new ApiError(
+            409,
+            "COLLABORATION_MATERIALIZATION_CONFLICT",
+            "The canonical block set did not match the collaboration document"
+          );
+        }
+
         const checkpoint = await client.execute<{ affectedRows: number }>(
           `UPDATE page_collaboration_state
            SET materialized_update_id = ?, materialization_version = ?,
@@ -1024,12 +1079,6 @@ collaborationRouter.put(
           );
         }
 
-        const currentPage = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
-        const currentBlocks = await client.query<BlockRow>(
-          "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
-          [pageId]
-        );
-        if (!currentPage) throw notFound("Page");
         const versionActors = await loadPageVersionActors(
           client,
           updateRows
