@@ -15,8 +15,8 @@ test("page create resolves durable replays before validating mutable parent stat
     .replace(/\r\n/g, "\n");
   const createRoute = section(route, 'pageRouter.post("/",', 'pageRouter.get("/:pageId/cover"');
 
-  const transactionIndex = createRoute.indexOf("const pageId = await transaction");
-  const replayIndex = createRoute.indexOf("return assessment.pageId;");
+  const transactionIndex = createRoute.indexOf("const page = await transaction");
+  const replayIndex = createRoute.indexOf("return getPageResponse(assessment.pageId, user.id, client);");
   const parentValidationIndex = createRoute.indexOf(
     "await assertOwnedParentPage(creation.parentPageId, user.id, client, true);"
   );

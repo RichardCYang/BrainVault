@@ -668,7 +668,7 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
       throw new ApiError(400, "INVALID_COLLECTION_PARENT", "A collection cannot have a parent page");
     }
 
-    const pageId = await transaction(async (client) => {
+    const page = await transaction(async (client) => {
       await assertCurrentAuthSessionBoundary(user.id, authScope, client);
       const id = createId("pag");
       if (mutationId && mutationHash) {
@@ -713,7 +713,10 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
               "This page creation was already completed, but the created page is no longer available. No additional page was created."
             );
           }
-          return assessment.pageId;
+          // Materialize the replay acknowledgement while the owner/session lock is still held.
+          // A post-COMMIT read could otherwise observe a later edit or deletion and make the
+          // already-committed create look as though it returned that unrelated state.
+          return getPageResponse(assessment.pageId, user.id, client);
         }
       }
 
@@ -765,10 +768,13 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
           ...diffPageVersionBlocks([], createdBlocks)
         ]
       });
-      return id;
+      // Keep the 201 acknowledgement causally bound to the create transaction. If another
+      // session edits, archives, or deletes the page immediately after COMMIT, that later
+      // mutation must not donate its state (or a false 404) to this successful create.
+      return getPageResponse(id, user.id, client);
     });
 
-    res.status(201).json({ page: await getPageResponse(pageId, user.id) });
+    res.status(201).json({ page });
   } catch (error) {
     next(error);
   }
