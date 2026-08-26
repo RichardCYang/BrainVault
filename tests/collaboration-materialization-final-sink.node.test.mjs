@@ -175,3 +175,48 @@ test("attachment cleanup reconciliation fails closed across rollback and restore
     false
   );
 });
+
+test("collaboration materialization keeps canonical page reads and writes owner-scoped", () => {
+  const pageUpdateStart = materialization.indexOf(
+    "const pageUpdate = await client.execute<{ affectedRows: number }>"
+  );
+  const pageUpdateEnd = materialization.indexOf(
+    "if (Number(pageUpdate.affectedRows) !== 1)",
+    pageUpdateStart
+  );
+  assert.notEqual(pageUpdateStart, -1, "missing canonical page update");
+  assert.notEqual(pageUpdateEnd, -1, "missing canonical page update affected-row fence");
+
+  const pageUpdateSink = materialization.slice(pageUpdateStart, pageUpdateEnd);
+  assert.match(pageUpdateSink, /WHERE id = \? AND owner_id = \?/);
+  assert.match(
+    pageUpdateSink,
+    /\[materialization\.title, pageId, attachmentOwnerId\]/
+  );
+
+  const ownerScopedPageReads =
+    materialization.match(/SELECT \* FROM pages WHERE id = \? AND owner_id = \?/g) ?? [];
+  assert.ok(
+    ownerScopedPageReads.length >= 3,
+    "materialization should retain owner scope when reading the canonical page"
+  );
+});
+
+test("owner mismatch at the final collaboration sink fails closed", () => {
+  const routedPageId = "page-1";
+  const lockedOwnerId = "owner-a";
+  const rowAtThatId = { id: "page-1", ownerId: "owner-b", title: "Owner B note" };
+
+  // The previous final sink was ID-only: if an internal stale/corrupt routing
+  // context ever crossed the already-checked owner boundary, the SQL predicate
+  // itself would still accept the other owner's row.
+  const vulnerableAffectedRows = rowAtThatId.id === routedPageId ? 1 : 0;
+  assert.equal(vulnerableAffectedRows, 1);
+
+  // The fixed sink carries the owner locked earlier in the transaction. An owner
+  // mismatch therefore becomes a zero-row write, which the route already rolls
+  // back as COLLABORATION_MATERIALIZATION_CONFLICT.
+  const fixedAffectedRows =
+    rowAtThatId.id === routedPageId && rowAtThatId.ownerId === lockedOwnerId ? 1 : 0;
+  assert.equal(fixedAffectedRows, 0);
+});

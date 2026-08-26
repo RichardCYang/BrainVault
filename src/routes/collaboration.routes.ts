@@ -872,7 +872,10 @@ collaborationRouter.put(
           materializedUpdateId,
           materializationVersion
         })) {
-          const currentPage = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
+          const currentPage = await client.queryOne<PageRow>(
+            "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
+            [pageId, attachmentOwnerId]
+          );
           const currentBlocks = await client.query<BlockRow>(
             "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
             [pageId]
@@ -925,8 +928,8 @@ collaborationRouter.put(
         // Access projections intentionally hide custom cover bytes. Version diffs need the
         // raw row so an unrelated collaboration materialization does not look like a cover change.
         const versionBeforePage = await client.queryOne<PageRow>(
-          "SELECT * FROM pages WHERE id = ?",
-          [pageId]
+          "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
+          [pageId, attachmentOwnerId]
         );
         if (!versionBeforePage) throw notFound("Page");
         const versionBeforeRows = existingRows.map((row) => ({ ...row }));
@@ -1091,8 +1094,8 @@ collaborationRouter.put(
           `UPDATE pages
            SET title = ?, last_mutation_id = NULL, last_mutation_hash = NULL,
                edit_version = edit_version + 1, content_version = content_version + 1
-           WHERE id = ?`,
-          [materialization.title, pageId]
+           WHERE id = ? AND owner_id = ?`,
+          [materialization.title, pageId, attachmentOwnerId]
         );
         if (Number(pageUpdate.affectedRows) !== 1) {
           throw new ApiError(
@@ -1107,7 +1110,10 @@ collaborationRouter.put(
         // alone can certify a same-ID row whose content or hierarchy was not persisted
         // as intended. Attachments omitted from Yjs are intentionally retained unless
         // explicitly tombstoned, so verify their retained hierarchy separately.
-        const currentPage = await client.queryOne<PageRow>("SELECT * FROM pages WHERE id = ?", [pageId]);
+        const currentPage = await client.queryOne<PageRow>(
+          "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
+          [pageId, attachmentOwnerId]
+        );
         const currentBlocks = await client.query<BlockRow>(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
           [pageId]
