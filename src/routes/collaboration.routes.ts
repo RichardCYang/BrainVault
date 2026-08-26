@@ -1008,16 +1008,46 @@ collaborationRouter.put(
           row.parent_block_id = null;
         }
 
-        for (const row of existingRows) {
-          if (row.type !== "ATTACHMENT" || !deletedAttachmentIds.has(row.id)) continue;
-          deletedFiles.push(row.id);
-          await client.execute("DELETE FROM blocks WHERE id = ? AND page_id = ?", [row.id, pageId]);
-          existingById.delete(row.id);
-        }
+        // Delete intended descendants before ancestors so the parent FK cascade never
+        // substitutes for an explicit, page-scoped destructive write. This lets every
+        // canonical deletion prove that exactly one locked row was removed.
+        const parentByDeletedId = new Map(
+          existingRows
+            .filter((row) => deletedExistingIds.has(row.id))
+            .map((row) => [row.id, row.parent_block_id] as const)
+        );
+        const deletedDepth = (row: BlockRow) => {
+          let depth = 0;
+          let currentId = row.id;
+          const visited = new Set<string>();
+          while (!visited.has(currentId)) {
+            visited.add(currentId);
+            const parentId = parentByDeletedId.get(currentId);
+            if (!parentId || !deletedExistingIds.has(parentId)) break;
+            depth += 1;
+            currentId = parentId;
+          }
+          return depth;
+        };
+        const rowsToDelete = existingRows
+          .filter((row) => deletedExistingIds.has(row.id))
+          .sort((left, right) => deletedDepth(right) - deletedDepth(left) || left.id.localeCompare(right.id));
 
-        for (const row of existingRows) {
-          if (row.type === "ATTACHMENT" || activeIds.has(row.id)) continue;
-          await client.execute("DELETE FROM blocks WHERE id = ? AND page_id = ?", [row.id, pageId]);
+        for (const row of rowsToDelete) {
+          const deletion = await client.execute<{ affectedRows: number }>(
+            "DELETE FROM blocks WHERE id = ? AND page_id = ?",
+            [row.id, pageId]
+          );
+          if (Number(deletion.affectedRows) !== 1) {
+            throw new ApiError(
+              409,
+              "COLLABORATION_MATERIALIZATION_CONFLICT",
+              "A canonical block changed before collaboration materialization completed"
+            );
+          }
+          if (row.type === "ATTACHMENT" && deletedAttachmentIds.has(row.id)) {
+            deletedFiles.push(row.id);
+          }
           existingById.delete(row.id);
         }
 

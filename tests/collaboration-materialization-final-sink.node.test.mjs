@@ -39,6 +39,39 @@ test("collaboration materialization fails closed on zero-row canonical writes", 
   );
 });
 
+test("collaboration deletion sinks are leaf-first and verify each direct row deletion", () => {
+  const deletionOrderIndex = materialization.indexOf("const rowsToDelete = existingRows");
+  const deleteIndex = materialization.indexOf(
+    'const deletion = await client.execute<{ affectedRows: number }>(',
+    deletionOrderIndex
+  );
+  const affectedRowsIndex = materialization.indexOf(
+    "if (Number(deletion.affectedRows) !== 1)",
+    deleteIndex
+  );
+  const cleanupIndex = materialization.indexOf("deletedFiles.push(row.id)", deleteIndex);
+
+  assert.ok(deletionOrderIndex >= 0, "missing explicit collaboration deletion order");
+  assert.match(
+    materialization.slice(deletionOrderIndex, deleteIndex),
+    /\.sort\(\(left, right\) => deletedDepth\(right\) - deletedDepth\(left\)/
+  );
+  assert.ok(deleteIndex > deletionOrderIndex, "destructive writes must follow leaf-first ordering");
+  assert.ok(affectedRowsIndex > deleteIndex, "each direct delete must verify its affected row count");
+  assert.ok(cleanupIndex > affectedRowsIndex, "attachment cleanup authority must follow confirmed SQL deletion");
+
+  const original = [
+    { id: "a-parent", parentId: null },
+    { id: "z-child", parentId: "a-parent" }
+  ];
+  const depth = (row) => row.parentId ? 1 : 0;
+  const vulnerableIdOrder = [...original].sort((left, right) => left.id.localeCompare(right.id));
+  const fixedLeafFirstOrder = [...original].sort(
+    (left, right) => depth(right) - depth(left) || left.id.localeCompare(right.id)
+  );
+  assert.deepEqual(vulnerableIdOrder.map((row) => row.id), ["a-parent", "z-child"]);
+  assert.deepEqual(fixedLeafFirstOrder.map((row) => row.id), ["z-child", "a-parent"]);
+});
 test("canonical page content and hierarchy are verified before the durable checkpoint advances", () => {
   assert.match(
     materialization,
