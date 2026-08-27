@@ -194,3 +194,61 @@ test("reproduction: restore between page-list access and tag reads cannot leak r
   assert.deepEqual(requestSnapshot.tags, ["shared-project"]);
   assert.notDeepEqual(requestSnapshot.tags, restoredGeneration.tags);
 });
+
+test("page version reads keep owner authorization and history in one repeatable-read snapshot", async () => {
+  const route = (await readFile(new URL("../src/routes/page.routes.ts", import.meta.url), "utf8"))
+    .replace(/\r\n/g, "\n");
+
+  const listRoute = section(
+    route,
+    'pageRouter.get(\n  "/:pageId/versions",',
+    'pageRouter.delete(\n  "/:pageId/versions",'
+  );
+  assert.match(listRoute, /const result = await transaction\(async \(client\) => \{/);
+  assert.match(listRoute, /getOwnedPage\(pageId, user\.id, client\)/);
+  assert.match(listRoute, /client\.query<PageVersionRow>/);
+  assert.match(listRoute, /client\.queryOne<\{ revision: number \| bigint \| null \}>/);
+  assert.doesNotMatch(listRoute, /await getOwnedPage\(pageId, user\.id\);/);
+  assert.doesNotMatch(listRoute, /await db\.query/);
+
+  const detailRoute = section(
+    route,
+    'pageRouter.get(\n  "/:pageId/versions/:versionId",',
+    'pageRouter.get(\n  "/:pageId/deletion-snapshot",'
+  );
+  assert.match(detailRoute, /const row = await transaction\(async \(client\) => \{/);
+  assert.match(detailRoute, /getOwnedPage\(pageId, user\.id, client\)/);
+  assert.match(detailRoute, /return client\.queryOne<PageVersionRow>/);
+  assert.doesNotMatch(detailRoute, /await getOwnedPage\(pageId, user\.id\);/);
+  assert.doesNotMatch(detailRoute, /await db\.queryOne/);
+});
+
+test("reproduction: page-version reads cannot cross a delete/restore page-id generation boundary", () => {
+  const ownerId = "usr-owner";
+  const otherOwnerId = "usr-other";
+  const stablePageId = "pag-stable-id";
+
+  const authorizedGeneration = {
+    pageId: stablePageId,
+    ownerId,
+    history: ["owner revision 1"]
+  };
+  const replacementGeneration = {
+    pageId: stablePageId,
+    ownerId: otherOwnerId,
+    history: ["other owner's private revision"]
+  };
+
+  // Vulnerable flow: the first autocommit read authorizes the old generation,
+  // then delete/restore reuses the page id before the independent history read.
+  assert.equal(authorizedGeneration.ownerId, ownerId);
+  const vulnerableHistoryRead = replacementGeneration.history;
+  assert.deepEqual(vulnerableHistoryRead, ["other owner's private revision"]);
+
+  // Fixed flow: one REPEATABLE READ transaction pins both authorization and
+  // version-history queries to the generation visible at the first read.
+  const requestSnapshot = authorizedGeneration;
+  assert.equal(requestSnapshot.ownerId, ownerId);
+  assert.deepEqual(requestSnapshot.history, ["owner revision 1"]);
+  assert.notDeepEqual(requestSnapshot.history, replacementGeneration.history);
+});

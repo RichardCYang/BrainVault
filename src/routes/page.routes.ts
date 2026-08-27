@@ -846,30 +846,37 @@ pageRouter.get(
       const user = requireUser(req.user);
       const pageId = String(req.params.pageId);
       const query = getValidatedQuery<z.infer<typeof pageVersionListQuerySchema>>(req);
-      const page = await getOwnedPage(pageId, user.id);
-      const rows = await db.query<PageVersionRow>(
-        `SELECT id, page_id, revision, page_edit_version, page_content_version,
-                actors, source, change_count, change_summary, created_at
-         FROM page_versions
-         WHERE page_id = ?${query.cursor ? " AND id < ?" : ""}
-         ORDER BY id DESC
-         LIMIT ?`,
-        query.cursor ? [pageId, query.cursor, query.limit + 1] : [pageId, query.limit + 1]
-      );
-      const pageRows = rows.slice(0, query.limit);
-      const latest = await db.queryOne<{ revision: number | bigint | null }>(
-        "SELECT MAX(revision) AS revision FROM page_versions WHERE page_id = ?",
-        [pageId]
-      );
+      // Bind ownership and history reads to one database generation. Workspace
+      // restore can delete/recreate a stable page id; separate autocommit reads
+      // could otherwise authorize the old owned page and return replacement history.
+      const result = await transaction(async (client) => {
+        const page = await getOwnedPage(pageId, user.id, client);
+        const rows = await client.query<PageVersionRow>(
+          `SELECT id, page_id, revision, page_edit_version, page_content_version,
+                  actors, source, change_count, change_summary, created_at
+           FROM page_versions
+           WHERE page_id = ?${query.cursor ? " AND id < ?" : ""}
+           ORDER BY id DESC
+           LIMIT ?`,
+          query.cursor ? [pageId, query.cursor, query.limit + 1] : [pageId, query.limit + 1]
+        );
+        const pageRows = rows.slice(0, query.limit);
+        const latest = await client.queryOne<{ revision: number | bigint | null }>(
+          "SELECT MAX(revision) AS revision FROM page_versions WHERE page_id = ?",
+          [pageId]
+        );
+        return { page, rows, pageRows, latest };
+      });
       res.setHeader("Cache-Control", "private, no-store");
       res.json({
         current: {
-          revision: Number(latest?.revision ?? 0),
-          pageVersion: Number(page.edit_version ?? 1),
-          contentVersion: Number(page.content_version ?? 1)
+          revision: Number(result.latest?.revision ?? 0),
+          pageVersion: Number(result.page.edit_version ?? 1),
+          contentVersion: Number(result.page.content_version ?? 1)
         },
-        versions: pageRows.map(mapPageVersionListRow),
-        nextCursor: rows.length > query.limit ? String(pageRows.at(-1)?.id ?? "") : null
+        versions: result.pageRows.map(mapPageVersionListRow),
+        nextCursor:
+          result.rows.length > query.limit ? String(result.pageRows.at(-1)?.id ?? "") : null
       });
     } catch (error) {
       next(error);
@@ -1026,14 +1033,18 @@ pageRouter.get(
       const user = requireUser(req.user);
       const pageId = String(req.params.pageId);
       const versionId = String(req.params.versionId);
-      await getOwnedPage(pageId, user.id);
-      const row = await db.queryOne<PageVersionRow>(
-        `SELECT id, page_id, revision, page_edit_version, page_content_version,
-                actors, source, change_count, change_summary, changes, created_at
-         FROM page_versions
-         WHERE page_id = ? AND id = ?`,
-        [pageId, versionId]
-      );
+      // Keep the owner check and version lookup in the same repeatable-read
+      // snapshot so a delete/restore id reuse cannot cross the authorization boundary.
+      const row = await transaction(async (client) => {
+        await getOwnedPage(pageId, user.id, client);
+        return client.queryOne<PageVersionRow>(
+          `SELECT id, page_id, revision, page_edit_version, page_content_version,
+                  actors, source, change_count, change_summary, changes, created_at
+           FROM page_versions
+           WHERE page_id = ? AND id = ?`,
+          [pageId, versionId]
+        );
+      });
       if (!row) throw notFound("Page version");
       res.setHeader("Cache-Control", "private, no-store");
       res.json({ version: mapPageVersionDetailRow(row) });
