@@ -819,8 +819,13 @@ pageRouter.get("/:pageId", validate({ params: idParamSchema }), async (req, res,
   try {
     const user = requireUser(req.user);
     const pageId = String(req.params.pageId);
+    // Keep the access decision and every page-generation-dependent read in one
+    // REPEATABLE READ snapshot. A workspace restore can delete/recreate the same
+    // page id; without a shared snapshot, a collaborator authorized on the old
+    // generation could otherwise receive blocks from the restored private one.
+    const page = await transaction((client) => getPageResponse(pageId, user.id, client));
     res.setHeader("Cache-Control", "private, no-store");
-    res.json({ page: await getPageResponse(pageId, user.id) });
+    res.json({ page });
   } catch (error) {
     next(error);
   }
@@ -1533,20 +1538,24 @@ pageRouter.get("/:pageId/render", validate({ params: idParamSchema }), async (re
   try {
     const user = requireUser(req.user);
     const pageId = String(req.params.pageId);
-    await getPageAccess(pageId, user.id);
-    const rows = await db.query<BlockRow>(
-      "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
-      [pageId]
-    );
+    const html = await transaction(async (client) => {
+      // Keep collaborator authorization and rendered block reads on the same
+      // page generation when a workspace restore reuses stable page ids.
+      await getPageAccess(pageId, user.id, client);
+      const rows = await client.query<BlockRow>(
+        "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
+        [pageId]
+      );
 
-    const html = rows
-      .map((block) => {
-        const blockHtml = block.type === "CALLOUT" || block.html_cache === null
-          ? renderBlockHtml(block.type, block.markdown, Boolean(block.checked), block.metadata)
-          : sanitizeRenderedBlockHtml(block.type, block.html_cache);
-        return `<section data-block-id="${escapeHtmlAttribute(block.id)}" data-block-type="${escapeHtmlAttribute(block.type)}">${blockHtml}</section>`;
-      })
-      .join("\n");
+      return rows
+        .map((block) => {
+          const blockHtml = block.type === "CALLOUT" || block.html_cache === null
+            ? renderBlockHtml(block.type, block.markdown, Boolean(block.checked), block.metadata)
+            : sanitizeRenderedBlockHtml(block.type, block.html_cache);
+          return `<section data-block-id="${escapeHtmlAttribute(block.id)}" data-block-type="${escapeHtmlAttribute(block.type)}">${blockHtml}</section>`;
+        })
+        .join("\n");
+    });
 
     res.setHeader("Cache-Control", "private, no-store");
     res.json({ html });

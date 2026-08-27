@@ -1077,29 +1077,40 @@ blockRouter.get("/blocks/:blockId/attachment", validate({ params: idParamSchema 
   try {
     const user = requireUser(req.user);
     const blockId = String(req.params.blockId);
-    const { block, access } = await assertAccessibleBlock(blockId, user.id);
-    if (block.type !== "ATTACHMENT") throw notFound("Attachment");
+    const initial = await assertAccessibleBlock(blockId, user.id);
+    if (initial.block.type !== "ATTACHMENT") throw notFound("Attachment");
+    const ownerId = initial.access.page.owner_id;
 
-    const ownerId = access.page.owner_id;
-    const info = getAttachmentInfo(toBlock(block).metadata);
-    if (!info || !(await attachmentFileExists(ownerId, blockId))) throw notFound("Attachment file");
+    // Workspace restore swaps the owner's complete attachment directory while
+    // holding this same user-row lock. Revalidate access after taking the lock
+    // and hold it through streaming so an old shared generation can never open
+    // or continue into a restored private file that reused the same block id.
+    await withUserAttachmentLock(ownerId, async (client) => {
+      const { block, access } = await assertAccessibleBlock(blockId, user.id, client);
+      if (access.page.owner_id !== ownerId || block.type !== "ATTACHMENT") throw notFound("Attachment");
 
-    res.setHeader("Cache-Control", "private, no-store");
-    res.setHeader("Content-Type", info.mimeType);
-    res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'");
-    res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.download(
-      getAttachmentFilePath(ownerId, blockId),
-      sanitizeAttachmentDownloadFilename(info.originalName),
-      (error) => {
-        if (!error) return;
-        if (!res.headersSent) next(error);
-        else console.error("Attachment download failed", { blockId, errorName: error.name });
-      }
-    );
+      const info = getAttachmentInfo(toBlock(block).metadata);
+      if (!info || !(await attachmentFileExists(ownerId, blockId))) throw notFound("Attachment file");
+
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Content-Type", info.mimeType);
+      res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'");
+      res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      await new Promise<void>((resolve, reject) => {
+        res.download(
+          getAttachmentFilePath(ownerId, blockId),
+          sanitizeAttachmentDownloadFilename(info.originalName),
+          (error) => error ? reject(error) : resolve()
+        );
+      });
+    });
   } catch (error) {
-    next(error);
+    if (!res.headersSent) next(error);
+    else console.error("Attachment download failed", {
+      blockId: String(req.params.blockId),
+      errorName: error instanceof Error ? error.name : "UnknownError"
+    });
   }
 });
 
