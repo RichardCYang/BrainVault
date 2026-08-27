@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { db } from "../lib/db.js";
+import { transaction } from "../lib/db.js";
 import { toSqlLikeContainsPattern } from "../lib/sql-like.js";
 import { requireAuth } from "../middleware/auth.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
@@ -31,28 +31,36 @@ searchRouter.get("/", validate({ query: searchQuerySchema }), async (req, res, n
     const query = getValidatedQuery<z.infer<typeof searchQuerySchema>>(req);
     const search = toSqlLikeContainsPattern(query.q);
 
-    const pages = await db.query<PageRow>(
-      `SELECT p.* FROM pages p
-       WHERE (p.owner_id = ? OR EXISTS (
-         SELECT 1 FROM page_shares ps WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
-       )) AND p.is_archived = 0 AND p.title LIKE ? ESCAPE '!'
-       ORDER BY p.updated_at DESC
-       LIMIT ?`,
-      [user.id, user.id, search, query.limit]
-    );
+    // Keep page and block hits in one database generation. Workspace restore can
+    // delete/recreate stable page IDs; separate autocommit reads could otherwise
+    // assemble one search response from different workspace generations.
+    const { pages, blocks } = await transaction(async (client) => {
+      const pages = await client.query<PageRow>(
+        `SELECT p.* FROM pages p
+         WHERE (p.owner_id = ? OR EXISTS (
+           SELECT 1 FROM page_shares ps WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+         )) AND p.is_archived = 0 AND p.title LIKE ? ESCAPE '!'
+         ORDER BY p.updated_at DESC
+         LIMIT ?`,
+        [user.id, user.id, search, query.limit]
+      );
 
-    const blocks = await db.query<BlockRow & { page_title: string; page_icon: string | null }>(
-      `SELECT b.*, p.title AS page_title, p.icon AS page_icon
-       FROM blocks b
-       INNER JOIN pages p ON p.id = b.page_id
-       WHERE (p.owner_id = ? OR EXISTS (
-         SELECT 1 FROM page_shares ps WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
-       )) AND p.is_archived = 0 AND b.markdown LIKE ? ESCAPE '!'
-       ORDER BY b.updated_at DESC
-       LIMIT ?`,
-      [user.id, user.id, search, query.limit]
-    );
+      const blocks = await client.query<BlockRow & { page_title: string; page_icon: string | null }>(
+        `SELECT b.*, p.title AS page_title, p.icon AS page_icon
+         FROM blocks b
+         INNER JOIN pages p ON p.id = b.page_id
+         WHERE (p.owner_id = ? OR EXISTS (
+           SELECT 1 FROM page_shares ps WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+         )) AND p.is_archived = 0 AND b.markdown LIKE ? ESCAPE '!'
+         ORDER BY b.updated_at DESC
+         LIMIT ?`,
+        [user.id, user.id, search, query.limit]
+      );
 
+      return { pages, blocks };
+    });
+
+    res.setHeader("Cache-Control", "private, no-store");
     res.json({
       results: [
         ...pages.map((page) => ({
