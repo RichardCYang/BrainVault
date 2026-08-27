@@ -64,8 +64,8 @@ describe("Navigation collapse preferences", () => {
       ]
     });
     expect(database.query).toHaveBeenCalledWith(
-      expect.stringContaining("FROM user_navigation_collapsed_pages"),
-      [user.id]
+      expect.stringContaining("FROM user_navigation_collapsed_pages np"),
+      [user.id, user.id, user.id]
     );
     expect(database.query).toHaveBeenCalledWith(
       expect.stringContaining("FROM user_navigation_page_order no"),

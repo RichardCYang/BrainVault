@@ -384,15 +384,24 @@ authRouter.get("/me", requireAuth, async (req, res) => {
 authRouter.get("/navigation-preferences", requireAuth, async (req, res, next) => {
   try {
     const currentUser = requireUser(req.user);
-    const [collapsedRows, orderRows] = await Promise.all([
-      db.query<{ page_id: string }>(
-        `SELECT page_id
-         FROM user_navigation_collapsed_pages
-         WHERE user_id = ?
-         ORDER BY page_id`,
-        [currentUser.id]
-      ),
-      db.query<{ page_id: string; sort_order: number }>(
+    const { collapsedRows, orderRows } = await transaction(async (client) => {
+      // A collapsed preference can outlive a sharing grant. Filter both halves
+      // of the navigation response through current page access in one repeatable-
+      // read snapshot so revocation/restore cannot disclose a stale page id or
+      // combine preference rows from different workspace generations.
+      const collapsedRows = await client.query<{ page_id: string }>(
+        `SELECT np.page_id
+         FROM user_navigation_collapsed_pages np
+         INNER JOIN pages p ON p.id = np.page_id
+         WHERE np.user_id = ?
+           AND (p.owner_id = ? OR EXISTS (
+             SELECT 1 FROM page_shares ps
+             WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+           ))
+         ORDER BY np.page_id`,
+        [currentUser.id, currentUser.id, currentUser.id]
+      );
+      const orderRows = await client.query<{ page_id: string; sort_order: number }>(
         `SELECT no.page_id, no.sort_order
          FROM user_navigation_page_order no
          INNER JOIN pages p ON p.id = no.page_id
@@ -403,8 +412,9 @@ authRouter.get("/navigation-preferences", requireAuth, async (req, res, next) =>
            ))
          ORDER BY no.sort_order ASC, no.page_id ASC`,
         [currentUser.id, currentUser.id, currentUser.id]
-      )
-    ]);
+      );
+      return { collapsedRows, orderRows };
+    });
     res.setHeader("Cache-Control", "private, no-store");
     res.json({
       collapsedPageIds: collapsedRows.map((row) => row.page_id),
