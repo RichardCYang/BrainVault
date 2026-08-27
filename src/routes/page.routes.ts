@@ -612,46 +612,53 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
       whereParams.push(cursor.createdAt, cursor.createdAt, cursor.id);
     }
 
-    const rows = await db.query<
-      PageRow & { block_count: number; child_count: number; cursor_created_at: string }
-    >(
-      `SELECT ${pageSummaryProjection("p")},
-        DATE_FORMAT(p.created_at, '%Y-%m-%d %H:%i:%s.%f') AS cursor_created_at,
-        (SELECT COUNT(*) FROM blocks b WHERE b.page_id = p.id) AS block_count,
-        (SELECT COUNT(*) FROM pages c
-          WHERE c.parent_page_id = p.id
-            AND (c.owner_id = ? OR EXISTS (
-              SELECT 1 FROM page_shares child_share
-              WHERE child_share.page_id = c.id AND child_share.user_id = ? AND child_share.permission = 'EDIT'
-            ))) AS child_count
-       FROM pages p
-       WHERE ${where.join(" AND ")}
-       ORDER BY p.created_at DESC, p.id DESC
-       LIMIT ?`,
-      [user.id, user.id, ...whereParams, query.limit + 1]
-    );
+    const result = await transaction(async (client) => {
+      // Keep the list membership decision, per-page authorization, and tags in
+      // one REPEATABLE READ snapshot. Workspace restore can reuse stable page
+      // ids; separate autocommit reads could otherwise combine authorization
+      // from the old shared generation with tags from a restored private one.
+      const rows = await client.query<
+        PageRow & { block_count: number; child_count: number; cursor_created_at: string }
+      >(
+        `SELECT ${pageSummaryProjection("p")},
+          DATE_FORMAT(p.created_at, '%Y-%m-%d %H:%i:%s.%f') AS cursor_created_at,
+          (SELECT COUNT(*) FROM blocks b WHERE b.page_id = p.id) AS block_count,
+          (SELECT COUNT(*) FROM pages c
+            WHERE c.parent_page_id = p.id
+              AND (c.owner_id = ? OR EXISTS (
+                SELECT 1 FROM page_shares child_share
+                WHERE child_share.page_id = c.id AND child_share.user_id = ? AND child_share.permission = 'EDIT'
+              ))) AS child_count
+         FROM pages p
+         WHERE ${where.join(" AND ")}
+         ORDER BY p.created_at DESC, p.id DESC
+         LIMIT ?`,
+        [user.id, user.id, ...whereParams, query.limit + 1]
+      );
 
-    const pageRows = rows.slice(0, query.limit);
-    const pages = await Promise.all(
-      pageRows.map(async (row) => {
-        const access = await getPageAccess(row.id, user.id);
+      const pageRows = rows.slice(0, query.limit);
+      const pages = [];
+      for (const row of pageRows) {
+        const access = await getPageAccess(row.id, user.id, client);
         const page = toPage(row);
         if (access.role !== "OWNER") page.parentPageId = null;
-        return {
+        pages.push({
           ...page,
           owner: access.owner,
           access: toAccessPayload(access),
           collaboration: toCollaborationPayload(access),
-          tags: await getPageTags(row.id),
+          tags: await getPageTags(row.id, client),
           counts: { blocks: row.block_count, children: row.child_count }
-        };
-      })
-    );
-    const nextCursor = rows.length > query.limit
-      ? encodePageListCursor(pageRows[pageRows.length - 1])
-      : null;
+        });
+      }
+      const nextCursor = rows.length > query.limit
+        ? encodePageListCursor(pageRows[pageRows.length - 1])
+        : null;
+      return { pages, nextCursor };
+    });
 
-    res.json({ pages, nextCursor });
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json(result);
   } catch (error) {
     next(error);
   }

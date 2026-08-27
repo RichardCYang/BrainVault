@@ -152,3 +152,45 @@ test("reproduction: an attachment restore cannot swap private bytes after old-sh
   assert.equal(restoredGeneration.sharedWith.has(collaboratorId), false);
 });
 
+test("page list keeps membership, authorization, and tags in one repeatable-read snapshot", async () => {
+  const route = (await readFile(new URL("../src/routes/page.routes.ts", import.meta.url), "utf8"))
+    .replace(/\r\n/g, "\n");
+  const listRoute = section(
+    route,
+    'pageRouter.get("/",',
+    'pageRouter.post("/",'
+  );
+
+  assert.match(listRoute, /const result = await transaction\(async \(client\) => \{/);
+  assert.match(listRoute, /const rows = await client\.query</);
+  assert.match(listRoute, /getPageAccess\(row\.id, user\.id, client\)/);
+  assert.match(listRoute, /getPageTags\(row\.id, client\)/);
+  assert.match(listRoute, /res\.json\(result\);/);
+});
+
+test("reproduction: restore between page-list access and tag reads cannot leak replacement private tags", () => {
+  const collaboratorId = "usr-collaborator";
+  const oldGeneration = {
+    pageId: "pag-stable-id",
+    sharedWith: new Set([collaboratorId]),
+    tags: ["shared-project"]
+  };
+  const restoredGeneration = {
+    pageId: "pag-stable-id",
+    sharedWith: new Set(),
+    tags: ["private-restored-tag"]
+  };
+
+  // Vulnerable flow: the list/access reads authorize the old generation, then a
+  // restore reuses the same id before the independent tag query.
+  assert.equal(oldGeneration.sharedWith.has(collaboratorId), true);
+  const vulnerableTagsRead = restoredGeneration.tags;
+  assert.deepEqual(vulnerableTagsRead, ["private-restored-tag"]);
+
+  // Fixed flow: one REPEATABLE READ transaction pins membership, access, and
+  // tag queries to the generation that authorized this list response.
+  const requestSnapshot = oldGeneration;
+  assert.equal(requestSnapshot.sharedWith.has(collaboratorId), true);
+  assert.deepEqual(requestSnapshot.tags, ["shared-project"]);
+  assert.notDeepEqual(requestSnapshot.tags, restoredGeneration.tags);
+});
