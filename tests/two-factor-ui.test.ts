@@ -6,6 +6,7 @@ const styles = readFileSync(new URL("../public/styles.css", import.meta.url), "u
 const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const authRoutes = readFileSync(new URL("../src/routes/auth.routes.ts", import.meta.url), "utf8");
 const mfaRoutes = readFileSync(new URL("../src/routes/mfa.routes.ts", import.meta.url), "utf8");
+const authRateLimits = readFileSync(new URL("../src/middleware/auth-rate-limit.ts", import.meta.url), "utf8");
 const migration = readFileSync(new URL("../migrations/010_two_factor_auth.sql", import.meta.url), "utf8");
 
 describe("Two-step verification UI and persistence", () => {
@@ -48,5 +49,17 @@ describe("Two-step verification UI and persistence", () => {
     expect(mfaRoutes).toContain("allowCredentials: passkeys.map");
     expect(mfaRoutes).toContain("last_used_step");
     expect(mfaRoutes).toContain("used_at = CURRENT_TIMESTAMP(3)");
+  });
+
+  it("rate-limits passkey option generation even when the option response succeeds", () => {
+    expect(mfaRoutes).toMatch(
+      /"\/login\/passkey\/options",[\s\S]*?mfaLoginOptionsIpRateLimit,[\s\S]*?mfaLoginOptionsAccountRateLimit,[\s\S]*?validate\(\{ body: mfaTokenSchema \}\)/
+    );
+    const ipLimiter = /export const mfaLoginOptionsIpRateLimit = rateLimit\(\{([\s\S]*?)\n\}\);/.exec(authRateLimits)?.[1] ?? "";
+    const accountLimiter = /export const mfaLoginOptionsAccountRateLimit = rateLimit\(\{([\s\S]*?)\n\}\);/.exec(authRateLimits)?.[1] ?? "";
+    expect(ipLimiter).toContain("keyGenerator: clientIpKey");
+    expect(accountLimiter).toContain("keyGenerator: mfaAccountKey");
+    expect(ipLimiter).not.toContain("skipSuccessfulRequests");
+    expect(accountLimiter).not.toContain("skipSuccessfulRequests");
   });
 });

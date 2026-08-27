@@ -43,6 +43,8 @@ import {
   accountReauthenticationRateLimit,
   mfaLoginAccountRateLimit,
   mfaLoginIpRateLimit,
+  mfaLoginOptionsAccountRateLimit,
+  mfaLoginOptionsIpRateLimit,
   mfaSetupRateLimit
 } from "../middleware/auth-rate-limit.js";
 import { validate } from "../middleware/validate.js";
@@ -1054,6 +1056,8 @@ mfaRouter.post(
   "/login/passkey/options",
   requireSameOriginBrowserRequest,
   requireJsonRequestBody,
+  mfaLoginOptionsIpRateLimit,
+  mfaLoginOptionsAccountRateLimit,
   validate({ body: mfaTokenSchema }),
   async (req, res, next) => {
     try {

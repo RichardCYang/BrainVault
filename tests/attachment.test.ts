@@ -21,6 +21,8 @@ describe("Attachment metadata", () => {
   it("removes client paths and control characters from display filenames", () => {
     expect(sanitizeAttachmentFilename("../../private/report.pdf")).toBe("report.pdf");
     expect(sanitizeAttachmentFilename("C:\\Users\\me\\notes\u0000.txt")).toBe("notes_.txt");
+    expect(sanitizeAttachmentFilename("invoice\u202Excod.pif")).toBe("invoice_xcod.pif");
+    expect(sanitizeAttachmentFilename("hidden\u200Bname.txt")).toBe("hidden_name.txt");
     expect(sanitizeAttachmentFilename("..")).toBe("attachment");
   });
 
@@ -33,7 +35,14 @@ describe("Attachment metadata", () => {
     expect(normalizeAttachmentMimeType("text/html\r\nX-Test: yes")).toBe("application/octet-stream");
     expect(normalizeAttachmentMimeType("image/svg+xml")).toBe("application/octet-stream");
     expect(isBlockedAttachmentFilename("payload.svg")).toBe(true);
+    expect(isBlockedAttachmentFilename("payload.pif")).toBe(true);
+    expect(isBlockedAttachmentFilename("payload.application")).toBe(true);
+    expect(isBlockedAttachmentFilename("payload.sct")).toBe(true);
+    expect(isBlockedAttachmentFilename("payload.chm")).toBe(true);
+    expect(isBlockedAttachmentFilename("payload.shs")).toBe(true);
+    expect(isBlockedAttachmentFilename("payload.jnlp")).toBe(true);
     expect(sanitizeAttachmentDownloadFilename("legacy.html")).toBe("legacy.html.download");
+    expect(sanitizeAttachmentDownloadFilename("invoice\u202Excod.pif")).toBe("invoice_xcod.pif.download");
     expect(formatAttachmentSize(1536)).toBe("1.5 KB");
   });
 

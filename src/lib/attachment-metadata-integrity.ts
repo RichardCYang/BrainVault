@@ -91,12 +91,14 @@ const activeAttachmentMimeTypes = new Set([
 ]);
 
 const blockedAttachmentExtensions = new Set([
-  "apk", "app", "appinstaller", "asp", "aspx", "bat", "bash", "cgi", "cmd", "com", "cpl",
-  "crt", "desktop", "dll", "dmg", "exe", "gadget", "hta", "htm", "html", "iso", "jar", "js",
-  "jse", "jsp", "lnk", "mjs", "msi", "msp", "mst", "phtml", "php", "phar", "pl", "ps1", "py",
-  "rb", "reg", "scf", "scr", "shtml", "sh", "svg", "svgz", "swf", "url", "vbs", "vbe", "wasm",
-  "wsf", "wsh", "xhtml", "xml", "xsl", "xslt", "zsh"
+  "apk", "app", "application", "appinstaller", "asp", "aspx", "bat", "bash", "cgi", "chm", "cmd",
+  "com", "cpl", "crt", "desktop", "dll", "dmg", "exe", "gadget", "hta", "htm", "html", "iso",
+  "jar", "jnlp", "js", "jse", "jsp", "lnk", "mjs", "msi", "msp", "mst", "phtml", "php", "phar",
+  "pif", "pl", "ps1", "py", "rb", "reg", "scf", "scr", "sct", "sh", "shs", "shtml", "svg", "svgz",
+  "swf", "url", "vbs", "vbe", "wasm", "wsf", "wsh", "xhtml", "xml", "xsl", "xslt", "zsh"
 ]);
+
+const unsafeAttachmentFilenameFormatting = /[\u0000-\u001f\u007f\u00ad\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g;
 
 function fail(path: string, reason: string): never {
   throw new AttachmentMetadataIntegrityError(path, reason);
@@ -146,7 +148,7 @@ export function sanitizeAttachmentFilename(value: string) {
     .replaceAll("\\", "/")
     .split("/")
     .pop()
-    ?.replace(/[\u0000-\u001f\u007f]/g, "_")
+    ?.replace(unsafeAttachmentFilenameFormatting, "_")
     .trim();
 
   const safeName = !basename || basename === "." || basename === ".." ? "attachment" : basename;

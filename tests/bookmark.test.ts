@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
+import { performance } from "node:perf_hooks";
 import { describe, expect, it, vi } from "vitest";
 import {
   createDatabaseFaviconDataUrl,
@@ -67,6 +68,21 @@ describe("bookmark OpenGraph parsing", () => {
     expect(preview.siteName).toBe("docs.example.org");
     expect(preview.faviconUrl).toBe("https://docs.example.org/favicon.ico");
     expect(preview.imageUrl).toBe("");
+  });
+
+  it("keeps malformed attacker-sized tag scans linear", () => {
+    const maliciousHead = "<meta ".repeat(Math.floor((256 * 1024) / 6));
+    const startedAt = performance.now();
+    const preview = parseBookmarkPreview(maliciousHead, "https://example.com/source");
+    const databaseMetadata = parseDatabaseUrlDocumentMetadata(
+      "<link ".repeat(Math.floor((256 * 1024) / 6)),
+      "https://example.com/source"
+    );
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(preview.title).toBe("example.com");
+    expect(databaseMetadata.title).toBe("example.com");
+    expect(elapsedMs).toBeLessThan(2_000);
   });
 });
 
@@ -286,7 +302,9 @@ describe("bookmark network address selection", () => {
     expect(envSource).toContain('BOOKMARK_FETCH_ALLOWED_PORTS');
     expect(bookmarkSource).toContain('isSelfOrSubdomainBookmarkFetchHost(url.hostname)');
     expect(bookmarkSource).toContain('if (hostPolicy === "bookmark" && !isBookmarkFetchHostAllowed(url.hostname))');
-    expect(bookmarkSource).toContain('const addresses = await resolvePublicAddresses(url)');
+    expect(bookmarkSource).toContain('const addresses = await resolvePublicAddresses(url, deadline)');
+    expect(bookmarkSource).toContain('new dns.promises.Resolver({ timeout: Math.max(1, remainingTime), tries: 1 })');
+    expect(bookmarkSource).not.toContain('dns.promises.lookup(hostname');
     expect(bookmarkSource).toContain('lookup: createPinnedLookup(addresses)');
     expect(bookmarkSource).toContain('fetchHtml(nextUrl, redirectsLeft - 1, deadline, hostPolicy)');
     expect(bookmarkSource).toContain('fetchHtml(value, bookmarkLimits.redirects, deadline, "public")');

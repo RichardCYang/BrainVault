@@ -2085,9 +2085,8 @@ async function importRows(
   collaboratorNavigation: RestoreCollaboratorNavigationPlan,
   stagedPageCoverDir: string
 ) {
-  const restoreIconValue = (value: string | null) => manifest.version >= uploadedAssetBackupVersion
-    ? rebindCustomIconValue(value, manifest.source.userId, userId)
-    : normalizeIconValue(value);
+  const restoreIconValue = (value: string | null) =>
+    rebindCustomIconValue(value, manifest.source.userId, userId);
   // Page-delete receipts can replay post-COMMIT attachment cleanup. A restore
   // starts a new attachment filesystem generation and may intentionally restore
   // unreferenced files as retainedAttachments, so pre-restore delete receipts

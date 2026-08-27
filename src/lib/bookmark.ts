@@ -225,7 +225,15 @@ export function renderBookmarkHtml(metadata: unknown) {
   return `<div class="rendered-bookmark-block">${title}<div class="rendered-bookmarks rendered-bookmarks--gallery">${items.join("")}</div></div>`;
 }
 
-async function resolvePublicAddresses(url: URL): Promise<ResolvedAddress[]> {
+function isDnsNoDataError(error: unknown) {
+  const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+  return code === "ENODATA" || code === "ENOTFOUND";
+}
+
+async function resolvePublicAddresses(
+  url: URL,
+  deadline: number = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS
+): Promise<ResolvedAddress[]> {
   const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (isPrivateOrLocalHostname(hostname)) {
     throw new ApiError(400, "BOOKMARK_URL_BLOCKED", "Local and private network addresses are not allowed");
@@ -234,11 +242,43 @@ async function resolvePublicAddresses(url: URL): Promise<ResolvedAddress[]> {
   const literalFamily = net.isIP(hostname);
   let addresses: Array<{ address: string; family: number }>;
   try {
-    addresses = literalFamily
-      ? [{ address: hostname, family: literalFamily }]
-      : await dns.promises.lookup(hostname, { all: true, order: "ipv4first" });
+    if (literalFamily) {
+      addresses = [{ address: hostname, family: literalFamily }];
+    } else {
+      const remainingTime = deadline - Date.now();
+      if (remainingTime <= 0) throw new ApiError(504, "BOOKMARK_FETCH_TIMEOUT", "The bookmark page took too long to respond");
+
+      // dns.lookup() runs getaddrinfo() on libuv's shared worker pool and cannot be
+      // cancelled. Use the asynchronous DNS resolver instead so attacker-controlled
+      // hosts cannot occupy the worker pool beyond the bookmark request deadline.
+      const resolver = new dns.promises.Resolver({ timeout: Math.max(1, remainingTime), tries: 1 });
+      const cancelTimer = setTimeout(() => resolver.cancel(), remainingTime);
+      cancelTimer.unref?.();
+      const [ipv4, ipv6] = await Promise.allSettled([
+        resolver.resolve4(hostname),
+        resolver.resolve6(hostname)
+      ]).finally(() => clearTimeout(cancelTimer));
+
+      const unexpectedFailure = [ipv4, ipv6].find(
+        (result) => result.status === "rejected" && !isDnsNoDataError(result.reason)
+      );
+      if (unexpectedFailure?.status === "rejected") throw unexpectedFailure.reason;
+
+      addresses = [
+        ...(ipv4.status === "fulfilled" ? ipv4.value.map((address) => ({ address, family: 4 })) : []),
+        ...(ipv6.status === "fulfilled" ? ipv6.value.map((address) => ({ address, family: 6 })) : [])
+      ];
+      if (!addresses.length) {
+        const resolutionFailure = [ipv4, ipv6].find((result) => result.status === "rejected");
+        if (resolutionFailure?.status === "rejected") throw resolutionFailure.reason;
+      }
+    }
   } catch (error) {
     const systemCode = error && typeof error === "object" && "code" in error ? String(error.code) : undefined;
+    if (error instanceof ApiError || systemCode === "ETIMEOUT" || systemCode === "ECANCELLED") {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(504, "BOOKMARK_FETCH_TIMEOUT", "The bookmark page took too long to respond");
+    }
     throw new ApiError(422, "BOOKMARK_FETCH_FAILED", "The bookmark hostname could not be resolved", {
       reason: "dns",
       systemCode
@@ -309,7 +349,8 @@ type BookmarkFetchHostPolicy = "bookmark" | "public";
 
 async function validateFetchUrl(
   value: string | URL,
-  hostPolicy: BookmarkFetchHostPolicy = "bookmark"
+  hostPolicy: BookmarkFetchHostPolicy = "bookmark",
+  deadline: number = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS
 ) {
   const normalized = normalizeBookmarkUrl(String(value));
   if (!normalized) {
@@ -326,7 +367,7 @@ async function validateFetchUrl(
   if (!env.BOOKMARK_FETCH_ALLOWED_PORTS.includes(effectivePort)) {
     throw new ApiError(400, "BOOKMARK_PORT_BLOCKED", "Bookmark previews are limited to approved web ports");
   }
-  const addresses = await resolvePublicAddresses(url);
+  const addresses = await resolvePublicAddresses(url, deadline);
   return { url, addresses };
 }
 
@@ -362,7 +403,7 @@ async function fetchHtml(
   deadline: number = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS,
   hostPolicy: BookmarkFetchHostPolicy = "bookmark"
 ): Promise<HtmlResponse> {
-  const { url, addresses } = await validateFetchUrl(value, hostPolicy);
+  const { url, addresses } = await validateFetchUrl(value, hostPolicy, deadline);
   const client = url.protocol === "https:" ? https : http;
   const remainingTime = deadline - Date.now();
   if (remainingTime <= 0) {
@@ -561,21 +602,93 @@ function firstValue(map: Map<string, string>, keys: string[]) {
   return "";
 }
 
+function findOpeningTag(
+  head: string,
+  opening: RegExp,
+  from: number
+): { start: number; afterName: number } | null {
+  const pattern = new RegExp(
+    opening.source,
+    opening.flags.includes("g") ? opening.flags : `${opening.flags}g`
+  );
+  pattern.lastIndex = from;
+  const match = pattern.exec(head);
+  return match ? { start: match.index, afterName: match.index + match[0].length } : null;
+}
+
+function matchOpeningTags(head: string, tagName: "meta" | "link") {
+  const tags: string[] = [];
+  let from = 0;
+  const opening = new RegExp(`<${tagName}\\b`, "i");
+  while (from < head.length) {
+    const match = findOpeningTag(head, opening, from);
+    if (!match) break;
+    const tagEnd = head.indexOf(">", match.afterName);
+    if (tagEnd === -1) break;
+    tags.push(head.slice(match.start, tagEnd + 1));
+    from = tagEnd + 1;
+  }
+  return tags;
+}
+
+function extractTitleContent(head: string) {
+  const opening = findOpeningTag(head, /<title\b/i, 0);
+  if (!opening) return "";
+  const tagEnd = head.indexOf(">", opening.afterName);
+  if (tagEnd === -1) return "";
+
+  let searchFrom = tagEnd + 1;
+  for (;;) {
+    const close = findOpeningTag(head, /<\/title/i, searchFrom);
+    if (!close) return "";
+    let cursor = close.afterName;
+    while (cursor < head.length && /\s/.test(head[cursor])) cursor += 1;
+    if (head[cursor] === ">") return head.slice(tagEnd + 1, close.start);
+    searchFrom = close.afterName;
+  }
+}
+
+function extractBaseTag(head: string) {
+  const opening = findOpeningTag(head, /<base\b/i, 0);
+  if (!opening) return "";
+  const tagEnd = head.indexOf(">", opening.afterName);
+  return tagEnd === -1 ? "" : head.slice(opening.start, tagEnd + 1);
+}
+
+function stripInlineTags(value: string) {
+  let result = "";
+  let cursor = 0;
+  for (;;) {
+    const open = value.indexOf("<", cursor);
+    if (open === -1) return result + value.slice(cursor);
+    result += value.slice(cursor, open);
+    const close = value.indexOf(">", open + 1);
+    if (close === -1) return result + value.slice(open);
+    if (close === open + 1) {
+      result += "<";
+      cursor = open + 1;
+      continue;
+    }
+    result += " ";
+    cursor = close + 1;
+  }
+}
+
 export function parseBookmarkPreview(html: string, pageUrl: string | URL): BookmarkPreview {
   const finalUrl = new URL(pageUrl);
   const head = html.slice(0, bookmarkLimits.htmlBytes);
   const metadata = new Map<string, string>();
 
-  for (const tag of head.match(/<meta\b[^>]*>/gi) ?? []) {
+  for (const tag of matchOpeningTags(head, "meta")) {
     const attributes = parseAttributes(tag);
     const key = (attributes.property || attributes.name || attributes.itemprop || "").toLowerCase();
     const content = normalizeText(attributes.content, bookmarkLimits.descriptionLength);
     if (key && content && !metadata.has(key)) metadata.set(key, content);
   }
 
-  const titleTag = /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i.exec(head)?.[1] ?? "";
+  const titleTag = extractTitleContent(head);
   const title = normalizeText(
-    firstValue(metadata, ["og:title", "twitter:title"]) || decodeHtmlEntities(titleTag.replace(/<[^>]+>/g, " ")),
+    firstValue(metadata, ["og:title", "twitter:title"]) || decodeHtmlEntities(stripInlineTags(titleTag)),
     bookmarkLimits.titleLength
   ) || finalUrl.hostname;
 
@@ -586,7 +699,7 @@ export function parseBookmarkPreview(html: string, pageUrl: string | URL): Bookm
 
   const canonicalCandidates: string[] = [];
   const faviconCandidates: string[] = [];
-  for (const tag of head.match(/<link\b[^>]*>/gi) ?? []) {
+  for (const tag of matchOpeningTags(head, "link")) {
     const attributes = parseAttributes(tag);
     const rel = (attributes.rel ?? "").toLowerCase().split(/\s+/);
     if (rel.includes("canonical") && attributes.href) canonicalCandidates.push(attributes.href);
@@ -667,14 +780,14 @@ export function createDatabaseFaviconDataUrl(bytes: Buffer) {
 export function parseDatabaseUrlDocumentMetadata(html: string, pageUrl: string | URL): DatabaseUrlDocumentMetadata {
   const finalUrl = new URL(pageUrl);
   const head = html.slice(0, bookmarkLimits.htmlBytes);
-  const titleTag = /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i.exec(head)?.[1] ?? "";
+  const titleTag = extractTitleContent(head);
   const title = normalizeText(
-    decodeHtmlEntities(titleTag.replace(/<[^>]+>/g, " ")),
+    decodeHtmlEntities(stripInlineTags(titleTag)),
     bookmarkLimits.titleLength
   ) || finalUrl.hostname;
 
   let linkBaseUrl = finalUrl.toString();
-  const baseTag = /<base\b[^>]*>/i.exec(head)?.[0];
+  const baseTag = extractBaseTag(head);
   if (baseTag) {
     const baseHref = parseAttributes(baseTag).href;
     if (baseHref) linkBaseUrl = normalizeBookmarkUrl(baseHref, finalUrl) || linkBaseUrl;
@@ -682,7 +795,7 @@ export function parseDatabaseUrlDocumentMetadata(html: string, pageUrl: string |
 
   const iconUrls: string[] = [];
   const appleTouchIconUrls: string[] = [];
-  for (const tag of head.match(/<link\b[^>]*>/gi) ?? []) {
+  for (const tag of matchOpeningTags(head, "link")) {
     const attributes = parseAttributes(tag);
     if (!attributes.href) continue;
     const rel = (attributes.rel ?? "").toLowerCase().split(/\s+/).filter(Boolean);
@@ -710,7 +823,7 @@ async function fetchDatabaseFaviconBytes(
   redirectsLeft: number,
   deadline: number
 ): Promise<Buffer> {
-  const { url, addresses } = await validateFetchUrl(value, "public");
+  const { url, addresses } = await validateFetchUrl(value, "public", deadline);
   const client = url.protocol === "https:" ? https : http;
   const remainingTime = deadline - Date.now();
   if (remainingTime <= 0) throw createBookmarkFetchTimeoutError();
@@ -848,10 +961,10 @@ export async function fetchDatabaseUrlPreview(value: string): Promise<DatabaseUr
   return { title: metadata.title, faviconUrl };
 }
 
-async function normalizePublicPreviewUrl(value: string, fallback = "") {
+async function normalizePublicPreviewUrl(value: string, fallback = "", deadline = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS) {
   if (!value) return fallback;
   try {
-    const { url } = await validateFetchUrl(value);
+    const { url } = await validateFetchUrl(value, "bookmark", deadline);
     return url.toString();
   } catch {
     return fallback;
@@ -862,11 +975,11 @@ async function fetchBookmarkPreviewFromHtml(value: string, deadline: number): Pr
   const response = await fetchHtml(value, bookmarkLimits.redirects, deadline);
   const parsed = parseBookmarkPreview(response.html, response.url);
   const finalUrl = response.url.toString();
-  const pageUrl = await normalizePublicPreviewUrl(parsed.url, finalUrl);
+  const pageUrl = await normalizePublicPreviewUrl(parsed.url, finalUrl, deadline);
   const fallbackFavicon = new URL("/favicon.ico", pageUrl).toString();
   const [imageUrl, faviconUrl] = await Promise.all([
-    normalizePublicPreviewUrl(parsed.imageUrl),
-    normalizePublicPreviewUrl(parsed.faviconUrl, fallbackFavicon)
+    normalizePublicPreviewUrl(parsed.imageUrl, "", deadline),
+    normalizePublicPreviewUrl(parsed.faviconUrl, fallbackFavicon, deadline)
   ]);
 
   return {

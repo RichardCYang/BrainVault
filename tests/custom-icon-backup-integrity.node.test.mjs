@@ -21,6 +21,7 @@ test("backup v3+ makes uploaded custom icons self-contained and restorable", asy
   assert.match(transfer, /detectCustomIconFileType\(await readFile\(outputPath\)\)/);
 
   assert.match(transfer, /function rebindCustomIconValue\([\s\S]*?customIconPublicPath\(targetUserId, fileName\)/);
+  assert.match(transfer, /const restoreIconValue = \(value: string \| null\) =>\n\s*rebindCustomIconValue\(value, manifest\.source\.userId, userId\);/);
   assert.match(transfer, /restoreIconValue\(manifest\.account\.default_collection_icon\)/);
   assert.match(transfer, /page\.id, page\.title, restoreIconValue\(page\.icon\)/);
   assert.match(transfer, /DELETE FROM custom_icons WHERE user_id = \?/);

@@ -173,6 +173,27 @@ export const mfaLoginAccountRateLimit = rateLimit({
   handler
 });
 
+// Passkey option generation is still part of an unfinished MFA ceremony, so
+// successful option responses must consume the same MFA request budget instead
+// of being removed by skipSuccessfulRequests.
+export const mfaLoginOptionsIpRateLimit = rateLimit({
+  windowMs: env.AUTH_MFA_IP_WINDOW_MS,
+  limit: env.AUTH_MFA_IP_MAX,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: clientIpKey,
+  handler
+});
+
+export const mfaLoginOptionsAccountRateLimit = rateLimit({
+  windowMs: env.AUTH_MFA_ACCOUNT_WINDOW_MS,
+  limit: env.AUTH_MFA_ACCOUNT_MAX,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: mfaAccountKey,
+  handler
+});
+
 export const accountReauthenticationRateLimit = rateLimit({
   windowMs: env.AUTH_MFA_SETUP_WINDOW_MS,
   limit: env.AUTH_MFA_SETUP_MAX,
