@@ -86,6 +86,18 @@ const blockSortOrderSchema = z.number().int()
   .max(blockSortOrderLimits.max);
 const mutationIdSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
 
+const structuredMetadataKeyByBlockType = new Map<BlockRow["type"], string>([
+  ["TABLE", "table"],
+  ["KANBAN", "kanban"],
+  ["DATABASE", "database"],
+  ["TREEVIEW", "treeView"],
+  ["ACCORDION", "accordion"],
+  ["TIMETABLE", "timetable"],
+  ["GANTT", "gantt"],
+  ["BOOKMARK", "bookmark"],
+  ["AI_CHAT", "aiChat"]
+]);
+
 const createBlockSchema = z.object({
   type: blockTypeSchema.default("MARKDOWN"),
   markdown: z.string().max(20_000).default(""),
@@ -184,6 +196,36 @@ function assertExistingMetadataSafeToOverwrite(existing: BlockRow) {
       );
     }
     throw error;
+  }
+}
+
+function assertSafeBlockTypeTransition(
+  existingType: BlockRow["type"],
+  requestedType: BlockRow["type"] | undefined,
+  requestedMetadata: unknown
+) {
+  if (requestedType === undefined || requestedType === existingType) return;
+
+  const metadataKey = structuredMetadataKeyByBlockType.get(requestedType);
+  if (!metadataKey) return;
+
+  // Structured editors keep their canonical user data in metadata, and some of
+  // them regenerate markdown from that metadata. A type-only PATCH (or an empty
+  // metadata envelope) would otherwise reinterpret an existing note through an
+  // implicit empty model.
+  if (
+    !requestedMetadata
+    || typeof requestedMetadata !== "object"
+    || Array.isArray(requestedMetadata)
+    || !Object.prototype.hasOwnProperty.call(requestedMetadata, metadataKey)
+    || (requestedMetadata as Record<string, unknown>)[metadataKey] === null
+    || (requestedMetadata as Record<string, unknown>)[metadataKey] === undefined
+  ) {
+    throw new ApiError(
+      400,
+      "BLOCK_TYPE_METADATA_REQUIRED",
+      `Changing a block to ${requestedType} requires explicit ${metadataKey} metadata. Nothing was saved.`
+    );
   }
 }
 
@@ -1302,6 +1344,8 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
           throw new ApiError(400, "ATTACHMENT_READ_ONLY", "Attachment block content is read-only");
         }
       }
+
+      assertSafeBlockTypeTransition(existing.type, body.type, body.metadata);
 
       const lockedContentVersion = Number(lockedPage.content_version ?? 1);
       if (hierarchyChanged) {

@@ -461,7 +461,8 @@ components:
       properties:
         type:
           type: string
-          enum: [MARKDOWN, HEADING_1, HEADING_2, HEADING_3, TODO, QUOTE, CALLOUT, TOGGLE, TABLE, KANBAN, DATABASE, TIMETABLE, GANTT, BOOKMARK, AI_CHAT, MATH, CODE, DIVIDER, IMAGE, VIDEO, ATTACHMENT]
+          enum: [MARKDOWN, HEADING_1, HEADING_2, HEADING_3, TODO, UNORDERED_LIST, ORDERED_LIST, QUOTE, CALLOUT, TOGGLE, ACCORDION, TABLE, KANBAN, DATABASE, TREEVIEW, TIMETABLE, GANTT, BOOKMARK, AI_CHAT, MATH, CODE, DIVIDER, IMAGE, VIDEO, ATTACHMENT]
+          description: On PATCH, changing an existing block to a metadata-backed structured type requires an explicit metadata object containing that target type's non-null canonical field; type-only and empty-envelope transitions are rejected before any write.
         markdown:
           type: string
         checked:
@@ -1051,7 +1052,7 @@ components:
           maxLength: 64
         type:
           type: string
-          enum: [MARKDOWN, HEADING_1, HEADING_2, HEADING_3, TODO, QUOTE, CALLOUT, TOGGLE, TABLE, KANBAN, DATABASE, TIMETABLE, GANTT, BOOKMARK, AI_CHAT, MATH, CODE, DIVIDER, IMAGE, VIDEO, ATTACHMENT]
+          enum: [MARKDOWN, HEADING_1, HEADING_2, HEADING_3, TODO, UNORDERED_LIST, ORDERED_LIST, QUOTE, CALLOUT, TOGGLE, ACCORDION, TABLE, KANBAN, DATABASE, TREEVIEW, TIMETABLE, GANTT, BOOKMARK, AI_CHAT, MATH, CODE, DIVIDER, IMAGE, VIDEO, ATTACHMENT]
         markdown:
           type: string
           maxLength: 20000
@@ -2092,7 +2093,7 @@ paths:
   /api/blocks/{blockId}:
     patch:
       summary: Update a block
-      description: Owner only for unshared, non-archived pages. Direct mutation is rejected while Yjs collaboration is enabled or the page is archived; shared title/block edits use the collaboration WebSocket and snapshot endpoint. For this partial-page response, pageContentVersion is included only when basePageContentVersion proves the caller held a current full-page snapshot; pageContentVersionAuthoritative reports that decision explicitly. Structural changes to parentBlockId or sortOrder require that current basePageContentVersion and reject an occupied sibling coordinate; use the reorder endpoint for complete sibling-order changes.
+      description: Owner only for unshared, non-archived pages. Direct mutation is rejected while Yjs collaboration is enabled or the page is archived; shared title/block edits use the collaboration WebSocket and snapshot endpoint. For this partial-page response, pageContentVersion is included only when basePageContentVersion proves the caller held a current full-page snapshot; pageContentVersionAuthoritative reports that decision explicitly. Structural changes to parentBlockId or sortOrder require that current basePageContentVersion and reject an occupied sibling coordinate; use the reorder endpoint for complete sibling-order changes. Changing to a metadata-backed structured type requires an explicit metadata object containing that target type's non-null canonical field so existing note text cannot be replaced or hidden by an implicit empty structured model.
       parameters:
         - in: path
           name: blockId
@@ -2108,6 +2109,8 @@ paths:
       responses:
         '200':
           description: Updated block
+        '400':
+          description: Invalid block transition, including a change to a metadata-backed structured type without its explicit non-null canonical metadata field
         '409':
           description: Block or hierarchy changed in another session, requested sibling position is occupied, page is archived, or direct mutation requires collaboration
     delete:
