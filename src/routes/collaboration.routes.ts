@@ -179,15 +179,16 @@ function assertShareablePage(page: PageRow) {
   }
 }
 
-async function getShareRows(pageId: string, client: DbClient = db) {
+async function getShareRows(pageId: string, ownerId: string, client: DbClient = db) {
   return client.query<ShareUserRow>(
     `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language, u.default_collection_icon, u.theme,
             u.created_at, u.updated_at, ps.permission, ps.created_at AS shared_at, ps.generation AS share_generation
      FROM page_shares ps
+     INNER JOIN pages p ON p.id = ps.page_id AND p.owner_id = ?
      INNER JOIN users u ON u.id = ps.user_id
      WHERE ps.page_id = ? AND ps.permission = 'EDIT'
      ORDER BY ps.created_at ASC, u.username ASC`,
-    [pageId]
+    [ownerId, pageId]
   );
 }
 
@@ -292,9 +293,15 @@ collaborationRouter.get(
     try {
       const user = requireUser(req.user);
       const pageId = String(req.params.pageId);
-      const page = await getOwnedPage(pageId, user.id);
-      assertShareablePage(page);
-      const rows = await getShareRows(pageId);
+      // Keep the ownership decision and the share rows in one repeatable-read
+      // snapshot. Backup restore/import preserves page IDs, so separate
+      // autocommit reads could authorize an old owner generation and then read
+      // shares belonging to a replacement page that reused the same ID.
+      const rows = await transaction(async (client) => {
+        const page = await getOwnedPage(pageId, user.id, client);
+        assertShareablePage(page);
+        return getShareRows(pageId, user.id, client);
+      });
       res.setHeader("Cache-Control", "private, no-store");
       res.json({ shares: rows.map(toSharePayload), count: rows.length });
     } catch (error) {
@@ -317,7 +324,7 @@ collaborationRouter.post(
       let firstShare = false;
       let previousDocumentEpoch: string | null = null;
 
-      const sharedUser = await transaction(async (client) => {
+      const shareResult = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(owner.id, authScope, client);
         const page = await client.queryOne<PageRow>(
           "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
@@ -382,7 +389,8 @@ collaborationRouter.post(
           [pageId, target.id]
         );
         if (!created) throw new ApiError(500, "PAGE_SHARE_FAILED", "The page share was not created");
-        return created;
+        const rows = await getShareRows(pageId, owner.id, client);
+        return { created, count: rows.length };
       });
 
       if (previousDocumentEpoch) {
@@ -392,8 +400,7 @@ collaborationRouter.post(
           "Collaboration state was initialized"
         );
       }
-      const rows = await getShareRows(pageId);
-      res.status(201).json({ share: toSharePayload(sharedUser), count: rows.length });
+      res.status(201).json({ share: toSharePayload(shareResult.created), count: shareResult.count });
     } catch (error) {
       next(error);
     }
