@@ -80,6 +80,7 @@ export function createDefaultAiChatData({ question = "", answeredAt = "" } = {})
     provider: "chatgpt",
     model: "",
     layout: "stacked",
+    hideAnswerBorder: false,
     turns: [normalizeTurn({ question, answeredAt }, { fallbackAnsweredAt: answeredAt })]
   };
 }
@@ -98,6 +99,7 @@ export function normalizeAiChatData(value, { fallbackAnsweredAt = "" } = {}) {
     provider: getAiProviderPreset(source.provider).id,
     model: normalizeText(source.model, aiChatLimits.modelLength).trim(),
     layout: normalizeLayout(source.layout),
+    hideAnswerBorder: source.hideAnswerBorder === true,
     turns: turns.length ? turns : [normalizeTurn({}, { fallbackAnsweredAt })]
   };
 }
@@ -420,6 +422,7 @@ export function createAiChatEditor(row, value, { onDirty, htmlCache = "" } = {})
   editor.className = "ai-chat-block-editor";
   editor.dataset.aiProvider = data.provider;
   editor.dataset.aiLayout = data.layout;
+  editor.dataset.aiHideAnswerBorder = String(data.hideAnswerBorder);
   editor.dataset.aiPage = "0";
   editor.setAttribute("aria-label", t("aiChat.editorAria"));
 
@@ -507,10 +510,26 @@ export function createAiChatEditor(row, value, { onDirty, htmlCache = "" } = {})
   });
   layoutField.append(layoutCaption, layoutOptions);
 
+  const answerBorderField = document.createElement("label");
+  answerBorderField.className = "ai-chat-answer-border-field";
+  const answerBorderCheckbox = document.createElement("input");
+  answerBorderCheckbox.type = "checkbox";
+  answerBorderCheckbox.className = "ai-chat-answer-border-toggle";
+  answerBorderCheckbox.checked = data.hideAnswerBorder;
+  answerBorderCheckbox.setAttribute("aria-label", t("aiChat.hideAnswerBorder"));
+  const answerBorderLabel = document.createElement("span");
+  answerBorderLabel.textContent = t("aiChat.hideAnswerBorder");
+  answerBorderField.append(answerBorderCheckbox, answerBorderLabel);
+  answerBorderCheckbox.addEventListener("change", () => {
+    editor.dataset.aiHideAnswerBorder = String(answerBorderCheckbox.checked);
+    onDirty?.(row);
+  });
+
   settings.append(
     providerField,
     createLabeledField(t("aiChat.modelLabel"), modelInput),
-    layoutField
+    layoutField,
+    answerBorderField
   );
 
   const conversationViewport = document.createElement("div");
@@ -582,6 +601,7 @@ export function extractAiChatData(row) {
     provider: editor.dataset.aiProvider,
     model: editor.querySelector(".ai-chat-model-input")?.value ?? "",
     layout: editor.dataset.aiLayout,
+    hideAnswerBorder: editor.querySelector(".ai-chat-answer-border-toggle")?.checked === true,
     turns: [...editor.querySelectorAll(".ai-chat-turn")].map((turn) => ({
       answeredAt: turn.querySelector(".ai-chat-time-input")?.value ?? "",
       question: turn.querySelector(".ai-chat-question-input")?.value ?? "",

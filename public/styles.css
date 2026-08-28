@@ -13518,6 +13518,33 @@ button.danger {
   box-shadow: inset 0 0 0 1px var(--ai-chat-line-strong);
 }
 
+.ai-chat-answer-border-field {
+  grid-column: 1 / -1;
+  display: inline-flex;
+  justify-self: start;
+  align-items: center;
+  gap: 0.42rem;
+  min-height: 1.8rem;
+  border-top: 1px solid color-mix(in srgb, var(--ai-chat-line) 72%, transparent);
+  color: var(--muted);
+  padding: 0.42rem 0.08rem 0;
+  font-size: 0.69rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.ai-chat-answer-border-field:hover {
+  color: var(--ink-strong);
+}
+
+.ai-chat-answer-border-toggle {
+  width: 0.9rem;
+  height: 0.9rem;
+  margin: 0;
+  accent-color: var(--focus);
+  cursor: pointer;
+}
+
 .ai-provider-icon {
   --ai-icon-bg: #e8f2f6;
   --ai-icon-ink: #31596a;
@@ -13713,6 +13740,18 @@ button.danger {
 .ai-chat-message--answer {
   align-self: flex-start;
   background: var(--ai-chat-panel);
+}
+
+.ai-chat-block-editor[data-ai-hide-answer-border="true"] .ai-chat-message--answer {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ai-chat-block-editor[data-ai-hide-answer-border="true"] .ai-chat-message--answer:hover,
+.ai-chat-block-editor[data-ai-hide-answer-border="true"] .ai-chat-message--answer:focus-within {
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .ai-chat-message-meta {
@@ -14035,6 +14074,12 @@ button.danger {
 .rendered-ai-chat-answer {
   align-self: flex-start;
   background: var(--panel);
+}
+
+.rendered-ai-chat--hide-answer-border .rendered-ai-chat-answer {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .rendered-ai-chat-meta {
@@ -17149,6 +17194,13 @@ html[data-theme="dark"] .ai-chat-message--answer,
 html[data-theme="dark"] .rendered-ai-chat-answer {
   border-color: var(--line);
   background: var(--panel);
+}
+
+html[data-theme="dark"] .ai-chat-block-editor[data-ai-hide-answer-border="true"] .ai-chat-message--answer,
+html[data-theme="dark"] .rendered-ai-chat--hide-answer-border .rendered-ai-chat-answer {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 html[data-theme="dark"] .ai-provider-icon[data-provider="chatgpt"] { --ai-icon-bg: #1d493f; --ai-icon-ink: #8ce0c9; }

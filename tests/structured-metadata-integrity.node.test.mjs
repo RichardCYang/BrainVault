@@ -182,6 +182,7 @@ test("normalized structured metadata remains accepted at exact limits", () => {
       provider: "chatgpt",
       model: "gpt-test",
       layout: "paginated",
+      hideAnswerBorder: true,
       turns: [{
         answeredAt: "2026-07-30T09:28",
         question: "q".repeat(8_000),
@@ -404,6 +405,23 @@ test("AI chat display layout is losslessly validated while legacy single-turn me
       turns: [{ answeredAt: "", question: "Question", answer: "Answer" }]
     }
   }, "metadata.aiChat.layout");
+
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("AI_CHAT", {
+    aiChat: {
+      provider: "chatgpt",
+      model: "",
+      hideAnswerBorder: true,
+      turns: [{ answeredAt: "", question: "Question", answer: "Answer" }]
+    }
+  }));
+  expectIntegrityFailure("AI_CHAT", {
+    aiChat: {
+      provider: "chatgpt",
+      model: "",
+      hideAnswerBorder: "true",
+      turns: [{ answeredAt: "", question: "Question", answer: "Answer" }]
+    }
+  }, "metadata.aiChat.hideAnswerBorder");
 });
 
 

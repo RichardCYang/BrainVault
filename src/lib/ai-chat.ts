@@ -15,6 +15,7 @@ export type AiChatData = {
   provider: AiProviderId;
   model: string;
   layout: AiChatLayout;
+  hideAnswerBorder: boolean;
   turns: AiChatTurn[];
 };
 
@@ -105,6 +106,7 @@ export function getAiChatData(metadata: unknown): AiChatData {
     provider: normalizeProvider(source.provider),
     model: normalizeText(source.model, limits.modelLength).trim(),
     layout: normalizeLayout(source.layout),
+    hideAnswerBorder: source.hideAnswerBorder === true,
     turns: turns.length ? turns : [normalizeTurn({})]
   };
 }

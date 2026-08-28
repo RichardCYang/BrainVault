@@ -766,13 +766,14 @@ function assertAiChatTurn(turn: MetadataRecord, path: string) {
 function assertAiChatMetadata(root: MetadataRecord) {
   const aiChat = optionalRecord(root.aiChat, "metadata.aiChat");
   if (!aiChat) return;
-  assertAllowedKeys(aiChat, "metadata.aiChat", ["title", "provider", "model", "layout", "turns", "answeredAt", "question", "answer"]);
+  assertAllowedKeys(aiChat, "metadata.aiChat", ["title", "provider", "model", "layout", "hideAnswerBorder", "turns", "answeredAt", "question", "answer"]);
   if (aiChat.provider !== null && aiChat.provider !== undefined && !aiProviderIds.has(aiChat.provider as string)) {
     fail("metadata.aiChat.provider", "is not a supported AI provider");
   }
   if (aiChat.layout !== null && aiChat.layout !== undefined && !aiChatLayouts.has(aiChat.layout as string)) {
     fail("metadata.aiChat.layout", "is not a supported AI chat layout");
   }
+  optionalBoolean(aiChat.hideAnswerBorder, "metadata.aiChat.hideAnswerBorder");
   const title = optionalString(aiChat.title, "metadata.aiChat.title", aiChatLimits.titleLength);
   if (title !== null && (title.includes("\u0000") || title.trim() !== title)) {
     fail("metadata.aiChat.title", "contains characters or whitespace that would be removed by the editor");

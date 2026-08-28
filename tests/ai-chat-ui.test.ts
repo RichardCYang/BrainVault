@@ -38,9 +38,11 @@ describe("AI conversation block", () => {
     expect(moduleSource).toContain('addTurnButton.className = "ai-chat-add-turn"');
     expect(moduleSource).toContain('removeButton.className = "ai-chat-remove-turn"');
     expect(moduleSource).toContain('button.className = "ai-chat-layout-option"');
+    expect(moduleSource).toContain('answerBorderCheckbox.className = "ai-chat-answer-border-toggle"');
     expect(moduleSource).toContain('pagination.className = "ai-chat-pagination"');
     expect(moduleSource).toContain('turns: [...editor.querySelectorAll(".ai-chat-turn")]');
     expect(moduleSource).toContain('layout: editor.dataset.aiLayout');
+    expect(moduleSource).toContain('hideAnswerBorder: editor.querySelector(".ai-chat-answer-border-toggle")?.checked === true');
   });
 
   it("normalizes legacy single-pair metadata without losing searchability", () => {
@@ -61,6 +63,7 @@ describe("AI conversation block", () => {
     expect(data.provider).toBe("gemini");
     expect(data.model).toBe("Gemini Pro");
     expect(data.layout).toBe("stacked");
+    expect(data.hideAnswerBorder).toBe(false);
     expect(data.turns).toHaveLength(1);
     expect(data.turns[0].answeredAt).toBe("2026-07-17T12:34");
     expect(data.turns[0].question).toBe("How does this work?");
@@ -126,6 +129,31 @@ describe("AI conversation block", () => {
     expect(paginated.match(/class="rendered-ai-chat-turn/g)).toHaveLength(2);
     expect(paginated).toContain('class="rendered-ai-chat-turn is-active" aria-hidden="false"');
     expect(paginated).toContain('class="rendered-ai-chat-turn" aria-hidden="true"');
+  });
+
+  it("keeps answer borders by default and can switch to a ChatGPT-style borderless AI answer", () => {
+    const defaultData = getAiChatData({ aiChat: { provider: "chatgpt", turns: [] } });
+    const defaultHtml = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        turns: [{ answeredAt: "", question: "Question", answer: "Answer" }]
+      }
+    });
+    const borderlessHtml = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        hideAnswerBorder: true,
+        turns: [{ answeredAt: "", question: "Question", answer: "Answer" }]
+      }
+    });
+
+    expect(defaultData.hideAnswerBorder).toBe(false);
+    expect(defaultHtml).not.toContain("rendered-ai-chat--hide-answer-border");
+    expect(borderlessHtml).toContain("rendered-ai-chat--hide-answer-border");
+    expect(borderlessHtml).toContain('class="rendered-ai-chat-message rendered-ai-chat-question"');
+    expect(borderlessHtml).toContain('class="rendered-ai-chat-message rendered-ai-chat-answer"');
+    expect(styles).toMatch(/\.ai-chat-block-editor\[data-ai-hide-answer-border="true"\] \.ai-chat-message--answer\s*\{[^}]*border:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s);
+    expect(styles).toMatch(/\.rendered-ai-chat--hide-answer-border \.rendered-ai-chat-answer\s*\{[^}]*border:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s);
   });
 
   it("does not let AI Markdown forge pagination controls", () => {
@@ -266,6 +294,7 @@ describe("AI conversation block", () => {
     expect(i18n).toContain('layoutLabel: "표시 방식"');
     expect(i18n).toContain('layoutStacked: "연속"');
     expect(i18n).toContain('layoutPaginated: "페이지"');
+    expect(i18n).toContain('hideAnswerBorder: "AI 답변 테두리 숨기기"');
     expect(i18n).toContain('pageAria: "{count}번째 질문·답변 쌍 보기"');
     expect(i18n).toContain('addTurn: "+ 다음 질문·답변 추가"');
     expect(i18n).toContain('answerPlaceholder: "AI 답변을 붙여넣거나 입력하세요…"');

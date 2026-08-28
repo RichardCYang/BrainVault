@@ -410,6 +410,7 @@ function renderAiChat(metadata: unknown) {
   const model = escapeText(data.model);
   const title = escapeText(data.title);
   const paginated = data.layout === "paginated";
+  const answerBorderClass = data.hideAnswerBorder ? " rendered-ai-chat--hide-answer-border" : "";
   const turns = data.turns.map((turn, index) => {
     const answeredAt = escapeText(turn.answeredAt);
     const question = renderMarkdown(turn.question);
@@ -435,7 +436,7 @@ function renderAiChat(metadata: unknown) {
     : "";
 
   return sanitizeHtml(
-    `<section class="rendered-ai-chat${paginated ? " rendered-ai-chat--paginated" : ""}">${title ? `<div class="rendered-ai-chat-title">${title}</div>` : ""}<div class="rendered-ai-chat-viewport"><div class="rendered-ai-chat-track">${turns}</div></div>${pagination}</section>`,
+    `<section class="rendered-ai-chat${paginated ? " rendered-ai-chat--paginated" : ""}${answerBorderClass}">${title ? `<div class="rendered-ai-chat-title">${title}</div>` : ""}<div class="rendered-ai-chat-viewport"><div class="rendered-ai-chat-track">${turns}</div></div>${pagination}</section>`,
     aiChatSanitizeOptions
   );
 }
