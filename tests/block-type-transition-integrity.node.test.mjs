@@ -8,6 +8,10 @@ const blockRoute = normalize(await readFile(
   new URL("../src/routes/block.routes.ts", import.meta.url),
   "utf8"
 ));
+const canonicalPolicy = normalize(await readFile(
+  new URL("../src/lib/structured-metadata-canonical.ts", import.meta.url),
+  "utf8"
+));
 const client = normalize(await readFile(new URL("../public/app.js", import.meta.url), "utf8"));
 
 const structuredMetadataPolicies = [
@@ -260,10 +264,12 @@ test("the server rejects under-specified structured writes before content prepar
   assert.match(blockRoute, /const replacesMetadata = requestedMetadata !== undefined;/);
   assert.match(blockRoute, /if \(!changesType && !replacesMetadata\) return;/);
   assert.match(blockRoute, /"BLOCK_TYPE_METADATA_REQUIRED"/);
-  assert.match(blockRoute, /Object\.prototype\.hasOwnProperty\.call\(requestedMetadata, metadataKey\)/);
   assert.match(blockRoute, /assertLosslessStructuredMetadata\(targetType, requestedMetadata\)/);
-  assert.match(blockRoute, /isDeepStrictEqual\(requestedModel, normalizer\(validatedMetadata\)\)/);
-  assert.match(blockRoute, /complete canonical \$\{metadataKey\} model/);
+  assert.match(blockRoute, /assertCanonicalStructuredMetadataModel\(targetType, validatedMetadata\)/);
+  assert.match(canonicalPolicy, /Object\.prototype\.hasOwnProperty\.call\(metadata, policy\.metadataKey\)/);
+  assert.match(canonicalPolicy, /isDeepStrictEqual\(/);
+  assert.match(canonicalPolicy, /normalizeComparableJsonValue\(requestedModel\)/);
+  assert.match(blockRoute, /complete canonical \$\{error\.metadataKey\} model/);
 
   const plain = {
     type: "MARKDOWN",
@@ -302,8 +308,10 @@ test("the server rejects under-specified structured writes before content prepar
 
 test("the server guard covers the same metadata-backed types as the browser preservation policy", () => {
   for (const [type, key, normalizer] of structuredMetadataPolicies) {
-    assert.match(blockRoute, new RegExp(`\\["${type}", "${key}"\\]`));
-    assert.match(blockRoute, new RegExp(`\\["${type}", ${normalizer}\\]`));
+    assert.match(
+      canonicalPolicy,
+      new RegExp(`\\["${type}", \\{ metadataKey: "${key}", normalize: ${normalizer} \\}\\]`)
+    );
     assert.match(client, new RegExp(`structuredBlockTypes = new Set\\([^\\n]*"${type}"`));
   }
   assert.match(client, /Never reinterpret metadata-backed content as another block type in place/);

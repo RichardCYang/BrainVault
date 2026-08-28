@@ -1,4 +1,3 @@
-import { isDeepStrictEqual } from "node:util";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
@@ -43,16 +42,16 @@ import {
 } from "../lib/bookmark.js";
 import { getAiChatData, summarizeAiChatData } from "../lib/ai-chat.js";
 import { getAccordionData, summarizeAccordionData } from "../lib/accordion.js";
-import { getDatabaseData } from "../lib/database.js";
-import { getGanttData } from "../lib/gantt.js";
-import { getKanbanData } from "../lib/kanban.js";
-import { getTableData } from "../lib/table.js";
-import { getTimetableData } from "../lib/timetable.js";
 import { getTreeViewData, summarizeTreeViewData } from "../lib/treeview.js";
 import {
   assertStructuredBlockMetadataIntegrity,
   StructuredMetadataIntegrityError
 } from "../lib/structured-metadata-integrity.js";
+import {
+  assertCanonicalStructuredMetadataModel,
+  hasCanonicalStructuredMetadataPolicy,
+  StructuredMetadataCanonicalityError
+} from "../lib/structured-metadata-canonical.js";
 import { toBlock } from "../lib/mappers.js";
 import {
   BlockSortOrderIntegrityError,
@@ -91,33 +90,6 @@ const blockSortOrderSchema = z.number().int()
   .min(blockSortOrderLimits.min)
   .max(blockSortOrderLimits.max);
 const mutationIdSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
-
-const structuredMetadataKeyByBlockType = new Map<BlockRow["type"], string>([
-  ["TABLE", "table"],
-  ["KANBAN", "kanban"],
-  ["DATABASE", "database"],
-  ["TREEVIEW", "treeView"],
-  ["ACCORDION", "accordion"],
-  ["TIMETABLE", "timetable"],
-  ["GANTT", "gantt"],
-  ["BOOKMARK", "bookmark"],
-  ["AI_CHAT", "aiChat"]
-]);
-
-const structuredMetadataNormalizerByBlockType = new Map<
-  BlockRow["type"],
-  (metadata: unknown) => unknown
->([
-  ["TABLE", getTableData],
-  ["KANBAN", getKanbanData],
-  ["DATABASE", getDatabaseData],
-  ["TREEVIEW", getTreeViewData],
-  ["ACCORDION", getAccordionData],
-  ["TIMETABLE", getTimetableData],
-  ["GANTT", getGanttData],
-  ["BOOKMARK", getBookmarkData],
-  ["AI_CHAT", getAiChatData]
-]);
 
 const createBlockSchema = z.object({
   type: blockTypeSchema.default("MARKDOWN"),
@@ -224,42 +196,25 @@ function assertCanonicalStructuredMetadataPayload(
   targetType: BlockRow["type"],
   requestedMetadata: unknown
 ) {
-  const metadataKey = structuredMetadataKeyByBlockType.get(targetType);
-  if (!metadataKey) return;
-
-  const rejectUnderSpecifiedWrite = (): never => {
-    throw new ApiError(
-      400,
-      "BLOCK_TYPE_METADATA_REQUIRED",
-      `Saving ${targetType} metadata requires a complete canonical ${metadataKey} model. Nothing was saved.`
-    );
-  };
+  if (!hasCanonicalStructuredMetadataPolicy(targetType)) return;
 
   // Structured editors keep their authoritative user data in metadata, and some
   // regenerate markdown from that model. Presence alone is insufficient: a nested
   // empty or partial object can pass shape validation and then acquire destructive
   // defaults during normalization. Require an exact canonical round trip before any
   // derived content is prepared or persisted.
-  if (
-    !requestedMetadata
-    || typeof requestedMetadata !== "object"
-    || Array.isArray(requestedMetadata)
-    || !Object.prototype.hasOwnProperty.call(requestedMetadata, metadataKey)
-  ) {
-    rejectUnderSpecifiedWrite();
-  }
-
-  const validatedMetadata = assertLosslessStructuredMetadata(targetType, requestedMetadata) as Record<string, unknown>;
-  const requestedModel = validatedMetadata[metadataKey];
-  const normalizer = structuredMetadataNormalizerByBlockType.get(targetType);
-  if (
-    !requestedModel
-    || typeof requestedModel !== "object"
-    || Array.isArray(requestedModel)
-    || !normalizer
-    || !isDeepStrictEqual(requestedModel, normalizer(validatedMetadata))
-  ) {
-    rejectUnderSpecifiedWrite();
+  const validatedMetadata = assertLosslessStructuredMetadata(targetType, requestedMetadata);
+  try {
+    assertCanonicalStructuredMetadataModel(targetType, validatedMetadata);
+  } catch (error) {
+    if (error instanceof StructuredMetadataCanonicalityError) {
+      throw new ApiError(
+        400,
+        "BLOCK_TYPE_METADATA_REQUIRED",
+        `Saving ${targetType} metadata requires a complete canonical ${error.metadataKey} model. Nothing was saved.`
+      );
+    }
+    throw error;
   }
 }
 
@@ -269,7 +224,7 @@ function assertSafeStructuredMetadataWrite(
   requestedMetadata: unknown
 ) {
   const targetType = requestedType ?? existingType;
-  if (!structuredMetadataKeyByBlockType.has(targetType)) return;
+  if (!hasCanonicalStructuredMetadataPolicy(targetType)) return;
 
   const changesType = requestedType !== undefined && requestedType !== existingType;
   const replacesMetadata = requestedMetadata !== undefined;

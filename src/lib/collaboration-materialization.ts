@@ -11,6 +11,10 @@ import {
   StructuredMetadataIntegrityError
 } from "./structured-metadata-integrity.js";
 import {
+  assertCanonicalStructuredMetadataModel,
+  StructuredMetadataCanonicalityError
+} from "./structured-metadata-canonical.js";
+import {
   createValidatedYjsDocument,
   InvalidYjsUpdateError
 } from "./yjs-validation.js";
@@ -137,9 +141,13 @@ function readBlock(id: string, value: unknown, budget: DecodeBudget): Materializ
 
   try {
     const validatedMetadata = assertStructuredBlockMetadataIntegrity(parsed.data.type, parsed.data.metadata);
+    assertCanonicalStructuredMetadataModel(parsed.data.type, validatedMetadata);
     return { ...parsed.data, metadata: validatedMetadata } as MaterializedCollaborationBlock;
   } catch (error) {
-    if (error instanceof StructuredMetadataIntegrityError) {
+    if (
+      error instanceof StructuredMetadataIntegrityError
+      || error instanceof StructuredMetadataCanonicalityError
+    ) {
       return invalidDocument("The collaboration document contains invalid block metadata");
     }
     throw error;
