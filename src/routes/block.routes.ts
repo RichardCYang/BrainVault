@@ -199,20 +199,23 @@ function assertExistingMetadataSafeToOverwrite(existing: BlockRow) {
   }
 }
 
-function assertSafeBlockTypeTransition(
+function assertSafeStructuredMetadataWrite(
   existingType: BlockRow["type"],
   requestedType: BlockRow["type"] | undefined,
   requestedMetadata: unknown
 ) {
-  if (requestedType === undefined || requestedType === existingType) return;
-
-  const metadataKey = structuredMetadataKeyByBlockType.get(requestedType);
+  const targetType = requestedType ?? existingType;
+  const metadataKey = structuredMetadataKeyByBlockType.get(targetType);
   if (!metadataKey) return;
 
+  const changesType = requestedType !== undefined && requestedType !== existingType;
+  const replacesMetadata = requestedMetadata !== undefined;
+  if (!changesType && !replacesMetadata) return;
+
   // Structured editors keep their canonical user data in metadata, and some of
-  // them regenerate markdown from that metadata. A type-only PATCH (or an empty
-  // metadata envelope) would otherwise reinterpret an existing note through an
-  // implicit empty model.
+  // them regenerate markdown from that metadata. Both a type conversion and an
+  // explicit metadata replacement must carry the target model; otherwise an
+  // omitted, null, or empty envelope is interpreted as a destructive empty model.
   if (
     !requestedMetadata
     || typeof requestedMetadata !== "object"
@@ -224,7 +227,7 @@ function assertSafeBlockTypeTransition(
     throw new ApiError(
       400,
       "BLOCK_TYPE_METADATA_REQUIRED",
-      `Changing a block to ${requestedType} requires explicit ${metadataKey} metadata. Nothing was saved.`
+      `Saving ${targetType} metadata requires an explicit non-null ${metadataKey} field. Nothing was saved.`
     );
   }
 }
@@ -1345,7 +1348,7 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
         }
       }
 
-      assertSafeBlockTypeTransition(existing.type, body.type, body.metadata);
+      assertSafeStructuredMetadataWrite(existing.type, body.type, body.metadata);
 
       const lockedContentVersion = Number(lockedPage.content_version ?? 1);
       if (hierarchyChanged) {

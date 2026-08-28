@@ -64,7 +64,7 @@ test("public-web mode still rejects local, private, metadata, documentation, mul
 test("bookmark fetch path preserves the SSRF, redirect, port, pinning, deadline, and body guards", () => {
   assert.match(bookmarkSource, /isSelfOrSubdomainBookmarkFetchHost\(url\.hostname\)/);
   assert.match(bookmarkSource, /BOOKMARK_FETCH_ALLOWED_PORTS\.includes\(effectivePort\)/);
-  assert.match(bookmarkSource, /const addresses = await resolvePublicAddresses\(url\)/);
+  assert.match(bookmarkSource, /const addresses = await resolvePublicAddresses\(url, deadline\)/);
   assert.match(bookmarkSource, /addresses\.some[\s\S]*isPrivateAddress\(item\.address\)/);
   assert.match(bookmarkSource, /lookup: createPinnedLookup\(addresses\)/);
   assert.match(bookmarkSource, /fetchHtml\(nextUrl, redirectsLeft - 1, deadline, hostPolicy\)/);
