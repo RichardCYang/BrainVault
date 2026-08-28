@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
@@ -42,6 +43,11 @@ import {
 } from "../lib/bookmark.js";
 import { getAiChatData, summarizeAiChatData } from "../lib/ai-chat.js";
 import { getAccordionData, summarizeAccordionData } from "../lib/accordion.js";
+import { getDatabaseData } from "../lib/database.js";
+import { getGanttData } from "../lib/gantt.js";
+import { getKanbanData } from "../lib/kanban.js";
+import { getTableData } from "../lib/table.js";
+import { getTimetableData } from "../lib/timetable.js";
 import { getTreeViewData, summarizeTreeViewData } from "../lib/treeview.js";
 import {
   assertStructuredBlockMetadataIntegrity,
@@ -96,6 +102,21 @@ const structuredMetadataKeyByBlockType = new Map<BlockRow["type"], string>([
   ["GANTT", "gantt"],
   ["BOOKMARK", "bookmark"],
   ["AI_CHAT", "aiChat"]
+]);
+
+const structuredMetadataNormalizerByBlockType = new Map<
+  BlockRow["type"],
+  (metadata: unknown) => unknown
+>([
+  ["TABLE", getTableData],
+  ["KANBAN", getKanbanData],
+  ["DATABASE", getDatabaseData],
+  ["TREEVIEW", getTreeViewData],
+  ["ACCORDION", getAccordionData],
+  ["TIMETABLE", getTimetableData],
+  ["GANTT", getGanttData],
+  ["BOOKMARK", getBookmarkData],
+  ["AI_CHAT", getAiChatData]
 ]);
 
 const createBlockSchema = z.object({
@@ -212,23 +233,39 @@ function assertSafeStructuredMetadataWrite(
   const replacesMetadata = requestedMetadata !== undefined;
   if (!changesType && !replacesMetadata) return;
 
-  // Structured editors keep their canonical user data in metadata, and some of
-  // them regenerate markdown from that metadata. Both a type conversion and an
-  // explicit metadata replacement must carry the target model; otherwise an
-  // omitted, null, or empty envelope is interpreted as a destructive empty model.
+  const rejectUnderSpecifiedWrite = (): never => {
+    throw new ApiError(
+      400,
+      "BLOCK_TYPE_METADATA_REQUIRED",
+      `Saving ${targetType} metadata requires a complete canonical ${metadataKey} model. Nothing was saved.`
+    );
+  };
+
+  // Structured editors keep their authoritative user data in metadata, and some
+  // regenerate markdown from that model. Presence alone is insufficient: a nested
+  // empty or partial object can pass shape validation and then acquire destructive
+  // defaults during normalization. Require an exact canonical round trip before any
+  // derived content is prepared or persisted.
   if (
     !requestedMetadata
     || typeof requestedMetadata !== "object"
     || Array.isArray(requestedMetadata)
     || !Object.prototype.hasOwnProperty.call(requestedMetadata, metadataKey)
-    || (requestedMetadata as Record<string, unknown>)[metadataKey] === null
-    || (requestedMetadata as Record<string, unknown>)[metadataKey] === undefined
   ) {
-    throw new ApiError(
-      400,
-      "BLOCK_TYPE_METADATA_REQUIRED",
-      `Saving ${targetType} metadata requires an explicit non-null ${metadataKey} field. Nothing was saved.`
-    );
+    rejectUnderSpecifiedWrite();
+  }
+
+  const validatedMetadata = assertLosslessStructuredMetadata(targetType, requestedMetadata) as Record<string, unknown>;
+  const requestedModel = validatedMetadata[metadataKey];
+  const normalizer = structuredMetadataNormalizerByBlockType.get(targetType);
+  if (
+    !requestedModel
+    || typeof requestedModel !== "object"
+    || Array.isArray(requestedModel)
+    || !normalizer
+    || !isDeepStrictEqual(requestedModel, normalizer(validatedMetadata))
+  ) {
+    rejectUnderSpecifiedWrite();
   }
 }
 

@@ -2093,7 +2093,7 @@ paths:
   /api/blocks/{blockId}:
     patch:
       summary: Update a block
-      description: Owner only for unshared, non-archived pages. Direct mutation is rejected while Yjs collaboration is enabled or the page is archived; shared title/block edits use the collaboration WebSocket and snapshot endpoint. For this partial-page response, pageContentVersion is included only when basePageContentVersion proves the caller held a current full-page snapshot; pageContentVersionAuthoritative reports that decision explicitly. Structural changes to parentBlockId or sortOrder require that current basePageContentVersion and reject an occupied sibling coordinate; use the reorder endpoint for complete sibling-order changes. Changing to a metadata-backed structured type or explicitly replacing metadata on an existing structured block requires the target type's non-null canonical metadata field. Omit metadata to preserve stored structured content; null or empty replacements are rejected before they can create an implicit empty model.
+      description: Owner only for unshared, non-archived pages. Direct mutation is rejected while Yjs collaboration is enabled or the page is archived; shared title/block edits use the collaboration WebSocket and snapshot endpoint. For this partial-page response, pageContentVersion is included only when basePageContentVersion proves the caller held a current full-page snapshot; pageContentVersionAuthoritative reports that decision explicitly. Structural changes to parentBlockId or sortOrder require that current basePageContentVersion and reject an occupied sibling coordinate; use the reorder endpoint for complete sibling-order changes. Changing to a metadata-backed structured type or explicitly replacing metadata on an existing structured block requires the target type's complete canonical metadata field, which must round-trip exactly through the server normalizer. Omit metadata to preserve stored structured content; null, empty, nested-empty, or partial replacements are rejected before they can create an implicit default model.
       parameters:
         - in: path
           name: blockId
@@ -2110,7 +2110,7 @@ paths:
         '200':
           description: Updated block
         '400':
-          description: Invalid structured block write, including a type conversion or explicit metadata replacement without the target type's non-null canonical metadata field
+          description: Invalid structured block write, including a type conversion or explicit metadata replacement without a complete target model that round-trips exactly through the server normalizer
         '409':
           description: Block or hierarchy changed in another session, requested sibling position is occupied, page is archived, or direct mutation requires collaboration
     delete:
