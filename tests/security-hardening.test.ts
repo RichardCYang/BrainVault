@@ -30,6 +30,7 @@ describe("authentication token separation", () => {
       username: "security-user",
       pageId: "pag_security",
       documentEpoch: "epoch-security",
+      shareGeneration: null,
       authVersion: 3,
       workspaceGeneration: 7,
       sessionBinding: "a".repeat(64),
