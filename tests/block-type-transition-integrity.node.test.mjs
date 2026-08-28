@@ -58,34 +58,52 @@ function vulnerableBookmarkWrite(existing, request) {
   return { type: nextType, markdown, metadata: sourceMetadata };
 }
 
+function assertCanonicalStructuredMetadataPayload(targetType, metadata) {
+  const metadataKey = structuredMetadataKeyByType.get(targetType);
+  if (!metadataKey) return;
+
+  const model = metadata?.[metadataKey];
+  const normalizer = targetType === "BOOKMARK" ? normalizeBookmarkModel : null;
+  if (
+    !metadata
+    || typeof metadata !== "object"
+    || Array.isArray(metadata)
+    || !Object.hasOwn(metadata, metadataKey)
+    || !model
+    || typeof model !== "object"
+    || Array.isArray(model)
+    || !normalizer
+    || !isDeepStrictEqual(model, normalizer(metadata))
+  ) {
+    const error = new Error("Structured writes require complete canonical metadata");
+    error.code = "BLOCK_TYPE_METADATA_REQUIRED";
+    throw error;
+  }
+}
+
 function guardedStructuredWrite(existing, request) {
   const targetType = request.type ?? existing.type;
-  const metadataKey = structuredMetadataKeyByType.get(targetType);
   const changesType = request.type !== undefined && request.type !== existing.type;
   const replacesMetadata = Object.hasOwn(request, "metadata") && request.metadata !== undefined;
-  const metadata = request.metadata;
 
-  if (metadataKey && (changesType || replacesMetadata)) {
-    const model = metadata?.[metadataKey];
-    const normalizer = targetType === "BOOKMARK" ? normalizeBookmarkModel : null;
-    if (
-      !metadata
-      || typeof metadata !== "object"
-      || Array.isArray(metadata)
-      || !Object.hasOwn(metadata, metadataKey)
-      || !model
-      || typeof model !== "object"
-      || Array.isArray(model)
-      || !normalizer
-      || !isDeepStrictEqual(model, normalizer(metadata))
-    ) {
-      const error = new Error("Structured writes require complete canonical metadata");
-      error.code = "BLOCK_TYPE_METADATA_REQUIRED";
-      throw error;
-    }
+  if (changesType || replacesMetadata) {
+    assertCanonicalStructuredMetadataPayload(targetType, request.metadata);
   }
 
   return vulnerableBookmarkWrite(existing, request);
+}
+
+function vulnerableStructuredCreate(request) {
+  return vulnerableBookmarkWrite(
+    { type: request.type ?? "MARKDOWN", markdown: request.markdown ?? "", metadata: null },
+    request
+  );
+}
+
+function guardedStructuredCreate(request) {
+  const targetType = request.type ?? "MARKDOWN";
+  assertCanonicalStructuredMetadataPayload(targetType, request.metadata);
+  return vulnerableStructuredCreate(request);
 }
 
 const populatedBookmark = {
@@ -149,6 +167,80 @@ test("reproduction: nested empty or partial metadata also normalized into destru
     assert.equal(vulnerable.markdown, "Bookmarks");
     assert.notDeepEqual(vulnerable.metadata, populatedBookmark.metadata);
   }
+});
+
+
+test("reproduction: structured creation accepted a partial model and replaced submitted markdown", () => {
+  const request = {
+    type: "BOOKMARK",
+    markdown: "Recovery phrase: golf-hotel-india",
+    metadata: { bookmark: { items: [] } }
+  };
+  const vulnerable = vulnerableStructuredCreate(request);
+
+  assert.equal(vulnerable.type, "BOOKMARK");
+  assert.equal(vulnerable.markdown, "Bookmarks");
+  assert.notEqual(vulnerable.markdown, request.markdown);
+});
+
+test("the create route resolves exact replays before requiring canonical structured metadata", () => {
+  const createStart = blockRoute.indexOf('blockRouter.post("/pages/:pageId/blocks"');
+  const createEnd = blockRoute.indexOf('blockRouter.patch("/blocks/:blockId"', createStart);
+  const createSource = blockRoute.slice(createStart, createEnd);
+
+  const replayIndex = createSource.indexOf('if (reservation.kind === "replay")');
+  const guardIndex = createSource.indexOf(
+    "assertCanonicalStructuredMetadataPayload(creation.type, creation.metadata);"
+  );
+  const losslessIndex = createSource.indexOf(
+    "const losslessMetadata = assertLosslessStructuredMetadata(creation.type, creation.metadata);"
+  );
+  const prepareIndex = createSource.indexOf(
+    "const prepared = prepareBlockContent(creation.type, creation.markdown, losslessMetadata);"
+  );
+  const insertIndex = createSource.indexOf("INSERT INTO blocks");
+
+  assert.ok(createStart >= 0 && createEnd > createStart);
+  assert.ok(replayIndex >= 0, "create route must retain idempotent replay handling");
+  assert.ok(guardIndex > replayIndex, "exact committed replays must resolve before new validation policy");
+  assert.ok(losslessIndex > guardIndex, "canonical guard must run before generic integrity validation");
+  assert.ok(prepareIndex > losslessIndex, "guard must run before derived markdown is prepared");
+  assert.ok(insertIndex > prepareIndex, "content must be validated before insertion");
+
+  for (const metadata of [
+    undefined,
+    {},
+    { bookmark: null },
+    { bookmark: {} },
+    { bookmark: { items: [] } },
+    { bookmark: { title: "Partial", items: [] } }
+  ]) {
+    assert.throws(
+      () => guardedStructuredCreate({
+        type: "BOOKMARK",
+        markdown: "Recovery phrase: golf-hotel-india",
+        metadata
+      }),
+      (error) => error?.code === "BLOCK_TYPE_METADATA_REQUIRED"
+    );
+  }
+
+  assert.doesNotThrow(() => guardedStructuredCreate({
+    type: "BOOKMARK",
+    markdown: "Derived from metadata",
+    metadata: {
+      bookmark: {
+        title: "Bookmarks",
+        view: "gallery",
+        listColumns: 1,
+        items: []
+      }
+    }
+  }));
+  assert.doesNotThrow(() => guardedStructuredCreate({
+    type: "MARKDOWN",
+    markdown: "Plain text creation remains unchanged"
+  }));
 });
 
 test("the server rejects under-specified structured writes before content preparation", () => {

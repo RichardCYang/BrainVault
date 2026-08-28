@@ -220,18 +220,12 @@ function assertExistingMetadataSafeToOverwrite(existing: BlockRow) {
   }
 }
 
-function assertSafeStructuredMetadataWrite(
-  existingType: BlockRow["type"],
-  requestedType: BlockRow["type"] | undefined,
+function assertCanonicalStructuredMetadataPayload(
+  targetType: BlockRow["type"],
   requestedMetadata: unknown
 ) {
-  const targetType = requestedType ?? existingType;
   const metadataKey = structuredMetadataKeyByBlockType.get(targetType);
   if (!metadataKey) return;
-
-  const changesType = requestedType !== undefined && requestedType !== existingType;
-  const replacesMetadata = requestedMetadata !== undefined;
-  if (!changesType && !replacesMetadata) return;
 
   const rejectUnderSpecifiedWrite = (): never => {
     throw new ApiError(
@@ -267,6 +261,21 @@ function assertSafeStructuredMetadataWrite(
   ) {
     rejectUnderSpecifiedWrite();
   }
+}
+
+function assertSafeStructuredMetadataWrite(
+  existingType: BlockRow["type"],
+  requestedType: BlockRow["type"] | undefined,
+  requestedMetadata: unknown
+) {
+  const targetType = requestedType ?? existingType;
+  if (!structuredMetadataKeyByBlockType.has(targetType)) return;
+
+  const changesType = requestedType !== undefined && requestedType !== existingType;
+  const replacesMetadata = requestedMetadata !== undefined;
+  if (!changesType && !replacesMetadata) return;
+
+  assertCanonicalStructuredMetadataPayload(targetType, requestedMetadata);
 }
 
 function prepareBlockContent(type: BlockRow["type"], markdown: string, metadata: unknown) {
@@ -1214,8 +1223,6 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
     const mutationHash = mutationId
       ? createMutationRequestHash({ kind: "BLOCK", pageId, basePageContentVersion, creation })
       : undefined;
-    const losslessMetadata = assertLosslessStructuredMetadata(creation.type, creation.metadata);
-    const prepared = prepareBlockContent(creation.type, creation.markdown, losslessMetadata);
     const result = await transaction(async (client) => {
       await lockBlockCreateUsers(client, [user.id, ownerId]);
       await assertCurrentAuthSessionBoundary(user.id, authScope, client);
@@ -1243,6 +1250,9 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
 
       assertDirectBlockMutationAllowed(lockedAccess);
       assertPageNotArchived(lockedAccess.page);
+      assertCanonicalStructuredMetadataPayload(creation.type, creation.metadata);
+      const losslessMetadata = assertLosslessStructuredMetadata(creation.type, creation.metadata);
+      const prepared = prepareBlockContent(creation.type, creation.markdown, losslessMetadata);
       await assertParentBlock(creation.parentBlockId, pageId, client);
       const createSortOrder = await getCollisionFreeBlockCreateSortOrder(
         client,

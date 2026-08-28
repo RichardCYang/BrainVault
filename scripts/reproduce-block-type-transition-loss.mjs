@@ -40,6 +40,12 @@ const sameTypeRequests = [
   { metadata: { bookmark: {} }, expectedVersion: 11 },
   { metadata: { bookmark: { items: [] } }, expectedVersion: 11 }
 ];
+const createRequests = [
+  { type: "BOOKMARK", markdown: "Recovery phrase: golf-hotel-india" },
+  { type: "BOOKMARK", markdown: "Recovery phrase: golf-hotel-india", metadata: {} },
+  { type: "BOOKMARK", markdown: "Recovery phrase: golf-hotel-india", metadata: { bookmark: {} } },
+  { type: "BOOKMARK", markdown: "Recovery phrase: golf-hotel-india", metadata: { bookmark: { items: [] } } }
+];
 
 function normalizeBookmarkModel(metadata) {
   const source = metadata?.bookmark;
@@ -81,6 +87,11 @@ for (const request of sameTypeRequests) {
   assert.notEqual(result.markdown, structuredBlock.markdown);
   assert.notDeepEqual(result.metadata, structuredBlock.metadata);
 }
+for (const request of createRequests) {
+  const result = preFixStoredState({ type: request.type, markdown: request.markdown, metadata: null }, request);
+  assert.equal(result.markdown, "Bookmarks");
+  assert.notEqual(result.markdown, request.markdown);
+}
 
 const source = (await readFile(
   new URL("../src/routes/block.routes.ts", import.meta.url),
@@ -91,6 +102,20 @@ const guardIndex = source.indexOf(
 );
 const prepareIndex = source.indexOf("const prepared = prepareBlockContent(", guardIndex);
 assert.ok(guardIndex >= 0 && prepareIndex > guardIndex);
+
+const createStart = source.indexOf('blockRouter.post("/pages/:pageId/blocks"');
+const createEnd = source.indexOf('blockRouter.patch("/blocks/:blockId"', createStart);
+const createSource = source.slice(createStart, createEnd);
+const createReplayIndex = createSource.indexOf('if (reservation.kind === "replay")');
+const createGuardIndex = createSource.indexOf(
+  "assertCanonicalStructuredMetadataPayload(creation.type, creation.metadata);"
+);
+const createPrepareIndex = createSource.indexOf(
+  "const prepared = prepareBlockContent(creation.type, creation.markdown, losslessMetadata);"
+);
+assert.ok(createReplayIndex >= 0 && createGuardIndex > createReplayIndex);
+assert.ok(createPrepareIndex > createGuardIndex);
+assert.match(source, /function assertCanonicalStructuredMetadataPayload\(/);
 assert.match(source, /const targetType = requestedType \?\? existingType;/);
 assert.match(source, /const replacesMetadata = requestedMetadata !== undefined;/);
 assert.match(source, /"BLOCK_TYPE_METADATA_REQUIRED"/);
@@ -102,15 +127,21 @@ console.log(JSON.stringify({
   reproduction: {
     conversionRequests,
     sameTypeRequests,
+    createRequests,
     originalPlainMarkdown: plainBlock.markdown,
     originalStructuredMarkdown: structuredBlock.markdown,
     preFixConversionStates: conversionRequests.map((request) => preFixStoredState(plainBlock, request)),
-    preFixSameTypeStates: sameTypeRequests.map((request) => preFixStoredState(structuredBlock, request))
+    preFixSameTypeStates: sameTypeRequests.map((request) => preFixStoredState(structuredBlock, request)),
+    preFixCreateStates: createRequests.map((request) => preFixStoredState(
+      { type: request.type, markdown: request.markdown, metadata: null },
+      request
+    ))
   },
   fixedBehavior: {
     status: 400,
     code: "BLOCK_TYPE_METADATA_REQUIRED",
     rejectedBeforeContentPreparation: true,
+    exactCreateReplaysRemainReadable: true,
     requiresExactCanonicalRoundTrip: true,
     databaseWriteAttempted: false,
     originalMarkdownPreserved: true,
