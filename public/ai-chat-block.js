@@ -21,6 +21,154 @@ export const aiChatLimits = Object.freeze({
 const providerById = new Map(aiProviderPresets.map((provider) => [provider.id, provider]));
 const svgNamespace = "http://www.w3.org/2000/svg";
 
+const aiChatLinkPreviewCache = new Map();
+const aiChatLinkPreviewObservers = new WeakMap();
+const aiChatLinkPreviewFaviconDataUrlMaxLength = Math.ceil((128 * 1024 * 4) / 3) + 128;
+const aiChatLinkPreviewFaviconDataPattern = /^data:image\/(?:png|jpeg|gif|webp|vnd\.microsoft\.icon);base64,[a-z0-9+/]+={0,2}$/i;
+
+function getAiChatWebUrl(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return null;
+  try {
+    const url = globalThis.location?.href ? new URL(raw, globalThis.location.href) : new URL(raw);
+    return url.protocol === "http:" || url.protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+function getAiChatLinkFallbackTitle(link, url) {
+  const label = typeof link?.textContent === "string" ? link.textContent.trim() : "";
+  if (label && !/^https?:\/\//i.test(label) && label !== url.hostname) return label;
+  return url.hostname;
+}
+
+function getAiChatLinkPreviewFavicon(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (
+    raw.length <= aiChatLinkPreviewFaviconDataUrlMaxLength
+    && aiChatLinkPreviewFaviconDataPattern.test(raw)
+  ) return raw;
+  return "";
+}
+
+function resetAiChatLinkFavicon(slot) {
+  if (!slot) return;
+  slot.replaceChildren();
+  slot.classList.add("is-fallback");
+}
+
+function prepareRenderedAiChatLink(link) {
+  const url = getAiChatWebUrl(link?.href ?? link?.getAttribute?.("href"));
+  if (!url) return null;
+  const normalizedUrl = url.toString();
+  if (link.dataset?.aiChatLinkUrl === normalizedUrl && link.classList?.contains("rendered-ai-chat-link-preview")) {
+    return normalizedUrl;
+  }
+
+  const favicon = document.createElement("span");
+  favicon.className = "rendered-ai-chat-link-favicon is-fallback";
+  favicon.setAttribute("aria-hidden", "true");
+
+  const title = document.createElement("span");
+  title.className = "rendered-ai-chat-link-title";
+  title.textContent = getAiChatLinkFallbackTitle(link, url);
+
+  link.classList.add("rendered-ai-chat-link-preview");
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.referrerPolicy = "no-referrer";
+  link.dataset.aiChatLinkUrl = normalizedUrl;
+  link.dataset.aiChatLinkPreviewState = "pending";
+  link.replaceChildren(favicon, title);
+  return normalizedUrl;
+}
+
+function applyRenderedAiChatLinkPreview(link, previewData, requestedUrl) {
+  if (!link?.isConnected || link.dataset?.aiChatLinkUrl !== requestedUrl) return;
+  const title = typeof previewData?.title === "string" ? previewData.title.trim() : "";
+  const titleElement = link.querySelector?.(".rendered-ai-chat-link-title");
+  if (titleElement && title) titleElement.textContent = title;
+
+  const faviconSlot = link.querySelector?.(".rendered-ai-chat-link-favicon");
+  const faviconUrl = getAiChatLinkPreviewFavicon(previewData?.faviconUrl);
+  resetAiChatLinkFavicon(faviconSlot);
+  if (faviconSlot && faviconUrl) {
+    const image = document.createElement("img");
+    image.src = faviconUrl;
+    image.alt = "";
+    image.width = 16;
+    image.height = 16;
+    image.loading = "lazy";
+    image.referrerPolicy = "no-referrer";
+    image.addEventListener("load", () => faviconSlot.classList.remove("is-fallback"), { once: true });
+    image.addEventListener("error", () => resetAiChatLinkFavicon(faviconSlot), { once: true });
+    faviconSlot.append(image);
+  }
+  link.dataset.aiChatLinkPreviewState = "loaded";
+}
+
+function getAiChatLinkPreviewRequest(url, fetchPreview) {
+  const cached = aiChatLinkPreviewCache.get(url);
+  if (cached) return cached;
+
+  const request = Promise.resolve()
+    .then(() => fetchPreview(url))
+    .then((value) => value?.preview ?? value ?? null)
+    .catch(() => null)
+    .then((value) => {
+      if (!value) aiChatLinkPreviewCache.delete(url);
+      return value;
+    });
+  aiChatLinkPreviewCache.set(url, request);
+  if (aiChatLinkPreviewCache.size > 250) {
+    const oldest = aiChatLinkPreviewCache.keys().next().value;
+    if (oldest) aiChatLinkPreviewCache.delete(oldest);
+  }
+  return request;
+}
+
+async function hydrateRenderedAiChatLink(link, fetchPreview) {
+  const url = prepareRenderedAiChatLink(link);
+  if (!url || ["loading", "loaded"].includes(link.dataset.aiChatLinkPreviewState)) return;
+  link.dataset.aiChatLinkPreviewState = "loading";
+  const previewData = await getAiChatLinkPreviewRequest(url, fetchPreview);
+  if (!link?.isConnected || link.dataset?.aiChatLinkUrl !== url) return;
+  if (!previewData) {
+    link.dataset.aiChatLinkPreviewState = "failed";
+    return;
+  }
+  applyRenderedAiChatLinkPreview(link, previewData, url);
+}
+
+export function hydrateRenderedAiChatLinks(root, fetchPreview) {
+  if (!root || typeof fetchPreview !== "function") return;
+  const links = [...root.querySelectorAll(".rendered-ai-chat-answer .rendered-ai-chat-content a[href]")]
+    .filter((link) => Boolean(prepareRenderedAiChatLink(link)))
+    .filter((link) => !["loading", "loaded"].includes(link.dataset.aiChatLinkPreviewState));
+  if (!links.length) return;
+
+  if (typeof IntersectionObserver !== "function") {
+    links.forEach((link) => { void hydrateRenderedAiChatLink(link, fetchPreview); });
+    return;
+  }
+
+  let observerState = aiChatLinkPreviewObservers.get(root);
+  if (!observerState || observerState.fetchPreview !== fetchPreview) {
+    observerState?.observer?.disconnect();
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        observer.unobserve(entry.target);
+        void hydrateRenderedAiChatLink(entry.target, fetchPreview);
+      });
+    }, { rootMargin: "160px" });
+    observerState = { observer, fetchPreview };
+    aiChatLinkPreviewObservers.set(root, observerState);
+  }
+  links.forEach((link) => observerState.observer.observe(link));
+}
+
 function normalizeText(value, maxLength) {
   return (value === null || value === undefined ? "" : String(value))
     .replace(/\u0000/g, "")

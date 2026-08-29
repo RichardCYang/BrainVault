@@ -14124,6 +14124,77 @@ button.danger {
   overflow-x: auto;
 }
 
+.page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-link-preview {
+  display: inline-flex;
+  max-width: min(100%, 26rem);
+  align-items: center;
+  gap: 0.34rem;
+  margin: 0 0.08rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--ink-strong);
+  padding: 0.13rem 0.48rem 0.13rem 0.28rem;
+  text-decoration: none;
+  vertical-align: -0.16em;
+  font-size: 0.88em;
+  font-weight: 620;
+  line-height: 1.35;
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+
+.page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-link-preview:hover {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+  background: var(--hover);
+  color: var(--ink-strong);
+  text-decoration: none;
+}
+
+.page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-link-preview:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-soft);
+  outline: none;
+}
+
+.rendered-ai-chat-link-favicon {
+  display: inline-grid;
+  flex: 0 0 1rem;
+  width: 1rem;
+  height: 1rem;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 3px;
+}
+
+.rendered-ai-chat-link-favicon.is-fallback::before {
+  content: "↗";
+  display: grid;
+  width: 1rem;
+  height: 1rem;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.rendered-ai-chat-link-favicon img {
+  display: block;
+  width: 1rem;
+  height: 1rem;
+  object-fit: contain;
+}
+
+.rendered-ai-chat-link-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Markdown tables inside AI answers are emitted as plain <table> elements by
    markdown-it, so give them the same readable table treatment as native table
    blocks without changing the stored Markdown or HTML cache format. */

@@ -59,6 +59,7 @@ import {
   createAiChatEditor,
   createDefaultAiChatData,
   extractAiChatData,
+  hydrateRenderedAiChatLinks,
   hydrateRenderedAiChatPagination,
   normalizeAiChatData,
   setRenderedAiChatPage,
@@ -6953,6 +6954,10 @@ function syncBlockReadOnlyState(row, readOnly = isPageReadOnly() || isPageIntera
   for (const details of row.querySelectorAll("details:not(.rendered-toggle):not(.rendered-accordion-item)")) {
     if (readOnly) details.removeAttribute("open");
   }
+
+  if (isPageReadOnly() && row.dataset.blockType === "AI_CHAT") {
+    hydrateRenderedAiChatLinks(row, fetchDatabaseUrlPreview);
+  }
 }
 
 function syncPageModeUi() {
@@ -11703,6 +11708,7 @@ function updateRenderedBlockPreview(row, block) {
   hydrateHighlightedCodeBlocks(preview);
   hydrateAccordionIcons(preview);
   hydrateRenderedAiChatPagination(preview);
+  if (isPageReadOnly()) hydrateRenderedAiChatLinks(preview, fetchDatabaseUrlPreview);
 }
 
 function createTextBlockEditor(block) {
