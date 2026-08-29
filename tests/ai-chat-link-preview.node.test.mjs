@@ -57,12 +57,191 @@ function createMarkdownLink({ href, textContent }) {
   };
 }
 
+
+function createDomClassList(element) {
+  return {
+    add(...items) {
+      const values = new Set(String(element.className || "").split(/\s+/).filter(Boolean));
+      items.forEach((item) => values.add(item));
+      element.className = [...values].join(" ");
+    },
+    remove(...items) {
+      const remove = new Set(items);
+      element.className = String(element.className || "").split(/\s+/).filter((item) => item && !remove.has(item)).join(" ");
+    },
+    contains(item) {
+      return String(element.className || "").split(/\s+/).includes(item);
+    }
+  };
+}
+
+function connectDomNode(node, connected) {
+  node.isConnected = connected;
+  for (const child of node.childNodes ?? []) connectDomNode(child, connected);
+}
+
+function appendDomNodes(parent, nodes) {
+  for (const node of nodes) {
+    if (!node) continue;
+    if (node.nodeType === 11) {
+      const children = [...node.childNodes];
+      node.childNodes.length = 0;
+      appendDomNodes(parent, children);
+      continue;
+    }
+    if (node.parentNode) node.remove?.();
+    node.parentNode = parent;
+    parent.childNodes.push(node);
+    connectDomNode(node, parent.isConnected !== false);
+  }
+}
+
+function replaceDomNode(node, replacements) {
+  const parent = node.parentNode;
+  if (!parent) return;
+  const index = parent.childNodes.indexOf(node);
+  if (index < 0) return;
+  const flattened = [];
+  for (const replacement of replacements) {
+    if (!replacement) continue;
+    if (replacement.nodeType === 11) flattened.push(...replacement.childNodes);
+    else flattened.push(replacement);
+  }
+  parent.childNodes.splice(index, 1, ...flattened);
+  node.parentNode = null;
+  connectDomNode(node, false);
+  flattened.forEach((replacement) => {
+    replacement.parentNode = parent;
+    connectDomNode(replacement, parent.isConnected !== false);
+  });
+}
+
+function createDomText(value) {
+  const node = {
+    nodeType: 3,
+    nodeValue: String(value),
+    parentNode: null,
+    isConnected: true,
+    get textContent() { return this.nodeValue; },
+    set textContent(next) { this.nodeValue = String(next); },
+    get parentElement() { return this.parentNode?.nodeType === 1 ? this.parentNode : null; },
+    get previousSibling() {
+      const siblings = this.parentNode?.childNodes ?? [];
+      const index = siblings.indexOf(this);
+      return index > 0 ? siblings[index - 1] : null;
+    },
+    replaceWith(...nodes) { replaceDomNode(this, nodes); },
+    remove() { replaceDomNode(this, []); }
+  };
+  return node;
+}
+
+function createDomFragment() {
+  return {
+    nodeType: 11,
+    childNodes: [],
+    parentNode: null,
+    isConnected: true,
+    append(...nodes) { appendDomNodes(this, nodes); }
+  };
+}
+
+function createDomElement(tagName) {
+  const attributes = new Map();
+  const listeners = new Map();
+  const element = {
+    nodeType: 1,
+    tagName: String(tagName).toUpperCase(),
+    className: "",
+    dataset: {},
+    style: {},
+    childNodes: [],
+    parentNode: null,
+    isConnected: true,
+    hidden: false,
+    setAttribute(name, value) { attributes.set(name, String(value)); },
+    getAttribute(name) { return attributes.get(name) ?? null; },
+    addEventListener(name, listener) { listeners.set(name, listener); },
+    append(...nodes) { appendDomNodes(this, nodes); },
+    replaceChildren(...nodes) {
+      this.childNodes.forEach((child) => { child.parentNode = null; connectDomNode(child, false); });
+      this.childNodes.length = 0;
+      appendDomNodes(this, nodes);
+    },
+    replaceWith(...nodes) { replaceDomNode(this, nodes); },
+    remove() { replaceDomNode(this, []); },
+    querySelectorAll(selector) {
+      const matches = [];
+      const visit = (node) => {
+        for (const child of node.childNodes ?? []) {
+          if (child.nodeType !== 1) continue;
+          const isAnchor = selector === "a[href]" && child.tagName === "A" && Boolean(child.getAttribute("href") ?? child.href);
+          const className = selector.startsWith(".") ? selector.slice(1) : "";
+          const isClass = className && child.classList.contains(className);
+          if (isAnchor || isClass) matches.push(child);
+          visit(child);
+        }
+      };
+      visit(this);
+      return matches;
+    },
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; },
+    contains(target) {
+      if (target === this) return true;
+      return this.childNodes.some((child) => child === target || child.contains?.(target));
+    },
+    getBoundingClientRect() { return { left: 20, right: 120, top: 20, bottom: 44, width: 100, height: 24 }; },
+    dispatch(name, event = {}) { listeners.get(name)?.({ preventDefault() {}, target: this, ...event }); },
+    get children() { return this.childNodes.filter((child) => child.nodeType === 1); },
+    get parentElement() { return this.parentNode?.nodeType === 1 ? this.parentNode : null; },
+    get previousSibling() {
+      const siblings = this.parentNode?.childNodes ?? [];
+      const index = siblings.indexOf(this);
+      return index > 0 ? siblings[index - 1] : null;
+    },
+    get nextElementSibling() {
+      const siblings = this.parentElement?.children ?? [];
+      const index = siblings.indexOf(this);
+      return index >= 0 ? siblings[index + 1] ?? null : null;
+    },
+    get textContent() { return this.childNodes.map((child) => child.textContent ?? "").join(""); },
+    set textContent(value) {
+      this.childNodes.forEach((child) => { child.parentNode = null; connectDomNode(child, false); });
+      this.childNodes.length = 0;
+      appendDomNodes(this, [createDomText(value)]);
+    }
+  };
+  element.classList = createDomClassList(element);
+  Object.defineProperty(element, "href", {
+    get() { return attributes.get("href") ?? ""; },
+    set(value) { attributes.set("href", String(value)); }
+  });
+  return element;
+}
+
+function appendText(element, value) {
+  element.append(createDomText(value));
+  return element;
+}
+
+function appendSourceLine(content, referenceNumber, href, label, prefix = "") {
+  const paragraph = createDomElement("p");
+  paragraph.append(createDomText(`[${referenceNumber}] ${prefix}`));
+  const link = createDomElement("a");
+  link.href = href;
+  link.textContent = label;
+  paragraph.append(link);
+  content.append(paragraph);
+  return paragraph;
+}
+
 test("AI read mode turns HTTP(S) Markdown links into compact domain/favicon citations", async () => {
   const sourceUrl = "https://docs.github.com/en/get-started/start-your-journey";
   const referenceLink = createMarkdownLink({ href: sourceUrl, textContent: "1" });
   const ordinaryLink = createMarkdownLink({ href: "https://google.com/search?q=test", textContent: "Google search" });
   const root = {
     querySelectorAll(selector) {
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content") return [];
       assert.equal(selector, ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]");
       return [referenceLink, ordinaryLink];
     }
@@ -158,6 +337,174 @@ test("citation chips handle bracketed references, named links, and country-code 
   assert.equal(namedLink.replacement?.dataset?.aiChatLinkTitle, "MDN URL docs");
   assert.equal(namedLink.replacement?.dataset?.aiChatReference, undefined);
   assert.equal(mailLink.replacement, null);
+});
+
+
+test("plain [1] and grouped [2, 13] markers receive relocated source chips instead of leaving chips at the Markdown tail", async () => {
+  const content = createDomElement("div");
+  const firstClaim = appendText(createDomElement("p"), "First claim [1].");
+  const groupedClaim = appendText(createDomElement("p"), "Grouped claim [2, 13].");
+  content.append(firstClaim, groupedClaim);
+
+  const sourceOne = appendSourceLine(content, "1", "https://docs.github.com/en/get-started", "GitHub Docs");
+  const sourceTwo = appendSourceLine(content, "2", "https://developer.mozilla.org/en-US/docs/Web/API/URL", "MDN URL");
+  const sourceThirteen = appendSourceLine(
+    content,
+    "13",
+    "https://news.example.co.kr/article/13",
+    "https://news.example.co.kr/article/13",
+    "Example Korea — "
+  );
+  const root = {
+    querySelectorAll(selector) {
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content") return [content];
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]") return content.querySelectorAll("a[href]");
+      return [];
+    }
+  };
+
+  const body = createDomElement("body");
+  const originalDocument = globalThis.document;
+  const originalIntersectionObserver = globalThis.IntersectionObserver;
+  globalThis.document = {
+    createElement: createDomElement,
+    createTextNode: createDomText,
+    createDocumentFragment: createDomFragment,
+    body,
+    documentElement: { clientWidth: 1280, clientHeight: 720 },
+    addEventListener() {}
+  };
+  delete globalThis.IntersectionObserver;
+
+  try {
+    hydrateRenderedAiChatLinks(root, async (url) => ({
+      title: `Preview ${new URL(url).hostname}`,
+      faviconUrl: ""
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const firstChips = firstClaim.querySelectorAll(".rendered-ai-chat-link-preview");
+    const groupedChips = groupedClaim.querySelectorAll(".rendered-ai-chat-link-preview");
+    assert.deepEqual(firstChips.map((chip) => chip.dataset.aiChatReference), ["1"]);
+    assert.deepEqual(groupedChips.map((chip) => chip.dataset.aiChatReference), ["2", "13"]);
+    assert.equal(firstChips[0].dataset.aiChatLinkDomain, "github");
+    assert.equal(groupedChips[0].dataset.aiChatLinkDomain, "mozilla");
+    assert.equal(groupedChips[1].dataset.aiChatLinkDomain, "example");
+    assert.doesNotMatch(firstClaim.textContent, /\[1\]/);
+    assert.doesNotMatch(groupedClaim.textContent, /\[2,\s*13\]/);
+
+    assert.equal(sourceOne.isConnected, false);
+    assert.equal(sourceTwo.isConnected, false);
+    assert.equal(sourceThirteen.isConnected, false);
+    assert.equal(content.querySelectorAll("a[href]").length, 0);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalIntersectionObserver === undefined) delete globalThis.IntersectionObserver;
+    else globalThis.IntersectionObserver = originalIntersectionObserver;
+  }
+});
+
+test("named links under a Sources heading are mapped by source order and the exhausted tail section is removed", async () => {
+  const content = createDomElement("div");
+  const claim = appendText(createDomElement("p"), "Claim [1] and [2].");
+  const heading = appendText(createDomElement("h3"), "Sources");
+  const list = createDomElement("ul");
+  const firstItem = createDomElement("li");
+  const firstLink = createDomElement("a");
+  firstLink.href = "https://openai.com/research";
+  firstLink.textContent = "OpenAI Research";
+  firstItem.append(firstLink);
+  const secondItem = createDomElement("li");
+  const secondLink = createDomElement("a");
+  secondLink.href = "https://www.nasa.gov/mission-pages";
+  secondLink.textContent = "NASA Missions";
+  secondItem.append(secondLink);
+  list.append(firstItem, secondItem);
+  content.append(claim, heading, list);
+
+  const root = {
+    querySelectorAll(selector) {
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content") return [content];
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]") return content.querySelectorAll("a[href]");
+      return [];
+    }
+  };
+  const body = createDomElement("body");
+  const originalDocument = globalThis.document;
+  const originalIntersectionObserver = globalThis.IntersectionObserver;
+  globalThis.document = {
+    createElement: createDomElement,
+    createTextNode: createDomText,
+    createDocumentFragment: createDomFragment,
+    body,
+    documentElement: { clientWidth: 1280, clientHeight: 720 },
+    addEventListener() {}
+  };
+  delete globalThis.IntersectionObserver;
+
+  try {
+    hydrateRenderedAiChatLinks(root, async () => null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const chips = claim.querySelectorAll(".rendered-ai-chat-link-preview");
+    assert.deepEqual(chips.map((chip) => chip.dataset.aiChatReference), ["1", "2"]);
+    assert.equal(chips[0].dataset.aiChatLinkTitle, "OpenAI Research");
+    assert.equal(chips[1].dataset.aiChatLinkTitle, "NASA Missions");
+    assert.equal(heading.isConnected, false);
+    assert.equal(list.isConnected, false);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalIntersectionObserver === undefined) delete globalThis.IntersectionObserver;
+    else globalThis.IntersectionObserver = originalIntersectionObserver;
+  }
+});
+
+test("source-only Markdown links keep the existing bottom chip behavior when there is no inline citation marker", async () => {
+  const content = createDomElement("div");
+  const heading = appendText(createDomElement("h3"), "Sources");
+  const list = createDomElement("ul");
+  const item = createDomElement("li");
+  const link = createDomElement("a");
+  link.href = "https://example.com/source";
+  link.textContent = "Example Source";
+  item.append(link);
+  list.append(item);
+  content.append(heading, list);
+
+  const root = {
+    querySelectorAll(selector) {
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content") return [content];
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]") return content.querySelectorAll("a[href]");
+      return [];
+    }
+  };
+  const originalDocument = globalThis.document;
+  const originalIntersectionObserver = globalThis.IntersectionObserver;
+  globalThis.document = {
+    createElement: createDomElement,
+    createTextNode: createDomText,
+    createDocumentFragment: createDomFragment,
+    body: createDomElement("body"),
+    documentElement: { clientWidth: 1280, clientHeight: 720 },
+    addEventListener() {}
+  };
+  delete globalThis.IntersectionObserver;
+
+  try {
+    hydrateRenderedAiChatLinks(root, async () => null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const chips = list.querySelectorAll(".rendered-ai-chat-link-preview");
+    assert.equal(chips.length, 1);
+    assert.equal(chips[0].dataset.aiChatLinkDomain, "example");
+    assert.equal(heading.isConnected, true);
+    assert.equal(list.isConnected, true);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalIntersectionObserver === undefined) delete globalThis.IntersectionObserver;
+    else globalThis.IntersectionObserver = originalIntersectionObserver;
+  }
 });
 
 test("read mode hydrates citation links through the existing secured URL preview API", () => {
