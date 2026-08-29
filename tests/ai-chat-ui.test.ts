@@ -296,8 +296,10 @@ describe("AI conversation block", () => {
     expect(moduleSource).toContain('getAiChatLinkFallbackTitle(link, url, referenceNumber)');
     expect(moduleSource).toContain('domain.className = "rendered-ai-chat-link-domain"');
     expect(moduleSource).toContain('showAiChatCitationPopover(citation);');
-    expect(moduleSource).toContain('sourceLink.textContent = citation.dataset.aiChatLinkTitle');
+    expect(moduleSource).toContain('renderAiChatCitationPopoverSource(citation, activeAiChatCitationSourceIndex);');
+    expect(moduleSource).toContain('t("aiChat.citationNextSource")');
     expect(styles).toMatch(/\.rendered-ai-chat-link-tooltip\s*\{[^}]*position:\s*fixed;[^}]*max-width:/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-link-tooltip-navigation\s*\{[^}]*display:\s*flex;/s);
   });
 
   it("preserves numeric and named HTTP(S) Markdown links for client-side citation hydration", () => {

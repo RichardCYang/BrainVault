@@ -497,16 +497,44 @@ test("plain [1] and grouped [2, 13] markers receive relocated source chips inste
     const firstChips = firstClaim.querySelectorAll(".rendered-ai-chat-link-preview");
     const groupedChips = groupedClaim.querySelectorAll(".rendered-ai-chat-link-preview");
     assert.deepEqual(firstChips.map((chip) => chip.dataset.aiChatReference), ["1"]);
-    assert.deepEqual(groupedChips.map((chip) => chip.dataset.aiChatReference), ["2", "13"]);
+    assert.deepEqual(groupedChips.map((chip) => chip.dataset.aiChatReference), ["2"]);
     assert.equal(firstChips[0].dataset.aiChatLinkDomain, "github");
     assert.equal(groupedChips[0].dataset.aiChatLinkDomain, "mozilla");
-    assert.equal(groupedChips[1].dataset.aiChatLinkDomain, "example");
+    assert.equal(groupedChips[0].dataset.aiChatReferences, "2,13");
+    assert.deepEqual(
+      groupedChips[0].aiChatCitationSources.map((source) => [source.referenceNumber, source.domain]),
+      [["2", "mozilla"], ["13", "example"]]
+    );
     assert.doesNotMatch(firstClaim.textContent, /\[1\]/);
     assert.doesNotMatch(groupedClaim.textContent, /\[2,\s*13\]/);
     assert.doesNotMatch(firstClaim.textContent, /[()]/);
     assert.doesNotMatch(groupedClaim.textContent, /[()]/);
     assert.equal(firstClaim.textContent, "First claim github.");
-    assert.equal(groupedClaim.textContent, "Grouped claim mozilla example.");
+    assert.equal(groupedClaim.textContent, "Grouped claim mozilla.");
+
+    groupedChips[0].dispatch("click");
+    const popover = body.children.find((child) => child.className === "rendered-ai-chat-link-tooltip");
+    assert.ok(popover);
+    const navigation = popover.querySelector(".rendered-ai-chat-link-tooltip-navigation");
+    const counter = popover.querySelector(".rendered-ai-chat-link-tooltip-counter");
+    const previousButton = popover.querySelector(".rendered-ai-chat-link-tooltip-nav--previous");
+    const nextButton = popover.querySelector(".rendered-ai-chat-link-tooltip-nav--next");
+    assert.equal(popover.children[0].href, "https://developer.mozilla.org/en-US/docs/Web/API/URL");
+    assert.equal(counter.textContent, "1 / 2");
+    assert.equal(navigation.hidden, false);
+    assert.equal(previousButton.disabled, true);
+    assert.equal(nextButton.disabled, false);
+
+    nextButton.dispatch("click");
+    assert.equal(popover.children[0].href, "https://news.example.co.kr/article/13");
+    assert.equal(popover.children[0].textContent, "news.example.co.kr");
+    assert.equal(counter.textContent, "2 / 2");
+    assert.equal(previousButton.disabled, false);
+    assert.equal(nextButton.disabled, true);
+
+    previousButton.dispatch("click");
+    assert.equal(popover.children[0].href, "https://developer.mozilla.org/en-US/docs/Web/API/URL");
+    assert.equal(counter.textContent, "1 / 2");
 
     assert.equal(sourceOne.isConnected, false);
     assert.equal(sourceTwo.isConnected, false);
@@ -520,9 +548,9 @@ test("plain [1] and grouped [2, 13] markers receive relocated source chips inste
   }
 });
 
-test("named links under a Sources heading are mapped by source order and the exhausted tail section is removed", async () => {
+test("grouped [1, 2, 3] sources render one representative chip and remove the exhausted source section", async () => {
   const content = createDomElement("div");
-  const claim = appendText(createDomElement("p"), "Claim [1, 2].");
+  const claim = appendText(createDomElement("p"), "Claim [1, 2, 3].");
   const heading = appendText(createDomElement("h3"), "Sources");
   const list = createDomElement("ul");
   const firstItem = createDomElement("li");
@@ -535,7 +563,12 @@ test("named links under a Sources heading are mapped by source order and the exh
   secondLink.href = "https://www.nasa.gov/mission-pages";
   secondLink.textContent = "NASA Missions";
   secondItem.append(secondLink);
-  list.append(firstItem, secondItem);
+  const thirdItem = createDomElement("li");
+  const thirdLink = createDomElement("a");
+  thirdLink.href = "https://developer.mozilla.org/en-US/docs/Web/API/URL";
+  thirdLink.textContent = "MDN URL";
+  thirdItem.append(thirdLink);
+  list.append(firstItem, secondItem, thirdItem);
   content.append(claim, heading, list);
 
   const root = {
@@ -562,9 +595,13 @@ test("named links under a Sources heading are mapped by source order and the exh
     hydrateRenderedAiChatLinks(root, async () => null);
     await new Promise((resolve) => setTimeout(resolve, 0));
     const chips = claim.querySelectorAll(".rendered-ai-chat-link-preview");
-    assert.deepEqual(chips.map((chip) => chip.dataset.aiChatReference), ["1", "2"]);
+    assert.deepEqual(chips.map((chip) => chip.dataset.aiChatReference), ["1"]);
+    assert.equal(chips[0].dataset.aiChatReferences, "1,2,3");
     assert.equal(chips[0].dataset.aiChatLinkTitle, "OpenAI Research");
-    assert.equal(chips[1].dataset.aiChatLinkTitle, "NASA Missions");
+    assert.deepEqual(
+      chips[0].aiChatCitationSources.map((source) => source.title),
+      ["OpenAI Research", "NASA Missions", "MDN URL"]
+    );
     assert.equal(heading.isConnected, false);
     assert.equal(list.isConnected, false);
   } finally {

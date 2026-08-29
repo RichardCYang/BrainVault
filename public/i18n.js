@@ -697,7 +697,9 @@ export const translationCatalogs = {
       questionAriaNumbered: "AI conversation question {count}",
       answerPlaceholder: "Paste or enter the AI answer…",
       answerAria: "AI conversation answer",
-      answerAriaNumbered: "AI conversation answer {count}"
+      answerAriaNumbered: "AI conversation answer {count}",
+      citationPreviousSource: "Previous source",
+      citationNextSource: "Next source"
     },
     callouts: { idea: "Idea", info: "Information", success: "Success", warning: "Warning", danger: "Danger" },
     slash: {
@@ -1948,7 +1950,9 @@ export const translationCatalogs = {
       questionAriaNumbered: "AI 대화 {count}번째 질문",
       answerPlaceholder: "AI 답변을 붙여넣거나 입력하세요…",
       answerAria: "AI 대화 답변",
-      answerAriaNumbered: "AI 대화 {count}번째 답변"
+      answerAriaNumbered: "AI 대화 {count}번째 답변",
+      citationPreviousSource: "이전 출처",
+      citationNextSource: "다음 출처"
     },
     callouts: { idea: "아이디어", info: "정보", success: "성공", warning: "주의", danger: "위험" },
     slash: {
