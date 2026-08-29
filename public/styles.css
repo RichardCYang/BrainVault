@@ -9511,6 +9511,12 @@ body.auth-mode * {
   background: #edf6fa;
 }
 
+.auth-mode .auth-passkey-login[aria-disabled="true"]:not(:disabled),
+.mfa-login-passkey[aria-disabled="true"]:not(:disabled) {
+  cursor: progress;
+  opacity: 0.5;
+}
+
 .auth-mode .auth-passkey-hint {
   margin: 0;
   color: #687f8d;

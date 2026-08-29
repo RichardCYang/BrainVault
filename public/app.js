@@ -1469,15 +1469,27 @@ function setWorkspaceCreateBusy(busy) {
 
 function syncAuthOperationControls() {
   const busy = state.authOperationBusy;
+  const webAuthnSupported = isWebAuthnSupported();
   elements.authSubmit.disabled = busy;
-  elements.authPasskeyLogin.disabled = busy || state.authMode !== "login" || !isWebAuthnSupported();
+  // Keep WebAuthn trigger buttons focusable while an authentication operation
+  // is pending. Disabling the element that initiated a passkey flow immediately
+  // drops its DOM focus before the native WebAuthn UI is requested. The click
+  // handlers already reject re-entry while authOperationBusy is true, so
+  // aria-disabled gives us the busy affordance without destroying the focus
+  // anchor that the browser can use for the native prompt hand-off.
+  elements.authPasskeyLogin.disabled = state.authMode !== "login" || !webAuthnSupported;
+  elements.authPasskeyLogin.setAttribute(
+    "aria-disabled",
+    String(busy || state.authMode !== "login" || !webAuthnSupported)
+  );
   elements.username.disabled = busy;
   elements.password.disabled = busy;
   elements.name.disabled = busy;
   elements.authSwitchLink.setAttribute("aria-disabled", String(busy));
   elements.authSwitchLink.tabIndex = busy ? -1 : 0;
   elements.mfaLoginTotpSubmit.disabled = busy;
-  elements.mfaLoginPasskey.disabled = busy || !isWebAuthnSupported();
+  elements.mfaLoginPasskey.disabled = !webAuthnSupported;
+  elements.mfaLoginPasskey.setAttribute("aria-disabled", String(busy || !webAuthnSupported));
   elements.mfaLoginCancel.disabled = busy;
 }
 
@@ -1732,8 +1744,33 @@ async function createWebAuthnCredential(options) {
   return serializeRegistrationCredential(credential);
 }
 
-async function getWebAuthnCredential(options) {
+function assertWebAuthnForeground(trigger) {
+  const documentVisible = document.visibilityState === "visible";
+  const documentFocused = typeof document.hasFocus !== "function" || document.hasFocus();
+  if (!documentVisible || !documentFocused) {
+    throw new Error(t("mfa.passkeyForegroundRequired"));
+  }
+
+  // Re-anchor focus on the user-invoked control immediately before crossing
+  // from DOM UI into the browser/OS WebAuthn UI. This cannot force native
+  // z-order, but it avoids handing the authenticator a stale/removed focus
+  // target after the asynchronous challenge fetch.
+  if (trigger?.focus) {
+    try {
+      trigger.focus({ preventScroll: true });
+    } catch {
+      trigger.focus();
+    }
+  }
+
+  if (typeof document.hasFocus === "function" && !document.hasFocus()) {
+    throw new Error(t("mfa.passkeyForegroundRequired"));
+  }
+}
+
+async function getWebAuthnCredential(options, { trigger = null } = {}) {
   if (!isWebAuthnSupported()) throw new Error(t("mfa.passkeyUnsupported"));
+  assertWebAuthnForeground(trigger);
   const credential = await navigator.credentials.get({ publicKey: prepareAuthenticationOptions(options) });
   if (!credential) throw new Error(t("mfa.passkeyOperationCancelled"));
   return serializeAuthenticationCredential(credential);
@@ -1941,11 +1978,18 @@ async function applyClientNetworkVerificationHeaders(headers) {
 const skippedApiRequest = Symbol("skipped-api-request");
 
 async function api(path, options = {}) {
-  const { skipAuthReset = false, beforeFetch = null, ...requestOptions } = options;
+  const {
+    skipAuthReset = false,
+    skipClientNetworkVerification = false,
+    beforeFetch = null,
+    ...requestOptions
+  } = options;
   const authenticationScope = captureAuthenticatedSessionScope();
   const startedAuthenticated = Boolean(state.authenticated && authenticationScope.targetKey);
   const headers = new Headers(requestOptions.headers ?? {});
-  await applyClientNetworkVerificationHeaders(headers);
+  if (!skipClientNetworkVerification) {
+    await applyClientNetworkVerificationHeaders(headers);
+  }
   if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope)) {
     throw createApiRequestError(t("errors.UNAUTHENTICATED"), {
       status: 401,
@@ -16807,7 +16851,14 @@ async function restoreWorkspaceLocationFromHash({ fallbackToHome = false } = {})
 
 
 async function loadMe() {
-  const data = await api("/api/auth/me", { skipAuthReset: true });
+  // /auth/me does not consume the timezone/WebRTC VPN signal server-side.
+  // Avoid starting the up-to-1.8s STUN discovery while the anonymous login
+  // screen is booting; otherwise an immediate passkey click can get queued
+  // behind that same in-flight signal before WebAuthn is even invoked.
+  const data = await api("/api/auth/me", {
+    skipAuthReset: true,
+    skipClientNetworkVerification: true
+  });
   return data.user;
 }
 
@@ -17974,7 +18025,7 @@ elements.mfaLoginPasskey.addEventListener("click", async () => {
       skipAuthReset: true
     });
     if (!isCurrentAuthFlowOperation(operation) || state.mfaLogin?.token !== mfaToken) return;
-    const response = await getWebAuthnCredential(optionsData.options);
+    const response = await getWebAuthnCredential(optionsData.options, { trigger: elements.mfaLoginPasskey });
     if (!isCurrentAuthFlowOperation(operation) || state.mfaLogin?.token !== mfaToken) return;
     const data = await api("/api/auth/mfa/login/passkey/verify", {
       method: "POST",
@@ -18155,10 +18206,14 @@ elements.authPasskeyLogin.addEventListener("click", async () => {
     const optionsData = await api("/api/auth/passkey/options", {
       method: "POST",
       body: {},
-      skipAuthReset: true
+      skipAuthReset: true,
+      // This endpoint only creates a one-time WebAuthn challenge and does not
+      // read the VPN/timezone signal. Do not put STUN discovery in the critical
+      // click -> native WebAuthn prompt path. /verify still sends the signal.
+      skipClientNetworkVerification: true
     });
     if (!isCurrentAuthFlowOperation(operation)) return;
-    const response = await getWebAuthnCredential(optionsData.options);
+    const response = await getWebAuthnCredential(optionsData.options, { trigger: elements.authPasskeyLogin });
     if (!isCurrentAuthFlowOperation(operation)) return;
     const data = await api("/api/auth/passkey/verify", {
       method: "POST",

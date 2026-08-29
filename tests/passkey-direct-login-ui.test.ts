@@ -16,9 +16,23 @@ describe("direct passkey login UI contract", () => {
     expect(index).toContain('data-i18n="auth.passkeyLogin"');
     expect(client).toContain('api("/api/auth/passkey/options"');
     expect(client).toContain('api("/api/auth/passkey/verify"');
-    expect(client).toContain("getWebAuthnCredential(optionsData.options)");
+    expect(client).toContain("getWebAuthnCredential(optionsData.options, { trigger: elements.authPasskeyLogin })");
     expect(client).toContain("await completeAuthenticatedLogin(data)");
     expect(styles).toContain(".auth-passkey-login-section");
+  });
+
+  it("keeps the native WebAuthn hand-off foreground-coupled and removes avoidable pre-prompt STUN waits", () => {
+    expect(client).toContain("function assertWebAuthnForeground(trigger)");
+    expect(client).toContain('document.visibilityState === "visible"');
+    expect(client).toContain("document.hasFocus()");
+    expect(client).toContain('trigger.focus({ preventScroll: true })');
+    expect(client).toContain('t("mfa.passkeyForegroundRequired")');
+    expect(client).toContain('skipClientNetworkVerification = false');
+    expect(client).toMatch(/api\("\/api\/auth\/passkey\/options"[\s\S]*?skipClientNetworkVerification: true/);
+    expect(client).toMatch(/api\("\/api\/auth\/me"[\s\S]*?skipClientNetworkVerification: true/);
+    expect(client).toContain("getWebAuthnCredential(optionsData.options, { trigger: elements.mfaLoginPasskey })");
+    expect(styles).toContain('.auth-passkey-login[aria-disabled="true"]');
+    expect(i18n).toContain("passkeyForegroundRequired:");
   });
 
   it("hides the passkey action during registration and serializes userHandle", () => {
