@@ -72,7 +72,10 @@ export function toPage(row: PageRow) {
 
 export function toBlock(row: BlockRow) {
   const metadata = validateStoredBlockMetadata(row.type, row.metadata);
-  const renderedHtml = row.html_cache === null
+  // AI chat HTML is derived from canonical metadata and includes renderer-version-sensitive
+  // citation normalization. Re-render it at the read boundary so legacy html_cache rows
+  // cannot bypass newer read-mode citation/chip semantics.
+  const renderedHtml = row.type === "AI_CHAT" || row.html_cache === null
     ? renderBlockHtml(row.type, row.markdown, Boolean(row.checked), metadata)
     : sanitizeRenderedBlockHtml(row.type, row.html_cache);
   return {

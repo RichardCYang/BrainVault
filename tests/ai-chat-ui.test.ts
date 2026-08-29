@@ -6,6 +6,7 @@ import {
   summarizeAiChatData
 } from "../src/lib/ai-chat.js";
 import { renderBlockHtml } from "../src/lib/markdown.js";
+import { toBlock } from "../src/lib/mappers.js";
 
 const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const moduleSource = readFileSync(new URL("../public/ai-chat-block.js", import.meta.url), "utf8");
@@ -322,6 +323,40 @@ describe("AI conversation block", () => {
     expect(html).toContain('>MDN URL docs</a>');
     expect(html.match(/target="_blank"/g)?.length).toBeGreaterThanOrEqual(2);
     expect(html.match(/rel="noopener noreferrer"/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("regenerates stale AI chat html_cache before exposing numeric reference-style citations", () => {
+    const block = toBlock({
+      id: "blk_ai_cache",
+      page_id: "page_ai_cache",
+      parent_block_id: null,
+      type: "AI_CHAT",
+      markdown: "legacy summary",
+      html_cache: '<section class="rendered-ai-chat"><a href="https://docs.github.com/en/get-started">제목</a></section>',
+      checked: 0,
+      sort_order: 0,
+      metadata: {
+        aiChat: {
+          provider: "chatgpt",
+          turns: [
+            {
+              answeredAt: "",
+              question: "Sources?",
+              answer: [
+                "Claim ([제목][1]).",
+                "",
+                "[1]: https://docs.github.com/en/get-started"
+              ].join("\n")
+            }
+          ]
+        }
+      },
+      created_at: "2026-08-29T00:00:00.000Z",
+      updated_at: "2026-08-29T00:00:00.000Z"
+    });
+
+    expect(block.htmlCache).toMatch(/Claim \(<a href="https:\/\/docs\.github\.com\/en\/get-started"[^>]*>1<\/a>\)\./);
+    expect(block.htmlCache).not.toContain(">제목</a>");
   });
 
   it("routes explicit numeric reference-style AI answer links through citation hydration", () => {

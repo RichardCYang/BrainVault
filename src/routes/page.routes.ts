@@ -1567,7 +1567,10 @@ pageRouter.get("/:pageId/render", validate({ params: idParamSchema }), async (re
 
       return rows
         .map((block) => {
-          const blockHtml = block.type === "CALLOUT" || block.html_cache === null
+          // AI chat citation rendering is version-sensitive: regenerate from canonical metadata
+          // so an older cache that still contains the visible [title][n] label cannot leak into
+          // read mode and skip favicon/domain-chip hydration.
+          const blockHtml = block.type === "CALLOUT" || block.type === "AI_CHAT" || block.html_cache === null
             ? renderBlockHtml(block.type, block.markdown, Boolean(block.checked), block.metadata)
             : sanitizeRenderedBlockHtml(block.type, block.html_cache);
           return `<section data-block-id="${escapeHtmlAttribute(block.id)}" data-block-type="${escapeHtmlAttribute(block.type)}">${blockHtml}</section>`;

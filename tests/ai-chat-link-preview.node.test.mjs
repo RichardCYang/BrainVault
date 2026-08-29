@@ -392,6 +392,55 @@ test("citation chips handle bracketed references and country-code domains while 
   assert.equal(namedParagraph.querySelectorAll(".rendered-ai-chat-link-preview").length, 0);
 });
 
+test("AI read mode treats wrapper parentheses around a normalized numeric reference link as citation syntax", async () => {
+  const sourceUrl = "https://docs.github.com/en/get-started";
+  const content = createDomElement("div");
+  const paragraph = createDomElement("p");
+  paragraph.append(createDomText("Claim ("));
+  const link = createDomElement("a");
+  link.href = sourceUrl;
+  link.textContent = "1";
+  paragraph.append(link, createDomText(")."));
+  content.append(paragraph);
+
+  const root = {
+    querySelectorAll(selector) {
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content") return [content];
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]") return content.querySelectorAll("a[href]");
+      return [];
+    }
+  };
+  const originalDocument = globalThis.document;
+  const originalIntersectionObserver = globalThis.IntersectionObserver;
+  globalThis.document = {
+    createElement: createDomElement,
+    createTextNode: createDomText,
+    createDocumentFragment: createDomFragment,
+    body: createDomElement("body"),
+    documentElement: { clientWidth: 1280, clientHeight: 720 },
+    addEventListener() {}
+  };
+  delete globalThis.IntersectionObserver;
+
+  try {
+    hydrateRenderedAiChatLinks(root, async () => ({ title: "GitHub Docs", faviconUrl: faviconDataUrl }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const chip = paragraph.querySelector(".rendered-ai-chat-link-preview");
+    assert.ok(chip);
+    assert.equal(chip.dataset.aiChatReference, "1");
+    assert.equal(chip.dataset.aiChatLinkDomain, "github");
+    assert.equal(chip.querySelector(".rendered-ai-chat-link-favicon").children[0]?.src, faviconDataUrl);
+    assert.equal(paragraph.textContent, "Claim github.");
+    assert.doesNotMatch(paragraph.textContent, /[()]/);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalIntersectionObserver === undefined) delete globalThis.IntersectionObserver;
+    else globalThis.IntersectionObserver = originalIntersectionObserver;
+  }
+});
+
 test("AI read mode removes wrapper parentheses around a trailing named reference link only", async () => {
   const content = createDomElement("div");
   const trailingParagraph = createDomElement("p");

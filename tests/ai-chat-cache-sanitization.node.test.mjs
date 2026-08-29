@@ -43,6 +43,12 @@ test("both persisted html_cache read boundaries select the sanitizer by block ty
 
   assert.doesNotMatch(mappers, /sanitizeRenderedHtml\(row\.html_cache\)/);
   assert.doesNotMatch(pageRoutes, /sanitizeRenderedHtml\(block\.html_cache\)/);
+
+  // AI_CHAT caches are renderer-version-sensitive because reference-style citations are
+  // normalized before client-side favicon/domain hydration. Existing rows must therefore
+  // be regenerated from canonical metadata rather than trusting a legacy derived cache.
+  assert.match(mappers, /row\.type === "AI_CHAT" \|\| row\.html_cache === null/);
+  assert.match(pageRoutes, /block\.type === "CALLOUT" \|\| block\.type === "AI_CHAT" \|\| block\.html_cache === null/);
 });
 
 
