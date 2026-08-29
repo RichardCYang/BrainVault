@@ -156,6 +156,26 @@ describe("AI conversation block", () => {
     expect(styles).toMatch(/\.rendered-ai-chat--hide-answer-border \.rendered-ai-chat-answer\s*\{[^}]*border:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s);
   });
 
+  it("keeps Markdown code fences bordered when the AI answer card border is hidden", () => {
+    const borderlessHtml = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        hideAnswerBorder: true,
+        turns: [
+          {
+            answeredAt: "",
+            question: "Show an example",
+            answer: "```javascript\nconst answer = 42;\n```"
+          }
+        ]
+      }
+    });
+
+    expect(borderlessHtml).toContain("rendered-ai-chat--hide-answer-border");
+    expect(borderlessHtml).toContain('<pre class="rendered-code-pre"><code class="language-javascript">');
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-code-pre\s*\{[^}]*border:\s*1px solid rgba\(93, 132, 160, 0\.2\);[^}]*border-radius:\s*var\(--radius-md\);/s);
+  });
+
   it("does not let AI Markdown forge pagination controls", () => {
     const html = renderBlockHtml("AI_CHAT", "", false, {
       aiChat: {

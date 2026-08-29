@@ -15731,6 +15731,16 @@ body.pdf-export-mode .remote-collaboration-caret {
   tab-size: 2;
 }
 
+/* Markdown code fences inside AI answers are rendered directly as
+   .rendered-code-pre (without the .rendered-code-shell used by standalone
+   CODE blocks). Give those fences their own outline so the answer-card border
+   toggle can remove only the outer AI answer chrome without also removing the
+   visual boundary around code. */
+.rendered-ai-chat-answer .rendered-code-pre {
+  border: 1px solid rgba(93, 132, 160, 0.2);
+  border-radius: var(--radius-md);
+}
+
 .block-rendered-preview .rendered-code-pre code.hljs,
 .rendered-code-pre code.hljs {
   display: block;
