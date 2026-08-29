@@ -232,6 +232,14 @@ describe("AI conversation block", () => {
     expect(html).not.toContain("script");
   });
 
+  it("limits rich link previews to numbered AI citations and keeps titles click-revealed", () => {
+    expect(moduleSource).toContain('label.match(/^(?:\\[(\\d{1,3})\\]|(\\d{1,3}))$/)');
+    expect(moduleSource).toContain('domain.className = "rendered-ai-chat-link-domain"');
+    expect(moduleSource).toContain('showAiChatCitationPopover(citation);');
+    expect(moduleSource).toContain('sourceLink.textContent = citation.dataset.aiChatLinkTitle');
+    expect(styles).toMatch(/\.rendered-ai-chat-link-tooltip\s*\{[^}]*position:\s*fixed;[^}]*max-width:/s);
+  });
+
   it("keeps display LaTeX centered in read-only AI answers", () => {
     expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-content \.math-expression--display\s*\{[^}]*width:\s*100%;[^}]*overflow-x:\s*auto;[^}]*text-align:\s*center;/s);
     expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-content \.math-expression--display \.katex-display\s*\{[^}]*width:\s*max-content;[^}]*min-width:\s*100%;[^}]*overflow:\s*visible;[^}]*text-align:\s*center;/s);

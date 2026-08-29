@@ -6943,7 +6943,7 @@ function setControlReadOnlyState(control, readOnly) {
 
   if (control instanceof HTMLButtonElement || control instanceof HTMLSelectElement) {
     const allowedInReadMode = control.matches(
-      '[data-action="download-attachment"], [data-action="copy-ai-answer-code"], [data-action="treeview-select-node"], [data-action="treeview-toggle-node"], .rendered-ai-chat-page'
+      '[data-action="download-attachment"], [data-action="copy-ai-answer-code"], [data-action="treeview-select-node"], [data-action="treeview-toggle-node"], .rendered-ai-chat-page, .rendered-ai-chat-link-preview'
     );
     if (readOnly) {
       if (!control.dataset.pageModeWasDisabled) control.dataset.pageModeWasDisabled = String(control.disabled);

@@ -25,6 +25,11 @@ const aiChatLinkPreviewCache = new Map();
 const aiChatLinkPreviewObservers = new WeakMap();
 const aiChatLinkPreviewFaviconDataUrlMaxLength = Math.ceil((128 * 1024 * 4) / 3) + 128;
 const aiChatLinkPreviewFaviconDataPattern = /^data:image\/(?:png|jpeg|gif|webp|vnd\.microsoft\.icon);base64,[a-z0-9+/]+={0,2}$/i;
+const aiChatCountrySecondLevelDomains = new Set(["ac", "co", "com", "edu", "go", "gov", "net", "ne", "or", "org"]);
+const aiChatCitationPopoverId = "rendered-ai-chat-citation-popover";
+let activeAiChatCitation = null;
+let aiChatCitationPopover = null;
+let aiChatCitationPopoverEventsBound = false;
 
 function getAiChatWebUrl(value) {
   const raw = typeof value === "string" ? value.trim() : "";
@@ -37,10 +42,27 @@ function getAiChatWebUrl(value) {
   }
 }
 
-function getAiChatLinkFallbackTitle(link, url) {
-  const label = typeof link?.textContent === "string" ? link.textContent.trim() : "";
-  if (label && !/^https?:\/\//i.test(label) && label !== url.hostname) return label;
-  return url.hostname;
+function getAiChatReferenceNumber(link) {
+  const label = typeof link?.textContent === "string" ? link.textContent.trim().replace(/\s+/g, "") : "";
+  const match = label.match(/^(?:\[(\d{1,3})\]|(\d{1,3}))$/);
+  return match?.[1] ?? match?.[2] ?? "";
+}
+
+function getAiChatCitationDomainLabel(url) {
+  const hostname = url.hostname.toLowerCase().replace(/^www\./, "").replace(/\.$/, "");
+  if (!hostname || hostname === "localhost" || hostname.includes(":")) return hostname || url.hostname;
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname)) return hostname;
+
+  const parts = hostname.split(".").filter(Boolean);
+  if (parts.length < 2) return hostname;
+  const tld = parts.at(-1) ?? "";
+  const secondLevel = parts.at(-2) ?? "";
+  const useThirdLevel = tld.length === 2 && aiChatCountrySecondLevelDomains.has(secondLevel) && parts.length >= 3;
+  return parts.at(useThirdLevel ? -3 : -2) || hostname;
+}
+
+function getAiChatCitationFallbackTitle(url) {
+  return url.hostname.toLowerCase().replace(/^www\./, "") || url.toString();
 }
 
 function getAiChatLinkPreviewFavicon(value) {
@@ -58,39 +80,143 @@ function resetAiChatLinkFavicon(slot) {
   slot.classList.add("is-fallback");
 }
 
+function hideAiChatCitationPopover({ restoreFocus = false } = {}) {
+  const citation = activeAiChatCitation;
+  if (citation) citation.setAttribute("aria-expanded", "false");
+  if (aiChatCitationPopover) aiChatCitationPopover.hidden = true;
+  activeAiChatCitation = null;
+  if (restoreFocus && citation?.isConnected) citation.focus?.();
+}
+
+function positionAiChatCitationPopover(citation, popover) {
+  if (!citation?.getBoundingClientRect || !popover?.getBoundingClientRect) return;
+  const triggerRect = citation.getBoundingClientRect();
+  const viewportWidth = document.documentElement?.clientWidth || globalThis.innerWidth || 0;
+  const viewportHeight = document.documentElement?.clientHeight || globalThis.innerHeight || 0;
+  const edge = 8;
+  const gap = 7;
+
+  popover.style.left = `${Math.max(edge, triggerRect.left)}px`;
+  popover.style.top = `${triggerRect.bottom + gap}px`;
+  const popoverRect = popover.getBoundingClientRect();
+  const maxLeft = Math.max(edge, viewportWidth - popoverRect.width - edge);
+  const left = Math.min(Math.max(triggerRect.left, edge), maxLeft);
+  let top = triggerRect.bottom + gap;
+  if (viewportHeight && top + popoverRect.height > viewportHeight - edge) {
+    const above = triggerRect.top - popoverRect.height - gap;
+    if (above >= edge) top = above;
+  }
+  popover.style.left = `${left}px`;
+  popover.style.top = `${Math.max(edge, top)}px`;
+}
+
+function ensureAiChatCitationPopover() {
+  if (aiChatCitationPopover?.isConnected) return aiChatCitationPopover;
+  if (!document?.body) return null;
+
+  const popover = document.createElement("div");
+  popover.id = aiChatCitationPopoverId;
+  popover.className = "rendered-ai-chat-link-tooltip";
+  popover.hidden = true;
+  popover.setAttribute("role", "dialog");
+  popover.setAttribute("aria-modal", "false");
+
+  const sourceLink = document.createElement("a");
+  sourceLink.className = "rendered-ai-chat-link-tooltip-title";
+  sourceLink.target = "_blank";
+  sourceLink.rel = "noopener noreferrer";
+  sourceLink.referrerPolicy = "no-referrer";
+  sourceLink.addEventListener("click", () => hideAiChatCitationPopover());
+  popover.append(sourceLink);
+  document.body.append(popover);
+  aiChatCitationPopover = popover;
+
+  if (!aiChatCitationPopoverEventsBound) {
+    document.addEventListener("pointerdown", (event) => {
+      if (!activeAiChatCitation || !aiChatCitationPopover || aiChatCitationPopover.hidden) return;
+      const target = event.target;
+      if (activeAiChatCitation.contains?.(target) || aiChatCitationPopover.contains?.(target)) return;
+      hideAiChatCitationPopover();
+    }, true);
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !activeAiChatCitation) return;
+      event.preventDefault();
+      hideAiChatCitationPopover({ restoreFocus: true });
+    });
+    document.addEventListener("scroll", () => hideAiChatCitationPopover(), true);
+    globalThis.addEventListener?.("resize", () => hideAiChatCitationPopover());
+    aiChatCitationPopoverEventsBound = true;
+  }
+
+  return popover;
+}
+
+function showAiChatCitationPopover(citation) {
+  if (!citation?.dataset?.aiChatLinkUrl) return;
+  if (activeAiChatCitation === citation && aiChatCitationPopover && !aiChatCitationPopover.hidden) {
+    hideAiChatCitationPopover();
+    return;
+  }
+
+  const popover = ensureAiChatCitationPopover();
+  const sourceLink = popover?.querySelector?.(".rendered-ai-chat-link-tooltip-title");
+  if (!popover || !sourceLink) return;
+
+  if (activeAiChatCitation && activeAiChatCitation !== citation) {
+    activeAiChatCitation.setAttribute("aria-expanded", "false");
+  }
+  activeAiChatCitation = citation;
+  citation.setAttribute("aria-expanded", "true");
+  citation.setAttribute("aria-controls", aiChatCitationPopoverId);
+  sourceLink.href = citation.dataset.aiChatLinkUrl;
+  sourceLink.textContent = citation.dataset.aiChatLinkTitle || citation.dataset.aiChatLinkDomain || citation.dataset.aiChatLinkUrl;
+  popover.setAttribute("aria-label", sourceLink.textContent);
+  popover.hidden = false;
+  positionAiChatCitationPopover(citation, popover);
+}
+
 function prepareRenderedAiChatLink(link) {
+  const referenceNumber = getAiChatReferenceNumber(link);
+  if (!referenceNumber) return null;
   const url = getAiChatWebUrl(link?.href ?? link?.getAttribute?.("href"));
   if (!url) return null;
+
   const normalizedUrl = url.toString();
-  if (link.dataset?.aiChatLinkUrl === normalizedUrl && link.classList?.contains("rendered-ai-chat-link-preview")) {
-    return normalizedUrl;
-  }
+  const citation = document.createElement("button");
+  citation.type = "button";
+  citation.className = "rendered-ai-chat-link-preview";
+  citation.dataset.aiChatLinkUrl = normalizedUrl;
+  citation.dataset.aiChatLinkDomain = getAiChatCitationDomainLabel(url);
+  citation.dataset.aiChatLinkTitle = getAiChatCitationFallbackTitle(url);
+  citation.dataset.aiChatLinkPreviewState = "pending";
+  citation.dataset.aiChatReference = referenceNumber;
+  citation.setAttribute("aria-expanded", "false");
+  citation.setAttribute("aria-haspopup", "dialog");
+  citation.setAttribute("aria-label", `[${referenceNumber}] ${citation.dataset.aiChatLinkDomain}`);
 
   const favicon = document.createElement("span");
   favicon.className = "rendered-ai-chat-link-favicon is-fallback";
   favicon.setAttribute("aria-hidden", "true");
 
-  const title = document.createElement("span");
-  title.className = "rendered-ai-chat-link-title";
-  title.textContent = getAiChatLinkFallbackTitle(link, url);
+  const domain = document.createElement("span");
+  domain.className = "rendered-ai-chat-link-domain";
+  domain.textContent = citation.dataset.aiChatLinkDomain;
 
-  link.classList.add("rendered-ai-chat-link-preview");
-  link.target = "_blank";
-  link.rel = "noopener noreferrer";
-  link.referrerPolicy = "no-referrer";
-  link.dataset.aiChatLinkUrl = normalizedUrl;
-  link.dataset.aiChatLinkPreviewState = "pending";
-  link.replaceChildren(favicon, title);
-  return normalizedUrl;
+  citation.append(favicon, domain);
+  citation.addEventListener("click", (event) => {
+    event.preventDefault();
+    showAiChatCitationPopover(citation);
+  });
+  link.replaceWith(citation);
+  return citation;
 }
 
-function applyRenderedAiChatLinkPreview(link, previewData, requestedUrl) {
-  if (!link?.isConnected || link.dataset?.aiChatLinkUrl !== requestedUrl) return;
+function applyRenderedAiChatLinkPreview(citation, previewData, requestedUrl) {
+  if (!citation?.isConnected || citation.dataset?.aiChatLinkUrl !== requestedUrl) return;
   const title = typeof previewData?.title === "string" ? previewData.title.trim() : "";
-  const titleElement = link.querySelector?.(".rendered-ai-chat-link-title");
-  if (titleElement && title) titleElement.textContent = title;
+  if (title) citation.dataset.aiChatLinkTitle = title;
 
-  const faviconSlot = link.querySelector?.(".rendered-ai-chat-link-favicon");
+  const faviconSlot = citation.querySelector?.(".rendered-ai-chat-link-favicon");
   const faviconUrl = getAiChatLinkPreviewFavicon(previewData?.faviconUrl);
   resetAiChatLinkFavicon(faviconSlot);
   if (faviconSlot && faviconUrl) {
@@ -105,7 +231,16 @@ function applyRenderedAiChatLinkPreview(link, previewData, requestedUrl) {
     image.addEventListener("error", () => resetAiChatLinkFavicon(faviconSlot), { once: true });
     faviconSlot.append(image);
   }
-  link.dataset.aiChatLinkPreviewState = "loaded";
+  citation.dataset.aiChatLinkPreviewState = "loaded";
+
+  if (activeAiChatCitation === citation && aiChatCitationPopover && !aiChatCitationPopover.hidden) {
+    const sourceLink = aiChatCitationPopover.querySelector?.(".rendered-ai-chat-link-tooltip-title");
+    if (sourceLink) {
+      sourceLink.textContent = citation.dataset.aiChatLinkTitle;
+      aiChatCitationPopover.setAttribute("aria-label", sourceLink.textContent);
+    }
+    positionAiChatCitationPopover(citation, aiChatCitationPopover);
+  }
 }
 
 function getAiChatLinkPreviewRequest(url, fetchPreview) {
@@ -128,28 +263,29 @@ function getAiChatLinkPreviewRequest(url, fetchPreview) {
   return request;
 }
 
-async function hydrateRenderedAiChatLink(link, fetchPreview) {
-  const url = prepareRenderedAiChatLink(link);
-  if (!url || ["loading", "loaded"].includes(link.dataset.aiChatLinkPreviewState)) return;
-  link.dataset.aiChatLinkPreviewState = "loading";
+async function hydrateRenderedAiChatLink(citation, fetchPreview) {
+  const url = citation?.dataset?.aiChatLinkUrl;
+  if (!url || ["loading", "loaded"].includes(citation.dataset.aiChatLinkPreviewState)) return;
+  citation.dataset.aiChatLinkPreviewState = "loading";
   const previewData = await getAiChatLinkPreviewRequest(url, fetchPreview);
-  if (!link?.isConnected || link.dataset?.aiChatLinkUrl !== url) return;
+  if (!citation?.isConnected || citation.dataset?.aiChatLinkUrl !== url) return;
   if (!previewData) {
-    link.dataset.aiChatLinkPreviewState = "failed";
+    citation.dataset.aiChatLinkPreviewState = "failed";
     return;
   }
-  applyRenderedAiChatLinkPreview(link, previewData, url);
+  applyRenderedAiChatLinkPreview(citation, previewData, url);
 }
 
 export function hydrateRenderedAiChatLinks(root, fetchPreview) {
   if (!root || typeof fetchPreview !== "function") return;
-  const links = [...root.querySelectorAll(".rendered-ai-chat-answer .rendered-ai-chat-content a[href]")]
-    .filter((link) => Boolean(prepareRenderedAiChatLink(link)))
-    .filter((link) => !["loading", "loaded"].includes(link.dataset.aiChatLinkPreviewState));
-  if (!links.length) return;
+  const citations = [...root.querySelectorAll(".rendered-ai-chat-answer .rendered-ai-chat-content a[href]")]
+    .map((link) => prepareRenderedAiChatLink(link))
+    .filter(Boolean)
+    .filter((citation) => !["loading", "loaded"].includes(citation.dataset.aiChatLinkPreviewState));
+  if (!citations.length) return;
 
   if (typeof IntersectionObserver !== "function") {
-    links.forEach((link) => { void hydrateRenderedAiChatLink(link, fetchPreview); });
+    citations.forEach((citation) => { void hydrateRenderedAiChatLink(citation, fetchPreview); });
     return;
   }
 
@@ -166,7 +302,7 @@ export function hydrateRenderedAiChatLinks(root, fetchPreview) {
     observerState = { observer, fetchPreview };
     aiChatLinkPreviewObservers.set(root, observerState);
   }
-  links.forEach((link) => observerState.observer.observe(link));
+  citations.forEach((citation) => observerState.observer.observe(citation));
 }
 
 function normalizeText(value, maxLength) {

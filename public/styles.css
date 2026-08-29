@@ -14238,7 +14238,8 @@ button.danger {
 
 .page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-link-preview {
   display: inline-flex;
-  max-width: min(100%, 26rem);
+  max-width: min(100%, 12rem);
+  min-height: 1.55rem;
   align-items: center;
   gap: 0.34rem;
   margin: 0 0.08rem;
@@ -14247,19 +14248,22 @@ button.danger {
   background: var(--panel-soft);
   color: var(--ink-strong);
   padding: 0.13rem 0.48rem 0.13rem 0.28rem;
-  text-decoration: none;
   vertical-align: -0.16em;
+  font: inherit;
   font-size: 0.88em;
   font-weight: 620;
   line-height: 1.35;
+  cursor: pointer;
+  box-shadow: none;
+  appearance: none;
   transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
 }
 
-.page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-link-preview:hover {
+.page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-link-preview:hover,
+.page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-link-preview[aria-expanded="true"] {
   border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
   background: var(--hover);
   color: var(--ink-strong);
-  text-decoration: none;
 }
 
 .page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-link-preview:focus-visible {
@@ -14300,11 +14304,56 @@ button.danger {
   object-fit: contain;
 }
 
-.rendered-ai-chat-link-title {
+.rendered-ai-chat-link-domain {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.rendered-ai-chat-link-tooltip {
+  position: fixed;
+  z-index: 1270;
+  width: max-content;
+  max-width: min(24rem, calc(100vw - 1rem));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 0.48rem 0.56rem;
+  box-shadow: var(--shadow-popover);
+}
+
+.rendered-ai-chat-link-tooltip[hidden] {
+  display: none;
+}
+
+.rendered-ai-chat-link-tooltip-title {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--ink-strong);
+  font-size: 0.76rem;
+  font-weight: 620;
+  line-height: 1.42;
+  text-decoration: none;
+}
+
+.rendered-ai-chat-link-tooltip-title:hover,
+.rendered-ai-chat-link-tooltip-title:focus-visible {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
+  outline: none;
+}
+
+body.pdf-export-mode .rendered-ai-chat-link-tooltip {
+  display: none !important;
+}
+
+@media print {
+  .rendered-ai-chat-link-tooltip {
+    display: none !important;
+  }
 }
 
 /* Markdown tables inside AI answers are emitted as plain <table> elements by

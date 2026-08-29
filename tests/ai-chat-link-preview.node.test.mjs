@@ -17,45 +17,70 @@ function createClassList() {
 }
 
 function createElement(tagName) {
-  return {
+  const listeners = new Map();
+  const attributes = new Map();
+  const element = {
     tagName,
     className: "",
     classList: createClassList(),
+    dataset: {},
+    style: {},
     textContent: "",
     children: [],
-    setAttribute() {},
-    addEventListener() {},
+    hidden: false,
+    isConnected: true,
+    setAttribute(name, value) { attributes.set(name, String(value)); },
+    getAttribute(name) { return attributes.get(name) ?? null; },
+    addEventListener(name, listener) { listeners.set(name, listener); },
     replaceChildren(...children) { this.children = children; },
-    append(...children) { this.children.push(...children); }
+    append(...children) { this.children.push(...children); },
+    querySelector(selector) {
+      const className = selector.startsWith(".") ? selector.slice(1) : "";
+      return this.children.find((child) => String(child.className || "").split(/\s+/).includes(className)) ?? null;
+    },
+    contains(target) { return target === this || this.children.includes(target); },
+    getBoundingClientRect() { return { left: 20, right: 120, top: 20, bottom: 44, width: 100, height: 24 }; },
+    dispatch(name, event = {}) { listeners.get(name)?.({ preventDefault() {}, target: this, ...event }); }
+  };
+  Object.defineProperty(element, "ariaExpanded", {
+    get() { return attributes.get("aria-expanded"); }
+  });
+  return element;
+}
+
+function createMarkdownLink({ href, textContent }) {
+  return {
+    href,
+    textContent,
+    replacement: null,
+    replaceWith(node) { this.replacement = node; }
   };
 }
 
-test("AI answer links become title/favicon links without changing their destination", async () => {
-  const sourceUrl = "https://example.com/docs/start?item=1#section";
-  const link = {
-    href: sourceUrl,
-    textContent: sourceUrl,
-    dataset: {},
-    classList: createClassList(),
-    isConnected: true,
-    children: [],
-    replaceChildren(...children) { this.children = children; },
-    querySelector(selector) {
-      if (selector === ".rendered-ai-chat-link-favicon") return this.children[0] ?? null;
-      if (selector === ".rendered-ai-chat-link-title") return this.children[1] ?? null;
-      return null;
-    }
-  };
+test("AI read mode turns only numeric Markdown references into compact domain/favicon citations", async () => {
+  const sourceUrl = "https://docs.github.com/en/get-started/start-your-journey";
+  const referenceLink = createMarkdownLink({ href: sourceUrl, textContent: "1" });
+  const ordinaryLink = createMarkdownLink({ href: "https://google.com/search?q=test", textContent: "Google search" });
   const root = {
     querySelectorAll(selector) {
       assert.equal(selector, ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]");
-      return [link];
+      return [referenceLink, ordinaryLink];
     }
   };
 
+  const body = createElement("body");
+  body.append = (...children) => {
+    children.forEach((child) => { child.isConnected = true; });
+    body.children.push(...children);
+  };
   const originalDocument = globalThis.document;
   const originalIntersectionObserver = globalThis.IntersectionObserver;
-  globalThis.document = { createElement };
+  globalThis.document = {
+    createElement,
+    body,
+    documentElement: { clientWidth: 1280, clientHeight: 720 },
+    addEventListener() {}
+  };
   delete globalThis.IntersectionObserver;
 
   let requests = 0;
@@ -63,8 +88,54 @@ test("AI answer links become title/favicon links without changing their destinat
     hydrateRenderedAiChatLinks(root, async (url) => {
       requests += 1;
       assert.equal(url, sourceUrl);
-      return { title: "Example Documentation", faviconUrl: faviconDataUrl };
+      return { title: "GitHub Docs", faviconUrl: faviconDataUrl };
     });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const citation = referenceLink.replacement;
+    assert.ok(citation);
+    assert.equal(ordinaryLink.replacement, null);
+    assert.equal(requests, 1);
+    assert.equal(citation.tagName, "button");
+    assert.equal(citation.dataset.aiChatLinkUrl, sourceUrl);
+    assert.equal(citation.dataset.aiChatLinkDomain, "github");
+    assert.equal(citation.dataset.aiChatLinkTitle, "GitHub Docs");
+    assert.equal(citation.dataset.aiChatLinkPreviewState, "loaded");
+    assert.equal(citation.children[1].className, "rendered-ai-chat-link-domain");
+    assert.equal(citation.children[1].textContent, "github");
+    assert.equal(citation.children[0].children[0]?.src, faviconDataUrl);
+
+    // The full title is intentionally absent from the inline chip. It appears
+    // only after the citation is activated, and remains the actual source link.
+    citation.dispatch("click");
+    const popover = body.children.find((child) => child.className === "rendered-ai-chat-link-tooltip");
+    assert.ok(popover);
+    assert.equal(popover.hidden, false);
+    assert.equal(citation.ariaExpanded, "true");
+    assert.equal(popover.children[0].textContent, "GitHub Docs");
+    assert.equal(popover.children[0].href, sourceUrl);
+    assert.equal(popover.children[0].target, "_blank");
+    assert.equal(popover.children[0].rel, "noopener noreferrer");
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalIntersectionObserver === undefined) delete globalThis.IntersectionObserver;
+    else globalThis.IntersectionObserver = originalIntersectionObserver;
+  }
+});
+
+test("citation chips handle bracketed references and country-code domains without touching ordinary links", async () => {
+  const sourceUrl = "https://news.example.co.kr/article/1";
+  const referenceLink = createMarkdownLink({ href: sourceUrl, textContent: "[2]" });
+  const ordinaryLink = createMarkdownLink({ href: "https://example.com", textContent: "2 examples" });
+  const root = { querySelectorAll: () => [referenceLink, ordinaryLink] };
+
+  const originalDocument = globalThis.document;
+  const originalIntersectionObserver = globalThis.IntersectionObserver;
+  globalThis.document = { createElement };
+  delete globalThis.IntersectionObserver;
+  try {
+    hydrateRenderedAiChatLinks(root, async () => ({ title: "Example Korea", faviconUrl: "" }));
     await new Promise((resolve) => setTimeout(resolve, 0));
   } finally {
     if (originalDocument === undefined) delete globalThis.document;
@@ -73,21 +144,18 @@ test("AI answer links become title/favicon links without changing their destinat
     else globalThis.IntersectionObserver = originalIntersectionObserver;
   }
 
-  assert.equal(requests, 1);
-  assert.equal(link.href, sourceUrl);
-  assert.equal(link.target, "_blank");
-  assert.equal(link.rel, "noopener noreferrer");
-  assert.equal(link.referrerPolicy, "no-referrer");
-  assert.equal(link.dataset.aiChatLinkPreviewState, "loaded");
-  assert.equal(link.children[1].textContent, "Example Documentation");
-  assert.equal(link.children[0].children[0]?.src, faviconDataUrl);
+  assert.equal(referenceLink.replacement?.dataset?.aiChatLinkDomain, "example");
+  assert.equal(ordinaryLink.replacement, null);
 });
 
-test("read mode hydrates AI answer links through the existing secured URL preview API", () => {
+test("read mode hydrates citation links through the existing secured URL preview API", () => {
   assert.match(appSource, /hydrateRenderedAiChatLinks\(row, fetchDatabaseUrlPreview\)/);
   assert.match(appSource, /hydrateRenderedAiChatLinks\(preview, fetchDatabaseUrlPreview\)/);
   assert.match(appSource, /body: \{ url, mode: "database-url" \}/);
+  assert.match(appSource, /\.rendered-ai-chat-page, \.rendered-ai-chat-link-preview/);
   assert.match(styles, /\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-link-preview\s*\{/);
   assert.match(styles, /\.rendered-ai-chat-link-favicon img\s*\{/);
-  assert.match(styles, /\.rendered-ai-chat-link-title\s*\{/);
+  assert.match(styles, /\.rendered-ai-chat-link-domain\s*\{/);
+  assert.match(styles, /\.rendered-ai-chat-link-tooltip\s*\{/);
+  assert.match(styles, /\.rendered-ai-chat-link-tooltip-title\s*\{/);
 });
