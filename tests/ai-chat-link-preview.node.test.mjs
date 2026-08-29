@@ -235,27 +235,40 @@ function appendSourceLine(content, referenceNumber, href, label, prefix = "") {
   return paragraph;
 }
 
-test("AI read mode turns HTTP(S) Markdown links into compact domain/favicon citations", async () => {
+test("AI read mode turns only paragraph-end numeric HTTP(S) citations into compact domain/favicon chips", async () => {
   const sourceUrl = "https://docs.github.com/en/get-started/start-your-journey";
-  const referenceLink = createMarkdownLink({ href: sourceUrl, textContent: "1" });
-  const ordinaryLink = createMarkdownLink({ href: "https://google.com/search?q=test", textContent: "Google search" });
+  const ordinaryUrl = "https://google.com/search?q=test";
+  const content = createDomElement("div");
+  const citationParagraph = createDomElement("p");
+  citationParagraph.append(createDomText("Claim "));
+  const referenceLink = createDomElement("a");
+  referenceLink.href = sourceUrl;
+  referenceLink.textContent = "1";
+  citationParagraph.append(referenceLink, createDomText("."));
+
+  const ordinaryParagraph = createDomElement("p");
+  ordinaryParagraph.append(createDomText("Read "));
+  const ordinaryLink = createDomElement("a");
+  ordinaryLink.href = ordinaryUrl;
+  ordinaryLink.textContent = "Google search";
+  ordinaryParagraph.append(ordinaryLink, createDomText(" for details."));
+  content.append(citationParagraph, ordinaryParagraph);
+
   const root = {
     querySelectorAll(selector) {
-      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content") return [];
-      assert.equal(selector, ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]");
-      return [referenceLink, ordinaryLink];
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content") return [content];
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]") return content.querySelectorAll("a[href]");
+      return [];
     }
   };
 
-  const body = createElement("body");
-  body.append = (...children) => {
-    children.forEach((child) => { child.isConnected = true; });
-    body.children.push(...children);
-  };
+  const body = createDomElement("body");
   const originalDocument = globalThis.document;
   const originalIntersectionObserver = globalThis.IntersectionObserver;
   globalThis.document = {
-    createElement,
+    createElement: createDomElement,
+    createTextNode: createDomText,
+    createDocumentFragment: createDomFragment,
     body,
     documentElement: { clientWidth: 1280, clientHeight: 720 },
     addEventListener() {}
@@ -267,35 +280,35 @@ test("AI read mode turns HTTP(S) Markdown links into compact domain/favicon cita
     hydrateRenderedAiChatLinks(root, async (url) => {
       requests += 1;
       if (url === sourceUrl) return { title: "GitHub Docs", faviconUrl: faviconDataUrl };
-      if (url === ordinaryLink.href) return { title: "Google", faviconUrl: "" };
       throw new Error(`Unexpected preview URL: ${url}`);
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const citation = referenceLink.replacement;
-    const ordinaryCitation = ordinaryLink.replacement;
+    const citation = citationParagraph.querySelector(".rendered-ai-chat-link-preview");
     assert.ok(citation);
-    assert.ok(ordinaryCitation);
-    assert.equal(requests, 2);
-    assert.equal(citation.tagName, "button");
+    assert.equal(requests, 1);
+    assert.equal(citation.tagName, "BUTTON");
     assert.equal(citation.dataset.aiChatLinkUrl, sourceUrl);
     assert.equal(citation.dataset.aiChatLinkDomain, "github");
     assert.equal(citation.dataset.aiChatLinkTitle, "GitHub Docs");
     assert.equal(citation.dataset.aiChatLinkPreviewState, "loaded");
+    assert.equal(citation.dataset.aiChatReference, "1");
     assert.equal(citation.children[1].className, "rendered-ai-chat-link-domain");
     assert.equal(citation.children[1].textContent, "github");
     assert.equal(citation.children[0].children[0]?.src, faviconDataUrl);
-    assert.equal(ordinaryCitation.dataset.aiChatLinkDomain, "google");
-    assert.equal(ordinaryCitation.dataset.aiChatLinkTitle, "Google");
-    assert.equal(ordinaryCitation.children[1].textContent, "google");
 
-    // The full title is intentionally absent from the inline chip. It appears
-    // only after the citation is activated, and remains the actual source link.
+    // Ordinary Markdown links must stay ordinary highlighted anchors. They are
+    // neither replaced with a chip nor sent through the URL-preview request.
+    assert.equal(ordinaryLink.isConnected, true);
+    assert.equal(ordinaryLink.parentElement, ordinaryParagraph);
+    assert.equal(ordinaryLink.href, ordinaryUrl);
+    assert.equal(ordinaryParagraph.querySelectorAll(".rendered-ai-chat-link-preview").length, 0);
+
     citation.dispatch("click");
     const popover = body.children.find((child) => child.className === "rendered-ai-chat-link-tooltip");
     assert.ok(popover);
     assert.equal(popover.hidden, false);
-    assert.equal(citation.ariaExpanded, "true");
+    assert.equal(citation.getAttribute("aria-expanded"), "true");
     assert.equal(popover.children[0].textContent, "GitHub Docs");
     assert.equal(popover.children[0].href, sourceUrl);
     assert.equal(popover.children[0].target, "_blank");
@@ -308,21 +321,57 @@ test("AI read mode turns HTTP(S) Markdown links into compact domain/favicon cita
   }
 });
 
-test("citation chips handle bracketed references, named links, and country-code domains", async () => {
+test("citation chips handle bracketed references and country-code domains while named links stay ordinary", async () => {
   const sourceUrl = "https://news.example.co.kr/article/1";
-  const referenceLink = createMarkdownLink({ href: sourceUrl, textContent: "[2]" });
-  const namedLink = createMarkdownLink({ href: "https://developer.mozilla.org/en-US/docs/Web/API/URL", textContent: "MDN URL docs" });
-  const mailLink = createMarkdownLink({ href: "mailto:hello@example.com", textContent: "Email" });
-  const root = { querySelectorAll: () => [referenceLink, namedLink, mailLink] };
+  const namedUrl = "https://developer.mozilla.org/en-US/docs/Web/API/URL";
+  const content = createDomElement("div");
+
+  const citationParagraph = createDomElement("p");
+  citationParagraph.append(createDomText("Claim "));
+  const referenceLink = createDomElement("a");
+  referenceLink.href = sourceUrl;
+  referenceLink.textContent = "[2]";
+  citationParagraph.append(referenceLink, createDomText("."));
+
+  const namedParagraph = createDomElement("p");
+  namedParagraph.append(createDomText("See "));
+  const namedLink = createDomElement("a");
+  namedLink.href = namedUrl;
+  namedLink.textContent = "MDN URL docs";
+  namedParagraph.append(namedLink, createDomText("."));
+
+  const mailParagraph = createDomElement("p");
+  const mailLink = createDomElement("a");
+  mailLink.href = "mailto:hello@example.com";
+  mailLink.textContent = "Email";
+  mailParagraph.append(mailLink);
+  content.append(citationParagraph, namedParagraph, mailParagraph);
+
+  const root = {
+    querySelectorAll(selector) {
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content") return [content];
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]") return content.querySelectorAll("a[href]");
+      return [];
+    }
+  };
 
   const originalDocument = globalThis.document;
   const originalIntersectionObserver = globalThis.IntersectionObserver;
-  globalThis.document = { createElement };
+  globalThis.document = {
+    createElement: createDomElement,
+    createTextNode: createDomText,
+    createDocumentFragment: createDomFragment,
+    body: createDomElement("body"),
+    documentElement: { clientWidth: 1280, clientHeight: 720 },
+    addEventListener() {}
+  };
   delete globalThis.IntersectionObserver;
+  let requests = 0;
   try {
-    hydrateRenderedAiChatLinks(root, async (url) => (
-      url === sourceUrl ? { title: "Example Korea", faviconUrl: "" } : null
-    ));
+    hydrateRenderedAiChatLinks(root, async (url) => {
+      requests += 1;
+      return url === sourceUrl ? { title: "Example Korea", faviconUrl: "" } : null;
+    });
     await new Promise((resolve) => setTimeout(resolve, 0));
   } finally {
     if (originalDocument === undefined) delete globalThis.document;
@@ -331,12 +380,16 @@ test("citation chips handle bracketed references, named links, and country-code 
     else globalThis.IntersectionObserver = originalIntersectionObserver;
   }
 
-  assert.equal(referenceLink.replacement?.dataset?.aiChatLinkDomain, "example");
-  assert.equal(referenceLink.replacement?.dataset?.aiChatReference, "2");
-  assert.equal(namedLink.replacement?.dataset?.aiChatLinkDomain, "mozilla");
-  assert.equal(namedLink.replacement?.dataset?.aiChatLinkTitle, "MDN URL docs");
-  assert.equal(namedLink.replacement?.dataset?.aiChatReference, undefined);
-  assert.equal(mailLink.replacement, null);
+  const citation = citationParagraph.querySelector(".rendered-ai-chat-link-preview");
+  assert.ok(citation);
+  assert.equal(requests, 1);
+  assert.equal(citation.dataset.aiChatLinkDomain, "example");
+  assert.equal(citation.dataset.aiChatReference, "2");
+  assert.equal(namedLink.isConnected, true);
+  assert.equal(namedLink.parentElement, namedParagraph);
+  assert.equal(namedLink.href, namedUrl);
+  assert.equal(mailLink.isConnected, true);
+  assert.equal(namedParagraph.querySelectorAll(".rendered-ai-chat-link-preview").length, 0);
 });
 
 
@@ -407,7 +460,7 @@ test("plain [1] and grouped [2, 13] markers receive relocated source chips inste
 
 test("named links under a Sources heading are mapped by source order and the exhausted tail section is removed", async () => {
   const content = createDomElement("div");
-  const claim = appendText(createDomElement("p"), "Claim [1] and [2].");
+  const claim = appendText(createDomElement("p"), "Claim [1, 2].");
   const heading = appendText(createDomElement("h3"), "Sources");
   const list = createDomElement("ul");
   const firstItem = createDomElement("li");
@@ -460,7 +513,7 @@ test("named links under a Sources heading are mapped by source order and the exh
   }
 });
 
-test("source-only Markdown links keep the existing bottom chip behavior when there is no inline citation marker", async () => {
+test("source-only Markdown links stay ordinary when there is no paragraph-end inline citation marker", async () => {
   const content = createDomElement("div");
   const heading = appendText(createDomElement("h3"), "Sources");
   const list = createDomElement("ul");
@@ -491,12 +544,18 @@ test("source-only Markdown links keep the existing bottom chip behavior when the
   };
   delete globalThis.IntersectionObserver;
 
+  let requests = 0;
   try {
-    hydrateRenderedAiChatLinks(root, async () => null);
+    hydrateRenderedAiChatLinks(root, async () => {
+      requests += 1;
+      return null;
+    });
     await new Promise((resolve) => setTimeout(resolve, 0));
     const chips = list.querySelectorAll(".rendered-ai-chat-link-preview");
-    assert.equal(chips.length, 1);
-    assert.equal(chips[0].dataset.aiChatLinkDomain, "example");
+    assert.equal(chips.length, 0);
+    assert.equal(requests, 0);
+    assert.equal(link.isConnected, true);
+    assert.equal(link.parentElement, item);
     assert.equal(heading.isConnected, true);
     assert.equal(list.isConnected, true);
   } finally {
@@ -506,6 +565,62 @@ test("source-only Markdown links keep the existing bottom chip behavior when the
     else globalThis.IntersectionObserver = originalIntersectionObserver;
   }
 });
+
+test("numeric citation links in the middle of prose stay ordinary while paragraph-end citations become chips", async () => {
+  const content = createDomElement("div");
+  const paragraph = createDomElement("p");
+  paragraph.append(createDomText("Middle "));
+  const middleCitationLikeLink = createDomElement("a");
+  middleCitationLikeLink.href = "https://example.com/middle";
+  middleCitationLikeLink.textContent = "1";
+  paragraph.append(middleCitationLikeLink, createDomText(" continues; final "));
+  const finalCitationLink = createDomElement("a");
+  finalCitationLink.href = "https://example.org/final";
+  finalCitationLink.textContent = "2";
+  paragraph.append(finalCitationLink, createDomText("."));
+  content.append(paragraph);
+
+  const root = {
+    querySelectorAll(selector) {
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content") return [content];
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]") return content.querySelectorAll("a[href]");
+      return [];
+    }
+  };
+  const originalDocument = globalThis.document;
+  const originalIntersectionObserver = globalThis.IntersectionObserver;
+  globalThis.document = {
+    createElement: createDomElement,
+    createTextNode: createDomText,
+    createDocumentFragment: createDomFragment,
+    body: createDomElement("body"),
+    documentElement: { clientWidth: 1280, clientHeight: 720 },
+    addEventListener() {}
+  };
+  delete globalThis.IntersectionObserver;
+
+  const requestedUrls = [];
+  try {
+    hydrateRenderedAiChatLinks(root, async (url) => {
+      requestedUrls.push(url);
+      return { title: "Preview", faviconUrl: "" };
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const chips = paragraph.querySelectorAll(".rendered-ai-chat-link-preview");
+    assert.equal(chips.length, 1);
+    assert.equal(chips[0].dataset.aiChatReference, "2");
+    assert.deepEqual(requestedUrls, ["https://example.org/final"]);
+    assert.equal(middleCitationLikeLink.isConnected, true);
+    assert.equal(middleCitationLikeLink.parentElement, paragraph);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalIntersectionObserver === undefined) delete globalThis.IntersectionObserver;
+    else globalThis.IntersectionObserver = originalIntersectionObserver;
+  }
+});
+
 
 test("read mode hydrates citation links through the existing secured URL preview API", () => {
   assert.match(appSource, /hydrateRenderedAiChatLinks\(row, fetchDatabaseUrlPreview\)/);

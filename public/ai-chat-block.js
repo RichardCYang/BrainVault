@@ -30,6 +30,10 @@ const aiChatCitationPopoverId = "rendered-ai-chat-citation-popover";
 const aiChatCitationMarkerPattern = /\[\s*(\d{1,3}(?:\s*,\s*\d{1,3})*)\s*\]/g;
 const aiChatCitationSourceHeadingPattern = /^(?:sources?|references?|citations?|source\s+links?|reference\s+links?|sources?\s*(?:&|and)\s*references?|출처(?:\s*(?:및|\/|&)\s*참고\s*자료)?|참고\s*(?:문헌|자료|링크)?|참조\s*(?:문헌|자료|링크)?)\s*[:：]?\s*$/i;
 const aiChatCitationTextExcludedTags = new Set(["A", "BUTTON", "CODE", "PRE", "SCRIPT", "STYLE", "TEXTAREA"]);
+const aiChatCitationBlockEndTags = new Set(["P", "LI"]);
+const aiChatCitationTailMarkerPattern = /\[\s*\d{1,3}(?:\s*,\s*\d{1,3})*\s*\]/g;
+const aiChatCitationTailSeparatorPattern = /^[\s,.;:!?…，。；：！？、(){}\[\]\'"“”‘’\-–—]*$/;
+const aiChatCitationTailInlineTags = new Set(["SPAN", "EM", "STRONG", "S", "DEL", "SUP"]);
 let activeAiChatCitation = null;
 let aiChatCitationPopover = null;
 let aiChatCitationPopoverEventsBound = false;
@@ -202,6 +206,67 @@ function getAiChatElementTagName(node) {
 
 function getAiChatChildElements(node) {
   return Array.from(node?.children ?? []);
+}
+
+function getAiChatCitationBlockEndBoundary(node) {
+  let current = node?.parentElement ?? node?.parentNode ?? null;
+  while (current) {
+    if (aiChatCitationBlockEndTags.has(getAiChatElementTagName(current))) return current;
+    current = current.parentElement ?? current.parentNode ?? null;
+  }
+  return null;
+}
+
+function getAiChatFollowingNodesWithinBoundary(node, boundary) {
+  const following = [];
+  let current = node;
+  while (current && current !== boundary) {
+    const parent = current.parentNode ?? current.parentElement ?? null;
+    if (!parent) return null;
+    const siblings = Array.from(parent.childNodes ?? []);
+    const index = siblings.indexOf(current);
+    if (index < 0) return null;
+    following.push(...siblings.slice(index + 1));
+    current = parent;
+  }
+  return current === boundary ? following : null;
+}
+
+function isAiChatCitationTailText(value) {
+  const raw = typeof value === "string" ? value : "";
+  const stripped = raw.replace(aiChatCitationTailMarkerPattern, "");
+  aiChatCitationTailMarkerPattern.lastIndex = 0;
+  return aiChatCitationTailSeparatorPattern.test(stripped);
+}
+
+function isAiChatCitationTailNode(node) {
+  if (!node) return true;
+  if (node.nodeType === 3) {
+    return isAiChatCitationTailText(typeof node.nodeValue === "string" ? node.nodeValue : (node.textContent ?? ""));
+  }
+  if (node.nodeType !== 1) return true;
+
+  const tagName = getAiChatElementTagName(node);
+  if (tagName === "A") {
+    return Boolean(getAiChatReferenceNumber(node) && getAiChatWebUrl(node?.href ?? node?.getAttribute?.("href")));
+  }
+  if (tagName === "BUTTON" && node?.classList?.contains?.("rendered-ai-chat-link-preview")) return true;
+  if (!aiChatCitationTailInlineTags.has(tagName)) return false;
+  const children = Array.from(node.childNodes ?? []);
+  return children.length > 0 && children.every((child) => isAiChatCitationTailNode(child));
+}
+
+function isAiChatNodeAtCitationBlockEnd(node, ownTail = "") {
+  const boundary = getAiChatCitationBlockEndBoundary(node);
+  if (!boundary || !isAiChatCitationTailText(ownTail)) return false;
+  const following = getAiChatFollowingNodesWithinBoundary(node, boundary);
+  return Array.isArray(following) && following.every((candidate) => isAiChatCitationTailNode(candidate));
+}
+
+function isAiChatInlineCitationLink(link) {
+  if (!getAiChatReferenceNumber(link)) return false;
+  if (link?.dataset?.aiChatRelocatedCitation === "true") return true;
+  return isAiChatNodeAtCitationBlockEnd(link);
 }
 
 function isAiChatHeadingElement(node) {
@@ -395,6 +460,7 @@ function getAiChatCitationNumbersFromTextNodes(textNodes) {
     aiChatCitationMarkerPattern.lastIndex = 0;
     let match = null;
     while ((match = aiChatCitationMarkerPattern.exec(value))) {
+      if (!isAiChatNodeAtCitationBlockEnd(textNode, value.slice(match.index))) continue;
       match[1].split(",").map((part) => part.trim()).filter(Boolean).forEach((reference) => references.add(reference));
     }
   });
@@ -452,7 +518,8 @@ function replaceAiChatCitationMarkers(textNode, sourcesByReference) {
   const value = typeof textNode?.nodeValue === "string" ? textNode.nodeValue : (textNode?.textContent ?? "");
   if (!value || typeof textNode?.replaceWith !== "function") return new Set();
   aiChatCitationMarkerPattern.lastIndex = 0;
-  const matches = [...value.matchAll(aiChatCitationMarkerPattern)];
+  const matches = [...value.matchAll(aiChatCitationMarkerPattern)]
+    .filter((match) => isAiChatNodeAtCitationBlockEnd(textNode, value.slice(match.index ?? 0)));
   aiChatCitationMarkerPattern.lastIndex = 0;
   if (!matches.some((match) => match[1].split(",").some((part) => sourcesByReference.has(part.trim())))) return new Set();
 
@@ -568,7 +635,7 @@ function relocateRenderedAiChatCitationLinks(root) {
 function prepareRenderedAiChatLink(link) {
   const referenceNumber = getAiChatReferenceNumber(link);
   const url = getAiChatWebUrl(link?.href ?? link?.getAttribute?.("href"));
-  if (!url) return null;
+  if (!referenceNumber || !url || !isAiChatInlineCitationLink(link)) return null;
 
   const normalizedUrl = url.toString();
   const domainLabel = getAiChatCitationDomainLabel(url);
@@ -675,6 +742,7 @@ export function hydrateRenderedAiChatLinks(root, fetchPreview) {
   relocateRenderedAiChatCitationLinks(root);
   const citations = [...root.querySelectorAll(".rendered-ai-chat-answer .rendered-ai-chat-content a[href]")]
     .filter((link) => link?.dataset?.aiChatSourceDefinition !== "true")
+    .filter((link) => isAiChatInlineCitationLink(link))
     .map((link) => prepareRenderedAiChatLink(link))
     .filter(Boolean)
     .filter((citation) => !["loading", "loaded"].includes(citation.dataset.aiChatLinkPreviewState));
