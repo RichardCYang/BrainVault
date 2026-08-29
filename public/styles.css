@@ -14145,6 +14145,8 @@ button.danger {
   display: grid;
   gap: 0.34rem;
   width: min(92%, 54rem);
+  max-width: 100%;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
@@ -14192,7 +14194,10 @@ button.danger {
 }
 
 .rendered-ai-chat-content {
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
+  overflow-x: clip;
   overflow-wrap: anywhere;
   color: var(--ink);
   line-height: 1.62;
@@ -14207,33 +14212,44 @@ button.danger {
 }
 
 .rendered-ai-chat-content pre {
+  width: 100%;
   max-width: 100%;
-  overflow-x: auto;
+  min-width: 0;
+  overflow-x: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-/* Keep display LaTeX centered inside the independently scrollable AI-answer
-   Markdown surface in read mode. The outer placeholder owns horizontal
-   overflow, while the KaTeX display box stays at least as wide as the answer
-   content so normal formulas remain visually centered and long formulas can
-   still scroll without being clipped on the left. */
+/* Keep display LaTeX inside the AI-answer width without creating a
+   horizontal scroller. KaTeX disables automatic wrapping in display mode by
+   default; allowing normal white-space here lets relations/operators wrap
+   across lines while preserving a centered formula. */
 .page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-content .math-expression--display {
   width: 100%;
   max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: visible;
   text-align: center;
 }
 
 .page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-content .math-expression--display .katex-display {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   margin: 0.55rem auto;
   overflow: visible;
   text-align: center;
 }
 
 .page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-content .math-expression--display .katex-display > .katex {
+  max-width: 100%;
+  white-space: normal;
   text-align: center;
+}
+
+.page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-content .math-expression--display .katex-display > .katex > .katex-html > .base {
+  margin-block: 0.12em;
 }
 
 .page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-link-preview {
@@ -14357,15 +14373,17 @@ body.pdf-export-mode .rendered-ai-chat-link-tooltip {
 }
 
 /* Markdown tables inside AI answers are emitted as plain <table> elements by
-   markdown-it. Keep them visually lightweight like modern AI chat tables:
-   no outer/column borders, only subtle separators between rows. */
+   markdown-it. Keep them visually lightweight and make columns share the
+   available answer width instead of widening the whole message. */
 .rendered-ai-chat-answer .rendered-ai-chat-content {
-  overflow-x: auto;
+  overflow-x: clip;
 }
 
 .rendered-ai-chat-answer .rendered-ai-chat-content table {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  table-layout: fixed;
   border: 0;
   border-radius: 0;
   border-collapse: collapse;
@@ -14376,10 +14394,11 @@ body.pdf-export-mode .rendered-ai-chat-link-tooltip {
 
 .rendered-ai-chat-answer .rendered-ai-chat-content th,
 .rendered-ai-chat-answer .rendered-ai-chat-content td {
-  min-width: 7rem;
+  min-width: 0;
   border: 0;
   border-bottom: 1px solid var(--line);
   padding: 0.48rem 0.6rem;
+  overflow-wrap: anywhere;
   text-align: left;
   vertical-align: top;
 }
@@ -15965,8 +15984,19 @@ body.pdf-export-mode .remote-collaboration-caret {
    toggle can remove only the outer AI answer chrome without also removing the
    visual boundary around code. */
 .rendered-ai-chat-answer .rendered-code-pre {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
   border: 1px solid rgba(93, 132, 160, 0.2);
   border-radius: var(--radius-md);
+}
+
+.rendered-ai-chat-answer .rendered-code-pre code.hljs {
+  min-width: 0;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .block-rendered-preview .rendered-code-pre code.hljs,

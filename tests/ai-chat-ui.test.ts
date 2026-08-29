@@ -240,10 +240,10 @@ describe("AI conversation block", () => {
     expect(styles).toMatch(/\.rendered-ai-chat-link-tooltip\s*\{[^}]*position:\s*fixed;[^}]*max-width:/s);
   });
 
-  it("keeps display LaTeX centered in read-only AI answers", () => {
-    expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-content \.math-expression--display\s*\{[^}]*width:\s*100%;[^}]*overflow-x:\s*auto;[^}]*text-align:\s*center;/s);
-    expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-content \.math-expression--display \.katex-display\s*\{[^}]*width:\s*max-content;[^}]*min-width:\s*100%;[^}]*overflow:\s*visible;[^}]*text-align:\s*center;/s);
-    expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-content \.math-expression--display \.katex-display > \.katex\s*\{[^}]*text-align:\s*center;/s);
+  it("keeps display LaTeX centered and wrapped inside read-only AI answers", () => {
+    expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-content \.math-expression--display\s*\{[^}]*width:\s*100%;[^}]*overflow-x:\s*hidden;[^}]*text-align:\s*center;/s);
+    expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-content \.math-expression--display \.katex-display\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*100%;[^}]*min-width:\s*0;[^}]*overflow:\s*visible;[^}]*text-align:\s*center;/s);
+    expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-content \.math-expression--display \.katex-display > \.katex\s*\{[^}]*max-width:\s*100%;[^}]*white-space:\s*normal;[^}]*text-align:\s*center;/s);
   });
 
   it("renders Markdown tables as readable tables inside AI answers", () => {
@@ -267,11 +267,18 @@ describe("AI conversation block", () => {
     expect(html).toContain("<th>Option</th>");
     expect(html).toContain("<strong>Alpha</strong>");
     expect(html).toContain("<td>9</td>");
-    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content\s*\{[^}]*overflow-x:\s*auto;/s);
-    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content table\s*\{[^}]*min-width:\s*100%;[^}]*border:\s*0;[^}]*border-collapse:\s*collapse;[^}]*background:\s*transparent;/s);
-    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content th,[\s\S]*\.rendered-ai-chat-answer \.rendered-ai-chat-content td\s*\{[^}]*border:\s*0;[^}]*border-bottom:\s*1px solid var\(--line\);/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content\s*\{[^}]*overflow-x:\s*clip;/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content table\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*100%;[^}]*min-width:\s*0;[^}]*table-layout:\s*fixed;[^}]*border:\s*0;[^}]*border-collapse:\s*collapse;[^}]*background:\s*transparent;/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content th,[\s\S]*\.rendered-ai-chat-answer \.rendered-ai-chat-content td\s*\{[^}]*min-width:\s*0;[^}]*border:\s*0;[^}]*border-bottom:\s*1px solid var\(--line\);[^}]*overflow-wrap:\s*anywhere;/s);
     expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content th\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--panel-soft\) 24%, transparent\);/s);
     expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content tbody tr:last-child > \*\s*\{[^}]*border-bottom:\s*0;/s);
+  });
+
+  it("keeps long AI answer text and code inside the message width without horizontal scrolling", () => {
+    expect(styles).toMatch(/\.rendered-ai-chat-message\s*\{[^}]*max-width:\s*100%;[^}]*min-width:\s*0;/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-content\s*\{[^}]*max-width:\s*100%;[^}]*overflow-x:\s*clip;[^}]*overflow-wrap:\s*anywhere;/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-content pre\s*\{[^}]*overflow-x:\s*hidden;[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-code-pre code\.hljs\s*\{[^}]*min-width:\s*0;[^}]*max-width:\s*100%;[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;/s);
   });
 
   it("uses content-sized questions and swaps editor for preview in read mode", () => {
