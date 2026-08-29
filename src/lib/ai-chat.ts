@@ -61,19 +61,33 @@ function normalizeLayout(value: unknown): AiChatLayout {
   return value === "paginated" ? "paginated" : "stacked";
 }
 
+function daysInMonth(year: number, month: number) {
+  if (month === 2) {
+    const isLeapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    return isLeapYear ? 29 : 28;
+  }
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
 function normalizeAnsweredAt(value: unknown) {
   if (typeof value !== "string") return "";
   const normalized = value.trim().slice(0, 16);
   const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
   if (!match) return "";
   const [, year, month, day, hour, minute] = match;
-  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute)));
+  const yearNumber = Number(year);
+  const monthNumber = Number(month);
+  const dayNumber = Number(day);
+  const hourNumber = Number(hour);
+  const minuteNumber = Number(minute);
   if (
-    date.getUTCFullYear() !== Number(year) ||
-    date.getUTCMonth() !== Number(month) - 1 ||
-    date.getUTCDate() !== Number(day) ||
-    date.getUTCHours() !== Number(hour) ||
-    date.getUTCMinutes() !== Number(minute)
+    yearNumber < 1 ||
+    monthNumber < 1 ||
+    monthNumber > 12 ||
+    dayNumber < 1 ||
+    dayNumber > daysInMonth(yearNumber, monthNumber) ||
+    hourNumber > 23 ||
+    minuteNumber > 59
   ) {
     return "";
   }

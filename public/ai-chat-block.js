@@ -321,6 +321,14 @@ export function createLocalDateTimeValue(value = new Date()) {
   return `${date.getFullYear()}-${padNumber(date.getMonth() + 1)}-${padNumber(date.getDate())}T${padNumber(date.getHours())}:${padNumber(date.getMinutes())}`;
 }
 
+function daysInMonth(year, month) {
+  if (month === 2) {
+    const isLeapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    return isLeapYear ? 29 : 28;
+  }
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
 function normalizeLocalDateTime(value) {
   if (typeof value !== "string") return "";
   const normalized = value.trim().slice(0, 16);
@@ -328,13 +336,19 @@ function normalizeLocalDateTime(value) {
   if (!match) return "";
 
   const [, year, month, day, hour, minute] = match;
-  const date = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute));
+  const yearNumber = Number(year);
+  const monthNumber = Number(month);
+  const dayNumber = Number(day);
+  const hourNumber = Number(hour);
+  const minuteNumber = Number(minute);
   if (
-    date.getFullYear() !== Number(year) ||
-    date.getMonth() !== Number(month) - 1 ||
-    date.getDate() !== Number(day) ||
-    date.getHours() !== Number(hour) ||
-    date.getMinutes() !== Number(minute)
+    yearNumber < 1 ||
+    monthNumber < 1 ||
+    monthNumber > 12 ||
+    dayNumber < 1 ||
+    dayNumber > daysInMonth(yearNumber, monthNumber) ||
+    hourNumber > 23 ||
+    minuteNumber > 59
   ) {
     return "";
   }
@@ -498,9 +512,11 @@ function formatLocalDateTime(value) {
   const [datePart, timePart] = normalized.split("T");
   const [year, month, day] = datePart.split("-").map(Number);
   const [hour, minute] = timePart.split(":").map(Number);
-  const date = new Date(year, month - 1, day, hour, minute);
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, minute, 0, 0);
   try {
-    return formatDateTime(date, { dateStyle: "medium", timeStyle: "short" });
+    return formatDateTime(date, { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
   } catch {
     return normalized.replace("T", " ");
   }

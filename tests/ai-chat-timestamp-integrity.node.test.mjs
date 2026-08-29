@@ -67,3 +67,51 @@ test("new AI chat blocks still receive an initial local timestamp", () => {
   const answeredAt = createDefaultAiChatData().turns[0].answeredAt;
   assert.match(answeredAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
 });
+
+test("timezone-free timestamps survive daylight-saving clock gaps", () => {
+  const previousTimeZone = process.env.TZ;
+  process.env.TZ = "America/New_York";
+
+  try {
+    const answeredAt = "2026-03-08T02:30";
+    const value = canonicalChat([
+      { answeredAt, question: "Spring-forward question", answer: "Preserve this timestamp" }
+    ]);
+
+    const client = normalizeAiChatData(value);
+    const server = getAiChatData({ aiChat: value });
+
+    assert.equal(client.turns[0].answeredAt, answeredAt);
+    assert.deepEqual(client, server);
+  } finally {
+    if (previousTimeZone === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTimeZone;
+  }
+});
+
+test("client and server use the same calendar-only timestamp validation", () => {
+  const validValues = [
+    "2024-02-29T23:59",
+    "0001-01-01T00:00"
+  ];
+  const invalidValues = [
+    "0000-01-01T00:00",
+    "2026-02-29T12:00",
+    "2026-04-31T12:00",
+    "2026-13-01T12:00",
+    "2026-01-01T24:00",
+    "2026-01-01T12:60"
+  ];
+
+  for (const answeredAt of validValues) {
+    const value = canonicalChat([{ answeredAt, question: "q", answer: "a" }]);
+    assert.equal(normalizeAiChatData(value).turns[0].answeredAt, answeredAt);
+    assert.equal(getAiChatData({ aiChat: value }).turns[0].answeredAt, answeredAt);
+  }
+
+  for (const answeredAt of invalidValues) {
+    const value = canonicalChat([{ answeredAt, question: "q", answer: "a" }]);
+    assert.equal(normalizeAiChatData(value).turns[0].answeredAt, "");
+    assert.equal(getAiChatData({ aiChat: value }).turns[0].answeredAt, "");
+  }
+});
