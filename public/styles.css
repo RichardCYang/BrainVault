@@ -14211,6 +14211,23 @@ button.danger {
   margin-bottom: 0;
 }
 
+/* Markdown blockquotes in rendered AI answers need an explicit quote rule.
+   Browsers do not provide the familiar Markdown left rail by default. */
+.rendered-ai-chat-answer .rendered-ai-chat-content blockquote {
+  margin: 0.72rem 0;
+  border-left: 3px solid var(--line-strong);
+  padding: 0.08rem 0 0.08rem 0.78rem;
+  color: var(--muted);
+}
+
+.rendered-ai-chat-answer .rendered-ai-chat-content blockquote > :first-child {
+  margin-top: 0;
+}
+
+.rendered-ai-chat-answer .rendered-ai-chat-content blockquote > :last-child {
+  margin-bottom: 0;
+}
+
 .rendered-ai-chat-content pre {
   width: 100%;
   max-width: 100%;

@@ -270,6 +270,28 @@ describe("AI conversation block", () => {
     expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-content \.math-expression--display \.katex-display > \.katex\s*\{[^}]*max-width:\s*100%;[^}]*white-space:\s*normal;[^}]*text-align:\s*center;/s);
   });
 
+  it("renders Markdown blockquotes with a visible left rail inside AI answers", () => {
+    const html = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        model: "GPT Test",
+        turns: [
+          {
+            answeredAt: "",
+            question: "Quote this",
+            answer: "> Quoted insight"
+          }
+        ]
+      }
+    });
+
+    expect(html).toContain("<blockquote>");
+    expect(html).toContain("<p>Quoted insight</p>");
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content blockquote\s*\{[^}]*margin:\s*0\.72rem 0;[^}]*border-left:\s*3px solid var\(--line-strong\);[^}]*padding:\s*0\.08rem 0 0\.08rem 0\.78rem;[^}]*color:\s*var\(--muted\);/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content blockquote > :first-child\s*\{[^}]*margin-top:\s*0;/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content blockquote > :last-child\s*\{[^}]*margin-bottom:\s*0;/s);
+  });
+
   it("renders Markdown tables as readable tables inside AI answers", () => {
     const html = renderBlockHtml("AI_CHAT", "", false, {
       aiChat: {
