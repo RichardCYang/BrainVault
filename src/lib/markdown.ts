@@ -28,6 +28,7 @@ const aiChatCjkStrongEmphasisEnvKey = "__brainVaultAiChatCjkStrongEmphasis";
 const aiChatNumericReferenceLinksEnvKey = "__brainVaultAiChatNumericReferenceLinks";
 const cjkOrFullwidthCharacterPattern = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3000-\u303f\uff00-\uffef]/u;
 const aiChatNumericReferenceLabelPattern = /^\s*(\d{1,3})\s*$/;
+const aiChatGroupedNumericReferenceLabelPattern = /^\s*(\d{1,3}(?:\s*,\s*\d{1,3})+)\s*$/;
 
 function codePointBefore(value: string, position: number) {
   if (position <= 0) return null;
@@ -132,7 +133,7 @@ function findAiChatReferenceLabelEnd(value: string, start: number) {
 }
 
 function normalizeAiChatNumericReferenceLinks(value: string, availableReferences: Set<string>) {
-  if (!value.includes("][") || !availableReferences.size) return value;
+  if (!availableReferences.size) return value;
 
   let output = "";
   let index = 0;
@@ -158,8 +159,39 @@ function normalizeAiChatNumericReferenceLinks(value: string, availableReferences
     }
 
     const titleEnd = findAiChatReferenceLabelEnd(value, index);
-    const referenceStart = titleEnd >= 0 ? titleEnd + 1 : -1;
-    if (referenceStart < 0 || value[referenceStart] !== "[") {
+    if (titleEnd < 0) {
+      output += character;
+      index += 1;
+      continue;
+    }
+
+    const titleLabel = value.slice(index + 1, titleEnd);
+    const groupedReferenceMatch = titleLabel.match(aiChatGroupedNumericReferenceLabelPattern);
+    const nextCharacter = value[titleEnd + 1] ?? "";
+    if (
+      groupedReferenceMatch
+      && value[index - 1] !== "["
+      && nextCharacter !== "("
+      && nextCharacter !== "["
+    ) {
+      const groupedReferences = groupedReferenceMatch[1]
+        .split(",")
+        .map((reference) => reference.trim())
+        .filter(Boolean);
+      if (groupedReferences.length > 1 && groupedReferences.every((reference) => availableReferences.has(reference))) {
+        // A marker like [1, 2] is not itself a CommonMark reference link even
+        // when [1]: and [2]: definitions exist. Expand it into adjacent numeric
+        // reference links while the parser still has access to env.references.
+        // The read-mode hydrator can then collapse those anchors into one chip
+        // whose tooltip retains every source in the original group.
+        output += `\\[${groupedReferences.map((reference) => `[${reference}][${reference}]`).join(", ")}\\]`;
+        index = titleEnd + 1;
+        continue;
+      }
+    }
+
+    const referenceStart = titleEnd + 1;
+    if (value[referenceStart] !== "[") {
       output += character;
       index += 1;
       continue;

@@ -395,6 +395,35 @@ describe("AI conversation block", () => {
     expect(html).toMatch(/<a href="https:\/\/developer\.mozilla\.org\/en-US\/docs\/Web\/API\/URL"[^>]*>named docs<\/a>/);
   });
 
+  it("expands grouped numeric reference markers before CommonMark drops their source definitions", () => {
+    const html = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        turns: [
+          {
+            answeredAt: "",
+            question: "Grouped citations?",
+            answer: [
+              "First claim [1, 2].",
+              "Second claim ([2, 3]).",
+              "Keep `[1, 2]` literal inside code.",
+              "",
+              "[1]: https://docs.github.com/en/get-started",
+              "[2]: https://developer.mozilla.org/en-US/docs/Web/API/URL",
+              "[3]: https://www.nasa.gov/mission-pages"
+            ].join("\n")
+          }
+        ]
+      }
+    });
+
+    expect(html).toMatch(/First claim \[<a href="https:\/\/docs\.github\.com\/en\/get-started"[^>]*>1<\/a>, <a href="https:\/\/developer\.mozilla\.org\/en-US\/docs\/Web\/API\/URL"[^>]*>2<\/a>\]\./);
+    expect(html).toMatch(/Second claim \(\[<a href="https:\/\/developer\.mozilla\.org\/en-US\/docs\/Web\/API\/URL"[^>]*>2<\/a>, <a href="https:\/\/www\.nasa\.gov\/mission-pages"[^>]*>3<\/a>\]\)\./);
+    expect(html).toContain("<code>[1, 2]</code>");
+    expect(html).not.toContain("First claim [1, 2]");
+    expect(html).not.toContain("Second claim ([2, 3])");
+  });
+
   it("keeps display LaTeX centered and wrapped inside read-only AI answers", () => {
     expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-content \.math-expression--display\s*\{[^}]*width:\s*100%;[^}]*overflow-x:\s*hidden;[^}]*text-align:\s*center;/s);
     expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-content \.math-expression--display \.katex-display\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*100%;[^}]*min-width:\s*0;[^}]*overflow:\s*visible;[^}]*text-align:\s*center;/s);
