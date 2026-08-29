@@ -48,6 +48,20 @@ function getAiChatReferenceNumber(link) {
   return match?.[1] ?? match?.[2] ?? "";
 }
 
+function getAiChatLinkFallbackTitle(link, url, referenceNumber = "") {
+  if (referenceNumber) return getAiChatCitationFallbackTitle(url);
+  const label = typeof link?.textContent === "string" ? link.textContent.trim().replace(/\s+/g, " ") : "";
+  if (
+    label
+    && !/^https?:\/\//i.test(label)
+    && label.toLowerCase() !== url.hostname.toLowerCase()
+    && label.toLowerCase() !== url.toString().toLowerCase()
+  ) {
+    return label;
+  }
+  return getAiChatCitationFallbackTitle(url);
+}
+
 function getAiChatCitationDomainLabel(url) {
   const hostname = url.hostname.toLowerCase().replace(/^www\./, "").replace(/\.$/, "");
   if (!hostname || hostname === "localhost" || hostname.includes(":")) return hostname || url.hostname;
@@ -177,22 +191,26 @@ function showAiChatCitationPopover(citation) {
 
 function prepareRenderedAiChatLink(link) {
   const referenceNumber = getAiChatReferenceNumber(link);
-  if (!referenceNumber) return null;
   const url = getAiChatWebUrl(link?.href ?? link?.getAttribute?.("href"));
   if (!url) return null;
 
   const normalizedUrl = url.toString();
+  const domainLabel = getAiChatCitationDomainLabel(url);
+  const fallbackTitle = getAiChatLinkFallbackTitle(link, url, referenceNumber);
   const citation = document.createElement("button");
   citation.type = "button";
   citation.className = "rendered-ai-chat-link-preview";
   citation.dataset.aiChatLinkUrl = normalizedUrl;
-  citation.dataset.aiChatLinkDomain = getAiChatCitationDomainLabel(url);
-  citation.dataset.aiChatLinkTitle = getAiChatCitationFallbackTitle(url);
+  citation.dataset.aiChatLinkDomain = domainLabel;
+  citation.dataset.aiChatLinkTitle = fallbackTitle;
   citation.dataset.aiChatLinkPreviewState = "pending";
-  citation.dataset.aiChatReference = referenceNumber;
+  if (referenceNumber) citation.dataset.aiChatReference = referenceNumber;
   citation.setAttribute("aria-expanded", "false");
   citation.setAttribute("aria-haspopup", "dialog");
-  citation.setAttribute("aria-label", `[${referenceNumber}] ${citation.dataset.aiChatLinkDomain}`);
+  citation.setAttribute(
+    "aria-label",
+    referenceNumber ? `[${referenceNumber}] ${domainLabel}` : `${domainLabel}: ${fallbackTitle}`
+  );
 
   const favicon = document.createElement("span");
   favicon.className = "rendered-ai-chat-link-favicon is-fallback";
@@ -200,7 +218,7 @@ function prepareRenderedAiChatLink(link) {
 
   const domain = document.createElement("span");
   domain.className = "rendered-ai-chat-link-domain";
-  domain.textContent = citation.dataset.aiChatLinkDomain;
+  domain.textContent = domainLabel;
 
   citation.append(favicon, domain);
   citation.addEventListener("click", (event) => {

@@ -57,7 +57,7 @@ function createMarkdownLink({ href, textContent }) {
   };
 }
 
-test("AI read mode turns only numeric Markdown references into compact domain/favicon citations", async () => {
+test("AI read mode turns HTTP(S) Markdown links into compact domain/favicon citations", async () => {
   const sourceUrl = "https://docs.github.com/en/get-started/start-your-journey";
   const referenceLink = createMarkdownLink({ href: sourceUrl, textContent: "1" });
   const ordinaryLink = createMarkdownLink({ href: "https://google.com/search?q=test", textContent: "Google search" });
@@ -87,15 +87,17 @@ test("AI read mode turns only numeric Markdown references into compact domain/fa
   try {
     hydrateRenderedAiChatLinks(root, async (url) => {
       requests += 1;
-      assert.equal(url, sourceUrl);
-      return { title: "GitHub Docs", faviconUrl: faviconDataUrl };
+      if (url === sourceUrl) return { title: "GitHub Docs", faviconUrl: faviconDataUrl };
+      if (url === ordinaryLink.href) return { title: "Google", faviconUrl: "" };
+      throw new Error(`Unexpected preview URL: ${url}`);
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const citation = referenceLink.replacement;
+    const ordinaryCitation = ordinaryLink.replacement;
     assert.ok(citation);
-    assert.equal(ordinaryLink.replacement, null);
-    assert.equal(requests, 1);
+    assert.ok(ordinaryCitation);
+    assert.equal(requests, 2);
     assert.equal(citation.tagName, "button");
     assert.equal(citation.dataset.aiChatLinkUrl, sourceUrl);
     assert.equal(citation.dataset.aiChatLinkDomain, "github");
@@ -104,6 +106,9 @@ test("AI read mode turns only numeric Markdown references into compact domain/fa
     assert.equal(citation.children[1].className, "rendered-ai-chat-link-domain");
     assert.equal(citation.children[1].textContent, "github");
     assert.equal(citation.children[0].children[0]?.src, faviconDataUrl);
+    assert.equal(ordinaryCitation.dataset.aiChatLinkDomain, "google");
+    assert.equal(ordinaryCitation.dataset.aiChatLinkTitle, "Google");
+    assert.equal(ordinaryCitation.children[1].textContent, "google");
 
     // The full title is intentionally absent from the inline chip. It appears
     // only after the citation is activated, and remains the actual source link.
@@ -124,18 +129,21 @@ test("AI read mode turns only numeric Markdown references into compact domain/fa
   }
 });
 
-test("citation chips handle bracketed references and country-code domains without touching ordinary links", async () => {
+test("citation chips handle bracketed references, named links, and country-code domains", async () => {
   const sourceUrl = "https://news.example.co.kr/article/1";
   const referenceLink = createMarkdownLink({ href: sourceUrl, textContent: "[2]" });
-  const ordinaryLink = createMarkdownLink({ href: "https://example.com", textContent: "2 examples" });
-  const root = { querySelectorAll: () => [referenceLink, ordinaryLink] };
+  const namedLink = createMarkdownLink({ href: "https://developer.mozilla.org/en-US/docs/Web/API/URL", textContent: "MDN URL docs" });
+  const mailLink = createMarkdownLink({ href: "mailto:hello@example.com", textContent: "Email" });
+  const root = { querySelectorAll: () => [referenceLink, namedLink, mailLink] };
 
   const originalDocument = globalThis.document;
   const originalIntersectionObserver = globalThis.IntersectionObserver;
   globalThis.document = { createElement };
   delete globalThis.IntersectionObserver;
   try {
-    hydrateRenderedAiChatLinks(root, async () => ({ title: "Example Korea", faviconUrl: "" }));
+    hydrateRenderedAiChatLinks(root, async (url) => (
+      url === sourceUrl ? { title: "Example Korea", faviconUrl: "" } : null
+    ));
     await new Promise((resolve) => setTimeout(resolve, 0));
   } finally {
     if (originalDocument === undefined) delete globalThis.document;
@@ -145,7 +153,11 @@ test("citation chips handle bracketed references and country-code domains withou
   }
 
   assert.equal(referenceLink.replacement?.dataset?.aiChatLinkDomain, "example");
-  assert.equal(ordinaryLink.replacement, null);
+  assert.equal(referenceLink.replacement?.dataset?.aiChatReference, "2");
+  assert.equal(namedLink.replacement?.dataset?.aiChatLinkDomain, "mozilla");
+  assert.equal(namedLink.replacement?.dataset?.aiChatLinkTitle, "MDN URL docs");
+  assert.equal(namedLink.replacement?.dataset?.aiChatReference, undefined);
+  assert.equal(mailLink.replacement, null);
 });
 
 test("read mode hydrates citation links through the existing secured URL preview API", () => {

@@ -232,12 +232,36 @@ describe("AI conversation block", () => {
     expect(html).not.toContain("script");
   });
 
-  it("limits rich link previews to numbered AI citations and keeps titles click-revealed", () => {
+  it("renders HTTP(S) AI answer links as domain/favicon chips and keeps titles click-revealed", () => {
     expect(moduleSource).toContain('label.match(/^(?:\\[(\\d{1,3})\\]|(\\d{1,3}))$/)');
+    expect(moduleSource).not.toContain('if (!referenceNumber) return null;');
+    expect(moduleSource).toContain('getAiChatLinkFallbackTitle(link, url, referenceNumber)');
     expect(moduleSource).toContain('domain.className = "rendered-ai-chat-link-domain"');
     expect(moduleSource).toContain('showAiChatCitationPopover(citation);');
     expect(moduleSource).toContain('sourceLink.textContent = citation.dataset.aiChatLinkTitle');
     expect(styles).toMatch(/\.rendered-ai-chat-link-tooltip\s*\{[^}]*position:\s*fixed;[^}]*max-width:/s);
+  });
+
+  it("preserves numeric and named HTTP(S) Markdown links for client-side citation hydration", () => {
+    const html = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        turns: [
+          {
+            answeredAt: "",
+            question: "Sources?",
+            answer: "[1](https://docs.github.com/en/get-started) [MDN URL docs](https://developer.mozilla.org/en-US/docs/Web/API/URL)"
+          }
+        ]
+      }
+    });
+
+    expect(html).toContain('<a href="https://docs.github.com/en/get-started"');
+    expect(html).toContain('>1</a>');
+    expect(html).toContain('<a href="https://developer.mozilla.org/en-US/docs/Web/API/URL"');
+    expect(html).toContain('>MDN URL docs</a>');
+    expect(html.match(/target="_blank"/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(html.match(/rel="noopener noreferrer"/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
   it("keeps display LaTeX centered and wrapped inside read-only AI answers", () => {
