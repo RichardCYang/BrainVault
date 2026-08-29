@@ -14308,8 +14308,8 @@ button.danger {
 }
 
 /* Markdown tables inside AI answers are emitted as plain <table> elements by
-   markdown-it, so give them the same readable table treatment as native table
-   blocks without changing the stored Markdown or HTML cache format. */
+   markdown-it. Keep them visually lightweight like modern AI chat tables:
+   no outer/column borders, only subtle separators between rows. */
 .rendered-ai-chat-answer .rendered-ai-chat-content {
   overflow-x: auto;
 }
@@ -14317,18 +14317,18 @@ button.danger {
 .rendered-ai-chat-answer .rendered-ai-chat-content table {
   width: max-content;
   min-width: 100%;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-md);
-  border-collapse: separate;
+  border: 0;
+  border-radius: 0;
+  border-collapse: collapse;
   border-spacing: 0;
-  background: var(--panel);
+  background: transparent;
   font-size: 0.86rem;
 }
 
 .rendered-ai-chat-answer .rendered-ai-chat-content th,
 .rendered-ai-chat-answer .rendered-ai-chat-content td {
   min-width: 7rem;
-  border-right: 1px solid var(--line);
+  border: 0;
   border-bottom: 1px solid var(--line);
   padding: 0.48rem 0.6rem;
   text-align: left;
@@ -14336,13 +14336,9 @@ button.danger {
 }
 
 .rendered-ai-chat-answer .rendered-ai-chat-content th {
-  background: var(--panel-soft);
+  background: color-mix(in srgb, var(--panel-soft) 24%, transparent);
   color: var(--ink-strong);
   font-weight: 650;
-}
-
-.rendered-ai-chat-answer .rendered-ai-chat-content tr > :last-child {
-  border-right: 0;
 }
 
 .rendered-ai-chat-answer .rendered-ai-chat-content tbody tr:last-child > * {

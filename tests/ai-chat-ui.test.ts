@@ -260,8 +260,10 @@ describe("AI conversation block", () => {
     expect(html).toContain("<strong>Alpha</strong>");
     expect(html).toContain("<td>9</td>");
     expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content\s*\{[^}]*overflow-x:\s*auto;/s);
-    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content table\s*\{[^}]*min-width:\s*100%;[^}]*border:/s);
-    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content th,[\s\S]*\.rendered-ai-chat-answer \.rendered-ai-chat-content td\s*\{[^}]*border-bottom:/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content table\s*\{[^}]*min-width:\s*100%;[^}]*border:\s*0;[^}]*border-collapse:\s*collapse;[^}]*background:\s*transparent;/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content th,[\s\S]*\.rendered-ai-chat-answer \.rendered-ai-chat-content td\s*\{[^}]*border:\s*0;[^}]*border-bottom:\s*1px solid var\(--line\);/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content th\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--panel-soft\) 24%, transparent\);/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content tbody tr:last-child > \*\s*\{[^}]*border-bottom:\s*0;/s);
   });
 
   it("uses content-sized questions and swaps editor for preview in read mode", () => {
