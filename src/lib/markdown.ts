@@ -24,6 +24,70 @@ const markdown = new MarkdownIt({
   highlight: (source, language) => renderMarkdownCodeFence(source, language)
 });
 
+const aiChatCjkStrongEmphasisEnvKey = "__brainVaultAiChatCjkStrongEmphasis";
+const cjkOrFullwidthCharacterPattern = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3000-\u303f\uff00-\uffef]/u;
+
+function codePointBefore(value: string, position: number) {
+  if (position <= 0) return null;
+  const trailingCodeUnit = value.charCodeAt(position - 1);
+  if ((trailingCodeUnit & 0xfc00) === 0xdc00 && position > 1) {
+    return value.codePointAt(position - 2) ?? trailingCodeUnit;
+  }
+  return trailingCodeUnit;
+}
+
+function codePointAt(value: string, position: number) {
+  if (position < 0 || position >= value.length) return null;
+  return value.codePointAt(position) ?? null;
+}
+
+function isCjkOrFullwidthCodePoint(codePoint: number | null) {
+  if (codePoint === null) return false;
+  return cjkOrFullwidthCharacterPattern.test(String.fromCodePoint(codePoint));
+}
+
+/**
+ * CommonMark's delimiter-flanking rules can reject `**` next to CJK text
+ * when punctuation sits on the other side of the marker. AI answers commonly
+ * contain natural Korean/Chinese/Japanese prose without spaces, so preserve
+ * markdown-it's normal decision first and only relax failed asterisk runs in
+ * the explicitly opted-in AI-answer environment. Underscore emphasis and all
+ * non-CJK rendering keep the stock markdown-it behavior.
+ */
+function enableAiChatCjkStrongEmphasis(markdownIt: MarkdownIt) {
+  const InlineState = (markdownIt.inline as any).State;
+  (markdownIt.inline as any).State = class BrainVaultInlineState extends InlineState {
+    scanDelims(start: number, canSplitWord: boolean) {
+      const scanned = super.scanDelims(start, canSplitWord);
+      const environment = this.env as Record<string, unknown> | undefined;
+      if (
+        environment?.[aiChatCjkStrongEmphasisEnvKey] !== true
+        || !canSplitWord
+        || this.src.charCodeAt(start) !== 0x2a
+        || scanned.length !== 2
+      ) {
+        return scanned;
+      }
+
+      const previousCodePoint = codePointBefore(this.src, start);
+      const nextCodePoint = codePointAt(this.src, start + scanned.length);
+      if (!isCjkOrFullwidthCodePoint(previousCodePoint) && !isCjkOrFullwidthCodePoint(nextCodePoint)) {
+        return scanned;
+      }
+
+      const previousIsWhitespace = previousCodePoint === null || this.md.utils.isWhiteSpace(previousCodePoint);
+      const nextIsWhitespace = nextCodePoint === null || this.md.utils.isWhiteSpace(nextCodePoint);
+      return {
+        ...scanned,
+        can_open: scanned.can_open || !nextIsWhitespace,
+        can_close: scanned.can_close || !previousIsWhitespace
+      };
+    }
+  };
+}
+
+enableAiChatCjkStrongEmphasis(markdown);
+
 function renderMathPlaceholder(latex: string, displayMode: boolean) {
   const source = latex.trim();
   const escaped = markdown.utils.escapeHtml(source);
@@ -422,7 +486,7 @@ function renderAiChat(metadata: unknown) {
   const turns = data.turns.map((turn, index) => {
     const answeredAt = escapeText(turn.answeredAt);
     const question = renderMarkdown(turn.question);
-    const answer = renderMarkdown(turn.answer);
+    const answer = renderAiChatAnswerMarkdown(turn.answer);
     const activeClass = paginated && index === 0 ? " is-active" : "";
     const hiddenAttribute = paginated && index !== 0 ? ' aria-hidden="true"' : paginated ? ' aria-hidden="false"' : "";
     return `<section class="rendered-ai-chat-turn${activeClass}"${hiddenAttribute}>
@@ -476,9 +540,17 @@ function renderTable(metadata: unknown) {
   );
 }
 
-export function renderMarkdown(raw: string) {
-  const html = markdown.render(raw ?? "");
+function renderMarkdownWithEnvironment(raw: string, environment?: Record<string, unknown>) {
+  const html = markdown.render(raw ?? "", environment ?? {});
   return sanitizeRenderedHtml(html);
+}
+
+export function renderMarkdown(raw: string) {
+  return renderMarkdownWithEnvironment(raw);
+}
+
+function renderAiChatAnswerMarkdown(raw: string) {
+  return renderMarkdownWithEnvironment(raw, { [aiChatCjkStrongEmphasisEnvKey]: true });
 }
 
 export function renderBlockHtml(type: BlockType, raw: string, checked = false, metadata?: unknown) {

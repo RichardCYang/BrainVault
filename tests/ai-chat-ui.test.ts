@@ -251,6 +251,45 @@ describe("AI conversation block", () => {
     expect(html).not.toContain("script");
   });
 
+  it("renders CJK-adjacent strong emphasis in AI answers without leaking literal asterisks", () => {
+    const html = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        turns: [
+          {
+            answeredAt: "",
+            question: "CJK emphasis",
+            answer: "**문장 전체가 강조됩니다.**다음 문장과 앞**「핵심」**뒤, 그리고 **내용:**설명이 이어집니다."
+          }
+        ]
+      }
+    });
+
+    expect(html).toContain("<strong>문장 전체가 강조됩니다.</strong>다음 문장");
+    expect(html).toContain("앞<strong>「핵심」</strong>뒤");
+    expect(html).toContain("<strong>내용:</strong>설명이 이어집니다.");
+    expect(html).not.toContain("**문장 전체가 강조됩니다.**");
+    expect(html).not.toContain("**「핵심」**");
+  });
+
+  it("keeps non-CJK CommonMark strong-emphasis boundaries and inline code unchanged", () => {
+    const html = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        turns: [
+          {
+            answeredAt: "",
+            question: "Boundary compatibility",
+            answer: "a**\"quoted\"**b and `**literal**`"
+          }
+        ]
+      }
+    });
+
+    expect(html).toContain("a**&quot;quoted&quot;**b");
+    expect(html).toContain("<code>**literal**</code>");
+  });
+
   it("renders HTTP(S) AI answer links as domain/favicon chips and keeps titles click-revealed", () => {
     expect(moduleSource).toContain('label.match(/^(?:\\[(\\d{1,3})\\]|(\\d{1,3}))$/)');
     expect(moduleSource).not.toContain('if (!referenceNumber) return null;');
