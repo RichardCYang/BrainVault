@@ -176,6 +176,25 @@ describe("AI conversation block", () => {
     expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-code-pre\s*\{[^}]*border:\s*1px solid rgba\(93, 132, 160, 0\.2\);[^}]*border-radius:\s*var\(--radius-md\);/s);
   });
 
+  it("gives inline Markdown code a compact background without restyling fenced code", () => {
+    const html = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        turns: [
+          {
+            answeredAt: "",
+            question: "Show both code styles",
+            answer: "Run `npm test` first.\n\n```bash\nnpm test\n```"
+          }
+        ]
+      }
+    });
+
+    expect(html).toContain("<code>npm test</code>");
+    expect(html).toContain('<pre class="rendered-code-pre"><code class="language-bash">');
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content :not\(pre\) > code\s*\{[^}]*background:\s*var\(--panel-soft\);[^}]*padding:\s*0\.08em 0\.3em;/s);
+  });
+
   it("does not let AI Markdown forge pagination controls", () => {
     const html = renderBlockHtml("AI_CHAT", "", false, {
       aiChat: {

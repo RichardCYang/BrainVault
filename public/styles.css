@@ -14237,6 +14237,23 @@ button.danger {
   overflow-wrap: anywhere;
 }
 
+/* Inline Markdown code in rendered AI answers is a <code> element rather
+   than a fenced <pre><code> block, so give it its own compact surface.
+   Excluding code whose direct parent is <pre> keeps fenced highlighting
+   unchanged before and after browser-side highlight.js hydration. */
+.rendered-ai-chat-answer .rendered-ai-chat-content :not(pre) > code {
+  border: 1px solid color-mix(in srgb, var(--line-strong) 66%, transparent);
+  border-radius: 4px;
+  background: var(--panel-soft);
+  color: var(--ink-strong);
+  padding: 0.08em 0.3em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.9em;
+  line-height: 1.4;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
 /* Keep display LaTeX inside the AI-answer width without creating a
    horizontal scroller. KaTeX disables automatic wrapping in display mode by
    default; allowing normal white-space here lets relations/operators wrap
