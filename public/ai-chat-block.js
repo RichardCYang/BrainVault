@@ -34,6 +34,9 @@ const aiChatCitationBlockEndTags = new Set(["P", "LI"]);
 const aiChatCitationTailMarkerPattern = /\[\s*\d{1,3}(?:\s*,\s*\d{1,3})*\s*\]/g;
 const aiChatCitationTailSeparatorPattern = /^[\s,.;:!?…，。；：！？、(){}\[\]\'"“”‘’\-–—]*$/;
 const aiChatCitationTailInlineTags = new Set(["SPAN", "EM", "STRONG", "S", "DEL", "SUP"]);
+const aiChatReferenceWrapperPlaceholder = "\ufffc";
+const aiChatReferenceWrapperBarrier = "\ufffd";
+const aiChatReferenceWrapperPattern = /\(\s*\ufffc(?:[\s,;，；、]*\ufffc)*\s*\)([\s,.;:!?…，。；：！？、{}\[\]\'"“”‘’\-–—]*)$/;
 let activeAiChatCitation = null;
 let aiChatCitationPopover = null;
 let aiChatCitationPopoverEventsBound = false;
@@ -267,6 +270,74 @@ function isAiChatInlineCitationLink(link) {
   if (!getAiChatReferenceNumber(link)) return false;
   if (link?.dataset?.aiChatRelocatedCitation === "true") return true;
   return isAiChatNodeAtCitationBlockEnd(link);
+}
+
+function collectAiChatReferenceWrapperUnits(node, units) {
+  for (const child of Array.from(node?.childNodes ?? [])) {
+    if (child?.nodeType === 3) {
+      const value = typeof child.nodeValue === "string" ? child.nodeValue : (child.textContent ?? "");
+      for (let index = 0; index < value.length; index += 1) {
+        units.push({ char: value[index], node: child, offset: index });
+      }
+      continue;
+    }
+    if (child?.nodeType !== 1) continue;
+
+    const tagName = getAiChatElementTagName(child);
+    const isWebLink = tagName === "A" && Boolean(getAiChatWebUrl(child?.href ?? child?.getAttribute?.("href")));
+    const isCitationChip = tagName === "BUTTON" && child?.classList?.contains?.("rendered-ai-chat-link-preview");
+    if (isWebLink || isCitationChip) {
+      units.push({ char: aiChatReferenceWrapperPlaceholder });
+      continue;
+    }
+    if (aiChatCitationTailInlineTags.has(tagName)) {
+      collectAiChatReferenceWrapperUnits(child, units);
+      continue;
+    }
+    units.push({ char: aiChatReferenceWrapperBarrier });
+  }
+}
+
+function stripAiChatTrailingReferenceParentheses(block) {
+  const units = [];
+  collectAiChatReferenceWrapperUnits(block, units);
+  if (!units.some((unit) => unit.char === aiChatReferenceWrapperPlaceholder)) return;
+
+  const linearText = units.map((unit) => unit.char).join("");
+  const match = linearText.match(aiChatReferenceWrapperPattern);
+  if (!match || match.index === undefined) return;
+
+  const openingIndex = match.index;
+  const closingIndex = linearText.lastIndexOf(")", linearText.length - match[1].length - 1);
+  const opening = units[openingIndex];
+  const closing = units[closingIndex];
+  if (opening?.char !== "(" || closing?.char !== ")" || !opening.node || !closing.node) return;
+
+  const edits = new Map();
+  for (const point of [opening, closing]) {
+    const offsets = edits.get(point.node) ?? new Set();
+    offsets.add(point.offset);
+    edits.set(point.node, offsets);
+  }
+  edits.forEach((offsets, textNode) => {
+    const value = typeof textNode.nodeValue === "string" ? textNode.nodeValue : (textNode.textContent ?? "");
+    textNode.nodeValue = value.split("").filter((_, index) => !offsets.has(index)).join("");
+  });
+}
+
+function stripRenderedAiChatReferenceParentheses(root) {
+  const contents = [];
+  if (root?.matches?.(".rendered-ai-chat-answer .rendered-ai-chat-content")) contents.push(root);
+  root?.querySelectorAll?.(".rendered-ai-chat-answer .rendered-ai-chat-content")?.forEach?.((content) => contents.push(content));
+
+  const visit = (node) => {
+    for (const child of getAiChatChildElements(node)) {
+      const tagName = getAiChatElementTagName(child);
+      if (aiChatCitationBlockEndTags.has(tagName)) stripAiChatTrailingReferenceParentheses(child);
+      visit(child);
+    }
+  };
+  [...new Set(contents)].forEach((content) => visit(content));
 }
 
 function isAiChatHeadingElement(node) {
@@ -746,6 +817,7 @@ export function hydrateRenderedAiChatLinks(root, fetchPreview) {
     .map((link) => prepareRenderedAiChatLink(link))
     .filter(Boolean)
     .filter((citation) => !["loading", "loaded"].includes(citation.dataset.aiChatLinkPreviewState));
+  stripRenderedAiChatReferenceParentheses(root);
   if (!citations.length) return;
 
   if (typeof IntersectionObserver !== "function") {

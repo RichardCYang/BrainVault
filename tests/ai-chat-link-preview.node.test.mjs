@@ -392,11 +392,69 @@ test("citation chips handle bracketed references and country-code domains while 
   assert.equal(namedParagraph.querySelectorAll(".rendered-ai-chat-link-preview").length, 0);
 });
 
+test("AI read mode removes wrapper parentheses around a trailing named reference link only", async () => {
+  const content = createDomElement("div");
+  const trailingParagraph = createDomElement("p");
+  trailingParagraph.append(createDomText("Claim ("));
+  const trailingLink = createDomElement("a");
+  trailingLink.href = "https://example.com/reference";
+  trailingLink.textContent = "Reference title";
+  trailingParagraph.append(trailingLink, createDomText(")."));
+
+  const middleParagraph = createDomElement("p");
+  middleParagraph.append(createDomText("See ("));
+  const middleLink = createDomElement("a");
+  middleLink.href = "https://example.org/details";
+  middleLink.textContent = "Details";
+  middleParagraph.append(middleLink, createDomText(") for context."));
+  content.append(trailingParagraph, middleParagraph);
+
+  const root = {
+    querySelectorAll(selector) {
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content") return [content];
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]") return content.querySelectorAll("a[href]");
+      return [];
+    }
+  };
+  const originalDocument = globalThis.document;
+  const originalIntersectionObserver = globalThis.IntersectionObserver;
+  globalThis.document = {
+    createElement: createDomElement,
+    createTextNode: createDomText,
+    createDocumentFragment: createDomFragment,
+    body: createDomElement("body"),
+    documentElement: { clientWidth: 1280, clientHeight: 720 },
+    addEventListener() {}
+  };
+  delete globalThis.IntersectionObserver;
+
+  let requests = 0;
+  try {
+    hydrateRenderedAiChatLinks(root, async () => {
+      requests += 1;
+      return null;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(requests, 0);
+    assert.equal(trailingParagraph.textContent, "Claim Reference title.");
+    assert.equal(trailingLink.isConnected, true);
+    assert.equal(trailingLink.parentElement, trailingParagraph);
+    assert.equal(middleParagraph.textContent, "See (Details) for context.");
+    assert.equal(middleLink.isConnected, true);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalIntersectionObserver === undefined) delete globalThis.IntersectionObserver;
+    else globalThis.IntersectionObserver = originalIntersectionObserver;
+  }
+});
+
 
 test("plain [1] and grouped [2, 13] markers receive relocated source chips instead of leaving chips at the Markdown tail", async () => {
   const content = createDomElement("div");
-  const firstClaim = appendText(createDomElement("p"), "First claim [1].");
-  const groupedClaim = appendText(createDomElement("p"), "Grouped claim [2, 13].");
+  const firstClaim = appendText(createDomElement("p"), "First claim ([1]).");
+  const groupedClaim = appendText(createDomElement("p"), "Grouped claim ([2, 13]).");
   content.append(firstClaim, groupedClaim);
 
   const sourceOne = appendSourceLine(content, "1", "https://docs.github.com/en/get-started", "GitHub Docs");
@@ -445,6 +503,10 @@ test("plain [1] and grouped [2, 13] markers receive relocated source chips inste
     assert.equal(groupedChips[1].dataset.aiChatLinkDomain, "example");
     assert.doesNotMatch(firstClaim.textContent, /\[1\]/);
     assert.doesNotMatch(groupedClaim.textContent, /\[2,\s*13\]/);
+    assert.doesNotMatch(firstClaim.textContent, /[()]/);
+    assert.doesNotMatch(groupedClaim.textContent, /[()]/);
+    assert.equal(firstClaim.textContent, "First claim github.");
+    assert.equal(groupedClaim.textContent, "Grouped claim mozilla example.");
 
     assert.equal(sourceOne.isConnected, false);
     assert.equal(sourceTwo.isConnected, false);
