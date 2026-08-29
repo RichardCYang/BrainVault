@@ -14211,13 +14211,16 @@ button.danger {
   margin-bottom: 0;
 }
 
-/* Markdown blockquotes in rendered AI answers need an explicit quote rule.
-   Browsers do not provide the familiar Markdown left rail by default. */
+/* Keep quoted Markdown distinct without dimming the prose itself. The
+   accent-tinted surface provides structure while the normal ink color keeps
+   long quotations as readable as surrounding answer text in both themes. */
 .rendered-ai-chat-answer .rendered-ai-chat-content blockquote {
   margin: 0.72rem 0;
-  border-left: 3px solid var(--line-strong);
-  padding: 0.08rem 0 0.08rem 0.78rem;
-  color: var(--muted);
+  border-left: 3px solid color-mix(in srgb, var(--accent-text) 72%, var(--line-strong));
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--accent-soft);
+  padding: 0.52rem 0.76rem 0.52rem 0.78rem;
+  color: var(--ink);
 }
 
 .rendered-ai-chat-answer .rendered-ai-chat-content blockquote > :first-child {
@@ -14242,13 +14245,14 @@ button.danger {
    Excluding code whose direct parent is <pre> keeps fenced highlighting
    unchanged before and after browser-side highlight.js hydration. */
 .rendered-ai-chat-answer .rendered-ai-chat-content :not(pre) > code {
-  border: 1px solid color-mix(in srgb, var(--line-strong) 66%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-text) 38%, var(--line-strong));
   border-radius: 4px;
-  background: var(--panel-soft);
+  background: var(--accent-soft-strong);
   color: var(--ink-strong);
-  padding: 0.08em 0.3em;
+  padding: 0.1em 0.34em;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 0.9em;
+  font-weight: 600;
   line-height: 1.4;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;

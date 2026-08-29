@@ -192,7 +192,7 @@ describe("AI conversation block", () => {
 
     expect(html).toContain("<code>npm test</code>");
     expect(html).toContain('<pre class="rendered-code-pre"><code class="language-bash">');
-    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content :not\(pre\) > code\s*\{[^}]*background:\s*var\(--panel-soft\);[^}]*padding:\s*0\.08em 0\.3em;/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content :not\(pre\) > code\s*\{[^}]*border:\s*1px solid color-mix\(in srgb, var\(--accent-text\) 38%, var\(--line-strong\)\);[^}]*background:\s*var\(--accent-soft-strong\);[^}]*color:\s*var\(--ink-strong\);[^}]*padding:\s*0\.1em 0\.34em;[^}]*font-weight:\s*600;/s);
   });
 
   it("does not let AI Markdown forge pagination controls", () => {
@@ -381,7 +381,7 @@ describe("AI conversation block", () => {
 
     expect(html).toContain("<blockquote>");
     expect(html).toContain("<p>Quoted insight</p>");
-    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content blockquote\s*\{[^}]*margin:\s*0\.72rem 0;[^}]*border-left:\s*3px solid var\(--line-strong\);[^}]*padding:\s*0\.08rem 0 0\.08rem 0\.78rem;[^}]*color:\s*var\(--muted\);/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content blockquote\s*\{[^}]*margin:\s*0\.72rem 0;[^}]*border-left:\s*3px solid color-mix\(in srgb, var\(--accent-text\) 72%, var\(--line-strong\)\);[^}]*border-radius:\s*0 var\(--radius-md\) var\(--radius-md\) 0;[^}]*background:\s*var\(--accent-soft\);[^}]*padding:\s*0\.52rem 0\.76rem 0\.52rem 0\.78rem;[^}]*color:\s*var\(--ink\);/s);
     expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content blockquote > :first-child\s*\{[^}]*margin-top:\s*0;/s);
     expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content blockquote > :last-child\s*\{[^}]*margin-bottom:\s*0;/s);
   });
