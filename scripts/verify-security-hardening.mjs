@@ -338,6 +338,8 @@ const appSource = contains("src/app.ts", [
   "createHttpsEnforcementMiddleware",
   'enabled: env.HTTPS_MODE !== "off"',
   "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js",
+  "https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/",
+  'frameSrc: ["\'self\'", "data:", "https://www.youtube-nocookie.com", "https://www.youtube.com"]',
   "'sha256-AQrGHmNf2ToDPODxkNyXldxWl9tWr2pnwbahY0pFneE='",
   'app.get("/vendor/yjs/yjs.mjs"',
   'app.get("/vendor/yjs/isomorphic/browser.mjs"',

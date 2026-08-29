@@ -39,6 +39,7 @@ const COLLABORATIVE_BLOCK_TYPES = new Set([
   "BOOKMARK",
   "AI_CHAT",
   "MATH",
+  "MERMAID",
   "CODE",
   "DIVIDER",
   "IMAGE",

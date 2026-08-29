@@ -4321,6 +4321,101 @@ for (const [language, addition] of Object.entries(ganttTranslationAdditions)) {
   catalog.gantt = addition.gantt;
 }
 
+const mermaidTranslationAdditions = {
+  en: {
+    blockType: "Mermaid diagram",
+    slash: { label: "Mermaid diagram", hint: "Render a diagram from Mermaid syntax", keywords: "mermaid diagram flowchart sequence class state er" },
+    mermaid: {
+      blockPlaceholder: "flowchart TD\n  A[Start] --> B[Done]",
+      blockAria: "Mermaid diagram source",
+      previewAria: "Mermaid diagram preview",
+      emptyPreview: "Enter Mermaid syntax to preview the diagram.",
+      rendering: "Rendering Mermaid diagram…",
+      renderError: "Could not render this Mermaid diagram. Check the syntax."
+    }
+  },
+  ko: {
+    blockType: "Mermaid 다이어그램",
+    slash: { label: "Mermaid 다이어그램", hint: "Mermaid 문법으로 다이어그램 만들기", keywords: "mermaid 머메이드 다이어그램 순서도 시퀀스 클래스 상태 er" },
+    mermaid: {
+      blockPlaceholder: "flowchart TD\n  A[시작] --> B[완료]",
+      blockAria: "Mermaid 다이어그램 소스",
+      previewAria: "Mermaid 다이어그램 미리보기",
+      emptyPreview: "Mermaid 문법을 입력하면 다이어그램을 미리 볼 수 있습니다.",
+      rendering: "Mermaid 다이어그램을 렌더링하는 중…",
+      renderError: "Mermaid 다이어그램을 렌더링하지 못했습니다. 문법을 확인해 주세요."
+    }
+  },
+  ja: {
+    blockType: "Mermaid ダイアグラム",
+    slash: { label: "Mermaid ダイアグラム", hint: "Mermaid 構文からダイアグラムを描画", keywords: "mermaid ダイアグラム フローチャート シーケンス クラス 状態 er" },
+    mermaid: {
+      blockPlaceholder: "flowchart TD\n  A[開始] --> B[完了]",
+      blockAria: "Mermaid ダイアグラムのソース",
+      previewAria: "Mermaid ダイアグラムのプレビュー",
+      emptyPreview: "Mermaid 構文を入力するとダイアグラムをプレビューできます。",
+      rendering: "Mermaid ダイアグラムを描画中…",
+      renderError: "Mermaid ダイアグラムを描画できませんでした。構文を確認してください。"
+    }
+  },
+  fr: {
+    blockType: "Diagramme Mermaid",
+    slash: { label: "Diagramme Mermaid", hint: "Afficher un diagramme à partir de la syntaxe Mermaid", keywords: "mermaid diagramme organigramme séquence classe état er" },
+    mermaid: {
+      blockPlaceholder: "flowchart TD\n  A[Début] --> B[Terminé]",
+      blockAria: "Source du diagramme Mermaid",
+      previewAria: "Aperçu du diagramme Mermaid",
+      emptyPreview: "Saisissez une syntaxe Mermaid pour prévisualiser le diagramme.",
+      rendering: "Rendu du diagramme Mermaid…",
+      renderError: "Impossible d’afficher ce diagramme Mermaid. Vérifiez la syntaxe."
+    }
+  },
+  de: {
+    blockType: "Mermaid-Diagramm",
+    slash: { label: "Mermaid-Diagramm", hint: "Diagramm aus Mermaid-Syntax rendern", keywords: "mermaid diagramm flussdiagramm sequenz klasse zustand er" },
+    mermaid: {
+      blockPlaceholder: "flowchart TD\n  A[Start] --> B[Fertig]",
+      blockAria: "Mermaid-Diagrammquelle",
+      previewAria: "Vorschau des Mermaid-Diagramms",
+      emptyPreview: "Mermaid-Syntax eingeben, um das Diagramm vorzusehen.",
+      rendering: "Mermaid-Diagramm wird gerendert…",
+      renderError: "Dieses Mermaid-Diagramm konnte nicht gerendert werden. Bitte Syntax prüfen."
+    }
+  },
+  es: {
+    blockType: "Diagrama Mermaid",
+    slash: { label: "Diagrama Mermaid", hint: "Renderizar un diagrama desde sintaxis Mermaid", keywords: "mermaid diagrama flujo secuencia clase estado er" },
+    mermaid: {
+      blockPlaceholder: "flowchart TD\n  A[Inicio] --> B[Fin]",
+      blockAria: "Fuente del diagrama Mermaid",
+      previewAria: "Vista previa del diagrama Mermaid",
+      emptyPreview: "Escribe sintaxis Mermaid para previsualizar el diagrama.",
+      rendering: "Renderizando diagrama Mermaid…",
+      renderError: "No se pudo renderizar este diagrama Mermaid. Revisa la sintaxis."
+    }
+  },
+  pt: {
+    blockType: "Diagrama Mermaid",
+    slash: { label: "Diagrama Mermaid", hint: "Renderizar um diagrama a partir da sintaxe Mermaid", keywords: "mermaid diagrama fluxograma sequência classe estado er" },
+    mermaid: {
+      blockPlaceholder: "flowchart TD\n  A[Início] --> B[Concluído]",
+      blockAria: "Fonte do diagrama Mermaid",
+      previewAria: "Prévia do diagrama Mermaid",
+      emptyPreview: "Digite a sintaxe Mermaid para visualizar o diagrama.",
+      rendering: "Renderizando diagrama Mermaid…",
+      renderError: "Não foi possível renderizar este diagrama Mermaid. Verifique a sintaxe."
+    }
+  }
+};
+
+for (const [language, addition] of Object.entries(mermaidTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  catalog.blocks.types.MERMAID = addition.blockType;
+  catalog.slash.MERMAID = addition.slash;
+  catalog.mermaid = addition.mermaid;
+}
+
 
 const timetableEnglish = {
   untitledEntry: "Untitled schedule",

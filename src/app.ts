@@ -75,12 +75,16 @@ export function createApp() {
           scriptSrc: [
             "'self'",
             "'sha256-AQrGHmNf2ToDPODxkNyXldxWl9tWr2pnwbahY0pFneE='",
-            "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js"
+            "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js",
+            "https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/"
           ],
           styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.css"],
           fontSrc: ["'self'", "data:", "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/fonts/"],
           connectSrc: ["'self'", ...configuredWebSocketOrigins],
-          frameSrc: ["'self'", "https://www.youtube-nocookie.com", "https://www.youtube.com"]
+          // Mermaid's strictest browser isolation mode returns a data-URL
+          // iframe. User-authored Markdown still cannot persist data iframes:
+          // the server sanitizer only permits the two YouTube hostnames below.
+          frameSrc: ["'self'", "data:", "https://www.youtube-nocookie.com", "https://www.youtube.com"]
         }
       }
     })

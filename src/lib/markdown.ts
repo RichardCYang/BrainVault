@@ -32,6 +32,14 @@ function renderMathPlaceholder(latex: string, displayMode: boolean) {
   return `<${tag} class="math-expression math-expression--${mode}" data-latex="${escaped}" data-math-display="${String(displayMode)}">${escaped}</${tag}>`;
 }
 
+function renderMermaidSourcePlaceholder(source: string) {
+  const escaped = markdown.utils.escapeHtml(source.trim());
+  return sanitizeHtml(
+    `<pre class="rendered-mermaid-source"><code class="language-mermaid">${escaped}</code></pre>`,
+    sanitizeOptions
+  );
+}
+
 function mathInlineParensRule(state: any, silent: boolean) {
   const start = state.pos;
   if (state.src.slice(start, start + 2) !== "\\(") return false;
@@ -528,6 +536,11 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
       return renderAiChat(safeMetadata);
     case "MATH":
       return sanitizeHtml(renderMathPlaceholder(markdownValue, true), sanitizeOptions);
+    case "MERMAID":
+      // Mermaid is rendered in the browser inside a sandboxed data-URL iframe.
+      // Persist only an escaped source fallback in html_cache; never trust a
+      // stored/generated SVG as an application HTML trust boundary.
+      return renderMermaidSourcePlaceholder(markdownValue);
     case "CODE":
       return renderTextAlignment(
         sanitizeHtml(renderHighlightedCode(stripFence(markdownValue), getCodeLanguage(safeMetadata)), sanitizeOptions),

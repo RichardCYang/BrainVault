@@ -2091,6 +2091,71 @@ kbd {
   font-size: 0.84rem;
 }
 
+.mermaid-block-editor {
+  gap: 0.62rem;
+}
+
+.editor-block-row[data-block-type="MERMAID"] .block-row-input {
+  min-height: 9.5rem;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #f8fbfd;
+  padding: 0.68rem 0.78rem;
+  color: #294357;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.editor-block-row[data-block-type="MERMAID"] .block-rendered-preview {
+  display: grid;
+}
+
+.mermaid-block-preview {
+  min-height: 11rem;
+  place-items: center;
+  overflow: auto;
+  border: 1px solid rgba(69, 153, 220, 0.18);
+  border-radius: var(--radius-md);
+  background: #fbfdff;
+  padding: 0.8rem;
+}
+
+.mermaid-block-preview.is-rendered {
+  display: block;
+}
+
+.mermaid-block-preview.is-empty,
+.mermaid-block-preview.is-rendering,
+.mermaid-block-preview.is-invalid {
+  color: var(--muted-light);
+  font-size: 0.84rem;
+  text-align: center;
+}
+
+.mermaid-block-preview.is-invalid {
+  color: var(--danger);
+}
+
+.mermaid-block-message {
+  max-width: 34rem;
+}
+
+.mermaid-sandbox-frame {
+  display: block;
+  width: 100%;
+  min-height: 11rem;
+  border: 0;
+  background: transparent;
+}
+
+.rendered-mermaid-source {
+  white-space: pre;
+}
+
 .math-expression--inline {
   display: inline-block;
   max-width: 100%;
@@ -4327,6 +4392,12 @@ body.is-kanban-column-dragging {
   padding-inline: 0;
 }
 
+.page-view.is-read-only .mermaid-block-preview {
+  border-color: transparent;
+  background: transparent;
+  padding-inline: 0;
+}
+
 .page-view.is-read-only .block-row-input,
 .page-view.is-read-only .table-cell-input,
 .page-view.is-read-only .kanban-title-input,
@@ -5662,6 +5733,12 @@ html[data-theme="dark"] .block-move-dialog {
   }
 
   body.pdf-export-mode .math-block-preview {
+    border-color: transparent !important;
+    background: transparent !important;
+    padding-inline: 0 !important;
+  }
+
+  body.pdf-export-mode .mermaid-block-preview {
     border-color: transparent !important;
     background: transparent !important;
     padding-inline: 0 !important;
@@ -16879,6 +16956,17 @@ html[data-theme="dark"] .math-block-preview {
   border-color: var(--line-strong);
   background: #1b1f25;
   color: var(--ink);
+}
+
+html[data-theme="dark"] .editor-block-row[data-block-type="MERMAID"] .block-row-input,
+html[data-theme="dark"] .mermaid-block-preview {
+  border-color: var(--line-strong);
+  background: #1b1f25;
+  color: var(--ink);
+}
+
+html[data-theme="dark"] .mermaid-block-preview.is-invalid {
+  color: #ff8b8b;
 }
 
 html[data-theme="dark"] .editor-block-row[data-block-type="QUOTE"],

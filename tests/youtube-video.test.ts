@@ -67,7 +67,7 @@ describe("YouTube video block", () => {
     expect(appSource).toContain('row.dataset.blockType === "VIDEO"');
     expect(schema).toContain('"VIDEO"');
     expect(migration).toContain("'VIDEO'");
-    expect(server).toContain('frameSrc: ["\'self\'", "https://www.youtube-nocookie.com", "https://www.youtube.com"]');
+    expect(server).toContain('frameSrc: ["\'self\'", "data:", "https://www.youtube-nocookie.com", "https://www.youtube.com"]');
     expect(styles).toContain('.editor-block-row[data-block-type="VIDEO"]');
     expect(styles).toContain("min-height: 200px");
     expect(styles).toContain("aspect-ratio: 16 / 9");

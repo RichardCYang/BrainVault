@@ -18,6 +18,11 @@ import {
   renderCodePreview
 } from "./code-highlighting.js";
 import {
+  hydrateMermaidPreviews,
+  renderMermaidPreview,
+  scheduleMermaidPreview
+} from "./mermaid-block.js";
+import {
   createDatabaseEditor,
   createDefaultDatabaseData,
   extractDatabaseData,
@@ -421,6 +426,7 @@ const blockTypeLabels = {
   BOOKMARK: "blocks.types.BOOKMARK",
   AI_CHAT: "blocks.types.AI_CHAT",
   MATH: "blocks.types.MATH",
+  MERMAID: "blocks.types.MERMAID",
   CODE: "blocks.types.CODE",
   DIVIDER: "blocks.types.DIVIDER",
   IMAGE: "blocks.types.IMAGE",
@@ -733,6 +739,7 @@ const slashCommands = [
   { type: "BOOKMARK", command: "/bookmark", icon: "bookmark" },
   { type: "AI_CHAT", command: "/ai", icon: "ai-chat" },
   { type: "MATH", command: "/math", icon: "math" },
+  { type: "MERMAID", command: "/mermaid", icon: "mermaid" },
   { type: "CODE", command: "/code", icon: "code" },
   { type: "DIVIDER", command: "/divider", icon: "divider" },
   { type: "IMAGE", command: "/image", icon: "image" },
@@ -877,6 +884,12 @@ const slashCommandIconShapes = {
   ],
   math: [
     ["path", { d: "M18 5H8l6 7-6 7h10" }]
+  ],
+  mermaid: [
+    ["rect", { x: "3", y: "3", width: "7", height: "6", rx: "1" }],
+    ["rect", { x: "14", y: "15", width: "7", height: "6", rx: "1" }],
+    ["path", { d: "M10 6h2a5 5 0 0 1 5 5v4" }],
+    ["path", { d: "m14 12 3 3 3-3" }]
   ],
   code: [
     ["path", { d: "m18 16 4-4-4-4" }],
@@ -1592,6 +1605,7 @@ function applyTheme(value, { persist = true } = {}) {
       // is unavailable (for example, in privacy-hardened browsing contexts).
     }
   }
+  requestAnimationFrame(() => void hydrateMermaidPreviews(document, { force: true }));
   return theme;
 }
 
@@ -7048,7 +7062,10 @@ function syncPageModeUi() {
   }
   if (readOnly) hydrateDatabaseUrlPreviews(elements.pageView, fetchDatabaseUrlPreview);
   renderCollaborationChrome();
-  requestAnimationFrame(() => hydrateMathExpressions(elements.pageView));
+  requestAnimationFrame(() => {
+    hydrateMathExpressions(elements.pageView);
+    void hydrateMermaidPreviews(elements.pageView);
+  });
 
   if (readOnly) {
     closeSlashMenu();
@@ -11729,6 +11746,23 @@ function updateMathBlockPreview(row, latex) {
   if (preview) renderLatexInto(preview, latex, true);
 }
 
+function getMermaidPreviewOptions() {
+  return {
+    emptyText: t("mermaid.emptyPreview"),
+    renderingText: t("mermaid.rendering"),
+    errorText: t("mermaid.renderError"),
+    previewLabel: t("mermaid.previewAria")
+  };
+}
+
+function updateMermaidBlockPreview(row, source, { immediate = false } = {}) {
+  const preview = row?.querySelector(".mermaid-block-preview");
+  if (!preview) return;
+  const options = getMermaidPreviewOptions();
+  if (immediate) void renderMermaidPreview(preview, source, options);
+  else scheduleMermaidPreview(preview, source, options);
+}
+
 function updateCodeBlockPreview(row, value, language = row?.dataset?.codeLanguage) {
   const preview = row?.querySelector(".block-rendered-preview");
   if (!preview) return;
@@ -11740,6 +11774,10 @@ function updateRenderedBlockPreview(row, block) {
   if (!preview || !block) return;
   if (block.type === "MATH") {
     renderLatexInto(preview, block.markdown, true);
+    return;
+  }
+  if (block.type === "MERMAID") {
+    updateMermaidBlockPreview(row, block.markdown, { immediate: true });
     return;
   }
   if (block.type === "CODE") {
@@ -11759,15 +11797,16 @@ function createTextBlockEditor(block) {
   const editor = document.createElement("div");
   editor.className = "text-block-editor";
   if (block.type === "MATH") editor.classList.add("math-block-editor");
+  if (block.type === "MERMAID") editor.classList.add("mermaid-block-editor");
   if (block.type === "CODE") editor.classList.add("code-block-editor");
 
   const textarea = document.createElement("textarea");
   textarea.name = "markdown";
   textarea.className = "block-row-input";
-  textarea.rows = block.type === "MATH" ? 2 : block.type === "CODE" ? 5 : 1;
+  textarea.rows = block.type === "MATH" ? 2 : block.type === "MERMAID" ? 8 : block.type === "CODE" ? 5 : 1;
   textarea.maxLength = BLOCK_MARKDOWN_MAX_LENGTH;
-  textarea.spellcheck = !["MATH", "CODE"].includes(block.type);
-  if (block.type === "CODE") {
+  textarea.spellcheck = !["MATH", "MERMAID", "CODE"].includes(block.type);
+  if (["MERMAID", "CODE"].includes(block.type)) {
     textarea.wrap = "off";
     textarea.autocapitalize = "off";
     textarea.autocomplete = "off";
@@ -11776,12 +11815,18 @@ function createTextBlockEditor(block) {
     ? t("block.dividerPlaceholder")
     : block.type === "MATH"
       ? t("math.blockPlaceholder")
-      : t("block.contentPlaceholder");
+      : block.type === "MERMAID"
+        ? t("mermaid.blockPlaceholder")
+        : t("block.contentPlaceholder");
   textarea.value = block.markdown ?? "";
   textarea.style.textAlign = getBlockTextAlign(block);
   textarea.setAttribute(
     "aria-label",
-    block.type === "MATH" ? t("math.blockAria") : t("block.contentAria", { type: getBlockTypeLabel(block.type) })
+    block.type === "MATH"
+      ? t("math.blockAria")
+      : block.type === "MERMAID"
+        ? t("mermaid.blockAria")
+        : t("block.contentAria", { type: getBlockTypeLabel(block.type) })
   );
 
   const preview = document.createElement("div");
@@ -11789,6 +11834,10 @@ function createTextBlockEditor(block) {
   if (block.type === "MATH") {
     preview.classList.add("math-block-preview", "math-expression", "math-expression--display");
     preview.setAttribute("aria-label", t("math.previewAria"));
+  }
+  if (block.type === "MERMAID") {
+    preview.classList.add("mermaid-block-preview");
+    preview.setAttribute("aria-label", t("mermaid.previewAria"));
   }
   if (block.type === "CODE") {
     preview.classList.add("code-block-preview");
@@ -14006,7 +14055,7 @@ function updateInlineToolbarForTextarea(textarea) {
   if (!requireWritablePage({ announce: false })) return closeInlineToolbar();
   const row = getBlockRow(textarea);
   const selection = getTextareaSelection(textarea);
-  if (!row || ["MATH", "VIDEO"].includes(row.dataset.blockType) || !selection) return closeInlineToolbar();
+  if (!row || ["MATH", "MERMAID", "VIDEO"].includes(row.dataset.blockType) || !selection) return closeInlineToolbar();
 
   closeSlashMenu();
   state.activeInlineBlockId = row.dataset.blockId;
@@ -15513,9 +15562,18 @@ async function waitForPdfExportAssets() {
       image.addEventListener("error", resolve, { once: true });
     });
   });
+  const mermaidFramePromises = [...elements.pageView.querySelectorAll(".mermaid-sandbox-frame")].map((frame) => {
+    frame.setAttribute("loading", "eager");
+    if (frame.dataset.mermaidLoaded === "true") return Promise.resolve();
+    return new Promise((resolve) => {
+      frame.addEventListener("load", resolve, { once: true });
+      frame.addEventListener("error", resolve, { once: true });
+    });
+  });
   const assetsReady = Promise.allSettled([
     document.fonts?.ready ?? Promise.resolve(),
-    ...imagePromises
+    ...imagePromises,
+    ...mermaidFramePromises
   ]);
   const timeout = new Promise((resolve) => window.setTimeout(resolve, 2500));
   await Promise.race([assetsReady, timeout]);
@@ -15539,6 +15597,7 @@ async function exportCurrentPageToPdf() {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     elements.blockList.querySelectorAll("textarea").forEach(autoGrowTextarea);
     hydrateMathExpressions(elements.pageView);
+    await hydrateMermaidPreviews(elements.pageView);
     hydrateAccordionIcons(elements.pageView);
     restoreToggleDetails = expandToggleDetailsForPdf();
     restoreComputedStyles = freezePdfExportComputedStyles();
@@ -15921,6 +15980,7 @@ function renderSelectedPage() {
   renderPages();
   requestAnimationFrame(() => {
     hydrateMathExpressions(elements.pageView);
+    void hydrateMermaidPreviews(elements.pageView);
     if (isPageReadOnly()) hydrateHighlightedCodeBlocks(elements.pageView);
     hydrateAccordionIcons(elements.pageView);
     focusPendingBlock();
@@ -19267,6 +19327,7 @@ elements.blockList.addEventListener("input", (event) => {
   const row = getBlockRow(textarea);
   if (row) {
     if (row.dataset.blockType === "MATH") updateMathBlockPreview(row, textarea.value);
+    if (row.dataset.blockType === "MERMAID") updateMermaidBlockPreview(row, textarea.value);
     if (row.dataset.blockType === "CODE") updateCodeBlockPreview(row, textarea.value, row.dataset.codeLanguage);
     if (row.dataset.blockType === "VIDEO") updateYouTubeVideoPreview(row, textarea.value);
     scheduleBlockSave(row, { allowConflictPrompt: !event.isComposing });
@@ -19405,7 +19466,7 @@ elements.blockList.addEventListener("keydown", async (event) => {
   const row = getBlockRow(textarea);
   if (!row) return;
 
-  if (row.dataset.blockType !== "MATH" && (event.ctrlKey || event.metaKey) && !event.altKey && !event.isComposing) {
+  if (!["MATH", "MERMAID"].includes(row.dataset.blockType) && (event.ctrlKey || event.metaKey) && !event.altKey && !event.isComposing) {
     const shortcut = event.key.toLowerCase();
     if (shortcut === "b" || shortcut === "i" || (shortcut === "m" && event.shiftKey)) {
       event.preventDefault();
@@ -20107,5 +20168,6 @@ boot();
 
 window.addEventListener("load", () => {
   hydrateMathExpressions(document);
+  void hydrateMermaidPreviews(document);
   hydrateAccordionIcons(document);
 });
