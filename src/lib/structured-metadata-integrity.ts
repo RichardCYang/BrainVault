@@ -94,7 +94,9 @@ const timetableLimits = {
   idLength: 64
 } as const;
 const bookmarkLimits = {
-  items: 50,
+  defaultMaxItems: 50,
+  minMaxItems: 1,
+  maxMaxItems: 500,
   idLength: 64,
   urlLength: 2_048,
   blockTitleLength: 120,
@@ -707,7 +709,7 @@ function assertTimetableMetadata(root: MetadataRecord) {
 function assertBookmarkMetadata(root: MetadataRecord) {
   const bookmark = optionalRecord(root.bookmark, "metadata.bookmark");
   if (!bookmark) return;
-  assertAllowedKeys(bookmark, "metadata.bookmark", ["title", "view", "listColumns", "items"]);
+  assertAllowedKeys(bookmark, "metadata.bookmark", ["title", "view", "listColumns", "maxItems", "items"]);
   assertCanonicalBookmarkText(bookmark.title, "metadata.bookmark.title", bookmarkLimits.blockTitleLength);
   if (bookmark.view !== null && bookmark.view !== undefined && bookmark.view !== "list" && bookmark.view !== "gallery") {
     fail("metadata.bookmark.view", "must be list or gallery");
@@ -716,7 +718,17 @@ function assertBookmarkMetadata(root: MetadataRecord) {
   if (listColumns !== null && (!Number.isInteger(listColumns) || listColumns < 1 || listColumns > bookmarkLimits.maxListColumns)) {
     fail("metadata.bookmark.listColumns", `must be an integer from 1 through ${bookmarkLimits.maxListColumns}`);
   }
-  const items = optionalArray(bookmark.items, "metadata.bookmark.items", bookmarkLimits.items);
+  const maxItems = optionalFiniteNumber(bookmark.maxItems, "metadata.bookmark.maxItems");
+  if (
+    maxItems !== null
+    && (!Number.isInteger(maxItems) || maxItems < bookmarkLimits.minMaxItems || maxItems > bookmarkLimits.maxMaxItems)
+  ) {
+    fail(
+      "metadata.bookmark.maxItems",
+      `must be an integer from ${bookmarkLimits.minMaxItems} through ${bookmarkLimits.maxMaxItems}`
+    );
+  }
+  const items = optionalArray(bookmark.items, "metadata.bookmark.items", bookmarkLimits.maxMaxItems);
   if (!items) return;
   const ids: string[] = [];
   const urls: string[] = [];

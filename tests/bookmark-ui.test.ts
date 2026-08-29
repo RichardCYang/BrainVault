@@ -33,7 +33,7 @@ describe("bookmark block UI", () => {
   });
 
   it("supports one through five columns for list view while defaulting to one", () => {
-    expect(client).toContain('view: "gallery", listColumns: 1, items: []');
+    expect(client).toContain('listColumns: 1,');
     expect(client).toContain('maxListColumns: 5');
     expect(client).toContain('listColumnsSelect.className = "bookmark-list-columns-select"');
     expect(client).toContain('listColumnsControl.hidden = data.view !== "list"');
@@ -45,6 +45,23 @@ describe("bookmark block UI", () => {
     expect(styles).toContain('.rendered-bookmarks--list-columns-5');
     expect(i18n).toContain('listColumnsLabel: "열"');
     expect(i18n).toContain('columnCount: "{count}열"');
+  });
+
+  it("supports a per-block maximum bookmark count with a default of 50", () => {
+    expect(client).toContain("defaultMaxItems: 50");
+    expect(client).toContain("maxMaxItems: 500");
+    expect(client).toContain("maxItems: bookmarkLimits.defaultMaxItems");
+    expect(client).toContain('maxItemsInput.className = "bookmark-max-items-input"');
+    expect(client).toContain('maxItemsInput.min = String(bookmarkLimits.minMaxItems)');
+    expect(client).toContain('maxItemsInput.max = String(bookmarkLimits.maxMaxItems)');
+    expect(client).toContain("addButton.disabled = data.items.length >= data.maxItems");
+    expect(client).toContain("async function setBookmarkMaxItems(row, value)");
+    expect(client).toContain("data.maxItems = nextMaxItems");
+    expect(client).toContain('const bookmarkMaxItems = event.target.closest(".bookmark-max-items-input")');
+    expect(styles).toContain(".bookmark-max-items-control");
+    expect(styles).toContain(".bookmark-max-items-input");
+    expect(i18n).toContain('maxItemsLabel: "최대 개수"');
+    expect(i18n).toContain('bookmarkMaxItemsChanged: "최대 북마크 개수를 {count}개로 변경했습니다."');
   });
 
   it("shows OpenGraph media and hides descriptions in list item construction", () => {

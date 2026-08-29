@@ -28,7 +28,7 @@ function normalizeComparableJsonValue(value) {
 function normalizeBookmarkModel(metadata) {
   const source = metadata?.bookmark;
   if (!source || typeof source !== "object" || Array.isArray(source)) {
-    return { title: "Bookmarks", view: "gallery", listColumns: 1, items: [] };
+    return { title: "Bookmarks", view: "gallery", listColumns: 1, maxItems: 50, items: [] };
   }
   return {
     title: typeof source.title === "string" ? source.title : "Bookmarks",
@@ -36,6 +36,9 @@ function normalizeBookmarkModel(metadata) {
     listColumns: Number.isInteger(source.listColumns)
       ? Math.min(5, Math.max(1, source.listColumns))
       : 1,
+    maxItems: Number.isInteger(source.maxItems)
+      ? Math.min(500, Math.max(1, source.maxItems))
+      : 50,
     items: Array.isArray(source.items) ? source.items : []
   };
 }
@@ -46,7 +49,7 @@ function legacyBookmarkIntegrityCheck(metadata) {
     : null;
   const bookmark = root?.bookmark;
   if (!bookmark || typeof bookmark !== "object" || Array.isArray(bookmark)) return false;
-  const allowed = new Set(["title", "view", "listColumns", "items"]);
+  const allowed = new Set(["title", "view", "listColumns", "maxItems", "items"]);
   return Object.keys(bookmark).every((key) => allowed.has(key))
     && (bookmark.items === undefined || Array.isArray(bookmark.items));
 }
@@ -61,14 +64,12 @@ function summarizeBookmark(metadata) {
 
 function isCanonicalBookmarkMetadata(metadata) {
   const model = metadata?.bookmark;
-  return Boolean(
-    model
-    && typeof model === "object"
-    && !Array.isArray(model)
-    && isDeepStrictEqual(
-      normalizeComparableJsonValue(model),
-      normalizeComparableJsonValue(normalizeBookmarkModel(metadata))
-    )
+  if (!model || typeof model !== "object" || Array.isArray(model)) return false;
+  const normalized = normalizeBookmarkModel(metadata);
+  if (!Object.hasOwn(model, "maxItems") && normalized.maxItems === 50) delete normalized.maxItems;
+  return isDeepStrictEqual(
+    normalizeComparableJsonValue(model),
+    normalizeComparableJsonValue(normalized)
   );
 }
 
@@ -80,6 +81,7 @@ test("reproduction: a partial collaborative bookmark model passed integrity chec
         title: "References",
         view: "gallery",
         listColumns: 1,
+        maxItems: 50,
         items: [{
           id: "runbook-1",
           url: "https://example.com/runbook",
@@ -154,7 +156,7 @@ test("the shared canonicality policy covers every metadata-backed editor and ign
   assert.deepEqual(Object.keys(normalizedHostileKeyRecord), ["__proto__"]);
   assert.equal({}.polluted, undefined);
 
-  const plain = { title: "Bookmarks", view: "gallery", listColumns: 1, items: [] };
+  const plain = { title: "Bookmarks", view: "gallery", listColumns: 1, maxItems: 50, items: [] };
   const nullPrototype = Object.assign(Object.create(null), plain);
   assert.equal(
     isDeepStrictEqual(
@@ -166,6 +168,15 @@ test("the shared canonicality policy covers every metadata-backed editor and ign
 });
 
 test("complete structured models and non-structured blocks remain valid", () => {
+  assert.equal(isCanonicalBookmarkMetadata({
+    bookmark: {
+      title: "Bookmarks",
+      view: "gallery",
+      listColumns: 1,
+      maxItems: 50,
+      items: []
+    }
+  }), true);
   assert.equal(isCanonicalBookmarkMetadata({
     bookmark: {
       title: "Bookmarks",

@@ -165,6 +165,7 @@ test("normalized structured metadata remains accepted at exact limits", () => {
     bookmark: {
       title: "Bookmarks",
       view: "gallery",
+      maxItems: 50,
       items: [{
         id: "bookmark-1",
         url: "https://example.com/",
@@ -239,6 +240,24 @@ test("bookmark metadata validates list column counts from one through five", () 
   expectIntegrityFailure("BOOKMARK", {
     bookmark: { title: "Bookmarks", view: "list", listColumns: 2.5, items: [] }
   }, "metadata.bookmark.listColumns");
+});
+
+test("bookmark metadata validates per-block maximum bookmark counts", () => {
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("BOOKMARK", {
+    bookmark: { title: "Bookmarks", view: "gallery", maxItems: 1, items: [] }
+  }));
+  assert.doesNotThrow(() => assertStructuredBlockMetadataIntegrity("BOOKMARK", {
+    bookmark: { title: "Bookmarks", view: "gallery", maxItems: 500, items: [] }
+  }));
+  expectIntegrityFailure("BOOKMARK", {
+    bookmark: { title: "Bookmarks", view: "gallery", maxItems: 0, items: [] }
+  }, "metadata.bookmark.maxItems");
+  expectIntegrityFailure("BOOKMARK", {
+    bookmark: { title: "Bookmarks", view: "gallery", maxItems: 501, items: [] }
+  }, "metadata.bookmark.maxItems");
+  expectIntegrityFailure("BOOKMARK", {
+    bookmark: { title: "Bookmarks", view: "gallery", maxItems: 2.5, items: [] }
+  }, "metadata.bookmark.maxItems");
 });
 
 test("bookmark metadata validates the block title without normalizing it", () => {

@@ -653,6 +653,9 @@ export const translationCatalogs = {
       listColumnsLabel: "Columns",
       listColumnsAria: "Number of columns in list view",
       columnCount: "{count} col",
+      maxItemsLabel: "Max",
+      maxItemsAria: "Maximum bookmarks in this block",
+      maxItemsHint: "Choose 1 to 500. Lowering the limit keeps existing bookmarks and only blocks new additions.",
       galleryView: "Gallery",
       galleryViewTitle: "Show OpenGraph images, titles, and descriptions",
       count: "{count} bookmarks",
@@ -987,6 +990,7 @@ export const translationCatalogs = {
       bookmarkRemoved: "Removed bookmark “{title}”.",
       bookmarkViewChanged: "Bookmark view changed.",
       bookmarkColumnsChanged: "Bookmark list columns changed to {count}.",
+      bookmarkMaxItemsChanged: "Maximum bookmarks changed to {count}.",
       languageChanged: "Language changed to {language}."
     },
     errors: {
@@ -1061,6 +1065,7 @@ export const translationCatalogs = {
       BOOKMARK_NOT_HTML: "The URL did not return an HTML web page.",
       BOOKMARK_PAGE_TOO_LARGE: "The web page is too large to preview.",
       BOOKMARK_REDIRECT_LIMIT: "The web page redirected too many times.",
+      BOOKMARK_ITEM_LIMIT_REACHED: "This bookmark block is limited to {count} bookmarks.",
       unknown: "Something went wrong. Please try again."
     }
   },
@@ -1906,6 +1911,9 @@ export const translationCatalogs = {
       listColumnsLabel: "열",
       listColumnsAria: "리스트 보기 열 수",
       columnCount: "{count}열",
+      maxItemsLabel: "최대 개수",
+      maxItemsAria: "이 블록의 최대 북마크 개수",
+      maxItemsHint: "1~500개로 설정할 수 있습니다. 제한을 낮춰도 기존 북마크는 삭제되지 않고 새 북마크 추가만 제한됩니다.",
       galleryView: "갤러리",
       galleryViewTitle: "OpenGraph 이미지, 제목, 설명을 카드로 표시",
       count: "북마크 {count}개",
@@ -2240,6 +2248,7 @@ export const translationCatalogs = {
       bookmarkRemoved: "‘{title}’ 북마크를 삭제했습니다.",
       bookmarkViewChanged: "북마크 보기 방식을 변경했습니다.",
       bookmarkColumnsChanged: "북마크 리스트를 {count}열로 변경했습니다.",
+      bookmarkMaxItemsChanged: "최대 북마크 개수를 {count}개로 변경했습니다.",
       languageChanged: "언어를 {language}(으)로 변경했습니다."
     },
     errors: {
@@ -2314,6 +2323,7 @@ export const translationCatalogs = {
       BOOKMARK_NOT_HTML: "입력한 URL이 HTML 웹 페이지를 반환하지 않았습니다.",
       BOOKMARK_PAGE_TOO_LARGE: "웹 페이지가 너무 커서 미리보기를 만들 수 없습니다.",
       BOOKMARK_REDIRECT_LIMIT: "웹 페이지 리다이렉트 횟수가 너무 많습니다.",
+      BOOKMARK_ITEM_LIMIT_REACHED: "이 북마크 블록은 최대 {count}개까지 추가할 수 있습니다.",
       unknown: "문제가 발생했습니다. 다시 시도하세요."
     }
   },

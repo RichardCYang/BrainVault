@@ -629,7 +629,9 @@ function normalizeKanbanData(value) {
 }
 
 const bookmarkLimits = {
-  items: 50,
+  defaultMaxItems: 50,
+  minMaxItems: 1,
+  maxMaxItems: 500,
   idLength: 64,
   urlLength: 2048,
   blockTitleLength: 120,
@@ -665,6 +667,11 @@ function normalizeBookmarkListColumns(value) {
   return Math.min(bookmarkLimits.maxListColumns, Math.max(1, value));
 }
 
+function normalizeBookmarkMaxItems(value) {
+  if (typeof value !== "number" || !Number.isInteger(value)) return bookmarkLimits.defaultMaxItems;
+  return Math.min(bookmarkLimits.maxMaxItems, Math.max(bookmarkLimits.minMaxItems, value));
+}
+
 function normalizeBookmarkInputUrl(value) {
   const raw = normalizeBookmarkText(value, bookmarkLimits.urlLength);
   if (!raw) return "";
@@ -672,7 +679,13 @@ function normalizeBookmarkInputUrl(value) {
 }
 
 function createDefaultBookmarkData() {
-  return { title: t("bookmark.defaultTitle"), view: "gallery", listColumns: 1, items: [] };
+  return {
+    title: t("bookmark.defaultTitle"),
+    view: "gallery",
+    listColumns: 1,
+    maxItems: bookmarkLimits.defaultMaxItems,
+    items: []
+  };
 }
 
 function normalizeBookmarkData(value) {
@@ -682,11 +695,12 @@ function normalizeBookmarkData(value) {
     : t("bookmark.defaultTitle");
   const view = source.view === "list" ? "list" : "gallery";
   const listColumns = normalizeBookmarkListColumns(source.listColumns);
+  const maxItems = normalizeBookmarkMaxItems(source.maxItems);
   const seenIds = new Set();
   const seenUrls = new Set();
   const items = [];
 
-  for (const [index, rawItem] of (Array.isArray(source.items) ? source.items : []).slice(0, bookmarkLimits.items).entries()) {
+  for (const [index, rawItem] of (Array.isArray(source.items) ? source.items : []).slice(0, bookmarkLimits.maxMaxItems).entries()) {
     if (!rawItem || typeof rawItem !== "object" || Array.isArray(rawItem)) continue;
     const url = normalizeBookmarkUrl(rawItem.url);
     if (!url || seenUrls.has(url)) continue;
@@ -708,7 +722,7 @@ function normalizeBookmarkData(value) {
     });
   }
 
-  return { title, view, listColumns, items };
+  return { title, view, listColumns, maxItems, items };
 }
 
 function summarizeBookmarkData(data) {
@@ -12143,10 +12157,36 @@ function createBookmarkEditor(row, value) {
   listColumnsControl.append(listColumnsLabel, listColumnsSelect);
   viewToggle.append(listColumnsControl);
 
+  const maxItemsControl = document.createElement("label");
+  maxItemsControl.className = "bookmark-max-items-control";
+  maxItemsControl.title = t("bookmark.maxItemsHint", {
+    min: formatNumber(bookmarkLimits.minMaxItems),
+    max: formatNumber(bookmarkLimits.maxMaxItems)
+  });
+
+  const maxItemsLabel = document.createElement("span");
+  maxItemsLabel.className = "bookmark-max-items-label";
+  maxItemsLabel.textContent = t("bookmark.maxItemsLabel");
+
+  const maxItemsInput = document.createElement("input");
+  maxItemsInput.type = "number";
+  maxItemsInput.className = "bookmark-max-items-input";
+  maxItemsInput.min = String(bookmarkLimits.minMaxItems);
+  maxItemsInput.max = String(bookmarkLimits.maxMaxItems);
+  maxItemsInput.step = "1";
+  maxItemsInput.required = true;
+  maxItemsInput.value = String(data.maxItems);
+  maxItemsInput.setAttribute("aria-label", t("bookmark.maxItemsAria"));
+  maxItemsControl.append(maxItemsLabel, maxItemsInput);
+
+  const toolbarControls = document.createElement("div");
+  toolbarControls.className = "bookmark-toolbar-controls";
+  toolbarControls.append(viewToggle, maxItemsControl);
+
   const count = document.createElement("span");
   count.className = "bookmark-count";
   count.textContent = t("bookmark.count", { count: formatNumber(data.items.length) });
-  toolbar.append(viewToggle, count);
+  toolbar.append(toolbarControls, count);
 
   const addRow = document.createElement("div");
   addRow.className = "bookmark-add-row";
@@ -12160,7 +12200,7 @@ function createBookmarkEditor(row, value) {
   input.inputMode = "url";
   const addButton = makeBookmarkActionButton("bookmark-add", t("bookmark.add"), t("bookmark.addTitle"));
   addButton.classList.add("bookmark-add-button");
-  addButton.disabled = data.items.length >= bookmarkLimits.items;
+  addButton.disabled = data.items.length >= data.maxItems;
   addRow.append(input, addButton);
 
   const items = document.createElement("div");
@@ -12222,6 +12262,11 @@ async function addBookmarkToRow(row) {
   const addButton = row.querySelector('[data-action="bookmark-add"]');
   const url = normalizeBookmarkInputUrl(input?.value ?? "");
   if (!url) throw new Error(t("errors.BOOKMARK_URL_INVALID"));
+  const initialData = extractBookmarkData(row);
+  const isExactExistingUrl = initialData.items.some((item) => item.url === url);
+  if (initialData.items.length >= initialData.maxItems && !isExactExistingUrl) {
+    throw new Error(t("errors.BOOKMARK_ITEM_LIMIT_REACHED", { count: formatNumber(initialData.maxItems) }));
+  }
   if (!promoteBlockDraftConflict(row)) return;
 
   row.classList.add("is-bookmark-loading");
@@ -12236,6 +12281,9 @@ async function addBookmarkToRow(row) {
     const data = extractBookmarkData(currentRow);
     const preview = response.preview;
     const existingIndex = data.items.findIndex((item) => item.url === preview.url || item.url === url);
+    if (existingIndex < 0 && data.items.length >= data.maxItems) {
+      throw new Error(t("errors.BOOKMARK_ITEM_LIMIT_REACHED", { count: formatNumber(data.maxItems) }));
+    }
     const item = {
       id: existingIndex >= 0 ? data.items[existingIndex].id : createClientId("bookmark"),
       ...preview
@@ -12263,6 +12311,23 @@ async function setBookmarkListColumns(row, value) {
   replaceBookmarkEditor(row, data);
   await saveBlockRow(row, { quiet: true });
   setStatus(t("status.bookmarkColumnsChanged", { count: formatNumber(nextColumns) }));
+}
+
+async function setBookmarkMaxItems(row, value) {
+  const data = extractBookmarkData(row);
+  const numericValue = typeof value === "string" && !value.trim() ? data.maxItems : Number(value);
+  const nextMaxItems = normalizeBookmarkMaxItems(numericValue);
+  if (data.maxItems === nextMaxItems) {
+    const input = row.querySelector(".bookmark-max-items-input");
+    if (input) input.value = String(nextMaxItems);
+    return;
+  }
+  if (!promoteBlockDraftConflict(row)) return;
+
+  data.maxItems = nextMaxItems;
+  replaceBookmarkEditor(row, data);
+  await saveBlockRow(row, { quiet: true });
+  setStatus(t("status.bookmarkMaxItemsChanged", { count: formatNumber(nextMaxItems) }));
 }
 
 async function handleBookmarkAction(row, button) {
@@ -19382,6 +19447,14 @@ elements.blockList.addEventListener("change", (event) => {
     const row = getBlockRow(bookmarkColumns);
     if (!row) return;
     setBookmarkListColumns(row, bookmarkColumns.value).catch((error) => setStatus(error.message, true));
+    return;
+  }
+
+  const bookmarkMaxItems = event.target.closest(".bookmark-max-items-input");
+  if (bookmarkMaxItems) {
+    const row = getBlockRow(bookmarkMaxItems);
+    if (!row) return;
+    setBookmarkMaxItems(row, bookmarkMaxItems.value).catch((error) => setStatus(error.message, true));
     return;
   }
 

@@ -187,6 +187,7 @@ describe("bookmark data normalization and rendering", () => {
     const data = getBookmarkData(metadata);
     expect(data.items).toHaveLength(1);
     expect(data.listColumns).toBe(1);
+    expect(data.maxItems).toBe(50);
     expect(data.items[0].imageUrl).toBe("https://example.com/cover.jpg");
     expect(data.items[0].faviconUrl).toBe("https://example.com/favicon.png");
     expect(data.title).toBe("Research <script>alert(2)</script>");
@@ -231,6 +232,29 @@ describe("bookmark data normalization and rendering", () => {
     expect(getBookmarkData({ bookmark: { view: "list", listColumns: 9, items: [] } }).listColumns).toBe(5);
     expect(getBookmarkData({ bookmark: { view: "list", listColumns: 0, items: [] } }).listColumns).toBe(1);
     expect(getBookmarkData({ bookmark: { view: "list", listColumns: "3", items: [] } }).listColumns).toBe(1);
+  });
+
+  it("supports a per-block bookmark maximum while keeping 50 as the default", () => {
+    expect(getBookmarkData({ bookmark: { view: "gallery", items: [] } }).maxItems).toBe(50);
+    expect(getBookmarkData({ bookmark: { view: "gallery", maxItems: 125, items: [] } }).maxItems).toBe(125);
+    expect(getBookmarkData({ bookmark: { view: "gallery", maxItems: 999, items: [] } }).maxItems).toBe(500);
+    expect(getBookmarkData({ bookmark: { view: "gallery", maxItems: 0, items: [] } }).maxItems).toBe(1);
+    expect(getBookmarkData({ bookmark: { view: "gallery", maxItems: "125", items: [] } }).maxItems).toBe(50);
+  });
+
+  it("does not delete existing bookmarks when the configured maximum is lowered", () => {
+    const items = Array.from({ length: 75 }, (_, index) => ({
+      id: `bookmark-${index + 1}`,
+      url: `https://example.com/${index + 1}`,
+      title: `Bookmark ${index + 1}`,
+      description: "",
+      imageUrl: "",
+      faviconUrl: "",
+      siteName: "example.com"
+    }));
+    const data = getBookmarkData({ bookmark: { view: "gallery", maxItems: 20, items } });
+    expect(data.maxItems).toBe(20);
+    expect(data.items).toHaveLength(75);
   });
 });
 

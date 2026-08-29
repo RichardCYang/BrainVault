@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { BlockType } from "../types/domain.js";
 import { getAccordionData } from "./accordion.js";
 import { getAiChatData } from "./ai-chat.js";
-import { getBookmarkData } from "./bookmark.js";
+import { bookmarkLimits, getBookmarkData } from "./bookmark.js";
 import { getDatabaseData } from "./database.js";
 import { getGanttData } from "./gantt.js";
 import { getKanbanData } from "./kanban.js";
@@ -57,6 +57,29 @@ function normalizeComparableJsonValue(value: unknown): unknown {
   return value;
 }
 
+function normalizeLegacyStructuredDefaultsForComparison(
+  policy: StructuredMetadataPolicy,
+  requestedModel: unknown,
+  normalizedModel: unknown
+) {
+  if (
+    policy.metadataKey === "bookmark"
+    && requestedModel
+    && typeof requestedModel === "object"
+    && !Array.isArray(requestedModel)
+    && normalizedModel
+    && typeof normalizedModel === "object"
+    && !Array.isArray(normalizedModel)
+    && !Object.prototype.hasOwnProperty.call(requestedModel, "maxItems")
+    && (normalizedModel as Record<string, unknown>).maxItems === bookmarkLimits.defaultMaxItems
+  ) {
+    const legacyCompatibleModel = { ...(normalizedModel as Record<string, unknown>) };
+    delete legacyCompatibleModel.maxItems;
+    return legacyCompatibleModel;
+  }
+  return normalizedModel;
+}
+
 /**
  * Require the complete editor model for metadata-backed block types.
  *
@@ -78,13 +101,19 @@ export function assertCanonicalStructuredMetadataModel(type: BlockType, metadata
   }
 
   const requestedModel = (metadata as Record<string, unknown>)[policy.metadataKey];
+  const normalizedModel = policy.normalize(metadata);
+  const comparableNormalizedModel = normalizeLegacyStructuredDefaultsForComparison(
+    policy,
+    requestedModel,
+    normalizedModel
+  );
   if (
     !requestedModel
     || typeof requestedModel !== "object"
     || Array.isArray(requestedModel)
     || !isDeepStrictEqual(
       normalizeComparableJsonValue(requestedModel),
-      normalizeComparableJsonValue(policy.normalize(metadata))
+      normalizeComparableJsonValue(comparableNormalizedModel)
     )
   ) {
     throw new StructuredMetadataCanonicalityError(type, policy.metadataKey);

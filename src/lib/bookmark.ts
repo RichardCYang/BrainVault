@@ -23,7 +23,9 @@ import { isRedditBookmarkUrl } from "./reddit-bookmark.js";
 export { isRedditBookmarkUrl } from "./reddit-bookmark.js";
 
 export const bookmarkLimits = {
-  items: 50,
+  defaultMaxItems: 50,
+  minMaxItems: 1,
+  maxMaxItems: 500,
   idLength: 64,
   urlLength: 2_048,
   blockTitleLength: 120,
@@ -52,6 +54,7 @@ export type BookmarkData = {
   title: string;
   view: BookmarkView;
   listColumns: number;
+  maxItems: number;
   items: BookmarkItem[];
 };
 
@@ -107,6 +110,11 @@ function normalizeBookmarkListColumns(value: unknown) {
   return Math.min(bookmarkLimits.maxListColumns, Math.max(1, value));
 }
 
+function normalizeBookmarkMaxItems(value: unknown) {
+  if (typeof value !== "number" || !Number.isInteger(value)) return bookmarkLimits.defaultMaxItems;
+  return Math.min(bookmarkLimits.maxMaxItems, Math.max(bookmarkLimits.minMaxItems, value));
+}
+
 export function normalizeBookmarkUrl(value: unknown, baseUrl?: string | URL) {
   const raw = normalizeText(value, bookmarkLimits.urlLength);
   if (!raw) return "";
@@ -124,7 +132,13 @@ export function normalizeBookmarkUrl(value: unknown, baseUrl?: string | URL) {
 }
 
 export function createDefaultBookmarkData(): BookmarkData {
-  return { title: "Bookmarks", view: "gallery", listColumns: 1, items: [] };
+  return {
+    title: "Bookmarks",
+    view: "gallery",
+    listColumns: 1,
+    maxItems: bookmarkLimits.defaultMaxItems,
+    items: []
+  };
 }
 
 export function getBookmarkData(metadata: unknown): BookmarkData {
@@ -138,7 +152,8 @@ export function getBookmarkData(metadata: unknown): BookmarkData {
   const requestedView = normalizeText(source.view, 20) as BookmarkView;
   const view = bookmarkViews.includes(requestedView) ? requestedView : "gallery";
   const listColumns = normalizeBookmarkListColumns(source.listColumns);
-  const sourceItems = Array.isArray(source.items) ? source.items.slice(0, bookmarkLimits.items) : [];
+  const maxItems = normalizeBookmarkMaxItems(source.maxItems);
+  const sourceItems = Array.isArray(source.items) ? source.items.slice(0, bookmarkLimits.maxMaxItems) : [];
   const seenIds = new Set<string>();
   const seenUrls = new Set<string>();
   const items: BookmarkItem[] = [];
@@ -171,7 +186,7 @@ export function getBookmarkData(metadata: unknown): BookmarkData {
     });
   }
 
-  return { title, view, listColumns, items };
+  return { title, view, listColumns, maxItems, items };
 }
 
 export function normalizeBookmarkMetadata(metadata: unknown) {

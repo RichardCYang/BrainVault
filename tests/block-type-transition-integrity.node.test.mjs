@@ -32,7 +32,7 @@ const structuredMetadataKeyByType = new Map(
 function normalizeBookmarkModel(metadata) {
   const source = metadata?.bookmark;
   if (!source || typeof source !== "object" || Array.isArray(source)) {
-    return { title: "Bookmarks", view: "gallery", listColumns: 1, items: [] };
+    return { title: "Bookmarks", view: "gallery", listColumns: 1, maxItems: 50, items: [] };
   }
   return {
     title: typeof source.title === "string" ? source.title : "Bookmarks",
@@ -40,6 +40,9 @@ function normalizeBookmarkModel(metadata) {
     listColumns: Number.isInteger(source.listColumns)
       ? Math.min(5, Math.max(1, source.listColumns))
       : 1,
+    maxItems: Number.isInteger(source.maxItems)
+      ? Math.min(500, Math.max(1, source.maxItems))
+      : 50,
     items: Array.isArray(source.items) ? source.items : []
   };
 }
@@ -118,6 +121,7 @@ const populatedBookmark = {
       title: "References",
       view: "gallery",
       listColumns: 1,
+      maxItems: 50,
       items: [{
         id: "reference-1",
         url: "https://example.com/docs",
@@ -237,6 +241,7 @@ test("the create route resolves exact replays before requiring canonical structu
         title: "Bookmarks",
         view: "gallery",
         listColumns: 1,
+        maxItems: 50,
         items: []
       }
     }
@@ -339,6 +344,7 @@ test("omitted metadata, text conversions, and complete canonical structured writ
         title: "References",
         view: "gallery",
         listColumns: 1,
+        maxItems: 50,
         items: []
       }
     }
@@ -353,6 +359,7 @@ test("omitted metadata, text conversions, and complete canonical structured writ
         title: "Empty references",
         view: "gallery",
         listColumns: 1,
+        maxItems: 50,
         items: []
       }
     }
