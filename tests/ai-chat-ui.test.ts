@@ -286,6 +286,13 @@ describe("AI conversation block", () => {
     expect(styles).toMatch(/@media \(max-width: 640px\)[\s\S]*\.ai-chat-message,[\s\S]*width:\s*100%;/s);
   });
 
+  it("re-measures AI textarea heights when read mode switches back to write mode", () => {
+    expect(moduleSource).toContain("export function syncAiChatTextareaHeights(root = document)");
+    expect(moduleSource).toContain("textarea.getClientRects?.().length === 0");
+    expect(client).toContain("syncAiChatTextareaHeights,");
+    expect(client).toContain("if (!isPageReadOnly()) syncAiChatTextareaHeights(elements.pageView);");
+  });
+
   it("uses a horizontal one-pair viewport with numbered navigation and preserves all pairs for print", () => {
     expect(styles).toMatch(/\.ai-chat-block-editor\[data-ai-layout="paginated"\] \.ai-chat-conversation\s*\{[^}]*flex-direction:\s*row;/s);
     expect(styles).toMatch(/\.rendered-ai-chat--paginated \.rendered-ai-chat-track\s*\{[^}]*flex-direction:\s*row;/s);

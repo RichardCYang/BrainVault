@@ -68,6 +68,7 @@ import {
   hydrateRenderedAiChatPagination,
   normalizeAiChatData,
   setRenderedAiChatPage,
+  syncAiChatTextareaHeights,
   summarizeAiChatData
 } from "./ai-chat-block.js";
 import {
@@ -7063,6 +7064,10 @@ function syncPageModeUi() {
   if (readOnly) hydrateDatabaseUrlPreviews(elements.pageView, fetchDatabaseUrlPreview);
   renderCollaborationChrome();
   requestAnimationFrame(() => {
+    // AI chat editors are mounted even in read mode, where their editing
+    // surface is display:none. Re-measure textarea content only after write
+    // mode has made that surface participate in layout again.
+    if (!isPageReadOnly()) syncAiChatTextareaHeights(elements.pageView);
     hydrateMathExpressions(elements.pageView);
     void hydrateMermaidPreviews(elements.pageView);
   });

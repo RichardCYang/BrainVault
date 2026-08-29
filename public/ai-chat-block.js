@@ -468,7 +468,23 @@ export function createAiProviderIcon(providerValue, className = "") {
 function autoGrow(textarea) {
   const minimum = textarea.classList.contains("ai-chat-question-input") ? 38 : 112;
   textarea.style.height = "auto";
+
+  // Read mode hides the whole editing surface with display:none. In that state
+  // the textarea has no layout box, so scrollHeight cannot describe the actual
+  // wrapped content height. Leave the height unset and measure again after the
+  // editor becomes visible instead of freezing the control at its minimum size.
+  if (textarea.getClientRects?.().length === 0) {
+    textarea.style.removeProperty("height");
+    return;
+  }
+
   textarea.style.height = `${Math.max(textarea.scrollHeight, minimum)}px`;
+}
+
+export function syncAiChatTextareaHeights(root = document) {
+  root?.querySelectorAll?.(".ai-chat-question-input, .ai-chat-answer-input").forEach((textarea) => {
+    autoGrow(textarea);
+  });
 }
 
 function formatLocalDateTime(value) {
