@@ -232,6 +232,12 @@ describe("AI conversation block", () => {
     expect(html).not.toContain("script");
   });
 
+  it("keeps display LaTeX centered in read-only AI answers", () => {
+    expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-content \.math-expression--display\s*\{[^}]*width:\s*100%;[^}]*overflow-x:\s*auto;[^}]*text-align:\s*center;/s);
+    expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-content \.math-expression--display \.katex-display\s*\{[^}]*width:\s*max-content;[^}]*min-width:\s*100%;[^}]*overflow:\s*visible;[^}]*text-align:\s*center;/s);
+    expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-content \.math-expression--display \.katex-display > \.katex\s*\{[^}]*text-align:\s*center;/s);
+  });
+
   it("renders Markdown tables as readable tables inside AI answers", () => {
     const html = renderBlockHtml("AI_CHAT", "", false, {
       aiChat: {

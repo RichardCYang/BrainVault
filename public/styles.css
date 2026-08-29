@@ -14211,6 +14211,31 @@ button.danger {
   overflow-x: auto;
 }
 
+/* Keep display LaTeX centered inside the independently scrollable AI-answer
+   Markdown surface in read mode. The outer placeholder owns horizontal
+   overflow, while the KaTeX display box stays at least as wide as the answer
+   content so normal formulas remain visually centered and long formulas can
+   still scroll without being clipped on the left. */
+.page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-content .math-expression--display {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-align: center;
+}
+
+.page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-content .math-expression--display .katex-display {
+  width: max-content;
+  min-width: 100%;
+  margin: 0.55rem auto;
+  overflow: visible;
+  text-align: center;
+}
+
+.page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-content .math-expression--display .katex-display > .katex {
+  text-align: center;
+}
+
 .page-view.is-read-only .rendered-ai-chat-answer .rendered-ai-chat-link-preview {
   display: inline-flex;
   max-width: min(100%, 26rem);
