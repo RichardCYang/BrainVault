@@ -60,6 +60,7 @@ export type BlockType =
   | "BOOKMARK"
   | "AI_CHAT"
   | "MATH"
+  | "MERMAID"
   | "CODE"
   | "DIVIDER"
   | "IMAGE"
