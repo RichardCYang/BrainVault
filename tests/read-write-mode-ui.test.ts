@@ -49,6 +49,12 @@ describe("Page read/write mode", () => {
     expect(styles).toContain('.page-view.is-read-only .block-handle');
   });
 
+  it("keeps block hover backgrounds disabled in read mode", () => {
+    expect(styles).toMatch(
+      /\.page-view\.is-read-only \.editor-block-row:hover\s*\{[^}]*background:\s*transparent;/s
+    );
+  });
+
   it("keeps read-mode callouts to a single rendered border", () => {
     expect(styles).toMatch(
       /\.page-view\.is-read-only \.editor-block-row\[data-block-type="CALLOUT"\] \.block-row-body\s*\{[^}]*border:\s*0;[^}]*background:\s*transparent;[^}]*padding:\s*0;/s
