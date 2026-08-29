@@ -597,6 +597,140 @@ test("plain [1] and grouped [2, 13] markers receive relocated source chips inste
   }
 });
 
+test("partially classified tail sources complete grouped [1, 2] citations instead of leaking [2] text", async () => {
+  const content = createDomElement("div");
+  const claim = appendText(createDomElement("p"), "Claim [1, 2].");
+  content.append(claim);
+
+  const sourceOne = createDomElement("p");
+  sourceOne.append(createDomText("[1] "));
+  const sourceOneLink = createDomElement("a");
+  sourceOneLink.href = "https://docs.github.com/en/get-started";
+  sourceOneLink.textContent = "GitHub Docs";
+  sourceOne.append(sourceOneLink);
+
+  const sourceTwo = createDomElement("p");
+  const sourceTwoLink = createDomElement("a");
+  sourceTwoLink.href = "https://developer.mozilla.org/en-US/docs/Web/API/URL";
+  sourceTwoLink.textContent = "MDN URL";
+  sourceTwo.append(sourceTwoLink);
+  content.append(sourceOne, sourceTwo);
+
+  const root = {
+    querySelectorAll(selector) {
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content") return [content];
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]") return content.querySelectorAll("a[href]");
+      return [];
+    }
+  };
+  const body = createDomElement("body");
+  const originalDocument = globalThis.document;
+  const originalIntersectionObserver = globalThis.IntersectionObserver;
+  globalThis.document = {
+    createElement: createDomElement,
+    createTextNode: createDomText,
+    createDocumentFragment: createDomFragment,
+    body,
+    documentElement: { clientWidth: 1280, clientHeight: 720 },
+    addEventListener() {}
+  };
+  delete globalThis.IntersectionObserver;
+
+  try {
+    hydrateRenderedAiChatLinks(root, async () => null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const chips = claim.querySelectorAll(".rendered-ai-chat-link-preview");
+    assert.equal(chips.length, 1);
+    assert.equal(chips[0].dataset.aiChatReferences, "1,2");
+    assert.deepEqual(
+      chips[0].aiChatCitationSources.map((source) => [source.referenceNumber, source.domain]),
+      [["1", "github"], ["2", "mozilla"]]
+    );
+    assert.equal(claim.textContent, "Claim github.");
+    assert.doesNotMatch(claim.textContent, /\[2\]/);
+
+    chips[0].dispatch("click");
+    const popover = body.children.find((child) => child.className === "rendered-ai-chat-link-tooltip");
+    const counter = popover?.querySelector(".rendered-ai-chat-link-tooltip-counter");
+    const nextButton = popover?.querySelector(".rendered-ai-chat-link-tooltip-nav--next");
+    assert.ok(popover);
+    assert.equal(counter.textContent, "1 / 2");
+    nextButton.dispatch("click");
+    assert.equal(counter.textContent, "2 / 2");
+    assert.equal(popover.children[0].href, "https://developer.mozilla.org/en-US/docs/Web/API/URL");
+    assert.equal(sourceOne.isConnected, false);
+    assert.equal(sourceTwo.isConnected, false);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalIntersectionObserver === undefined) delete globalThis.IntersectionObserver;
+    else globalThis.IntersectionObserver = originalIntersectionObserver;
+  }
+});
+
+test("plain or bold Sources paragraphs seed named links for grouped citation tooltips", async () => {
+  for (const bold of [false, true]) {
+    const content = createDomElement("div");
+    const claim = appendText(createDomElement("p"), "Claim [1, 2].");
+    const heading = createDomElement("p");
+    if (bold) {
+      const strong = appendText(createDomElement("strong"), "Sources:");
+      heading.append(strong);
+    } else {
+      heading.append(createDomText("Sources:"));
+    }
+    const sourceOne = createDomElement("p");
+    const sourceOneLink = createDomElement("a");
+    sourceOneLink.href = "https://docs.github.com/en/get-started";
+    sourceOneLink.textContent = "GitHub Docs";
+    sourceOne.append(sourceOneLink);
+    const sourceTwo = createDomElement("p");
+    const sourceTwoLink = createDomElement("a");
+    sourceTwoLink.href = "https://developer.mozilla.org/en-US/docs/Web/API/URL";
+    sourceTwoLink.textContent = "MDN URL";
+    sourceTwo.append(sourceTwoLink);
+    content.append(claim, heading, sourceOne, sourceTwo);
+
+    const root = {
+      querySelectorAll(selector) {
+        if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content") return [content];
+        if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]") return content.querySelectorAll("a[href]");
+        return [];
+      }
+    };
+    const body = createDomElement("body");
+    const originalDocument = globalThis.document;
+    const originalIntersectionObserver = globalThis.IntersectionObserver;
+    globalThis.document = {
+      createElement: createDomElement,
+      createTextNode: createDomText,
+      createDocumentFragment: createDomFragment,
+      body,
+      documentElement: { clientWidth: 1280, clientHeight: 720 },
+      addEventListener() {}
+    };
+    delete globalThis.IntersectionObserver;
+
+    try {
+      hydrateRenderedAiChatLinks(root, async () => null);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const chips = claim.querySelectorAll(".rendered-ai-chat-link-preview");
+      assert.equal(chips.length, 1);
+      assert.equal(chips[0].dataset.aiChatReferences, "1,2");
+      assert.equal(claim.textContent, "Claim github.");
+      assert.equal(heading.isConnected, false);
+      assert.equal(sourceOne.isConnected, false);
+      assert.equal(sourceTwo.isConnected, false);
+    } finally {
+      if (originalDocument === undefined) delete globalThis.document;
+      else globalThis.document = originalDocument;
+      if (originalIntersectionObserver === undefined) delete globalThis.IntersectionObserver;
+      else globalThis.IntersectionObserver = originalIntersectionObserver;
+    }
+  }
+});
+
 test("grouped [1, 2, 3] sources render one representative chip and remove the exhausted source section", async () => {
   const content = createDomElement("div");
   const claim = appendText(createDomElement("p"), "Claim [1, 2, 3].");

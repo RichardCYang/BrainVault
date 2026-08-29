@@ -715,9 +715,15 @@ function isAiChatHeadingElement(node) {
 }
 
 function isAiChatCitationSourceHeading(node) {
-  if (!isAiChatHeadingElement(node)) return false;
+  const tagName = getAiChatElementTagName(node);
+  if (!tagName || ["A", "BUTTON", "CODE", "PRE", "SCRIPT", "STYLE", "TEXTAREA"].includes(tagName)) return false;
   const label = typeof node.textContent === "string" ? node.textContent.trim().replace(/\s+/g, " ") : "";
-  return aiChatCitationSourceHeadingPattern.test(label);
+  if (!aiChatCitationSourceHeadingPattern.test(label)) return false;
+  // AI answers frequently emit source labels as `**Sources:**` or plain
+  // `Sources:` paragraphs instead of ATX headings. Because the label must be
+  // an exact source-heading phrase and contain no web link, treating that
+  // top-level block as a source boundary is still conservative.
+  return isAiChatHeadingElement(node) || getAiChatHttpLinks(node).length === 0;
 }
 
 function getAiChatHttpLinks(node) {
@@ -943,6 +949,82 @@ function collectAiChatTrailingListSourceRecords(content, topLevelBlocks, existin
   return { records, sourceLinks, sourceContainers };
 }
 
+function collectAiChatOrdinalTailSourceRecords(
+  content,
+  topLevelBlocks,
+  existingRecords,
+  existingSourceLinks
+) {
+  const records = [];
+  const sourceLinks = new Set();
+  const sourceContainers = new Set();
+  if (!existingRecords.length || !topLevelBlocks.length) return { records, sourceLinks, sourceContainers };
+
+  const knownPositions = existingRecords.map((record) => {
+    const block = record.topBlock ?? getAiChatTopLevelBlock(record.item ?? record.link, content);
+    return { record, index: topLevelBlocks.indexOf(block) };
+  }).filter(({ index }) => index >= 0);
+  if (!knownPositions.length) return { records, sourceLinks, sourceContainers };
+
+  const regionStart = Math.min(...knownPositions.map(({ index }) => index));
+  const markerReferences = new Set();
+  topLevelBlocks.slice(0, regionStart).forEach((block) => {
+    getAiChatCitationNumbersFromTextNodes(collectAiChatTextNodes(block))
+      .forEach((reference) => markerReferences.add(reference));
+  });
+  if (!markerReferences.size) return { records, sourceLinks, sourceContainers };
+
+  const referencedNumbers = [...markerReferences]
+    .map((reference) => Number.parseInt(reference, 10))
+    .filter((reference) => Number.isFinite(reference) && reference > 0);
+  if (!referencedNumbers.length) return { records, sourceLinks, sourceContainers };
+  const maxReference = Math.max(...referencedNumbers);
+
+  const candidateLinks = [];
+  const seenLinks = new Set();
+  topLevelBlocks.slice(regionStart).forEach((block) => {
+    getAiChatHttpLinks(block).forEach((link) => {
+      if (seenLinks.has(link)) return;
+      seenLinks.add(link);
+      candidateLinks.push(link);
+    });
+  });
+  if (candidateLinks.length < maxReference) return { records, sourceLinks, sourceContainers };
+
+  // Use ordinal completion only when already-classified source records prove
+  // that the tail link sequence is the numbered source list. This repairs a
+  // partially recognized list (for example source 1 is explicit while source
+  // 2 is a named link) without guessing from arbitrary prose links.
+  let alignedKnownSources = 0;
+  for (const { record } of knownPositions) {
+    const referenceNumber = Number.parseInt(record.referenceNumber, 10);
+    const linkIndex = candidateLinks.indexOf(record.link);
+    if (!Number.isFinite(referenceNumber) || referenceNumber <= 0 || linkIndex < 0) continue;
+    if (linkIndex !== referenceNumber - 1) return { records, sourceLinks, sourceContainers };
+    alignedKnownSources += 1;
+  }
+  if (!alignedKnownSources) return { records, sourceLinks, sourceContainers };
+
+  const existingReferences = new Set(existingRecords.map((record) => record.referenceNumber));
+  [...markerReferences]
+    .sort((left, right) => Number.parseInt(left, 10) - Number.parseInt(right, 10))
+    .forEach((referenceNumber) => {
+      if (existingReferences.has(referenceNumber)) return;
+      const ordinal = Number.parseInt(referenceNumber, 10);
+      const link = candidateLinks[ordinal - 1];
+      if (!link || existingSourceLinks.has(link)) return;
+      const item = getAiChatClosestSourceItem(link, content) ?? getAiChatTopLevelBlock(link, content);
+      const topBlock = getAiChatTopLevelBlock(item ?? link, content) ?? item;
+      const record = createAiChatCitationSourceRecord(referenceNumber, link, item, topBlock);
+      if (!record) return;
+      records.push(record);
+      sourceLinks.add(link);
+      if (item) sourceContainers.add(item);
+    });
+
+  return { records, sourceLinks, sourceContainers };
+}
+
 function createRelocatedAiChatCitationLink(referenceNumber, source, groupedSources = [source]) {
   const link = document.createElement("a");
   link.href = source.url;
@@ -1050,9 +1132,18 @@ function relocateRenderedAiChatCitationSources(content) {
     knownSourceContainers
   );
 
-  const records = [...sectionSources.records, ...explicitSources.records, ...trailingSources.records];
-  if (!records.length) return;
-  const sourceContainers = new Set([...knownSourceContainers, ...trailingSources.sourceContainers]);
+  const initiallyResolvedRecords = [...sectionSources.records, ...explicitSources.records, ...trailingSources.records];
+  if (!initiallyResolvedRecords.length) return;
+  const resolvedSourceLinks = new Set([...knownSourceLinks, ...trailingSources.sourceLinks]);
+  const resolvedSourceContainers = new Set([...knownSourceContainers, ...trailingSources.sourceContainers]);
+  const ordinalTailSources = collectAiChatOrdinalTailSourceRecords(
+    content,
+    topLevelBlocks,
+    initiallyResolvedRecords,
+    resolvedSourceLinks
+  );
+  const records = [...initiallyResolvedRecords, ...ordinalTailSources.records];
+  const sourceContainers = new Set([...resolvedSourceContainers, ...ordinalTailSources.sourceContainers]);
 
   const sourcesByReference = new Map();
   records.forEach((record) => {
