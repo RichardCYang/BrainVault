@@ -27,6 +27,7 @@ const aiChatLinkPreviewFaviconDataUrlMaxLength = Math.ceil((128 * 1024 * 4) / 3)
 const aiChatLinkPreviewFaviconDataPattern = /^data:image\/(?:png|jpeg|gif|webp|vnd\.microsoft\.icon);base64,[a-z0-9+/]+={0,2}$/i;
 const aiChatCountrySecondLevelDomains = new Set(["ac", "co", "com", "edu", "go", "gov", "net", "ne", "or", "org"]);
 const aiChatCitationPopoverId = "rendered-ai-chat-citation-popover";
+const aiChatCitationReferenceClass = "rendered-ai-chat-citation-reference";
 const aiChatCitationMarkerPattern = /\[\s*(\d{1,3}(?:\s*,\s*\d{1,3})*)\s*\]/g;
 const aiChatCitationSourceHeadingPattern = /^(?:sources?|references?|citations?|source\s+links?|reference\s+links?|sources?\s*(?:&|and)\s*references?|출처(?:\s*(?:및|\/|&)\s*참고\s*자료)?|참고\s*(?:문헌|자료|링크)?|참조\s*(?:문헌|자료|링크)?)\s*[:：]?\s*$/i;
 const aiChatCitationTextExcludedTags = new Set(["A", "BUTTON", "CODE", "PRE", "SCRIPT", "STYLE", "TEXTAREA"]);
@@ -409,6 +410,11 @@ function isAiChatNodeAtCitationBlockEnd(node, ownTail = "") {
 function isAiChatInlineCitationLink(link) {
   if (!getAiChatReferenceNumber(link)) return false;
   if (link?.dataset?.aiChatRelocatedCitation === "true") return true;
+  // Server-rendered numeric reference links are positively identified from
+  // markdown-it reference definitions, so they remain citations even when
+  // another sentence follows in the same paragraph. Unmarked numeric links
+  // still require the conservative paragraph/list-item tail position.
+  if (link?.classList?.contains?.(aiChatCitationReferenceClass)) return true;
   return isAiChatNodeAtCitationBlockEnd(link);
 }
 
@@ -907,7 +913,9 @@ function getAiChatCitationNumbersFromTextNodes(textNodes) {
     aiChatCitationMarkerPattern.lastIndex = 0;
     let match = null;
     while ((match = aiChatCitationMarkerPattern.exec(value))) {
-      if (!isAiChatNodeAtCitationBlockEnd(textNode, value.slice(match.index))) continue;
+      // Once a real source section/list is available, numeric markers can be
+      // resolved by reference number without relying on paragraph-tail
+      // position. This includes citations between sentences in one paragraph.
       match[1].split(",").map((part) => part.trim()).filter(Boolean).forEach((reference) => references.add(reference));
     }
   });
@@ -1046,8 +1054,7 @@ function replaceAiChatCitationMarkers(textNode, sourcesByReference) {
   const value = typeof textNode?.nodeValue === "string" ? textNode.nodeValue : (textNode?.textContent ?? "");
   if (!value || typeof textNode?.replaceWith !== "function") return new Set();
   aiChatCitationMarkerPattern.lastIndex = 0;
-  const matches = [...value.matchAll(aiChatCitationMarkerPattern)]
-    .filter((match) => isAiChatNodeAtCitationBlockEnd(textNode, value.slice(match.index ?? 0)));
+  const matches = [...value.matchAll(aiChatCitationMarkerPattern)];
   aiChatCitationMarkerPattern.lastIndex = 0;
   if (!matches.some((match) => match[1].split(",").some((part) => sourcesByReference.has(part.trim())))) return new Set();
 

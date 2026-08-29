@@ -597,6 +597,51 @@ test("plain [1] and grouped [2, 13] markers receive relocated source chips inste
   }
 });
 
+test("single citations between sentences relocate from tail sources instead of leaking raw markers", async () => {
+  const content = createDomElement("div");
+  const claim = appendText(createDomElement("p"), "First claim [1]. Second claim [2].");
+  content.append(claim);
+
+  const sourceOne = appendSourceLine(content, "1", "https://docs.github.com/en/get-started", "GitHub Docs");
+  const sourceTwo = appendSourceLine(content, "2", "https://developer.mozilla.org/en-US/docs/Web/API/URL", "MDN URL");
+  const root = {
+    querySelectorAll(selector) {
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content") return [content];
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]") return content.querySelectorAll("a[href]");
+      return [];
+    }
+  };
+  const originalDocument = globalThis.document;
+  const originalIntersectionObserver = globalThis.IntersectionObserver;
+  globalThis.document = {
+    createElement: createDomElement,
+    createTextNode: createDomText,
+    createDocumentFragment: createDomFragment,
+    body: createDomElement("body"),
+    documentElement: { clientWidth: 1280, clientHeight: 720 },
+    addEventListener() {}
+  };
+  delete globalThis.IntersectionObserver;
+
+  try {
+    hydrateRenderedAiChatLinks(root, async () => null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const chips = claim.querySelectorAll(".rendered-ai-chat-link-preview");
+    assert.deepEqual(chips.map((chip) => chip.dataset.aiChatReference), ["1", "2"]);
+    assert.deepEqual(chips.map((chip) => chip.dataset.aiChatLinkDomain), ["github", "mozilla"]);
+    assert.equal(claim.textContent, "First claim github. Second claim mozilla.");
+    assert.doesNotMatch(claim.textContent, /\[(?:1|2)\]/);
+    assert.equal(sourceOne.isConnected, false);
+    assert.equal(sourceTwo.isConnected, false);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalIntersectionObserver === undefined) delete globalThis.IntersectionObserver;
+    else globalThis.IntersectionObserver = originalIntersectionObserver;
+  }
+});
+
 test("partially classified tail sources complete grouped [1, 2] citations instead of leaking [2] text", async () => {
   const content = createDomElement("div");
   const claim = appendText(createDomElement("p"), "Claim [1, 2].");
@@ -961,6 +1006,62 @@ test("directly linked [1, 2] and [2, 3] citation clusters collapse into one chip
   }
 });
 
+test("server-marked numeric reference links hydrate mid-prose while arbitrary numeric links stay ordinary", async () => {
+  const content = createDomElement("div");
+  const paragraph = createDomElement("p");
+  paragraph.append(createDomText("Referenced "));
+  const referenceLink = createDomElement("a");
+  referenceLink.href = "https://citation-mid.example.net/source-one";
+  referenceLink.textContent = "1";
+  referenceLink.className = "rendered-ai-chat-citation-reference";
+  paragraph.append(referenceLink, createDomText(" continues; ordinary "));
+  const ordinaryNumericLink = createDomElement("a");
+  ordinaryNumericLink.href = "https://example.com/ordinary";
+  ordinaryNumericLink.textContent = "7";
+  paragraph.append(ordinaryNumericLink, createDomText(" also continues."));
+  content.append(paragraph);
+
+  const root = {
+    querySelectorAll(selector) {
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content") return [content];
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]") return content.querySelectorAll("a[href]");
+      return [];
+    }
+  };
+  const originalDocument = globalThis.document;
+  const originalIntersectionObserver = globalThis.IntersectionObserver;
+  globalThis.document = {
+    createElement: createDomElement,
+    createTextNode: createDomText,
+    createDocumentFragment: createDomFragment,
+    body: createDomElement("body"),
+    documentElement: { clientWidth: 1280, clientHeight: 720 },
+    addEventListener() {}
+  };
+  delete globalThis.IntersectionObserver;
+
+  const requestedUrls = [];
+  try {
+    hydrateRenderedAiChatLinks(root, async (url) => {
+      requestedUrls.push(url);
+      return { title: "Preview", faviconUrl: "" };
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const chips = paragraph.querySelectorAll(".rendered-ai-chat-link-preview");
+    assert.equal(chips.length, 1);
+    assert.equal(chips[0].dataset.aiChatReference, "1");
+    assert.deepEqual(requestedUrls, ["https://citation-mid.example.net/source-one"]);
+    assert.equal(ordinaryNumericLink.isConnected, true);
+    assert.equal(ordinaryNumericLink.parentElement, paragraph);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalIntersectionObserver === undefined) delete globalThis.IntersectionObserver;
+    else globalThis.IntersectionObserver = originalIntersectionObserver;
+  }
+});
+
 test("source-only Markdown links stay ordinary when there is no paragraph-end inline citation marker", async () => {
   const content = createDomElement("div");
   const heading = appendText(createDomElement("h3"), "Sources");
@@ -1014,7 +1115,7 @@ test("source-only Markdown links stay ordinary when there is no paragraph-end in
   }
 });
 
-test("numeric citation links in the middle of prose stay ordinary while paragraph-end citations become chips", async () => {
+test("unmarked numeric links in the middle of prose stay ordinary while paragraph-end citations become chips", async () => {
   const content = createDomElement("div");
   const paragraph = createDomElement("p");
   paragraph.append(createDomText("Middle "));

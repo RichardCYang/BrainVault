@@ -395,6 +395,33 @@ describe("AI conversation block", () => {
     expect(html).toMatch(/<a href="https:\/\/developer\.mozilla\.org\/en-US\/docs\/Web\/API\/URL"[^>]*>named docs<\/a>/);
   });
 
+  it("marks single numeric reference citations for read-mode hydration even before the paragraph tail", () => {
+    const html = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        turns: [
+          {
+            answeredAt: "",
+            question: "Single citations?",
+            answer: [
+              "First claim [1] continues in the same paragraph; second claim [2].",
+              "An ordinary numeric link [7](https://example.com/ordinary) continues as normal prose.",
+              "",
+              "[1]: https://docs.github.com/en/get-started",
+              "[2]: https://developer.mozilla.org/en-US/docs/Web/API/URL"
+            ].join("\n")
+          }
+        ]
+      }
+    });
+
+    expect(html).toMatch(/<a[^>]*class="rendered-ai-chat-citation-reference"[^>]*>1<\/a>/);
+    expect(html).toMatch(/<a[^>]*class="rendered-ai-chat-citation-reference"[^>]*>2<\/a>/);
+    expect(html.match(/rendered-ai-chat-citation-reference/g)?.length).toBe(2);
+    expect(html).toMatch(/<a href="https:\/\/example\.com\/ordinary"[^>]*>7<\/a>/);
+    expect(html).not.toMatch(/<a[^>]*class="rendered-ai-chat-citation-reference"[^>]*href="https:\/\/example\.com\/ordinary"/);
+  });
+
   it("expands grouped numeric reference markers before CommonMark drops their source definitions", () => {
     const html = renderBlockHtml("AI_CHAT", "", false, {
       aiChat: {

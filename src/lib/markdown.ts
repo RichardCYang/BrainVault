@@ -26,6 +26,7 @@ const markdown = new MarkdownIt({
 
 const aiChatCjkStrongEmphasisEnvKey = "__brainVaultAiChatCjkStrongEmphasis";
 const aiChatNumericReferenceLinksEnvKey = "__brainVaultAiChatNumericReferenceLinks";
+const aiChatCitationReferenceClass = "rendered-ai-chat-citation-reference";
 const cjkOrFullwidthCharacterPattern = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3000-\u303f\uff00-\uffef]/u;
 const aiChatNumericReferenceLabelPattern = /^\s*(\d{1,3})\s*$/;
 const aiChatGroupedNumericReferenceLabelPattern = /^\s*(\d{1,3}(?:\s*,\s*\d{1,3})+)\s*$/;
@@ -237,6 +238,39 @@ markdown.core.ruler.before("inline", "ai_chat_numeric_reference_links", (state: 
   state.tokens.forEach((token: any) => {
     if (token?.type !== "inline" || typeof token.content !== "string") return;
     token.content = normalizeAiChatNumericReferenceLinks(token.content, availableReferences);
+  });
+});
+
+// markdown-it 14.x does not expose the originating reference label on
+// link tokens. After inline parsing, positively identify numeric links by
+// matching their visible number and normalized href against env.references.
+// The class survives sanitization and lets read mode distinguish a genuine
+// reference citation in the middle of prose from an arbitrary numeric link.
+markdown.core.ruler.after("inline", "ai_chat_mark_numeric_reference_links", (state: any) => {
+  if (state.env?.[aiChatNumericReferenceLinksEnvKey] !== true) return;
+  const references = state.env?.references;
+  if (!references || typeof references !== "object") return;
+
+  state.tokens.forEach((token: any) => {
+    if (token?.type !== "inline" || !Array.isArray(token.children)) return;
+    const children = token.children;
+    for (let index = 0; index + 2 < children.length; index += 1) {
+      const linkOpen = children[index];
+      const labelToken = children[index + 1];
+      const linkClose = children[index + 2];
+      if (linkOpen?.type !== "link_open" || labelToken?.type !== "text" || linkClose?.type !== "link_close") continue;
+
+      const referenceNumber = String(labelToken.content ?? "").match(aiChatNumericReferenceLabelPattern)?.[1] ?? "";
+      if (!referenceNumber) continue;
+      const definition = references[referenceNumber];
+      const definitionHref = typeof definition?.href === "string" ? definition.href : "";
+      const renderedHref = typeof linkOpen.attrGet === "function" ? (linkOpen.attrGet("href") ?? "") : "";
+      if (!definitionHref || !renderedHref) continue;
+
+      const normalizedDefinitionHref = markdown.normalizeLink(definitionHref);
+      if (normalizedDefinitionHref !== renderedHref) continue;
+      linkOpen.attrJoin("class", aiChatCitationReferenceClass);
+    }
   });
 });
 
