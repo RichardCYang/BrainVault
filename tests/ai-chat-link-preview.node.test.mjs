@@ -709,14 +709,116 @@ test("read mode removes duplicate numeric markers that trail an already-rendered
       single.querySelectorAll(".rendered-ai-chat-link-preview").map((chip) => chip.dataset.aiChatReference),
       ["1"]
     );
+    const groupedChips = grouped.querySelectorAll(".rendered-ai-chat-link-preview");
     assert.deepEqual(
-      grouped.querySelectorAll(".rendered-ai-chat-link-preview").map((chip) => chip.dataset.aiChatReference),
-      ["1", "2"]
+      groupedChips.map((chip) => chip.dataset.aiChatReference),
+      ["1"]
+    );
+    assert.equal(groupedChips[0].dataset.aiChatReferences, "1,2");
+    assert.deepEqual(
+      groupedChips[0].aiChatCitationSources.map((source) => [source.referenceNumber, source.domain]),
+      [["1", "mozilla"], ["2", "example"]]
     );
     assert.equal(single.textContent, "Single github.");
-    assert.equal(grouped.textContent, "Grouped mozilla example.");
+    assert.equal(grouped.textContent, "Grouped mozilla.");
     assert.doesNotMatch(single.textContent, /\[1\]/);
     assert.doesNotMatch(grouped.textContent, /\[(?:1|2|1,\s*2)\]/);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalIntersectionObserver === undefined) delete globalThis.IntersectionObserver;
+    else globalThis.IntersectionObserver = originalIntersectionObserver;
+  }
+});
+
+test("directly linked [1, 2] and [2, 3] citation clusters collapse into one chip with tooltip navigation", async () => {
+  const content = createDomElement("div");
+
+  const first = createDomElement("p");
+  first.append(createDomText("First ["));
+  const firstOne = createDomElement("a");
+  firstOne.href = "https://docs.github.com/en/get-started";
+  firstOne.textContent = "1";
+  const firstTwo = createDomElement("a");
+  firstTwo.href = "https://developer.mozilla.org/en-US/docs/Web/API/URL";
+  firstTwo.textContent = "2";
+  first.append(firstOne, createDomText(", "), firstTwo, createDomText("]."));
+
+  const second = createDomElement("p");
+  second.append(createDomText("Second ["));
+  const secondTwo = createDomElement("a");
+  secondTwo.href = "https://news.example.co.kr/article/2";
+  secondTwo.textContent = "2";
+  const secondThree = createDomElement("a");
+  secondThree.href = "https://www.nasa.gov/mission-pages";
+  secondThree.textContent = "3";
+  second.append(secondTwo, createDomText(", "), secondThree, createDomText("]."));
+  content.append(first, second);
+
+  const root = {
+    querySelectorAll(selector) {
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content") return [content];
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]") return content.querySelectorAll("a[href]");
+      return [];
+    }
+  };
+  const body = createDomElement("body");
+  const originalDocument = globalThis.document;
+  const originalIntersectionObserver = globalThis.IntersectionObserver;
+  globalThis.document = {
+    createElement: createDomElement,
+    createTextNode: createDomText,
+    createDocumentFragment: createDomFragment,
+    body,
+    documentElement: { clientWidth: 1280, clientHeight: 720 },
+    addEventListener() {}
+  };
+  delete globalThis.IntersectionObserver;
+
+  try {
+    hydrateRenderedAiChatLinks(root, async (url) => ({
+      title: `Preview ${new URL(url).hostname}`,
+      faviconUrl: ""
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const firstChips = first.querySelectorAll(".rendered-ai-chat-link-preview");
+    const secondChips = second.querySelectorAll(".rendered-ai-chat-link-preview");
+    assert.equal(firstChips.length, 1);
+    assert.equal(secondChips.length, 1);
+    assert.equal(firstChips[0].dataset.aiChatReferences, "1,2");
+    assert.equal(secondChips[0].dataset.aiChatReferences, "2,3");
+    assert.deepEqual(
+      firstChips[0].aiChatCitationSources.map((source) => source.referenceNumber),
+      ["1", "2"]
+    );
+    assert.deepEqual(
+      secondChips[0].aiChatCitationSources.map((source) => source.referenceNumber),
+      ["2", "3"]
+    );
+    assert.equal(first.textContent, "First github.");
+    assert.equal(second.textContent, "Second example.");
+    assert.doesNotMatch(first.textContent, /[\[\],]/);
+    assert.doesNotMatch(second.textContent, /[\[\],]/);
+
+    firstChips[0].dispatch("click");
+    const popover = body.children.find((child) => child.className === "rendered-ai-chat-link-tooltip");
+    assert.ok(popover);
+    const navigation = popover.querySelector(".rendered-ai-chat-link-tooltip-navigation");
+    const counter = popover.querySelector(".rendered-ai-chat-link-tooltip-counter");
+    const previousButton = popover.querySelector(".rendered-ai-chat-link-tooltip-nav--previous");
+    const nextButton = popover.querySelector(".rendered-ai-chat-link-tooltip-nav--next");
+    assert.equal(popover.children[0].href, "https://docs.github.com/en/get-started");
+    assert.equal(counter.textContent, "1 / 2");
+    assert.equal(navigation.hidden, false);
+    assert.equal(previousButton.disabled, true);
+    assert.equal(nextButton.disabled, false);
+
+    nextButton.dispatch("click");
+    assert.equal(popover.children[0].href, "https://developer.mozilla.org/en-US/docs/Web/API/URL");
+    assert.equal(counter.textContent, "2 / 2");
+    assert.equal(previousButton.disabled, false);
+    assert.equal(nextButton.disabled, true);
   } finally {
     if (originalDocument === undefined) delete globalThis.document;
     else globalThis.document = originalDocument;

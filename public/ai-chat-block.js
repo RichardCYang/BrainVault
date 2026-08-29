@@ -34,6 +34,8 @@ const aiChatCitationBlockEndTags = new Set(["P", "LI"]);
 const aiChatCitationTailMarkerPattern = /\[\s*\d{1,3}(?:\s*,\s*\d{1,3})*\s*\]/g;
 const aiChatCitationTailSeparatorPattern = /^[\s,.;:!?…，。；：！？、(){}\[\]\'"“”‘’\-–—]*$/;
 const aiChatCitationTailInlineTags = new Set(["SPAN", "EM", "STRONG", "S", "DEL", "SUP"]);
+const aiChatCitationGroupSeparatorPattern = /^[\s,;:，；：、\[\](){}]*$/;
+const aiChatCitationGroupWrapperPairs = new Map([["[", "]"], ["(", ")"], ["{", "}"]]);
 const aiChatReferenceWrapperPlaceholder = "\ufffc";
 const aiChatReferenceWrapperBarrier = "\ufffd";
 const aiChatReferenceWrapperPattern = /\(\s*\ufffc(?:[\s,;，；、]*\ufffc)*\s*\)([\s,.;:!?…，。；：！？、{}\[\]\'"“”‘’\-–—]*)$/;
@@ -408,6 +410,171 @@ function isAiChatInlineCitationLink(link) {
   if (!getAiChatReferenceNumber(link)) return false;
   if (link?.dataset?.aiChatRelocatedCitation === "true") return true;
   return isAiChatNodeAtCitationBlockEnd(link);
+}
+
+function getAiChatInlineCitationLinkSources(link) {
+  const existingSources = Array.isArray(link?.aiChatCitationSources) ? link.aiChatCitationSources : [];
+  if (existingSources.length) return existingSources;
+
+  const referenceNumber = getAiChatReferenceNumber(link);
+  const url = getAiChatWebUrl(link?.href ?? link?.getAttribute?.("href"));
+  if (!referenceNumber || !url) return [];
+  return [{
+    referenceNumber,
+    url: url.toString(),
+    title: getAiChatLinkFallbackTitle(link, url, referenceNumber)
+  }];
+}
+
+function collectAiChatCitationGroupUnits(node, units) {
+  for (const child of Array.from(node?.childNodes ?? [])) {
+    if (child?.nodeType === 3) {
+      const value = typeof child.nodeValue === "string" ? child.nodeValue : (child.textContent ?? "");
+      for (let index = 0; index < value.length; index += 1) {
+        units.push({ type: "text", char: value[index], node: child, offset: index });
+      }
+      continue;
+    }
+    if (child?.nodeType !== 1) continue;
+
+    const tagName = getAiChatElementTagName(child);
+    const isNumericWebLink = tagName === "A"
+      && Boolean(getAiChatReferenceNumber(child))
+      && Boolean(getAiChatWebUrl(child?.href ?? child?.getAttribute?.("href")));
+    if (isNumericWebLink) {
+      units.push({ type: "link", node: child });
+      continue;
+    }
+    if (aiChatCitationTailInlineTags.has(tagName)) {
+      collectAiChatCitationGroupUnits(child, units);
+      continue;
+    }
+    units.push({ type: "barrier", node: child });
+  }
+}
+
+function isAiChatCitationGroupSeparatorUnits(units) {
+  if (!units.length) return true;
+  return units.every((unit) => unit.type === "text" && aiChatCitationGroupSeparatorPattern.test(unit.char));
+}
+
+function addAiChatCitationTextUnitDeletion(deletions, unit) {
+  if (unit?.type !== "text" || !unit.node || !Number.isInteger(unit.offset)) return;
+  const offsets = deletions.get(unit.node) ?? new Set();
+  offsets.add(unit.offset);
+  deletions.set(unit.node, offsets);
+}
+
+function findAiChatCitationWrapperUnit(units, startIndex, direction) {
+  let index = startIndex;
+  while (index >= 0 && index < units.length) {
+    const unit = units[index];
+    if (unit?.type !== "text") return null;
+    if (!/\s/.test(unit.char)) return { index, unit };
+    index += direction;
+  }
+  return null;
+}
+
+function mergeAiChatInlineCitationGroup(units, group) {
+  if (!Array.isArray(group) || group.length < 2) return;
+  const primary = group[0]?.unit?.node;
+  if (!primary) return;
+
+  const mergedSources = [];
+  const seenSources = new Set();
+  group.forEach(({ unit }) => {
+    getAiChatInlineCitationLinkSources(unit?.node).forEach((source) => {
+      const url = getAiChatWebUrl(source?.url);
+      if (!url) return;
+      const referenceNumber = typeof source?.referenceNumber === "string"
+        ? source.referenceNumber.trim()
+        : String(source?.referenceNumber ?? "").trim();
+      const key = `${referenceNumber}\n${url.toString()}`;
+      if (seenSources.has(key)) return;
+      seenSources.add(key);
+      mergedSources.push({
+        referenceNumber,
+        url: url.toString(),
+        title: typeof source?.title === "string" ? source.title : ""
+      });
+    });
+  });
+  if (mergedSources.length < 2) return;
+  primary.aiChatCitationSources = mergedSources;
+
+  const deletions = new Map();
+  const firstIndex = group[0].index;
+  const lastIndex = group.at(-1).index;
+  for (let index = firstIndex + 1; index < lastIndex; index += 1) {
+    addAiChatCitationTextUnitDeletion(deletions, units[index]);
+  }
+
+  let leftBoundary = firstIndex;
+  let rightBoundary = lastIndex;
+  while (true) {
+    const left = findAiChatCitationWrapperUnit(units, leftBoundary - 1, -1);
+    const right = findAiChatCitationWrapperUnit(units, rightBoundary + 1, 1);
+    const expectedClose = left?.unit?.type === "text" ? aiChatCitationGroupWrapperPairs.get(left.unit.char) : null;
+    if (!expectedClose || right?.unit?.type !== "text" || right.unit.char !== expectedClose) break;
+
+    for (let index = left.index; index < leftBoundary; index += 1) {
+      addAiChatCitationTextUnitDeletion(deletions, units[index]);
+    }
+    for (let index = rightBoundary + 1; index <= right.index; index += 1) {
+      addAiChatCitationTextUnitDeletion(deletions, units[index]);
+    }
+    leftBoundary = left.index;
+    rightBoundary = right.index;
+  }
+
+  deletions.forEach((offsets, textNode) => {
+    const value = typeof textNode.nodeValue === "string" ? textNode.nodeValue : (textNode.textContent ?? "");
+    textNode.nodeValue = value.split("").filter((_, index) => !offsets.has(index)).join("");
+  });
+  group.slice(1).forEach(({ unit }) => unit?.node?.remove?.());
+}
+
+function collapseAiChatInlineCitationGroupsInBlock(block) {
+  const units = [];
+  collectAiChatCitationGroupUnits(block, units);
+  const candidates = units.map((unit, index) => ({ unit, index }))
+    .filter(({ unit }) => unit.type === "link")
+    .filter(({ unit }) => unit.node?.dataset?.aiChatSourceDefinition !== "true")
+    .filter(({ unit }) => isAiChatInlineCitationLink(unit.node));
+  if (candidates.length < 2) return;
+
+  const groups = [];
+  let current = [candidates[0]];
+  for (let index = 1; index < candidates.length; index += 1) {
+    const previous = current.at(-1);
+    const candidate = candidates[index];
+    const between = units.slice(previous.index + 1, candidate.index);
+    if (isAiChatCitationGroupSeparatorUnits(between)) {
+      current.push(candidate);
+      continue;
+    }
+    if (current.length > 1) groups.push(current);
+    current = [candidate];
+  }
+  if (current.length > 1) groups.push(current);
+
+  groups.reverse().forEach((group) => mergeAiChatInlineCitationGroup(units, group));
+}
+
+function collapseRenderedAiChatInlineCitationGroups(root) {
+  const contents = [];
+  if (root?.matches?.(".rendered-ai-chat-answer .rendered-ai-chat-content")) contents.push(root);
+  root?.querySelectorAll?.(".rendered-ai-chat-answer .rendered-ai-chat-content")?.forEach?.((content) => contents.push(content));
+
+  const visit = (node) => {
+    for (const child of getAiChatChildElements(node)) {
+      const tagName = getAiChatElementTagName(child);
+      if (aiChatCitationBlockEndTags.has(tagName)) collapseAiChatInlineCitationGroupsInBlock(child);
+      visit(child);
+    }
+  };
+  [...new Set(contents)].forEach((content) => visit(content));
 }
 
 function collectAiChatReferenceWrapperUnits(node, units) {
@@ -1037,6 +1204,7 @@ async function hydrateRenderedAiChatLink(citation, fetchPreview) {
 export function hydrateRenderedAiChatLinks(root, fetchPreview) {
   if (!root || typeof fetchPreview !== "function") return;
   relocateRenderedAiChatCitationLinks(root);
+  collapseRenderedAiChatInlineCitationGroups(root);
   const citations = [...root.querySelectorAll(".rendered-ai-chat-answer .rendered-ai-chat-content a[href]")]
     .filter((link) => link?.dataset?.aiChatSourceDefinition !== "true")
     .filter((link) => isAiChatInlineCitationLink(link))
