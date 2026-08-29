@@ -322,6 +322,42 @@ describe("AI conversation block", () => {
     expect(html.match(/rel="noopener noreferrer"/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("routes explicit numeric reference-style AI answer links through citation hydration", () => {
+    const html = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        turns: [
+          {
+            answeredAt: "",
+            question: "[Question title][1]\n\n[1]: https://question.example/source",
+            answer: [
+              "Claim ([제목][1]).",
+              "",
+              "Keep `[code title][2]` literal and [named docs][docs] as a named link.",
+              "",
+              "[1]: https://docs.github.com/en/get-started",
+              "[2]: https://example.com/code-only",
+              "[docs]: https://developer.mozilla.org/en-US/docs/Web/API/URL"
+            ].join("\n")
+          }
+        ]
+      }
+    });
+
+    // Questions keep ordinary CommonMark reference-link behavior. Only AI
+    // answers opt into numeric citation normalization for the read-mode chips.
+    expect(html).toMatch(/<a href="https:\/\/question\.example\/source"[^>]*>Question title<\/a>/);
+
+    // [제목][1] becomes the same numeric anchor shape as [1](url), allowing
+    // public/ai-chat-block.js to replace it with the favicon + domain chip.
+    expect(html).toMatch(/Claim \(<a href="https:\/\/docs\.github\.com\/en\/get-started"[^>]*>1<\/a>\)\./);
+    expect(html).not.toMatch(/<a href="https:\/\/docs\.github\.com\/en\/get-started"[^>]*>제목<\/a>/);
+
+    // Inline code and nonnumeric reference-style links remain unchanged.
+    expect(html).toContain("<code>[code title][2]</code>");
+    expect(html).toMatch(/<a href="https:\/\/developer\.mozilla\.org\/en-US\/docs\/Web\/API\/URL"[^>]*>named docs<\/a>/);
+  });
+
   it("keeps display LaTeX centered and wrapped inside read-only AI answers", () => {
     expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-content \.math-expression--display\s*\{[^}]*width:\s*100%;[^}]*overflow-x:\s*hidden;[^}]*text-align:\s*center;/s);
     expect(styles).toMatch(/\.page-view\.is-read-only \.rendered-ai-chat-answer \.rendered-ai-chat-content \.math-expression--display \.katex-display\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*100%;[^}]*min-width:\s*0;[^}]*overflow:\s*visible;[^}]*text-align:\s*center;/s);

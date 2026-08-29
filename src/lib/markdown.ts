@@ -25,7 +25,9 @@ const markdown = new MarkdownIt({
 });
 
 const aiChatCjkStrongEmphasisEnvKey = "__brainVaultAiChatCjkStrongEmphasis";
+const aiChatNumericReferenceLinksEnvKey = "__brainVaultAiChatNumericReferenceLinks";
 const cjkOrFullwidthCharacterPattern = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3000-\u303f\uff00-\uffef]/u;
+const aiChatNumericReferenceLabelPattern = /^\s*(\d{1,3})\s*$/;
 
 function codePointBefore(value: string, position: number) {
   if (position <= 0) return null;
@@ -87,6 +89,124 @@ function enableAiChatCjkStrongEmphasis(markdownIt: MarkdownIt) {
 }
 
 enableAiChatCjkStrongEmphasis(markdown);
+
+function findAiChatBacktickSpanEnd(value: string, start: number) {
+  let runLength = 1;
+  while (value[start + runLength] === "`") runLength += 1;
+
+  let searchFrom = start + runLength;
+  const marker = "`".repeat(runLength);
+  while (searchFrom < value.length) {
+    const candidate = value.indexOf(marker, searchFrom);
+    if (candidate < 0) return -1;
+    if (value[candidate - 1] !== "`" && value[candidate + runLength] !== "`") {
+      return candidate + runLength;
+    }
+    searchFrom = candidate + 1;
+  }
+  return -1;
+}
+
+function findAiChatReferenceLabelEnd(value: string, start: number) {
+  if (value[start] !== "[") return -1;
+  for (let index = start + 1; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === "\\") {
+      index += 1;
+      continue;
+    }
+    if (character === "`") {
+      const codeSpanEnd = findAiChatBacktickSpanEnd(value, index);
+      if (codeSpanEnd > index) {
+        index = codeSpanEnd - 1;
+        continue;
+      }
+    }
+    // markdown-it rejects nested links while parsing the outer link label.
+    // Staying conservative here prevents malformed Markdown from being
+    // rewritten into a valid citation by this AI-only compatibility rule.
+    if (character === "[") return -1;
+    if (character === "]") return index;
+  }
+  return -1;
+}
+
+function normalizeAiChatNumericReferenceLinks(value: string, availableReferences: Set<string>) {
+  if (!value.includes("][") || !availableReferences.size) return value;
+
+  let output = "";
+  let index = 0;
+  while (index < value.length) {
+    const character = value[index];
+    if (character === "\\") {
+      output += value.slice(index, Math.min(index + 2, value.length));
+      index += 2;
+      continue;
+    }
+    if (character === "`") {
+      const codeSpanEnd = findAiChatBacktickSpanEnd(value, index);
+      if (codeSpanEnd > index) {
+        output += value.slice(index, codeSpanEnd);
+        index = codeSpanEnd;
+        continue;
+      }
+    }
+    if (character !== "[" || value[index - 1] === "!") {
+      output += character;
+      index += 1;
+      continue;
+    }
+
+    const titleEnd = findAiChatReferenceLabelEnd(value, index);
+    const referenceStart = titleEnd >= 0 ? titleEnd + 1 : -1;
+    if (referenceStart < 0 || value[referenceStart] !== "[") {
+      output += character;
+      index += 1;
+      continue;
+    }
+
+    const referenceEnd = findAiChatReferenceLabelEnd(value, referenceStart);
+    if (referenceEnd < 0) {
+      output += character;
+      index += 1;
+      continue;
+    }
+
+    const referenceMatch = value.slice(referenceStart + 1, referenceEnd).match(aiChatNumericReferenceLabelPattern);
+    const referenceNumber = referenceMatch?.[1] ?? "";
+    if (!referenceNumber || !availableReferences.has(referenceNumber)) {
+      output += character;
+      index += 1;
+      continue;
+    }
+
+    // markdown-it 14.x resolves [title][1] to an <a> whose visible text is
+    // only "title" and does not retain the numeric reference label. The read
+    // mode citation hydrator intentionally recognizes numeric link text, so
+    // rewrite only explicit numeric reference links in AI answers to the
+    // equivalent [1][1] form. The URL still comes from the original reference
+    // definition and ordinary inline/nonnumeric links remain untouched.
+    output += `[${referenceNumber}][${referenceNumber}]`;
+    index = referenceEnd + 1;
+  }
+  return output;
+}
+
+markdown.core.ruler.before("inline", "ai_chat_numeric_reference_links", (state: any) => {
+  if (state.env?.[aiChatNumericReferenceLinksEnvKey] !== true) return;
+  const references = state.env?.references;
+  if (!references || typeof references !== "object") return;
+
+  const availableReferences = new Set(
+    Object.keys(references).filter((label) => /^\d{1,3}$/.test(label))
+  );
+  if (!availableReferences.size) return;
+
+  state.tokens.forEach((token: any) => {
+    if (token?.type !== "inline" || typeof token.content !== "string") return;
+    token.content = normalizeAiChatNumericReferenceLinks(token.content, availableReferences);
+  });
+});
 
 function renderMathPlaceholder(latex: string, displayMode: boolean) {
   const source = latex.trim();
@@ -550,7 +670,10 @@ export function renderMarkdown(raw: string) {
 }
 
 function renderAiChatAnswerMarkdown(raw: string) {
-  return renderMarkdownWithEnvironment(raw, { [aiChatCjkStrongEmphasisEnvKey]: true });
+  return renderMarkdownWithEnvironment(raw, {
+    [aiChatCjkStrongEmphasisEnvKey]: true,
+    [aiChatNumericReferenceLinksEnvKey]: true
+  });
 }
 
 export function renderBlockHtml(type: BlockType, raw: string, checked = false, metadata?: unknown) {
