@@ -575,6 +575,70 @@ test("named links under a Sources heading are mapped by source order and the exh
   }
 });
 
+test("read mode removes duplicate numeric markers that trail an already-rendered citation chip", async () => {
+  const content = createDomElement("div");
+
+  const single = createDomElement("p");
+  single.append(createDomText("Single "));
+  const singleLink = createDomElement("a");
+  singleLink.href = "https://docs.github.com/en/get-started";
+  singleLink.textContent = "1";
+  single.append(singleLink, createDomText(" [1]."));
+
+  const grouped = createDomElement("p");
+  grouped.append(createDomText("Grouped "));
+  const firstLink = createDomElement("a");
+  firstLink.href = "https://developer.mozilla.org/en-US/docs/Web/API/URL";
+  firstLink.textContent = "1";
+  const secondLink = createDomElement("a");
+  secondLink.href = "https://news.example.co.kr/article/2";
+  secondLink.textContent = "2";
+  grouped.append(firstLink, createDomText(" "), secondLink, createDomText(" [1, 2]."));
+  content.append(single, grouped);
+
+  const root = {
+    querySelectorAll(selector) {
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content") return [content];
+      if (selector === ".rendered-ai-chat-answer .rendered-ai-chat-content a[href]") return content.querySelectorAll("a[href]");
+      return [];
+    }
+  };
+  const originalDocument = globalThis.document;
+  const originalIntersectionObserver = globalThis.IntersectionObserver;
+  globalThis.document = {
+    createElement: createDomElement,
+    createTextNode: createDomText,
+    createDocumentFragment: createDomFragment,
+    body: createDomElement("body"),
+    documentElement: { clientWidth: 1280, clientHeight: 720 },
+    addEventListener() {}
+  };
+  delete globalThis.IntersectionObserver;
+
+  try {
+    hydrateRenderedAiChatLinks(root, async () => ({ title: "Preview", faviconUrl: "" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.deepEqual(
+      single.querySelectorAll(".rendered-ai-chat-link-preview").map((chip) => chip.dataset.aiChatReference),
+      ["1"]
+    );
+    assert.deepEqual(
+      grouped.querySelectorAll(".rendered-ai-chat-link-preview").map((chip) => chip.dataset.aiChatReference),
+      ["1", "2"]
+    );
+    assert.equal(single.textContent, "Single github.");
+    assert.equal(grouped.textContent, "Grouped mozilla example.");
+    assert.doesNotMatch(single.textContent, /\[1\]/);
+    assert.doesNotMatch(grouped.textContent, /\[(?:1|2|1,\s*2)\]/);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalIntersectionObserver === undefined) delete globalThis.IntersectionObserver;
+    else globalThis.IntersectionObserver = originalIntersectionObserver;
+  }
+});
+
 test("source-only Markdown links stay ordinary when there is no paragraph-end inline citation marker", async () => {
   const content = createDomElement("div");
   const heading = appendText(createDomElement("h3"), "Sources");

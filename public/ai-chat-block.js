@@ -340,6 +340,71 @@ function stripRenderedAiChatReferenceParentheses(root) {
   [...new Set(contents)].forEach((content) => visit(content));
 }
 
+function stripAiChatDuplicateTrailingReferenceMarkers(block) {
+  const renderedReferences = new Set();
+
+  const visit = (node) => {
+    for (const child of Array.from(node?.childNodes ?? [])) {
+      if (child?.nodeType === 3) {
+        if (!renderedReferences.size) continue;
+        const value = typeof child.nodeValue === "string" ? child.nodeValue : (child.textContent ?? "");
+        aiChatCitationMarkerPattern.lastIndex = 0;
+        const matches = [...value.matchAll(aiChatCitationMarkerPattern)];
+        aiChatCitationMarkerPattern.lastIndex = 0;
+        if (!matches.length) continue;
+
+        let cursor = 0;
+        let nextValue = "";
+        let changed = false;
+        matches.forEach((match) => {
+          const matchIndex = match.index ?? 0;
+          const references = match[1].split(",").map((part) => part.trim()).filter(Boolean);
+          const isDuplicateTail = references.length > 0
+            && references.every((reference) => renderedReferences.has(reference))
+            && isAiChatNodeAtCitationBlockEnd(child, value.slice(matchIndex));
+          if (!isDuplicateTail) return;
+
+          const between = value.slice(cursor, matchIndex);
+          nextValue += /^\s*$/.test(nextValue + between) ? "" : between;
+          cursor = matchIndex + match[0].length;
+          changed = true;
+        });
+        if (!changed) continue;
+        nextValue += value.slice(cursor);
+        child.nodeValue = nextValue.replace(/^\s+(?=[,.;:!?…，。；：！？、])/, "");
+        continue;
+      }
+      if (child?.nodeType !== 1) continue;
+
+      if (child.classList?.contains?.("rendered-ai-chat-link-preview")) {
+        const reference = typeof child.dataset?.aiChatReference === "string"
+          ? child.dataset.aiChatReference.trim()
+          : "";
+        if (reference) renderedReferences.add(reference);
+        continue;
+      }
+      if (aiChatCitationTailInlineTags.has(getAiChatElementTagName(child))) visit(child);
+    }
+  };
+
+  visit(block);
+}
+
+function stripRenderedAiChatDuplicateReferenceMarkers(root) {
+  const contents = [];
+  if (root?.matches?.(".rendered-ai-chat-answer .rendered-ai-chat-content")) contents.push(root);
+  root?.querySelectorAll?.(".rendered-ai-chat-answer .rendered-ai-chat-content")?.forEach?.((content) => contents.push(content));
+
+  const visit = (node) => {
+    for (const child of getAiChatChildElements(node)) {
+      const tagName = getAiChatElementTagName(child);
+      if (aiChatCitationBlockEndTags.has(tagName)) stripAiChatDuplicateTrailingReferenceMarkers(child);
+      visit(child);
+    }
+  };
+  [...new Set(contents)].forEach((content) => visit(content));
+}
+
 function isAiChatHeadingElement(node) {
   return /^H[1-6]$/.test(getAiChatElementTagName(node));
 }
@@ -817,6 +882,7 @@ export function hydrateRenderedAiChatLinks(root, fetchPreview) {
     .map((link) => prepareRenderedAiChatLink(link))
     .filter(Boolean)
     .filter((citation) => !["loading", "loaded"].includes(citation.dataset.aiChatLinkPreviewState));
+  stripRenderedAiChatDuplicateReferenceMarkers(root);
   stripRenderedAiChatReferenceParentheses(root);
   if (!citations.length) return;
 
