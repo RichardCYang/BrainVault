@@ -349,10 +349,14 @@ export function getAiProviderPreset(value) {
   return providerById.get(typeof value === "string" ? value.toLowerCase() : "") ?? aiProviderPresets[0];
 }
 
-function normalizeTurn(value, { fallbackAnsweredAt = "" } = {}) {
+function normalizeTurn(value, { fallbackAnsweredAt = "", defaultAnsweredAt = false } = {}) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const hasAnsweredAt = Object.prototype.hasOwnProperty.call(source, "answeredAt");
+  const answeredAt = normalizeLocalDateTime(source.answeredAt)
+    || (!hasAnsweredAt ? normalizeLocalDateTime(fallbackAnsweredAt) : "")
+    || (defaultAnsweredAt ? createLocalDateTimeValue() : "");
   return {
-    answeredAt: normalizeLocalDateTime(source.answeredAt) || normalizeLocalDateTime(fallbackAnsweredAt) || createLocalDateTimeValue(),
+    answeredAt,
     question: normalizeText(source.question, aiChatLimits.questionLength),
     answer: normalizeText(source.answer, aiChatLimits.answerLength)
   };
@@ -365,17 +369,18 @@ export function createDefaultAiChatData({ question = "", answeredAt = "" } = {})
     model: "",
     layout: "stacked",
     hideAnswerBorder: false,
-    turns: [normalizeTurn({ question, answeredAt }, { fallbackAnsweredAt: answeredAt })]
+    turns: [normalizeTurn({ question, answeredAt }, { defaultAnsweredAt: true })]
   };
 }
 
 export function normalizeAiChatData(value, { fallbackAnsweredAt = "" } = {}) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  const rawTurns = Array.isArray(source.turns)
+  const hasTurnCollection = Array.isArray(source.turns);
+  const rawTurns = hasTurnCollection
     ? source.turns.slice(0, aiChatLimits.turns)
     : [source];
   const turns = rawTurns.map((turn, index) => normalizeTurn(turn, {
-    fallbackAnsweredAt: index === 0 ? fallbackAnsweredAt : ""
+    fallbackAnsweredAt: !hasTurnCollection && index === 0 ? fallbackAnsweredAt : ""
   }));
 
   return {
@@ -384,7 +389,7 @@ export function normalizeAiChatData(value, { fallbackAnsweredAt = "" } = {}) {
     model: normalizeText(source.model, aiChatLimits.modelLength).trim(),
     layout: normalizeLayout(source.layout),
     hideAnswerBorder: source.hideAnswerBorder === true,
-    turns: turns.length ? turns : [normalizeTurn({}, { fallbackAnsweredAt })]
+    turns: turns.length ? turns : [normalizeTurn({})]
   };
 }
 
