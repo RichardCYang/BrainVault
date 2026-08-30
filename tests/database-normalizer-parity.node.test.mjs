@@ -560,7 +560,7 @@ test("invalid collection placeholders do not consume database capacity", () => {
       id: "status",
       name: "Status",
       type: "select",
-      options: [null, ...options]
+      options: [null, {}, { legacyPlaceholder: true }, ...options]
     },
     ...Array.from({ length: databaseLimits.properties - 1 }, (_, index) => ({
       id: `field-${index + 1}`,
@@ -592,9 +592,9 @@ test("invalid collection placeholders do not consume database capacity", () => {
   }));
   const source = {
     title: "Placeholder capacity",
-    properties: [null, ...properties],
-    rows: [null, ...rows],
-    views: [null, ...views],
+    properties: [null, {}, { legacyPlaceholder: true }, ...properties],
+    rows: [null, {}, { legacyPlaceholder: true }, ...rows],
+    views: [null, {}, { legacyPlaceholder: true }, ...views],
     activeViewId: views.at(-1).id
   };
 

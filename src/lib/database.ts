@@ -118,12 +118,19 @@ function recordValue(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function collectRecordValues(value: unknown, limit: number): Record<string, unknown>[] {
+function collectRecordValues(
+  value: unknown,
+  limit: number,
+  recoverableKeys: readonly string[]
+): Record<string, unknown>[] {
   if (!Array.isArray(value) || limit <= 0) return [];
   const records: Record<string, unknown>[] = [];
   for (const item of value) {
     const record = recordValue(item);
-    if (!record) continue;
+    if (
+      !record
+      || !recoverableKeys.some((key) => Object.prototype.hasOwnProperty.call(record, key))
+    ) continue;
     records.push(record);
     if (records.length >= limit) break;
   }
@@ -262,7 +269,7 @@ function normalizeOptions(value: unknown, propertyId: string): NormalizedDatabas
   const aliases = createIdAliases();
   if (!Array.isArray(value)) return { options: [], aliases };
   const seen = new Set<string>();
-  const descriptors = collectRecordValues(value, databaseLimits.optionsPerProperty)
+  const descriptors = collectRecordValues(value, databaseLimits.optionsPerProperty, ["id", "name", "color"])
     .map((item, index) => {
       const sourceId = sourceStringId(item.id);
       const requestedId = safeId(item.id, `${propertyId}-option-${index + 1}`);
@@ -423,7 +430,7 @@ export function getDatabaseData(metadata: unknown): DatabaseData {
   if (!value || typeof value !== "object" || Array.isArray(value)) return createDefaultDatabaseData();
   const source = value as Record<string, unknown>;
 
-  const propertySources = collectRecordValues(source.properties, databaseLimits.properties);
+  const propertySources = collectRecordValues(source.properties, databaseLimits.properties, ["id", "name", "type", "options"]);
   const seenPropertyIds = new Set<string>();
   const propertyAliases = createIdAliases();
   let titlePropertySeen = false;
@@ -477,7 +484,7 @@ export function getDatabaseData(metadata: unknown): DatabaseData {
     propertyDescriptors.map((descriptor) => [descriptor.property.id, descriptor])
   );
 
-  const rowSources = collectRecordValues(source.rows, databaseLimits.rows);
+  const rowSources = collectRecordValues(source.rows, databaseLimits.rows, ["id", "values"]);
   const seenRowIds = new Set<string>();
   const rows = rowSources
     .map((item, rowIndex) => {
@@ -491,7 +498,11 @@ export function getDatabaseData(metadata: unknown): DatabaseData {
       return { id, values };
     });
 
-  const viewSources = collectRecordValues(source.views, databaseLimits.views);
+  const viewSources = collectRecordValues(
+    source.views,
+    databaseLimits.views,
+    ["id", "name", "type", "filters", "sorts", "groupPropertyId", "hiddenPropertyIds"]
+  );
   const seenViewIds = new Set<string>();
   const viewAliases = createIdAliases();
   const viewDescriptors = viewSources
