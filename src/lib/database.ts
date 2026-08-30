@@ -118,6 +118,18 @@ function recordValue(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function collectRecordValues(value: unknown, limit: number): Record<string, unknown>[] {
+  if (!Array.isArray(value) || limit <= 0) return [];
+  const records: Record<string, unknown>[] = [];
+  for (const item of value) {
+    const record = recordValue(item);
+    if (!record) continue;
+    records.push(record);
+    if (records.length >= limit) break;
+  }
+  return records;
+}
+
 function stringValue(value: unknown, fallback: string, maxLength: number) {
   return (typeof value === "string" ? value : fallback).slice(0, maxLength);
 }
@@ -250,10 +262,7 @@ function normalizeOptions(value: unknown, propertyId: string): NormalizedDatabas
   const aliases = createIdAliases();
   if (!Array.isArray(value)) return { options: [], aliases };
   const seen = new Set<string>();
-  const descriptors = value
-    .slice(0, databaseLimits.optionsPerProperty)
-    .map((item) => recordValue(item))
-    .filter((item): item is Record<string, unknown> => Boolean(item))
+  const descriptors = collectRecordValues(value, databaseLimits.optionsPerProperty)
     .map((item, index) => {
       const sourceId = sourceStringId(item.id);
       const requestedId = safeId(item.id, `${propertyId}-option-${index + 1}`);
@@ -414,15 +423,11 @@ export function getDatabaseData(metadata: unknown): DatabaseData {
   if (!value || typeof value !== "object" || Array.isArray(value)) return createDefaultDatabaseData();
   const source = value as Record<string, unknown>;
 
-  const propertySources = Array.isArray(source.properties)
-    ? source.properties.slice(0, databaseLimits.properties)
-    : [];
+  const propertySources = collectRecordValues(source.properties, databaseLimits.properties);
   const seenPropertyIds = new Set<string>();
   const propertyAliases = createIdAliases();
   let titlePropertySeen = false;
   const propertyDescriptors: DatabasePropertyDescriptor[] = propertySources
-    .map((item) => recordValue(item))
-    .filter((item): item is Record<string, unknown> => Boolean(item))
     .map((item, index) => {
       const sourceId = sourceStringId(item.id);
       const requestedId = safeId(item.id, `property-${index + 1}`);
@@ -472,11 +477,9 @@ export function getDatabaseData(metadata: unknown): DatabaseData {
     propertyDescriptors.map((descriptor) => [descriptor.property.id, descriptor])
   );
 
-  const rowSources = Array.isArray(source.rows) ? source.rows.slice(0, databaseLimits.rows) : [];
+  const rowSources = collectRecordValues(source.rows, databaseLimits.rows);
   const seenRowIds = new Set<string>();
   const rows = rowSources
-    .map((item) => recordValue(item))
-    .filter((item): item is Record<string, unknown> => Boolean(item))
     .map((item, rowIndex) => {
       const id = uniqueId(safeId(item.id, `row-${rowIndex + 1}`), seenRowIds, `row-${rowIndex + 1}`);
       const sourceValues = recordValue(item.values) ?? {};
@@ -488,12 +491,10 @@ export function getDatabaseData(metadata: unknown): DatabaseData {
       return { id, values };
     });
 
-  const viewSources = Array.isArray(source.views) ? source.views.slice(0, databaseLimits.views) : [];
+  const viewSources = collectRecordValues(source.views, databaseLimits.views);
   const seenViewIds = new Set<string>();
   const viewAliases = createIdAliases();
   const viewDescriptors = viewSources
-    .map((item) => recordValue(item))
-    .filter((item): item is Record<string, unknown> => Boolean(item))
     .map((item, viewIndex) => {
       const sourceId = sourceStringId(item.id);
       const requestedId = safeId(item.id, `view-${viewIndex + 1}`);
@@ -501,46 +502,55 @@ export function getDatabaseData(metadata: unknown): DatabaseData {
       registerGeneratedIdOwnership(viewAliases, item.id, requestedId, id);
       registerExactIdAlias(viewAliases, sourceId, id);
       const type = normalizeViewType(item.type);
-      const filterSources = Array.isArray(item.filters)
-        ? item.filters.slice(0, databaseLimits.filtersPerView)
-        : [];
-      const seenFilterIds = new Set<string>();
-      const filters = filterSources
-        .map((filter) => recordValue(filter))
-        .filter((filter): filter is Record<string, unknown> => Boolean(filter))
-        .map((filter, filterIndex): DatabaseFilter => {
+      const filterSources: Array<{ filter: Record<string, unknown>; propertyId: string }> = [];
+      if (Array.isArray(item.filters)) {
+        for (const candidate of item.filters) {
+          const filter = recordValue(candidate);
+          if (!filter) continue;
           const propertyId = resolveIdReference(filter.propertyId, propertyAliases);
-          const propertyDescriptor = propertyDescriptorById.get(propertyId);
-          return {
-            id: uniqueId(
-              safeId(filter.id, `${id}-filter-${filterIndex + 1}`),
-              seenFilterIds,
-              `${id}-filter-${filterIndex + 1}`
-            ),
-            propertyId,
-            operator: normalizeFilterOperator(filter.operator),
-            value: propertyDescriptor
-              ? normalizeFilterValueForProperty(propertyDescriptor, filter.value)
-              : normalizeFilterValue(filter.value)
-          };
-        })
-        .filter((filter) => propertyById.has(filter.propertyId));
-
-      const sortSources = Array.isArray(item.sorts) ? item.sorts.slice(0, databaseLimits.sortsPerView) : [];
-      const seenSortIds = new Set<string>();
-      const sorts = sortSources
-        .map((sort) => recordValue(sort))
-        .filter((sort): sort is Record<string, unknown> => Boolean(sort))
-        .map((sort, sortIndex): DatabaseSort => ({
+          if (!propertyById.has(propertyId)) continue;
+          filterSources.push({ filter, propertyId });
+          if (filterSources.length >= databaseLimits.filtersPerView) break;
+        }
+      }
+      const seenFilterIds = new Set<string>();
+      const filters = filterSources.map(({ filter, propertyId }, filterIndex): DatabaseFilter => {
+        const propertyDescriptor = propertyDescriptorById.get(propertyId);
+        return {
           id: uniqueId(
-            safeId(sort.id, `${id}-sort-${sortIndex + 1}`),
-            seenSortIds,
-            `${id}-sort-${sortIndex + 1}`
+            safeId(filter.id, `${id}-filter-${filterIndex + 1}`),
+            seenFilterIds,
+            `${id}-filter-${filterIndex + 1}`
           ),
-          propertyId: resolveIdReference(sort.propertyId, propertyAliases),
-          direction: sort.direction === "descending" ? "descending" : "ascending"
-        }))
-        .filter((sort) => propertyById.has(sort.propertyId));
+          propertyId,
+          operator: normalizeFilterOperator(filter.operator),
+          value: propertyDescriptor
+            ? normalizeFilterValueForProperty(propertyDescriptor, filter.value)
+            : normalizeFilterValue(filter.value)
+        };
+      });
+
+      const sortSources: Array<{ sort: Record<string, unknown>; propertyId: string }> = [];
+      if (Array.isArray(item.sorts)) {
+        for (const candidate of item.sorts) {
+          const sort = recordValue(candidate);
+          if (!sort) continue;
+          const propertyId = resolveIdReference(sort.propertyId, propertyAliases);
+          if (!propertyById.has(propertyId)) continue;
+          sortSources.push({ sort, propertyId });
+          if (sortSources.length >= databaseLimits.sortsPerView) break;
+        }
+      }
+      const seenSortIds = new Set<string>();
+      const sorts = sortSources.map(({ sort, propertyId }, sortIndex): DatabaseSort => ({
+        id: uniqueId(
+          safeId(sort.id, `${id}-sort-${sortIndex + 1}`),
+          seenSortIds,
+          `${id}-sort-${sortIndex + 1}`
+        ),
+        propertyId,
+        direction: sort.direction === "descending" ? "descending" : "ascending"
+      }));
 
       const requestedGroupPropertyId = resolveIdReference(item.groupPropertyId, propertyAliases);
       const groupProperty = propertyById.get(requestedGroupPropertyId);

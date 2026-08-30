@@ -548,3 +548,137 @@ test("databases below capacity still receive a recovery title property", () => {
     assert.deepEqual(getDatabaseData({ database }), database);
   }
 });
+
+test("invalid collection placeholders do not consume database capacity", () => {
+  const options = Array.from({ length: databaseLimits.optionsPerProperty }, (_, index) => ({
+    id: `option-${index + 1}`,
+    name: `Option ${index + 1}`,
+    color: "blue"
+  }));
+  const properties = [
+    {
+      id: "status",
+      name: "Status",
+      type: "select",
+      options: [null, ...options]
+    },
+    ...Array.from({ length: databaseLimits.properties - 1 }, (_, index) => ({
+      id: `field-${index + 1}`,
+      name: `Field ${index + 1}`,
+      type: "text",
+      options: []
+    }))
+  ];
+  const lastPropertyId = properties.at(-1).id;
+  const rows = Array.from({ length: databaseLimits.rows }, (_, index) => ({
+    id: `row-${index + 1}`,
+    values: {
+      status: options.at(-1).id,
+      [lastPropertyId]: `LAST-${index + 1}`
+    }
+  }));
+  const views = Array.from({ length: databaseLimits.views }, (_, index) => ({
+    id: `view-${index + 1}`,
+    name: `View ${index + 1}`,
+    type: "table",
+    filters: index === databaseLimits.views - 1
+      ? [{ id: "last-filter", propertyId: lastPropertyId, operator: "contains", value: "LAST" }]
+      : [],
+    sorts: index === databaseLimits.views - 1
+      ? [{ id: "last-sort", propertyId: lastPropertyId, direction: "descending" }]
+      : [],
+    groupPropertyId: null,
+    hiddenPropertyIds: index === databaseLimits.views - 1 ? [lastPropertyId] : []
+  }));
+  const source = {
+    title: "Placeholder capacity",
+    properties: [null, ...properties],
+    rows: [null, ...rows],
+    views: [null, ...views],
+    activeViewId: views.at(-1).id
+  };
+
+  const pair = normalizedPair(source);
+  assert.deepEqual(pair.browser, pair.server);
+  for (const database of Object.values(pair)) {
+    assert.equal(database.properties.length, databaseLimits.properties);
+    assert.equal(database.properties.filter((property) => property.type === "title").length, 0);
+    assert.equal(database.properties.at(-1).id, lastPropertyId);
+    assert.equal(database.properties[0].options.length, databaseLimits.optionsPerProperty);
+    assert.equal(database.properties[0].options.at(-1).id, options.at(-1).id);
+    assert.equal(database.rows.length, databaseLimits.rows);
+    assert.equal(database.rows.at(-1).id, rows.at(-1).id);
+    assert.equal(database.rows.at(-1).values.status, options.at(-1).id);
+    assert.equal(database.rows.at(-1).values[lastPropertyId], `LAST-${databaseLimits.rows}`);
+    assert.equal(database.views.length, databaseLimits.views);
+    assert.equal(database.activeViewId, views.at(-1).id);
+    assert.equal(database.views.at(-1).filters[0].propertyId, lastPropertyId);
+    assert.equal(database.views.at(-1).sorts[0].propertyId, lastPropertyId);
+    assert.deepEqual(database.views.at(-1).hiddenPropertyIds, [lastPropertyId]);
+    assert.deepEqual(normalizeDatabaseData(database), database);
+    assert.deepEqual(getDatabaseData({ database }), database);
+  }
+});
+
+test("stale and malformed view rules do not displace later valid rules", () => {
+  const validFilters = Array.from({ length: databaseLimits.filtersPerView }, (_, index) => ({
+    id: `valid-filter-${index + 1}`,
+    propertyId: "notes",
+    operator: "contains",
+    value: `KEEP-${index + 1}`
+  }));
+  const validSorts = Array.from({ length: databaseLimits.sortsPerView }, (_, index) => ({
+    id: `valid-sort-${index + 1}`,
+    propertyId: "notes",
+    direction: index % 2 === 0 ? "ascending" : "descending"
+  }));
+  const source = {
+    title: "Rule capacity",
+    properties: [
+      { id: "title", name: "Name", type: "title", options: [] },
+      { id: "notes", name: "Notes", type: "text", options: [] }
+    ],
+    rows: [],
+    views: [{
+      id: "view-1",
+      name: "Table",
+      type: "table",
+      filters: [
+        null,
+        ...Array.from({ length: databaseLimits.filtersPerView }, (_, index) => ({
+          id: `stale-filter-${index + 1}`,
+          propertyId: `missing-${index + 1}`,
+          operator: "contains",
+          value: "DROP"
+        })),
+        ...validFilters
+      ],
+      sorts: [
+        false,
+        ...Array.from({ length: databaseLimits.sortsPerView }, (_, index) => ({
+          id: `stale-sort-${index + 1}`,
+          propertyId: `missing-${index + 1}`,
+          direction: "ascending"
+        })),
+        ...validSorts
+      ],
+      groupPropertyId: null,
+      hiddenPropertyIds: []
+    }],
+    activeViewId: "view-1"
+  };
+
+  const pair = normalizedPair(source);
+  assert.deepEqual(pair.browser, pair.server);
+  for (const database of Object.values(pair)) {
+    const view = database.views[0];
+    assert.equal(view.filters.length, databaseLimits.filtersPerView);
+    assert.deepEqual(view.filters.map((filter) => filter.id), validFilters.map((filter) => filter.id));
+    assert.deepEqual(view.filters.map((filter) => filter.value), validFilters.map((filter) => filter.value));
+    assert.equal(view.sorts.length, databaseLimits.sortsPerView);
+    assert.deepEqual(view.sorts.map((sort) => sort.id), validSorts.map((sort) => sort.id));
+    assert.deepEqual(view.sorts.map((sort) => sort.direction), validSorts.map((sort) => sort.direction));
+    assert.deepEqual(normalizeDatabaseData(database), database);
+    assert.deepEqual(getDatabaseData({ database }), database);
+  }
+});

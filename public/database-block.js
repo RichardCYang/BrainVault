@@ -88,6 +88,18 @@ function recordValue(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 
+function collectRecordValues(value, limit) {
+  if (!Array.isArray(value) || limit <= 0) return [];
+  const records = [];
+  for (const item of value) {
+    const record = recordValue(item);
+    if (!record) continue;
+    records.push(record);
+    if (records.length >= limit) break;
+  }
+  return records;
+}
+
 function stringValue(value, fallback, maxLength) {
   return (typeof value === "string" ? value : fallback).slice(0, maxLength);
 }
@@ -190,10 +202,7 @@ function normalizeOptions(value, propertyId) {
   const aliases = createIdAliases();
   if (!Array.isArray(value)) return { options: [], aliases };
   const seen = new Set();
-  const descriptors = value
-    .slice(0, databaseLimits.optionsPerProperty)
-    .map(recordValue)
-    .filter(Boolean)
+  const descriptors = collectRecordValues(value, databaseLimits.optionsPerProperty)
     .map((item, index) => {
       const sourceId = sourceStringId(item.id);
       const requestedId = safeId(item.id, `${propertyId}-option-${index + 1}`);
@@ -480,13 +489,11 @@ function createDatabaseNormalizationFallback() {
 export function normalizeDatabaseData(value) {
   const source = recordValue(value) ?? {};
   const fallback = createDatabaseNormalizationFallback();
-  const propertySources = Array.isArray(source.properties) ? source.properties.slice(0, databaseLimits.properties) : [];
+  const propertySources = collectRecordValues(source.properties, databaseLimits.properties);
   const seenPropertyIds = new Set();
   const propertyAliases = createIdAliases();
   let titleSeen = false;
   const propertyDescriptors = propertySources
-    .map(recordValue)
-    .filter(Boolean)
     .map((item, index) => {
       const sourceId = sourceStringId(item.id);
       const requestedId = safeId(item.id, `property-${index + 1}`);
@@ -539,11 +546,9 @@ export function normalizeDatabaseData(value) {
     propertyDescriptors.map((descriptor) => [descriptor.property.id, descriptor])
   );
 
-  const rowSources = Array.isArray(source.rows) ? source.rows.slice(0, databaseLimits.rows) : [];
+  const rowSources = collectRecordValues(source.rows, databaseLimits.rows);
   const seenRowIds = new Set();
   const rows = rowSources
-    .map(recordValue)
-    .filter(Boolean)
     .map((item, index) => {
       const id = uniqueId(safeId(item.id, `row-${index + 1}`), seenRowIds, `row-${index + 1}`);
       const sourceValues = recordValue(item.values) ?? {};
@@ -555,12 +560,10 @@ export function normalizeDatabaseData(value) {
       return { id, values };
     });
 
-  const viewSources = Array.isArray(source.views) ? source.views.slice(0, databaseLimits.views) : [];
+  const viewSources = collectRecordValues(source.views, databaseLimits.views);
   const seenViewIds = new Set();
   const viewAliases = createIdAliases();
   const viewDescriptors = viewSources
-    .map(recordValue)
-    .filter(Boolean)
     .map((item, index) => {
       const sourceId = sourceStringId(item.id);
       const requestedId = safeId(item.id, `view-${index + 1}`);
@@ -568,43 +571,54 @@ export function normalizeDatabaseData(value) {
       registerGeneratedIdOwnership(viewAliases, item.id, requestedId, id);
       registerExactIdAlias(viewAliases, sourceId, id);
       const type = normalizeViewType(item.type);
-      const seenFilterIds = new Set();
-      const filters = (Array.isArray(item.filters) ? item.filters : [])
-        .slice(0, databaseLimits.filtersPerView)
-        .map(recordValue)
-        .filter(Boolean)
-        .map((filter, filterIndex) => {
+      const filterSources = [];
+      if (Array.isArray(item.filters)) {
+        for (const candidate of item.filters) {
+          const filter = recordValue(candidate);
+          if (!filter) continue;
           const propertyId = resolveIdReference(filter.propertyId, propertyAliases);
-          const propertyDescriptor = propertyDescriptorById.get(propertyId);
-          return {
-            id: uniqueId(
-              safeId(filter.id, `${id}-filter-${filterIndex + 1}`),
-              seenFilterIds,
-              `${id}-filter-${filterIndex + 1}`
-            ),
-            propertyId,
-            operator: databaseFilterOperators.includes(filter.operator) ? filter.operator : "contains",
-            value: propertyDescriptor
-              ? normalizeFilterValueForProperty(propertyDescriptor, filter.value)
-              : normalizeFilterValue(filter.value)
-          };
-        })
-        .filter((filter) => propertyById.has(filter.propertyId));
-      const seenSortIds = new Set();
-      const sorts = (Array.isArray(item.sorts) ? item.sorts : [])
-        .slice(0, databaseLimits.sortsPerView)
-        .map(recordValue)
-        .filter(Boolean)
-        .map((sort, sortIndex) => ({
+          if (!propertyById.has(propertyId)) continue;
+          filterSources.push({ filter, propertyId });
+          if (filterSources.length >= databaseLimits.filtersPerView) break;
+        }
+      }
+      const seenFilterIds = new Set();
+      const filters = filterSources.map(({ filter, propertyId }, filterIndex) => {
+        const propertyDescriptor = propertyDescriptorById.get(propertyId);
+        return {
           id: uniqueId(
-            safeId(sort.id, `${id}-sort-${sortIndex + 1}`),
-            seenSortIds,
-            `${id}-sort-${sortIndex + 1}`
+            safeId(filter.id, `${id}-filter-${filterIndex + 1}`),
+            seenFilterIds,
+            `${id}-filter-${filterIndex + 1}`
           ),
-          propertyId: resolveIdReference(sort.propertyId, propertyAliases),
-          direction: sort.direction === "descending" ? "descending" : "ascending"
-        }))
-        .filter((sort) => propertyById.has(sort.propertyId));
+          propertyId,
+          operator: databaseFilterOperators.includes(filter.operator) ? filter.operator : "contains",
+          value: propertyDescriptor
+            ? normalizeFilterValueForProperty(propertyDescriptor, filter.value)
+            : normalizeFilterValue(filter.value)
+        };
+      });
+      const sortSources = [];
+      if (Array.isArray(item.sorts)) {
+        for (const candidate of item.sorts) {
+          const sort = recordValue(candidate);
+          if (!sort) continue;
+          const propertyId = resolveIdReference(sort.propertyId, propertyAliases);
+          if (!propertyById.has(propertyId)) continue;
+          sortSources.push({ sort, propertyId });
+          if (sortSources.length >= databaseLimits.sortsPerView) break;
+        }
+      }
+      const seenSortIds = new Set();
+      const sorts = sortSources.map(({ sort, propertyId }, sortIndex) => ({
+        id: uniqueId(
+          safeId(sort.id, `${id}-sort-${sortIndex + 1}`),
+          seenSortIds,
+          `${id}-sort-${sortIndex + 1}`
+        ),
+        propertyId,
+        direction: sort.direction === "descending" ? "descending" : "ascending"
+      }));
       const requestedGroupPropertyId = resolveIdReference(item.groupPropertyId, propertyAliases);
       const groupProperty = propertyById.get(requestedGroupPropertyId);
       const view = {
