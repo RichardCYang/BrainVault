@@ -134,3 +134,179 @@ test("database generated IDs and filter values stay inside canonical limits", ()
     assert.equal(view.filters[1].value, null);
   }
 });
+
+test("database identifier repair preserves values, option references, and view state", () => {
+  const longPropertyId = "long-property-" + "p".repeat(databaseLimits.idLength);
+  const longOptionId = "long-option-" + "o".repeat(databaseLimits.idLength);
+  const canonicalLongPropertyId = longPropertyId.trim().slice(0, databaseLimits.idLength);
+  const canonicalLongOptionId = longOptionId.trim().slice(0, databaseLimits.idLength);
+  const source = {
+    title: "Repairable database",
+    properties: [
+      { id: " title ", name: "Name", type: "title", options: [] },
+      {
+        id: " status ",
+        name: "Status",
+        type: "select",
+        options: [
+          { id: " open ", name: "Open", color: "blue" },
+          { id: longOptionId, name: "Long option", color: "green" }
+        ]
+      },
+      { id: longPropertyId, name: "Long property", type: "text", options: [] }
+    ],
+    rows: [{
+      id: " row-1 ",
+      values: {
+        " title ": "KEEP TITLE",
+        " status ": " open ",
+        [longPropertyId]: "KEEP LONG VALUE"
+      }
+    }],
+    views: [
+      {
+        id: "table-view",
+        name: "Table",
+        type: "table",
+        filters: [],
+        sorts: [],
+        groupPropertyId: null,
+        hiddenPropertyIds: []
+      },
+      {
+        id: " board-view ",
+        name: "Board",
+        type: "board",
+        filters: [
+          { id: " filter-1 ", propertyId: " status ", operator: "equals", value: " open " },
+          { id: "filter-2", propertyId: " status ", operator: "equals", value: longOptionId }
+        ],
+        sorts: [{ id: " sort-1 ", propertyId: longPropertyId, direction: "descending" }],
+        groupPropertyId: " status ",
+        hiddenPropertyIds: [" status ", longPropertyId]
+      }
+    ],
+    activeViewId: " board-view "
+  };
+
+  const pair = normalizedPair(source);
+  assert.deepEqual(pair.browser, pair.server);
+  for (const database of Object.values(pair)) {
+    const status = database.properties.find((property) => property.id === "status");
+    assert.ok(status);
+    assert.deepEqual(status.options.map((option) => option.id), ["open", canonicalLongOptionId]);
+    assert.equal(database.rows[0].values.title, "KEEP TITLE");
+    assert.equal(database.rows[0].values.status, "open");
+    assert.equal(database.rows[0].values[canonicalLongPropertyId], "KEEP LONG VALUE");
+
+    const board = database.views.find((view) => view.id === "board-view");
+    assert.ok(board);
+    assert.equal(database.activeViewId, "board-view");
+    assert.deepEqual(board.filters.map((filter) => filter.propertyId), ["status", "status"]);
+    assert.deepEqual(board.filters.map((filter) => filter.value), ["open", canonicalLongOptionId]);
+    assert.equal(board.sorts[0].propertyId, canonicalLongPropertyId);
+    assert.equal(board.groupPropertyId, "status");
+    assert.deepEqual(board.hiddenPropertyIds, ["status", canonicalLongPropertyId]);
+  }
+});
+
+test("missing database IDs normalize deterministically and identically in browser and server", () => {
+  const source = {
+    title: "Deterministic repair",
+    properties: [
+      { name: "Name", type: "title", options: [] },
+      {
+        name: "Status",
+        type: "select",
+        options: [{ name: "Open", color: "blue" }]
+      }
+    ],
+    rows: [{
+      values: {
+        "property-1": "KEEP GENERATED TITLE",
+        "property-2": "property-2-option-1"
+      }
+    }],
+    views: [{
+      name: "Board",
+      type: "board",
+      filters: [{ propertyId: "property-2", operator: "equals", value: "property-2-option-1" }],
+      sorts: [{ propertyId: "property-1", direction: "ascending" }],
+      groupPropertyId: "property-2",
+      hiddenPropertyIds: ["property-2"]
+    }],
+    activeViewId: "view-1"
+  };
+
+  const firstBrowser = normalizeDatabaseData(source);
+  const secondBrowser = normalizeDatabaseData(source);
+  const server = getDatabaseData({ database: source });
+  assert.deepEqual(firstBrowser, secondBrowser);
+  assert.deepEqual(firstBrowser, server);
+  assert.deepEqual(firstBrowser.properties.map((property) => property.id), ["property-1", "property-2"]);
+  assert.equal(firstBrowser.properties[1].options[0].id, "property-2-option-1");
+  assert.equal(firstBrowser.rows[0].id, "row-1");
+  assert.equal(firstBrowser.rows[0].values["property-1"], "KEEP GENERATED TITLE");
+  assert.equal(firstBrowser.rows[0].values["property-2"], "property-2-option-1");
+  assert.equal(firstBrowser.views[0].id, "view-1");
+  assert.equal(firstBrowser.activeViewId, "view-1");
+});
+
+test("browser fallback view identifiers remain stable during legacy repair", () => {
+  const source = {
+    title: "No views",
+    properties: [{ id: "title", name: "Name", type: "title", options: [] }],
+    rows: [{ id: "row-1", values: { title: "Keep me" } }],
+    views: [],
+    activeViewId: " table-view "
+  };
+
+  const first = normalizeDatabaseData(source);
+  const second = normalizeDatabaseData(source);
+  assert.deepEqual(first, second);
+  assert.deepEqual(first.views.map((view) => view.id), ["table-view", "board-view"]);
+  assert.equal(first.activeViewId, "table-view");
+  assert.equal(first.rows[0].values.title, "Keep me");
+});
+
+test("reserved object-key IDs are repaired without prototype mutation or data loss", () => {
+  const sourceValues = JSON.parse('{"title":"Row","__proto__":["constructor"]}');
+  const source = {
+    title: "Reserved identifiers",
+    properties: [
+      { id: "title", name: "Name", type: "title", options: [] },
+      {
+        id: "__proto__",
+        name: "Tags",
+        type: "multi_select",
+        options: [{ id: "constructor", name: "Keep", color: "blue" }]
+      }
+    ],
+    rows: [{ id: "row-1", values: sourceValues }],
+    views: [{
+      id: "prototype",
+      name: "Table",
+      type: "table",
+      filters: [{ propertyId: "__proto__", operator: "equals", value: "constructor" }],
+      sorts: [{ propertyId: "__proto__", direction: "ascending" }],
+      groupPropertyId: null,
+      hiddenPropertyIds: ["__proto__"]
+    }],
+    activeViewId: "prototype"
+  };
+
+  const pair = normalizedPair(source);
+  assert.deepEqual(pair.browser, pair.server);
+  for (const database of Object.values(pair)) {
+    assert.deepEqual(database.properties.map((property) => property.id), ["title", "property-2"]);
+    assert.equal(database.properties[1].options[0].id, "property-2-option-1");
+    assert.deepEqual(database.rows[0].values["property-2"], ["property-2-option-1"]);
+    assert.equal(Object.getPrototypeOf(database.rows[0].values), Object.prototype);
+    assert.equal(database.views[0].id, "view-1");
+    assert.equal(database.views[0].filters[0].propertyId, "property-2");
+    assert.equal(database.views[0].filters[0].value, "property-2-option-1");
+    assert.equal(database.views[0].sorts[0].propertyId, "property-2");
+    assert.deepEqual(database.views[0].hiddenPropertyIds, ["property-2"]);
+    assert.equal(database.activeViewId, "view-1");
+  }
+});

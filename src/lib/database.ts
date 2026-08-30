@@ -40,6 +40,7 @@ export const databaseFilterOperators = [
   "checked",
   "unchecked"
 ] as const;
+const unsafeDatabaseIds = new Set(["__proto__", "constructor", "prototype"]);
 export type DatabaseFilterOperator = (typeof databaseFilterOperators)[number];
 
 export type DatabaseOption = {
@@ -123,7 +124,9 @@ function stringValue(value: unknown, fallback: string, maxLength: number) {
 
 function safeId(value: unknown, fallback: string) {
   const id = typeof value === "string" ? value.trim().slice(0, databaseLimits.idLength) : "";
-  return id || fallback.slice(0, databaseLimits.idLength);
+  if (id && !unsafeDatabaseIds.has(id)) return id;
+  const fallbackId = fallback.slice(0, databaseLimits.idLength);
+  return fallbackId && !unsafeDatabaseIds.has(fallbackId) ? fallbackId : "";
 }
 
 function uniqueId(requested: string, seen: Set<string>, fallbackPrefix: string) {
@@ -137,6 +140,43 @@ function uniqueId(requested: string, seen: Set<string>, fallbackPrefix: string) 
   }
   seen.add(id);
   return id;
+}
+
+type DatabaseIdAliases = {
+  exact: Map<string, string>;
+  normalized: Map<string, string>;
+};
+
+function createIdAliases(): DatabaseIdAliases {
+  return { exact: new Map(), normalized: new Map() };
+}
+
+function sourceStringId(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function registerExactIdAlias(aliases: DatabaseIdAliases, sourceId: string | null, canonicalId: string) {
+  if (sourceId && !aliases.exact.has(sourceId)) aliases.exact.set(sourceId, canonicalId);
+}
+
+function registerNormalizedIdAlias(
+  aliases: DatabaseIdAliases,
+  requestedId: string,
+  canonicalId: string
+) {
+  for (const alias of [requestedId, canonicalId]) {
+    if (!alias || aliases.exact.has(alias) || aliases.normalized.has(alias)) continue;
+    aliases.normalized.set(alias, canonicalId);
+  }
+}
+
+function resolveIdReference(value: unknown, aliases: DatabaseIdAliases) {
+  if (typeof value !== "string") return "";
+  const exact = aliases.exact.get(value);
+  if (exact !== undefined) return exact;
+  const normalized = safeId(value, "");
+  if (!normalized) return "";
+  return aliases.exact.get(normalized) ?? aliases.normalized.get(normalized) ?? normalized;
 }
 
 function normalizePropertyType(value: unknown): DatabasePropertyType {
@@ -157,25 +197,36 @@ function normalizeOptionColor(value: unknown, index: number): DatabaseOptionColo
     : databaseOptionColors[index % databaseOptionColors.length];
 }
 
-function normalizeOptions(value: unknown, propertyId: string): DatabaseOption[] {
-  if (!Array.isArray(value)) return [];
+type NormalizedDatabaseOptions = {
+  options: DatabaseOption[];
+  aliases: DatabaseIdAliases;
+};
+
+function normalizeOptions(value: unknown, propertyId: string): NormalizedDatabaseOptions {
+  const aliases = createIdAliases();
+  if (!Array.isArray(value)) return { options: [], aliases };
   const seen = new Set<string>();
-  return value
+  const descriptors = value
     .slice(0, databaseLimits.optionsPerProperty)
-    .map((item, index) => recordValue(item))
+    .map((item) => recordValue(item))
     .filter((item): item is Record<string, unknown> => Boolean(item))
     .map((item, index) => {
-      const id = uniqueId(
-        safeId(item.id, `${propertyId}-option-${index + 1}`),
-        seen,
-        `${propertyId}-option-${index + 1}`
-      );
-      return {
+      const sourceId = sourceStringId(item.id);
+      const requestedId = safeId(item.id, `${propertyId}-option-${index + 1}`);
+      const id = uniqueId(requestedId, seen, `${propertyId}-option-${index + 1}`);
+      registerExactIdAlias(aliases, sourceId, id);
+      const option: DatabaseOption = {
         id,
         name: stringValue(item.name, `Option ${index + 1}`, databaseLimits.optionNameLength),
         color: normalizeOptionColor(item.color, index)
       };
+      return { sourceId, requestedId, option };
     });
+
+  for (const descriptor of descriptors) {
+    registerNormalizedIdAlias(aliases, descriptor.requestedId, descriptor.option.id);
+  }
+  return { options: descriptors.map((descriptor) => descriptor.option), aliases };
 }
 
 function normalizePropertyValue(property: DatabaseProperty, value: unknown): DatabaseValue {
@@ -219,6 +270,52 @@ function normalizeFilterValue(value: unknown): string | number | boolean | null 
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (typeof value === "string") return value.slice(0, databaseLimits.textLength);
   return null;
+}
+
+type DatabasePropertyDescriptor = {
+  sourceId: string | null;
+  requestedId: string;
+  property: DatabaseProperty;
+  optionAliases: DatabaseIdAliases;
+};
+
+function readSourcePropertyValue(
+  sourceValues: Record<string, unknown>,
+  descriptor: DatabasePropertyDescriptor,
+  propertyAliases: DatabaseIdAliases
+) {
+  const candidates = [descriptor.sourceId, descriptor.requestedId, descriptor.property.id];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (!Object.prototype.hasOwnProperty.call(sourceValues, candidate)) continue;
+    if (resolveIdReference(candidate, propertyAliases) !== descriptor.property.id) continue;
+    return sourceValues[candidate];
+  }
+  return undefined;
+}
+
+function normalizeReferencedPropertyValue(descriptor: DatabasePropertyDescriptor, value: unknown) {
+  if (descriptor.property.type === "select" && typeof value === "string") {
+    return normalizePropertyValue(descriptor.property, resolveIdReference(value, descriptor.optionAliases));
+  }
+  if (descriptor.property.type === "multi_select" && Array.isArray(value)) {
+    const remapped = value.map((item) =>
+      typeof item === "string" ? resolveIdReference(item, descriptor.optionAliases) : item
+    );
+    return normalizePropertyValue(descriptor.property, remapped);
+  }
+  return normalizePropertyValue(descriptor.property, value);
+}
+
+function normalizeFilterValueForProperty(descriptor: DatabasePropertyDescriptor, value: unknown) {
+  if ((descriptor.property.type === "select" || descriptor.property.type === "multi_select")
+    && typeof value === "string") {
+    const remapped = resolveIdReference(value, descriptor.optionAliases);
+    if (descriptor.property.options.some((option) => option.id === remapped)) return remapped;
+  }
+  return normalizeFilterValue(value);
 }
 
 export function createDefaultDatabaseData(): DatabaseData {
@@ -276,41 +373,56 @@ export function getDatabaseData(metadata: unknown): DatabaseData {
     ? source.properties.slice(0, databaseLimits.properties)
     : [];
   const seenPropertyIds = new Set<string>();
+  const propertyAliases = createIdAliases();
   let titlePropertySeen = false;
-  const properties = propertySources
+  const propertyDescriptors: DatabasePropertyDescriptor[] = propertySources
     .map((item) => recordValue(item))
     .filter((item): item is Record<string, unknown> => Boolean(item))
     .map((item, index) => {
-      const id = uniqueId(
-        safeId(item.id, `property-${index + 1}`),
-        seenPropertyIds,
-        `property-${index + 1}`
-      );
+      const sourceId = sourceStringId(item.id);
+      const requestedId = safeId(item.id, `property-${index + 1}`);
+      const id = uniqueId(requestedId, seenPropertyIds, `property-${index + 1}`);
+      registerExactIdAlias(propertyAliases, sourceId, id);
       let type = normalizePropertyType(item.type);
       if (type === "title") {
         if (titlePropertySeen) type = "text";
         else titlePropertySeen = true;
       }
-      const options = type === "select" || type === "multi_select" ? normalizeOptions(item.options, id) : [];
-      return {
+      const normalizedOptions = type === "select" || type === "multi_select"
+        ? normalizeOptions(item.options, id)
+        : { options: [], aliases: createIdAliases() };
+      const property: DatabaseProperty = {
         id,
-        name: stringValue(item.name, type === "title" ? "Name" : `Property ${index + 1}`, databaseLimits.propertyNameLength),
+        name: stringValue(
+          item.name,
+          type === "title" ? "Name" : `Property ${index + 1}`,
+          databaseLimits.propertyNameLength
+        ),
         type,
-        options
+        options: normalizedOptions.options
       };
+      return { sourceId, requestedId, property, optionAliases: normalizedOptions.aliases };
     });
 
   if (!titlePropertySeen) {
-    let id = "title";
-    let attempt = 1;
-    while (seenPropertyIds.has(id)) {
-      id = `title-${attempt}`;
-      attempt += 1;
-    }
-    properties.unshift({ id, name: "Name", type: "title", options: [] });
+    const id = uniqueId("title", seenPropertyIds, "title");
+    propertyDescriptors.unshift({
+      sourceId: null,
+      requestedId: id,
+      property: { id, name: "Name", type: "title", options: [] },
+      optionAliases: createIdAliases()
+    });
   }
 
+  for (const descriptor of propertyDescriptors) {
+    registerNormalizedIdAlias(propertyAliases, descriptor.requestedId, descriptor.property.id);
+  }
+  const properties = propertyDescriptors.map((descriptor) => descriptor.property);
   const propertyById = new Map(properties.map((property) => [property.id, property]));
+  const propertyDescriptorById = new Map(
+    propertyDescriptors.map((descriptor) => [descriptor.property.id, descriptor])
+  );
+
   const rowSources = Array.isArray(source.rows) ? source.rows.slice(0, databaseLimits.rows) : [];
   const seenRowIds = new Set<string>();
   const rows = rowSources
@@ -320,17 +432,24 @@ export function getDatabaseData(metadata: unknown): DatabaseData {
       const id = uniqueId(safeId(item.id, `row-${rowIndex + 1}`), seenRowIds, `row-${rowIndex + 1}`);
       const sourceValues = recordValue(item.values) ?? {};
       const values: Record<string, DatabaseValue> = {};
-      for (const property of properties) values[property.id] = normalizePropertyValue(property, sourceValues[property.id]);
+      for (const descriptor of propertyDescriptors) {
+        const sourceValue = readSourcePropertyValue(sourceValues, descriptor, propertyAliases);
+        values[descriptor.property.id] = normalizeReferencedPropertyValue(descriptor, sourceValue);
+      }
       return { id, values };
     });
 
   const viewSources = Array.isArray(source.views) ? source.views.slice(0, databaseLimits.views) : [];
   const seenViewIds = new Set<string>();
-  const views = viewSources
+  const viewAliases = createIdAliases();
+  const viewDescriptors = viewSources
     .map((item) => recordValue(item))
     .filter((item): item is Record<string, unknown> => Boolean(item))
     .map((item, viewIndex) => {
-      const id = uniqueId(safeId(item.id, `view-${viewIndex + 1}`), seenViewIds, `view-${viewIndex + 1}`);
+      const sourceId = sourceStringId(item.id);
+      const requestedId = safeId(item.id, `view-${viewIndex + 1}`);
+      const id = uniqueId(requestedId, seenViewIds, `view-${viewIndex + 1}`);
+      registerExactIdAlias(viewAliases, sourceId, id);
       const type = normalizeViewType(item.type);
       const filterSources = Array.isArray(item.filters)
         ? item.filters.slice(0, databaseLimits.filtersPerView)
@@ -339,16 +458,22 @@ export function getDatabaseData(metadata: unknown): DatabaseData {
       const filters = filterSources
         .map((filter) => recordValue(filter))
         .filter((filter): filter is Record<string, unknown> => Boolean(filter))
-        .map((filter, filterIndex) => ({
-          id: uniqueId(
-            safeId(filter.id, `${id}-filter-${filterIndex + 1}`),
-            seenFilterIds,
-            `${id}-filter-${filterIndex + 1}`
-          ),
-          propertyId: safeId(filter.propertyId, ""),
-          operator: normalizeFilterOperator(filter.operator),
-          value: normalizeFilterValue(filter.value)
-        }))
+        .map((filter, filterIndex): DatabaseFilter => {
+          const propertyId = resolveIdReference(filter.propertyId, propertyAliases);
+          const propertyDescriptor = propertyDescriptorById.get(propertyId);
+          return {
+            id: uniqueId(
+              safeId(filter.id, `${id}-filter-${filterIndex + 1}`),
+              seenFilterIds,
+              `${id}-filter-${filterIndex + 1}`
+            ),
+            propertyId,
+            operator: normalizeFilterOperator(filter.operator),
+            value: propertyDescriptor
+              ? normalizeFilterValueForProperty(propertyDescriptor, filter.value)
+              : normalizeFilterValue(filter.value)
+          };
+        })
         .filter((filter) => propertyById.has(filter.propertyId));
 
       const sortSources = Array.isArray(item.sorts) ? item.sorts.slice(0, databaseLimits.sortsPerView) : [];
@@ -356,38 +481,50 @@ export function getDatabaseData(metadata: unknown): DatabaseData {
       const sorts = sortSources
         .map((sort) => recordValue(sort))
         .filter((sort): sort is Record<string, unknown> => Boolean(sort))
-        .map((sort, sortIndex) => ({
+        .map((sort, sortIndex): DatabaseSort => ({
           id: uniqueId(
             safeId(sort.id, `${id}-sort-${sortIndex + 1}`),
             seenSortIds,
             `${id}-sort-${sortIndex + 1}`
           ),
-          propertyId: safeId(sort.propertyId, ""),
-          direction: sort.direction === "descending" ? "descending" as const : "ascending" as const
+          propertyId: resolveIdReference(sort.propertyId, propertyAliases),
+          direction: sort.direction === "descending" ? "descending" : "ascending"
         }))
         .filter((sort) => propertyById.has(sort.propertyId));
 
-      const requestedGroupPropertyId = safeId(item.groupPropertyId, "");
+      const requestedGroupPropertyId = resolveIdReference(item.groupPropertyId, propertyAliases);
       const groupProperty = propertyById.get(requestedGroupPropertyId);
       const groupPropertyId = type === "board" && groupProperty && ["select", "checkbox"].includes(groupProperty.type)
         ? groupProperty.id
         : null;
 
       const hiddenPropertyIds = Array.isArray(item.hiddenPropertyIds)
-        ? [...new Set(item.hiddenPropertyIds.filter((propertyId): propertyId is string => typeof propertyId === "string"))]
+        ? [...new Set(item.hiddenPropertyIds
+          .filter((propertyId): propertyId is string => typeof propertyId === "string")
+          .map((propertyId) => resolveIdReference(propertyId, propertyAliases)))]
           .filter((propertyId) => propertyById.has(propertyId) && propertyById.get(propertyId)?.type !== "title")
         : [];
 
-      return {
+      const view: DatabaseView = {
         id,
-        name: stringValue(item.name, type === "board" ? "Board" : type === "list" ? "List" : "Table", databaseLimits.viewNameLength),
+        name: stringValue(
+          item.name,
+          type === "board" ? "Board" : type === "list" ? "List" : "Table",
+          databaseLimits.viewNameLength
+        ),
         type,
         filters,
         sorts,
         groupPropertyId,
         hiddenPropertyIds
       };
+      return { sourceId, requestedId, view };
     });
+
+  for (const descriptor of viewDescriptors) {
+    registerNormalizedIdAlias(viewAliases, descriptor.requestedId, descriptor.view.id);
+  }
+  const views = viewDescriptors.map((descriptor) => descriptor.view);
 
   const fallback = createDefaultDatabaseData();
   const fallbackViews = fallback.views.map((view) => {
@@ -407,14 +544,15 @@ export function getDatabaseData(metadata: unknown): DatabaseData {
     };
   });
   const normalizedViews = views.length ? views : fallbackViews;
-  const activeViewId = normalizedViews.some((view) => view.id === source.activeViewId)
-    ? String(source.activeViewId)
+  const requestedActiveViewId = resolveIdReference(source.activeViewId, viewAliases);
+  const activeViewId = normalizedViews.some((view) => view.id === requestedActiveViewId)
+    ? requestedActiveViewId
     : normalizedViews[0].id;
 
   return {
     title: stringValue(source.title, fallback.title, databaseLimits.titleLength),
     properties,
-    rows: rows.length ? rows : [],
+    rows,
     views: normalizedViews,
     activeViewId
   };
