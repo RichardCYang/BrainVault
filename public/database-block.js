@@ -19,6 +19,63 @@ export const databasePropertyTypes = ["title", "text", "number", "select", "mult
 export const databaseViewTypes = ["table", "board", "list"];
 const databaseOptionColors = ["gray", "blue", "purple", "green", "yellow", "red", "pink", "orange"];
 const databaseFilterOperators = ["contains", "equals", "is_empty", "is_not_empty", "checked", "unchecked"];
+const databaseToolbarPanels = [
+  { selector: ".database-properties-panel", reopenKey: "openProperties" },
+  { selector: ".database-filter-panel", reopenKey: "openFilters" },
+  { selector: ".database-sort-panel", reopenKey: "openSorts" },
+  { selector: ".database-view-options-panel", reopenKey: "openViewOptions" },
+  { selector: ".database-search-panel" },
+  { selector: ".database-new-menu" }
+];
+const openDatabaseToolbarPanelSelector = databaseToolbarPanels
+  .map(({ selector }) => `${selector}[open]`)
+  .join(",");
+// Outside pointer interaction can blur a property field whose change handler
+// rebuilds the editor. Keep the dismissal authoritative across that rebuild.
+const databaseToolbarLightDismissSuppressions = new WeakMap();
+
+function closestMatchingElement(target, selector) {
+  return target && typeof target.closest === "function" ? target.closest(selector) : null;
+}
+
+function databaseToolbarPanelEntry(panel) {
+  return databaseToolbarPanels.find(({ selector }) => panel?.matches?.(selector)) ?? null;
+}
+
+function markDatabaseToolbarLightDismiss(panel) {
+  const row = panel?.closest?.(".editor-block-row");
+  const entry = databaseToolbarPanelEntry(panel);
+  if (!row || !entry?.reopenKey) return;
+  const suppressions = databaseToolbarLightDismissSuppressions.get(row) ?? new Set();
+  suppressions.add(entry.reopenKey);
+  databaseToolbarLightDismissSuppressions.set(row, suppressions);
+  setTimeout(() => {
+    const current = databaseToolbarLightDismissSuppressions.get(row);
+    if (!current) return;
+    current.delete(entry.reopenKey);
+    if (!current.size) databaseToolbarLightDismissSuppressions.delete(row);
+  }, 0);
+}
+
+function consumeDatabaseToolbarLightDismiss(row, reopenKey) {
+  const suppressions = databaseToolbarLightDismissSuppressions.get(row);
+  if (!suppressions?.delete(reopenKey)) return false;
+  if (!suppressions.size) databaseToolbarLightDismissSuppressions.delete(row);
+  return true;
+}
+
+export function dismissDatabaseToolbarPopovers(root, eventTarget = null) {
+  if (!root || typeof root.querySelectorAll !== "function") return false;
+  const containingOpenPanel = closestMatchingElement(eventTarget, openDatabaseToolbarPanelSelector);
+  let dismissed = false;
+  root.querySelectorAll(openDatabaseToolbarPanelSelector).forEach((panel) => {
+    if (panel === containingOpenPanel) return;
+    markDatabaseToolbarLightDismiss(panel);
+    panel.removeAttribute("open");
+    dismissed = true;
+  });
+  return dismissed;
+}
 
 function createId(prefix) {
   const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -1282,16 +1339,22 @@ export function createDatabaseEditor(row, value, { onDirty = () => {} } = {}) {
   const replaceEditor = (focus = {}) => {
     const host = row.querySelector(".block-editor-host");
     if (!host) return;
+    const reopen = {
+      openProperties: Boolean(focus.openProperties) && !consumeDatabaseToolbarLightDismiss(row, "openProperties"),
+      openFilters: Boolean(focus.openFilters) && !consumeDatabaseToolbarLightDismiss(row, "openFilters"),
+      openSorts: Boolean(focus.openSorts) && !consumeDatabaseToolbarLightDismiss(row, "openSorts"),
+      openViewOptions: Boolean(focus.openViewOptions) && !consumeDatabaseToolbarLightDismiss(row, "openViewOptions")
+    };
     const next = createDatabaseEditor(row, database, { onDirty });
     host.replaceChildren(next);
     onDirty();
     requestAnimationFrame(() => {
-      if (focus.openProperties) next.querySelector(".database-properties-panel")?.setAttribute("open", "");
-      if (focus.openFilters) next.querySelector(".database-filter-panel")?.setAttribute("open", "");
-      if (focus.openSorts) next.querySelector(".database-sort-panel")?.setAttribute("open", "");
-      if (focus.openViewOptions) next.querySelector(".database-view-options-panel")?.setAttribute("open", "");
-      if (focus.focusPropertyId) next.querySelector(`.database-property-item[data-property-id="${CSS.escape(focus.focusPropertyId)}"] .database-property-name`)?.focus();
-      else if (focus.focusViewName) next.querySelector(".database-view-name")?.focus();
+      if (reopen.openProperties) next.querySelector(".database-properties-panel")?.setAttribute("open", "");
+      if (reopen.openFilters) next.querySelector(".database-filter-panel")?.setAttribute("open", "");
+      if (reopen.openSorts) next.querySelector(".database-sort-panel")?.setAttribute("open", "");
+      if (reopen.openViewOptions) next.querySelector(".database-view-options-panel")?.setAttribute("open", "");
+      if (focus.focusPropertyId && reopen.openProperties) next.querySelector(`.database-property-item[data-property-id="${CSS.escape(focus.focusPropertyId)}"] .database-property-name`)?.focus();
+      else if (focus.focusViewName && reopen.openViewOptions) next.querySelector(".database-view-name")?.focus();
       else if (focus.focusRowId) next.querySelector(`[data-database-row-id="${CSS.escape(focus.focusRowId)}"] .database-value-input`)?.focus();
     });
   };

@@ -25,6 +25,13 @@ describe("Database block UI", () => {
     expect(styles).toContain('.database-select-chip[data-option-color="blue"]');
   });
 
+  it("light-dismisses database toolbar popovers without reopening them during blur-driven rerenders", () => {
+    expect(client).toContain("export function dismissDatabaseToolbarPopovers");
+    expect(client).toContain("consumeDatabaseToolbarLightDismiss");
+    expect(app).toContain('document.addEventListener("pointerdown", lightDismissDatabaseToolbarPopovers, { capture: true });');
+    expect(app).toContain('document.addEventListener("click", lightDismissDatabaseToolbarPopovers, { capture: true });');
+  });
+
   it("inherits BrainVault's light sky-blue theme without changing the transparent layout", () => {
     expect(styles).toMatch(/\.database-block-editor\s*\{[^}]*--database-ink:\s*var\(--ink\);[^}]*--database-accent:\s*var\(--accent\);[^}]*--database-blue:\s*var\(--focus\);/s);
     expect(styles).toMatch(/\.database-view-tab\[aria-pressed="true"\]::after\s*\{[^}]*background:\s*var\(--database-blue\);/s);

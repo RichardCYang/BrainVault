@@ -25,6 +25,7 @@ import {
 import {
   createDatabaseEditor,
   createDefaultDatabaseData,
+  dismissDatabaseToolbarPopovers,
   extractDatabaseData,
   hydrateDatabaseUrlPreviews,
   normalizeDatabaseData,
@@ -20159,6 +20160,14 @@ elements.inlineToolbar.addEventListener("click", (event) => {
   if (!button) return;
   applyInlineFormat(button.dataset.format, button.dataset.align ?? button.dataset.color ?? "");
 });
+
+const lightDismissDatabaseToolbarPopovers = (event) => {
+  dismissDatabaseToolbarPopovers(elements.blockList, event.target);
+};
+// Pointer capture wins before focus/change-driven editor rebuilds; click capture
+// also covers keyboard or programmatic activation paths that have no pointerdown.
+document.addEventListener("pointerdown", lightDismissDatabaseToolbarPopovers, { capture: true });
+document.addEventListener("click", lightDismissDatabaseToolbarPopovers, { capture: true });
 
 document.addEventListener("click", (event) => {
   const pageActionsTrigger = event.target.closest("#page-actions-button");
