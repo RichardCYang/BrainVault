@@ -12,7 +12,8 @@ export const databaseLimits = {
   filtersPerView: 8,
   sortsPerView: 8,
   textLength: 2000,
-  urlLength: 2000
+  urlLength: 2000,
+  idLength: 64
 };
 
 export const databasePropertyTypes = ["title", "text", "number", "select", "multi_select", "checkbox", "date", "url"];
@@ -79,7 +80,7 @@ export function dismissDatabaseToolbarPopovers(root, eventTarget = null) {
 
 function createId(prefix) {
   const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return `${prefix}-${random}`.slice(0, 64);
+  return `${prefix}-${random}`.slice(0, databaseLimits.idLength);
 }
 
 function recordValue(value) {
@@ -91,16 +92,16 @@ function stringValue(value, fallback, maxLength) {
 }
 
 function safeId(value, fallback) {
-  const id = typeof value === "string" ? value.trim().slice(0, 64) : "";
-  return id || fallback;
+  const id = typeof value === "string" ? value.trim().slice(0, databaseLimits.idLength) : "";
+  return id || fallback.slice(0, databaseLimits.idLength);
 }
 
 function uniqueId(value, seen, fallbackPrefix) {
-  let id = value;
+  let id = value.slice(0, databaseLimits.idLength);
   let attempt = 1;
   while (seen.has(id)) {
     const suffix = `-${attempt}`;
-    const prefixLength = Math.max(0, 64 - suffix.length);
+    const prefixLength = Math.max(0, databaseLimits.idLength - suffix.length);
     id = `${fallbackPrefix.slice(0, prefixLength)}${suffix}`;
     attempt += 1;
   }
@@ -255,6 +256,13 @@ function databaseOptionValidationMessage(error) {
   }
 }
 
+function normalizeFilterValue(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") return value.slice(0, databaseLimits.textLength);
+  return null;
+}
+
 function normalizePropertyValue(property, value) {
   if (property.type === "number") {
     if (value === null || value === "" || value === undefined) return null;
@@ -381,25 +389,33 @@ export function normalizeDatabaseData(value) {
     .map((item, index) => {
       const id = uniqueId(safeId(item.id, createId("view")), seenViewIds, `view-${index + 1}`);
       const type = normalizeViewType(item.type);
+      const seenFilterIds = new Set();
       const filters = (Array.isArray(item.filters) ? item.filters : [])
         .slice(0, databaseLimits.filtersPerView)
         .map(recordValue)
         .filter(Boolean)
         .map((filter, filterIndex) => ({
-          id: safeId(filter.id, `${id}-filter-${filterIndex + 1}`),
+          id: uniqueId(
+            safeId(filter.id, `${id}-filter-${filterIndex + 1}`),
+            seenFilterIds,
+            `${id}-filter-${filterIndex + 1}`
+          ),
           propertyId: safeId(filter.propertyId, ""),
           operator: databaseFilterOperators.includes(filter.operator) ? filter.operator : "contains",
-          value: typeof filter.value === "boolean" || typeof filter.value === "number" || typeof filter.value === "string"
-            ? filter.value
-            : null
+          value: normalizeFilterValue(filter.value)
         }))
         .filter((filter) => propertyById.has(filter.propertyId));
+      const seenSortIds = new Set();
       const sorts = (Array.isArray(item.sorts) ? item.sorts : [])
         .slice(0, databaseLimits.sortsPerView)
         .map(recordValue)
         .filter(Boolean)
         .map((sort, sortIndex) => ({
-          id: safeId(sort.id, `${id}-sort-${sortIndex + 1}`),
+          id: uniqueId(
+            safeId(sort.id, `${id}-sort-${sortIndex + 1}`),
+            seenSortIds,
+            `${id}-sort-${sortIndex + 1}`
+          ),
           propertyId: safeId(sort.propertyId, ""),
           direction: sort.direction === "descending" ? "descending" : "ascending"
         }))
@@ -421,7 +437,23 @@ export function normalizeDatabaseData(value) {
       };
     });
 
-  const normalizedViews = views.length ? views : fallback.views;
+  const fallbackViews = fallback.views.map((view) => {
+    const requestedGroupProperty = view.groupPropertyId
+      ? propertyById.get(view.groupPropertyId)
+      : null;
+    return {
+      ...view,
+      groupPropertyId: view.type === "board"
+        && requestedGroupProperty
+        && ["select", "checkbox"].includes(requestedGroupProperty.type)
+        ? requestedGroupProperty.id
+        : null,
+      hiddenPropertyIds: view.hiddenPropertyIds.filter(
+        (propertyId) => propertyById.has(propertyId) && propertyById.get(propertyId)?.type !== "title"
+      )
+    };
+  });
+  const normalizedViews = views.length ? views : fallbackViews;
   const activeViewId = normalizedViews.some((view) => view.id === source.activeViewId)
     ? source.activeViewId
     : normalizedViews[0].id;

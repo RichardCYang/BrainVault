@@ -123,11 +123,11 @@ function stringValue(value: unknown, fallback: string, maxLength: number) {
 
 function safeId(value: unknown, fallback: string) {
   const id = typeof value === "string" ? value.trim().slice(0, databaseLimits.idLength) : "";
-  return id || fallback;
+  return id || fallback.slice(0, databaseLimits.idLength);
 }
 
 function uniqueId(requested: string, seen: Set<string>, fallbackPrefix: string) {
-  let id = requested;
+  let id = requested.slice(0, databaseLimits.idLength);
   let attempt = 1;
   while (seen.has(id)) {
     const suffix = `-${attempt}`;
