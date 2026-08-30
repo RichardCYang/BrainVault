@@ -478,3 +478,73 @@ test("collision-generated canonical IDs keep first ownership across chained coll
   }
 });
 
+test("full-capacity databases without a title preserve every property across repeated normalization", () => {
+  const properties = Array.from({ length: databaseLimits.properties }, (_, index) => ({
+    id: `field-${index + 1}`,
+    name: `Field ${index + 1}`,
+    type: "text",
+    options: []
+  }));
+  const lastPropertyId = properties.at(-1).id;
+  const source = {
+    title: "Legacy capacity",
+    properties,
+    rows: [{
+      id: "row-1",
+      values: Object.fromEntries(properties.map((property, index) => [property.id, `VALUE-${index + 1}`]))
+    }],
+    views: [{
+      id: "view-1",
+      name: "Table",
+      type: "table",
+      filters: [{ id: "filter-1", propertyId: lastPropertyId, operator: "contains", value: "VALUE" }],
+      sorts: [{ id: "sort-1", propertyId: lastPropertyId, direction: "ascending" }],
+      groupPropertyId: null,
+      hiddenPropertyIds: [lastPropertyId]
+    }],
+    activeViewId: "view-1"
+  };
+
+  const pair = normalizedPair(source);
+  assert.deepEqual(pair.browser, pair.server);
+  for (const database of Object.values(pair)) {
+    assert.equal(database.properties.length, databaseLimits.properties);
+    assert.equal(database.properties.filter((property) => property.type === "title").length, 0);
+    assert.equal(database.properties.at(-1).id, lastPropertyId);
+    assert.equal(database.rows[0].values[lastPropertyId], `VALUE-${databaseLimits.properties}`);
+    assert.equal(database.views[0].filters[0].propertyId, lastPropertyId);
+    assert.equal(database.views[0].sorts[0].propertyId, lastPropertyId);
+    assert.deepEqual(database.views[0].hiddenPropertyIds, [lastPropertyId]);
+    assert.deepEqual(normalizeDatabaseData(database), database);
+    assert.deepEqual(getDatabaseData({ database }), database);
+  }
+});
+
+test("databases below capacity still receive a recovery title property", () => {
+  const properties = Array.from({ length: databaseLimits.properties - 1 }, (_, index) => ({
+    id: `field-${index + 1}`,
+    name: `Field ${index + 1}`,
+    type: "text",
+    options: []
+  }));
+  const source = {
+    title: "Legacy below capacity",
+    properties,
+    rows: [{
+      id: "row-1",
+      values: Object.fromEntries(properties.map((property, index) => [property.id, `VALUE-${index + 1}`]))
+    }],
+    views: [],
+    activeViewId: "missing-view"
+  };
+
+  const pair = normalizedPair(source);
+  assert.deepEqual(pair.browser, pair.server);
+  for (const database of Object.values(pair)) {
+    assert.equal(database.properties.length, databaseLimits.properties);
+    assert.equal(database.properties.filter((property) => property.type === "title").length, 1);
+    assert.equal(database.rows[0].values[`field-${databaseLimits.properties - 1}`], `VALUE-${databaseLimits.properties - 1}`);
+    assert.deepEqual(normalizeDatabaseData(database), database);
+    assert.deepEqual(getDatabaseData({ database }), database);
+  }
+});

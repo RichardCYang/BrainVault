@@ -518,7 +518,9 @@ export function normalizeDatabaseData(value) {
       };
     });
 
-  if (!titleSeen) {
+  // Preserve every field in a full-capacity legacy model without a title. Adding a
+  // synthetic 21st property would make the next normalization drop the final field.
+  if (!titleSeen && propertyDescriptors.length < databaseLimits.properties) {
     const id = uniqueId("title", seenPropertyIds, "title");
     propertyDescriptors.unshift({
       sourceId: null,

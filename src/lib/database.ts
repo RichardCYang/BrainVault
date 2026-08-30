@@ -450,7 +450,10 @@ export function getDatabaseData(metadata: unknown): DatabaseData {
       return { sourceId, requestedId, property, optionAliases: normalizedOptions.aliases };
     });
 
-  if (!titlePropertySeen) {
+  // A full-capacity legacy model may legitimately arrive without a title property.
+  // Adding a synthetic title would create 21 properties, and the next normalization
+  // would truncate the final property together with every row value stored under it.
+  if (!titlePropertySeen && propertyDescriptors.length < databaseLimits.properties) {
     const id = uniqueId("title", seenPropertyIds, "title");
     propertyDescriptors.unshift({
       sourceId: null,
