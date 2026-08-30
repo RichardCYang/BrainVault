@@ -3,10 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { getDatabaseData } from "../src/lib/database.ts";
 import { metadataSchema } from "../src/utils/schemas.ts";
+import { getAiChatAnswerMaxLength } from "../src/config/ai-chat-limits.ts";
 import {
   assertStructuredBlockMetadataIntegrity,
   StructuredMetadataIntegrityError
 } from "../src/lib/structured-metadata-integrity.ts";
+
+const aiChatAnswerMaxLength = getAiChatAnswerMaxLength();
 
 function expectIntegrityFailure(type, metadata, expectedPath) {
   assert.throws(
@@ -187,7 +190,7 @@ test("normalized structured metadata remains accepted at exact limits", () => {
       turns: [{
         answeredAt: "2026-07-30T09:28",
         question: "q".repeat(8_000),
-        answer: "a".repeat(12_000)
+        answer: "a".repeat(aiChatAnswerMaxLength)
       }]
     }
   }));
@@ -364,7 +367,7 @@ test("database duplicate-id repair keeps its distinguishing suffix inside the id
 
 test("AI metadata that the old save path silently truncated is rejected atomically", () => {
   expectIntegrityFailure("AI_CHAT", {
-    aiChat: { provider: "chatgpt", model: "", answeredAt: "", question: "", answer: "a".repeat(12_001) }
+    aiChat: { provider: "chatgpt", model: "", answeredAt: "", question: "", answer: "a".repeat(aiChatAnswerMaxLength + 1) }
   }, "metadata.aiChat.answer");
 });
 

@@ -34,6 +34,7 @@ Never commit a real `.env` file.
 | `SERVE_INTERNAL_DOCS` | `false` | Serve the repository `docs/` directory at authenticated `/docs` routes |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window in milliseconds |
 | `RATE_LIMIT_MAX` | `120` | Maximum requests per global window |
+| `AI_CHAT_ANSWER_MAX_LENGTH` | `50000` | Maximum Markdown characters in each AI chat answer; accepted range is 1 through 500000 and the browser/server share the same runtime value |
 | `AUTH_LOGIN_IP_WINDOW_MS` | `900000` | Login IP throttling window |
 | `AUTH_LOGIN_IP_MAX` | `20` | Failed login requests allowed per IP window |
 | `AUTH_LOGIN_ACCOUNT_WINDOW_MS` | `21600000` | Account-keyed login throttling window |

@@ -200,6 +200,12 @@ export function createApp() {
       }
     })
   );
+  app.get("/runtime-config.js", (_req, res) => {
+    setPrivateNoStoreCacheControl(res);
+    res.type("text/javascript").send(
+      `export const AI_CHAT_ANSWER_MAX_LENGTH = ${env.AI_CHAT_ANSWER_MAX_LENGTH};\n`
+    );
+  });
   app.use(express.static(publicDir, { index: false }));
   if (env.SERVE_INTERNAL_DOCS) {
     app.use(

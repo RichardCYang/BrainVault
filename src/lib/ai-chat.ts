@@ -1,3 +1,5 @@
+import { getAiChatAnswerMaxLength } from "../config/ai-chat-limits.js";
+
 export const aiProviderIds = ["chatgpt", "gemini", "claude", "deepseek", "grok"] as const;
 export const aiChatLayouts = ["stacked", "paginated"] as const;
 
@@ -31,7 +33,7 @@ const limits = {
   titleLength: 120,
   turns: 50,
   questionLength: 8_000,
-  answerLength: 12_000,
+  answerLength: getAiChatAnswerMaxLength(),
   modelLength: 120
 };
 

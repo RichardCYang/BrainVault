@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { getAiChatAnswerMaxLength } from "../src/config/ai-chat-limits.ts";
 import { normalizeAiChatMetadata } from "../src/lib/ai-chat.ts";
 import {
   assertStructuredBlockMetadataIntegrity,
   StructuredMetadataIntegrityError
 } from "../src/lib/structured-metadata-integrity.ts";
+
+const answerLimit = getAiChatAnswerMaxLength();
 
 const original = {
   aiChat: {
@@ -12,14 +15,14 @@ const original = {
     model: "gpt-test",
     answeredAt: "2026-07-30T09:28",
     question: "reproduction",
-    answer: "A".repeat(12_001)
+    answer: "A".repeat(answerLimit + 1)
   }
 };
 
 // This is the exact destructive projection used by the pre-fix save path.
 const oldStored = normalizeAiChatMetadata(original);
-assert.equal(original.aiChat.answer.length, 12_001);
-assert.equal(oldStored.aiChat.answer.length, 12_000);
+assert.equal(original.aiChat.answer.length, answerLimit + 1);
+assert.equal(oldStored.aiChat.answer.length, answerLimit);
 
 let rejectedPath = "";
 try {

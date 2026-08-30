@@ -1,4 +1,5 @@
 import type { BlockType } from "../types/domain.js";
+import { getAiChatAnswerMaxLength } from "../config/ai-chat-limits.js";
 import { metadataSchema } from "../utils/schemas.js";
 import {
   assertLosslessAttachmentMetadata,
@@ -109,7 +110,7 @@ const aiChatLimits = {
   titleLength: 120,
   turns: 50,
   questionLength: 8_000,
-  answerLength: 12_000,
+  answerLength: getAiChatAnswerMaxLength(),
   modelLength: 120,
   answeredAtLength: 16
 } as const;

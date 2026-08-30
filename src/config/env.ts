@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import net from "node:net";
 import { z } from "zod";
 import { assertSecureDatabaseTransport } from "../lib/database-url.js";
+import { aiChatAnswerMaxLengthSchema } from "./ai-chat-limits.js";
 
 const knownInsecureSecrets = new Set(
   [
@@ -60,6 +61,7 @@ const envSchema = z.object({
   SERVE_INTERNAL_DOCS: disabledByDefault,
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
+  AI_CHAT_ANSWER_MAX_LENGTH: aiChatAnswerMaxLengthSchema,
   COLLABORATION_SHARE_WINDOW_MS: z.coerce.number().int().min(60_000).max(24 * 60 * 60_000).default(60 * 60_000),
   COLLABORATION_SHARE_ACCOUNT_MAX: z.coerce.number().int().min(1).max(100).default(30),
   COLLABORATION_SHARE_IP_MAX: z.coerce.number().int().min(1).max(500).default(60),

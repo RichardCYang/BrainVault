@@ -861,7 +861,7 @@ assert(
   "A direct content update can rewrite unchanged JSON metadata through a second serialization"
 );
 assert(
-  structuredMetadataIntegritySource.includes("answerLength: 12_000")
+  structuredMetadataIntegritySource.includes("answerLength: getAiChatAnswerMaxLength()")
     && structuredMetadataIntegritySource.includes("rows: 50")
     && structuredMetadataIntegritySource.includes("columns: 12")
     && structuredMetadataIntegritySource.includes("rows: 200")

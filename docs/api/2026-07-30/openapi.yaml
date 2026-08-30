@@ -855,7 +855,7 @@ components:
           maxLength: 8000
         answer:
           type: string
-          maxLength: 12000
+          description: Maximum length is configured by AI_CHAT_ANSWER_MAX_LENGTH at runtime (default 50000; accepted configuration range 1 through 500000).
     BookmarkPreview:
       type: object
       required: [url, title, description, imageUrl, faviconUrl, siteName]

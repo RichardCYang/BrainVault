@@ -1,4 +1,5 @@
 import { formatDateTime, t } from "./i18n.js";
+import { AI_CHAT_ANSWER_MAX_LENGTH } from "./runtime-config.js";
 
 export const aiProviderPresets = Object.freeze([
   { id: "chatgpt", label: "ChatGPT" },
@@ -14,7 +15,7 @@ export const aiChatLimits = Object.freeze({
   titleLength: 120,
   turns: 50,
   questionLength: 8_000,
-  answerLength: 12_000,
+  answerLength: AI_CHAT_ANSWER_MAX_LENGTH,
   modelLength: 120
 });
 

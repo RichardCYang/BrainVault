@@ -11,6 +11,7 @@ import { toBlock } from "../src/lib/mappers.js";
 const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const moduleSource = readFileSync(new URL("../public/ai-chat-block.js", import.meta.url), "utf8");
 const highlighterSource = readFileSync(new URL("../public/code-highlighting.js", import.meta.url), "utf8");
+const runtimeConfigSource = readFileSync(new URL("../public/runtime-config.js", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../public/styles.css", import.meta.url), "utf8");
 const i18n = readFileSync(new URL("../public/i18n.js", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../src/utils/schemas.ts", import.meta.url), "utf8");
@@ -24,6 +25,12 @@ describe("AI conversation block", () => {
     expect(client).toContain('payload.markdown = summarizeAiChatData(aiChat)');
     expect(moduleSource).toContain('preview.className = "block-rendered-preview ai-chat-rendered-preview"');
     expect(schema).toContain('"AI_CHAT"');
+  });
+
+  it("uses the server-delivered AI answer Markdown limit with a 50,000-character fallback", () => {
+    expect(moduleSource).toContain('import { AI_CHAT_ANSWER_MAX_LENGTH } from "./runtime-config.js";');
+    expect(moduleSource).toContain("answerLength: AI_CHAT_ANSWER_MAX_LENGTH");
+    expect(runtimeConfigSource).toContain("AI_CHAT_ANSWER_MAX_LENGTH = 50_000");
   });
 
   it("offers provider icons, a block title, and multiple conversation turns", () => {
