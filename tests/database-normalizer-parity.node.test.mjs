@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { normalizeDatabaseData } from "../public/database-block.js";
+import { getLanguage, setLanguage, supportedLanguages } from "../public/i18n.js";
 import { databaseLimits, getDatabaseData } from "../src/lib/database.ts";
 
 function assertReferencesAreLocal(database) {
@@ -18,6 +19,55 @@ function normalizedPair(database) {
     server: getDatabaseData({ database })
   };
 }
+
+test("legacy database label repair is locale-independent and matches the server", () => {
+  const source = {
+    title: null,
+    properties: [
+      { id: "title", type: "title", options: [] },
+      { id: "status", type: "select", options: [{ id: "open", color: "blue" }] }
+    ],
+    rows: [{ id: "row-1", values: { title: "KEEP TITLE", status: "open" } }],
+    views: [{
+      id: "board-view",
+      type: "board",
+      filters: [],
+      sorts: [],
+      groupPropertyId: "status",
+      hiddenPropertyIds: ["status"]
+    }],
+    activeViewId: "board-view"
+  };
+  const fallbackViewSource = { ...source, views: [], activeViewId: "missing-view" };
+  const server = getDatabaseData({ database: source });
+  const serverWithFallbackViews = getDatabaseData({ database: fallbackViewSource });
+  const previousLanguage = getLanguage();
+
+  try {
+    for (const { code } of supportedLanguages) {
+      setLanguage(code, { persist: false });
+      const browser = normalizeDatabaseData(source);
+      const browserWithFallbackViews = normalizeDatabaseData(fallbackViewSource);
+      assert.deepEqual(browser, server, `custom view repair diverged in ${code}`);
+      assert.deepEqual(
+        browserWithFallbackViews,
+        serverWithFallbackViews,
+        `fallback view repair diverged in ${code}`
+      );
+      assert.deepEqual(normalizeDatabaseData(browser), browser);
+      assert.equal(browser.rows[0].values.title, "KEEP TITLE");
+      assert.equal(browser.rows[0].values.status, "open");
+    }
+  } finally {
+    setLanguage(previousLanguage, { persist: false });
+  }
+
+  assert.equal(server.title, "Database");
+  assert.deepEqual(server.properties.map((property) => property.name), ["Name", "Property 2"]);
+  assert.equal(server.properties[1].options[0].name, "Option 1");
+  assert.equal(server.views[0].name, "Board");
+  assert.deepEqual(serverWithFallbackViews.views.map((view) => view.name), ["Table", "Board"]);
+});
 
 test("database fallback views never reference properties absent from a legacy model", () => {
   const source = {

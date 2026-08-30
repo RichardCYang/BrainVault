@@ -217,7 +217,7 @@ function normalizeOptions(value, propertyId) {
         requestedId,
         option: {
           id,
-          name: stringValue(item.name, `${t("database.option")} ${formatNumber(index + 1)}`, databaseLimits.optionNameLength),
+          name: stringValue(item.name, `Option ${index + 1}`, databaseLimits.optionNameLength),
           color: normalizeOptionColor(item.color, index)
         }
       };
@@ -465,11 +465,11 @@ export function createDefaultDatabaseData() {
 
 function createDatabaseNormalizationFallback() {
   return {
-    title: t("database.defaultTitle"),
+    title: "Database",
     views: [
       {
         id: "table-view",
-        name: t("database.tableView"),
+        name: "Table",
         type: "table",
         filters: [],
         sorts: [],
@@ -478,7 +478,7 @@ function createDatabaseNormalizationFallback() {
       },
       {
         id: "board-view",
-        name: t("database.boardView"),
+        name: "Board",
         type: "board",
         filters: [],
         sorts: [],
@@ -518,7 +518,7 @@ export function normalizeDatabaseData(value) {
           id,
           name: stringValue(
             item.name,
-            type === "title" ? t("database.defaultNameProperty") : t("database.newProperty"),
+            type === "title" ? "Name" : `Property ${index + 1}`,
             databaseLimits.propertyNameLength
           ),
           type,
@@ -535,7 +535,7 @@ export function normalizeDatabaseData(value) {
     propertyDescriptors.unshift({
       sourceId: null,
       requestedId: id,
-      property: { id, name: t("database.defaultNameProperty"), type: "title", options: [] },
+      property: { id, name: "Name", type: "title", options: [] },
       optionAliases: createIdAliases()
     });
   }
@@ -630,7 +630,11 @@ export function normalizeDatabaseData(value) {
       const groupProperty = propertyById.get(requestedGroupPropertyId);
       const view = {
         id,
-        name: stringValue(item.name, t(`database.${type}View`), databaseLimits.viewNameLength),
+        name: stringValue(
+          item.name,
+          type === "board" ? "Board" : type === "list" ? "List" : "Table",
+          databaseLimits.viewNameLength
+        ),
         type,
         filters,
         sorts,
