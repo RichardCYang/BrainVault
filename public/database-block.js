@@ -113,20 +113,39 @@ function uniqueId(value, seen, fallbackPrefix) {
 }
 
 function createIdAliases() {
-  return { exact: new Map(), normalized: new Map() };
+  return { exact: new Map(), generated: new Map(), normalized: new Map() };
 }
 
 function sourceStringId(value) {
   return typeof value === "string" ? value : null;
 }
 
+function sourceUsesFallbackId(value) {
+  const id = typeof value === "string" ? value.trim().slice(0, databaseLimits.idLength) : "";
+  return !id || unsafeDatabaseIds.has(id);
+}
+
 function registerExactIdAlias(aliases, sourceId, canonicalId) {
-  if (sourceId && !aliases.exact.has(sourceId)) aliases.exact.set(sourceId, canonicalId);
+  if (sourceId && !aliases.exact.has(sourceId) && !aliases.generated.has(sourceId)) {
+    aliases.exact.set(sourceId, canonicalId);
+  }
+}
+
+function registerGeneratedIdAliases(aliases, requestedId, canonicalId) {
+  [requestedId, canonicalId].forEach((alias) => {
+    if (!alias || aliases.exact.has(alias) || aliases.generated.has(alias)) return;
+    aliases.generated.set(alias, canonicalId);
+  });
 }
 
 function registerNormalizedIdAlias(aliases, requestedId, canonicalId) {
   [requestedId, canonicalId].forEach((alias) => {
-    if (!alias || aliases.exact.has(alias) || aliases.normalized.has(alias)) return;
+    if (
+      !alias
+      || aliases.exact.has(alias)
+      || aliases.generated.has(alias)
+      || aliases.normalized.has(alias)
+    ) return;
     aliases.normalized.set(alias, canonicalId);
   });
 }
@@ -135,9 +154,14 @@ function resolveIdReference(value, aliases) {
   if (typeof value !== "string") return "";
   const exact = aliases.exact.get(value);
   if (exact !== undefined) return exact;
+  const generated = aliases.generated.get(value);
+  if (generated !== undefined) return generated;
   const normalized = safeId(value, "");
   if (!normalized) return "";
-  return aliases.exact.get(normalized) ?? aliases.normalized.get(normalized) ?? normalized;
+  return aliases.exact.get(normalized)
+    ?? aliases.generated.get(normalized)
+    ?? aliases.normalized.get(normalized)
+    ?? normalized;
 }
 
 function normalizePropertyType(value) {
@@ -164,6 +188,7 @@ function normalizeOptions(value, propertyId) {
       const sourceId = sourceStringId(item.id);
       const requestedId = safeId(item.id, `${propertyId}-option-${index + 1}`);
       const id = uniqueId(requestedId, seen, `${propertyId}-option-${index + 1}`);
+      if (sourceUsesFallbackId(item.id)) registerGeneratedIdAliases(aliases, requestedId, id);
       registerExactIdAlias(aliases, sourceId, id);
       return {
         sourceId,
@@ -456,6 +481,7 @@ export function normalizeDatabaseData(value) {
       const sourceId = sourceStringId(item.id);
       const requestedId = safeId(item.id, `property-${index + 1}`);
       const id = uniqueId(requestedId, seenPropertyIds, `property-${index + 1}`);
+      if (sourceUsesFallbackId(item.id)) registerGeneratedIdAliases(propertyAliases, requestedId, id);
       registerExactIdAlias(propertyAliases, sourceId, id);
       let type = normalizePropertyType(item.type);
       if (type === "title") {
@@ -527,6 +553,7 @@ export function normalizeDatabaseData(value) {
       const sourceId = sourceStringId(item.id);
       const requestedId = safeId(item.id, `view-${index + 1}`);
       const id = uniqueId(requestedId, seenViewIds, `view-${index + 1}`);
+      if (sourceUsesFallbackId(item.id)) registerGeneratedIdAliases(viewAliases, requestedId, id);
       registerExactIdAlias(viewAliases, sourceId, id);
       const type = normalizeViewType(item.type);
       const seenFilterIds = new Set();

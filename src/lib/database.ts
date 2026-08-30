@@ -144,19 +144,38 @@ function uniqueId(requested: string, seen: Set<string>, fallbackPrefix: string) 
 
 type DatabaseIdAliases = {
   exact: Map<string, string>;
+  generated: Map<string, string>;
   normalized: Map<string, string>;
 };
 
 function createIdAliases(): DatabaseIdAliases {
-  return { exact: new Map(), normalized: new Map() };
+  return { exact: new Map(), generated: new Map(), normalized: new Map() };
 }
 
 function sourceStringId(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function sourceUsesFallbackId(value: unknown) {
+  const id = typeof value === "string" ? value.trim().slice(0, databaseLimits.idLength) : "";
+  return !id || unsafeDatabaseIds.has(id);
+}
+
 function registerExactIdAlias(aliases: DatabaseIdAliases, sourceId: string | null, canonicalId: string) {
-  if (sourceId && !aliases.exact.has(sourceId)) aliases.exact.set(sourceId, canonicalId);
+  if (sourceId && !aliases.exact.has(sourceId) && !aliases.generated.has(sourceId)) {
+    aliases.exact.set(sourceId, canonicalId);
+  }
+}
+
+function registerGeneratedIdAliases(
+  aliases: DatabaseIdAliases,
+  requestedId: string,
+  canonicalId: string
+) {
+  for (const alias of [requestedId, canonicalId]) {
+    if (!alias || aliases.exact.has(alias) || aliases.generated.has(alias)) continue;
+    aliases.generated.set(alias, canonicalId);
+  }
 }
 
 function registerNormalizedIdAlias(
@@ -165,7 +184,12 @@ function registerNormalizedIdAlias(
   canonicalId: string
 ) {
   for (const alias of [requestedId, canonicalId]) {
-    if (!alias || aliases.exact.has(alias) || aliases.normalized.has(alias)) continue;
+    if (
+      !alias
+      || aliases.exact.has(alias)
+      || aliases.generated.has(alias)
+      || aliases.normalized.has(alias)
+    ) continue;
     aliases.normalized.set(alias, canonicalId);
   }
 }
@@ -174,9 +198,14 @@ function resolveIdReference(value: unknown, aliases: DatabaseIdAliases) {
   if (typeof value !== "string") return "";
   const exact = aliases.exact.get(value);
   if (exact !== undefined) return exact;
+  const generated = aliases.generated.get(value);
+  if (generated !== undefined) return generated;
   const normalized = safeId(value, "");
   if (!normalized) return "";
-  return aliases.exact.get(normalized) ?? aliases.normalized.get(normalized) ?? normalized;
+  return aliases.exact.get(normalized)
+    ?? aliases.generated.get(normalized)
+    ?? aliases.normalized.get(normalized)
+    ?? normalized;
 }
 
 function normalizePropertyType(value: unknown): DatabasePropertyType {
@@ -214,6 +243,7 @@ function normalizeOptions(value: unknown, propertyId: string): NormalizedDatabas
       const sourceId = sourceStringId(item.id);
       const requestedId = safeId(item.id, `${propertyId}-option-${index + 1}`);
       const id = uniqueId(requestedId, seen, `${propertyId}-option-${index + 1}`);
+      if (sourceUsesFallbackId(item.id)) registerGeneratedIdAliases(aliases, requestedId, id);
       registerExactIdAlias(aliases, sourceId, id);
       const option: DatabaseOption = {
         id,
@@ -382,6 +412,7 @@ export function getDatabaseData(metadata: unknown): DatabaseData {
       const sourceId = sourceStringId(item.id);
       const requestedId = safeId(item.id, `property-${index + 1}`);
       const id = uniqueId(requestedId, seenPropertyIds, `property-${index + 1}`);
+      if (sourceUsesFallbackId(item.id)) registerGeneratedIdAliases(propertyAliases, requestedId, id);
       registerExactIdAlias(propertyAliases, sourceId, id);
       let type = normalizePropertyType(item.type);
       if (type === "title") {
@@ -449,6 +480,7 @@ export function getDatabaseData(metadata: unknown): DatabaseData {
       const sourceId = sourceStringId(item.id);
       const requestedId = safeId(item.id, `view-${viewIndex + 1}`);
       const id = uniqueId(requestedId, seenViewIds, `view-${viewIndex + 1}`);
+      if (sourceUsesFallbackId(item.id)) registerGeneratedIdAliases(viewAliases, requestedId, id);
       registerExactIdAlias(viewAliases, sourceId, id);
       const type = normalizeViewType(item.type);
       const filterSources = Array.isArray(item.filters)

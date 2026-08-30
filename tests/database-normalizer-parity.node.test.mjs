@@ -310,3 +310,68 @@ test("reserved object-key IDs are repaired without prototype mutation or data lo
     assert.equal(database.activeViewId, "view-1");
   }
 });
+
+test("generated fallback IDs keep first ownership when later exact IDs collide", () => {
+  const source = {
+    title: "Alias ownership",
+    properties: [
+      { name: "Generated title", type: "title", options: [] },
+      { id: "property-1", name: "Explicit text", type: "text", options: [] },
+      {
+        id: "status",
+        name: "Status",
+        type: "multi_select",
+        options: [
+          { name: "Generated option", color: "blue" },
+          { id: "status-option-1", name: "Explicit option", color: "green" }
+        ]
+      }
+    ],
+    rows: [{
+      id: "row-1",
+      values: {
+        "property-1": "KEEP GENERATED VALUE",
+        "property-2-1": "KEEP EXPLICIT VALUE",
+        status: ["status-option-1", "status-option-2-1"]
+      }
+    }],
+    views: [
+      {
+        name: "Generated view",
+        type: "table",
+        filters: [{ propertyId: "property-1", operator: "contains", value: "KEEP" }],
+        sorts: [],
+        groupPropertyId: null,
+        hiddenPropertyIds: []
+      },
+      {
+        id: "view-1",
+        name: "Explicit view",
+        type: "table",
+        filters: [{ propertyId: "property-2-1", operator: "contains", value: "EXPLICIT" }],
+        sorts: [],
+        groupPropertyId: null,
+        hiddenPropertyIds: []
+      }
+    ],
+    activeViewId: "view-1"
+  };
+
+  const pair = normalizedPair(source);
+  assert.deepEqual(pair.browser, pair.server);
+  for (const database of Object.values(pair)) {
+    assert.deepEqual(database.properties.map((property) => property.id), ["property-1", "property-2-1", "status"]);
+    assert.equal(database.rows[0].values["property-1"], "KEEP GENERATED VALUE");
+    assert.equal(database.rows[0].values["property-2-1"], "KEEP EXPLICIT VALUE");
+
+    const status = database.properties.find((property) => property.id === "status");
+    assert.ok(status);
+    assert.deepEqual(status.options.map((option) => option.id), ["status-option-1", "status-option-2-1"]);
+    assert.deepEqual(database.rows[0].values.status, ["status-option-1", "status-option-2-1"]);
+
+    assert.deepEqual(database.views.map((view) => view.id), ["view-1", "view-2-1"]);
+    assert.equal(database.activeViewId, "view-1");
+    assert.equal(database.views[0].filters[0].propertyId, "property-1");
+    assert.equal(database.views[1].filters[0].propertyId, "property-2-1");
+  }
+});
