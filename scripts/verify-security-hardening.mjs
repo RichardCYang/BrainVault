@@ -311,13 +311,14 @@ contains("src/lib/access-log.ts", [
   ":safe-user-agent"
 ]);
 contains("src/lib/markdown.ts", [
-  "export function sanitizeRenderedHtml"
+  "export function sanitizeRenderedHtml",
+  "export function sanitizeRenderedBlockHtml"
 ]);
 contains("src/lib/mappers.ts", [
-  "sanitizeRenderedHtml(row.html_cache)"
+  "sanitizeRenderedBlockHtml(row.type, row.html_cache)"
 ]);
 contains("src/routes/page.routes.ts", [
-  "sanitizeRenderedHtml(block.html_cache)"
+  "sanitizeRenderedBlockHtml(block.type, block.html_cache)"
 ]);
 contains("src/middleware/auth-rate-limit.ts", [
   "loginIpRateLimit",

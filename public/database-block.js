@@ -138,6 +138,16 @@ function registerGeneratedIdAliases(aliases, requestedId, canonicalId) {
   });
 }
 
+function registerGeneratedIdOwnership(aliases, sourceId, requestedId, canonicalId) {
+  const requestedWasGenerated = sourceUsesFallbackId(sourceId);
+  if (!requestedWasGenerated && canonicalId === requestedId) return;
+  registerGeneratedIdAliases(
+    aliases,
+    requestedWasGenerated ? requestedId : "",
+    canonicalId
+  );
+}
+
 function registerNormalizedIdAlias(aliases, requestedId, canonicalId) {
   [requestedId, canonicalId].forEach((alias) => {
     if (
@@ -188,7 +198,7 @@ function normalizeOptions(value, propertyId) {
       const sourceId = sourceStringId(item.id);
       const requestedId = safeId(item.id, `${propertyId}-option-${index + 1}`);
       const id = uniqueId(requestedId, seen, `${propertyId}-option-${index + 1}`);
-      if (sourceUsesFallbackId(item.id)) registerGeneratedIdAliases(aliases, requestedId, id);
+      registerGeneratedIdOwnership(aliases, item.id, requestedId, id);
       registerExactIdAlias(aliases, sourceId, id);
       return {
         sourceId,
@@ -481,7 +491,7 @@ export function normalizeDatabaseData(value) {
       const sourceId = sourceStringId(item.id);
       const requestedId = safeId(item.id, `property-${index + 1}`);
       const id = uniqueId(requestedId, seenPropertyIds, `property-${index + 1}`);
-      if (sourceUsesFallbackId(item.id)) registerGeneratedIdAliases(propertyAliases, requestedId, id);
+      registerGeneratedIdOwnership(propertyAliases, item.id, requestedId, id);
       registerExactIdAlias(propertyAliases, sourceId, id);
       let type = normalizePropertyType(item.type);
       if (type === "title") {
@@ -553,7 +563,7 @@ export function normalizeDatabaseData(value) {
       const sourceId = sourceStringId(item.id);
       const requestedId = safeId(item.id, `view-${index + 1}`);
       const id = uniqueId(requestedId, seenViewIds, `view-${index + 1}`);
-      if (sourceUsesFallbackId(item.id)) registerGeneratedIdAliases(viewAliases, requestedId, id);
+      registerGeneratedIdOwnership(viewAliases, item.id, requestedId, id);
       registerExactIdAlias(viewAliases, sourceId, id);
       const type = normalizeViewType(item.type);
       const seenFilterIds = new Set();

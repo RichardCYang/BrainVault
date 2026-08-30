@@ -375,3 +375,106 @@ test("generated fallback IDs keep first ownership when later exact IDs collide",
     assert.equal(database.views[1].filters[0].propertyId, "property-2-1");
   }
 });
+
+test("collision-generated canonical IDs keep first ownership across chained collisions", () => {
+  const source = {
+    title: "Chained alias ownership",
+    properties: [
+      { name: "Generated title", type: "title", options: [] },
+      { id: "property-1", name: "Collision-generated text", type: "text", options: [] },
+      { id: "property-2-1", name: "Later exact text", type: "text", options: [] },
+      {
+        id: "status",
+        name: "Status",
+        type: "select",
+        options: [
+          { name: "Generated option", color: "blue" },
+          { id: "status-option-1", name: "Collision-generated option", color: "green" },
+          { id: "status-option-2-1", name: "Later exact option", color: "red" }
+        ]
+      }
+    ],
+    rows: [{
+      id: "row-1",
+      values: {
+        "property-1": "FIRST OWNER",
+        "property-2-1": "SECOND PROPERTY",
+        "property-3-1": "THIRD PROPERTY",
+        status: "status-option-2-1"
+      }
+    }],
+    views: [
+      {
+        name: "Generated view",
+        type: "table",
+        filters: [
+          {
+            propertyId: "property-2-1",
+            operator: "contains",
+            value: "SECOND"
+          },
+          {
+            propertyId: "status",
+            operator: "equals",
+            value: "status-option-2-1"
+          }
+        ],
+        sorts: [{
+          propertyId: "property-2-1",
+          direction: "ascending"
+        }],
+        groupPropertyId: null,
+        hiddenPropertyIds: ["property-2-1"]
+      },
+      {
+        id: "view-1",
+        name: "Collision-generated view",
+        type: "table",
+        filters: [],
+        sorts: [],
+        groupPropertyId: null,
+        hiddenPropertyIds: []
+      },
+      {
+        id: "view-2-1",
+        name: "Later exact view",
+        type: "table",
+        filters: [],
+        sorts: [],
+        groupPropertyId: null,
+        hiddenPropertyIds: []
+      }
+    ],
+    activeViewId: "view-2-1"
+  };
+
+  const pair = normalizedPair(source);
+  assert.deepEqual(pair.browser, pair.server);
+  for (const database of Object.values(pair)) {
+    assert.deepEqual(
+      database.properties.map((property) => property.id),
+      ["property-1", "property-2-1", "property-3-1", "status"]
+    );
+    assert.equal(database.rows[0].values["property-1"], "FIRST OWNER");
+    assert.equal(database.rows[0].values["property-2-1"], "SECOND PROPERTY");
+    assert.equal(database.rows[0].values["property-3-1"], "THIRD PROPERTY");
+
+    const status = database.properties.find((property) => property.id === "status");
+    assert.ok(status);
+    assert.deepEqual(
+      status.options.map((option) => option.id),
+      ["status-option-1", "status-option-2-1", "status-option-3-1"]
+    );
+    assert.equal(database.rows[0].values.status, "status-option-2-1");
+
+    assert.equal(database.views[0].filters[0].propertyId, "property-2-1");
+    assert.equal(database.views[0].filters[1].value, "status-option-2-1");
+    assert.equal(database.views[0].sorts[0].propertyId, "property-2-1");
+    assert.deepEqual(database.views[0].hiddenPropertyIds, ["property-2-1"]);
+    assert.deepEqual(database.views.map((view) => view.id), ["view-1", "view-2-1", "view-3-1"]);
+    assert.equal(database.activeViewId, "view-2-1");
+    assert.deepEqual(normalizeDatabaseData(database), database);
+    assert.deepEqual(getDatabaseData({ database }), database);
+  }
+});
+
