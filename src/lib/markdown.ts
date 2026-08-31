@@ -753,6 +753,10 @@ export function renderBlockHtml(type: BlockType, raw: string, checked = false, m
       return renderTextAlignment(renderMarkdown(`## ${stripHeadingMarks(markdownValue) || "제목 2"}`), safeMetadata);
     case "HEADING_3":
       return renderTextAlignment(renderMarkdown(`### ${stripHeadingMarks(markdownValue) || "제목 3"}`), safeMetadata);
+    case "HEADING_4":
+      return renderTextAlignment(renderMarkdown(`#### ${stripHeadingMarks(markdownValue) || "제목 4"}`), safeMetadata);
+    case "HEADING_5":
+      return renderTextAlignment(renderMarkdown(`##### ${stripHeadingMarks(markdownValue) || "제목 5"}`), safeMetadata);
     case "TODO": {
       const checkbox = `<input type="checkbox" disabled${checked ? " checked" : ""}>`;
       return renderTextAlignment(

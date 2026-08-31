@@ -412,6 +412,8 @@ const blockTypeLabels = {
   HEADING_1: "blocks.types.HEADING_1",
   HEADING_2: "blocks.types.HEADING_2",
   HEADING_3: "blocks.types.HEADING_3",
+  HEADING_4: "blocks.types.HEADING_4",
+  HEADING_5: "blocks.types.HEADING_5",
   TODO: "blocks.types.TODO",
   UNORDERED_LIST: "blocks.types.UNORDERED_LIST",
   ORDERED_LIST: "blocks.types.ORDERED_LIST",
@@ -454,6 +456,8 @@ const textAlignableBlockTypes = new Set([
   "HEADING_1",
   "HEADING_2",
   "HEADING_3",
+  "HEADING_4",
+  "HEADING_5",
   "TODO",
   "QUOTE",
   "CALLOUT",
@@ -739,6 +743,8 @@ const slashCommands = [
   { type: "HEADING_1", command: "/h1", icon: "heading-1" },
   { type: "HEADING_2", command: "/h2", icon: "heading-2" },
   { type: "HEADING_3", command: "/h3", icon: "heading-3" },
+  { type: "HEADING_4", command: "/h4", icon: "heading-4" },
+  { type: "HEADING_5", command: "/h5", icon: "heading-5" },
   { type: "TODO", command: "/todo", icon: "todo" },
   { type: "UNORDERED_LIST", command: "/bullet", icon: "unordered-list" },
   { type: "ORDERED_LIST", command: "/number", icon: "ordered-list" },
@@ -802,6 +808,18 @@ const slashCommandIconShapes = {
     ["path", { d: "M12 18V6" }],
     ["path", { d: "M17 10c.45-.35 1.05-.5 1.75-.5 1.35 0 2.25.65 2.25 1.65 0 .95-.8 1.6-2.1 1.6" }],
     ["path", { d: "M18.9 12.75c1.45 0 2.35.65 2.35 1.75 0 1.2-1.05 2-2.65 2-.75 0-1.4-.2-1.9-.6" }]
+  ],
+  "heading-4": [
+    ["path", { d: "M4 12h8" }],
+    ["path", { d: "M4 18V6" }],
+    ["path", { d: "M12 18V6" }],
+    ["path", { d: "M20 18V6l-4 8h6" }]
+  ],
+  "heading-5": [
+    ["path", { d: "M4 12h8" }],
+    ["path", { d: "M4 18V6" }],
+    ["path", { d: "M12 18V6" }],
+    ["path", { d: "M21 6h-4l-.5 5.25c.5-.35 1.1-.5 1.8-.5 1.7 0 2.7 1.05 2.7 2.75 0 1.85-1.2 3-3 3-.9 0-1.65-.25-2.25-.75" }]
   ],
   todo: [
     ["path", { d: "m9 11 3 3L22 4" }],
@@ -15563,6 +15581,8 @@ function freezePdfExportComputedStyles() {
     '.editor-block-row[data-block-type="HEADING_1"] .block-row-input, ' +
     '.editor-block-row[data-block-type="HEADING_2"] .block-row-input, ' +
     '.editor-block-row[data-block-type="HEADING_3"] .block-row-input, ' +
+    '.editor-block-row[data-block-type="HEADING_4"] .block-row-input, ' +
+    '.editor-block-row[data-block-type="HEADING_5"] .block-row-input, ' +
     ".kanban-title-input, .database-title-input, .gantt-title-input, .bookmark-title-input"
   ).forEach((element) => {
     const computed = remember(element);

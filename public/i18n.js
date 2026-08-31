@@ -616,6 +616,8 @@ export const translationCatalogs = {
         HEADING_1: "Heading 1",
         HEADING_2: "Heading 2",
         HEADING_3: "Heading 3",
+        HEADING_4: "Heading 4",
+        HEADING_5: "Heading 5",
         TODO: "To-do",
         QUOTE: "Quote",
         CALLOUT: "Callout",
@@ -710,6 +712,8 @@ export const translationCatalogs = {
       HEADING_1: { label: "Heading 1", hint: "Largest heading", keywords: "heading title h1" },
       HEADING_2: { label: "Heading 2", hint: "Medium heading", keywords: "heading subtitle h2" },
       HEADING_3: { label: "Heading 3", hint: "Small heading", keywords: "heading h3" },
+      HEADING_4: { label: "Heading 4", hint: "Level 4 heading", keywords: "heading h4" },
+      HEADING_5: { label: "Heading 5", hint: "Level 5 heading", keywords: "heading h5" },
       TODO: { label: "Checkbox", hint: "To-do block", keywords: "todo task check checkbox" },
       QUOTE: { label: "Quote", hint: "Quotation block", keywords: "quote quotation" },
       CALLOUT: { label: "Callout", hint: "Highlighted box", keywords: "callout notice highlight" },
@@ -1250,7 +1254,7 @@ export const translationCatalogs = {
       colorRed: "赤色の文字",
       colorGreen: "緑色の文字"
     },
-    blocks: { types: { MARKDOWN: "テキスト", HEADING_1: "見出し 1", HEADING_2: "見出し 2", HEADING_3: "見出し 3", TODO: "タスク", QUOTE: "引用", CALLOUT: "コールアウト", TABLE: "表", KANBAN: "ボード", CODE: "コード", DIVIDER: "区切り線", IMAGE: "画像", ATTACHMENT: "添付ファイル" } },
+    blocks: { types: { MARKDOWN: "テキスト", HEADING_1: "見出し 1", HEADING_2: "見出し 2", HEADING_3: "見出し 3", HEADING_4: "見出し 4", HEADING_5: "見出し 5", TODO: "タスク", QUOTE: "引用", CALLOUT: "コールアウト", TABLE: "表", KANBAN: "ボード", CODE: "コード", DIVIDER: "区切り線", IMAGE: "画像", ATTACHMENT: "添付ファイル" } },
     attachment: {
       unnamed: "無題の添付ファイル",
       chooseFile: "添付するファイルを選択",
@@ -1264,6 +1268,8 @@ export const translationCatalogs = {
       HEADING_1: { label: "見出し 1", hint: "最も大きい見出し", keywords: "heading title 見出し h1" },
       HEADING_2: { label: "見出し 2", hint: "中くらいの見出し", keywords: "heading subtitle 見出し h2" },
       HEADING_3: { label: "見出し 3", hint: "小さい見出し", keywords: "heading 見出し h3" },
+      HEADING_4: { label: "見出し 4", hint: "レベル 4 の見出し", keywords: "heading 見出し h4" },
+      HEADING_5: { label: "見出し 5", hint: "レベル 5 の見出し", keywords: "heading 見出し h5" },
       TODO: { label: "チェックボックス", hint: "タスクブロック", keywords: "todo task check タスク チェック" },
       QUOTE: { label: "引用", hint: "引用文ブロック", keywords: "quote 引用" },
       CALLOUT: { label: "コールアウト", hint: "強調ボックス", keywords: "callout notice コールアウト 強調" },
@@ -1887,7 +1893,7 @@ export const translationCatalogs = {
       colorRed: "빨간색 글자",
       colorGreen: "초록색 글자"
     },
-    blocks: { types: { MARKDOWN: "텍스트", HEADING_1: "제목 1", HEADING_2: "제목 2", HEADING_3: "제목 3", TODO: "할 일", QUOTE: "인용", CALLOUT: "콜아웃", TABLE: "표", KANBAN: "보드", DATABASE: "데이터베이스", BOOKMARK: "북마크", AI_CHAT: "AI 대화", MATH: "수식", CODE: "코드", DIVIDER: "구분선", IMAGE: "이미지", ATTACHMENT: "첨부파일" } },
+    blocks: { types: { MARKDOWN: "텍스트", HEADING_1: "제목 1", HEADING_2: "제목 2", HEADING_3: "제목 3", HEADING_4: "제목 4", HEADING_5: "제목 5", TODO: "할 일", QUOTE: "인용", CALLOUT: "콜아웃", TABLE: "표", KANBAN: "보드", DATABASE: "데이터베이스", BOOKMARK: "북마크", AI_CHAT: "AI 대화", MATH: "수식", CODE: "코드", DIVIDER: "구분선", IMAGE: "이미지", ATTACHMENT: "첨부파일" } },
     math: {
       blockPlaceholder: "LaTeX 수식을 입력하세요. 예: \\frac{a}{b}",
       blockAria: "LaTeX 수식 원문",
@@ -1968,6 +1974,8 @@ export const translationCatalogs = {
       HEADING_1: { label: "제목 1", hint: "가장 큰 제목", keywords: "heading title 제목 h1" },
       HEADING_2: { label: "제목 2", hint: "중간 제목", keywords: "heading subtitle 제목 h2" },
       HEADING_3: { label: "제목 3", hint: "작은 제목", keywords: "heading 제목 h3" },
+      HEADING_4: { label: "제목 4", hint: "4단계 제목", keywords: "heading 제목 h4" },
+      HEADING_5: { label: "제목 5", hint: "5단계 제목", keywords: "heading 제목 h5" },
       TODO: { label: "체크박스", hint: "할 일 블록", keywords: "todo task check 할일 체크" },
       QUOTE: { label: "인용", hint: "인용문 블록", keywords: "quote 인용" },
       CALLOUT: { label: "콜아웃", hint: "강조 박스", keywords: "callout notice 콜아웃 강조" },
@@ -2508,7 +2516,7 @@ export const translationCatalogs = {
       colorRed: "Texte rouge",
       colorGreen: "Texte vert"
     },
-    blocks: { types: { MARKDOWN: "Texte", HEADING_1: "Titre 1", HEADING_2: "Titre 2", HEADING_3: "Titre 3", TODO: "Tâche", QUOTE: "Citation", CALLOUT: "Encadré", TABLE: "Tableau", KANBAN: "Tableau Kanban", CODE: "Code", DIVIDER: "Séparateur", IMAGE: "Image", ATTACHMENT: "Pièce jointe" } },
+    blocks: { types: { MARKDOWN: "Texte", HEADING_1: "Titre 1", HEADING_2: "Titre 2", HEADING_3: "Titre 3", HEADING_4: "Titre 4", HEADING_5: "Titre 5", TODO: "Tâche", QUOTE: "Citation", CALLOUT: "Encadré", TABLE: "Tableau", KANBAN: "Tableau Kanban", CODE: "Code", DIVIDER: "Séparateur", IMAGE: "Image", ATTACHMENT: "Pièce jointe" } },
     attachment: {
       unnamed: "Pièce jointe sans nom",
       chooseFile: "Choisir un fichier à joindre",
@@ -2522,6 +2530,8 @@ export const translationCatalogs = {
       HEADING_1: { label: "Titre 1", hint: "Titre le plus grand", keywords: "heading titre h1" },
       HEADING_2: { label: "Titre 2", hint: "Titre moyen", keywords: "heading sous-titre titre h2" },
       HEADING_3: { label: "Titre 3", hint: "Petit titre", keywords: "heading titre h3" },
+      HEADING_4: { label: "Titre 4", hint: "Titre de niveau 4", keywords: "heading titre h4" },
+      HEADING_5: { label: "Titre 5", hint: "Titre de niveau 5", keywords: "heading titre h5" },
       TODO: { label: "Case à cocher", hint: "Bloc de tâche", keywords: "todo tâche case cocher" },
       QUOTE: { label: "Citation", hint: "Bloc de citation", keywords: "quote citation" },
       CALLOUT: { label: "Encadré", hint: "Boîte mise en évidence", keywords: "callout notice encadré surbrillance" },
@@ -2919,7 +2929,7 @@ export const translationCatalogs = {
       colorRed: "Roter Text",
       colorGreen: "Grüner Text"
     },
-    blocks: { types: { MARKDOWN: "Text", HEADING_1: "Überschrift 1", HEADING_2: "Überschrift 2", HEADING_3: "Überschrift 3", TODO: "Aufgabe", QUOTE: "Zitat", CALLOUT: "Hinweis", TABLE: "Tabelle", KANBAN: "Board", CODE: "Code", DIVIDER: "Trennlinie", IMAGE: "Bild", ATTACHMENT: "Anhang" } },
+    blocks: { types: { MARKDOWN: "Text", HEADING_1: "Überschrift 1", HEADING_2: "Überschrift 2", HEADING_3: "Überschrift 3", HEADING_4: "Überschrift 4", HEADING_5: "Überschrift 5", TODO: "Aufgabe", QUOTE: "Zitat", CALLOUT: "Hinweis", TABLE: "Tabelle", KANBAN: "Board", CODE: "Code", DIVIDER: "Trennlinie", IMAGE: "Bild", ATTACHMENT: "Anhang" } },
     attachment: {
       unnamed: "Unbenannter Anhang",
       chooseFile: "Datei zum Anhängen auswählen",
@@ -2933,6 +2943,8 @@ export const translationCatalogs = {
       HEADING_1: { label: "Überschrift 1", hint: "Größte Überschrift", keywords: "heading titel überschrift h1" },
       HEADING_2: { label: "Überschrift 2", hint: "Mittlere Überschrift", keywords: "heading untertitel überschrift h2" },
       HEADING_3: { label: "Überschrift 3", hint: "Kleine Überschrift", keywords: "heading überschrift h3" },
+      HEADING_4: { label: "Überschrift 4", hint: "Überschrift der Ebene 4", keywords: "heading überschrift h4" },
+      HEADING_5: { label: "Überschrift 5", hint: "Überschrift der Ebene 5", keywords: "heading überschrift h5" },
       TODO: { label: "Kontrollkästchen", hint: "Aufgabenblock", keywords: "todo aufgabe check kontrollkästchen" },
       QUOTE: { label: "Zitat", hint: "Zitatblock", keywords: "quote zitat" },
       CALLOUT: { label: "Hinweis", hint: "Hervorgehobener Kasten", keywords: "callout notice hinweis hervorhebung" },
@@ -3330,7 +3342,7 @@ export const translationCatalogs = {
       colorRed: "Texto rojo",
       colorGreen: "Texto verde"
     },
-    blocks: { types: { MARKDOWN: "Texto", HEADING_1: "Título 1", HEADING_2: "Título 2", HEADING_3: "Título 3", TODO: "Tarea", QUOTE: "Cita", CALLOUT: "Aviso", TABLE: "Tabla", KANBAN: "Tablero", CODE: "Código", DIVIDER: "Separador", IMAGE: "Imagen", ATTACHMENT: "Archivo adjunto" } },
+    blocks: { types: { MARKDOWN: "Texto", HEADING_1: "Título 1", HEADING_2: "Título 2", HEADING_3: "Título 3", HEADING_4: "Título 4", HEADING_5: "Título 5", TODO: "Tarea", QUOTE: "Cita", CALLOUT: "Aviso", TABLE: "Tabla", KANBAN: "Tablero", CODE: "Código", DIVIDER: "Separador", IMAGE: "Imagen", ATTACHMENT: "Archivo adjunto" } },
     attachment: {
       unnamed: "Archivo adjunto sin nombre",
       chooseFile: "Elegir un archivo para adjuntar",
@@ -3344,6 +3356,8 @@ export const translationCatalogs = {
       HEADING_1: { label: "Título 1", hint: "Título más grande", keywords: "heading título h1" },
       HEADING_2: { label: "Título 2", hint: "Título mediano", keywords: "heading subtítulo título h2" },
       HEADING_3: { label: "Título 3", hint: "Título pequeño", keywords: "heading título h3" },
+      HEADING_4: { label: "Título 4", hint: "Título de nivel 4", keywords: "heading título h4" },
+      HEADING_5: { label: "Título 5", hint: "Título de nivel 5", keywords: "heading título h5" },
       TODO: { label: "Casilla", hint: "Bloque de tarea", keywords: "todo tarea check casilla" },
       QUOTE: { label: "Cita", hint: "Bloque de cita", keywords: "quote cita" },
       CALLOUT: { label: "Aviso", hint: "Cuadro destacado", keywords: "callout notice aviso destacado" },
@@ -3741,7 +3755,7 @@ export const translationCatalogs = {
       colorRed: "Texto vermelho",
       colorGreen: "Texto verde"
     },
-    blocks: { types: { MARKDOWN: "Texto", HEADING_1: "Título 1", HEADING_2: "Título 2", HEADING_3: "Título 3", TODO: "Tarefa", QUOTE: "Citação", CALLOUT: "Destaque", TABLE: "Tabela", KANBAN: "Quadro", CODE: "Código", DIVIDER: "Divisor", IMAGE: "Imagem", ATTACHMENT: "Anexo" } },
+    blocks: { types: { MARKDOWN: "Texto", HEADING_1: "Título 1", HEADING_2: "Título 2", HEADING_3: "Título 3", HEADING_4: "Título 4", HEADING_5: "Título 5", TODO: "Tarefa", QUOTE: "Citação", CALLOUT: "Destaque", TABLE: "Tabela", KANBAN: "Quadro", CODE: "Código", DIVIDER: "Divisor", IMAGE: "Imagem", ATTACHMENT: "Anexo" } },
     attachment: {
       unnamed: "Anexo sem nome",
       chooseFile: "Escolher um arquivo para anexar",
@@ -3755,6 +3769,8 @@ export const translationCatalogs = {
       HEADING_1: { label: "Título 1", hint: "Maior título", keywords: "heading título h1" },
       HEADING_2: { label: "Título 2", hint: "Título médio", keywords: "heading subtítulo título h2" },
       HEADING_3: { label: "Título 3", hint: "Título pequeno", keywords: "heading título h3" },
+      HEADING_4: { label: "Título 4", hint: "Título de nível 4", keywords: "heading título h4" },
+      HEADING_5: { label: "Título 5", hint: "Título de nível 5", keywords: "heading título h5" },
       TODO: { label: "Caixa de seleção", hint: "Bloco de tarefa", keywords: "todo tarefa check caixa seleção" },
       QUOTE: { label: "Citação", hint: "Bloco de citação", keywords: "quote citação" },
       CALLOUT: { label: "Destaque", hint: "Caixa em destaque", keywords: "callout notice destaque aviso" },

@@ -1,7 +1,6 @@
--- Add Mermaid diagram blocks while preserving every existing block value.
--- Historical enum migrations are kept in sync as well because BrainVault's
--- migration safety tests require every replayable enum definition to remain a
--- superset of all block types supported by the current application.
+-- Add Heading 4 and Heading 5 blocks without rewriting existing block rows.
+-- The complete enum is restated so existing databases can accept the new values
+-- while migration replay remains a superset of every application-supported block type.
 ALTER TABLE blocks
   MODIFY COLUMN type ENUM(
     'MARKDOWN', 'HEADING_1', 'HEADING_2', 'HEADING_3', 'HEADING_4', 'HEADING_5', 'TODO',

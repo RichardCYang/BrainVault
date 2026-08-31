@@ -2188,6 +2188,14 @@ kbd {
   margin-top: 0.5rem;
 }
 
+.editor-block-row[data-block-type="HEADING_4"] {
+  margin-top: 0.38rem;
+}
+
+.editor-block-row[data-block-type="HEADING_5"] {
+  margin-top: 0.28rem;
+}
+
 /*
  * Keep note headings closer to familiar Markdown/Notion proportions.
  * The previous desktop H1 could reach 2.35rem, which made document hierarchy
@@ -2221,6 +2229,24 @@ kbd {
   line-height: 1.38;
 }
 
+.editor-block-row[data-block-type="HEADING_4"] .block-row-input,
+.block-rendered-preview h4 {
+  color: var(--ink-strong);
+  font-size: clamp(1rem, 1.15vw, 1.08rem);
+  font-weight: 630;
+  letter-spacing: -0.006em;
+  line-height: 1.42;
+}
+
+.editor-block-row[data-block-type="HEADING_5"] .block-row-input,
+.block-rendered-preview h5 {
+  color: var(--ink-strong);
+  font-size: clamp(0.94rem, 1vw, 1rem);
+  font-weight: 620;
+  letter-spacing: -0.003em;
+  line-height: 1.45;
+}
+
 .editor-block-row[data-block-type="HEADING_1"] .block-row-input {
   min-height: 2.4rem;
 }
@@ -2233,7 +2259,15 @@ kbd {
   min-height: 1.7rem;
 }
 
-/* Markdown blocks can contain native h1-h3 elements, so normalize their
+.editor-block-row[data-block-type="HEADING_4"] .block-row-input {
+  min-height: 1.55rem;
+}
+
+.editor-block-row[data-block-type="HEADING_5"] .block-row-input {
+  min-height: 1.45rem;
+}
+
+/* Markdown blocks can contain native h1-h5 elements, so normalize their
  * rhythm too. Dedicated heading blocks keep their outer row spacing instead. */
 .block-rendered-preview h1 {
   margin: 1.15em 0 0.42em;
@@ -2247,9 +2281,19 @@ kbd {
   margin: 0.95em 0 0.34em;
 }
 
+.block-rendered-preview h4 {
+  margin: 0.88em 0 0.3em;
+}
+
+.block-rendered-preview h5 {
+  margin: 0.82em 0 0.28em;
+}
+
 .editor-block-row[data-block-type="HEADING_1"] .block-rendered-preview h1,
 .editor-block-row[data-block-type="HEADING_2"] .block-rendered-preview h2,
-.editor-block-row[data-block-type="HEADING_3"] .block-rendered-preview h3 {
+.editor-block-row[data-block-type="HEADING_3"] .block-rendered-preview h3,
+.editor-block-row[data-block-type="HEADING_4"] .block-rendered-preview h4,
+.editor-block-row[data-block-type="HEADING_5"] .block-rendered-preview h5 {
   margin: 0;
 }
 
