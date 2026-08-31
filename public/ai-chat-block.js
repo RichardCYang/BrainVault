@@ -1406,6 +1406,10 @@ function normalizeTurn(value, { fallbackAnsweredAt = "", defaultAnsweredAt = fal
   };
 }
 
+export function createAiChatFollowUpTurnData(firstTurnAnsweredAt = "") {
+  return normalizeTurn({ answeredAt: firstTurnAnsweredAt });
+}
+
 export function createDefaultAiChatData({ question = "", answeredAt = "" } = {}) {
   return {
     title: "",
@@ -1912,7 +1916,9 @@ export function createAiChatEditor(row, value, { onDirty, htmlCache = "" } = {})
   addTurnButton.title = t("aiChat.addTurnTitle");
   addTurnButton.addEventListener("click", () => {
     if (conversation.querySelectorAll(".ai-chat-turn").length >= aiChatLimits.turns) return;
-    const turn = createTurnEditor(editor, row, normalizeTurn({ answeredAt: createLocalDateTimeValue() }), { onDirty });
+    const firstTurnTimeInput = conversation.querySelector(".ai-chat-turn .ai-chat-time-input");
+    const inheritedAnsweredAt = firstTurnTimeInput?.value ?? "";
+    const turn = createTurnEditor(editor, row, createAiChatFollowUpTurnData(inheritedAnsweredAt), { onDirty });
     conversation.append(turn);
     editor.dataset.aiPage = String(conversation.querySelectorAll(".ai-chat-turn").length - 1);
     syncTurnControls(editor);

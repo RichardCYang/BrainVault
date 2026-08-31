@@ -49,6 +49,10 @@ describe("AI conversation block", () => {
     expect(moduleSource).toContain('answerBorderCheckbox.className = "ai-chat-answer-border-toggle"');
     expect(moduleSource).toContain('pagination.className = "ai-chat-pagination"');
     expect(moduleSource).toContain('turns: [...editor.querySelectorAll(".ai-chat-turn")]');
+    expect(moduleSource).toContain('const firstTurnTimeInput = conversation.querySelector(".ai-chat-turn .ai-chat-time-input");');
+    expect(moduleSource).toContain('const inheritedAnsweredAt = firstTurnTimeInput?.value ?? "";');
+    expect(moduleSource).toContain('createAiChatFollowUpTurnData(inheritedAnsweredAt)');
+    expect(moduleSource).not.toContain('normalizeTurn({ answeredAt: createLocalDateTimeValue() })');
     expect(moduleSource).toContain('layout: editor.dataset.aiLayout');
     expect(moduleSource).toContain('hideAnswerBorder: editor.querySelector(".ai-chat-answer-border-toggle")?.checked === true');
   });
