@@ -165,6 +165,21 @@ function isDuplicateEntryError(error: unknown) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ER_DUP_ENTRY";
 }
 
+async function lockPageDeleteUsers(client: DbClient, userIds: string[]) {
+  const uniqueIds = [...new Set(userIds)].sort();
+  if (!uniqueIds.length) return;
+  // A collection administrator and the workspace owner can be different users.
+  // Lock every participating user in one deterministic order before any page
+  // lock so reciprocal cross-workspace deletes cannot form an A->B / B->A cycle.
+  await client.query<{ id: string }>(
+    `SELECT id FROM users
+     WHERE id IN (${uniqueIds.map(() => "?").join(", ")})
+     ORDER BY id ASC
+     FOR UPDATE`,
+    uniqueIds
+  );
+}
+
 type PageDeletionPageRow = {
   id: string;
   parent_page_id: string | null;
@@ -1441,7 +1456,18 @@ pageRouter.delete(
           pageId,
           expectedSnapshot
         });
+        // Resolve only a non-authoritative lock-order hint before opening the
+        // REPEATABLE READ transaction. A plain owner lookup inside the transaction
+        // would pin an old grant snapshot before waiting for the owner/page locks.
+        const pageOwnerHint = await db.queryOne<{ owner_id: string }>(
+          "SELECT owner_id FROM pages WHERE id = ?",
+          [pageId]
+        );
         const deletion = await transaction(async (client) => {
+          await lockPageDeleteUsers(
+            client,
+            pageOwnerHint ? [user.id, pageOwnerHint.owner_id] : [user.id]
+          );
           // Serialize receipt creation for this actor before taking page locks.
           // The receipt deliberately has no FK to pages so it survives deletion
           // and can reconcile an unknown COMMIT outcome.
@@ -1490,10 +1516,6 @@ pageRouter.delete(
             };
           }
 
-          const pageOwnerHint = await client.queryOne<{ owner_id: string }>(
-            "SELECT owner_id FROM pages WHERE id = ?",
-            [pageId]
-          );
           if (!pageOwnerHint) throw notFound("Page");
           const attachmentGeneration = pageOwnerHint.owner_id === user.id
             ? actorAttachmentGeneration
