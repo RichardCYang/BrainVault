@@ -16,7 +16,13 @@ import {
   ensureCollaborationState,
   getCollaborationState
 } from "../lib/collaboration-lineage.js";
-import { getOwnedPage, getPageAccess, toAccessPayload, toCollaborationPayload } from "../lib/page-access.js";
+import {
+  assertPageNotArchived,
+  getOwnedPage,
+  getPageAccess,
+  toAccessPayload,
+  toCollaborationPayload
+} from "../lib/page-access.js";
 import {
   collaborationTicketTtlSeconds,
   createCollaborationSessionBinding,
@@ -99,6 +105,17 @@ const shareParamsSchema = z.object({
   userId: routeIdSchema
 });
 
+const pageCommentBodySchema = z.object({
+  body: z.string().trim().min(1).max(2_000)
+}).strict();
+
+const pageCommentParamsSchema = z.object({
+  pageId: routeIdSchema,
+  commentId: routeIdSchema
+});
+
+const maxPageCommentsPerPage = 500;
+
 // Pre-fix tabs may still send title/blocks/deletedAttachmentIds. Zod strips
 // those unknown fields, but the server never trusts or materializes them.
 const materializeSchema = z.object({
@@ -145,6 +162,15 @@ type ShareUserRow = ShareTargetRow & {
   permission: "EDIT";
   shared_at: string;
   share_generation: string;
+};
+
+type PageCommentRow = ShareTargetRow & {
+  comment_id: string;
+  page_id: string;
+  user_id: string;
+  body: string;
+  comment_created_at: string;
+  comment_updated_at: string;
 };
 
 type CollaborationUpdateRow = {
@@ -198,6 +224,40 @@ function toSharePayload(row: ShareUserRow) {
     permission: row.permission,
     sharedAt: row.shared_at,
     generation: row.share_generation
+  };
+}
+
+async function getPageCommentRow(
+  pageId: string,
+  commentId: string,
+  client: DbClient = db
+): Promise<PageCommentRow | null> {
+  return client.queryOne<PageCommentRow>(
+    `SELECT pc.id AS comment_id, pc.page_id, pc.user_id, pc.body,
+            pc.created_at AS comment_created_at, pc.updated_at AS comment_updated_at,
+            u.id, u.username, u.name, u.avatar_data, u.preferred_language,
+            u.default_collection_icon, u.theme, u.created_at, u.updated_at
+     FROM page_comments pc
+     INNER JOIN users u ON u.id = pc.user_id
+     WHERE pc.page_id = ? AND pc.id = ?`,
+    [pageId, commentId]
+  );
+}
+
+function toPageCommentPayload(
+  row: PageCommentRow,
+  viewer: { id: string; isOwner: boolean }
+) {
+  const isAuthor = row.user_id === viewer.id;
+  return {
+    id: row.comment_id,
+    pageId: row.page_id,
+    body: row.body,
+    author: toPublicUser(row),
+    createdAt: row.comment_created_at,
+    updatedAt: row.comment_updated_at,
+    canEdit: isAuthor,
+    canDelete: isAuthor || viewer.isOwner
   };
 }
 
@@ -285,6 +345,149 @@ function canonicalJsonForComparison(value: unknown): string | null | undefined {
   }
 }
 
+
+collaborationRouter.get(
+  "/pages/:pageId/comments",
+  validate({ params: idParamSchema }),
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req.user);
+      const pageId = String(req.params.pageId);
+      const result = await transaction(async (client) => {
+        const access = await getPageAccess(pageId, user.id, client);
+        const rows = await client.query<PageCommentRow>(
+          `SELECT pc.id AS comment_id, pc.page_id, pc.user_id, pc.body,
+                  pc.created_at AS comment_created_at, pc.updated_at AS comment_updated_at,
+                  u.id, u.username, u.name, u.avatar_data, u.preferred_language,
+                  u.default_collection_icon, u.theme, u.created_at, u.updated_at
+           FROM page_comments pc
+           INNER JOIN users u ON u.id = pc.user_id
+           WHERE pc.page_id = ?
+           ORDER BY pc.created_at ASC, pc.id ASC
+           LIMIT ${maxPageCommentsPerPage}`,
+          [pageId]
+        );
+        const viewer = { id: user.id, isOwner: access.role === "OWNER" };
+        return rows.map((row) => toPageCommentPayload(row, viewer));
+      });
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json({ comments: result, count: result.length });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+collaborationRouter.post(
+  "/pages/:pageId/comments",
+  validate({ params: idParamSchema, body: pageCommentBodySchema }),
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
+      const pageId = String(req.params.pageId);
+      const body = String(req.body.body).trim();
+      const comment = await transaction(async (client) => {
+        await assertCurrentAuthSessionBoundary(user.id, authScope, client);
+        const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
+        assertPageNotArchived(access.page, "Restore the page before adding a comment");
+        const countRow = await client.queryOne<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM page_comments WHERE page_id = ?",
+          [pageId]
+        );
+        if (Number(countRow?.count ?? 0) >= maxPageCommentsPerPage) {
+          throw new ApiError(409, "PAGE_COMMENT_LIMIT_REACHED", `A page can contain up to ${maxPageCommentsPerPage} comments`);
+        }
+        const commentId = createId("cmt");
+        await client.execute(
+          `INSERT INTO page_comments (id, page_id, user_id, body)
+           VALUES (?, ?, ?, ?)`,
+          [commentId, pageId, user.id, body]
+        );
+        const created = await getPageCommentRow(pageId, commentId, client);
+        if (!created) throw new ApiError(500, "PAGE_COMMENT_CREATE_FAILED", "The comment was not created");
+        return toPageCommentPayload(created, { id: user.id, isOwner: access.role === "OWNER" });
+      });
+      res.setHeader("Cache-Control", "private, no-store");
+      res.status(201).json({ comment });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+collaborationRouter.patch(
+  "/pages/:pageId/comments/:commentId",
+  validate({ params: pageCommentParamsSchema, body: pageCommentBodySchema }),
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
+      const pageId = String(req.params.pageId);
+      const commentId = String(req.params.commentId);
+      const body = String(req.body.body).trim();
+      const comment = await transaction(async (client) => {
+        await assertCurrentAuthSessionBoundary(user.id, authScope, client);
+        const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
+        assertPageNotArchived(access.page, "Restore the page before editing a comment");
+        const existing = await client.queryOne<{ user_id: string }>(
+          `SELECT user_id FROM page_comments
+           WHERE page_id = ? AND id = ? FOR UPDATE`,
+          [pageId, commentId]
+        );
+        if (!existing) throw notFound("Page comment");
+        if (existing.user_id !== user.id) {
+          throw new ApiError(403, "PAGE_COMMENT_EDIT_FORBIDDEN", "Only the comment author can edit this comment");
+        }
+        await client.execute(
+          `UPDATE page_comments SET body = ?, updated_at = CURRENT_TIMESTAMP(3)
+           WHERE page_id = ? AND id = ?`,
+          [body, pageId, commentId]
+        );
+        const updated = await getPageCommentRow(pageId, commentId, client);
+        if (!updated) throw notFound("Page comment");
+        return toPageCommentPayload(updated, { id: user.id, isOwner: access.role === "OWNER" });
+      });
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json({ comment });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+collaborationRouter.delete(
+  "/pages/:pageId/comments/:commentId",
+  validate({ params: pageCommentParamsSchema }),
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
+      const pageId = String(req.params.pageId);
+      const commentId = String(req.params.commentId);
+      await transaction(async (client) => {
+        await assertCurrentAuthSessionBoundary(user.id, authScope, client);
+        const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
+        const existing = await client.queryOne<{ user_id: string }>(
+          `SELECT user_id FROM page_comments
+           WHERE page_id = ? AND id = ? FOR UPDATE`,
+          [pageId, commentId]
+        );
+        if (!existing) throw notFound("Page comment");
+        if (existing.user_id !== user.id && access.role !== "OWNER") {
+          throw new ApiError(403, "PAGE_COMMENT_DELETE_FORBIDDEN", "You cannot delete this comment");
+        }
+        await client.execute(
+          "DELETE FROM page_comments WHERE page_id = ? AND id = ?",
+          [pageId, commentId]
+        );
+      });
+      res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 collaborationRouter.get(
   "/pages/:pageId/shares",

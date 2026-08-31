@@ -151,6 +151,20 @@ function sharedUsernamesForPage(manifest: BrainVaultBackup, pageId: string) {
     .map((share) => share.shared_username));
 }
 
+function pageCommentState(manifest: BrainVaultBackup, pageId: string) {
+  return (manifest.data.pageComments ?? [])
+    .filter((comment) => comment.page_id === pageId)
+    .sort((left, right) => left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id))
+    .map((comment) => ({
+      id: comment.id,
+      authorUserId: comment.author_user_id,
+      authorUsername: comment.author_username,
+      body: comment.body,
+      createdAt: comment.created_at,
+      updatedAt: comment.updated_at
+    }));
+}
+
 function pageVersionState(manifest: BrainVaultBackup, pageId: string) {
   return (manifest.data.pageVersions ?? [])
     .filter((version) => version.page_id === pageId)
@@ -348,6 +362,8 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
     } else if (beforePage && afterPage) {
       const beforeHistory = pageVersionState(snapshot, pageId);
       const afterHistory = pageVersionState(current, pageId);
+      const beforeComments = pageCommentState(snapshot, pageId);
+      const afterComments = pageCommentState(current, pageId);
       const hasBlockChanges = Boolean(
         localBlockSummary.added || localBlockSummary.removed || localBlockSummary.modified
       );
@@ -369,6 +385,8 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
         longTextFieldDifference("tagState", stableJson(tagStateForPage(snapshot, pageId)), stableJson(tagStateForPage(current, pageId))),
         fieldDifference("sharedWith", sharedUsernamesForPage(snapshot, pageId), sharedUsernamesForPage(current, pageId)),
         longTextFieldDifference("sharingState", stableJson(sharingStateForPage(snapshot, pageId)), stableJson(sharingStateForPage(current, pageId))),
+        fieldDifference("commentCount", beforeComments.length, afterComments.length),
+        longTextFieldDifference("commentState", stableJson(beforeComments), stableJson(afterComments)),
         fieldDifference("navigationCollapsed", snapshotCollapsed.has(pageId), currentCollapsed.has(pageId)),
         fieldDifference("navigationOrder", navigationOrder(snapshot, pageId), navigationOrder(current, pageId)),
         fieldDifference("historyEntries", beforeHistory.length, afterHistory.length),

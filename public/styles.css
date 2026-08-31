@@ -1582,6 +1582,311 @@ button.page-view-path-segment:focus-visible {
   box-shadow: inset 0 -2px 0 rgba(190, 62, 62, 0.7);
 }
 
+.page-comments {
+  width: min(100%, 46rem);
+  margin: -1.08rem 0 1.65rem;
+}
+
+.page-comments-toggle {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  gap: 0.42rem;
+  border: 0;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.28rem 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.page-comments-toggle:hover,
+.page-comments-toggle:focus-visible,
+.page-comments-toggle[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--ink-strong);
+}
+
+.page-comments-toggle-icon {
+  font-size: 0.9rem;
+  line-height: 1;
+  filter: grayscale(1);
+  opacity: 0.76;
+}
+
+.page-comments-count {
+  display: inline-grid;
+  min-width: 1.3rem;
+  height: 1.3rem;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  color: var(--muted);
+  padding-inline: 0.32rem;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.page-comments-panel {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  border-top: 1px solid var(--line);
+  padding: 0.78rem 0.1rem 0;
+}
+
+.page-comments-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-inline: 0.2rem;
+}
+
+.page-comments-panel-header > div {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.page-comments-panel-header strong {
+  color: var(--ink-strong);
+  font-size: 0.82rem;
+}
+
+.page-comments-panel-header .muted {
+  font-size: 0.72rem;
+}
+
+.page-comments-refresh,
+.page-comment-action {
+  min-height: auto;
+  border: 0;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.25rem 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.page-comments-refresh:hover,
+.page-comments-refresh:focus-visible,
+.page-comment-action:hover,
+.page-comment-action:focus-visible {
+  background: var(--hover);
+  color: var(--ink-strong);
+}
+
+.page-comments-message {
+  min-height: 0;
+  color: var(--muted);
+  padding-inline: 0.2rem;
+  font-size: 0.74rem;
+}
+
+.page-comments-message:empty {
+  display: none;
+}
+
+.page-comments-message.is-error {
+  color: var(--danger, #b23a3a);
+}
+
+.page-comments-list {
+  display: grid;
+  gap: 0.22rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.page-comment-item {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: 0.62rem;
+  border-radius: 0.55rem;
+  padding: 0.48rem 0.42rem;
+}
+
+.page-comment-item:hover,
+.page-comment-item:focus-within {
+  background: color-mix(in srgb, var(--hover) 76%, transparent);
+}
+
+.page-comment-avatar,
+.page-comments-author-avatar {
+  display: grid;
+  overflow: hidden;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--muted) 12%, var(--panel));
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.page-comment-avatar {
+  width: 2rem;
+  height: 2rem;
+}
+
+.page-comments-author-avatar {
+  width: 2rem;
+  height: 2rem;
+  margin-top: 0.22rem;
+}
+
+.page-comment-avatar img,
+.page-comments-author-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.page-comment-content {
+  min-width: 0;
+}
+
+.page-comment-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.42rem;
+}
+
+.page-comment-author {
+  overflow: hidden;
+  color: var(--ink-strong);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-comment-time,
+.page-comment-edited {
+  flex: 0 0 auto;
+  color: var(--muted-light);
+  font-size: 0.66rem;
+}
+
+.page-comment-actions {
+  display: inline-flex;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.page-comment-item:hover .page-comment-actions,
+.page-comment-item:focus-within .page-comment-actions {
+  opacity: 1;
+}
+
+.page-comment-body {
+  margin: 0.18rem 0 0;
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1.52;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.page-comment-edit-form {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.32rem;
+}
+
+.page-comment-edit-form textarea,
+.page-comments-form textarea {
+  width: 100%;
+  resize: vertical;
+  border-color: var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.page-comment-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.page-comments-empty {
+  margin: 0;
+  padding: 0.45rem 0.2rem 0.2rem;
+  color: var(--muted-light);
+  font-size: 0.78rem;
+}
+
+.page-comments-form {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: 0.62rem;
+  padding: 0.35rem 0.42rem 0.12rem;
+}
+
+.page-comments-composer {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  background: var(--panel);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.page-comments-composer:focus-within {
+  border-color: var(--line-strong);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.page-comments-form textarea {
+  min-height: 3.15rem;
+  resize: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.62rem 0.7rem 0.2rem;
+  box-shadow: none;
+}
+
+.page-comments-form textarea:focus {
+  box-shadow: none;
+}
+
+.page-comments-form-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  padding: 0.22rem 0.38rem 0.38rem 0.7rem;
+}
+
+.page-comments-length {
+  color: var(--muted-light);
+  font-size: 0.64rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.page-comments-form-footer button,
+.page-comment-edit-actions button {
+  min-height: 1.85rem;
+  padding: 0.3rem 0.58rem;
+  font-size: 0.7rem;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .page-comment-actions {
+    opacity: 1;
+  }
+}
+
 .page-view .kicker {
   display: block;
   margin-bottom: 0.55rem;
@@ -5834,6 +6139,7 @@ html[data-theme="dark"] .block-move-dialog {
     page-break-inside: avoid;
   }
 
+  body.pdf-export-mode .page-comments,
   body.pdf-export-mode .page-title-input,
   body.pdf-export-mode .block-row-input,
   body.pdf-export-mode .table-cell-input,

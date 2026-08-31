@@ -390,6 +390,20 @@ const state = {
   applyingCollaborationSnapshot: false,
   sharePageOpen: false,
   sharePageEntries: [],
+  pageComments: {
+    pageId: null,
+    entries: [],
+    loading: false,
+    submitting: false,
+    expanded: false,
+    initialized: false,
+    editingId: null,
+    editingDraft: "",
+    busyCommentId: null,
+    requestId: 0,
+    message: "",
+    messageIsError: false
+  },
   pageVersionHistory: {
     pageId: null,
     versions: [],
@@ -1222,6 +1236,20 @@ const elements = {
   pageKicker: $("#page-kicker"),
   pageIconButton: $("#page-icon-button"),
   pageTitle: $("#page-title"),
+  pageComments: $("#page-comments"),
+  pageCommentsToggle: $("#page-comments-toggle"),
+  pageCommentsToggleLabel: $("#page-comments-summary-label"),
+  pageCommentsCount: $("#page-comments-count"),
+  pageCommentsPanel: $("#page-comments-panel"),
+  pageCommentsPanelCount: $("#page-comments-panel-count"),
+  pageCommentsRefresh: $("#page-comments-refresh"),
+  pageCommentsMessage: $("#page-comments-message"),
+  pageCommentsList: $("#page-comments-list"),
+  pageCommentsForm: $("#page-comments-form"),
+  pageCommentsAuthorAvatar: $("#page-comments-author-avatar"),
+  pageCommentsInput: $("#page-comments-input"),
+  pageCommentsLength: $("#page-comments-length"),
+  pageCommentsSubmit: $("#page-comments-submit"),
   subpageIndex: $("#subpage-index"),
   subpageIndexCount: $("#subpage-index-count"),
   subpageIndexList: $("#subpage-index-list"),
@@ -10111,6 +10139,389 @@ function updateCollaborationAwareness(target = document.activeElement) {
   });
 }
 
+function setPageCommentsMessage(message = "", isError = false) {
+  state.pageComments.message = message;
+  state.pageComments.messageIsError = isError;
+  elements.pageCommentsMessage.textContent = message;
+  elements.pageCommentsMessage.classList.toggle("is-error", isError);
+}
+
+function resetPageComments(pageId = null) {
+  state.pageComments.requestId += 1;
+  state.pageComments.pageId = pageId;
+  state.pageComments.entries = [];
+  state.pageComments.loading = false;
+  state.pageComments.submitting = false;
+  state.pageComments.expanded = false;
+  state.pageComments.initialized = false;
+  state.pageComments.editingId = null;
+  state.pageComments.editingDraft = "";
+  state.pageComments.busyCommentId = null;
+  state.pageComments.message = "";
+  state.pageComments.messageIsError = false;
+  elements.pageCommentsInput.value = "";
+  renderPageComments();
+}
+
+function isCurrentPageCommentsContext(pageId, navigationGeneration = workspaceNavigationGeneration) {
+  return Boolean(
+    state.authenticated
+      && state.user
+      && state.workspaceView === "page"
+      && state.selectedPage?.id === pageId
+      && state.pageComments.pageId === pageId
+      && isCurrentWorkspaceNavigation(navigationGeneration)
+  );
+}
+
+function renderPageCommentAvatar(container, user) {
+  container.replaceChildren();
+  if (user?.avatarData) {
+    const image = document.createElement("img");
+    image.src = user.avatarData;
+    image.alt = "";
+    container.append(image);
+    return;
+  }
+  container.textContent = getUserInitials(user ?? { username: "?" });
+}
+
+function renderPageCommentItem(comment) {
+  const item = document.createElement("li");
+  item.className = "page-comment-item";
+  item.dataset.commentId = comment.id;
+
+  const avatar = document.createElement("span");
+  avatar.className = "page-comment-avatar";
+  avatar.setAttribute("aria-hidden", "true");
+  renderPageCommentAvatar(avatar, comment.author);
+
+  const content = document.createElement("div");
+  content.className = "page-comment-content";
+  const header = document.createElement("div");
+  header.className = "page-comment-header";
+  const author = document.createElement("span");
+  author.className = "page-comment-author";
+  author.textContent = comment.author?.name?.trim() || `@${comment.author?.username ?? "?"}`;
+  const time = document.createElement("time");
+  time.className = "page-comment-time";
+  time.dateTime = comment.createdAt ?? "";
+  time.textContent = formatDate(comment.createdAt);
+  header.append(author, time);
+
+  if (comment.updatedAt && comment.updatedAt !== comment.createdAt) {
+    const edited = document.createElement("span");
+    edited.className = "page-comment-edited";
+    edited.textContent = t("comments.edited");
+    header.append(edited);
+  }
+
+  const busy = Boolean(
+    state.pageComments.loading
+      || state.pageComments.submitting
+      || state.pageComments.busyCommentId
+  );
+  if (comment.canEdit || comment.canDelete) {
+    const actions = document.createElement("span");
+    actions.className = "page-comment-actions";
+    if (comment.canEdit) {
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "page-comment-action";
+      edit.dataset.commentAction = "edit";
+      edit.dataset.commentId = comment.id;
+      edit.disabled = busy;
+      edit.textContent = t("comments.edit");
+      actions.append(edit);
+    }
+    if (comment.canDelete) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "page-comment-action";
+      remove.dataset.commentAction = "delete";
+      remove.dataset.commentId = comment.id;
+      remove.disabled = busy;
+      remove.textContent = t("comments.delete");
+      actions.append(remove);
+    }
+    header.append(actions);
+  }
+
+  content.append(header);
+  if (state.pageComments.editingId === comment.id) {
+    const form = document.createElement("form");
+    form.className = "page-comment-edit-form";
+    form.dataset.commentEditId = comment.id;
+    const textarea = document.createElement("textarea");
+    textarea.rows = 3;
+    textarea.maxLength = 2000;
+    textarea.value = state.pageComments.editingDraft;
+    textarea.disabled = busy;
+    textarea.setAttribute("aria-label", t("comments.editLabel"));
+    textarea.dataset.commentEditInput = comment.id;
+    const editActions = document.createElement("div");
+    editActions.className = "page-comment-edit-actions";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "secondary";
+    cancel.dataset.commentAction = "cancel-edit";
+    cancel.dataset.commentId = comment.id;
+    cancel.disabled = busy;
+    cancel.textContent = t("comments.cancel");
+    const save = document.createElement("button");
+    save.type = "submit";
+    save.disabled = busy || !state.pageComments.editingDraft.trim();
+    save.textContent = busy ? t("comments.saving") : t("comments.save");
+    editActions.append(cancel, save);
+    form.append(textarea, editActions);
+    content.append(form);
+  } else {
+    const body = document.createElement("p");
+    body.className = "page-comment-body";
+    body.textContent = comment.body;
+    content.append(body);
+  }
+
+  item.append(avatar, content);
+  return item;
+}
+
+function renderPageComments() {
+  const page = state.workspaceView === "page" ? state.selectedPage : null;
+  const hasPage = Boolean(page);
+  elements.pageComments.classList.toggle("hidden", !hasPage);
+  if (!hasPage) return;
+
+  const commentState = state.pageComments.pageId === page.id ? state.pageComments : null;
+  const entries = commentState?.entries ?? [];
+  const count = entries.length;
+  const expanded = Boolean(commentState?.expanded);
+  const busy = Boolean(
+    commentState?.loading
+      || commentState?.submitting
+      || commentState?.busyCommentId
+  );
+  const pageUnavailable = Boolean(page.isArchived);
+
+  elements.pageCommentsToggle.setAttribute("aria-expanded", String(expanded));
+  elements.pageCommentsToggleLabel.textContent = count > 0 ? t("comments.title") : t("comments.add");
+  elements.pageCommentsCount.textContent = String(count);
+  elements.pageCommentsCount.classList.toggle("hidden", count === 0);
+  elements.pageCommentsPanel.classList.toggle("hidden", !expanded);
+  elements.pageCommentsPanelCount.textContent = t("comments.count", { count: formatNumber(count) });
+  elements.pageCommentsRefresh.disabled = busy;
+  elements.pageCommentsRefresh.textContent = commentState?.loading ? t("comments.loading") : t("comments.refresh");
+
+  setPageCommentsMessage(commentState?.message ?? "", Boolean(commentState?.messageIsError));
+  elements.pageCommentsList.replaceChildren();
+  if (!commentState?.loading && count === 0) {
+    const empty = document.createElement("li");
+    empty.className = "page-comments-empty";
+    empty.textContent = t("comments.empty");
+    elements.pageCommentsList.append(empty);
+  } else {
+    for (const comment of entries) elements.pageCommentsList.append(renderPageCommentItem(comment));
+  }
+
+  renderPageCommentAvatar(elements.pageCommentsAuthorAvatar, state.user);
+  const currentLength = elements.pageCommentsInput.value.length;
+  elements.pageCommentsLength.textContent = `${formatNumber(currentLength)} / ${formatNumber(2000)}`;
+  elements.pageCommentsInput.disabled = busy || pageUnavailable;
+  elements.pageCommentsSubmit.disabled = busy || pageUnavailable || !elements.pageCommentsInput.value.trim();
+  elements.pageCommentsSubmit.textContent = commentState?.submitting ? t("comments.submitting") : t("comments.submit");
+}
+
+async function loadPageComments(
+  pageId,
+  navigationGeneration = workspaceNavigationGeneration,
+  { expand = false } = {}
+) {
+  if (!isCurrentPageCommentsContext(pageId, navigationGeneration)) return;
+  const requestId = ++state.pageComments.requestId;
+  const wasInitialized = state.pageComments.initialized;
+  state.pageComments.loading = true;
+  if (expand) state.pageComments.expanded = true;
+  state.pageComments.message = t("comments.loading");
+  state.pageComments.messageIsError = false;
+  renderPageComments();
+
+  try {
+    const data = await api(`/api/pages/${encodeURIComponent(pageId)}/comments`);
+    if (
+      requestId !== state.pageComments.requestId
+      || !isCurrentPageCommentsContext(pageId, navigationGeneration)
+    ) return;
+    state.pageComments.entries = Array.isArray(data?.comments) ? data.comments : [];
+    state.pageComments.loading = false;
+    state.pageComments.initialized = true;
+    state.pageComments.message = "";
+    state.pageComments.messageIsError = false;
+    if (!wasInitialized && state.pageComments.entries.length > 0) state.pageComments.expanded = true;
+    renderPageComments();
+  } catch (error) {
+    if (
+      requestId !== state.pageComments.requestId
+      || !isCurrentPageCommentsContext(pageId, navigationGeneration)
+    ) return;
+    state.pageComments.loading = false;
+    state.pageComments.initialized = true;
+    state.pageComments.message = error?.message || t("comments.loadError");
+    state.pageComments.messageIsError = true;
+    renderPageComments();
+  }
+}
+
+async function submitPageComment() {
+  const pageId = state.selectedPage?.id;
+  if (!pageId || state.workspaceView !== "page" || state.pageComments.pageId !== pageId) return;
+  const body = elements.pageCommentsInput.value.trim();
+  if (!body || state.pageComments.loading || state.pageComments.submitting || state.pageComments.busyCommentId) return;
+  const navigationGeneration = workspaceNavigationGeneration;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentPageCommentsContext(pageId, navigationGeneration)) return;
+
+  state.pageComments.submitting = true;
+  state.pageComments.message = t("comments.submitting");
+  state.pageComments.messageIsError = false;
+  renderPageComments();
+  try {
+    const data = await api(`/api/pages/${encodeURIComponent(pageId)}/comments`, {
+      method: "POST",
+      body: { body }
+    });
+    if (
+      !isCurrentAuthenticatedSessionScope(authenticationScope)
+      || !isCurrentPageCommentsContext(pageId, navigationGeneration)
+    ) return;
+    if (data?.comment) {
+      const existingIndex = state.pageComments.entries.findIndex((entry) => entry.id === data.comment.id);
+      if (existingIndex >= 0) state.pageComments.entries[existingIndex] = data.comment;
+      else state.pageComments.entries.push(data.comment);
+    }
+    state.pageComments.initialized = true;
+    state.pageComments.expanded = true;
+    elements.pageCommentsInput.value = "";
+    state.pageComments.message = t("comments.added");
+    state.pageComments.messageIsError = false;
+  } catch (error) {
+    if (
+      isCurrentAuthenticatedSessionScope(authenticationScope)
+      && isCurrentPageCommentsContext(pageId, navigationGeneration)
+    ) {
+      state.pageComments.message = error?.message || t("errors.unknown");
+      state.pageComments.messageIsError = true;
+    }
+  } finally {
+    if (
+      isCurrentAuthenticatedSessionScope(authenticationScope)
+      && isCurrentPageCommentsContext(pageId, navigationGeneration)
+    ) {
+      state.pageComments.submitting = false;
+      renderPageComments();
+      if (!state.pageComments.messageIsError) {
+        requestAnimationFrame(() => elements.pageCommentsInput.focus({ preventScroll: true }));
+      }
+    }
+  }
+}
+
+async function savePageCommentEdit(commentId) {
+  const pageId = state.selectedPage?.id;
+  if (!pageId || state.pageComments.editingId !== commentId) return;
+  const body = state.pageComments.editingDraft.trim();
+  if (!body || state.pageComments.loading || state.pageComments.submitting || state.pageComments.busyCommentId) return;
+  const navigationGeneration = workspaceNavigationGeneration;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  state.pageComments.busyCommentId = commentId;
+  state.pageComments.message = t("comments.saving");
+  state.pageComments.messageIsError = false;
+  renderPageComments();
+
+  try {
+    const data = await api(
+      `/api/pages/${encodeURIComponent(pageId)}/comments/${encodeURIComponent(commentId)}`,
+      { method: "PATCH", body: { body } }
+    );
+    if (
+      !isCurrentAuthenticatedSessionScope(authenticationScope)
+      || !isCurrentPageCommentsContext(pageId, navigationGeneration)
+    ) return;
+    const index = state.pageComments.entries.findIndex((entry) => entry.id === commentId);
+    if (index >= 0 && data?.comment) state.pageComments.entries[index] = data.comment;
+    state.pageComments.editingId = null;
+    state.pageComments.editingDraft = "";
+    state.pageComments.message = t("comments.saved");
+    state.pageComments.messageIsError = false;
+  } catch (error) {
+    if (
+      isCurrentAuthenticatedSessionScope(authenticationScope)
+      && isCurrentPageCommentsContext(pageId, navigationGeneration)
+    ) {
+      state.pageComments.message = error?.message || t("errors.unknown");
+      state.pageComments.messageIsError = true;
+    }
+  } finally {
+    if (
+      isCurrentAuthenticatedSessionScope(authenticationScope)
+      && isCurrentPageCommentsContext(pageId, navigationGeneration)
+    ) {
+      state.pageComments.busyCommentId = null;
+      renderPageComments();
+      if (state.pageComments.editingId === commentId) {
+        requestAnimationFrame(() => {
+          elements.pageCommentsList.querySelector(`[data-comment-edit-input="${CSS.escape(commentId)}"]`)?.focus();
+        });
+      }
+    }
+  }
+}
+
+async function deletePageComment(commentId) {
+  const pageId = state.selectedPage?.id;
+  if (!pageId || state.pageComments.loading || state.pageComments.submitting || state.pageComments.busyCommentId) return;
+  const comment = state.pageComments.entries.find((entry) => entry.id === commentId);
+  if (!comment?.canDelete || !window.confirm(t("comments.deleteConfirm"))) return;
+  const navigationGeneration = workspaceNavigationGeneration;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  state.pageComments.busyCommentId = commentId;
+  state.pageComments.message = t("comments.deleting");
+  state.pageComments.messageIsError = false;
+  renderPageComments();
+
+  try {
+    await api(`/api/pages/${encodeURIComponent(pageId)}/comments/${encodeURIComponent(commentId)}`, {
+      method: "DELETE"
+    });
+    if (
+      !isCurrentAuthenticatedSessionScope(authenticationScope)
+      || !isCurrentPageCommentsContext(pageId, navigationGeneration)
+    ) return;
+    state.pageComments.entries = state.pageComments.entries.filter((entry) => entry.id !== commentId);
+    if (state.pageComments.editingId === commentId) {
+      state.pageComments.editingId = null;
+      state.pageComments.editingDraft = "";
+    }
+    state.pageComments.message = t("comments.deleted");
+    state.pageComments.messageIsError = false;
+  } catch (error) {
+    if (
+      isCurrentAuthenticatedSessionScope(authenticationScope)
+      && isCurrentPageCommentsContext(pageId, navigationGeneration)
+    ) {
+      state.pageComments.message = error?.message || t("errors.unknown");
+      state.pageComments.messageIsError = true;
+    }
+  } finally {
+    if (
+      isCurrentAuthenticatedSessionScope(authenticationScope)
+      && isCurrentPageCommentsContext(pageId, navigationGeneration)
+    ) {
+      state.pageComments.busyCommentId = null;
+      renderPageComments();
+    }
+  }
+}
+
 function setSharePageMessage(message = "", isError = false) {
   elements.sharePageMessage.textContent = message;
   elements.sharePageMessage.classList.toggle("is-error", isError);
@@ -16048,6 +16459,7 @@ function renderSelectedPage() {
   elements.pageKicker.textContent = formatDate(page.updatedAt);
   renderIconValue(elements.pageIconButton, page.icon, "📄");
   elements.pageTitle.value = page.title;
+  renderPageComments();
   if (!elements.pageTitle.classList.contains("recovery-admission-pending")) {
     pageTitleLastDurableValue = page.title;
   }
@@ -17178,7 +17590,9 @@ async function openPage(pageId, { skipFlush = false, requestedPageMode = null } 
       state.workspaceView = "page";
       state.activeCollectionId = null;
       if (recovery.title) applyPageSummaryUpdate(data.page.id, { title: data.page.title });
+      resetPageComments(data.page.id);
       renderSelectedPage();
+      void loadPageComments(data.page.id, navigationGeneration);
       if (isCollaborativePage(data.page)) {
         await startPageCollaboration(data.page);
         if (isCurrentWorkspaceNavigation(navigationGeneration)) setStatus(t("status.documentOpened"));
@@ -18591,6 +19005,98 @@ elements.homeDocumentList.addEventListener("click", async (event) => {
   }
 });
 
+
+elements.pageCommentsToggle.addEventListener("click", () => {
+  const pageId = state.selectedPage?.id;
+  if (!pageId || state.pageComments.pageId !== pageId) return;
+  state.pageComments.expanded = !state.pageComments.expanded;
+  renderPageComments();
+  if (state.pageComments.expanded) {
+    if (!state.pageComments.initialized && !state.pageComments.loading) {
+      void loadPageComments(pageId, workspaceNavigationGeneration, { expand: true });
+    } else {
+      requestAnimationFrame(() => elements.pageCommentsInput.focus({ preventScroll: true }));
+    }
+  }
+});
+
+elements.pageCommentsRefresh.addEventListener("click", () => {
+  const pageId = state.selectedPage?.id;
+  if (!pageId || state.pageComments.pageId !== pageId) return;
+  void loadPageComments(pageId, workspaceNavigationGeneration, { expand: true });
+});
+
+elements.pageCommentsForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void submitPageComment();
+});
+
+elements.pageCommentsInput.addEventListener("input", () => {
+  elements.pageCommentsLength.textContent = `${formatNumber(elements.pageCommentsInput.value.length)} / ${formatNumber(2000)}`;
+  elements.pageCommentsSubmit.disabled = Boolean(
+    state.pageComments.loading
+      || state.pageComments.submitting
+      || state.pageComments.busyCommentId
+      || state.selectedPage?.isArchived
+      || !elements.pageCommentsInput.value.trim()
+  );
+});
+
+elements.pageCommentsInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    if (!elements.pageCommentsSubmit.disabled) elements.pageCommentsForm.requestSubmit();
+  }
+});
+
+elements.pageCommentsList.addEventListener("input", (event) => {
+  const textarea = event.target.closest("textarea[data-comment-edit-input]");
+  if (!textarea || state.pageComments.editingId !== textarea.dataset.commentEditInput) return;
+  state.pageComments.editingDraft = textarea.value;
+  const form = textarea.closest("form[data-comment-edit-id]");
+  const submit = form?.querySelector('button[type="submit"]');
+  if (submit) submit.disabled = Boolean(state.pageComments.busyCommentId || !textarea.value.trim());
+});
+
+elements.pageCommentsList.addEventListener("submit", (event) => {
+  const form = event.target.closest("form[data-comment-edit-id]");
+  if (!form) return;
+  event.preventDefault();
+  const commentId = form.dataset.commentEditId;
+  if (commentId) void savePageCommentEdit(commentId);
+});
+
+elements.pageCommentsList.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-comment-action][data-comment-id]");
+  if (!button) return;
+  const commentId = button.dataset.commentId;
+  const action = button.dataset.commentAction;
+  const comment = state.pageComments.entries.find((entry) => entry.id === commentId);
+  if (!comment) return;
+
+  if (action === "edit" && comment.canEdit) {
+    state.pageComments.editingId = commentId;
+    state.pageComments.editingDraft = comment.body;
+    renderPageComments();
+    requestAnimationFrame(() => {
+      const textarea = elements.pageCommentsList.querySelector(
+        `[data-comment-edit-input="${CSS.escape(commentId)}"]`
+      );
+      textarea?.focus();
+      textarea?.setSelectionRange?.(textarea.value.length, textarea.value.length);
+    });
+    return;
+  }
+
+  if (action === "cancel-edit" && state.pageComments.editingId === commentId) {
+    state.pageComments.editingId = null;
+    state.pageComments.editingDraft = "";
+    renderPageComments();
+    return;
+  }
+
+  if (action === "delete") void deletePageComment(commentId);
+});
 
 elements.sharePageButton.addEventListener("click", () => {
   openSharePageDialog().catch((error) => setSharePageMessage(error.message, true));

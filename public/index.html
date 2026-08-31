@@ -509,6 +509,49 @@
             </div>
           </div>
 
+          <section id="page-comments" class="page-comments" aria-labelledby="page-comments-summary-label">
+            <button
+              id="page-comments-toggle"
+              type="button"
+              class="page-comments-toggle"
+              aria-expanded="false"
+              aria-controls="page-comments-panel"
+            >
+              <span class="page-comments-toggle-icon" aria-hidden="true">💬</span>
+              <span id="page-comments-summary-label" class="page-comments-toggle-label" data-i18n="comments.add">Add comment</span>
+              <span id="page-comments-count" class="page-comments-count hidden" aria-hidden="true"></span>
+            </button>
+
+            <div id="page-comments-panel" class="page-comments-panel hidden">
+              <div class="page-comments-panel-header">
+                <div>
+                  <strong data-i18n="comments.title">Comments</strong>
+                  <span id="page-comments-panel-count" class="muted"></span>
+                </div>
+                <button id="page-comments-refresh" type="button" class="page-comments-refresh" data-i18n="comments.refresh">Refresh</button>
+              </div>
+              <div id="page-comments-message" class="page-comments-message" role="status" aria-live="polite"></div>
+              <ul id="page-comments-list" class="page-comments-list" aria-live="polite"></ul>
+              <form id="page-comments-form" class="page-comments-form">
+                <span id="page-comments-author-avatar" class="page-comments-author-avatar" aria-hidden="true"></span>
+                <div class="page-comments-composer">
+                  <label class="visually-hidden" for="page-comments-input" data-i18n="comments.inputLabel">Add a page comment</label>
+                  <textarea
+                    id="page-comments-input"
+                    rows="2"
+                    maxlength="2000"
+                    placeholder="Add a comment…"
+                    data-i18n-placeholder="comments.placeholder"
+                  ></textarea>
+                  <div class="page-comments-form-footer">
+                    <span id="page-comments-length" class="page-comments-length" aria-hidden="true">0 / 2000</span>
+                    <button id="page-comments-submit" type="submit" data-i18n="comments.submit">Comment</button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          </section>
+
           <section
             id="subpage-index"
             class="subpage-index hidden"

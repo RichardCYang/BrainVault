@@ -58,6 +58,7 @@ test("snapshot creation and restore reuse the complete validated backup boundary
 
   for (const preservedField of [
     "pageShares",
+    "pageComments",
     "pageVersions",
     "navigationCollapsedPageIds",
     "navigationPageOrder",
@@ -97,6 +98,8 @@ test("snapshot diff covers complete canonical backup state without returning unb
     "tagState",
     "sharedWith",
     "sharingState",
+    "commentCount",
+    "commentState",
     "navigationCollapsed",
     "navigationOrder",
     "historyEntries",

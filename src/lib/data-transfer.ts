@@ -218,6 +218,15 @@ const pageShareSchema = z.object({
   permission: z.literal("EDIT"),
   created_at: timestampSchema
 }).strict();
+const pageCommentSchema = z.object({
+  id: idSchema,
+  page_id: idSchema,
+  author_user_id: idSchema,
+  author_username: z.string().min(3).max(50).regex(/^[a-zA-Z0-9._-]+$/),
+  body: z.string().min(1).max(2_000),
+  created_at: timestampSchema,
+  updated_at: timestampSchema
+}).strict();
 const attachmentSchema = z.object({
   blockId: idSchema,
   path: z.string().min(1).max(160),
@@ -321,6 +330,9 @@ const manifestSchema = z.object({
     // Optional only for backward compatibility with backups exported before
     // page sharing relationships became part of the complete workspace format.
     pageShares: z.array(pageShareSchema).max(dataTransferResourceLimits.maxPageShares).optional(),
+    // Added compatibly to version 4. Older v4 backups without page comments
+    // remain importable, while new backups preserve page discussions.
+    pageComments: z.array(pageCommentSchema).max(dataTransferResourceLimits.maxPageComments).optional(),
     // Version 4 makes user-visible page history and owned-page navigation state
     // part of the complete workspace round trip. Older backups did not carry it.
     pageVersions: z.array(pageVersionSchema).max(dataTransferResourceLimits.maxPageVersions).optional(),
@@ -411,12 +423,17 @@ const manifestSchema = z.object({
   }
   if (
     manifest.version < backupVersion
-    && (manifest.data.pageVersions || manifest.data.navigationCollapsedPageIds || manifest.data.navigationPageOrder)
+    && (
+      manifest.data.pageComments
+      || manifest.data.pageVersions
+      || manifest.data.navigationCollapsedPageIds
+      || manifest.data.navigationPageOrder
+    )
   ) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["data", "pageVersions"],
-      message: "Backups before version 4 cannot declare page history or navigation state"
+      message: "Backups before version 4 cannot declare page comments, history, or navigation state"
     });
   }
 });
@@ -426,6 +443,7 @@ type BackupPage = BrainVaultBackup["data"]["pages"][number];
 type BackupBlock = BrainVaultBackup["data"]["blocks"][number];
 type BackupTag = BrainVaultBackup["data"]["tags"][number];
 type BackupPageShare = z.infer<typeof pageShareSchema>;
+type BackupPageComment = z.infer<typeof pageCommentSchema>;
 type BackupPageVersion = z.infer<typeof pageVersionSchema>;
 type BackupPageCoverFile = z.infer<typeof pageCoverFileSchema>;
 type BackupRetainedAttachmentFile = z.infer<typeof retainedAttachmentSchema>;
@@ -463,6 +481,15 @@ type WorkspaceRestoreShareRow = {
   shared_at: string;
 };
 
+type WorkspaceRestorePageCommentRow = {
+  id: string;
+  page_id: string;
+  user_id: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
+};
+
 type WorkspaceRestoreCustomIconRow = {
   id: string;
   file_path: string;
@@ -498,6 +525,15 @@ type RestoredPageShare = {
 type RestoreSharingPlan = {
   mode: "backup" | "legacy-preserved";
   shares: RestoredPageShare[];
+};
+
+type RestoredPageComment = {
+  id: string;
+  pageId: string;
+  userId: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type CollaboratorNavigationCollapsedRow = {
@@ -725,6 +761,15 @@ async function createWorkspaceRestoreSnapshot(
      ORDER BY ps.page_id ASC, ps.user_id ASC${lockClause}`,
     [userId]
   );
+  const pageComments = await client.query<WorkspaceRestorePageCommentRow>(
+    `SELECT pc.id, pc.page_id, pc.user_id, pc.body,
+            DATE_FORMAT(pc.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at,
+            DATE_FORMAT(pc.updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at
+     FROM page_comments pc INNER JOIN pages p ON p.id = pc.page_id
+     WHERE p.owner_id = ?
+     ORDER BY pc.page_id ASC, pc.created_at ASC, pc.id ASC${lockClause}`,
+    [userId]
+  );
   const pageVersions = await client.query<WorkspaceRestorePageVersionRow>(
     `SELECT pv.page_id, pv.revision, pv.page_edit_version, pv.page_content_version,
             CAST(pv.actors AS CHAR CHARACTER SET utf8mb4) AS actors,
@@ -799,6 +844,9 @@ async function createWorkspaceRestoreSnapshot(
     hash.update(
       `share\0${share.page_id}\0${share.user_id}\0${share.permission}\0${share.shared_by}\0${share.generation}\0${share.shared_at}\n`
     );
+  }
+  for (const comment of pageComments) {
+    hash.update(`page-comment\0${JSON.stringify(comment)}\n`);
   }
   for (const version of pageVersions) {
     hash.update(
@@ -983,6 +1031,7 @@ function orderByParent<T>(items: T[], getId: (item: T) => string, getParent: (it
 function validateManifestRelations(manifest: BrainVaultBackup) {
   const { pages, blocks, tags, pageTags } = manifest.data;
   const pageShares = manifest.data.pageShares ?? [];
+  const pageComments = manifest.data.pageComments ?? [];
   const pageVersions = manifest.data.pageVersions ?? [];
   const navigationCollapsedPageIds = manifest.data.navigationCollapsedPageIds ?? [];
   const navigationPageOrder = manifest.data.navigationPageOrder ?? [];
@@ -1017,6 +1066,13 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
       .map((item) => `${item.page_id}\u0000${item.shared_user_id}`),
     "page share account ID"
   );
+  assertUnique(pageComments.map((item) => item.id), "page comment ID");
+  const commentCountByPage = new Map<string, number>();
+  for (const comment of pageComments) {
+    const count = (commentCountByPage.get(comment.page_id) ?? 0) + 1;
+    if (count > 500) invalidBackup(`Page contains too many comments: ${comment.page_id}`);
+    commentCountByPage.set(comment.page_id, count);
+  }
   assertUnique(
     pageVersions.map((item) => `${item.page_id}\u0000${item.revision}`),
     "page version revision"
@@ -1135,6 +1191,15 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
     if (!page) invalidBackup(`Shared page is missing: ${share.page_id}`);
     if (!isRestorablePageShareTarget(page)) {
       invalidBackup(`Shared page cannot be a collection: ${share.page_id}`);
+    }
+  }
+  for (const comment of pageComments) {
+    if (!pageById.has(comment.page_id)) invalidBackup(`Comment page is missing: ${comment.page_id}`);
+    if (
+      comment.author_user_id === manifest.source.userId
+      && comment.author_username.toLowerCase() !== manifest.source.username.toLowerCase()
+    ) {
+      invalidBackup(`Page comment owner identity is invalid: ${comment.id}`);
     }
   }
 
@@ -1308,6 +1373,17 @@ export async function prepareUserDataBackup(userId: string) {
          ORDER BY ps.page_id ASC, u.username ASC`,
         [userId]
       );
+      const pageComments = await client.query<BackupPageComment>(
+        `SELECT pc.id, pc.page_id, pc.user_id AS author_user_id, u.username AS author_username, pc.body,
+                DATE_FORMAT(pc.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at,
+                DATE_FORMAT(pc.updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at
+         FROM page_comments pc
+         INNER JOIN pages p ON p.id = pc.page_id
+         INNER JOIN users u ON u.id = pc.user_id
+         WHERE p.owner_id = ?
+         ORDER BY pc.page_id ASC, pc.created_at ASC, pc.id ASC`,
+        [userId]
+      );
       const pageVersions = await client.query<BackupPageVersion>(
         `SELECT pv.page_id, pv.revision, pv.page_edit_version, pv.page_content_version,
                 CAST(pv.actors AS CHAR CHARACTER SET utf8mb4) AS actors, pv.source, pv.change_count,
@@ -1358,6 +1434,7 @@ export async function prepareUserDataBackup(userId: string) {
       assertExportCount("tags", tags.length, dataTransferResourceLimits.maxTags);
       assertExportCount("page-tag relations", pageTags.length, dataTransferResourceLimits.maxPageTags);
       assertExportCount("page sharing grants", pageShares.length, dataTransferResourceLimits.maxPageShares);
+      assertExportCount("page comments", pageComments.length, dataTransferResourceLimits.maxPageComments);
       assertExportCount("page version history entries", pageVersions.length, dataTransferResourceLimits.maxPageVersions);
       assertExportCount("collapsed navigation pages", navigationCollapsedPageIds.length, dataTransferResourceLimits.maxPages);
       assertExportCount("ordered navigation pages", navigationPageOrder.length, dataTransferResourceLimits.maxPages);
@@ -1600,7 +1677,7 @@ export async function prepareUserDataBackup(userId: string) {
       }
 
       const snapshot = {
-        account, pages, blocks, tags, pageTags, pageShares, pageVersions, navigationCollapsedPageIds, navigationPageOrder,
+        account, pages, blocks, tags, pageTags, pageShares, pageComments, pageVersions, navigationCollapsedPageIds, navigationPageOrder,
         customIconLibraryRemovals
       };
       return { snapshot, attachmentFiles, retainedAttachmentFiles, pageCoverFiles, customIconFiles };
@@ -1627,6 +1704,7 @@ export async function prepareUserDataBackup(userId: string) {
         tags: snapshot.tags,
         pageTags: snapshot.pageTags,
         pageShares: snapshot.pageShares,
+        pageComments: snapshot.pageComments,
         pageVersions: snapshot.pageVersions,
         navigationCollapsedPageIds: snapshot.navigationCollapsedPageIds,
         navigationPageOrder: snapshot.navigationPageOrder.map((item) => ({
@@ -1773,6 +1851,7 @@ export async function writeUserDataBackup(
       retainedAttachments: manifest.retainedAttachments?.length ?? 0,
       pageCovers: manifest.pageCovers?.length ?? 0,
       customIcons: manifest.customIcons?.length ?? 0,
+      pageComments: manifest.data.pageComments?.length ?? 0,
       pageVersions: manifest.data.pageVersions?.length ?? 0,
       navigationCollapsedPages: manifest.data.navigationCollapsedPageIds?.length ?? 0,
       navigationOrderedPages: manifest.data.navigationPageOrder?.length ?? 0
@@ -1803,6 +1882,16 @@ async function assertNoForeignIdConflicts(userId: string, manifest: BrainVaultBa
     const rows = await db.query<{ id: string; owner_id: string }>(
       `SELECT b.id, p.owner_id FROM blocks b INNER JOIN pages p ON p.id = b.page_id
        WHERE b.id IN (${ids.map(() => "?").join(",")})`,
+      ids
+    );
+    const conflict = rows.find((row) => row.owner_id !== userId);
+    if (conflict) throw new ApiError(409, "BACKUP_ID_CONFLICT", "The backup contains an identifier owned by another account");
+  }
+  for (const ids of batch((manifest.data.pageComments ?? []).map((item) => item.id))) {
+    if (!ids.length) continue;
+    const rows = await db.query<{ id: string; owner_id: string }>(
+      `SELECT pc.id, p.owner_id FROM page_comments pc INNER JOIN pages p ON p.id = pc.page_id
+       WHERE pc.id IN (${ids.map(() => "?").join(",")})`,
       ids
     );
     const conflict = rows.find((row) => row.owner_id !== userId);
@@ -1979,6 +2068,51 @@ async function prepareRestoreSharingPlan(
   return { mode: "backup", shares };
 }
 
+async function prepareRestorePageComments(
+  client: DbClient,
+  userId: string,
+  manifest: BrainVaultBackup
+): Promise<RestoredPageComment[]> {
+  const comments = manifest.data.pageComments ?? [];
+  const externalAuthorIds = [...new Set(
+    comments
+      .map((comment) => comment.author_user_id)
+      .filter((authorId) => authorId !== manifest.source.userId)
+  )];
+  const usersById = new Map<string, { id: string; username: string }>();
+  for (const group of batch(externalAuthorIds)) {
+    if (!group.length) continue;
+    const rows = await client.query<{ id: string; username: string }>(
+      `SELECT id, username FROM users WHERE id IN (${group.map(() => "?").join(",")})`,
+      group
+    );
+    for (const row of rows) usersById.set(row.id, row);
+  }
+
+  return comments.map((comment) => {
+    let authorId = comment.author_user_id;
+    if (authorId === manifest.source.userId) {
+      if (comment.author_username.toLowerCase() !== manifest.source.username.toLowerCase()) {
+        invalidBackup(`Page comment owner identity is invalid: ${comment.id}`);
+      }
+      authorId = userId;
+    } else {
+      const author = usersById.get(authorId);
+      if (!author || author.username.toLowerCase() !== comment.author_username.toLowerCase()) {
+        invalidBackup(`Page comment author identity does not match this server: ${comment.author_username}`);
+      }
+    }
+    return {
+      id: comment.id,
+      pageId: comment.page_id,
+      userId: authorId,
+      body: comment.body,
+      createdAt: comment.created_at,
+      updatedAt: comment.updated_at
+    };
+  });
+}
+
 function collaboratorNavigationKey(userId: string, pageId: string) {
   return `${userId}\u0000${pageId}`;
 }
@@ -2082,6 +2216,7 @@ async function importRows(
   manifest: BrainVaultBackup,
   restoreVersion: number,
   pageShares: RestoredPageShare[],
+  pageComments: RestoredPageComment[],
   collaboratorNavigation: RestoreCollaboratorNavigationPlan,
   stagedPageCoverDir: string
 ) {
@@ -2184,6 +2319,14 @@ async function importRows(
     const targetTagId = tagIdMap.get(relation.tag_id);
     if (!targetTagId) invalidBackup(`Tag mapping is missing: ${relation.tag_id}`);
     await client.execute("INSERT INTO page_tags (page_id, tag_id) VALUES (?, ?)", [relation.page_id, targetTagId]);
+  }
+
+  for (const comment of pageComments) {
+    await client.execute(
+      `INSERT INTO page_comments (id, page_id, user_id, body, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [comment.id, comment.pageId, comment.userId, comment.body, comment.createdAt, comment.updatedAt]
+    );
   }
 
   for (const share of pageShares) {
@@ -3027,6 +3170,7 @@ export async function importUserDataBackup(
   let journalWritten = false;
   let restoreJournal: RestoreJournal | null = null;
   let restoreSharingPlan: RestoreSharingPlan = { mode: "backup", shares: [] };
+  let restorePageComments: RestoredPageComment[] = [];
   let restoreCollaboratorNavigation: RestoreCollaboratorNavigationPlan = { collapsed: [], order: [] };
   await Promise.all([
     mkdir(stagedAttachmentDir, { recursive: true }),
@@ -3184,6 +3328,7 @@ export async function importUserDataBackup(
           manifest,
           lockedWorkspaceSnapshot.shares
         );
+        restorePageComments = await prepareRestorePageComments(client, userId, manifest);
         restoreCollaboratorNavigation = await prepareRestoreCollaboratorNavigationPlan(
           client,
           userId,
@@ -3240,6 +3385,7 @@ export async function importUserDataBackup(
           manifest,
           restoreVersion,
           restoreSharingPlan.shares,
+          restorePageComments,
           restoreCollaboratorNavigation,
           stagedPageCoverDir
         );
@@ -3339,6 +3485,7 @@ export async function importUserDataBackup(
         customIcons: manifest.customIcons?.length ?? 0,
         tags: manifest.data.tags.length,
         shares: restoreSharingPlan.shares.length,
+        pageComments: restorePageComments.length,
         pageVersions: manifest.data.pageVersions?.length ?? 0,
         navigationCollapsedPages: manifest.data.navigationCollapsedPageIds?.length ?? 0,
       navigationOrderedPages: manifest.data.navigationPageOrder?.length ?? 0
