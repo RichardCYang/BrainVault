@@ -6,7 +6,12 @@ import { createId } from "./id.js";
 import { corsOrigins, env } from "../config/env.js";
 import { createExactHttpOriginSet, parseExactHttpOrigin } from "./request-origin.js";
 import { db, transaction, type DbClient } from "./db.js";
-import { getPageAccess, type PageAccess } from "./page-access.js";
+import {
+  assertPageCanEdit,
+  canEditPageAccess,
+  getPageAccess,
+  type PageAccess
+} from "./page-access.js";
 import { createCollaborationSessionBinding, verifyCollaborationToken } from "./collaboration-token.js";
 import {
   assertCollaborationDocumentEpoch,
@@ -122,6 +127,7 @@ type ClientContext = {
   authVersion: number;
   workspaceGeneration: number;
   shareGeneration: string | null;
+  canEdit: boolean;
   authSessionId: string;
   ipAddress: string;
   webRtcSignal: ClientWebRtcSignal;
@@ -640,6 +646,7 @@ export class PageCollaborationHub {
         authVersion: payload.authVersion,
         workspaceGeneration: payload.workspaceGeneration,
         shareGeneration: payload.shareGeneration,
+        canEdit: canEditPageAccess(access),
         authSessionId,
         ipAddress: sourceIp,
         webRtcSignal,
@@ -717,6 +724,7 @@ export class PageCollaborationHub {
           connection.close(4010, "Collaboration is no longer available");
           return;
         }
+        client.canEdit = canEditPageAccess(currentAccess);
         const currentState = await getCollaborationState(pageId);
         assertCollaborationDocumentEpoch(currentState, payload.documentEpoch);
       } catch (error) {
@@ -765,6 +773,18 @@ export class PageCollaborationHub {
           connectionId: client.id,
           bootstrap: false,
           lastUpdateId: room.maxUpdateId
+        });
+      } else if (!client.canEdit) {
+        // A read-only collaborator can bootstrap its local Yjs document from the
+        // canonical HTTP snapshot and immediately receive later server updates,
+        // but must never become responsible for writing the initial Yjs state.
+        client.synced = true;
+        connection.sendJson({
+          type: "sync-complete",
+          connectionId: client.id,
+          bootstrap: true,
+          readOnly: true,
+          lastUpdateId: 0
         });
       } else if (!room.bootstrapLeaderId) {
         room.bootstrapLeaderId = client.id;
@@ -975,6 +995,14 @@ export class PageCollaborationHub {
 
     if (!client.synced) {
       client.socket.sendJson({ type: "error", code: "COLLABORATION_NOT_SYNCED", message: "Wait for document synchronization" });
+      return;
+    }
+    if (!client.canEdit) {
+      client.socket.sendJson({
+        type: "error",
+        code: "COLLABORATION_READ_ONLY",
+        message: "This collection is shared with read-only permission"
+      });
       return;
     }
     if (message.data.length < 2) {
@@ -1289,6 +1317,7 @@ export class PageCollaborationHub {
         await assertCurrentCollaborationAuthentication(client, dbClient, { lock: true });
         const access = await getPageAccess(room.pageId, client.user.id, dbClient, { lockPage: true });
         assertCurrentCollaborationGrant(access, client.shareGeneration);
+        assertPageCanEdit(access, "This collaboration session is read-only");
         if (room.invalidated || this.rooms.get(room.pageId) !== room) return null;
         if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
           throw new ApiError(403, "COLLABORATION_DISABLED", "Collaboration is not enabled for this page");
@@ -1563,6 +1592,18 @@ export class PageCollaborationHub {
       room.waitingForBootstrap.delete(nextId);
       const next = room.clients.get(nextId);
       if (!next?.socket.isOpen) continue;
+      if (!next.canEdit) {
+        next.synced = true;
+        next.socket.sendJson({
+          type: "sync-complete",
+          connectionId: next.id,
+          bootstrap: true,
+          readOnly: true,
+          lastUpdateId: 0
+        });
+        this.broadcastPresenceUpdate(room, next);
+        continue;
+      }
       room.bootstrapLeaderId = next.id;
       next.synced = true;
       next.socket.sendJson({
@@ -1678,6 +1719,7 @@ export class PageCollaborationHub {
                 client.socket.close(4010, "Collaboration is no longer available");
                 return;
               }
+              client.canEdit = canEditPageAccess(access);
               const collaborationState = await getCollaborationState(room.pageId);
               if (!collaborationState || collaborationState.document_epoch !== client.documentEpoch) {
                 this.invalidateRoomForLineageChange(room);
@@ -1691,8 +1733,8 @@ export class PageCollaborationHub {
                 client.socket.close(4003, "Access from this VPN, proxy, or Tor network is blocked");
                 return;
               }
-              if (error instanceof ApiError && error.statusCode === 404) {
-                client.socket.close(4003, "Page access was removed");
+              if (error instanceof ApiError && (error.statusCode === 403 || error.statusCode === 404)) {
+                client.socket.close(4003, "Page access changed; reconnect to continue collaboration");
                 return;
               }
               console.error("Failed to recheck collaboration access", { pageId: room.pageId, error });

@@ -373,6 +373,7 @@ class PageCollaborationSession {
     this.page = options.page;
     this.bootstrapPage = options.page;
     this.accountId = typeof options.accountId === "string" ? options.accountId : "";
+    this.canEdit = options.canEdit !== false && options.page?.access?.canEdit !== false;
     this.recoverySourceId = typeof options.recoverySourceId === "string" ? options.recoverySourceId : "";
     this.recoveryStore = options.recoveryStore ?? null;
     this.recoveredLocalRecords = [];
@@ -427,11 +428,13 @@ class PageCollaborationSession {
         // before this live update became visible. Every other local-origin update
         // keeps the older best-effort persistence path because it is derived from
         // already durable server state (for example canonical attachments).
-        if (origin !== PREPARED_LOCAL_ORIGIN) this.persistLocalRecovery();
-        if (this.synced) this.sendDocumentUpdate(update);
-        else this.needsRecovery = true;
+        if (this.canEdit) {
+          if (origin !== PREPARED_LOCAL_ORIGIN) this.persistLocalRecovery();
+          if (this.synced) this.sendDocumentUpdate(update);
+          else this.needsRecovery = true;
+        }
       }
-      if (origin !== REMOTE_ORIGIN) this.scheduleMaterialization();
+      if (origin !== REMOTE_ORIGIN && this.canEdit) this.scheduleMaterialization();
     };
     this.doc.on("update", this.handleDocumentUpdate);
   }
@@ -1169,6 +1172,7 @@ class PageCollaborationSession {
   }
 
   async flushMaterialization({ compact = true } = {}) {
+    if (!this.canEdit) return null;
     if (this.destroyed) return null;
     if (!this.isReady || this.needsRecovery) {
       throw new Error("The real-time document is not synchronized yet");
@@ -1261,6 +1265,7 @@ class PageCollaborationSession {
 
   assertWritable({ allowDisconnected = false } = {}) {
     if (this.destroyed) throw new Error("The real-time collaboration session is closed");
+    if (!this.canEdit) throw new Error("This collection is shared with read-only permission");
     if (!allowDisconnected && !this.isReady) throw new Error("Wait for real-time synchronization before editing");
   }
 
@@ -1309,13 +1314,14 @@ class PageCollaborationSession {
       if (!documentEpoch || documentEpoch.length > 64) {
         throw new Error("The collaboration server returned an invalid document version");
       }
+      this.canEdit = session?.access?.canEdit !== false;
       if (this.documentEpoch && this.documentEpoch !== documentEpoch) {
         if (this.hasUnconfirmedLocalChanges) this.persistLocalRecovery();
         this.onAccessChanged({ code: 4011, reason: "The collaboration document was replaced" });
         return;
       }
       this.documentEpoch = documentEpoch;
-      if (this.recoveryLoadedEpoch !== documentEpoch) {
+      if (this.canEdit && this.recoveryLoadedEpoch !== documentEpoch) {
         this.restoreLocalRecovery(documentEpoch);
         this.recoveryLoadedEpoch = documentEpoch;
       }
@@ -1385,9 +1391,11 @@ class PageCollaborationSession {
       this.connectionId = message.connectionId ?? null;
       this.lastUpdateId = Math.max(this.lastUpdateId, Number(message.lastUpdateId) || 0);
       this.synced = true;
-      const mustSendFullState = Boolean(message.bootstrap || this.needsRecovery);
+      const mustSendFullState = this.canEdit && Boolean(message.bootstrap || this.needsRecovery);
       if (message.bootstrap) this.initializeFromPage();
-      else this.mergeCanonicalAttachments(mustSendFullState ? BOOTSTRAP_ORIGIN : LOCAL_ORIGIN);
+      else this.mergeCanonicalAttachments(
+        mustSendFullState || !this.canEdit ? BOOTSTRAP_ORIGIN : LOCAL_ORIGIN
+      );
       if (mustSendFullState) {
         let fullStateUpdate;
         try {
@@ -1537,7 +1545,10 @@ class PageCollaborationSession {
   markReady() {
     if (!this.synced || this.destroyed) return;
     this.ready = true;
-    this.reconcileServerAttachments(this.bootstrapPage?.blocks ?? this.page.blocks ?? []);
+    this.reconcileServerAttachments(
+      this.bootstrapPage?.blocks ?? this.page.blocks ?? [],
+      { origin: this.canEdit ? LOCAL_ORIGIN : BOOTSTRAP_ORIGIN }
+    );
     this.onStatus("synced");
     this.emitSnapshot("ready");
     this.sendAwareness();
@@ -1545,6 +1556,7 @@ class PageCollaborationSession {
   }
 
   sendDocumentUpdate(update) {
+    if (!this.canEdit) return false;
     const socket = this.socket;
     if (!this.synced || socket?.readyState !== WebSocket.OPEN) {
       this.needsRecovery = true;
@@ -1569,6 +1581,7 @@ class PageCollaborationSession {
   }
 
   requestCompaction() {
+    if (!this.canEdit) return;
     if (this.compactionPending || !this.isReady || this.pendingLocalUpdates) return;
     const socket = this.socket;
     if (socket?.readyState !== WebSocket.OPEN) return;
@@ -1627,7 +1640,7 @@ class PageCollaborationSession {
   }
 
   scheduleMaterialization() {
-    if (!this.isReady || this.destroyed) return;
+    if (!this.canEdit || !this.isReady || this.destroyed) return;
     clearTimeout(this.materializeTimer);
     this.materializeTimer = setTimeout(() => {
       this.materializeTimer = null;

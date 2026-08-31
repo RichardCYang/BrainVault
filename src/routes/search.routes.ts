@@ -38,11 +38,21 @@ searchRouter.get("/", validate({ query: searchQuerySchema }), async (req, res, n
       const pages = await client.query<PageRow>(
         `SELECT p.* FROM pages p
          WHERE (p.owner_id = ? OR EXISTS (
-           SELECT 1 FROM page_shares ps WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+           SELECT 1 FROM collection_shares cs
+           INNER JOIN page_collection_memberships pcm ON pcm.collection_id = cs.collection_id
+           WHERE pcm.page_id = p.id AND cs.user_id = ?
+         ) OR EXISTS (
+           SELECT 1 FROM page_shares ps
+           WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+             AND NOT EXISTS (
+               SELECT 1 FROM page_collection_memberships pcm2
+               INNER JOIN collection_shares cs2 ON cs2.collection_id = pcm2.collection_id
+               WHERE pcm2.page_id = p.id AND cs2.user_id = ?
+             )
          )) AND p.is_archived = 0 AND p.title LIKE ? ESCAPE '!'
          ORDER BY p.updated_at DESC
          LIMIT ?`,
-        [user.id, user.id, search, query.limit]
+        [user.id, user.id, user.id, user.id, search, query.limit]
       );
 
       const blocks = await client.query<BlockRow & { page_title: string; page_icon: string | null }>(
@@ -50,11 +60,21 @@ searchRouter.get("/", validate({ query: searchQuerySchema }), async (req, res, n
          FROM blocks b
          INNER JOIN pages p ON p.id = b.page_id
          WHERE (p.owner_id = ? OR EXISTS (
-           SELECT 1 FROM page_shares ps WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+           SELECT 1 FROM collection_shares cs
+           INNER JOIN page_collection_memberships pcm ON pcm.collection_id = cs.collection_id
+           WHERE pcm.page_id = p.id AND cs.user_id = ?
+         ) OR EXISTS (
+           SELECT 1 FROM page_shares ps
+           WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+             AND NOT EXISTS (
+               SELECT 1 FROM page_collection_memberships pcm2
+               INNER JOIN collection_shares cs2 ON cs2.collection_id = pcm2.collection_id
+               WHERE pcm2.page_id = p.id AND cs2.user_id = ?
+             )
          )) AND p.is_archived = 0 AND b.markdown LIKE ? ESCAPE '!'
          ORDER BY b.updated_at DESC
          LIMIT ?`,
-        [user.id, user.id, search, query.limit]
+        [user.id, user.id, user.id, user.id, search, query.limit]
       );
 
       return { pages, blocks };

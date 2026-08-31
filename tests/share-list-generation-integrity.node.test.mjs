@@ -9,7 +9,7 @@ function section(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-test("share list binds owner authorization and share rows to one database snapshot", async () => {
+test("share list binds administrator authorization and owner-scoped share rows to one database snapshot", async () => {
   const routes = (await readFile(new URL("../src/routes/collaboration.routes.ts", import.meta.url), "utf8"))
     .replace(/\r\n/g, "\n");
   const route = section(
@@ -19,9 +19,10 @@ test("share list binds owner authorization and share rows to one database snapsh
   );
 
   assert.match(route, /const rows = await transaction\(async \(client\) => \{/);
-  assert.match(route, /getOwnedPage\(pageId, user\.id, client\)/);
-  assert.match(route, /return getShareRows\(pageId, user\.id, client\)/);
-  assert.doesNotMatch(route, /getOwnedPage\(pageId, user\.id\);/);
+  assert.match(route, /const access = await getPageAccess\(pageId, user\.id, client\)/);
+  assert.match(route, /assertPageCanAdminister\(access\)/);
+  assert.match(route, /return getShareRows\(pageId, access\.page\.owner_id, client\)/);
+  assert.doesNotMatch(route, /getPageAccess\(pageId, user\.id\);/);
   assert.doesNotMatch(route, /const rows = await getShareRows\(pageId\);/);
 
   const helper = section(
@@ -38,7 +39,7 @@ test("share list binds owner authorization and share rows to one database snapsh
     'collaborationRouter.delete(\n  "/pages/:pageId/shares/:userId",'
   );
   assert.match(postRoute, /const shareResult = await transaction\(async \(client\) => \{/);
-  assert.match(postRoute, /const rows = await getShareRows\(pageId, owner\.id, client\)/);
+  assert.match(postRoute, /const rows = await getShareRows\(pageId, workspaceOwnerId, client\)/);
   assert.match(postRoute, /return \{ created, count: rows\.length \};/);
   assert.doesNotMatch(postRoute, /await getShareRows\(pageId\);/);
 });

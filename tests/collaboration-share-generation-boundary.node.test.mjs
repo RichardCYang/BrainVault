@@ -8,10 +8,12 @@ const token = readFileSync(new URL("../src/lib/collaboration-token.ts", import.m
 const server = readFileSync(new URL("../src/lib/collaboration-server.ts", import.meta.url), "utf8");
 const route = readFileSync(new URL("../src/routes/collaboration.routes.ts", import.meta.url), "utf8");
 
-test("editor page access carries the exact share generation", () => {
+test("effective page access carries the exact authoritative share generation", () => {
   assert.match(pageAccess, /shareGeneration: string \| null/);
-  assert.match(pageAccess, /ps\.generation AS access_share_generation/);
-  assert.match(pageAccess, /shareGeneration = sharedPage\?\.access_share_generation \?\? null/);
+  assert.match(pageAccess, /SELECT permission, generation\s+FROM collection_shares/);
+  assert.match(pageAccess, /shareGeneration = collectionGrant\.generation/);
+  assert.match(pageAccess, /SELECT generation\s+FROM page_shares/);
+  assert.match(pageAccess, /shareGeneration = pageGrant\.generation/);
 });
 
 test("collaboration tickets require a grant lineage", () => {
@@ -65,7 +67,7 @@ test("attachment uploads stay bound to the collaborator grant admitted before mu
   const admissionStart = blockRoute.indexOf("async function capturePageMutationAdmission");
   const admissionEnd = blockRoute.indexOf("function assertPageOwnerWorkspaceGeneration", admissionStart);
   const admission = blockRoute.slice(admissionStart, admissionEnd);
-  assert.match(admission, /access_share_generation/);
+  assert.match(admission, /access\.shareGeneration/);
   assert.match(admission, /actorShareGeneration/);
 
   const uploadStart = blockRoute.indexOf('"/pages/:pageId/attachments"');

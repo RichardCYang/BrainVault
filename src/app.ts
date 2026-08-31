@@ -14,6 +14,7 @@ import { blockRouter } from "./routes/block.routes.js";
 import { searchRouter } from "./routes/search.routes.js";
 import { dataRouter } from "./routes/data.routes.js";
 import { collaborationRouter } from "./routes/collaboration.routes.js";
+import { collectionSharingRouter } from "./routes/collection-sharing.routes.js";
 import { customIconRouter } from "./routes/custom-icon.routes.js";
 import { snapshotRouter } from "./routes/snapshot.routes.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.js";
@@ -231,6 +232,7 @@ export function createApp() {
 
   app.use("/api/auth", authRouter);
   app.use("/api", collaborationRouter);
+  app.use("/api", collectionSharingRouter);
   app.use("/api/pages", pageRouter);
   app.use("/api", blockRouter);
   app.use("/api/search", searchRouter);

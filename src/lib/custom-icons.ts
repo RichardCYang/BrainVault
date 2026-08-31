@@ -118,11 +118,23 @@ export async function canUserReadCustomIcon(
   const sharedReference = await client.queryOne<{ allowed: number }>(
     `SELECT 1 AS allowed
      FROM pages p
-     INNER JOIN page_shares ps
-       ON ps.page_id = p.id
-      AND ps.user_id = ?
-      AND ps.permission = 'EDIT'
      WHERE p.owner_id = ?
+       AND (
+         EXISTS (
+           SELECT 1 FROM page_collection_memberships pcm
+           INNER JOIN collection_shares cs ON cs.collection_id = pcm.collection_id
+           WHERE pcm.page_id = p.id AND cs.user_id = ?
+         )
+         OR EXISTS (
+           SELECT 1 FROM page_shares ps
+           WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+             AND NOT EXISTS (
+               SELECT 1 FROM page_collection_memberships pcm2
+               INNER JOIN collection_shares cs2 ON cs2.collection_id = pcm2.collection_id
+               WHERE pcm2.page_id = p.id AND cs2.user_id = ?
+             )
+         )
+       )
        AND (
          p.icon = ?
          OR EXISTS (
@@ -134,7 +146,7 @@ export async function canUserReadCustomIcon(
          )
        )
      LIMIT 1`,
-    [safeRequesterId, ownerId, iconValue, jsonSearchPattern]
+    [ownerId, safeRequesterId, safeRequesterId, safeRequesterId, iconValue, jsonSearchPattern]
   );
   return Boolean(sharedReference);
 }

@@ -62,7 +62,14 @@ import {
   BlockPreserveChildrenIntegrityError,
   planBlockDeletePreservingChildren
 } from "../lib/block-preserve-children.js";
-import { assertPageNotArchived, getBlockAccess, getPageAccess, type PageAccess } from "../lib/page-access.js";
+import {
+  assertPageCanEdit,
+  assertPageNotArchived,
+  canAdministerPageAccess,
+  getBlockAccess,
+  getPageAccess,
+  type PageAccess
+} from "../lib/page-access.js";
 import { broadcastCanonicalAttachment } from "../lib/collaboration-server.js";
 import { ensureCollaborationState } from "../lib/collaboration-lineage.js";
 import {
@@ -501,39 +508,27 @@ type PageMutationAdmission = Readonly<{
 }>;
 
 async function capturePageMutationAdmission(pageId: string, userId: string): Promise<PageMutationAdmission> {
-  const row = await db.queryOne<{
-    owner_id: string;
-    attachment_generation: number | bigint | string;
-    access_share_generation: string | null;
-    is_archived: number | boolean;
-  }>(
-    `SELECT p.owner_id, u.attachment_generation, p.is_archived,
-            CASE WHEN p.owner_id = ? THEN NULL ELSE ps.generation END AS access_share_generation
-     FROM pages p
-     INNER JOIN users u ON u.id = p.owner_id
-     LEFT JOIN page_shares ps
-       ON ps.page_id = p.id
-      AND ps.user_id = ?
-      AND ps.permission = 'EDIT'
-     WHERE p.id = ?
-       AND (p.owner_id = ? OR ps.user_id IS NOT NULL)`,
-    [userId, userId, pageId, userId]
+  const access = await getPageAccess(pageId, userId);
+  assertPageCanEdit(access);
+  const row = await db.queryOne<{ attachment_generation: number | bigint | string }>(
+    "SELECT attachment_generation FROM users WHERE id = ?",
+    [access.page.owner_id]
   );
-  if (!row) throw notFound("Page");
+  if (!row) throw notFound("User");
 
   const ownerWorkspaceGeneration = Number(row.attachment_generation);
   if (!Number.isSafeInteger(ownerWorkspaceGeneration) || ownerWorkspaceGeneration < 1) {
-    throw new Error(`Invalid workspace generation for page owner: ${row.owner_id}`);
+    throw new Error(`Invalid workspace generation for page owner: ${access.page.owner_id}`);
   }
-  const actorShareGeneration = row.owner_id === userId ? null : row.access_share_generation;
-  if (row.owner_id !== userId && !actorShareGeneration) {
+  const actorShareGeneration = access.page.owner_id === userId ? null : access.shareGeneration;
+  if (access.page.owner_id !== userId && !actorShareGeneration) {
     throw new Error(`Missing collaborator share generation for page: ${pageId}`);
   }
   return Object.freeze({
-    ownerId: row.owner_id,
+    ownerId: access.page.owner_id,
     ownerWorkspaceGeneration,
     actorShareGeneration,
-    isArchived: Boolean(row.is_archived)
+    isArchived: Boolean(access.page.is_archived)
   });
 }
 
@@ -546,7 +541,8 @@ function assertPageOwnerWorkspaceGeneration(expected: number, current: number) {
   );
 }
 
-function assertDirectBlockMutationAllowed(access: Pick<PageAccess, "shareCount">) {
+function assertDirectBlockMutationAllowed(access: Pick<PageAccess, "role" | "shareCount">) {
+  assertPageCanEdit(access);
   if (access.shareCount > 0) {
     throw new ApiError(
       409,
@@ -1634,10 +1630,8 @@ blockRouter.post(
           body.targetPageId
         );
         if (
-          sourceAccess.role !== "OWNER"
-          || targetAccess.role !== "OWNER"
-          || sourceAccess.page.owner_id !== user.id
-          || targetAccess.page.owner_id !== user.id
+          !canAdministerPageAccess(sourceAccess)
+          || !canAdministerPageAccess(targetAccess)
           || sourceAccess.page.owner_id !== targetAccess.page.owner_id
         ) {
           throw new ApiError(

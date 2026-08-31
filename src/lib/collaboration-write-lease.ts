@@ -1,5 +1,5 @@
 import { db, transaction, type DbClient } from "./db.js";
-import { getPageAccess } from "./page-access.js";
+import { assertPageCanEdit, getPageAccess } from "./page-access.js";
 import { assertCollaborationDocumentEpoch, getCollaborationState } from "./collaboration-lineage.js";
 import { ApiError } from "./http.js";
 import { createId } from "./id.js";
@@ -20,6 +20,7 @@ export async function reserveCollaborationWriteLease(
     // Destructive transitions lock the same page row before inspecting leases.
     // Whichever transaction acquires this row first establishes the ordering.
     const access = await getPageAccess(pageId, userId, client, { lockPage: true });
+    assertPageCanEdit(access, "This collaboration session is read-only");
     if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
       throw new ApiError(403, "COLLABORATION_DISABLED", "Collaboration is not enabled for this page");
     }

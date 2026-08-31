@@ -11,7 +11,7 @@ test("page parent move is an in-place hierarchy mutation guarded by owner-wide r
   assert.ok(patchStart >= 0 && deleteStart > patchStart, "page PATCH route must be discoverable");
   assert.match(patchRoute, /fields\.push\("parent_page_id = \?"\)/);
   assert.match(patchRoute, /values\.push\(updates\.parentPageId\)/);
-  assert.match(patchRoute, /getOwnedPageTreeRows\(user\.id, client, true\)/);
+  assert.match(patchRoute, /getOwnedPageTreeRows\(workspaceOwnerId, client, true\)/);
   assert.match(patchRoute, /assertPageParentFromLockedRows\(pageId, updates\.parentPageId, lockedRows\)/);
   assert.ok(
     patchRoute.indexOf("isMatchingMutationReplay") < patchRoute.indexOf("assertPageParentFromLockedRows"),
@@ -38,11 +38,9 @@ test("server rejects invalid page-move destinations before applying a parent upd
     route,
     /throw new ApiError\(409, "PARENT_PAGE_ARCHIVED", "Restore the destination page before moving this page"\)/
   );
-  assert.match(route, /if \(parent\.is_collection\)/);
-  assert.match(
-    route,
-    /throw new ApiError\(400, "INVALID_PARENT_PAGE", "A collection cannot be used as a page-move destination"\)/
-  );
   assert.match(route, /throw new ApiError\(400, "INVALID_PARENT_PAGE", "Page hierarchy cannot contain a cycle"\)/);
   assert.match(route, /if \(existingPage\.is_collection && updates\.parentPageId\)/);
+  assert.match(route, /"INVALID_COLLECTION_PARENT", "A collection cannot have a parent page"/);
+  assert.match(patchRoute, /replacePageSubtreeCollectionMembership\(/);
+  assert.match(patchRoute, /"COLLECTION_ADMIN_SCOPE_REQUIRED"/);
 });

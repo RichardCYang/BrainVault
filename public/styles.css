@@ -20120,3 +20120,40 @@ html[data-theme="dark"] {
     transition: none;
   }
 }
+
+/* Collection-level sharing */
+.collection-view-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.collection-share-form-row select,
+.share-page-list-item .collection-share-permission {
+  min-width: 8.5rem;
+}
+
+.share-page-list-item .collection-share-permission {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 760px) {
+  .collection-view-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .collection-view-heading {
+    flex-wrap: wrap;
+  }
+
+  .collection-share-form-row {
+    flex-wrap: wrap;
+  }
+
+  .collection-share-form-row input {
+    flex-basis: 100%;
+  }
+}

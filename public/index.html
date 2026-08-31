@@ -443,6 +443,10 @@
               data-i18n-title="emoji.changeCollection"
             >📁</button>
             <h2 id="collection-view-title" class="collection-view-title"></h2>
+            <div class="collection-view-actions">
+              <button id="collection-add-page-button" type="button" class="secondary">Add page</button>
+              <button id="share-collection-button" type="button" class="secondary">Share collection</button>
+            </div>
           </div>
           <div id="collection-view-list" class="collection-view-list document-tree"></div>
         </section>
@@ -671,6 +675,51 @@
           <span id="share-page-count" class="muted"></span>
         </div>
         <ul id="share-page-list" class="share-page-list"></ul>
+      </section>
+    </div>
+
+    <div id="share-collection-layer" class="share-page-layer hidden" aria-hidden="true">
+      <button
+        id="share-collection-backdrop"
+        class="share-page-backdrop"
+        type="button"
+        aria-label="Close collection sharing dialog"
+        tabindex="-1"
+      ></button>
+      <section
+        id="share-collection-dialog"
+        class="share-page-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="share-collection-title"
+        tabindex="-1"
+      >
+        <header class="share-page-header">
+          <div>
+            <p class="kicker">Collection collaboration</p>
+            <h2 id="share-collection-title">Share this collection</h2>
+            <p class="muted">Collection access overrides page-level sharing. Choose read, read/write, or administrator access.</p>
+          </div>
+          <button id="share-collection-close" class="share-page-close" type="button" aria-label="Close collection sharing dialog">×</button>
+        </header>
+        <form id="share-collection-form" class="share-page-form">
+          <label for="share-collection-username">User login ID</label>
+          <div class="share-page-form-row collection-share-form-row">
+            <input id="share-collection-username" type="text" required minlength="3" maxlength="40" autocomplete="off" spellcheck="false" placeholder="username" />
+            <select id="share-collection-permission" aria-label="Collection permission">
+              <option value="READ">Read</option>
+              <option value="WRITE">Read / write</option>
+              <option value="ADMIN">Administrator</option>
+            </select>
+            <button id="share-collection-submit" type="submit">Add user</button>
+          </div>
+        </form>
+        <p id="share-collection-message" class="share-page-message" role="status" aria-live="polite"></p>
+        <div class="share-page-list-heading">
+          <strong>People with collection access</strong>
+          <span id="share-collection-count" class="muted"></span>
+        </div>
+        <ul id="share-collection-list" class="share-page-list"></ul>
       </section>
     </div>
 

@@ -240,6 +240,8 @@ let workspaceNavigationGeneration = 0;
 let authenticationSessionGeneration = 0;
 let sharePageRequestGeneration = 0;
 let sharePageNavigationGeneration = null;
+let shareCollectionRequestGeneration = 0;
+let shareCollectionNavigationGeneration = null;
 let pageEditLockGeneration = 0;
 const pendingWorkspaceCreateTasks = new Map();
 const pendingPageVersionResetTasks = new Map();
@@ -390,6 +392,9 @@ const state = {
   applyingCollaborationSnapshot: false,
   sharePageOpen: false,
   sharePageEntries: [],
+  shareCollectionOpen: false,
+  shareCollectionId: null,
+  shareCollectionEntries: [],
   pageComments: {
     pageId: null,
     entries: [],
@@ -1191,6 +1196,8 @@ const elements = {
   collectionIconButton: $("#collection-icon-button"),
   collectionViewTitle: $("#collection-view-title"),
   collectionViewList: $("#collection-view-list"),
+  collectionAddPageButton: $("#collection-add-page-button"),
+  shareCollectionButton: $("#share-collection-button"),
   pageViewHeader: $("#page-view-header"),
   pagePath: $("#page-path"),
   pageActionsButton: $("#page-actions-button"),
@@ -1271,6 +1278,17 @@ const elements = {
   sharePageMessage: $("#share-page-message"),
   sharePageCount: $("#share-page-count"),
   sharePageList: $("#share-page-list"),
+  shareCollectionLayer: $("#share-collection-layer"),
+  shareCollectionBackdrop: $("#share-collection-backdrop"),
+  shareCollectionDialog: $("#share-collection-dialog"),
+  shareCollectionClose: $("#share-collection-close"),
+  shareCollectionForm: $("#share-collection-form"),
+  shareCollectionUsername: $("#share-collection-username"),
+  shareCollectionPermission: $("#share-collection-permission"),
+  shareCollectionSubmit: $("#share-collection-submit"),
+  shareCollectionMessage: $("#share-collection-message"),
+  shareCollectionCount: $("#share-collection-count"),
+  shareCollectionList: $("#share-collection-list"),
   blockEditorHelp: $("#block-editor-help"),
   blockCount: $("#block-count"),
   blockList: $("#block-list"),
@@ -2930,6 +2948,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   void stopPageWriterSession({ flush: false });
   void destroyPageCollaboration({ flush: false });
   closeSharePageDialog({ restoreFocus: false });
+  closeShareCollectionDialog({ restoreFocus: false });
   closeSearchDialog({ restoreFocus: false });
   closePageVersionHistory({ restoreFocus: false });
   closePageCoverDialog();
@@ -6098,7 +6117,7 @@ function renderDocumentNode(page, groups, depth = 0) {
   }
   button.append(icon, label);
   row.append(button);
-  if (isPageOwner(page)) {
+  if (canManagePage(page)) {
     row.append(makeNavigationMenuButton({ id: page.id, kind: "page", title: page.title }));
   }
   wrapper.append(row);
@@ -6142,17 +6161,17 @@ function renderCollectionSection(collection, pages) {
   count.textContent = String(getCollectionPageCount(collection.id));
 
   button.append(title, count);
-  row.append(
-    button,
-    makeNavigationMenuButton({ id: collection.id, kind: "collection", title: collection.title })
-  );
+  row.append(button);
+  if (canManagePage(collection)) {
+    row.append(makeNavigationMenuButton({ id: collection.id, kind: "collection", title: collection.title }));
+  }
   section.append(row);
 
   if (pages.length) {
     const tree = document.createElement("div");
     tree.className = "document-tree";
     const groups = buildPageTree(pages, { useNavigationOrder: true });
-    for (const page of groups.get(rootParentKey) ?? []) {
+    for (const page of groups.get(collection.id) ?? []) {
       tree.append(renderDocumentNode(page, groups));
     }
     section.append(tree);
@@ -6459,7 +6478,7 @@ function makeHomeDocumentButton(page) {
 
   button.append(title);
   row.append(button);
-  if (isPageOwner(page)) {
+  if (canManagePage(page)) {
     row.append(
       makeNavigationMenuButton({
         id: page.id,
@@ -6513,7 +6532,7 @@ function isRecoveryStorageWritable() {
 }
 
 function isPageReadOnly() {
-  return state.pageMode !== pageModes.WRITE || !isRecoveryStorageWritable();
+  return state.pageMode !== pageModes.WRITE || !isRecoveryStorageWritable() || !canEditPage();
 }
 
 let recoveryStorageFailureDrainInFlight = false;
@@ -6615,6 +6634,24 @@ function isPageOwner(page = state.selectedPage) {
   if (!page) return false;
   if (page.access && typeof page.access.isOwner === "boolean") return page.access.isOwner;
   return Boolean(state.user?.id && page.ownerId === state.user.id);
+}
+
+function canEditPage(page = state.selectedPage) {
+  if (!page) return false;
+  if (page.access && typeof page.access.canEdit === "boolean") return page.access.canEdit;
+  return isPageOwner(page);
+}
+
+function canManagePage(page = state.selectedPage) {
+  if (!page) return false;
+  if (page.access && typeof page.access.canManagePage === "boolean") return page.access.canManagePage;
+  return isPageOwner(page);
+}
+
+function canManagePageSharing(page = state.selectedPage) {
+  if (!page) return false;
+  if (page.access && typeof page.access.canManageSharing === "boolean") return page.access.canManageSharing;
+  return isPageOwner(page);
 }
 
 function isCollaborativePage(page = state.selectedPage) {
@@ -6978,6 +7015,7 @@ function canPersistSelectedPage() {
     state.selectedPage
     && state.workspaceView === "page"
     && state.pageMode === pageModes.WRITE
+    && canEditPage(state.selectedPage)
     && (recoveryWritable || recoveryDrainAllowed)
   );
 }
@@ -7088,7 +7126,8 @@ function syncPageModeUi() {
   const controlsReadOnly = readOnly || interactionLocked;
   const modeLabelKey = readOnly ? "page.readMode" : "page.writeMode";
   const modeDescriptionKey = readOnly ? "page.readModeDescription" : "page.writeModeDescription";
-  const owner = isPageOwner();
+  const manager = canManagePage();
+  const canEdit = canEditPage();
 
   elements.pageView.classList.toggle("is-read-only", readOnly);
   elements.pageView.classList.toggle("is-collaborative", isCollaborativePage());
@@ -7096,20 +7135,20 @@ function syncPageModeUi() {
   elements.pageView.setAttribute("aria-busy", String(interactionLocked));
   elements.pageView.dataset.pageMode = state.pageMode;
   elements.pageTitle.readOnly = controlsReadOnly;
-  elements.pageIconButton.disabled = controlsReadOnly || !owner;
+  elements.pageIconButton.disabled = controlsReadOnly || !manager;
   elements.savePageButton.disabled = controlsReadOnly;
   elements.savePageButton.classList.toggle("hidden", readOnly);
-  elements.archivePageButton.disabled = controlsReadOnly || !owner;
-  elements.archivePageButton.classList.toggle("hidden", !owner);
-  elements.sharePageButton.classList.toggle("hidden", !state.selectedPage || !owner);
+  elements.archivePageButton.disabled = controlsReadOnly || !manager;
+  elements.archivePageButton.classList.toggle("hidden", !manager);
+  elements.sharePageButton.classList.toggle("hidden", !state.selectedPage || !canManagePageSharing());
   elements.sharePageButton.disabled = interactionLocked;
-  elements.pageVersionHistoryButton.classList.toggle("hidden", !state.selectedPage || !owner);
-  elements.pageVersionHistoryButton.disabled = interactionLocked || !owner;
+  elements.pageVersionHistoryButton.classList.toggle("hidden", !state.selectedPage || !manager);
+  elements.pageVersionHistoryButton.disabled = interactionLocked || !manager;
   elements.blockList.setAttribute("aria-readonly", String(controlsReadOnly));
   elements.blockList.setAttribute("aria-label", t(readOnly ? "page.readerAria" : "page.editorAria"));
   elements.blockEditorHelp.innerHTML = t(readOnly ? "page.readOnlyHelp" : "page.editorHelp");
 
-  elements.pageModeToggle.disabled = interactionLocked || isPageModeMutationFenced();
+  elements.pageModeToggle.disabled = !canEdit || interactionLocked || isPageModeMutationFenced();
   elements.pageModeToggle.setAttribute("aria-checked", String(!readOnly));
   elements.pageModeToggle.classList.toggle("is-write-mode", !readOnly);
   elements.pageModeToggleIcon.textContent = readOnly ? "◉" : "✎";
@@ -7642,8 +7681,8 @@ async function withPagePersistenceTransition(pageId, kind, action) {
   return result.value;
 }
 
-async function withWorkspacePersistenceTransition(kind, action) {
-  const workspaceTransitionId = getWorkspaceTransitionId();
+async function withWorkspacePersistenceTransitionForOwner(ownerId, kind, action) {
+  const workspaceTransitionId = getWorkspaceTransitionId(ownerId);
   if (!workspaceTransitionId) throw new Error(t("status.workspaceTransitionBusy"));
   return withPagePersistenceTransition(workspaceTransitionId, kind, async () => {
     // The owner lock proves that no current page transition for this workspace
@@ -7668,6 +7707,10 @@ async function withWorkspacePersistenceTransition(kind, action) {
     if (competingTransitions.length) throw new Error(t("status.workspaceTransitionBusy"));
     return action();
   });
+}
+
+async function withWorkspacePersistenceTransition(kind, action) {
+  return withWorkspacePersistenceTransitionForOwner(state.user?.id, kind, action);
 }
 
 function getJsonPayloadByteLength(payload) {
@@ -8308,7 +8351,7 @@ async function resetPageVersionHistory() {
   const history = state.pageVersionHistory;
   const page = state.selectedPage;
   const pageId = history.pageId;
-  if (!pageId || !page || page.id !== pageId || !isPageOwner(page) || history.loading || history.resetting) return;
+  if (!pageId || !page || page.id !== pageId || !canManagePage(page) || history.loading || history.resetting) return;
   if (!requireWritablePage()) return;
 
   const title = page.title || t("newDocumentTitle");
@@ -8416,7 +8459,7 @@ async function loadPageVersionDetail(versionId) {
 
 function openPageVersionHistory() {
   const page = state.selectedPage;
-  if (!page || !isPageOwner(page)) return;
+  if (!page || !canManagePage(page)) return;
   closePageActionsMenu();
   state.pageVersionHistory.pageId = page.id;
   state.pageVersionHistory.versions = [];
@@ -8426,7 +8469,7 @@ function openPageVersionHistory() {
   state.pageVersionHistory.requestId += 1;
   state.pageVersionHistory.detailRequestId += 1;
   elements.pageVersionHistoryPageTitle.textContent = page.title || t("newDocumentTitle");
-  elements.pageVersionHistoryReset.classList.toggle("hidden", !isPageOwner(page));
+  elements.pageVersionHistoryReset.classList.toggle("hidden", !canManagePage(page));
   elements.pageVersionHistoryReset.disabled = state.pageVersionHistory.resetting || isPageReadOnly();
   if (state.pageVersionHistory.resetting) {
     elements.pageVersionHistoryReset.setAttribute("aria-busy", "true");
@@ -8526,7 +8569,10 @@ function openNavigationContextMenu(trigger, { focusFirst = false } = {}) {
     "aria-label",
     t(kind === "collection" ? "navigationMenu.collectionAria" : "navigationMenu.pageAria", { title })
   );
-  elements.navigationAddSubpageButton.classList.toggle("hidden", kind !== "page");
+  elements.navigationAddSubpageButton.classList.remove("hidden");
+  elements.navigationAddSubpageButton.querySelector("span")?.replaceChildren(
+    document.createTextNode(t(kind === "collection" ? "collection.addTitle" : "navigationMenu.addSubpage"))
+  );
   elements.navigationAddSubpageButton.disabled = state.workspaceCreateBusy;
   elements.navigationMovePageButton.classList.toggle("hidden", kind !== "page");
   elements.navigationMovePageButton.disabled = kind !== "page" || pageMoveSubmitting;
@@ -8540,7 +8586,7 @@ function openNavigationContextMenu(trigger, { focusFirst = false } = {}) {
 
 async function createNavigationSubpage() {
   const target = state.activeNavigationMenuTarget;
-  if (!target || target.kind !== "page") return { applied: false };
+  if (!target || !["page", "collection"].includes(target.kind)) return { applied: false };
 
   const parentPageId = target.id;
   const navigationGeneration = workspaceNavigationGeneration;
@@ -8561,7 +8607,7 @@ function canMoveNavigationPage(page) {
     page?.id
     && !page.isArchived
     && !isCollectionPage(page)
-    && isPageOwner(page)
+    && canManagePage(page)
   );
 }
 
@@ -8575,8 +8621,7 @@ function getPageMoveDestinationPages(sourcePage) {
       && page.id !== sourcePage.parentPageId
       && page.ownerId === sourcePage.ownerId
       && !page.isArchived
-      && !isCollectionPage(page)
-      && isPageOwner(page)
+      && canManagePage(page)
     ))
     .sort((left, right) => (
       getPageMoveDestinationLabel(left).localeCompare(getPageMoveDestinationLabel(right), getLocale())
@@ -9071,10 +9116,16 @@ function renderCollectionView() {
     "📁"
   );
   elements.collectionViewTitle.textContent = collection ? collection.title : getDefaultCollectionName();
+  const canManageCollection = collection ? canManagePage(collection) : true;
+  elements.collectionIconButton.disabled = collection ? !canManageCollection : false;
+  elements.collectionAddPageButton.classList.toggle("hidden", collection ? !canManageCollection : false);
+  elements.collectionAddPageButton.disabled = state.workspaceCreateBusy || (collection ? !canManageCollection : false);
+  elements.shareCollectionButton.classList.toggle("hidden", !collection || !canManagePageSharing(collection));
+  elements.shareCollectionButton.disabled = !collection || !canManagePageSharing(collection);
   elements.collectionViewList.replaceChildren();
 
   const groups = buildPageTree(pages);
-  const roots = groups.get(rootParentKey) ?? [];
+  const roots = groups.get(collection?.id ?? rootParentKey) ?? [];
   if (!roots.length) {
     elements.collectionViewList.append(makeEmptyMessage(t("empty.noDocumentsSidebar")));
     return;
@@ -10023,11 +10074,13 @@ async function startPageCollaboration(page = state.selectedPage) {
     const session = await createPageCollaboration({
       page,
       accountId: state.user?.id,
+      canEdit: page.access?.canEdit !== false,
       recoverySourceId: pageDraftSourceId,
       recoveryStore: collaborationRecoveryStore,
       api,
       onBeforeLocalRecoveryApply: () => {
         if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) return false;
+        if (page.access?.canEdit === false || state.selectedPage?.access?.canEdit === false) return false;
         if (isPageReadOnly() && isRecoveryStorageWritable()) {
           // A crash-recovery Yjs update is a real local edit. Enable continued
           // editing only when strict IndexedDB recovery writes remain available;
@@ -10221,7 +10274,7 @@ function renderPageCommentItem(comment) {
       || state.pageComments.submitting
       || state.pageComments.busyCommentId
   );
-  if (comment.canEdit || comment.canDelete) {
+  if (canEditPage() && (comment.canEdit || comment.canDelete)) {
     const actions = document.createElement("span");
     actions.className = "page-comment-actions";
     if (comment.canEdit) {
@@ -10301,7 +10354,7 @@ function renderPageComments() {
       || commentState?.submitting
       || commentState?.busyCommentId
   );
-  const pageUnavailable = Boolean(page.isArchived);
+  const pageUnavailable = Boolean(page.isArchived || !canEditPage(page));
 
   elements.pageCommentsToggle.setAttribute("aria-expanded", String(expanded));
   elements.pageCommentsToggleLabel.textContent = count > 0 ? t("comments.title") : t("comments.add");
@@ -10577,7 +10630,7 @@ function isCurrentSharePageRequest(requestGeneration, pageId) {
       && isCurrentWorkspaceNavigation(sharePageNavigationGeneration)
       && state.sharePageOpen
       && state.selectedPage?.id === pageId
-      && isPageOwner()
+      && canManagePageSharing()
   );
 }
 
@@ -10599,7 +10652,7 @@ async function loadPageShares(pageId, requestGeneration) {
 
 async function openSharePageDialog() {
   const pageId = state.selectedPage?.id;
-  if (!pageId || !isPageOwner()) return;
+  if (!pageId || !canManagePageSharing()) return;
   const navigationGeneration = workspaceNavigationGeneration;
   const requestGeneration = ++sharePageRequestGeneration;
   await flushPendingPageEdits();
@@ -10607,7 +10660,7 @@ async function openSharePageDialog() {
     requestGeneration !== sharePageRequestGeneration
       || !isCurrentWorkspaceNavigation(navigationGeneration)
       || state.selectedPage?.id !== pageId
-      || !isPageOwner()
+      || !canManagePageSharing()
   ) return;
   sharePageNavigationGeneration = navigationGeneration;
   state.sharePageOpen = true;
@@ -10636,6 +10689,141 @@ function closeSharePageDialog({ restoreFocus = true } = {}) {
   setSharePageMessage();
   if (restoreFocus && elements.sharePageButton.isConnected && !elements.sharePageButton.classList.contains("hidden")) {
     elements.sharePageButton.focus();
+  }
+}
+
+function getActiveCustomCollection() {
+  if (state.workspaceView !== "collection" || !state.activeCollectionId || state.activeCollectionId === defaultCollectionKey) {
+    return null;
+  }
+  return state.allPages.find((page) => page.id === state.activeCollectionId && isCollectionPage(page)) ?? null;
+}
+
+function setShareCollectionMessage(message = "", isError = false) {
+  elements.shareCollectionMessage.textContent = message;
+  elements.shareCollectionMessage.classList.toggle("is-error", isError);
+}
+
+function renderShareCollectionList() {
+  elements.shareCollectionList.replaceChildren();
+  elements.shareCollectionCount.textContent = `${state.shareCollectionEntries.length}`;
+  if (!state.shareCollectionEntries.length) {
+    const empty = document.createElement("li");
+    empty.className = "share-page-empty";
+    empty.textContent = "Only you can access this collection.";
+    elements.shareCollectionList.append(empty);
+    return;
+  }
+
+  for (const share of state.shareCollectionEntries) {
+    const item = document.createElement("li");
+    item.className = "share-page-list-item";
+    const avatar = document.createElement("span");
+    avatar.className = "share-page-user-avatar";
+    if (share.user?.avatarData) {
+      const image = document.createElement("img");
+      image.src = share.user.avatarData;
+      image.alt = "";
+      avatar.append(image);
+    } else {
+      avatar.textContent = getUserInitials(share.user ?? { username: "?" });
+    }
+    const copy = document.createElement("span");
+    copy.className = "share-page-user-copy";
+    const name = document.createElement("strong");
+    name.textContent = share.user?.name?.trim() || share.user?.username;
+    const meta = document.createElement("span");
+    meta.textContent = `@${share.user?.username}`;
+    copy.append(name, meta);
+
+    const permission = document.createElement("select");
+    permission.className = "collection-share-permission";
+    permission.dataset.userId = share.user?.id ?? "";
+    permission.dataset.username = share.user?.username ?? "";
+    permission.dataset.generation = share.generation ?? "";
+    permission.setAttribute("aria-label", `Permission for @${share.user?.username ?? "user"}`);
+    for (const [value, label] of [["READ", "Read"], ["WRITE", "Read / write"], ["ADMIN", "Administrator"]]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      permission.append(option);
+    }
+    permission.value = share.permission ?? "READ";
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "share-page-remove";
+    remove.dataset.collectionShareRemove = "true";
+    remove.dataset.userId = share.user?.id ?? "";
+    remove.dataset.username = share.user?.username ?? "";
+    remove.dataset.generation = share.generation ?? "";
+    remove.textContent = t("sharing.remove");
+    item.append(avatar, copy, permission, remove);
+    elements.shareCollectionList.append(item);
+  }
+}
+
+function isCurrentShareCollectionRequest(requestGeneration, collectionId) {
+  const collection = getActiveCustomCollection();
+  return Boolean(
+    requestGeneration === shareCollectionRequestGeneration
+      && shareCollectionNavigationGeneration !== null
+      && isCurrentWorkspaceNavigation(shareCollectionNavigationGeneration)
+      && state.shareCollectionOpen
+      && state.shareCollectionId === collectionId
+      && collection?.id === collectionId
+      && canManagePageSharing(collection)
+  );
+}
+
+async function loadCollectionShares(collectionId, requestGeneration) {
+  if (!isCurrentShareCollectionRequest(requestGeneration, collectionId)) return;
+  setShareCollectionMessage(t("sharing.loading"));
+  try {
+    const data = await api(`/api/collections/${encodeURIComponent(collectionId)}/shares`);
+    if (!isCurrentShareCollectionRequest(requestGeneration, collectionId)) return;
+    state.shareCollectionEntries = data.shares ?? [];
+    renderShareCollectionList();
+    setShareCollectionMessage();
+  } catch (error) {
+    if (isCurrentShareCollectionRequest(requestGeneration, collectionId)) {
+      setShareCollectionMessage(error?.message || t("errors.unknown"), true);
+    }
+  }
+}
+
+async function openShareCollectionDialog() {
+  const collection = getActiveCustomCollection();
+  if (!collection || !canManagePageSharing(collection)) return;
+  const navigationGeneration = workspaceNavigationGeneration;
+  const requestGeneration = ++shareCollectionRequestGeneration;
+  shareCollectionNavigationGeneration = navigationGeneration;
+  state.shareCollectionOpen = true;
+  state.shareCollectionId = collection.id;
+  state.shareCollectionEntries = [];
+  elements.shareCollectionLayer.classList.remove("hidden");
+  elements.shareCollectionLayer.setAttribute("aria-hidden", "false");
+  renderShareCollectionList();
+  await loadCollectionShares(collection.id, requestGeneration);
+  if (isCurrentShareCollectionRequest(requestGeneration, collection.id)) {
+    requestAnimationFrame(() => elements.shareCollectionUsername.focus());
+  }
+}
+
+function closeShareCollectionDialog({ restoreFocus = true } = {}) {
+  shareCollectionRequestGeneration += 1;
+  shareCollectionNavigationGeneration = null;
+  const wasOpen = state.shareCollectionOpen;
+  state.shareCollectionOpen = false;
+  state.shareCollectionId = null;
+  state.shareCollectionEntries = [];
+  elements.shareCollectionLayer.classList.add("hidden");
+  elements.shareCollectionLayer.setAttribute("aria-hidden", "true");
+  elements.shareCollectionForm.reset();
+  renderShareCollectionList();
+  setShareCollectionMessage();
+  if (wasOpen && restoreFocus && !elements.shareCollectionButton.classList.contains("hidden")) {
+    elements.shareCollectionButton.focus();
   }
 }
 
@@ -16165,10 +16353,10 @@ function syncPageCoverControls() {
   const hasCurrentPositionDraft = isPageCoverPositionDraftForPage(pageCoverPositionDraft, page?.id);
   const hasCover = Boolean(getRenderableImageSource(page?.coverUrl));
   const canEditCover = Boolean(
-    page && hasCover && !isPageReadOnly() && isPageOwner(page) && !isPageInteractionLocked() && !pageCoverSaving
+    page && hasCover && !isPageReadOnly() && canManagePage(page) && !isPageInteractionLocked() && !pageCoverSaving
   );
   const canAddCover = Boolean(
-    page && !hasCover && !isPageReadOnly() && isPageOwner(page) && !isPageInteractionLocked() && !pageCoverSaving
+    page && !hasCover && !isPageReadOnly() && canManagePage(page) && !isPageInteractionLocked() && !pageCoverSaving
   );
 
   elements.pageCoverControls.classList.toggle("hidden", !canEditCover);
@@ -16231,7 +16419,7 @@ function hydratePageCoverPreviews() {
 }
 
 function openPageCoverDialog() {
-  if (!requireWritablePage() || !isPageOwner()) return;
+  if (!requireWritablePage() || !canManagePage()) return;
   closePageCoverPositionEditor({ restore: true });
   hydratePageCoverPreviews();
   if (!elements.pageCoverDialog.open) elements.pageCoverDialog.showModal();
@@ -16251,7 +16439,7 @@ async function persistPageCover(
     navigationGeneration = workspaceNavigationGeneration
   } = {}
 ) {
-  if (!requireWritablePage() || !isPageOwner() || pageCoverSaving) return null;
+  if (!requireWritablePage() || !canManagePage() || pageCoverSaving) return null;
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
   const pageId = state.selectedPage.id;
   const activeOperation = operation ?? pageCoverOperationGuard.begin(pageId);
@@ -17285,7 +17473,7 @@ async function createWorkspacePage(
       || !data
       || !isCurrentAuthenticatedSessionScope(authenticationScope)
     ) return { applied: false };
-    if (!data.page?.id || data.page.ownerId !== state.user?.id) {
+    if (!data.page?.id) {
       throw new Error(t("errors.invalidResponse"));
     }
     if (!isCreateIntentCurrent()) {
@@ -17498,6 +17686,7 @@ async function showHome({ skipFlush = false, navigationGeneration = ++workspaceN
       await destroyPageCollaboration({ flush: false });
       if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
       closeSharePageDialog({ restoreFocus: false });
+      closeShareCollectionDialog({ restoreFocus: false });
       resetPageEditTracking();
       state.selectedPage = null;
       state.pageMode = pageModes.READ;
@@ -17520,6 +17709,7 @@ async function showCollection(
       await destroyPageCollaboration({ flush: false });
       if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
       closeSharePageDialog({ restoreFocus: false });
+      closeShareCollectionDialog({ restoreFocus: false });
       resetPageEditTracking();
       state.selectedPage = null;
       state.pageMode = pageModes.READ;
@@ -17564,6 +17754,7 @@ async function openPage(pageId, { skipFlush = false, requestedPageMode = null } 
       await destroyPageCollaboration({ flush: false });
       if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
       closeSharePageDialog({ restoreFocus: false });
+      closeShareCollectionDialog({ restoreFocus: false });
       const normalizedRequestedPageMode = requestedPageMode === pageModes.WRITE
         ? (isRecoveryStorageWritable() ? pageModes.WRITE : pageModes.READ)
         : requestedPageMode === pageModes.READ
@@ -17574,6 +17765,11 @@ async function openPage(pageId, { skipFlush = false, requestedPageMode = null } 
         state.pendingFocusBlockId = null;
       } else if (normalizedRequestedPageMode) {
         state.pageMode = normalizedRequestedPageMode;
+      }
+
+      if (data.page?.access?.canEdit === false) {
+        state.pageMode = pageModes.READ;
+        state.pendingFocusBlockId = null;
       }
 
       resetPageEditTracking();
@@ -19107,7 +19303,7 @@ elements.sharePageBackdrop.addEventListener("click", () => closeSharePageDialog(
 
 elements.sharePageForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!state.selectedPage || !isPageOwner()) return;
+  if (!state.selectedPage || !canManagePageSharing()) return;
   const username = elements.sharePageUsername.value.trim();
   if (!username) return;
   const pageId = state.selectedPage.id;
@@ -19153,7 +19349,7 @@ elements.sharePageForm.addEventListener("submit", async (event) => {
 
 elements.sharePageList.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-user-id]");
-  if (!button || !state.selectedPage || !isPageOwner()) return;
+  if (!button || !state.selectedPage || !canManagePageSharing()) return;
   const pageId = state.selectedPage.id;
   const userId = button.dataset.userId;
   const username = button.dataset.username || "";
@@ -19220,10 +19416,149 @@ elements.sharePageList.addEventListener("click", async (event) => {
   }
 });
 
+elements.shareCollectionButton.addEventListener("click", () => {
+  openShareCollectionDialog().catch((error) => setShareCollectionMessage(error?.message || t("errors.unknown"), true));
+});
+
+elements.shareCollectionClose.addEventListener("click", () => closeShareCollectionDialog());
+elements.shareCollectionBackdrop.addEventListener("click", () => closeShareCollectionDialog());
+
+elements.collectionAddPageButton.addEventListener("click", () => {
+  const collection = getActiveCustomCollection();
+  const parentPageId = collection?.id ?? null;
+  if (collection && !canManagePage(collection)) return;
+  const navigationGeneration = workspaceNavigationGeneration;
+  void createWorkspacePage(
+    { title: t("newDocumentTitle"), icon: "📄", ...(parentPageId ? { parentPageId } : {}) },
+    {
+      creatingKey: "status.creatingDocument",
+      createdKey: "status.documentCreated",
+      navigationGeneration
+    }
+  ).catch((error) => setStatus(error?.message || t("errors.unknown"), true));
+});
+
+elements.shareCollectionForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const collectionId = state.shareCollectionId;
+  const requestGeneration = shareCollectionRequestGeneration;
+  if (!collectionId || !isCurrentShareCollectionRequest(requestGeneration, collectionId)) return;
+  const username = elements.shareCollectionUsername.value.trim();
+  const permission = elements.shareCollectionPermission.value;
+  if (!username || !["READ", "WRITE", "ADMIN"].includes(permission)) return;
+  const collection = getActiveCustomCollection();
+  if (!collection || collection.id !== collectionId) return;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  const isShareMutationCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+      && isCurrentShareCollectionRequest(requestGeneration, collectionId)
+  );
+  const memberPageIds = getCollectionPages(collectionId)
+    .filter((page) => !isCollectionPage(page))
+    .map((page) => page.id);
+  elements.shareCollectionSubmit.disabled = true;
+  setShareCollectionMessage(t("sharing.adding"));
+  try {
+    const data = await withWorkspacePersistenceTransitionForOwner(
+      collection.ownerId,
+      "collection-share-add",
+      async () => {
+        if (!isShareMutationCurrent()) return skippedApiRequest;
+        // The first collection grant switches every previously private member
+        // page to Yjs persistence. Match the existing page-share transition and
+        // fail closed if this browser still has a direct-edit recovery draft.
+        if (state.shareCollectionEntries.length === 0 && collection.ownerId === state.user?.id) {
+          assertNoPendingLocalPageDraftsForPages(memberPageIds, "sharing.localDraftsPending");
+        }
+        return api(`/api/collections/${encodeURIComponent(collectionId)}/shares`, {
+          method: "POST",
+          body: { username, permission },
+          beforeFetch: isShareMutationCurrent
+        });
+      }
+    );
+    if (data === skippedApiRequest || !isShareMutationCurrent()) return;
+    state.shareCollectionEntries.push(data.share);
+    elements.shareCollectionForm.reset();
+    elements.shareCollectionPermission.value = "READ";
+    renderShareCollectionList();
+    setShareCollectionMessage(`@${data.share?.user?.username ?? username} now has collection access.`);
+  } catch (error) {
+    if (isShareMutationCurrent()) {
+      setShareCollectionMessage(error?.message || t("errors.unknown"), true);
+    }
+  } finally {
+    if (isShareMutationCurrent()) {
+      elements.shareCollectionSubmit.disabled = false;
+      elements.shareCollectionUsername.focus();
+    }
+  }
+});
+
+elements.shareCollectionList.addEventListener("change", async (event) => {
+  const select = event.target.closest("select.collection-share-permission[data-user-id]");
+  const collectionId = state.shareCollectionId;
+  const requestGeneration = shareCollectionRequestGeneration;
+  if (!select || !collectionId || !isCurrentShareCollectionRequest(requestGeneration, collectionId)) return;
+  const userId = select.dataset.userId;
+  const expectedGeneration = select.dataset.generation;
+  const previous = state.shareCollectionEntries.find((share) => share.user?.id === userId);
+  if (!userId || !expectedGeneration || !previous) return;
+  select.disabled = true;
+  setShareCollectionMessage(`Updating @${select.dataset.username || "user"}…`);
+  try {
+    const data = await api(`/api/collections/${encodeURIComponent(collectionId)}/shares/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      body: { permission: select.value, expectedGeneration }
+    });
+    if (!isCurrentShareCollectionRequest(requestGeneration, collectionId)) return;
+    state.shareCollectionEntries = state.shareCollectionEntries.map((share) => share.user?.id === userId ? data.share : share);
+    renderShareCollectionList();
+    setShareCollectionMessage(`@${data.share?.user?.username ?? "user"} permission updated.`);
+  } catch (error) {
+    if (isCurrentShareCollectionRequest(requestGeneration, collectionId)) {
+      renderShareCollectionList();
+      setShareCollectionMessage(error?.message || t("errors.unknown"), true);
+    }
+  }
+});
+
+elements.shareCollectionList.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-collection-share-remove='true']");
+  const collectionId = state.shareCollectionId;
+  const requestGeneration = shareCollectionRequestGeneration;
+  if (!button || !collectionId || !isCurrentShareCollectionRequest(requestGeneration, collectionId)) return;
+  const userId = button.dataset.userId;
+  const expectedGeneration = button.dataset.generation;
+  const username = button.dataset.username || "user";
+  if (!userId || !expectedGeneration) return;
+  button.disabled = true;
+  setShareCollectionMessage(t("sharing.removing", { username }));
+  try {
+    const data = await api(`/api/collections/${encodeURIComponent(collectionId)}/shares/${encodeURIComponent(userId)}`, {
+      method: "DELETE",
+      body: { expectedGeneration }
+    });
+    if (!isCurrentShareCollectionRequest(requestGeneration, collectionId)) return;
+    state.shareCollectionEntries = state.shareCollectionEntries.filter((share) => share.user?.id !== userId);
+    renderShareCollectionList();
+    setShareCollectionMessage(t("sharing.removed", { username }));
+  } catch (error) {
+    if (isCurrentShareCollectionRequest(requestGeneration, collectionId)) {
+      button.disabled = false;
+      setShareCollectionMessage(error?.message || t("errors.unknown"), true);
+    }
+  }
+});
+
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && state.sharePageOpen) {
     event.preventDefault();
     closeSharePageDialog();
+  }
+  if (event.key === "Escape" && state.shareCollectionOpen) {
+    event.preventDefault();
+    closeShareCollectionDialog();
   }
 });
 
@@ -19257,7 +19592,7 @@ elements.pageCoverDialog.querySelector(".page-cover-default-grid").addEventListe
 });
 
 elements.pageCoverCustomButton.addEventListener("click", () => {
-  if (!requireWritablePage() || !isPageOwner() || pageCoverSaving) return;
+  if (!requireWritablePage() || !canManagePage() || pageCoverSaving) return;
   elements.pageCoverCustomInput.click();
 });
 
@@ -19308,7 +19643,7 @@ elements.pageCoverRemoveButton.addEventListener("click", async () => {
 });
 
 elements.pageCoverPositionButton.addEventListener("click", () => {
-  if (!requireWritablePage() || !isPageOwner() || !state.selectedPage?.coverUrl) return;
+  if (!requireWritablePage() || !canManagePage() || !state.selectedPage?.coverUrl) return;
   pageCoverPositionDraft = {
     pageId: state.selectedPage.id,
     x: clampPageCoverPosition(state.selectedPage.coverPositionX ?? 50),
@@ -19435,7 +19770,7 @@ elements.pageModeToggle.addEventListener("click", async () => {
 });
 
 elements.pageVersionHistoryButton.addEventListener("click", () => {
-  if (!isPageOwner()) return;
+  if (!canManagePage()) return;
   openPageVersionHistory();
 });
 

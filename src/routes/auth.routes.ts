@@ -395,11 +395,15 @@ authRouter.get("/navigation-preferences", requireAuth, async (req, res, next) =>
          INNER JOIN pages p ON p.id = np.page_id
          WHERE np.user_id = ?
            AND (p.owner_id = ? OR EXISTS (
+             SELECT 1 FROM page_collection_memberships pcm
+             INNER JOIN collection_shares cs ON cs.collection_id = pcm.collection_id
+             WHERE pcm.page_id = p.id AND cs.user_id = ?
+           ) OR EXISTS (
              SELECT 1 FROM page_shares ps
              WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
            ))
          ORDER BY np.page_id`,
-        [currentUser.id, currentUser.id, currentUser.id]
+        [currentUser.id, currentUser.id, currentUser.id, currentUser.id]
       );
       const orderRows = await client.query<{ page_id: string; sort_order: number }>(
         `SELECT no.page_id, no.sort_order
@@ -407,11 +411,15 @@ authRouter.get("/navigation-preferences", requireAuth, async (req, res, next) =>
          INNER JOIN pages p ON p.id = no.page_id
          WHERE no.user_id = ?
            AND (p.owner_id = ? OR EXISTS (
+             SELECT 1 FROM page_collection_memberships pcm
+             INNER JOIN collection_shares cs ON cs.collection_id = pcm.collection_id
+             WHERE pcm.page_id = p.id AND cs.user_id = ?
+           ) OR EXISTS (
              SELECT 1 FROM page_shares ps
              WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
            ))
          ORDER BY no.sort_order ASC, no.page_id ASC`,
-        [currentUser.id, currentUser.id, currentUser.id]
+        [currentUser.id, currentUser.id, currentUser.id, currentUser.id]
       );
       return { collapsedRows, orderRows };
     });
@@ -448,11 +456,16 @@ authRouter.patch(
         const page = await client.queryOne<{ id: string }>(
           `SELECT p.id
            FROM pages p
-           LEFT JOIN page_shares ps
-             ON ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
-           WHERE p.id = ? AND (p.owner_id = ? OR ps.user_id IS NOT NULL)
+           WHERE p.id = ? AND (p.owner_id = ? OR EXISTS (
+             SELECT 1 FROM page_collection_memberships pcm
+             INNER JOIN collection_shares cs ON cs.collection_id = pcm.collection_id
+             WHERE pcm.page_id = p.id AND cs.user_id = ?
+           ) OR EXISTS (
+             SELECT 1 FROM page_shares ps
+             WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+           ))
            LIMIT 1`,
-          [currentUser.id, pageId, currentUser.id]
+          [pageId, currentUser.id, currentUser.id, currentUser.id]
         );
         if (!page) throw new ApiError(404, "NOT_FOUND", "Page not found");
 
@@ -504,11 +517,15 @@ authRouter.patch(
            FROM pages p
            WHERE p.is_archived = 0
              AND (p.owner_id = ? OR EXISTS (
+               SELECT 1 FROM page_collection_memberships pcm
+               INNER JOIN collection_shares cs ON cs.collection_id = pcm.collection_id
+               WHERE pcm.page_id = p.id AND cs.user_id = ?
+             ) OR EXISTS (
                SELECT 1 FROM page_shares ps
                WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
              ))
            ORDER BY p.id ASC`,
-          [currentUser.id, currentUser.id]
+          [currentUser.id, currentUser.id, currentUser.id]
         );
         const accessibleIds = new Set(accessibleRows.map((row) => row.id));
         if (pageIds.some((pageId) => !accessibleIds.has(pageId))) {

@@ -15,17 +15,25 @@ import {
 } from "../lib/page-version-reset-mutation.js";
 import { toBlock, toPage, toTag } from "../lib/mappers.js";
 import {
+  assertPageCanAdminister,
   assertPageNotArchived,
-  getOwnedPage,
+  canAdministerPageAccess,
+  getEffectivePageShareCount,
   getPageAccess,
+  getPageCollectionId,
   pageSummaryProjection,
   toAccessPayload,
   toCollaborationPayload
 } from "../lib/page-access.js";
 import {
+  replacePageSubtreeCollectionMembership,
+  setPageCollectionMembershipForCreate
+} from "../lib/collection-membership.js";
+import {
   disconnectPageCollaborators,
   disconnectPageCollaboratorsForDocumentEpoch
 } from "../lib/collaboration-server.js";
+import { ensureCollaborationState } from "../lib/collaboration-lineage.js";
 import {
   isUnsupportedCollaborationMaterializationVersion,
   needsCollaborationMaterialization
@@ -50,7 +58,11 @@ import { buildBlockTree } from "../utils/blockTree.js";
 import { idParamSchema, requireUser, routeIdSchema, safeVersionSchema } from "../utils/schemas.js";
 import type { BlockRow, PageRow, TagRow } from "../types/domain.js";
 import { assertNoActiveCollaborationWriteLeases } from "../lib/collaboration-write-lease.js";
-import { preserveRecoveryGrantsForPages } from "../lib/recovery-candidates.js";
+import {
+  grantDirectPageRecovery,
+  grantLegacyYjsPageRecovery,
+  preserveRecoveryGrantsForPages
+} from "../lib/recovery-candidates.js";
 
 export const pageRouter = Router();
 
@@ -153,10 +165,6 @@ function isDuplicateEntryError(error: unknown) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ER_DUP_ENTRY";
 }
 
-async function assertOwnedPage(pageId: string, ownerId: string, client: DbClient = db) {
-  return getOwnedPage(pageId, ownerId, client);
-}
-
 type PageDeletionPageRow = {
   id: string;
   parent_page_id: string | null;
@@ -237,10 +245,6 @@ function assertPageParentFromLockedRows(
   if (parent.is_archived) {
     throw new ApiError(409, "PARENT_PAGE_ARCHIVED", "Restore the destination page before moving this page");
   }
-  if (parent.is_collection) {
-    throw new ApiError(400, "INVALID_PARENT_PAGE", "A collection cannot be used as a page-move destination");
-  }
-
   let currentId: string | null = parentPageId;
   const visited = new Set<string>();
   while (currentId) {
@@ -285,7 +289,18 @@ async function getPageDeletionShares(
        ORDER BY user_id ASC${lock ? " FOR UPDATE" : ""}`,
       [page.id]
     );
-    shares.push(...rows);
+    // Collection-share mutations serialize on every member page before commit.
+    // During hard delete, lock the effective collection grant too so a stale
+    // deletion snapshot cannot cross a concurrent collection-permission change.
+    const collectionRows = await client.query<PageDeletionShareRow>(
+      `SELECT pcm.page_id, cs.user_id, CONCAT('COLLECTION:', cs.permission) AS permission, cs.generation
+       FROM page_collection_memberships pcm
+       INNER JOIN collection_shares cs ON cs.collection_id = pcm.collection_id
+       WHERE pcm.page_id = ?
+       ORDER BY cs.user_id ASC, cs.permission ASC${lock ? " FOR UPDATE" : ""}`,
+      [page.id]
+    );
+    shares.push(...rows, ...collectionRows);
   }
   return shares;
 }
@@ -327,7 +342,10 @@ function createPageDeletionSnapshot(
     hash.update(`block\0${block.id}\0${block.page_id}\0${Number(block.edit_version ?? 1)}\n`);
   }
   for (const share of [...shares].sort((left, right) =>
-    left.page_id.localeCompare(right.page_id) || left.user_id.localeCompare(right.user_id)
+    left.page_id.localeCompare(right.page_id)
+      || left.user_id.localeCompare(right.user_id)
+      || left.permission.localeCompare(right.permission)
+      || left.generation.localeCompare(right.generation)
   )) {
     hash.update(
       `share\0${share.page_id}\0${share.user_id}\0${share.permission}\0${share.generation}\n`
@@ -499,18 +517,21 @@ async function assertOwnedParentPage(
   client: DbClient = db,
   lock = false
 ) {
-  if (!parentPageId) return;
-  const parent = await client.queryOne<Pick<PageDeletionPageRow, "id" | "is_archived" | "is_collection">>(
-    `SELECT id, is_archived, is_collection FROM pages WHERE id = ? AND owner_id = ?${lock ? " FOR UPDATE" : ""}`,
-    [parentPageId, ownerId]
-  );
-  if (!parent) throw new ApiError(400, "INVALID_PARENT_PAGE", "Parent page does not exist");
-  if (parent.is_archived) {
+  if (!parentPageId) return null;
+  let access;
+  try {
+    access = await getPageAccess(parentPageId, ownerId, client, { lockPage: lock });
+  } catch (error) {
+    if (error instanceof ApiError && error.statusCode === 404) {
+      throw new ApiError(400, "INVALID_PARENT_PAGE", "Parent page does not exist");
+    }
+    throw error;
+  }
+  assertPageCanAdminister(access, "Administrator permission is required to add pages here");
+  if (access.page.is_archived) {
     throw new ApiError(409, "PARENT_PAGE_ARCHIVED", "Restore the destination page before creating a subpage");
   }
-  if (parent.is_collection) {
-    throw new ApiError(400, "INVALID_PARENT_PAGE", "A collection cannot be used as a page-create destination");
-  }
+  return access.page;
 }
 
 async function getPageTags(pageId: string, client: DbClient = db) {
@@ -553,12 +574,19 @@ async function getPageResponse(pageId: string, userId: string, client: DbClient 
        AND (c.owner_id = ? OR EXISTS (
          SELECT 1 FROM page_shares child_share
          WHERE child_share.page_id = c.id AND child_share.user_id = ? AND child_share.permission = 'EDIT'
+       ) OR EXISTS (
+         SELECT 1
+         FROM page_collection_memberships child_membership
+         INNER JOIN collection_shares child_collection_share
+           ON child_collection_share.collection_id = child_membership.collection_id
+          AND child_collection_share.user_id = ?
+         WHERE child_membership.page_id = c.id
        ))
      ORDER BY c.updated_at DESC`,
-    [pageId, userId, userId]
+    [pageId, userId, userId, userId]
   );
   const page = toPage(access.page);
-  if (access.role !== "OWNER") page.parentPageId = null;
+  if (access.scope === "PAGE") page.parentPageId = null;
 
   return {
     ...page,
@@ -569,7 +597,10 @@ async function getPageResponse(pageId: string, userId: string, client: DbClient 
     blocks: buildBlockTree(await getBlocks(pageId, client)),
     children: childRows.map((row) => {
       const child = toPage(row);
-      if (row.owner_id !== userId) child.parentPageId = null;
+      // Direct page shares intentionally keep the legacy isolated-page view.
+      // A collection share, however, must preserve hierarchy so the recipient
+      // can navigate the complete shared collection.
+      if (row.owner_id !== userId && access.scope === "PAGE") child.parentPageId = null;
       return child;
     })
   };
@@ -580,10 +611,30 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
     const user = requireUser(req.user);
     const query = getValidatedQuery<z.infer<typeof listPagesQuerySchema>>(req);
     const where = [
-      "(p.owner_id = ? OR EXISTS (SELECT 1 FROM page_shares current_share WHERE current_share.page_id = p.id AND current_share.user_id = ? AND current_share.permission = 'EDIT'))",
+      `(p.owner_id = ?
+        OR EXISTS (
+          SELECT 1 FROM page_collection_memberships current_membership
+          INNER JOIN collection_shares current_collection_share
+            ON current_collection_share.collection_id = current_membership.collection_id
+           AND current_collection_share.user_id = ?
+          WHERE current_membership.page_id = p.id
+        )
+        OR EXISTS (
+          SELECT 1 FROM page_shares current_share
+          WHERE current_share.page_id = p.id
+            AND current_share.user_id = ?
+            AND current_share.permission = 'EDIT'
+            AND NOT EXISTS (
+              SELECT 1 FROM page_collection_memberships override_membership
+              INNER JOIN collection_shares override_collection_share
+                ON override_collection_share.collection_id = override_membership.collection_id
+               AND override_collection_share.user_id = current_share.user_id
+              WHERE override_membership.page_id = p.id
+            )
+        ))`,
       "p.is_archived = ?"
     ];
-    const whereParams: DbValue[] = [user.id, user.id, query.archived ? 1 : 0];
+    const whereParams: DbValue[] = [user.id, user.id, user.id, query.archived ? 1 : 0];
 
     if (query.q) {
       where.push(
@@ -628,12 +679,18 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
               AND (c.owner_id = ? OR EXISTS (
                 SELECT 1 FROM page_shares child_share
                 WHERE child_share.page_id = c.id AND child_share.user_id = ? AND child_share.permission = 'EDIT'
+              ) OR EXISTS (
+                SELECT 1 FROM page_collection_memberships child_membership
+                INNER JOIN collection_shares child_collection_share
+                  ON child_collection_share.collection_id = child_membership.collection_id
+                 AND child_collection_share.user_id = ?
+                WHERE child_membership.page_id = c.id
               ))) AS child_count
          FROM pages p
          WHERE ${where.join(" AND ")}
          ORDER BY p.created_at DESC, p.id DESC
          LIMIT ?`,
-        [user.id, user.id, ...whereParams, query.limit + 1]
+        [user.id, user.id, user.id, ...whereParams, query.limit + 1]
       );
 
       const pageRows = rows.slice(0, query.limit);
@@ -641,7 +698,7 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
       for (const row of pageRows) {
         const access = await getPageAccess(row.id, user.id, client);
         const page = toPage(row);
-        if (access.role !== "OWNER") page.parentPageId = null;
+        if (access.scope === "PAGE") page.parentPageId = null;
         pages.push({
           ...page,
           owner: access.owner,
@@ -710,8 +767,8 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
             throw new ApiError(500, "PAGE_CREATE_RECEIPT_MISSING", "The page creation receipt is unavailable");
           }
           const replayPage = await client.queryOne<{ id: string }>(
-            "SELECT id FROM pages WHERE id = ? AND owner_id = ?",
-            [assessment.pageId, user.id]
+            "SELECT id FROM pages WHERE id = ?",
+            [assessment.pageId]
           );
           if (!replayPage) {
             throw new ApiError(
@@ -731,7 +788,8 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
       // hierarchy state. For a fresh create, lock and revalidate the parent
       // in this transaction so deletion/reparenting races cannot make the
       // insert depend on a stale pre-transaction existence check.
-      await assertOwnedParentPage(creation.parentPageId, user.id, client, true);
+      const parentPage = await assertOwnedParentPage(creation.parentPageId, user.id, client, true);
+      const pageOwnerId = parentPage?.owner_id ?? user.id;
 
       await client.execute(
         `INSERT INTO pages
@@ -745,10 +803,16 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
           creation.coverPositionX ?? 50,
           creation.coverPositionY ?? 50,
           creation.isCollection ? 1 : 0,
-          user.id,
+          pageOwnerId,
           creation.parentPageId ?? null
         ]
       );
+
+      await setPageCollectionMembershipForCreate(client, {
+        pageId: id,
+        isCollection: Boolean(creation.isCollection),
+        parentPageId: creation.parentPageId ?? null
+      });
 
       if (creation.initialMarkdown) {
         await client.execute(
@@ -791,16 +855,15 @@ pageRouter.get("/:pageId/cover", validate({ params: idParamSchema }), async (req
   try {
     const user = requireUser(req.user);
     const pageId = String(req.params.pageId);
-    const row = await db.queryOne<{ cover_url: string | null }>(
-      `SELECT p.cover_url
-       FROM pages p
-       WHERE p.id = ?
-         AND (p.owner_id = ? OR EXISTS (
-           SELECT 1 FROM page_shares ps
-           WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
-         ))`,
-      [pageId, user.id, user.id]
-    );
+    // Authorize against the effective page access policy (collection grant first,
+    // direct page grant second) and read the raw cover from the same snapshot.
+    const row = await transaction(async (client) => {
+      await getPageAccess(pageId, user.id, client);
+      return client.queryOne<{ cover_url: string | null }>(
+        "SELECT cover_url FROM pages WHERE id = ?",
+        [pageId]
+      );
+    });
     if (!row?.cover_url?.startsWith("data:")) throw notFound("Page cover");
 
     const { mimeType, bytes } = inspectCustomCoverDataUrl(row.cover_url);
@@ -850,7 +913,9 @@ pageRouter.get(
       // restore can delete/recreate a stable page id; separate autocommit reads
       // could otherwise authorize the old owned page and return replacement history.
       const result = await transaction(async (client) => {
-        const page = await getOwnedPage(pageId, user.id, client);
+        const access = await getPageAccess(pageId, user.id, client);
+        assertPageCanAdminister(access);
+        const page = access.page;
         const rows = await client.query<PageVersionRow>(
           `SELECT id, page_id, revision, page_edit_version, page_content_version,
                   actors, source, change_count, change_summary, created_at
@@ -910,11 +975,9 @@ pageRouter.delete(
         if (!lockedOwner) throw notFound("User");
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
 
-        const page = await client.queryOne<PageRow>(
-          "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
-          [pageId, user.id]
-        );
-        if (!page) throw notFound("Page");
+        const pageAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
+        assertPageCanAdminister(pageAccess);
+        const page = pageAccess.page;
 
         let reserved = true;
         try {
@@ -1036,7 +1099,8 @@ pageRouter.get(
       // Keep the owner check and version lookup in the same repeatable-read
       // snapshot so a delete/restore id reuse cannot cross the authorization boundary.
       const row = await transaction(async (client) => {
-        await getOwnedPage(pageId, user.id, client);
+        const access = await getPageAccess(pageId, user.id, client);
+        assertPageCanAdminister(access);
         return client.queryOne<PageVersionRow>(
           `SELECT id, page_id, revision, page_edit_version, page_content_version,
                   actors, source, change_count, change_summary, changes, created_at
@@ -1062,7 +1126,9 @@ pageRouter.get(
       const user = requireUser(req.user);
       const pageId = String(req.params.pageId);
       const result = await transaction(async (client) => {
-        const treeRows = await getOwnedPageTreeRows(user.id, client);
+        const access = await getPageAccess(pageId, user.id, client);
+        assertPageCanAdminister(access);
+        const treeRows = await getOwnedPageTreeRows(access.page.owner_id, client);
         const subtreeRows = getPageSubtreeRows(pageId, treeRows);
         const blockRows = await getPageDeletionBlocks(client, subtreeRows);
         const shareRows = await getPageDeletionShares(client, subtreeRows);
@@ -1130,25 +1196,16 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
       values.push(updates.parentPageId);
     }
 
+    let collaborationMembershipChangedPageIds: string[] = [];
     const page = await transaction(async (client) => {
       await assertCurrentAuthSessionBoundary(user.id, authScope, client);
-      let existingPage: PageRow;
+      const initialAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
+      assertPageCanAdminister(initialAccess);
+      const workspaceOwnerId = initialAccess.page.owner_id;
+      let existingPage: PageRow = initialAccess.page;
       let lockedRows: PageDeletionPageRow[] | undefined;
       if (updates.parentPageId !== undefined) {
-        lockedRows = await getOwnedPageTreeRows(user.id, client, true);
-        const lockedPage = await client.queryOne<PageRow>(
-          "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
-          [pageId, user.id]
-        );
-        if (!lockedPage) throw notFound("Page");
-        existingPage = lockedPage;
-      } else {
-        const lockedPage = await client.queryOne<PageRow>(
-          "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
-          [pageId, user.id]
-        );
-        if (!lockedPage) throw notFound("Page");
-        existingPage = lockedPage;
+        lockedRows = await getOwnedPageTreeRows(workspaceOwnerId, client, true);
       }
 
       if (
@@ -1170,6 +1227,21 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
           throw new ApiError(500, "PAGE_HIERARCHY_LOCK_MISSING", "Page hierarchy validation is unavailable");
         }
         assertPageParentFromLockedRows(pageId, updates.parentPageId, lockedRows);
+        const destinationCollectionId = existingPage.is_collection
+          ? pageId
+          : updates.parentPageId
+            ? await getPageCollectionId(updates.parentPageId, client)
+            : null;
+        if (
+          initialAccess.role === "ADMIN"
+          && destinationCollectionId !== initialAccess.collectionId
+        ) {
+          throw new ApiError(
+            403,
+            "COLLECTION_ADMIN_SCOPE_REQUIRED",
+            "A collection administrator can only move pages within the shared collection"
+          );
+        }
       }
 
       const isArchivedRestoreOnly =
@@ -1180,12 +1252,8 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
 
       const beforeTags = (await getPageTags(pageId, client)).map((tag) => tag.name);
 
-      if (updates.title !== undefined) {
-        const shareCountRow = await client.queryOne<{ share_count: number }>(
-          "SELECT COUNT(*) AS share_count FROM page_shares WHERE page_id = ? AND permission = 'EDIT'",
-          [pageId]
-        );
-        if (Number(shareCountRow?.share_count ?? 0) > 0) {
+      if (updates.title !== undefined && !existingPage.is_collection) {
+        if (await getEffectivePageShareCount(pageId, client, initialAccess.collectionId) > 0) {
           throw new ApiError(
             409,
             "COLLABORATION_REQUIRED",
@@ -1217,13 +1285,95 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
         }
         const result = await client.execute<{ affectedRows: number }>(
           `UPDATE pages SET ${[...updateFields, "edit_version = edit_version + 1"].join(", ")} WHERE id = ? AND owner_id = ? AND edit_version = ?`,
-          [...updateValues, pageId, user.id, expectedVersion]
+          [...updateValues, pageId, workspaceOwnerId, expectedVersion]
         );
         if (Number(result.affectedRows) === 0) {
           throw new ApiError(
             409,
             "PAGE_EDIT_CONFLICT",
             "This page was changed in another session. Your local edits were not overwritten."
+          );
+        }
+      }
+      if (updates.parentPageId !== undefined && lockedRows) {
+        const destinationCollectionId = existingPage.is_collection
+          ? pageId
+          : updates.parentPageId
+            ? await getPageCollectionId(updates.parentPageId, client)
+            : null;
+        const sourceCollectionId = initialAccess.collectionId;
+        const subtreeRows = getPageSubtreeRows(pageId, lockedRows);
+
+        if (destinationCollectionId !== sourceCollectionId) {
+          const documentRows = subtreeRows.filter((row) => !row.is_collection);
+          const beforeShareCounts = new Map<string, number>();
+          for (const row of documentRows) {
+            beforeShareCounts.set(
+              row.id,
+              await getEffectivePageShareCount(row.id, client, sourceCollectionId, { lock: true })
+            );
+          }
+          const previouslySharedPageIds = documentRows
+            .filter((row) => (beforeShareCounts.get(row.id) ?? 0) > 0)
+            .map((row) => row.id);
+
+          if (previouslySharedPageIds.length) {
+            // Moving a page can revoke a whole collection's collaborators or
+            // reduce a direct editor to a destination collection's READ grant.
+            // Fence server-admitted writes and preserve every old lineage before
+            // changing the authoritative collection membership.
+            await assertCollaborationMaterialized(client, previouslySharedPageIds);
+            await assertNoActiveCollaborationWriteLeases(client, previouslySharedPageIds);
+            await preserveRecoveryGrantsForPages(
+              client,
+              workspaceOwnerId,
+              previouslySharedPageIds,
+              "SHARE_REMOVED"
+            );
+          }
+
+          await replacePageSubtreeCollectionMembership(
+            client,
+            subtreeRows.map((row) => row.id),
+            destinationCollectionId
+          );
+
+          for (const row of documentRows) {
+            const beforeShareCount = beforeShareCounts.get(row.id) ?? 0;
+            const afterShareCount = await getEffectivePageShareCount(row.id, client, destinationCollectionId, { lock: true });
+            if (beforeShareCount === 0 && afterShareCount > 0) {
+              // A page entering a shared collection starts a fresh Yjs lineage
+              // from its canonical SQL snapshot, matching first direct-share
+              // behavior and protecting any browser-local owner draft.
+              await grantDirectPageRecovery(client, {
+                pageId: row.id,
+                principalId: workspaceOwnerId,
+                ownerId: workspaceOwnerId,
+                reason: "SHARE_STARTED"
+              });
+              await grantLegacyYjsPageRecovery(client, {
+                pageId: row.id,
+                principalId: workspaceOwnerId,
+                ownerId: workspaceOwnerId,
+                reason: "SHARE_STARTED"
+              });
+              await client.execute("DELETE FROM page_yjs_updates WHERE page_id = ?", [row.id]);
+              await client.execute("DELETE FROM page_collaboration_state WHERE page_id = ?", [row.id]);
+              await ensureCollaborationState(row.id, client);
+            } else if (beforeShareCount > 0 && afterShareCount === 0) {
+              // The current Yjs state was proven materialized above, so once the
+              // final effective share disappears the page can safely return to
+              // direct single-user editing.
+              await client.execute("DELETE FROM page_yjs_updates WHERE page_id = ?", [row.id]);
+              await client.execute("DELETE FROM page_collaboration_state WHERE page_id = ?", [row.id]);
+            }
+          }
+          collaborationMembershipChangedPageIds = documentRows.map((row) => row.id);
+        } else {
+          await replacePageSubtreeCollectionMembership(
+            client,
+            subtreeRows.map((row) => row.id),
+            destinationCollectionId
           );
         }
       }
@@ -1245,7 +1395,11 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
     });
 
     if (updates.isArchived === true) {
-      await disconnectArchivedPageCollaboratorsIfCurrent(pageId, user.id, Number(page.version ?? 1));
+      await disconnectArchivedPageCollaboratorsIfCurrent(pageId, page.ownerId, Number(page.version ?? 1));
+    } else if (updates.parentPageId !== undefined) {
+      for (const changedPageId of collaborationMembershipChangedPageIds) {
+        disconnectPageCollaborators(changedPageId, "Page collection membership changed");
+      }
     }
     res.json({ page });
   } catch (error) {
@@ -1291,14 +1445,14 @@ pageRouter.delete(
           // Serialize receipt creation for this actor before taking page locks.
           // The receipt deliberately has no FK to pages so it survives deletion
           // and can reconcile an unknown COMMIT outcome.
-          const attachmentGeneration = await lockUserAttachmentGeneration(client, user.id);
-          if (attachmentGeneration === undefined) {
+          const actorAttachmentGeneration = await lockUserAttachmentGeneration(client, user.id);
+          if (actorAttachmentGeneration === undefined) {
             throw new ApiError(401, "UNAUTHENTICATED", "Authentication is required");
           }
           await assertCurrentAuthSessionBoundary(user.id, authScope, client);
 
           const receipt = await client.queryOne<PageDeleteMutationReceipt>(
-            `SELECT page_id, request_hash, page_ids, attachment_ids, attachment_generation
+            `SELECT page_id, request_hash, page_ids, attachment_ids, attachment_generation, workspace_owner_id
              FROM page_delete_mutations
              WHERE actor_id = ? AND mutation_id = ?
              FOR UPDATE`,
@@ -1331,11 +1485,29 @@ pageRouter.delete(
               attachmentIds: assessment.attachmentIds,
               pageIds: assessment.pageIds,
               attachmentGeneration: assessment.attachmentGeneration,
+              ownerId: assessment.workspaceOwnerId ?? user.id,
               replayed: true as const
             };
           }
 
-          const treeRows = await getOwnedPageTreeRows(user.id, client, true);
+          const pageOwnerHint = await client.queryOne<{ owner_id: string }>(
+            "SELECT owner_id FROM pages WHERE id = ?",
+            [pageId]
+          );
+          if (!pageOwnerHint) throw notFound("Page");
+          const attachmentGeneration = pageOwnerHint.owner_id === user.id
+            ? actorAttachmentGeneration
+            : await lockUserAttachmentGeneration(client, pageOwnerHint.owner_id);
+          if (attachmentGeneration === undefined) throw notFound("Page owner");
+
+          const deletionAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
+          assertPageCanAdminister(deletionAccess);
+          const workspaceOwnerId = deletionAccess.page.owner_id;
+          if (workspaceOwnerId !== pageOwnerHint.owner_id) {
+            throw new ApiError(409, "PAGE_OWNER_CHANGED", "The page owner changed before deletion completed");
+          }
+
+          const treeRows = await getOwnedPageTreeRows(workspaceOwnerId, client, true);
           const subtreeRows = getPageSubtreeRows(pageId, treeRows);
           await assertCollaborationMaterialized(client, subtreeRows.map((page) => page.id));
           const blockRows = await getPageDeletionBlocks(client, subtreeRows, true);
@@ -1367,12 +1539,12 @@ pageRouter.delete(
           // Reject deletion while a server-admitted collaboration write is
           // validating, and preserve late-upload grants for offline browsers.
           await assertNoActiveCollaborationWriteLeases(client, pageIds);
-          await preserveRecoveryGrantsForPages(client, user.id, pageIds, "PAGE_DELETED");
+          await preserveRecoveryGrantsForPages(client, workspaceOwnerId, pageIds, "PAGE_DELETED");
 
           for (const page of [...subtreeRows].reverse()) {
             const deleteResult = await client.execute<{ affectedRows: number }>(
               "DELETE FROM pages WHERE id = ? AND owner_id = ?",
-              [page.id, user.id]
+              [page.id, workspaceOwnerId]
             );
             if (Number(deleteResult.affectedRows) !== 1) {
               throw new ApiError(
@@ -1388,8 +1560,8 @@ pageRouter.delete(
             .map((row) => row.id);
           await client.execute(
             `INSERT INTO page_delete_mutations
-               (actor_id, mutation_id, page_id, request_hash, page_ids, attachment_ids, attachment_generation)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+               (actor_id, mutation_id, page_id, request_hash, page_ids, attachment_ids, attachment_generation, workspace_owner_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               user.id,
               mutationId,
@@ -1397,13 +1569,15 @@ pageRouter.delete(
               mutationHash,
               JSON.stringify(pageIds),
               JSON.stringify(attachmentIds),
-              attachmentGeneration
+              attachmentGeneration,
+              workspaceOwnerId
             ]
           );
           return {
             attachmentIds,
             pageIds,
             attachmentGeneration,
+            ownerId: workspaceOwnerId,
             collaborationDocumentEpochs,
             replayed: false as const
           };
@@ -1427,7 +1601,7 @@ pageRouter.delete(
         // transaction. Legacy receipts intentionally skip filesystem cleanup.
         if (deletion.attachmentGeneration !== undefined) {
           await removeDeletedAttachmentFiles(
-            user.id,
+            deletion.ownerId,
             deletion.attachmentIds,
             deletion.attachmentGeneration
           );
@@ -1436,7 +1610,8 @@ pageRouter.delete(
         return;
       }
 
-      await assertOwnedPage(pageId, user.id);
+      const archiveAccess = await getPageAccess(pageId, user.id);
+      assertPageCanAdminister(archiveAccess);
       if (!body.expectedVersion) {
         throw new ApiError(
           400,
@@ -1447,11 +1622,10 @@ pageRouter.delete(
       const expectedVersion = body.expectedVersion;
       const archivedPage = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
-        const page = await client.queryOne<PageRow>(
-          "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
-          [pageId, user.id]
-        );
-        if (!page) throw notFound("Page");
+        const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
+        assertPageCanAdminister(access);
+        const page = access.page;
+        const workspaceOwnerId = page.owner_id;
         await assertCollaborationMaterialized(client, [pageId]);
         await assertNoActiveCollaborationWriteLeases(client, [pageId]);
         const updateResult = await client.execute<{ affectedRows: number }>(
@@ -1461,7 +1635,7 @@ pageRouter.delete(
                last_mutation_id = NULL,
                last_mutation_hash = NULL
            WHERE id = ? AND owner_id = ? AND edit_version = ?`,
-          [pageId, user.id, expectedVersion]
+          [pageId, workspaceOwnerId, expectedVersion]
         );
         if (Number(updateResult.affectedRows) === 0) {
           throw new ApiError(
@@ -1484,7 +1658,7 @@ pageRouter.delete(
       });
       await disconnectArchivedPageCollaboratorsIfCurrent(
         pageId,
-        user.id,
+        archivedPage.owner_id,
         Number(archivedPage.edit_version ?? 1)
       );
       res.json({ page: toPage(archivedPage) });
@@ -1499,15 +1673,13 @@ pageRouter.put("/:pageId/tags", validate({ params: idParamSchema, body: tagSchem
     const user = requireUser(req.user);
     const authScope = requireRequestAuthScope(req);
     const pageId = String(req.params.pageId);
-    await assertOwnedPage(pageId, user.id);
     const { tags, expectedVersion } = req.body as z.infer<typeof tagSchema>;
     const result = await transaction(async (client) => {
       await assertCurrentAuthSessionBoundary(user.id, authScope, client);
-      const existingPage = await client.queryOne<PageRow>(
-        "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
-        [pageId, user.id]
-      );
-      if (!existingPage) throw notFound("Page");
+      const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
+      assertPageCanAdminister(access);
+      const existingPage = access.page;
+      const workspaceOwnerId = existingPage.owner_id;
       assertPageNotArchived(existingPage);
       const beforeTags = (await getPageTags(pageId, client)).map((tag) => tag.name);
       const updateResult = await client.execute<{ affectedRows: number }>(
@@ -1516,7 +1688,7 @@ pageRouter.put("/:pageId/tags", validate({ params: idParamSchema, body: tagSchem
              last_mutation_id = NULL,
              last_mutation_hash = NULL
          WHERE id = ? AND owner_id = ? AND edit_version = ?`,
-        [pageId, user.id, expectedVersion]
+        [pageId, workspaceOwnerId, expectedVersion]
       );
       if (Number(updateResult.affectedRows) === 0) {
         throw new ApiError(

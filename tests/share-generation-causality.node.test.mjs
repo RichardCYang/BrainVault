@@ -49,14 +49,16 @@ test("share removal is owner-scoped and generation-fenced before destructive rec
   assert.match(route, /validate\(\{ params: shareParamsSchema, body: removeShareSchema \}\)/);
   assert.match(route, /const expectedGeneration = String\(req\.body\.expectedGeneration\)/);
 
-  const ownerLock = route.indexOf("SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE");
+  const ownerLock = route.indexOf("getPageAccess(pageId, actor.id, client, { lockPage: true })");
+  const adminFence = route.indexOf("assertPageCanAdminister(access)");
   const shareLock = route.indexOf("SELECT user_id, generation FROM page_shares");
   const generationFence = route.indexOf("existingShare.generation !== expectedGeneration");
   const recoveryGrant = route.indexOf("await grantDirectPageRecovery");
   const destructiveDelete = route.indexOf("DELETE FROM page_shares");
 
-  assert.ok(ownerLock >= 0, "page ownership must be rechecked server-side");
-  assert.ok(shareLock > ownerLock, "share lookup must happen only after owner-scoped page lock");
+  assert.ok(ownerLock >= 0, "effective page access must be rechecked under the page lock");
+  assert.ok(adminFence > ownerLock, "share management must require owner-or-admin authority");
+  assert.ok(shareLock > adminFence, "share lookup must happen only after the administrative page lock");
   assert.ok(generationFence > shareLock, "current grant generation must be compared");
   assert.ok(recoveryGrant > generationFence, "stale intents must fail before recovery side effects");
   assert.ok(destructiveDelete > recoveryGrant);
@@ -154,7 +156,7 @@ test("permanent page deletion snapshot binds destructive intent to share generat
     /createPageDeletionSnapshot\(subtreeRows, blockRows, shareRows, collaborationRows\)/
   );
 
-  const pageLock = deleteRoute.indexOf("getOwnedPageTreeRows(user.id, client, true)");
+  const pageLock = deleteRoute.indexOf("getOwnedPageTreeRows(workspaceOwnerId, client, true)");
   const shareLock = deleteRoute.indexOf("getPageDeletionShares(client, subtreeRows, true)");
   const collaborationLock = deleteRoute.indexOf(
     "getPageDeletionCollaborationStates(client, subtreeRows, true)"

@@ -17,8 +17,10 @@ import {
   getCollaborationState
 } from "../lib/collaboration-lineage.js";
 import {
+  assertPageCanAdminister,
+  assertPageCanEdit,
   assertPageNotArchived,
-  getOwnedPage,
+  getEffectivePageShareCount,
   getPageAccess,
   toAccessPayload,
   toCollaborationPayload
@@ -367,7 +369,7 @@ collaborationRouter.get(
            LIMIT ${maxPageCommentsPerPage}`,
           [pageId]
         );
-        const viewer = { id: user.id, isOwner: access.role === "OWNER" };
+        const viewer = { id: user.id, isOwner: access.role === "OWNER" || access.role === "ADMIN" };
         return rows.map((row) => toPageCommentPayload(row, viewer));
       });
       res.setHeader("Cache-Control", "private, no-store");
@@ -390,6 +392,7 @@ collaborationRouter.post(
       const comment = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
         const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
+        assertPageCanEdit(access, "This shared collection is read-only for your account");
         assertPageNotArchived(access.page, "Restore the page before adding a comment");
         const countRow = await client.queryOne<{ count: number }>(
           "SELECT COUNT(*) AS count FROM page_comments WHERE page_id = ?",
@@ -406,7 +409,7 @@ collaborationRouter.post(
         );
         const created = await getPageCommentRow(pageId, commentId, client);
         if (!created) throw new ApiError(500, "PAGE_COMMENT_CREATE_FAILED", "The comment was not created");
-        return toPageCommentPayload(created, { id: user.id, isOwner: access.role === "OWNER" });
+        return toPageCommentPayload(created, { id: user.id, isOwner: access.role === "OWNER" || access.role === "ADMIN" });
       });
       res.setHeader("Cache-Control", "private, no-store");
       res.status(201).json({ comment });
@@ -429,6 +432,7 @@ collaborationRouter.patch(
       const comment = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
         const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
+        assertPageCanEdit(access, "This shared collection is read-only for your account");
         assertPageNotArchived(access.page, "Restore the page before editing a comment");
         const existing = await client.queryOne<{ user_id: string }>(
           `SELECT user_id FROM page_comments
@@ -446,7 +450,7 @@ collaborationRouter.patch(
         );
         const updated = await getPageCommentRow(pageId, commentId, client);
         if (!updated) throw notFound("Page comment");
-        return toPageCommentPayload(updated, { id: user.id, isOwner: access.role === "OWNER" });
+        return toPageCommentPayload(updated, { id: user.id, isOwner: access.role === "OWNER" || access.role === "ADMIN" });
       });
       res.setHeader("Cache-Control", "private, no-store");
       res.json({ comment });
@@ -468,13 +472,14 @@ collaborationRouter.delete(
       await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
         const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
+        assertPageCanEdit(access, "This shared collection is read-only for your account");
         const existing = await client.queryOne<{ user_id: string }>(
           `SELECT user_id FROM page_comments
            WHERE page_id = ? AND id = ? FOR UPDATE`,
           [pageId, commentId]
         );
         if (!existing) throw notFound("Page comment");
-        if (existing.user_id !== user.id && access.role !== "OWNER") {
+        if (existing.user_id !== user.id && access.role !== "OWNER" && access.role !== "ADMIN") {
           throw new ApiError(403, "PAGE_COMMENT_DELETE_FORBIDDEN", "You cannot delete this comment");
         }
         await client.execute(
@@ -501,9 +506,10 @@ collaborationRouter.get(
       // autocommit reads could authorize an old owner generation and then read
       // shares belonging to a replacement page that reused the same ID.
       const rows = await transaction(async (client) => {
-        const page = await getOwnedPage(pageId, user.id, client);
-        assertShareablePage(page);
-        return getShareRows(pageId, user.id, client);
+        const access = await getPageAccess(pageId, user.id, client);
+        assertPageCanAdminister(access);
+        assertShareablePage(access.page);
+        return getShareRows(pageId, access.page.owner_id, client);
       });
       res.setHeader("Cache-Control", "private, no-store");
       res.json({ shares: rows.map(toSharePayload), count: rows.length });
@@ -520,7 +526,7 @@ collaborationRouter.post(
   validate({ params: idParamSchema, body: shareUserSchema }),
   async (req, res, next) => {
     try {
-      const owner = requireUser(req.user);
+      const actor = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       const username = String(req.body.username);
@@ -528,12 +534,11 @@ collaborationRouter.post(
       let previousDocumentEpoch: string | null = null;
 
       const shareResult = await transaction(async (client) => {
-        await assertCurrentAuthSessionBoundary(owner.id, authScope, client);
-        const page = await client.queryOne<PageRow>(
-          "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
-          [pageId, owner.id]
-        );
-        if (!page) throw notFound("Page");
+        await assertCurrentAuthSessionBoundary(actor.id, authScope, client);
+        const access = await getPageAccess(pageId, actor.id, client, { lockPage: true });
+        assertPageCanAdminister(access);
+        const page = access.page;
+        const workspaceOwnerId = page.owner_id;
         assertShareablePage(page);
 
         const target = await client.queryOne<ShareTargetRow>(
@@ -545,16 +550,12 @@ collaborationRouter.post(
                SELECT 1 FROM page_shares ps
                WHERE ps.page_id = ? AND ps.user_id = u.id AND ps.permission = 'EDIT'
              )`,
-          [username, owner.id, pageId]
+          [username, workspaceOwnerId, pageId]
         );
         if (!target) {
           throw new ApiError(400, "SHARE_TARGET_UNAVAILABLE", "The requested account cannot be added");
         }
-        const count = await client.queryOne<{ share_count: number }>(
-          "SELECT COUNT(*) AS share_count FROM page_shares WHERE page_id = ? AND permission = 'EDIT'",
-          [pageId]
-        );
-        firstShare = Number(count?.share_count ?? 0) === 0;
+        firstShare = (await getEffectivePageShareCount(pageId, client, access.collectionId)) === 0;
         if (firstShare) {
           const previousState = await getCollaborationState(pageId, client, { lock: true });
           previousDocumentEpoch = previousState?.document_epoch ?? null;
@@ -563,14 +564,14 @@ collaborationRouter.post(
           // switching this page to a fresh collaboration lineage.
           await grantDirectPageRecovery(client, {
             pageId,
-            principalId: owner.id,
-            ownerId: owner.id,
+            principalId: workspaceOwnerId,
+            ownerId: workspaceOwnerId,
             reason: "SHARE_STARTED"
           });
           await grantLegacyYjsPageRecovery(client, {
             pageId,
-            principalId: owner.id,
-            ownerId: owner.id,
+            principalId: workspaceOwnerId,
+            ownerId: workspaceOwnerId,
             reason: "SHARE_STARTED"
           });
           await assertNoActiveCollaborationWriteLeases(client, [pageId]);
@@ -582,7 +583,7 @@ collaborationRouter.post(
         await client.execute(
           `INSERT INTO page_shares (page_id, user_id, permission, shared_by, generation)
            VALUES (?, ?, 'EDIT', ?, ?)`,
-          [pageId, target.id, owner.id, shareGeneration]
+          [pageId, target.id, actor.id, shareGeneration]
         );
         const created = await client.queryOne<ShareUserRow>(
           `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language, u.default_collection_icon, u.theme,
@@ -592,7 +593,7 @@ collaborationRouter.post(
           [pageId, target.id]
         );
         if (!created) throw new ApiError(500, "PAGE_SHARE_FAILED", "The page share was not created");
-        const rows = await getShareRows(pageId, owner.id, client);
+        const rows = await getShareRows(pageId, workspaceOwnerId, client);
         return { created, count: rows.length };
       });
 
@@ -615,18 +616,18 @@ collaborationRouter.delete(
   validate({ params: shareParamsSchema, body: removeShareSchema }),
   async (req, res, next) => {
     try {
-      const owner = requireUser(req.user);
+      const actor = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       const sharedUserId = String(req.params.userId);
       const expectedGeneration = String(req.body.expectedGeneration);
       const result = await transaction(async (client) => {
-        await assertCurrentAuthSessionBoundary(owner.id, authScope, client);
-        const page = await client.queryOne<PageRow>(
-          "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
-          [pageId, owner.id]
-        );
-        if (!page) throw notFound("Page");
+        await assertCurrentAuthSessionBoundary(actor.id, authScope, client);
+        const access = await getPageAccess(pageId, actor.id, client, { lockPage: true });
+        assertPageCanAdminister(access);
+        const page = access.page;
+        const workspaceOwnerId = page.owner_id;
+        assertShareablePage(page);
         await assertNoActiveCollaborationWriteLeases(client, [pageId]);
         const existingShare = await client.queryOne<{ user_id: string; generation: string }>(
           `SELECT user_id, generation FROM page_shares
@@ -649,19 +650,19 @@ collaborationRouter.delete(
         await grantDirectPageRecovery(client, {
           pageId,
           principalId: sharedUserId,
-          ownerId: owner.id,
+          ownerId: workspaceOwnerId,
           reason: "SHARE_REMOVED"
         });
         await grantLegacyYjsPageRecovery(client, {
           pageId,
           principalId: sharedUserId,
-          ownerId: owner.id,
+          ownerId: workspaceOwnerId,
           reason: "SHARE_REMOVED"
         });
         await grantLegacyYjsPageRecovery(client, {
           pageId,
-          principalId: owner.id,
-          ownerId: owner.id,
+          principalId: workspaceOwnerId,
+          ownerId: workspaceOwnerId,
           reason: "SHARE_REMOVED"
         });
         const preRemovalState = await getCollaborationState(pageId, client, { lock: true });
@@ -679,14 +680,14 @@ collaborationRouter.delete(
           await grantYjsPageRecovery(client, {
             pageId,
             principalId: sharedUserId,
-            ownerId: owner.id,
+            ownerId: workspaceOwnerId,
             documentEpoch: preRemovalState.document_epoch,
             reason: "SHARE_REMOVED"
           });
           await grantYjsPageRecovery(client, {
             pageId,
-            principalId: owner.id,
-            ownerId: owner.id,
+            principalId: workspaceOwnerId,
+            ownerId: workspaceOwnerId,
             documentEpoch: preRemovalState.document_epoch,
             reason: "SHARE_REMOVED"
           });
@@ -703,11 +704,7 @@ collaborationRouter.delete(
             "The collaborator grant changed in another session. Refresh before removing it."
           );
         }
-        const count = await client.queryOne<{ share_count: number }>(
-          "SELECT COUNT(*) AS share_count FROM page_shares WHERE page_id = ? AND permission = 'EDIT'",
-          [pageId]
-        );
-        const remaining = Number(count?.share_count ?? 0);
+        const remaining = await getEffectivePageShareCount(pageId, client, access.collectionId);
         if (remaining === 0) {
           const latestUpdateRow = await client.queryOne<{ max_update_id: number | null }>(
             "SELECT MAX(id) AS max_update_id FROM page_yjs_updates WHERE page_id = ?",
@@ -1003,6 +1000,7 @@ collaborationRouter.put(
           );
         }
         assertShareablePage(access.page);
+        assertPageCanEdit(access, "This shared collection is read-only for your account");
         if (access.shareCount < 1) {
           throw new ApiError(409, "COLLABORATION_DISABLED", "Collaboration is no longer enabled");
         }

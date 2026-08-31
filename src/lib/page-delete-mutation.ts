@@ -4,6 +4,7 @@ export type PageDeleteMutationReceipt = {
   page_ids: unknown;
   attachment_ids: unknown;
   attachment_generation?: number | null;
+  workspace_owner_id?: string | null;
 };
 
 export type PageDeleteMutationAssessment =
@@ -13,6 +14,7 @@ export type PageDeleteMutationAssessment =
       pageIds: string[];
       attachmentIds: string[];
       attachmentGeneration?: number;
+      workspaceOwnerId?: string;
     }
   | { kind: "collision" }
   | { kind: "incomplete" };
@@ -53,6 +55,12 @@ function decodeAttachmentGeneration(value: unknown): number | null | undefined {
   return generation;
 }
 
+function decodeWorkspaceOwnerId(value: unknown): string | null | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string" || !value.length || value.length > 64) return null;
+  return value;
+}
+
 export function assessPageDeleteMutationReceipt(
   receipt: PageDeleteMutationReceipt,
   request: { pageId: string; requestHash: string }
@@ -64,11 +72,13 @@ export function assessPageDeleteMutationReceipt(
   const pageIds = decodePageDeletePageIds(receipt.page_ids);
   const attachmentIds = decodePageDeleteAttachmentIds(receipt.attachment_ids);
   const attachmentGeneration = decodeAttachmentGeneration(receipt.attachment_generation);
+  const workspaceOwnerId = decodeWorkspaceOwnerId(receipt.workspace_owner_id);
   if (
     !pageIds
     || !pageIds.includes(receipt.page_id)
     || attachmentIds === null
     || attachmentGeneration === null
+    || workspaceOwnerId === null
   ) {
     return { kind: "incomplete" };
   }
@@ -78,6 +88,7 @@ export function assessPageDeleteMutationReceipt(
     pageId: receipt.page_id,
     pageIds,
     attachmentIds,
-    ...(attachmentGeneration === undefined ? {} : { attachmentGeneration })
+    ...(attachmentGeneration === undefined ? {} : { attachmentGeneration }),
+    ...(workspaceOwnerId === undefined ? {} : { workspaceOwnerId })
   };
 }
