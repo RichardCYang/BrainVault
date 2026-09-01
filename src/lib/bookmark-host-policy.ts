@@ -1,5 +1,8 @@
 import net from "node:net";
 
+export const bookmarkFetchGuardHeader = "x-brainvault-bookmark-preview";
+export const bookmarkFetchGuardValue = "1";
+
 export function normalizeBookmarkFetchHostname(hostname: string) {
   return hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
 }

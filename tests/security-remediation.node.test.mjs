@@ -311,7 +311,17 @@ test("password login account limiter bounds attacker-controlled username key car
   assert.match(limiter, /namespace\.accountKeys\.size >= maxDistinctLoginAccountKeysPerIpWindow/);
   assert.match(limiter, /Math\.floor\(now \/ Math\.max\(1, env\.AUTH_LOGIN_IP_WINDOW_MS\)\)/);
   assert.equal((limiter.match(/return loginAccountOverflowKey\(ip, now\);/g) ?? []).length, 2);
+  assert.match(limiter, /const accountNetworkKey = hashRateLimitKey\("account-network", `\$\{accountKey\}:\$\{ip\}`\);/);
+  assert.match(limiter, /namespace\.accountKeys\.has\(accountKey\)\) return accountNetworkKey;/);
+  assert.match(limiter, /namespace\.accountKeys\.add\(accountKey\);\s*return accountNetworkKey;/);
   assert.match(limiter, /keyGenerator: usernameKey/);
+});
+
+test("404 responses do not reflect the raw request URL", () => {
+  const errorMiddleware = read("src/middleware/error.ts");
+
+  assert.match(errorMiddleware, /new ApiError\(404, "ROUTE_NOT_FOUND", "Route not found"\)/);
+  assert.doesNotMatch(errorMiddleware, /`Route \$\{req\.method\} \$\{req\.originalUrl\} not found`/);
 });
 
 test("collaboration awareness control frames are strictly validated before access revalidation", () => {

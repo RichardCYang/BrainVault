@@ -7,6 +7,7 @@ import {
 import { isPrivateAddress, isPrivateOrLocalHostname } from "../src/lib/network-address.ts";
 
 const bookmarkSource = readFileSync(new URL("../src/lib/bookmark.ts", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
 const envExample = readFileSync(new URL("../.env.example", import.meta.url), "utf8");
 
 test("empty bookmark host list enables public-web destinations without manual host registration", () => {
@@ -66,6 +67,11 @@ test("bookmark fetch path preserves the SSRF, redirect, port, pinning, deadline,
   assert.match(bookmarkSource, /BOOKMARK_FETCH_ALLOWED_PORTS\.includes\(effectivePort\)/);
   assert.match(bookmarkSource, /const addresses = await resolvePublicAddresses\(url, deadline\)/);
   assert.match(bookmarkSource, /addresses\.some[\s\S]*isPrivateAddress\(item\.address\)/);
+  assert.match(bookmarkSource, /Object\.values\(os\.networkInterfaces\(\)\)/);
+  assert.match(bookmarkSource, /resolvePublicOriginAddressKeys\(deadline\)/);
+  assert.match(bookmarkSource, /assertBookmarkAddressesAreNotSelfOrigin\(addresses, deadline\)/);
+  assert.match(bookmarkSource, /selfAddresses\.has\(comparableBookmarkAddress\(item\.address\)\)/);
+  assert.match(bookmarkSource, /\[bookmarkFetchGuardHeader\]: bookmarkFetchGuardValue/);
   assert.match(bookmarkSource, /lookup: createPinnedLookup\(addresses\)/);
   assert.match(bookmarkSource, /fetchHtml\(nextUrl, redirectsLeft - 1, deadline, hostPolicy\)/);
   assert.match(bookmarkSource, /url\.protocol === "https:" && nextUrl\.protocol !== "https:"/);
@@ -73,5 +79,7 @@ test("bookmark fetch path preserves the SSRF, redirect, port, pinning, deadline,
   assert.match(bookmarkSource, /BOOKMARK_FETCH_MAX_BYTES/);
   assert.match(bookmarkSource, /BOOKMARK_NOT_HTML/);
   assert.match(bookmarkSource, /contentType/);
+  assert.match(appSource, /req\.get\(bookmarkFetchGuardHeader\) === bookmarkFetchGuardValue/);
+  assert.match(appSource, /BOOKMARK_SELF_FETCH_BLOCKED/);
   assert.match(envExample, /Leave empty to allow any public HTTP\(S\) hostname after SSRF checks/);
 });

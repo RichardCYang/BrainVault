@@ -57,6 +57,7 @@ describe("YouTube video block", () => {
       '<iframe src="https://evil.example/embed"></iframe><input type="password"><input type="checkbox" checked disabled>'
     );
     expect(html).not.toContain("evil.example");
+    expect(html).not.toContain("<iframe");
     expect(html).not.toContain('type="password"');
     expect(html).toContain('type="checkbox"');
   });

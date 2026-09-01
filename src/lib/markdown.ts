@@ -470,7 +470,10 @@ const sanitizeOptions: sanitizeHtml.IOptions = {
   allowedSchemes: ["http", "https", "mailto"],
   allowedSchemesByTag: { img: ["data"] },
   allowedIframeHostnames: ["www.youtube-nocookie.com", "www.youtube.com"],
-  exclusiveFilter: (frame) => frame.tag === "input" && frame.attribs.type !== "checkbox",
+  exclusiveFilter: (frame) =>
+    (frame.tag === "input" && frame.attribs.type !== "checkbox")
+    || (frame.tag === "iframe"
+      && !/^https:\/\/www\.youtube(?:-nocookie)?\.com\/embed\//i.test(frame.attribs.src ?? "")),
   transformTags: {
     a: sanitizeHtml.simpleTransform("a", { rel: "noopener noreferrer", target: "_blank" }),
     img: (tagName, attribs) => {

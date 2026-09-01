@@ -23,6 +23,7 @@ import { createHttpsEnforcementMiddleware } from "./middleware/https.js";
 import { setPrivateNoStoreCacheControl } from "./lib/cache-control.js";
 import { createExpressTrustProxySetting } from "./lib/reverse-proxy.js";
 import { canUserReadCustomIcon, customIconUploadRoot, getCustomIconFilePath } from "./lib/custom-icons.js";
+import { bookmarkFetchGuardHeader, bookmarkFetchGuardValue } from "./lib/bookmark-host-policy.js";
 import {
   developmentAccessLogFormat,
   productionAccessLogFormat,
@@ -90,6 +91,18 @@ export function createApp() {
       }
     })
   );
+  app.use((req, res, next) => {
+    if (req.get(bookmarkFetchGuardHeader) === bookmarkFetchGuardValue) {
+      res.status(403).json({
+        error: {
+          code: "BOOKMARK_SELF_FETCH_BLOCKED",
+          message: "Server-originated bookmark preview requests cannot target BrainVault"
+        }
+      });
+      return;
+    }
+    next();
+  });
   app.use(
     createHttpsEnforcementMiddleware({
       enabled: env.HTTPS_MODE !== "off",

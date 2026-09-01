@@ -13,8 +13,8 @@ function getDbError(error: unknown) {
   };
 }
 
-export function notFoundHandler(req: Request, _res: Response, next: NextFunction) {
-  next(new ApiError(404, "ROUTE_NOT_FOUND", `Route ${req.method} ${req.originalUrl} not found`));
+export function notFoundHandler(_req: Request, _res: Response, next: NextFunction) {
+  next(new ApiError(404, "ROUTE_NOT_FOUND", "Route not found"));
 }
 
 export function errorHandler(error: unknown, req: Request, res: Response, _next: NextFunction) {

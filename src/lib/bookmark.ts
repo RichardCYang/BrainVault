@@ -2,7 +2,10 @@ import dns from "node:dns";
 import http from "node:http";
 import https from "node:https";
 import net, { type LookupFunction } from "node:net";
+import os from "node:os";
 import {
+  bookmarkFetchGuardHeader,
+  bookmarkFetchGuardValue,
   isBookmarkFetchHostAllowedByOptionalAllowlist,
   normalizeBookmarkFetchHostname
 } from "./bookmark-host-policy.js";
@@ -245,6 +248,107 @@ function isDnsNoDataError(error: unknown) {
   return code === "ENODATA" || code === "ENOTFOUND";
 }
 
+function comparableBookmarkAddress(value: string) {
+  const address = value.trim().toLowerCase().replace(/^\[|\]$/g, "").split("%", 1)[0];
+  const family = net.isIP(address);
+  if (family === 4) return address;
+  if (family !== 6) return "";
+
+  try {
+    const normalized = new URL(`http://[${address}]/`).hostname.slice(1, -1);
+    const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(normalized);
+    if (!mapped) return normalized;
+
+    const high = Number.parseInt(mapped[1], 16);
+    const low = Number.parseInt(mapped[2], 16);
+    return `${high >>> 8}.${high & 255}.${low >>> 8}.${low & 255}`;
+  } catch {
+    return "";
+  }
+}
+
+const localBookmarkSelfAddresses = new Set(
+  Object.values(os.networkInterfaces())
+    .flatMap((entries) => entries ?? [])
+    .map((entry) => comparableBookmarkAddress(entry.address))
+    .filter(Boolean)
+);
+let publicOriginAddressKeys: ReadonlySet<string> | null = null;
+let publicOriginAddressResolution: Promise<ReadonlySet<string>> | null = null;
+
+async function resolvePublicOriginAddressKeys(deadline: number): Promise<ReadonlySet<string>> {
+  if (publicOriginAddressKeys) return publicOriginAddressKeys;
+  if (publicOriginAddressResolution) return publicOriginAddressResolution;
+
+  const publicHost = normalizeBookmarkFetchHostname(new URL(env.PUBLIC_ORIGIN).hostname);
+  const literalKey = comparableBookmarkAddress(publicHost);
+  if (literalKey) {
+    publicOriginAddressKeys = new Set([literalKey]);
+    return publicOriginAddressKeys;
+  }
+  if (isPrivateOrLocalHostname(publicHost)) {
+    publicOriginAddressKeys = new Set();
+    return publicOriginAddressKeys;
+  }
+
+  publicOriginAddressResolution = (async () => {
+    const remainingTime = deadline - Date.now();
+    if (remainingTime <= 0) throw new ApiError(504, "BOOKMARK_FETCH_TIMEOUT", "The bookmark page took too long to respond");
+
+    const resolver = new dns.promises.Resolver({ timeout: Math.max(1, remainingTime), tries: 1 });
+    const cancelTimer = setTimeout(() => resolver.cancel(), remainingTime);
+    cancelTimer.unref?.();
+    try {
+      const [ipv4, ipv6] = await Promise.allSettled([
+        resolver.resolve4(publicHost),
+        resolver.resolve6(publicHost)
+      ]);
+      const unexpectedFailure = [ipv4, ipv6].find(
+        (result) => result.status === "rejected" && !isDnsNoDataError(result.reason)
+      );
+      if (unexpectedFailure?.status === "rejected") throw unexpectedFailure.reason;
+
+      const resolved = [
+        ...(ipv4.status === "fulfilled" ? ipv4.value : []),
+        ...(ipv6.status === "fulfilled" ? ipv6.value : [])
+      ];
+      const keys = new Set(resolved.map(comparableBookmarkAddress).filter(Boolean));
+      if (!keys.size) {
+        throw new ApiError(422, "BOOKMARK_FETCH_FAILED", "The canonical BrainVault hostname could not be resolved for self-origin protection");
+      }
+      publicOriginAddressKeys = keys;
+      return keys;
+    } catch (error) {
+      const systemCode = error && typeof error === "object" && "code" in error ? String(error.code) : undefined;
+      if (error instanceof ApiError) throw error;
+      if (systemCode === "ETIMEOUT" || systemCode === "ECANCELLED") {
+        throw new ApiError(504, "BOOKMARK_FETCH_TIMEOUT", "The bookmark page took too long to respond");
+      }
+      throw new ApiError(422, "BOOKMARK_FETCH_FAILED", "The canonical BrainVault hostname could not be resolved for self-origin protection", {
+        reason: "dns",
+        systemCode
+      });
+    } finally {
+      clearTimeout(cancelTimer);
+    }
+  })();
+
+  try {
+    return await publicOriginAddressResolution;
+  } catch (error) {
+    publicOriginAddressResolution = null;
+    throw error;
+  }
+}
+
+async function assertBookmarkAddressesAreNotSelfOrigin(addresses: ResolvedAddress[], deadline: number) {
+  const canonicalOriginAddresses = await resolvePublicOriginAddressKeys(deadline);
+  const selfAddresses = new Set([...localBookmarkSelfAddresses, ...canonicalOriginAddresses]);
+  if (addresses.some((item) => selfAddresses.has(comparableBookmarkAddress(item.address)))) {
+    throw new ApiError(403, "BOOKMARK_URL_BLOCKED", "Self-origin bookmark previews are not allowed");
+  }
+}
+
 async function resolvePublicAddresses(
   url: URL,
   deadline: number = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS
@@ -383,6 +487,7 @@ async function validateFetchUrl(
     throw new ApiError(400, "BOOKMARK_PORT_BLOCKED", "Bookmark previews are limited to approved web ports");
   }
   const addresses = await resolvePublicAddresses(url, deadline);
+  await assertBookmarkAddressesAreNotSelfOrigin(addresses, deadline);
   return { url, addresses };
 }
 
@@ -449,7 +554,8 @@ async function fetchHtml(
         "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
         "Cache-Control": "no-cache",
         Pragma: "no-cache",
-        "User-Agent": bookmarkFetchUserAgent(url)
+        "User-Agent": bookmarkFetchUserAgent(url),
+        [bookmarkFetchGuardHeader]: bookmarkFetchGuardValue
       },
       lookup: createPinnedLookup(addresses),
       agent: createBookmarkFetchAgent(url, addresses)
@@ -868,7 +974,8 @@ async function fetchDatabaseFaviconBytes(
           "Accept-Encoding": "identity",
           "Cache-Control": "no-cache",
           Pragma: "no-cache",
-          "User-Agent": bookmarkFetchUserAgent(url)
+          "User-Agent": bookmarkFetchUserAgent(url),
+          [bookmarkFetchGuardHeader]: bookmarkFetchGuardValue
         },
         lookup: createPinnedLookup(addresses),
         agent: createBookmarkFetchAgent(url, addresses)
