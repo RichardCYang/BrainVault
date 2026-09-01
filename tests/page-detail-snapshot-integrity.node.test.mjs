@@ -205,7 +205,7 @@ test("reproduction: restore between page-list access and tag reads cannot leak r
   assert.notDeepEqual(requestSnapshot.tags, restoredGeneration.tags);
 });
 
-test("page version reads keep owner authorization and history in one repeatable-read snapshot", async () => {
+test("page version reads keep administrative authorization and history in one repeatable-read snapshot", async () => {
   const route = (await readFile(new URL("../src/routes/page.routes.ts", import.meta.url), "utf8"))
     .replace(/\r\n/g, "\n");
 
@@ -215,10 +215,11 @@ test("page version reads keep owner authorization and history in one repeatable-
     'pageRouter.delete(\n  "/:pageId/versions",'
   );
   assert.match(listRoute, /const result = await transaction\(async \(client\) => \{/);
-  assert.match(listRoute, /getOwnedPage\(pageId, user\.id, client\)/);
+  assert.match(listRoute, /getPageAccess\(pageId, user\.id, client\)/);
+  assert.match(listRoute, /assertPageCanAdminister\(access\)/);
   assert.match(listRoute, /client\.query<PageVersionRow>/);
   assert.match(listRoute, /client\.queryOne<\{ revision: number \| bigint \| null \}>/);
-  assert.doesNotMatch(listRoute, /await getOwnedPage\(pageId, user\.id\);/);
+  assert.doesNotMatch(listRoute, /await getPageAccess\(pageId, user\.id\);/);
   assert.doesNotMatch(listRoute, /await db\.query/);
 
   const detailRoute = section(
@@ -227,9 +228,10 @@ test("page version reads keep owner authorization and history in one repeatable-
     'pageRouter.get(\n  "/:pageId/deletion-snapshot",'
   );
   assert.match(detailRoute, /const row = await transaction\(async \(client\) => \{/);
-  assert.match(detailRoute, /getOwnedPage\(pageId, user\.id, client\)/);
+  assert.match(detailRoute, /getPageAccess\(pageId, user\.id, client\)/);
+  assert.match(detailRoute, /assertPageCanAdminister\(access\)/);
   assert.match(detailRoute, /return client\.queryOne<PageVersionRow>/);
-  assert.doesNotMatch(detailRoute, /await getOwnedPage\(pageId, user\.id\);/);
+  assert.doesNotMatch(detailRoute, /await getPageAccess\(pageId, user\.id\);/);
   assert.doesNotMatch(detailRoute, /await db\.queryOne/);
 });
 

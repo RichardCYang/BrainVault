@@ -161,7 +161,7 @@ test("attachment uploads hold the same page-mode mutation fence for their entire
 test("the read/write toggle is disabled while the selected page has an active mutation fence", () => {
   assert.match(
     client,
-    /elements\.pageModeToggle\.disabled\s*=\s*interactionLocked\s*\|\|\s*isPageModeMutationFenced\(\)/
+    /elements\.pageModeToggle\.disabled\s*=\s*!canEdit\s*\|\|\s*interactionLocked\s*\|\|\s*isPageModeMutationFenced\(\)/
   );
   assert.match(client, /pendingAttachmentCreateTasks\.clear\(\);\s*pageModeMutationFences\.clear\(\);/s);
 });
@@ -184,7 +184,7 @@ test("read mode blocks destructive page-version history reset while keeping hist
       selectedPage: { id: "page-1", title: "Example" },
       pageVersionHistory: { pageId: "page-1", loading: false, resetting: false }
     },
-    isPageOwner() {
+    canManagePage() {
       return true;
     },
     requireWritablePage() {

@@ -49,10 +49,77 @@ test("collection sharing API exposes create/update/remove and requires collectio
   assert.match(route, /assertPageCanAdminister\(access, "Administrator permission is required to manage collection sharing"\)/);
   assert.match(route, /createId\("cshare"\)/);
   assert.match(route, /const downgradedTargetPages: PageRow\[\] = \[\]/);
-  assert.match(route, /permission === "READ"/);
-  assert.match(route, /WHERE page_id = \? AND user_id = \? AND permission = 'EDIT'/);
+  assert.match(route, /const overriddenDirectTargetGrants: Array<\{ pageId: string; shareGeneration: string \}> = \[\]/);
+  assert.match(
+    route,
+    /SELECT generation FROM page_shares\s+WHERE page_id = \? AND user_id = \? AND permission = 'EDIT'\s+FOR UPDATE/
+  );
+  assert.match(route, /const replacementGeneration = createId\("share"\)/);
+  assert.match(
+    route,
+    /UPDATE page_shares\s+SET generation = \?\s+WHERE page_id = \? AND user_id = \? AND permission = 'EDIT' AND generation = \?/
+  );
+  assert.match(route, /Number\(rotation\.affectedRows\) !== 1/);
+  assert.match(route, /if \(permission === "READ"\) downgradedTargetPages\.push\(page\)/);
   assert.match(route, /await preserveRevokedGrantRecovery\(page, ownerId, target\.id, client\)/);
-  assert.match(route, /disconnectPageCollaborators\(page\.id, "Collection sharing changed"\)/);
+  assert.match(route, /const previousState = await getCollaborationState\(page\.id, client, \{ lock: true \}\)/);
+  assert.match(route, /return previousState\?\.document_epoch \?\? null/);
+  assert.match(route, /const replacedDocumentLineages: Array<\{ pageId: string; documentEpoch: string \}> = \[\]/);
+  assert.match(route, /const removedDocumentLineages: Array<\{ pageId: string; documentEpoch: string \}> = \[\]/);
+  assert.doesNotMatch(route, /disconnectPageCollaborators\(/);
+});
+
+test("collection sharing invalidates only captured document epochs and grant generations", async () => {
+  const route = await read("../src/routes/collection-sharing.routes.ts");
+  const create = section(
+    route,
+    'collectionSharingRouter.post(\n  "/collections/:collectionId/shares"',
+    'collectionSharingRouter.patch(\n  "/collections/:collectionId/shares/:userId"'
+  );
+  const remove = section(
+    route,
+    'collectionSharingRouter.delete(\n  "/collections/:collectionId/shares/:userId"',
+    "\n);\n"
+  );
+
+  assert.match(
+    create,
+    /disconnectPageCollaboratorsForDocumentEpoch\(\s*lineage\.pageId,\s*lineage\.documentEpoch/s
+  );
+  assert.match(
+    create,
+    /disconnectSharedUserGrant\(\s*grant\.pageId,\s*result\.targetId,\s*grant\.shareGeneration/s
+  );
+  assert.match(
+    remove,
+    /disconnectSharedUserGrant\(page\.id, sharedUserId, result\.oldGeneration/
+  );
+  assert.match(
+    remove,
+    /disconnectPageCollaboratorsForDocumentEpoch\(\s*lineage\.pageId,\s*lineage\.documentEpoch/s
+  );
+  assert.doesNotMatch(create, /disconnectPageCollaborators\(/);
+  assert.doesNotMatch(remove, /disconnectPageCollaborators\(/);
+
+  // A delayed cleanup may run after a new share transaction and reconnect. The
+  // captured old identities match only the superseded room or grant.
+  const oldEpoch = "epoch-old";
+  const replacementEpoch = "epoch-new";
+  const revokedGeneration = "direct-old";
+  const collectionGeneration = "collection-new";
+  assert.equal(oldEpoch === oldEpoch, true);
+  assert.equal(replacementEpoch === oldEpoch, false);
+  assert.equal(revokedGeneration === revokedGeneration, true);
+  assert.equal(collectionGeneration === revokedGeneration, false);
+
+  // A direct grant can remain stored underneath the collection grant and become
+  // authoritative again after collection access is removed. Rotating it during
+  // collection-share creation prevents the old post-commit cleanup from matching
+  // a newly admitted session on that revived direct grant.
+  const rotatedDirectGeneration = "direct-rotated";
+  const delayedDisconnectMatches = (socketGeneration) => socketGeneration === revokedGeneration;
+  assert.equal(delayedDisconnectMatches(revokedGeneration), true);
+  assert.equal(delayedDisconnectMatches(rotatedDirectGeneration), false);
 });
 
 test("Yjs collaboration stays readable for READ grants while server rejects their writes", async () => {

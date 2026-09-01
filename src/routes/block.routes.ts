@@ -510,27 +510,52 @@ type PageMutationAdmission = Readonly<{
 }>;
 
 async function capturePageMutationAdmission(pageId: string, userId: string): Promise<PageMutationAdmission> {
-  const access = await getPageAccess(pageId, userId);
-  assertPageCanEdit(access);
-  const row = await db.queryOne<{ attachment_generation: number | bigint | string }>(
-    "SELECT attachment_generation FROM users WHERE id = ?",
-    [access.page.owner_id]
+  // Capture the page lineage, owner's workspace generation, archived state,
+  // and effective grant from one database snapshot. Splitting these reads can
+  // admit a stale collaborator upload across a workspace restore that reuses
+  // the same stable page and share identifiers.
+  const row = await db.queryOne<{
+    owner_id: string;
+    attachment_generation: number | bigint | string;
+    access_share_generation: string | null;
+    is_archived: number | boolean;
+  }>(
+    `SELECT p.owner_id, u.attachment_generation, p.is_archived,
+            CASE
+              WHEN p.owner_id = ? THEN NULL
+              WHEN cs.user_id IS NOT NULL THEN cs.generation
+              ELSE ps.generation
+            END AS access_share_generation
+     FROM pages p
+     INNER JOIN users u ON u.id = p.owner_id
+     LEFT JOIN page_collection_memberships pcm ON pcm.page_id = p.id
+     LEFT JOIN collection_shares cs
+       ON cs.collection_id = pcm.collection_id AND cs.user_id = ?
+     LEFT JOIN page_shares ps
+       ON ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+     WHERE p.id = ?
+       AND (
+         p.owner_id = ?
+         OR (cs.user_id IS NOT NULL AND cs.permission IN ('WRITE', 'ADMIN'))
+         OR (cs.user_id IS NULL AND ps.user_id IS NOT NULL)
+       )`,
+    [userId, userId, userId, pageId, userId]
   );
-  if (!row) throw notFound("User");
+  if (!row) throw notFound("Page");
 
   const ownerWorkspaceGeneration = Number(row.attachment_generation);
   if (!Number.isSafeInteger(ownerWorkspaceGeneration) || ownerWorkspaceGeneration < 1) {
-    throw new Error(`Invalid workspace generation for page owner: ${access.page.owner_id}`);
+    throw new Error(`Invalid workspace generation for page owner: ${row.owner_id}`);
   }
-  const actorShareGeneration = access.page.owner_id === userId ? null : access.shareGeneration;
-  if (access.page.owner_id !== userId && !actorShareGeneration) {
+  const actorShareGeneration = row.owner_id === userId ? null : row.access_share_generation;
+  if (row.owner_id !== userId && !actorShareGeneration) {
     throw new Error(`Missing collaborator share generation for page: ${pageId}`);
   }
   return Object.freeze({
-    ownerId: access.page.owner_id,
+    ownerId: row.owner_id,
     ownerWorkspaceGeneration,
     actorShareGeneration,
-    isArchived: Boolean(access.page.is_archived)
+    isArchived: Boolean(row.is_archived)
   });
 }
 

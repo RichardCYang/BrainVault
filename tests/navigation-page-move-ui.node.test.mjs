@@ -23,7 +23,7 @@ test("sidebar page menu exposes the move action and an accessible destination di
   assert.match(client, /elements\.pageMoveDialog\.showModal\(\)/);
 });
 
-test("production destination-filter function excludes unsafe parents and keeps valid sibling branches", () => {
+test("production destination-filter function excludes unsafe parents and keeps authorized collection destinations", () => {
   const productionFunctions = extractBetween(
     client,
     "function canMoveNavigationPage(page)",
@@ -46,14 +46,14 @@ test("production destination-filter function excludes unsafe parents and keeps v
     state: { allPages: pages },
     getPageSubtreeIds: () => subtree,
     isCollectionPage: (page) => Boolean(page?.isCollection),
-    isPageOwner: (page) => page?.ownerId === "owner",
+    canManagePage: (page) => page?.ownerId === "owner",
     getPageMoveDestinationLabel: (page) => page.title,
     getLocale: () => "en",
     result: null
   };
 
   vm.runInNewContext(`${productionFunctions}\nresult = getPageMoveDestinationPages(state.allPages[0]).map((page) => page.id);`, sandbox);
-  assert.deepEqual(Array.from(sandbox.result), ["valid-a", "valid-b"]);
+  assert.deepEqual(Array.from(sandbox.result), ["valid-a", "valid-b", "collection"]);
 });
 
 test("page move submits only parent metadata and keeps retry reconciliation idempotent", () => {

@@ -67,7 +67,9 @@ test("attachment uploads stay bound to the collaborator grant admitted before mu
   const admissionStart = blockRoute.indexOf("async function capturePageMutationAdmission");
   const admissionEnd = blockRoute.indexOf("function assertPageOwnerWorkspaceGeneration", admissionStart);
   const admission = blockRoute.slice(admissionStart, admissionEnd);
-  assert.match(admission, /access\.shareGeneration/);
+  assert.match(admission, /access_share_generation/);
+  assert.match(admission, /WHEN cs\.user_id IS NOT NULL THEN cs\.generation/);
+  assert.match(admission, /ELSE ps\.generation/);
   assert.match(admission, /actorShareGeneration/);
 
   const uploadStart = blockRoute.indexOf('"/pages/:pageId/attachments"');

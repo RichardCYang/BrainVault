@@ -84,7 +84,9 @@ test("custom icon reads require authentication, ownership or an exact shared-pag
   assert.match(iconMount, /setPrivateNoStoreCacheControl\(res\)/);
   assert.doesNotMatch(iconMount, /public, max-age=31536000, immutable/);
   assert.match(customIcons, /p\.owner_id = \?/);
-  assert.match(customIcons, /INNER JOIN page_shares ps/);
+  assert.match(customIcons, /INNER JOIN collection_shares cs ON cs\.collection_id = pcm\.collection_id/);
+  assert.match(customIcons, /SELECT 1 FROM page_shares ps/);
+  assert.match(customIcons, /NOT EXISTS \(\s*SELECT 1 FROM page_collection_memberships pcm2/);
   assert.match(customIcons, /JSON_SEARCH\(b\.metadata, 'one', \?, '#'\) IS NOT NULL/);
 
   process.env.NODE_ENV = "test";
@@ -94,10 +96,12 @@ test("custom icon reads require authentication, ownership or an exact shared-pag
     async queryOne(sql, params) {
       queryCount += 1;
       assert.match(sql, /p\.owner_id = \?/);
-      assert.equal(params[0], "editor_1");
-      assert.equal(params[1], "owner_1");
-      assert.equal(params[2], "image:/upload/icons/owner_1/cicon_value_1.png");
-      assert.equal(params[3], "image:/upload/icons/owner#_1/cicon#_value#_1.png");
+      assert.equal(params[0], "owner_1");
+      assert.equal(params[1], "editor_1");
+      assert.equal(params[2], "editor_1");
+      assert.equal(params[3], "editor_1");
+      assert.equal(params[4], "image:/upload/icons/owner_1/cicon_value_1.png");
+      assert.equal(params[5], "image:/upload/icons/owner#_1/cicon#_value#_1.png");
       return { allowed: 1 };
     }
   };

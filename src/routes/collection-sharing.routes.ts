@@ -20,7 +20,7 @@ import { requireUser, routeIdSchema, usernameSchema } from "../utils/schemas.js"
 import { toPublicUser } from "../lib/mappers.js";
 import type { PageRow, UserRow } from "../types/domain.js";
 import {
-  disconnectPageCollaborators,
+  disconnectPageCollaboratorsForDocumentEpoch,
   disconnectSharedUserGrant
 } from "../lib/collaboration-server.js";
 import {
@@ -130,6 +130,7 @@ async function resetCollaborationForFirstShare(
   ownerId: string,
   client: DbClient
 ) {
+  const previousState = await getCollaborationState(page.id, client, { lock: true });
   await grantDirectPageRecovery(client, {
     pageId: page.id,
     principalId: ownerId,
@@ -145,6 +146,7 @@ async function resetCollaborationForFirstShare(
   await client.execute("DELETE FROM page_yjs_updates WHERE page_id = ?", [page.id]);
   await client.execute("DELETE FROM page_collaboration_state WHERE page_id = ?", [page.id]);
   await ensureCollaborationState(page.id, client);
+  return previousState?.document_epoch ?? null;
 }
 
 async function preserveRevokedGrantRecovery(
@@ -282,20 +284,42 @@ collectionSharingRouter.post(
 
         const firstSharePages: PageRow[] = [];
         const downgradedTargetPages: PageRow[] = [];
+        const overriddenDirectTargetGrants: Array<{ pageId: string; shareGeneration: string }> = [];
         for (const page of pages) {
           const shareCount = await getEffectivePageShareCount(page.id, client, collectionId, { lock: true });
           if (shareCount === 0) firstSharePages.push(page);
-          if (permission === "READ") {
-            // A newly added collection READ grant is immediately authoritative.
-            // If this account already has a direct EDIT grant for a member page,
-            // adding the collection share is a write-permission downgrade for
-            // that page even though the legacy grant remains stored underneath.
-            const directTargetGrant = await client.queryOne<{ user_id: string }>(
-              `SELECT user_id FROM page_shares
-               WHERE page_id = ? AND user_id = ? AND permission = 'EDIT'`,
-              [page.id, target.id]
+
+          // A collection grant is authoritative even when an older direct EDIT
+          // grant remains stored. Rotate that hidden direct grant in this same
+          // transaction: if the collection grant is later removed, the direct
+          // grant can become authoritative again, and a delayed disconnect for
+          // the superseded generation must not evict that revived session.
+          const directTargetGrant = await client.queryOne<{ generation: string }>(
+            `SELECT generation FROM page_shares
+             WHERE page_id = ? AND user_id = ? AND permission = 'EDIT'
+             FOR UPDATE`,
+            [page.id, target.id]
+          );
+          if (directTargetGrant) {
+            const replacementGeneration = createId("share");
+            const rotation = await client.execute<{ affectedRows: number }>(
+              `UPDATE page_shares
+               SET generation = ?
+               WHERE page_id = ? AND user_id = ? AND permission = 'EDIT' AND generation = ?`,
+              [replacementGeneration, page.id, target.id, directTargetGrant.generation]
             );
-            if (directTargetGrant) downgradedTargetPages.push(page);
+            if (Number(rotation.affectedRows) !== 1) {
+              throw new ApiError(
+                409,
+                "PAGE_SHARE_GENERATION_CHANGED",
+                "A direct page grant changed while collection sharing was being applied."
+              );
+            }
+            overriddenDirectTargetGrants.push({
+              pageId: page.id,
+              shareGeneration: directTargetGrant.generation
+            });
+            if (permission === "READ") downgradedTargetPages.push(page);
           }
         }
         const fencedPageIds = [...new Set([
@@ -304,10 +328,16 @@ collectionSharingRouter.post(
         ])];
         await assertNoActiveCollaborationWriteLeases(client, fencedPageIds);
         for (const page of downgradedTargetPages) {
+          // READ replaces the direct EDIT authority, so preserve any local write
+          // that can no longer be replayed into the live shared document.
           await preserveRevokedGrantRecovery(page, ownerId, target.id, client);
         }
+        const replacedDocumentLineages: Array<{ pageId: string; documentEpoch: string }> = [];
         for (const page of firstSharePages) {
-          await resetCollaborationForFirstShare(page, ownerId, client);
+          const previousDocumentEpoch = await resetCollaborationForFirstShare(page, ownerId, client);
+          if (previousDocumentEpoch) {
+            replacedDocumentLineages.push({ pageId: page.id, documentEpoch: previousDocumentEpoch });
+          }
         }
 
         const generation = createId("cshare");
@@ -320,11 +350,29 @@ collectionSharingRouter.post(
           .find((row) => row.id === target.id);
         if (!created) throw new ApiError(500, "COLLECTION_SHARE_FAILED", "The collection share was not created");
         const rows = await getCollectionShareRows(collectionId, client);
-        return { created, count: rows.length, pages };
+        return {
+          created,
+          count: rows.length,
+          targetId: target.id,
+          overriddenDirectTargetGrants,
+          replacedDocumentLineages
+        };
       });
 
-      for (const page of result.pages) {
-        disconnectPageCollaborators(page.id, "Collection sharing changed");
+      for (const lineage of result.replacedDocumentLineages) {
+        disconnectPageCollaboratorsForDocumentEpoch(
+          lineage.pageId,
+          lineage.documentEpoch,
+          "Collaboration state was initialized"
+        );
+      }
+      for (const grant of result.overriddenDirectTargetGrants) {
+        disconnectSharedUserGrant(
+          grant.pageId,
+          result.targetId,
+          grant.shareGeneration,
+          "Collection sharing replaced the page grant"
+        );
       }
       res.status(201).json({ share: toCollectionSharePayload(result.created), count: result.count });
     } catch (error) {
@@ -449,19 +497,38 @@ collectionSharingRouter.delete(
           throw new ApiError(409, "COLLECTION_SHARE_GENERATION_CHANGED", "The collection grant changed in another session.");
         }
 
+        const removedDocumentLineages: Array<{ pageId: string; documentEpoch: string }> = [];
         for (const page of pages) {
-          await teardownCollaborationIfFinalShare(page.id, preRemovalStates.get(page.id) ?? null, client);
+          const preRemovalState = preRemovalStates.get(page.id) ?? null;
+          const remaining = await teardownCollaborationIfFinalShare(page.id, preRemovalState, client);
+          if (remaining === 0 && preRemovalState?.document_epoch) {
+            removedDocumentLineages.push({
+              pageId: page.id,
+              documentEpoch: preRemovalState.document_epoch
+            });
+          }
         }
         const rows = await getCollectionShareRows(collectionId, client);
-        return { count: rows.length, oldGeneration: existing.generation, pages };
+        return {
+          count: rows.length,
+          oldGeneration: existing.generation,
+          pages,
+          removedDocumentLineages
+        };
       });
 
       for (const page of result.pages) {
+        // A lower-priority direct grant may become effective after removal. Match
+        // the old collection generation so a reconnect under that direct grant
+        // cannot be mistaken for the revoked collection session.
         disconnectSharedUserGrant(page.id, sharedUserId, result.oldGeneration, "Collection access was removed");
-        // The removed collection grant can expose a lower-priority direct page
-        // grant. Reconnecting all remaining clients keeps the room's effective
-        // participant and write permissions aligned immediately.
-        disconnectPageCollaborators(page.id, "Collection sharing changed");
+      }
+      for (const lineage of result.removedDocumentLineages) {
+        disconnectPageCollaboratorsForDocumentEpoch(
+          lineage.pageId,
+          lineage.documentEpoch,
+          "Collection sharing ended"
+        );
       }
       res.json({ removed: true, count: result.count });
     } catch (error) {

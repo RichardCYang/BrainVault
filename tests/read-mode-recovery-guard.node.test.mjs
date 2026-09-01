@@ -44,7 +44,10 @@ test("same-page local draft recovery switches to write mode before activation", 
     }),
     destroyPageCollaboration: async () => {},
     closeSharePageDialog: () => {},
+    closeShareCollectionDialog: () => {},
     resetPageEditTracking: () => {},
+    resetPageComments: () => {},
+    loadPageComments: async () => {},
     isCollaborativePage: (page) => Boolean(page?.collaboration?.enabled),
     applyPersistedPageDraft: (page) => {
       page.title = "recovered-local";

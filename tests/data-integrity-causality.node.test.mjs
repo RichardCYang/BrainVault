@@ -54,14 +54,17 @@ test("legacy page archive DELETE keeps its acknowledgement causally bound to the
   );
 
   const transactionStart = route.indexOf("const archivedPage = await transaction(async (client) => {");
-  const rowLock = route.indexOf("FOR UPDATE", transactionStart);
-  const causalResponse = route.indexOf("return updatedPage;", rowLock);
+  const pageLock = route.indexOf(
+    "getPageAccess(pageId, user.id, client, { lockPage: true })",
+    transactionStart
+  );
+  const causalResponse = route.indexOf("return updatedPage;", pageLock);
   const transactionEnd = route.indexOf("\n      });", causalResponse);
   const send = route.indexOf("res.json({ page: toPage(archivedPage) });", transactionEnd);
 
   assert.ok(transactionStart >= 0);
-  assert.ok(rowLock > transactionStart);
-  assert.ok(causalResponse > rowLock);
+  assert.ok(pageLock > transactionStart);
+  assert.ok(causalResponse > pageLock);
   assert.ok(transactionEnd > causalResponse);
   assert.ok(send > transactionEnd);
   assert.doesNotMatch(route.slice(transactionEnd, send), /assertOwnedPage\(pageId, user\.id\)/);
@@ -129,8 +132,35 @@ test("post-COMMIT page disconnects are fenced against a later restore generation
 
   assert.match(
     patchRoute,
-    /await disconnectArchivedPageCollaboratorsIfCurrent\(pageId, user\.id, Number\(page\.version \?\? 1\)\)/
+    /await disconnectArchivedPageCollaboratorsIfCurrent\(pageId, page\.ownerId, Number\(page\.version \?\? 1\)\)/
   );
+
+  const membershipLineageCapture = patchRoute.indexOf(
+    "const previousCollaborationLineages = await getPageCollaborationDocumentEpochs("
+  );
+  const membershipRewrite = patchRoute.indexOf(
+    "await replacePageSubtreeCollectionMembership(",
+    membershipLineageCapture
+  );
+  const membershipStateRotation = patchRoute.indexOf(
+    'DELETE FROM page_collaboration_state WHERE page_id = ?',
+    membershipRewrite
+  );
+  const membershipTransactionEnd = patchRoute.indexOf("\n    });", membershipStateRotation);
+  const membershipEpochDisconnect = patchRoute.indexOf(
+    "disconnectPageCollaboratorsForDocumentEpoch(",
+    membershipTransactionEnd
+  );
+  assert.ok(membershipLineageCapture >= 0);
+  assert.ok(membershipRewrite > membershipLineageCapture);
+  assert.ok(membershipStateRotation > membershipRewrite);
+  assert.ok(membershipTransactionEnd > membershipStateRotation);
+  assert.ok(membershipEpochDisconnect > membershipTransactionEnd);
+  assert.match(patchRoute, /if \(beforeShareCount > 0 \|\| afterShareCount > 0\)/);
+  assert.match(patchRoute, /if \(afterShareCount > 0\) await ensureCollaborationState\(row\.id, client\)/);
+  assert.match(patchRoute, /lineage\.pageId/);
+  assert.match(patchRoute, /lineage\.documentEpoch/);
+
   const captureIndex = deleteRoute.indexOf(
     "const collaborationDocumentEpochs = await getPageCollaborationDocumentEpochs(client, pageIds)"
   );
@@ -154,8 +184,8 @@ test("post-COMMIT page disconnects are fenced against a later restore generation
   );
   assert.equal(
     (pages.match(/disconnectPageCollaboratorsForDocumentEpoch\(/g) ?? []).length,
-    1,
-    "permanent deletion must invalidate by captured document lineage"
+    2,
+    "membership changes and permanent deletion must invalidate captured document lineages"
   );
 
   // Reproduction model: without a row lock, the verification SELECT can read
@@ -203,6 +233,15 @@ test("post-COMMIT page disconnects are fenced against a later restore generation
   const shouldDisconnectDeletedRoom = (roomEpoch) => roomEpoch === deletedEpoch;
   assert.equal(shouldDisconnectDeletedRoom(deletedEpoch), true);
   assert.equal(shouldDisconnectDeletedRoom(restoredEpoch), false);
+
+  // Collection moves have the same post-COMMIT hazard. The membership update
+  // rotates the durable epoch before commit, so cleanup of the captured old room
+  // cannot evict a reconnect admitted against the destination collection.
+  const sourceCollectionEpoch = "epoch_source_collection";
+  const destinationCollectionEpoch = "epoch_destination_collection";
+  const shouldDisconnectMovedRoom = (roomEpoch) => roomEpoch === sourceCollectionEpoch;
+  assert.equal(shouldDisconnectMovedRoom(sourceCollectionEpoch), true);
+  assert.equal(shouldDisconnectMovedRoom(destinationCollectionEpoch), false);
 });
 
 test("share-transition disconnects cannot tear down a later collaboration generation", () => {

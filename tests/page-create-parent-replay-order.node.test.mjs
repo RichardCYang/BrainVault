@@ -43,12 +43,11 @@ test("page create resolves durable replays before validating mutable parent stat
     "async function assertOwnedParentPage(",
     "async function getPageTags("
   );
-  assert.match(helper, /\$\{lock \? " FOR UPDATE" : ""\}/);
-  assert.match(helper, /SELECT id, is_archived, is_collection FROM pages/);
-  assert.match(helper, /if \(parent\.is_archived\)/);
+  assert.match(helper, /getPageAccess\(parentPageId, ownerId, client, \{ lockPage: lock \}\)/);
+  assert.match(helper, /assertPageCanAdminister\(access/);
+  assert.match(helper, /if \(access\.page\.is_archived\)/);
   assert.match(helper, /PARENT_PAGE_ARCHIVED/);
-  assert.match(helper, /if \(parent\.is_collection\)/);
-  assert.match(helper, /A collection cannot be used as a page-create destination/);
+  assert.doesNotMatch(helper, /A collection cannot be used as a page-create destination/);
 });
 
 test("response-loss replay stays idempotent after the original parent is removed", () => {

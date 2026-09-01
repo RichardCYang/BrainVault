@@ -115,7 +115,9 @@ test("browser page creation and downloads remain bound to the initiating authent
   const creation = section(app, "async function createWorkspacePage", "async function createCollection");
   assert.match(creation, /if \(state\.workspaceCreateBusy\) return \{ applied: false \};/);
   assert.match(creation, /const pages = await fetchAllPageSummaries\(\);/);
-  assert.match(creation, /data\.page\.ownerId !== state\.user\?\.id/);
+  assert.match(creation, /if \(!data\.page\?\.id\)/);
+  assert.match(creation, /if \(!isCurrentAuthenticatedSessionScope\(authenticationScope\)\) return \{ applied: false \};/);
+  assert.doesNotMatch(creation, /data\.page\.ownerId !== state\.user\?\.id/);
   assert.match(creation, /pendingWorkspaceCreateTasks\.delete\(task\.taskKey\)/);
   assert.doesNotMatch(creation, /await loadPages\("", ""\)/);
   const navigationIndex = Math.max(creation.indexOf("await showCollection"), creation.indexOf("await openPage"));

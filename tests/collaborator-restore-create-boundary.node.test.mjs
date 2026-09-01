@@ -23,8 +23,13 @@ test("attachment admission captures authorization and the page owner's workspace
 
   assert.match(admission, /SELECT p\.owner_id, u\.attachment_generation, p\.is_archived/);
   assert.match(admission, /INNER JOIN users u ON u\.id = p\.owner_id/);
+  assert.match(admission, /LEFT JOIN page_collection_memberships pcm/);
+  assert.match(admission, /LEFT JOIN collection_shares cs/);
   assert.match(admission, /p\.owner_id = \?/);
   assert.match(admission, /ps\.user_id = \?[\s\S]*ps\.permission = 'EDIT'/);
+  assert.match(admission, /cs\.permission IN \('WRITE', 'ADMIN'\)/);
+  assert.match(admission, /cs\.user_id IS NULL AND ps\.user_id IS NOT NULL/);
+  assert.match(admission, /WHEN cs\.user_id IS NOT NULL THEN cs\.generation[\s\S]*ELSE ps\.generation/);
   assert.match(admission, /ownerWorkspaceGeneration/);
 });
 

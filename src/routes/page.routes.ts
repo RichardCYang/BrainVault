@@ -1211,7 +1211,7 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
       values.push(updates.parentPageId);
     }
 
-    let collaborationMembershipChangedPageIds: string[] = [];
+    let collaborationMembershipChangedLineages: PageCollaborationDocumentEpoch[] = [];
     const page = await transaction(async (client) => {
       await assertCurrentAuthSessionBoundary(user.id, authScope, client);
       const initialAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
@@ -1331,6 +1331,13 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
           const previouslySharedPageIds = documentRows
             .filter((row) => (beforeShareCounts.get(row.id) ?? 0) > 0)
             .map((row) => row.id);
+          const previousCollaborationLineages = await getPageCollaborationDocumentEpochs(
+            client,
+            documentRows.map((row) => row.id)
+          );
+          const previousLineageByPageId = new Map(
+            previousCollaborationLineages.map((lineage) => [lineage.pageId, lineage])
+          );
 
           if (previouslySharedPageIds.length) {
             // Moving a page can revoke a whole collection's collaborators or
@@ -1372,18 +1379,21 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
                 ownerId: workspaceOwnerId,
                 reason: "SHARE_STARTED"
               });
+            }
+
+            if (beforeShareCount > 0 || afterShareCount > 0) {
+              // Collection membership is part of collaboration authorization.
+              // Replace the document epoch in the same transaction so a delayed
+              // post-COMMIT cleanup can retire only the old room, never a room
+              // admitted under the new collection grant set.
               await client.execute("DELETE FROM page_yjs_updates WHERE page_id = ?", [row.id]);
               await client.execute("DELETE FROM page_collaboration_state WHERE page_id = ?", [row.id]);
-              await ensureCollaborationState(row.id, client);
-            } else if (beforeShareCount > 0 && afterShareCount === 0) {
-              // The current Yjs state was proven materialized above, so once the
-              // final effective share disappears the page can safely return to
-              // direct single-user editing.
-              await client.execute("DELETE FROM page_yjs_updates WHERE page_id = ?", [row.id]);
-              await client.execute("DELETE FROM page_collaboration_state WHERE page_id = ?", [row.id]);
+              if (afterShareCount > 0) await ensureCollaborationState(row.id, client);
+
+              const previousLineage = previousLineageByPageId.get(row.id);
+              if (previousLineage) collaborationMembershipChangedLineages.push(previousLineage);
             }
           }
-          collaborationMembershipChangedPageIds = documentRows.map((row) => row.id);
         } else {
           await replacePageSubtreeCollectionMembership(
             client,
@@ -1412,8 +1422,12 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
     if (updates.isArchived === true) {
       await disconnectArchivedPageCollaboratorsIfCurrent(pageId, page.ownerId, Number(page.version ?? 1));
     } else if (updates.parentPageId !== undefined) {
-      for (const changedPageId of collaborationMembershipChangedPageIds) {
-        disconnectPageCollaborators(changedPageId, "Page collection membership changed");
+      for (const lineage of collaborationMembershipChangedLineages) {
+        disconnectPageCollaboratorsForDocumentEpoch(
+          lineage.pageId,
+          lineage.documentEpoch,
+          "Page collection membership changed"
+        );
       }
     }
     res.json({ page });
