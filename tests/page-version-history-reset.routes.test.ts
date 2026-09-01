@@ -78,8 +78,8 @@ beforeEach(() => {
     if (sql.includes("FROM users WHERE id = ?")) {
       return params[0] === owner.id ? owner : params[0] === otherUser.id ? otherUser : undefined;
     }
-    if (sql.includes("SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE")) {
-      return database.page?.id === params[0] && database.page?.owner_id === params[1] ? database.page : undefined;
+    if (sql.includes("FROM pages WHERE id = ? FOR UPDATE")) {
+      return database.page?.id === params[0] ? database.page : undefined;
     }
     if (sql.includes("FROM page_version_reset_mutations")) {
       return database.resetReceipts.get(receiptKey(params[0], params[1]));

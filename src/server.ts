@@ -4,6 +4,10 @@ import { createApp } from "./app.js";
 import { env } from "./config/env.js";
 import { bootstrapDatabase } from "./lib/db-bootstrap.js";
 import { assertDatabaseCrashDurability, closeDb } from "./lib/db.js";
+import {
+  acquireApplicationInstanceLease,
+  type ApplicationInstanceLease
+} from "./lib/application-instance-lock.js";
 import { cleanupStaleDataTransferTempFiles, recoverInterruptedDataRestores } from "./lib/data-transfer.js";
 import { cleanupStaleAttachmentTempFiles } from "./lib/attachments.js";
 import { attachPageCollaborationServer } from "./lib/collaboration-server.js";
@@ -13,6 +17,8 @@ import { assertSupportedNodeRuntime } from "./lib/runtime-security.js";
 import { initializePermanentTotpIpEnforcement } from "./lib/totp-ip-block.js";
 
 assertSupportedNodeRuntime();
+
+let applicationInstanceLease: ApplicationInstanceLease | null = null;
 
 async function start() {
   const poshAcmeTls = env.HTTPS_MODE === "posh-acme"
@@ -28,6 +34,16 @@ async function start() {
   } else {
     console.log("AUTO_BOOTSTRAP_DATABASE=false. Skipping database/schema bootstrap.");
   }
+
+  // BrainVault's collaboration fan-out, request throttles, and admission gates
+  // are intentionally process-local. Fail closed rather than silently multiplying
+  // those controls when a second application process points at the same database.
+  applicationInstanceLease = await acquireApplicationInstanceLease({
+    onLeaseLost(error) {
+      console.error("BrainVault application-instance lease was lost; shutting down.", error);
+      process.kill(process.pid, "SIGTERM");
+    }
+  });
 
   // Refuse to accept user writes if MariaDB can acknowledge commits that are
   // not guaranteed to survive a server/OS crash. InnoDB-based binary logging
@@ -84,6 +100,10 @@ async function start() {
         resolve();
       });
     });
+    await applicationInstanceLease?.release().catch((error) => {
+      console.error("Failed to release the BrainVault application-instance lease", error);
+    });
+    applicationInstanceLease = null;
     await closeDb().catch((error) => console.error("Failed to close MariaDB pool", error));
     process.exit(0);
   }
@@ -95,6 +115,8 @@ async function start() {
 start().catch(async (error) => {
   console.error("Failed to start BrainVault API.");
   console.error(error);
+  await applicationInstanceLease?.release().catch(() => undefined);
+  applicationInstanceLease = null;
   await closeDb().catch(() => undefined);
   process.exitCode = 1;
 });

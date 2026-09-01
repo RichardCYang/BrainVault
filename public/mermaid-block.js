@@ -4,7 +4,7 @@ import { BLOCK_MARKDOWN_MAX_LENGTH } from "./editor-content-limits.js";
 // Pin Mermaid so a future upstream release cannot silently change rendering or
 // security behavior for an existing BrainVault deployment.
 export const MERMAID_VERSION = "11.17.2";
-export const MERMAID_MODULE_URL = `https://cdn.jsdelivr.net/npm/mermaid@${MERMAID_VERSION}/dist/mermaid.esm.min.mjs`;
+export const MERMAID_SCRIPT_URL = `/vendor/mermaid/${MERMAID_VERSION}/mermaid.min.js`;
 
 const previewRevisions = new WeakMap();
 const previewTimers = new WeakMap();
@@ -45,12 +45,33 @@ function setPreviewMessage(target, state, message) {
 
 async function loadMermaid() {
   if (!mermaidModulePromise) {
-    mermaidModulePromise = import(MERMAID_MODULE_URL)
-      .then((module) => module.default ?? module.mermaid ?? module)
-      .catch((error) => {
-        mermaidModulePromise = null;
-        throw error;
-      });
+    mermaidModulePromise = new Promise((resolve, reject) => {
+      const loaded = globalThis.mermaid;
+      if (loaded) {
+        resolve(loaded);
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src = MERMAID_SCRIPT_URL;
+      script.async = true;
+      script.dataset.brainvaultMermaid = MERMAID_VERSION;
+      script.addEventListener("load", () => {
+        const mermaid = globalThis.mermaid;
+        if (!mermaid) {
+          reject(new Error("The local Mermaid bundle did not expose the Mermaid API"));
+          return;
+        }
+        resolve(mermaid);
+      }, { once: true });
+      script.addEventListener("error", () => {
+        reject(new Error("The local Mermaid bundle could not be loaded"));
+      }, { once: true });
+      document.head.append(script);
+    }).catch((error) => {
+      mermaidModulePromise = null;
+      throw error;
+    });
   }
   return mermaidModulePromise;
 }

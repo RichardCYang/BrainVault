@@ -91,7 +91,7 @@ For database permissions, opt-in demo data, alternative environment setup, and p
 npm run dev       # Start the server and open a private/incognito browser window
 npm run secrets:generate # Print independent 32-byte JWT and MFA secrets
 npm test          # Run the test suite
-npm run build     # Compile TypeScript
+npm run build     # Integrity-vendor Mermaid, then compile TypeScript
 npm run reproduce:cross-instance-loss # Reproduce the stale-room compaction loss and fixed behavior
 npm run reproduce:attachment-position-loss # Reproduce stale-SQL attachment position loss and the fixed merge
 npm run reproduce:page-cover-backup-manifest # Reproduce inline-cover manifest exhaustion and the v2 fix

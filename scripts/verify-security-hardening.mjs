@@ -339,7 +339,6 @@ const appSource = contains("src/app.ts", [
   "createHttpsEnforcementMiddleware",
   'enabled: env.HTTPS_MODE !== "off"',
   "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js",
-  "https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/",
   'frameSrc: ["\'self\'", "data:", "https://www.youtube-nocookie.com", "https://www.youtube.com"]',
   "'sha256-AQrGHmNf2ToDPODxkNyXldxWl9tWr2pnwbahY0pFneE='",
   'app.get("/vendor/yjs/yjs.mjs"',
@@ -387,6 +386,25 @@ assert.ok(!collaborationBrowserSource.includes("https://cdn.jsdelivr.net/npm/yjs
 assert.ok(indexSource.includes("/vendor/yjs/lib0/"), "The import map must resolve lib0 locally");
 assert.ok(!appSource.includes('scriptSrc: ["\'self\'", "https://cdn.jsdelivr.net"]'), "CSP must not trust the entire jsDelivr host");
 assert.ok(!appSource.includes('connectSrc: ["\'self\'", "ws:", "wss:"]'), "CSP must not allow arbitrary WebSocket hosts");
+
+const mermaidBrowserSource = contains("public/mermaid-block.js", [
+  'export const MERMAID_VERSION = "11.17.2";',
+  'export const MERMAID_SCRIPT_URL = `/vendor/mermaid/${MERMAID_VERSION}/mermaid.min.js`;',
+  "script.src = MERMAID_SCRIPT_URL",
+  "globalThis.mermaid",
+  'securityLevel: "sandbox"'
+]);
+const mermaidVendorSource = contains("scripts/vendor-mermaid.mjs", [
+  'export const MERMAID_VERSION = "11.17.2";',
+  "MERMAID_PACKAGE_INTEGRITY",
+  "sha512-V6K3C8EBdEsPFZXSKMJe6ppQOENxuHARr9GvHX4hh47lAbhMRD9qf4oEK7LoaRQxULMa80/qt5gHO73aCleBBg==",
+  'package/dist/mermaid.min.js',
+  "verifyPackageIntegrity(tarball)",
+  "assertTarHeaderChecksum(header)"
+]);
+assert.ok(!mermaidBrowserSource.includes("cdn.jsdelivr.net/npm/mermaid"), "Mermaid executable code must load from BrainVault's own origin");
+assert.ok(!appSource.includes("cdn.jsdelivr.net/npm/mermaid"), "CSP must not trust a Mermaid CDN script source");
+assert.ok(mermaidVendorSource.includes("verifyPackageIntegrity(tarball)"), "The vendoring step must verify package integrity before extraction");
 contains("src/lib/runtime-security.ts", [
   'export const nodeRuntimeSecurityFloor = "^22.23.2 || ^24.18.1 || >=26.5.1"',
   "process.versions.node",
@@ -395,14 +413,35 @@ contains("src/lib/runtime-security.ts", [
 const serverSource = contains("src/server.ts", [
   'import { assertSupportedNodeRuntime } from "./lib/runtime-security.js";',
   "assertSupportedNodeRuntime();",
+  "acquireApplicationInstanceLease",
+  "applicationInstanceLease = await acquireApplicationInstanceLease({",
+  "BrainVault application-instance lease was lost; shutting down.",
+  "process.kill(process.pid, \"SIGTERM\")",
+  "await applicationInstanceLease?.release()",
   "createHttpServer(app)",
   "createHttpsServer(poshAcmeTls.options, app)",
   "server.listen(env.PORT, env.HOST",
   "HTTPS reverse-proxy mode enabled",
   "Posh-ACME HTTPS mode enabled"
 ]);
+const applicationInstanceLockSource = contains("src/lib/application-instance-lock.ts", [
+  "createDedicatedDbConnection",
+  "SELECT GET_LOCK(?, 0) AS acquired",
+  "SELECT RELEASE_LOCK(?) AS released",
+  "Another BrainVault application instance is already active",
+  "application_instance_lease_heartbeat",
+  "options.onLeaseLost(error)",
+  "heartbeat.unref()",
+  "await connection.end()"
+]);
+contains("src/lib/db.ts", ["export function createDedicatedDbConnection()"]);
+assert.ok(applicationInstanceLockSource.includes("GET_LOCK"), "The single-instance lease must be database-scoped rather than process-local");
 const runtimeGuardIndex = serverSource.indexOf("assertSupportedNodeRuntime();");
 assert.ok(runtimeGuardIndex >= 0, "The server entrypoint must enforce the runtime security floor");
+const applicationLeaseIndex = serverSource.indexOf("applicationInstanceLease = await acquireApplicationInstanceLease({");
+assert.ok(applicationLeaseIndex > serverSource.indexOf("await bootstrapDatabase()"), "The instance lease must be acquired after optional schema bootstrap");
+assert.ok(applicationLeaseIndex < serverSource.indexOf("await assertDatabaseCrashDurability()"), "The instance lease must be held before runtime recovery or serving requests");
+assert.ok(applicationLeaseIndex < serverSource.indexOf("server.listen("), "The instance lease must be held before accepting network traffic");
 for (const startupOperation of ["await loadPoshAcmeTls(", "await bootstrapDatabase(", "server.listen("]) {
   assert.ok(
     serverSource.indexOf(startupOperation) > runtimeGuardIndex,

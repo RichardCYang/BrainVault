@@ -206,6 +206,10 @@ const pageRouteSource = readFileSync(
   new URL("../src/routes/page.routes.ts", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const pageAccessSource = readFileSync(
+  new URL("../src/lib/page-access.ts", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const dataTransferSource = readFileSync(
   new URL("../src/lib/data-transfer.ts", import.meta.url),
   "utf8"
@@ -356,8 +360,10 @@ assert(
     && pageRouteSource.includes("createMutationRequestHash({")
     && pageRouteSource.includes("expectedRevision")
     && pageRouteSource.includes("SELECT id FROM users WHERE id = ? FOR UPDATE")
+    && pageRouteSource.includes("getPageAccess(pageId, user.id, client, { lockPage: true })")
     && pageRouteSource.indexOf("SELECT id FROM users WHERE id = ? FOR UPDATE")
-      < pageRouteSource.indexOf("SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE", pageRouteSource.indexOf("SELECT id FROM users WHERE id = ? FOR UPDATE"))
+      < pageRouteSource.indexOf("getPageAccess(pageId, user.id, client, { lockPage: true })", pageRouteSource.indexOf("SELECT id FROM users WHERE id = ? FOR UPDATE"))
+    && pageAccessSource.includes('WHERE id = ?${lockPage ? " FOR UPDATE" : ""}')
     && pageRouteSource.includes("INSERT INTO page_version_reset_mutations")
     && pageRouteSource.includes("assessPageVersionResetMutationReceipt(receipt, { pageId, requestHash })")
     && pageRouteSource.includes("UPDATE page_version_reset_mutations")

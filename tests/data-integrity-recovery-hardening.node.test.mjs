@@ -67,7 +67,7 @@ test("share removal, hard deletion, and restore fence active collaboration lease
   );
   assertBefore(
     removeShare,
-    "SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE",
+    "getPageAccess(pageId, actor.id, client, { lockPage: true })",
     "await assertNoActiveCollaborationWriteLeases(client, [pageId])",
     "share removal"
   );
@@ -124,7 +124,7 @@ test("both page archive routes fence active collaboration write leases", () => {
   );
   const archiveBranch = section(
     deleteRoute,
-    'SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE',
+    "const access = await getPageAccess(pageId, user.id, client, { lockPage: true })",
     "const updateResult = await client.execute"
   );
   assertBefore(
@@ -186,7 +186,7 @@ test("destructive transitions preserve server recovery admission before deleting
   const hardDelete = section(pageRoutes, "const pageIds = subtreeRows.map", "const attachmentIds = blockRows");
   assertBefore(
     hardDelete,
-    'await preserveRecoveryGrantsForPages(client, user.id, pageIds, "PAGE_DELETED")',
+    'await preserveRecoveryGrantsForPages(client, workspaceOwnerId, pageIds, "PAGE_DELETED")',
     '"DELETE FROM pages WHERE id = ? AND owner_id = ?"',
     "hard-delete recovery grant"
   );

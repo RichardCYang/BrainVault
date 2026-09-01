@@ -15,7 +15,7 @@ Never commit a real `.env` file.
 | `MARIADB_ADMIN_URL` | Not set | Optional admin connection for database and exact-host user creation; remote production hosts require `?ssl=true` |
 | `DB_USER_HOSTS` | `localhost,127.0.0.1,::1` | Comma-separated exact MariaDB account hosts; `%` and `_` wildcards are rejected |
 | `AUTO_BOOTSTRAP_DATABASE` | `true` | Run database bootstrap before listening |
-| `DATABASE_CONNECTION_LIMIT` | `10` | Maximum database pool size |
+| `DATABASE_CONNECTION_LIMIT` | `10` | Maximum database pool size; the single-instance safety lease uses one additional dedicated MariaDB connection |
 | `JWT_SECRET` | Random ephemeral value outside production | Secret used to sign access tokens; `env:init` writes a persistent random value and production requires an explicit non-placeholder value |
 | `JWT_EXPIRES_IN` | `12h` | Session-token lifetime; must be between 5 minutes and 24 hours |
 | `AUTH_ALLOW_BEARER_TOKENS` | `false` | Permit compatibility `Authorization: Bearer` sessions only when explicitly enabled; the browser client uses the `HttpOnly` cookie |
@@ -79,7 +79,7 @@ Never commit a real `.env` file.
 | `DATA_IMPORT_MAX` | `3` | Complete-data imports admitted per principal and window before multipart upload processing |
 | `DATA_IMPORT_MAX_CONCURRENT` | `2` | Maximum imports processed concurrently by one application process; each principal is also limited to one active import |
 
-The attachment-upload and import admission gates use process-local state. A horizontally scaled deployment must apply equivalent limits in the edge proxy or use a shared rate-limit/admission store across instances.
+The attachment-upload and import admission gates use process-local state. BrainVault therefore acquires a database-scoped application-instance lease during startup and refuses to run a second active application process against the same MariaDB database. Horizontal scaling remains unsupported until these gates, request-rate counters, and collaboration coordination are moved to shared/distributed backends.
 
 ## Development browser launch
 
@@ -152,8 +152,8 @@ Serve production over HTTPS and use a browser that supports Web Locks. Local dev
 
 Real-time collaboration uses the same `PORT`, `CORS_ORIGIN`, and JWT signing secret as the HTTP API. No separate collaboration process or port is required. Direct Posh-ACME mode carries WebSocket upgrades over the same native HTTPS listener. A production reverse proxy must support HTTP/1.1 WebSocket upgrades for `/api/collaboration/` and forward the browser origin and original host/protocol headers. In proxy mode, the application uses the trusted `X-Forwarded-Proto` value to recognize the external HTTPS request; it never uses forwarded host headers to authorize browser origins or construct redirects.
 
-The included collaboration hub is process-local and is intended to run as one active application process. Patched writers compare every room tip with the locked durable tip and invalidate a stale room before it can insert or compact, which prevents silent loss during accidental overlap but does not provide cross-process broadcasts. Horizontal scaling requires a shared pub/sub and distributed update coordinator so every instance observes the same room history and presence events. Drain all pre-fix collaboration writers before starting this version.
+The included collaboration hub is process-local and is intended to run as one active application process. Startup enforces this topology with a MariaDB advisory lease and fails closed if another BrainVault application process already holds the lease for the same database. Horizontal scaling requires shared rate/admission stores plus a shared pub/sub and distributed update coordinator so every instance observes the same room history and presence events.
 
-The browser loads the exact `yjs@13.6.31` ESM build from same-origin routes backed by the lockfile-controlled `yjs`, `lib0`, and `isomorphic.js` packages. An inline import map is authorized by an exact CSP hash. The exact `katex@0.17.0` assets remain on versioned jsDelivr paths with Subresource Integrity. The Content Security Policy permits only same-origin scripts, that import-map hash, the exact KaTeX script, and exact WebSocket origins derived from `CORS_ORIGIN`; it does not allow the complete CDN host or arbitrary `ws:`/`wss:` destinations.
+The browser loads the exact `yjs@13.6.31` ESM build from same-origin routes backed by the lockfile-controlled `yjs`, `lib0`, and `isomorphic.js` packages. Mermaid `11.17.2` is also served from BrainVault's own origin: `npm run build` first downloads (or consumes `BRAINVAULT_MERMAID_TARBALL`), verifies the pinned npm-package SHA-512 digest, and extracts only the approved browser bundle and license. An inline import map is authorized by an exact CSP hash. The exact `katex@0.17.0` assets remain on versioned jsDelivr paths with Subresource Integrity. The Content Security Policy permits only same-origin scripts, that import-map hash, the exact KaTeX script, and exact WebSocket origins derived from `CORS_ORIGIN`; it does not allow a Mermaid CDN script source, the complete CDN host, or arbitrary `ws:`/`wss:` destinations.
 
 See [Collaboration](../../collaboration/2026-07-29/collaboration.md#authentication-and-network-requirements) and the [HTTPS deployment guide](../../../deploy/README.md) for complete examples.

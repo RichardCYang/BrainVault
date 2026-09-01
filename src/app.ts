@@ -77,8 +77,7 @@ export function createApp() {
           scriptSrc: [
             "'self'",
             "'sha256-AQrGHmNf2ToDPODxkNyXldxWl9tWr2pnwbahY0pFneE='",
-            "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js",
-            "https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/"
+            "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js"
           ],
           styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.css"],
           fontSrc: ["'self'", "data:", "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/fonts/"],

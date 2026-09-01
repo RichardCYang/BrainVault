@@ -31,6 +31,8 @@ describe("Mermaid block integration", () => {
   it("uses a pinned sandboxed Mermaid browser renderer", async () => {
     const renderer = await source("public/mermaid-block.js");
     expect(renderer).toContain('MERMAID_VERSION = "11.17.2"');
+    expect(renderer).toContain('MERMAID_SCRIPT_URL = `/vendor/mermaid/${MERMAID_VERSION}/mermaid.min.js`');
+    expect(renderer).not.toContain("cdn.jsdelivr.net/npm/mermaid");
     expect(renderer).toContain('securityLevel: "sandbox"');
     expect(renderer).toContain("startOnLoad: false");
     expect(renderer).toContain('frame.setAttribute("sandbox", "")');
@@ -47,7 +49,7 @@ describe("Mermaid block integration", () => {
     expect(app).toContain('updateMermaidBlockPreview(row, textarea.value)');
     expect(i18n).toContain('catalog.blocks.types.MERMAID = addition.blockType');
     expect(i18n).toContain('blockType: "Mermaid 다이어그램"');
-    expect(csp).toContain('https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/');
+    expect(csp).not.toContain('cdn.jsdelivr.net/npm/mermaid');
     expect(csp).toContain('frameSrc: ["\'self\'", "data:"');
   });
 });

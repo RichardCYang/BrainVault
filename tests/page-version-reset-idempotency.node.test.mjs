@@ -49,8 +49,10 @@ test("page-version reset receipts distinguish new, replay, collision, and incomp
 });
 
 test("DELETE /api/pages/:pageId/versions reserves and completes a receipt around the destructive reset", async () => {
-  const route = (await readFile(new URL("../src/routes/page.routes.ts", import.meta.url), "utf8"))
-    .replace(/\r\n/g, "\n");
+  const [route, pageAccess] = await Promise.all([
+    readFile(new URL("../src/routes/page.routes.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/lib/page-access.ts", import.meta.url), "utf8")
+  ]).then((sources) => sources.map((source) => source.replace(/\r\n/g, "\n")));
   const resetRoute = section(
     route,
     'pageRouter.delete(\n  "/:pageId/versions",',
@@ -61,9 +63,11 @@ test("DELETE /api/pages/:pageId/versions reserves and completes a receipt around
   assert.match(route, /pageVersionResetSchema = z\.object\([\s\S]*expectedVersion: safeVersionSchema,[\s\S]*expectedContentVersion: safeVersionSchema,[\s\S]*expectedRevision:/);
   assert.match(resetRoute, /createMutationRequestHash\(\{[\s\S]*pageId,[\s\S]*expectedVersion,[\s\S]*expectedContentVersion,[\s\S]*expectedRevision[\s\S]*\}\)/);
   assert.match(resetRoute, /SELECT id FROM users WHERE id = \? FOR UPDATE/);
+  assert.match(resetRoute, /getPageAccess\(pageId, user\.id, client, \{ lockPage: true \}\)/);
+  assert.match(pageAccess, /WHERE id = \?\$\{lockPage \? " FOR UPDATE" : ""\}/);
   assert.ok(
     resetRoute.indexOf("SELECT id FROM users WHERE id = ? FOR UPDATE")
-      < resetRoute.indexOf("SELECT * FROM pages WHERE id = ? AND owner_id = ? FOR UPDATE"),
+      < resetRoute.indexOf("getPageAccess(pageId, user.id, client, { lockPage: true })"),
     "owner-scoped destructive operations must keep the global owner-before-page lock order"
   );
   assert.match(resetRoute, /INSERT INTO page_version_reset_mutations/);

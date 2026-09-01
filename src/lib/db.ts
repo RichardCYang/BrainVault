@@ -41,6 +41,17 @@ export const pool: Pool = mariadb.createPool({
   initSql: strictTransactionalSqlMode
 });
 
+export function createDedicatedDbConnection() {
+  return mariadb.createConnection({
+    ...databaseOptionsWithSchema(databaseConfig),
+    insertIdAsNumber: true,
+    bigIntAsNumber: true,
+    checkNumberRange: true,
+    namedPlaceholders: false,
+    initSql: strictTransactionalSqlMode
+  });
+}
+
 function createClient(target: Pool | PoolConnection): DbClient {
   async function runQuery<T extends Record<string, unknown> = Record<string, unknown>>(
     sql: string,

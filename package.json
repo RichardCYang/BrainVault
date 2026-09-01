@@ -36,7 +36,7 @@
     "setup": "npm run env:init && npm run db:init && npm run db:migrate",
     "setup:demo": "npm run setup && npm run db:seed",
     "dev": "node scripts/dev.mjs",
-    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
+    "build": "npm run vendor:mermaid && node scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "start": "node dist/src/server.js",
     "test": "npm run lockfile:check && npm run test:unit && npm run test:durability",
     "test:unit": "vitest run --exclude 'tests/*.node.test.mjs'",
@@ -76,7 +76,8 @@
     "reproduce:database-transport-security": "node --import=tsx scripts/reproduce-database-transport-security.mjs",
     "reproduce:custom-icon-resource-boundary": "node --import=tsx scripts/reproduce-custom-icon-resource-boundary.mjs",
     "reproduce:page-delete-response-loss": "node scripts/reproduce-page-delete-response-loss.mjs",
-    "reproduce:bigint-version-collision": "node scripts/reproduce-bigint-version-collision.mjs"
+    "reproduce:bigint-version-collision": "node scripts/reproduce-bigint-version-collision.mjs",
+    "vendor:mermaid": "node scripts/vendor-mermaid.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.2",
