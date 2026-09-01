@@ -19,6 +19,10 @@ test("page discussions are persisted and permission-bound", async () => {
   assert.match(route, /getPageAccess\(pageId, user\.id, client, \{ lockPage: true \}\)/);
   assert.match(route, /Only the comment author can edit this comment/);
   assert.match(route, /existing\.user_id !== user\.id && access\.role !== "OWNER"/);
+  assert.match(
+    route,
+    /collaborationRouter\.delete\([\s\S]*assertPageNotArchived\(access\.page, "Restore the page before deleting a comment"\)/
+  );
   assert.match(route, /body: row\.body[\s\S]*?canEdit: isAuthor[\s\S]*?canDelete: isAuthor \|\| viewer\.isOwner/);
 
   assert.match(migration, /CREATE TABLE IF NOT EXISTS page_comments/);

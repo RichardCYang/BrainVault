@@ -473,6 +473,7 @@ collaborationRouter.delete(
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
         const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
         assertPageCanEdit(access, "This shared collection is read-only for your account");
+        assertPageNotArchived(access.page, "Restore the page before deleting a comment");
         const existing = await client.queryOne<{ user_id: string }>(
           `SELECT user_id FROM page_comments
            WHERE page_id = ? AND id = ? FOR UPDATE`,

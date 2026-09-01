@@ -9,6 +9,7 @@ import { renderBlockHtml, sanitizeRenderedBlockHtml } from "../lib/markdown.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
 import { assessPageCreateMutationReceipt, type PageCreateMutationReceipt } from "../lib/page-create-mutation.js";
 import { assessPageDeleteMutationReceipt, type PageDeleteMutationReceipt } from "../lib/page-delete-mutation.js";
+import { createPageDeletionSnapshot } from "../lib/page-delete-snapshot.js";
 import {
   assessPageVersionResetMutationReceipt,
   type PageVersionResetMutationReceipt
@@ -208,6 +209,13 @@ type PageDeletionCollaborationRow = {
   document_epoch: string;
 };
 
+type PageDeletionCommentRow = {
+  id: string;
+  page_id: string;
+  user_id: string;
+  body_hash: string;
+};
+
 async function getOwnedPageTreeRows(ownerId: string, client: DbClient = db, lock = false) {
   return client.query<PageDeletionPageRow>(
     `SELECT id, parent_page_id, edit_version, content_version, is_archived, is_collection
@@ -341,37 +349,25 @@ async function getPageDeletionCollaborationStates(
   return states;
 }
 
-function createPageDeletionSnapshot(
-  pages: PageDeletionPageRow[],
-  blocks: PageDeletionBlockRow[],
-  shares: PageDeletionShareRow[],
-  collaborationStates: PageDeletionCollaborationRow[]
+async function getPageDeletionComments(
+  client: DbClient,
+  subtreeRows: PageDeletionPageRow[],
+  lock = false
 ) {
-  const hash = createHash("sha256");
-  for (const page of [...pages].sort((left, right) => left.id.localeCompare(right.id))) {
-    hash.update(
-      `page\0${page.id}\0${page.parent_page_id ?? ""}\0${Number(page.edit_version ?? 1)}\0${Number(page.content_version ?? 1)}\n`
+  const pageIds = [...new Set(subtreeRows.map((page) => page.id).filter(Boolean))];
+  const comments: PageDeletionCommentRow[] = [];
+  for (let offset = 0; offset < pageIds.length; offset += 500) {
+    const group = pageIds.slice(offset, offset + 500);
+    const rows = await client.query<PageDeletionCommentRow>(
+      `SELECT id, page_id, user_id, SHA2(body, 256) AS body_hash
+       FROM page_comments
+       WHERE page_id IN (${group.map(() => "?").join(", ")})
+       ORDER BY page_id ASC, id ASC${lock ? " FOR UPDATE" : ""}`,
+      group
     );
+    comments.push(...rows);
   }
-  for (const block of [...blocks].sort((left, right) => left.id.localeCompare(right.id))) {
-    hash.update(`block\0${block.id}\0${block.page_id}\0${Number(block.edit_version ?? 1)}\n`);
-  }
-  for (const share of [...shares].sort((left, right) =>
-    left.page_id.localeCompare(right.page_id)
-      || left.user_id.localeCompare(right.user_id)
-      || left.permission.localeCompare(right.permission)
-      || left.generation.localeCompare(right.generation)
-  )) {
-    hash.update(
-      `share\0${share.page_id}\0${share.user_id}\0${share.permission}\0${share.generation}\n`
-    );
-  }
-  for (const state of [...collaborationStates].sort((left, right) =>
-    left.page_id.localeCompare(right.page_id)
-  )) {
-    hash.update(`collaboration\0${state.page_id}\0${state.document_epoch}\n`);
-  }
-  return hash.digest("hex");
+  return comments;
 }
 
 function assertPageDeletionSnapshot(
@@ -379,9 +375,12 @@ function assertPageDeletionSnapshot(
   pages: PageDeletionPageRow[],
   blocks: PageDeletionBlockRow[],
   shares: PageDeletionShareRow[],
-  collaborationStates: PageDeletionCollaborationRow[]
+  collaborationStates: PageDeletionCollaborationRow[],
+  comments: PageDeletionCommentRow[]
 ) {
-  if (createPageDeletionSnapshot(pages, blocks, shares, collaborationStates) === expectedSnapshot) return;
+  if (
+    createPageDeletionSnapshot(pages, blocks, shares, collaborationStates, comments) === expectedSnapshot
+  ) return;
   throw new ApiError(
     409,
     "PAGE_EDIT_CONFLICT",
@@ -1148,8 +1147,15 @@ pageRouter.get(
         const blockRows = await getPageDeletionBlocks(client, subtreeRows);
         const shareRows = await getPageDeletionShares(client, subtreeRows);
         const collaborationRows = await getPageDeletionCollaborationStates(client, subtreeRows);
+        const commentRows = await getPageDeletionComments(client, subtreeRows);
         return {
-          snapshot: createPageDeletionSnapshot(subtreeRows, blockRows, shareRows, collaborationRows),
+          snapshot: createPageDeletionSnapshot(
+            subtreeRows,
+            blockRows,
+            shareRows,
+            collaborationRows,
+            commentRows
+          ),
           pageIds: subtreeRows.map((page) => page.id).sort((left, right) => left.localeCompare(right)),
           pages: subtreeRows
             .map((page) => ({
@@ -1158,7 +1164,7 @@ pageRouter.get(
               contentVersion: Number(page.content_version ?? 1)
             }))
             .sort((left, right) => left.id.localeCompare(right.id)),
-          counts: { pages: subtreeRows.length, blocks: blockRows.length }
+          counts: { pages: subtreeRows.length, blocks: blockRows.length, comments: commentRows.length }
         };
       });
       res.setHeader("Cache-Control", "private, no-store");
@@ -1556,12 +1562,17 @@ pageRouter.delete(
           // creates a fresh document epoch without changing page/block/share
           // versions, so bind permanent deletion to that lineage as well.
           const collaborationRows = await getPageDeletionCollaborationStates(client, subtreeRows, true);
+          // Discussions are user-authored page data and cascade with the page.
+          // Bind and lock them too, so a comment committed after the preview
+          // invalidates this stale destructive request instead of being erased.
+          const commentRows = await getPageDeletionComments(client, subtreeRows, true);
           assertPageDeletionSnapshot(
             expectedSnapshot,
             subtreeRows,
             blockRows,
             shareRows,
-            collaborationRows
+            collaborationRows,
+            commentRows
           );
 
           const pageIds = subtreeRows.map((row) => row.id);

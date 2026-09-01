@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const pageDeletionSnapshotSource = read("../src/lib/page-delete-snapshot.ts");
 
 function section(source, startNeedle, endNeedle) {
   const start = source.indexOf(startNeedle);
@@ -146,14 +147,14 @@ test("permanent page deletion snapshot binds destructive intent to share generat
 
   assert.match(helpers, /SELECT page_id, user_id, permission, generation\n\s+FROM page_shares/);
   assert.match(
-    helpers,
+    pageDeletionSnapshotSource,
     /`share\\0\$\{share\.page_id\}\\0\$\{share\.user_id\}\\0\$\{share\.permission\}\\0\$\{share\.generation\}\\n`/
   );
   assert.match(snapshotRoute, /getPageDeletionShares\(client, subtreeRows\)/);
   assert.match(snapshotRoute, /getPageDeletionCollaborationStates\(client, subtreeRows\)/);
   assert.match(
     snapshotRoute,
-    /createPageDeletionSnapshot\(subtreeRows, blockRows, shareRows, collaborationRows\)/
+    /createPageDeletionSnapshot\([\s\S]*subtreeRows,[\s\S]*blockRows,[\s\S]*shareRows,[\s\S]*collaborationRows,[\s\S]*commentRows[\s\S]*\)/
   );
 
   const pageLock = deleteRoute.indexOf("getOwnedPageTreeRows(workspaceOwnerId, client, true)");
@@ -161,6 +162,7 @@ test("permanent page deletion snapshot binds destructive intent to share generat
   const collaborationLock = deleteRoute.indexOf(
     "getPageDeletionCollaborationStates(client, subtreeRows, true)"
   );
+  const commentLock = deleteRoute.indexOf("getPageDeletionComments(client, subtreeRows, true)");
   const snapshotFence = deleteRoute.indexOf("assertPageDeletionSnapshot(");
   const destructiveDelete = deleteRoute.indexOf('DELETE FROM pages WHERE id = ? AND owner_id = ?');
   assert.ok(pageLock >= 0);
@@ -170,8 +172,12 @@ test("permanent page deletion snapshot binds destructive intent to share generat
     "collaboration lineage must be read after the owned page tree is locked"
   );
   assert.ok(
-    snapshotFence > collaborationLock,
-    "share and collaboration generations must participate in stale-delete validation"
+    commentLock > collaborationLock,
+    "page discussion rows must be locked after the owned page tree is locked"
+  );
+  assert.ok(
+    snapshotFence > commentLock,
+    "share, collaboration, and discussion generations must participate in stale-delete validation"
   );
   assert.ok(destructiveDelete > snapshotFence, "validation must happen before any page is deleted");
 
@@ -226,7 +232,7 @@ test("permanent page deletion snapshot binds destructive intent to collaboration
     /SELECT page_id, document_epoch\n\s+FROM page_collaboration_state/
   );
   assert.match(
-    helpers,
+    pageDeletionSnapshotSource,
     /`collaboration\\0\$\{state\.page_id\}\\0\$\{state\.document_epoch\}\\n`/
   );
   assert.match(
