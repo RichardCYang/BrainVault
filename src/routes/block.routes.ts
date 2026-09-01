@@ -1,3 +1,5 @@
+import { open } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
@@ -1124,29 +1126,44 @@ blockRouter.get("/blocks/:blockId/attachment", validate({ params: idParamSchema 
     const ownerId = initial.access.page.owner_id;
 
     // Workspace restore swaps the owner's complete attachment directory while
-    // holding this same user-row lock. Revalidate access after taking the lock
-    // and hold it through streaming so an old shared generation can never open
-    // or continue into a restored private file that reused the same block id.
-    await withUserAttachmentLock(ownerId, async (client) => {
+    // holding this same user-row lock. Revalidate access and open the exact file
+    // while the lock is held, then release the transaction before streaming. An
+    // already-open file handle continues to reference the authorized pre-restore
+    // file even if a later restore replaces the directory entry, so client-paced
+    // response backpressure can never retain the database lock or pool connection.
+    const claimedAttachment = await withUserAttachmentLock(ownerId, async (client) => {
       const { block, access } = await assertAccessibleBlock(blockId, user.id, client);
       if (access.page.owner_id !== ownerId || block.type !== "ATTACHMENT") throw notFound("Attachment");
 
       const info = getAttachmentInfo(toBlock(block).metadata);
       if (!info || !(await attachmentFileExists(ownerId, blockId))) throw notFound("Attachment file");
 
+      const handle = await open(getAttachmentFilePath(ownerId, blockId), "r");
+      try {
+        const fileStats = await handle.stat();
+        if (!fileStats.isFile()) throw notFound("Attachment file");
+        return { handle, info, size: fileStats.size };
+      } catch (error) {
+        await handle.close().catch(() => undefined);
+        throw error;
+      }
+    });
+
+    try {
+      res.attachment(sanitizeAttachmentDownloadFilename(claimedAttachment.info.originalName));
       res.setHeader("Cache-Control", "private, no-store");
-      res.setHeader("Content-Type", info.mimeType);
+      res.setHeader("Content-Type", claimedAttachment.info.mimeType);
+      res.setHeader("Content-Length", String(claimedAttachment.size));
       res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'");
       res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
       res.setHeader("X-Content-Type-Options", "nosniff");
-      await new Promise<void>((resolve, reject) => {
-        res.download(
-          getAttachmentFilePath(ownerId, blockId),
-          sanitizeAttachmentDownloadFilename(info.originalName),
-          (error) => error ? reject(error) : resolve()
-        );
-      });
-    });
+      await pipeline(
+        claimedAttachment.handle.createReadStream({ autoClose: false }),
+        res
+      );
+    } finally {
+      await claimedAttachment.handle.close().catch(() => undefined);
+    }
   } catch (error) {
     if (!res.headersSent) next(error);
     else console.error("Attachment download failed", {

@@ -116,11 +116,20 @@ test("attachment download revalidates access under the restore filesystem-genera
   );
 
   assert.match(downloadRoute, /const initial = await assertAccessibleBlock\(blockId, user\.id\);/);
-  assert.match(downloadRoute, /await withUserAttachmentLock\(ownerId, async \(client\) => \{/);
+  assert.match(downloadRoute, /const claimedAttachment = await withUserAttachmentLock\(ownerId, async \(client\) => \{/);
   assert.match(downloadRoute, /assertAccessibleBlock\(blockId, user\.id, client\)/);
   assert.match(downloadRoute, /access\.page\.owner_id !== ownerId/);
-  assert.match(downloadRoute, /await new Promise<void>/);
-  assert.match(downloadRoute, /res\.download\(/);
+  assert.match(downloadRoute, /const handle = await open\(getAttachmentFilePath\(ownerId, blockId\), "r"\);/);
+  assert.match(downloadRoute, /return \{ handle, info, size: fileStats\.size \};/);
+  assert.match(downloadRoute, /claimedAttachment\.handle\.createReadStream\(\{ autoClose: false \}\)/);
+  assert.match(downloadRoute, /await pipeline\(/);
+  assert.doesNotMatch(downloadRoute, /res\.download\(/);
+
+  const lockStart = downloadRoute.indexOf("const claimedAttachment = await withUserAttachmentLock");
+  const lockEnd = downloadRoute.indexOf("\n    });\n\n    try {", lockStart);
+  const streamStart = downloadRoute.indexOf("await pipeline(", lockStart);
+  assert.ok(lockStart >= 0 && lockEnd > lockStart && streamStart > lockEnd);
+  assert.equal(downloadRoute.slice(lockStart, lockEnd).includes("pipeline("), false);
 });
 
 test("reproduction: an attachment restore cannot swap private bytes after old-share authorization", () => {
@@ -142,10 +151,11 @@ test("reproduction: an attachment restore cannot swap private bytes after old-sh
   const vulnerableDownloadedBytes = restoredGeneration.bytes;
   assert.equal(vulnerableDownloadedBytes, "restored private attachment");
 
-  // Fixed order A: download takes the owner's generation lock first and keeps it
-  // through streaming, so restore waits and the authorized old bytes are served.
-  const lockedDownloadBytes = oldGeneration.bytes;
-  assert.equal(lockedDownloadBytes, "old shared attachment");
+  // Fixed order A: download opens the authorized old file while holding the owner's
+  // generation lock, then releases the lock before streaming from that open handle.
+  // A restore may replace the path, but the claimed handle still serves old bytes.
+  const claimedHandleDownloadBytes = oldGeneration.bytes;
+  assert.equal(claimedHandleDownloadBytes, "old shared attachment");
 
   // Fixed order B: if restore wins the lock, reauthorization observes the new
   // generation and rejects the collaborator before any replacement file opens.
