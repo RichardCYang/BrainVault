@@ -1,6 +1,7 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import path from "node:path";
 import { type ServerResponse } from "node:http";
+import { readdirSync } from "node:fs";
 import { lstat } from "node:fs/promises";
 import helmet from "helmet";
 import cors from "cors";
@@ -54,8 +55,36 @@ morgan.token("safe-user-agent", (req) => {
   return sanitizeAccessLogValue(Array.isArray(userAgent) ? userAgent[0] : userAgent);
 });
 
+function collectPublicAssetPaths(rootDir: string) {
+  const assetPaths = new Set<string>();
+  const visit = (directory: string, urlPrefix: string) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const urlPath = path.posix.join(urlPrefix, entry.name);
+      const filePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(filePath, urlPath);
+      } else if (entry.isFile()) {
+        assetPaths.add(urlPath);
+      }
+    }
+  };
+  visit(rootDir, "/");
+  return assetPaths;
+}
+
+function isPublicAssetRateLimitExempt(req: Request, publicAssetPaths: ReadonlySet<string>) {
+  if (req.method !== "GET" && req.method !== "HEAD") return false;
+  if (req.path === "/") return true;
+  if (req.path.startsWith("/vendor/yjs/")) return true;
+  return publicAssetPaths.has(req.path);
+}
+
 export function createApp() {
   const app = express();
+  const publicDir = path.resolve(process.cwd(), "public");
+  const docsDir = path.resolve(process.cwd(), "docs");
+  const browserModuleRoot = path.resolve(process.cwd(), "node_modules");
+  const publicAssetPaths = collectPublicAssetPaths(publicDir);
 
   app.disable("x-powered-by");
   app.set("trust proxy", trustProxySetting);
@@ -118,7 +147,10 @@ export function createApp() {
       windowMs: env.RATE_LIMIT_WINDOW_MS,
       limit: env.RATE_LIMIT_MAX,
       standardHeaders: "draft-8",
-      legacyHeaders: false
+      legacyHeaders: false,
+      // Public application assets are bounded by the static file set and do not
+      // consume the shared per-IP API budget. Authenticated/private routes still do.
+      skip: (req) => isPublicAssetRateLimitExempt(req, publicAssetPaths)
     })
   );
   // Anonymous WebAuthn assertion endpoints have deliberately small, bounded JSON
@@ -129,9 +161,6 @@ export function createApp() {
   app.use(express.json({ limit: "5mb" }));
   app.use(express.urlencoded({ extended: false }));
 
-  const publicDir = path.resolve(process.cwd(), "public");
-  const docsDir = path.resolve(process.cwd(), "docs");
-  const browserModuleRoot = path.resolve(process.cwd(), "node_modules");
   // These module URLs are stable across deployments, so they must revalidate.
   // Long-lived immutable caching is safe only when the URL itself is versioned.
   const browserModuleCacheControl = "public, max-age=0, must-revalidate";

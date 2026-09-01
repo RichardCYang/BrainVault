@@ -70,6 +70,15 @@ test("the global limiter executes before request-body parsing", async () => {
   assert.ok(limiterIndex < urlencodedParserIndex, "form parsing must not precede the global limiter");
 });
 
+test("public static assets do not consume the shared per-IP API rate-limit budget", async () => {
+  const source = await read("src/app.ts");
+
+  assert.match(source, /collectPublicAssetPaths\(publicDir\)/);
+  assert.match(source, /skip: \(req\) => isPublicAssetRateLimitExempt\(req, publicAssetPaths\)/);
+  assert.match(source, /req\.path\.startsWith\("\/vendor\/yjs\/"\)/);
+  assert.doesNotMatch(source, /req\.path\.startsWith\("\/upload\/"\)/);
+});
+
 test("the browser fences responses started under the replaced cookie", async () => {
   const source = await read("public/app.js");
 

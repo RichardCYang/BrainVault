@@ -3,7 +3,11 @@ import { db, type DbClient } from "./db.js";
 import { normalizeIsoCountryCode, type IsoCountryCode } from "./country-codes.js";
 import { isPublicCountryLookupIp, normalizeCountryLookupIp } from "./geo-country.js";
 import { ApiError } from "./http.js";
-import { matchVpnGateRelay, resetVpnGateRelayCacheForTests } from "./vpngate-relays.js";
+import {
+  matchVpnGateRelay,
+  resetVpnGateRelayCacheForTests,
+  type VpnGateRelayMatch
+} from "./vpngate-relays.js";
 import {
   recordCountryLoginBlock,
   resolveCountryLoginLocation,
@@ -53,8 +57,13 @@ export type VpnRiskResolution = {
   supportingSignals: string[];
 };
 
-type VpnRiskCacheEntry = {
-  resolution: VpnRiskResolution;
+type VpnProviderCacheEntry = {
+  signal: VpnProviderSignal;
+  expiresAt: number;
+};
+
+type VpnGateMatchCacheEntry = {
+  match: VpnGateRelayMatch;
   expiresAt: number;
 };
 
@@ -67,11 +76,10 @@ const torListTimeoutMs = 4_000;
 const torListMaxBytes = 4 * 1024 * 1024;
 const torListRefreshMs = 60 * 60_000;
 const torListStaleMs = 6 * 60 * 60_000;
-const positiveRiskCacheMs = 10 * 60_000;
-const vpnGatePositiveRiskCacheMs = 2 * 60_000;
-const clearRiskCacheMs = 5 * 60_000;
-const unknownRiskCacheMs = 60_000;
-const maxRiskCacheEntries = 4_096;
+const providerSignalCacheMs = 5 * 60_000;
+const unavailableProviderSignalCacheMs = 60_000;
+const vpnGateMatchCacheMs = 60_000;
+const maxExternalFactCacheEntries = 8_192;
 const timezoneMismatchThresholdMinutes = 180;
 const maxClientWebRtcHeaderLength = 256;
 const maxClientWebRtcObservedIps = 4;
@@ -81,7 +89,10 @@ const absentClientWebRtcSignal: ClientWebRtcSignal = Object.freeze({
   observedIps: []
 });
 
-const riskCache = new Map<string, VpnRiskCacheEntry>();
+const providerSignalCache = new Map<string, VpnProviderCacheEntry>();
+const providerSignalInFlight = new Map<string, Promise<VpnProviderSignal>>();
+const vpnGateMatchCache = new Map<string, VpnGateMatchCacheEntry>();
+const vpnGateMatchInFlight = new Map<string, Promise<VpnGateRelayMatch>>();
 let torExitAddresses = new Set<string>();
 let torExitListFetchedAt = 0;
 let torExitListInFlight: Promise<Set<string>> | null = null;
@@ -210,6 +221,66 @@ async function queryIpApi(ipAddress: string): Promise<VpnProviderSignal> {
     };
   } catch {
     return emptyProviderSignal("ipapi");
+  }
+}
+
+function trimOldestEntries<T>(cache: Map<string, T>) {
+  while (cache.size > maxExternalFactCacheEntries) {
+    const oldestKey = cache.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    cache.delete(oldestKey);
+  }
+}
+
+async function resolveProviderSignal(
+  provider: VpnProviderSignal["provider"],
+  ipAddress: string
+): Promise<VpnProviderSignal> {
+  const cacheKey = `${provider}|${ipAddress}`;
+  const cached = providerSignalCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.signal;
+
+  const existing = providerSignalInFlight.get(cacheKey);
+  if (existing) return existing;
+
+  const query = provider === "ipquery" ? queryIpQuery : queryIpApi;
+  const inFlight = (async () => {
+    const signal = await query(ipAddress);
+    providerSignalCache.delete(cacheKey);
+    providerSignalCache.set(cacheKey, {
+      signal,
+      expiresAt: Date.now() + (signal.available ? providerSignalCacheMs : unavailableProviderSignalCacheMs)
+    });
+    trimOldestEntries(providerSignalCache);
+    return signal;
+  })();
+  providerSignalInFlight.set(cacheKey, inFlight);
+  try {
+    return await inFlight;
+  } finally {
+    if (providerSignalInFlight.get(cacheKey) === inFlight) providerSignalInFlight.delete(cacheKey);
+  }
+}
+
+async function resolveVpnGateMatch(ipAddress: string): Promise<VpnGateRelayMatch> {
+  const cached = vpnGateMatchCache.get(ipAddress);
+  if (cached && cached.expiresAt > Date.now()) return cached.match;
+
+  const existing = vpnGateMatchInFlight.get(ipAddress);
+  if (existing) return existing;
+
+  const inFlight = (async () => {
+    const match = await matchVpnGateRelay(ipAddress);
+    vpnGateMatchCache.delete(ipAddress);
+    vpnGateMatchCache.set(ipAddress, { match, expiresAt: Date.now() + vpnGateMatchCacheMs });
+    trimOldestEntries(vpnGateMatchCache);
+    return match;
+  })();
+  vpnGateMatchInFlight.set(ipAddress, inFlight);
+  try {
+    return await inFlight;
+  } finally {
+    if (vpnGateMatchInFlight.get(ipAddress) === inFlight) vpnGateMatchInFlight.delete(ipAddress);
   }
 }
 
@@ -554,51 +625,6 @@ export function evaluateVpnSignals(
   };
 }
 
-function rememberRiskResolution(cacheKey: string, resolution: VpnRiskResolution) {
-  const ttl = resolution.blocked
-    ? resolution.verdict === "VPN_GATE"
-      ? vpnGatePositiveRiskCacheMs
-      : positiveRiskCacheMs
-    : resolution.verdict === "UNKNOWN"
-      ? unknownRiskCacheMs
-      : clearRiskCacheMs;
-  riskCache.delete(cacheKey);
-  riskCache.set(cacheKey, { resolution, expiresAt: Date.now() + ttl });
-  while (riskCache.size > maxRiskCacheEntries) {
-    const oldestKey = riskCache.keys().next().value as string | undefined;
-    if (!oldestKey) break;
-    riskCache.delete(oldestKey);
-  }
-}
-
-function shouldCrossCheck(primary: VpnProviderSignal, timezoneMismatch: boolean, webRtcAuxiliaryRisk: boolean) {
-  return primary.available && (
-    primary.vpn
-    || primary.proxy
-    || primary.tor
-    || primary.datacenter
-    || (primary.riskScore ?? 0) >= 50
-    || timezoneMismatch
-    || webRtcAuxiliaryRisk
-  );
-}
-
-function createRiskCacheKey(
-  ipAddress: string,
-  clientTimeZone: string | null,
-  webRtcSignal: ClientWebRtcSignal,
-  webRtcIpMismatch: boolean
-) {
-  const webRtcCacheState = webRtcSignal.state === "AVAILABLE"
-    ? `AVAILABLE:${webRtcIpMismatch ? "MISMATCH" : "MATCH"}`
-    : webRtcSignal.state;
-  return [
-    ipAddress,
-    isValidTimeZone(clientTimeZone) ? clientTimeZone : "",
-    webRtcCacheState
-  ].join("|");
-}
-
 export async function resolveVpnAccessRisk(
   ipAddress: string,
   clientTimeZone: string | null = null,
@@ -633,26 +659,21 @@ export async function resolveVpnAccessRisk(
   const webRtcAuxiliaryRisk = webRtcIpMismatch
     || webRtcSignal.state === "DISABLED"
     || webRtcSignal.state === "UNAVAILABLE";
-  const cacheKey = createRiskCacheKey(normalizedIp, clientTimeZone, webRtcSignal, webRtcIpMismatch);
-  const cached = riskCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return {
-      ...cached.resolution,
-      webRtcObservedIps: webRtcSignal.observedIps
-    };
-  }
 
+  // Cache only server-observed network facts by normalized IP. Client-asserted
+  // timezone/WebRTC values remain decision inputs and can no longer multiply
+  // outbound provider lookups or evict another client's provider facts.
   const [torExits, vpnGate, primary] = await Promise.all([
     refreshTorExitAddresses(),
-    matchVpnGateRelay(normalizedIp),
-    queryIpQuery(normalizedIp)
+    resolveVpnGateMatch(normalizedIp),
+    resolveProviderSignal("ipquery", normalizedIp)
   ]);
   const torListMatch = torExits.has(normalizedIp);
   const primaryTimezoneMismatch = hasTimezoneMismatch(primary.timezone, clientTimeZone);
   const secondary = !vpnGate.dnsVerified
     && (!primary.available || torListMatch || vpnGate.listed || webRtcAuxiliaryRisk
       || shouldCrossCheck(primary, primaryTimezoneMismatch, webRtcAuxiliaryRisk))
-      ? await queryIpApi(normalizedIp)
+      ? await resolveProviderSignal("ipapi", normalizedIp)
       : emptyProviderSignal("ipapi");
   const timezoneMismatch = primaryTimezoneMismatch || hasTimezoneMismatch(secondary.timezone, clientTimeZone);
   const signals = [primary, secondary];
@@ -679,7 +700,6 @@ export async function resolveVpnAccessRisk(
     webRtcIpMismatch,
     ...decision
   };
-  rememberRiskResolution(cacheKey, resolution);
   return resolution;
 }
 
@@ -710,13 +730,6 @@ export async function enforceVpnAccessPolicy(
   if (!enabled) return null;
 
   const resolution = await resolveVpnAccessRisk(ipAddress, clientTimeZone, clientWebRtcSignal);
-  if (resolution.supportingSignals.includes("VPN_VERIFICATION_UNAVAILABLE")) {
-    throw new ApiError(
-      503,
-      "VPN_VERIFICATION_UNAVAILABLE",
-      "VPN access policy could not be verified because the risk providers are unavailable"
-    );
-  }
   if (!resolution.blocked || !resolution.reason) return resolution;
 
   await recordCountryLoginBlock(
@@ -761,7 +774,10 @@ export async function assertVpnPolicyAllowsCurrentConnection(
 }
 
 export function resetVpnAccessPolicyCachesForTests() {
-  riskCache.clear();
+  providerSignalCache.clear();
+  providerSignalInFlight.clear();
+  vpnGateMatchCache.clear();
+  vpnGateMatchInFlight.clear();
   torExitAddresses = new Set<string>();
   torExitListFetchedAt = 0;
   torExitListInFlight = null;

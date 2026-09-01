@@ -36,7 +36,11 @@ test("VPN detection uses free no-key network intelligence, Tor bulk data, VPN Ga
   assert.match(policy, /VPN_GATE_DIRECTORY_DDNS_VERIFIED/);
   assert.match(policy, /VPN_GATE_DIRECTORY_PROVIDER_CORROBORATED/);
   assert.match(policy, /VPN_GATE_DIRECTORY_UNVERIFIED/);
-  assert.match(policy, /vpnGatePositiveRiskCacheMs = 2 \* 60_000/);
+  assert.match(policy, /providerSignalCache = new Map/);
+  assert.match(policy, /providerSignalInFlight = new Map/);
+  assert.match(policy, /resolveProviderSignal\("ipquery", normalizedIp\)/);
+  assert.match(policy, /resolveProviderSignal\("ipapi", normalizedIp\)/);
+  assert.doesNotMatch(policy, /createRiskCacheKey/);
   assert.match(policy, /reason: "VPN_GATE_DETECTED"/);
   assert.match(policy, /MULTI_PROVIDER_VPN_SIGNAL/);
   assert.match(vpnGate, /https:\/\/www\.vpngate\.net\/api\/iphone\//);
@@ -58,12 +62,10 @@ test("VPN detection uses free no-key network intelligence, Tor bulk data, VPN Ga
   assert.match(policy, /WEBRTC_STUN_UNAVAILABLE/);
   assert.match(policy, /if \(webRtcIpMismatch\) \{[\s\S]*?verdict: "UNKNOWN",[\s\S]*?blocked: false/);
   assert.match(policy, /webRtcState === "DISABLED"[\s\S]*?Math\.min\(baseClearConfidence, 70\)/);
-  assert.match(policy, /AVAILABLE:\$\{webRtcIpMismatch \? "MISMATCH" : "MATCH"\}/);
   assert.match(policy, /verdict: "UNKNOWN",\s*blocked: false/);
   assert.match(policy, /!primary\.available/);
   assert.match(policy, /VPN_VERIFICATION_UNAVAILABLE/);
-  assert.match(policy, /supportingSignals\.includes\("VPN_VERIFICATION_UNAVAILABLE"\)/);
-  assert.match(policy, /new ApiError\(\s*503,\s*"VPN_VERIFICATION_UNAVAILABLE"/s);
+  assert.doesNotMatch(policy, /new ApiError\(\s*503,\s*"VPN_VERIFICATION_UNAVAILABLE"/s);
   assert.match(policy, /"VPN_ACCESS_BLOCKED"/);
 });
 

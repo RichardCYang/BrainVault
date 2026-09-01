@@ -13,6 +13,7 @@ const pageRoutesSource = readFileSync(new URL("../src/routes/page.routes.ts", im
 const searchRoutesSource = readFileSync(new URL("../src/routes/search.routes.ts", import.meta.url), "utf8");
 const collaborationRoutesSource = readFileSync(new URL("../src/routes/collaboration.routes.ts", import.meta.url), "utf8");
 const schemaSource = readFileSync(new URL("../src/utils/schemas.ts", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
 
 function mockRequest(headers: Record<string, string>): Request {
   return {
@@ -101,6 +102,15 @@ describe("explicit shared-edit authorization", () => {
   });
 });
 
+
+describe("CSP configuration", () => {
+  it("keeps Helmet default directives enabled while overriding application fetch sources", () => {
+    expect(appSource).not.toContain("useDefaults: false");
+    expect(appSource).toContain("contentSecurityPolicy");
+    expect(appSource).toContain("imgSrc:");
+    expect(appSource).toContain("scriptSrc:");
+  });
+});
 
 describe("reported security hardening", () => {
   it("accepts only HTTP(S) page cover URLs", () => {
