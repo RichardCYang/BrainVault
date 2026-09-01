@@ -32,11 +32,7 @@ import {
   type WebSocketMessage
 } from "./websocket.js";
 import type { BlockRow, UserRow } from "../types/domain.js";
-import * as Y from "yjs";
-import {
-  createValidatedYjsDocument,
-  InvalidYjsUpdateError
-} from "./yjs-validation.js";
+import { InvalidYjsUpdateError } from "./yjs-validation.js";
 import {
   assessCollaborationWriteCheckpoint,
   maxCollaborationDocumentBytes,
@@ -93,6 +89,8 @@ type YjsUpdateRow = {
   update_data: Buffer;
   is_snapshot: 0 | 1;
 };
+
+type YjsHistoryEntry = Pick<YjsUpdateRow, "id" | "is_snapshot">;
 
 type CollaborationHistoryStatsRow = {
   history_entries: number | string | bigint | null;
@@ -199,7 +197,7 @@ type Room = {
   pageId: string;
   documentEpoch: string;
   clients: Map<string, ClientContext>;
-  history: YjsUpdateRow[];
+  history: YjsHistoryEntry[];
   historyBytes: number;
   stateUpdate: Buffer;
   maxUpdateId: number;
@@ -304,6 +302,10 @@ export class PageCollaborationHub {
   constructor(server: CollaborationNetworkServer) {
     this.server = server;
     this.upgradeHandler = (request, socket, head) => {
+      // Node hands ownership of an upgraded socket to the application before
+      // any asynchronous authorization work begins. Contain transport errors
+      // locally so an aborted handshake cannot become an uncaught process error.
+      socket.on("error", () => socket.destroy());
       void this.handleUpgrade(request, socket, head).catch((error) => {
         console.error("Collaboration WebSocket upgrade failed", error);
         if (this.upgradedSockets.has(socket)) socket.destroy();
@@ -843,7 +845,6 @@ export class PageCollaborationHub {
       pendingWriteBytes: 0,
       bootstrapWritePending: false
     });
-    let pendingLoadedDocument: Y.Doc | null = null;
     room.loadPromise = transaction(async (dbClient) => {
       // Every durable collaboration writer locks the page row first. Taking the
       // same lock keeps the aggregate preflight, BLOB read, and optional legacy
@@ -887,17 +888,21 @@ export class PageCollaborationHub {
         throw new InvalidYjsUpdateError("Stored collaboration history changed during bounded replay");
       }
 
-      const loadedDocument = createValidatedYjsDocument(
-        history.map((row) => row.update_data),
-        maxCollaborationDocumentBytes
-      );
-      pendingLoadedDocument = loadedDocument;
-      const stateUpdate = Buffer.from(Y.encodeStateAsUpdate(loadedDocument));
+      // Persisted Yjs history can be expensive to decode even though its byte
+      // and entry counts are bounded. Rebuild it in the validation worker pool
+      // so a room reconnect cannot monopolize Node's shared event loop. Update
+      // validation tasks are prioritized and at most one replay runs at a time.
+      const replay = await this.validationPool.replayHistory({
+        principalKey: `history:${pageId}`,
+        updates: history.map((row) => row.update_data),
+        maxStateBytes: maxCollaborationDocumentBytes
+      });
+      const stateUpdate = Buffer.from(replay.stateUpdate);
+      const historyMetadata: YjsHistoryEntry[] = history.map(({ id, is_snapshot }) => ({ id, is_snapshot }));
 
       if (!replayAssessment.compact || !history.length) {
         return {
-          document: loadedDocument,
-          history,
+          history: historyMetadata,
           historyBytes: actualHistoryBytes,
           stateUpdate,
           maxUpdateId: history.length ? history[history.length - 1].id : 0
@@ -930,28 +935,19 @@ export class PageCollaborationHub {
         [pageId, updateId]
       );
       return {
-        document: loadedDocument,
-        history: [{ id: updateId, update_data: stateUpdate, is_snapshot: 1 as const }],
+        history: [{ id: updateId, is_snapshot: 1 as const }],
         historyBytes: stateUpdate.length,
         stateUpdate,
         maxUpdateId: updateId
       };
     }).then((loaded) => {
-      if (room.invalidated || this.rooms.get(pageId) !== room) {
-        loaded.document.destroy();
-        pendingLoadedDocument = null;
-        return;
-      }
+      if (room.invalidated || this.rooms.get(pageId) !== room) return;
       room.history = loaded.history;
       room.historyBytes = loaded.historyBytes;
       room.stateUpdate = loaded.stateUpdate;
-      loaded.document.destroy();
-      pendingLoadedDocument = null;
       room.maxUpdateId = loaded.maxUpdateId;
       room.loaded = true;
     }).catch((error) => {
-      pendingLoadedDocument?.destroy();
-      pendingLoadedDocument = null;
       room.loadFailed = true;
       room.invalidated = true;
       this.clearRoomTimers(room);
@@ -1438,9 +1434,8 @@ export class PageCollaborationHub {
 
     room.stateUpdate = Buffer.from(validation.stateUpdate);
 
-    const row: YjsUpdateRow = {
+    const row: YjsHistoryEntry = {
       id: result.updateId,
-      update_data: persistedUpdate,
       is_snapshot: durableSnapshot ? 1 : 0
     };
     room.maxUpdateId = result.updateId;

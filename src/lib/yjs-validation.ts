@@ -89,6 +89,18 @@ function encodeBoundedState(document: Y.Doc, maxStateBytes: number) {
   return stateUpdate;
 }
 
+function rebuildValidatedYjsHistory(
+  document: Y.Doc,
+  updates: Iterable<Uint8Array>,
+  maxStateBytes: number
+) {
+  for (const update of updates) {
+    assertUpdatePreflight(update, maxStateBytes);
+    Y.applyUpdate(document, update);
+  }
+  return encodeBoundedState(document, maxStateBytes);
+}
+
 /**
  * Rebuild a room document from the ordered, persisted update log. Invalid or
  * over-sized history is rejected before any client receives it.
@@ -99,16 +111,32 @@ export function createValidatedYjsDocument(
 ) {
   const document = new Y.Doc();
   try {
-    for (const update of updates) {
-      assertUpdatePreflight(update, maxStateBytes);
-      Y.applyUpdate(document, update);
-    }
-    encodeBoundedState(document, maxStateBytes);
+    rebuildValidatedYjsHistory(document, updates, maxStateBytes);
     return document;
   } catch (error) {
     document.destroy();
     if (error instanceof InvalidYjsUpdateError) throw error;
     throw new InvalidYjsUpdateError("Stored collaboration history is not a valid Yjs document", { cause: error });
+  }
+}
+
+/**
+ * Rebuild persisted history and return only its canonical state update. This is
+ * the worker-friendly form used by room loading so CPU-heavy Yjs replay never
+ * runs on Node's shared event loop.
+ */
+export function createValidatedYjsStateUpdate(
+  updates: Iterable<Uint8Array>,
+  maxStateBytes: number
+) {
+  const document = new Y.Doc();
+  try {
+    return rebuildValidatedYjsHistory(document, updates, maxStateBytes);
+  } catch (error) {
+    if (error instanceof InvalidYjsUpdateError) throw error;
+    throw new InvalidYjsUpdateError("Stored collaboration history is not a valid Yjs document", { cause: error });
+  } finally {
+    document.destroy();
   }
 }
 

@@ -2,13 +2,16 @@ import { availableParallelism } from "node:os";
 import { Worker } from "node:worker_threads";
 import type { CollaborationMaterialization } from "./collaboration-materialization.js";
 import { CollaborationDocumentError } from "./collaboration-document.js";
+import { maxCollaborationHistoryReplayBytes } from "./collaboration-update-policy.js";
 import { InvalidYjsUpdateError } from "./yjs-validation.js";
 
 const maxPendingValidationTasks = 64;
 const maxPendingValidationBytes = 128 * 1024 * 1024;
 const maxPendingValidationTasksPerPrincipal = 1;
 const maxPendingValidationBytesPerPrincipal = 32 * 1024 * 1024;
+const maxPendingHistoryReplayBytesPerPrincipal = maxCollaborationHistoryReplayBytes;
 const validationTaskTimeoutMs = 5_000;
+const historyReplayTaskTimeoutMs = 30_000;
 const maxValidationWorkers = 2;
 const validationWorkerOldGenerationMb = 128;
 const validationWorkerYoungGenerationMb = 32;
@@ -21,6 +24,12 @@ type ValidationRequest = {
   includeMaterialization?: boolean;
 };
 
+type HistoryReplayRequest = {
+  principalKey: string;
+  updates: Uint8Array[];
+  maxStateBytes: number;
+};
+
 export type CollaborationValidationResult = {
   stateUpdate: Buffer;
   incrementalUpdate: Buffer;
@@ -28,16 +37,31 @@ export type CollaborationValidationResult = {
   materialization: CollaborationMaterialization | null;
 };
 
-type WorkerRequest = {
+export type CollaborationHistoryReplayResult = {
+  stateUpdate: Buffer;
+};
+
+type WorkerValidationRequest = {
   id: number;
+  kind: "validation";
   currentState: Uint8Array;
   update: Uint8Array;
   maxStateBytes: number;
   includeMaterialization: boolean;
 };
 
-type WorkerSuccess = {
+type WorkerHistoryReplayRequest = {
   id: number;
+  kind: "history-replay";
+  updates: Uint8Array[];
+  maxStateBytes: number;
+};
+
+type WorkerRequest = WorkerValidationRequest | WorkerHistoryReplayRequest;
+
+type WorkerValidationSuccess = {
+  id: number;
+  kind: "validation";
   ok: true;
   stateUpdate: Uint8Array;
   incrementalUpdate: Uint8Array;
@@ -45,24 +69,45 @@ type WorkerSuccess = {
   materialization: CollaborationMaterialization | null;
 };
 
+type WorkerHistoryReplaySuccess = {
+  id: number;
+  kind: "history-replay";
+  ok: true;
+  stateUpdate: Uint8Array;
+};
+
 type WorkerFailure = {
   id: number;
+  task: WorkerRequest["kind"];
   ok: false;
-  kind: "invalid-yjs" | "invalid-document" | "internal";
+  errorKind: "invalid-yjs" | "invalid-document" | "internal";
   code?: string;
   message: string;
 };
 
-type WorkerResponse = WorkerSuccess | WorkerFailure;
+type WorkerResponse = WorkerValidationSuccess | WorkerHistoryReplaySuccess | WorkerFailure;
 
-type PendingTask = {
+type PendingTaskBase = {
   id: number;
   principalKey: string;
-  request: WorkerRequest;
   validationBytes: number;
-  resolve: (result: CollaborationValidationResult) => void;
+  timeoutMs: number;
   reject: (error: unknown) => void;
 };
+
+type PendingValidationTask = PendingTaskBase & {
+  kind: "validation";
+  request: WorkerValidationRequest;
+  resolve: (result: CollaborationValidationResult) => void;
+};
+
+type PendingHistoryReplayTask = PendingTaskBase & {
+  kind: "history-replay";
+  request: WorkerHistoryReplayRequest;
+  resolve: (result: CollaborationHistoryReplayResult) => void;
+};
+
+type PendingTask = PendingValidationTask | PendingHistoryReplayTask;
 
 type WorkerSlot = {
   worker: Worker;
@@ -108,8 +153,8 @@ function isWorkerOutOfMemoryError(error: Error) {
 }
 
 function toWorkerError(response: WorkerFailure) {
-  if (response.kind === "invalid-yjs") return new InvalidYjsUpdateError(response.message);
-  if (response.kind === "invalid-document") {
+  if (response.errorKind === "invalid-yjs") return new InvalidYjsUpdateError(response.message);
+  if (response.errorKind === "invalid-document") {
     return new CollaborationDocumentError(
       response.code ?? "INVALID_COLLABORATION_DOCUMENT",
       response.message
@@ -136,33 +181,62 @@ export class CollaborationValidationPool {
     if (this.closed) return Promise.reject(new Error("Collaboration validation pool is closed"));
     const principalKey = request.principalKey.trim();
     if (!principalKey) return Promise.reject(new CollaborationValidationCapacityError());
-    this.ensureWorkers();
-    const activeTasks = this.slots.reduce((count, slot) => count + (slot.activeTask ? 1 : 0), 0);
     const validationBytes = request.currentState.byteLength + request.update.byteLength;
-    const principalTasks = this.pendingValidationTasksByPrincipal.get(principalKey) ?? 0;
-    const principalBytes = this.pendingValidationBytesByPrincipal.get(principalKey) ?? 0;
-    if (
-      activeTasks + this.queue.length >= maxPendingValidationTasks
-      || validationBytes > maxPendingValidationBytes - this.pendingValidationBytes
-      || principalTasks >= maxPendingValidationTasksPerPrincipal
-      || validationBytes > maxPendingValidationBytesPerPrincipal - principalBytes
-    ) {
+    if (!this.admitTask(principalKey, validationBytes, maxPendingValidationBytesPerPrincipal)) {
       return Promise.reject(new CollaborationValidationCapacityError());
     }
 
     const id = this.nextTaskId++;
-    const workerRequest: WorkerRequest = {
+    const workerRequest: WorkerValidationRequest = {
       id,
+      kind: "validation",
       currentState: request.currentState,
       update: request.update,
       maxStateBytes: request.maxStateBytes,
       includeMaterialization: request.includeMaterialization === true
     };
     return new Promise((resolve, reject) => {
-      this.pendingValidationBytes += validationBytes;
-      this.pendingValidationTasksByPrincipal.set(principalKey, principalTasks + 1);
-      this.pendingValidationBytesByPrincipal.set(principalKey, principalBytes + validationBytes);
-      this.queue.push({ id, principalKey, request: workerRequest, validationBytes, resolve, reject });
+      this.queue.push({
+        id,
+        kind: "validation",
+        principalKey,
+        request: workerRequest,
+        validationBytes,
+        timeoutMs: validationTaskTimeoutMs,
+        resolve,
+        reject
+      });
+      this.dispatch();
+    });
+  }
+
+  replayHistory(request: HistoryReplayRequest): Promise<CollaborationHistoryReplayResult> {
+    if (this.closed) return Promise.reject(new Error("Collaboration validation pool is closed"));
+    const principalKey = request.principalKey.trim();
+    if (!principalKey) return Promise.reject(new CollaborationValidationCapacityError());
+    const validationBytes = request.updates.reduce((total, update) => total + update.byteLength, 0);
+    if (!this.admitTask(principalKey, validationBytes, maxPendingHistoryReplayBytesPerPrincipal)) {
+      return Promise.reject(new CollaborationValidationCapacityError());
+    }
+
+    const id = this.nextTaskId++;
+    const workerRequest: WorkerHistoryReplayRequest = {
+      id,
+      kind: "history-replay",
+      updates: request.updates,
+      maxStateBytes: request.maxStateBytes
+    };
+    return new Promise((resolve, reject) => {
+      this.queue.push({
+        id,
+        kind: "history-replay",
+        principalKey,
+        request: workerRequest,
+        validationBytes,
+        timeoutMs: historyReplayTaskTimeoutMs,
+        resolve,
+        reject
+      });
       this.dispatch();
     });
   }
@@ -189,6 +263,28 @@ export class CollaborationValidationPool {
       slot.worker.removeAllListeners();
       await slot.worker.terminate();
     }));
+  }
+
+  private admitTask(principalKey: string, validationBytes: number, principalByteLimit: number) {
+    this.ensureWorkers();
+    const activeTasks = this.slots.reduce((count, slot) => count + (slot.activeTask ? 1 : 0), 0);
+    const principalTasks = this.pendingValidationTasksByPrincipal.get(principalKey) ?? 0;
+    const principalBytes = this.pendingValidationBytesByPrincipal.get(principalKey) ?? 0;
+    if (
+      !Number.isSafeInteger(validationBytes)
+      || validationBytes < 0
+      || activeTasks + this.queue.length >= maxPendingValidationTasks
+      || validationBytes > maxPendingValidationBytes - this.pendingValidationBytes
+      || principalTasks >= maxPendingValidationTasksPerPrincipal
+      || validationBytes > principalByteLimit - principalBytes
+    ) {
+      return false;
+    }
+
+    this.pendingValidationBytes += validationBytes;
+    this.pendingValidationTasksByPrincipal.set(principalKey, principalTasks + 1);
+    this.pendingValidationBytesByPrincipal.set(principalKey, principalBytes + validationBytes);
+    return true;
   }
 
   private ensureWorkers() {
@@ -224,6 +320,10 @@ export class CollaborationValidationPool {
       this.failWorkerSlot(slot, new Error("Collaboration validation worker returned an unexpected response"));
       return;
     }
+    if (response.ok ? task.kind !== response.kind : task.kind !== response.task) {
+      this.failWorkerSlot(slot, new Error("Collaboration validation worker returned a mismatched task response"));
+      return;
+    }
 
     slot.activeTask = null;
     if (slot.timeout) clearTimeout(slot.timeout);
@@ -231,12 +331,16 @@ export class CollaborationValidationPool {
     this.releaseTaskAccounting(task);
     slot.worker.unref();
     if (response.ok) {
-      task.resolve({
-        stateUpdate: Buffer.from(response.stateUpdate),
-        incrementalUpdate: Buffer.from(response.incrementalUpdate),
-        changed: response.changed,
-        materialization: response.materialization
-      });
+      if (task.kind === "validation" && response.kind === "validation") {
+        task.resolve({
+          stateUpdate: Buffer.from(response.stateUpdate),
+          incrementalUpdate: Buffer.from(response.incrementalUpdate),
+          changed: response.changed,
+          materialization: response.materialization
+        });
+      } else if (task.kind === "history-replay" && response.kind === "history-replay") {
+        task.resolve({ stateUpdate: Buffer.from(response.stateUpdate) });
+      }
     } else {
       task.reject(toWorkerError(response));
     }
@@ -277,18 +381,31 @@ export class CollaborationValidationPool {
     else this.pendingValidationBytesByPrincipal.set(task.principalKey, principalBytes);
   }
 
+  private takeNextTask(activeHistoryReplay: boolean) {
+    const validationIndex = this.queue.findIndex((task) => task.kind === "validation");
+    if (validationIndex >= 0) return this.queue.splice(validationIndex, 1)[0];
+    if (activeHistoryReplay) return null;
+    const replayIndex = this.queue.findIndex((task) => task.kind === "history-replay");
+    return replayIndex >= 0 ? this.queue.splice(replayIndex, 1)[0] : null;
+  }
+
   private dispatch() {
     if (this.closed) return;
+    let activeHistoryReplay = this.slots.some((slot) => slot.activeTask?.kind === "history-replay");
     for (const slot of this.slots) {
       if (slot.failed || slot.activeTask || !this.queue.length) continue;
-      const task = this.queue.shift();
-      if (!task) return;
+      const task = this.takeNextTask(activeHistoryReplay);
+      if (!task) continue;
+      if (task.kind === "history-replay") activeHistoryReplay = true;
       slot.activeTask = task;
       slot.worker.ref();
       const timeout = setTimeout(() => {
         if (slot.activeTask?.id !== task.id) return;
-        this.failWorkerSlot(slot, new CollaborationValidationTimeoutError());
-      }, validationTaskTimeoutMs);
+        const error = task.kind === "history-replay"
+          ? new Error("Collaboration history replay exceeded the validation time budget")
+          : new CollaborationValidationTimeoutError();
+        this.failWorkerSlot(slot, error);
+      }, task.timeoutMs);
       timeout.unref();
       slot.timeout = timeout;
       try {

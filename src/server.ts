@@ -18,6 +18,10 @@ import { initializePermanentTotpIpEnforcement } from "./lib/totp-ip-block.js";
 
 assertSupportedNodeRuntime();
 
+// Attachments, restore archives, and other runtime-created files contain private
+// account data. Do not rely on the host's inherited umask for their permissions.
+if (process.platform !== "win32") process.umask(0o077);
+
 let applicationInstanceLease: ApplicationInstanceLease | null = null;
 
 async function start() {

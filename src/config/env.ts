@@ -65,6 +65,8 @@ const envSchema = z.object({
   COLLABORATION_SHARE_WINDOW_MS: z.coerce.number().int().min(60_000).max(24 * 60 * 60_000).default(60 * 60_000),
   COLLABORATION_SHARE_ACCOUNT_MAX: z.coerce.number().int().min(1).max(100).default(30),
   COLLABORATION_SHARE_IP_MAX: z.coerce.number().int().min(1).max(500).default(60),
+  COLLABORATION_SESSION_WINDOW_MS: z.coerce.number().int().min(10_000).max(60 * 60_000).default(60_000),
+  COLLABORATION_SESSION_PAGE_MAX: z.coerce.number().int().min(1).max(120).default(12),
   NAVIGATION_ORDER_WINDOW_MS: z.coerce.number().int().min(10_000).max(60 * 60_000).default(60_000),
   NAVIGATION_ORDER_ACCOUNT_MAX: z.coerce.number().int().min(1).max(60).default(12),
   AUTH_LOGIN_IP_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60_000),

@@ -4,6 +4,7 @@ import { db, transaction, type DbClient } from "../lib/db.js";
 import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import {
+  collaborationSessionPageRateLimit,
   collaborationShareAccountRateLimit,
   collaborationShareIpRateLimit
 } from "../middleware/auth-rate-limit.js";
@@ -875,6 +876,7 @@ collaborationRouter.delete(
 
 collaborationRouter.post(
   "/pages/:pageId/collaboration/session",
+  collaborationSessionPageRateLimit,
   validate({ params: idParamSchema }),
   async (req, res, next) => {
     try {

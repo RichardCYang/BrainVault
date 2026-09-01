@@ -99,6 +99,14 @@ function authenticatedAccountKey(scope: string, req: Request) {
   return userId ? hashRateLimitKey(scope, userId) : `ip:${clientIpKey(req)}`;
 }
 
+function collaborationSessionPageKey(req: Request) {
+  const userId = typeof req.user?.id === "string" ? req.user.id : "";
+  const pageId = typeof req.params?.pageId === "string" ? req.params.pageId : "";
+  return userId && pageId
+    ? hashRateLimitKey("collaboration-session-page", `${userId}:${pageId}`)
+    : `ip:${clientIpKey(req)}`;
+}
+
 function authenticationRequestSucceeded(_req: Request, res: Response) {
   return res.statusCode < 400 && res.locals.authenticationPending !== true;
 }
@@ -258,6 +266,22 @@ export const collaborationShareAccountRateLimit = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req) => authenticatedAccountKey("page-share-account", req),
   handler: collaborationShareHandler
+});
+
+export const collaborationSessionPageRateLimit = rateLimit({
+  windowMs: env.COLLABORATION_SESSION_WINDOW_MS,
+  limit: env.COLLABORATION_SESSION_PAGE_MAX,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: collaborationSessionPageKey,
+  handler: (_req: Request, res: Response) => {
+    res.status(429).json({
+      error: {
+        code: "COLLABORATION_SESSION_RATE_LIMITED",
+        message: "Too many collaboration reconnect attempts. Try again shortly."
+      }
+    });
+  }
 });
 
 export const navigationOrderRateLimit = rateLimit({
