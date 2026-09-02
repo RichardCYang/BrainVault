@@ -35,6 +35,8 @@ const jwtExpirySchema = z.string().trim().regex(/^\d+[smhd]$/, "JWT_EXPIRES_IN m
   }, "JWT_EXPIRES_IN must be between 5 minutes and 24 hours");
 
 const envSchema = z.object({
+  // Direct module consumers retain a development fallback for test/tooling compatibility.
+  // src/server.ts separately requires NODE_ENV to be explicitly configured before startup.
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   HOST: z.string().trim().min(1).max(255).default("127.0.0.1"),
   PORT: z.coerce.number().int().positive().default(4000),
@@ -124,6 +126,14 @@ if (!inputEnv.DATABASE_URL && inputEnv.NODE_ENV === "test") {
   inputEnv.DATABASE_URL = "mariadb://brainvault:test-only-password@127.0.0.1:3306/brainvault_test";
 }
 const parsedEnv = envSchema.parse(inputEnv);
+
+export function assertExplicitRuntimeEnvironment() {
+  const configured = process.env.NODE_ENV?.trim();
+  if (!configured) {
+    throw new Error("NODE_ENV must be explicitly configured as development, test, or production before starting BrainVault");
+  }
+}
+
 if (parsedEnv.ATTACHMENT_STORAGE_MAX_MB < parsedEnv.MAX_ATTACHMENT_SIZE_MB) {
   throw new Error("ATTACHMENT_STORAGE_MAX_MB must be at least MAX_ATTACHMENT_SIZE_MB");
 }

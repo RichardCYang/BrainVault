@@ -80,6 +80,14 @@ function isPrivateIpv6(address: string) {
   const isMappedIpv4 = parts.slice(0, 5).every((part) => part === "0000") && parts[5] === "ffff";
   if (isMappedIpv4) return isPrivateIpv4(embeddedIpv4(parts));
 
+  // RFC 2765/6145 IPv4-translated form: 0:0:0:0:ffff:0::/96
+  // (commonly written ::ffff:0:a.b.c.d). Validate the embedded IPv4
+  // address with the same special/private-space rules as mapped IPv4.
+  const isTranslatedIpv4 = parts.slice(0, 4).every((part) => part === "0000")
+    && parts[4] === "ffff"
+    && parts[5] === "0000";
+  if (isTranslatedIpv4) return isPrivateIpv4(embeddedIpv4(parts));
+
   const specialUseRanges: Array<[string, number]> = [
     ["::", 96],
     ["64:ff9b::", 96],

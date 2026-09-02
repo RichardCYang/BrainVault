@@ -464,11 +464,8 @@ function isSelfOrSubdomainBookmarkFetchHost(hostname: string) {
   return net.isIP(host) === 0 && net.isIP(publicHost) === 0 && host.endsWith(`.${publicHost}`);
 }
 
-type BookmarkFetchHostPolicy = "bookmark" | "public";
-
 async function validateFetchUrl(
   value: string | URL,
-  hostPolicy: BookmarkFetchHostPolicy = "bookmark",
   deadline: number = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS
 ) {
   const normalized = normalizeBookmarkUrl(String(value));
@@ -479,7 +476,7 @@ async function validateFetchUrl(
   if (isSelfOrSubdomainBookmarkFetchHost(url.hostname)) {
     throw new ApiError(403, "BOOKMARK_URL_BLOCKED", "Self-origin bookmark previews are not allowed");
   }
-  if (hostPolicy === "bookmark" && !isBookmarkFetchHostAllowed(url.hostname)) {
+  if (!isBookmarkFetchHostAllowed(url.hostname)) {
     throw new ApiError(403, "BOOKMARK_URL_BLOCKED", "Bookmark preview host is blocked by the configured outbound host restriction");
   }
   const effectivePort = url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
@@ -520,10 +517,9 @@ function bookmarkFetchUserAgent(url: URL) {
 async function fetchHtml(
   value: string | URL,
   redirectsLeft: number = bookmarkLimits.redirects,
-  deadline: number = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS,
-  hostPolicy: BookmarkFetchHostPolicy = "bookmark"
+  deadline: number = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS
 ): Promise<HtmlResponse> {
-  const { url, addresses } = await validateFetchUrl(value, hostPolicy, deadline);
+  const { url, addresses } = await validateFetchUrl(value, deadline);
   const client = url.protocol === "https:" ? https : http;
   const remainingTime = deadline - Date.now();
   if (remainingTime <= 0) {
@@ -585,7 +581,7 @@ async function fetchHtml(
             rejectFetch(new ApiError(403, "BOOKMARK_URL_BLOCKED", "Bookmark redirects must not downgrade from HTTPS to HTTP"));
             return;
           }
-          fetchHtml(nextUrl, redirectsLeft - 1, deadline, hostPolicy).then(
+          fetchHtml(nextUrl, redirectsLeft - 1, deadline).then(
             (result) => {
               if (settled) return;
               settled = true;
@@ -944,7 +940,7 @@ async function fetchDatabaseFaviconBytes(
   redirectsLeft: number,
   deadline: number
 ): Promise<Buffer> {
-  const { url, addresses } = await validateFetchUrl(value, "public", deadline);
+  const { url, addresses } = await validateFetchUrl(value, deadline);
   const client = url.protocol === "https:" ? https : http;
   const remainingTime = deadline - Date.now();
   if (remainingTime <= 0) throw createBookmarkFetchTimeoutError();
@@ -1063,9 +1059,9 @@ async function fetchDatabaseFaviconBytes(
 
 export async function fetchDatabaseUrlPreview(value: string): Promise<DatabaseUrlPreview> {
   const deadline = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS;
-  // Database URL properties use the same public-web SSRF gate as bookmarks. The explicit
-  // "public" policy only bypasses the optional operator hostname restriction, when configured.
-  const response = await fetchHtml(value, bookmarkLimits.redirects, deadline, "public");
+  // Database URL properties use the same SSRF and operator egress-host policy as bookmarks.
+  // User-entered content is unchanged; only server-side preview fetch destinations are constrained.
+  const response = await fetchHtml(value, bookmarkLimits.redirects, deadline);
   const metadata = parseDatabaseUrlDocumentMetadata(response.html, response.url);
   let faviconUrl = "";
 
@@ -1086,7 +1082,7 @@ export async function fetchDatabaseUrlPreview(value: string): Promise<DatabaseUr
 async function normalizePublicPreviewUrl(value: string, fallback = "", deadline = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS) {
   if (!value) return fallback;
   try {
-    const { url } = await validateFetchUrl(value, "bookmark", deadline);
+    const { url } = await validateFetchUrl(value, deadline);
     return url.toString();
   } catch {
     return fallback;

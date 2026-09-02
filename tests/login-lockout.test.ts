@@ -15,6 +15,7 @@ function createLockoutClient(state: LockState) {
     queryOne: async () => ({ ...state }),
     execute: async (sql: string, params: readonly unknown[]) => {
       if (!sql.includes("UPDATE users")) return { affectedRows: 0 };
+      if (sql.includes("failed_login_attempts = failed_login_attempts")) return { affectedRows: 1 };
       if (params.length === 1) {
         state.failed_login_attempts = 0;
         state.last_failed_login_at = null;
@@ -46,7 +47,12 @@ describe("Account password lockout", () => {
     expect(state.failed_login_attempts).toBe(env.AUTH_LOGIN_LOCK_THRESHOLD);
     expect(state.login_locked_until?.getTime()).toBe(startedAt + env.AUTH_LOGIN_LOCK_THRESHOLD - 1 + env.AUTH_LOGIN_LOCK_BASE_MS);
     await expect(evaluatePasswordLogin(client, "usr_lockout", false, startedAt + env.AUTH_LOGIN_LOCK_THRESHOLD)).resolves.toBe("LOCKED");
-    await expect(evaluatePasswordLogin(client, "usr_lockout", true, startedAt + env.AUTH_LOGIN_LOCK_THRESHOLD)).resolves.toBe("ALLOWED");
+    await expect(evaluatePasswordLogin(client, "usr_lockout", true, startedAt + env.AUTH_LOGIN_LOCK_THRESHOLD)).resolves.toBe("LOCKED");
+    expect(state.failed_login_attempts).toBe(env.AUTH_LOGIN_LOCK_THRESHOLD);
+    expect(state.login_locked_until?.getTime()).toBe(startedAt + env.AUTH_LOGIN_LOCK_THRESHOLD - 1 + env.AUTH_LOGIN_LOCK_BASE_MS);
+
+    const afterExpiry = state.login_locked_until!.getTime() + 1;
+    await expect(evaluatePasswordLogin(client, "usr_lockout", true, afterExpiry)).resolves.toBe("ALLOWED");
     expect(state).toEqual({
       failed_login_attempts: 0,
       last_failed_login_at: null,

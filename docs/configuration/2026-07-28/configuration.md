@@ -8,7 +8,7 @@ Never commit a real `.env` file.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `NODE_ENV` | `development` | Runtime environment |
+| `NODE_ENV` | Required for server startup (`npm run dev` sets `development`) | Runtime environment; production deployments must set `production` explicitly |
 | `HOST` | `127.0.0.1` | Network address to bind; set `0.0.0.0` or `::` only when external access is intentional |
 | `PORT` | `4000` | HTTP listener port in `off`/`proxy` mode or HTTPS listener port in `posh-acme` mode |
 | `DATABASE_URL` | Required; `env:init` generates the password | MariaDB connection used by the app; a non-empty, non-default password is required, and remote production hosts require `?ssl=true` |

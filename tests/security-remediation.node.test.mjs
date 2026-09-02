@@ -354,6 +354,38 @@ test("stored block metadata is revalidated before rendering and response project
   assert.match(history, /metadata: validateStoredBlockMetadata\(block\.type, block\.metadata\)/);
 });
 
+
+test("bookmark preview modes share the same egress policy and translated IPv6 is classified", () => {
+  const network = read("src/lib/network-address.ts");
+  const bookmark = read("src/lib/bookmark.ts");
+
+  assert.match(network, /parts\.slice\(0, 4\).*?parts\[4\] === "ffff".*?parts\[5\] === "0000"/s);
+  assert.match(network, /if \(isTranslatedIpv4\) return isPrivateIpv4\(embeddedIpv4\(parts\)\)/);
+  assert.doesNotMatch(bookmark, /BookmarkFetchHostPolicy|hostPolicy/);
+  assert.match(bookmark, /if \(!isBookmarkFetchHostAllowed\(url\.hostname\)\)/);
+  assert.match(bookmark, /fetchDatabaseUrlPreview[\s\S]*?fetchHtml\(value, bookmarkLimits\.redirects, deadline\)/);
+  assert.match(bookmark, /fetchDatabaseFaviconBytes[\s\S]*?validateFetchUrl\(value, deadline\)/);
+});
+
+test("active password lockout is evaluated before accepting a correct password", () => {
+  const source = read("src/lib/login-lockout.ts");
+  const lockCheck = source.indexOf("lockedUntil !== null && lockedUntil > nowMs");
+  const passwordSuccess = source.indexOf("if (passwordMatches)");
+
+  assert.ok(lockCheck >= 0);
+  assert.ok(passwordSuccess > lockCheck);
+});
+
+test("server startup fails closed when NODE_ENV was not explicitly configured", () => {
+  const envSource = read("src/config/env.ts");
+  const serverSource = read("src/server.ts");
+
+  assert.match(envSource, /export function assertExplicitRuntimeEnvironment\(\)/);
+  assert.match(envSource, /if \(!configured\)[\s\S]*?NODE_ENV must be explicitly configured/);
+  assert.ok(serverSource.indexOf("assertExplicitRuntimeEnvironment();") >= 0);
+  assert.ok(serverSource.indexOf("assertExplicitRuntimeEnvironment();") < serverSource.indexOf("assertSupportedNodeRuntime();"));
+});
+
 test("declared markdown and sanitizer dependency floors stay on patched releases", () => {
   const packageJson = JSON.parse(read("package.json"));
   const packageLock = JSON.parse(read("package-lock.json"));
@@ -362,7 +394,8 @@ test("declared markdown and sanitizer dependency floors stay on patched releases
   assert.equal(packageLock.packages?.[""]?.dependencies?.["markdown-it"], "^14.3.0");
   assert.equal(packageLock.packages?.["node_modules/markdown-it"]?.version, "14.3.0");
 
-  assert.equal(packageJson.dependencies?.["sanitize-html"], "^2.17.5");
-  assert.equal(packageLock.packages?.[""]?.dependencies?.["sanitize-html"], "^2.17.5");
-  assert.equal(packageLock.packages?.["node_modules/sanitize-html"]?.version, "2.17.5");
+  assert.equal(packageJson.dependencies?.["sanitize-html"], "^2.17.7");
+  assert.equal(packageLock.packages?.[""]?.dependencies?.["sanitize-html"], "^2.17.7");
+  assert.equal(packageLock.packages?.["node_modules/sanitize-html"]?.version, "2.17.7");
+  assert.equal(packageLock.packages?.["node_modules/sanitize-html/node_modules/htmlparser2"]?.version, "12.0.0");
 });

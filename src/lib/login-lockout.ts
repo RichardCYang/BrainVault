@@ -48,6 +48,17 @@ export async function evaluatePasswordLogin(
     return "DENIED";
   }
 
+  const lockedUntil = timestamp(state.login_locked_until);
+  if (lockedUntil !== null && lockedUntil > nowMs) {
+    // A persisted lock must apply to the whole password-verification ceremony.
+    // Do not let a correct guess clear the lock before its expiry.
+    await client.execute(
+      "UPDATE users SET failed_login_attempts = failed_login_attempts WHERE id = ?",
+      [userId]
+    );
+    return "LOCKED";
+  }
+
   if (passwordMatches) {
     await client.execute(
       `UPDATE users
@@ -56,15 +67,6 @@ export async function evaluatePasswordLogin(
       [userId]
     );
     return "ALLOWED";
-  }
-
-  const lockedUntil = timestamp(state.login_locked_until);
-  if (lockedUntil !== null && lockedUntil > nowMs) {
-    await client.execute(
-      "UPDATE users SET failed_login_attempts = failed_login_attempts WHERE id = ?",
-      [userId]
-    );
-    return "LOCKED";
   }
 
   const lastFailure = timestamp(state.last_failed_login_at);

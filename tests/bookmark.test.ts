@@ -279,12 +279,15 @@ describe("bookmark SSRF address filtering", () => {
     "fc00::1",
     "fe80::1",
     "fec0::1",
-    "::ffff:127.0.0.1"
+    "::ffff:127.0.0.1",
+    "::ffff:0:127.0.0.1",
+    "::ffff:0:a9fe:a9fe",
+    "::ffff:0:10.0.0.5"
   ])("blocks private address %s", (address) => {
     expect(isPrivateAddress(address)).toBe(true);
   });
 
-  it.each(["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111", "2001:4860:4860::8888"])("allows public address %s", (address) => {
+  it.each(["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111", "2001:4860:4860::8888", "::ffff:0:8.8.8.8"])("allows public address %s", (address) => {
     expect(isPrivateAddress(address)).toBe(false);
   });
 });
@@ -298,6 +301,16 @@ describe("bookmark network address selection", () => {
       { address: "1.1.1.1", family: 4 }
     ])).toEqual([
       { address: "1.1.1.1", family: 4 },
+      { address: "2606:4700:4700::1111", family: 6 }
+    ]);
+  });
+
+  it("drops IPv4-translated IPv6 destinations when their embedded IPv4 address is private", () => {
+    expect(prioritizeResolvedAddresses([
+      { address: "::ffff:0:127.0.0.1", family: 6 },
+      { address: "::ffff:0:a9fe:a9fe", family: 6 },
+      { address: "2606:4700:4700::1111", family: 6 }
+    ])).toEqual([
       { address: "2606:4700:4700::1111", family: 6 }
     ]);
   });
@@ -325,13 +338,16 @@ describe("bookmark network address selection", () => {
     expect(envSource).toContain('BOOKMARK_FETCH_ALLOWED_HOSTS');
     expect(envSource).toContain('BOOKMARK_FETCH_ALLOWED_PORTS');
     expect(bookmarkSource).toContain('isSelfOrSubdomainBookmarkFetchHost(url.hostname)');
-    expect(bookmarkSource).toContain('if (hostPolicy === "bookmark" && !isBookmarkFetchHostAllowed(url.hostname))');
+    expect(bookmarkSource).toContain('if (!isBookmarkFetchHostAllowed(url.hostname))');
     expect(bookmarkSource).toContain('const addresses = await resolvePublicAddresses(url, deadline)');
     expect(bookmarkSource).toContain('new dns.promises.Resolver({ timeout: Math.max(1, remainingTime), tries: 1 })');
     expect(bookmarkSource).not.toContain('dns.promises.lookup(hostname');
     expect(bookmarkSource).toContain('lookup: createPinnedLookup(addresses)');
-    expect(bookmarkSource).toContain('fetchHtml(nextUrl, redirectsLeft - 1, deadline, hostPolicy)');
-    expect(bookmarkSource).toContain('fetchHtml(value, bookmarkLimits.redirects, deadline, "public")');
+    expect(bookmarkSource).toContain('fetchHtml(nextUrl, redirectsLeft - 1, deadline)');
+    expect(bookmarkSource).toContain('fetchHtml(value, bookmarkLimits.redirects, deadline)');
+    expect(bookmarkSource).toContain('validateFetchUrl(value, deadline)');
+    expect(bookmarkSource).not.toContain('BookmarkFetchHostPolicy');
+    expect(bookmarkSource).not.toContain('hostPolicy');
     expect(isBookmarkFetchHostAllowed("example.com", [])).toBe(true);
     expect(isBookmarkFetchHostAllowed("unlisted.example.net", [])).toBe(true);
     expect(isBookmarkFetchHostAllowed("example.com", ["example.com"])).toBe(true);

@@ -1,7 +1,7 @@
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { createApp } from "./app.js";
-import { env } from "./config/env.js";
+import { assertExplicitRuntimeEnvironment, env } from "./config/env.js";
 import { bootstrapDatabase } from "./lib/db-bootstrap.js";
 import { assertDatabaseCrashDurability, closeDb } from "./lib/db.js";
 import {
@@ -16,6 +16,7 @@ import { createExpressTrustProxySetting, describeExpressTrustProxySetting } from
 import { assertSupportedNodeRuntime } from "./lib/runtime-security.js";
 import { initializePermanentTotpIpEnforcement } from "./lib/totp-ip-block.js";
 
+assertExplicitRuntimeEnvironment();
 assertSupportedNodeRuntime();
 
 // Attachments, restore archives, and other runtime-created files contain private

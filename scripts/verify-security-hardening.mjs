@@ -411,7 +411,9 @@ contains("src/lib/runtime-security.ts", [
   "Refusing to start"
 ]);
 const serverSource = contains("src/server.ts", [
+  'import { assertExplicitRuntimeEnvironment, env } from "./config/env.js";',
   'import { assertSupportedNodeRuntime } from "./lib/runtime-security.js";',
+  "assertExplicitRuntimeEnvironment();",
   "assertSupportedNodeRuntime();",
   "acquireApplicationInstanceLease",
   "applicationInstanceLease = await acquireApplicationInstanceLease({",
@@ -436,8 +438,10 @@ const applicationInstanceLockSource = contains("src/lib/application-instance-loc
 ]);
 contains("src/lib/db.ts", ["export function createDedicatedDbConnection()"]);
 assert.ok(applicationInstanceLockSource.includes("GET_LOCK"), "The single-instance lease must be database-scoped rather than process-local");
+const environmentGuardIndex = serverSource.indexOf("assertExplicitRuntimeEnvironment();");
 const runtimeGuardIndex = serverSource.indexOf("assertSupportedNodeRuntime();");
-assert.ok(runtimeGuardIndex >= 0, "The server entrypoint must enforce the runtime security floor");
+assert.ok(environmentGuardIndex >= 0, "The server entrypoint must require an explicit NODE_ENV");
+assert.ok(runtimeGuardIndex > environmentGuardIndex, "The runtime security floor must be checked after the environment guard");
 const applicationLeaseIndex = serverSource.indexOf("applicationInstanceLease = await acquireApplicationInstanceLease({");
 assert.ok(applicationLeaseIndex > serverSource.indexOf("await bootstrapDatabase()"), "The instance lease must be acquired after optional schema bootstrap");
 assert.ok(applicationLeaseIndex < serverSource.indexOf("await assertDatabaseCrashDurability()"), "The instance lease must be held before runtime recovery or serving requests");
