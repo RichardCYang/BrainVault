@@ -43,12 +43,16 @@ async function runTimedFetchAttempt(
   init,
   {
     timeoutMs,
+    beforeDispatch = null,
     beforeRead = null,
     afterRead = null
   }
 ) {
   const parentSignal = init.signal ?? null;
   if (timeoutMs <= 0 || typeof AbortController !== "function") {
+    // This hook must remain synchronous and adjacent to fetchImpl. Awaiting it
+    // would create a microtask window in which a destructive intent can become stale.
+    beforeDispatch?.();
     const response = await fetchImpl(input, init);
     await beforeRead?.(response);
     const text = await readResponseText(response);
@@ -73,6 +77,8 @@ async function runTimedFetchAttempt(
   }, timeoutMs);
 
   try {
+    // Run after timer/signal setup but synchronously immediately before dispatch.
+    beforeDispatch?.();
     const response = await fetchImpl(input, { ...init, signal: controller.signal });
     await beforeRead?.(response);
     const text = await readResponseText(response);
@@ -91,7 +97,8 @@ async function runTimedFetchAttempt(
  * Fetches an API response and consumes its text body under the same deadline.
  * Only safe reads (GET/HEAD) receive a deadline and automatic retry. Mutations
  * deliberately keep their existing one-shot semantics so a lost response can
- * never turn into an accidental duplicate write.
+ * never turn into an accidental duplicate write. `beforeDispatch` is a synchronous
+ * last-moment guard; it intentionally cannot yield between validation and fetch.
  */
 export async function fetchApiResponseText(
   input,
@@ -101,6 +108,7 @@ export async function fetchApiResponseText(
     readTimeoutMs = apiReadRequestTimeoutMs,
     readRetryCount = apiReadRequestRetryCount,
     beforeAttempt = null,
+    beforeDispatch = null,
     beforeRead = null,
     afterRead = null
   } = {}
@@ -117,6 +125,7 @@ export async function fetchApiResponseText(
     try {
       return await runTimedFetchAttempt(fetchImpl, input, init, {
         timeoutMs,
+        beforeDispatch,
         beforeRead,
         afterRead
       });

@@ -32,10 +32,17 @@ test("browser mutations retain the workspace generation from the user state that
   const apiSource = app.slice(apiStart, apiEnd);
   const scopeCapture = apiSource.indexOf("const authenticationScope = captureAuthenticatedSessionScope()");
   const generationHeader = apiSource.indexOf('"X-BrainVault-Workspace-Generation"', scopeCapture);
-  const fetchDispatch = apiSource.indexOf("await fetch(path", generationHeader);
+  const transportDispatch = apiSource.indexOf("await fetchApiResponseText(", generationHeader);
+  const synchronousDispatchFence = apiSource.indexOf(
+    "beforeDispatch: assertRequestDispatchCurrent",
+    transportDispatch
+  );
   assert.ok(
-    scopeCapture >= 0 && generationHeader > scopeCapture && fetchDispatch > generationHeader,
-    "the originating workspace generation must be attached before request dispatch"
+    scopeCapture >= 0
+      && generationHeader > scopeCapture
+      && transportDispatch > generationHeader
+      && synchronousDispatchFence > transportDispatch,
+    "the originating workspace generation must be attached and revalidated before transport dispatch"
   );
 
   assert.match(middleware, /req\.header\("x-brainvault-workspace-generation"\)/);

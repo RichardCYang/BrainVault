@@ -168,6 +168,31 @@ test("authentication boundary callbacks are not treated as transport retries", a
   assert.equal(calls, 1);
 });
 
+test("request dispatch guards run synchronously with no microtask gap before fetch", async () => {
+  let intentCurrent = true;
+  let dispatchGuardCalls = 0;
+  let intentObservedByFetch = null;
+
+  const result = await fetchApiResponseText("/api/pages/page-1", { method: "DELETE" }, {
+    fetchImpl: async () => {
+      intentObservedByFetch = intentCurrent;
+      return { status: 204, text: async () => "" };
+    },
+    beforeDispatch: () => {
+      dispatchGuardCalls += 1;
+      queueMicrotask(() => {
+        intentCurrent = false;
+      });
+    }
+  });
+
+  assert.equal(dispatchGuardCalls, 1);
+  assert.equal(intentObservedByFetch, true);
+  assert.equal(result.response.status, 204);
+  await Promise.resolve();
+  assert.equal(intentCurrent, false);
+});
+
 test("the app routes API reads through the bounded transport without weakening auth fencing", () => {
   const client = fs.readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
   const apiStart = client.indexOf("async function api(path, options = {})");
@@ -176,6 +201,7 @@ test("the app routes API reads through the bounded transport without weakening a
 
   assert.match(apiSource, /fetchApiResponseText/);
   assert.match(apiSource, /beforeAttempt: assertAuthenticationScopeCurrent/);
+  assert.match(apiSource, /beforeDispatch: assertRequestDispatchCurrent/);
   assert.match(apiSource, /beforeRead: assertAuthenticationScopeCurrent/);
   assert.match(apiSource, /afterRead: assertAuthenticationScopeCurrent/);
   assert.match(apiSource, /code: "REQUEST_TIMEOUT"/);

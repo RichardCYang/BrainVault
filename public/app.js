@@ -2139,6 +2139,13 @@ async function applyClientNetworkVerificationHeaders(headers) {
 
 const skippedApiRequest = Symbol("skipped-api-request");
 
+class SkippedApiRequestDispatchError extends Error {
+  constructor() {
+    super("API request dispatch skipped");
+    this.name = "SkippedApiRequestDispatchError";
+  }
+}
+
 async function api(path, options = {}) {
   const {
     skipAuthReset = false,
@@ -2173,11 +2180,6 @@ async function api(path, options = {}) {
     body = JSON.stringify(body);
   }
 
-  // Some destructive callers bind intent to a navigation generation. Header
-  // verification can itself wait on WebRTC discovery, so evaluate their gate
-  // only after all asynchronous request preparation and immediately before fetch.
-  if (beforeFetch?.() === false) return skippedApiRequest;
-
   const assertAuthenticationScopeCurrent = () => {
     if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope)) {
       throw createApiRequestError(t("errors.UNAUTHENTICATED"), {
@@ -2186,6 +2188,14 @@ async function api(path, options = {}) {
         ambiguous: false
       });
     }
+  };
+
+  // Some destructive callers bind intent to a navigation generation. Header
+  // verification and retry preparation can yield, so the transport invokes this
+  // synchronously at the exact dispatch boundary for every actual fetch attempt.
+  const assertRequestDispatchCurrent = () => {
+    assertAuthenticationScopeCurrent();
+    if (beforeFetch?.() === false) throw new SkippedApiRequestDispatchError();
   };
 
   let response;
@@ -2198,11 +2208,13 @@ async function api(path, options = {}) {
         // Re-check at every retry boundary, after response headers, and again
         // after the response body. A retry can never cross into a newer login.
         beforeAttempt: assertAuthenticationScopeCurrent,
+        beforeDispatch: assertRequestDispatchCurrent,
         beforeRead: assertAuthenticationScopeCurrent,
         afterRead: assertAuthenticationScopeCurrent
       }
     ));
   } catch (error) {
+    if (error instanceof SkippedApiRequestDispatchError) return skippedApiRequest;
     if (error?.code === "UNAUTHENTICATED") throw error;
     if (error instanceof ApiReadTimeoutError || error?.name === "TimeoutError") {
       throw createApiRequestError(t("errors.requestTimeout"), {
@@ -2212,6 +2224,10 @@ async function api(path, options = {}) {
     }
     throw createApiRequestError(t("errors.network"), { ambiguous: true });
   }
+
+  // The transport returns through multiple promise continuations after its body
+  // callback. Revalidate once more in this continuation before status or JSON use.
+  assertAuthenticationScopeCurrent();
   if (response.status === 204) return null;
   let data = null;
   try {

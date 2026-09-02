@@ -144,24 +144,32 @@ test("authenticated API requests revalidate auth scope around async network prep
   assert.match(apiSource, /const startedAuthenticated = Boolean\(state\.authenticated && authenticationScope\.targetKey\)/);
 
   const headerAwait = apiSource.indexOf("await applyClientNetworkVerificationHeaders(headers)");
-  const preFetchFence = apiSource.indexOf(
+  const postHeaderFence = apiSource.indexOf(
     "if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope))",
     headerAwait
   );
-  const fetchCall = apiSource.indexOf("response = await fetch(path", preFetchFence);
-  const postFetchFence = apiSource.indexOf(
-    "if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope))",
-    preFetchFence + 1
+  const dispatchGuard = apiSource.indexOf("const assertRequestDispatchCurrent = () =>", postHeaderFence);
+  const transportCall = apiSource.indexOf("await fetchApiResponseText(", dispatchGuard);
+  const attemptFence = apiSource.indexOf(
+    "beforeAttempt: assertAuthenticationScopeCurrent",
+    transportCall
   );
-  const firstResponseUse = apiSource.indexOf("if (response.status === 204)", postFetchFence);
+  const dispatchFence = apiSource.indexOf(
+    "beforeDispatch: assertRequestDispatchCurrent",
+    transportCall
+  );
 
   assert.ok(
-    headerAwait >= 0 && headerAwait < preFetchFence && preFetchFence < fetchCall,
-    "an authenticated request must not reach fetch after its initiating auth generation changes during network-signal preparation"
+    headerAwait >= 0 && headerAwait < postHeaderFence && postHeaderFence < dispatchGuard,
+    "an authenticated request must be rejected if network-signal preparation crosses an auth generation"
+  );
+  assert.match(
+    apiSource.slice(dispatchGuard, transportCall),
+    /assertAuthenticationScopeCurrent\(\);[\s\S]*beforeFetch\?\.\(\) === false/
   );
   assert.ok(
-    fetchCall >= 0 && fetchCall < postFetchFence && postFetchFence < firstResponseUse,
-    "a response from an obsolete auth generation must not be applied to the replacement session"
+    transportCall > dispatchGuard && attemptFence > transportCall && dispatchFence > attemptFence,
+    "every transport attempt must retain both an auth fence and a synchronous last-moment dispatch fence"
   );
 });
 
@@ -470,15 +478,22 @@ test("authenticated API responses revalidate auth scope after streaming the resp
   const apiEnd = source.indexOf("function enqueueAccountProfilePatch", apiStart);
   const apiSource = source.slice(apiStart, apiEnd);
 
-  const responseText = apiSource.indexOf("const text = await response.text()");
-  const postBodyFence = apiSource.indexOf(
-    "if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope))",
-    responseText
+  const transportCall = apiSource.indexOf("await fetchApiResponseText(");
+  const transportBodyFence = apiSource.indexOf(
+    "afterRead: assertAuthenticationScopeCurrent",
+    transportCall
   );
-  const parseStart = apiSource.indexOf("data = text ? JSON.parse(text) : null", postBodyFence);
+  const postTransportFence = apiSource.indexOf(
+    "assertAuthenticationScopeCurrent();\n  if (response.status === 204)",
+    transportBodyFence
+  );
+  const parseStart = apiSource.indexOf("data = text ? JSON.parse(text) : null", postTransportFence);
   assert.ok(
-    responseText >= 0 && postBodyFence > responseText && parseStart > postBodyFence,
-    "a credential rotation while the response body is streaming must be rejected before stale data is parsed/applied"
+    transportCall >= 0
+      && transportBodyFence > transportCall
+      && postTransportFence > transportBodyFence
+      && parseStart > postTransportFence,
+    "a credential rotation while the response body or helper continuation is pending must be rejected before stale data is parsed/applied"
   );
 });
 

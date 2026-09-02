@@ -96,13 +96,26 @@ test("collaborative delete rechecks intent after its queued local-mutation wait"
   assert.match(deleteBlock, /\{ allowDisconnected, beforeCommit \}/);
 });
 
-test("api evaluates a destructive request gate after async verification and immediately before fetch", async () => {
+test("api evaluates a destructive request gate synchronously at the transport dispatch boundary", async () => {
   const source = (await readFile(appUrl, "utf8")).replace(/\r\n/g, "\n");
   const api = section(source, "async function api(path, options = {})", "\nasync function fetchDatabaseUrlPreview");
   const preflightIndex = api.indexOf("await applyClientNetworkVerificationHeaders(headers);");
-  const gateIndex = api.indexOf("beforeFetch?.() === false");
-  const fetchIndex = api.indexOf("response = await fetch(");
-  assert.ok(preflightIndex >= 0 && gateIndex > preflightIndex && fetchIndex > gateIndex);
+  const guardIndex = api.indexOf("const assertRequestDispatchCurrent = () =>", preflightIndex);
+  const transportIndex = api.indexOf("await fetchApiResponseText(", guardIndex);
+  const dispatchFenceIndex = api.indexOf(
+    "beforeDispatch: assertRequestDispatchCurrent",
+    transportIndex
+  );
+  assert.ok(
+    preflightIndex >= 0
+      && guardIndex > preflightIndex
+      && transportIndex > guardIndex
+      && dispatchFenceIndex > transportIndex
+  );
+  assert.match(
+    api.slice(guardIndex, transportIndex),
+    /assertAuthenticationScopeCurrent\(\);[\s\S]*beforeFetch\?\.\(\) === false/
+  );
 });
 
 test("standalone page-delete reproduction covers every late pre-submit navigation window", () => {
