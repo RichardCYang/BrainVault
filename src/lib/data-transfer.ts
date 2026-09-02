@@ -232,6 +232,7 @@ const pageCommentSchema = z.object({
   author_user_id: idSchema,
   author_username: z.string().min(3).max(50).regex(/^[a-zA-Z0-9._-]+$/),
   body: z.string().min(1).max(2_000),
+  edit_version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   created_at: timestampSchema,
   updated_at: timestampSchema
 }).strict();
@@ -508,6 +509,7 @@ type WorkspaceRestorePageCommentRow = {
   page_id: string;
   user_id: string;
   body: string;
+  edit_version: number;
   created_at: string;
   updated_at: string;
 };
@@ -804,7 +806,7 @@ async function createWorkspaceRestoreSnapshot(
     [userId]
   );
   const pageComments = await client.query<WorkspaceRestorePageCommentRow>(
-    `SELECT pc.id, pc.page_id, pc.user_id, pc.body,
+    `SELECT pc.id, pc.page_id, pc.user_id, pc.body, pc.edit_version,
             DATE_FORMAT(pc.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at,
             DATE_FORMAT(pc.updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at
      FROM page_comments pc INNER JOIN pages p ON p.id = pc.page_id
@@ -1461,6 +1463,7 @@ export async function prepareUserDataBackup(userId: string) {
       );
       const pageComments = await client.query<BackupPageComment>(
         `SELECT pc.id, pc.page_id, pc.user_id AS author_user_id, u.username AS author_username, pc.body,
+                pc.edit_version,
                 DATE_FORMAT(pc.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at,
                 DATE_FORMAT(pc.updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at
          FROM page_comments pc
@@ -2346,6 +2349,9 @@ function getManifestMaxEditVersion(manifest: BrainVaultBackup) {
     maximum = Math.max(maximum, Number(page.edit_version ?? 1), Number(page.content_version ?? 1));
   }
   for (const block of manifest.data.blocks) maximum = Math.max(maximum, Number(block.edit_version ?? 1));
+  for (const comment of manifest.data.pageComments ?? []) {
+    maximum = Math.max(maximum, Number(comment.edit_version ?? 1));
+  }
   for (const version of manifest.data.pageVersions ?? []) {
     maximum = Math.max(maximum, version.page_edit_version, version.page_content_version);
   }
@@ -2361,9 +2367,14 @@ async function createRestoreEditVersion(client: DbClient, userId: string, manife
          SELECT MAX(b.edit_version)
          FROM blocks b INNER JOIN pages p ON p.id = b.page_id
          WHERE p.owner_id = ?
+       ), 0),
+       COALESCE((
+         SELECT MAX(pc.edit_version)
+         FROM page_comments pc INNER JOIN pages p ON p.id = pc.page_id
+         WHERE p.owner_id = ?
        ), 0)
      ) AS max_edit_version`,
-    [userId, userId, userId]
+    [userId, userId, userId, userId]
   );
   const currentMaximum = Number(current?.max_edit_version ?? 0);
   const manifestMaximum = getManifestMaxEditVersion(manifest);
@@ -2515,9 +2526,12 @@ async function importRows(
 
   for (const comment of pageComments) {
     await client.execute(
-      `INSERT INTO page_comments (id, page_id, user_id, body, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [comment.id, comment.pageId, comment.userId, comment.body, comment.createdAt, comment.updatedAt]
+      `INSERT INTO page_comments (id, page_id, user_id, body, edit_version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        comment.id, comment.pageId, comment.userId, comment.body,
+        restoreVersion, comment.createdAt, comment.updatedAt
+      ]
     );
   }
 

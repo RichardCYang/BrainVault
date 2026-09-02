@@ -29,6 +29,7 @@ export type PageDeletionSnapshotComment = {
   id: string;
   page_id: string;
   user_id: string;
+  edit_version: number;
   body_hash: string;
 };
 
@@ -73,7 +74,13 @@ export function createPageDeletionSnapshot(
     // JSON framing keeps row identity unambiguous. The database-side
     // SHA-256 digest avoids transporting every comment body during subtree preview.
     hash.update(
-      `comment\0${JSON.stringify([comment.page_id, comment.id, comment.user_id, comment.body_hash])}\n`
+      `comment\0${JSON.stringify([
+        comment.page_id,
+        comment.id,
+        comment.user_id,
+        Number(comment.edit_version ?? 1),
+        comment.body_hash
+      ])}\n`
     );
   }
   return hash.digest("hex");

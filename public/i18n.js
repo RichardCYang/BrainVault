@@ -4180,6 +4180,21 @@ for (const [language, comments] of Object.entries(pageCommentTranslationAddition
   if (catalog) catalog.comments = comments;
 }
 
+const pageCommentConflictMessages = {
+  en: "This comment changed in another session. Your change was not applied; refresh the discussion and review the newer comment.",
+  ja: "別のセッションでこのコメントが変更されました。変更は適用されていません。ディスカッションを更新して新しいコメントを確認してください。",
+  ko: "다른 세션에서 이 댓글이 변경되었습니다. 변경 사항은 적용되지 않았습니다. 토론을 새로 고쳐 최신 댓글을 확인하세요.",
+  fr: "Ce commentaire a été modifié dans une autre session. Votre modification n’a pas été appliquée ; actualisez la discussion et vérifiez le commentaire le plus récent.",
+  de: "Dieser Kommentar wurde in einer anderen Sitzung geändert. Ihre Änderung wurde nicht übernommen; aktualisieren Sie die Diskussion und prüfen Sie den neueren Kommentar.",
+  es: "Este comentario cambió en otra sesión. Tu cambio no se aplicó; actualiza la conversación y revisa el comentario más reciente.",
+  pt: "Este comentário foi alterado em outra sessão. Sua alteração não foi aplicada; atualize a discussão e revise o comentário mais recente."
+};
+
+for (const [language, message] of Object.entries(pageCommentConflictMessages)) {
+  const catalog = translationCatalogs[language];
+  if (catalog) catalog.errors.PAGE_COMMENT_EDIT_CONFLICT = message;
+}
+
 const ganttTranslationAdditions = {
   en: {
     blockType: "Gantt chart",

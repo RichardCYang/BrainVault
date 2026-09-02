@@ -32,6 +32,7 @@ function hashCommentBody(body) {
 
 function comment(values) {
   return {
+    edit_version: 1,
     ...values,
     body_hash: hashCommentBody(values.body)
   };
@@ -62,9 +63,14 @@ test("a comment committed after deletion preview invalidates the stale hard dele
     "the post-preview comment must change the destructive snapshot"
   );
   assert.notEqual(
-    snapshot([{ ...committedComment, body: "Edited after preview" }]),
+    snapshot([{ ...committedComment, body: "Edited after preview", edit_version: 2 }]),
     snapshot([committedComment]),
     "a post-preview comment edit must also invalidate the destructive snapshot"
+  );
+  assert.notEqual(
+    snapshot([{ ...committedComment, edit_version: 2 }]),
+    snapshot([committedComment]),
+    "even an edit that returns to identical text must advance the destructive generation"
   );
 });
 
@@ -103,7 +109,7 @@ test("page deletion reads, locks, and validates discussion rows before its delet
   const deleteRoute = route.slice(deleteRouteStart, tagRouteStart);
   assert.match(
     route,
-    /async function getPageDeletionComments\([\s\S]*SELECT id, page_id, user_id, SHA2\(body, 256\) AS body_hash[\s\S]*FROM page_comments/
+    /async function getPageDeletionComments\([\s\S]*SELECT id, page_id, user_id, edit_version, SHA2\(body, 256\) AS body_hash[\s\S]*FROM page_comments/
   );
   assert.match(snapshotRoute, /getPageDeletionComments\(client, subtreeRows\)/);
   assert.match(snapshotRoute, /comments: commentRows\.length/);

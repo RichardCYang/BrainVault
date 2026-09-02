@@ -406,6 +406,7 @@ const state = {
     initialized: false,
     editingId: null,
     editingDraft: "",
+    editingVersion: null,
     busyCommentId: null,
     requestId: 0,
     message: "",
@@ -10307,6 +10308,7 @@ function resetPageComments(pageId = null) {
   state.pageComments.initialized = false;
   state.pageComments.editingId = null;
   state.pageComments.editingDraft = "";
+  state.pageComments.editingVersion = null;
   state.pageComments.busyCommentId = null;
   state.pageComments.message = "";
   state.pageComments.messageIsError = false;
@@ -10581,6 +10583,13 @@ async function savePageCommentEdit(commentId) {
   if (!pageId || state.pageComments.editingId !== commentId) return;
   const body = state.pageComments.editingDraft.trim();
   if (!body || state.pageComments.loading || state.pageComments.submitting || state.pageComments.busyCommentId) return;
+  const expectedVersion = getPositiveVersion(state.pageComments.editingVersion);
+  if (expectedVersion === null) {
+    state.pageComments.message = t("errors.invalidResponse");
+    state.pageComments.messageIsError = true;
+    renderPageComments();
+    return;
+  }
   const navigationGeneration = workspaceNavigationGeneration;
   const authenticationScope = captureAuthenticatedSessionScope();
   state.pageComments.busyCommentId = commentId;
@@ -10591,7 +10600,7 @@ async function savePageCommentEdit(commentId) {
   try {
     const data = await api(
       `/api/pages/${encodeURIComponent(pageId)}/comments/${encodeURIComponent(commentId)}`,
-      { method: "PATCH", body: { body } }
+      { method: "PATCH", body: { body, expectedVersion } }
     );
     if (
       !isCurrentAuthenticatedSessionScope(authenticationScope)
@@ -10601,6 +10610,7 @@ async function savePageCommentEdit(commentId) {
     if (index >= 0 && data?.comment) state.pageComments.entries[index] = data.comment;
     state.pageComments.editingId = null;
     state.pageComments.editingDraft = "";
+    state.pageComments.editingVersion = null;
     state.pageComments.message = t("comments.saved");
     state.pageComments.messageIsError = false;
   } catch (error) {
@@ -10631,7 +10641,16 @@ async function deletePageComment(commentId) {
   const pageId = state.selectedPage?.id;
   if (!pageId || state.pageComments.loading || state.pageComments.submitting || state.pageComments.busyCommentId) return;
   const comment = state.pageComments.entries.find((entry) => entry.id === commentId);
-  if (!comment?.canDelete || !window.confirm(t("comments.deleteConfirm"))) return;
+  const expectedVersion = getPositiveVersion(comment?.version);
+  if (!comment?.canDelete || expectedVersion === null) {
+    if (comment?.canDelete) {
+      state.pageComments.message = t("errors.invalidResponse");
+      state.pageComments.messageIsError = true;
+      renderPageComments();
+    }
+    return;
+  }
+  if (!window.confirm(t("comments.deleteConfirm"))) return;
   const navigationGeneration = workspaceNavigationGeneration;
   const authenticationScope = captureAuthenticatedSessionScope();
   state.pageComments.busyCommentId = commentId;
@@ -10641,7 +10660,8 @@ async function deletePageComment(commentId) {
 
   try {
     await api(`/api/pages/${encodeURIComponent(pageId)}/comments/${encodeURIComponent(commentId)}`, {
-      method: "DELETE"
+      method: "DELETE",
+      body: { expectedVersion }
     });
     if (
       !isCurrentAuthenticatedSessionScope(authenticationScope)
@@ -10651,6 +10671,7 @@ async function deletePageComment(commentId) {
     if (state.pageComments.editingId === commentId) {
       state.pageComments.editingId = null;
       state.pageComments.editingDraft = "";
+      state.pageComments.editingVersion = null;
     }
     state.pageComments.message = t("comments.deleted");
     state.pageComments.messageIsError = false;
@@ -19407,8 +19428,16 @@ elements.pageCommentsList.addEventListener("click", (event) => {
   if (!comment) return;
 
   if (action === "edit" && comment.canEdit) {
+    const editingVersion = getPositiveVersion(comment.version);
+    if (editingVersion === null) {
+      state.pageComments.message = t("errors.invalidResponse");
+      state.pageComments.messageIsError = true;
+      renderPageComments();
+      return;
+    }
     state.pageComments.editingId = commentId;
     state.pageComments.editingDraft = comment.body;
+    state.pageComments.editingVersion = editingVersion;
     renderPageComments();
     requestAnimationFrame(() => {
       const textarea = elements.pageCommentsList.querySelector(
@@ -19423,6 +19452,7 @@ elements.pageCommentsList.addEventListener("click", (event) => {
   if (action === "cancel-edit" && state.pageComments.editingId === commentId) {
     state.pageComments.editingId = null;
     state.pageComments.editingDraft = "";
+    state.pageComments.editingVersion = null;
     renderPageComments();
     return;
   }

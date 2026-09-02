@@ -329,12 +329,27 @@ test("collaboration writes revalidate auth and session state at the durable tran
   const server = await read("src/lib/collaboration-server.ts");
   const sessions = await read("src/lib/auth-sessions.ts");
 
-  assert.match(
-    server,
-    /await assertCurrentCollaborationAuthentication\(client\);\s+const access = await getPageAccess\(room\.pageId, client\.user\.id\)/
+  const revalidationStart = server.indexOf("private async revalidateClientPageAccess");
+  const persistStart = server.indexOf("private async persistUpdate", revalidationStart);
+  const revalidation = server.slice(revalidationStart, persistStart);
+  const authVersionFence = revalidation.indexOf("Number(currentUser.auth_version ?? 1) !== client.authVersion");
+  const sessionFence = revalidation.indexOf(
+    "isAuthSessionActive(client.user.id, client.authSessionId, client.authVersion)",
+    authVersionFence
+  );
+  const accessLookup = revalidation.indexOf(
+    "getPageAccess(room.pageId, client.user.id)",
+    sessionFence
+  );
+  assert.ok(
+    revalidationStart >= 0
+      && persistStart > revalidationStart
+      && authVersionFence >= 0
+      && sessionFence > authVersionFence
+      && accessLookup > sessionFence,
+    "cached collaboration access must revalidate credentials and device session before page access"
   );
 
-  const persistStart = server.indexOf("private async persistUpdate");
   const persistEnd = server.indexOf("private async handleMessage", persistStart);
   const persist = server.slice(persistStart, persistEnd >= 0 ? persistEnd : undefined);
   const transactionalAuthFence = persist.indexOf(

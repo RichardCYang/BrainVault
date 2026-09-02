@@ -213,6 +213,7 @@ type PageDeletionCommentRow = {
   id: string;
   page_id: string;
   user_id: string;
+  edit_version: number;
   body_hash: string;
 };
 
@@ -359,7 +360,7 @@ async function getPageDeletionComments(
   for (let offset = 0; offset < pageIds.length; offset += 500) {
     const group = pageIds.slice(offset, offset + 500);
     const rows = await client.query<PageDeletionCommentRow>(
-      `SELECT id, page_id, user_id, SHA2(body, 256) AS body_hash
+      `SELECT id, page_id, user_id, edit_version, SHA2(body, 256) AS body_hash
        FROM page_comments
        WHERE page_id IN (${group.map(() => "?").join(", ")})
        ORDER BY page_id ASC, id ASC${lock ? " FOR UPDATE" : ""}`,

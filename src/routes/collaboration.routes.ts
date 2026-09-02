@@ -9,7 +9,7 @@ import {
   collaborationShareIpRateLimit
 } from "../middleware/auth-rate-limit.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
-import { idParamSchema, requireUser, routeIdSchema, usernameSchema } from "../utils/schemas.js";
+import { idParamSchema, requireUser, routeIdSchema, safeVersionSchema, usernameSchema } from "../utils/schemas.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { createId } from "../lib/id.js";
 import {
@@ -118,8 +118,19 @@ const shareParamsSchema = z.object({
   userId: routeIdSchema
 });
 
+const pageCommentTextSchema = z.string().trim().min(1).max(2_000);
+
 const pageCommentBodySchema = z.object({
-  body: z.string().trim().min(1).max(2_000)
+  body: pageCommentTextSchema
+}).strict();
+
+const pageCommentEditSchema = z.object({
+  body: pageCommentTextSchema,
+  expectedVersion: safeVersionSchema
+}).strict();
+
+const pageCommentDeleteSchema = z.object({
+  expectedVersion: safeVersionSchema
 }).strict();
 
 const pageCommentParamsSchema = z.object({
@@ -182,6 +193,7 @@ type PageCommentRow = ShareTargetRow & {
   page_id: string;
   user_id: string;
   body: string;
+  edit_version: number;
   comment_created_at: string;
   comment_updated_at: string;
 };
@@ -246,7 +258,7 @@ async function getPageCommentRow(
   client: DbClient = db
 ): Promise<PageCommentRow | null> {
   return (await client.queryOne<PageCommentRow>(
-    `SELECT pc.id AS comment_id, pc.page_id, pc.user_id, pc.body,
+    `SELECT pc.id AS comment_id, pc.page_id, pc.user_id, pc.body, pc.edit_version,
             pc.created_at AS comment_created_at, pc.updated_at AS comment_updated_at,
             u.id, u.username, u.name, u.avatar_data, u.preferred_language,
             u.default_collection_icon, u.theme, u.created_at, u.updated_at
@@ -266,6 +278,7 @@ function toPageCommentPayload(
     id: row.comment_id,
     pageId: row.page_id,
     body: row.body,
+    version: Number(row.edit_version),
     author: toPublicUser(row),
     createdAt: row.comment_created_at,
     updatedAt: row.comment_updated_at,
@@ -369,7 +382,7 @@ collaborationRouter.get(
       const result = await transaction(async (client) => {
         const access = await getPageAccess(pageId, user.id, client);
         const rows = await client.query<PageCommentRow>(
-          `SELECT pc.id AS comment_id, pc.page_id, pc.user_id, pc.body,
+          `SELECT pc.id AS comment_id, pc.page_id, pc.user_id, pc.body, pc.edit_version,
                   pc.created_at AS comment_created_at, pc.updated_at AS comment_updated_at,
                   u.id, u.username, u.name, u.avatar_data, u.preferred_language,
                   u.default_collection_icon, u.theme, u.created_at, u.updated_at
@@ -432,7 +445,7 @@ collaborationRouter.post(
 
 collaborationRouter.patch(
   "/pages/:pageId/comments/:commentId",
-  validate({ params: pageCommentParamsSchema, body: pageCommentBodySchema }),
+  validate({ params: pageCommentParamsSchema, body: pageCommentEditSchema }),
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
@@ -440,13 +453,14 @@ collaborationRouter.patch(
       const pageId = String(req.params.pageId);
       const commentId = String(req.params.commentId);
       const body = String(req.body.body).trim();
+      const expectedVersion = Number(req.body.expectedVersion);
       const comment = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
         const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
         assertPageCanEdit(access, "This shared collection is read-only for your account");
         assertPageNotArchived(access.page, "Restore the page before editing a comment");
-        const existing = await client.queryOne<{ user_id: string }>(
-          `SELECT user_id FROM page_comments
+        const existing = await client.queryOne<{ user_id: string; edit_version: number }>(
+          `SELECT user_id, edit_version FROM page_comments
            WHERE page_id = ? AND id = ? FOR UPDATE`,
           [pageId, commentId]
         );
@@ -454,11 +468,30 @@ collaborationRouter.patch(
         if (existing.user_id !== user.id) {
           throw new ApiError(403, "PAGE_COMMENT_EDIT_FORBIDDEN", "Only the comment author can edit this comment");
         }
-        await client.execute(
-          `UPDATE page_comments SET body = ?, updated_at = CURRENT_TIMESTAMP(3)
-           WHERE page_id = ? AND id = ?`,
-          [body, pageId, commentId]
+        const currentVersion = Number(existing.edit_version);
+        if (!Number.isSafeInteger(currentVersion) || currentVersion < 1) {
+          throw new ApiError(500, "INVALID_PAGE_COMMENT_VERSION", "The stored comment version is invalid");
+        }
+        if (currentVersion !== expectedVersion || currentVersion >= Number.MAX_SAFE_INTEGER) {
+          throw new ApiError(
+            409,
+            "PAGE_COMMENT_EDIT_CONFLICT",
+            "This comment changed in another session. Your change was not applied."
+          );
+        }
+        const update = await client.execute<{ affectedRows: number }>(
+          `UPDATE page_comments
+           SET body = ?, edit_version = edit_version + 1, updated_at = CURRENT_TIMESTAMP(3)
+           WHERE page_id = ? AND id = ? AND edit_version = ?`,
+          [body, pageId, commentId, expectedVersion]
         );
+        if (Number(update.affectedRows) !== 1) {
+          throw new ApiError(
+            409,
+            "PAGE_COMMENT_EDIT_CONFLICT",
+            "This comment changed in another session. Your change was not applied."
+          );
+        }
         const updated = await getPageCommentRow(pageId, commentId, client);
         if (!updated) throw notFound("Page comment");
         return toPageCommentPayload(updated, { id: user.id, isOwner: access.role === "OWNER" || access.role === "ADMIN" });
@@ -473,20 +506,21 @@ collaborationRouter.patch(
 
 collaborationRouter.delete(
   "/pages/:pageId/comments/:commentId",
-  validate({ params: pageCommentParamsSchema }),
+  validate({ params: pageCommentParamsSchema, body: pageCommentDeleteSchema }),
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       const commentId = String(req.params.commentId);
+      const expectedVersion = Number(req.body.expectedVersion);
       await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
         const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
         assertPageCanEdit(access, "This shared collection is read-only for your account");
         assertPageNotArchived(access.page, "Restore the page before deleting a comment");
-        const existing = await client.queryOne<{ user_id: string }>(
-          `SELECT user_id FROM page_comments
+        const existing = await client.queryOne<{ user_id: string; edit_version: number }>(
+          `SELECT user_id, edit_version FROM page_comments
            WHERE page_id = ? AND id = ? FOR UPDATE`,
           [pageId, commentId]
         );
@@ -494,10 +528,28 @@ collaborationRouter.delete(
         if (existing.user_id !== user.id && access.role !== "OWNER" && access.role !== "ADMIN") {
           throw new ApiError(403, "PAGE_COMMENT_DELETE_FORBIDDEN", "You cannot delete this comment");
         }
-        await client.execute(
-          "DELETE FROM page_comments WHERE page_id = ? AND id = ?",
-          [pageId, commentId]
+        const currentVersion = Number(existing.edit_version);
+        if (!Number.isSafeInteger(currentVersion) || currentVersion < 1) {
+          throw new ApiError(500, "INVALID_PAGE_COMMENT_VERSION", "The stored comment version is invalid");
+        }
+        if (currentVersion !== expectedVersion) {
+          throw new ApiError(
+            409,
+            "PAGE_COMMENT_EDIT_CONFLICT",
+            "This comment changed in another session. It was not deleted."
+          );
+        }
+        const deletion = await client.execute<{ affectedRows: number }>(
+          "DELETE FROM page_comments WHERE page_id = ? AND id = ? AND edit_version = ?",
+          [pageId, commentId, expectedVersion]
         );
+        if (Number(deletion.affectedRows) !== 1) {
+          throw new ApiError(
+            409,
+            "PAGE_COMMENT_EDIT_CONFLICT",
+            "This comment changed before deletion completed. It was not deleted."
+          );
+        }
       });
       res.status(204).end();
     } catch (error) {
