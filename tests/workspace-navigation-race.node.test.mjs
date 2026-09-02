@@ -13,7 +13,11 @@ test("workspace navigation applies only the latest page, collection, or home int
 
   assert.match(source, /navigationGeneration = \+\+workspaceNavigationGeneration/);
   assert.match(source, /const navigationGeneration = \+\+workspaceNavigationGeneration;/);
-  assert.match(source, /data = await api\(`\/api\/pages\/\$\{pageId\}`\);/);
+  assert.match(
+    source,
+    /data = await api\(`\/api\/pages\/\$\{encodeURIComponent\(pageId\)\}`,[\s\S]*signal: requestController\.signal[\s\S]*\);/
+  );
+  assert.match(source, /function cancelPendingPageRead\(\)[\s\S]*controller\.abort\(\)[\s\S]*clearStatus\(\)/);
   assert.match(source, /catch \(error\) \{\n        if \(!isCurrentWorkspaceNavigation\(navigationGeneration\)\) return;\n        throw error;/);
   assert.match(source, /if \(!isCurrentWorkspaceNavigation\(navigationGeneration\)\) return;/);
   assert.match(source, /showCollection\(pageId, \{ skipFlush: true, navigationGeneration \}\)/);

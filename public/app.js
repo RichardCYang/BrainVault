@@ -10,6 +10,7 @@ import {
   setLanguage,
   t
 } from "./i18n.js";
+import { ApiReadTimeoutError, fetchApiResponseText } from "./api-read-transport.js";
 import {
   codeLanguageOptions,
   getBlockCodeLanguage,
@@ -237,6 +238,7 @@ const accountSecurityOperationGuards = Object.freeze({
   passkeyRegister: createAccountAvatarOperationGuard()
 });
 let workspaceNavigationGeneration = 0;
+let pageNavigationRequestController = null;
 let authenticationSessionGeneration = 0;
 let sharePageRequestGeneration = 0;
 let sharePageNavigationGeneration = null;
@@ -2176,29 +2178,41 @@ async function api(path, options = {}) {
   // only after all asynchronous request preparation and immediately before fetch.
   if (beforeFetch?.() === false) return skippedApiRequest;
 
+  const assertAuthenticationScopeCurrent = () => {
+    if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope)) {
+      throw createApiRequestError(t("errors.UNAUTHENTICATED"), {
+        status: 401,
+        code: "UNAUTHENTICATED",
+        ambiguous: false
+      });
+    }
+  };
+
   let response;
+  let text;
   try {
-    response = await fetch(path, { ...requestOptions, credentials: "include", headers, body });
-  } catch {
+    ({ response, text } = await fetchApiResponseText(
+      path,
+      { ...requestOptions, credentials: "include", headers, body },
+      {
+        // Re-check at every retry boundary, after response headers, and again
+        // after the response body. A retry can never cross into a newer login.
+        beforeAttempt: assertAuthenticationScopeCurrent,
+        beforeRead: assertAuthenticationScopeCurrent,
+        afterRead: assertAuthenticationScopeCurrent
+      }
+    ));
+  } catch (error) {
+    if (error?.code === "UNAUTHENTICATED") throw error;
+    if (error instanceof ApiReadTimeoutError || error?.name === "TimeoutError") {
+      throw createApiRequestError(t("errors.requestTimeout"), {
+        code: "REQUEST_TIMEOUT",
+        ambiguous: true
+      });
+    }
     throw createApiRequestError(t("errors.network"), { ambiguous: true });
   }
-  if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope)) {
-    throw createApiRequestError(t("errors.UNAUTHENTICATED"), {
-      status: 401,
-      code: "UNAUTHENTICATED",
-      ambiguous: false
-    });
-  }
   if (response.status === 204) return null;
-
-  const text = await response.text();
-  if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope)) {
-    throw createApiRequestError(t("errors.UNAUTHENTICATED"), {
-      status: 401,
-      code: "UNAUTHENTICATED",
-      ambiguous: false
-    });
-  }
   let data = null;
   try {
     data = text ? JSON.parse(text) : null;
@@ -3002,6 +3016,7 @@ function renderShell() {
 
 function resetAuthenticationSessionState({ render = true } = {}) {
   workspaceNavigationGeneration += 1;
+  cancelPendingPageRead();
   authenticationSessionGeneration += 1;
   authFlowOperationGuard.invalidate();
   authenticatedSessionOperationGuard.invalidate();
@@ -17745,7 +17760,17 @@ function isCurrentWorkspaceNavigation(generation) {
   return generation === workspaceNavigationGeneration;
 }
 
+function cancelPendingPageRead() {
+  const controller = pageNavigationRequestController;
+  if (!controller) return false;
+  pageNavigationRequestController = null;
+  controller.abort();
+  clearStatus();
+  return true;
+}
+
 async function showHome({ skipFlush = false, navigationGeneration = ++workspaceNavigationGeneration } = {}) {
+  cancelPendingPageRead();
   const shouldFlush = !skipFlush || state.pageEditLockDepth === 0;
   return withPageEditLock(
     async () => {
@@ -17769,6 +17794,7 @@ async function showCollection(
   collectionId,
   { skipFlush = false, navigationGeneration = ++workspaceNavigationGeneration } = {}
 ) {
+  cancelPendingPageRead();
   const shouldFlush = !skipFlush || state.pageEditLockDepth === 0;
   return withPageEditLock(
     async () => {
@@ -17790,6 +17816,7 @@ async function showCollection(
 
 async function openPage(pageId, { skipFlush = false, requestedPageMode = null } = {}) {
   const navigationGeneration = ++workspaceNavigationGeneration;
+  cancelPendingPageRead();
   const shouldFlush = !skipFlush || state.pageEditLockDepth === 0;
   await withPageEditLock(
     async () => {
@@ -17802,13 +17829,24 @@ async function openPage(pageId, { skipFlush = false, requestedPageMode = null } 
         return;
       }
 
-      setStatus(t("status.loadingDocument"));
+      // Keep the loading indicator tied to the operation rather than the generic
+      // 2.4s toast timer. A stalled read must stay visibly pending until it opens,
+      // times out, or is superseded by another navigation.
+      setStatus(t("status.loadingDocument"), false, { dismissAfter: 0 });
       let data;
+      const requestController = new AbortController();
+      pageNavigationRequestController = requestController;
       try {
-        data = await api(`/api/pages/${pageId}`);
+        data = await api(`/api/pages/${encodeURIComponent(pageId)}`, {
+          signal: requestController.signal
+        });
       } catch (error) {
         if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
         throw error;
+      } finally {
+        if (pageNavigationRequestController === requestController) {
+          pageNavigationRequestController = null;
+        }
       }
       if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
 
