@@ -50,9 +50,20 @@ export function isPathInside(root: string, candidate: string) {
 if (isPathInside(projectRoot, attachmentUploadRoot) && comparablePath(attachmentUploadRoot) === comparablePath(projectRoot)) {
   throw new Error("ATTACHMENT_UPLOAD_DIR cannot be the project root");
 }
-for (const forbiddenRoot of [path.join(projectRoot, "public"), path.join(projectRoot, "docs"), path.join(projectRoot, ".git")]) {
-  if (isPathInside(forbiddenRoot, attachmentUploadRoot)) {
-    throw new Error("ATTACHMENT_UPLOAD_DIR must stay outside the public, docs, and .git folders");
+const forbiddenAttachmentRoots = [
+  path.join(projectRoot, "public"),
+  path.join(projectRoot, "docs"),
+  path.join(projectRoot, ".git"),
+  path.join(projectRoot, "upload", "icons")
+];
+for (const forbiddenRoot of forbiddenAttachmentRoots) {
+  if (
+    isPathInside(forbiddenRoot, attachmentUploadRoot)
+    || isPathInside(attachmentUploadRoot, forbiddenRoot)
+  ) {
+    throw new Error(
+      "ATTACHMENT_UPLOAD_DIR must not overlap public, docs, .git, or the custom-icon upload tree"
+    );
   }
 }
 

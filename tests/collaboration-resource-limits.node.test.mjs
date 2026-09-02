@@ -92,3 +92,31 @@ test("collaboration write admission bounds both queued operations and retained u
     { accepted: false, reason: "write-bytes" }
   );
 });
+
+test("collaboration revalidation amortizes durable checks and protects presence recipients", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = (await readFile(new URL("../src/lib/collaboration-server.ts", import.meta.url), "utf8"))
+    .replace(/\r\n/g, "\n");
+
+  assert.match(source, /const accessRevalidationCacheMs = 2_000;/);
+  assert.match(source, /if \(!force && now - client\.accessValidatedAt < accessRevalidationCacheMs\) return true;/);
+  assert.match(source, /if \(client\.accessValidationPromise\) return client\.accessValidationPromise;/);
+  assert.match(source, /isPermanentlyBlockedTotpIp\(client\.ipAddress, client\.user\.id\)/);
+  assert.match(source, /enforceCountryLoginPolicy\(client\.user\.id, currentUser\.country_login_mode, client\.ipAddress\)/);
+  assert.ok(source.includes("enforceVpnAccessPolicy("));
+  assert.ok(source.includes("client.ipAddress"));
+  assert.match(source, /targets\.map\(async \(target\) => \{[\s\S]*revalidateClientPageAccess\(room, target\)/);
+});
+
+test("large-state validations cannot occupy every global worker simultaneously", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = (await readFile(
+    new URL("../src/lib/collaboration-update-worker-pool.ts", import.meta.url),
+    "utf8"
+  )).replace(/\r\n/g, "\n");
+
+  assert.match(source, /export const expensiveValidationStateThresholdBytes = 4 \* 1024 \* 1024;/);
+  assert.match(source, /expensive: request\.currentState\.byteLength >= expensiveValidationStateThresholdBytes/);
+  assert.match(source, /!task\.expensive[\s\S]*\|\| this\.workerCount === 1[\s\S]*\|\| !activeExpensiveValidation/);
+  assert.match(source, /else if \(task\.expensive\) activeExpensiveValidation = true;/);
+});

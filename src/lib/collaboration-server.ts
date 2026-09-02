@@ -81,6 +81,7 @@ const maxBytesPerMinute = 64 * 1024 * 1024;
 const heartbeatIntervalMs = 25_000;
 const heartbeatTimeoutMs = 75_000;
 const accessRecheckIntervalMs = 30_000;
+const accessRevalidationCacheMs = 2_000;
 const bootstrapLeaderTimeoutMs = 15_000;
 const idleRoomTtlMs = 30_000;
 
@@ -136,6 +137,8 @@ type ClientContext = {
   rateWindowStartedAt: number;
   frameCount: number;
   byteCount: number;
+  accessValidatedAt: number;
+  accessValidationPromise: Promise<boolean> | null;
 };
 
 async function assertCurrentCollaborationAuthentication(
@@ -658,7 +661,12 @@ export class PageCollaborationHub {
         awareness: { blockId: null, field: null, control: null, selection: null },
         rateWindowStartedAt: Date.now(),
         frameCount: 0,
-        byteCount: 0
+        byteCount: 0,
+        // Upgrade admission just performed the same durable credential, policy,
+        // and page-access checks. Cache only successful verdicts for a very short
+        // interval; mutation transactions still re-authorize under locks.
+        accessValidatedAt: Date.now(),
+        accessValidationPromise: null
       };
       room.clients.set(client.id, client);
       this.trackClient(room.pageId, client.user.id);
@@ -1128,7 +1136,11 @@ export class PageCollaborationHub {
     this.broadcastPresenceUpdate(room, client);
   }
 
-  private async revalidateClientPageAccess(room: Room, client: ClientContext) {
+  private async revalidateClientPageAccess(
+    room: Room,
+    client: ClientContext,
+    { force = false }: { force?: boolean } = {}
+  ) {
     if (
       this.closed
       || room.invalidated
@@ -1137,38 +1149,98 @@ export class PageCollaborationHub {
       || !client.socket.isOpen
     ) return false;
 
-    try {
-      // A WebSocket can outlive a password/MFA rotation or an individual
-      // device-session revocation, especially across multiple server instances.
-      // Revalidate the credential and workspace-generation boundary for every
-      // state-changing frame before worker validation; persistence locks it again.
-      await assertCurrentCollaborationAuthentication(client);
-      const access = await getPageAccess(room.pageId, client.user.id);
-      assertCurrentCollaborationGrant(access, client.shareGeneration);
-      if (
-        this.closed
-        || room.invalidated
-        || this.rooms.get(room.pageId) !== room
-        || !room.clients.has(client.id)
-        || !client.socket.isOpen
-      ) return false;
-      if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
-        client.socket.close(4010, "Collaboration is no longer available");
+    const now = Date.now();
+    if (!force && now - client.accessValidatedAt < accessRevalidationCacheMs) return true;
+    if (client.accessValidationPromise) return client.accessValidationPromise;
+
+    const validation = (async () => {
+      try {
+        // Successful WebSocket authorization verdicts are deliberately cached for
+        // only two seconds and coalesced per connection. Credential/grant/policy
+        // mutation routes still disconnect affected sockets immediately, while the
+        // transaction write path below independently re-authorizes under locks.
+        // This removes per-frame and per-recipient database amplification without
+        // turning authorization into a long-lived ticket.
+        if (await isPermanentlyBlockedTotpIp(client.ipAddress, client.user.id)) {
+          throw new ApiError(403, "TOTP_IP_PERMANENTLY_BLOCKED", "Access from this IP is blocked");
+        }
+        const currentUser = await db.queryOne<{
+          auth_version?: number;
+          attachment_generation?: number | bigint | string;
+          country_login_mode?: UserRow["country_login_mode"];
+          vpn_block_enabled?: UserRow["vpn_block_enabled"];
+        }>(
+          "SELECT auth_version, attachment_generation, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
+          [client.user.id]
+        );
+        if (!currentUser || Number(currentUser.auth_version ?? 1) !== client.authVersion) {
+          throw new ApiError(401, "SESSION_REVOKED", "Authentication session was revoked");
+        }
+        const currentWorkspaceGeneration = Number(currentUser.attachment_generation ?? 1);
+        if (!Number.isSafeInteger(currentWorkspaceGeneration) || currentWorkspaceGeneration < 1) {
+          throw new Error(`Invalid workspace generation for collaboration user: ${client.user.id}`);
+        }
+        if (currentWorkspaceGeneration !== client.workspaceGeneration) {
+          throw new ApiError(
+            409,
+            "WORKSPACE_RESTORED",
+            "The workspace was restored after this collaboration session started. Reconnect before editing again."
+          );
+        }
+        if (!await isAuthSessionActive(client.user.id, client.authSessionId, client.authVersion)) {
+          throw new ApiError(401, "SESSION_REVOKED", "Authentication session was revoked");
+        }
+        await enforceCountryLoginPolicy(client.user.id, currentUser.country_login_mode, client.ipAddress);
+        await enforceVpnAccessPolicy(
+          client.user.id,
+          currentUser.vpn_block_enabled,
+          client.ipAddress,
+          null,
+          client.webRtcSignal
+        );
+
+        const access = await getPageAccess(room.pageId, client.user.id);
+        assertCurrentCollaborationGrant(access, client.shareGeneration);
+        if (
+          this.closed
+          || room.invalidated
+          || this.rooms.get(room.pageId) !== room
+          || !room.clients.has(client.id)
+          || !client.socket.isOpen
+        ) return false;
+        if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
+          client.socket.close(4010, "Collaboration is no longer available");
+          return false;
+        }
+        client.canEdit = canEditPageAccess(access);
+        client.accessValidatedAt = Date.now();
+        return true;
+      } catch (error) {
+        if (client.socket.isOpen) {
+          client.socket.close(
+            4003,
+            error instanceof ApiError && error.statusCode === 401
+              ? "Authentication session was revoked"
+              : error instanceof ApiError && error.code === "WORKSPACE_RESTORED"
+                ? "Workspace was restored; reconnect before editing again"
+                : error instanceof ApiError && error.code === "COUNTRY_LOGIN_BLOCKED"
+                  ? "Access from this IP country is blocked"
+                  : error instanceof ApiError && error.code === "VPN_ACCESS_BLOCKED"
+                    ? "Access from this VPN, proxy, or Tor network is blocked"
+                    : error instanceof ApiError && error.code === "TOTP_IP_PERMANENTLY_BLOCKED"
+                      ? "Access from this IP is blocked"
+                      : "Page access was removed"
+          );
+        }
         return false;
       }
-      return true;
-    } catch (error) {
-      if (client.socket.isOpen) {
-        client.socket.close(
-          4003,
-          error instanceof ApiError && error.statusCode === 401
-            ? "Authentication session was revoked"
-            : error instanceof ApiError && error.code === "WORKSPACE_RESTORED"
-              ? "Workspace was restored; reconnect before editing again"
-              : "Page access was removed"
-        );
-      }
-      return false;
+    })();
+
+    client.accessValidationPromise = validation;
+    try {
+      return await validation;
+    } finally {
+      if (client.accessValidationPromise === validation) client.accessValidationPromise = null;
     }
   }
 
@@ -1559,9 +1631,20 @@ export class PageCollaborationHub {
     const message = removed
       ? { type: "awareness-update", connectionId: client.id, state: null }
       : { type: "awareness-update", ...publicPresence(client, includeIdentity) };
-    for (const target of room.clients.values()) {
-      if (target.id !== client.id) target.socket.sendJson(message);
-    }
+    const targets = [...room.clients.values()].filter((target) => target.id !== client.id);
+    void Promise.all(targets.map(async (target) => {
+      // Presence is collaboration data too. Filter each recipient through the
+      // same short-lived authorization verdict used for committed updates so a
+      // stale/revoked collaborator cannot keep receiving cursor/identity state.
+      if (!await this.revalidateClientPageAccess(room, target)) return;
+      if (
+        room.invalidated
+        || this.rooms.get(room.pageId) !== room
+        || !room.clients.has(target.id)
+        || !target.socket.isOpen
+      ) return;
+      target.socket.sendJson(message);
+    }));
   }
 
   private clearBootstrapLeaderTimer(room: Room) {
@@ -1763,6 +1846,7 @@ export class PageCollaborationHub {
                 return;
               }
               client.canEdit = canEditPageAccess(access);
+              client.accessValidatedAt = Date.now();
               const collaborationState = await getCollaborationState(room.pageId);
               if (!collaborationState || collaborationState.document_epoch !== client.documentEpoch) {
                 this.invalidateRoomForLineageChange(room);

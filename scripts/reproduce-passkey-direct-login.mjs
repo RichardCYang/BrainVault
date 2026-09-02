@@ -407,7 +407,7 @@ const staticContract = {
   boundedAnonymousRequestBody: /app\.use\("\/api\/auth\/passkey", express\.json\(\{ limit: "64kb" \}\)\)/
     .test(appSource)
     && /app\.use\("\/api\/auth\/mfa\/login\/passkey", express\.json\(\{ limit: "64kb" \}\)\)/.test(appSource),
-  consumeBeforeFullValidation: routeSource.indexOf("consumePasskeyLoginChallenge(challengeToken, binding)")
+  consumeBeforeFullValidation: routeSource.indexOf("consumePasskeyLoginChallenge(challengeToken, binding, sourceIp)")
     < routeSource.indexOf("verifySchema.safeParse(req.body)"),
   userHandleBinding: /equalBytes\(userHandle, passkey\.webauthn_user_id\)/.test(routeSource),
   stableCredentialCommit: /assertStablePasskey/.test(routeSource)

@@ -47,7 +47,7 @@ describe("BrainVault ZIP container", () => {
       "attachments/blk_test"
     ]);
     await expect(readZipEntryBuffer(zipPath, entries[0], 1024)).resolves.toEqual(manifest);
-    await copyZipEntryToFile(zipPath, entries[1], restoredPath);
+    await copyZipEntryToFile(zipPath, entries[1], restoredPath, payload.length);
     await expect(readFile(restoredPath)).resolves.toEqual(attachment);
   });
 });

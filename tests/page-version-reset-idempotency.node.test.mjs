@@ -13,38 +13,46 @@ function section(source, start, end) {
   return source.slice(startIndex, endIndex);
 }
 
-test("page-version reset receipts distinguish new, replay, collision, and incomplete states", () => {
+test("page-version reset receipts distinguish new, replay, collision, incomplete, and restored states", () => {
+  const input = { pageId: "pag_a", requestHash: "hash-a", workspaceGeneration: 7 };
   assert.deepEqual(
-    assessPageVersionResetMutationReceipt(null, { pageId: "pag_a", requestHash: "hash-a" }),
+    assessPageVersionResetMutationReceipt(null, input),
     { kind: "new" }
   );
   assert.deepEqual(
     assessPageVersionResetMutationReceipt(
-      { page_id: "pag_a", request_hash: "hash-a", revision: 1, deleted_count: 3 },
-      { pageId: "pag_a", requestHash: "hash-a" }
+      { page_id: "pag_a", request_hash: "hash-a", workspace_generation: 7, revision: 1, deleted_count: 3 },
+      input
     ),
     { kind: "replay", revision: 1, deletedCount: 3 }
   );
   assert.deepEqual(
     assessPageVersionResetMutationReceipt(
-      { page_id: "pag_b", request_hash: "hash-a", revision: 1, deleted_count: 3 },
-      { pageId: "pag_a", requestHash: "hash-a" }
+      { page_id: "pag_b", request_hash: "hash-a", workspace_generation: 7, revision: 1, deleted_count: 3 },
+      input
     ),
     { kind: "collision" }
   );
   assert.deepEqual(
     assessPageVersionResetMutationReceipt(
-      { page_id: "pag_a", request_hash: "hash-b", revision: 1, deleted_count: 3 },
-      { pageId: "pag_a", requestHash: "hash-a" }
+      { page_id: "pag_a", request_hash: "hash-b", workspace_generation: 7, revision: 1, deleted_count: 3 },
+      input
     ),
     { kind: "collision" }
   );
   assert.deepEqual(
     assessPageVersionResetMutationReceipt(
-      { page_id: "pag_a", request_hash: "hash-a", revision: null, deleted_count: null },
-      { pageId: "pag_a", requestHash: "hash-a" }
+      { page_id: "pag_a", request_hash: "hash-a", workspace_generation: 7, revision: null, deleted_count: null },
+      input
     ),
     { kind: "incomplete" }
+  );
+  assert.deepEqual(
+    assessPageVersionResetMutationReceipt(
+      { page_id: "pag_a", request_hash: "hash-a", workspace_generation: 6, revision: 1, deleted_count: 3 },
+      input
+    ),
+    { kind: "superseded" }
   );
 });
 
@@ -72,7 +80,8 @@ test("DELETE /api/pages/:pageId/versions reserves and completes a receipt around
     "owner-scoped destructive operations must keep the global owner-before-page lock order"
   );
   assert.match(resetRoute, /INSERT INTO page_version_reset_mutations/);
-  assert.match(resetRoute, /assessPageVersionResetMutationReceipt\(receipt, \{ pageId, requestHash \}\)/);
+  assert.match(resetRoute, /assessPageVersionResetMutationReceipt\(receipt, \{[\s\S]*workspaceGeneration: authScope\.workspaceGeneration[\s\S]*\}\)/);
+  assert.match(resetRoute, /PAGE_VERSION_RESET_REPLAY_SUPERSEDED/);
   assert.match(resetRoute, /MUTATION_ID_REUSED/);
   assert.match(resetRoute, /PAGE_VERSION_RESET_RECEIPT_INCOMPLETE/);
   assert.match(resetRoute, /UPDATE page_version_reset_mutations/);

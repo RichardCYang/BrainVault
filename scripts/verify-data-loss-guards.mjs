@@ -339,7 +339,8 @@ assert(
     && !pageCreateMutationMigrationSource.includes("FOREIGN KEY (page_id)")
     && pageRouteSource.includes("createMutationRequestHash(creation)")
     && pageRouteSource.includes("INSERT INTO page_create_mutations")
-    && pageRouteSource.includes("assessPageCreateMutationReceipt(receipt, mutationHash)")
+    && pageRouteSource.includes("authScope.workspaceGeneration")
+    && pageRouteSource.includes("PAGE_CREATE_REPLAY_SUPERSEDED")
     && pageRouteSource.indexOf("INSERT INTO page_create_mutations") < pageRouteSource.indexOf("INSERT INTO pages"),
   "Page creation can still duplicate a committed page after an ambiguous POST retry"
 );
@@ -365,7 +366,8 @@ assert(
       < pageRouteSource.indexOf("getPageAccess(pageId, user.id, client, { lockPage: true })", pageRouteSource.indexOf("SELECT id FROM users WHERE id = ? FOR UPDATE"))
     && pageAccessSource.includes('WHERE id = ?${lockPage ? " FOR UPDATE" : ""}')
     && pageRouteSource.includes("INSERT INTO page_version_reset_mutations")
-    && pageRouteSource.includes("assessPageVersionResetMutationReceipt(receipt, { pageId, requestHash })")
+    && pageRouteSource.includes("workspaceGeneration: authScope.workspaceGeneration")
+    && pageRouteSource.includes("PAGE_VERSION_RESET_REPLAY_SUPERSEDED")
     && pageRouteSource.includes("UPDATE page_version_reset_mutations")
     && pageRouteSource.includes("PAGE_VERSION_RESET_CONFLICT")
     && pageRouteSource.includes("SELECT MAX(revision) AS revision FROM page_versions WHERE page_id = ?")

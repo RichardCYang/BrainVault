@@ -105,7 +105,7 @@ const createPageSchema = z.object({
   coverUrl: pageCoverUrlSchema.optional(),
   coverPositionX: pageCoverPositionSchema.optional(),
   coverPositionY: pageCoverPositionSchema.optional(),
-  parentPageId: z.string().min(1).optional(),
+  parentPageId: routeIdSchema.optional(),
   isCollection: z.boolean().optional().default(false),
   initialMarkdown: z.string().max(20_000).optional(),
   tags: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
@@ -119,7 +119,7 @@ const updatePageSchema = z.object({
   coverPositionX: pageCoverPositionSchema.optional(),
   coverPositionY: pageCoverPositionSchema.optional(),
   isArchived: z.boolean().optional(),
-  parentPageId: z.string().min(1).nullable().optional(),
+  parentPageId: routeIdSchema.nullable().optional(),
   tags: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
   expectedVersion: safeVersionSchema,
   mutationId: mutationIdSchema.optional()
@@ -753,9 +753,10 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
         let reserved = true;
         try {
           await client.execute(
-            `INSERT INTO page_create_mutations (owner_id, mutation_id, page_id, request_hash)
-             VALUES (?, ?, ?, ?)`,
-            [user.id, mutationId, id, mutationHash]
+            `INSERT INTO page_create_mutations
+               (owner_id, mutation_id, page_id, request_hash, workspace_generation)
+             VALUES (?, ?, ?, ?, ?)`,
+            [user.id, mutationId, id, mutationHash, authScope.workspaceGeneration]
           );
         } catch (error) {
           if (!isDuplicateEntryError(error)) throw error;
@@ -763,18 +764,29 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
         }
         if (!reserved) {
           const receipt = await client.queryOne<PageCreateMutationReceipt>(
-            `SELECT page_id, request_hash
+            `SELECT page_id, request_hash, workspace_generation
              FROM page_create_mutations
              WHERE owner_id = ? AND mutation_id = ?
              FOR UPDATE`,
             [user.id, mutationId]
           );
-          const assessment = assessPageCreateMutationReceipt(receipt, mutationHash);
+          const assessment = assessPageCreateMutationReceipt(
+            receipt,
+            mutationHash,
+            authScope.workspaceGeneration
+          );
           if (assessment.kind === "collision") {
             throw new ApiError(
               409,
               "MUTATION_ID_REUSED",
               "This mutation id was already used for a different page creation request. No additional page was created."
+            );
+          }
+          if (assessment.kind === "superseded") {
+            throw new ApiError(
+              409,
+              "PAGE_CREATE_REPLAY_SUPERSEDED",
+              "This page creation receipt belongs to an earlier workspace generation. No additional page was created."
             );
           }
           if (assessment.kind !== "replay") {
@@ -998,9 +1010,9 @@ pageRouter.delete(
         try {
           await client.execute(
             `INSERT INTO page_version_reset_mutations
-               (owner_id, mutation_id, page_id, request_hash)
-             VALUES (?, ?, ?, ?)`,
-            [user.id, mutationId, pageId, requestHash]
+               (owner_id, mutation_id, page_id, request_hash, workspace_generation)
+             VALUES (?, ?, ?, ?, ?)`,
+            [user.id, mutationId, pageId, requestHash, authScope.workspaceGeneration]
           );
         } catch (error) {
           if (!isDuplicateEntryError(error)) throw error;
@@ -1009,18 +1021,29 @@ pageRouter.delete(
 
         if (!reserved) {
           const receipt = await client.queryOne<PageVersionResetMutationReceipt>(
-            `SELECT page_id, request_hash, revision, deleted_count
+            `SELECT page_id, request_hash, workspace_generation, revision, deleted_count
              FROM page_version_reset_mutations
              WHERE owner_id = ? AND mutation_id = ?
              FOR UPDATE`,
             [user.id, mutationId]
           );
-          const assessment = assessPageVersionResetMutationReceipt(receipt, { pageId, requestHash });
+          const assessment = assessPageVersionResetMutationReceipt(receipt, {
+            pageId,
+            requestHash,
+            workspaceGeneration: authScope.workspaceGeneration
+          });
           if (assessment.kind === "collision") {
             throw new ApiError(
               409,
               "MUTATION_ID_REUSED",
               "This mutation id was already used for a different page-version reset request. The history was not reset again."
+            );
+          }
+          if (assessment.kind === "superseded") {
+            throw new ApiError(
+              409,
+              "PAGE_VERSION_RESET_REPLAY_SUPERSEDED",
+              "This page-version reset receipt belongs to an earlier workspace generation. The restored history was not acknowledged as reset."
             );
           }
           if (assessment.kind === "incomplete") {

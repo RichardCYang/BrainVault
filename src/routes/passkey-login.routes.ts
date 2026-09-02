@@ -284,26 +284,26 @@ function schedulePasskeyLoginChallengeCleanup() {
   });
 }
 
-async function consumePasskeyLoginChallenge(challengeToken: string, binding: string) {
+async function consumePasskeyLoginChallenge(challengeToken: string, binding: string, sourceIp: string) {
   return transaction(async (client) => {
     const tokenHash = hashOpaqueToken(challengeToken);
     const bindingHash = hashOpaqueToken(binding);
     const row = await client.queryOne<PasskeyLoginChallengeRow>(
       `SELECT token_hash, binding_hash, challenge, source_ip, expires_at, used_at
        FROM passkey_login_challenges
-       WHERE token_hash = ? AND binding_hash = ?
+       WHERE token_hash = ? AND binding_hash = ? AND source_ip = ?
          AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)
        FOR UPDATE`,
-      [tokenHash, bindingHash]
+      [tokenHash, bindingHash, sourceIp]
     );
     if (!row) throw loginFailure();
 
     const consumed = await client.execute<{ affectedRows: number }>(
       `UPDATE passkey_login_challenges
        SET used_at = CURRENT_TIMESTAMP(3)
-       WHERE token_hash = ? AND binding_hash = ? AND used_at IS NULL
+       WHERE token_hash = ? AND binding_hash = ? AND source_ip = ? AND used_at IS NULL
          AND expires_at > CURRENT_TIMESTAMP(3)`,
-      [tokenHash, bindingHash]
+      [tokenHash, bindingHash, sourceIp]
     );
     if (Number(consumed.affectedRows) !== 1) throw loginFailure();
     return row;
@@ -369,7 +369,7 @@ passkeyLoginRouter.post(
       const envelope = verifyEnvelopeSchema.safeParse(req.body);
       if (!envelope.success) throw loginFailure();
       const { challengeToken } = envelope.data;
-      const challenge = await consumePasskeyLoginChallenge(challengeToken, binding);
+      const challenge = await consumePasskeyLoginChallenge(challengeToken, binding, sourceIp);
       // Keep the one-time token consumed even when the remaining payload is
       // malformed, and enforce the exact JSON key contract independently of
       // the schema library before cryptographic verification.

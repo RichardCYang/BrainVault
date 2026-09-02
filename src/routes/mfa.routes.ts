@@ -16,6 +16,7 @@ import { db, transaction, type DbClient } from "../lib/db.js";
 import { disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
+import { clearMfaCeremonyBinding, readMfaCeremonyBinding } from "../lib/mfa-ceremony-cookie.js";
 import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
 import { enforceVpnAccessPolicy, getClientTimeZone, getClientWebRtcSignal } from "../lib/vpn-access-policy.js";
 import { getClientIpAddress, recordLoginAttempt, type LoginAttemptOutcome } from "../lib/login-history.js";
@@ -251,6 +252,7 @@ type MfaSessionRow = {
   token_hash: string;
   user_id: string;
   source_ip: string;
+  binding_hash: string;
   failed_attempts: number;
   expires_at: string;
   used_at: string | null;
@@ -409,7 +411,7 @@ export async function getMfaMethods(userId: string): Promise<MfaMethods> {
   };
 }
 
-export async function createMfaLoginSession(userId: string, sourceIp: string) {
+export async function createMfaLoginSession(userId: string, sourceIp: string, binding: string) {
   const token = createOpaqueToken();
   const tokenHash = hashOpaqueToken(token);
   const carryCutoff = new Date(Date.now() - mfaFailureCarryWindowMs);
@@ -440,21 +442,23 @@ export async function createMfaLoginSession(userId: string, sourceIp: string) {
       [userId, carryCutoff]
     );
     await client.execute(
-      `INSERT INTO mfa_login_sessions (token_hash, user_id, source_ip, failed_attempts, expires_at)
-       VALUES (?, ?, ?, ?, ?)`,
-      [tokenHash, userId, sourceIp, carriedAttempts, expiresAt(mfaSessionLifetimeMs)]
+      `INSERT INTO mfa_login_sessions
+         (token_hash, user_id, source_ip, binding_hash, failed_attempts, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [tokenHash, userId, sourceIp, hashOpaqueToken(binding), carriedAttempts, expiresAt(mfaSessionLifetimeMs)]
     );
   });
 
   return token;
 }
 
-async function getActiveMfaSession(mfaToken: string, sourceIp: string, client: DbClient = db) {
+async function getActiveMfaSession(mfaToken: string, sourceIp: string, binding: string, client: DbClient = db) {
   const row = await client.queryOne<MfaSessionRow>(
-    `SELECT token_hash, user_id, source_ip, failed_attempts, expires_at, used_at
+    `SELECT token_hash, user_id, source_ip, binding_hash, failed_attempts, expires_at, used_at
      FROM mfa_login_sessions
-     WHERE token_hash = ? AND source_ip = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)`,
-    [hashOpaqueToken(mfaToken), sourceIp]
+     WHERE token_hash = ? AND source_ip = ? AND binding_hash = ?
+       AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)`,
+    [hashOpaqueToken(mfaToken), sourceIp, hashOpaqueToken(binding)]
   );
   if (!row || Number(row.failed_attempts) >= maxMfaAttempts) {
     throw new ApiError(401, "MFA_SESSION_EXPIRED", "The two-step verification session expired");
@@ -462,20 +466,29 @@ async function getActiveMfaSession(mfaToken: string, sourceIp: string, client: D
   return row;
 }
 
+function requireMfaCeremonyBinding(req: Request) {
+  const binding = readMfaCeremonyBinding(req);
+  if (!binding) {
+    throw new ApiError(401, "MFA_SESSION_EXPIRED", "The two-step verification session expired");
+  }
+  return binding;
+}
+
 async function enforceMfaLoginNetworkAccess(pendingSession: MfaSessionRow, req: Request) {
   await enforceCountryLoginPolicy(pendingSession.user_id, undefined, pendingSession.source_ip);
   await enforceVpnAccessPolicy(pendingSession.user_id, undefined, pendingSession.source_ip, getClientTimeZone(req), getClientWebRtcSignal(req));
 }
 
-async function reserveMfaAttempt(mfaToken: string, sourceIp: string) {
+async function reserveMfaAttempt(mfaToken: string, sourceIp: string, binding: string) {
   const tokenHash = hashOpaqueToken(mfaToken);
   return transaction(async (client) => {
     const row = await client.queryOne<MfaSessionRow>(
-      `SELECT token_hash, user_id, source_ip, failed_attempts, expires_at, used_at
+      `SELECT token_hash, user_id, source_ip, binding_hash, failed_attempts, expires_at, used_at
        FROM mfa_login_sessions
-       WHERE token_hash = ? AND source_ip = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)
+       WHERE token_hash = ? AND source_ip = ? AND binding_hash = ?
+         AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)
        FOR UPDATE`,
-      [tokenHash, sourceIp]
+      [tokenHash, sourceIp, hashOpaqueToken(binding)]
     );
     const failedAttempts = Number(row?.failed_attempts ?? maxMfaAttempts);
     if (!row || failedAttempts >= maxMfaAttempts) {
@@ -485,9 +498,10 @@ async function reserveMfaAttempt(mfaToken: string, sourceIp: string) {
     const result = await client.execute<{ affectedRows: number }>(
       `UPDATE mfa_login_sessions
        SET failed_attempts = failed_attempts + 1
-       WHERE token_hash = ? AND source_ip = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)
+       WHERE token_hash = ? AND source_ip = ? AND binding_hash = ?
+         AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)
          AND failed_attempts = ?`,
-      [tokenHash, sourceIp, failedAttempts]
+      [tokenHash, sourceIp, hashOpaqueToken(binding), failedAttempts]
     );
     if (Number(result.affectedRows) !== 1) {
       throw new ApiError(401, "MFA_SESSION_EXPIRED", "The two-step verification session expired");
@@ -503,13 +517,13 @@ async function recordReservedMfaFailure(
   await recordLoginAttempt(session.user_id, session.source_ip, outcome);
 }
 
-async function completeMfaSession(client: DbClient, mfaToken: string, userId: string) {
+async function completeMfaSession(client: DbClient, mfaToken: string, userId: string, binding: string) {
   const result = await client.execute<{ affectedRows: number }>(
     `UPDATE mfa_login_sessions
      SET used_at = CURRENT_TIMESTAMP(3)
-     WHERE token_hash = ? AND user_id = ? AND used_at IS NULL
+     WHERE token_hash = ? AND user_id = ? AND binding_hash = ? AND used_at IS NULL
        AND expires_at > CURRENT_TIMESTAMP(3)`,
-    [hashOpaqueToken(mfaToken), userId]
+    [hashOpaqueToken(mfaToken), userId, hashOpaqueToken(binding)]
   );
   if (Number(result.affectedRows) !== 1) {
     throw new ApiError(401, "MFA_SESSION_EXPIRED", "The two-step verification session expired");
@@ -980,9 +994,10 @@ mfaRouter.post(
     let session: MfaSessionRow | undefined;
     try {
       const sourceIp = getClientIpAddress(req);
-      const pendingSession = await getActiveMfaSession(mfaToken, sourceIp);
+      const binding = requireMfaCeremonyBinding(req);
+      const pendingSession = await getActiveMfaSession(mfaToken, sourceIp, binding);
       await enforceMfaLoginNetworkAccess(pendingSession, req);
-      const activeSession = await reserveMfaAttempt(mfaToken, sourceIp);
+      const activeSession = await reserveMfaAttempt(mfaToken, sourceIp, binding);
       session = activeSession;
       const result = await transaction(async (client) => {
         const loginUser = await getLoginUserForUpdate(client, activeSession.user_id);
@@ -1019,10 +1034,11 @@ mfaRouter.post(
         }
         await clearTotpIpFailures(activeSession.user_id, activeSession.source_ip, client);
         await recordLoginAttempt(activeSession.user_id, activeSession.source_ip, "SUCCESS", client);
-        await completeMfaSession(client, mfaToken, activeSession.user_id);
+        await completeMfaSession(client, mfaToken, activeSession.user_id, binding);
         return createMfaLoginResult(loginUser);
       });
 
+      clearMfaCeremonyBinding(res);
       setAuthSessionCookie(res, result.token);
       res.json({ user: result.user });
     } catch (error) {
@@ -1062,7 +1078,8 @@ mfaRouter.post(
   async (req, res, next) => {
     try {
       const { mfaToken } = req.body as z.infer<typeof mfaTokenSchema>;
-      const session = await getActiveMfaSession(mfaToken, getClientIpAddress(req));
+      const binding = requireMfaCeremonyBinding(req);
+      const session = await getActiveMfaSession(mfaToken, getClientIpAddress(req), binding);
       await enforceCountryLoginPolicy(session.user_id, undefined, session.source_ip);
       await enforceVpnAccessPolicy(session.user_id, undefined, session.source_ip, getClientTimeZone(req), getClientWebRtcSignal(req));
       const passkeys = await db.query<PasskeyRow>(
@@ -1109,9 +1126,10 @@ mfaRouter.post(
     let session: MfaSessionRow | undefined;
     try {
       const sourceIp = getClientIpAddress(req);
-      const pendingSession = await getActiveMfaSession(mfaToken, sourceIp);
+      const binding = requireMfaCeremonyBinding(req);
+      const pendingSession = await getActiveMfaSession(mfaToken, sourceIp, binding);
       await enforceMfaLoginNetworkAccess(pendingSession, req);
-      const activeSession = await reserveMfaAttempt(mfaToken, sourceIp);
+      const activeSession = await reserveMfaAttempt(mfaToken, sourceIp, binding);
       session = activeSession;
       const contextHash = hashOpaqueToken(mfaToken);
       const challenge = await consumeChallenge(challengeToken, activeSession.user_id, "authentication", contextHash);
@@ -1185,10 +1203,11 @@ mfaRouter.post(
           throw new ApiError(401, "PASSKEY_AUTHENTICATION_FAILED", "The passkey state changed during verification");
         }
         await recordLoginAttempt(activeSession.user_id, activeSession.source_ip, "SUCCESS", client);
-        await completeMfaSession(client, mfaToken, activeSession.user_id);
+        await completeMfaSession(client, mfaToken, activeSession.user_id, binding);
         return createMfaLoginResult(loginUser);
       });
 
+      clearMfaCeremonyBinding(res);
       setAuthSessionCookie(res, result.token);
       res.json({ user: result.user });
     } catch (error) {

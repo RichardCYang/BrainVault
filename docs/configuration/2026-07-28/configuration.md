@@ -37,8 +37,8 @@ Never commit a real `.env` file.
 | `AI_CHAT_ANSWER_MAX_LENGTH` | `50000` | Maximum Markdown characters in each AI chat answer; accepted range is 1 through 500000 and the browser/server share the same runtime value |
 | `AUTH_LOGIN_IP_WINDOW_MS` | `900000` | Login IP throttling window |
 | `AUTH_LOGIN_IP_MAX` | `20` | Failed login requests allowed per IP window |
-| `AUTH_LOGIN_ACCOUNT_WINDOW_MS` | `21600000` | Account-and-source-network login throttling window |
-| `AUTH_LOGIN_ACCOUNT_MAX` | `30` | Failed or MFA-pending login requests allowed per normalized account and source-network window |
+| `AUTH_LOGIN_ACCOUNT_WINDOW_MS` | `21600000` | Normalized-account login throttling window |
+| `AUTH_LOGIN_ACCOUNT_MAX` | `30` | Failed or MFA-pending login requests allowed per normalized account across source networks |
 | `AUTH_LOGIN_LOCK_THRESHOLD` | `8` | Password failures before persisted account backoff begins |
 | `AUTH_LOGIN_LOCK_BASE_MS` | `30000` | Initial account lock duration |
 | `AUTH_LOGIN_LOCK_MAX_MS` | `900000` | Maximum exponential account lock duration |

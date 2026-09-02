@@ -40,7 +40,6 @@ function usernameKey(req: Request) {
   if (!raw) return `login-account-ip:${ip}`;
 
   const accountKey = hashRateLimitKey("account", raw);
-  const accountNetworkKey = hashRateLimitKey("account-network", `${accountKey}:${ip}`);
   const now = Date.now();
   let namespace = loginAccountKeysByIp.get(ip);
   if (namespace && namespace.expiresAt <= now) {
@@ -62,13 +61,13 @@ function usernameKey(req: Request) {
     loginAccountKeysByIp.set(ip, namespace);
   }
 
-  if (namespace.accountKeys.has(accountKey)) return accountNetworkKey;
+  if (namespace.accountKeys.has(accountKey)) return accountKey;
   if (namespace.accountKeys.size >= maxDistinctLoginAccountKeysPerIpWindow) {
     return loginAccountOverflowKey(ip, now);
   }
 
   namespace.accountKeys.add(accountKey);
-  return accountNetworkKey;
+  return accountKey;
 }
 
 async function mfaAccountKey(req: Request) {

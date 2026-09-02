@@ -7,6 +7,7 @@ import { createId } from "../lib/id.js";
 import { hashPassword, normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { disconnectAuthSessionCollaborators, disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { ApiError } from "../lib/http.js";
+import { clearMfaCeremonyBinding, getOrCreateMfaCeremonyBinding } from "../lib/mfa-ceremony-cookie.js";
 import { iconMutationValueSchema, normalizeIconValue } from "../lib/icon-value.js";
 import { evaluatePasswordLogin } from "../lib/login-lockout.js";
 import {
@@ -324,7 +325,8 @@ authRouter.post(
 
       const methods = await getMfaMethods(user.id);
       if (methods.totp || methods.passkey) {
-        const mfaToken = await createMfaLoginSession(user.id, sourceIp);
+        const mfaBinding = getOrCreateMfaCeremonyBinding(req, res);
+        const mfaToken = await createMfaLoginSession(user.id, sourceIp, mfaBinding);
         res.locals.authenticationPending = true;
         clearAuthSessionCookie(res);
         await padLoginResponse(startedAt);
@@ -341,6 +343,7 @@ authRouter.post(
       await recordLoginAttempt(user.id, sourceIp, "SUCCESS");
       const token = signAuthToken({ sub: user.id, username: user.username, authVersion: normalizeAuthVersion(user.auth_version) });
       await padLoginResponse(startedAt);
+      clearMfaCeremonyBinding(res);
       setAuthSessionCookie(res, token);
       res.setHeader("Cache-Control", "private, no-store");
       res.json({ user: toPublicUser(user) });

@@ -127,7 +127,7 @@ test("authentication route source retains all hardened ordering guarantees", asy
   assert.match(mfaRoutes, /FROM mfa_login_sessions[\s\S]{0,220}FOR UPDATE/);
   assert.match(mfaRoutes, /SET failed_attempts = failed_attempts \+ 1/);
   assert.match(mfaRoutes, /WHERE token_hash = \? AND source_ip = \?/);
-  assert.match(mfaRoutes, /const sourceIp = getClientIpAddress\(req\);[\s\S]{0,320}reserveMfaAttempt\(mfaToken, sourceIp\)/);
+  assert.match(mfaRoutes, /const sourceIp = getClientIpAddress\(req\);[\s\S]{0,320}reserveMfaAttempt\(mfaToken, sourceIp, binding\)/);
   assert.doesNotMatch(mfaRoutes, /async function recordMfaFailure/);
   assert.doesNotMatch(mfaRoutes, /failed_attempts < \?/);
 

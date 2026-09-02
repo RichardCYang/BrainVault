@@ -311,9 +311,10 @@ test("password login account limiter bounds attacker-controlled username key car
   assert.match(limiter, /namespace\.accountKeys\.size >= maxDistinctLoginAccountKeysPerIpWindow/);
   assert.match(limiter, /Math\.floor\(now \/ Math\.max\(1, env\.AUTH_LOGIN_IP_WINDOW_MS\)\)/);
   assert.equal((limiter.match(/return loginAccountOverflowKey\(ip, now\);/g) ?? []).length, 2);
-  assert.match(limiter, /const accountNetworkKey = hashRateLimitKey\("account-network", `\$\{accountKey\}:\$\{ip\}`\);/);
-  assert.match(limiter, /namespace\.accountKeys\.has\(accountKey\)\) return accountNetworkKey;/);
-  assert.match(limiter, /namespace\.accountKeys\.add\(accountKey\);\s*return accountNetworkKey;/);
+  assert.match(limiter, /return accountKey;/);
+  assert.doesNotMatch(limiter, /hashRateLimitKey\("account-network", `\$\{accountKey\}:\$\{ip\}`\)/);
+  assert.match(limiter, /namespace\.accountKeys\.has\(accountKey\)\) return accountKey;/);
+  assert.match(limiter, /namespace\.accountKeys\.add\(accountKey\);\s*return accountKey;/);
   assert.match(limiter, /keyGenerator: usernameKey/);
 });
 

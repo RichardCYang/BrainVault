@@ -13,20 +13,40 @@ function section(source, start, end) {
   return source.slice(startIndex, endIndex);
 }
 
-test("page creation receipts distinguish new requests, valid replays, and key reuse", () => {
-  assert.deepEqual(assessPageCreateMutationReceipt(null, "hash-a"), { kind: "new" });
+test("page creation receipts distinguish new requests, valid replays, key reuse, and restored generations", () => {
+  assert.deepEqual(assessPageCreateMutationReceipt(null, "hash-a", 7), { kind: "new" });
   assert.deepEqual(
-    assessPageCreateMutationReceipt({ page_id: "page-a", request_hash: "hash-a" }, "hash-a"),
+    assessPageCreateMutationReceipt(
+      { page_id: "page-a", request_hash: "hash-a", workspace_generation: 7 },
+      "hash-a",
+      7
+    ),
     { kind: "replay", pageId: "page-a" }
   );
 
   assert.deepEqual(
-    assessPageCreateMutationReceipt({ page_id: "page-a", request_hash: "hash-a" }, "hash-b"),
+    assessPageCreateMutationReceipt(
+      { page_id: "page-a", request_hash: "hash-a", workspace_generation: 7 },
+      "hash-b",
+      7
+    ),
     { kind: "collision" }
   );
   assert.deepEqual(
-    assessPageCreateMutationReceipt({ page_id: "page-a", request_hash: null }, "hash-a"),
+    assessPageCreateMutationReceipt(
+      { page_id: "page-a", request_hash: null, workspace_generation: 7 },
+      "hash-a",
+      7
+    ),
     { kind: "collision" }
+  );
+  assert.deepEqual(
+    assessPageCreateMutationReceipt(
+      { page_id: "page-a", request_hash: "hash-a", workspace_generation: 6 },
+      "hash-a",
+      7
+    ),
+    { kind: "superseded" }
   );
 });
 
@@ -40,7 +60,8 @@ test("POST /api/pages reserves an owner-scoped idempotency receipt before durabl
   assert.match(createRoute, /createMutationRequestHash\(creation\)/);
   assert.match(createRoute, /INSERT INTO page_create_mutations/);
   assert.match(createRoute, /if \(!isDuplicateEntryError\(error\)\) throw error;/);
-  assert.match(createRoute, /assessPageCreateMutationReceipt\(receipt, mutationHash\)/);
+  assert.match(createRoute, /assessPageCreateMutationReceipt\(\s*receipt,\s*mutationHash,\s*authScope\.workspaceGeneration\s*\)/);
+  assert.match(createRoute, /PAGE_CREATE_REPLAY_SUPERSEDED/);
   assert.match(createRoute, /PAGE_CREATE_REPLAY_UNAVAILABLE/);
   assert.ok(
     createRoute.indexOf("INSERT INTO page_create_mutations") < createRoute.indexOf("INSERT INTO pages"),
@@ -55,6 +76,10 @@ test("fresh and upgraded databases both install durable page-creation receipts",
     new URL("../migrations/036_page_create_mutation_receipts.sql", import.meta.url),
     "utf8"
   )).replace(/\r\n/g, "\n");
+  const remediation = (await readFile(
+    new URL("../migrations/069_security_report_remediation.sql", import.meta.url),
+    "utf8"
+  )).replace(/\r\n/g, "\n");
 
   const baselineReceiptTable = section(
     baseline,
@@ -67,6 +92,7 @@ test("fresh and upgraded databases both install durable page-creation receipts",
     assert.match(source, /FOREIGN KEY \(owner_id\) REFERENCES users\(id\) ON DELETE CASCADE/);
     assert.doesNotMatch(source, /FOREIGN KEY \(page_id\)/);
   }
+  assert.match(remediation, /ALTER TABLE page_create_mutations[\s\S]*workspace_generation BIGINT UNSIGNED NULL/);
 });
 
 test("browser page creation and downloads remain bound to the initiating authentication generation", async () => {

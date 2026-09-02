@@ -14,6 +14,7 @@ import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { ApiError } from "../lib/http.js";
 import { iconValueSchema, maxCustomIconBytes } from "../lib/icon-value.js";
 import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
+import { customIconUploadRateLimit } from "../middleware/attachment-rate-limit.js";
 import { validate } from "../middleware/validate.js";
 import { requireUser } from "../utils/schemas.js";
 
@@ -75,7 +76,7 @@ customIconRouter.get("/", async (req, res, next) => {
   }
 });
 
-customIconRouter.post("/", parseCustomIconUpload, async (req, res, next) => {
+customIconRouter.post("/", customIconUploadRateLimit, parseCustomIconUpload, async (req, res, next) => {
   try {
     const user = requireUser(req.user);
     const authScope = requireRequestAuthScope(req);

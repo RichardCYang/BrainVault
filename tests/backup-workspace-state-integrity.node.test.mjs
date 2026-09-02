@@ -29,6 +29,8 @@ test("backup v4 preserves page version history and owned-page navigation state",
   assert.match(transfer, /INSERT INTO user_navigation_page_order \(user_id, page_id, sort_order\) VALUES \(\?, \?, \?\)/);
   assert.match(transfer, /function rebindPageVersionChangesJson/);
   assert.match(transfer, /function rebindPageVersionActorsJson/);
+  assert.match(transfer, /user-controlled backup cannot prove[\s\S]*Rebind every imported actor to the importing account/i);
+  assert.match(transfer, /Backup bytes are controlled by the importer[\s\S]*every imported[\s\S]*comment to the importer/i);
   assert.match(transfer, /hash\.update\([\s\S]*?`page-version\\0\$\{version\.page_id\}/);
   assert.match(transfer, /hash\.update\(`navigation-collapsed\\0\$\{pageId\}\\n`\)/);
 

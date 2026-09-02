@@ -1021,20 +1021,30 @@ function rebindPageVersionChangesJson(value: string, sourceUserId: string, targe
   return JSON.stringify(parsed);
 }
 
-function rebindPageVersionActorsJson(value: string, sourceUserId: string, targetUserId: string) {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    invalidBackup("Page version history contains invalid actor JSON");
-  }
-  if (!Array.isArray(parsed)) invalidBackup("Page version history actors must be an array");
+function rebindPageVersionActorsJson(
+  value: string,
+  sourceUserId: string,
+  sourceUsername: string,
+  targetUser: Pick<UserRow, "id" | "username" | "name">
+) {
+  const parsed = parsePageVersionActorsJson(value);
   for (const actor of parsed) {
-    if (!actor || typeof actor !== "object" || Array.isArray(actor)) continue;
-    const record = actor as Record<string, unknown>;
-    if (record.id === sourceUserId) record.id = targetUserId;
+    if (actor.id === sourceUserId && actor.username.toLowerCase() !== sourceUsername.toLowerCase()) {
+      invalidBackup("Page version history contains an invalid backup-owner identity");
+    }
   }
-  return JSON.stringify(parsed);
+  if (!parsed.length) return "[]";
+
+  // A user-controlled backup cannot prove that another live account authored a
+  // historical change. Rebind every imported actor to the importing account
+  // instead of trusting an arbitrary id/username pair from the archive. This is
+  // intentionally stricter than merely checking that the other account exists
+  // or was shared onto the page, neither of which proves authorship.
+  return JSON.stringify([{
+    id: targetUser.id,
+    username: targetUser.username,
+    name: targetUser.name ?? null
+  }]);
 }
 
 function expectedCustomIconExtension(mimeType: BackupCustomIconFile["mimeType"]) {
@@ -1327,7 +1337,7 @@ export async function readUserDataBackupManifest(zipPath: string): Promise<Brain
   const entryNamesCaseFolded = new Set<string>();
   let totalSize = 0n;
   for (const entry of entries) {
-    if (!entry.name || entry.name.startsWith("/") || entry.name.includes("\\") || entry.name.split("/").includes("..")) {
+    if (!entry.name || path.isAbsolute(entry.name) || entry.name.includes(":") || entry.name.includes("\\") || entry.name.split("/").includes("..")) {
       invalidBackup(`ZIP entry path is unsafe: ${entry.name}`);
     }
     const caseFoldedName = entry.name.toLowerCase();
@@ -2209,44 +2219,27 @@ async function prepareRestoreCollectionSharingPlan(
   return { mode: "backup", shares };
 }
 
-async function prepareRestorePageComments(
-  client: DbClient,
+function prepareRestorePageComments(
   userId: string,
   manifest: BrainVaultBackup
-): Promise<RestoredPageComment[]> {
+): RestoredPageComment[] {
   const comments = manifest.data.pageComments ?? [];
-  const externalAuthorIds = [...new Set(
-    comments
-      .map((comment) => comment.author_user_id)
-      .filter((authorId) => authorId !== manifest.source.userId)
-  )];
-  const usersById = new Map<string, { id: string; username: string }>();
-  for (const group of batch(externalAuthorIds)) {
-    if (!group.length) continue;
-    const rows = await client.query<{ id: string; username: string }>(
-      `SELECT id, username FROM users WHERE id IN (${group.map(() => "?").join(",")})`,
-      group
-    );
-    for (const row of rows) usersById.set(row.id, row);
-  }
-
   return comments.map((comment) => {
-    let authorId = comment.author_user_id;
-    if (authorId === manifest.source.userId) {
-      if (comment.author_username.toLowerCase() !== manifest.source.username.toLowerCase()) {
-        invalidBackup(`Page comment owner identity is invalid: ${comment.id}`);
-      }
-      authorId = userId;
-    } else {
-      const author = usersById.get(authorId);
-      if (!author || author.username.toLowerCase() !== comment.author_username.toLowerCase()) {
-        invalidBackup(`Page comment author identity does not match this server: ${comment.author_username}`);
-      }
+    if (
+      comment.author_user_id === manifest.source.userId
+      && comment.author_username.toLowerCase() !== manifest.source.username.toLowerCase()
+    ) {
+      invalidBackup(`Page comment owner identity is invalid: ${comment.id}`);
     }
+
+    // Backup bytes are controlled by the importer and therefore cannot
+    // authenticate another account's authorship. Rebinding every imported
+    // comment to the importer prevents forged statements while retaining the
+    // comment content and timestamps.
     return {
       id: comment.id,
       pageId: comment.page_id,
-      userId: authorId,
+      userId,
       body: comment.body,
       createdAt: comment.created_at,
       updatedAt: comment.updated_at
@@ -2434,6 +2427,11 @@ async function importRows(
       userId
     ]
   );
+  const restoredOwner = await client.queryOne<Pick<UserRow, "id" | "username" | "name">>(
+    "SELECT id, username, name FROM users WHERE id = ?",
+    [userId]
+  );
+  if (!restoredOwner) throw new ApiError(404, "USER_NOT_FOUND", "User not found");
 
   const pageCoverByPageId = new Map((manifest.pageCovers ?? []).map((item) => [item.pageId, item]));
   const orderedPages = orderByParent(manifest.data.pages, (item) => item.id, (item) => item.parent_page_id);
@@ -2560,7 +2558,12 @@ async function importRows(
           version.page_edit_version,
           version.page_content_version,
           JSON.stringify(parsePageVersionActorsJson(
-            rebindPageVersionActorsJson(version.actors, manifest.source.userId, userId)
+            rebindPageVersionActorsJson(
+              version.actors,
+              manifest.source.userId,
+              manifest.source.username,
+              restoredOwner
+            )
           )),
           version.source,
           version.change_count,
@@ -3256,7 +3259,7 @@ export async function importUserDataBackup(
   const entryNamesCaseFolded = new Set<string>();
   let totalSize = 0n;
   for (const entry of entries) {
-    if (!entry.name || entry.name.startsWith("/") || entry.name.includes("\\") || entry.name.split("/").includes("..")) {
+    if (!entry.name || path.isAbsolute(entry.name) || entry.name.includes(":") || entry.name.includes("\\") || entry.name.split("/").includes("..")) {
       invalidBackup(`ZIP entry path is unsafe: ${entry.name}`);
     }
     const caseFoldedName = entry.name.toLowerCase();
@@ -3382,7 +3385,7 @@ export async function importUserDataBackup(
       }
       const outputPath = path.join(stagedAttachmentDir, attachment.blockId);
       try {
-        await copyZipEntryToFile(zipPath, entry, outputPath);
+        await copyZipEntryToFile(zipPath, entry, outputPath, env.MAX_ATTACHMENT_SIZE_MB * 1024 * 1024);
         await syncPath(outputPath);
       } catch (error) {
         invalidBackup(error instanceof Error ? error.message : `Attachment is corrupt: ${attachment.blockId}`);
@@ -3410,7 +3413,7 @@ export async function importUserDataBackup(
       }
       const outputPath = path.join(stagedAttachmentDir, retained.fileName);
       try {
-        await copyZipEntryToFile(zipPath, entry, outputPath);
+        await copyZipEntryToFile(zipPath, entry, outputPath, env.MAX_ATTACHMENT_SIZE_MB * 1024 * 1024);
         await syncPath(outputPath);
       } catch (error) {
         invalidBackup(error instanceof Error ? error.message : `Retained attachment is corrupt: ${retained.fileName}`);
@@ -3441,7 +3444,7 @@ export async function importUserDataBackup(
       }
       const outputPath = path.join(stagedPageCoverDir, pageCover.pageId);
       try {
-        await copyZipEntryToFile(zipPath, entry, outputPath);
+        await copyZipEntryToFile(zipPath, entry, outputPath, maxCustomCoverImageBytes);
         await syncPath(outputPath);
       } catch (error) {
         invalidBackup(error instanceof Error ? error.message : `Page cover is corrupt: ${pageCover.pageId}`);
@@ -3470,7 +3473,7 @@ export async function importUserDataBackup(
       }
       const outputPath = path.join(stagedCustomIconDir, customIcon.fileName);
       try {
-        await copyZipEntryToFile(zipPath, entry, outputPath);
+        await copyZipEntryToFile(zipPath, entry, outputPath, maxCustomIconBytes);
         await syncPath(outputPath);
       } catch (error) {
         invalidBackup(error instanceof Error ? error.message : `Custom icon is corrupt: ${customIcon.fileName}`);
@@ -3529,7 +3532,7 @@ export async function importUserDataBackup(
           manifest,
           lockedWorkspaceSnapshot.collectionShares
         );
-        restorePageComments = await prepareRestorePageComments(client, userId, manifest);
+        restorePageComments = prepareRestorePageComments(userId, manifest);
         restoreCollaboratorNavigation = await prepareRestoreCollaboratorNavigationPlan(
           client,
           userId,

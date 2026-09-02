@@ -7,13 +7,17 @@ import {
   AttachmentUploadAdmissionLease
 } from "../lib/attachment-upload-admission.js";
 
-function attachmentUploadKey(req: Request) {
+function uploadPrincipalKey(scope: string, req: Request) {
   const userId = typeof req.user?.id === "string" ? req.user.id : "";
   if (userId) {
     const digest = createHash("sha256").update(userId, "utf8").digest("hex");
-    return `attachment-upload-user:${digest}`;
+    return `${scope}-user:${digest}`;
   }
-  return `attachment-upload-ip:${ipKeyGenerator(req.ip || req.socket.remoteAddress || "unknown")}`;
+  return `${scope}-ip:${ipKeyGenerator(req.ip || req.socket.remoteAddress || "unknown")}`;
+}
+
+function attachmentUploadKey(req: Request) {
+  return uploadPrincipalKey("attachment-upload", req);
 }
 
 export const attachmentUploadRateLimit = rateLimit({
@@ -27,6 +31,23 @@ export const attachmentUploadRateLimit = rateLimit({
       error: {
         code: "ATTACHMENT_UPLOAD_RATE_LIMITED",
         message: "Too many attachment upload requests. Try again later."
+      }
+    });
+  }
+});
+
+
+export const customIconUploadRateLimit = rateLimit({
+  windowMs: env.ATTACHMENT_UPLOAD_WINDOW_MS,
+  limit: env.ATTACHMENT_UPLOAD_MAX,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: (req) => uploadPrincipalKey("custom-icon-upload", req),
+  handler: (_req: Request, res: Response) => {
+    res.status(429).json({
+      error: {
+        code: "CUSTOM_ICON_UPLOAD_RATE_LIMITED",
+        message: "Too many custom icon upload requests. Try again later."
       }
     });
   }

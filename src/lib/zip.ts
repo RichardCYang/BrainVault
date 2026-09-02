@@ -503,7 +503,8 @@ export async function readZipEntryBuffer(filePath: string, entry: ZipReadEntry, 
   }
 }
 
-export async function copyZipEntryToFile(filePath: string, entry: ZipReadEntry, outputPath: string) {
+export async function copyZipEntryToFile(filePath: string, entry: ZipReadEntry, outputPath: string, maxBytes: number) {
+  if (entry.uncompressedSize > BigInt(maxBytes)) throw new Error("ZIP entry exceeds the allowed size");
   const start = toSafeNumber(entry.dataOffset, "ZIP entry offset");
   const size = toSafeNumber(entry.uncompressedSize, "ZIP entry size");
   const end = size === 0 ? start - 1 : start + size - 1;

@@ -22,6 +22,7 @@ test("discoverable-passkey login keeps the WebAuthn ceremony server-authoritativ
   assert.match(route, /expectedOrigin:\s*webAuthnConfig\.origins/);
   assert.match(route, /expectedRPID:\s*webAuthnConfig\.rpID/);
   assert.match(route, /SET used_at = CURRENT_TIMESTAMP\(3\)/);
+  assert.match(route, /WHERE token_hash = \? AND binding_hash = \? AND source_ip = \?/);
   assert.match(route, /opaqueTokenPattern = \/\^\[A-Za-z0-9_\-\]\{43\}\$\//);
   assert.match(route, /maxClientExtensionResultsBytes = 8 \* 1024/);
   assert.match(route, /maxClientExtensionNodes = 256/);
@@ -30,7 +31,7 @@ test("discoverable-passkey login keeps the WebAuthn ceremony server-authoritativ
   assert.match(route, /function hasStrictDirectPasskeyShape/);
   assert.match(route, /if \(!hasStrictDirectPasskeyShape\(req\.body\)\) throw loginFailure\(\)/);
   assert.ok(
-    route.indexOf("consumePasskeyLoginChallenge(challengeToken, binding)")
+    route.indexOf("consumePasskeyLoginChallenge(challengeToken, binding, sourceIp)")
       < route.indexOf("verifySchema.safeParse(req.body)"),
     "a valid one-time token must be consumed before full response validation"
   );

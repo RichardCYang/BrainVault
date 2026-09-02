@@ -13,6 +13,12 @@ const maxPendingHistoryReplayBytesPerPrincipal = maxCollaborationHistoryReplayBy
 const validationTaskTimeoutMs = 5_000;
 const historyReplayTaskTimeoutMs = 30_000;
 const maxValidationWorkers = 2;
+// Large-state Yjs validation cost is dominated by reconstructing/materializing the
+// existing document rather than by the wire update. With two workers, reserve at
+// least one slot from simultaneous large-state work so hostile edits on a legal
+// large page cannot consume the entire global validation pool. Large pages remain
+// supported; their expensive validations are serialized across rooms/principals.
+export const expensiveValidationStateThresholdBytes = 4 * 1024 * 1024;
 const validationWorkerOldGenerationMb = 128;
 const validationWorkerYoungGenerationMb = 32;
 
@@ -127,6 +133,7 @@ type PendingTaskBase = {
 type PendingValidationTask = PendingTaskBase & {
   kind: "validation";
   request: WorkerValidationRequest;
+  expensive: boolean;
   resolve: (result: CollaborationValidationResult) => void;
 };
 
@@ -246,6 +253,7 @@ export class CollaborationValidationPool {
         kind: "validation",
         principalKey,
         request: workerRequest,
+        expensive: request.currentState.byteLength >= expensiveValidationStateThresholdBytes,
         validationBytes,
         timeoutMs: validationTaskTimeoutMs,
         resolve,
@@ -458,8 +466,15 @@ export class CollaborationValidationPool {
     else this.pendingValidationBytesByPrincipal.set(task.principalKey, principalBytes);
   }
 
-  private takeNextTask(activeHistoryTask: boolean) {
-    const validationIndex = this.queue.findIndex((task) => task.kind === "validation");
+  private takeNextTask(activeHistoryTask: boolean, activeExpensiveValidation: boolean) {
+    const validationIndex = this.queue.findIndex((task) =>
+      task.kind === "validation"
+      && (
+        !task.expensive
+        || this.workerCount === 1
+        || !activeExpensiveValidation
+      )
+    );
     if (validationIndex >= 0) return this.queue.splice(validationIndex, 1)[0];
     if (activeHistoryTask) return null;
     const historyIndex = this.queue.findIndex((task) => task.kind !== "validation");
@@ -469,11 +484,15 @@ export class CollaborationValidationPool {
   private dispatch() {
     if (this.closed) return;
     let activeHistoryTask = this.slots.some((slot) => slot.activeTask?.kind !== "validation" && slot.activeTask !== null);
+    let activeExpensiveValidation = this.slots.some((slot) =>
+      slot.activeTask?.kind === "validation" && slot.activeTask.expensive
+    );
     for (const slot of this.slots) {
       if (slot.failed || slot.activeTask || !this.queue.length) continue;
-      const task = this.takeNextTask(activeHistoryTask);
+      const task = this.takeNextTask(activeHistoryTask, activeExpensiveValidation);
       if (!task) continue;
       if (task.kind !== "validation") activeHistoryTask = true;
+      else if (task.expensive) activeExpensiveValidation = true;
       slot.activeTask = task;
       slot.worker.ref();
       const timeout = setTimeout(() => {

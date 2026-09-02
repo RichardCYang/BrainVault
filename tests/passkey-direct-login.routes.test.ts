@@ -181,6 +181,7 @@ beforeEach(() => {
       if (
         !row
         || row.binding_hash !== String(params[1])
+        || row.source_ip !== String(params[2])
         || row.used_at
         || row.expires_at.getTime() <= Date.now()
       ) return undefined;
@@ -218,6 +219,7 @@ beforeEach(() => {
       if (
         !row
         || row.binding_hash !== String(params[1])
+        || row.source_ip !== String(params[2])
         || row.used_at
         || row.expires_at.getTime() <= Date.now()
       ) return { affectedRows: 0 };
