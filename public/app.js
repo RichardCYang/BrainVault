@@ -1614,6 +1614,7 @@ function setAccountDataOperationBusy(busy) {
 function setAuthMode(mode, updateHash = true) {
   state.authMode = mode === "register" ? "register" : "login";
   const isRegister = state.authMode === "register";
+  if (isRegister) clearDirectPasskeyOptionsWarmup();
 
   elements.authKicker.textContent = t(isRegister ? "auth.registerKicker" : "auth.loginKicker");
   elements.authTitle.textContent = t(isRegister ? "auth.registerTitle" : "auth.loginTitle");
@@ -1698,6 +1699,71 @@ function isWebAuthnSupported() {
 }
 
 let webAuthnClientCapabilitiesPromise = null;
+const directPasskeyOptionsWarmupMaxAgeMs = 45_000;
+let directPasskeyOptionsWarmup = null;
+let directPasskeyOptionsWarmupPromise = null;
+let directPasskeyOptionsWarmupGeneration = 0;
+
+function clearDirectPasskeyOptionsWarmup() {
+  directPasskeyOptionsWarmupGeneration += 1;
+  directPasskeyOptionsWarmup = null;
+  directPasskeyOptionsWarmupPromise = null;
+}
+
+function takeDirectPasskeyOptionsWarmup() {
+  const warmed = directPasskeyOptionsWarmup;
+  directPasskeyOptionsWarmup = null;
+  if (!warmed) return null;
+  if (Date.now() - warmed.receivedAt > directPasskeyOptionsWarmupMaxAgeMs) return null;
+  return warmed.data;
+}
+
+function requestDirectPasskeyOptions() {
+  return api("/api/auth/passkey/options", {
+    method: "POST",
+    body: {},
+    skipAuthReset: true,
+    // This endpoint only creates a one-time WebAuthn challenge and does not
+    // read the VPN/timezone signal. Do not put STUN discovery in the critical
+    // path that prepares the native WebAuthn prompt. /verify still sends it.
+    skipClientNetworkVerification: true
+  });
+}
+
+function primeDirectPasskeyOptions() {
+  if (
+    !isWebAuthnSupported()
+    || state.authenticated
+    || state.authMode !== "login"
+    || state.authOperationBusy
+  ) return Promise.resolve(null);
+
+  if (directPasskeyOptionsWarmup) {
+    if (Date.now() - directPasskeyOptionsWarmup.receivedAt <= directPasskeyOptionsWarmupMaxAgeMs) {
+      return Promise.resolve(directPasskeyOptionsWarmup.data);
+    }
+    directPasskeyOptionsWarmup = null;
+  }
+  if (directPasskeyOptionsWarmupPromise) return directPasskeyOptionsWarmupPromise;
+
+  const generation = directPasskeyOptionsWarmupGeneration;
+  const request = requestDirectPasskeyOptions()
+    .then((data) => {
+      if (
+        generation !== directPasskeyOptionsWarmupGeneration
+        || state.authenticated
+        || state.authMode !== "login"
+      ) return null;
+      directPasskeyOptionsWarmup = { data, receivedAt: Date.now() };
+      return data;
+    })
+    .catch(() => null)
+    .finally(() => {
+      if (directPasskeyOptionsWarmupPromise === request) directPasskeyOptionsWarmupPromise = null;
+    });
+  directPasskeyOptionsWarmupPromise = request;
+  return request;
+}
 
 function getPasskeyRegistrationTarget() {
   return elements.accountPasskeyRegistrationTarget?.value === "remote" ? "remote" : "automatic";
@@ -2977,6 +3043,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   closeSlashMenu();
   closeMobileSidebar();
   resetMfaLogin();
+  clearDirectPasskeyOptionsWarmup();
   setAuthenticated(false);
   state.user = null;
   serverRecoveryCandidates = [];
@@ -18958,22 +19025,37 @@ window.addEventListener("storage", (event) => {
   if (elements.themeSelect) elements.themeSelect.value = theme;
 });
 
+const primeDirectPasskeyOptionsFromIntent = () => {
+  void primeDirectPasskeyOptions();
+};
+
+// Warm the server-issued challenge only after the user shows intent to use the
+// passkey control. This avoids spending anonymous rate-limit budget on every
+// login-page view while giving pointer, touch, and keyboard users a head start.
+elements.authPasskeyLogin.addEventListener("pointerenter", primeDirectPasskeyOptionsFromIntent, { passive: true });
+elements.authPasskeyLogin.addEventListener("pointerdown", primeDirectPasskeyOptionsFromIntent, { passive: true });
+elements.authPasskeyLogin.addEventListener("focus", primeDirectPasskeyOptionsFromIntent);
+
 elements.authPasskeyLogin.addEventListener("click", async () => {
   if (state.authOperationBusy || state.authMode !== "login") return;
   const operation = beginAuthFlowOperation();
   setAuthOperationBusy(true);
   try {
     setStatus(t("auth.passkeyAuthenticating"));
-    const optionsData = await api("/api/auth/passkey/options", {
-      method: "POST",
-      body: {},
-      skipAuthReset: true,
-      // This endpoint only creates a one-time WebAuthn challenge and does not
-      // read the VPN/timezone signal. Do not put STUN discovery in the critical
-      // click -> native WebAuthn prompt path. /verify still sends the signal.
-      skipClientNetworkVerification: true
-    });
-    if (!isCurrentAuthFlowOperation(operation)) return;
+    let optionsData = takeDirectPasskeyOptionsWarmup();
+    if (!optionsData && directPasskeyOptionsWarmupPromise) {
+      await directPasskeyOptionsWarmupPromise;
+      if (!isCurrentAuthFlowOperation(operation)) return;
+      optionsData = takeDirectPasskeyOptionsWarmup();
+    }
+    if (!optionsData) {
+      optionsData = await requestDirectPasskeyOptions();
+      if (!isCurrentAuthFlowOperation(operation)) return;
+    }
+
+    // When intent warm-up completed before the click, there has been no await
+    // in this handler yet. Invoke WebAuthn now so the browser receives the call
+    // in the same trusted user-activation task instead of after a network hop.
     const response = await getWebAuthnCredential(optionsData.options, { trigger: elements.authPasskeyLogin });
     if (!isCurrentAuthFlowOperation(operation)) return;
     const data = await api("/api/auth/passkey/verify", {

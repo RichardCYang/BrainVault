@@ -35,6 +35,48 @@ describe("direct passkey login UI contract", () => {
     expect(i18n).toContain("passkeyForegroundRequired:");
   });
 
+  it("warms direct-login options from explicit intent and keeps ready options on the click activation task", () => {
+    expect(client).toContain("const directPasskeyOptionsWarmupMaxAgeMs = 45_000");
+    expect(client).toContain("function requestDirectPasskeyOptions()");
+    expect(client).toContain("function primeDirectPasskeyOptions()");
+    expect(client).toContain("function takeDirectPasskeyOptionsWarmup()");
+    expect(client).toContain(
+      'elements.authPasskeyLogin.addEventListener("pointerenter", primeDirectPasskeyOptionsFromIntent, { passive: true })'
+    );
+    expect(client).toContain(
+      'elements.authPasskeyLogin.addEventListener("pointerdown", primeDirectPasskeyOptionsFromIntent, { passive: true })'
+    );
+    expect(client).toContain(
+      'elements.authPasskeyLogin.addEventListener("focus", primeDirectPasskeyOptionsFromIntent)'
+    );
+    expect(client).toMatch(
+      /setStatus\(t\("auth\.passkeyAuthenticating"\)\);\s+let optionsData = takeDirectPasskeyOptionsWarmup\(\);/
+    );
+    expect(client).toMatch(
+      /if \(!optionsData\) \{[\s\S]*?optionsData = await requestDirectPasskeyOptions\(\);[\s\S]*?const response = await getWebAuthnCredential/
+    );
+  });
+
+  it("keeps challenge garbage collection out of the prompt-critical option issuance mutation", () => {
+    const createStart = directRoutes.indexOf("async function createPasskeyLoginChallenge");
+    const cleanupStart = directRoutes.indexOf("function schedulePasskeyLoginChallengeCleanup");
+    expect(createStart).toBeGreaterThanOrEqual(0);
+    expect(cleanupStart).toBeGreaterThan(createStart);
+    const createSource = directRoutes.slice(createStart, cleanupStart);
+
+    expect(createSource).toContain("await db.execute(");
+    expect(createSource).toContain("INSERT INTO passkey_login_challenges");
+    expect(createSource).not.toContain("transaction(");
+    expect(createSource).not.toContain("DELETE FROM passkey_login_challenges");
+    expect(directRoutes).toContain("function schedulePasskeyLoginChallengeCleanup()");
+    expect(directRoutes).toMatch(
+      /res\.once\("finish", schedulePasskeyLoginChallengeCleanup\);\s+res\.json\(result\);/
+    );
+    expect(directRoutes).toMatch(
+      /DELETE FROM passkey_login_challenges\s+WHERE expires_at <= CURRENT_TIMESTAMP\(3\)/
+    );
+  });
+
   it("hides the passkey action during registration and serializes userHandle", () => {
     expect(client).toContain('elements.authPasskeyLoginSection.classList.toggle("hidden", isRegister)');
     expect(client).toContain('elements.username.autocomplete = isRegister ? "username" : "username webauthn"');

@@ -41,6 +41,7 @@ import type { UserRow } from "../types/domain.js";
 const base64UrlPattern = /^[A-Za-z0-9_-]+$/;
 const opaqueTokenPattern = /^[A-Za-z0-9_-]{43}$/;
 const challengeLifetimeMs = 5 * 60_000;
+const challengeCleanupIntervalMs = 60_000;
 const maxCredentialIdBytes = 1023;
 const maxUserHandleBytes = 64;
 const maxClientExtensionResultsBytes = 8 * 1024;
@@ -165,6 +166,9 @@ type PasskeyRow = {
 
 export const passkeyLoginRouter = Router();
 
+let passkeyChallengeCleanupInFlight: Promise<unknown> | null = null;
+let nextPasskeyChallengeCleanupAt = 0;
+
 passkeyLoginRouter.use((_req, res, next) => {
   res.setHeader("Cache-Control", "private, no-store");
   next();
@@ -241,27 +245,43 @@ async function createPasskeyLoginChallenge(binding: string, sourceIp: string) {
   });
   const challengeToken = createOpaqueToken();
 
-  await transaction(async (client) => {
-    await client.execute(
-      `DELETE FROM passkey_login_challenges
-       WHERE expires_at <= CURRENT_TIMESTAMP(3)
-          OR (used_at IS NOT NULL AND used_at <= DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 10 MINUTE))`
-    );
-    await client.execute(
-      `INSERT INTO passkey_login_challenges
-         (token_hash, binding_hash, challenge, source_ip, expires_at)
-       VALUES (?, ?, ?, ?, ?)`,
-      [
-        hashOpaqueToken(challengeToken),
-        hashOpaqueToken(binding),
-        options.challenge,
-        sourceIp,
-        expiresAt(challengeLifetimeMs)
-      ]
-    );
-  });
+  // This insert is the only database mutation required to make the freshly
+  // issued challenge verifiable. Keeping unrelated garbage collection out of
+  // this critical path avoids several extra DB protocol round trips before the
+  // browser is even allowed to call navigator.credentials.get().
+  await db.execute(
+    `INSERT INTO passkey_login_challenges
+       (token_hash, binding_hash, challenge, source_ip, expires_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [
+      hashOpaqueToken(challengeToken),
+      hashOpaqueToken(binding),
+      options.challenge,
+      sourceIp,
+      expiresAt(challengeLifetimeMs)
+    ]
+  );
 
   return { options, challengeToken };
+}
+
+function schedulePasskeyLoginChallengeCleanup() {
+  const now = Date.now();
+  if (passkeyChallengeCleanupInFlight || now < nextPasskeyChallengeCleanupAt) return;
+  nextPasskeyChallengeCleanupAt = now + challengeCleanupIntervalMs;
+
+  // All rows have a five-minute expires_at, so the old used_at>10m branch was
+  // redundant. Using only the already-indexed expiry column also gives MariaDB
+  // a straightforward range predicate. Cleanup is intentionally best-effort
+  // and runs after the response has been queued so it cannot delay native UI.
+  passkeyChallengeCleanupInFlight = db.execute(
+    `DELETE FROM passkey_login_challenges
+     WHERE expires_at <= CURRENT_TIMESTAMP(3)`
+  ).catch((error) => {
+    console.error("Failed to clean up expired passkey login challenges", error);
+  }).finally(() => {
+    passkeyChallengeCleanupInFlight = null;
+  });
 }
 
 async function consumePasskeyLoginChallenge(challengeToken: string, binding: string) {
@@ -325,6 +345,7 @@ passkeyLoginRouter.post(
     try {
       const binding = getOrCreatePasskeyCeremonyBinding(req, res);
       const result = await createPasskeyLoginChallenge(binding, getClientIpAddress(req));
+      res.once("finish", schedulePasskeyLoginChallengeCleanup);
       res.json(result);
     } catch (error) {
       next(error);

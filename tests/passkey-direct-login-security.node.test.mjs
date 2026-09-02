@@ -10,6 +10,7 @@ const read = async (relativePath) => (
 
 test("discoverable-passkey login keeps the WebAuthn ceremony server-authoritative", async () => {
   const route = await read("src/routes/passkey-login.routes.ts");
+  const client = await read("public/app.js");
   const cookie = await read("src/lib/passkey-ceremony-cookie.ts");
   const migration = await read("migrations/040_passkey_direct_login.sql");
   const app = await read("src/app.ts");
@@ -39,6 +40,28 @@ test("discoverable-passkey login keeps the WebAuthn ceremony server-authoritativ
   assert.match(route, /assertStablePasskey/);
   assert.match(route, /previousCounter > 0 && newCounter <= previousCounter/);
   assert.match(route, /PASSKEY_LOGIN_FAILED/);
+
+  const createChallengeSource = route.slice(
+    route.indexOf("async function createPasskeyLoginChallenge"),
+    route.indexOf("function schedulePasskeyLoginChallengeCleanup")
+  );
+  assert.match(createChallengeSource, /await db\.execute\([\s\S]*INSERT INTO passkey_login_challenges/);
+  assert.doesNotMatch(createChallengeSource, /transaction\(/);
+  assert.doesNotMatch(createChallengeSource, /DELETE FROM passkey_login_challenges/);
+  assert.match(route, /function schedulePasskeyLoginChallengeCleanup\(\)/);
+  assert.match(route, /res\.once\("finish", schedulePasskeyLoginChallengeCleanup\);\s+res\.json\(result\);/);
+  assert.match(route, /DELETE FROM passkey_login_challenges\s+WHERE expires_at <= CURRENT_TIMESTAMP\(3\)/);
+
+  assert.match(client, /const directPasskeyOptionsWarmupMaxAgeMs = 45_000/);
+  assert.match(client, /function primeDirectPasskeyOptions\(\)/);
+  assert.match(client, /function takeDirectPasskeyOptionsWarmup\(\)/);
+  assert.match(client, /addEventListener\("pointerenter", primeDirectPasskeyOptionsFromIntent/);
+  assert.match(client, /addEventListener\("pointerdown", primeDirectPasskeyOptionsFromIntent/);
+  assert.match(client, /addEventListener\("focus", primeDirectPasskeyOptionsFromIntent/);
+  assert.match(
+    client,
+    /setStatus\(t\("auth\.passkeyAuthenticating"\)\);\s+let optionsData = takeDirectPasskeyOptionsWarmup\(\);/
+  );
 
   assert.match(cookie, /httpOnly:\s*true/);
   assert.match(cookie, /sameSite:\s*"strict"/);
