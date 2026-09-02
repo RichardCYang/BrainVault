@@ -31,9 +31,13 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `GET` | `/api/pages/:pageId` | Read a page and its block tree |
 | `PATCH` | `/api/pages/:pageId` | Update page metadata |
 | `DELETE` | `/api/pages/:pageId` | Archive or permanently delete a page |
-| `GET` | `/api/pages/:pageId/shares` | List invited editors; owner only |
-| `POST` | `/api/pages/:pageId/shares` | Add an existing user as an editor; owner only |
-| `DELETE` | `/api/pages/:pageId/shares/:userId` | Remove an editor and close that user’s active sockets; owner only |
+| `GET` | `/api/pages/:pageId/shares` | List direct page `EDIT` grants; page owner or effective `ADMIN` only |
+| `POST` | `/api/pages/:pageId/shares` | Add an existing user as a direct page editor; page owner or effective `ADMIN` only |
+| `DELETE` | `/api/pages/:pageId/shares/:userId` | Remove a direct page editor and close sockets for the superseded grant generation; page owner or effective `ADMIN` only |
+| `GET` | `/api/collections/:collectionId/shares` | List `READ`/`WRITE`/`ADMIN` grants for a custom collection; owner or collection `ADMIN` only |
+| `POST` | `/api/collections/:collectionId/shares` | Add an existing account to a custom collection with `READ`, `WRITE`, or `ADMIN` |
+| `PATCH` | `/api/collections/:collectionId/shares/:userId` | Change a collection grant using its current generation token |
+| `DELETE` | `/api/collections/:collectionId/shares/:userId` | Remove a collection grant using its current generation token |
 | `POST` | `/api/pages/:pageId/collaboration/session` | Issue a short-lived page-scoped WebSocket ticket and canonical snapshot; requires `{ "documentEpochProtocol": 2 }` |
 | `PUT` | `/api/pages/:pageId/collaboration/snapshot` | Materialize the locked durable Yjs log into page/block tables; request content is not trusted |
 | `WS` | `/api/collaboration/:pageId` | Authenticated binary Yjs updates plus JSON presence/control messages |
@@ -43,8 +47,8 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `PATCH` | `/api/blocks/:blockId` | Update a block |
 | `DELETE` | `/api/blocks/:blockId` | Delete a block and its descendants using an exact version snapshot and required mutation ID |
 | `GET` | `/api/blocks/:blockId/attachment` | Download an attachment after current page-access verification, forced disposition, and active-content response hardening |
-| `GET` | `/api/data/export` | Stream a complete ZIP backup under a per-user rate limit, including page sharing grants bound to collaborator account ID and username |
-| `POST` | `/api/data/import` | Validate and restore a BrainVault backup ZIP; ID-bound grants are recreated; legacy grants are preserved only through verified current identities |
+| `GET` | `/api/data/export` | Stream a complete ZIP backup under a per-user rate limit, including page and collection sharing grants bound to collaborator account ID and username |
+| `POST` | `/api/data/import` | Validate and restore a BrainVault backup ZIP; ID-bound page/collection grants are recreated; compatible legacy grants are preserved only through verified current identities |
 | `POST` | `/api/pages/:pageId/blocks/reorder` | Move or reorder blocks |
 | `GET` | `/api/pages/:pageId/render` | Render sanitized page HTML |
 | `GET` | `/api/pages/:pageId/versions` | List owner-only page version history; historical entries may contain deleted content |
@@ -52,6 +56,18 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `DELETE` | `/api/pages/:pageId/versions` | Reset owner-only page version history once using an idempotency key plus the exact viewed page/content/history versions |
 | `GET` | `/api/search?q=...` | Search titles and block Markdown |
 
+
+## Collection-sharing API
+
+Collection sharing applies only to persisted custom collections; the virtual Default Collection has no shareable collection record. `GET`, `POST`, `PATCH`, and `DELETE` under `/api/collections/:collectionId/shares` all require an authenticated caller who can administer the collection (owner or effective `ADMIN`).
+
+`POST /api/collections/:collectionId/shares` accepts an existing `username` and a `permission` of `READ`, `WRITE`, or `ADMIN`. The grant applies through `page_collection_memberships` to every current member page. If a document becomes effectively shared for the first time, BrainVault initializes a fresh Yjs collaboration lineage from its canonical SQL snapshot. A collection grant is authoritative over a direct page `EDIT` grant for the same user; a new `READ` collection grant therefore downgrades that user's effective member-page access to read-only while the collection grant exists.
+
+`PATCH /api/collections/:collectionId/shares/:userId` and `DELETE /api/collections/:collectionId/shares/:userId` require `expectedGeneration`, the `generation` returned with the current grant. The server rotates the generation on permission changes and rejects stale actions with `409 COLLECTION_SHARE_GENERATION_CHANGED`. A `WRITE`/`ADMIN` to `READ` downgrade and a removal preserve recovery state and fence active collaboration writes before revoking write authority.
+
+Removing collection access recalculates every member document's effective share set. A lower-priority direct page grant can become effective again. Collaboration history is torn down only for documents whose final effective share is gone, and only after the latest accepted Yjs updates are safely materialized.
+
+See [Collection sharing](../../collaboration/2026-09-02/collection-sharing.md) for the UI entry point and detailed role/inheritance behavior.
 
 ## Page-creation retry integrity
 
@@ -87,9 +103,11 @@ Only a matching fresh snapshot proceeds to delete the prior history, write the r
 
 ## Backup sharing integrity
 
-Current-format manifests include `data.pageShares` entries containing the page ID, stable collaborator account ID, collaborator username, `EDIT` permission, and creation timestamp. Import locks destination accounts by ID and requires the ID-and-username pair to match before destructive replacement. A missing or mismatched account, self-share, duplicate grant, mixed identity generation, collection target, or unknown page causes a validation failure with no data replacement. An archived ordinary page may carry a retained grant because archiving suspends live collaboration without deleting the access list; restore preserves that grant for a later unarchive.
+Current-format version 4 manifests can include both `data.pageShares` and `data.collectionShares`. Direct page entries contain the page ID, stable collaborator account ID, collaborator username, `EDIT` permission, and creation timestamp. Collection entries contain the collection ID, the same stable collaborator identity pair, `READ`/`WRITE`/`ADMIN` permission, and creation timestamp. Import locks destination accounts and validates the ID-and-username pair before destructive replacement. Missing or mismatched accounts, self-shares, duplicate grants, invalid targets, or unknown pages/collections fail validation with no data replacement.
 
-Username-only `pageShares` records from the earlier format are accepted only when each record matches a currently locked page-to-account grant in the destination workspace; the importer never discovers a legacy collaborator by username alone. Backups created before `pageShares` existed remain accepted through the separate `legacy-preserved` path: BrainVault snapshots current grants and reinserts those whose ordinary page IDs survive, including archived pages with retained grants, rather than losing them through the `pages` → `page_shares` cascade. The import response reports `counts.shares` and `sharing.mode` (`backup` or `legacy-preserved`).
+Collection memberships are rebuilt from the restored page hierarchy before collection grants are inserted. Restored page and collection grants receive fresh causal generations. The import response reports direct-page grant totals in `counts.shares`/`sharing` and collection grant totals in `counts.collectionShares`/`collectionSharing`.
+
+Username-only `pageShares` records from the earlier direct-sharing format are accepted only when each record matches a currently locked page-to-account grant in the destination workspace; the importer never discovers a legacy collaborator by username alone. Backups that predate `pageShares` preserve valid current direct grants for matching ordinary page IDs. Older version 4 backups that omit `collectionShares` similarly preserve valid current collection grants for collection IDs that survive restore. Backups from versions before v4 cannot declare collection-share data.
 
 ## Collaboration materialization integrity
 

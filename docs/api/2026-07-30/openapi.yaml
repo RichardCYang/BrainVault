@@ -365,7 +365,7 @@ components:
           maxLength: 128
     DataTransferCounts:
       type: object
-      required: [pages, blocks, attachments, retainedAttachments, pageCovers, customIcons, tags, shares]
+      required: [pages, blocks, attachments, retainedAttachments, pageCovers, customIcons, tags, shares, collectionShares]
       properties:
         pages:
           type: integer
@@ -396,6 +396,10 @@ components:
           type: integer
           minimum: 0
           description: Page sharing grants recreated or preserved by the restore.
+        collectionShares:
+          type: integer
+          minimum: 0
+          description: Collection sharing grants recreated or preserved by the restore.
     DataImportSharing:
       type: object
       required: [mode, count]
@@ -403,19 +407,21 @@ components:
         mode:
           type: string
           enum: [backup, legacy-preserved]
-          description: Whether grants came from the backup manifest or were preserved for a legacy manifest without pageShares.
+          description: Whether this grant set came from the backup manifest or was preserved because the corresponding share array was absent.
         count:
           type: integer
           minimum: 0
     DataImportResponse:
       type: object
-      required: [user, counts, sharing]
+      required: [user, counts, sharing, collectionSharing]
       properties:
         user:
           $ref: '#/components/schemas/PublicUser'
         counts:
           $ref: '#/components/schemas/DataTransferCounts'
         sharing:
+          $ref: '#/components/schemas/DataImportSharing'
+        collectionSharing:
           $ref: '#/components/schemas/DataImportSharing'
     PageInput:
       type: object
@@ -1042,6 +1048,66 @@ components:
           maxLength: 64
           pattern: '^[a-zA-Z0-9_-]+$'
           description: Causal token for this specific editor grant. Supply it when removing the grant.
+    ShareCollectionInput:
+      type: object
+      additionalProperties: false
+      required: [username, permission]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 40
+          pattern: '^[a-zA-Z0-9._-]+$'
+          description: Existing BrainVault login ID. The collection owner cannot be added as a collaborator.
+        permission:
+          type: string
+          enum: [READ, WRITE, ADMIN]
+    UpdateCollectionShareInput:
+      type: object
+      additionalProperties: false
+      required: [permission, expectedGeneration]
+      properties:
+        permission:
+          type: string
+          enum: [READ, WRITE, ADMIN]
+        expectedGeneration:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-zA-Z0-9_-]+$'
+          description: Current causal generation of the collection grant.
+    RemoveCollectionShareInput:
+      type: object
+      additionalProperties: false
+      required: [expectedGeneration]
+      properties:
+        expectedGeneration:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-zA-Z0-9_-]+$'
+          description: Current causal generation of the collection grant.
+    CollectionShare:
+      type: object
+      required: [user, permission, sharedAt, updatedAt, generation]
+      properties:
+        user:
+          $ref: '#/components/schemas/PublicUser'
+        permission:
+          type: string
+          enum: [READ, WRITE, ADMIN]
+        sharedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        generation:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-zA-Z0-9_-]+$'
+          description: Causal token for this exact collection grant generation. Supply it when updating or removing the grant.
     CollaborationBlock:
       type: object
       required: [id, type, markdown, checked, parentBlockId, sortOrder]
@@ -1803,10 +1869,156 @@ paths:
           description: Invalid or unsupported bookmark URL
         '429':
           description: Authenticated user exceeded the bookmark-preview request limit
+  /api/collections/{collectionId}/shares:
+    get:
+      summary: List grants for a custom collection
+      description: Collection owner or effective ADMIN only. The virtual Default Collection is not a persisted shareable collection.
+      parameters:
+        - in: path
+          name: collectionId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Current collection grants
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [shares, count]
+                properties:
+                  shares:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CollectionShare'
+                  count:
+                    type: integer
+                    minimum: 0
+        '403':
+          description: Administrator permission is required to manage collection sharing
+        '404':
+          description: Collection is missing or not accessible
+    post:
+      summary: Share a custom collection with an existing BrainVault account
+      description: Collection owner or effective ADMIN only. The grant is authoritative for the target user across every member page. If a member document becomes effectively shared for the first time, the server initializes a fresh collaboration lineage from the canonical SQL snapshot.
+      parameters:
+        - in: path
+          name: collectionId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShareCollectionInput'
+      responses:
+        '201':
+          description: Collection grant created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [share, count]
+                properties:
+                  share:
+                    $ref: '#/components/schemas/CollectionShare'
+                  count:
+                    type: integer
+                    minimum: 1
+        '400':
+          description: Invalid account, self-share, duplicate target, or invalid permission
+        '403':
+          description: Administrator permission is required to manage collection sharing
+        '409':
+          description: A collaboration transition could not be safely completed
+        '429':
+          description: Collection/page sharing rate limit exceeded
+  /api/collections/{collectionId}/shares/{userId}:
+    patch:
+      summary: Change a collection collaborator permission
+      description: Collection owner or effective ADMIN only. Requires the current grant generation. WRITE/ADMIN to READ downgrades preserve recovery state and revoke the old write generation before the new read-only grant takes effect.
+      parameters:
+        - in: path
+          name: collectionId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCollectionShareInput'
+      responses:
+        '200':
+          description: Collection grant updated with a new generation
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [share]
+                properties:
+                  share:
+                    $ref: '#/components/schemas/CollectionShare'
+        '403':
+          description: Administrator permission is required to manage collection sharing
+        '404':
+          description: Collection or grant not found
+        '409':
+          description: Grant generation changed or active collaboration writes prevent a safe downgrade
+    delete:
+      summary: Remove a collection collaborator
+      description: Collection owner or effective ADMIN only. Requires the current grant generation. Effective access is recalculated for every member page, so an underlying direct page grant may become active again after removal.
+      parameters:
+        - in: path
+          name: collectionId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoveCollectionShareInput'
+      responses:
+        '200':
+          description: Collection grant removed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [removed, count]
+                properties:
+                  removed:
+                    type: boolean
+                    const: true
+                  count:
+                    type: integer
+                    minimum: 0
+        '403':
+          description: Administrator permission is required to manage collection sharing
+        '404':
+          description: Collection or grant not found
+        '409':
+          description: Grant generation changed, active collaboration writes remain, or final-share materialization is pending
   /api/pages/{pageId}/shares:
     get:
       summary: List users invited to edit a page
-      description: Owner only. Collections and archived pages cannot be shared.
+      description: Page owner or effective ADMIN only. This endpoint manages a direct EDIT grant for one ordinary page; use /api/collections/{collectionId}/shares for custom-collection access. Archived ordinary pages cannot accept a new direct grant.
       parameters:
         - in: path
           name: pageId
@@ -1830,10 +2042,10 @@ paths:
                     type: integer
                     minimum: 0
         '404':
-          description: Page not owned by the authenticated user
+          description: Page is missing or not accessible to the authenticated administrator
     post:
-      summary: Invite an existing BrainVault user as a page editor
-      description: Owner only. Creating the first grant initializes a fresh collaboration history from the current canonical page snapshot.
+      summary: Invite an existing BrainVault user as a direct page editor
+      description: Page owner or effective ADMIN only. Creating the first effective grant initializes a fresh collaboration history from the current canonical page snapshot. A collection grant for the same user remains authoritative over this direct EDIT grant.
       parameters:
         - in: path
           name: pageId
@@ -1867,7 +2079,7 @@ paths:
   /api/pages/{pageId}/shares/{userId}:
     delete:
       summary: Remove a page editor
-      description: Owner only. The caller must provide the generation from the current PageShare so a delayed request cannot revoke a replacement grant. Active sockets for the removed user are closed immediately. Removing the final grant requires every accepted Yjs update to have been materialized.
+      description: Page owner or effective ADMIN only. The caller must provide the generation from the current PageShare so a delayed request cannot revoke a replacement grant. Active sockets for the removed user are closed immediately. Removing the final grant requires every accepted Yjs update to have been materialized.
       parameters:
         - in: path
           name: pageId
@@ -1912,7 +2124,7 @@ paths:
   /api/pages/{pageId}/collaboration/session:
     post:
       summary: Create a short-lived authenticated collaboration session
-      description: Available to the owner and invited editors while the page has at least one editor grant. The response contains the canonical relational snapshot, the current document generation, and the required WebSocket subprotocols for WS /api/collaboration/{pageId}.
+      description: Available to any user with effective access while the ordinary page has at least one effective share. READ collection collaborators receive a read-only collaboration connection; owner, WRITE, ADMIN, and direct EDIT users can write. The response contains the canonical relational snapshot, current document generation, and required WebSocket subprotocols for WS /api/collaboration/{pageId}.
       parameters:
         - in: path
           name: pageId
@@ -1944,7 +2156,7 @@ paths:
   /api/pages/{pageId}/collaboration/snapshot:
     put:
       summary: Materialize a consistent Yjs document into the relational page and block tables
-      description: Available to the owner and invited editors. The server locks the page and durable Yjs rows, requires documentEpoch to match the current generation and updateId to equal the latest persisted update, rebuilds the canonical Yjs document from ordered page_yjs_updates, validates hierarchy and attachment provenance, and atomically writes that server-derived state to the relational tables. Browser-supplied duplicate content is never trusted.
+      description: Available to the owner and effective writable collaborators (direct EDIT, collection WRITE, or collection ADMIN). READ collection collaborators cannot materialize writes. The server locks the page and durable Yjs rows, requires documentEpoch to match the current generation and updateId to equal the latest persisted update, rebuilds the canonical Yjs document from ordered page_yjs_updates, validates hierarchy and attachment provenance, and atomically writes that server-derived state to the relational tables. Browser-supplied duplicate content is never trusted.
       parameters:
         - in: path
           name: pageId
@@ -2173,10 +2385,10 @@ paths:
   /api/data/export:
     get:
       summary: Export the authenticated account workspace as a complete BrainVault ZIP backup
-      description: Streams a complete workspace backup under a per-authenticated-user rate limit. Current version 3 exports include page sharing grants, every regular account attachment-upload file (including deliberately retained unlinked files), custom page-cover bytes, every uploaded custom-icon file retained for the account, and custom-icon library/removal state. Security credentials and the historical Yjs update log are excluded.
+      description: Streams a complete workspace backup under a per-authenticated-user rate limit. Current version 4 exports include direct page grants, collection grants, page version/history and navigation state, every regular account attachment-upload file (including deliberately retained unlinked files), custom page-cover bytes, every uploaded custom-icon file retained for the account, and custom-icon library/removal state. Security credentials and the historical Yjs update log are excluded.
       responses:
         '200':
-          description: Lossless workspace backup containing the manifest, sharing grants, all account attachment-upload bytes, page-cover bytes, and uploaded custom-icon bytes
+          description: Lossless workspace backup containing the manifest, page and collection sharing grants, all account attachment-upload bytes, page-cover bytes, and uploaded custom-icon bytes
           headers:
             Content-Disposition:
               schema:
@@ -2193,7 +2405,7 @@ paths:
   /api/data/import:
     post:
       summary: Replace the authenticated account workspace from a BrainVault backup ZIP
-      description: Restored rows receive a new edit-version generation, and a durable restore journal automatically reconciles database, attachment, and version 3 custom-icon filesystem state after an interrupted process. Current-format sharing grants are resolved before destructive replacement; a missing collaborator fails closed. Retained unlinked attachment-upload files are restored under their original generated names, and uploaded custom-icon URLs are rebound to the destination account ID. Legacy backups preserve current grants for matching shareable page IDs and do not replace custom-icon storage.
+      description: Restored rows receive a new edit-version generation, and a durable restore journal automatically reconciles database, attachment, and version 3 custom-icon filesystem state after an interrupted process. Current-format direct page and collection sharing grants are resolved before destructive replacement; a missing collaborator fails closed. Retained unlinked attachment-upload files are restored under their original generated names, and uploaded custom-icon URLs are rebound to the destination account ID. Legacy backups preserve current grants for matching shareable page IDs and do not replace custom-icon storage.
       requestBody:
         required: true
         content:

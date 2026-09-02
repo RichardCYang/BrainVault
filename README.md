@@ -15,14 +15,30 @@ The preview is captured from the real browser UI. See [Development guide](docs/d
 - Block editor with slash commands, nested content, drag-and-drop ordering, tables, databases, Kanban boards, and Gantt timelines
 - Rich text, Markdown, syntax-highlighted code blocks, callouts, bookmarks, YouTube video embeds, file attachments, AI conversation blocks, and KaTeX formulas
 - Crash-resilient browser drafts, automatic title saving, and search across page titles and block content
-- Owner-managed page sharing with Yjs-based simultaneous title/block editing, live presence, reconnect recovery, and MariaDB persistence
-- Page collections, nesting, built-in or custom cover images with adjustable focal positions, archiving, permanent deletion, PDF export, and complete ZIP backup/restore including sharing grants, page version history, owned-page navigation state, every account attachment-upload file, and uploaded custom-icon assets
+- Owner- and administrator-managed sharing: ordinary pages use direct `EDIT` grants, while custom collections use inherited `READ`, `WRITE`, or `ADMIN` grants; shared documents use Yjs live synchronization, presence, reconnect recovery, and MariaDB persistence
+- Page collections, nesting, built-in or custom cover images with adjustable focal positions, archiving, permanent deletion, PDF export, and complete ZIP backup/restore including page and collection sharing grants, page version history, owned-page navigation state, every account attachment-upload file, and uploaded custom-icon assets
 - Custom page/collection icon uploads stored as physical files under `upload/icons/`; MariaDB stores only the generated file path, and missing files fall back to the default page icon
 - JWT authentication with an HttpOnly browser session cookie, profile settings, TOTP authenticator support, multiple WebAuthn/FIDO2 passkeys, and passwordless passkey-first login from the sign-in screen
 - Seven interface languages: English, Japanese, Korean, French, German, Spanish, and Portuguese
 - Private attachment storage, sanitized Markdown rendering, rate limiting, and validated bookmark previews
 - Automatic MariaDB bootstrap and migrations, plus an included OpenAPI 3.1 specification
 - Production HTTPS via a Posh-ACME certificate directory or a trusted Caddy, Synology DSM, NGINX, or Nginx Proxy Manager reverse proxy
+
+## Collection sharing
+
+BrainVault can share an entire **custom collection** with another existing BrainVault account. A collection grant covers the collection and every document page currently inside it, including nested descendant pages. Pages created in or moved into the collection inherit the collection grant; pages moved out stop inheriting it.
+
+**Where to find the UI:** click a custom collection's **name** in the left sidebar to open the collection landing view. Owners and users with `ADMIN` collection permission see **Share collection** next to **Add page**. The button is intentionally hidden for the virtual **Default Collection**, while an individual document page is open, and for `READ`/`WRITE` collection collaborators. Direct sharing of a single ordinary page remains available from that page's **Share** button.
+
+| Collection permission | Effective access |
+| --- | --- |
+| `READ` | View the collection and its document hierarchy. Shared documents can receive live Yjs updates, but this user cannot write them. |
+| `WRITE` | Everything in `READ`, plus editing shared document titles/blocks and other writable document content. It does not grant sharing or page-administration controls. |
+| `ADMIN` | Everything in `WRITE`, plus collection sharing and page/collection administration allowed by the server. An administrator cannot move pages outside the shared collection's scope. |
+
+A collection grant is authoritative for a user inside that collection and takes precedence over a direct page `EDIT` grant. For example, a collection-level `READ` grant keeps member pages read-only for that user even if an older direct `EDIT` grant is still stored for one of those pages. If the collection grant is later removed, a still-valid direct page grant can become effective again.
+
+Collection sharing is persisted in `collection_shares`, while `page_collection_memberships` materializes each page's collection scope. Current version 4 backups round-trip collection grants in addition to direct page grants. See [Collection sharing](docs/collaboration/2026-09-02/collection-sharing.md) for UI behavior, permission semantics, API routes, inheritance rules, backup behavior, and troubleshooting.
 
 ## Syntax-highlighted code blocks
 
@@ -66,6 +82,7 @@ For database permissions, opt-in demo data, alternative environment setup, and p
 | [Getting started](docs/getting-started/2026-07-27/getting-started.md) | Requirements, secure setup, database bootstrap, opt-in demo data, and production |
 | [Features](docs/features/2026-07-30/features.md) | Editor behavior, sharing, block types, backup/restore, PDF export, and languages |
 | [Collaboration](docs/collaboration/2026-07-29/collaboration.md) | Sharing permissions, Yjs/WebSocket flow, persistence, proxy setup, and verification |
+| [Collection sharing](docs/collaboration/2026-09-02/collection-sharing.md) | Custom-collection UI entry point, READ/WRITE/ADMIN permissions, inheritance, API routes, and troubleshooting |
 | [Collaboration verification](docs/data-loss/2026-07-29/collaboration-verification.md) | Delivery checks, integrity-proof scope, and reproducible deployment validation |
 | [Data-loss and integrity reports](docs/README.md#data-loss-and-integrity-reports) | Dated audits, reproductions, corrections, and verification evidence |
 | [In-depth review and remediation results](docs/data-loss/2026-08-05/in-depth-review-and-remediation-results.md) | Consolidated authentication-boundary, idempotency, deletion-atomicity, and verification findings |

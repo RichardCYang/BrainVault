@@ -18,7 +18,8 @@ docs/<topic>/<YYYY-MM-DD>/<document>
 | Configuration | 2026-07-28 | [Environment variables and runtime behavior](configuration/2026-07-28/configuration.md) |
 | Deployment | Current | [Direct Posh-ACME HTTPS and trusted reverse-proxy setup](../deploy/README.md) |
 | Development | 2026-07-28 | [Scripts, repository structure, translations, and preview capture](development/2026-07-28/development.md) |
-| Collaboration | 2026-07-29 | [Sharing, Yjs/WebSocket synchronization, persistence, and deployment](collaboration/2026-07-29/collaboration.md) |
+| Collaboration | 2026-07-29 | [Page/collection sharing, Yjs/WebSocket synchronization, persistence, and deployment](collaboration/2026-07-29/collaboration.md) |
+| Collection sharing | 2026-09-02 | [UI entry point, READ/WRITE/ADMIN roles, inheritance, API, backup/restore, and troubleshooting](collaboration/2026-09-02/collection-sharing.md) |
 | Features | 2026-07-30 | [Editor behavior, blocks, backup/restore, languages, and export](features/2026-07-30/features.md) |
 | Security | 2026-07-30 | [MFA, secrets, attachments, backup safety, and production boundaries](security/2026-07-30/security.md) |
 | API | 2026-07-30 | [REST route overview and authentication](api/2026-07-30/api.md) |

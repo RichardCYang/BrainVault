@@ -1,12 +1,30 @@
-# Page sharing and real-time collaboration
+# Page and collection sharing and real-time collaboration
 
-BrainVault page owners can share an ordinary page with another existing BrainVault account by login ID. The owner and every invited editor can then edit the page title and block document at the same time.
+BrainVault supports two sharing scopes. An ordinary page can be shared directly with an existing account using a page-level `EDIT` grant, while a **custom collection** can be shared with `READ`, `WRITE`, or `ADMIN` permission. Shared ordinary documents use the same Yjs collaboration and recovery machinery regardless of which grant made the document accessible.
 
-Collections cannot be shared. Archived pages cannot open live collaboration or accept a new grant, but archiving preserves any existing grant while live collaboration is suspended so restoring the page reactivates the prior access list. Only the page owner can add or remove collaborators, archive the page, change page-level navigation metadata, or permanently delete the page. Invited editors can read and edit the shared page and use its authenticated attachment upload/download flow, but they cannot manage access.
+Archived pages cannot open live collaboration or accept a new direct page grant, but archiving preserves existing access grants while live collaboration is suspended so restoring the page can reactivate access. The virtual **Default Collection** is not a shareable collection object; collection sharing applies to persisted custom collections.
+
+## Collection sharing and permissions
+
+Open a custom collection by clicking its **name** in the sidebar. In the collection landing view, the owner and `ADMIN` collection collaborators see **Share collection** next to **Add page**. The button is hidden for the Default Collection, while an individual document is open, and for `READ`/`WRITE` collaborators.
+
+A collection grant is inherited by the collection and every document page whose materialized membership belongs to that collection, including nested descendant pages. Creating a page inside the collection inherits the current grants. Moving a page subtree into or out of the collection changes the applicable collection grant and replaces any affected collaboration lineage so a stale room cannot retain access from the previous membership.
+
+| Permission | Effective role | Main capabilities |
+| --- | --- | --- |
+| `READ` | `READER` | Navigate the collection and read its documents. A read-only client can receive live Yjs state, but binary writes are rejected with `COLLABORATION_READ_ONLY`. |
+| `WRITE` | `EDITOR` | Read plus edit shared document titles/blocks and other writable document content. It cannot manage sharing or page administration. |
+| `ADMIN` | `ADMIN` | Read/write plus sharing and page/collection administration within the collection scope. An administrator cannot move pages outside the shared collection. |
+
+For the same user, a collection grant is authoritative before a direct page grant. This includes a `READ` collection grant overriding a stored direct `EDIT` grant on a member page. When collection access is removed, a still-valid direct grant can become authoritative again; grant generations and targeted socket disconnects prevent a delayed cleanup from revoking that revived access.
+
+The collection record itself is not a Yjs collaborative document. Yjs sessions run on ordinary member pages. Collection metadata and sharing administration use authenticated REST mutations.
+
+For a focused guide to the UI entry point, role behavior, inheritance, API routes, backup/restore, and common reasons the button may be missing, see [Collection sharing](../2026-09-02/collection-sharing.md).
 
 ## Collaboration flow
 
-1. The owner opens **Share**, enters an existing login ID, and creates an `EDIT` grant in `page_shares`.
+1. Sharing is configured either from an ordinary page's **Share** dialog (`page_shares`, direct `EDIT`) or from a custom collection's **Share collection** dialog (`collection_shares`, `READ`/`WRITE`/`ADMIN`).
 2. An authorized owner or invited editor requests `POST /api/pages/:pageId/collaboration/session` with `{ "documentEpochProtocol": 2 }`.
 3. The server returns a short-lived, page-scoped WebSocket ticket, the canonical database snapshot, the current `documentEpoch`, the socket path, and the required `brainvault-yjs-v2` subprotocol.
 4. The browser loads only local recovery updates carrying that exact `documentEpoch`, then creates the Yjs document containing the page title, blocks, block ordering, metadata, and attachment-deletion tombstones. Recovery updates from an older or unknown generation remain in browser storage for manual recovery and are never merged automatically.
@@ -28,11 +46,13 @@ Migration `021_collaboration_document_epoch.sql` adds a non-null `document_epoch
 
 Migration `022_server_authoritative_collaboration_materialization.sql` adds `materialization_version`. Existing rows default to version `0`, which means an older build may have advanced the update marker from a browser-supplied duplicate snapshot. Version `1` is written only after the updated server reconstructs the relational state from the durable Yjs log. For any non-empty history, destructive and replacement operations require both an exact latest update marker and the current provenance version.
 
+Migration `068_collection_sharing.sql` adds `collection_shares` with `READ`/`WRITE`/`ADMIN` permissions and per-grant generations, plus `page_collection_memberships` to materialize the custom collection that governs each page. The migration backfills membership recursively from the existing page hierarchy. Runtime create/move/restore paths keep that materialized membership synchronized.
+
 A materialization request includes only the server-issued document epoch and the last received update ID as meaningful inputs. The update ID is a checkpoint, not proof that independently supplied title or block data belongs to that update. The server locks the page and Yjs history, rejects a replaced generation or stale checkpoint, replays ordered `page_yjs_updates`, decodes and validates the reconstructed document, gives attachment-deletion tombstones precedence over concurrent stale attachment maps, prevents forged attachment blocks, writes the title and blocks in one transaction, and finally records update ID plus provenance version. Legacy browser fields are ignored. Compaction persists a full state update re-encoded by the server-side Yjs document and removes older update rows only after the replacement update is committed.
 
 Every normal update and compaction write also holds the page and collaboration-state row locks while comparing the room's in-memory `maxUpdateId` with the durable `MAX(page_yjs_updates.id)`. A process-local room that missed an update committed by another application process is invalidated before any insert or history deletion. Connected clients receive close code `1011`, reconnect, replay durable history, and resend their still-unacknowledged full-document recovery state. Snapshot writes retain the additional exact `baseUpdateId` check. This is a fail-closed integrity fence; it does not provide cross-process live fan-out.
 
-When the last editor grant is removed, BrainVault requires the latest accepted Yjs update to be materialized by the current server implementation before deleting collaboration history. The same provenance gate protects archive, permanent deletion, export, and workspace restore. Removing a collaborator immediately closes that user's active sockets. Archiving closes the entire room but preserves the grants while live collaboration is suspended; permanent deletion removes the page and its grants.
+When the final effective share for an ordinary document is removed, BrainVault requires the latest accepted Yjs update to be materialized by the current server implementation before deleting collaboration history. The same provenance gate protects archive, permanent deletion, export, and workspace restore. Removing or changing a collaborator grant immediately invalidates the affected grant generation and closes matching active sockets. Archiving closes the entire room but preserves the grants while live collaboration is suspended; permanent deletion removes the page and its grants.
 
 ## Document replacement and offline recovery
 
