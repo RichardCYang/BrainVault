@@ -54,7 +54,7 @@ test("the collaboration final sink rejects future provenance before canonical re
   assertBefore(
     materialization,
     "if (isUnsupportedCollaborationMaterializationVersion(materializationVersion))",
-    "materialization = materializeCollaborationUpdates(",
+    "materialization = (await collaborationMaterializationPool.materializeHistory({",
     "future materialization-version fence"
   );
   assertBefore(

@@ -85,6 +85,21 @@ describe("GeoIP country lookup", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.country.is/info");
   });
 
+  it("rejects oversized GeoIP responses before buffering the full provider body", async () => {
+    const oversizedChunk = new Uint8Array(1024 * 1024);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(oversizedChunk);
+        controller.enqueue(oversizedChunk);
+        controller.enqueue(new Uint8Array([123]));
+        controller.close();
+      }
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(stream, { status: 200 })));
+
+    await expect(lookupCountryCodes(["8.8.8.8"])).resolves.toEqual(new Map());
+  });
+
   it("fails open when the GeoIP provider is unavailable", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     await expect(lookupCountryCodes(["8.8.8.8"])).resolves.toEqual(new Map());

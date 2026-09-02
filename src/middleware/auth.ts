@@ -171,9 +171,13 @@ async function authenticateRequest(
     req.user = toPublicUser(user);
     next();
   } catch (error) {
+    // Only credential-invalidating authentication failures should destroy the
+    // browser session. Policy/provider bugs and transient internal failures must
+    // not turn a retryable request failure into an account-wide logout loop.
     if (
       source === "cookie"
-      && !(error instanceof ApiError && error.code === "TOTP_IP_PERMANENTLY_BLOCKED")
+      && error instanceof ApiError
+      && ["INVALID_TOKEN", "UNAUTHENTICATED", "SESSION_REVOKED"].includes(error.code)
     ) clearAuthSessionCookie(res);
     next(error);
   }

@@ -1,5 +1,6 @@
 import { parentPort } from "node:worker_threads";
 import {
+  materializeCollaborationUpdates,
   readCollaborationMaterialization,
   type CollaborationMaterialization
 } from "./collaboration-materialization.js";
@@ -26,9 +27,16 @@ type CollaborationHistoryReplayRequest = {
   maxStateBytes: number;
 };
 
+type CollaborationHistoryMaterializationRequest = {
+  id: number;
+  kind: "history-materialization";
+  updates: Uint8Array[];
+};
+
 type CollaborationWorkerRequest =
   | CollaborationUpdateValidationRequest
-  | CollaborationHistoryReplayRequest;
+  | CollaborationHistoryReplayRequest
+  | CollaborationHistoryMaterializationRequest;
 
 type CollaborationUpdateValidationSuccess = {
   id: number;
@@ -45,6 +53,13 @@ type CollaborationHistoryReplaySuccess = {
   kind: "history-replay";
   ok: true;
   stateUpdate: Uint8Array;
+};
+
+type CollaborationHistoryMaterializationSuccess = {
+  id: number;
+  kind: "history-materialization";
+  ok: true;
+  materialization: CollaborationMaterialization;
 };
 
 type CollaborationWorkerFailure = {
@@ -89,6 +104,21 @@ function toFailure(request: CollaborationWorkerRequest, error: unknown): Collabo
 }
 
 workerParentPort.on("message", (request: CollaborationWorkerRequest) => {
+  if (request.kind === "history-materialization") {
+    try {
+      const response: CollaborationHistoryMaterializationSuccess = {
+        id: request.id,
+        kind: "history-materialization",
+        ok: true,
+        materialization: materializeCollaborationUpdates(request.updates)
+      };
+      workerParentPort.postMessage(response);
+    } catch (error) {
+      workerParentPort.postMessage(toFailure(request, error));
+    }
+    return;
+  }
+
   if (request.kind === "history-replay") {
     try {
       const stateUpdate = Uint8Array.from(

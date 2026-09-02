@@ -30,6 +30,11 @@ type HistoryReplayRequest = {
   maxStateBytes: number;
 };
 
+type HistoryMaterializationRequest = {
+  principalKey: string;
+  updates: Uint8Array[];
+};
+
 export type CollaborationValidationResult = {
   stateUpdate: Buffer;
   incrementalUpdate: Buffer;
@@ -39,6 +44,10 @@ export type CollaborationValidationResult = {
 
 export type CollaborationHistoryReplayResult = {
   stateUpdate: Buffer;
+};
+
+export type CollaborationHistoryMaterializationResult = {
+  materialization: CollaborationMaterialization;
 };
 
 type WorkerValidationRequest = {
@@ -57,7 +66,16 @@ type WorkerHistoryReplayRequest = {
   maxStateBytes: number;
 };
 
-type WorkerRequest = WorkerValidationRequest | WorkerHistoryReplayRequest;
+type WorkerHistoryMaterializationRequest = {
+  id: number;
+  kind: "history-materialization";
+  updates: Uint8Array[];
+};
+
+type WorkerRequest =
+  | WorkerValidationRequest
+  | WorkerHistoryReplayRequest
+  | WorkerHistoryMaterializationRequest;
 
 type WorkerValidationSuccess = {
   id: number;
@@ -76,6 +94,13 @@ type WorkerHistoryReplaySuccess = {
   stateUpdate: Uint8Array;
 };
 
+type WorkerHistoryMaterializationSuccess = {
+  id: number;
+  kind: "history-materialization";
+  ok: true;
+  materialization: CollaborationMaterialization;
+};
+
 type WorkerFailure = {
   id: number;
   task: WorkerRequest["kind"];
@@ -85,7 +110,11 @@ type WorkerFailure = {
   message: string;
 };
 
-type WorkerResponse = WorkerValidationSuccess | WorkerHistoryReplaySuccess | WorkerFailure;
+type WorkerResponse =
+  | WorkerValidationSuccess
+  | WorkerHistoryReplaySuccess
+  | WorkerHistoryMaterializationSuccess
+  | WorkerFailure;
 
 type PendingTaskBase = {
   id: number;
@@ -107,7 +136,16 @@ type PendingHistoryReplayTask = PendingTaskBase & {
   resolve: (result: CollaborationHistoryReplayResult) => void;
 };
 
-type PendingTask = PendingValidationTask | PendingHistoryReplayTask;
+type PendingHistoryMaterializationTask = PendingTaskBase & {
+  kind: "history-materialization";
+  request: WorkerHistoryMaterializationRequest;
+  resolve: (result: CollaborationHistoryMaterializationResult) => void;
+};
+
+type PendingTask =
+  | PendingValidationTask
+  | PendingHistoryReplayTask
+  | PendingHistoryMaterializationTask;
 
 type WorkerSlot = {
   worker: Worker;
@@ -134,6 +172,13 @@ export class CollaborationValidationResourceLimitError extends Error {
   constructor() {
     super("Collaboration update exceeded the validation memory budget");
     this.name = "CollaborationValidationResourceLimitError";
+  }
+}
+
+export class CollaborationHistoryTimeoutError extends Error {
+  constructor(operation: "replay" | "materialization") {
+    super(`Collaboration history ${operation} exceeded the validation time budget`);
+    this.name = "CollaborationHistoryTimeoutError";
   }
 }
 
@@ -230,6 +275,36 @@ export class CollaborationValidationPool {
       this.queue.push({
         id,
         kind: "history-replay",
+        principalKey,
+        request: workerRequest,
+        validationBytes,
+        timeoutMs: historyReplayTaskTimeoutMs,
+        resolve,
+        reject
+      });
+      this.dispatch();
+    });
+  }
+
+  materializeHistory(request: HistoryMaterializationRequest): Promise<CollaborationHistoryMaterializationResult> {
+    if (this.closed) return Promise.reject(new Error("Collaboration validation pool is closed"));
+    const principalKey = request.principalKey.trim();
+    if (!principalKey) return Promise.reject(new CollaborationValidationCapacityError());
+    const validationBytes = request.updates.reduce((total, update) => total + update.byteLength, 0);
+    if (!this.admitTask(principalKey, validationBytes, maxPendingHistoryReplayBytesPerPrincipal)) {
+      return Promise.reject(new CollaborationValidationCapacityError());
+    }
+
+    const id = this.nextTaskId++;
+    const workerRequest: WorkerHistoryMaterializationRequest = {
+      id,
+      kind: "history-materialization",
+      updates: request.updates
+    };
+    return new Promise((resolve, reject) => {
+      this.queue.push({
+        id,
+        kind: "history-materialization",
         principalKey,
         request: workerRequest,
         validationBytes,
@@ -340,6 +415,8 @@ export class CollaborationValidationPool {
         });
       } else if (task.kind === "history-replay" && response.kind === "history-replay") {
         task.resolve({ stateUpdate: Buffer.from(response.stateUpdate) });
+      } else if (task.kind === "history-materialization" && response.kind === "history-materialization") {
+        task.resolve({ materialization: response.materialization });
       }
     } else {
       task.reject(toWorkerError(response));
@@ -381,29 +458,31 @@ export class CollaborationValidationPool {
     else this.pendingValidationBytesByPrincipal.set(task.principalKey, principalBytes);
   }
 
-  private takeNextTask(activeHistoryReplay: boolean) {
+  private takeNextTask(activeHistoryTask: boolean) {
     const validationIndex = this.queue.findIndex((task) => task.kind === "validation");
     if (validationIndex >= 0) return this.queue.splice(validationIndex, 1)[0];
-    if (activeHistoryReplay) return null;
-    const replayIndex = this.queue.findIndex((task) => task.kind === "history-replay");
-    return replayIndex >= 0 ? this.queue.splice(replayIndex, 1)[0] : null;
+    if (activeHistoryTask) return null;
+    const historyIndex = this.queue.findIndex((task) => task.kind !== "validation");
+    return historyIndex >= 0 ? this.queue.splice(historyIndex, 1)[0] : null;
   }
 
   private dispatch() {
     if (this.closed) return;
-    let activeHistoryReplay = this.slots.some((slot) => slot.activeTask?.kind === "history-replay");
+    let activeHistoryTask = this.slots.some((slot) => slot.activeTask?.kind !== "validation" && slot.activeTask !== null);
     for (const slot of this.slots) {
       if (slot.failed || slot.activeTask || !this.queue.length) continue;
-      const task = this.takeNextTask(activeHistoryReplay);
+      const task = this.takeNextTask(activeHistoryTask);
       if (!task) continue;
-      if (task.kind === "history-replay") activeHistoryReplay = true;
+      if (task.kind !== "validation") activeHistoryTask = true;
       slot.activeTask = task;
       slot.worker.ref();
       const timeout = setTimeout(() => {
         if (slot.activeTask?.id !== task.id) return;
-        const error = task.kind === "history-replay"
-          ? new Error("Collaboration history replay exceeded the validation time budget")
-          : new CollaborationValidationTimeoutError();
+        const error = task.kind === "validation"
+          ? new CollaborationValidationTimeoutError()
+          : new CollaborationHistoryTimeoutError(
+              task.kind === "history-replay" ? "replay" : "materialization"
+            );
         this.failWorkerSlot(slot, error);
       }, task.timeoutMs);
       timeout.unref();

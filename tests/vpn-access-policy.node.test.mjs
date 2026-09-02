@@ -40,6 +40,7 @@ test("VPN detection uses free no-key network intelligence, Tor bulk data, VPN Ga
   assert.match(policy, /providerSignalInFlight = new Map/);
   assert.match(policy, /resolveProviderSignal\("ipquery", normalizedIp\)/);
   assert.match(policy, /resolveProviderSignal\("ipapi", normalizedIp\)/);
+  assert.match(policy, /function shouldCrossCheck\([\s\S]*?primary\.available[\s\S]*?riskScore \?\? 0\) >= 50/);
   assert.doesNotMatch(policy, /createRiskCacheKey/);
   assert.match(policy, /reason: "VPN_GATE_DETECTED"/);
   assert.match(policy, /MULTI_PROVIDER_VPN_SIGNAL/);
@@ -110,4 +111,16 @@ test("settings API, migration, browser UI, and block history include VPN blockin
   assert.match(i18n, /vpnBlockTitle: "VPN \/ 프록시 접속 차단"/);
   assert.match(i18n, /blockHistoryVpnDetected: "VPN 감지"/);
   assert.match(i18n, /blockHistoryVpnGateDetected: "VPN Gate 공개 릴레이 감지"/);
+});
+
+test("unexpected policy-engine failures do not destroy cookie sessions", async () => {
+  const authMiddleware = await read("src/middleware/auth.ts");
+  assert.match(
+    authMiddleware,
+    /source === "cookie"[\s\S]*?error instanceof ApiError[\s\S]*?\["INVALID_TOKEN", "UNAUTHENTICATED", "SESSION_REVOKED"\]\.includes\(error\.code\)/
+  );
+  assert.doesNotMatch(
+    authMiddleware,
+    /source === "cookie"\s*&&\s*!\(error instanceof ApiError/
+  );
 });

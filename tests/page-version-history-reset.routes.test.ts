@@ -219,6 +219,23 @@ describe("Page version history reset", () => {
     );
   });
 
+  it("refuses to reset version history while the page is archived", async () => {
+    if (database.page) database.page.is_archived = 1;
+
+    const response = await request(createApp())
+      .delete("/api/pages/pag_version_reset/versions")
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send(resetBody("mut_reset_archived"))
+      .expect(409);
+
+    expect(response.body.error.code).toBe("PAGE_ARCHIVED");
+    expect(database.versions).toHaveLength(3);
+    expect(database.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining("DELETE FROM page_versions"),
+      expect.anything()
+    );
+  });
+
   it("does not allow a non-owner to erase the page history", async () => {
     const response = await request(createApp())
       .delete("/api/pages/pag_version_reset/versions")

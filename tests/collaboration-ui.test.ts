@@ -179,7 +179,7 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(server).toContain("4011");
     expect(routes).toContain("COLLABORATION_SNAPSHOT_STALE");
     expect(routes).toContain("SELECT id, update_data");
-    expect(routes).toContain("materializeCollaborationUpdates");
+    expect(routes).toContain("collaborationMaterializationPool.materializeHistory");
     expect(routes).toContain("currentCollaborationMaterializationVersion");
     expect(routes).not.toContain("body.title");
     expect(routes).not.toContain("body.blocks");

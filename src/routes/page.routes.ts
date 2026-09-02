@@ -992,6 +992,7 @@ pageRouter.delete(
         const pageAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
         assertPageCanAdminister(pageAccess);
         const page = pageAccess.page;
+        assertPageNotArchived(page);
 
         let reserved = true;
         try {

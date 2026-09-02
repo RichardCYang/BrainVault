@@ -36,14 +36,20 @@ class MemoryStorage {
   removeItem(key) { this.values.delete(String(key)); }
 }
 
-test("collaboration validation is fenced by a durable write lease before CPU validation", () => {
+test("collaboration validation and no-op filtering happen before the durable write lease", () => {
   const server = read("src/lib/collaboration-server.ts");
   const persist = section(server, "  private async persistUpdate(", "  private broadcastPresenceUpdate(");
   assertBefore(
     persist,
-    "const writeLeaseId = await reserveCollaborationWriteLease(",
     "validation = await this.validationPool.validate({",
+    "const writeLeaseId = await reserveCollaborationWriteLease(",
     "collaboration update admission"
+  );
+  assertBefore(
+    persist,
+    'persistenceDecision.action === "ignore"',
+    "const writeLeaseId = await reserveCollaborationWriteLease(",
+    "no-op collaboration update admission"
   );
   assert.match(persist, /finally \{\n\s+await releaseWriteLease\(\);\n\s+\}/);
 
@@ -56,6 +62,46 @@ test("collaboration validation is fenced by a durable write lease before CPU val
   );
   assert.match(lease, /expires_at <= CURRENT_TIMESTAMP\(6\)/);
   assert.match(lease, /COLLABORATION_WRITES_PENDING/);
+});
+
+test("room history replay releases the page row lock before CPU replay", () => {
+  const server = read("src/lib/collaboration-server.ts");
+  const roomLoad = section(server, "  private getOrCreateRoom(", "  private checkRate(");
+  assertBefore(
+    roomLoad,
+    "const snapshot = await transaction(async (dbClient) => {",
+    "const replay = await this.validationPool.replayHistory({",
+    "room history snapshot"
+  );
+  assertBefore(
+    roomLoad,
+    "const replay = await this.validationPool.replayHistory({",
+    "const loaded = await transaction(async (dbClient) => {",
+    "room history replay"
+  );
+  assert.match(roomLoad, /SELECT id FROM pages WHERE id = \? FOR UPDATE/);
+  assert.match(roomLoad, /COLLABORATION_HISTORY_CHANGED/);
+});
+
+test("archived pages cannot have version history reset", () => {
+  const pageRoutes = read("src/routes/page.routes.ts");
+  const resetRoute = section(
+    pageRoutes,
+    'pageRouter.delete(\n  "/:pageId/versions"',
+    'pageRouter.get(\n  "/:pageId/versions/:versionId"'
+  );
+  assertBefore(
+    resetRoute,
+    "assertPageCanAdminister(pageAccess);",
+    "assertPageNotArchived(page);",
+    "version reset archived-page fence"
+  );
+  assertBefore(
+    resetRoute,
+    "assertPageNotArchived(page);",
+    "INSERT INTO page_version_reset_mutations",
+    "version reset archived-page fence"
+  );
 });
 
 test("share removal, hard deletion, and restore fence active collaboration leases before destructive writes", () => {

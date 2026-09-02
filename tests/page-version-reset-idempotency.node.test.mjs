@@ -64,6 +64,7 @@ test("DELETE /api/pages/:pageId/versions reserves and completes a receipt around
   assert.match(resetRoute, /createMutationRequestHash\(\{[\s\S]*pageId,[\s\S]*expectedVersion,[\s\S]*expectedContentVersion,[\s\S]*expectedRevision[\s\S]*\}\)/);
   assert.match(resetRoute, /SELECT id FROM users WHERE id = \? FOR UPDATE/);
   assert.match(resetRoute, /getPageAccess\(pageId, user\.id, client, \{ lockPage: true \}\)/);
+  assert.match(resetRoute, /const page = pageAccess\.page;\n\s*assertPageNotArchived\(page\);/);
   assert.match(pageAccess, /WHERE id = \?\$\{lockPage \? " FOR UPDATE" : ""\}/);
   assert.ok(
     resetRoute.indexOf("SELECT id FROM users WHERE id = ? FOR UPDATE")

@@ -120,15 +120,33 @@ async function fetchVpnGateCsv() {
       redirect: "error"
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const contentLength = Number(response.headers.get("content-length"));
-    if (Number.isFinite(contentLength) && contentLength > vpnGateMaxBytes) {
-      throw new Error("VPN Gate directory exceeded the configured size limit");
+    const declaredLength = response.headers.get("content-length");
+    if (declaredLength !== null) {
+      const contentLength = Number(declaredLength);
+      if (!Number.isFinite(contentLength) || contentLength < 0 || contentLength > vpnGateMaxBytes) {
+        throw new Error("VPN Gate directory exceeded the configured size limit");
+      }
     }
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > vpnGateMaxBytes) {
-      throw new Error("VPN Gate directory exceeded the configured size limit");
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("VPN Gate directory did not contain a body");
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value?.byteLength) continue;
+        totalBytes += value.byteLength;
+        if (totalBytes > vpnGateMaxBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw new Error("VPN Gate directory exceeded the configured size limit");
+        }
+        chunks.push(Buffer.from(value));
+      }
+    } finally {
+      reader.releaseLock();
     }
-    return new TextDecoder().decode(bytes);
+    return Buffer.concat(chunks, totalBytes).toString("utf8");
   } finally {
     clearTimeout(timer);
   }

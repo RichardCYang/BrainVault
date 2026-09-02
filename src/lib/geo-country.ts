@@ -2,6 +2,8 @@ import net from "node:net";
 const countryApiBaseUrl = "https://api.country.is";
 const countryApiTimeoutMs = 2_000;
 const countryApiBatchSize = 100;
+const countryApiInfoMaxBytes = 64 * 1024;
+const countryApiBatchMaxBytes = 2 * 1024 * 1024;
 const countryInfoCacheMs = 60 * 1_000;
 
 type CountryInfoCache = {
@@ -89,6 +91,38 @@ export function normalizeCountryCode(value: unknown) {
   return /^[A-Z]{2}$/.test(normalized) ? normalized : null;
 }
 
+async function readLimitedJson(response: Response, maxBytes: number): Promise<unknown> {
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null) {
+    const contentLength = Number(declaredLength);
+    if (!Number.isFinite(contentLength) || contentLength < 0 || contentLength > maxBytes) {
+      throw new Error("Country.is response exceeded the configured size limit");
+    }
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Country.is response did not contain a body");
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value?.byteLength) continue;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("Country.is response exceeded the configured size limit");
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return JSON.parse(Buffer.concat(chunks, totalBytes).toString("utf8")) as unknown;
+}
+
 async function fetchCountryApi(pathname: string, init?: RequestInit) {
   return fetch(`${countryApiBaseUrl}${pathname}`, {
     ...init,
@@ -104,7 +138,7 @@ async function refreshCountryDatasetUpdatedAt(now: number) {
   try {
     const response = await fetchCountryApi("/info");
     if (!response.ok) throw new Error(`Country.is info request failed with HTTP ${response.status}`);
-    const payload = await response.json();
+    const payload = await readLimitedJson(response, countryApiInfoMaxBytes);
     if (!payload || typeof payload !== "object" || !("lastUpdated" in payload) || typeof payload.lastUpdated !== "string") {
       throw new Error("Country.is info response was invalid");
     }
@@ -146,7 +180,7 @@ async function lookupCountryCodeBatch(ipAddresses: readonly string[]) {
     });
     if (!response.ok) return result;
 
-    const payload = await response.json();
+    const payload = await readLimitedJson(response, countryApiBatchMaxBytes);
     if (!Array.isArray(payload)) return result;
 
     // A successful batch may omit IPs that have no database match. Mark those as

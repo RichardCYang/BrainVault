@@ -144,15 +144,33 @@ async function fetchLimitedText(url: string, timeoutMs: number, maxBytes: number
       redirect: "error"
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const contentLength = Number(response.headers.get("content-length"));
-    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-      throw new Error("Response exceeded the configured size limit");
+    const declaredLength = response.headers.get("content-length");
+    if (declaredLength !== null) {
+      const contentLength = Number(declaredLength);
+      if (!Number.isFinite(contentLength) || contentLength < 0 || contentLength > maxBytes) {
+        throw new Error("Response exceeded the configured size limit");
+      }
     }
-    const text = await response.text();
-    if (new TextEncoder().encode(text).byteLength > maxBytes) {
-      throw new Error("Response exceeded the configured size limit");
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("Provider response did not contain a body");
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value?.byteLength) continue;
+        totalBytes += value.byteLength;
+        if (totalBytes > maxBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw new Error("Response exceeded the configured size limit");
+        }
+        chunks.push(Buffer.from(value));
+      }
+    } finally {
+      reader.releaseLock();
     }
-    return text;
+    return Buffer.concat(chunks, totalBytes).toString("utf8");
   } finally {
     clearTimeout(timer);
   }
@@ -623,6 +641,22 @@ export function evaluateVpnSignals(
     providerCount: available.length,
     supportingSignals
   };
+}
+
+function shouldCrossCheck(
+  primary: VpnProviderSignal,
+  timezoneMismatch: boolean,
+  webRtcAuxiliaryRisk: boolean
+) {
+  return primary.available && (
+    primary.vpn
+    || primary.proxy
+    || primary.tor
+    || primary.datacenter
+    || (primary.riskScore ?? 0) >= 50
+    || timezoneMismatch
+    || webRtcAuxiliaryRisk
+  );
 }
 
 export async function resolveVpnAccessRisk(

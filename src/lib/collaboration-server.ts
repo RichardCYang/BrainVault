@@ -95,6 +95,7 @@ type YjsHistoryEntry = Pick<YjsUpdateRow, "id" | "is_snapshot">;
 type CollaborationHistoryStatsRow = {
   history_entries: number | string | bigint | null;
   history_bytes: number | string | bigint | null;
+  max_update_id?: number | string | bigint | null;
 };
 
 type CollaborationProfile = Pick<UserRow, "id" | "username" | "name" | "avatar_data">;
@@ -845,102 +846,152 @@ export class PageCollaborationHub {
       pendingWriteBytes: 0,
       bootstrapWritePending: false
     });
-    room.loadPromise = transaction(async (dbClient) => {
-      // Every durable collaboration writer locks the page row first. Taking the
-      // same lock keeps the aggregate preflight, BLOB read, and optional legacy
-      // compaction consistent without selecting an unbounded history first.
-      const page = await dbClient.queryOne<{ id: string }>(
-        "SELECT id FROM pages WHERE id = ? FOR UPDATE",
-        [pageId]
-      );
-      if (!page) throw new ApiError(404, "PAGE_NOT_FOUND", "Page not found");
+    room.loadPromise = (async () => {
+      // Replay can take up to the worker timeout on a large retained history.
+      // Read a bounded immutable candidate under the page lock, release that
+      // lock for CPU replay, then re-acquire it only to prove the lineage and
+      // durable cursor are still identical before admitting the room.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const snapshot = await transaction(async (dbClient) => {
+          const page = await dbClient.queryOne<{ id: string }>(
+            "SELECT id FROM pages WHERE id = ? FOR UPDATE",
+            [pageId]
+          );
+          if (!page) throw new ApiError(404, "PAGE_NOT_FOUND", "Page not found");
 
-      const statsRow = await dbClient.queryOne<CollaborationHistoryStatsRow>(
-        `SELECT COUNT(*) AS history_entries,
-                COALESCE(SUM(OCTET_LENGTH(update_data)), 0) AS history_bytes
-         FROM page_yjs_updates
-         WHERE page_id = ?`,
-        [pageId]
-      );
-      const historyEntries = toSafeHistoryMetric(statsRow?.history_entries, "entry count");
-      const historyBytes = toSafeHistoryMetric(statsRow?.history_bytes, "byte count");
-      const replayAssessment = assessCollaborationHistoryReplay({ historyEntries, historyBytes });
-      if (!replayAssessment.accepted) {
-        throw new InvalidYjsUpdateError(
-          `Stored collaboration history exceeds the safe replay ${replayAssessment.reason}`
-        );
+          const collaborationState = await getCollaborationState(pageId, dbClient, { lock: true });
+          assertCollaborationDocumentEpoch(collaborationState, documentEpoch);
+
+          const statsRow = await dbClient.queryOne<CollaborationHistoryStatsRow>(
+            `SELECT COUNT(*) AS history_entries,
+                    COALESCE(SUM(OCTET_LENGTH(update_data)), 0) AS history_bytes
+             FROM page_yjs_updates
+             WHERE page_id = ?`,
+            [pageId]
+          );
+          const historyEntries = toSafeHistoryMetric(statsRow?.history_entries, "entry count");
+          const historyBytes = toSafeHistoryMetric(statsRow?.history_bytes, "byte count");
+          const replayAssessment = assessCollaborationHistoryReplay({ historyEntries, historyBytes });
+          if (!replayAssessment.accepted) {
+            throw new InvalidYjsUpdateError(
+              `Stored collaboration history exceeds the safe replay ${replayAssessment.reason}`
+            );
+          }
+
+          const rows = await dbClient.query<YjsUpdateRow>(
+            `SELECT id, update_data, is_snapshot
+             FROM page_yjs_updates
+             WHERE page_id = ?
+             ORDER BY id ASC`,
+            [pageId]
+          );
+          const history = rows.map((row) => ({
+            id: toSafeUpdateId(row.id),
+            update_data: Buffer.from(row.update_data),
+            is_snapshot: row.is_snapshot === 1 ? 1 as const : 0 as const
+          }));
+          const actualHistoryBytes = history.reduce((total, row) => total + row.update_data.length, 0);
+          if (history.length !== historyEntries || actualHistoryBytes !== historyBytes) {
+            throw new InvalidYjsUpdateError("Stored collaboration history changed during bounded replay");
+          }
+
+          return {
+            history,
+            historyBytes: actualHistoryBytes,
+            maxUpdateId: history.length ? history[history.length - 1].id : 0,
+            replayAssessment
+          };
+        });
+
+        // Persisted Yjs history can be expensive to decode even though its byte
+        // and entry counts are bounded. Rebuild it without holding the page row
+        // lock so a read-only reconnect cannot stall same-page writes.
+        const replay = await this.validationPool.replayHistory({
+          principalKey: `history:${pageId}`,
+          updates: snapshot.history.map((row) => row.update_data),
+          maxStateBytes: maxCollaborationDocumentBytes
+        });
+        const stateUpdate = Buffer.from(replay.stateUpdate);
+        const historyMetadata: YjsHistoryEntry[] = snapshot.history.map(({ id, is_snapshot }) => ({ id, is_snapshot }));
+
+        const loaded = await transaction(async (dbClient) => {
+          const page = await dbClient.queryOne<{ id: string }>(
+            "SELECT id FROM pages WHERE id = ? FOR UPDATE",
+            [pageId]
+          );
+          if (!page) throw new ApiError(404, "PAGE_NOT_FOUND", "Page not found");
+
+          const collaborationState = await getCollaborationState(pageId, dbClient, { lock: true });
+          assertCollaborationDocumentEpoch(collaborationState, documentEpoch);
+
+          const statsRow = await dbClient.queryOne<CollaborationHistoryStatsRow>(
+            `SELECT COUNT(*) AS history_entries,
+                    COALESCE(SUM(OCTET_LENGTH(update_data)), 0) AS history_bytes,
+                    COALESCE(MAX(id), 0) AS max_update_id
+             FROM page_yjs_updates
+             WHERE page_id = ?`,
+            [pageId]
+          );
+          const currentHistoryEntries = toSafeHistoryMetric(statsRow?.history_entries, "entry count");
+          const currentHistoryBytes = toSafeHistoryMetric(statsRow?.history_bytes, "byte count");
+          const currentMaxUpdateId = toSafeUpdateId(statsRow?.max_update_id ?? 0);
+          if (
+            currentHistoryEntries !== snapshot.history.length
+            || currentHistoryBytes !== snapshot.historyBytes
+            || currentMaxUpdateId !== snapshot.maxUpdateId
+          ) {
+            return null;
+          }
+
+          if (!snapshot.replayAssessment.compact || !snapshot.history.length) {
+            return {
+              history: historyMetadata,
+              historyBytes: snapshot.historyBytes,
+              stateUpdate,
+              maxUpdateId: snapshot.maxUpdateId
+            };
+          }
+
+          // Histories from older builds that only moderately exceed the retained
+          // caps are repaired after the replay, once stability is proven under
+          // the page lock. The replacement is server-encoded canonical state.
+          if (stateUpdate.length > maxCollaborationRetainedHistoryBytes) {
+            throw new InvalidYjsUpdateError("The compacted collaboration state exceeds the retained history limit");
+          }
+          const updateId = snapshot.history.at(-1)?.id;
+          if (updateId === undefined) {
+            throw new InvalidYjsUpdateError("Stored collaboration history has no compaction checkpoint");
+          }
+          const replacement = await dbClient.execute<{ affectedRows: number }>(
+            `UPDATE page_yjs_updates
+             SET update_data = ?, is_snapshot = 1
+             WHERE page_id = ? AND id = ?`,
+            [stateUpdate, pageId, updateId]
+          );
+          if (replacement.affectedRows !== 1) {
+            throw new InvalidYjsUpdateError("Stored collaboration history could not be compacted safely");
+          }
+          await dbClient.execute(
+            "DELETE FROM page_yjs_updates WHERE page_id = ? AND id < ?",
+            [pageId, updateId]
+          );
+          return {
+            history: [{ id: updateId, is_snapshot: 1 as const }],
+            historyBytes: stateUpdate.length,
+            stateUpdate,
+            maxUpdateId: updateId
+          };
+        });
+
+        if (loaded) return loaded;
       }
 
-      const rows = await dbClient.query<YjsUpdateRow>(
-        `SELECT id, update_data, is_snapshot
-         FROM page_yjs_updates
-         WHERE page_id = ?
-         ORDER BY id ASC`,
-        [pageId]
+      throw new ApiError(
+        409,
+        "COLLABORATION_HISTORY_CHANGED",
+        "Collaboration history changed while the room was loading. Reconnect to retry."
       );
-      const history = rows.map((row) => ({
-        id: toSafeUpdateId(row.id),
-        update_data: Buffer.from(row.update_data),
-        is_snapshot: row.is_snapshot === 1 ? 1 as const : 0 as const
-      }));
-      const actualHistoryBytes = history.reduce((total, row) => total + row.update_data.length, 0);
-      if (history.length !== historyEntries || actualHistoryBytes !== historyBytes) {
-        throw new InvalidYjsUpdateError("Stored collaboration history changed during bounded replay");
-      }
-
-      // Persisted Yjs history can be expensive to decode even though its byte
-      // and entry counts are bounded. Rebuild it in the validation worker pool
-      // so a room reconnect cannot monopolize Node's shared event loop. Update
-      // validation tasks are prioritized and at most one replay runs at a time.
-      const replay = await this.validationPool.replayHistory({
-        principalKey: `history:${pageId}`,
-        updates: history.map((row) => row.update_data),
-        maxStateBytes: maxCollaborationDocumentBytes
-      });
-      const stateUpdate = Buffer.from(replay.stateUpdate);
-      const historyMetadata: YjsHistoryEntry[] = history.map(({ id, is_snapshot }) => ({ id, is_snapshot }));
-
-      if (!replayAssessment.compact || !history.length) {
-        return {
-          history: historyMetadata,
-          historyBytes: actualHistoryBytes,
-          stateUpdate,
-          maxUpdateId: history.length ? history[history.length - 1].id : 0
-        };
-      }
-
-      // Histories from older builds that only moderately exceed the retained
-      // caps are repaired once under the page lock. The replacement is encoded
-      // from the validated canonical document, never from a client payload.
-      if (stateUpdate.length > maxCollaborationRetainedHistoryBytes) {
-        throw new InvalidYjsUpdateError("The compacted collaboration state exceeds the retained history limit");
-      }
-      const updateId = history.at(-1)?.id;
-      if (updateId === undefined) {
-        throw new InvalidYjsUpdateError("Stored collaboration history has no compaction checkpoint");
-      }
-      // Replace the latest row in place so state-equivalent legacy repair does
-      // not advance the durable cursor or invalidate rooms on another server.
-      const replacement = await dbClient.execute<{ affectedRows: number }>(
-        `UPDATE page_yjs_updates
-         SET update_data = ?, is_snapshot = 1
-         WHERE page_id = ? AND id = ?`,
-        [stateUpdate, pageId, updateId]
-      );
-      if (replacement.affectedRows !== 1) {
-        throw new InvalidYjsUpdateError("Stored collaboration history could not be compacted safely");
-      }
-      await dbClient.execute(
-        "DELETE FROM page_yjs_updates WHERE page_id = ? AND id < ?",
-        [pageId, updateId]
-      );
-      return {
-        history: [{ id: updateId, is_snapshot: 1 as const }],
-        historyBytes: stateUpdate.length,
-        stateUpdate,
-        maxUpdateId: updateId
-      };
-    }).then((loaded) => {
+    })().then((loaded) => {
       if (room.invalidated || this.rooms.get(pageId) !== room) return;
       room.history = loaded.history;
       room.historyBytes = loaded.historyBytes;
@@ -1205,29 +1256,6 @@ export class PageCollaborationHub {
     // shared validation budget first.
     if (!await this.revalidateClientPageAccess(room, client)) return;
 
-    // Serialize validation-in-flight writes with share removal, hard deletion,
-    // and restore. Lease admission and those destructive transitions all lock
-    // the same page row before deciding which operation may proceed.
-    const writeLeaseId = await reserveCollaborationWriteLease(
-      room.pageId,
-      client.user.id,
-      client.documentEpoch
-    );
-    let writeLeaseReleased = false;
-    const releaseWriteLease = async () => {
-      if (writeLeaseReleased) return;
-      writeLeaseReleased = true;
-      await releaseCollaborationWriteLease(writeLeaseId).catch((error) => {
-        // A leaked lease is deliberately safer than treating a committed write
-        // as failed or opening a destructive race. It expires automatically.
-        console.error("Failed to release collaboration write lease", {
-          pageId: room.pageId,
-          writeLeaseId,
-          error
-        });
-      });
-    };
-
     let validation: CollaborationValidationResult;
     try {
       // Reconstructing, re-encoding, and semantically materializing a large Yjs
@@ -1242,18 +1270,13 @@ export class PageCollaborationHub {
       });
     } catch (error) {
       if (error instanceof CollaborationDocumentError) {
-        await releaseWriteLease();
         if (client.socket.isOpen) client.socket.close(1008, "Invalid collaboration update");
         return;
       }
-      await releaseWriteLease();
       throw error;
     }
 
-    if (room.invalidated || this.rooms.get(room.pageId) !== room) {
-      await releaseWriteLease();
-      return;
-    }
+    if (room.invalidated || this.rooms.get(room.pageId) !== room) return;
 
     const persistenceDecision = assessCollaborationUpdatePersistence({
       snapshot,
@@ -1278,7 +1301,6 @@ export class PageCollaborationHub {
           noChange: true
         });
       }
-      await releaseWriteLease();
       return;
     }
 
@@ -1289,6 +1311,32 @@ export class PageCollaborationHub {
       nextUpdateBytes: canonicalIncrementalUpdate.length
     });
     const persistedUpdate = durableSnapshot ? Buffer.from(validation.stateUpdate) : canonicalIncrementalUpdate;
+
+    // Reserve the durable write lease only after bounded worker validation and
+    // no-op filtering. Destructive owner operations can therefore win during
+    // expensive validation instead of racing near-continuous lease occupancy.
+    // Reservation itself re-authorizes under the page lock, so a revocation,
+    // archive, delete, or restore that commits first safely rejects this write.
+    const writeLeaseId = await reserveCollaborationWriteLease(
+      room.pageId,
+      client.user.id,
+      client.documentEpoch
+    );
+    let writeLeaseReleased = false;
+    const releaseWriteLease = async () => {
+      if (writeLeaseReleased) return;
+      writeLeaseReleased = true;
+      await releaseCollaborationWriteLease(writeLeaseId).catch((error) => {
+        // A leaked lease is deliberately safer than treating a committed write
+        // as failed or opening a destructive race. It expires automatically.
+        console.error("Failed to release collaboration write lease", {
+          pageId: room.pageId,
+          writeLeaseId,
+          error
+        });
+      });
+    };
+
     let result:
       | { accepted: true; updateId: number }
       | {

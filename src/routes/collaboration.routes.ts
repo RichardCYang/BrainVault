@@ -50,7 +50,7 @@ import {
 } from "../lib/structured-metadata-integrity.js";
 import { lockUserAttachmentGeneration, removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { CollaborationDocumentError } from "../lib/collaboration-document.js";
-import { materializeCollaborationUpdates } from "../lib/collaboration-materialization.js";
+import type { CollaborationMaterialization } from "../lib/collaboration-materialization.js";
 import {
   diffPageVersionBlocks,
   diffPageVersionPage,
@@ -64,6 +64,12 @@ import {
   needsCollaborationMaterialization
 } from "../lib/collaboration-protocol.js";
 import { assessCollaborationHistoryReplay } from "../lib/collaboration-update-policy.js";
+import {
+  CollaborationHistoryTimeoutError,
+  CollaborationValidationCapacityError,
+  CollaborationValidationPool,
+  CollaborationValidationResourceLimitError
+} from "../lib/collaboration-update-worker-pool.js";
 import { getClientWebRtcSignal } from "../lib/vpn-access-policy.js";
 import { readAuthSessionCookie } from "../lib/session-cookie.js";
 import type { BlockRow, PageRow, UserRow } from "../types/domain.js";
@@ -85,6 +91,10 @@ import {
 
 export const collaborationRouter = Router();
 collaborationRouter.use(requireAuth);
+
+// HTTP snapshot materialization uses a dedicated bounded worker so replaying a
+// large persisted Yjs history never monopolizes Node's shared event loop.
+const collaborationMaterializationPool = new CollaborationValidationPool(1);
 
 async function lockCollaborationMutationUsers(client: DbClient, userIds: string[]) {
   const uniqueIds = [...new Set(userIds)].sort();
@@ -235,7 +245,7 @@ async function getPageCommentRow(
   commentId: string,
   client: DbClient = db
 ): Promise<PageCommentRow | null> {
-  return client.queryOne<PageCommentRow>(
+  return (await client.queryOne<PageCommentRow>(
     `SELECT pc.id AS comment_id, pc.page_id, pc.user_id, pc.body,
             pc.created_at AS comment_created_at, pc.updated_at AS comment_updated_at,
             u.id, u.username, u.name, u.avatar_data, u.preferred_language,
@@ -244,7 +254,7 @@ async function getPageCommentRow(
      INNER JOIN users u ON u.id = pc.user_id
      WHERE pc.page_id = ? AND pc.id = ?`,
     [pageId, commentId]
-  );
+  )) ?? null;
 }
 
 function toPageCommentPayload(
@@ -1102,16 +1112,29 @@ collaborationRouter.put(
           };
         }
 
-        let materialization: ReturnType<typeof materializeCollaborationUpdates>;
+        let materialization: CollaborationMaterialization;
         try {
           // The durable Yjs log is the sole content authority. updateId is only
           // a checkpoint; browser-supplied relational content is never accepted.
-          materialization = materializeCollaborationUpdates(
-            updateRows.map((row) => row.update_data)
-          );
+          // Replay and semantic decoding stay inside a resource-capped worker.
+          materialization = (await collaborationMaterializationPool.materializeHistory({
+            principalKey: user.id,
+            updates: updateRows.map((row) => Buffer.from(row.update_data))
+          })).materialization;
         } catch (error) {
           if (error instanceof CollaborationDocumentError) {
             throw new ApiError(409, error.code, error.message);
+          }
+          if (
+            error instanceof CollaborationValidationCapacityError
+            || error instanceof CollaborationValidationResourceLimitError
+            || error instanceof CollaborationHistoryTimeoutError
+          ) {
+            throw new ApiError(
+              503,
+              "COLLABORATION_MATERIALIZATION_UNAVAILABLE",
+              "Collaboration materialization exceeded the available server resource budget. Retry shortly."
+            );
           }
           throw error;
         }
