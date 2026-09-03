@@ -267,6 +267,12 @@ let blockMoveSubmitting = false;
 let activePageMoveSourcePageId = null;
 let pageMoveReturnFocus = null;
 let pageMoveSubmitting = false;
+let allPagesHierarchyCacheSource = null;
+let allPagesHierarchyCacheValue = null;
+let allPagesRecentTreeCacheSource = null;
+let allPagesRecentTreeCacheValue = null;
+const pageSummaryLookupCache = new WeakMap();
+const deferredNavigationChildren = new WeakMap();
 
 let emojiCategoryDefinitions = [];
 let emojiRecords = [];
@@ -5037,6 +5043,22 @@ function sortByRecent(items) {
   return [...items].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
+function takeMostRecent(items, limit) {
+  if (!Number.isSafeInteger(limit) || limit <= 0 || !items.length) return [];
+  const selected = [];
+
+  for (const item of items) {
+    const timestamp = new Date(item.updatedAt).getTime();
+    let insertAt = selected.length;
+    while (insertAt > 0 && timestamp > selected[insertAt - 1].timestamp) insertAt -= 1;
+    if (insertAt >= limit) continue;
+    selected.splice(insertAt, 0, { item, timestamp });
+    if (selected.length > limit) selected.pop();
+  }
+
+  return selected.map((entry) => entry.item);
+}
+
 function sortByNavigationOrder(items) {
   return [...items].sort((a, b) => {
     const aOrder = state.navigationPageOrder.get(a.id);
@@ -5057,6 +5079,10 @@ function sortByNavigationOrder(items) {
 }
 
 function buildPageTree(pages, { useNavigationOrder = false } = {}) {
+  if (!useNavigationOrder && pages === state.allPages && allPagesRecentTreeCacheSource === pages) {
+    return allPagesRecentTreeCacheValue;
+  }
+
   const ids = new Set(pages.map((page) => page.id));
   const groups = new Map([[rootParentKey, []]]);
 
@@ -5068,6 +5094,10 @@ function buildPageTree(pages, { useNavigationOrder = false } = {}) {
 
   const sortChildren = useNavigationOrder ? sortByNavigationOrder : sortByRecent;
   for (const [key, children] of groups) groups.set(key, sortChildren(children));
+  if (!useNavigationOrder && pages === state.allPages) {
+    allPagesRecentTreeCacheSource = pages;
+    allPagesRecentTreeCacheValue = groups;
+  }
   return groups;
 }
 
@@ -5093,6 +5123,10 @@ function getRootCollections(pages = state.allPages) {
 }
 
 function createPageHierarchyIndex(pages = state.allPages) {
+  if (pages === state.allPages && allPagesHierarchyCacheSource === pages) {
+    return allPagesHierarchyCacheValue;
+  }
+
   const pagesById = new Map();
   for (const page of pages) {
     if (page?.id) pagesById.set(page.id, page);
@@ -5140,12 +5174,41 @@ function createPageHierarchyIndex(pages = state.allPages) {
     );
   }
 
-  return {
+  const index = {
     pagesById,
     collectionRootByPageId,
     collectionPageCounts,
     getCollectionRootId: resolveCollectionRootId
   };
+  if (pages === state.allPages) {
+    allPagesHierarchyCacheSource = pages;
+    allPagesHierarchyCacheValue = index;
+  }
+  return index;
+}
+
+function invalidateAllPagesHierarchyCache() {
+  allPagesHierarchyCacheSource = null;
+  allPagesHierarchyCacheValue = null;
+}
+
+function invalidateAllPagesRecentTreeCache() {
+  allPagesRecentTreeCacheSource = null;
+  allPagesRecentTreeCacheValue = null;
+}
+
+function getPageSummaryLookup(pages) {
+  if (pages === state.allPages && allPagesHierarchyCacheSource === pages) {
+    return allPagesHierarchyCacheValue.pagesById;
+  }
+  let lookup = pageSummaryLookupCache.get(pages);
+  if (lookup) return lookup;
+  lookup = new Map();
+  for (const page of pages) {
+    if (page?.id) lookup.set(page.id, page);
+  }
+  pageSummaryLookupCache.set(pages, lookup);
+  return lookup;
 }
 
 function getCollectionRootId(pageId, pages = state.allPages, hierarchyIndex = null) {
@@ -5175,11 +5238,14 @@ function getCollectionPages(collectionId, pages = state.allPages) {
 function getPagePathSegments(page = state.selectedPage, pageLookup = null) {
   if (!page) return [];
 
-  const pagesById = pageLookup ?? new Map(state.allPages.map((item) => [item.id, item]));
-  pagesById.set(page.id, { ...(pagesById.get(page.id) ?? {}), ...page });
+  const pagesById = pageLookup ?? getPageSummaryLookup(state.allPages);
+  const getPage = (pageId) => {
+    const summary = pagesById.get(pageId);
+    return pageId === page.id ? { ...(summary ?? {}), ...page } : summary;
+  };
   const segments = [];
   const visited = new Set();
-  let current = pagesById.get(page.id);
+  let current = getPage(page.id);
 
   while (current && !visited.has(current.id)) {
     visited.add(current.id);
@@ -5190,7 +5256,7 @@ function getPagePathSegments(page = state.selectedPage, pageLookup = null) {
       title: current.title || t("newDocumentTitle"),
       icon: current.icon ?? (collection ? "📁" : "📄")
     });
-    current = current.parentPageId ? pagesById.get(current.parentPageId) : null;
+    current = current.parentPageId ? getPage(current.parentPageId) : null;
   }
 
   if (!segments.length || segments[0].kind !== "collection") {
@@ -6344,8 +6410,25 @@ function setNavigationSubpagesExpanded(pageId, expanded) {
     button.classList.toggle("collapsed", !expanded);
 
     const controlsId = button.getAttribute("aria-controls");
-    if (controlsId) document.getElementById(controlsId)?.classList.toggle("hidden", !expanded);
+    if (controlsId) {
+      const group = document.getElementById(controlsId);
+      if (expanded && group) materializeDeferredNavigationChildren(group);
+      group?.classList.toggle("hidden", !expanded);
+    }
   }
+}
+
+function materializeDeferredNavigationChildren(group) {
+  if (!group || group.childNodes.length) return;
+  const deferred = deferredNavigationChildren.get(group);
+  if (!deferred) return;
+
+  const fragment = document.createDocumentFragment();
+  for (const child of deferred.children) {
+    fragment.append(renderDocumentNode(child, deferred.groups, deferred.depth));
+  }
+  group.append(fragment);
+  deferredNavigationChildren.delete(group);
 }
 
 
@@ -6395,7 +6478,13 @@ function renderDocumentNode(page, groups, depth = 0) {
     group.className = "document-children";
     group.id = childrenId;
     group.classList.toggle("hidden", !expanded);
-    for (const child of children) group.append(renderDocumentNode(child, groups, depth + 1));
+    if (expanded) {
+      const fragment = document.createDocumentFragment();
+      for (const child of children) fragment.append(renderDocumentNode(child, groups, depth + 1));
+      group.append(fragment);
+    } else {
+      deferredNavigationChildren.set(group, { children, groups, depth: depth + 1 });
+    }
     wrapper.append(group);
   }
 
@@ -6450,8 +6539,8 @@ function renderCollectionSection(collection, pages, pageCount = getCollectionPag
 
 function renderDocumentTree() {
   closeNavigationContextMenu();
-  elements.pageList.replaceChildren();
-  elements.collectionList.replaceChildren();
+  const pageListFragment = document.createDocumentFragment();
+  const collectionListFragment = document.createDocumentFragment();
 
   const hierarchyIndex = createPageHierarchyIndex(state.allPages);
   const collectionRoots = getRootCollections();
@@ -6476,20 +6565,23 @@ function renderDocumentTree() {
     const message = state.searchQuery || state.activeTag
       ? t("empty.noSearchResults")
       : t("empty.noDocumentsSidebar");
-    elements.pageList.append(makeEmptyMessage(message));
+    pageListFragment.append(makeEmptyMessage(message));
   } else {
-    for (const page of defaultRoots) elements.pageList.append(renderDocumentNode(page, defaultGroups));
+    for (const page of defaultRoots) pageListFragment.append(renderDocumentNode(page, defaultGroups));
   }
 
   const isFiltering = Boolean(state.searchQuery || state.activeTag);
   for (const collection of collectionRoots) {
     if (isFiltering && !matchedCollectionIds.has(collection.id)) continue;
-    elements.collectionList.append(renderCollectionSection(
+    collectionListFragment.append(renderCollectionSection(
       collection,
       collectionPages.get(collection.id) ?? [],
       hierarchyIndex.collectionPageCounts.get(collection.id) ?? 0
     ));
   }
+
+  elements.pageList.replaceChildren(pageListFragment);
+  elements.collectionList.replaceChildren(collectionListFragment);
 }
 
 
@@ -9412,18 +9504,20 @@ function renderCollectionView() {
   elements.collectionAddPageButton.disabled = state.workspaceCreateBusy || (collection ? !canManageCollection : false);
   elements.shareCollectionButton.classList.toggle("hidden", !collection || !canManagePageSharing(collection));
   elements.shareCollectionButton.disabled = !collection || !canManagePageSharing(collection);
-  elements.collectionViewList.replaceChildren();
+  const collectionViewFragment = document.createDocumentFragment();
 
   const groups = buildPageTree(pages);
   const roots = groups.get(collection?.id ?? rootParentKey) ?? [];
   if (!roots.length) {
-    elements.collectionViewList.append(makeEmptyMessage(t("empty.noDocumentsSidebar")));
+    collectionViewFragment.append(makeEmptyMessage(t("empty.noDocumentsSidebar")));
+    elements.collectionViewList.replaceChildren(collectionViewFragment);
     return;
   }
 
   for (const page of roots) {
-    elements.collectionViewList.append(renderDocumentNode(page, groups));
+    collectionViewFragment.append(renderDocumentNode(page, groups));
   }
+  elements.collectionViewList.replaceChildren(collectionViewFragment);
 }
 
 function inspectLocalPageDraftRecords(pageId) {
@@ -9906,7 +10000,7 @@ function renderHome() {
   if (!state.allPages.length) {
     elements.homeDocumentList.append(makeEmptyMessage(t("empty.noDocumentsHome")));
   } else {
-    for (const page of sortByRecent(state.allPages).slice(0, 8)) {
+    for (const page of takeMostRecent(state.allPages, 8)) {
       elements.homeDocumentList.append(makeHomeDocumentButton(page));
     }
   }
@@ -10062,11 +10156,14 @@ function updateInputValuePreservingSelection(input, value) {
 }
 
 function updatePageCollaborationSummary(pageId, collaboration) {
-  const apply = (page) => {
-    if (page?.id === pageId) page.collaboration = { ...collaboration };
-  };
-  apply(state.selectedPage);
-  for (const pages of [state.pages, state.allPages]) pages.forEach(apply);
+  const targets = new Set();
+  if (state.selectedPage?.id === pageId) targets.add(state.selectedPage);
+  const pageLists = state.pages === state.allPages ? [state.allPages] : [state.pages, state.allPages];
+  for (const pages of pageLists) {
+    const page = getPageSummaryLookup(pages).get(pageId);
+    if (page) targets.add(page);
+  }
+  for (const page of targets) page.collaboration = { ...collaboration };
 }
 
 function applyCollaborationSnapshot(snapshot, { source = "remote" } = {}) {
@@ -10079,8 +10176,9 @@ function applyCollaborationSnapshot(snapshot, { source = "remote" } = {}) {
 
   state.selectedPage.title = nextTitle;
   state.selectedPage.blocks = nextBlocks;
-  for (const pages of [state.pages, state.allPages]) {
-    const summary = pages.find((page) => page.id === state.selectedPage.id);
+  const pageLists = state.pages === state.allPages ? [state.allPages] : [state.pages, state.allPages];
+  for (const pages of pageLists) {
+    const summary = getPageSummaryLookup(pages).get(state.selectedPage.id);
     if (summary) summary.title = nextTitle;
   }
 
@@ -10100,8 +10198,7 @@ function applyCollaborationSnapshot(snapshot, { source = "remote" } = {}) {
     if (titleChanged) {
       updateInputValuePreservingSelection(elements.pageTitle, nextTitle);
       renderPageHeader(state.selectedPage);
-      renderDocumentTree();
-      renderHome();
+      syncPageTitleSummaryPresentation(state.selectedPage.id, nextTitle);
     }
     renderCollaborationPresence();
     return;
@@ -10159,14 +10256,16 @@ function applyCollaborationMaterialization(result) {
     }
   }
 
-  for (const pages of [state.pages, state.allPages]) {
-    const page = pages.find((item) => item.id === state.selectedPage.id);
+  const pageLists = state.pages === state.allPages ? [state.allPages] : [state.pages, state.allPages];
+  for (const pages of pageLists) {
+    const page = getPageSummaryLookup(pages).get(state.selectedPage.id);
     if (!page) continue;
     page.title = state.selectedPage.title;
     page.version = state.selectedPage.version;
     page.contentVersion = state.selectedPage.contentVersion;
     page.updatedAt = state.selectedPage.updatedAt;
   }
+  if (result.pageUpdatedAt && !materializationIsStale) invalidateAllPagesRecentTreeCache();
   syncBeforeUnloadProtection();
 }
 
@@ -17003,16 +17102,81 @@ function normalizePageTitle(value) {
   return title || t("newDocumentTitle");
 }
 
-function applyPageSummaryUpdate(pageId, updates) {
-  const updateArray = (pages) => {
-    for (const page of pages) {
-      if (page.id === pageId) Object.assign(page, updates);
-    }
-  };
+function syncPageTitleSummaryPresentation(pageId, title) {
+  const escapedPageId = CSS.escape(pageId);
 
-  if (state.selectedPage?.id === pageId) Object.assign(state.selectedPage, updates);
-  updateArray(state.pages);
-  updateArray(state.allPages);
+  for (const button of document.querySelectorAll(`.document-item[data-page-id="${escapedPageId}"]`)) {
+    const label = button.querySelector(".doc-label");
+    if (label) label.textContent = title;
+  }
+
+  for (const button of document.querySelectorAll(`[data-page-children-toggle-id="${escapedPageId}"]`)) {
+    button.dataset.pageChildrenToggleTitle = title;
+    const expanded = button.getAttribute("aria-expanded") === "true";
+    const label = t(expanded ? "navigation.collapseSubpages" : "navigation.expandSubpages", { title });
+    button.setAttribute("aria-label", label);
+    button.setAttribute("title", label);
+  }
+
+  for (const button of document.querySelectorAll(`[data-navigation-menu-id="${escapedPageId}"]`)) {
+    const kind = button.dataset.navigationMenuKind === "collection" ? "collection" : "page";
+    const label = t(kind === "collection" ? "navigationMenu.openCollection" : "navigationMenu.openPage", { title });
+    button.dataset.navigationMenuTitle = title;
+    button.setAttribute("aria-label", label);
+    button.setAttribute("title", label);
+  }
+
+  for (const button of document.querySelectorAll(`.subpage-index-item[data-subpage-index-page-id="${escapedPageId}"]`)) {
+    const label = button.querySelector(".subpage-index-title");
+    if (label) label.textContent = title || t("newDocumentTitle");
+  }
+
+  for (const button of document.querySelectorAll(`.home-document-item[data-page-id="${escapedPageId}"]`)) {
+    const label = button.querySelector(".app-icon-label-text");
+    if (label) label.textContent = title;
+  }
+
+  for (const button of document.querySelectorAll(`.collection-title-button[data-collection-id="${escapedPageId}"]`)) {
+    const label = button.querySelector(".app-icon-label-text");
+    if (label) label.textContent = title;
+  }
+
+  if (state.activeNavigationMenuTarget?.id === pageId) {
+    state.activeNavigationMenuTarget.title = title;
+    const kind = state.activeNavigationMenuTarget.kind;
+    elements.navigationContextMenu.setAttribute(
+      "aria-label",
+      t(kind === "collection" ? "navigationMenu.collectionAria" : "navigationMenu.pageAria", { title })
+    );
+  }
+
+  if (state.workspaceView === "collection" && state.activeCollectionId === pageId) {
+    elements.collectionViewTitle.textContent = title;
+  }
+}
+
+function applyPageSummaryUpdate(pageId, updates) {
+  const targets = new Set();
+  if (state.selectedPage?.id === pageId) targets.add(state.selectedPage);
+  const pageLists = state.pages === state.allPages ? [state.allPages] : [state.pages, state.allPages];
+  for (const pages of pageLists) {
+    const page = getPageSummaryLookup(pages).get(pageId);
+    if (page) targets.add(page);
+  }
+  for (const page of targets) Object.assign(page, updates);
+
+  const updateKeys = Object.keys(updates);
+  if (updateKeys.length === 1 && updateKeys[0] === "title") {
+    syncPageTitleSummaryPresentation(pageId, updates.title);
+    return;
+  }
+
+  if (updateKeys.includes("parentPageId") || updateKeys.includes("isCollection")) {
+    invalidateAllPagesHierarchyCache();
+  }
+  if (updateKeys.includes("parentPageId") || updateKeys.includes("updatedAt")) {
+    invalidateAllPagesRecentTreeCache();
+  }
   renderDocumentTree();
   renderHome();
 }
@@ -17047,13 +17211,15 @@ function applyPageMetadataMutationResult(committedPage, updates) {
 function applyPageContentVersion(pageId, contentVersion) {
   const version = Number(contentVersion);
   if (!Number.isSafeInteger(version) || version < 1) return;
-  const applyVersion = (page) => {
-    if (page?.id !== pageId) return;
+  const targets = new Set();
+  if (state.selectedPage?.id === pageId) targets.add(state.selectedPage);
+  const pageLists = state.pages === state.allPages ? [state.allPages] : [state.pages, state.allPages];
+  for (const pages of pageLists) {
+    const page = getPageSummaryLookup(pages).get(pageId);
+    if (page) targets.add(page);
+  }
+  for (const page of targets) {
     page.contentVersion = Math.max(Number(page.contentVersion ?? 1), version);
-  };
-  applyVersion(state.selectedPage);
-  for (const pages of [state.pages, state.allPages]) {
-    for (const page of pages) applyVersion(page);
   }
 }
 
@@ -17098,8 +17264,9 @@ async function savePageTitleNow({
     if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;
     recordPageTitleEditorHistory(previousTitle);
     state.selectedPage.title = title;
-    for (const pages of [state.pages, state.allPages]) {
-      const page = pages.find((item) => item.id === pageId);
+    const pageLists = state.pages === state.allPages ? [state.allPages] : [state.pages, state.allPages];
+    for (const pages of pageLists) {
+      const page = getPageSummaryLookup(pages).get(pageId);
       if (page) page.title = title;
     }
     renderPageHeader(state.selectedPage);
@@ -17182,8 +17349,9 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
       elements.pageTitle.classList.remove("is-saving", "save-error");
       recordPageTitleEditorHistory(previousTitle);
       if (state.selectedPage?.id === pageId) state.selectedPage.title = title;
-      for (const pages of [state.pages, state.allPages]) {
-        const page = pages.find((item) => item.id === pageId);
+      const pageLists = state.pages === state.allPages ? [state.allPages] : [state.pages, state.allPages];
+      for (const pages of pageLists) {
+        const page = getPageSummaryLookup(pages).get(pageId);
         if (page) page.title = title;
       }
       if (state.selectedPage?.id === pageId) renderPageHeader(state.selectedPage);
