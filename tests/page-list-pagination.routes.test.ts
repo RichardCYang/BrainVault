@@ -159,6 +159,24 @@ describe("Page-list pagination", () => {
     expect(database.query.mock.calls.filter(([sql]) => String(sql).includes("FROM page_tags pt"))).toHaveLength(1);
   });
 
+  it("lets the internal navigation scan omit tag enrichment without changing compact semantics", async () => {
+    database.pageBatches.push([
+      page("pag_navigation", "2026-07-18 12:00:00.000000")
+    ]);
+
+    const response = await request(createApp())
+      .get("/api/pages?limit=500&compact=true&navigation=true")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+
+    expect(response.body.pages).toHaveLength(1);
+    expect(response.body.pages[0].id).toBe("pag_navigation");
+    expect(response.body.pages[0].tags).toEqual([]);
+    expect(response.body.pages[0]).not.toHaveProperty("owner");
+    expect(response.body.pages[0]).not.toHaveProperty("counts");
+    expect(database.query.mock.calls.filter(([sql]) => String(sql).includes("FROM page_tags pt"))).toHaveLength(0);
+  });
+
   it("rejects a malformed cursor before running the page query", async () => {
     const response = await request(createApp())
       .get("/api/pages?cursor=not-a-valid-cursor")

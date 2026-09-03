@@ -92,6 +92,10 @@ const listPagesQuerySchema = z.object({
   compact: z
     .enum(["true", "false"])
     .optional()
+    .transform((value) => value === "true"),
+  navigation: z
+    .enum(["true", "false"])
+    .optional()
     .transform((value) => value === "true")
 });
 
@@ -614,7 +618,7 @@ async function buildPageListSummaries(
   client: DbClient,
   pageRows: PageListRow[],
   userId: string,
-  { compact = false }: { compact?: boolean } = {}
+  { compact = false, omitTags = false }: { compact?: boolean; omitTags?: boolean } = {}
 ) {
   if (!pageRows.length) return [];
 
@@ -656,21 +660,24 @@ async function buildPageListSummaries(
     shareCountRows.map((row) => [row.page_id, Number(row.share_count ?? 0)])
   );
 
-  // Preserve the historical per-page tag ordering while fetching every tag in
-  // one indexed relation scan for the current batch.
-  const tagRows = await client.query<PageListTagRow>(
-    `SELECT pt.page_id, t.id, t.name, t.created_at
-     FROM page_tags pt
-     INNER JOIN tags t ON t.id = pt.tag_id
-     WHERE pt.page_id IN (${placeholders})
-     ORDER BY pt.page_id ASC, t.name ASC`,
-    pageIds
-  );
   const tagsByPageId = new Map<string, ReturnType<typeof toTag>[]>();
-  for (const row of tagRows) {
-    const tags = tagsByPageId.get(row.page_id) ?? [];
-    tags.push(toTag(row));
-    tagsByPageId.set(row.page_id, tags);
+  if (!omitTags) {
+    // Preserve the historical per-page tag ordering for compact and default API
+    // responses. The internal navigation scan can explicitly omit this relation
+    // because tag filtering is already applied by the page-list WHERE clause.
+    const tagRows = await client.query<PageListTagRow>(
+      `SELECT pt.page_id, t.id, t.name, t.created_at
+       FROM page_tags pt
+       INNER JOIN tags t ON t.id = pt.tag_id
+       WHERE pt.page_id IN (${placeholders})
+       ORDER BY pt.page_id ASC, t.name ASC`,
+      pageIds
+    );
+    for (const row of tagRows) {
+      const tags = tagsByPageId.get(row.page_id) ?? [];
+      tags.push(toTag(row));
+      tagsByPageId.set(row.page_id, tags);
+    }
   }
 
   // The workspace navigation never renders owner profile data. In compact mode
@@ -888,7 +895,10 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
       );
 
       const pageRows = rows.slice(0, query.limit);
-      const pages = await buildPageListSummaries(client, pageRows, user.id, { compact: query.compact });
+      const pages = await buildPageListSummaries(client, pageRows, user.id, {
+        compact: query.compact,
+        omitTags: query.navigation
+      });
       const nextCursor = rows.length > query.limit
         ? encodePageListCursor(pageRows[pageRows.length - 1])
         : null;

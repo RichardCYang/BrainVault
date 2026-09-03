@@ -74,7 +74,7 @@ test("large page-list requests use bounded batch enrichment instead of per-page 
 
   assert.match(enrichment, /WHERE pcm\.page_id IN \(\$\{placeholders\}\)/);
   assert.match(enrichment, /COUNT\(DISTINCT effective_shares\.user_id\)/);
-  assert.match(enrichment, /WHERE pt\.page_id IN \(\$\{placeholders\}\)/);
+  assert.match(enrichment, /if \(!omitTags\) \{[\s\S]*WHERE pt\.page_id IN \(\$\{placeholders\}\)/);
   assert.match(enrichment, /if \(!compact\) \{[\s\S]*FROM users[\s\S]*WHERE id IN/);
 });
 
@@ -82,11 +82,134 @@ test("workspace navigation opts into compact 500-item keyset batches", async () 
   const app = await read("public/app.js");
   const fetcher = section(app, "async function fetchAllPageSummaries(", "async function fetchOwnedWorkspacePageIds(");
 
-  assert.match(fetcher, /new URLSearchParams\(\{ limit: "500", compact: "true" \}\)/);
+  assert.match(fetcher, /new URLSearchParams\(\{ limit: "500", compact: "true", navigation: "true" \}\)/);
   assert.match(fetcher, /if \(cursor\) params\.set\("cursor", cursor\);/);
   assert.match(fetcher, /seenPageIds/);
   assert.match(fetcher, /seenCursors/);
   assert.match(fetcher, /return sortByRecent\(pages\);/);
+});
+
+test("selected-page rerenders update navigation selection without rebuilding the workspace tree", async () => {
+  const app = await read("public/app.js");
+  const selectorSync = section(app, "function syncWorkspaceNavigationSelection(", "function flattenBlocks(");
+  const selectedRenderer = section(app, "function renderSelectedPage(", "function normalizePageTitle(");
+
+  assert.match(selectorSync, /document-item\.active/);
+  assert.match(selectorSync, /data-page-id=\"\$\{escapedPageId\}\"/);
+  assert.match(selectorSync, /collection-title-button\.active/);
+  assert.match(selectorSync, /aria-current/);
+  assert.doesNotMatch(selectorSync, /renderDocumentTree\(/);
+
+  assert.match(selectedRenderer, /syncWorkspaceNavigationSelection\(\)/);
+  assert.match(selectedRenderer, /if \(isCollection\)[\s\S]*renderCollectionView\(\);[\s\S]*return;/);
+  assert.match(selectedRenderer, /if \(!hasPage\)[\s\S]*if \(isHome\) renderHome\(\);[\s\S]*return;/);
+  assert.doesNotMatch(selectedRenderer, /renderPages\(\)/);
+  assert.doesNotMatch(selectedRenderer, /renderDocumentTree\(\)/);
+});
+
+test("navigation selection sync preserves active and aria-current semantics across views", async () => {
+  const app = await read("public/app.js");
+  const selectorSync = section(app, "function syncWorkspaceNavigationSelection(", "function flattenBlocks(");
+
+  class MockClassList {
+    constructor(...names) { this.names = new Set(names); }
+    add(name) { this.names.add(name); }
+    remove(name) { this.names.delete(name); }
+    contains(name) { return this.names.has(name); }
+    toggle(name, force) {
+      if (force === undefined) force = !this.names.has(name);
+      if (force) this.names.add(name);
+      else this.names.delete(name);
+      return force;
+    }
+  }
+  class MockElement {
+    constructor(dataset = {}, classes = []) {
+      this.dataset = dataset;
+      this.classList = new MockClassList(...classes);
+      this.attributes = new Map();
+      this.row = null;
+    }
+    setAttribute(name, value) { this.attributes.set(name, String(value)); }
+    removeAttribute(name) { this.attributes.delete(name); }
+    getAttribute(name) { return this.attributes.get(name) ?? null; }
+    closest(selector) { return selector === ".document-item-row" || selector === ".collection-title-row" ? this.row : null; }
+  }
+
+  const page1 = new MockElement({ pageId: "page_1" }, ["document-item", "active"]);
+  const page1Row = new MockElement({}, ["document-item-row", "active"]);
+  page1.row = page1Row;
+  page1.setAttribute("aria-current", "page");
+  const page2 = new MockElement({ pageId: "page_2" }, ["document-item"]);
+  const page2Row = new MockElement({}, ["document-item-row"]);
+  page2.row = page2Row;
+
+  const collection1 = new MockElement({ collectionId: "collection_1" }, ["collection-title-button", "active"]);
+  const collection1Row = new MockElement({}, ["collection-title-row", "active"]);
+  collection1.row = collection1Row;
+  collection1.setAttribute("aria-current", "page");
+  const collection2 = new MockElement({ collectionId: "collection_2" }, ["collection-title-button"]);
+  const collection2Row = new MockElement({}, ["collection-title-row"]);
+  collection2.row = collection2Row;
+
+  const defaultCollectionButton = new MockElement({}, ["collection-title-button"]);
+  const defaultCollectionRow = new MockElement({}, ["collection-title-row"]);
+  defaultCollectionButton.row = defaultCollectionRow;
+  const pageButtons = [page1, page2];
+  const collectionButtons = [collection1, collection2];
+  const allCollectionButtons = [defaultCollectionButton, ...collectionButtons];
+  const documentMock = {
+    querySelectorAll(selector) {
+      if (selector === '.document-item.active, .document-item[aria-current="page"]') {
+        return pageButtons.filter((button) => button.classList.contains("active") || button.getAttribute("aria-current") === "page");
+      }
+      if (selector === '.collection-title-button.active, .collection-title-button[aria-current="page"]') {
+        return allCollectionButtons.filter((button) => button.classList.contains("active") || button.getAttribute("aria-current") === "page");
+      }
+      const pageMatch = selector.match(/^\.document-item\[data-page-id="(.+)"\]$/);
+      if (pageMatch) return pageButtons.filter((button) => button.dataset.pageId === pageMatch[1]);
+      const collectionMatch = selector.match(/^\.collection-title-button\[data-collection-id="(.+)"\]$/);
+      if (collectionMatch) return collectionButtons.filter((button) => button.dataset.collectionId === collectionMatch[1]);
+      throw new Error(`Unexpected selector: ${selector}`);
+    }
+  };
+  const state = { workspaceView: "page", selectedPage: { id: "page_2" }, activeCollectionId: null };
+  const sandbox = {
+    state,
+    document: documentMock,
+    CSS: { escape: (value) => value },
+    elements: { defaultCollectionButton },
+    defaultCollectionKey: "__default_collection__"
+  };
+  vm.runInNewContext(selectorSync, sandbox);
+
+  sandbox.syncWorkspaceNavigationSelection();
+  assert.equal(page1.classList.contains("active"), false);
+  assert.equal(page1Row.classList.contains("active"), false);
+  assert.equal(page1.getAttribute("aria-current"), null);
+  assert.equal(page2.classList.contains("active"), true);
+  assert.equal(page2Row.classList.contains("active"), true);
+  assert.equal(page2.getAttribute("aria-current"), "page");
+  assert.equal(collection1.classList.contains("active"), false);
+
+  state.workspaceView = "collection";
+  state.selectedPage = null;
+  state.activeCollectionId = "collection_2";
+  sandbox.syncWorkspaceNavigationSelection();
+  assert.equal(page2.classList.contains("active"), false);
+  assert.equal(page2.getAttribute("aria-current"), null);
+  assert.equal(collection2.classList.contains("active"), true);
+  assert.equal(collection2Row.classList.contains("active"), true);
+  assert.equal(collection2.getAttribute("aria-current"), "page");
+  assert.equal(defaultCollectionButton.classList.contains("active"), false);
+
+  state.activeCollectionId = "__default_collection__";
+  sandbox.syncWorkspaceNavigationSelection();
+  assert.equal(collection2.classList.contains("active"), false);
+  assert.equal(collection2.getAttribute("aria-current"), null);
+  assert.equal(defaultCollectionButton.classList.contains("active"), true);
+  assert.equal(defaultCollectionRow.classList.contains("active"), true);
+  assert.equal(defaultCollectionButton.getAttribute("aria-current"), "page");
 });
 
 test("hierarchy index preserves collection semantics while avoiding repeated full-array scans", async () => {
@@ -205,6 +328,12 @@ test("page header path lookup reuses the workspace page index instead of rebuild
 
   assert.match(pathSource, /getPageSummaryLookup\(state\.allPages\)/);
   assert.doesNotMatch(pathSource, /new Map\(state\.allPages\.map/);
+
+  const lookupSource = section(app, "function getPageSummaryLookup(", "function getCollectionRootId(");
+  assert.match(lookupSource, /function getPageSummaryById\(pageId\)/);
+  assert.match(lookupSource, /getPageSummaryLookup\(state\.allPages\)\.get\(pageId\)/);
+  assert.doesNotMatch(app, /state\.allPages\.find\(\(page\) => page\.id ===/);
+  assert.doesNotMatch(app, /state\.allPages\.find\(\(candidate\) => candidate\.id ===/);
 
   const indexedPages = new Map([
     ["collection", { id: "collection", title: "Collection", icon: "📁", isCollection: true, parentPageId: null }],
@@ -345,12 +474,12 @@ test("large subtree and move-dialog helpers avoid repeated full-page scans", asy
   assert.equal(iteratedPages, largePages.length, "subtree discovery should scan the page array once");
 
   const pageMove = section(app, "function getPageMoveDestinationPages(", "function setPageMoveMessage(");
-  assert.match(pageMove, /const pageLookup = new Map\(state\.allPages\.map/);
+  assert.match(pageMove, /const pageLookup = getPageSummaryLookup\(state\.allPages\)/);
   assert.match(pageMove, /const labelByPageId = new Map\(\)/);
   assert.doesNotMatch(pageMove, /getPageMoveDestinationLabel\(left\)\.localeCompare/);
 
   const blockMove = section(app, "function getBlockMoveDestinationPages(", "function setBlockMoveMessage(");
-  assert.match(blockMove, /const pageLookup = new Map\(state\.allPages\.map/);
+  assert.match(blockMove, /const pageLookup = getPageSummaryLookup\(state\.allPages\)/);
   assert.match(blockMove, /const labelByPageId = new Map\(\)/);
   assert.doesNotMatch(blockMove, /getPagePathSegments\(left\)/);
 });

@@ -1588,6 +1588,12 @@ paths:
           schema:
             type: boolean
             default: false
+        - in: query
+          name: navigation
+          description: Internal workspace-navigation hint. When true, tag enrichment is omitted because navigation does not render page tags; tag filtering still applies. Defaults to false, so compact=true retains its existing tag response semantics.
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: User pages

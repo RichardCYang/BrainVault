@@ -44,6 +44,7 @@ test("production destination-filter function excludes unsafe parents and keeps a
   const subtree = new Set(["source", "child", "grandchild"]);
   const sandbox = {
     state: { allPages: pages },
+    getPageSummaryLookup: (items) => new Map(items.map((page) => [page.id, page])),
     getPageSubtreeIds: () => subtree,
     isCollectionPage: (page) => Boolean(page?.isCollection),
     canManagePage: (page) => page?.ownerId === "owner",
