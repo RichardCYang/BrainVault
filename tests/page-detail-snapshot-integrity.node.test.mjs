@@ -173,8 +173,8 @@ test("page list keeps membership, authorization, and tags in one repeatable-read
 
   assert.match(listRoute, /const result = await transaction\(async \(client\) => \{/);
   assert.match(listRoute, /const rows = await client\.query</);
-  assert.match(listRoute, /getPageAccess\(row\.id, user\.id, client\)/);
-  assert.match(listRoute, /getPageTags\(row\.id, client\)/);
+  assert.match(listRoute, /buildPageListSummaries\(client, pageRows, user\.id/);
+  assert.match(listRoute, /compact: query\.compact/);
   assert.match(listRoute, /res\.json\(result\);/);
 });
 

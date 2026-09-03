@@ -5092,43 +5092,90 @@ function getRootCollections(pages = state.allPages) {
   return sortByNavigationOrder(pages.filter(isCollectionPage));
 }
 
-function getCollectionRootId(pageId, pages = state.allPages) {
-  if (!pageId) return null;
-
-  const pagesById = new Map(pages.map((page) => [page.id, page]));
-  const visited = new Set();
-  let page = pagesById.get(pageId);
-
-  while (page && !visited.has(page.id)) {
-    if (isCollectionPage(page)) return page.id;
-    visited.add(page.id);
-    page = page.parentPageId ? pagesById.get(page.parentPageId) : null;
+function createPageHierarchyIndex(pages = state.allPages) {
+  const pagesById = new Map();
+  for (const page of pages) {
+    if (page?.id) pagesById.set(page.id, page);
   }
 
-  return null;
+  const collectionRootByPageId = new Map();
+  const resolveCollectionRootId = (pageId) => {
+    if (!pageId || !pagesById.has(pageId)) return null;
+    if (collectionRootByPageId.has(pageId)) return collectionRootByPageId.get(pageId);
+
+    const path = [];
+    const visited = new Set();
+    let page = pagesById.get(pageId);
+    let collectionRootId = null;
+
+    while (page && !visited.has(page.id)) {
+      if (collectionRootByPageId.has(page.id)) {
+        collectionRootId = collectionRootByPageId.get(page.id);
+        break;
+      }
+      visited.add(page.id);
+      path.push(page.id);
+      if (isCollectionPage(page)) {
+        collectionRootId = page.id;
+        break;
+      }
+      page = page.parentPageId ? pagesById.get(page.parentPageId) : null;
+    }
+
+    // Path compression makes repeated hierarchy lookups effectively O(1)
+    // after each ancestry chain has been resolved once.
+    for (const id of path) collectionRootByPageId.set(id, collectionRootId);
+    return collectionRootId;
+  };
+
+  for (const pageId of pagesById.keys()) resolveCollectionRootId(pageId);
+
+  const collectionPageCounts = new Map();
+  for (const page of pagesById.values()) {
+    const collectionRootId = collectionRootByPageId.get(page.id) ?? null;
+    if (!collectionRootId || collectionRootId === page.id) continue;
+    collectionPageCounts.set(
+      collectionRootId,
+      (collectionPageCounts.get(collectionRootId) ?? 0) + 1
+    );
+  }
+
+  return {
+    pagesById,
+    collectionRootByPageId,
+    collectionPageCounts,
+    getCollectionRootId: resolveCollectionRootId
+  };
+}
+
+function getCollectionRootId(pageId, pages = state.allPages, hierarchyIndex = null) {
+  return (hierarchyIndex ?? createPageHierarchyIndex(pages)).getCollectionRootId(pageId);
 }
 
 function getDefaultCollectionPages(pages = state.allPages) {
-  return pages.filter((page) => !getCollectionRootId(page.id, pages));
+  const hierarchyIndex = createPageHierarchyIndex(pages);
+  return pages.filter((page) => !hierarchyIndex.getCollectionRootId(page.id));
 }
 
 function getCollectionPageCount(collectionId, pages = state.allPages) {
-  return pages.filter(
-    (page) => page.id !== collectionId && getCollectionRootId(page.id, pages) === collectionId
-  ).length;
+  if (!collectionId) return 0;
+  return createPageHierarchyIndex(pages).collectionPageCounts.get(collectionId) ?? 0;
 }
 
 function getCollectionPages(collectionId, pages = state.allPages) {
-  if (collectionId === defaultCollectionKey) return getDefaultCollectionPages(pages);
+  const hierarchyIndex = createPageHierarchyIndex(pages);
+  if (collectionId === defaultCollectionKey) {
+    return pages.filter((page) => !hierarchyIndex.getCollectionRootId(page.id));
+  }
   return pages.filter(
-    (page) => page.id !== collectionId && getCollectionRootId(page.id, pages) === collectionId
+    (page) => page.id !== collectionId && hierarchyIndex.getCollectionRootId(page.id) === collectionId
   );
 }
 
-function getPagePathSegments(page = state.selectedPage) {
+function getPagePathSegments(page = state.selectedPage, pageLookup = null) {
   if (!page) return [];
 
-  const pagesById = new Map(state.allPages.map((item) => [item.id, item]));
+  const pagesById = pageLookup ?? new Map(state.allPages.map((item) => [item.id, item]));
   pagesById.set(page.id, { ...(pagesById.get(page.id) ?? {}), ...page });
   const segments = [];
   const visited = new Set();
@@ -6355,7 +6402,7 @@ function renderDocumentNode(page, groups, depth = 0) {
   return wrapper;
 }
 
-function renderCollectionSection(collection, pages) {
+function renderCollectionSection(collection, pages, pageCount = getCollectionPageCount(collection.id)) {
   const section = document.createElement("section");
   section.className = "nav-section custom-collection";
   section.dataset.navigationOrderId = collection.id;
@@ -6379,7 +6426,7 @@ function renderCollectionSection(collection, pages) {
 
   const count = document.createElement("span");
   count.className = "count-pill";
-  count.textContent = String(getCollectionPageCount(collection.id));
+  count.textContent = String(pageCount);
 
   button.append(title, count);
   row.append(button);
@@ -6406,13 +6453,14 @@ function renderDocumentTree() {
   elements.pageList.replaceChildren();
   elements.collectionList.replaceChildren();
 
+  const hierarchyIndex = createPageHierarchyIndex(state.allPages);
   const collectionRoots = getRootCollections();
   const collectionPages = new Map(collectionRoots.map((collection) => [collection.id, []]));
   const matchedCollectionIds = new Set();
   const defaultPages = [];
 
   for (const page of state.pages) {
-    const collectionId = getCollectionRootId(page.id);
+    const collectionId = getCollectionRootId(page.id, state.allPages, hierarchyIndex);
     if (!collectionId) {
       defaultPages.push(page);
       continue;
@@ -6436,7 +6484,11 @@ function renderDocumentTree() {
   const isFiltering = Boolean(state.searchQuery || state.activeTag);
   for (const collection of collectionRoots) {
     if (isFiltering && !matchedCollectionIds.has(collection.id)) continue;
-    elements.collectionList.append(renderCollectionSection(collection, collectionPages.get(collection.id) ?? []));
+    elements.collectionList.append(renderCollectionSection(
+      collection,
+      collectionPages.get(collection.id) ?? [],
+      hierarchyIndex.collectionPageCounts.get(collection.id) ?? 0
+    ));
   }
 }
 
@@ -6727,14 +6779,21 @@ function makeHomeGuideRow(titleText, metaText) {
 
 function getPageSubtreeIds(pageId, pages = state.allPages) {
   const ids = new Set([pageId]);
-  let changed = true;
+  const childrenByParentId = new Map();
+  for (const page of pages) {
+    if (!page?.id || !page.parentPageId) continue;
+    const children = childrenByParentId.get(page.parentPageId) ?? [];
+    children.push(page.id);
+    childrenByParentId.set(page.parentPageId, children);
+  }
 
-  while (changed) {
-    changed = false;
-    for (const page of pages) {
-      if (!page.parentPageId || !ids.has(page.parentPageId) || ids.has(page.id)) continue;
-      ids.add(page.id);
-      changed = true;
+  const pending = [pageId];
+  while (pending.length) {
+    const parentId = pending.pop();
+    for (const childId of childrenByParentId.get(parentId) ?? []) {
+      if (ids.has(childId)) continue;
+      ids.add(childId);
+      pending.push(childId);
     }
   }
 
@@ -8836,6 +8895,15 @@ function canMoveNavigationPage(page) {
 function getPageMoveDestinationPages(sourcePage) {
   if (!canMoveNavigationPage(sourcePage)) return [];
   const subtreeIds = getPageSubtreeIds(sourcePage.id);
+  const pageLookup = new Map(state.allPages.map((page) => [page.id, page]));
+  const labelByPageId = new Map();
+  const getLabel = (page) => {
+    if (!labelByPageId.has(page.id)) {
+      labelByPageId.set(page.id, getPageMoveDestinationLabel(page, pageLookup));
+    }
+    return labelByPageId.get(page.id);
+  };
+
   return state.allPages
     .filter((page) => (
       page?.id
@@ -8845,13 +8913,12 @@ function getPageMoveDestinationPages(sourcePage) {
       && !page.isArchived
       && canManagePage(page)
     ))
-    .sort((left, right) => (
-      getPageMoveDestinationLabel(left).localeCompare(getPageMoveDestinationLabel(right), getLocale())
-    ));
+    .sort((left, right) => getLabel(left).localeCompare(getLabel(right), getLocale()));
 }
 
 function getPageMoveDestinationLabel(page) {
-  return getPagePathSegments(page).map(({ title }) => title).join(" / ");
+  const pageLookup = arguments[1] ?? null;
+  return getPagePathSegments(page, pageLookup).map(({ title }) => title).join(" / ");
 }
 
 function setPageMoveMessage(message = "", isError = false) {
@@ -8886,10 +8953,11 @@ function renderPageMoveDestinations() {
   placeholder.disabled = true;
   elements.pageMovePageSelect.append(placeholder);
 
+  const pageLookup = new Map(state.allPages.map((page) => [page.id, page]));
   for (const page of destinations) {
     const option = document.createElement("option");
     option.value = page.id;
-    option.textContent = getPageMoveDestinationLabel(page);
+    option.textContent = getPageMoveDestinationLabel(page, pageLookup);
     elements.pageMovePageSelect.append(option);
   }
 
@@ -13934,6 +14002,15 @@ function canMoveBlockFromPage(page = state.selectedPage) {
 
 function getBlockMoveDestinationPages(sourcePage = state.selectedPage) {
   if (!canMoveBlockFromPage(sourcePage)) return [];
+  const pageLookup = new Map(state.allPages.map((page) => [page.id, page]));
+  const labelByPageId = new Map();
+  const getLabel = (page) => {
+    if (!labelByPageId.has(page.id)) {
+      labelByPageId.set(page.id, getBlockMoveDestinationLabel(page, pageLookup));
+    }
+    return labelByPageId.get(page.id);
+  };
+
   return state.allPages
     .filter((page) => (
       page?.id
@@ -13944,15 +14021,11 @@ function getBlockMoveDestinationPages(sourcePage = state.selectedPage) {
       && isPageOwner(page)
       && !isCollaborativePage(page)
     ))
-    .sort((left, right) => {
-      const leftLabel = getPagePathSegments(left).map(({ title }) => title).join(" / ");
-      const rightLabel = getPagePathSegments(right).map(({ title }) => title).join(" / ");
-      return leftLabel.localeCompare(rightLabel, getLocale());
-    });
+    .sort((left, right) => getLabel(left).localeCompare(getLabel(right), getLocale()));
 }
 
-function getBlockMoveDestinationLabel(page) {
-  return getPagePathSegments(page).map(({ title }) => title).join(" / ");
+function getBlockMoveDestinationLabel(page, pageLookup = null) {
+  return getPagePathSegments(page, pageLookup).map(({ title }) => title).join(" / ");
 }
 
 function setBlockMoveMessage(message = "", isError = false) {
@@ -13984,10 +14057,11 @@ function renderBlockMoveDestinations() {
   placeholder.disabled = true;
   elements.blockMovePageSelect.append(placeholder);
 
+  const pageLookup = new Map(state.allPages.map((page) => [page.id, page]));
   for (const page of destinations) {
     const option = document.createElement("option");
     option.value = page.id;
-    option.textContent = getBlockMoveDestinationLabel(page);
+    option.textContent = getBlockMoveDestinationLabel(page, pageLookup);
     elements.blockMovePageSelect.append(option);
   }
 
@@ -17866,7 +17940,10 @@ async function fetchAllPageSummaries({ query = "", tag = "", archived = false } 
   let cursor = null;
 
   do {
-    const params = new URLSearchParams({ limit: "100" });
+    // The navigation only needs hierarchy/access/tag metadata. Compact batches
+    // avoid duplicating owner avatars and per-page COUNT subqueries, while the
+    // larger keyset page reduces request overhead for very large workspaces.
+    const params = new URLSearchParams({ limit: "500", compact: "true" });
     if (query) params.set("q", query);
     if (tag) params.set("tag", tag);
     if (archived) params.set("archived", "true");

@@ -56,6 +56,8 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `DELETE` | `/api/pages/:pageId/versions` | Reset owner-only page version history once using an idempotency key plus the exact viewed page/content/history versions |
 | `GET` | `/api/search?q=...` | Search titles and block Markdown |
 
+`GET /api/pages` uses stable keyset pagination and accepts up to 500 rows per request. The optional `compact=true` mode is intended for workspace-navigation scans: it preserves hierarchy, access, collaboration, tags, and cursor behavior while omitting repeated owner-profile data and per-page block/child counts. The default remains the full response for backward compatibility.
+
 
 ## Collection-sharing API
 

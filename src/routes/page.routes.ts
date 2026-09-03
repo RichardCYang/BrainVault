@@ -14,7 +14,7 @@ import {
   assessPageVersionResetMutationReceipt,
   type PageVersionResetMutationReceipt
 } from "../lib/page-version-reset-mutation.js";
-import { toBlock, toPage, toTag } from "../lib/mappers.js";
+import { toBlock, toPage, toPublicUser, toTag } from "../lib/mappers.js";
 import {
   assertPageCanAdminister,
   assertPageNotArchived,
@@ -25,7 +25,10 @@ import {
   getPageCollectionId,
   pageSummaryProjection,
   toAccessPayload,
-  toCollaborationPayload
+  toCollaborationPayload,
+  type CollectionSharePermission,
+  type PageAccessRole,
+  type PageAccessScope
 } from "../lib/page-access.js";
 import {
   replacePageSubtreeCollectionMembership,
@@ -58,7 +61,7 @@ import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { buildBlockTree } from "../utils/blockTree.js";
 import { idParamSchema, requireUser, routeIdSchema, safeVersionSchema } from "../utils/schemas.js";
-import type { BlockRow, PageRow, TagRow } from "../types/domain.js";
+import type { BlockRow, PageRow, TagRow, UserRow } from "../types/domain.js";
 import { assertNoActiveCollaborationWriteLeases } from "../lib/collaboration-write-lease.js";
 import {
   grantDirectPageRecovery,
@@ -85,7 +88,11 @@ const listPagesQuerySchema = z.object({
     .transform((value) => (value ? value === "true" : false)),
   tag: z.string().trim().min(1).max(50).optional(),
   cursor: z.string().min(1).max(256).optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(50)
+  limit: z.coerce.number().int().min(1).max(500).default(50),
+  compact: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => value === "true")
 });
 
 function decodePageListCursor(value: string) {
@@ -571,6 +578,165 @@ async function getPageTags(pageId: string, client: DbClient = db) {
   return rows.map(toTag);
 }
 
+type PageListRow = PageRow & {
+  cursor_created_at: string;
+  block_count?: number | bigint | string;
+  child_count?: number | bigint | string;
+};
+
+type PageListAccessMetadataRow = {
+  page_id: string;
+  collection_id: string;
+  collection_permission: CollectionSharePermission | null;
+};
+
+type PageListShareCountRow = {
+  page_id: string;
+  share_count: number | bigint | string;
+};
+
+type PageListTagRow = TagRow & { page_id: string };
+
+type PageListOwnerRow = Pick<
+  UserRow,
+  | "id"
+  | "username"
+  | "name"
+  | "avatar_data"
+  | "preferred_language"
+  | "default_collection_icon"
+  | "theme"
+  | "created_at"
+  | "updated_at"
+>;
+
+async function buildPageListSummaries(
+  client: DbClient,
+  pageRows: PageListRow[],
+  userId: string,
+  { compact = false }: { compact?: boolean } = {}
+) {
+  if (!pageRows.length) return [];
+
+  const pageIds = pageRows.map((row) => row.id);
+  const placeholders = pageIds.map(() => "?").join(", ");
+
+  // Resolve collection membership and the current user's collection grant once
+  // for the whole batch. The list WHERE clause already proves direct-page access,
+  // so a non-owner without a collection grant is necessarily a direct editor.
+  const accessRows = await client.query<PageListAccessMetadataRow>(
+    `SELECT pcm.page_id, pcm.collection_id, cs.permission AS collection_permission
+     FROM page_collection_memberships pcm
+     LEFT JOIN collection_shares cs
+       ON cs.collection_id = pcm.collection_id AND cs.user_id = ?
+     WHERE pcm.page_id IN (${placeholders})`,
+    [userId, ...pageIds]
+  );
+  const accessByPageId = new Map(accessRows.map((row) => [row.page_id, row]));
+
+  // Collaboration status is the union of direct page editors and collection
+  // members. Aggregate it for the complete page batch instead of issuing one
+  // COUNT query per page.
+  const shareCountRows = await client.query<PageListShareCountRow>(
+    `SELECT effective_shares.page_id, COUNT(DISTINCT effective_shares.user_id) AS share_count
+     FROM (
+       SELECT ps.page_id, ps.user_id
+       FROM page_shares ps
+       WHERE ps.permission = 'EDIT' AND ps.page_id IN (${placeholders})
+       UNION ALL
+       SELECT pcm.page_id, cs.user_id
+       FROM page_collection_memberships pcm
+       INNER JOIN collection_shares cs ON cs.collection_id = pcm.collection_id
+       WHERE pcm.page_id IN (${placeholders})
+     ) effective_shares
+     GROUP BY effective_shares.page_id`,
+    [...pageIds, ...pageIds]
+  );
+  const shareCountByPageId = new Map(
+    shareCountRows.map((row) => [row.page_id, Number(row.share_count ?? 0)])
+  );
+
+  // Preserve the historical per-page tag ordering while fetching every tag in
+  // one indexed relation scan for the current batch.
+  const tagRows = await client.query<PageListTagRow>(
+    `SELECT pt.page_id, t.id, t.name, t.created_at
+     FROM page_tags pt
+     INNER JOIN tags t ON t.id = pt.tag_id
+     WHERE pt.page_id IN (${placeholders})
+     ORDER BY pt.page_id ASC, t.name ASC`,
+    pageIds
+  );
+  const tagsByPageId = new Map<string, ReturnType<typeof toTag>[]>();
+  for (const row of tagRows) {
+    const tags = tagsByPageId.get(row.page_id) ?? [];
+    tags.push(toTag(row));
+    tagsByPageId.set(row.page_id, tags);
+  }
+
+  // The workspace navigation never renders owner profile data. In compact mode
+  // omit it entirely so a large avatar is not duplicated once per page. The
+  // default API response remains backward compatible and includes owner data.
+  const ownerById = new Map<string, ReturnType<typeof toPublicUser>>();
+  if (!compact) {
+    const ownerIds = [...new Set(pageRows.map((row) => row.owner_id))];
+    const ownerPlaceholders = ownerIds.map(() => "?").join(", ");
+    const ownerRows = await client.query<PageListOwnerRow>(
+      `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon, theme, created_at, updated_at
+       FROM users
+       WHERE id IN (${ownerPlaceholders})`,
+      ownerIds
+    );
+    for (const owner of ownerRows) ownerById.set(owner.id, toPublicUser(owner));
+  }
+
+  return pageRows.map((row) => {
+    const accessMetadata = accessByPageId.get(row.id);
+    const collectionId = accessMetadata?.collection_id ?? null;
+    const collectionPermission = accessMetadata?.collection_permission ?? null;
+    let role: PageAccessRole;
+    let scope: PageAccessScope;
+
+    if (row.owner_id === userId) {
+      role = "OWNER";
+      scope = "OWNER";
+    } else if (collectionPermission) {
+      scope = "COLLECTION";
+      role = collectionPermission === "ADMIN"
+        ? "ADMIN"
+        : collectionPermission === "WRITE"
+          ? "EDITOR"
+          : "READER";
+    } else {
+      // The list membership predicate only admits this branch when a direct
+      // EDIT grant exists and no collection grant overrides it.
+      role = "EDITOR";
+      scope = "PAGE";
+    }
+
+    const page = toPage(row);
+    if (scope === "PAGE") page.parentPageId = null;
+    const shareCount = shareCountByPageId.get(row.id) ?? 0;
+    const result = {
+      ...page,
+      access: toAccessPayload({ role, scope, collectionId, collectionPermission }),
+      collaboration: toCollaborationPayload({ shareCount }),
+      tags: tagsByPageId.get(row.id) ?? []
+    };
+
+    if (compact) return result;
+    const owner = ownerById.get(row.owner_id);
+    if (!owner) throw notFound("Page owner");
+    return {
+      ...result,
+      owner,
+      counts: {
+        blocks: Number(row.block_count ?? 0),
+        children: Number(row.child_count ?? 0)
+      }
+    };
+  });
+}
+
 async function replaceTags(client: DbClient, pageId: string, tagNames: string[]) {
   const uniqueNames = [...new Set(tagNames.map((tag) => tag.trim().toLowerCase()).filter(Boolean))];
   await client.execute("DELETE FROM page_tags WHERE page_id = ?", [pageId]);
@@ -694,11 +860,9 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
       // one REPEATABLE READ snapshot. Workspace restore can reuse stable page
       // ids; separate autocommit reads could otherwise combine authorization
       // from the old shared generation with tags from a restored private one.
-      const rows = await client.query<
-        PageRow & { block_count: number; child_count: number; cursor_created_at: string }
-      >(
-        `SELECT ${pageSummaryProjection("p")},
-          DATE_FORMAT(p.created_at, '%Y-%m-%d %H:%i:%s.%f') AS cursor_created_at,
+      const countProjection = query.compact
+        ? ""
+        : `,
           (SELECT COUNT(*) FROM blocks b WHERE b.page_id = p.id) AS block_count,
           (SELECT COUNT(*) FROM pages c
             WHERE c.parent_page_id = p.id
@@ -711,29 +875,20 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
                   ON child_collection_share.collection_id = child_membership.collection_id
                  AND child_collection_share.user_id = ?
                 WHERE child_membership.page_id = c.id
-              ))) AS child_count
+              ))) AS child_count`;
+      const countParams: DbValue[] = query.compact ? [] : [user.id, user.id, user.id];
+      const rows = await client.query<PageListRow>(
+        `SELECT ${pageSummaryProjection("p")},
+          DATE_FORMAT(p.created_at, '%Y-%m-%d %H:%i:%s.%f') AS cursor_created_at${countProjection}
          FROM pages p
          WHERE ${where.join(" AND ")}
          ORDER BY p.created_at DESC, p.id DESC
          LIMIT ?`,
-        [user.id, user.id, user.id, ...whereParams, query.limit + 1]
+        [...countParams, ...whereParams, query.limit + 1]
       );
 
       const pageRows = rows.slice(0, query.limit);
-      const pages = [];
-      for (const row of pageRows) {
-        const access = await getPageAccess(row.id, user.id, client);
-        const page = toPage(row);
-        if (access.scope === "PAGE") page.parentPageId = null;
-        pages.push({
-          ...page,
-          owner: access.owner,
-          access: toAccessPayload(access),
-          collaboration: toCollaborationPayload(access),
-          tags: await getPageTags(row.id, client),
-          counts: { blocks: row.block_count, children: row.child_count }
-        });
-      }
+      const pages = await buildPageListSummaries(client, pageRows, user.id, { compact: query.compact });
       const nextCursor = rows.length > query.limit
         ? encodePageListCursor(pageRows[pageRows.length - 1])
         : null;

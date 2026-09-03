@@ -1580,8 +1580,14 @@ paths:
           schema:
             type: integer
             minimum: 1
-            maximum: 100
+            maximum: 500
             default: 50
+        - in: query
+          name: compact
+          description: When true, omits owner profile and block/child count metadata for lightweight workspace-navigation scans. Access, collaboration, tags, hierarchy fields, and cursor semantics are unchanged. Defaults to false for backward compatibility.
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: User pages
