@@ -93,6 +93,21 @@ test("accordion external controls preserve the editor's live data object", () =>
   }
 });
 
+test("accordion item removal keeps the live editor mounted to avoid focus and layout flicker", () => {
+  const editor = read("public/accordion-block.js");
+  const removeStart = editor.indexOf('if (action === "accordion-remove-item")');
+  const moveStart = editor.indexOf('if (action === "accordion-move-up"', removeStart);
+  assert.ok(removeStart >= 0 && moveStart > removeStart);
+  const removeBranch = editor.slice(removeStart, moveStart);
+
+  assert.doesNotMatch(removeBranch, /replaceEditor\s*\(/);
+  assert.match(removeBranch, /itemElement\?\.remove\(\)/);
+  assert.match(removeBranch, /syncAccordionItemControls\(\)/);
+  assert.match(removeBranch, /renderFallbackPreview\(preview, data, renderIcon\)/);
+  assert.match(removeBranch, /focusWithoutScroll\(focusTarget\)/);
+  assert.match(editor, /target\.focus\(\{ preventScroll: true \}\)/);
+});
+
 test("accordion translations and item icon picker scope are complete", () => {
   for (const language of ["en", "ko", "ja", "fr", "de", "es", "pt"]) {
     setLanguage(language, { persist: false });
@@ -156,6 +171,7 @@ test("accordion UI, persistence, collaboration, backup, and structured integrity
   assert.match(styles, /\.accordion-add-item\s*\{[^}]*background:\s*transparent;/);
   assert.match(styles, /\.accordion-item\s*\{[^}]*background:\s*transparent;/);
   assert.match(styles, /\.accordion-item-content\s*\{[^}]*background:\s*transparent;/);
+  assert.match(styles, /\.editor-block-row\[data-block-type="ACCORDION"\]\.is-dirty:focus-within\s*\{[^}]*background:\s*var\(--hover\);/);
   assert.match(styles, /\.rendered-accordion-title\s*\{[^}]*background:\s*transparent;/);
   assert.match(styles, /\.rendered-accordion-item\s*\{[^}]*background:\s*transparent;/);
   for (const source of sources) assert.match(source, /ACCORDION/);

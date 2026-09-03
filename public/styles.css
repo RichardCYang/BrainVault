@@ -2088,6 +2088,13 @@ kbd {
   background: rgba(99, 161, 242, 0.08);
 }
 
+/* Accordion surfaces are intentionally transparent, so switching the large row
+ * between focus and dirty backgrounds on each autosave reads as a full-block
+ * flash. Keep the focused editing surface visually stable while it is dirty. */
+.editor-block-row[data-block-type="ACCORDION"].is-dirty:focus-within {
+  background: var(--hover);
+}
+
 .editor-block-row.save-error {
   box-shadow: inset 3px 0 0 rgba(190, 62, 62, 0.72);
 }

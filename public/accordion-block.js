@@ -290,6 +290,38 @@ export function createAccordionEditor(row, value, options = {}) {
 
   editor.append(editSurface, preview);
 
+  const syncAccordionItemControls = () => {
+    addButton.disabled = data.items.length >= accordionLimits.items;
+    empty.hidden = data.items.length > 0;
+    data.items.forEach((item, index) => {
+      const itemElement = list.querySelector(`.accordion-item[data-accordion-item-id="${CSS.escape(item.id)}"]`);
+      if (!itemElement) return;
+      const order = itemElement.querySelector(".accordion-item-order");
+      if (order) order.textContent = formatNumber(index + 1);
+      const itemTitle = itemElement.querySelector(".accordion-item-title-input");
+      if (itemTitle) itemTitle.setAttribute("aria-label", t("accordion.itemTitleAria", { number: formatNumber(index + 1) }));
+      const accessibleTitle = item.title || formatNumber(index + 1);
+      const iconButton = itemElement.querySelector('[data-action="accordion-pick-icon"]');
+      if (iconButton) iconButton.setAttribute("aria-label", t("accordion.changeIconFor", { title: accessibleTitle }));
+      const content = itemElement.querySelector(".accordion-item-content");
+      if (content) content.setAttribute("aria-label", t("accordion.contentAria", { title: accessibleTitle }));
+      const moveUp = itemElement.querySelector('[data-action="accordion-move-up"]');
+      if (moveUp) moveUp.disabled = index === 0;
+      const moveDown = itemElement.querySelector('[data-action="accordion-move-down"]');
+      if (moveDown) moveDown.disabled = index === data.items.length - 1;
+    });
+    editor.accordionData = data;
+  };
+
+  const focusWithoutScroll = (target) => {
+    if (!target) return;
+    try {
+      target.focus({ preventScroll: true });
+    } catch {
+      target.focus();
+    }
+  };
+
   const replaceEditor = ({ focusItemId = null, focusSelector } = {}) => {
     const replacement = createAccordionEditor(row, data, {
       onDirty,
@@ -368,9 +400,21 @@ export function createAccordionEditor(row, value, options = {}) {
       return;
     }
     if (action === "accordion-remove-item") {
+      const itemElement = button.closest(".accordion-item");
       data.items.splice(itemIndex, 1);
       const focusItemId = data.items[Math.min(itemIndex, data.items.length - 1)]?.id ?? null;
-      replaceEditor({ focusItemId });
+      const focusTarget = focusItemId
+        ? list.querySelector(`.accordion-item[data-accordion-item-id="${CSS.escape(focusItemId)}"] .accordion-item-title-input`)
+        : addButton;
+
+      // Keep the live editor mounted. Replacing the entire editor here briefly
+      // removes focus and resets every textarea before focus/height restoration
+      // on the next animation frame, which is visible as a block flicker.
+      focusWithoutScroll(focusTarget);
+      itemElement?.remove();
+      syncAccordionItemControls();
+      renderFallbackPreview(preview, data, renderIcon);
+      onDirty?.();
       return;
     }
     if (action === "accordion-move-up" && itemIndex > 0) {
