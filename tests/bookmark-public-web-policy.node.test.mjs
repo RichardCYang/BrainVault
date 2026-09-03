@@ -73,7 +73,8 @@ test("bookmark fetch path preserves the SSRF, redirect, port, pinning, deadline,
   assert.match(bookmarkSource, /selfAddresses\.has\(comparableBookmarkAddress\(item\.address\)\)/);
   assert.match(bookmarkSource, /\[bookmarkFetchGuardHeader\]: bookmarkFetchGuardValue/);
   assert.match(bookmarkSource, /lookup: createPinnedLookup\(addresses\)/);
-  assert.match(bookmarkSource, /fetchHtml\(nextUrl, redirectsLeft - 1, deadline, hostPolicy\)/);
+  assert.match(bookmarkSource, /async function fetchHtml\([\s\S]*const \{ url, addresses \} = await validateFetchUrl\(value, deadline\)/);
+  assert.match(bookmarkSource, /fetchHtml\(nextUrl, redirectsLeft - 1, deadline\)/);
   assert.match(bookmarkSource, /url\.protocol === "https:" && nextUrl\.protocol !== "https:"/);
   assert.match(bookmarkSource, /enforceAbsoluteRequestDeadline\(request, remainingTime\)/);
   assert.match(bookmarkSource, /BOOKMARK_FETCH_MAX_BYTES/);

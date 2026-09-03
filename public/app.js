@@ -6567,7 +6567,10 @@ function renderCollectionSection(collection, pages, pageCount = getCollectionPag
     const tree = document.createElement("div");
     tree.className = "document-tree";
     const groups = buildPageTree(pages, { useNavigationOrder: true });
-    for (const page of groups.get(collection.id) ?? []) {
+    // The collection root is intentionally omitted from this page subset.
+    // buildPageTree promotes children whose parent is outside the subset to
+    // rootParentKey, including direct collection children and filtered matches.
+    for (const page of groups.get(rootParentKey) ?? []) {
       tree.append(renderDocumentNode(page, groups));
     }
     section.append(tree);
@@ -9555,7 +9558,9 @@ function renderCollectionView() {
   const collectionViewFragment = document.createDocumentFragment();
 
   const groups = buildPageTree(pages);
-  const roots = groups.get(collection?.id ?? rootParentKey) ?? [];
+  // getCollectionPages excludes a custom collection's root record, so direct
+  // children are represented under buildPageTree's synthetic rootParentKey.
+  const roots = groups.get(rootParentKey) ?? [];
   if (!roots.length) {
     collectionViewFragment.append(makeEmptyMessage(t("empty.noDocumentsSidebar")));
     elements.collectionViewList.replaceChildren(collectionViewFragment);

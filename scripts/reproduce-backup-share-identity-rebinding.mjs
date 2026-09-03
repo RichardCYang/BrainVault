@@ -38,6 +38,14 @@ const currentSource = (await readFile(new URL("../src/lib/data-transfer.ts", imp
   .replace(/\r\n/g, "\n");
 const pageAccessSource = (await readFile(new URL("../src/lib/page-access.ts", import.meta.url), "utf8"))
   .replace(/\r\n/g, "\n");
+const canEditPolicySource = pageAccessSource.slice(
+  pageAccessSource.indexOf("export function canEditPageAccess"),
+  pageAccessSource.indexOf("export function canAdministerPageAccess")
+);
+const accessPayloadSource = pageAccessSource.slice(
+  pageAccessSource.indexOf("export function toAccessPayload"),
+  pageAccessSource.indexOf("export function toCollaborationPayload")
+);
 
 const vulnerableBlocks = [{ id: "blk_private_note", markdown: "private note" }];
 const vulnerableAfterEdit = unrelatedAccountReceivedEditAccess ? [] : vulnerableBlocks;
@@ -71,7 +79,9 @@ const fixed = {
   legacyRequiresCurrentExactGrant:
     currentSource.includes("Legacy sharing grant cannot be verified against a current exact account grant"),
   editorGrantCarriesWriteAuthority:
-    pageAccessSource.includes('role = "EDITOR"') && pageAccessSource.includes("canEdit: true"),
+    canEditPolicySource.includes('access.role === "EDITOR"')
+      && accessPayloadSource.includes("const canEdit = canEditPageAccess(access)")
+      && /\n\s+canEdit,/.test(accessPayloadSource),
   unrelatedAccountCannotDeleteAfterFix:
     !isExactBackupPageShareIdentityMatch(exactBackupGrant, unrelatedDestinationAccount)
       && vulnerableBlocks.length === 1
