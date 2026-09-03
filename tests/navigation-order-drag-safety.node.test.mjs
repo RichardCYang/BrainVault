@@ -41,6 +41,10 @@ test("navigation-order API is user-scoped, access-checked, and never mutates pag
   assert.match(route, /SELECT id FROM users WHERE id = \? FOR UPDATE/);
   assert.match(route, /p\.owner_id = \? OR EXISTS/);
   assert.match(route, /ps\.permission = 'EDIT'/);
+  assert.match(route, /const accessiblePlaceholders = pageIds\.map\(\(\) => "\?"\)\.join\(", "\)/);
+  assert.match(route, /WHERE p\.id IN \(\$\{accessiblePlaceholders\}\)/);
+  assert.match(route, /\[\.\.\.pageIds, currentUser\.id, currentUser\.id, currentUser\.id\]/);
+  assert.doesNotMatch(route, /ORDER BY p\.id ASC/);
   assert.match(route, /INSERT INTO user_navigation_page_order/);
   assert.match(route, /ON DUPLICATE KEY UPDATE sort_order = VALUES\(sort_order\)/);
   assert.doesNotMatch(route, /UPDATE\s+pages\b/i);

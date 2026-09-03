@@ -515,10 +515,15 @@ authRouter.patch(
         if (!lockedUser) throw new ApiError(404, "NOT_FOUND", "User not found");
         await assertCurrentAuthSessionBoundary(currentUser.id, authScope, client);
 
+        // Validate only the sibling ids supplied by this bounded request. Scanning
+        // every accessible page here made one drag operation grow with the entire
+        // workspace even though only these ids can be persisted by this request.
+        const accessiblePlaceholders = pageIds.map(() => "?").join(", ");
         const accessibleRows = await client.query<{ id: string }>(
           `SELECT p.id
            FROM pages p
-           WHERE p.is_archived = 0
+           WHERE p.id IN (${accessiblePlaceholders})
+             AND p.is_archived = 0
              AND (p.owner_id = ? OR EXISTS (
                SELECT 1 FROM page_collection_memberships pcm
                INNER JOIN collection_shares cs ON cs.collection_id = pcm.collection_id
@@ -526,9 +531,8 @@ authRouter.patch(
              ) OR EXISTS (
                SELECT 1 FROM page_shares ps
                WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
-             ))
-           ORDER BY p.id ASC`,
-          [currentUser.id, currentUser.id, currentUser.id]
+             ))`,
+          [...pageIds, currentUser.id, currentUser.id, currentUser.id]
         );
         const accessibleIds = new Set(accessibleRows.map((row) => row.id));
         if (pageIds.some((pageId) => !accessibleIds.has(pageId))) {

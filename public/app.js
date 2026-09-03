@@ -273,6 +273,13 @@ let allPagesRecentTreeCacheSource = null;
 let allPagesRecentTreeCacheValue = null;
 const pageSummaryLookupCache = new WeakMap();
 const deferredNavigationChildren = new WeakMap();
+const navigationPageRenderEntries = new Map();
+const navigationCollectionRenderEntries = new Map();
+const subpageIndexTitleElements = new Map();
+const homeDocumentTitleElements = new Map();
+const homeDocumentMenuButtons = new Map();
+let syncedNavigationPageId = null;
+let syncedNavigationCollectionId = null;
 
 let emojiCategoryDefinitions = [];
 let emojiRecords = [];
@@ -5059,23 +5066,25 @@ function takeMostRecent(items, limit) {
   return selected.map((entry) => entry.item);
 }
 
+function compareNavigationOrder(a, b) {
+  const aOrder = state.navigationPageOrder.get(a.id);
+  const bOrder = state.navigationPageOrder.get(b.id);
+  const aRanked = Number.isSafeInteger(aOrder) && aOrder >= 0;
+  const bRanked = Number.isSafeInteger(bOrder) && bOrder >= 0;
+
+  // Pages without an explicit preference keep the historical recent-first
+  // behavior. Newly created pages therefore appear first until the user
+  // explicitly reorders that sibling group.
+  if (aRanked !== bRanked) return aRanked ? 1 : -1;
+  if (aRanked && bRanked && aOrder !== bOrder) return aOrder - bOrder;
+
+  const recent = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  if (recent !== 0) return recent;
+  return String(a.id).localeCompare(String(b.id));
+}
+
 function sortByNavigationOrder(items) {
-  return [...items].sort((a, b) => {
-    const aOrder = state.navigationPageOrder.get(a.id);
-    const bOrder = state.navigationPageOrder.get(b.id);
-    const aRanked = Number.isSafeInteger(aOrder) && aOrder >= 0;
-    const bRanked = Number.isSafeInteger(bOrder) && bOrder >= 0;
-
-    // Pages without an explicit preference keep the historical recent-first
-    // behavior. Newly created pages therefore appear first until the user
-    // explicitly reorders that sibling group.
-    if (aRanked !== bRanked) return aRanked ? 1 : -1;
-    if (aRanked && bRanked && aOrder !== bOrder) return aOrder - bOrder;
-
-    const recent = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-    if (recent !== 0) return recent;
-    return String(a.id).localeCompare(String(b.id));
-  });
+  return [...items].sort(compareNavigationOrder);
 }
 
 function buildPageTree(pages, { useNavigationOrder = false } = {}) {
@@ -6407,22 +6416,20 @@ function setNavigationSubpagesExpanded(pageId, expanded) {
   else state.collapsedNavigationPageIds.add(pageId);
   persistNavigationPreference(pageId, !expanded);
 
-  const selector = `[data-page-children-toggle-id="${CSS.escape(pageId)}"]`;
-  for (const button of document.querySelectorAll(selector)) {
-    const title = button.dataset.pageChildrenToggleTitle || t("newDocumentTitle");
-    const label = t(expanded ? "navigation.collapseSubpages" : "navigation.expandSubpages", { title });
-    button.setAttribute("aria-expanded", String(expanded));
-    button.setAttribute("aria-label", label);
-    button.setAttribute("title", label);
-    button.classList.toggle("collapsed", !expanded);
+  const button = navigationPageRenderEntries.get(pageId)?.toggleButton ?? null;
+  if (!button) return;
+  const title = button.dataset.pageChildrenToggleTitle || t("newDocumentTitle");
+  const label = t(expanded ? "navigation.collapseSubpages" : "navigation.expandSubpages", { title });
+  button.setAttribute("aria-expanded", String(expanded));
+  button.setAttribute("aria-label", label);
+  button.setAttribute("title", label);
+  button.classList.toggle("collapsed", !expanded);
 
-    const controlsId = button.getAttribute("aria-controls");
-    if (controlsId) {
-      const group = document.getElementById(controlsId);
-      if (expanded && group) materializeDeferredNavigationChildren(group);
-      group?.classList.toggle("hidden", !expanded);
-    }
-  }
+  const controlsId = button.getAttribute("aria-controls");
+  if (!controlsId) return;
+  const group = document.getElementById(controlsId);
+  if (expanded && group) materializeDeferredNavigationChildren(group);
+  group?.classList.toggle("hidden", !expanded);
 }
 
 function materializeDeferredNavigationChildren(group) {
@@ -6431,15 +6438,15 @@ function materializeDeferredNavigationChildren(group) {
   if (!deferred) return;
 
   const fragment = document.createDocumentFragment();
-  for (const child of deferred.children) {
-    fragment.append(renderDocumentNode(child, deferred.groups, deferred.depth));
+  for (const child of sortByNavigationOrder(deferred.children)) {
+    fragment.append(renderDocumentNode(child, deferred.groups, deferred.depth, true));
   }
   group.append(fragment);
   deferredNavigationChildren.delete(group);
 }
 
 
-function renderDocumentNode(page, groups, depth = 0) {
+function renderDocumentNode(page, groups, depth = 0, refreshOrder = false) {
   const wrapper = document.createElement("div");
   wrapper.className = "document-node";
   wrapper.dataset.navigationOrderId = page.id;
@@ -6448,10 +6455,11 @@ function renderDocumentNode(page, groups, depth = 0) {
   const row = document.createElement("div");
   row.className = "document-item-row";
 
-  const children = groups.get(page.id) ?? [];
+  const rawChildren = groups.get(page.id) ?? [];
+  const children = refreshOrder ? sortByNavigationOrder(rawChildren) : rawChildren;
   const expanded = children.length > 0 && !state.collapsedNavigationPageIds.has(page.id);
   const childrenId = children.length ? `document-children-${++documentChildrenRenderId}` : null;
-  const isActive = state.selectedPage?.id === page.id;
+  const isActive = state.workspaceView === "page" && state.selectedPage?.id === page.id;
   row.classList.toggle("has-children", children.length > 0);
   row.classList.toggle("active", isActive);
 
@@ -6470,15 +6478,29 @@ function renderDocumentNode(page, groups, depth = 0) {
   label.className = "doc-label";
   label.textContent = page.title;
 
+  let toggleButton = null;
   if (children.length && childrenId) {
-    row.append(makeDocumentChildrenToggle({ page, expanded, controlsId: childrenId }));
+    toggleButton = makeDocumentChildrenToggle({ page, expanded, controlsId: childrenId });
+    row.append(toggleButton);
   }
   button.append(icon, label);
   row.append(button);
+  let menuButton = null;
   if (canManagePage(page)) {
-    row.append(makeNavigationMenuButton({ id: page.id, kind: "page", title: page.title }));
+    menuButton = makeNavigationMenuButton({ id: page.id, kind: "page", title: page.title });
+    row.append(menuButton);
   }
   wrapper.append(row);
+
+  navigationPageRenderEntries.set(page.id, {
+    wrapper,
+    row,
+    button,
+    icon,
+    label,
+    toggleButton,
+    menuButton
+  });
 
   if (children.length) {
     const group = document.createElement("div");
@@ -6487,7 +6509,7 @@ function renderDocumentNode(page, groups, depth = 0) {
     group.classList.toggle("hidden", !expanded);
     if (expanded) {
       const fragment = document.createDocumentFragment();
-      for (const child of children) fragment.append(renderDocumentNode(child, groups, depth + 1));
+      for (const child of children) fragment.append(renderDocumentNode(child, groups, depth + 1, refreshOrder));
       group.append(fragment);
     } else {
       deferredNavigationChildren.set(group, { children, groups, depth: depth + 1 });
@@ -6526,10 +6548,20 @@ function renderCollectionSection(collection, pages, pageCount = getCollectionPag
 
   button.append(title, count);
   row.append(button);
+  let menuButton = null;
   if (canManagePage(collection)) {
-    row.append(makeNavigationMenuButton({ id: collection.id, kind: "collection", title: collection.title }));
+    menuButton = makeNavigationMenuButton({ id: collection.id, kind: "collection", title: collection.title });
+    row.append(menuButton);
   }
   section.append(row);
+
+  navigationCollectionRenderEntries.set(collection.id, {
+    section,
+    row,
+    button,
+    titleLabel: title.querySelector(".app-icon-label-text"),
+    menuButton
+  });
 
   if (pages.length) {
     const tree = document.createElement("div");
@@ -6546,6 +6578,8 @@ function renderCollectionSection(collection, pages, pageCount = getCollectionPag
 
 function renderDocumentTree() {
   closeNavigationContextMenu();
+  navigationPageRenderEntries.clear();
+  navigationCollectionRenderEntries.clear();
   const pageListFragment = document.createDocumentFragment();
   const collectionListFragment = document.createDocumentFragment();
 
@@ -6589,6 +6623,8 @@ function renderDocumentTree() {
 
   elements.pageList.replaceChildren(pageListFragment);
   elements.collectionList.replaceChildren(collectionListFragment);
+  syncedNavigationPageId = state.workspaceView === "page" ? state.selectedPage?.id ?? null : null;
+  syncedNavigationCollectionId = state.workspaceView === "collection" ? state.activeCollectionId : null;
 }
 
 
@@ -6768,7 +6804,7 @@ async function finishNavigationDrag(event, { cancelled = false } = {}) {
   }
 }
 
-function renderSubpageIndexItem(page, groups, depth = 0) {
+function renderSubpageIndexItem(page, depth = 0) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "subpage-index-item";
@@ -6783,6 +6819,7 @@ function renderSubpageIndexItem(page, groups, depth = 0) {
   const title = document.createElement("span");
   title.className = "subpage-index-title";
   title.textContent = page.title || t("newDocumentTitle");
+  subpageIndexTitleElements.set(page.id, title);
 
   const arrow = document.createElement("span");
   arrow.className = "subpage-index-arrow";
@@ -6790,16 +6827,11 @@ function renderSubpageIndexItem(page, groups, depth = 0) {
   arrow.textContent = "→";
 
   button.append(icon, title, arrow);
-
-  const fragment = document.createDocumentFragment();
-  fragment.append(button);
-  for (const child of groups.get(page.id) ?? []) {
-    fragment.append(renderSubpageIndexItem(child, groups, depth + 1));
-  }
-  return fragment;
+  return button;
 }
 
 function renderSubpageIndex(page = state.selectedPage) {
+  subpageIndexTitleElements.clear();
   elements.subpageIndexList.replaceChildren();
   if (!page || state.workspaceView !== "page") {
     elements.subpageIndex.classList.add("hidden");
@@ -6815,18 +6847,28 @@ function renderSubpageIndex(page = state.selectedPage) {
     return;
   }
 
+  const fragment = document.createDocumentFragment();
+  const pending = children
+    .slice()
+    .reverse()
+    .map((child) => ({ page: child, depth: 0 }));
+  const visitedPageIds = new Set();
   let descendantCount = 0;
-  const countDescendants = (parentId) => {
-    for (const child of groups.get(parentId) ?? []) {
-      descendantCount += 1;
-      countDescendants(child.id);
-    }
-  };
-  countDescendants(page.id);
 
-  for (const child of children) {
-    elements.subpageIndexList.append(renderSubpageIndexItem(child, groups));
+  while (pending.length) {
+    const current = pending.pop();
+    if (!current?.page?.id || visitedPageIds.has(current.page.id)) continue;
+    visitedPageIds.add(current.page.id);
+    descendantCount += 1;
+    fragment.append(renderSubpageIndexItem(current.page, current.depth));
+
+    const descendants = groups.get(current.page.id) ?? [];
+    for (let index = descendants.length - 1; index >= 0; index -= 1) {
+      pending.push({ page: descendants[index], depth: current.depth + 1 });
+    }
   }
+
+  elements.subpageIndexList.replaceChildren(fragment);
   elements.subpageIndexCount.textContent = formatNumber(descendantCount);
   elements.subpageIndex.classList.remove("hidden");
 }
@@ -6847,17 +6889,18 @@ function makeHomeDocumentButton(page) {
 
   const title = document.createElement("strong");
   renderIconLabel(title, page.icon, isCollectionPage(page) ? "📁" : "📄", page.title);
+  homeDocumentTitleElements.set(page.id, title.querySelector(".app-icon-label-text"));
 
   button.append(title);
   row.append(button);
   if (canManagePage(page)) {
-    row.append(
-      makeNavigationMenuButton({
-        id: page.id,
-        kind: isCollectionPage(page) ? "collection" : "page",
-        title: page.title
-      })
-    );
+    const menuButton = makeNavigationMenuButton({
+      id: page.id,
+      kind: isCollectionPage(page) ? "collection" : "page",
+      title: page.title
+    });
+    homeDocumentMenuButtons.set(page.id, menuButton);
+    row.append(menuButton);
   }
   return row;
 }
@@ -9996,6 +10039,8 @@ function refreshCollaborativePageDraftRecovery() {
 
 function renderHome() {
   collaborationRecoveryPanelGeneration += 1;
+  homeDocumentTitleElements.clear();
+  homeDocumentMenuButtons.clear();
   elements.homeDocumentCount.textContent = t("counts.documents", { count: formatNumber(state.allPages.length) });
   elements.homeDocumentList.replaceChildren();
   elements.homeCollectionList.replaceChildren();
@@ -10026,22 +10071,31 @@ function renderPages() {
   renderCollectionView();
 }
 
+function setPageNavigationEntryActive(entry, active) {
+  if (!entry) return;
+  entry.button.classList.toggle("active", active);
+  entry.row.classList.toggle("active", active);
+  if (active) entry.button.setAttribute("aria-current", "page");
+  else entry.button.removeAttribute("aria-current");
+}
+
+function setCollectionNavigationEntryActive(entry, active) {
+  if (!entry) return;
+  entry.button.classList.toggle("active", active);
+  entry.row.classList.toggle("active", active);
+  if (active) entry.button.setAttribute("aria-current", "page");
+  else entry.button.removeAttribute("aria-current");
+}
+
 function syncWorkspaceNavigationSelection() {
   const activePageId = state.workspaceView === "page" ? state.selectedPage?.id ?? null : null;
-  for (const button of document.querySelectorAll('.document-item.active, .document-item[aria-current="page"]')) {
-    if (activePageId && button.dataset.pageId === activePageId) continue;
-    button.classList.remove("active");
-    button.removeAttribute("aria-current");
-    button.closest(".document-item-row")?.classList.remove("active");
+  if (syncedNavigationPageId && syncedNavigationPageId !== activePageId) {
+    setPageNavigationEntryActive(navigationPageRenderEntries.get(syncedNavigationPageId), false);
   }
   if (activePageId) {
-    const escapedPageId = CSS.escape(activePageId);
-    for (const button of document.querySelectorAll(`.document-item[data-page-id="${escapedPageId}"]`)) {
-      button.classList.add("active");
-      button.setAttribute("aria-current", "page");
-      button.closest(".document-item-row")?.classList.add("active");
-    }
+    setPageNavigationEntryActive(navigationPageRenderEntries.get(activePageId), true);
   }
+  syncedNavigationPageId = activePageId;
 
   const activeCollectionId = state.workspaceView === "collection" ? state.activeCollectionId : null;
   const defaultCollectionActive = activeCollectionId === defaultCollectionKey;
@@ -10050,21 +10104,23 @@ function syncWorkspaceNavigationSelection() {
   if (defaultCollectionActive) elements.defaultCollectionButton.setAttribute("aria-current", "page");
   else elements.defaultCollectionButton.removeAttribute("aria-current");
 
-  for (const button of document.querySelectorAll('.collection-title-button.active, .collection-title-button[aria-current="page"]')) {
-    if (button === elements.defaultCollectionButton) continue;
-    if (activeCollectionId && button.dataset.collectionId === activeCollectionId) continue;
-    button.classList.remove("active");
-    button.removeAttribute("aria-current");
-    button.closest(".collection-title-row")?.classList.remove("active");
+  if (
+    syncedNavigationCollectionId
+    && syncedNavigationCollectionId !== defaultCollectionKey
+    && syncedNavigationCollectionId !== activeCollectionId
+  ) {
+    setCollectionNavigationEntryActive(
+      navigationCollectionRenderEntries.get(syncedNavigationCollectionId),
+      false
+    );
   }
   if (activeCollectionId && activeCollectionId !== defaultCollectionKey) {
-    const escapedCollectionId = CSS.escape(activeCollectionId);
-    for (const button of document.querySelectorAll(`.collection-title-button[data-collection-id="${escapedCollectionId}"]`)) {
-      button.classList.add("active");
-      button.setAttribute("aria-current", "page");
-      button.closest(".collection-title-row")?.classList.add("active");
-    }
+    setCollectionNavigationEntryActive(
+      navigationCollectionRenderEntries.get(activeCollectionId),
+      true
+    );
   }
+  syncedNavigationCollectionId = activeCollectionId;
 }
 
 function flattenBlocks(blocks) {
@@ -17149,43 +17205,46 @@ function normalizePageTitle(value) {
   return title || t("newDocumentTitle");
 }
 
+function syncNavigationMenuButtonTitle(button, kind, title) {
+  if (!button) return;
+  const normalizedKind = kind === "collection" ? "collection" : "page";
+  const label = t(
+    normalizedKind === "collection" ? "navigationMenu.openCollection" : "navigationMenu.openPage",
+    { title }
+  );
+  button.dataset.navigationMenuTitle = title;
+  button.setAttribute("aria-label", label);
+  button.setAttribute("title", label);
+}
+
 function syncPageTitleSummaryPresentation(pageId, title) {
-  const escapedPageId = CSS.escape(pageId);
-
-  for (const button of document.querySelectorAll(`.document-item[data-page-id="${escapedPageId}"]`)) {
-    const label = button.querySelector(".doc-label");
-    if (label) label.textContent = title;
+  const pageEntry = navigationPageRenderEntries.get(pageId);
+  if (pageEntry) {
+    pageEntry.label.textContent = title;
+    if (pageEntry.toggleButton) {
+      pageEntry.toggleButton.dataset.pageChildrenToggleTitle = title;
+      const expanded = pageEntry.toggleButton.getAttribute("aria-expanded") === "true";
+      const label = t(expanded ? "navigation.collapseSubpages" : "navigation.expandSubpages", { title });
+      pageEntry.toggleButton.setAttribute("aria-label", label);
+      pageEntry.toggleButton.setAttribute("title", label);
+    }
+    syncNavigationMenuButtonTitle(pageEntry.menuButton, "page", title);
   }
 
-  for (const button of document.querySelectorAll(`[data-page-children-toggle-id="${escapedPageId}"]`)) {
-    button.dataset.pageChildrenToggleTitle = title;
-    const expanded = button.getAttribute("aria-expanded") === "true";
-    const label = t(expanded ? "navigation.collapseSubpages" : "navigation.expandSubpages", { title });
-    button.setAttribute("aria-label", label);
-    button.setAttribute("title", label);
+  const collectionEntry = navigationCollectionRenderEntries.get(pageId);
+  if (collectionEntry) {
+    if (collectionEntry.titleLabel) collectionEntry.titleLabel.textContent = title;
+    syncNavigationMenuButtonTitle(collectionEntry.menuButton, "collection", title);
   }
 
-  for (const button of document.querySelectorAll(`[data-navigation-menu-id="${escapedPageId}"]`)) {
-    const kind = button.dataset.navigationMenuKind === "collection" ? "collection" : "page";
-    const label = t(kind === "collection" ? "navigationMenu.openCollection" : "navigationMenu.openPage", { title });
-    button.dataset.navigationMenuTitle = title;
-    button.setAttribute("aria-label", label);
-    button.setAttribute("title", label);
-  }
+  const subpageIndexTitle = subpageIndexTitleElements.get(pageId);
+  if (subpageIndexTitle) subpageIndexTitle.textContent = title || t("newDocumentTitle");
 
-  for (const button of document.querySelectorAll(`.subpage-index-item[data-subpage-index-page-id="${escapedPageId}"]`)) {
-    const label = button.querySelector(".subpage-index-title");
-    if (label) label.textContent = title || t("newDocumentTitle");
-  }
-
-  for (const button of document.querySelectorAll(`.home-document-item[data-page-id="${escapedPageId}"]`)) {
-    const label = button.querySelector(".app-icon-label-text");
-    if (label) label.textContent = title;
-  }
-
-  for (const button of document.querySelectorAll(`.collection-title-button[data-collection-id="${escapedPageId}"]`)) {
-    const label = button.querySelector(".app-icon-label-text");
-    if (label) label.textContent = title;
+  const homeDocumentTitle = homeDocumentTitleElements.get(pageId);
+  if (homeDocumentTitle) homeDocumentTitle.textContent = title;
+  const homeMenuButton = homeDocumentMenuButtons.get(pageId);
+  if (homeMenuButton) {
+    syncNavigationMenuButtonTitle(homeMenuButton, homeMenuButton.dataset.navigationMenuKind, title);
   }
 
   if (state.activeNavigationMenuTarget?.id === pageId) {
@@ -17200,6 +17259,32 @@ function syncPageTitleSummaryPresentation(pageId, title) {
   if (state.workspaceView === "collection" && state.activeCollectionId === pageId) {
     elements.collectionViewTitle.textContent = title;
   }
+}
+
+function repositionRenderedNavigationItem(pageId) {
+  const page = getPageSummaryById(pageId);
+  const entry = navigationPageRenderEntries.get(pageId) ?? navigationCollectionRenderEntries.get(pageId);
+  const node = entry?.wrapper ?? entry?.section ?? null;
+  const container = node?.parentElement ?? null;
+  if (!page || !node || !container) return;
+
+  let insertBefore = null;
+  let lastComparableNode = null;
+  for (const candidateNode of container.children) {
+    if (candidateNode === node) continue;
+    const candidatePageId = candidateNode.dataset?.navigationOrderId;
+    if (!candidatePageId) continue;
+    const candidatePage = getPageSummaryById(candidatePageId);
+    if (!candidatePage) continue;
+    if (compareNavigationOrder(page, candidatePage) < 0) {
+      insertBefore = candidateNode;
+      break;
+    }
+    lastComparableNode = candidateNode;
+  }
+
+  if (insertBefore) container.insertBefore(node, insertBefore);
+  else if (lastComparableNode) lastComparableNode.after(node);
 }
 
 function applyPageSummaryUpdate(pageId, updates) {
@@ -17218,12 +17303,23 @@ function applyPageSummaryUpdate(pageId, updates) {
     return;
   }
 
-  if (updateKeys.includes("parentPageId") || updateKeys.includes("isCollection")) {
-    invalidateAllPagesHierarchyCache();
-  }
+  const hierarchyChanged = updateKeys.includes("parentPageId") || updateKeys.includes("isCollection");
+  if (hierarchyChanged) invalidateAllPagesHierarchyCache();
   if (updateKeys.includes("parentPageId") || updateKeys.includes("updatedAt")) {
     invalidateAllPagesRecentTreeCache();
   }
+
+  const canIncrementallyRefreshRecentMetadata =
+    !hierarchyChanged
+    && updateKeys.includes("updatedAt")
+    && updateKeys.every((key) => key === "title" || key === "version" || key === "updatedAt");
+  if (canIncrementallyRefreshRecentMetadata) {
+    if (updateKeys.includes("title")) syncPageTitleSummaryPresentation(pageId, updates.title);
+    repositionRenderedNavigationItem(pageId);
+    renderHome();
+    return;
+  }
+
   renderDocumentTree();
   renderHome();
 }

@@ -89,15 +89,15 @@ test("workspace navigation opts into compact 500-item keyset batches", async () 
   assert.match(fetcher, /return sortByRecent\(pages\);/);
 });
 
-test("selected-page rerenders update navigation selection without rebuilding the workspace tree", async () => {
+test("selected-page rerenders update navigation selection without rebuilding or rescanning the workspace tree", async () => {
   const app = await read("public/app.js");
-  const selectorSync = section(app, "function syncWorkspaceNavigationSelection(", "function flattenBlocks(");
+  const selectorSync = section(app, "function setPageNavigationEntryActive(", "function flattenBlocks(");
   const selectedRenderer = section(app, "function renderSelectedPage(", "function normalizePageTitle(");
 
-  assert.match(selectorSync, /document-item\.active/);
-  assert.match(selectorSync, /data-page-id=\"\$\{escapedPageId\}\"/);
-  assert.match(selectorSync, /collection-title-button\.active/);
+  assert.match(selectorSync, /navigationPageRenderEntries\.get\(activePageId\)/);
+  assert.match(selectorSync, /navigationCollectionRenderEntries\.get\(activeCollectionId\)/);
   assert.match(selectorSync, /aria-current/);
+  assert.doesNotMatch(selectorSync, /querySelectorAll\(/);
   assert.doesNotMatch(selectorSync, /renderDocumentTree\(/);
 
   assert.match(selectedRenderer, /syncWorkspaceNavigationSelection\(\)/);
@@ -109,7 +109,7 @@ test("selected-page rerenders update navigation selection without rebuilding the
 
 test("navigation selection sync preserves active and aria-current semantics across views", async () => {
   const app = await read("public/app.js");
-  const selectorSync = section(app, "function syncWorkspaceNavigationSelection(", "function flattenBlocks(");
+  const selectorSync = section(app, "function setPageNavigationEntryActive(", "function flattenBlocks(");
 
   class MockClassList {
     constructor(...names) { this.names = new Set(names); }
@@ -124,8 +124,7 @@ test("navigation selection sync preserves active and aria-current semantics acro
     }
   }
   class MockElement {
-    constructor(dataset = {}, classes = []) {
-      this.dataset = dataset;
+    constructor(classes = []) {
       this.classList = new MockClassList(...classes);
       this.attributes = new Map();
       this.row = null;
@@ -133,53 +132,40 @@ test("navigation selection sync preserves active and aria-current semantics acro
     setAttribute(name, value) { this.attributes.set(name, String(value)); }
     removeAttribute(name) { this.attributes.delete(name); }
     getAttribute(name) { return this.attributes.get(name) ?? null; }
-    closest(selector) { return selector === ".document-item-row" || selector === ".collection-title-row" ? this.row : null; }
+    closest(selector) { return selector === ".collection-title-row" ? this.row : null; }
   }
 
-  const page1 = new MockElement({ pageId: "page_1" }, ["document-item", "active"]);
-  const page1Row = new MockElement({}, ["document-item-row", "active"]);
-  page1.row = page1Row;
+  const page1 = new MockElement(["document-item", "active"]);
+  const page1Row = new MockElement(["document-item-row", "active"]);
   page1.setAttribute("aria-current", "page");
-  const page2 = new MockElement({ pageId: "page_2" }, ["document-item"]);
-  const page2Row = new MockElement({}, ["document-item-row"]);
-  page2.row = page2Row;
+  const page2 = new MockElement(["document-item"]);
+  const page2Row = new MockElement(["document-item-row"]);
 
-  const collection1 = new MockElement({ collectionId: "collection_1" }, ["collection-title-button", "active"]);
-  const collection1Row = new MockElement({}, ["collection-title-row", "active"]);
-  collection1.row = collection1Row;
+  const collection1 = new MockElement(["collection-title-button", "active"]);
+  const collection1Row = new MockElement(["collection-title-row", "active"]);
   collection1.setAttribute("aria-current", "page");
-  const collection2 = new MockElement({ collectionId: "collection_2" }, ["collection-title-button"]);
-  const collection2Row = new MockElement({}, ["collection-title-row"]);
-  collection2.row = collection2Row;
+  const collection2 = new MockElement(["collection-title-button"]);
+  const collection2Row = new MockElement(["collection-title-row"]);
 
-  const defaultCollectionButton = new MockElement({}, ["collection-title-button"]);
-  const defaultCollectionRow = new MockElement({}, ["collection-title-row"]);
+  const defaultCollectionButton = new MockElement(["collection-title-button"]);
+  const defaultCollectionRow = new MockElement(["collection-title-row"]);
   defaultCollectionButton.row = defaultCollectionRow;
-  const pageButtons = [page1, page2];
-  const collectionButtons = [collection1, collection2];
-  const allCollectionButtons = [defaultCollectionButton, ...collectionButtons];
-  const documentMock = {
-    querySelectorAll(selector) {
-      if (selector === '.document-item.active, .document-item[aria-current="page"]') {
-        return pageButtons.filter((button) => button.classList.contains("active") || button.getAttribute("aria-current") === "page");
-      }
-      if (selector === '.collection-title-button.active, .collection-title-button[aria-current="page"]') {
-        return allCollectionButtons.filter((button) => button.classList.contains("active") || button.getAttribute("aria-current") === "page");
-      }
-      const pageMatch = selector.match(/^\.document-item\[data-page-id="(.+)"\]$/);
-      if (pageMatch) return pageButtons.filter((button) => button.dataset.pageId === pageMatch[1]);
-      const collectionMatch = selector.match(/^\.collection-title-button\[data-collection-id="(.+)"\]$/);
-      if (collectionMatch) return collectionButtons.filter((button) => button.dataset.collectionId === collectionMatch[1]);
-      throw new Error(`Unexpected selector: ${selector}`);
-    }
-  };
+
   const state = { workspaceView: "page", selectedPage: { id: "page_2" }, activeCollectionId: null };
   const sandbox = {
     state,
-    document: documentMock,
-    CSS: { escape: (value) => value },
     elements: { defaultCollectionButton },
-    defaultCollectionKey: "__default_collection__"
+    defaultCollectionKey: "__default_collection__",
+    navigationPageRenderEntries: new Map([
+      ["page_1", { button: page1, row: page1Row }],
+      ["page_2", { button: page2, row: page2Row }]
+    ]),
+    navigationCollectionRenderEntries: new Map([
+      ["collection_1", { button: collection1, row: collection1Row }],
+      ["collection_2", { button: collection2, row: collection2Row }]
+    ]),
+    syncedNavigationPageId: "page_1",
+    syncedNavigationCollectionId: "collection_1"
   };
   vm.runInNewContext(selectorSync, sandbox);
 
@@ -358,23 +344,38 @@ test("page header path lookup reuses the workspace page index instead of rebuild
   );
 });
 
-test("title typing updates only the affected summary presentation instead of rerendering the full page tree", async () => {
+test("title typing and save update only cached presentation nodes instead of rescanning or rebuilding the full page tree", async () => {
   const app = await read("public/app.js");
-  const presentation = section(app, "function syncPageTitleSummaryPresentation(", "function applyPageSummaryUpdate(");
+  const presentation = section(app, "function syncPageTitleSummaryPresentation(", "function repositionRenderedNavigationItem(");
   const updater = section(app, "function applyPageSummaryUpdate(", "function applyPageMetadataMutationResult(");
+  assert.match(presentation, /navigationPageRenderEntries\.get\(pageId\)/);
+  assert.match(presentation, /navigationCollectionRenderEntries\.get\(pageId\)/);
+  assert.match(presentation, /subpageIndexTitleElements\.get\(pageId\)/);
+  assert.match(presentation, /homeDocumentTitleElements\.get\(pageId\)/);
+  assert.match(presentation, /homeDocumentMenuButtons\.get\(pageId\)/);
+  assert.doesNotMatch(presentation, /querySelectorAll\(/);
   assert.match(presentation, /state\.activeNavigationMenuTarget\?\.id === pageId/);
   assert.match(presentation, /state\.activeNavigationMenuTarget\.title = title/);
   assert.match(updater, /getPageSummaryLookup\(pages\)\.get\(pageId\)/);
   assert.match(updater, /updateKeys\.length === 1 && updateKeys\[0\] === "title"/);
-  assert.match(updater, /syncPageTitleSummaryPresentation\(pageId, updates\.title\);\s*return;/);
+  assert.match(updater, /canIncrementallyRefreshRecentMetadata/);
+  assert.match(updater, /repositionRenderedNavigationItem\(pageId\)/);
 
   const allPage = { id: "page_1", title: "Old" };
   const selectedPage = { id: "page_1", title: "Old" };
-  const counters = { sync: 0, tree: 0, home: 0, hierarchyInvalidations: 0, recentInvalidations: 0 };
+  const counters = {
+    sync: 0,
+    reposition: 0,
+    tree: 0,
+    home: 0,
+    hierarchyInvalidations: 0,
+    recentInvalidations: 0
+  };
   const sandbox = {
     state: { selectedPage, allPages: [allPage], pages: null },
     getPageSummaryLookup: (pages) => new Map(pages.map((page) => [page.id, page])),
     syncPageTitleSummaryPresentation: () => { counters.sync += 1; },
+    repositionRenderedNavigationItem: () => { counters.reposition += 1; },
     invalidateAllPagesHierarchyCache: () => { counters.hierarchyInvalidations += 1; },
     invalidateAllPagesRecentTreeCache: () => { counters.recentInvalidations += 1; },
     renderDocumentTree: () => { counters.tree += 1; },
@@ -386,11 +387,149 @@ test("title typing updates only the affected summary presentation instead of rer
   vm.runInNewContext(`${updater}\napplyPageSummaryUpdate("page_1", { title: "Typing" });`, sandbox);
   assert.equal(allPage.title, "Typing");
   assert.equal(selectedPage.title, "Typing");
-  assert.deepEqual(counters, { sync: 1, tree: 0, home: 0, hierarchyInvalidations: 0, recentInvalidations: 0 });
+  assert.deepEqual(counters, {
+    sync: 1,
+    reposition: 0,
+    tree: 0,
+    home: 0,
+    hierarchyInvalidations: 0,
+    recentInvalidations: 0
+  });
 
-  vm.runInNewContext(`applyPageSummaryUpdate("page_1", { title: "Saved", updatedAt: "2026-09-03T00:00:00.000Z" });`, sandbox);
+  vm.runInNewContext(`applyPageSummaryUpdate("page_1", { title: "Saved", version: 2, updatedAt: "2026-09-03T00:00:00.000Z" });`, sandbox);
   assert.equal(allPage.title, "Saved");
-  assert.deepEqual(counters, { sync: 1, tree: 1, home: 1, hierarchyInvalidations: 0, recentInvalidations: 1 });
+  assert.deepEqual(counters, {
+    sync: 2,
+    reposition: 1,
+    tree: 0,
+    home: 1,
+    hierarchyInvalidations: 0,
+    recentInvalidations: 1
+  });
+});
+
+test("incremental recent-order refresh moves only the affected rendered node and preserves explicit order", async () => {
+  const app = await read("public/app.js");
+  const comparatorSource = section(app, "function compareNavigationOrder(", "function sortByNavigationOrder(");
+  const repositionSource = section(app, "function repositionRenderedNavigationItem(", "function applyPageSummaryUpdate(");
+
+  class MockNode {
+    constructor(id) {
+      this.dataset = { navigationOrderId: id };
+      this.parentElement = null;
+    }
+    after(node) { this.parentElement.moveAfter(node, this); }
+  }
+  class MockContainer {
+    constructor(nodes) {
+      this.children = nodes;
+      for (const node of nodes) node.parentElement = this;
+    }
+    detach(node) {
+      const index = this.children.indexOf(node);
+      if (index >= 0) this.children.splice(index, 1);
+    }
+    insertBefore(node, before) {
+      this.detach(node);
+      const index = this.children.indexOf(before);
+      this.children.splice(index, 0, node);
+      node.parentElement = this;
+    }
+    moveAfter(node, after) {
+      this.detach(node);
+      const index = this.children.indexOf(after);
+      this.children.splice(index + 1, 0, node);
+      node.parentElement = this;
+    }
+  }
+
+  const pages = new Map([
+    ["page_1", { id: "page_1", updatedAt: "2026-09-01T00:00:00.000Z" }],
+    ["page_2", { id: "page_2", updatedAt: "2026-09-03T00:00:00.000Z" }],
+    ["page_3", { id: "page_3", updatedAt: "2026-09-02T00:00:00.000Z" }]
+  ]);
+  const nodes = new Map([...pages.keys()].map((id) => [id, new MockNode(id)]));
+  const container = new MockContainer([nodes.get("page_2"), nodes.get("page_3"), nodes.get("page_1")]);
+  const sandbox = {
+    state: { navigationPageOrder: new Map() },
+    navigationPageRenderEntries: new Map([...nodes].map(([id, wrapper]) => [id, { wrapper }])),
+    navigationCollectionRenderEntries: new Map(),
+    getPageSummaryById: (id) => pages.get(id) ?? null
+  };
+  vm.runInNewContext(`${comparatorSource}\n${repositionSource}`, sandbox);
+
+  pages.get("page_1").updatedAt = "2026-09-04T00:00:00.000Z";
+  sandbox.repositionRenderedNavigationItem("page_1");
+  assert.deepEqual(container.children.map((node) => node.dataset.navigationOrderId), ["page_1", "page_2", "page_3"]);
+
+  sandbox.state.navigationPageOrder = new Map([["page_2", 0], ["page_3", 1], ["page_1", 2]]);
+  container.children = [nodes.get("page_2"), nodes.get("page_3"), nodes.get("page_1")];
+  for (const node of container.children) node.parentElement = container;
+  pages.get("page_1").updatedAt = "2026-09-05T00:00:00.000Z";
+  sandbox.repositionRenderedNavigationItem("page_1");
+  assert.deepEqual(container.children.map((node) => node.dataset.navigationOrderId), ["page_2", "page_3", "page_1"]);
+});
+
+test("incremental title presentation preserves labels, menus, toggle accessibility, and collection-view title", async () => {
+  const app = await read("public/app.js");
+  const source = section(app, "function syncNavigationMenuButtonTitle(", "function repositionRenderedNavigationItem(");
+
+  const makeNode = () => ({
+    textContent: "",
+    dataset: {},
+    attributes: new Map(),
+    setAttribute(name, value) { this.attributes.set(name, String(value)); },
+    getAttribute(name) { return this.attributes.get(name) ?? null; }
+  });
+  const pageLabel = makeNode();
+  const toggleButton = makeNode();
+  toggleButton.setAttribute("aria-expanded", "true");
+  const pageMenu = makeNode();
+  const collectionLabel = makeNode();
+  const collectionMenu = makeNode();
+  const subpageTitle = makeNode();
+  const homeTitle = makeNode();
+  const homeMenu = makeNode();
+  homeMenu.dataset.navigationMenuKind = "collection";
+  const navigationContextMenu = makeNode();
+  const collectionViewTitle = makeNode();
+  const state = {
+    activeNavigationMenuTarget: { id: "page_1", kind: "collection", title: "Old" },
+    workspaceView: "collection",
+    activeCollectionId: "page_1"
+  };
+  const sandbox = {
+    state,
+    navigationPageRenderEntries: new Map([["page_1", {
+      label: pageLabel,
+      toggleButton,
+      menuButton: pageMenu
+    }]]),
+    navigationCollectionRenderEntries: new Map([["page_1", {
+      titleLabel: collectionLabel,
+      menuButton: collectionMenu
+    }]]),
+    subpageIndexTitleElements: new Map([["page_1", subpageTitle]]),
+    homeDocumentTitleElements: new Map([["page_1", homeTitle]]),
+    homeDocumentMenuButtons: new Map([["page_1", homeMenu]]),
+    elements: { navigationContextMenu, collectionViewTitle },
+    t: (key, values = {}) => `${key}:${values.title ?? ""}`
+  };
+  vm.runInNewContext(source, sandbox);
+  sandbox.syncPageTitleSummaryPresentation("page_1", "Renamed");
+
+  assert.equal(pageLabel.textContent, "Renamed");
+  assert.equal(collectionLabel.textContent, "Renamed");
+  assert.equal(subpageTitle.textContent, "Renamed");
+  assert.equal(homeTitle.textContent, "Renamed");
+  assert.equal(toggleButton.dataset.pageChildrenToggleTitle, "Renamed");
+  assert.equal(toggleButton.getAttribute("aria-label"), "navigation.collapseSubpages:Renamed");
+  assert.equal(pageMenu.dataset.navigationMenuTitle, "Renamed");
+  assert.equal(collectionMenu.dataset.navigationMenuTitle, "Renamed");
+  assert.equal(homeMenu.dataset.navigationMenuTitle, "Renamed");
+  assert.equal(state.activeNavigationMenuTarget.title, "Renamed");
+  assert.equal(navigationContextMenu.getAttribute("aria-label"), "navigationMenu.collectionAria:Renamed");
+  assert.equal(collectionViewTitle.textContent, "Renamed");
 });
 
 test("collaborative title and content-version propagation avoid workspace-wide summary scans", async () => {
@@ -419,13 +558,78 @@ test("sidebar rendering batches live DOM replacement and defers already-collapse
 
   assert.match(toggleSource, /if \(expanded && group\) materializeDeferredNavigationChildren\(group\)/);
   assert.match(toggleSource, /deferredNavigationChildren\.delete\(group\)/);
-  assert.match(nodeSource, /if \(expanded\) \{[\s\S]*renderDocumentNode\(child, groups, depth \+ 1\)[\s\S]*\} else \{[\s\S]*deferredNavigationChildren\.set/);
+  assert.match(nodeSource, /if \(expanded\) \{[\s\S]*renderDocumentNode\(child, groups, depth \+ 1, refreshOrder\)[\s\S]*\} else \{[\s\S]*deferredNavigationChildren\.set/);
   assert.match(treeSource, /const pageListFragment = document\.createDocumentFragment\(\)/);
   assert.match(treeSource, /const collectionListFragment = document\.createDocumentFragment\(\)/);
   assert.match(treeSource, /elements\.pageList\.replaceChildren\(pageListFragment\)/);
   assert.match(treeSource, /elements\.collectionList\.replaceChildren\(collectionListFragment\)/);
   assert.doesNotMatch(treeSource, /elements\.pageList\.append\(/);
   assert.doesNotMatch(treeSource, /elements\.collectionList\.append\(/);
+});
+
+test("subpage index renders large descendant trees in one iterative pass without recursive depth risk", async () => {
+  const app = await read("public/app.js");
+  const source = section(app, "function renderSubpageIndexItem(", "function renderParentOptions(");
+
+  assert.doesNotMatch(source, /countDescendants/);
+  assert.doesNotMatch(source, /renderSubpageIndexItem\(child/);
+  assert.match(source, /const pending = children/);
+  assert.match(source, /while \(pending\.length\)/);
+  assert.match(source, /const fragment = document\.createDocumentFragment\(\)/);
+  assert.match(source, /elements\.subpageIndexList\.replaceChildren\(fragment\)/);
+
+  class MockClassList {
+    constructor() { this.names = new Set(); }
+    add(name) { this.names.add(name); }
+    remove(name) { this.names.delete(name); }
+  }
+  class MockNode {
+    constructor(tag = "node") {
+      this.tag = tag;
+      this.children = [];
+      this.dataset = {};
+      this.style = { values: new Map(), setProperty: (name, value) => this.style.values.set(name, value) };
+      this.classList = new MockClassList();
+      this.textContent = "";
+      this.attributes = new Map();
+    }
+    append(...nodes) { this.children.push(...nodes); }
+    setAttribute(name, value) { this.attributes.set(name, String(value)); }
+    replaceChildren(...nodes) { this.children = nodes.flatMap((node) => node?.isFragment ? node.children : [node]); }
+  }
+  const documentMock = {
+    createElement: (tag) => new MockNode(tag),
+    createDocumentFragment: () => Object.assign(new MockNode("fragment"), { isFragment: true })
+  };
+  const list = new MockNode("list");
+  const subpageIndex = new MockNode("section");
+  const subpageIndexCount = new MockNode("count");
+  const groups = new Map();
+  const descendantTotal = 20_000;
+  for (let index = 0; index < descendantTotal; index += 1) {
+    const parentId = index === 0 ? "root" : `page_${index - 1}`;
+    groups.set(parentId, [{ id: `page_${index}`, title: `Page ${index}`, icon: "📄" }]);
+  }
+
+  const sandbox = {
+    state: { selectedPage: { id: "root" }, workspaceView: "page", allPages: [] },
+    document: documentMock,
+    elements: { subpageIndexList: list, subpageIndex, subpageIndexCount },
+    subpageIndexTitleElements: new Map(),
+    buildPageTree: () => groups,
+    renderIconValue: () => {},
+    t: () => "Untitled",
+    formatNumber: (value) => String(value)
+  };
+  vm.runInNewContext(source, sandbox);
+  sandbox.renderSubpageIndex(sandbox.state.selectedPage);
+
+  assert.equal(list.children.length, descendantTotal);
+  assert.equal(subpageIndexCount.textContent, String(descendantTotal));
+  assert.equal(sandbox.subpageIndexTitleElements.size, descendantTotal);
+  assert.equal(list.children[0].dataset.subpageIndexPageId, "page_0");
+  assert.equal(list.children.at(-1).dataset.subpageIndexPageId, `page_${descendantTotal - 1}`);
+  assert.equal(list.children.at(-1).style.values.get("--subpage-depth"), String(descendantTotal - 1));
 });
 
 test("large subtree and move-dialog helpers avoid repeated full-page scans", async () => {
