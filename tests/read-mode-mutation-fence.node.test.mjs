@@ -184,8 +184,8 @@ test("read mode blocks destructive page-version history reset while keeping hist
       selectedPage: { id: "page-1", title: "Example" },
       pageVersionHistory: { pageId: "page-1", loading: false, resetting: false }
     },
-    canManagePage() {
-      return true;
+    isPageOwner(page) {
+      return page?.id === "page-1";
     },
     requireWritablePage() {
       writableChecks += 1;

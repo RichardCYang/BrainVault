@@ -69,6 +69,26 @@ test("collection sharing API exposes create/update/remove and requires collectio
   assert.doesNotMatch(route, /disconnectPageCollaborators\(/);
 });
 
+
+test("direct page grants cannot be minted by collection administrators and admin-created grants are cascaded on revoke", async () => {
+  const directRoute = await read("../src/routes/collaboration.routes.ts");
+  const collectionRoute = await read("../src/routes/collection-sharing.routes.ts");
+  assert.match(directRoute, /access\.role !== "OWNER" \|\| access\.scope !== "OWNER"/);
+  assert.match(directRoute, /PAGE_OWNER_REQUIRED/);
+  assert.match(
+    collectionRoute,
+    /SELECT user_id, generation[\s\S]*WHERE page_id = \? AND shared_by = \? AND permission = 'EDIT'[\s\S]*FOR UPDATE/
+  );
+  assert.match(
+    collectionRoute,
+    /DELETE FROM page_shares WHERE page_id = \? AND shared_by = \?/
+  );
+  assert.match(collectionRoute, /\[page\.id, sharedUserId\]/);
+  assert.match(collectionRoute, /preserveRevokedGrantRecovery\(page, ownerId, principalId, client\)/);
+  assert.match(collectionRoute, /for \(const grant of result\.cascadedDirectGrants\)/);
+  assert.match(collectionRoute, /grant\.userId,[\s\S]*grant\.generation/);
+});
+
 test("collection sharing invalidates only captured document epochs and grant generations", async () => {
   const route = await read("../src/routes/collection-sharing.routes.ts");
   const create = section(
@@ -112,10 +132,10 @@ test("collection sharing invalidates only captured document epochs and grant gen
   assert.equal(revokedGeneration === revokedGeneration, true);
   assert.equal(collectionGeneration === revokedGeneration, false);
 
-  // A direct grant can remain stored underneath the collection grant and become
-  // authoritative again after collection access is removed. Rotating it during
-  // collection-share creation prevents the old post-commit cleanup from matching
-  // a newly admitted session on that revived direct grant.
+  // Owner-created direct grants can remain underneath a collection grant. Their
+  // generation is rotated during collection-share creation so delayed cleanup
+  // cannot match a newly admitted session if that independent owner grant later
+  // becomes effective. Grants created by the revoked admin are now cascaded.
   const rotatedDirectGeneration = "direct-rotated";
   const delayedDisconnectMatches = (socketGeneration) => socketGeneration === revokedGeneration;
   assert.equal(delayedDisconnectMatches(revokedGeneration), true);
@@ -143,6 +163,8 @@ test("collection ADMIN capability is surfaced to page management UI and READ rem
   assert.match(app, /page\.access && typeof page\.access\.canManageSharing === "boolean"/);
   assert.match(app, /elements\.shareCollectionButton\.classList\.toggle\("hidden", !collection \|\| !canManagePageSharing\(collection\)\)/);
   assert.match(app, /if \(collection && !canManagePage\(collection\)\) return/);
+  assert.match(app, /elements\.sharePageForm\.classList\.toggle\("hidden", !canCreateDirectShare\)/);
+  assert.match(app, /!canManagePageSharing\(\) \|\| !isPageOwner\(state\.selectedPage\)/);
   assert.match(html, /id="share-collection-button"/);
   assert.match(html, /value="READ"/);
   assert.match(html, /value="WRITE"/);

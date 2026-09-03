@@ -1,4 +1,5 @@
 import { formatNumber, t } from "./i18n.js";
+import { renderServerBlockHtml } from "./rendered-html-sanitizer.js";
 
 export const accordionLimits = {
   titleLength: 120,
@@ -284,7 +285,7 @@ export function createAccordionEditor(row, value, options = {}) {
 
   const preview = document.createElement("div");
   preview.className = "block-rendered-preview accordion-block-preview";
-  if (previewHtml) preview.innerHTML = previewHtml;
+  if (previewHtml) renderServerBlockHtml(preview, previewHtml);
   else renderFallbackPreview(preview, data, renderIcon);
 
   editor.append(editSurface, preview);

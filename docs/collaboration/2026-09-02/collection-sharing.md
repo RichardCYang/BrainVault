@@ -32,7 +32,7 @@ The sidebar collection three-dot menu is not the sharing entry point. Direct sha
 
 `WRITE` allows normal shared-document editing but does not expose sharing administration or page-management controls.
 
-`ADMIN` is deliberately stronger. It satisfies the same administration checks as the owner for pages in the collection, including sharing controls and supported page/collection management operations. A collection administrator is scope-limited: moving a page outside the shared collection is rejected with `COLLECTION_ADMIN_SCOPE_REQUIRED`.
+`ADMIN` is deliberately stronger. It satisfies the administration checks needed for collection sharing and supported page/collection management operations within the shared collection. Direct page-share creation remains owner-only so a collection administrator cannot mint a lower-priority grant that outlives the authorizing collection grant. A collection administrator is scope-limited: moving a page outside the shared collection is rejected with `COLLECTION_ADMIN_SCOPE_REQUIRED`.
 
 ## Scope and inheritance
 
@@ -55,7 +55,7 @@ This means:
 - collection `WRITE` + direct page `EDIT` => effective `EDITOR` from the collection grant;
 - collection `ADMIN` + direct page `EDIT` => effective `ADMIN` from the collection grant.
 
-A direct page grant can remain stored underneath the collection grant. BrainVault rotates its generation when collection sharing supersedes it so delayed socket cleanup cannot evict a later session. If the collection grant is removed and the direct grant is still valid, that direct page grant can become effective again.
+An independent direct page grant created by the workspace owner can remain stored underneath the collection grant. BrainVault rotates its generation when collection sharing supersedes it so delayed socket cleanup cannot evict a later session. If the collection grant is removed and the owner-created direct grant is still valid, that direct page grant can become effective again. When a collection administrator is revoked, BrainVault also removes direct page grants on member pages whose `shared_by` provenance identifies that revoked administrator; this prevents administrator-planted grants from surviving the revocation.
 
 ## REST API
 
@@ -102,7 +102,7 @@ Collection sharing turns each effectively shared **ordinary document** into the 
 
 For a document that receives its first effective collaborator, BrainVault starts a fresh collaboration lineage from the canonical SQL snapshot. Writable owners/`WRITE`/`ADMIN` users can submit Yjs updates. `READ` users receive the synchronized state but cannot write it. Permission downgrade or revocation preserves recovery admissions before the old write authority is disconnected.
 
-Removing a collection grant does not blindly disable collaboration for every member page. The server recalculates effective shares per page, including any remaining collection or direct page grants, and tears down a document's collaboration history only when its final effective share is gone and all accepted Yjs updates have been safely materialized.
+Removing a collection grant does not blindly disable collaboration for every member page. The server first removes any member-page direct grants created by the revoked administrator, then recalculates effective shares per page, including independent owner-created direct grants. It tears down a document's collaboration history only when its final effective share is gone and all accepted Yjs updates have been safely materialized.
 
 ## Backup and restore
 

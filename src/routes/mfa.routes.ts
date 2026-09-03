@@ -844,6 +844,7 @@ mfaRouter.post(
 mfaRouter.post(
   "/passkeys",
   requireAuth,
+  mfaSetupRateLimit,
   validate({ body: passkeyRegistrationSchema }),
   async (req, res, next) => {
     try {

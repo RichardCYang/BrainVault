@@ -1976,7 +1976,7 @@ paths:
           description: Grant generation changed or active collaboration writes prevent a safe downgrade
     delete:
       summary: Remove a collection collaborator
-      description: Collection owner or effective ADMIN only. Requires the current grant generation. Effective access is recalculated for every member page, so an underlying direct page grant may become active again after removal.
+      description: Collection owner or effective ADMIN only. Requires the current grant generation. Direct grants on member pages created by the revoked administrator are removed in the same transaction; effective access is then recalculated, so an independent owner-created direct page grant may become active again after removal.
       parameters:
         - in: path
           name: collectionId
@@ -2045,7 +2045,7 @@ paths:
           description: Page is missing or not accessible to the authenticated administrator
     post:
       summary: Invite an existing BrainVault user as a direct page editor
-      description: Page owner or effective ADMIN only. Creating the first effective grant initializes a fresh collaboration history from the current canonical page snapshot. A collection grant for the same user remains authoritative over this direct EDIT grant.
+      description: Page owner only. Creating the first effective grant initializes a fresh collaboration history from the current canonical page snapshot. A collection grant for the same user remains authoritative over this direct EDIT grant.
       parameters:
         - in: path
           name: pageId
@@ -2074,6 +2074,8 @@ paths:
                     minimum: 1
         '400':
           description: Invalid account, self-share, collection, or archived page
+        '403':
+          description: Only the workspace owner can create a direct page grant
         '409':
           description: The user already has access
   /api/pages/{pageId}/shares/{userId}:

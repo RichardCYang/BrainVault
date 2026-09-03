@@ -32,7 +32,7 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `PATCH` | `/api/pages/:pageId` | Update page metadata |
 | `DELETE` | `/api/pages/:pageId` | Archive or permanently delete a page |
 | `GET` | `/api/pages/:pageId/shares` | List direct page `EDIT` grants; page owner or effective `ADMIN` only |
-| `POST` | `/api/pages/:pageId/shares` | Add an existing user as a direct page editor; page owner or effective `ADMIN` only |
+| `POST` | `/api/pages/:pageId/shares` | Add an existing user as a direct page editor; page owner only |
 | `DELETE` | `/api/pages/:pageId/shares/:userId` | Remove a direct page editor and close sockets for the superseded grant generation; page owner or effective `ADMIN` only |
 | `GET` | `/api/collections/:collectionId/shares` | List `READ`/`WRITE`/`ADMIN` grants for a custom collection; owner or collection `ADMIN` only |
 | `POST` | `/api/collections/:collectionId/shares` | Add an existing account to a custom collection with `READ`, `WRITE`, or `ADMIN` |
@@ -65,7 +65,7 @@ Collection sharing applies only to persisted custom collections; the virtual Def
 
 `PATCH /api/collections/:collectionId/shares/:userId` and `DELETE /api/collections/:collectionId/shares/:userId` require `expectedGeneration`, the `generation` returned with the current grant. The server rotates the generation on permission changes and rejects stale actions with `409 COLLECTION_SHARE_GENERATION_CHANGED`. A `WRITE`/`ADMIN` to `READ` downgrade and a removal preserve recovery state and fence active collaboration writes before revoking write authority.
 
-Removing collection access recalculates every member document's effective share set. A lower-priority direct page grant can become effective again. Collaboration history is torn down only for documents whose final effective share is gone, and only after the latest accepted Yjs updates are safely materialized.
+Removing collection access first deletes member-page direct grants created by the revoked administrator, then recalculates every member document's effective share set. An independent owner-created direct page grant can still become effective again. Collaboration history is torn down only for documents whose final effective share is gone, and only after the latest accepted Yjs updates are safely materialized.
 
 See [Collection sharing](../../collaboration/2026-09-02/collection-sharing.md) for the UI entry point and detailed role/inheritance behavior.
 

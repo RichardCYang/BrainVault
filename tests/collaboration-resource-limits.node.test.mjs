@@ -12,7 +12,8 @@ test("collaboration connection limits reject the first allocation beyond each bo
     assessCollaborationConnectionAdmission({
       activeConnections: collaborationResourceLimits.connectionsPerServer - 1,
       pageConnections: collaborationResourceLimits.connectionsPerPage - 1,
-      userConnections: collaborationResourceLimits.connectionsPerUser - 1
+      userConnections: collaborationResourceLimits.connectionsPerUser - 1,
+      ipConnections: collaborationResourceLimits.connectionsPerIp - 1
     }),
     { accepted: true }
   );
@@ -20,7 +21,8 @@ test("collaboration connection limits reject the first allocation beyond each bo
     assessCollaborationConnectionAdmission({
       activeConnections: collaborationResourceLimits.connectionsPerServer,
       pageConnections: 0,
-      userConnections: 0
+      userConnections: 0,
+      ipConnections: 0
     }),
     { accepted: false, reason: "server-connections" }
   );
@@ -28,7 +30,8 @@ test("collaboration connection limits reject the first allocation beyond each bo
     assessCollaborationConnectionAdmission({
       activeConnections: 0,
       pageConnections: collaborationResourceLimits.connectionsPerPage,
-      userConnections: 0
+      userConnections: 0,
+      ipConnections: 0
     }),
     { accepted: false, reason: "page-connections" }
   );
@@ -36,9 +39,19 @@ test("collaboration connection limits reject the first allocation beyond each bo
     assessCollaborationConnectionAdmission({
       activeConnections: 0,
       pageConnections: 0,
-      userConnections: collaborationResourceLimits.connectionsPerUser
+      userConnections: collaborationResourceLimits.connectionsPerUser,
+      ipConnections: 0
     }),
     { accepted: false, reason: "user-connections" }
+  );
+  assert.deepEqual(
+    assessCollaborationConnectionAdmission({
+      activeConnections: 0,
+      pageConnections: 0,
+      userConnections: 0,
+      ipConnections: collaborationResourceLimits.connectionsPerIp
+    }),
+    { accepted: false, reason: "ip-connections" }
   );
 });
 

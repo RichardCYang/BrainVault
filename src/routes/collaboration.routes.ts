@@ -601,6 +601,9 @@ collaborationRouter.post(
         await assertCurrentAuthSessionBoundary(actor.id, authScope, client);
         const access = await getPageAccess(pageId, actor.id, client, { lockPage: true });
         assertPageCanAdminister(access);
+        if (access.role !== "OWNER" || access.scope !== "OWNER") {
+          throw new ApiError(403, "PAGE_OWNER_REQUIRED", "Direct page shares can only be created by the workspace owner");
+        }
         const page = access.page;
         const workspaceOwnerId = page.owner_id;
         assertShareablePage(page);

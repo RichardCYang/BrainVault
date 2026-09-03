@@ -89,7 +89,13 @@ const pageCoverFileBackupVersion = 2;
 const uploadedAssetBackupVersion = 3;
 const backupVersion = 4;
 const maxManifestBytes = env.DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024;
-const idSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
+const windowsReservedDeviceNamePattern = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+const idSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-zA-Z0-9_-]+$/)
+  .refine((value) => !windowsReservedDeviceNamePattern.test(value), "Identifier is reserved on Windows");
 const timestampSchema = z.string().min(1).max(40);
 const profileThemeSchema = z.enum(["light", "dark"]);
 const preferredLanguageSchema = z.enum(supportedProfileLanguages);

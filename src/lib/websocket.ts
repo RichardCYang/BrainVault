@@ -5,7 +5,7 @@ import type { Socket } from "node:net";
 const websocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const fatalUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const defaultMaxQueuedMessages = 64;
-const maxQueuedExtraBytes = 1024 * 1024;
+const maxQueuedExtraBytes = 256 * 1024;
 const maxFrameHeaderBytes = 10;
 const maxFragmentsPerMessage = 1_024;
 const maxTransportFramesPerSecond = 600;

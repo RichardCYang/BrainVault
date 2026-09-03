@@ -54,6 +54,12 @@ export function assertPageCanAdminister(
   }
 }
 
+export function assertPageOwner(access: Pick<PageAccess, "role" | "scope">): void {
+  if (access.role !== "OWNER" || access.scope !== "OWNER") {
+    throw notFound("Page");
+  }
+}
+
 function pageRowProjection(alias = "") {
   const column = (name: string) => alias ? `${alias}.${name}` : name;
   return [

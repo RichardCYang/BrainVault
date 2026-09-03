@@ -18,6 +18,7 @@ import { toBlock, toPage, toTag } from "../lib/mappers.js";
 import {
   assertPageCanAdminister,
   assertPageNotArchived,
+  assertPageOwner,
   canAdministerPageAccess,
   getEffectivePageShareCount,
   getPageAccess,
@@ -145,14 +146,24 @@ const deletePageBodySchema = z
   })
   .default({});
 
+const maxUnsignedBigIntString = "18446744073709551615";
+const unsignedBigIntStringSchema = z
+  .string()
+  .max(maxUnsignedBigIntString.length)
+  .regex(/^\d+$/)
+  .refine(
+    (value) => value.length < maxUnsignedBigIntString.length || value <= maxUnsignedBigIntString,
+    "Value exceeds an unsigned BIGINT"
+  );
+
 const pageVersionListQuerySchema = z.object({
-  cursor: z.string().regex(/^\d+$/).optional(),
+  cursor: unsignedBigIntStringSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50)
 });
 
 const pageVersionParamsSchema = z.object({
   pageId: routeIdSchema,
-  versionId: z.string().regex(/^\d+$/)
+  versionId: unsignedBigIntStringSchema
 });
 
 const pageVersionResetSchema = z.object({
@@ -941,7 +952,7 @@ pageRouter.get(
       // could otherwise authorize the old owned page and return replacement history.
       const result = await transaction(async (client) => {
         const access = await getPageAccess(pageId, user.id, client);
-        assertPageCanAdminister(access);
+        assertPageOwner(access);
         const page = access.page;
         const rows = await client.query<PageVersionRow>(
           `SELECT id, page_id, revision, page_edit_version, page_content_version,
@@ -1003,7 +1014,7 @@ pageRouter.delete(
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
 
         const pageAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
-        assertPageCanAdminister(pageAccess);
+        assertPageOwner(pageAccess);
         const page = pageAccess.page;
         assertPageNotArchived(page);
 
@@ -1139,7 +1150,7 @@ pageRouter.get(
       // snapshot so a delete/restore id reuse cannot cross the authorization boundary.
       const row = await transaction(async (client) => {
         const access = await getPageAccess(pageId, user.id, client);
-        assertPageCanAdminister(access);
+        assertPageOwner(access);
         return client.queryOne<PageVersionRow>(
           `SELECT id, page_id, revision, page_edit_version, page_content_version,
                   actors, source, change_count, change_summary, changes, created_at

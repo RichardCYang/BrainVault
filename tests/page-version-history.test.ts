@@ -95,8 +95,11 @@ describe("Page version history", () => {
     expect(pageVersionHistory).toContain('source: "RESET"');
     expect(pageVersionHistory).toContain('"DELETE FROM page_versions WHERE page_id = ?"');
     expect(pageRoutes).toContain('"/:pageId/versions/:versionId"');
-    expect(pageRoutes).toMatch(/"\/:pageId\/versions"[\s\S]{0,500}getOwnedPage\(pageId, user\.id\)/);
-    expect(pageRoutes).toMatch(/"\/:pageId\/versions\/:versionId"[\s\S]{0,500}getOwnedPage\(pageId, user\.id\)/);
+    expect(pageRoutes).toMatch(/"\/:pageId\/versions"[\s\S]{0,700}assertPageOwner\(access\)/);
+    expect(pageRoutes).toMatch(/pageRouter\.delete\([\s\S]*?"\/:pageId\/versions"[\s\S]{0,1200}assertPageOwner\(pageAccess\)/);
+    expect(pageRoutes).toMatch(/"\/:pageId\/versions\/:versionId"[\s\S]{0,700}assertPageOwner\(access\)/);
+    expect(pageRoutes).toContain("const unsignedBigIntStringSchema = z");
+    expect(pageRoutes).toContain('const maxUnsignedBigIntString = "18446744073709551615";');
     expect(blockRoutes).toContain('source: "BLOCK_UPDATE"');
     expect(blockRoutes).toContain('source: "BLOCK_DELETE"');
     expect(collaborationRoutes).toContain('source: "COLLABORATION"');

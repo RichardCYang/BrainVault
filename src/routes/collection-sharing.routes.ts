@@ -482,11 +482,29 @@ collectionSharingRouter.delete(
         }
 
         const preRemovalStates = new Map<string, Awaited<ReturnType<typeof getCollaborationState>>>();
+        const cascadedDirectGrants: Array<{ pageId: string; userId: string; generation: string }> = [];
         for (const page of pages) {
-          preRemovalStates.set(
-            page.id,
-            await preserveRevokedGrantRecovery(page, ownerId, sharedUserId, client)
+          const delegated = await client.query<{ user_id: string; generation: string }>(
+            `SELECT user_id, generation
+             FROM page_shares
+             WHERE page_id = ? AND shared_by = ? AND permission = 'EDIT'
+             ORDER BY user_id ASC
+             FOR UPDATE`,
+            [page.id, sharedUserId]
           );
+          for (const grant of delegated) {
+            cascadedDirectGrants.push({ pageId: page.id, userId: grant.user_id, generation: grant.generation });
+          }
+
+          // Preserve recovery for every principal whose write authority is being
+          // revoked by this lifecycle operation, including legacy delegated grants.
+          const principals = new Set([sharedUserId, ...delegated.map((grant) => grant.user_id)]);
+          let state: Awaited<ReturnType<typeof getCollaborationState>> = null;
+          for (const principalId of principals) {
+            const preservedState = await preserveRevokedGrantRecovery(page, ownerId, principalId, client);
+            state ??= preservedState;
+          }
+          preRemovalStates.set(page.id, state);
         }
         const deletion = await client.execute<{ affectedRows: number }>(
           `DELETE FROM collection_shares
@@ -495,6 +513,16 @@ collectionSharingRouter.delete(
         );
         if (Number(deletion.affectedRows) !== 1) {
           throw new ApiError(409, "COLLECTION_SHARE_GENERATION_CHANGED", "The collection grant changed in another session.");
+        }
+
+        // Direct grants carry their creator in page_shares.shared_by. Remove any
+        // grants planted by the revoked collection administrator on pages in
+        // this collection, while preserving direct grants created by the owner.
+        for (const page of pages) {
+          await client.execute(
+            "DELETE FROM page_shares WHERE page_id = ? AND shared_by = ?",
+            [page.id, sharedUserId]
+          );
         }
 
         const removedDocumentLineages: Array<{ pageId: string; documentEpoch: string }> = [];
@@ -513,15 +541,23 @@ collectionSharingRouter.delete(
           count: rows.length,
           oldGeneration: existing.generation,
           pages,
+          cascadedDirectGrants,
           removedDocumentLineages
         };
       });
 
       for (const page of result.pages) {
-        // A lower-priority direct grant may become effective after removal. Match
-        // the old collection generation so a reconnect under that direct grant
-        // cannot be mistaken for the revoked collection session.
+        // Match the revoked collection generation so stale sockets are closed
+        // even if another independent direct grant remains effective.
         disconnectSharedUserGrant(page.id, sharedUserId, result.oldGeneration, "Collection access was removed");
+      }
+      for (const grant of result.cascadedDirectGrants) {
+        disconnectSharedUserGrant(
+          grant.pageId,
+          grant.userId,
+          grant.generation,
+          "Direct access granted by a removed collection administrator was revoked"
+        );
       }
       for (const lineage of result.removedDocumentLineages) {
         disconnectPageCollaboratorsForDocumentEpoch(

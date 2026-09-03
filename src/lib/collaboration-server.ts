@@ -297,6 +297,8 @@ export class PageCollaborationHub {
   private activeConnectionCount = 0;
   private readonly pageConnectionCounts = new Map<string, number>();
   private readonly userConnectionCounts = new Map<string, number>();
+  private readonly ipConnectionCounts = new Map<string, number>();
+  private readonly unauthenticatedUpgradeWindows = new Map<string, { startedAt: number; attempts: number }>();
   private pendingUpgradeCount = 0;
   private readonly pendingUpgradeUserCounts = new Map<string, number>();
   private readonly upgradedSockets = new WeakSet<Socket>();
@@ -456,11 +458,35 @@ export class PageCollaborationHub {
     }));
   }
 
-  private reserveUpgrade(userId: string, pageId: string) {
+  private consumeUnauthenticatedUpgradeBudget(sourceIp: string) {
+    const now = Date.now();
+    const windowMs = 60_000;
+    const limit = collaborationResourceLimits.unauthenticatedUpgradesPerIpPerMinute;
+    const existing = this.unauthenticatedUpgradeWindows.get(sourceIp);
+    if (existing && now - existing.startedAt < windowMs) {
+      if (existing.attempts >= limit) return false;
+      existing.attempts += 1;
+      return true;
+    }
+
+    if (!existing && this.unauthenticatedUpgradeWindows.size >= collaborationResourceLimits.trackedUnauthenticatedUpgradeIps) {
+      for (const [ip, entry] of this.unauthenticatedUpgradeWindows) {
+        if (now - entry.startedAt >= windowMs) this.unauthenticatedUpgradeWindows.delete(ip);
+      }
+      if (this.unauthenticatedUpgradeWindows.size >= collaborationResourceLimits.trackedUnauthenticatedUpgradeIps) {
+        return false;
+      }
+    }
+    this.unauthenticatedUpgradeWindows.set(sourceIp, { startedAt: now, attempts: 1 });
+    return true;
+  }
+
+  private reserveUpgrade(userId: string, pageId: string, sourceIp: string) {
     const connectionAdmission = assessCollaborationConnectionAdmission({
       activeConnections: this.activeConnectionCount,
       pageConnections: this.pageConnectionCounts.get(pageId) ?? 0,
-      userConnections: this.userConnectionCounts.get(userId) ?? 0
+      userConnections: this.userConnectionCounts.get(userId) ?? 0,
+      ipConnections: this.ipConnectionCounts.get(sourceIp) ?? 0
     });
     const upgradeAdmission = assessCollaborationUpgradeAdmission({
       pendingUpgrades: this.pendingUpgradeCount,
@@ -483,13 +509,14 @@ export class PageCollaborationHub {
     else this.pendingUpgradeUserCounts.delete(userId);
   }
 
-  private trackClient(pageId: string, userId: string) {
+  private trackClient(pageId: string, userId: string, sourceIp: string) {
     this.activeConnectionCount += 1;
     this.pageConnectionCounts.set(pageId, (this.pageConnectionCounts.get(pageId) ?? 0) + 1);
     this.userConnectionCounts.set(userId, (this.userConnectionCounts.get(userId) ?? 0) + 1);
+    this.ipConnectionCounts.set(sourceIp, (this.ipConnectionCounts.get(sourceIp) ?? 0) + 1);
   }
 
-  private untrackClient(pageId: string, userId: string) {
+  private untrackClient(pageId: string, userId: string, sourceIp: string) {
     this.activeConnectionCount = Math.max(0, this.activeConnectionCount - 1);
     const nextPageCount = Math.max(0, (this.pageConnectionCounts.get(pageId) ?? 0) - 1);
     if (nextPageCount) this.pageConnectionCounts.set(pageId, nextPageCount);
@@ -497,6 +524,9 @@ export class PageCollaborationHub {
     const nextUserCount = Math.max(0, (this.userConnectionCounts.get(userId) ?? 0) - 1);
     if (nextUserCount) this.userConnectionCounts.set(userId, nextUserCount);
     else this.userConnectionCounts.delete(userId);
+    const nextIpCount = Math.max(0, (this.ipConnectionCounts.get(sourceIp) ?? 0) - 1);
+    if (nextIpCount) this.ipConnectionCounts.set(sourceIp, nextIpCount);
+    else this.ipConnectionCounts.delete(sourceIp);
   }
 
   private rejectConnectionLimit(socket: Socket) {
@@ -514,6 +544,15 @@ export class PageCollaborationHub {
       !isHttpsRequestFromTrustedProxy(request, env.TRUST_PROXY_ADDRESSES)
     ) {
       rejectWebSocketUpgrade(socket, 426, "HTTPS reverse proxy is required");
+      return;
+    }
+
+    const sourceIp = getClientIpAddressFromTrustedProxyRequest(
+      request,
+      env.HTTPS_MODE === "proxy" ? env.TRUST_PROXY_ADDRESSES : []
+    );
+    if (!this.consumeUnauthenticatedUpgradeBudget(sourceIp)) {
+      rejectWebSocketUpgrade(socket, 429, "Too many collaboration upgrade attempts");
       return;
     }
 
@@ -561,7 +600,7 @@ export class PageCollaborationHub {
       return;
     }
     const authSessionId = resolveAuthSessionId(authSessionToken, authPayload);
-    if (!this.reserveUpgrade(payload.sub, pageId)) {
+    if (!this.reserveUpgrade(payload.sub, pageId, sourceIp)) {
       this.rejectConnectionLimit(socket);
       return;
     }
@@ -576,10 +615,6 @@ export class PageCollaborationHub {
       }
       const collaborationState = await getCollaborationState(pageId);
       assertCollaborationDocumentEpoch(collaborationState, payload.documentEpoch);
-      const sourceIp = getClientIpAddressFromTrustedProxyRequest(
-        request,
-        env.HTTPS_MODE === "proxy" ? env.TRUST_PROXY_ADDRESSES : []
-      );
       if (await isPermanentlyBlockedTotpIp(sourceIp, payload.sub)) {
         rejectWebSocketUpgrade(socket, 403, "Access from this IP is blocked");
         return;
@@ -630,7 +665,8 @@ export class PageCollaborationHub {
       const connectionAdmission = assessCollaborationConnectionAdmission({
         activeConnections: this.activeConnectionCount,
         pageConnections: this.pageConnectionCounts.get(pageId) ?? 0,
-        userConnections: this.userConnectionCounts.get(payload.sub) ?? 0
+        userConnections: this.userConnectionCounts.get(payload.sub) ?? 0,
+        ipConnections: this.ipConnectionCounts.get(sourceIp) ?? 0
       });
       if (!connectionAdmission.accepted) {
         this.rejectConnectionLimit(socket);
@@ -669,7 +705,7 @@ export class PageCollaborationHub {
         accessValidationPromise: null
       };
       room.clients.set(client.id, client);
-      this.trackClient(room.pageId, client.user.id);
+      this.trackClient(room.pageId, client.user.id, client.ipAddress);
       connection.onMessage((message) => this.handleMessage(room, client, message));
       connection.onClose(() => this.handleClientClose(room, client));
       connection.start(head);
@@ -1770,7 +1806,7 @@ export class PageCollaborationHub {
 
   private handleClientClose(room: Room, client: ClientContext) {
     if (!room.clients.delete(client.id)) return;
-    this.untrackClient(room.pageId, client.user.id);
+    this.untrackClient(room.pageId, client.user.id, client.ipAddress);
     room.waitingForBootstrap.delete(client.id);
     this.broadcastPresenceUpdate(room, client, { removed: true });
 

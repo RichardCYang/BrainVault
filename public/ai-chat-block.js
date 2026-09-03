@@ -1,5 +1,6 @@
 import { formatDateTime, t } from "./i18n.js";
 import { AI_CHAT_ANSWER_MAX_LENGTH } from "./runtime-config.js";
+import { renderServerBlockHtml } from "./rendered-html-sanitizer.js";
 
 export const aiProviderPresets = Object.freeze([
   { id: "chatgpt", label: "ChatGPT" },
@@ -1930,7 +1931,7 @@ export function createAiChatEditor(row, value, { onDirty, htmlCache = "" } = {})
 
   const preview = document.createElement("div");
   preview.className = "block-rendered-preview ai-chat-rendered-preview";
-  preview.innerHTML = htmlCache || "";
+  renderServerBlockHtml(preview, htmlCache || "", { allowAiControls: true });
   hydrateRenderedAiChatPagination(preview);
 
   editingSurface.append(titleRow, settings, conversationViewport, pagination, actions);

@@ -384,7 +384,6 @@ passkeyLoginRouter.post(
       const userHandle = decodeBase64UrlStrict(response.response.userHandle, maxUserHandleBytes);
       const passkey = await findPasskeyByCredentialId(credentialId);
       if (!passkey) throw loginFailure();
-      knownUserId = passkey.user_id;
       if (!equalBytes(userHandle, passkey.webauthn_user_id)) throw loginFailure();
 
       let verification;
@@ -406,6 +405,10 @@ passkeyLoginRouter.post(
         throw loginFailure();
       }
       if (!verification.verified) throw loginFailure();
+      // Attribute login history only after the authenticator has proved possession
+      // of the credential. Policy and counter failures after this point are safe
+      // to associate with the owning account.
+      knownUserId = passkey.user_id;
 
       const previousCounter = Number(passkey.counter);
       const newCounter = Number(verification.authenticationInfo.newCounter);
@@ -509,7 +512,13 @@ passkeyLoginRouter.post(
       clearPasskeyCeremonyBinding(res);
       res.json({ user: result.user });
     } catch (error) {
-      if (knownUserId && error instanceof ApiError && error.code === "PASSKEY_LOGIN_FAILED") {
+      const auditableFailureCodes = new Set([
+        "PASSKEY_LOGIN_FAILED",
+        "TOTP_IP_PERMANENTLY_BLOCKED",
+        "COUNTRY_LOGIN_BLOCKED",
+        "VPN_ACCESS_BLOCKED"
+      ]);
+      if (knownUserId && error instanceof ApiError && auditableFailureCodes.has(error.code)) {
         await recordLoginAttempt(knownUserId, sourceIp, "FAILURE");
       }
       next(error);

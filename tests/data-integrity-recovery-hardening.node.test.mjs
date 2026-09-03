@@ -92,7 +92,7 @@ test("archived pages cannot have version history reset", () => {
   );
   assertBefore(
     resetRoute,
-    "assertPageCanAdminister(pageAccess);",
+    "assertPageOwner(pageAccess);",
     "assertPageNotArchived(page);",
     "version reset archived-page fence"
   );

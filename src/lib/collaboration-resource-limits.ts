@@ -2,6 +2,9 @@ export const collaborationResourceLimits = {
   connectionsPerServer: 512,
   connectionsPerPage: 64,
   connectionsPerUser: 8,
+  connectionsPerIp: 32,
+  unauthenticatedUpgradesPerIpPerMinute: 30,
+  trackedUnauthenticatedUpgradeIps: 4_096,
   pendingUpgradesPerServer: 64,
   pendingUpgradesPerUser: 4,
   pendingWritesPerRoom: 64,
@@ -12,17 +15,19 @@ export type CollaborationConnectionAdmission =
   | { accepted: true }
   | {
       accepted: false;
-      reason: "server-connections" | "page-connections" | "user-connections";
+      reason: "server-connections" | "page-connections" | "user-connections" | "ip-connections";
     };
 
 export function assessCollaborationConnectionAdmission({
   activeConnections,
   pageConnections,
-  userConnections
+  userConnections,
+  ipConnections = 0
 }: {
   activeConnections: number;
   pageConnections: number;
   userConnections: number;
+  ipConnections?: number;
 }): CollaborationConnectionAdmission {
   if (activeConnections >= collaborationResourceLimits.connectionsPerServer) {
     return { accepted: false, reason: "server-connections" };
@@ -32,6 +37,9 @@ export function assessCollaborationConnectionAdmission({
   }
   if (userConnections >= collaborationResourceLimits.connectionsPerUser) {
     return { accepted: false, reason: "user-connections" };
+  }
+  if (ipConnections >= collaborationResourceLimits.connectionsPerIp) {
+    return { accepted: false, reason: "ip-connections" };
   }
   return { accepted: true };
 }

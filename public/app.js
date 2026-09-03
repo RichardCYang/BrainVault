@@ -11,6 +11,7 @@ import {
   t
 } from "./i18n.js";
 import { ApiReadTimeoutError, fetchApiResponseText } from "./api-read-transport.js";
+import { renderServerBlockHtml } from "./rendered-html-sanitizer.js";
 import {
   codeLanguageOptions,
   getBlockCodeLanguage,
@@ -676,12 +677,133 @@ function normalizeBookmarkText(value, maxLength) {
     .slice(0, maxLength);
 }
 
+function parseBookmarkIpv4(address) {
+  const parts = String(address).split(".");
+  if (parts.length !== 4) return null;
+  const octets = [];
+  for (const part of parts) {
+    if (!/^\d{1,3}$/.test(part)) return null;
+    const value = Number(part);
+    if (!Number.isInteger(value) || value < 0 || value > 255) return null;
+    octets.push(value);
+  }
+  return octets;
+}
+
+function bookmarkIpv4ToNumber(address) {
+  const octets = parseBookmarkIpv4(address);
+  if (!octets) return null;
+  return octets.reduce((total, part) => ((total << 8) + part) >>> 0, 0);
+}
+
+function isBookmarkIpv4InRange(address, base, prefix) {
+  const value = bookmarkIpv4ToNumber(address);
+  const baseValue = bookmarkIpv4ToNumber(base);
+  if (value === null || baseValue === null) return false;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return (value & mask) === (baseValue & mask);
+}
+
+function isPrivateBookmarkIpv4(address) {
+  const ranges = [
+    ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8],
+    ["168.63.129.16", 32], ["169.254.0.0", 16], ["172.16.0.0", 12],
+    ["192.0.0.0", 24], ["192.0.2.0", 24], ["192.88.99.0", 24],
+    ["192.168.0.0", 16], ["198.18.0.0", 15], ["198.51.100.0", 24],
+    ["203.0.113.0", 24], ["224.0.0.0", 4], ["240.0.0.0", 4]
+  ];
+  return ranges.some(([base, prefix]) => isBookmarkIpv4InRange(address, base, prefix));
+}
+
+function expandBookmarkIpv6(address) {
+  let normalized = String(address).trim().toLowerCase().replace(/^\[|\]$/g, "").split("%")[0];
+  if (normalized.includes(".")) {
+    const lastColon = normalized.lastIndexOf(":");
+    const ipv4 = normalized.slice(lastColon + 1);
+    const value = bookmarkIpv4ToNumber(ipv4);
+    if (value === null || lastColon < 0) return null;
+    normalized = `${normalized.slice(0, lastColon)}:${((value >>> 16) & 0xffff).toString(16)}:${(value & 0xffff).toString(16)}`;
+  }
+
+  const compressed = normalized.includes("::");
+  const sides = normalized.split("::");
+  if (sides.length > 2) return null;
+  const left = sides[0] ? sides[0].split(":") : [];
+  const right = sides[1] ? sides[1].split(":") : [];
+  const all = [...left, ...right];
+  if (all.some((part) => !/^[0-9a-f]{1,4}$/.test(part))) return null;
+  if ((!compressed && all.length !== 8) || (compressed && all.length >= 8)) return null;
+  const missing = compressed ? 8 - all.length : 0;
+  const parts = [...left, ...Array.from({ length: missing }, () => "0"), ...right]
+    .map((part) => part.padStart(4, "0"));
+  return parts.length === 8 ? parts : null;
+}
+
+function bookmarkIpv6PartsToBigInt(parts) {
+  return parts.reduce((value, part) => (value << 16n) | BigInt(Number.parseInt(part, 16)), 0n);
+}
+
+function isBookmarkIpv6InRange(parts, base, prefix) {
+  const baseParts = expandBookmarkIpv6(base);
+  if (!baseParts) return false;
+  const shift = BigInt(128 - prefix);
+  return (bookmarkIpv6PartsToBigInt(parts) >> shift) === (bookmarkIpv6PartsToBigInt(baseParts) >> shift);
+}
+
+function embeddedBookmarkIpv4(parts) {
+  const high = Number.parseInt(parts[6], 16);
+  const low = Number.parseInt(parts[7], 16);
+  return `${high >>> 8}.${high & 255}.${low >>> 8}.${low & 255}`;
+}
+
+function isPrivateBookmarkIpv6(address) {
+  const parts = expandBookmarkIpv6(address);
+  if (!parts) return true;
+
+  const mapped = parts.slice(0, 5).every((part) => part === "0000") && parts[5] === "ffff";
+  if (mapped) return isPrivateBookmarkIpv4(embeddedBookmarkIpv4(parts));
+
+  const translated = parts.slice(0, 4).every((part) => part === "0000")
+    && parts[4] === "ffff"
+    && parts[5] === "0000";
+  if (translated) return isPrivateBookmarkIpv4(embeddedBookmarkIpv4(parts));
+
+  const ranges = [
+    ["::", 96], ["64:ff9b::", 96], ["64:ff9b:1::", 48], ["100::", 64],
+    ["100:0:0:1::", 64], ["2001::", 23], ["2001:db8::", 32], ["2002::", 16],
+    ["3fff::", 20], ["5f00::", 16], ["fc00::", 7], ["fe80::", 10],
+    ["fec0::", 10], ["ff00::", 8]
+  ];
+  return ranges.some(([base, prefix]) => isBookmarkIpv6InRange(parts, base, prefix));
+}
+
+function isPrivateOrLocalBookmarkHostname(hostname) {
+  const normalized = String(hostname ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "");
+  if (!normalized) return true;
+
+  if (parseBookmarkIpv4(normalized)) return isPrivateBookmarkIpv4(normalized);
+  if (normalized.includes(":")) return isPrivateBookmarkIpv6(normalized);
+  if (!normalized.includes(".")) return true;
+  return normalized === "localhost"
+    || normalized.endsWith(".localhost")
+    || normalized.endsWith(".local")
+    || normalized.endsWith(".internal")
+    || normalized.endsWith(".lan")
+    || normalized.endsWith(".home")
+    || normalized.endsWith(".home.arpa");
+}
+
 function normalizeBookmarkUrl(value, baseUrl) {
   const raw = normalizeBookmarkText(value, bookmarkLimits.urlLength);
   if (!raw) return "";
   try {
     const url = baseUrl ? new URL(raw, baseUrl) : new URL(raw);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return "";
+    if (isPrivateOrLocalBookmarkHostname(url.hostname)) return "";
     url.hash = "";
     return url.toString().slice(0, bookmarkLimits.urlLength);
   } catch {
@@ -7241,8 +7363,9 @@ function syncPageModeUi() {
   elements.archivePageButton.classList.toggle("hidden", !manager);
   elements.sharePageButton.classList.toggle("hidden", !state.selectedPage || !canManagePageSharing());
   elements.sharePageButton.disabled = interactionLocked;
-  elements.pageVersionHistoryButton.classList.toggle("hidden", !state.selectedPage || !manager);
-  elements.pageVersionHistoryButton.disabled = interactionLocked || !manager;
+  const owner = Boolean(state.selectedPage && isPageOwner(state.selectedPage));
+  elements.pageVersionHistoryButton.classList.toggle("hidden", !state.selectedPage || !owner);
+  elements.pageVersionHistoryButton.disabled = interactionLocked || !owner;
   elements.blockList.setAttribute("aria-readonly", String(controlsReadOnly));
   elements.blockList.setAttribute("aria-label", t(readOnly ? "page.readerAria" : "page.editorAria"));
   elements.blockEditorHelp.innerHTML = t(readOnly ? "page.readOnlyHelp" : "page.editorHelp");
@@ -8450,7 +8573,7 @@ async function resetPageVersionHistory() {
   const history = state.pageVersionHistory;
   const page = state.selectedPage;
   const pageId = history.pageId;
-  if (!pageId || !page || page.id !== pageId || !canManagePage(page) || history.loading || history.resetting) return;
+  if (!pageId || !page || page.id !== pageId || !isPageOwner(page) || history.loading || history.resetting) return;
   if (!requireWritablePage()) return;
 
   const title = page.title || t("newDocumentTitle");
@@ -8558,7 +8681,7 @@ async function loadPageVersionDetail(versionId) {
 
 function openPageVersionHistory() {
   const page = state.selectedPage;
-  if (!page || !canManagePage(page)) return;
+  if (!page || !isPageOwner(page)) return;
   closePageActionsMenu();
   state.pageVersionHistory.pageId = page.id;
   state.pageVersionHistory.versions = [];
@@ -8568,7 +8691,7 @@ function openPageVersionHistory() {
   state.pageVersionHistory.requestId += 1;
   state.pageVersionHistory.detailRequestId += 1;
   elements.pageVersionHistoryPageTitle.textContent = page.title || t("newDocumentTitle");
-  elements.pageVersionHistoryReset.classList.toggle("hidden", !canManagePage(page));
+  elements.pageVersionHistoryReset.classList.toggle("hidden", !isPageOwner(page));
   elements.pageVersionHistoryReset.disabled = state.pageVersionHistory.resetting || isPageReadOnly();
   if (state.pageVersionHistory.resetting) {
     elements.pageVersionHistoryReset.setAttribute("aria-busy", "true");
@@ -10784,13 +10907,17 @@ async function openSharePageDialog() {
   sharePageNavigationGeneration = navigationGeneration;
   state.sharePageOpen = true;
   state.sharePageEntries = [];
+  const canCreateDirectShare = Boolean(state.selectedPage && isPageOwner(state.selectedPage));
+  elements.sharePageForm.classList.toggle("hidden", !canCreateDirectShare);
   elements.sharePageLayer.classList.remove("hidden");
   elements.sharePageLayer.setAttribute("aria-hidden", "false");
   renderSharePageList();
   await loadPageShares(pageId, requestGeneration);
   if (isCurrentSharePageRequest(requestGeneration, pageId)) {
     requestAnimationFrame(() => {
-      if (isCurrentSharePageRequest(requestGeneration, pageId)) elements.sharePageUsername.focus();
+      if (!isCurrentSharePageRequest(requestGeneration, pageId)) return;
+      if (canCreateDirectShare) elements.sharePageUsername.focus();
+      else elements.sharePageClose.focus();
     });
   }
 }
@@ -12540,7 +12667,7 @@ function updateRenderedBlockPreview(row, block) {
     renderCodePreview(preview, block.markdown, getBlockCodeLanguage(block));
     return;
   }
-  preview.innerHTML = block.htmlCache ?? "";
+  renderServerBlockHtml(preview, block.htmlCache ?? "", { allowAiControls: block.type === "AI_CHAT" });
   if (!block.htmlCache) preview.textContent = block.markdown ?? "";
   hydrateMathExpressions(preview);
   hydrateHighlightedCodeBlocks(preview);
@@ -12679,7 +12806,7 @@ function createToggleBlockEditor(row, block) {
 
   const preview = document.createElement("div");
   preview.className = "block-rendered-preview toggle-block-preview";
-  preview.innerHTML = block.htmlCache ?? "";
+  renderServerBlockHtml(preview, block.htmlCache ?? "", { allowAiControls: block.type === "AI_CHAT" });
   if (!block.htmlCache) {
     const details = document.createElement("details");
     details.className = "rendered-toggle";
@@ -19469,7 +19596,7 @@ elements.sharePageBackdrop.addEventListener("click", () => closeSharePageDialog(
 
 elements.sharePageForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!state.selectedPage || !canManagePageSharing()) return;
+  if (!state.selectedPage || !canManagePageSharing() || !isPageOwner(state.selectedPage)) return;
   const username = elements.sharePageUsername.value.trim();
   if (!username) return;
   const pageId = state.selectedPage.id;

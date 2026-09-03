@@ -277,3 +277,42 @@ test("the production wiring preserves identity while removing repeated high-cost
   assert.match(attachmentSource, /await lstat\(getAttachmentFilePath\(ownerId, blockId\)\)/);
   assert.match(app, /const fileInfo = await lstat\(filePath\)\.catch/);
 });
+
+test("report follow-up hardening closes client HTML, bookmark, WebSocket, passkey, and restore gaps", () => {
+  const appClient = read("public/app.js");
+  const accordion = read("public/accordion-block.js");
+  const aiChat = read("public/ai-chat-block.js");
+  const browserSanitizer = read("public/rendered-html-sanitizer.js");
+  const collaborationServer = read("src/lib/collaboration-server.ts");
+  const websocket = read("src/lib/websocket.ts");
+  const passkeyLogin = read("src/routes/passkey-login.routes.ts");
+  const mfaRoutes = read("src/routes/mfa.routes.ts");
+  const transfer = read("src/lib/data-transfer.ts");
+
+  assert.doesNotMatch(appClient, /preview\.innerHTML = block\.htmlCache/);
+  assert.doesNotMatch(accordion, /preview\.innerHTML = previewHtml/);
+  assert.doesNotMatch(aiChat, /preview\.innerHTML = htmlCache/);
+  assert.match(appClient, /renderServerBlockHtml\(preview, block\.htmlCache/);
+  assert.match(browserSanitizer, /forbiddenRenderedTags/);
+  assert.match(browserSanitizer, /youtubeEmbedPattern/);
+  assert.match(browserSanitizer, /normalizeRenderedImageSource/);
+  assert.match(browserSanitizer, /rel", "noopener noreferrer"/);
+
+  assert.match(appClient, /isPrivateOrLocalBookmarkHostname\(url\.hostname\)/);
+  assert.match(appClient, /\["100\.64\.0\.0", 10\]/);
+  assert.match(appClient, /normalized\.endsWith\("\.internal"\)/);
+
+  assert.match(collaborationServer, /consumeUnauthenticatedUpgradeBudget\(sourceIp\)/);
+  assert.match(collaborationServer, /Too many collaboration upgrade attempts/);
+  assert.match(collaborationServer, /ipConnections: this\.ipConnectionCounts\.get\(sourceIp\)/);
+  assert.match(websocket, /const maxQueuedExtraBytes = 256 \* 1024/);
+
+  const verifiedIndex = passkeyLogin.indexOf("if (!verification.verified) throw loginFailure();");
+  const attributionIndex = passkeyLogin.indexOf("knownUserId = passkey.user_id;");
+  assert.ok(verifiedIndex >= 0 && attributionIndex > verifiedIndex, "passkey login history must be attributed only after a verified assertion");
+  assert.match(passkeyLogin, /COUNTRY_LOGIN_BLOCKED/);
+  assert.match(passkeyLogin, /VPN_ACCESS_BLOCKED/);
+  assert.match(mfaRoutes, /"\/passkeys",\s*requireAuth,\s*mfaSetupRateLimit/);
+  assert.match(transfer, /windowsReservedDeviceNamePattern/);
+});
+

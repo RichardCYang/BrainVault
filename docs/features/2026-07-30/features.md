@@ -16,7 +16,7 @@ Owners can replace or remove a cover at any time and add it again later. **Repos
 
 ### Direct page sharing
 
-Open an ordinary page and select **Share** to add an existing BrainVault account by login ID. Direct page sharing creates an `EDIT` grant for that page. The page owner or a user with effective `ADMIN` access can manage the direct access list. A direct page collaborator can edit the shared page, but a direct grant by itself does not expose the owner's surrounding page hierarchy.
+Open an ordinary page and select **Share** to add an existing BrainVault account by login ID. Direct page sharing creates an `EDIT` grant for that page. Only the page owner can create a new direct grant; the owner or a user with effective `ADMIN` access can inspect and revoke existing direct access entries. A direct page collaborator can edit the shared page, but a direct grant by itself does not expose the owner's surrounding page hierarchy.
 
 Archived ordinary pages cannot accept a new direct grant or use live collaboration. Existing direct grants are retained while the page is archived and become usable again after the page is restored.
 
