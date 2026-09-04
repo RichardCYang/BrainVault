@@ -783,8 +783,8 @@ test("grouped [1, 2, 3] sources render one representative chip and remove the ex
   const list = createDomElement("ul");
   const firstItem = createDomElement("li");
   const firstLink = createDomElement("a");
-  firstLink.href = "https://openai.com/research";
-  firstLink.textContent = "OpenAI Research";
+  firstLink.href = "https://example.com/research";
+  firstLink.textContent = "Research Reference";
   firstItem.append(firstLink);
   const secondItem = createDomElement("li");
   const secondLink = createDomElement("a");
@@ -825,10 +825,10 @@ test("grouped [1, 2, 3] sources render one representative chip and remove the ex
     const chips = claim.querySelectorAll(".rendered-ai-chat-link-preview");
     assert.deepEqual(chips.map((chip) => chip.dataset.aiChatReference), ["1"]);
     assert.equal(chips[0].dataset.aiChatReferences, "1,2,3");
-    assert.equal(chips[0].dataset.aiChatLinkTitle, "OpenAI Research");
+    assert.equal(chips[0].dataset.aiChatLinkTitle, "Research Reference");
     assert.deepEqual(
       chips[0].aiChatCitationSources.map((source) => source.title),
-      ["OpenAI Research", "NASA Missions", "MDN URL"]
+      ["Research Reference", "NASA Missions", "MDN URL"]
     );
     assert.equal(heading.isConnected, false);
     assert.equal(list.isConnected, false);

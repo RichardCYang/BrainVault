@@ -115,7 +115,7 @@ function guardedStructuredCreate(request) {
 
 const populatedBookmark = {
   type: "BOOKMARK",
-  markdown: "References\nOpenAI documentation\nhttps://example.com/docs",
+  markdown: "References\nReference documentation\nhttps://example.com/docs",
   metadata: {
     bookmark: {
       title: "References",
@@ -125,7 +125,7 @@ const populatedBookmark = {
       items: [{
         id: "reference-1",
         url: "https://example.com/docs",
-        title: "OpenAI documentation",
+        title: "Reference documentation",
         description: "Primary reference",
         imageUrl: "",
         faviconUrl: "https://example.com/favicon.ico",

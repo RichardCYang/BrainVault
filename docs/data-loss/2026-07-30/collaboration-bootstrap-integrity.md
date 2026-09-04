@@ -228,7 +228,7 @@ The final ZIP was extracted into a separate directory and checked again so that 
 ## 9. Official technical references
 
 - Yjs Document Updates: https://docs.yjs.dev/api/document-updates
-- Yjs README / `encodeStateAsUpdate`: https://github.com/yjs/yjs/blob/main/README.md
+- Yjs README / `encodeStateAsUpdate`
 - MariaDB `FOR UPDATE`: https://mariadb.com/docs/server/reference/sql-statements/data-manipulation/selecting-data/for-update
 - MariaDB transactions: https://mariadb.com/docs/server/reference/sql-statements/transactions
 - MariaDB `START TRANSACTION`: https://mariadb.com/docs/server/reference/sql-statements/transactions/start-transaction

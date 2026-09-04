@@ -237,7 +237,7 @@ WebSocket upgrades enforce the configured origin. Collaboration uses short-lived
 
 ### Secrets and history
 
-The working tree and reachable Git blobs were scanned for obvious private keys and common AWS, GitHub, OpenAI, Slack, and Google credential formats. No likely credential was detected by those pattern checks. Pattern matching cannot prove the absence of every proprietary, low-entropy, or context-dependent secret.
+The working tree and reachable Git blobs were scanned for obvious private keys and common hosted-service credential and token formats. No likely credential was detected by those pattern checks. Pattern matching cannot prove the absence of every proprietary, low-entropy, or context-dependent secret.
 
 ## Locked Dependency Advisory Review
 

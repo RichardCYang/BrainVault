@@ -8,7 +8,7 @@ const plainBlock = {
 };
 const structuredBlock = {
   type: "BOOKMARK",
-  markdown: "References\nOpenAI documentation\nhttps://example.com/docs",
+  markdown: "References\nReference documentation\nhttps://example.com/docs",
   metadata: {
     bookmark: {
       title: "References",
@@ -17,7 +17,7 @@ const structuredBlock = {
       items: [{
         id: "reference-1",
         url: "https://example.com/docs",
-        title: "OpenAI documentation",
+        title: "Reference documentation",
         description: "Primary reference",
         imageUrl: "",
         faviconUrl: "https://example.com/favicon.ico",

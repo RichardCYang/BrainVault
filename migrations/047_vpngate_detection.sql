@@ -1,4 +1,4 @@
--- Distinguish high-confidence VPN Gate public relay blocks in the existing security history.
+-- Distinguish high-confidence public relay blocks in the existing security history.
 ALTER TABLE user_country_login_blocks
   MODIFY COLUMN reason ENUM(
     'NOT_ALLOWLISTED',

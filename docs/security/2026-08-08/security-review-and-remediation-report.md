@@ -279,7 +279,7 @@ The project requires Node.js `^22.23.2 || ^24.18.1 || >=26.5.1`. The validation 
 ## Secret and Repository Review
 
 - No real `.env` file was present; only `.env.example` was included.
-- No high-confidence PEM private key, AWS access key, GitHub token, npm token, OpenAI-style key, Slack token, Google API key, or Stripe live secret pattern was found in the final working tree.
+- No high-confidence private-key or common hosted-service credential/token pattern was found in the final working tree.
 - The same scan covered 1,779 unique blobs across 176 reachable Git revisions and found no match.
 - `git fsck --full` passed before the original `.git` directory was restored for packaging.
 - No generated `node_modules`, `dist`, attachment, upload, or runtime-secret directory is included in the release archive. The final working tree contains 425 non-Git files and no symbolic links.
@@ -348,4 +348,4 @@ No database migration, dependency version, lockfile, Git history, or Git metadat
 - Express 5 documentation for static response cache metadata
 - Official npm `package.json` documentation for `engines` and `engine-strict` behavior
 - Official Node.js July 29, 2026 security release information
-- GitHub Security Advisories for the reviewed Multer, express-rate-limit, sanitize-html, markdown-it, linkify-it, picomatch, PostCSS, and SimpleWebAuthn issues
+- Public security advisories for the reviewed Multer, express-rate-limit, sanitize-html, markdown-it, linkify-it, picomatch, PostCSS, and SimpleWebAuthn issues

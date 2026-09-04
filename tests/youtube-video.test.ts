@@ -21,8 +21,8 @@ const supportedUrls = [
   `<iframe src="https://www.youtube.com/embed/${expectedId}"></iframe>`
 ];
 
-describe("YouTube video block", () => {
-  it.each(supportedUrls)("parses supported YouTube URL form: %s", (url) => {
+describe("External video block", () => {
+  it.each(supportedUrls)("parses supported video URL form: %s", (url) => {
     expect(parseYouTubeVideoUrl(url)?.videoId).toBe(expectedId);
     expect(parseClientYouTubeVideoUrl(url)?.videoId).toBe(expectedId);
   });
@@ -35,7 +35,7 @@ describe("YouTube video block", () => {
     expect(parsed?.watchUrl).toContain("t=90s");
   });
 
-  it("rejects non-YouTube and malformed video URLs", () => {
+  it("rejects unsupported and malformed video URLs", () => {
     expect(parseYouTubeVideoUrl(`https://example.com/watch?v=${expectedId}`)).toBeNull();
     expect(parseYouTubeVideoUrl("javascript:alert(1)")).toBeNull();
     expect(parseYouTubeVideoUrl("https://www.youtube.com/watch?v=bad")).toBeNull();

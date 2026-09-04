@@ -23,7 +23,7 @@ test("VPN access policy is enforced across authentication and collaboration boun
   assert.match(collaborationServer, /await enforceVpnAccessPolicy\([\s\S]*?currentUser\.vpn_block_enabled,[\s\S]*?client\.ipAddress,[\s\S]*?client\.webRtcSignal[\s\S]*?\);/);
 });
 
-test("VPN detection uses free no-key network intelligence, Tor bulk data, VPN Gate directory data, and conservative supporting signals", async () => {
+test("VPN detection uses free no-key network intelligence, Tor bulk data, public-relay directory data, and conservative supporting signals", async () => {
   const [policy, vpnGate] = await Promise.all([
     read("src/lib/vpn-access-policy.ts"),
     read("src/lib/vpngate-relays.ts")

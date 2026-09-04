@@ -4,8 +4,8 @@ Twemoji attribution
 BrainVault uses Twemoji v17.0.3 graphics from the jdecked/twemoji project to render
 Unicode emoji consistently across platforms.
 
-Project: https://github.com/jdecked/twemoji
+Project: jdecked/twemoji
 Graphics license: Creative Commons Attribution 4.0 International (CC BY 4.0)
-License text: https://github.com/jdecked/twemoji/blob/main/LICENSE-GRAPHICS
+License text: LICENSE-GRAPHICS in the upstream project distribution
 
-The application references the version-pinned SVG assets from jsDelivr at runtime.
+The application references version-pinned SVG assets from an external CDN at runtime.

@@ -162,7 +162,7 @@ function startVpnGateRelayRefresh() {
       vpnGateRelays = next;
       vpnGateRelaysFetchedAt = Date.now();
     } catch {
-      // VPN Gate relays are frequently residential/dynamic. Do not retain a failed
+      // Public relay endpoints are frequently residential/dynamic. Do not retain a failed
       // refresh for long enough that an old relay address could be reassigned.
       if (Date.now() - vpnGateRelaysFetchedAt > vpnGateStaleMs) {
         vpnGateRelays = new Map<string, VpnGateRelayRecord>();

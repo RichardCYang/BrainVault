@@ -297,7 +297,7 @@ No runtime application path was found that forwards user-controlled input to a s
 
 ### Secrets and Git history
 
-The current working tree and reachable Git blobs were scanned for high-confidence private-key, AWS, GitHub, OpenAI, Slack, and npm-token patterns. No credible hit was identified. The reachable repository contained **163 commits**, **2,922 reachable objects**, and **1,668 unique blobs**. Pattern scanning cannot prove the absence of every custom secret format, encrypted secret, or credential split across files.
+The current working tree and reachable Git blobs were scanned for high-confidence private-key and hosted-service credential/token patterns. No credible hit was identified. The reachable repository contained **163 commits**, **2,922 reachable objects**, and **1,668 unique blobs**. Pattern scanning cannot prove the absence of every custom secret format, encrypted secret, or credential split across files.
 
 ## Dependency and Runtime Review
 
@@ -409,5 +409,5 @@ No standalone audit-log artifact was created.
 - OWASP, "Session Management Cheat Sheet": https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html
 - OWASP, "Application Logging Vocabulary Cheat Sheet": https://cheatsheetseries.owasp.org/cheatsheets/Logging_Vocabulary_Cheat_Sheet.html
 - OWASP, "Business Logic Security Cheat Sheet": https://cheatsheetseries.owasp.org/cheatsheets/Business_Logic_Security_Cheat_Sheet.html
-- GitHub Advisory Database, Multer aborted-upload cleanup advisory: https://github.com/advisories/GHSA-3p4h-7m6x-2hcm
-- GitHub Advisory Database, Multer deeply nested field-name advisory: https://github.com/advisories/GHSA-72gw-mp4g-v24j
+- Public advisory GHSA-3p4h-7m6x-2hcm — Multer aborted-upload cleanup
+- Public advisory GHSA-72gw-mp4g-v24j — Multer deeply nested field names

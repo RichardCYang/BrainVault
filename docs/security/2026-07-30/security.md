@@ -58,11 +58,11 @@ Production refuses to start unless `HTTPS_MODE` is `proxy` or `posh-acme`, and `
 
 ## Rendered HTML restrictions
 
-Sanitized note HTML permits embedded video frames only from the supported YouTube hosts. User-supplied iframe permission attributes are removed, and input elements are retained only for disabled checkbox rendering; password and other interactive input types are discarded.
+Sanitized note HTML permits embedded video frames only from the supported video hosts. User-supplied iframe permission attributes are removed, and input elements are retained only for disabled checkbox rendering; password and other interactive input types are discarded.
 
 ## Content Security Policy
 
-The Content Security Policy allows only same-origin application scripts plus the exact versioned KaTeX and Yjs resources used by the current client. It does not trust the complete jsDelivr host. WebSocket destinations are derived from the exact configured browser origins rather than allowing every `ws:` or `wss:` endpoint. Dynamic page-render attributes are escaped, collaboration block IDs use the same restricted identifier alphabet as backup data, and client-side attribute selectors use `CSS.escape()`.
+The Content Security Policy allows only same-origin application scripts plus the exact versioned KaTeX and Yjs resources used by the current client. It does not trust the complete external CDN host. WebSocket destinations are derived from the exact configured browser origins rather than allowing every `ws:` or `wss:` endpoint. Dynamic page-render attributes are escaped, collaboration block IDs use the same restricted identifier alphabet as backup data, and client-side attribute selectors use `CSS.escape()`.
 
 ## Bookmark preview safety
 

@@ -143,7 +143,7 @@ describe("AI conversation block", () => {
     expect(paginated).toContain('class="rendered-ai-chat-turn" aria-hidden="true"');
   });
 
-  it("keeps answer borders by default and can switch to a ChatGPT-style borderless AI answer", () => {
+  it("keeps answer borders by default and can switch to a borderless AI answer layout", () => {
     const defaultData = getAiChatData({ aiChat: { provider: "chatgpt", turns: [] } });
     const defaultHtml = renderBlockHtml("AI_CHAT", "", false, {
       aiChat: {

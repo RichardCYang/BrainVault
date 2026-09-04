@@ -847,8 +847,7 @@ components:
       properties:
         provider:
           type: string
-          enum: [chatgpt, gemini, claude, deepseek, grok]
-          description: Selects the built-in AI icon and provider label.
+          description: Selects a built-in AI icon and provider label.
         model:
           type: string
           maxLength: 120

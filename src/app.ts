@@ -113,7 +113,7 @@ export function createApp() {
           connectSrc: ["'self'", ...configuredWebSocketOrigins],
           // Mermaid's strictest browser isolation mode returns a data-URL
           // iframe. User-authored Markdown still cannot persist data iframes:
-          // the server sanitizer only permits the two YouTube hostnames below.
+          // the server sanitizer only permits the approved video hostnames below.
           frameSrc: ["'self'", "data:", "https://www.youtube-nocookie.com", "https://www.youtube.com"]
         }
       }

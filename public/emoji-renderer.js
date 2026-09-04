@@ -1,6 +1,6 @@
 // BrainVault renders Unicode emoji with Twemoji to avoid OS/font-dependent fallback
 // artifacts for multi-codepoint and Emoji 17 sequences. Twemoji graphics are
-// licensed under CC BY 4.0: https://github.com/jdecked/twemoji/blob/main/LICENSE-GRAPHICS
+// licensed under CC BY 4.0; attribution details are kept in the bundled notice file
 
 const twemojiVersion = "17.0.3";
 const twemojiSvgBase = `https://cdn.jsdelivr.net/gh/jdecked/twemoji@${twemojiVersion}/assets/svg/`;

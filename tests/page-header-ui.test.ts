@@ -18,9 +18,9 @@ describe("Page view header and actions menu", () => {
     expect(client).toContain('renderIconValue(emoji, segment.icon');
   });
 
-  it("stacks the page icon above a large, full-width title like a Notion page", () => {
+  it("stacks the page icon above a large, full-width title with a document-style hierarchy", () => {
     expect(index).toMatch(/class="page-heading"[\s\S]*class="page-emoji-button page-title-icon-button"[\s\S]*class="page-title-row"[\s\S]*id="page-kicker"/);
-    expect(styles).toContain("/* Notion-inspired page icon and title hierarchy */");
+    expect(styles).toContain("/* Page icon and title hierarchy */");
     expect(styles).toMatch(/\.app-mode \.page-title-icon-button\s*\{[\s\S]*?width:\s*5\.75rem;[\s\S]*?font-size:\s*4\.7rem;/);
     expect(styles).toMatch(/\.app-mode \.page-title-input\s*\{[\s\S]*?width:\s*100%;[\s\S]*?font-size:\s*clamp\(2\.55rem, 5vw, 3\.4rem\);/);
   });

@@ -13,7 +13,7 @@ The preview is captured from the real browser UI. See [Development guide](docs/d
 ## Key features
 
 - Block editor with slash commands, nested content, drag-and-drop ordering, tables, databases, Kanban boards, and Gantt timelines
-- Rich text, Markdown, syntax-highlighted code blocks, callouts, bookmarks, YouTube video embeds, file attachments, AI conversation blocks, and KaTeX formulas
+- Rich text, Markdown, syntax-highlighted code blocks, callouts, bookmarks, privacy-enhanced video embeds, file attachments, AI conversation blocks, and KaTeX formulas
 - Crash-resilient browser drafts, automatic title saving, and search across page titles and block content
 - Owner- and administrator-managed sharing: ordinary pages use direct `EDIT` grants, while custom collections use inherited `READ`, `WRITE`, or `ADMIN` grants; shared documents use Yjs live synchronization, presence, reconnect recovery, and MariaDB persistence
 - Page collections, nesting, built-in or custom cover images with adjustable focal positions, archiving, permanent deletion, PDF export, and complete ZIP backup/restore including page and collection sharing grants, page version history, owned-page navigation state, every account attachment-upload file, and uploaded custom-icon assets

@@ -207,7 +207,7 @@ The review rechecked exact origin handling, authenticated tickets, access verifi
 
 ### Secrets and Git history
 
-The current working tree and reachable Git objects were scanned for common private-key, AWS, GitHub, Google, Slack, and npm-token patterns and for sensitive key/environment filenames. No credible secret was identified. The scan covered **161 commits** and **2,560 unique Git objects**. Pattern scanning cannot prove the absence of every custom secret format.
+The current working tree and reachable Git objects were scanned for common private-key and hosted-service credential/token patterns and for sensitive key/environment filenames. No credible secret was identified. The scan covered **161 commits** and **2,560 unique Git objects**. Pattern scanning cannot prove the absence of every custom secret format.
 
 ## Dependency and Runtime Review
 
@@ -294,7 +294,7 @@ No separate raw audit log was added to the repository.
 - [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)
 - [OWASP Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)
 - [NIST SP 800-63B-4 — Authenticator Event Management](https://pages.nist.gov/800-63-4/sp800-63b/events/)
-- [GitHub Advisory GHSA-46wh-pxpv-q5gq — express-rate-limit IPv4-mapped IPv6 behavior](https://github.com/advisories/GHSA-46wh-pxpv-q5gq)
-- [Multer Advisory GHSA-72gw-mp4g-v24j — deeply nested field names](https://github.com/expressjs/multer/security/advisories/GHSA-72gw-mp4g-v24j)
-- [Multer Advisory GHSA-3p4h-7m6x-2hcm — aborted upload cleanup](https://github.com/expressjs/multer/security/advisories/GHSA-3p4h-7m6x-2hcm)
+- Public advisory GHSA-46wh-pxpv-q5gq — express-rate-limit IPv4-mapped IPv6 behavior
+- Public advisory GHSA-72gw-mp4g-v24j — Multer deeply nested field names
+- Public advisory GHSA-3p4h-7m6x-2hcm — Multer aborted upload cleanup
 - [Node.js 22.23.2 security release](https://nodejs.org/en/blog/release/v22.23.2)

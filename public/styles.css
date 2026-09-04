@@ -2509,7 +2509,7 @@ kbd {
 }
 
 /*
- * Keep note headings closer to familiar Markdown/Notion proportions.
+ * Keep note headings closer to familiar compact document proportions.
  * The previous desktop H1 could reach 2.35rem, which made document hierarchy
  * feel oversized next to the 1rem body copy. Reading and editing views share
  * the same compact type scale below so switching modes does not cause jumps.
@@ -12660,7 +12660,7 @@ body.search-dialog-open {
 }
 
 
-/* Notion-inspired page icon and title hierarchy */
+/* Page icon and title hierarchy */
 @media screen {
   .app-mode .page-view-header {
     margin-bottom: 2.35rem;
@@ -12783,19 +12783,19 @@ body.search-dialog-open {
 }
 
 /* ========================================================================== 
-   Notion-inspired sidebar refinement
+   Workspace sidebar refinement
    Keeps BrainVault's sky-blue identity while adopting a calmer workspace
    switcher, compact utility rows, section labels, and page-tree rhythm.
    ========================================================================== */
 @media screen {
   body.app-mode {
-    --notion-sidebar: #f4f8fb;
-    --notion-sidebar-deep: #eef5f9;
-    --notion-sidebar-hover: rgba(56, 189, 248, 0.1);
-    --notion-sidebar-active: rgba(56, 189, 248, 0.17);
-    --notion-sidebar-line: rgba(54, 103, 133, 0.13);
-    --notion-sidebar-text: #3f4b53;
-    --notion-sidebar-muted: #7f8b93;
+    --workspace-sidebar: #f4f8fb;
+    --workspace-sidebar-deep: #eef5f9;
+    --workspace-sidebar-hover: rgba(56, 189, 248, 0.1);
+    --workspace-sidebar-active: rgba(56, 189, 248, 0.17);
+    --workspace-sidebar-line: rgba(54, 103, 133, 0.13);
+    --workspace-sidebar-text: #3f4b53;
+    --workspace-sidebar-muted: #7f8b93;
   }
 
   .app-mode .shell {
@@ -12804,10 +12804,10 @@ body.search-dialog-open {
 
   .app-mode .sidebar {
     overflow: hidden;
-    border-right: 1px solid var(--notion-sidebar-line);
+    border-right: 1px solid var(--workspace-sidebar-line);
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.32), transparent 8rem),
-      linear-gradient(180deg, var(--notion-sidebar) 0%, var(--notion-sidebar-deep) 100%);
+      linear-gradient(180deg, var(--workspace-sidebar) 0%, var(--workspace-sidebar-deep) 100%);
     padding: 0.66rem 0.58rem 0.72rem;
   }
 
@@ -12834,7 +12834,7 @@ body.search-dialog-open {
   .app-mode .account-settings-trigger:hover,
   .app-mode .account-settings-trigger:focus-visible {
     border-color: transparent;
-    background: var(--notion-sidebar-hover);
+    background: var(--workspace-sidebar-hover);
     color: #1f2b32;
   }
 
@@ -12860,7 +12860,7 @@ body.search-dialog-open {
   }
 
   .app-mode .user-identity small {
-    color: var(--notion-sidebar-muted);
+    color: var(--workspace-sidebar-muted);
     font-size: 0.64rem;
     font-weight: 560;
   }
@@ -12868,7 +12868,7 @@ body.search-dialog-open {
   .app-mode .account-settings-chevron {
     width: 1rem;
     height: 1rem;
-    color: var(--notion-sidebar-muted);
+    color: var(--workspace-sidebar-muted);
     stroke-width: 1.6;
     opacity: 0.9;
   }
@@ -12886,7 +12886,7 @@ body.search-dialog-open {
     border-radius: 5px;
     background: transparent;
     box-shadow: none;
-    color: var(--notion-sidebar-text);
+    color: var(--workspace-sidebar-text);
   }
 
   .app-mode .sidebar-utility-button {
@@ -12903,12 +12903,12 @@ body.search-dialog-open {
 
   .app-mode .sidebar-utility-button:hover,
   .app-mode .sidebar-utility-button:focus-visible {
-    background: var(--notion-sidebar-hover);
+    background: var(--workspace-sidebar-hover);
     color: #25333b;
   }
 
   .app-mode .sidebar-utility-button.active {
-    background: var(--notion-sidebar-active);
+    background: var(--workspace-sidebar-active);
     color: #075985;
     box-shadow: none;
   }
@@ -12961,11 +12961,11 @@ body.search-dialog-open {
   .app-mode .collection-title-row:hover,
   .app-mode .collection-title-row:focus-within,
   .app-mode .collection-title-row.is-menu-open {
-    background: var(--notion-sidebar-hover);
+    background: var(--workspace-sidebar-hover);
   }
 
   .app-mode .collection-title-row.active {
-    background: var(--notion-sidebar-active);
+    background: var(--workspace-sidebar-active);
   }
 
   .app-mode .collection-title-button {
@@ -13022,7 +13022,7 @@ body.search-dialog-open {
   .app-mode .navigation-more-button:hover,
   .app-mode .navigation-more-button:focus-visible,
   .app-mode .navigation-more-button[aria-expanded="true"] {
-    background: var(--notion-sidebar-hover);
+    background: var(--workspace-sidebar-hover);
     color: var(--chrome-accent-strong);
   }
 
@@ -13048,13 +13048,13 @@ body.search-dialog-open {
 
   .app-mode .document-item:hover,
   .app-mode .document-item-row.is-menu-open .document-item {
-    background: var(--notion-sidebar-hover);
+    background: var(--workspace-sidebar-hover);
     color: #27343c;
   }
 
   .app-mode .document-item-row.active {
     border-radius: 5px;
-    background: var(--notion-sidebar-active);
+    background: var(--workspace-sidebar-active);
     color: #075985;
     box-shadow: none;
   }
@@ -13075,7 +13075,7 @@ body.search-dialog-open {
   .app-mode .sidebar-footer {
     gap: 0.06rem;
     margin-top: auto;
-    border-top: 1px solid var(--notion-sidebar-line);
+    border-top: 1px solid var(--workspace-sidebar-line);
     padding-top: 0.55rem;
   }
 
@@ -13093,7 +13093,7 @@ body.search-dialog-open {
   }
 
   .app-mode .sidebar-footer-button:hover {
-    background: var(--notion-sidebar-hover);
+    background: var(--workspace-sidebar-hover);
     color: #27343c;
   }
 
@@ -18047,24 +18047,24 @@ html[data-theme="dark"] .gantt-status--blocked,
 html[data-theme="dark"] .rendered-gantt-status--blocked { background: #513529; color: #f6d2c1; }
 
 
-/* Dark authenticated sidebar, including the later Notion-inspired refinement. */
+/* Dark authenticated sidebar, including the later workspace refinement. */
 @media screen {
   html[data-theme="dark"] body.app-mode {
-    --notion-sidebar: #1d2127;
-    --notion-sidebar-deep: #181b20;
-    --notion-sidebar-hover: rgba(125, 211, 252, 0.08);
-    --notion-sidebar-active: rgba(56, 189, 248, 0.16);
-    --notion-sidebar-line: rgba(166, 189, 211, 0.14);
-    --notion-sidebar-text: #bac4cf;
-    --notion-sidebar-muted: #7f8a98;
+    --workspace-sidebar: #1d2127;
+    --workspace-sidebar-deep: #181b20;
+    --workspace-sidebar-hover: rgba(125, 211, 252, 0.08);
+    --workspace-sidebar-active: rgba(56, 189, 248, 0.16);
+    --workspace-sidebar-line: rgba(166, 189, 211, 0.14);
+    --workspace-sidebar-text: #bac4cf;
+    --workspace-sidebar-muted: #7f8a98;
   }
 
   html[data-theme="dark"] .app-mode .sidebar {
-    border-right-color: var(--notion-sidebar-line);
+    border-right-color: var(--workspace-sidebar-line);
     background:
       linear-gradient(180deg, rgba(125, 211, 252, 0.035), transparent 8rem),
-      linear-gradient(180deg, var(--notion-sidebar) 0%, var(--notion-sidebar-deep) 100%);
-    color: var(--notion-sidebar-text);
+      linear-gradient(180deg, var(--workspace-sidebar) 0%, var(--workspace-sidebar-deep) 100%);
+    color: var(--workspace-sidebar-text);
     scrollbar-color: rgba(166, 189, 211, 0.18) transparent;
   }
 
@@ -18075,7 +18075,7 @@ html[data-theme="dark"] .rendered-gantt-status--blocked { background: #513529; c
     .document-item,
     .sidebar-footer-button
   ) {
-    color: var(--notion-sidebar-text);
+    color: var(--workspace-sidebar-text);
   }
 
   html[data-theme="dark"] .app-mode :is(
@@ -18088,7 +18088,7 @@ html[data-theme="dark"] .rendered-gantt-status--blocked { background: #513529; c
     .document-item-row.is-menu-open .document-item,
     .sidebar-footer-button:hover
   ) {
-    background: var(--notion-sidebar-hover);
+    background: var(--workspace-sidebar-hover);
     color: #e7f5fc;
   }
 
@@ -18100,7 +18100,7 @@ html[data-theme="dark"] .rendered-gantt-status--blocked { background: #513529; c
     .document-item-row.active .document-item,
     .document-item.active
   ) {
-    background: var(--notion-sidebar-active);
+    background: var(--workspace-sidebar-active);
     color: #9fddfa;
   }
 
@@ -18132,7 +18132,7 @@ html[data-theme="dark"] .rendered-gantt-status--blocked { background: #513529; c
     .count-pill,
     .doc-caret
   ) {
-    color: var(--notion-sidebar-muted);
+    color: var(--workspace-sidebar-muted);
   }
 
   html[data-theme="dark"] .app-mode .sidebar-utility-button svg {
@@ -18578,7 +18578,7 @@ html[data-theme="dark"] .page-cover-custom-row {
 
 /* ========================================================================== 
    Screenshot-matched sidebar list refinement
-   Targets the compact, neutral Notion sidebar rhythm shown in the supplied
+   Targets the compact, neutral reference sidebar rhythm shown in the supplied
    reference while leaving BrainVault navigation behavior and data untouched.
    ========================================================================== */
 @media screen {

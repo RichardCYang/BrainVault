@@ -63,7 +63,7 @@ Chrome 149 introduced `uiMode: "immediate"`, but Chrome's documentation states t
 ## References reviewed
 
 - W3C Web Authentication Level 3: https://www.w3.org/TR/webauthn-3/
-- W3C WebAuthn issue discussion for `challengeUrl` and challenge-fetch UI latency: https://github.com/w3c/webauthn/issues/2152
+- W3C WebAuthn issue discussion for `challengeUrl` and challenge-fetch UI latency (issue 2152)
 - MDN User Activation API: https://developer.mozilla.org/en-US/docs/Web/API/Navigator/userActivation
 - Chrome Immediate UI mode: https://developer.chrome.com/docs/identity/immediate-ui-mode
 - WebKit bug 273712, intermittent WebAuthn/passkey hangs: https://bugs.webkit.org/show_bug.cgi?id=273712

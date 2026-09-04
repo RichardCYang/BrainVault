@@ -30,7 +30,7 @@ async function importVpnGateModuleForBehaviorTest() {
   return { module, cleanup: () => rm(directory, { recursive: true, force: true }) };
 }
 
-test("VPN Gate refresh serves a still-safe cached directory without blocking the next authenticated request", async () => {
+test("Public-relay refresh serves a still-safe cached directory without blocking the next authenticated request", async () => {
   const originalFetch = globalThis.fetch;
   const originalDateNow = Date.now;
   const baseNow = 1_800_000_000_000;

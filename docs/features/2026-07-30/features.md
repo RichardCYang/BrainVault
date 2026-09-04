@@ -99,7 +99,7 @@ Formula rendering is sanitized and uses KaTeX with trusted commands disabled.
 
 Type `/ai` to store a question and an AI answer as a two-sided chat transcript. The question appears as a right-aligned bubble, while the answer appears as a left-aligned bubble with its AI identity and response metadata.
 
-The icon picker includes ChatGPT, Gemini, Claude, DeepSeek, and Grok. The provider icon, free-form model name, local answer date/time, question, and answer are stored under `metadata.aiChat`. A bounded text summary is also written to `markdown`, so search can match the provider, model, question, or answer. Read mode hides configuration controls while preserving the conversation presentation.
+The icon picker exposes the configured AI-provider choices. The provider icon, free-form model name, local answer date/time, question, and answer are stored under `metadata.aiChat`. A bounded text summary is also written to `markdown`, so search can match the provider, model, question, or answer. Read mode hides configuration controls while preserving the conversation presentation.
 
 ## Bookmark blocks
 
@@ -116,9 +116,9 @@ When a public site blocks automated preview requests, times out, returns a non-H
 
 Security details for server-side preview fetching are documented in [Security](../../security/2026-07-30/security.md#bookmark-preview-safety).
 
-## YouTube video blocks
+## Video blocks
 
-Type `/video` and paste a standard YouTube, `youtu.be`, Shorts, Live, or embed URL. BrainVault validates the video ID, preserves an optional start time, and renders a responsive privacy-enhanced `youtube-nocookie.com` player without requiring a YouTube API key.
+Type `/video` and paste a supported watch, short-form, live, or embed URL. BrainVault validates the video ID, preserves an optional start time, and renders a responsive privacy-enhanced player without requiring a provider API key.
 
 The original URL remains in `markdown` so search, collaboration, version history, backup, and restore continue to use the normal block persistence path.
 
