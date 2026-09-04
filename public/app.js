@@ -20185,26 +20185,59 @@ elements.shareCollectionList.addEventListener("change", async (event) => {
   const collectionId = state.shareCollectionId;
   const requestGeneration = shareCollectionRequestGeneration;
   if (!select || !collectionId || !isCurrentShareCollectionRequest(requestGeneration, collectionId)) return;
+  const collection = getActiveCustomCollection();
+  if (!collection || collection.id !== collectionId) return;
   const userId = select.dataset.userId;
   const expectedGeneration = select.dataset.generation;
+  const nextPermission = select.value;
   const previous = state.shareCollectionEntries.find((share) => share.user?.id === userId);
-  if (!userId || !expectedGeneration || !previous) return;
+  if (!userId || !expectedGeneration || !previous || !["READ", "WRITE", "ADMIN"].includes(nextPermission)) return;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  const isShareMutationCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+      && isCurrentShareCollectionRequest(requestGeneration, collectionId)
+  );
+  if (!isShareMutationCurrent()) return;
+  const revokesWriteAccess = previous.permission !== "READ" && nextPermission === "READ";
+  const memberPageIds = revokesWriteAccess
+    ? getCollectionPages(collectionId)
+      .filter((page) => !isCollectionPage(page))
+      .map((page) => page.id)
+    : [];
   select.disabled = true;
   setShareCollectionMessage(`Updating @${select.dataset.username || "user"}…`);
   try {
-    const data = await api(`/api/collections/${encodeURIComponent(collectionId)}/shares/${encodeURIComponent(userId)}`, {
-      method: "PATCH",
-      body: { permission: select.value, expectedGeneration }
-    });
-    if (!isCurrentShareCollectionRequest(requestGeneration, collectionId)) return;
+    const submitPermissionChange = async () => {
+      if (!isShareMutationCurrent()) return skippedApiRequest;
+      if (revokesWriteAccess) {
+        // A workspace transition drains same-origin writers and refreshes the
+        // durable recovery mirror before this inspection. Do not strand Yjs
+        // bytes when WRITE/ADMIN authority is reduced to READ.
+        assertNoPendingLocalCollaborationRecoveryForPages(memberPageIds);
+      }
+      return api(`/api/collections/${encodeURIComponent(collectionId)}/shares/${encodeURIComponent(userId)}`, {
+        method: "PATCH",
+        body: { permission: nextPermission, expectedGeneration },
+        beforeFetch: isShareMutationCurrent
+      });
+    };
+    const data = revokesWriteAccess
+      ? await withWorkspacePersistenceTransitionForOwner(
+        collection.ownerId,
+        "collection-share-permission",
+        submitPermissionChange
+      )
+      : await submitPermissionChange();
+    if (data === skippedApiRequest || !isShareMutationCurrent()) return;
     state.shareCollectionEntries = state.shareCollectionEntries.map((share) => share.user?.id === userId ? data.share : share);
     renderShareCollectionList();
     setShareCollectionMessage(`@${data.share?.user?.username ?? "user"} permission updated.`);
   } catch (error) {
-    if (isCurrentShareCollectionRequest(requestGeneration, collectionId)) {
-      renderShareCollectionList();
-      setShareCollectionMessage(error?.message || t("errors.unknown"), true);
-    }
+    if (!isShareMutationCurrent()) return;
+    renderShareCollectionList();
+    setShareCollectionMessage(error?.message || t("errors.unknown"), true);
+  } finally {
+    if (select.isConnected) select.disabled = false;
   }
 });
 
@@ -20213,26 +20246,49 @@ elements.shareCollectionList.addEventListener("click", async (event) => {
   const collectionId = state.shareCollectionId;
   const requestGeneration = shareCollectionRequestGeneration;
   if (!button || !collectionId || !isCurrentShareCollectionRequest(requestGeneration, collectionId)) return;
+  const collection = getActiveCustomCollection();
+  if (!collection || collection.id !== collectionId) return;
   const userId = button.dataset.userId;
   const expectedGeneration = button.dataset.generation;
   const username = button.dataset.username || "user";
   if (!userId || !expectedGeneration) return;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  const isShareMutationCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+      && isCurrentShareCollectionRequest(requestGeneration, collectionId)
+  );
+  if (!isShareMutationCurrent()) return;
+  const memberPageIds = getCollectionPages(collectionId)
+    .filter((page) => !isCollectionPage(page))
+    .map((page) => page.id);
   button.disabled = true;
   setShareCollectionMessage(t("sharing.removing", { username }));
   try {
-    const data = await api(`/api/collections/${encodeURIComponent(collectionId)}/shares/${encodeURIComponent(userId)}`, {
-      method: "DELETE",
-      body: { expectedGeneration }
-    });
-    if (!isCurrentShareCollectionRequest(requestGeneration, collectionId)) return;
+    const data = await withWorkspacePersistenceTransitionForOwner(
+      collection.ownerId,
+      "collection-share-remove",
+      async () => {
+        if (!isShareMutationCurrent()) return skippedApiRequest;
+        // Removing a collection grant can revoke write access across every
+        // member page and can tear down the final collaboration lineage. The
+        // owner-scoped barrier makes this all-pages recovery check race-safe.
+        assertNoPendingLocalCollaborationRecoveryForPages(memberPageIds);
+        return api(`/api/collections/${encodeURIComponent(collectionId)}/shares/${encodeURIComponent(userId)}`, {
+          method: "DELETE",
+          body: { expectedGeneration },
+          beforeFetch: isShareMutationCurrent
+        });
+      }
+    );
+    if (data === skippedApiRequest || !isShareMutationCurrent()) return;
     state.shareCollectionEntries = state.shareCollectionEntries.filter((share) => share.user?.id !== userId);
     renderShareCollectionList();
     setShareCollectionMessage(t("sharing.removed", { username }));
   } catch (error) {
-    if (isCurrentShareCollectionRequest(requestGeneration, collectionId)) {
-      button.disabled = false;
-      setShareCollectionMessage(error?.message || t("errors.unknown"), true);
-    }
+    if (!isShareMutationCurrent()) return;
+    setShareCollectionMessage(error?.message || t("errors.unknown"), true);
+  } finally {
+    if (button.isConnected) button.disabled = false;
   }
 });
 
