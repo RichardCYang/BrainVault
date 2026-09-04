@@ -9,7 +9,10 @@ import { renderBlockHtml, sanitizeRenderedBlockHtml } from "../lib/markdown.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
 import { assessPageCreateMutationReceipt, type PageCreateMutationReceipt } from "../lib/page-create-mutation.js";
 import { assessPageDeleteMutationReceipt, type PageDeleteMutationReceipt } from "../lib/page-delete-mutation.js";
-import { createPageDeletionSnapshot } from "../lib/page-delete-snapshot.js";
+import {
+  createPageDeletionSnapshot,
+  hasPageDeletionMembershipOutsideSubtree
+} from "../lib/page-delete-snapshot.js";
 import {
   assessPageVersionResetMutationReceipt,
   type PageVersionResetMutationReceipt
@@ -338,20 +341,54 @@ async function getPageDeletionCollectionMemberships(
   subtreeRows: PageDeletionPageRow[],
   lock = false
 ) {
-  const pageIds = [...new Set(subtreeRows.map((page) => page.id).filter(Boolean))];
-  const memberships: PageDeletionCollectionMembershipRow[] = [];
+  const pageIds = [...new Set(subtreeRows.map((page) => page.id).filter(Boolean))].sort();
+  const membershipsByPageId = new Map<string, PageDeletionCollectionMembershipRow>();
+  const remember = (rows: PageDeletionCollectionMembershipRow[]) => {
+    for (const row of rows) {
+      // page_id is the table's primary key, so it safely de-duplicates rows
+      // returned by both the forward and reverse foreign-key lookups.
+      membershipsByPageId.set(row.page_id, row);
+    }
+  };
+
   for (let offset = 0; offset < pageIds.length; offset += 500) {
     const group = pageIds.slice(offset, offset + 500);
-    const rows = await client.query<PageDeletionCollectionMembershipRow>(
+    const pageRows = await client.query<PageDeletionCollectionMembershipRow>(
       `SELECT page_id, collection_id
        FROM page_collection_memberships
        WHERE page_id IN (${group.map(() => "?").join(", ")})
        ORDER BY page_id ASC, collection_id ASC${lock ? " FOR UPDATE" : ""}`,
       group
     );
-    memberships.push(...rows);
+    remember(pageRows);
+
+    // The membership table also cascades on collection_id. Read that reverse
+    // edge so deleting a collection can never silently mutate a surviving page
+    // whose stale or inconsistent membership points at the deleted subtree.
+    const collectionRows = await client.query<PageDeletionCollectionMembershipRow>(
+      `SELECT page_id, collection_id
+       FROM page_collection_memberships
+       WHERE collection_id IN (${group.map(() => "?").join(", ")})
+       ORDER BY collection_id ASC, page_id ASC${lock ? " FOR UPDATE" : ""}`,
+      group
+    );
+    remember(collectionRows);
   }
-  return memberships;
+  return [...membershipsByPageId.values()];
+}
+
+function assertPageDeletionMembershipClosure(
+  subtreeRows: PageDeletionPageRow[],
+  memberships: PageDeletionCollectionMembershipRow[]
+) {
+  if (!hasPageDeletionMembershipOutsideSubtree(subtreeRows, memberships)) return;
+  // Do not disclose the surviving page id: the malformed relation can cross a
+  // workspace boundary, and the caller is authorized only for this subtree.
+  throw new ApiError(
+    409,
+    "PAGE_EDIT_CONFLICT",
+    "The page collection membership graph changed or is inconsistent. Nothing was deleted."
+  );
 }
 
 async function getPageDeletionShares(
@@ -1429,6 +1466,7 @@ pageRouter.get(
         const subtreeRows = getPageSubtreeRows(pageId, treeRows);
         const blockRows = await getPageDeletionBlocks(client, subtreeRows);
         const membershipRows = await getPageDeletionCollectionMemberships(client, subtreeRows);
+        assertPageDeletionMembershipClosure(subtreeRows, membershipRows);
         const shareRows = await getPageDeletionShares(client, subtreeRows);
         const collaborationRows = await getPageDeletionCollaborationStates(client, subtreeRows);
         const commentRows = await getPageDeletionComments(client, subtreeRows);
@@ -1845,6 +1883,7 @@ pageRouter.delete(
           // hash the authoritative membership rows so a stale confirmation cannot
           // delete a subtree after it moved into or out of another collection.
           const membershipRows = await getPageDeletionCollectionMemberships(client, subtreeRows, true);
+          assertPageDeletionMembershipClosure(subtreeRows, membershipRows);
           // Share creation/removal also serializes on the owned page row. Hash
           // the exact grant generations while those page locks are held so a
           // stale delete cannot erase a page whose sharing lineage changed.

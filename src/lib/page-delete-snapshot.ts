@@ -49,6 +49,18 @@ function compareText(left: string, right: string) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+export function hasPageDeletionMembershipOutsideSubtree(
+  pages: readonly Pick<PageDeletionSnapshotPage, "id">[],
+  collectionMemberships: readonly PageDeletionSnapshotCollectionMembership[]
+) {
+  const subtreePageIds = new Set(pages.map((page) => page.id));
+  return collectionMemberships.some(
+    (membership) =>
+      subtreePageIds.has(membership.collection_id)
+      && !subtreePageIds.has(membership.page_id)
+  );
+}
+
 export function createPageDeletionSnapshot(
   pages: readonly PageDeletionSnapshotPage[],
   blocks: readonly PageDeletionSnapshotBlock[],
