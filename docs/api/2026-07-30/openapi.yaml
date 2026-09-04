@@ -1829,7 +1829,7 @@ paths:
   /api/pages/{pageId}/deletion-snapshot:
     get:
       summary: Create a page-subtree deletion precondition
-      description: Hashes every page and block version in the target subtree. The hash must be supplied for permanent deletion.
+      description: Hashes every cascading page-subtree generation, including pages, blocks, collection memberships, shares, collaboration lineage, comments, and version-history rows. The hash must be supplied for permanent deletion.
       parameters:
         - in: path
           name: pageId

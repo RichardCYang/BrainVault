@@ -22,7 +22,8 @@ function snapshot(memberships) {
     [],
     [],
     [],
-    memberships
+    memberships,
+    []
   );
 }
 

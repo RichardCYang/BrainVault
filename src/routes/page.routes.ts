@@ -244,6 +244,13 @@ type PageDeletionCommentRow = {
   body_hash: string;
 };
 
+type PageDeletionVersionHistoryRow = {
+  id: string;
+  page_id: string;
+  revision: string;
+  row_hash: string;
+};
+
 async function getOwnedPageTreeRows(ownerId: string, client: DbClient = db, lock = false) {
   return client.query<PageDeletionPageRow>(
     `SELECT id, parent_page_id, edit_version, content_version, is_archived, is_collection
@@ -419,6 +426,45 @@ async function getPageDeletionComments(
   return comments;
 }
 
+async function getPageDeletionVersionHistory(
+  client: DbClient,
+  subtreeRows: PageDeletionPageRow[],
+  lock = false
+) {
+  const pageIds = [...new Set(subtreeRows.map((page) => page.id).filter(Boolean))];
+  const versions: PageDeletionVersionHistoryRow[] = [];
+  for (let offset = 0; offset < pageIds.length; offset += 500) {
+    const group = pageIds.slice(offset, offset + 500);
+    const rows = await client.query<PageDeletionVersionHistoryRow>(
+      `SELECT CAST(id AS CHAR) AS id,
+              page_id,
+              CAST(revision AS CHAR) AS revision,
+              SHA2(
+                JSON_ARRAY(
+                  CAST(id AS CHAR),
+                  page_id,
+                  CAST(revision AS CHAR),
+                  CAST(page_edit_version AS CHAR),
+                  CAST(page_content_version AS CHAR),
+                  actors,
+                  source,
+                  CAST(change_count AS CHAR),
+                  change_summary,
+                  changes,
+                  DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s.%f')
+                ),
+                256
+              ) AS row_hash
+       FROM page_versions
+       WHERE page_id IN (${group.map(() => "?").join(", ")})
+       ORDER BY page_id ASC, id ASC${lock ? " FOR UPDATE" : ""}`,
+      group
+    );
+    versions.push(...rows);
+  }
+  return versions;
+}
+
 function assertPageDeletionSnapshot(
   expectedSnapshot: string,
   pages: PageDeletionPageRow[],
@@ -426,7 +472,8 @@ function assertPageDeletionSnapshot(
   shares: PageDeletionShareRow[],
   collaborationStates: PageDeletionCollaborationRow[],
   comments: PageDeletionCommentRow[],
-  collectionMemberships: PageDeletionCollectionMembershipRow[]
+  collectionMemberships: PageDeletionCollectionMembershipRow[],
+  versionHistory: PageDeletionVersionHistoryRow[]
 ) {
   if (
     createPageDeletionSnapshot(
@@ -435,7 +482,8 @@ function assertPageDeletionSnapshot(
       shares,
       collaborationStates,
       comments,
-      collectionMemberships
+      collectionMemberships,
+      versionHistory
     ) === expectedSnapshot
   ) return;
   throw new ApiError(
@@ -1384,6 +1432,7 @@ pageRouter.get(
         const shareRows = await getPageDeletionShares(client, subtreeRows);
         const collaborationRows = await getPageDeletionCollaborationStates(client, subtreeRows);
         const commentRows = await getPageDeletionComments(client, subtreeRows);
+        const versionHistoryRows = await getPageDeletionVersionHistory(client, subtreeRows);
         return {
           snapshot: createPageDeletionSnapshot(
             subtreeRows,
@@ -1391,7 +1440,8 @@ pageRouter.get(
             shareRows,
             collaborationRows,
             commentRows,
-            membershipRows
+            membershipRows,
+            versionHistoryRows
           ),
           pageIds: subtreeRows.map((page) => page.id).sort((left, right) => left.localeCompare(right)),
           pages: subtreeRows
@@ -1808,6 +1858,10 @@ pageRouter.delete(
           // Bind and lock them too, so a comment committed after the preview
           // invalidates this stale destructive request instead of being erased.
           const commentRows = await getPageDeletionComments(client, subtreeRows, true);
+          // Resetting history deliberately keeps page edit/content versions
+          // monotonic and unchanged. Lock and hash every cascading history row
+          // so an old confirmation cannot erase a newer reset or appended entry.
+          const versionHistoryRows = await getPageDeletionVersionHistory(client, subtreeRows, true);
           assertPageDeletionSnapshot(
             expectedSnapshot,
             subtreeRows,
@@ -1815,7 +1869,8 @@ pageRouter.delete(
             shareRows,
             collaborationRows,
             commentRows,
-            membershipRows
+            membershipRows,
+            versionHistoryRows
           );
 
           const pageIds = subtreeRows.map((row) => row.id);

@@ -38,6 +38,13 @@ export type PageDeletionSnapshotComment = {
   body_hash: string;
 };
 
+export type PageDeletionSnapshotVersionHistory = {
+  id: string;
+  page_id: string;
+  revision: string;
+  row_hash: string;
+};
+
 function compareText(left: string, right: string) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
@@ -48,7 +55,8 @@ export function createPageDeletionSnapshot(
   shares: readonly PageDeletionSnapshotShare[],
   collaborationStates: readonly PageDeletionSnapshotCollaborationState[],
   comments: readonly PageDeletionSnapshotComment[],
-  collectionMemberships: readonly PageDeletionSnapshotCollectionMembership[]
+  collectionMemberships: readonly PageDeletionSnapshotCollectionMembership[],
+  versionHistory: readonly PageDeletionSnapshotVersionHistory[]
 ) {
   const hash = createHash("sha256");
   for (const page of [...pages].sort((left, right) => compareText(left.id, right.id))) {
@@ -92,6 +100,24 @@ export function createPageDeletionSnapshot(
         comment.user_id,
         Number(comment.edit_version ?? 1),
         comment.body_hash
+      ])}\n`
+    );
+  }
+  for (const version of [...versionHistory].sort((left, right) =>
+    compareText(left.page_id, right.page_id)
+      || compareText(left.id, right.id)
+      || compareText(left.revision, right.revision)
+      || compareText(left.row_hash, right.row_hash)
+  )) {
+    // Version history is immutable user data that cascades with its page. Hash
+    // a database-side row digest so reset/append operations invalidate stale
+    // permanent-delete intent without returning the stored history payload.
+    hash.update(
+      `history\0${JSON.stringify([
+        version.page_id,
+        version.id,
+        version.revision,
+        version.row_hash
       ])}\n`
     );
   }
