@@ -13,6 +13,11 @@ export type PageDeletionSnapshotBlock = {
   edit_version: number;
 };
 
+export type PageDeletionSnapshotCollectionMembership = {
+  page_id: string;
+  collection_id: string;
+};
+
 export type PageDeletionSnapshotShare = {
   page_id: string;
   user_id: string;
@@ -42,13 +47,20 @@ export function createPageDeletionSnapshot(
   blocks: readonly PageDeletionSnapshotBlock[],
   shares: readonly PageDeletionSnapshotShare[],
   collaborationStates: readonly PageDeletionSnapshotCollaborationState[],
-  comments: readonly PageDeletionSnapshotComment[]
+  comments: readonly PageDeletionSnapshotComment[],
+  collectionMemberships: readonly PageDeletionSnapshotCollectionMembership[]
 ) {
   const hash = createHash("sha256");
   for (const page of [...pages].sort((left, right) => compareText(left.id, right.id))) {
     hash.update(
       `page\0${page.id}\0${page.parent_page_id ?? ""}\0${Number(page.edit_version ?? 1)}\0${Number(page.content_version ?? 1)}\n`
     );
+  }
+  for (const membership of [...collectionMemberships].sort((left, right) =>
+    compareText(left.page_id, right.page_id)
+      || compareText(left.collection_id, right.collection_id)
+  )) {
+    hash.update(`membership\0${membership.page_id}\0${membership.collection_id}\n`);
   }
   for (const block of [...blocks].sort((left, right) => compareText(left.id, right.id))) {
     hash.update(`block\0${block.id}\0${block.page_id}\0${Number(block.edit_version ?? 1)}\n`);

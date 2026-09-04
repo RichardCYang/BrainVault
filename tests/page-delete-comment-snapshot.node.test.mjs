@@ -44,7 +44,8 @@ function snapshot(comments) {
     blocks,
     shares,
     collaborationStates,
-    comments.map(comment)
+    comments.map(comment),
+    []
   );
 }
 

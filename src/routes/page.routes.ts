@@ -219,6 +219,11 @@ type PageDeletionBlockRow = {
   edit_version: number;
 };
 
+type PageDeletionCollectionMembershipRow = {
+  page_id: string;
+  collection_id: string;
+};
+
 type PageDeletionShareRow = {
   page_id: string;
   user_id: string;
@@ -321,6 +326,27 @@ async function getPageDeletionBlocks(
   return blocks;
 }
 
+async function getPageDeletionCollectionMemberships(
+  client: DbClient,
+  subtreeRows: PageDeletionPageRow[],
+  lock = false
+) {
+  const pageIds = [...new Set(subtreeRows.map((page) => page.id).filter(Boolean))];
+  const memberships: PageDeletionCollectionMembershipRow[] = [];
+  for (let offset = 0; offset < pageIds.length; offset += 500) {
+    const group = pageIds.slice(offset, offset + 500);
+    const rows = await client.query<PageDeletionCollectionMembershipRow>(
+      `SELECT page_id, collection_id
+       FROM page_collection_memberships
+       WHERE page_id IN (${group.map(() => "?").join(", ")})
+       ORDER BY page_id ASC, collection_id ASC${lock ? " FOR UPDATE" : ""}`,
+      group
+    );
+    memberships.push(...rows);
+  }
+  return memberships;
+}
+
 async function getPageDeletionShares(
   client: DbClient,
   subtreeRows: PageDeletionPageRow[],
@@ -399,10 +425,18 @@ function assertPageDeletionSnapshot(
   blocks: PageDeletionBlockRow[],
   shares: PageDeletionShareRow[],
   collaborationStates: PageDeletionCollaborationRow[],
-  comments: PageDeletionCommentRow[]
+  comments: PageDeletionCommentRow[],
+  collectionMemberships: PageDeletionCollectionMembershipRow[]
 ) {
   if (
-    createPageDeletionSnapshot(pages, blocks, shares, collaborationStates, comments) === expectedSnapshot
+    createPageDeletionSnapshot(
+      pages,
+      blocks,
+      shares,
+      collaborationStates,
+      comments,
+      collectionMemberships
+    ) === expectedSnapshot
   ) return;
   throw new ApiError(
     409,
@@ -1346,6 +1380,7 @@ pageRouter.get(
         const treeRows = await getOwnedPageTreeRows(access.page.owner_id, client);
         const subtreeRows = getPageSubtreeRows(pageId, treeRows);
         const blockRows = await getPageDeletionBlocks(client, subtreeRows);
+        const membershipRows = await getPageDeletionCollectionMemberships(client, subtreeRows);
         const shareRows = await getPageDeletionShares(client, subtreeRows);
         const collaborationRows = await getPageDeletionCollaborationStates(client, subtreeRows);
         const commentRows = await getPageDeletionComments(client, subtreeRows);
@@ -1355,7 +1390,8 @@ pageRouter.get(
             blockRows,
             shareRows,
             collaborationRows,
-            commentRows
+            commentRows,
+            membershipRows
           ),
           pageIds: subtreeRows.map((page) => page.id).sort((left, right) => left.localeCompare(right)),
           pages: subtreeRows
@@ -1754,6 +1790,11 @@ pageRouter.delete(
           const subtreeRows = getPageSubtreeRows(pageId, treeRows);
           await assertCollaborationMaterialized(client, subtreeRows.map((page) => page.id));
           const blockRows = await getPageDeletionBlocks(client, subtreeRows, true);
+          // Moving an ancestor can replace collection membership for every
+          // descendant without advancing each descendant page version. Lock and
+          // hash the authoritative membership rows so a stale confirmation cannot
+          // delete a subtree after it moved into or out of another collection.
+          const membershipRows = await getPageDeletionCollectionMemberships(client, subtreeRows, true);
           // Share creation/removal also serializes on the owned page row. Hash
           // the exact grant generations while those page locks are held so a
           // stale delete cannot erase a page whose sharing lineage changed.
@@ -1773,7 +1814,8 @@ pageRouter.delete(
             blockRows,
             shareRows,
             collaborationRows,
-            commentRows
+            commentRows,
+            membershipRows
           );
 
           const pageIds = subtreeRows.map((row) => row.id);
