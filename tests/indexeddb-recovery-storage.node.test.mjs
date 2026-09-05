@@ -184,6 +184,11 @@ test("reports and flush-rejects failed recovery deletions instead of silently di
 
   storage.removeItem(key);
   await assert.rejects(storage.flush(), /simulated IndexedDB delete failure/);
+  assert.equal(
+    storage.getItem(key),
+    "durable-draft",
+    "a failed durable delete must restore the still-durable record to the in-memory mirror"
+  );
   assert.equal(writeErrors.at(-1)?.context?.operation, "delete");
   storage.close();
 
@@ -192,6 +197,31 @@ test("reports and flush-rejects failed recovery deletions instead of silently di
     databaseName: "delete-failure-test"
   });
   assert.equal(reopened.getItem(key), "durable-draft");
+  reopened.close();
+});
+
+test("failed recovery deletion cannot overwrite a newer local recovery write", async () => {
+  const key = "brainvault.pageDraft.v2:user:page:tab";
+  const indexedDb = new FakeIndexedDb();
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName: "delete-failure-newer-write-test"
+  });
+
+  storage.setItem(key, "old-draft");
+  await storage.flush();
+  indexedDb.failDeleteKeys.add(key);
+
+  storage.removeItem(key);
+  storage.setItem(key, "newer-draft");
+  await assert.rejects(storage.flush(), /simulated IndexedDB delete failure/);
+  assert.equal(storage.getItem(key), "newer-draft");
+
+  indexedDb.failDeleteKeys.delete(key);
+  storage.close();
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName: "delete-failure-newer-write-test"
+  });
+  assert.equal(reopened.getItem(key), "newer-draft");
   reopened.close();
 });
 

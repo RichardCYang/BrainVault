@@ -176,6 +176,7 @@ export async function createIndexedDbRecoveryStorage(
   let externalRefreshTail = Promise.resolve();
   let externalRefreshFailure = null;
   let pendingWrites = 0;
+  const pendingDeleteTokens = new Map();
   let failureSequence = 0;
   let observedFailureSequence = 0;
   let lastFailure = null;
@@ -346,12 +347,18 @@ export async function createIndexedDbRecoveryStorage(
     }, { operation: "put", key });
   }
 
-  function deleteRecord(key) {
+  function deleteRecord(key, { onCommitted = null, onFailure = null } = {}) {
     return enqueue(async () => {
-      const transaction = createStrictWriteTransaction(db, storeName);
-      transaction.objectStore(storeName).delete(key);
-      await transactionComplete(transaction);
-      publishChange("delete", key);
+      try {
+        const transaction = createStrictWriteTransaction(db, storeName);
+        transaction.objectStore(storeName).delete(key);
+        await transactionComplete(transaction);
+        onCommitted?.();
+        publishChange("delete", key);
+      } catch (error) {
+        await onFailure?.();
+        throw error;
+      }
     }, { operation: "delete", key });
   }
 
@@ -374,19 +381,53 @@ export async function createIndexedDbRecoveryStorage(
     setItem(key, value) {
       const normalizedKey = String(key);
       const normalizedValue = String(value);
+      // A newer local write supersedes any earlier delete whose durable
+      // transaction is still settling. Its failure must not resurrect the
+      // value that this write intentionally replaced.
+      pendingDeleteTokens.delete(normalizedKey);
       records.set(normalizedKey, normalizedValue);
       void putRecord(normalizedKey, normalizedValue).catch(() => undefined);
     },
     setObject(key, value) {
       const normalizedKey = String(key);
       const cloned = cloneStoredValue(value);
+      pendingDeleteTokens.delete(normalizedKey);
       records.set(normalizedKey, cloned);
       void putRecord(normalizedKey, cloned).catch(() => undefined);
     },
     removeItem(key) {
       const normalizedKey = String(key);
+      const hadPreviousValue = records.has(normalizedKey);
+      const previousValue = hadPreviousValue
+        ? cloneStoredValue(records.get(normalizedKey))
+        : undefined;
+      const deleteToken = {};
+      pendingDeleteTokens.set(normalizedKey, deleteToken);
       records.delete(normalizedKey);
-      void deleteRecord(normalizedKey).catch(() => undefined);
+      void deleteRecord(normalizedKey, {
+        onCommitted: () => {
+          if (pendingDeleteTokens.get(normalizedKey) === deleteToken) {
+            pendingDeleteTokens.delete(normalizedKey);
+          }
+        },
+        onFailure: async () => {
+          if (pendingDeleteTokens.get(normalizedKey) !== deleteToken) return;
+          let durableRecord;
+          try {
+            durableRecord = await loadRecord(normalizedKey);
+          } catch {
+            // If even the verification read fails, keep the last known copy
+            // visible in memory rather than hiding potentially recoverable data.
+            if (hadPreviousValue) records.set(normalizedKey, cloneStoredValue(previousValue));
+            pendingDeleteTokens.delete(normalizedKey);
+            return;
+          }
+          if (pendingDeleteTokens.get(normalizedKey) !== deleteToken) return;
+          pendingDeleteTokens.delete(normalizedKey);
+          if (durableRecord) records.set(durableRecord.key, durableRecord.value);
+          else records.delete(normalizedKey);
+        }
+      }).catch(() => undefined);
     },
     compareAndRemove(key, matches) {
       if (typeof matches !== "function") {
