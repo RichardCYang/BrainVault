@@ -580,6 +580,103 @@ test("cross-tab mirrors refresh only after another tab commits IndexedDB recover
   second.close();
 });
 
+test("foreign draft acknowledgement cannot overwrite a newer cross-tab IndexedDB draft", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const hub = new QueuedBroadcastHub();
+  const options = {
+    databaseName: "cross-tab-foreign-draft-cas",
+    broadcastChannelFactory: hub.create,
+    storageEventTarget: null
+  };
+  const reconcilingStorage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  const editingStorage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  const reconcilingDrafts = createPageDraftStore(reconcilingStorage, { sourceId: "tab-reader" });
+  const editingDrafts = createPageDraftStore(editingStorage, { sourceId: "tab-editing" });
+
+  assert.equal(editingDrafts.saveTitle({
+    userId: "user-1",
+    pageId: "page-1",
+    value: "server title",
+    expectedVersion: 4,
+    revision: 2
+  }), true);
+  assert.equal(editingDrafts.saveBlock({
+    userId: "user-1",
+    pageId: "page-1",
+    blockId: "block-1",
+    payload: { type: "MARKDOWN", markdown: "older unsaved block", checked: false },
+    expectedVersion: 7,
+    revision: 3
+  }), true);
+  await editingStorage.flush();
+  hub.deliverAll();
+  await nextTask();
+  await reconcilingStorage.flush();
+  assert.equal(
+    reconcilingDrafts.loadPage("user-1", "page-1", "tab-editing")?.blocks["block-1"]?.payload.markdown,
+    "older unsaved block"
+  );
+
+  // The editing tab durably advances the same source record, but its change
+  // notification remains queued so the reconciling tab still sees the old mirror.
+  assert.equal(editingDrafts.saveBlock({
+    userId: "user-1",
+    pageId: "page-1",
+    blockId: "block-1",
+    payload: { type: "MARKDOWN", markdown: "newer unsaved block", checked: false },
+    expectedVersion: 7,
+    revision: 4
+  }), true);
+  await editingStorage.flush();
+  assert.equal(
+    reconcilingDrafts.loadPage("user-1", "page-1", "tab-editing")?.blocks["block-1"]?.payload.markdown,
+    "older unsaved block"
+  );
+
+  // A stale acknowledgement of the matching title must not rewrite the whole
+  // foreign record and thereby roll the newer block draft back to the old bytes.
+  assert.equal(reconcilingDrafts.acknowledgeTitle({
+    userId: "user-1",
+    pageId: "page-1",
+    sourceId: "tab-editing",
+    revision: 2,
+    nextExpectedVersion: 5
+  }), true);
+  await reconcilingStorage.flush();
+
+  const reconciled = reconcilingDrafts.loadPage("user-1", "page-1", "tab-editing");
+  assert.equal(reconciled?.title?.value, "server title", "failed CAS must retain the foreign title for later cleanup");
+  assert.equal(reconciled?.blocks["block-1"]?.payload.markdown, "newer unsaved block");
+  assert.equal(reconciled?.blocks["block-1"]?.revision, 4);
+
+  // Retrying from the refreshed mirror should now match atomically: remove the
+  // acknowledged title while preserving the newer block bytes in the same record.
+  assert.equal(reconcilingDrafts.acknowledgeTitle({
+    userId: "user-1",
+    pageId: "page-1",
+    sourceId: "tab-editing",
+    revision: 2,
+    nextExpectedVersion: 5
+  }), true);
+  await reconcilingStorage.flush();
+  const cleaned = reconcilingDrafts.loadPage("user-1", "page-1", "tab-editing");
+  assert.equal(cleaned?.title, null);
+  assert.equal(cleaned?.blocks["block-1"]?.payload.markdown, "newer unsaved block");
+
+  reconcilingStorage.close();
+  editingStorage.close();
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName: "cross-tab-foreign-draft-cas",
+    storageEventTarget: null
+  });
+  const durable = createPageDraftStore(reopened, { sourceId: "verifier" })
+    .loadPage("user-1", "page-1", "tab-editing");
+  assert.equal(durable?.title, null);
+  assert.equal(durable?.blocks["block-1"]?.payload.markdown, "newer unsaved block");
+  assert.equal(durable?.blocks["block-1"]?.revision, 4);
+  reopened.close();
+});
+
 test("delayed cross-tab delete cannot hide a newer durable recovery write", async () => {
   const indexedDb = new FakeIndexedDb();
   const hub = new QueuedBroadcastHub();

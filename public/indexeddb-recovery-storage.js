@@ -558,6 +558,58 @@ export async function createIndexedDbRecoveryStorage(
         }
       }).catch(() => undefined);
     },
+    compareAndSet(key, matches, value) {
+      if (typeof matches !== "function") {
+        return Promise.reject(new TypeError("A recovery comparison function is required"));
+      }
+      const normalizedKey = String(key);
+      const nextValue = cloneStoredValue(value);
+      const visibleMutationSequence = keyMutationSequences.get(normalizedKey) ?? 0;
+      return enqueue(async () => {
+        const transaction = createStrictWriteTransaction(db, storeName);
+        const complete = transactionComplete(transaction);
+        const objectStore = transaction.objectStore(storeName);
+        let matched = false;
+        let currentExists = false;
+        let currentValue = null;
+
+        const comparison = new Promise((resolve, reject) => {
+          const request = objectStore.get(normalizedKey);
+          request.onerror = () => reject(request.error ?? new Error("IndexedDB recovery compare-read failed"));
+          request.onsuccess = () => {
+            const current = request.result;
+            if (current && current.key === normalizedKey) {
+              currentExists = true;
+              currentValue = cloneStoredValue(current.value);
+              try {
+                matched = matches(cloneStoredValue(current.value)) === true;
+              } catch (error) {
+                try { transaction.abort(); } catch { /* best effort */ }
+                reject(error);
+                return;
+              }
+              if (matched) objectStore.put({ key: normalizedKey, value: cloneStoredValue(nextValue) });
+            }
+            resolve();
+          };
+        });
+
+        await Promise.all([comparison, complete]);
+        const mirrorStillMatchesRequest = (keyMutationSequences.get(normalizedKey) ?? 0)
+          === visibleMutationSequence;
+        if (matched) {
+          if (mirrorStillMatchesRequest) records.set(normalizedKey, cloneStoredValue(nextValue));
+          publishChange("put", normalizedKey);
+        } else if (mirrorStillMatchesRequest && currentExists) {
+          // A stale mirror must converge on the durable record that caused the
+          // compare to fail instead of retaining data the caller can mutate again.
+          records.set(normalizedKey, currentValue);
+        } else if (mirrorStillMatchesRequest) {
+          records.delete(normalizedKey);
+        }
+        return matched;
+      }, { operation: "compare-put", key: normalizedKey });
+    },
     compareAndRemove(key, matches) {
       if (typeof matches !== "function") {
         return Promise.reject(new TypeError("A recovery comparison function is required"));
