@@ -80,6 +80,7 @@ import type { BlockType, UserRow } from "../types/domain.js";
 import { assertNoActiveCollaborationWriteLeases } from "./collaboration-write-lease.js";
 import { preserveRecoveryGrantsForPages } from "./recovery-candidates.js";
 import { rebuildOwnerPageCollectionMemberships } from "./collection-membership.js";
+import { hasPageDeletionMembershipOutsideSubtree } from "./page-delete-snapshot.js";
 
 export const dataTransferTempDir = path.join(attachmentUploadRoot, ".data-transfer");
 const manifestName = "brainvault-backup.json";
@@ -484,6 +485,11 @@ type WorkspaceRestorePageRow = {
   content_version: number;
 };
 
+type WorkspaceRestoreCollectionMembershipRow = {
+  page_id: string;
+  collection_id: string;
+};
+
 type WorkspaceRestoreBlockRow = {
   id: string;
   page_id: string;
@@ -769,6 +775,61 @@ async function listWorkspaceRestoreAssetFiles(
   return files;
 }
 
+async function getWorkspaceRestoreCollectionMemberships(
+  client: DbClient,
+  pages: readonly Pick<WorkspaceRestorePageRow, "id">[],
+  lock = false
+) {
+  const pageIds = [...new Set(pages.map((page) => page.id).filter(Boolean))].sort();
+  const membershipsByPageId = new Map<string, WorkspaceRestoreCollectionMembershipRow>();
+  const remember = (rows: WorkspaceRestoreCollectionMembershipRow[]) => {
+    for (const row of rows) {
+      // page_id is the table's primary key, so it safely de-duplicates rows
+      // returned by both the forward and reverse foreign-key lookups.
+      membershipsByPageId.set(row.page_id, row);
+    }
+  };
+
+  for (let offset = 0; offset < pageIds.length; offset += 500) {
+    const group = pageIds.slice(offset, offset + 500);
+    const pageRows = await client.query<WorkspaceRestoreCollectionMembershipRow>(
+      `SELECT page_id, collection_id
+       FROM page_collection_memberships
+       WHERE page_id IN (${group.map(() => "?").join(", ")})
+       ORDER BY page_id ASC, collection_id ASC${lock ? " FOR UPDATE" : ""}`,
+      group
+    );
+    remember(pageRows);
+
+    // Deleting every owned page also cascades through collection_id. Lock and
+    // validate that reverse edge so a malformed/legacy membership cannot make
+    // this workspace restore silently mutate a surviving page in another scope.
+    const collectionRows = await client.query<WorkspaceRestoreCollectionMembershipRow>(
+      `SELECT page_id, collection_id
+       FROM page_collection_memberships
+       WHERE collection_id IN (${group.map(() => "?").join(", ")})
+       ORDER BY collection_id ASC, page_id ASC${lock ? " FOR UPDATE" : ""}`,
+      group
+    );
+    remember(collectionRows);
+  }
+
+  const memberships = [...membershipsByPageId.values()].sort(
+    (left, right) =>
+      left.page_id.localeCompare(right.page_id)
+      || left.collection_id.localeCompare(right.collection_id)
+  );
+  if (!hasPageDeletionMembershipOutsideSubtree(pages, memberships)) return memberships;
+
+  // Do not disclose the surviving page id: an inconsistent relation can cross
+  // a workspace boundary, and the restore actor is authorized only here.
+  throw new ApiError(
+    409,
+    "DATA_RESTORE_CONFLICT",
+    "The workspace collection membership graph changed or is inconsistent. No data was replaced."
+  );
+}
+
 async function createWorkspaceRestoreSnapshot(
   userId: string,
   client: DbClient = db,
@@ -788,6 +849,7 @@ async function createWorkspaceRestoreSnapshot(
      FROM pages WHERE owner_id = ? ORDER BY id ASC${lockClause}`,
     [userId]
   );
+  const collectionMemberships = await getWorkspaceRestoreCollectionMemberships(client, pages, lock);
   await assertWorkspaceCollaborationMaterialized(client, pages.map((page) => page.id), lock);
   const blocks = await client.query<WorkspaceRestoreBlockRow>(
     `SELECT b.id, b.page_id, b.parent_block_id, b.type, b.edit_version
@@ -884,6 +946,9 @@ async function createWorkspaceRestoreSnapshot(
     hash.update(
       `page\0${page.id}\0${page.parent_page_id ?? ""}\0${Number(page.edit_version ?? 1)}\0${Number(page.content_version ?? 1)}\n`
     );
+  }
+  for (const membership of collectionMemberships) {
+    hash.update(`collection-membership\0${membership.page_id}\0${membership.collection_id}\n`);
   }
   for (const block of blocks) {
     hash.update(
