@@ -125,8 +125,10 @@ export async function createIndexedDbRecoveryStorage(
     records.set(record.key, cloneStoredValue(record.value));
   }
 
-  // Migrate legacy localStorage recovery records transactionally. The legacy
-  // copy is removed only after the IndexedDB transaction commits successfully.
+  // Migrate legacy localStorage recovery records transactionally, but keep the
+  // legacy copy as a fallback. Web Storage has no cross-agent locking/CAS:
+  // removing a snapshotted key after awaiting IndexedDB could delete a newer
+  // write from an older tab during a rolling deployment.
   const prefixes = migrationPrefixes.filter((value) => typeof value === "string" && value.length > 0);
   if (legacyStorage && prefixes.length) {
     const snapshot = inspectStorageKeys(legacyStorage);
@@ -152,19 +154,12 @@ export async function createIndexedDbRecoveryStorage(
         for (const record of migration) objectStore.put(record);
         await transactionComplete(transaction);
 
-        // Destructive legacy cleanup is allowed only after a fresh committed read
-        // confirms the replacement copy. If verification fails, localStorage is
-        // intentionally left untouched so recovery retains at least one copy.
+        // Verify the durable copy before exposing it through the in-memory mirror.
+        // Do not remove the legacy value here: a different tab may have replaced
+        // it while this async transaction was in flight, and localStorage offers
+        // no atomic compare-and-remove primitive.
         await verifyMigratedRecords(db, storeName, migration);
         for (const record of migration) records.set(record.key, record.value);
-        for (const record of migration) {
-          try {
-            legacyStorage.removeItem(record.key);
-          } catch {
-            // A duplicate legacy copy is safe. Never treat cleanup failure as a
-            // reason to delete the newly durable IndexedDB record.
-          }
-        }
       } catch (error) {
         db.close();
         throw error;

@@ -379,16 +379,17 @@ test("keeps the legacy recovery copy when post-commit migration verification fai
   assert.equal(legacy.getItem(key), legacyValue);
 });
 
-test("migrates legacy recovery only after IndexedDB commit and removes the duplicate", async () => {
+test("migrates legacy recovery after IndexedDB commit without destructively removing the fallback", async () => {
   const indexedDb = new FakeIndexedDb();
   const key = "brainvault.pageDraft.v2:user:page:tab";
-  const legacy = new MemoryStorage([[key, JSON.stringify({ schemaVersion: 2, marker: "legacy" })]]);
+  const legacyValue = JSON.stringify({ schemaVersion: 2, marker: "legacy" });
+  const legacy = new MemoryStorage([[key, legacyValue]]);
   const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
     databaseName: "migration-test",
     migrationPrefixes: ["brainvault.pageDraft.v2:"]
   });
 
-  assert.equal(legacy.getItem(key), null);
+  assert.equal(legacy.getItem(key), legacyValue);
   assert.match(storage.getItem(key), /"marker":"legacy"/);
   await storage.flush();
   storage.close();
@@ -398,7 +399,46 @@ test("migrates legacy recovery only after IndexedDB commit and removes the dupli
     migrationPrefixes: ["brainvault.pageDraft.v2:"]
   });
   assert.match(reopened.getItem(key), /"marker":"legacy"/);
+  assert.equal(legacy.getItem(key), legacyValue);
   reopened.close();
+});
+
+test("legacy migration never deletes a newer recovery write from an older tab", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const key = "brainvault.pageDraft.v2:user:page:tab";
+  const initialValue = JSON.stringify({ schemaVersion: 2, marker: "before-migration" });
+  const newerValue = JSON.stringify({ schemaVersion: 2, marker: "newer-old-tab-write" });
+
+  class ConcurrentLegacyStorage extends MemoryStorage {
+    constructor(entries) {
+      super(entries);
+      this.injectedWrite = false;
+    }
+
+    getItem(storageKey) {
+      const value = super.getItem(storageKey);
+      if (storageKey === key && !this.injectedWrite) {
+        this.injectedWrite = true;
+        queueMicrotask(() => this.setItem(key, newerValue));
+      }
+      return value;
+    }
+  }
+
+  const legacy = new ConcurrentLegacyStorage([[key, initialValue]]);
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    databaseName: "migration-concurrent-write",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"],
+    storageEventTarget: null
+  });
+
+  assert.match(storage.getItem(key), /"marker":"before-migration"/);
+  assert.equal(
+    legacy.getItem(key),
+    newerValue,
+    "migration must not remove a newer legacy write that arrived while IndexedDB commit/verification was pending"
+  );
+  storage.close();
 });
 
 test("stores large binary recovery values without localStorage/base64 expansion", async () => {
