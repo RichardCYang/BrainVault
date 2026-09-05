@@ -84,6 +84,35 @@ function cloneStoredValue(value) {
   return value;
 }
 
+const legacyMigrationMarkerKeyPrefix = "\u0000brainvault.recoveryLegacyMigration.v1:";
+
+function getLegacyMigrationMarkerKey(key) {
+  return `${legacyMigrationMarkerKeyPrefix}${key}`;
+}
+
+function getLegacyMigrationSourceKey(key) {
+  if (typeof key !== "string" || !key.startsWith(legacyMigrationMarkerKeyPrefix)) return null;
+  return key.slice(legacyMigrationMarkerKeyPrefix.length);
+}
+
+async function fingerprintLegacyValue(value) {
+  if (typeof value !== "string") return null;
+  try {
+    if (globalThis.crypto?.subtle && typeof TextEncoder === "function") {
+      const bytes = new TextEncoder().encode(value);
+      const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+      const hex = [...new Uint8Array(digest)]
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("");
+      return `sha256:${hex}`;
+    }
+  } catch {
+    // Fall through to an exact marker. This path is only for runtimes that
+    // expose IndexedDB but cannot provide Web Crypto hashing.
+  }
+  return `exact:${value}`;
+}
+
 /**
  * Creates a synchronous in-memory Storage-compatible view backed by IndexedDB.
  * Every mutation is serialized to IndexedDB and can be awaited with flush().
@@ -116,54 +145,111 @@ export async function createIndexedDbRecoveryStorage(
   }
 
   const records = new Map();
+  const legacyMigrationMarkers = new Map();
   const loadTransaction = db.transaction(storeName, "readonly");
   const loadComplete = transactionComplete(loadTransaction);
   const existing = await requestResult(loadTransaction.objectStore(storeName).getAll());
   await loadComplete;
   for (const record of existing ?? []) {
     if (typeof record?.key !== "string") continue;
+    const markerSourceKey = getLegacyMigrationSourceKey(record.key);
+    if (markerSourceKey !== null) {
+      if (typeof record.value === "string") legacyMigrationMarkers.set(markerSourceKey, record.value);
+      continue;
+    }
     records.set(record.key, cloneStoredValue(record.value));
   }
 
   // Migrate legacy localStorage recovery records transactionally, but keep the
   // legacy copy as a fallback. Web Storage has no cross-agent locking/CAS:
   // removing a snapshotted key after awaiting IndexedDB could delete a newer
-  // write from an older tab during a rolling deployment.
+  // write from an older tab during a rolling deployment. A durable, internal
+  // fingerprint marks the exact legacy value already imported so a later
+  // successful delete cannot cause that stale fallback to resurrect on restart.
   const prefixes = migrationPrefixes.filter((value) => typeof value === "string" && value.length > 0);
+  const isMigratableLegacyKey = (key) => typeof key === "string" && prefixes.some((prefix) => {
+    const namespace = prefix.endsWith(":") ? prefix : `${prefix}:`;
+    return key === prefix || key.startsWith(namespace);
+  });
   if (legacyStorage && prefixes.length) {
-    const snapshot = inspectStorageKeys(legacyStorage);
-    if (!snapshot.reliable) {
-      db.close();
-      throw new Error("Legacy recovery storage could not be inspected safely");
-    }
-    const migration = [];
-    for (const key of snapshot.keys) {
-      if (!prefixes.some((prefix) => {
-        const namespace = prefix.endsWith(":") ? prefix : `${prefix}:`;
-        return key === prefix || key.startsWith(namespace);
-      })) continue;
-      if (records.has(key)) continue;
-      const value = legacyStorage.getItem(key);
-      if (value === null) continue;
-      migration.push({ key, value });
-    }
-    if (migration.length) {
-      try {
-        const transaction = createStrictWriteTransaction(db, storeName);
-        const objectStore = transaction.objectStore(storeName);
-        for (const record of migration) objectStore.put(record);
-        await transactionComplete(transaction);
+    try {
+      // Reconcile twice. The second pass closes the common rolling-deployment
+      // race where an older tab writes a newer legacy value while the first
+      // IndexedDB migration transaction is committing. The legacy copy is never
+      // removed, so a still-later write remains recoverable on the next refresh.
+      for (let pass = 0; pass < 2; pass += 1) {
+        const snapshot = inspectStorageKeys(legacyStorage);
+        if (!snapshot.reliable) throw new Error("Legacy recovery storage could not be inspected safely");
 
-        // Verify the durable copy before exposing it through the in-memory mirror.
-        // Do not remove the legacy value here: a different tab may have replaced
-        // it while this async transaction was in flight, and localStorage offers
-        // no atomic compare-and-remove primitive.
-        await verifyMigratedRecords(db, storeName, migration);
-        for (const record of migration) records.set(record.key, record.value);
-      } catch (error) {
-        db.close();
-        throw error;
+        const migration = [];
+        const markerUpdates = new Map();
+        for (const key of snapshot.keys) {
+          if (!isMigratableLegacyKey(key)) continue;
+          const value = legacyStorage.getItem(key);
+          if (value === null) continue;
+          const legacyFingerprint = await fingerprintLegacyValue(value);
+          const marker = legacyMigrationMarkers.get(key) ?? null;
+
+          if (records.has(key)) {
+            const currentValue = records.get(key);
+            if (typeof currentValue !== "string") continue;
+            const currentFingerprint = await fingerprintLegacyValue(currentValue);
+
+            if (marker !== null && currentFingerprint === marker && legacyFingerprint !== marker) {
+              // IndexedDB is still the exact value imported previously, while
+              // the retained legacy copy has changed. Treat that legacy value
+              // as a newer write from an older tab instead of hiding it forever.
+              migration.push({ key, value, fingerprint: legacyFingerprint });
+            } else if (currentFingerprint === legacyFingerprint && marker !== legacyFingerprint) {
+              // Bootstrap receipts for databases migrated by an older build.
+              markerUpdates.set(key, legacyFingerprint);
+            }
+            continue;
+          }
+
+          if (marker === legacyFingerprint) {
+            // This exact fallback was already imported and then durably removed.
+            // Do not resurrect it merely because the intentionally retained
+            // localStorage copy is still present.
+            continue;
+          }
+          migration.push({ key, value, fingerprint: legacyFingerprint });
+        }
+
+        if (migration.length) {
+          const transaction = createStrictWriteTransaction(db, storeName);
+          const objectStore = transaction.objectStore(storeName);
+          for (const record of migration) objectStore.put({ key: record.key, value: record.value });
+          await transactionComplete(transaction);
+
+          // Verify the durable copy before exposing it through the in-memory mirror.
+          await verifyMigratedRecords(
+            db,
+            storeName,
+            migration.map(({ key, value }) => ({ key, value }))
+          );
+          for (const record of migration) {
+            records.set(record.key, record.value);
+            markerUpdates.set(record.key, record.fingerprint);
+          }
+        }
+
+        if (markerUpdates.size) {
+          const expectedMarkers = [...markerUpdates].map(([key, fingerprint]) => ({
+            key: getLegacyMigrationMarkerKey(key),
+            value: fingerprint
+          }));
+          const markerTransaction = createStrictWriteTransaction(db, storeName);
+          const markerStore = markerTransaction.objectStore(storeName);
+          for (const markerRecord of expectedMarkers) markerStore.put(markerRecord);
+          await transactionComplete(markerTransaction);
+          await verifyMigratedRecords(db, storeName, expectedMarkers);
+          for (const [key, fingerprint] of markerUpdates) legacyMigrationMarkers.set(key, fingerprint);
+        }
       }
+    } catch (error) {
+      db.close();
+      throw error;
     }
   }
 
@@ -229,7 +315,7 @@ export async function createIndexedDbRecoveryStorage(
     await complete;
     const loadedRecords = new Map();
     for (const record of values ?? []) {
-      if (typeof record?.key !== "string") continue;
+      if (typeof record?.key !== "string" || getLegacyMigrationSourceKey(record.key) !== null) continue;
       loadedRecords.set(record.key, cloneStoredValue(record.value));
     }
     return loadedRecords;
@@ -334,7 +420,7 @@ export async function createIndexedDbRecoveryStorage(
     const legacyValue = event.newValue;
     markVisibleMutation(legacyKey);
     records.set(legacyKey, legacyValue);
-    void putRecord(legacyKey, legacyValue).catch(() => undefined);
+    void putLegacyRecord(legacyKey, legacyValue).catch(() => undefined);
   };
   storageEventTarget?.addEventListener?.("storage", onStorageEvent);
 
@@ -372,6 +458,19 @@ export async function createIndexedDbRecoveryStorage(
       await transactionComplete(transaction);
       publishChange("put", key);
     }, { operation: "put", key });
+  }
+
+  function putLegacyRecord(key, value) {
+    return enqueue(async () => {
+      const fingerprint = await fingerprintLegacyValue(value);
+      const transaction = createStrictWriteTransaction(db, storeName);
+      const objectStore = transaction.objectStore(storeName);
+      objectStore.put({ key, value: cloneStoredValue(value) });
+      objectStore.put({ key: getLegacyMigrationMarkerKey(key), value: fingerprint });
+      await transactionComplete(transaction);
+      legacyMigrationMarkers.set(key, fingerprint);
+      publishChange("put", key);
+    }, { operation: "legacy-put", key });
   }
 
   function deleteRecord(key, { onCommitted = null, onFailure = null } = {}) {
@@ -524,7 +623,14 @@ export async function createIndexedDbRecoveryStorage(
       void enqueue(async () => {
         try {
           const transaction = createStrictWriteTransaction(db, storeName);
-          transaction.objectStore(storeName).clear();
+          const objectStore = transaction.objectStore(storeName);
+          objectStore.clear();
+          // Keep only internal migration receipts. The corresponding legacy
+          // fallback values remain in localStorage by design, and these receipts
+          // prevent clear() from making those stale values visible again later.
+          for (const [key, fingerprint] of legacyMigrationMarkers) {
+            objectStore.put({ key: getLegacyMigrationMarkerKey(key), value: fingerprint });
+          }
           await transactionComplete(transaction);
 
           // An older queued operation may have repopulated the mirror while the

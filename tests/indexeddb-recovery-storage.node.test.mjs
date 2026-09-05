@@ -403,6 +403,76 @@ test("migrates legacy recovery after IndexedDB commit without destructively remo
   reopened.close();
 });
 
+test("deleted migrated legacy recovery does not resurrect on restart", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const key = "brainvault.pageDraft.v2:user:page:tab";
+  const legacyValue = JSON.stringify({ schemaVersion: 2, marker: "already-acknowledged" });
+  const legacy = new MemoryStorage([[key, legacyValue]]);
+
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    databaseName: "migration-delete-restart",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"]
+  });
+  assert.equal(storage.getItem(key), legacyValue);
+
+  storage.removeItem(key);
+  await storage.flush();
+  assert.equal(storage.getItem(key), null);
+  storage.close();
+
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    databaseName: "migration-delete-restart",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"]
+  });
+  assert.equal(
+    reopened.getItem(key),
+    null,
+    "an acknowledged legacy fallback must not be imported again after its IndexedDB copy was durably deleted"
+  );
+  reopened.close();
+});
+
+test("durable acknowledgement of migrated legacy recovery stays deleted after restart", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const key = "brainvault.pageDraft.v2:user:page:tab";
+  const legacyValue = JSON.stringify({ schemaVersion: 2, marker: "uploaded" });
+  const legacy = new MemoryStorage([[key, legacyValue]]);
+  const options = {
+    databaseName: "migration-compare-delete-restart",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"]
+  };
+
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, options);
+  assert.equal(await storage.compareAndRemove(key, (value) => value === legacyValue), true);
+  await storage.flush();
+  storage.close();
+
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, legacy, options);
+  assert.equal(reopened.getItem(key), null);
+  assert.equal(reopened.length, 0, "internal migration receipts must not leak through the Storage-compatible API");
+  reopened.close();
+});
+
+test("clearing migrated recovery does not re-import retained legacy fallbacks", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const key = "brainvault.pageDraft.v2:user:page:tab";
+  const legacyValue = JSON.stringify({ schemaVersion: 2, marker: "cleared" });
+  const legacy = new MemoryStorage([[key, legacyValue]]);
+  const options = {
+    databaseName: "migration-clear-restart",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"]
+  };
+
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, options);
+  storage.clear();
+  await storage.flush();
+  storage.close();
+
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, legacy, options);
+  assert.equal(reopened.getItem(key), null);
+  reopened.close();
+});
+
 test("legacy migration never deletes a newer recovery write from an older tab", async () => {
   const indexedDb = new FakeIndexedDb();
   const key = "brainvault.pageDraft.v2:user:page:tab";
@@ -432,13 +502,25 @@ test("legacy migration never deletes a newer recovery write from an older tab", 
     storageEventTarget: null
   });
 
-  assert.match(storage.getItem(key), /"marker":"before-migration"/);
+  assert.equal(
+    storage.getItem(key),
+    newerValue,
+    "migration must reconcile a newer legacy write that arrived while IndexedDB commit/verification was pending"
+  );
   assert.equal(
     legacy.getItem(key),
     newerValue,
     "migration must not remove a newer legacy write that arrived while IndexedDB commit/verification was pending"
   );
   storage.close();
+
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    databaseName: "migration-concurrent-write",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"],
+    storageEventTarget: null
+  });
+  assert.equal(reopened.getItem(key), newerValue);
+  reopened.close();
 });
 
 test("stores large binary recovery values without localStorage/base64 expansion", async () => {
