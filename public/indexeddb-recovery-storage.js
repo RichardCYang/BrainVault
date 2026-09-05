@@ -276,10 +276,10 @@ export async function createIndexedDbRecoveryStorage(
     ]).then(async () => {
       if (message.operation === "clear") {
         await reloadAllRecords();
-      } else if (message.operation === "delete") {
-        // The sender only publishes after its IndexedDB transaction commits.
-        records.delete(message.key);
       } else {
+        // Cross-tab notifications can be delayed behind later writes. Re-read
+        // the committed record for both put and delete signals so an older
+        // delete cannot hide a newer durable draft from this tab's mirror.
         const record = await loadRecord(message.key);
         if (record) records.set(record.key, record.value);
         else records.delete(message.key);

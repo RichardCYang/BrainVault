@@ -140,6 +140,35 @@ class FakeBroadcastHub {
   };
 }
 
+class QueuedBroadcastHub {
+  constructor() {
+    this.channels = new Map();
+    this.pending = [];
+  }
+  create = (name) => {
+    const listeners = new Set();
+    const channel = {
+      addEventListener(type, listener) { if (type === "message") listeners.add(listener); },
+      removeEventListener(type, listener) { if (type === "message") listeners.delete(listener); },
+      postMessage: (data) => {
+        for (const peer of this.channels.get(name) ?? []) {
+          if (peer === channel) continue;
+          this.pending.push(() => peer._dispatch({ data: clone(data) }));
+        }
+      },
+      _dispatch(event) { for (const listener of [...listeners]) listener(event); },
+      close: () => this.channels.get(name)?.delete(channel)
+    };
+    const group = this.channels.get(name) ?? new Set();
+    group.add(channel);
+    this.channels.set(name, group);
+    return channel;
+  };
+  deliverAll() {
+    for (const deliver of this.pending.splice(0)) deliver();
+  }
+}
+
 function nextTask() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -412,6 +441,41 @@ test("cross-tab mirrors refresh only after another tab commits IndexedDB recover
 
   first.close();
   second.close();
+});
+
+test("delayed cross-tab delete cannot hide a newer durable recovery write", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const hub = new QueuedBroadcastHub();
+  const options = {
+    databaseName: "cross-tab-stale-delete",
+    broadcastChannelFactory: hub.create,
+    storageEventTarget: null
+  };
+  const deletingTab = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  const editingTab = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  const key = "brainvault.pageDraft.v2:user:page:tab";
+
+  deletingTab.setItem(key, "old draft");
+  await deletingTab.flush();
+  hub.deliverAll();
+  await editingTab.flush();
+  assert.equal(editingTab.getItem(key), "old draft");
+
+  // The delete commits first, but its notification is delayed.
+  deletingTab.removeItem(key);
+  await deletingTab.flush();
+
+  // A newer write commits afterward, so IndexedDB contains the new draft.
+  editingTab.setItem(key, "newer durable draft");
+  await editingTab.flush();
+
+  hub.deliverAll();
+  await nextTask();
+  await editingTab.flush();
+  assert.equal(editingTab.getItem(key), "newer durable draft");
+
+  deletingTab.close();
+  editingTab.close();
 });
 
 test("cross-tab refresh failures stay unhealthy until a full IndexedDB reload succeeds", async () => {
