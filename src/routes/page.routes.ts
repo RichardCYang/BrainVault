@@ -421,6 +421,35 @@ function assertPageDeletionAuthorizationScope(
   );
 }
 
+function assertPageMoveAuthorizationScope(
+  access: { role: PageAccessRole; scope: PageAccessScope; collectionId: string | null },
+  subtreeRows: PageDeletionPageRow[],
+  memberships: PageDeletionCollectionMembershipRow[]
+) {
+  if (access.role !== "ADMIN") return;
+  if (
+    access.scope === "COLLECTION"
+    && access.collectionId
+    && !hasPageDeletionMembershipOutsideCollectionScope(
+      subtreeRows,
+      memberships,
+      access.collectionId
+    )
+  ) {
+    return;
+  }
+
+  // The hierarchy can contain malformed/legacy descendants whose materialized
+  // collection membership is outside the administrator's grant. A move rewrites
+  // every descendant membership, so validate the full subtree before changing
+  // either its parent edge or its authorization scope.
+  throw new ApiError(
+    409,
+    "PAGE_EDIT_CONFLICT",
+    "The page collection membership graph changed or is inconsistent. Nothing was moved."
+  );
+}
+
 async function getPageDeletionShares(
   client: DbClient,
   subtreeRows: PageDeletionPageRow[],
@@ -1701,6 +1730,18 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
           throw new ApiError(500, "PAGE_HIERARCHY_LOCK_MISSING", "Page hierarchy validation is unavailable");
         }
         assertPageParentFromLockedRows(pageId, updates.parentPageId, lockedRows);
+        if (initialAccess.role === "ADMIN") {
+          const subtreeRows = getPageSubtreeRows(pageId, lockedRows);
+          // Use a locking/current membership read after the owner-wide hierarchy
+          // locks. A pre-lock REPEATABLE READ view could miss a membership change
+          // that committed while this transaction was waiting for a descendant.
+          const membershipRows = await getPageDeletionCollectionMemberships(
+            client,
+            subtreeRows,
+            true
+          );
+          assertPageMoveAuthorizationScope(initialAccess, subtreeRows, membershipRows);
+        }
         const destinationCollectionId = existingPage.is_collection
           ? pageId
           : updates.parentPageId
