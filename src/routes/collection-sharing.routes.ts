@@ -209,12 +209,21 @@ async function teardownCollaborationIfFinalShare(
   const remaining = await getEffectivePageShareCount(pageId, client, undefined, { lock: true });
   if (remaining > 0) return remaining;
 
-  const latestUpdateRow = await client.queryOne<{ max_update_id: number | null }>(
-    "SELECT MAX(id) AS max_update_id FROM page_yjs_updates WHERE page_id = ?",
+  // A collection-share transaction can establish a REPEATABLE READ snapshot
+  // while authorizing the collection root, then wait for a descendant page
+  // lock behind a collaboration write. Read the latest durable update with a
+  // locking/current read so teardown cannot miss that newly committed update.
+  const latestUpdateRow = await client.queryOne<{ latest_update_id: number | bigint | null }>(
+    `SELECT id AS latest_update_id
+     FROM page_yjs_updates
+     WHERE page_id = ?
+     ORDER BY id DESC
+     LIMIT 1
+     FOR UPDATE`,
     [pageId]
   );
   const state = preRemovalState ?? await getCollaborationState(pageId, client, { lock: true });
-  const latestUpdateId = Number(latestUpdateRow?.max_update_id ?? 0);
+  const latestUpdateId = Number(latestUpdateRow?.latest_update_id ?? 0);
   const materializedUpdateId = Number(state?.materialized_update_id ?? 0);
   const materializationVersion = Number(state?.materialization_version ?? 0);
   if (!Number.isSafeInteger(latestUpdateId) || latestUpdateId < 0) {
