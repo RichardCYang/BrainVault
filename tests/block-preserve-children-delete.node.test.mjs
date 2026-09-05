@@ -100,7 +100,7 @@ test("the server promotes children and deletes the target inside one locked SQL 
   assert.match(route, /planBlockDeletePreservingChildren\(target\.id, hierarchyRows\)/);
   assert.match(route, /preserveChildren: z\.boolean\(\)\.optional\(\)\.default\(false\)/);
   assert.match(route, /expectedPageContentVersion: safeVersionSchema\.optional\(\)/);
-  assert.match(deletion, /getPageAccess\(block\.page_id, user\.id, client, \{ lockPage: true \}\)/);
+  assert.match(deletion, /getPageAccess\(block\.page_id, user\.id, client, \{ lockPage: true, lockAccess: true \}\)/);
   assert.match(deletion, /ORDER BY sort_order ASC, id ASC FOR UPDATE/);
   assert.match(deletion, /Number\(lockedAccess\.page\.content_version \?\? 1\) !== expectedPageContentVersion/);
   assertBefore(
