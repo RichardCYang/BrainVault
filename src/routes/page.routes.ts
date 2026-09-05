@@ -645,18 +645,31 @@ async function getPageCollaborationDocumentEpochs(
 
 async function assertCollaborationMaterialized(client: DbClient, pageIds: string[]) {
   for (const pageId of pageIds) {
+    // These must be locking/current reads, not plain consistent reads. Permanent
+    // subtree deletion can establish a REPEATABLE READ snapshot while authorizing
+    // the root, then wait for a descendant page lock behind a collaboration write.
+    // Once every descendant page row is locked, a plain SELECT could still read
+    // the older snapshot and miss that now-committed durable Yjs update.
     const state = await client.queryOne<{
-      latest_update_id: number | bigint | null;
       materialized_update_id: number | bigint | null;
       materialization_version: number | bigint | null;
     }>(
-      `SELECT
-         (SELECT MAX(id) FROM page_yjs_updates WHERE page_id = ?) AS latest_update_id,
-         (SELECT materialized_update_id FROM page_collaboration_state WHERE page_id = ?) AS materialized_update_id,
-         (SELECT materialization_version FROM page_collaboration_state WHERE page_id = ?) AS materialization_version`,
-      [pageId, pageId, pageId]
+      `SELECT materialized_update_id, materialization_version
+       FROM page_collaboration_state
+       WHERE page_id = ?
+       FOR UPDATE`,
+      [pageId]
     );
-    const latestUpdateId = Number(state?.latest_update_id ?? 0);
+    const latestUpdate = await client.queryOne<{ latest_update_id: number | bigint | null }>(
+      `SELECT id AS latest_update_id
+       FROM page_yjs_updates
+       WHERE page_id = ?
+       ORDER BY id DESC
+       LIMIT 1
+       FOR UPDATE`,
+      [pageId]
+    );
+    const latestUpdateId = Number(latestUpdate?.latest_update_id ?? 0);
     const materializedUpdateId = Number(state?.materialized_update_id ?? 0);
     const materializationVersion = Number(state?.materialization_version ?? 0);
     if (
