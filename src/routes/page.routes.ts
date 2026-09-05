@@ -434,17 +434,28 @@ async function getPageDeletionShares(
        ORDER BY user_id ASC${lock ? " FOR UPDATE" : ""}`,
       [page.id]
     );
-    // Collection-share mutations serialize on every member page before commit.
-    // During hard delete, lock the effective collection grant too so a stale
-    // deletion snapshot cannot cross a concurrent collection-permission change.
-    const collectionRows = await client.query<PageDeletionShareRow>(
-      `SELECT pcm.page_id, cs.user_id, CONCAT('COLLECTION:', cs.permission) AS permission, cs.generation
-       FROM page_collection_memberships pcm
-       INNER JOIN collection_shares cs ON cs.collection_id = pcm.collection_id
-       WHERE pcm.page_id = ?
-       ORDER BY cs.user_id ASC, cs.permission ASC${lock ? " FOR UPDATE" : ""}`,
-      [page.id]
-    );
+    // collection_shares cascades directly through collection_id -> pages(id).
+    // A legacy/inconsistent collection can be missing its self-membership row,
+    // so collection-root grants must not depend on the membership join or a
+    // stale deletion snapshot could miss a newly committed cascading grant.
+    const collectionRows = page.is_collection
+      ? await client.query<PageDeletionShareRow>(
+          `SELECT cs.collection_id AS page_id, cs.user_id,
+                  CONCAT('COLLECTION:', cs.permission) AS permission, cs.generation
+           FROM collection_shares cs
+           WHERE cs.collection_id = ?
+           ORDER BY cs.user_id ASC, cs.permission ASC${lock ? " FOR UPDATE" : ""}`,
+          [page.id]
+        )
+      : await client.query<PageDeletionShareRow>(
+          `SELECT pcm.page_id, cs.user_id,
+                  CONCAT('COLLECTION:', cs.permission) AS permission, cs.generation
+           FROM page_collection_memberships pcm
+           INNER JOIN collection_shares cs ON cs.collection_id = pcm.collection_id
+           WHERE pcm.page_id = ?
+           ORDER BY cs.user_id ASC, cs.permission ASC${lock ? " FOR UPDATE" : ""}`,
+          [page.id]
+        );
     shares.push(...rows, ...collectionRows);
   }
   return shares;
