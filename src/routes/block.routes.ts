@@ -856,9 +856,24 @@ async function lockMovePages(
   sourcePageId: string,
   targetPageId: string
 ) {
+  const pageIds = [...new Set([sourcePageId, targetPageId])].sort();
+  const lockedPages = await client.query<{ id: string }>(
+    `SELECT id FROM pages
+     WHERE id IN (${pageIds.map(() => "?").join(", ")})
+     ORDER BY id ASC
+     FOR UPDATE`,
+    pageIds
+  );
+  if (lockedPages.length !== pageIds.length) throw notFound("Page");
+
+  // Lock every page before any grant row. Collection sharing uses the same
+  // page-before-grant order, so cross-page moves cannot invert that order.
   const accessById = new Map<string, PageAccess>();
-  for (const pageId of [sourcePageId, targetPageId].sort()) {
-    accessById.set(pageId, await getPageAccess(pageId, userId, client, { lockPage: true }));
+  for (const pageId of pageIds) {
+    accessById.set(
+      pageId,
+      await getPageAccess(pageId, userId, client, { lockPage: true, lockAccess: true })
+    );
   }
   return {
     sourceAccess: accessById.get(sourcePageId)!,
@@ -1311,7 +1326,7 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
       await assertCurrentAuthSessionBoundary(user.id, authScope, client);
       const hierarchyChanged = body.parentBlockId !== undefined || body.sortOrder !== undefined;
       const { block: identity } = await assertAccessibleBlock(blockId, user.id, client);
-      const lockedAccess = await getPageAccess(identity.page_id, user.id, client, { lockPage: true });
+      const lockedAccess = await getPageAccess(identity.page_id, user.id, client, { lockPage: true, lockAccess: true });
       const lockedPage = lockedAccess.page;
       let existing: BlockRow;
       let hierarchyRows: BlockRow[] | null = null;
@@ -1989,7 +2004,7 @@ blockRouter.delete(
         };
       }
       const { block } = await assertAccessibleBlock(blockId, user.id, client);
-      const lockedAccess = await getPageAccess(block.page_id, user.id, client, { lockPage: true });
+      const lockedAccess = await getPageAccess(block.page_id, user.id, client, { lockPage: true, lockAccess: true });
       assertDirectBlockMutationAllowed(lockedAccess);
       assertPageNotArchived(lockedAccess.page);
       const hierarchyRows = await client.query<BlockRow>(

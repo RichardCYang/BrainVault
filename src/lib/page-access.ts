@@ -167,7 +167,7 @@ export async function getPageAccess(
   pageId: string,
   userId: string,
   client: DbClient = db,
-  { lockPage = false }: { lockPage?: boolean } = {}
+  { lockPage = false, lockAccess = false }: { lockPage?: boolean; lockAccess?: boolean } = {}
 ): Promise<PageAccess> {
   const page = await client.queryOne<PageRow>(
     `SELECT ${pageRowProjection()} FROM pages WHERE id = ?${lockPage ? " FOR UPDATE" : ""}`,
@@ -175,10 +175,14 @@ export async function getPageAccess(
   );
   if (!page) throw notFound("Page");
 
+  // A page-row locking read is current, but it does not refresh an InnoDB
+  // REPEATABLE READ snapshot that an earlier plain SELECT established. Direct
+  // mutation callers can therefore request locking reads for every mutable
+  // authorization/scope row after the page lock is acquired.
   const membership = await client.queryOne<{ collection_id: string }>(
     `SELECT collection_id
      FROM page_collection_memberships
-     WHERE page_id = ?`,
+     WHERE page_id = ?${lockAccess ? " FOR UPDATE" : ""}`,
     [pageId]
   );
   const collectionId = membership?.collection_id ?? null;
@@ -198,7 +202,7 @@ export async function getPageAccess(
       ? await client.queryOne<CollectionGrantRow>(
           `SELECT permission, generation
            FROM collection_shares
-           WHERE collection_id = ? AND user_id = ?`,
+           WHERE collection_id = ? AND user_id = ?${lockAccess ? " FOR UPDATE" : ""}`,
           [collectionId, userId]
         )
       : null;
@@ -216,7 +220,7 @@ export async function getPageAccess(
       const pageGrant = await client.queryOne<{ generation: string }>(
         `SELECT generation
          FROM page_shares
-         WHERE page_id = ? AND user_id = ? AND permission = 'EDIT'`,
+         WHERE page_id = ? AND user_id = ? AND permission = 'EDIT'${lockAccess ? " FOR UPDATE" : ""}`,
         [pageId, userId]
       );
       if (!pageGrant) throw notFound("Page");
@@ -241,7 +245,7 @@ export async function getPageAccess(
     collectionId,
     collectionPermission,
     owner: toPublicUser(owner),
-    shareCount: await getEffectivePageShareCount(pageId, client, collectionId)
+    shareCount: await getEffectivePageShareCount(pageId, client, collectionId, { lock: lockAccess })
   };
 }
 
