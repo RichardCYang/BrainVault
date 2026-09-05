@@ -61,6 +61,20 @@ export function hasPageDeletionMembershipOutsideSubtree(
   );
 }
 
+export function hasPageDeletionMembershipOutsideCollectionScope(
+  pages: readonly Pick<PageDeletionSnapshotPage, "id">[],
+  collectionMemberships: readonly PageDeletionSnapshotCollectionMembership[],
+  collectionId: string
+) {
+  const subtreePageIds = new Set(pages.map((page) => page.id));
+  const membershipByPageId = new Map(
+    collectionMemberships
+      .filter((membership) => subtreePageIds.has(membership.page_id))
+      .map((membership) => [membership.page_id, membership.collection_id])
+  );
+  return pages.some((page) => membershipByPageId.get(page.id) !== collectionId);
+}
+
 export function createPageDeletionSnapshot(
   pages: readonly PageDeletionSnapshotPage[],
   blocks: readonly PageDeletionSnapshotBlock[],

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { hasPageDeletionMembershipOutsideSubtree } from "../src/lib/page-delete-snapshot.ts";
+import {
+  hasPageDeletionMembershipOutsideCollectionScope,
+  hasPageDeletionMembershipOutsideSubtree
+} from "../src/lib/page-delete-snapshot.ts";
 
 const subtreePages = [
   { id: "collection_a" },
@@ -36,6 +39,51 @@ test("collection deletion detects a membership row whose surviving page is outsi
     hasPageDeletionMembershipOutsideSubtree(subtreePages, memberships),
     true,
     "the deletion guard must fail closed before that cascade"
+  );
+});
+
+test("collection-admin deletion rejects a hierarchy descendant scoped to another collection", () => {
+  // Reproduction:
+  // 1. collection_a is shared with the actor as ADMIN.
+  // 2. private_child remains under collection_a in the parent hierarchy, but a
+  //    malformed/legacy membership row scopes it to collection_b.
+  // 3. Hierarchy traversal therefore includes private_child in collection_a's
+  //    hard-delete subtree even though the actor has no ADMIN grant on collection_b.
+  // 4. The reverse-cascade guard alone does not reject this outbound scope edge.
+  const memberships = [
+    { page_id: "collection_a", collection_id: "collection_a" },
+    { page_id: "page_child", collection_id: "collection_b" }
+  ];
+
+  assert.equal(
+    hasPageDeletionMembershipOutsideSubtree(subtreePages, memberships),
+    false,
+    "the reverse-FK closure guard does not cover outbound authorization scope"
+  );
+  assert.equal(
+    hasPageDeletionMembershipOutsideCollectionScope(subtreePages, memberships, "collection_a"),
+    true,
+    "a collection ADMIN must not delete a descendant outside the authorizing collection"
+  );
+  assert.equal(
+    hasPageDeletionMembershipOutsideCollectionScope(
+      subtreePages,
+      [{ page_id: "collection_a", collection_id: "collection_a" }],
+      "collection_a"
+    ),
+    true,
+    "a missing descendant membership must also fail closed"
+  );
+  assert.equal(
+    hasPageDeletionMembershipOutsideCollectionScope(
+      subtreePages,
+      [
+        { page_id: "collection_a", collection_id: "collection_a" },
+        { page_id: "page_child", collection_id: "collection_a" }
+      ],
+      "collection_a"
+    ),
+    false
   );
 });
 
@@ -83,10 +131,15 @@ test("preview and permanent delete read reverse memberships and reject them befo
 
   const previewMembershipRead = snapshotRoute.indexOf("getPageDeletionCollectionMemberships(client, subtreeRows)");
   const previewClosure = snapshotRoute.indexOf("assertPageDeletionMembershipClosure(", previewMembershipRead);
-  const previewSnapshot = snapshotRoute.indexOf("createPageDeletionSnapshot(", previewClosure);
+  const previewAuthorizationScope = snapshotRoute.indexOf(
+    "assertPageDeletionAuthorizationScope(access, subtreeRows, membershipRows)",
+    previewClosure
+  );
+  const previewSnapshot = snapshotRoute.indexOf("createPageDeletionSnapshot(", previewAuthorizationScope);
   assert.ok(previewMembershipRead >= 0);
   assert.ok(previewClosure > previewMembershipRead);
-  assert.ok(previewSnapshot > previewClosure);
+  assert.ok(previewAuthorizationScope > previewClosure);
+  assert.ok(previewSnapshot > previewAuthorizationScope);
 
   const lockedMembershipRead = deleteRoute.indexOf(
     "getPageDeletionCollectionMemberships(client, subtreeRows, true)"
@@ -95,13 +148,22 @@ test("preview and permanent delete read reverse memberships and reject them befo
     "assertPageDeletionMembershipClosure(",
     lockedMembershipRead
   );
-  const snapshotFence = deleteRoute.indexOf("assertPageDeletionSnapshot(", lockedClosure);
+  const lockedAuthorizationScope = deleteRoute.indexOf(
+    "assertPageDeletionAuthorizationScope(deletionAccess, subtreeRows, membershipRows)",
+    lockedClosure
+  );
+  const snapshotFence = deleteRoute.indexOf("assertPageDeletionSnapshot(", lockedAuthorizationScope);
   const destructiveDelete = deleteRoute.indexOf(
     'DELETE FROM pages WHERE id = ? AND owner_id = ?',
     snapshotFence
   );
   assert.ok(lockedMembershipRead >= 0);
   assert.ok(lockedClosure > lockedMembershipRead);
-  assert.ok(snapshotFence > lockedClosure);
+  assert.ok(lockedAuthorizationScope > lockedClosure);
+  assert.ok(snapshotFence > lockedAuthorizationScope);
   assert.ok(destructiveDelete > snapshotFence);
+  assert.match(
+    route,
+    /function assertPageDeletionAuthorizationScope[\s\S]*access\.role !== "ADMIN"[\s\S]*access\.scope === "COLLECTION"[\s\S]*hasPageDeletionMembershipOutsideCollectionScope/
+  );
 });

@@ -11,6 +11,7 @@ import { assessPageCreateMutationReceipt, type PageCreateMutationReceipt } from 
 import { assessPageDeleteMutationReceipt, type PageDeleteMutationReceipt } from "../lib/page-delete-mutation.js";
 import {
   createPageDeletionSnapshot,
+  hasPageDeletionMembershipOutsideCollectionScope,
   hasPageDeletionMembershipOutsideSubtree
 } from "../lib/page-delete-snapshot.js";
 import {
@@ -384,6 +385,34 @@ function assertPageDeletionMembershipClosure(
   if (!hasPageDeletionMembershipOutsideSubtree(subtreeRows, memberships)) return;
   // Do not disclose the surviving page id: the malformed relation can cross a
   // workspace boundary, and the caller is authorized only for this subtree.
+  throw new ApiError(
+    409,
+    "PAGE_EDIT_CONFLICT",
+    "The page collection membership graph changed or is inconsistent. Nothing was deleted."
+  );
+}
+
+function assertPageDeletionAuthorizationScope(
+  access: { role: PageAccessRole; scope: PageAccessScope; collectionId: string | null },
+  subtreeRows: PageDeletionPageRow[],
+  memberships: PageDeletionCollectionMembershipRow[]
+) {
+  if (access.role !== "ADMIN") return;
+  if (
+    access.scope === "COLLECTION"
+    && access.collectionId
+    && !hasPageDeletionMembershipOutsideCollectionScope(
+      subtreeRows,
+      memberships,
+      access.collectionId
+    )
+  ) {
+    return;
+  }
+
+  // A collection administrator is authorized only for pages materialized in
+  // that collection. Fail closed if a malformed/legacy parent edge would pull
+  // a differently scoped descendant into the hierarchy-based delete subtree.
   throw new ApiError(
     409,
     "PAGE_EDIT_CONFLICT",
@@ -1467,6 +1496,7 @@ pageRouter.get(
         const blockRows = await getPageDeletionBlocks(client, subtreeRows);
         const membershipRows = await getPageDeletionCollectionMemberships(client, subtreeRows);
         assertPageDeletionMembershipClosure(subtreeRows, membershipRows);
+        assertPageDeletionAuthorizationScope(access, subtreeRows, membershipRows);
         const shareRows = await getPageDeletionShares(client, subtreeRows);
         const collaborationRows = await getPageDeletionCollaborationStates(client, subtreeRows);
         const commentRows = await getPageDeletionComments(client, subtreeRows);
@@ -1884,6 +1914,7 @@ pageRouter.delete(
           // delete a subtree after it moved into or out of another collection.
           const membershipRows = await getPageDeletionCollectionMemberships(client, subtreeRows, true);
           assertPageDeletionMembershipClosure(subtreeRows, membershipRows);
+          assertPageDeletionAuthorizationScope(deletionAccess, subtreeRows, membershipRows);
           // Share creation/removal also serializes on the owned page row. Hash
           // the exact grant generations while those page locks are held so a
           // stale delete cannot erase a page whose sharing lineage changed.
