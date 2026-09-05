@@ -18,12 +18,13 @@ function clone(value) {
 }
 
 class FakeIndexedDb {
-  constructor({ ignoreDurability = false, corruptReadbackKeys = [], failDeleteKeys = [], failReadKeys = [] } = {}) {
+  constructor({ ignoreDurability = false, corruptReadbackKeys = [], failDeleteKeys = [], failReadKeys = [], failClear = false } = {}) {
     this.databases = new Map();
     this.ignoreDurability = ignoreDurability;
     this.corruptReadbackKeys = new Set(corruptReadbackKeys);
     this.failDeleteKeys = new Set(failDeleteKeys);
     this.failReadKeys = new Set(failReadKeys);
+    this.failClear = failClear;
     this.transactions = [];
   }
   open(name) {
@@ -93,7 +94,14 @@ class FakeIndexedDb {
               }
               store.delete(key);
             },
-            clear() { store.clear(); }
+            clear: () => {
+              if (this.failClear) {
+                transaction.error = new Error("simulated IndexedDB clear failure");
+                queueMicrotask(() => transaction.onabort?.());
+                return;
+              }
+              store.clear();
+            }
           });
           setTimeout(() => transaction.oncomplete?.(), 0);
           return transaction;
@@ -222,6 +230,92 @@ test("failed recovery deletion cannot overwrite a newer local recovery write", a
     databaseName: "delete-failure-newer-write-test"
   });
   assert.equal(reopened.getItem(key), "newer-draft");
+  reopened.close();
+});
+
+test("restores still-durable recovery records when a clear transaction fails", async () => {
+  const firstKey = "brainvault.pageDraft.v2:user:page:first";
+  const secondKey = "brainvault.pageDraft.v2:user:page:second";
+  const indexedDb = new FakeIndexedDb();
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName: "clear-failure-test"
+  });
+  const writeErrors = [];
+  storage.onWriteError((error, context) => writeErrors.push({ error, context }));
+
+  storage.setItem(firstKey, "first durable draft");
+  storage.setItem(secondKey, "second durable draft");
+  await storage.flush();
+  indexedDb.failClear = true;
+
+  storage.clear();
+  await assert.rejects(storage.flush(), /simulated IndexedDB clear failure/);
+  assert.equal(storage.getItem(firstKey), "first durable draft");
+  assert.equal(storage.getItem(secondKey), "second durable draft");
+  assert.equal(writeErrors.at(-1)?.context?.operation, "clear");
+  storage.close();
+
+  indexedDb.failClear = false;
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName: "clear-failure-test"
+  });
+  assert.equal(reopened.getItem(firstKey), "first durable draft");
+  assert.equal(reopened.getItem(secondKey), "second durable draft");
+  reopened.close();
+});
+
+test("failed recovery clear preserves newer local writes while restoring untouched records", async () => {
+  const changedKey = "brainvault.pageDraft.v2:user:page:changed";
+  const untouchedKey = "brainvault.pageDraft.v2:user:page:untouched";
+  const indexedDb = new FakeIndexedDb();
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName: "clear-failure-newer-write-test"
+  });
+
+  storage.setItem(changedKey, "old changed draft");
+  storage.setItem(untouchedKey, "untouched durable draft");
+  await storage.flush();
+  indexedDb.failClear = true;
+
+  storage.clear();
+  storage.setItem(changedKey, "newer changed draft");
+  await assert.rejects(storage.flush(), /simulated IndexedDB clear failure/);
+  assert.equal(storage.getItem(changedKey), "newer changed draft");
+  assert.equal(storage.getItem(untouchedKey), "untouched durable draft");
+
+  indexedDb.failClear = false;
+  storage.close();
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName: "clear-failure-newer-write-test"
+  });
+  assert.equal(reopened.getItem(changedKey), "newer changed draft");
+  assert.equal(reopened.getItem(untouchedKey), "untouched durable draft");
+  reopened.close();
+});
+
+test("successful recovery clear cannot resurrect a value from an older failed delete", async () => {
+  const key = "brainvault.pageDraft.v2:user:page:tab";
+  const indexedDb = new FakeIndexedDb();
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName: "clear-supersedes-delete-failure-test"
+  });
+
+  storage.setItem(key, "obsolete draft");
+  await storage.flush();
+  indexedDb.failDeleteKeys.add(key);
+
+  storage.removeItem(key);
+  storage.clear();
+  await assert.rejects(storage.flush(), /simulated IndexedDB delete failure/);
+  assert.equal(storage.getItem(key), null);
+  assert.equal(storage.length, 0);
+
+  indexedDb.failDeleteKeys.delete(key);
+  storage.close();
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName: "clear-supersedes-delete-failure-test"
+  });
+  assert.equal(reopened.getItem(key), null);
   reopened.close();
 });
 

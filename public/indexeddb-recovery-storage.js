@@ -177,6 +177,8 @@ export async function createIndexedDbRecoveryStorage(
   let externalRefreshFailure = null;
   let pendingWrites = 0;
   const pendingDeleteTokens = new Map();
+  let localMutationSequence = 0;
+  const keyMutationSequences = new Map();
   let failureSequence = 0;
   let observedFailureSequence = 0;
   let lastFailure = null;
@@ -192,6 +194,12 @@ export async function createIndexedDbRecoveryStorage(
       ? (name) => new globalThis.window.BroadcastChannel(name)
       : null);
   const changeChannel = channelFactory?.(`${changeSignalKey}:broadcast`) ?? null;
+
+  function markVisibleMutation(key) {
+    const sequence = ++localMutationSequence;
+    keyMutationSequences.set(key, sequence);
+    return sequence;
+  }
 
   function notifyChange(change) {
     for (const listener of [...changeListeners]) {
@@ -219,16 +227,23 @@ export async function createIndexedDbRecoveryStorage(
     return { key: value.key, value: cloneStoredValue(value.value) };
   }
 
-  async function reloadAllRecords() {
+  async function loadAllRecords() {
     const transaction = db.transaction(storeName, "readonly");
     const complete = transactionComplete(transaction);
     const values = await requestResult(transaction.objectStore(storeName).getAll());
     await complete;
-    records.clear();
+    const loadedRecords = new Map();
     for (const record of values ?? []) {
       if (typeof record?.key !== "string") continue;
-      records.set(record.key, cloneStoredValue(record.value));
+      loadedRecords.set(record.key, cloneStoredValue(record.value));
     }
+    return loadedRecords;
+  }
+
+  async function reloadAllRecords() {
+    const loadedRecords = await loadAllRecords();
+    records.clear();
+    for (const [key, value] of loadedRecords) records.set(key, value);
   }
 
   function publishChange(operation, key) {
@@ -306,6 +321,7 @@ export async function createIndexedDbRecoveryStorage(
     if (typeof event?.newValue !== "string" || !isRecoveryKey(event.key)) return;
     const legacyKey = event.key;
     const legacyValue = event.newValue;
+    markVisibleMutation(legacyKey);
     records.set(legacyKey, legacyValue);
     void putRecord(legacyKey, legacyValue).catch(() => undefined);
   };
@@ -384,6 +400,7 @@ export async function createIndexedDbRecoveryStorage(
       // A newer local write supersedes any earlier delete whose durable
       // transaction is still settling. Its failure must not resurrect the
       // value that this write intentionally replaced.
+      markVisibleMutation(normalizedKey);
       pendingDeleteTokens.delete(normalizedKey);
       records.set(normalizedKey, normalizedValue);
       void putRecord(normalizedKey, normalizedValue).catch(() => undefined);
@@ -391,12 +408,14 @@ export async function createIndexedDbRecoveryStorage(
     setObject(key, value) {
       const normalizedKey = String(key);
       const cloned = cloneStoredValue(value);
+      markVisibleMutation(normalizedKey);
       pendingDeleteTokens.delete(normalizedKey);
       records.set(normalizedKey, cloned);
       void putRecord(normalizedKey, cloned).catch(() => undefined);
     },
     removeItem(key) {
       const normalizedKey = String(key);
+      markVisibleMutation(normalizedKey);
       const hadPreviousValue = records.has(normalizedKey);
       const previousValue = hadPreviousValue
         ? cloneStoredValue(records.get(normalizedKey))
@@ -479,13 +498,55 @@ export async function createIndexedDbRecoveryStorage(
       }, { operation: "compare-delete", key: normalizedKey });
     },
     clear() {
+      const clearSequence = ++localMutationSequence;
+      const previousRecords = new Map(
+        [...records].map(([key, value]) => [key, cloneStoredValue(value)])
+      );
+
+      // A clear supersedes older per-key removals. If one of those removals
+      // later aborts, it must not resurrect data after a successful clear.
+      pendingDeleteTokens.clear();
       records.clear();
       void enqueue(async () => {
-        const transaction = createStrictWriteTransaction(db, storeName);
-        transaction.objectStore(storeName).clear();
-        await transactionComplete(transaction);
-        publishChange("clear", null);
-      }, { operation: "clear", key: null }, { reportFailure: false }).catch(() => undefined);
+        try {
+          const transaction = createStrictWriteTransaction(db, storeName);
+          transaction.objectStore(storeName).clear();
+          await transactionComplete(transaction);
+
+          // An older queued operation may have repopulated the mirror while the
+          // clear transaction was settling. Remove only values that were not
+          // intentionally written again after clear() was called.
+          for (const key of [...records.keys()]) {
+            if ((keyMutationSequences.get(key) ?? 0) <= clearSequence) records.delete(key);
+          }
+          publishChange("clear", null);
+        } catch (error) {
+          let durableRecords = null;
+          try {
+            durableRecords = await loadAllRecords();
+          } catch {
+            // Keep the last known in-memory copies if verification is also
+            // unavailable. A later successful refresh can reconcile them.
+          }
+
+          const recoveryRecords = durableRecords ?? previousRecords;
+          if (durableRecords) {
+            for (const key of [...records.keys()]) {
+              if ((keyMutationSequences.get(key) ?? 0) <= clearSequence && !durableRecords.has(key)) {
+                records.delete(key);
+              }
+            }
+          }
+          for (const [key, value] of recoveryRecords) {
+            // Preserve any newer local write/removal made after clear(). The
+            // queued operation for that mutation will run after this one.
+            if ((keyMutationSequences.get(key) ?? 0) <= clearSequence) {
+              records.set(key, cloneStoredValue(value));
+            }
+          }
+          throw error;
+        }
+      }, { operation: "clear", key: null }).catch(() => undefined);
     },
     hasPendingWrites() {
       return pendingWrites > 0;
