@@ -1164,16 +1164,33 @@ blockRouter.get("/blocks/:blockId/attachment", validate({ params: idParamSchema 
     const initial = await assertAccessibleBlock(blockId, user.id);
     if (initial.block.type !== "ATTACHMENT") throw notFound("Attachment");
     const ownerId = initial.access.page.owner_id;
+    const pageId = initial.block.page_id;
 
     // Workspace restore swaps the owner's complete attachment directory while
     // holding this same user-row lock. Revalidate access and open the exact file
-    // while the lock is held, then release the transaction before streaming. An
-    // already-open file handle continues to reference the authorized pre-restore
-    // file even if a later restore replaces the directory entry, so client-paced
-    // response backpressure can never retain the database lock or pool connection.
+    // while the lock is held, then release the transaction before streaming. A
+    // collection administrator can revoke access without taking the owner-user
+    // lock, so take the current page/access locks before any non-locking database
+    // read can pin an older REPEATABLE READ snapshot. The page lock also keeps the
+    // block on this page while its attachment file is claimed. An already-open
+    // file handle continues to reference the authorized pre-restore file even if
+    // a later restore replaces the directory entry, so client-paced response
+    // backpressure can never retain the database lock or pool connection.
     const claimedAttachment = await withUserAttachmentLock(ownerId, async (client) => {
-      const { block, access } = await assertAccessibleBlock(blockId, user.id, client);
-      if (access.page.owner_id !== ownerId || block.type !== "ATTACHMENT") throw notFound("Attachment");
+      let access: PageAccess;
+      try {
+        access = await getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true });
+      } catch (error) {
+        if (error instanceof ApiError && error.statusCode === 404) throw notFound("Attachment");
+        throw error;
+      }
+      if (access.page.owner_id !== ownerId) throw notFound("Attachment");
+
+      const block = await client.queryOne<BlockRow>(
+        "SELECT * FROM blocks WHERE id = ? AND page_id = ?",
+        [blockId, pageId]
+      );
+      if (!block || block.type !== "ATTACHMENT") throw notFound("Attachment");
 
       const info = getAttachmentInfo(toBlock(block).metadata);
       if (!info || !(await attachmentFileExists(ownerId, blockId))) throw notFound("Attachment file");

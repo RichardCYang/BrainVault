@@ -90,7 +90,7 @@ test("deferred attachment cleanup is fenced from workspace restore generations",
     blockTransactionIndex
   );
   const blockPageLockIndex = blockRoute.indexOf(
-    "getPageAccess(block.page_id, user.id, client, { lockPage: true })",
+    "getPageAccess(block.page_id, user.id, client, { lockPage: true, lockAccess: true })",
     blockTransactionIndex
   );
   assert.ok(

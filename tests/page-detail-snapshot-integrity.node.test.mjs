@@ -116,8 +116,13 @@ test("attachment download revalidates access under the restore filesystem-genera
   );
 
   assert.match(downloadRoute, /const initial = await assertAccessibleBlock\(blockId, user\.id\);/);
+  assert.match(downloadRoute, /const pageId = initial\.block\.page_id;/);
   assert.match(downloadRoute, /const claimedAttachment = await withUserAttachmentLock\(ownerId, async \(client\) => \{/);
-  assert.match(downloadRoute, /assertAccessibleBlock\(blockId, user\.id, client\)/);
+  assert.match(
+    downloadRoute,
+    /getPageAccess\(pageId, user\.id, client, \{ lockPage: true, lockAccess: true \}\)/
+  );
+  assert.match(downloadRoute, /SELECT \* FROM blocks WHERE id = \? AND page_id = \?/);
   assert.match(downloadRoute, /access\.page\.owner_id !== ownerId/);
   assert.match(downloadRoute, /const handle = await open\(getAttachmentFilePath\(ownerId, blockId\), "r"\);/);
   assert.match(downloadRoute, /return \{ handle, info, size: fileStats\.size \};/);
@@ -126,10 +131,42 @@ test("attachment download revalidates access under the restore filesystem-genera
   assert.doesNotMatch(downloadRoute, /res\.download\(/);
 
   const lockStart = downloadRoute.indexOf("const claimedAttachment = await withUserAttachmentLock");
+  const accessLockStart = downloadRoute.indexOf("getPageAccess(pageId, user.id, client", lockStart);
+  const blockReadStart = downloadRoute.indexOf("client.queryOne<BlockRow>(", lockStart);
+  const fileOpenStart = downloadRoute.indexOf("await open(getAttachmentFilePath", lockStart);
   const lockEnd = downloadRoute.indexOf("\n    });\n\n    try {", lockStart);
   const streamStart = downloadRoute.indexOf("await pipeline(", lockStart);
-  assert.ok(lockStart >= 0 && lockEnd > lockStart && streamStart > lockEnd);
+  assert.ok(
+    lockStart >= 0
+      && accessLockStart > lockStart
+      && blockReadStart > accessLockStart
+      && fileOpenStart > blockReadStart
+      && lockEnd > fileOpenStart
+      && streamStart > lockEnd,
+    "current page/access locks must precede block resolution and file claiming"
+  );
   assert.equal(downloadRoute.slice(lockStart, lockEnd).includes("pipeline("), false);
+});
+
+test("reproduction: collection-share revocation cannot be bypassed by a stale attachment snapshot", () => {
+  const collaboratorId = "usr-collaborator";
+  const granted = { pageId: "pag-shared", blockId: "blk-attachment", sharedWith: new Set([collaboratorId]) };
+  const revoked = { pageId: "pag-shared", blockId: "blk-attachment", sharedWith: new Set() };
+
+  // Vulnerable order: a plain block lookup is the first consistent read and
+  // pins the granted snapshot. A collection administrator can then revoke the
+  // collection grant before the later authorization read, which still sees it.
+  const pinnedSnapshot = granted;
+  assert.equal(pinnedSnapshot.blockId, "blk-attachment");
+  const revocationCommitted = revoked;
+  assert.equal(revocationCommitted.sharedWith.has(collaboratorId), false);
+  assert.equal(pinnedSnapshot.sharedWith.has(collaboratorId), true);
+
+  // Fixed order: the page and mutable access rows are current locking reads
+  // before block resolution. If revocation wins, access is rejected. If the
+  // download wins, revocation waits for the page lock until the file is claimed.
+  assert.equal(revoked.sharedWith.has(collaboratorId), false);
+  assert.equal(granted.sharedWith.has(collaboratorId), true);
 });
 
 test("reproduction: an attachment restore cannot swap private bytes after old-share authorization", () => {
