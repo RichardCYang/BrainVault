@@ -31,6 +31,7 @@ import {
   toAccessPayload,
   toCollaborationPayload,
   type CollectionSharePermission,
+  type PageAccess,
   type PageAccessRole,
   type PageAccessScope
 } from "../lib/page-access.js";
@@ -720,6 +721,68 @@ async function assertCollaborationMaterialized(client: DbClient, pageIds: string
   }
 }
 
+type PageCreateParentAdmission = Readonly<{
+  pageId: string;
+  ownerId: string;
+  collectionId: string | null;
+  shareGeneration: string | null;
+}>;
+
+async function capturePageCreateParentAdmission(
+  parentPageId: string | null | undefined,
+  userId: string
+): Promise<PageCreateParentAdmission | null> {
+  if (!parentPageId) return null;
+  // Capture the page, collection membership, and effective administrator grant
+  // in one statement. A workspace restore can reuse the stable page id while
+  // minting a fresh collection-share generation.
+  const row = await db.queryOne<{
+    page_id: string;
+    owner_id: string;
+    collection_id: string | null;
+    collection_permission: CollectionSharePermission | null;
+    share_generation: string | null;
+  }>(
+    `SELECT p.id AS page_id,
+            p.owner_id,
+            pcm.collection_id,
+            cs.permission AS collection_permission,
+            cs.generation AS share_generation
+     FROM pages p
+     LEFT JOIN page_collection_memberships pcm ON pcm.page_id = p.id
+     LEFT JOIN collection_shares cs
+       ON cs.collection_id = pcm.collection_id AND cs.user_id = ?
+     WHERE p.id = ?`,
+    [userId, parentPageId]
+  );
+  if (!row) return null;
+  if (row.owner_id !== userId && row.collection_permission !== "ADMIN") return null;
+  return Object.freeze({
+    pageId: row.page_id,
+    ownerId: row.owner_id,
+    collectionId: row.collection_id,
+    shareGeneration: row.owner_id === userId ? null : row.share_generation
+  });
+}
+
+function assertPageCreateParentAdmission(
+  admission: PageCreateParentAdmission | null,
+  currentAccess: PageAccess
+) {
+  if (
+    admission
+    && admission.pageId === currentAccess.page.id
+    && admission.ownerId === currentAccess.page.owner_id
+    && admission.collectionId === currentAccess.collectionId
+    && admission.shareGeneration === currentAccess.shareGeneration
+  ) return;
+  throw new ApiError(
+    409,
+    "PAGE_CREATE_ACCESS_CHANGED",
+    "The destination access changed while this page was being created. Refresh before retrying."
+  );
+}
+
 async function assertOwnedParentPage(
   parentPageId: string | null | undefined,
   ownerId: string,
@@ -1095,6 +1158,10 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
       throw new ApiError(400, "INVALID_COLLECTION_PARENT", "A collection cannot have a parent page");
     }
 
+    // Capture only the request-generation grant. Authorization remains
+    // authoritative inside the mutation transaction below.
+    const parentAdmission = await capturePageCreateParentAdmission(creation.parentPageId, user.id);
+
     const page = await transaction(async (client) => {
       await assertCurrentAuthSessionBoundary(user.id, authScope, client);
       const id = createId("pag");
@@ -1165,6 +1232,11 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
       // insert depend on a stale pre-transaction existence check.
       const parentPage = await assertOwnedParentPage(creation.parentPageId, user.id, client, true);
       const pageOwnerId = parentPage?.owner_id ?? user.id;
+      if (parentPage && pageOwnerId !== user.id) {
+        const currentParentAccess = await getPageAccess(parentPage.id, user.id, client, { lockPage: true });
+        assertPageCanAdminister(currentParentAccess, "Administrator permission is required to add pages here");
+        assertPageCreateParentAdmission(parentAdmission, currentParentAccess);
+      }
 
       await client.execute(
         `INSERT INTO pages
@@ -1806,7 +1878,8 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
 
     if (updates.isArchived === true) {
       await disconnectArchivedPageCollaboratorsIfCurrent(pageId, page.ownerId, Number(page.version ?? 1));
-    } else if (updates.parentPageId !== undefined) {
+    }
+    if (updates.parentPageId !== undefined) {
       for (const lineage of collaborationMembershipChangedLineages) {
         disconnectPageCollaboratorsForDocumentEpoch(
           lineage.pageId,
