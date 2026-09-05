@@ -635,16 +635,18 @@ type PageCollaborationDocumentEpoch = {
 
 async function getPageCollaborationDocumentEpochs(
   client: DbClient,
-  pageIds: readonly string[]
+  pageIds: readonly string[],
+  { lock = false }: { lock?: boolean } = {}
 ): Promise<PageCollaborationDocumentEpoch[]> {
-  const uniquePageIds = [...new Set(pageIds.filter(Boolean))];
+  const uniquePageIds = [...new Set(pageIds.filter(Boolean))].sort();
   const lineages: PageCollaborationDocumentEpoch[] = [];
   for (let offset = 0; offset < uniquePageIds.length; offset += 500) {
     const group = uniquePageIds.slice(offset, offset + 500);
     const rows = await client.query<{ page_id: string; document_epoch: string }>(
       `SELECT page_id, document_epoch
        FROM page_collaboration_state
-       WHERE page_id IN (${group.map(() => "?").join(", ")})`,
+       WHERE page_id IN (${group.map(() => "?").join(", ")})
+       ORDER BY page_id ASC${lock ? " FOR UPDATE" : ""}`,
       group
     );
     lineages.push(...rows.map((row) => ({
@@ -1788,9 +1790,14 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
           const previouslySharedPageIds = documentRows
             .filter((row) => (beforeShareCounts.get(row.id) ?? 0) > 0)
             .map((row) => row.id);
+          // The root access check can establish a REPEATABLE READ snapshot before
+          // this transaction waits for descendant page locks. Capture collaboration
+          // lineages with a locking/current read so a room admitted while we waited
+          // is retired after this collection-scope transition.
           const previousCollaborationLineages = await getPageCollaborationDocumentEpochs(
             client,
-            documentRows.map((row) => row.id)
+            documentRows.map((row) => row.id),
+            { lock: true }
           );
           const previousLineageByPageId = new Map(
             previousCollaborationLineages.map((lineage) => [lineage.pageId, lineage])

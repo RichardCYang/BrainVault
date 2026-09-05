@@ -108,27 +108,44 @@ export async function preserveRecoveryGrantsForPages(
   for (let offset = 0; offset < uniquePageIds.length; offset += recoveryGrantBatchSize) {
     const group = uniquePageIds.slice(offset, offset + recoveryGrantBatchSize);
     const placeholders = group.map(() => "?").join(", ");
+    // Destructive transitions call this helper after locking the owned page
+    // generation. Use locking/current reads here as well: a REPEATABLE READ
+    // snapshot may have been established before the caller waited on another
+    // page, so plain reads could miss the collaboration epoch or editor grant
+    // that actually existed at the destructive boundary.
     const states = await client.query<{ page_id: string; document_epoch: string }>(
       `SELECT page_id, document_epoch
        FROM page_collaboration_state
-       WHERE page_id IN (${placeholders})`,
+       WHERE page_id IN (${placeholders})
+       ORDER BY page_id ASC
+       FOR UPDATE`,
       group
     );
     const epochByPage = new Map(states.map((row) => [row.page_id, row.document_epoch]));
-    const shares = await client.query<{ page_id: string; user_id: string }>(
-      `SELECT effective.page_id, effective.user_id
-       FROM (
-         SELECT ps.page_id, ps.user_id
-         FROM page_shares ps
-         WHERE ps.page_id IN (${placeholders}) AND ps.permission = 'EDIT'
-         UNION
-         SELECT pcm.page_id, cs.user_id
-         FROM page_collection_memberships pcm
-         INNER JOIN collection_shares cs ON cs.collection_id = pcm.collection_id
-         WHERE pcm.page_id IN (${placeholders})
-       ) effective`,
-      [...group, ...group]
+
+    const directShares = await client.query<{ page_id: string; user_id: string }>(
+      `SELECT page_id, user_id
+       FROM page_shares
+       WHERE page_id IN (${placeholders}) AND permission = 'EDIT'
+       ORDER BY page_id ASC, user_id ASC
+       FOR UPDATE`,
+      group
     );
+    const collectionShares = await client.query<{ page_id: string; user_id: string }>(
+      `SELECT pcm.page_id, cs.user_id
+       FROM page_collection_memberships pcm
+       INNER JOIN collection_shares cs ON cs.collection_id = pcm.collection_id
+       WHERE pcm.page_id IN (${placeholders})
+       ORDER BY pcm.page_id ASC, cs.user_id ASC
+       FOR UPDATE`,
+      group
+    );
+    const shares = [...new Map(
+      [...directShares, ...collectionShares].map((share) => [
+        `${share.page_id}\0${share.user_id}`,
+        share
+      ])
+    ).values()];
 
     for (const state of states) {
       await grantYjsPageRecovery(client, {
