@@ -240,10 +240,20 @@ export async function createIndexedDbRecoveryStorage(
     return loadedRecords;
   }
 
-  async function reloadAllRecords() {
+  async function reloadAllRecords(preserveMutationsAfter = null) {
     const loadedRecords = await loadAllRecords();
-    records.clear();
-    for (const [key, value] of loadedRecords) records.set(key, value);
+    for (const key of [...records.keys()]) {
+      if (
+        preserveMutationsAfter === null
+        || (keyMutationSequences.get(key) ?? 0) <= preserveMutationsAfter
+      ) records.delete(key);
+    }
+    for (const [key, value] of loadedRecords) {
+      if (
+        preserveMutationsAfter === null
+        || (keyMutationSequences.get(key) ?? 0) <= preserveMutationsAfter
+      ) records.set(key, value);
+    }
   }
 
   function publishChange(operation, key) {
@@ -270,19 +280,25 @@ export async function createIndexedDbRecoveryStorage(
     if (!["put", "delete", "clear"].includes(message.operation)) return;
     if (message.key !== null && typeof message.key !== "string") return;
 
+    const localSequenceAtNotification = localMutationSequence;
+    const keySequenceAtNotification = message.key === null
+      ? null
+      : (keyMutationSequences.get(message.key) ?? 0);
     externalRefreshTail = Promise.all([
       externalRefreshTail.catch(() => undefined),
       tail.catch(() => undefined)
     ]).then(async () => {
       if (message.operation === "clear") {
-        await reloadAllRecords();
+        await reloadAllRecords(localSequenceAtNotification);
       } else {
         // Cross-tab notifications can be delayed behind later writes. Re-read
         // the committed record for both put and delete signals so an older
         // delete cannot hide a newer durable draft from this tab's mirror.
         const record = await loadRecord(message.key);
-        if (record) records.set(record.key, record.value);
-        else records.delete(message.key);
+        if ((keyMutationSequences.get(message.key) ?? 0) === keySequenceAtNotification) {
+          if (record) records.set(record.key, record.value);
+          else records.delete(message.key);
+        }
       }
       notifyChange({
         operation: message.operation,
@@ -453,6 +469,7 @@ export async function createIndexedDbRecoveryStorage(
         return Promise.reject(new TypeError("A recovery comparison function is required"));
       }
       const normalizedKey = String(key);
+      const visibleMutationSequence = keyMutationSequences.get(normalizedKey) ?? 0;
       return enqueue(async () => {
         const transaction = createStrictWriteTransaction(db, storeName);
         const complete = transactionComplete(transaction);
@@ -483,15 +500,17 @@ export async function createIndexedDbRecoveryStorage(
         });
 
         await Promise.all([comparison, complete]);
+        const mirrorStillMatchesRequest = (keyMutationSequences.get(normalizedKey) ?? 0)
+          === visibleMutationSequence;
         if (matched) {
-          records.delete(normalizedKey);
+          if (mirrorStillMatchesRequest) records.delete(normalizedKey);
           publishChange("delete", normalizedKey);
-        } else if (currentExists) {
+        } else if (mirrorStillMatchesRequest && currentExists) {
           // A different tab may have committed a newer recovery value while this
           // tab's synchronous mirror was stale. Refresh the mirror from the exact
           // record observed by the atomic compare transaction.
           records.set(normalizedKey, currentValue);
-        } else {
+        } else if (mirrorStillMatchesRequest) {
           records.delete(normalizedKey);
         }
         return matched;
@@ -571,9 +590,10 @@ export async function createIndexedDbRecoveryStorage(
       return () => changeListeners.delete(listener);
     },
     async refresh() {
+      const localSequenceAtRefresh = localMutationSequence;
       await tail.catch(() => undefined);
       await externalRefreshTail;
-      await reloadAllRecords();
+      await reloadAllRecords(localSequenceAtRefresh);
       // Cross-tab refresh failures are sticky so synchronous inspections never
       // mistake a stale mirror for an authoritative empty store. Only a full
       // successful backing-store reload restores a healthy inspection state.

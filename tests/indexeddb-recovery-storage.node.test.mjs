@@ -26,6 +26,11 @@ class FakeIndexedDb {
     this.failReadKeys = new Set(failReadKeys);
     this.failClear = failClear;
     this.transactions = [];
+    this.pausedReadKeys = new Set();
+    this.pendingReads = [];
+  }
+  releasePausedReads() {
+    for (const read of this.pendingReads.splice(0)) queueMicrotask(read);
   }
   open(name) {
     const request = {};
@@ -69,20 +74,30 @@ class FakeIndexedDb {
             },
             get: (key) => {
               const child = { result: null, error: null, onsuccess: null, onerror: null };
-              queueMicrotask(() => {
+              const finishRead = (exists, value) => {
                 if (this.failReadKeys.has(key)) {
                   child.error = new Error(`simulated IndexedDB read failure for ${key}`);
                   child.onerror?.();
                   return;
                 }
-                child.result = store.has(key)
+                child.result = exists
                   ? {
                       key,
-                      value: this.corruptReadbackKeys.has(key) ? "__corrupted__" : clone(store.get(key))
+                      value: this.corruptReadbackKeys.has(key) ? "__corrupted__" : clone(value)
                     }
                   : undefined;
                 child.onsuccess?.();
-              });
+              };
+              if (this.pausedReadKeys.has(key)) {
+                const exists = store.has(key);
+                const value = exists ? clone(store.get(key)) : undefined;
+                this.pendingReads.push(() => finishRead(exists, value));
+              } else {
+                queueMicrotask(() => {
+                  const exists = store.has(key);
+                  finishRead(exists, exists ? clone(store.get(key)) : undefined);
+                });
+              }
               return child;
             },
             put(record) { store.set(record.key, clone(record.value)); },
@@ -473,6 +488,77 @@ test("delayed cross-tab delete cannot hide a newer durable recovery write", asyn
   await nextTask();
   await editingTab.flush();
   assert.equal(editingTab.getItem(key), "newer durable draft");
+
+  deletingTab.close();
+  editingTab.close();
+});
+
+test("atomic compare-and-remove cannot hide a newer same-tab recovery write", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName: "same-tab-compare-delete-race",
+    storageEventTarget: null
+  });
+  const key = "brainvault.pageDraft.v2:user:page:tab";
+
+  storage.setItem(key, "uploaded-old-draft");
+  await storage.flush();
+
+  const cleanup = storage.compareAndRemove(key, (value) => value === "uploaded-old-draft");
+  // Let the compare transaction consume the old durable value while its
+  // completion callback is still pending, then queue a newer local draft.
+  await Promise.resolve();
+  await Promise.resolve();
+  storage.setItem(key, "newer-local-draft");
+  assert.equal(storage.getItem(key), "newer-local-draft");
+
+  assert.equal(await cleanup, true);
+  await storage.flush();
+  assert.equal(storage.getItem(key), "newer-local-draft");
+
+  storage.close();
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName: "same-tab-compare-delete-race",
+    storageEventTarget: null
+  });
+  assert.equal(reopened.getItem(key), "newer-local-draft");
+  reopened.close();
+});
+
+test("cross-tab reconciliation cannot hide a newer same-tab write while its IndexedDB read is in flight", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const hub = new FakeBroadcastHub();
+  const options = {
+    databaseName: "cross-tab-overlap-delete",
+    broadcastChannelFactory: hub.create,
+    storageEventTarget: null
+  };
+  const deletingTab = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  const editingTab = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  const key = "brainvault.pageDraft.v2:user:page:tab";
+
+  deletingTab.setItem(key, "old-draft");
+  await deletingTab.flush();
+  await nextTask();
+  await editingTab.flush();
+  assert.equal(editingTab.getItem(key), "old-draft");
+
+  indexedDb.pausedReadKeys.add(key);
+  deletingTab.removeItem(key);
+  await deletingTab.flush();
+
+  for (let attempt = 0; attempt < 10 && indexedDb.pendingReads.length === 0; attempt += 1) {
+    await Promise.resolve();
+  }
+  assert.equal(indexedDb.pendingReads.length, 1, "receiver should be reconciling the committed delete");
+
+  editingTab.setItem(key, "newer-local-draft");
+  assert.equal(editingTab.getItem(key), "newer-local-draft");
+
+  indexedDb.releasePausedReads();
+  await nextTask();
+  await editingTab.flush();
+  assert.equal(editingTab.getItem(key), "newer-local-draft");
 
   deletingTab.close();
   editingTab.close();
