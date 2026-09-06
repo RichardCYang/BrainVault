@@ -500,6 +500,64 @@ test("clearing migrated recovery does not re-import retained legacy fallbacks", 
   reopened.close();
 });
 
+test("cross-tab clear preserves a newer durable legacy migration receipt", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const key = "brainvault.pageDraft.v2:user:page:cross-tab-clear";
+  const initialValue = JSON.stringify({ schemaVersion: 2, marker: "initial" });
+  const newerValue = JSON.stringify({ schemaVersion: 2, marker: "newer-legacy-generation" });
+  const legacy = new MemoryStorage([[key, initialValue]]);
+  const writerEvents = new FakeStorageEventTarget();
+  const clearerEvents = new FakeStorageEventTarget();
+  const hub = new FakeBroadcastHub();
+  const options = {
+    databaseName: "migration-cross-tab-clear-receipt",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"],
+    broadcastChannelFactory: hub.create
+  };
+
+  const writer = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    ...options,
+    storageEventTarget: writerEvents
+  });
+  const clearer = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    ...options,
+    storageEventTarget: clearerEvents
+  });
+
+  // Only the writer has received the legacy localStorage event so far. Its
+  // IndexedDB commit/broadcast advances the durable migration receipt, while the
+  // clearer can already observe the new record with an older in-memory receipt.
+  legacy.setItem(key, newerValue);
+  writerEvents.emit({
+    key,
+    oldValue: initialValue,
+    newValue: newerValue,
+    storageArea: legacy
+  });
+  await writer.flush();
+  await nextTask();
+  await clearer.flush();
+  assert.equal(clearer.getItem(key), newerValue);
+
+  clearer.clear();
+  await clearer.flush();
+  assert.equal(clearer.getItem(key), null);
+  writer.close();
+  clearer.close();
+
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    ...options,
+    storageEventTarget: null,
+    broadcastChannelFactory: null
+  });
+  assert.equal(
+    reopened.getItem(key),
+    null,
+    "clear must retain the newest durable migration receipt instead of resurrecting the legacy draft"
+  );
+  reopened.close();
+});
+
 test("legacy migration never deletes a newer recovery write from an older tab", async () => {
   const indexedDb = new FakeIndexedDb();
   const key = "brainvault.pageDraft.v2:user:page:tab";

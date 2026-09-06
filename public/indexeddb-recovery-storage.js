@@ -961,16 +961,47 @@ export async function createIndexedDbRecoveryStorage(
       void enqueue(async () => {
         try {
           const transaction = createStrictWriteTransaction(db, storeName);
+          const complete = transactionComplete(transaction);
           const objectStore = transaction.objectStore(storeName);
-          objectStore.clear();
-          // Keep only internal migration receipts. The corresponding legacy
-          // fallback values remain in localStorage by design, and these receipts
-          // prevent clear() from making those stale values visible again later.
-          for (const [key, fingerprint] of legacyMigrationMarkers) {
-            objectStore.put({ key: getLegacyMigrationMarkerKey(key), value: fingerprint });
-          }
-          await transactionComplete(transaction);
+          const durableMigrationMarkers = new Map();
+          const preserveMigrationReceipts = new Promise((resolve, reject) => {
+            const request = objectStore.getAll();
+            request.onerror = () => {
+              try { transaction.abort(); } catch { /* best effort */ }
+              reject(request.error ?? new Error("IndexedDB recovery clear receipt scan failed"));
+            };
+            request.onsuccess = () => {
+              try {
+                // Migration receipts can advance in another tab before its
+                // localStorage event reaches this one. Preserve the receipts from
+                // this transaction's authoritative IndexedDB snapshot rather than
+                // rewriting an older in-memory cache and resurrecting a cleared
+                // legacy draft on the next startup.
+                for (const record of request.result ?? []) {
+                  if (typeof record?.key !== "string") continue;
+                  const markerSourceKey = getLegacyMigrationSourceKey(record.key);
+                  if (markerSourceKey !== null && typeof record.value === "string") {
+                    durableMigrationMarkers.set(markerSourceKey, record.value);
+                  }
+                }
 
+                objectStore.clear();
+                for (const [key, fingerprint] of durableMigrationMarkers) {
+                  objectStore.put({ key: getLegacyMigrationMarkerKey(key), value: fingerprint });
+                }
+                resolve();
+              } catch (error) {
+                try { transaction.abort(); } catch { /* best effort */ }
+                reject(error);
+              }
+            };
+          });
+          await Promise.all([preserveMigrationReceipts, complete]);
+
+          legacyMigrationMarkers.clear();
+          for (const [key, fingerprint] of durableMigrationMarkers) {
+            legacyMigrationMarkers.set(key, fingerprint);
+          }
           // clear() removes every lineage sidecar atomically with the records.
           // Migration receipts are intentionally retained above so stale legacy
           // fallbacks cannot reappear after acknowledgement.
