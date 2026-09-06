@@ -530,6 +530,55 @@ test("legacy migration never deletes a newer recovery write from an older tab", 
   reopened.close();
 });
 
+test("captures legacy recovery created during the final migration pass before listener handoff", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const events = new FakeStorageEventTarget();
+  const seedKey = "brainvault.pageDraft.v2:user:page:seed";
+  const lateKey = "brainvault.pageDraft.v2:user:page:late";
+  const seedValue = JSON.stringify({ schemaVersion: 2, marker: "seed" });
+  const lateValue = JSON.stringify({ schemaVersion: 2, marker: "late-final-pass-write" });
+
+  class FinalPassLegacyStorage extends MemoryStorage {
+    constructor(entries) {
+      super(entries);
+      this.seedReads = 0;
+      this.injectedWrite = false;
+    }
+
+    getItem(storageKey) {
+      const value = super.getItem(storageKey);
+      if (storageKey === seedKey) {
+        this.seedReads += 1;
+        if (this.seedReads === 2 && !this.injectedWrite) {
+          this.injectedWrite = true;
+          queueMicrotask(() => {
+            const oldValue = super.getItem(lateKey);
+            super.setItem(lateKey, lateValue);
+            events.emit({ key: lateKey, oldValue, newValue: lateValue });
+          });
+        }
+      }
+      return value;
+    }
+  }
+
+  const legacy = new FinalPassLegacyStorage([[seedKey, seedValue]]);
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    databaseName: "migration-final-pass-listener-gap",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"],
+    storageEventTarget: events
+  });
+
+  assert.equal(legacy.getItem(lateKey), lateValue);
+  assert.equal(
+    storage.getItem(lateKey),
+    lateValue,
+    "a recovery draft created after the final migration snapshot must be visible before initialization returns"
+  );
+  await storage.flush();
+  storage.close();
+});
+
 test("legacy storage deletion removes the exact migrated IndexedDB recovery", async () => {
   const indexedDb = new FakeIndexedDb();
   const key = "brainvault.pageDraft.v2:user:page:legacy-tab";

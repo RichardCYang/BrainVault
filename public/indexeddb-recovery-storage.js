@@ -187,7 +187,22 @@ export async function createIndexedDbRecoveryStorage(
     const namespace = prefix.endsWith(":") ? prefix : `${prefix}:`;
     return key === prefix || key.startsWith(namespace);
   });
+  const initializationLegacyEvents = new Map();
+  let captureInitializationLegacyEvent = null;
   if (legacyStorage && prefixes.length) {
+    // Listen before taking the first migration snapshot. Two reconciliation passes
+    // close ordinary commit races, but without this temporary journal a legacy tab
+    // can create a brand-new recovery key after the final snapshot and before the
+    // live storage listener is installed. Keep only the first observed predecessor
+    // per key: replay reads the storage area's current value, so that predecessor
+    // provides the causal fence needed to advance directly to the newest bytes.
+    captureInitializationLegacyEvent = (event) => {
+      if (!isMigratableLegacyKey(event?.key) || initializationLegacyEvents.has(event.key)) return;
+      const oldValue = event?.oldValue;
+      if (oldValue !== null && typeof oldValue !== "string") return;
+      initializationLegacyEvents.set(event.key, { key: event.key, oldValue });
+    };
+    storageEventTarget?.addEventListener?.("storage", captureInitializationLegacyEvent);
     try {
       // Reconcile twice. The second pass closes the common rolling-deployment
       // race where an older tab writes a newer legacy value while the first
@@ -283,6 +298,7 @@ export async function createIndexedDbRecoveryStorage(
         }
       }
     } catch (error) {
+      storageEventTarget?.removeEventListener?.("storage", captureInitializationLegacyEvent);
       db.close();
       throw error;
     }
@@ -1033,7 +1049,21 @@ export async function createIndexedDbRecoveryStorage(
     }
   };
 
+  // Install the live listener before removing the temporary migration journal
+  // so there is no unobserved handoff interval. Replaying each key's first event
+  // through onStorageEvent re-reads the latest legacy bytes and uses the existing
+  // lineage receipts/CAS fencing, so it cannot overwrite a newer IndexedDB write.
   storageEventTarget?.addEventListener?.("storage", onStorageEvent);
+  if (captureInitializationLegacyEvent) {
+    storageEventTarget?.removeEventListener?.("storage", captureInitializationLegacyEvent);
+    for (const event of initializationLegacyEvents.values()) onStorageEvent(event);
+    try {
+      await api.flush();
+    } catch (error) {
+      api.close();
+      throw error;
+    }
+  }
   return api;
 }
 
