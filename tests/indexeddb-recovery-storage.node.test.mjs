@@ -13,6 +13,13 @@ class MemoryStorage {
   removeItem(key) { this.values.delete(String(key)); }
 }
 
+class FakeStorageEventTarget {
+  constructor() { this.listeners = new Set(); }
+  addEventListener(type, listener) { if (type === "storage") this.listeners.add(listener); }
+  removeEventListener(type, listener) { if (type === "storage") this.listeners.delete(listener); }
+  emit(event) { for (const listener of [...this.listeners]) listener(event); }
+}
+
 function clone(value) {
   return typeof structuredClone === "function" ? structuredClone(value) : value;
 }
@@ -521,6 +528,80 @@ test("legacy migration never deletes a newer recovery write from an older tab", 
   });
   assert.equal(reopened.getItem(key), newerValue);
   reopened.close();
+});
+
+test("legacy storage deletion removes the exact migrated IndexedDB recovery", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const key = "brainvault.pageDraft.v2:user:page:legacy-tab";
+  const legacyValue = JSON.stringify({ schemaVersion: 2, marker: "acknowledged-by-old-tab" });
+  const legacy = new MemoryStorage([[key, legacyValue]]);
+  const events = new FakeStorageEventTarget();
+  const options = {
+    databaseName: "legacy-delete-event",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"],
+    storageEventTarget: events
+  };
+
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, options);
+  assert.equal(storage.getItem(key), legacyValue);
+
+  legacy.removeItem(key);
+  events.emit({ key, oldValue: legacyValue, newValue: null });
+  await nextTask();
+  await storage.flush();
+  assert.equal(storage.getItem(key), null);
+  storage.close();
+
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    ...options,
+    storageEventTarget: null
+  });
+  assert.equal(reopened.getItem(key), null);
+  reopened.close();
+});
+
+test("delayed legacy deletion reconciles a newer current legacy draft instead of hiding it", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const key = "brainvault.pageDraft.v2:user:page:legacy-tab";
+  const oldValue = JSON.stringify({ schemaVersion: 2, marker: "old" });
+  const newerValue = JSON.stringify({ schemaVersion: 2, marker: "newer" });
+  const legacy = new MemoryStorage([[key, oldValue]]);
+  const events = new FakeStorageEventTarget();
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    databaseName: "legacy-stale-delete-event",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"],
+    storageEventTarget: events
+  });
+
+  legacy.setItem(key, newerValue);
+  events.emit({ key, oldValue, newValue: null });
+  await nextTask();
+  await storage.flush();
+  assert.equal(storage.getItem(key), newerValue);
+  storage.close();
+});
+
+test("legacy deletion cannot remove a newer IndexedDB value for the same recovery key", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const key = "brainvault.pageDraft.v2:user:page:legacy-tab";
+  const legacyValue = JSON.stringify({ schemaVersion: 2, marker: "legacy" });
+  const newerIndexedDbValue = JSON.stringify({ schemaVersion: 2, marker: "new-indexeddb" });
+  const legacy = new MemoryStorage([[key, legacyValue]]);
+  const events = new FakeStorageEventTarget();
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    databaseName: "legacy-delete-newer-indexeddb",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"],
+    storageEventTarget: events
+  });
+
+  storage.setItem(key, newerIndexedDbValue);
+  await storage.flush();
+  legacy.removeItem(key);
+  events.emit({ key, oldValue: legacyValue, newValue: null });
+  await nextTask();
+  await storage.flush();
+  assert.equal(storage.getItem(key), newerIndexedDbValue);
+  storage.close();
 });
 
 test("stores large binary recovery values without localStorage/base64 expansion", async () => {

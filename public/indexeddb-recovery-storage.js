@@ -411,18 +411,36 @@ export async function createIndexedDbRecoveryStorage(
       return;
     }
 
-    // During a rolling deployment an already-open older tab can still write the
-    // legacy localStorage recovery namespace. Import that committed value into
-    // IndexedDB rather than making a newly loaded tab blind to it. Source IDs are
-    // part of the recovery key, so this cannot overwrite another tab's draft.
-    if (typeof event?.newValue !== "string" || !isRecoveryKey(event.key)) return;
+    // During a rolling deployment an already-open older tab can still mutate the
+    // legacy localStorage recovery namespace. Reconcile from the storage area's
+    // current value instead of trusting a potentially delayed event payload.
+    // Source IDs are part of the recovery key, so this cannot overwrite another
+    // tab's draft.
+    if (!isRecoveryKey(event?.key)) return;
     const legacyKey = event.key;
-    const legacyValue = event.newValue;
-    markVisibleMutation(legacyKey);
-    records.set(legacyKey, legacyValue);
-    void putLegacyRecord(legacyKey, legacyValue).catch(() => undefined);
+    let legacyValue;
+    try {
+      legacyValue = legacyStorage?.getItem?.(legacyKey);
+    } catch {
+      // If localStorage cannot be read, fail closed and keep the durable copy.
+      return;
+    }
+
+    if (typeof legacyValue === "string") {
+      markVisibleMutation(legacyKey);
+      records.set(legacyKey, legacyValue);
+      void putLegacyRecord(legacyKey, legacyValue).catch(() => undefined);
+      return;
+    }
+
+    // A legacy tab can also acknowledge/delete a draft after this tab migrated it.
+    // Remove only the exact bytes named by that delete event. A newer IndexedDB
+    // value from this tab or another tab must survive a delayed legacy deletion.
+    if (legacyValue !== null || typeof event?.oldValue !== "string") return;
+    const removedLegacyValue = event.oldValue;
+    void api.compareAndRemove(legacyKey, (storedValue) => storedValue === removedLegacyValue)
+      .catch(() => undefined);
   };
-  storageEventTarget?.addEventListener?.("storage", onStorageEvent);
 
   function notifyWriteError(error, context) {
     for (const listener of [...writeErrorListeners]) {
@@ -766,6 +784,7 @@ export async function createIndexedDbRecoveryStorage(
     }
   };
 
+  storageEventTarget?.addEventListener?.("storage", onStorageEvent);
   return api;
 }
 
