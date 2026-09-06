@@ -1044,3 +1044,79 @@ test("atomic compare-and-remove preserves a newer collaboration generation commi
   cleanupStorage.close();
   writerStorage.close();
 });
+
+
+test("delayed legacy deletion cannot remove a newer same-byte IndexedDB generation", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const key = "brainvault.pageDraft.v2:user:page:legacy-tab";
+  const originalValue = JSON.stringify({ schemaVersion: 2, marker: "A" });
+  const intermediateValue = JSON.stringify({ schemaVersion: 2, marker: "B" });
+  const legacy = new MemoryStorage([[key, originalValue]]);
+  const events = new FakeStorageEventTarget();
+  const options = {
+    databaseName: "legacy-delete-aba",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"],
+    storageEventTarget: events
+  };
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, options);
+
+  // The older tab deletes A, but delivery is delayed. Meanwhile this tab creates
+  // two newer IndexedDB generations whose bytes happen to return B -> A.
+  legacy.removeItem(key);
+  storage.setItem(key, intermediateValue);
+  await storage.flush();
+  storage.setItem(key, originalValue);
+  await storage.flush();
+  assert.equal(storage.getItem(key), originalValue);
+
+  events.emit({ key, oldValue: originalValue, newValue: null });
+  await nextTask();
+  await storage.flush();
+  assert.equal(storage.getItem(key), originalValue);
+  storage.close();
+
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    ...options,
+    storageEventTarget: null
+  });
+  assert.equal(reopened.getItem(key), originalValue);
+  reopened.close();
+});
+
+test("delayed changed legacy write cannot overwrite a newer same-byte IndexedDB generation", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const key = "brainvault.pageDraft.v2:user:page:legacy-tab";
+  const originalValue = JSON.stringify({ schemaVersion: 2, marker: "A" });
+  const intermediateValue = JSON.stringify({ schemaVersion: 2, marker: "B" });
+  const staleLegacyValue = JSON.stringify({ schemaVersion: 2, marker: "stale-B" });
+  const legacy = new MemoryStorage([[key, originalValue]]);
+  const events = new FakeStorageEventTarget();
+  const options = {
+    databaseName: "legacy-put-aba",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"],
+    storageEventTarget: events
+  };
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, options);
+
+  // The older tab changes A first, but its event is delayed. Newer IndexedDB
+  // generations then evolve A -> B -> A before that event is delivered.
+  legacy.setItem(key, staleLegacyValue);
+  storage.setItem(key, intermediateValue);
+  await storage.flush();
+  storage.setItem(key, originalValue);
+  await storage.flush();
+  assert.equal(storage.getItem(key), originalValue);
+
+  events.emit({ key, oldValue: originalValue, newValue: staleLegacyValue });
+  await nextTask();
+  await storage.flush();
+  assert.equal(storage.getItem(key), originalValue);
+  storage.close();
+
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    ...options,
+    storageEventTarget: null
+  });
+  assert.equal(reopened.getItem(key), originalValue);
+  reopened.close();
+});

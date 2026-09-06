@@ -85,6 +85,7 @@ function cloneStoredValue(value) {
 }
 
 const legacyMigrationMarkerKeyPrefix = "\u0000brainvault.recoveryLegacyMigration.v1:";
+const legacyLineageMarkerKeyPrefix = "\u0000brainvault.recoveryLegacyLineage.v1:";
 
 function getLegacyMigrationMarkerKey(key) {
   return `${legacyMigrationMarkerKeyPrefix}${key}`;
@@ -93,6 +94,15 @@ function getLegacyMigrationMarkerKey(key) {
 function getLegacyMigrationSourceKey(key) {
   if (typeof key !== "string" || !key.startsWith(legacyMigrationMarkerKeyPrefix)) return null;
   return key.slice(legacyMigrationMarkerKeyPrefix.length);
+}
+
+function getLegacyLineageMarkerKey(key) {
+  return `${legacyLineageMarkerKeyPrefix}${key}`;
+}
+
+function getLegacyLineageSourceKey(key) {
+  if (typeof key !== "string" || !key.startsWith(legacyLineageMarkerKeyPrefix)) return null;
+  return key.slice(legacyLineageMarkerKeyPrefix.length);
 }
 
 async function fingerprintLegacyValue(value) {
@@ -146,6 +156,7 @@ export async function createIndexedDbRecoveryStorage(
 
   const records = new Map();
   const legacyMigrationMarkers = new Map();
+  const legacyLineageMarkers = new Map();
   const loadTransaction = db.transaction(storeName, "readonly");
   const loadComplete = transactionComplete(loadTransaction);
   const existing = await requestResult(loadTransaction.objectStore(storeName).getAll());
@@ -155,6 +166,11 @@ export async function createIndexedDbRecoveryStorage(
     const markerSourceKey = getLegacyMigrationSourceKey(record.key);
     if (markerSourceKey !== null) {
       if (typeof record.value === "string") legacyMigrationMarkers.set(markerSourceKey, record.value);
+      continue;
+    }
+    const lineageSourceKey = getLegacyLineageSourceKey(record.key);
+    if (lineageSourceKey !== null) {
+      if (typeof record.value === "string") legacyLineageMarkers.set(lineageSourceKey, record.value);
       continue;
     }
     records.set(record.key, cloneStoredValue(record.value));
@@ -183,25 +199,36 @@ export async function createIndexedDbRecoveryStorage(
 
         const migration = [];
         const markerUpdates = new Map();
+        const lineageUpdates = new Map();
         for (const key of snapshot.keys) {
           if (!isMigratableLegacyKey(key)) continue;
           const value = legacyStorage.getItem(key);
           if (value === null) continue;
           const legacyFingerprint = await fingerprintLegacyValue(value);
           const marker = legacyMigrationMarkers.get(key) ?? null;
+          const lineage = legacyLineageMarkers.get(key) ?? null;
 
           if (records.has(key)) {
             const currentValue = records.get(key);
             if (typeof currentValue !== "string") continue;
             const currentFingerprint = await fingerprintLegacyValue(currentValue);
 
-            if (marker !== null && currentFingerprint === marker && legacyFingerprint !== marker) {
-              // IndexedDB is still the exact value imported previously, while
-              // the retained legacy copy has changed. Treat that legacy value
-              // as a newer write from an older tab instead of hiding it forever.
+            if (
+              marker !== null
+              && lineage === marker
+              && currentFingerprint === marker
+              && legacyFingerprint !== marker
+            ) {
+              // Only a durable lineage receipt can prove the current IndexedDB
+              // generation is still the legacy generation named by the marker.
+              // Byte equality alone is not causal evidence: A -> B -> A is a
+              // valid newer IndexedDB sequence and must not be rolled back.
               migration.push({ key, value, fingerprint: legacyFingerprint });
             } else if (currentFingerprint === legacyFingerprint && marker !== legacyFingerprint) {
-              // Bootstrap receipts for databases migrated by an older build.
+              // Bootstrap resurrection receipts for databases migrated by an
+              // older build, but deliberately do not bootstrap lineage. Older
+              // versions did not record enough information to distinguish an
+              // original legacy generation from a newer same-byte generation.
               markerUpdates.set(key, legacyFingerprint);
             }
             continue;
@@ -231,20 +258,28 @@ export async function createIndexedDbRecoveryStorage(
           for (const record of migration) {
             records.set(record.key, record.value);
             markerUpdates.set(record.key, record.fingerprint);
+            lineageUpdates.set(record.key, record.fingerprint);
           }
         }
 
-        if (markerUpdates.size) {
-          const expectedMarkers = [...markerUpdates].map(([key, fingerprint]) => ({
-            key: getLegacyMigrationMarkerKey(key),
-            value: fingerprint
-          }));
+        if (markerUpdates.size || lineageUpdates.size) {
+          const expectedMarkers = [
+            ...[...markerUpdates].map(([key, fingerprint]) => ({
+              key: getLegacyMigrationMarkerKey(key),
+              value: fingerprint
+            })),
+            ...[...lineageUpdates].map(([key, fingerprint]) => ({
+              key: getLegacyLineageMarkerKey(key),
+              value: fingerprint
+            }))
+          ];
           const markerTransaction = createStrictWriteTransaction(db, storeName);
           const markerStore = markerTransaction.objectStore(storeName);
           for (const markerRecord of expectedMarkers) markerStore.put(markerRecord);
           await transactionComplete(markerTransaction);
           await verifyMigratedRecords(db, storeName, expectedMarkers);
           for (const [key, fingerprint] of markerUpdates) legacyMigrationMarkers.set(key, fingerprint);
+          for (const [key, fingerprint] of lineageUpdates) legacyLineageMarkers.set(key, fingerprint);
         }
       }
     } catch (error) {
@@ -315,7 +350,11 @@ export async function createIndexedDbRecoveryStorage(
     await complete;
     const loadedRecords = new Map();
     for (const record of values ?? []) {
-      if (typeof record?.key !== "string" || getLegacyMigrationSourceKey(record.key) !== null) continue;
+      if (
+        typeof record?.key !== "string"
+        || getLegacyMigrationSourceKey(record.key) !== null
+        || getLegacyLineageSourceKey(record.key) !== null
+      ) continue;
       loadedRecords.set(record.key, cloneStoredValue(record.value));
     }
     return loadedRecords;
@@ -440,12 +479,12 @@ export async function createIndexedDbRecoveryStorage(
     }
 
     // A legacy tab can also acknowledge/delete a draft after this tab migrated it.
-    // Remove only the exact bytes named by that delete event. A newer IndexedDB
-    // value from this tab or another tab must survive a delayed legacy deletion.
+    // Require both the exact bytes and a durable legacy-lineage receipt. Byte
+    // equality alone is ABA-vulnerable when a newer IndexedDB generation returns
+    // to the same value before a delayed legacy delete is delivered.
     if (legacyValue !== null || typeof event?.oldValue !== "string") return;
     const removedLegacyValue = event.oldValue;
-    void api.compareAndRemove(legacyKey, (storedValue) => storedValue === removedLegacyValue)
-      .catch(() => undefined);
+    void removeLegacyRecord(legacyKey, removedLegacyValue).catch(() => undefined);
   };
 
   function notifyWriteError(error, context) {
@@ -478,8 +517,14 @@ export async function createIndexedDbRecoveryStorage(
   function putRecord(key, value) {
     return enqueue(async () => {
       const transaction = createStrictWriteTransaction(db, storeName);
-      transaction.objectStore(storeName).put({ key, value: cloneStoredValue(value) });
+      const objectStore = transaction.objectStore(storeName);
+      objectStore.put({ key, value: cloneStoredValue(value) });
+      // A normal IndexedDB mutation starts a new generation. Keep the migration
+      // receipt (it prevents stale retained localStorage from resurrecting), but
+      // clear legacy lineage so equal bytes cannot impersonate the old generation.
+      objectStore.delete(getLegacyLineageMarkerKey(key));
       await transactionComplete(transaction);
+      legacyLineageMarkers.delete(key);
       publishChange("put", key);
     }, { operation: "put", key });
   }
@@ -487,48 +532,107 @@ export async function createIndexedDbRecoveryStorage(
   function putLegacyRecord(key, value, previousLegacyValue, visibleMutationSequence) {
     return enqueue(async () => {
       const fingerprint = await fingerprintLegacyValue(value);
-
-      // Retained localStorage fallbacks intentionally survive migration. A
-      // delayed storage event for the exact bytes already imported is therefore
-      // not evidence of a new legacy write. Re-importing it could resurrect an
-      // acknowledged draft or overwrite a newer IndexedDB value for this key.
-      if (legacyMigrationMarkers.get(key) === fingerprint) return false;
-
-      // Storage events can be delivered after a newer IndexedDB mutation has
-      // already committed. Treat event.oldValue as the causal predecessor and
-      // replace the durable record only when it still matches that predecessor.
-      // This is an IndexedDB compare-and-set inside one read/write transaction,
-      // so a delayed legacy event cannot roll a newer recovery generation back.
+      const previousFingerprint = previousLegacyValue === null
+        ? null
+        : await fingerprintLegacyValue(previousLegacyValue);
       const transaction = createStrictWriteTransaction(db, storeName);
       const complete = transactionComplete(transaction);
       const objectStore = transaction.objectStore(storeName);
+      const markerKey = getLegacyMigrationMarkerKey(key);
+      const lineageKey = getLegacyLineageMarkerKey(key);
       let matched = false;
       let currentExists = false;
       let currentValue = null;
+      let durableMarker = null;
+      let durableLineage = null;
+
+      // The record and both receipts are read and conditionally updated in one
+      // transaction. A value comparison by itself is ABA-vulnerable: a newer
+      // IndexedDB generation can legitimately evolve A -> B -> A while a legacy
+      // event for the original A is delayed.
       const comparison = new Promise((resolve, reject) => {
-        const request = objectStore.get(key);
-        request.onerror = () => reject(request.error ?? new Error("IndexedDB legacy recovery compare-read failed"));
-        request.onsuccess = () => {
-          const current = request.result;
+        const currentRequest = objectStore.get(key);
+        currentRequest.onerror = () => reject(
+          currentRequest.error ?? new Error("IndexedDB legacy recovery compare-read failed")
+        );
+        currentRequest.onsuccess = () => {
+          const current = currentRequest.result;
           if (current && current.key === key) {
             currentExists = true;
             currentValue = cloneStoredValue(current.value);
           }
-          const predecessorMatches = previousLegacyValue === null
-            ? !currentExists
-            : currentExists && typeof currentValue === "string" && currentValue === previousLegacyValue;
-          if (predecessorMatches) {
-            objectStore.put({ key, value: cloneStoredValue(value) });
-            objectStore.put({ key: getLegacyMigrationMarkerKey(key), value: fingerprint });
-            matched = true;
-          }
-          resolve();
+
+          let remaining = 2;
+          const finishComparison = () => {
+            remaining -= 1;
+            if (remaining > 0) return;
+
+            // If these bytes have already been imported, this is a duplicate
+            // retained-fallback event, not a new generation.
+            if (durableMarker === fingerprint) {
+              resolve();
+              return;
+            }
+
+            const predecessorMatches = previousLegacyValue === null
+              ? !currentExists
+              : (
+                currentExists
+                  ? (
+                    typeof currentValue === "string"
+                    && currentValue === previousLegacyValue
+                    && durableLineage === previousFingerprint
+                  )
+                  : durableMarker === previousFingerprint
+              );
+
+            if (predecessorMatches) {
+              objectStore.put({ key, value: cloneStoredValue(value) });
+              objectStore.put({ key: markerKey, value: fingerprint });
+              objectStore.put({ key: lineageKey, value: fingerprint });
+              matched = true;
+            }
+            resolve();
+          };
+
+          const markerRequest = objectStore.get(markerKey);
+          markerRequest.onerror = () => reject(
+            markerRequest.error ?? new Error("IndexedDB legacy migration receipt read failed")
+          );
+          markerRequest.onsuccess = () => {
+            const markerRecord = markerRequest.result;
+            durableMarker = markerRecord
+              && markerRecord.key === markerKey
+              && typeof markerRecord.value === "string"
+              ? markerRecord.value
+              : null;
+            finishComparison();
+          };
+
+          const lineageRequest = objectStore.get(lineageKey);
+          lineageRequest.onerror = () => reject(
+            lineageRequest.error ?? new Error("IndexedDB legacy lineage receipt read failed")
+          );
+          lineageRequest.onsuccess = () => {
+            const lineageRecord = lineageRequest.result;
+            durableLineage = lineageRecord
+              && lineageRecord.key === lineageKey
+              && typeof lineageRecord.value === "string"
+              ? lineageRecord.value
+              : null;
+            finishComparison();
+          };
         };
       });
       await Promise.all([comparison, complete]);
 
       const mirrorStillMatchesRequest = (keyMutationSequences.get(key) ?? 0) === visibleMutationSequence;
       if (!matched) {
+        if (durableMarker === null) legacyMigrationMarkers.delete(key);
+        else legacyMigrationMarkers.set(key, durableMarker);
+        if (durableLineage === null) legacyLineageMarkers.delete(key);
+        else legacyLineageMarkers.set(key, durableLineage);
+
         // Converge the synchronous mirror on the durable value that defeated the
         // stale legacy write, unless a newer same-tab mutation has superseded it.
         if (mirrorStillMatchesRequest) {
@@ -539,6 +643,7 @@ export async function createIndexedDbRecoveryStorage(
       }
 
       legacyMigrationMarkers.set(key, fingerprint);
+      legacyLineageMarkers.set(key, fingerprint);
       // A newer same-tab mutation can be queued while fingerprinting/committing
       // the legacy write. Do not let this older reconciliation roll its mirror
       // back; the newer mutation is serialized after this durable transaction.
@@ -548,12 +653,86 @@ export async function createIndexedDbRecoveryStorage(
     }, { operation: "legacy-put", key });
   }
 
+  function removeLegacyRecord(key, removedLegacyValue) {
+    const visibleMutationSequence = keyMutationSequences.get(key) ?? 0;
+    return enqueue(async () => {
+      const removedFingerprint = await fingerprintLegacyValue(removedLegacyValue);
+      const transaction = createStrictWriteTransaction(db, storeName);
+      const complete = transactionComplete(transaction);
+      const objectStore = transaction.objectStore(storeName);
+      const lineageKey = getLegacyLineageMarkerKey(key);
+      let matched = false;
+      let currentExists = false;
+      let currentValue = null;
+      let durableLineage = null;
+
+      const comparison = new Promise((resolve, reject) => {
+        const currentRequest = objectStore.get(key);
+        currentRequest.onerror = () => reject(
+          currentRequest.error ?? new Error("IndexedDB legacy recovery delete compare-read failed")
+        );
+        currentRequest.onsuccess = () => {
+          const current = currentRequest.result;
+          if (current && current.key === key) {
+            currentExists = true;
+            currentValue = cloneStoredValue(current.value);
+          }
+
+          const lineageRequest = objectStore.get(lineageKey);
+          lineageRequest.onerror = () => reject(
+            lineageRequest.error ?? new Error("IndexedDB legacy lineage receipt read failed")
+          );
+          lineageRequest.onsuccess = () => {
+            const lineageRecord = lineageRequest.result;
+            durableLineage = lineageRecord
+              && lineageRecord.key === lineageKey
+              && typeof lineageRecord.value === "string"
+              ? lineageRecord.value
+              : null;
+
+            if (
+              currentExists
+              && typeof currentValue === "string"
+              && currentValue === removedLegacyValue
+              && durableLineage === removedFingerprint
+            ) {
+              objectStore.delete(key);
+              objectStore.delete(lineageKey);
+              matched = true;
+            }
+            resolve();
+          };
+        };
+      });
+      await Promise.all([comparison, complete]);
+
+      const mirrorStillMatchesRequest = (keyMutationSequences.get(key) ?? 0) === visibleMutationSequence;
+      if (matched) {
+        legacyLineageMarkers.delete(key);
+        if (mirrorStillMatchesRequest) records.delete(key);
+        publishChange("delete", key);
+        return true;
+      }
+
+      if (durableLineage === null) legacyLineageMarkers.delete(key);
+      else legacyLineageMarkers.set(key, durableLineage);
+      if (mirrorStillMatchesRequest) {
+        if (currentExists) records.set(key, cloneStoredValue(currentValue));
+        else records.delete(key);
+      }
+      return false;
+    }, { operation: "legacy-delete", key });
+  }
+
   function deleteRecord(key, { onCommitted = null, onFailure = null } = {}) {
     return enqueue(async () => {
       try {
         const transaction = createStrictWriteTransaction(db, storeName);
-        transaction.objectStore(storeName).delete(key);
+        const objectStore = transaction.objectStore(storeName);
+        objectStore.delete(key);
+        objectStore.delete(getLegacyLineageMarkerKey(key));
         await transactionComplete(transaction);
+        legacyLineageMarkers.delete(key);
         onCommitted?.();
         publishChange("delete", key);
       } catch (error) {
@@ -663,7 +842,10 @@ export async function createIndexedDbRecoveryStorage(
                 reject(error);
                 return;
               }
-              if (matched) objectStore.put({ key: normalizedKey, value: cloneStoredValue(nextValue) });
+              if (matched) {
+                objectStore.put({ key: normalizedKey, value: cloneStoredValue(nextValue) });
+                objectStore.delete(getLegacyLineageMarkerKey(normalizedKey));
+              }
             }
             resolve();
           };
@@ -673,6 +855,7 @@ export async function createIndexedDbRecoveryStorage(
         const mirrorStillMatchesRequest = (keyMutationSequences.get(normalizedKey) ?? 0)
           === visibleMutationSequence;
         if (matched) {
+          legacyLineageMarkers.delete(normalizedKey);
           if (mirrorStillMatchesRequest) records.set(normalizedKey, cloneStoredValue(nextValue));
           publishChange("put", normalizedKey);
         } else if (mirrorStillMatchesRequest && currentExists) {
@@ -714,7 +897,10 @@ export async function createIndexedDbRecoveryStorage(
                 reject(error);
                 return;
               }
-              if (matched) objectStore.delete(normalizedKey);
+              if (matched) {
+                objectStore.delete(normalizedKey);
+                objectStore.delete(getLegacyLineageMarkerKey(normalizedKey));
+              }
             }
             resolve();
           };
@@ -724,6 +910,7 @@ export async function createIndexedDbRecoveryStorage(
         const mirrorStillMatchesRequest = (keyMutationSequences.get(normalizedKey) ?? 0)
           === visibleMutationSequence;
         if (matched) {
+          legacyLineageMarkers.delete(normalizedKey);
           if (mirrorStillMatchesRequest) records.delete(normalizedKey);
           publishChange("delete", normalizedKey);
         } else if (mirrorStillMatchesRequest && currentExists) {
@@ -759,6 +946,11 @@ export async function createIndexedDbRecoveryStorage(
             objectStore.put({ key: getLegacyMigrationMarkerKey(key), value: fingerprint });
           }
           await transactionComplete(transaction);
+
+          // clear() removes every lineage sidecar atomically with the records.
+          // Migration receipts are intentionally retained above so stale legacy
+          // fallbacks cannot reappear after acknowledgement.
+          legacyLineageMarkers.clear();
 
           // An older queued operation may have repopulated the mirror while the
           // clear transaction was settling. Remove only values that were not
