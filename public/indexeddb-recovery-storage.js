@@ -197,6 +197,7 @@ export async function createIndexedDbRecoveryStorage(
     // When a migration pass imports an intermediate generation, the predecessor
     // is rebased below to that durable generation before handoff replay.
     captureInitializationLegacyEvent = (event) => {
+      if (event?.storageArea != null && event.storageArea !== legacyStorage) return;
       if (!isMigratableLegacyKey(event?.key) || initializationLegacyEvents.has(event.key)) return;
       const oldValue = event?.oldValue;
       if (oldValue !== null && typeof oldValue !== "string") return;
@@ -463,6 +464,7 @@ export async function createIndexedDbRecoveryStorage(
   }
 
   const onStorageEvent = (event) => {
+    if (event?.storageArea != null && event.storageArea !== legacyStorage) return;
     if (event?.key === changeSignalKey && typeof event.newValue === "string") {
       try {
         applyExternalChange(JSON.parse(event.newValue));
@@ -1013,8 +1015,17 @@ export async function createIndexedDbRecoveryStorage(
       return pendingWrites > 0;
     },
     async flush() {
-      await tail;
-      await externalRefreshTail;
+      // A recovery write or cross-tab refresh can be queued while this barrier
+      // is awaiting an earlier generation. Keep draining until both promise
+      // chains remain unchanged across the await; otherwise flush() can resolve
+      // while a newer strict IndexedDB transaction is still pending.
+      while (true) {
+        const pendingTail = tail;
+        const pendingExternalRefreshTail = externalRefreshTail;
+        await pendingTail;
+        await pendingExternalRefreshTail;
+        if (pendingTail === tail && pendingExternalRefreshTail === externalRefreshTail) break;
+      }
       if (failureSequence > observedFailureSequence) {
         observedFailureSequence = failureSequence;
         throw lastFailure ?? new Error("Recovery storage write failed");

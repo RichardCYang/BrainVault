@@ -228,6 +228,26 @@ test("uses strict durability for every recovery write transaction", async () => 
   storage.close();
 });
 
+test("flush drains recovery writes queued while the barrier is in flight", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName: "flush-inflight-race",
+    storageEventTarget: null
+  });
+
+  storage.setItem("brainvault.pageDraft.v2:user:page:first", "first");
+  const flushing = storage.flush();
+  storage.setItem("brainvault.pageDraft.v2:user:page:second", "second");
+  await flushing;
+
+  assert.equal(
+    storage.hasPendingWrites(),
+    false,
+    "flush must not resolve while a recovery write queued during the barrier is still pending"
+  );
+  storage.close();
+});
+
 test("reports and flush-rejects failed recovery deletions instead of silently discarding them", async () => {
   const key = "brainvault.pageDraft.v2:user:page:tab";
   const indexedDb = new FakeIndexedDb();
@@ -607,6 +627,40 @@ test("legacy storage deletion removes the exact migrated IndexedDB recovery", as
   });
   assert.equal(reopened.getItem(key), null);
   reopened.close();
+});
+
+test("ignores same-key recovery deletion events from a different Storage area", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const key = "brainvault.pageDraft.v2:user:page:foreign-storage-event";
+  const legacyValue = JSON.stringify({ schemaVersion: 2, marker: "local-draft" });
+  const legacy = new MemoryStorage([[key, legacyValue]]);
+  const foreignStorage = new MemoryStorage([[key, legacyValue]]);
+  const events = new FakeStorageEventTarget();
+  const options = {
+    databaseName: "foreign-storage-area-event",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"],
+    storageEventTarget: events
+  };
+
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, options);
+  assert.equal(storage.getItem(key), legacyValue);
+
+  legacy.removeItem(key);
+  events.emit({
+    key,
+    oldValue: legacyValue,
+    newValue: null,
+    storageArea: foreignStorage
+  });
+  await nextTask();
+  await storage.flush();
+
+  assert.equal(
+    storage.getItem(key),
+    legacyValue,
+    "an unrelated Storage area must not acknowledge or delete localStorage recovery"
+  );
+  storage.close();
 });
 
 test("delayed legacy deletion reconciles a newer current legacy draft instead of hiding it", async () => {
