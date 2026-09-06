@@ -427,8 +427,15 @@ export async function createIndexedDbRecoveryStorage(
     }
 
     if (typeof legacyValue === "string") {
+      const previousLegacyValue = event?.oldValue;
+      if (previousLegacyValue !== null && typeof previousLegacyValue !== "string") return;
       const visibleMutationSequence = markVisibleMutation(legacyKey);
-      void putLegacyRecord(legacyKey, legacyValue, visibleMutationSequence).catch(() => undefined);
+      void putLegacyRecord(
+        legacyKey,
+        legacyValue,
+        previousLegacyValue,
+        visibleMutationSequence
+      ).catch(() => undefined);
       return;
     }
 
@@ -477,7 +484,7 @@ export async function createIndexedDbRecoveryStorage(
     }, { operation: "put", key });
   }
 
-  function putLegacyRecord(key, value, visibleMutationSequence) {
+  function putLegacyRecord(key, value, previousLegacyValue, visibleMutationSequence) {
     return enqueue(async () => {
       const fingerprint = await fingerprintLegacyValue(value);
 
@@ -487,19 +494,55 @@ export async function createIndexedDbRecoveryStorage(
       // acknowledged draft or overwrite a newer IndexedDB value for this key.
       if (legacyMigrationMarkers.get(key) === fingerprint) return false;
 
+      // Storage events can be delivered after a newer IndexedDB mutation has
+      // already committed. Treat event.oldValue as the causal predecessor and
+      // replace the durable record only when it still matches that predecessor.
+      // This is an IndexedDB compare-and-set inside one read/write transaction,
+      // so a delayed legacy event cannot roll a newer recovery generation back.
       const transaction = createStrictWriteTransaction(db, storeName);
+      const complete = transactionComplete(transaction);
       const objectStore = transaction.objectStore(storeName);
-      objectStore.put({ key, value: cloneStoredValue(value) });
-      objectStore.put({ key: getLegacyMigrationMarkerKey(key), value: fingerprint });
-      await transactionComplete(transaction);
-      legacyMigrationMarkers.set(key, fingerprint);
+      let matched = false;
+      let currentExists = false;
+      let currentValue = null;
+      const comparison = new Promise((resolve, reject) => {
+        const request = objectStore.get(key);
+        request.onerror = () => reject(request.error ?? new Error("IndexedDB legacy recovery compare-read failed"));
+        request.onsuccess = () => {
+          const current = request.result;
+          if (current && current.key === key) {
+            currentExists = true;
+            currentValue = cloneStoredValue(current.value);
+          }
+          const predecessorMatches = previousLegacyValue === null
+            ? !currentExists
+            : currentExists && typeof currentValue === "string" && currentValue === previousLegacyValue;
+          if (predecessorMatches) {
+            objectStore.put({ key, value: cloneStoredValue(value) });
+            objectStore.put({ key: getLegacyMigrationMarkerKey(key), value: fingerprint });
+            matched = true;
+          }
+          resolve();
+        };
+      });
+      await Promise.all([comparison, complete]);
 
+      const mirrorStillMatchesRequest = (keyMutationSequences.get(key) ?? 0) === visibleMutationSequence;
+      if (!matched) {
+        // Converge the synchronous mirror on the durable value that defeated the
+        // stale legacy write, unless a newer same-tab mutation has superseded it.
+        if (mirrorStillMatchesRequest) {
+          if (currentExists) records.set(key, cloneStoredValue(currentValue));
+          else records.delete(key);
+        }
+        return false;
+      }
+
+      legacyMigrationMarkers.set(key, fingerprint);
       // A newer same-tab mutation can be queued while fingerprinting/committing
       // the legacy write. Do not let this older reconciliation roll its mirror
       // back; the newer mutation is serialized after this durable transaction.
-      if ((keyMutationSequences.get(key) ?? 0) === visibleMutationSequence) {
-        records.set(key, cloneStoredValue(value));
-      }
+      if (mirrorStillMatchesRequest) records.set(key, cloneStoredValue(value));
       publishChange("put", key);
       return true;
     }, { operation: "legacy-put", key });

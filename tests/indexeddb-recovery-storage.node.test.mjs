@@ -662,6 +662,43 @@ test("delayed legacy write cannot overwrite newer IndexedDB recovery for the sam
   storage.close();
 });
 
+test("delayed changed legacy write cannot overwrite a newer IndexedDB recovery value", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const key = "brainvault.pageDraft.v2:user:page:legacy-tab";
+  const migratedValue = JSON.stringify({ schemaVersion: 2, marker: "migrated" });
+  const delayedLegacyValue = JSON.stringify({ schemaVersion: 2, marker: "older-legacy-write" });
+  const newerIndexedDbValue = JSON.stringify({ schemaVersion: 2, marker: "newer-indexeddb" });
+  const legacy = new MemoryStorage([[key, migratedValue]]);
+  const events = new FakeStorageEventTarget();
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    databaseName: "legacy-stale-changed-put-newer-indexeddb",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"],
+    storageEventTarget: events
+  });
+
+  // The older tab writes first, but delivery of its storage event is delayed.
+  legacy.setItem(key, delayedLegacyValue);
+
+  // A newer recovery value commits durably before the old event reaches this tab.
+  storage.setItem(key, newerIndexedDbValue);
+  await storage.flush();
+  assert.equal(storage.getItem(key), newerIndexedDbValue);
+
+  events.emit({ key, oldValue: migratedValue, newValue: delayedLegacyValue });
+  await nextTask();
+  await storage.flush();
+  assert.equal(storage.getItem(key), newerIndexedDbValue);
+  storage.close();
+
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    databaseName: "legacy-stale-changed-put-newer-indexeddb",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"],
+    storageEventTarget: null
+  });
+  assert.equal(reopened.getItem(key), newerIndexedDbValue);
+  reopened.close();
+});
+
 test("stores large binary recovery values without localStorage/base64 expansion", async () => {
   const indexedDb = new FakeIndexedDb();
   const legacy = new MemoryStorage();
