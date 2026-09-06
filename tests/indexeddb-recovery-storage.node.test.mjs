@@ -604,6 +604,64 @@ test("legacy deletion cannot remove a newer IndexedDB value for the same recover
   storage.close();
 });
 
+test("delayed legacy write cannot resurrect an acknowledged migrated recovery", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const key = "brainvault.pageDraft.v2:user:page:legacy-tab";
+  const legacyValue = JSON.stringify({ schemaVersion: 2, marker: "already-acknowledged" });
+  const legacy = new MemoryStorage([[key, legacyValue]]);
+  const events = new FakeStorageEventTarget();
+  const options = {
+    databaseName: "legacy-stale-put-after-ack",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"],
+    storageEventTarget: events
+  };
+
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, options);
+  assert.equal(storage.getItem(key), legacyValue);
+  assert.equal(await storage.compareAndRemove(key, (storedValue) => storedValue === legacyValue), true);
+  await storage.flush();
+  assert.equal(storage.getItem(key), null);
+
+  // The localStorage fallback is intentionally retained. A delayed storage
+  // event for its already-migrated bytes must not make that stale copy live again.
+  events.emit({ key, oldValue: null, newValue: legacyValue });
+  await nextTask();
+  await storage.flush();
+  assert.equal(storage.getItem(key), null);
+  storage.close();
+
+  const reopened = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    ...options,
+    storageEventTarget: null
+  });
+  assert.equal(reopened.getItem(key), null);
+  reopened.close();
+});
+
+test("delayed legacy write cannot overwrite newer IndexedDB recovery for the same key", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const key = "brainvault.pageDraft.v2:user:page:legacy-tab";
+  const legacyValue = JSON.stringify({ schemaVersion: 2, marker: "legacy" });
+  const newerIndexedDbValue = JSON.stringify({ schemaVersion: 2, marker: "newer-indexeddb" });
+  const legacy = new MemoryStorage([[key, legacyValue]]);
+  const events = new FakeStorageEventTarget();
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    databaseName: "legacy-stale-put-newer-indexeddb",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"],
+    storageEventTarget: events
+  });
+
+  storage.setItem(key, newerIndexedDbValue);
+  await storage.flush();
+  assert.equal(storage.getItem(key), newerIndexedDbValue);
+
+  events.emit({ key, oldValue: null, newValue: legacyValue });
+  await nextTask();
+  await storage.flush();
+  assert.equal(storage.getItem(key), newerIndexedDbValue);
+  storage.close();
+});
+
 test("stores large binary recovery values without localStorage/base64 expansion", async () => {
   const indexedDb = new FakeIndexedDb();
   const legacy = new MemoryStorage();

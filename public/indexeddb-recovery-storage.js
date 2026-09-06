@@ -427,9 +427,8 @@ export async function createIndexedDbRecoveryStorage(
     }
 
     if (typeof legacyValue === "string") {
-      markVisibleMutation(legacyKey);
-      records.set(legacyKey, legacyValue);
-      void putLegacyRecord(legacyKey, legacyValue).catch(() => undefined);
+      const visibleMutationSequence = markVisibleMutation(legacyKey);
+      void putLegacyRecord(legacyKey, legacyValue, visibleMutationSequence).catch(() => undefined);
       return;
     }
 
@@ -478,16 +477,31 @@ export async function createIndexedDbRecoveryStorage(
     }, { operation: "put", key });
   }
 
-  function putLegacyRecord(key, value) {
+  function putLegacyRecord(key, value, visibleMutationSequence) {
     return enqueue(async () => {
       const fingerprint = await fingerprintLegacyValue(value);
+
+      // Retained localStorage fallbacks intentionally survive migration. A
+      // delayed storage event for the exact bytes already imported is therefore
+      // not evidence of a new legacy write. Re-importing it could resurrect an
+      // acknowledged draft or overwrite a newer IndexedDB value for this key.
+      if (legacyMigrationMarkers.get(key) === fingerprint) return false;
+
       const transaction = createStrictWriteTransaction(db, storeName);
       const objectStore = transaction.objectStore(storeName);
       objectStore.put({ key, value: cloneStoredValue(value) });
       objectStore.put({ key: getLegacyMigrationMarkerKey(key), value: fingerprint });
       await transactionComplete(transaction);
       legacyMigrationMarkers.set(key, fingerprint);
+
+      // A newer same-tab mutation can be queued while fingerprinting/committing
+      // the legacy write. Do not let this older reconciliation roll its mirror
+      // back; the newer mutation is serialized after this durable transaction.
+      if ((keyMutationSequences.get(key) ?? 0) === visibleMutationSequence) {
+        records.set(key, cloneStoredValue(value));
+      }
       publishChange("put", key);
+      return true;
     }, { operation: "legacy-put", key });
   }
 
