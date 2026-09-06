@@ -192,10 +192,10 @@ export async function createIndexedDbRecoveryStorage(
   if (legacyStorage && prefixes.length) {
     // Listen before taking the first migration snapshot. Two reconciliation passes
     // close ordinary commit races, but without this temporary journal a legacy tab
-    // can create a brand-new recovery key after the final snapshot and before the
-    // live storage listener is installed. Keep only the first observed predecessor
-    // per key: replay reads the storage area's current value, so that predecessor
-    // provides the causal fence needed to advance directly to the newest bytes.
+    // can create or advance recovery data after the final snapshot and before the
+    // live storage listener is installed. Keep one causal predecessor per key.
+    // When a migration pass imports an intermediate generation, the predecessor
+    // is rebased below to that durable generation before handoff replay.
     captureInitializationLegacyEvent = (event) => {
       if (!isMigratableLegacyKey(event?.key) || initializationLegacyEvents.has(event.key)) return;
       const oldValue = event?.oldValue;
@@ -274,6 +274,12 @@ export async function createIndexedDbRecoveryStorage(
             records.set(record.key, record.value);
             markerUpdates.set(record.key, record.fingerprint);
             lineageUpdates.set(record.key, record.fingerprint);
+            // A captured event can predate this pass. If this pass imports an
+            // intermediate legacy generation, replay must compare the newest
+            // legacy bytes against that generation rather than the event's
+            // original predecessor.
+            const initializationEvent = initializationLegacyEvents.get(record.key);
+            if (initializationEvent) initializationEvent.oldValue = record.value;
           }
         }
 

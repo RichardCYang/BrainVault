@@ -1169,3 +1169,56 @@ test("delayed changed legacy write cannot overwrite a newer same-byte IndexedDB 
   assert.equal(reopened.getItem(key), originalValue);
   reopened.close();
 });
+
+test("initialization journal preserves the newest same-key legacy generation across both migration passes", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const events = new FakeStorageEventTarget();
+  const key = "brainvault.pageDraft.v2:user:page:tab";
+  const valueA = JSON.stringify({ schemaVersion: 2, marker: "A" });
+  const valueB = JSON.stringify({ schemaVersion: 2, marker: "B" });
+  const valueC = JSON.stringify({ schemaVersion: 2, marker: "C" });
+
+  class MultiWriteLegacyStorage extends MemoryStorage {
+    constructor(entries) {
+      super(entries);
+      this.reads = 0;
+    }
+
+    getItem(storageKey) {
+      const value = super.getItem(storageKey);
+      if (storageKey === key) {
+        this.reads += 1;
+        if (this.reads === 1) {
+          queueMicrotask(() => {
+            const oldValue = super.getItem(key);
+            super.setItem(key, valueB);
+            events.emit({ key, oldValue, newValue: valueB });
+          });
+        } else if (this.reads === 2) {
+          queueMicrotask(() => {
+            const oldValue = super.getItem(key);
+            super.setItem(key, valueC);
+            events.emit({ key, oldValue, newValue: valueC });
+          });
+        }
+      }
+      return value;
+    }
+  }
+
+  const legacy = new MultiWriteLegacyStorage([[key, valueA]]);
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    databaseName: "migration-multiwrite-handoff-race",
+    migrationPrefixes: ["brainvault.pageDraft.v2:"],
+    storageEventTarget: events
+  });
+
+  assert.equal(legacy.getItem(key), valueC, "legacy storage reached generation C");
+  assert.equal(
+    storage.getItem(key),
+    valueC,
+    "initialization must expose the newest legacy generation instead of the intermediate pass-two generation"
+  );
+  await storage.flush();
+  storage.close();
+});
