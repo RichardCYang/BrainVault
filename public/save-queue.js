@@ -8,7 +8,7 @@ export function createLatestWriteQueue(
   let discardGeneration = 0;
   let lastResult;
 
-  async function drain() {
+  async function drain(ownerPromise) {
     while (retryTask !== null || pendingTask !== null) {
       const isRetry = retryTask !== null;
       const task = isRetry ? retryTask : pendingTask;
@@ -36,16 +36,37 @@ export function createLatestWriteQueue(
         throw error;
       }
     }
+
+    // Release successful-run ownership before this async function settles. A task enqueued
+    // from another reaction to the writer's completion can then start a fresh drain instead
+    // of inheriting a run that already decided the queue was empty.
+    if (runningPromise === ownerPromise) runningPromise = null;
     return lastResult;
   }
 
   function ensureRunning() {
-    if (!runningPromise) {
-      runningPromise = drain().finally(() => {
-        runningPromise = null;
-      });
-    }
-    return runningPromise;
+    if (runningPromise) return runningPromise;
+
+    let resolveRun;
+    let rejectRun;
+    const ownerPromise = new Promise((resolve, reject) => {
+      resolveRun = resolve;
+      rejectRun = reject;
+    });
+    runningPromise = ownerPromise;
+
+    // drain() starts synchronously, so the first queued task is claimed immediately just as
+    // before. The pre-installed owner promise closes the completion gap without delaying that
+    // admission. On failure, retain ownership until the rejection is propagated so retry and
+    // discard semantics remain unchanged.
+    drain(ownerPromise).then(
+      (value) => resolveRun(value),
+      (error) => {
+        if (runningPromise === ownerPromise) runningPromise = null;
+        rejectRun(error);
+      }
+    );
+    return ownerPromise;
   }
 
   return {

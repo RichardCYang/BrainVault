@@ -20,6 +20,30 @@ function structuredMetadataError() {
   });
 }
 
+test("an enqueue during drain settlement starts a fresh writer run", async () => {
+  const first = deferred();
+  const calls = [];
+  const queue = createLatestWriteQueue((task) => {
+    calls.push(task);
+    if (task === "first") return first.promise;
+    return Promise.resolve(task);
+  });
+
+  const firstCompletion = queue.enqueue("first");
+  await Promise.resolve();
+
+  let lateCompletion;
+  first.promise.then(() => {
+    lateCompletion = queue.enqueue("late");
+  });
+  first.resolve("first-result");
+
+  assert.equal(await firstCompletion, "first-result");
+  assert.equal(await lateCompletion, "late");
+  assert.deepEqual(calls, ["first", "late"]);
+  assert.equal(queue.busy, false);
+});
+
 test("a definitive structured metadata rejection does not remain in the retry slot", async () => {
   const calls = [];
   const error = structuredMetadataError();
