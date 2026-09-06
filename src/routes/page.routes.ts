@@ -1016,7 +1016,10 @@ async function replaceTags(client: DbClient, pageId: string, tagNames: string[])
 
   for (const name of uniqueNames) {
     await client.execute("INSERT IGNORE INTO tags (id, name) VALUES (?, ?)", [createId("tag"), name]);
-    const tag = await client.queryOne<TagRow>("SELECT * FROM tags WHERE name = ?", [name]);
+    // INSERT IGNORE uses current duplicate-key checks, while an ordinary SELECT under
+    // REPEATABLE READ can still be pinned to an older read view. Use a locking/current
+    // read so a tag concurrently created after this transaction snapshot is not lost.
+    const tag = await client.queryOne<TagRow>("SELECT * FROM tags WHERE name = ? FOR UPDATE", [name]);
     if (tag) {
       await client.execute("INSERT IGNORE INTO page_tags (page_id, tag_id) VALUES (?, ?)", [pageId, tag.id]);
     }
