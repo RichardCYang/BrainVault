@@ -2481,9 +2481,13 @@ async function importRows(
   // Page-delete receipts can replay post-COMMIT attachment cleanup. A restore
   // starts a new attachment filesystem generation and may intentionally restore
   // unreferenced files as retainedAttachments, so pre-restore delete receipts
-  // must not be allowed to clean up that new generation. The caller holds the
-  // user row lock, matching permanent page deletion's receipt lock order.
-  await client.execute("DELETE FROM page_delete_mutations WHERE actor_id = ?", [userId]);
+  // must not survive into that new generation. Collection administrators can
+  // create receipts whose actor_id differs from the page owner's workspace;
+  // invalidate both roles while the caller holds the owner user-row lock.
+  await client.execute(
+    "DELETE FROM page_delete_mutations WHERE actor_id = ? OR workspace_owner_id = ?",
+    [userId, userId]
+  );
   // Block-order receipts are page-generation scoped. A full restore replaces every
   // owned page/block with a new optimistic-version generation, so a delayed
   // pre-restore reorder must conflict against restoreVersion instead of being
