@@ -44,11 +44,16 @@ export function createLatestWriteQueue(
         // A structured editor can enqueue a canonical payload while an older transient snapshot
         // is still in flight. When that older snapshot is definitively rejected, allow the newer
         // snapshot to replace it instead of surfacing a stale error and stopping the drain.
-        if (
-          pendingTask !== null
-          && pendingGeneration === taskGeneration
-          && canSupersede(error, task, pendingTask)
-        ) continue;
+        if (pendingTask !== null && pendingGeneration === taskGeneration) {
+          if (canSupersede(error, task, pendingTask)) continue;
+
+          // A caller that classified this failure as non-retryable has already surfaced
+          // the rejection to the editor. Do not leave a newer payload from the same
+          // optimistic-lock generation armed for an unrelated later flush. The editor's
+          // durable draft remains the recovery source and can be re-admitted explicitly.
+          pendingTask = null;
+          pendingGeneration = null;
+        }
         throw error;
       }
     }

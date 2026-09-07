@@ -80,6 +80,34 @@ describe("Latest write queue", () => {
     expect(calls).toEqual(["invalid", "latest-valid"]);
   });
 
+  it("drops a queued newer edit after a non-retryable failure", async () => {
+    const firstAttempt = deferred();
+    const calls = [];
+    const conflictError = Object.assign(new Error("optimistic conflict"), {
+      status: 409,
+      code: "PAGE_EDIT_CONFLICT"
+    });
+    const queue = createLatestWriteQueue(async (value) => {
+      calls.push(value);
+      if (value === "stale") await firstAttempt.promise;
+      return value;
+    }, {
+      shouldRetry: () => false
+    });
+
+    const saving = queue.enqueue("stale");
+    const queued = queue.enqueue("newer-local");
+    await Promise.resolve();
+    firstAttempt.reject(conflictError);
+
+    await expect(saving).rejects.toBe(conflictError);
+    await expect(queued).rejects.toBe(conflictError);
+    expect(calls).toEqual(["stale"]);
+    expect(queue.busy).toBe(false);
+    await expect(queue.flush()).resolves.toBeUndefined();
+    expect(calls).toEqual(["stale"]);
+  });
+
   it("lets a newer canonical structured payload supersede a rejected stale snapshot", async () => {
     const firstAttempt = deferred();
     const calls = [];

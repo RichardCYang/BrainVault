@@ -122,6 +122,36 @@ test("a definitive structured metadata rejection does not remain in the retry sl
   assert.deepEqual(calls, ["invalid", "valid"]);
 });
 
+test("a definitive rejection drops a non-superseding queued edit instead of arming a later flush", async () => {
+  const first = deferred();
+  const calls = [];
+  const error = Object.assign(new Error("optimistic conflict"), {
+    status: 409,
+    code: "PAGE_EDIT_CONFLICT"
+  });
+  const queue = createLatestWriteQueue(async (task) => {
+    calls.push(task);
+    if (task === "stale") await first.promise;
+    return task;
+  }, {
+    shouldRetry: () => false
+  });
+
+  const firstCompletion = queue.enqueue("stale");
+  const queuedCompletion = queue.enqueue("newer-local");
+  const firstRejection = assert.rejects(firstCompletion, (caught) => caught === error);
+  const queuedRejection = assert.rejects(queuedCompletion, (caught) => caught === error);
+  await Promise.resolve();
+  first.reject(error);
+
+  await firstRejection;
+  await queuedRejection;
+  assert.deepEqual(calls, ["stale"]);
+  assert.equal(queue.busy, false);
+  assert.equal(await queue.flush(), undefined);
+  assert.deepEqual(calls, ["stale"], "a later flush must not resurrect the rejected generation");
+});
+
 test("a newer canonical structured payload supersedes an older rejected snapshot", async () => {
   const first = deferred();
   const calls = [];
@@ -168,6 +198,19 @@ test("an ambiguous write is still retried before a newer edit", async () => {
   assert.equal(queue.busy, false);
 });
 
+
+test("direct optimistic-lock conflicts require explicit overwrite admission", async () => {
+  const client = (await readFile(new URL("../public/app.js", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
+  const titleSaveStart = client.indexOf("async function savePageTitleNow");
+  const titleSaveEnd = client.indexOf("function schedulePageTitleSave", titleSaveStart);
+  const titleSave = client.slice(titleSaveStart, titleSaveEnd);
+  assert.match(titleSave, /error\?\.code === "PAGE_EDIT_CONFLICT"[\s\S]*pageTitleDraftConflict = true/);
+
+  const blockSaveStart = client.indexOf("async function saveBlockRow");
+  const blockSaveEnd = client.indexOf("function scheduleBlockSave", blockSaveStart);
+  const blockSave = client.slice(blockSaveStart, blockSaveEnd);
+  assert.match(blockSave, /error\?\.code === "BLOCK_EDIT_CONFLICT"[\s\S]*currentRow\.dataset\.draftConflict = "true"/);
+});
 
 test("the browser block queue wires HTTP-aware retry and structured supersession policies", async () => {
   const client = await readFile(new URL("../public/app.js", import.meta.url), "utf8");

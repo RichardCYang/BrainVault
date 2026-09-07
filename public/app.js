@@ -15128,6 +15128,16 @@ async function saveBlockRow(row, options = {}) {
     const currentRow = findRenderedBlockRow(blockId) ?? row;
     currentRow.classList.remove("is-saving");
     currentRow.classList.add("is-dirty", "save-error");
+    if (
+      error?.code === "BLOCK_EDIT_CONFLICT"
+      && isCurrentAuthenticatedSessionScope(authenticationScope)
+      && state.selectedPage?.id === task.pageId
+      && currentRow.dataset.blockId === blockId
+    ) {
+      // Preserve the draft's rejected base version until the user explicitly confirms
+      // an overwrite through promoteBlockDraftConflict().
+      currentRow.dataset.draftConflict = "true";
+    }
     throw error;
   } finally {
     syncBeforeUnloadProtection();
@@ -17454,6 +17464,19 @@ async function savePageTitleNow({
     const data = await pageTitleSaveQueue.enqueue(task);
     if (!quiet) setStatus(t("status.pageTitleSaved"));
     return data;
+  } catch (error) {
+    if (
+      error?.code === "PAGE_EDIT_CONFLICT"
+      && isCurrentAuthenticatedSessionScope(authenticationScope)
+      && state.selectedPage?.id === pageId
+    ) {
+      // Keep the durable draft on its original optimistic-lock generation. A later
+      // canonical refresh must not donate a newer page version and silently turn this
+      // rejected title into an overwrite; the existing conflict flow requires consent.
+      pageTitleDraftConflict = true;
+      elements.pageTitle.classList.add("save-error");
+    }
+    throw error;
   } finally {
     syncBeforeUnloadProtection();
   }

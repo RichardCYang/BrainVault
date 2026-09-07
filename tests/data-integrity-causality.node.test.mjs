@@ -54,17 +54,16 @@ test("legacy page archive DELETE keeps its acknowledgement causally bound to the
   );
 
   const transactionStart = route.indexOf("const archivedPage = await transaction(async (client) => {");
-  const pageLock = route.indexOf(
-    "getPageAccess(pageId, user.id, client, { lockPage: true })",
-    transactionStart
-  );
+  const pageLock = route.indexOf("const access = await getPageAccess(", transactionStart);
+  const pageLockOptions = route.indexOf("{ lockPage: true, lockAccess: true }", pageLock);
   const causalResponse = route.indexOf("return updatedPage;", pageLock);
   const transactionEnd = route.indexOf("\n      });", causalResponse);
   const send = route.indexOf("res.json({ page: toPage(archivedPage) });", transactionEnd);
 
   assert.ok(transactionStart >= 0);
   assert.ok(pageLock > transactionStart);
-  assert.ok(causalResponse > pageLock);
+  assert.ok(pageLockOptions > pageLock);
+  assert.ok(causalResponse > pageLockOptions);
   assert.ok(transactionEnd > causalResponse);
   assert.ok(send > transactionEnd);
   assert.doesNotMatch(route.slice(transactionEnd, send), /assertOwnedPage\(pageId, user\.id\)/);
