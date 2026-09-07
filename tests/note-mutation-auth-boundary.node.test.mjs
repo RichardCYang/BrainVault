@@ -55,7 +55,7 @@ test("page create, history reset, update, archive/delete, and tags revalidate re
 
   const update = section(pages, 'pageRouter.patch("/:pageId"', 'pageRouter.delete(\n  "/:pageId"');
   assert.match(update, /const authScope = requireRequestAuthScope\(req\)/);
-  assert.match(update, /transaction\(async \(client\) => \{\s+await assertCurrentAuthSessionBoundary\(user\.id, authScope, client\)/);
+  assert.match(update, /transaction\(async \(client\) => \{[\s\S]*await assertCurrentAuthSessionBoundary\(user\.id, authScope, client\)/);
 
   const deletion = section(pages, 'pageRouter.delete(\n  "/:pageId"', 'pageRouter.put("/:pageId/tags"');
   assert.match(deletion, /const authScope = requireRequestAuthScope\(req\)/);
@@ -67,7 +67,7 @@ test("page create, history reset, update, archive/delete, and tags revalidate re
 
   const tags = section(pages, 'pageRouter.put("/:pageId/tags"', 'function escapeHtmlAttribute');
   assert.match(tags, /const authScope = requireRequestAuthScope\(req\)/);
-  assert.match(tags, /transaction\(async \(client\) => \{\s+await assertCurrentAuthSessionBoundary\(user\.id, authScope, client\)/);
+  assert.match(tags, /transaction\(async \(client\) => \{[\s\S]*await assertCurrentAuthSessionBoundary\(user\.id, authScope, client\)/);
 });
 
 test("block attachment/create/update/delete/reorder mutations revalidate request auth before durable changes", () => {

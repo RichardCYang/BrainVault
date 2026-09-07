@@ -191,6 +191,108 @@ function assertPageCommentMutationAdmission(
   );
 }
 
+type PageShareAdministrationAdmission = Readonly<{
+  ownerId: string;
+  ownerWorkspaceGeneration: number;
+  collectionId: string | null;
+  shareGeneration: string | null;
+}>;
+
+async function capturePageShareAdministrationAdmission(
+  pageId: string,
+  userId: string
+): Promise<PageShareAdministrationAdmission> {
+  // Direct-share removal is also available to collection administrators. Capture
+  // the page owner's workspace generation with the exact administrator grant so
+  // a stale request cannot cross a restore that recreates the same stable IDs.
+  const row = await db.queryOne<{
+    owner_id: string;
+    attachment_generation: number | bigint | string;
+    collection_id: string | null;
+    collection_permission: "READ" | "WRITE" | "ADMIN" | null;
+    collection_share_generation: string | null;
+    direct_share_user_id: string | null;
+  }>(
+    `SELECT p.owner_id,
+            u.attachment_generation,
+            pcm.collection_id,
+            cs.permission AS collection_permission,
+            cs.generation AS collection_share_generation,
+            ps.user_id AS direct_share_user_id
+     FROM pages p
+     INNER JOIN users u ON u.id = p.owner_id
+     LEFT JOIN page_collection_memberships pcm ON pcm.page_id = p.id
+     LEFT JOIN collection_shares cs
+       ON cs.collection_id = pcm.collection_id AND cs.user_id = ?
+     LEFT JOIN page_shares ps
+       ON ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+     WHERE p.id = ?`,
+    [userId, userId, pageId]
+  );
+  if (!row) throw notFound("Page");
+
+  if (row.owner_id !== userId) {
+    if (!row.collection_permission && !row.direct_share_user_id) throw notFound("Page");
+    if (row.collection_permission !== "ADMIN") {
+      throw new ApiError(403, "PAGE_ADMIN_REQUIRED", "Administrator permission is required for this operation");
+    }
+    if (!row.collection_share_generation) {
+      throw new Error(`Missing collection administrator generation for page share target: ${pageId}`);
+    }
+  }
+
+  const ownerWorkspaceGeneration = Number(row.attachment_generation);
+  if (!Number.isSafeInteger(ownerWorkspaceGeneration) || ownerWorkspaceGeneration < 1) {
+    throw new Error(`Invalid workspace generation for page owner: ${row.owner_id}`);
+  }
+
+  return Object.freeze({
+    ownerId: row.owner_id,
+    ownerWorkspaceGeneration,
+    collectionId: row.collection_id,
+    shareGeneration: row.owner_id === userId ? null : row.collection_share_generation
+  });
+}
+
+async function assertPageShareAdministrationOwnerWorkspaceGeneration(
+  admission: PageShareAdministrationAdmission,
+  actorId: string,
+  client: DbClient
+) {
+  if (admission.ownerId === actorId) return;
+  const currentGeneration = await lockUserAttachmentGeneration(client, admission.ownerId);
+  if (currentGeneration === undefined) throw notFound("Page");
+  if (currentGeneration === admission.ownerWorkspaceGeneration) return;
+  throw new ApiError(
+    409,
+    "WORKSPACE_RESTORED",
+    "The page owner's workspace was restored while page sharing was being changed. Refresh before retrying."
+  );
+}
+
+function assertPageShareAdministrationMutationAdmission(
+  admission: PageShareAdministrationAdmission,
+  actorId: string,
+  currentAccess: Awaited<ReturnType<typeof getPageAccess>>
+) {
+  const stillAuthorized = currentAccess.page.owner_id === admission.ownerId
+    && (
+      admission.ownerId === actorId
+        ? currentAccess.role === "OWNER" && currentAccess.scope === "OWNER"
+        : currentAccess.role === "ADMIN"
+          && currentAccess.scope === "COLLECTION"
+          && currentAccess.collectionId === admission.collectionId
+          && currentAccess.shareGeneration === admission.shareGeneration
+    );
+  if (stillAuthorized) return;
+
+  throw new ApiError(
+    409,
+    "PAGE_SHARE_ACCESS_CHANGED",
+    "Page administration access changed while sharing was being changed. Refresh before retrying."
+  );
+}
+
 const shareUserSchema = z.object({
   username: usernameSchema
 });
@@ -783,10 +885,19 @@ collaborationRouter.delete(
       const pageId = String(req.params.pageId);
       const sharedUserId = String(req.params.userId);
       const expectedGeneration = String(req.body.expectedGeneration);
+      const administrationAdmission = await capturePageShareAdministrationAdmission(pageId, actor.id);
       const result = await transaction(async (client) => {
+        await lockCollaborationMutationUsers(client, [actor.id, administrationAdmission.ownerId]);
         await assertCurrentAuthSessionBoundary(actor.id, authScope, client);
-        const access = await getPageAccess(pageId, actor.id, client, { lockPage: true });
+        await assertPageShareAdministrationOwnerWorkspaceGeneration(administrationAdmission, actor.id, client);
+        const access = await getPageAccess(
+          pageId,
+          actor.id,
+          client,
+          { lockPage: true, lockAccess: true }
+        );
         assertPageCanAdminister(access);
+        assertPageShareAdministrationMutationAdmission(administrationAdmission, actor.id, access);
         const page = access.page;
         const workspaceOwnerId = page.owner_id;
         assertShareablePage(page);

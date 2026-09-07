@@ -855,6 +855,108 @@ function assertPageCreateParentAdmission(
   );
 }
 
+type PageAdministrationMutationAdmission = Readonly<{
+  ownerId: string;
+  ownerWorkspaceGeneration: number;
+  collectionId: string | null;
+  shareGeneration: string | null;
+}>;
+
+async function capturePageAdministrationMutationAdmission(
+  pageId: string,
+  userId: string
+): Promise<PageAdministrationMutationAdmission> {
+  // Capture the owner workspace lineage and the exact administrator grant in
+  // one statement. A restore can legitimately recreate the same stable page,
+  // membership, version, and share-generation identifiers.
+  const row = await db.queryOne<{
+    owner_id: string;
+    attachment_generation: number | bigint | string;
+    collection_id: string | null;
+    collection_permission: CollectionSharePermission | null;
+    collection_share_generation: string | null;
+    direct_share_user_id: string | null;
+  }>(
+    `SELECT p.owner_id,
+            u.attachment_generation,
+            pcm.collection_id,
+            cs.permission AS collection_permission,
+            cs.generation AS collection_share_generation,
+            ps.user_id AS direct_share_user_id
+     FROM pages p
+     INNER JOIN users u ON u.id = p.owner_id
+     LEFT JOIN page_collection_memberships pcm ON pcm.page_id = p.id
+     LEFT JOIN collection_shares cs
+       ON cs.collection_id = pcm.collection_id AND cs.user_id = ?
+     LEFT JOIN page_shares ps
+       ON ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+     WHERE p.id = ?`,
+    [userId, userId, pageId]
+  );
+  if (!row) throw notFound("Page");
+
+  if (row.owner_id !== userId) {
+    if (!row.collection_permission && !row.direct_share_user_id) throw notFound("Page");
+    if (row.collection_permission !== "ADMIN") {
+      throw new ApiError(403, "PAGE_ADMIN_REQUIRED", "Administrator permission is required for this operation");
+    }
+    if (!row.collection_share_generation) {
+      throw new Error(`Missing collection administrator generation for page: ${pageId}`);
+    }
+  }
+
+  const ownerWorkspaceGeneration = Number(row.attachment_generation);
+  if (!Number.isSafeInteger(ownerWorkspaceGeneration) || ownerWorkspaceGeneration < 1) {
+    throw new Error(`Invalid workspace generation for page owner: ${row.owner_id}`);
+  }
+
+  return Object.freeze({
+    ownerId: row.owner_id,
+    ownerWorkspaceGeneration,
+    collectionId: row.collection_id,
+    shareGeneration: row.owner_id === userId ? null : row.collection_share_generation
+  });
+}
+
+async function assertPageAdministrationOwnerWorkspaceGeneration(
+  admission: PageAdministrationMutationAdmission,
+  actorId: string,
+  client: DbClient
+) {
+  if (admission.ownerId === actorId) return;
+  const currentGeneration = await lockUserAttachmentGeneration(client, admission.ownerId);
+  if (currentGeneration === undefined) throw notFound("Page");
+  if (currentGeneration === admission.ownerWorkspaceGeneration) return;
+  throw new ApiError(
+    409,
+    "WORKSPACE_RESTORED",
+    "The page owner's workspace was restored while this page administration request was in progress. Refresh before retrying."
+  );
+}
+
+function assertPageAdministrationMutationAdmission(
+  admission: PageAdministrationMutationAdmission,
+  actorId: string,
+  currentAccess: PageAccess
+) {
+  const stillAuthorized = currentAccess.page.owner_id === admission.ownerId
+    && (
+      admission.ownerId === actorId
+        ? currentAccess.role === "OWNER" && currentAccess.scope === "OWNER"
+        : currentAccess.role === "ADMIN"
+          && currentAccess.scope === "COLLECTION"
+          && currentAccess.collectionId === admission.collectionId
+          && currentAccess.shareGeneration === admission.shareGeneration
+    );
+  if (stillAuthorized) return;
+
+  throw new ApiError(
+    409,
+    "PAGE_ADMIN_ACCESS_CHANGED",
+    "Page administration access changed while this request was in progress. Refresh before retrying."
+  );
+}
+
 async function assertOwnedParentPage(
   parentPageId: string | null | undefined,
   ownerId: string,
@@ -1717,6 +1819,7 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
     const pageId = String(req.params.pageId);
     const body = req.body as z.infer<typeof updatePageSchema>;
     const { tags, expectedVersion, mutationId, ...updates } = body;
+    const administrationAdmission = await capturePageAdministrationMutationAdmission(pageId, user.id);
     const mutationHash = mutationId
       ? createMutationRequestHash({ expectedVersion, tags, updates })
       : undefined;
@@ -1754,9 +1857,17 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
 
     let collaborationMembershipChangedLineages: PageCollaborationDocumentEpoch[] = [];
     const page = await transaction(async (client) => {
+      await lockPageDeleteUsers(client, [user.id, administrationAdmission.ownerId]);
       await assertCurrentAuthSessionBoundary(user.id, authScope, client);
-      const initialAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
+      await assertPageAdministrationOwnerWorkspaceGeneration(administrationAdmission, user.id, client);
+      const initialAccess = await getPageAccess(
+        pageId,
+        user.id,
+        client,
+        { lockPage: true, lockAccess: true }
+      );
       assertPageCanAdminister(initialAccess);
+      assertPageAdministrationMutationAdmission(administrationAdmission, user.id, initialAccess);
       const workspaceOwnerId = initialAccess.page.owner_id;
       let existingPage: PageRow = initialAccess.page;
       let lockedRows: PageDeletionPageRow[] | undefined;
@@ -2225,8 +2336,7 @@ pageRouter.delete(
         return;
       }
 
-      const archiveAccess = await getPageAccess(pageId, user.id);
-      assertPageCanAdminister(archiveAccess);
+      const administrationAdmission = await capturePageAdministrationMutationAdmission(pageId, user.id);
       if (!body.expectedVersion) {
         throw new ApiError(
           400,
@@ -2236,9 +2346,17 @@ pageRouter.delete(
       }
       const expectedVersion = body.expectedVersion;
       const archivedPage = await transaction(async (client) => {
+        await lockPageDeleteUsers(client, [user.id, administrationAdmission.ownerId]);
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
-        const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
+        await assertPageAdministrationOwnerWorkspaceGeneration(administrationAdmission, user.id, client);
+        const access = await getPageAccess(
+          pageId,
+          user.id,
+          client,
+          { lockPage: true, lockAccess: true }
+        );
         assertPageCanAdminister(access);
+        assertPageAdministrationMutationAdmission(administrationAdmission, user.id, access);
         const page = access.page;
         const workspaceOwnerId = page.owner_id;
         await assertCollaborationMaterialized(client, [pageId]);
@@ -2289,10 +2407,19 @@ pageRouter.put("/:pageId/tags", validate({ params: idParamSchema, body: tagSchem
     const authScope = requireRequestAuthScope(req);
     const pageId = String(req.params.pageId);
     const { tags, expectedVersion } = req.body as z.infer<typeof tagSchema>;
+    const administrationAdmission = await capturePageAdministrationMutationAdmission(pageId, user.id);
     const result = await transaction(async (client) => {
+      await lockPageDeleteUsers(client, [user.id, administrationAdmission.ownerId]);
       await assertCurrentAuthSessionBoundary(user.id, authScope, client);
-      const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
+      await assertPageAdministrationOwnerWorkspaceGeneration(administrationAdmission, user.id, client);
+      const access = await getPageAccess(
+        pageId,
+        user.id,
+        client,
+        { lockPage: true, lockAccess: true }
+      );
       assertPageCanAdminister(access);
+      assertPageAdministrationMutationAdmission(administrationAdmission, user.id, access);
       const existingPage = access.page;
       const workspaceOwnerId = existingPage.owner_id;
       assertPageNotArchived(existingPage);
