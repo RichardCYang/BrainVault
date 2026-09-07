@@ -46,7 +46,8 @@ function snapshot(comments) {
     collaborationStates,
     comments.map(comment),
     [],
-    []
+    [],
+    { ownerId: "user_owner", generation: 1 }
   );
 }
 

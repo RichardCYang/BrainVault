@@ -23,7 +23,8 @@ function snapshot(memberships) {
     [],
     [],
     memberships,
-    []
+    [],
+    { ownerId: "user_owner", generation: 1 }
   );
 }
 

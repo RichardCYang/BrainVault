@@ -35,7 +35,8 @@ function snapshot(versionHistory) {
     [],
     [],
     [],
-    versionHistory
+    versionHistory,
+    { ownerId: "user_owner", generation: 1 }
   );
 }
 

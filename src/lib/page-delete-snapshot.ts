@@ -45,6 +45,11 @@ export type PageDeletionSnapshotVersionHistory = {
   row_hash: string;
 };
 
+export type PageDeletionSnapshotWorkspace = {
+  ownerId: string;
+  generation: number;
+};
+
 function compareText(left: string, right: string) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
@@ -82,9 +87,17 @@ export function createPageDeletionSnapshot(
   collaborationStates: readonly PageDeletionSnapshotCollaborationState[],
   comments: readonly PageDeletionSnapshotComment[],
   collectionMemberships: readonly PageDeletionSnapshotCollectionMembership[],
-  versionHistory: readonly PageDeletionSnapshotVersionHistory[]
+  versionHistory: readonly PageDeletionSnapshotVersionHistory[],
+  workspace: PageDeletionSnapshotWorkspace
 ) {
+  if (!workspace?.ownerId || !Number.isSafeInteger(workspace.generation) || workspace.generation < 1) {
+    throw new Error("Invalid page deletion workspace generation");
+  }
   const hash = createHash("sha256");
+  // A restore can recreate the same stable page/block/share identifiers and versions.
+  // Bind destructive intent to the exact owner workspace generation so a stale
+  // collection-admin confirmation cannot delete the newly restored generation.
+  hash.update(`workspace\0${workspace.ownerId}\0${workspace.generation}\n`);
   for (const page of [...pages].sort((left, right) => compareText(left.id, right.id))) {
     hash.update(
       `page\0${page.id}\0${page.parent_page_id ?? ""}\0${Number(page.edit_version ?? 1)}\0${Number(page.content_version ?? 1)}\n`

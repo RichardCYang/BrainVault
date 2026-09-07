@@ -71,6 +71,40 @@ test("an enqueue after discard gets a fresh runner when the discarded write late
   assert.equal(queue.busy, false);
 });
 
+test("a flush started before discard never adopts post-discard writes", async () => {
+  const first = deferred();
+  const second = deferred();
+  const calls = [];
+  const queue = createLatestWriteQueue(async (task) => {
+    calls.push(task);
+    if (task === "old") return first.promise;
+    if (task === "new") return second.promise;
+    return task;
+  }, { shouldRetry: () => false });
+
+  const oldCompletion = queue.enqueue("old");
+  await Promise.resolve();
+  let flushSettled = false;
+  const oldFlush = queue.flush().then((value) => {
+    flushSettled = true;
+    return value;
+  });
+  await Promise.resolve();
+
+  queue.discard();
+  const newCompletion = queue.enqueue("new");
+  first.resolve("old-result");
+
+  assert.equal(await oldCompletion, "old-result");
+  assert.equal(await oldFlush, "old-result");
+  assert.equal(flushSettled, true);
+  assert.deepEqual(calls, ["old", "new"]);
+
+  second.resolve("new-result");
+  assert.equal(await newCompletion, "new-result");
+  assert.equal(queue.busy, false);
+});
+
 test("a definitive structured metadata rejection does not remain in the retry slot", async () => {
   const calls = [];
   const error = structuredMetadataError();

@@ -167,3 +167,37 @@ describe("Latest write queue", () => {
     expect(attempts).toBe(2);
   });
 });
+
+it("a flush started before discard never adopts post-discard writes", async () => {
+  const first = deferred();
+  const second = deferred();
+  const calls = [];
+  const queue = createLatestWriteQueue(async (task) => {
+    calls.push(task);
+    if (task === "old") return first.promise;
+    if (task === "new") return second.promise;
+    return task;
+  }, { shouldRetry: () => false });
+
+  const oldCompletion = queue.enqueue("old");
+  await Promise.resolve();
+  let flushSettled = false;
+  const oldFlush = queue.flush().then((value) => {
+    flushSettled = true;
+    return value;
+  });
+  await Promise.resolve();
+
+  queue.discard();
+  const newCompletion = queue.enqueue("new");
+  first.resolve("old-result");
+
+  await expect(oldCompletion).resolves.toBe("old-result");
+  await expect(oldFlush).resolves.toBe("old-result");
+  expect(flushSettled).toBe(true);
+  expect(calls).toEqual(["old", "new"]);
+
+  second.resolve("new-result");
+  await expect(newCompletion).resolves.toBe("new-result");
+  expect(queue.busy).toBe(false);
+});

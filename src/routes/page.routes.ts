@@ -193,6 +193,19 @@ function isDuplicateEntryError(error: unknown) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ER_DUP_ENTRY";
 }
 
+async function getPageDeletionWorkspaceGeneration(client: DbClient, ownerId: string) {
+  const row = await client.queryOne<{ attachment_generation: number | string | bigint }>(
+    "SELECT attachment_generation FROM users WHERE id = ?",
+    [ownerId]
+  );
+  if (!row) throw notFound("Page owner");
+  const generation = Number(row.attachment_generation);
+  if (!Number.isSafeInteger(generation) || generation < 1) {
+    throw new Error(`Invalid attachment generation for page owner: ${ownerId}`);
+  }
+  return generation;
+}
+
 async function lockPageDeleteUsers(client: DbClient, userIds: string[]) {
   const uniqueIds = [...new Set(userIds)].sort();
   if (!uniqueIds.length) return;
@@ -580,7 +593,9 @@ function assertPageDeletionSnapshot(
   collaborationStates: PageDeletionCollaborationRow[],
   comments: PageDeletionCommentRow[],
   collectionMemberships: PageDeletionCollectionMembershipRow[],
-  versionHistory: PageDeletionVersionHistoryRow[]
+  versionHistory: PageDeletionVersionHistoryRow[],
+  workspaceOwnerId: string,
+  workspaceGeneration: number
 ) {
   if (
     createPageDeletionSnapshot(
@@ -590,7 +605,8 @@ function assertPageDeletionSnapshot(
       collaborationStates,
       comments,
       collectionMemberships,
-      versionHistory
+      versionHistory,
+      { ownerId: workspaceOwnerId, generation: workspaceGeneration }
     ) === expectedSnapshot
   ) return;
   throw new ApiError(
@@ -1621,6 +1637,10 @@ pageRouter.get(
       const result = await transaction(async (client) => {
         const access = await getPageAccess(pageId, user.id, client);
         assertPageCanAdminister(access);
+        // This plain read joins the same REPEATABLE READ snapshot as the page/tree
+        // preview. A later owner restore increments attachment_generation, making
+        // this opaque deletion snapshot stale even if all restored rows are identical.
+        const workspaceGeneration = await getPageDeletionWorkspaceGeneration(client, access.page.owner_id);
         const treeRows = await getOwnedPageTreeRows(access.page.owner_id, client);
         const subtreeRows = getPageSubtreeRows(pageId, treeRows);
         const blockRows = await getPageDeletionBlocks(client, subtreeRows);
@@ -1639,7 +1659,8 @@ pageRouter.get(
             collaborationRows,
             commentRows,
             membershipRows,
-            versionHistoryRows
+            versionHistoryRows,
+            { ownerId: access.page.owner_id, generation: workspaceGeneration }
           ),
           pageIds: subtreeRows.map((page) => page.id).sort((left, right) => left.localeCompare(right)),
           pages: subtreeRows
@@ -2088,7 +2109,9 @@ pageRouter.delete(
             collaborationRows,
             commentRows,
             membershipRows,
-            versionHistoryRows
+            versionHistoryRows,
+            workspaceOwnerId,
+            attachmentGeneration
           );
 
           const pageIds = subtreeRows.map((row) => row.id);

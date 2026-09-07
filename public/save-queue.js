@@ -115,8 +115,16 @@ export function createLatestWriteQueue(
       return ensureRunning(discardGeneration);
     },
     async flush() {
-      while (retryTask !== null || pendingTask !== null || runningPromise) {
-        await ensureRunning(discardGeneration);
+      // A flush belongs to the generation that existed when it started. If a
+      // discard occurs while it is waiting for an older request, do not let the
+      // obsolete flush adopt writes admitted after that discard boundary.
+      const targetGeneration = discardGeneration;
+      while (
+        (retryTask !== null && retryGeneration === targetGeneration)
+        || (pendingTask !== null && pendingGeneration === targetGeneration)
+        || (runningPromise && runningGeneration === targetGeneration)
+      ) {
+        await ensureRunning(targetGeneration);
       }
       return lastResult;
     },
