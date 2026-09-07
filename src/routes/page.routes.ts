@@ -771,6 +771,7 @@ async function assertCollaborationMaterialized(client: DbClient, pageIds: string
 type PageCreateParentAdmission = Readonly<{
   pageId: string;
   ownerId: string;
+  ownerWorkspaceGeneration: number;
   collectionId: string | null;
   shareGeneration: string | null;
 }>;
@@ -780,22 +781,25 @@ async function capturePageCreateParentAdmission(
   userId: string
 ): Promise<PageCreateParentAdmission | null> {
   if (!parentPageId) return null;
-  // Capture the page, collection membership, and effective administrator grant
-  // in one statement. A workspace restore can reuse the stable page id while
-  // minting a fresh collection-share generation.
+  // Capture the page, owner workspace generation, collection membership, and
+  // effective administrator grant in one statement. The owner generation is
+  // authoritative even if a restore recreates stable page/share identifiers.
   const row = await db.queryOne<{
     page_id: string;
     owner_id: string;
+    attachment_generation: number | bigint | string;
     collection_id: string | null;
     collection_permission: CollectionSharePermission | null;
     share_generation: string | null;
   }>(
     `SELECT p.id AS page_id,
             p.owner_id,
+            u.attachment_generation,
             pcm.collection_id,
             cs.permission AS collection_permission,
             cs.generation AS share_generation
      FROM pages p
+     INNER JOIN users u ON u.id = p.owner_id
      LEFT JOIN page_collection_memberships pcm ON pcm.page_id = p.id
      LEFT JOIN collection_shares cs
        ON cs.collection_id = pcm.collection_id AND cs.user_id = ?
@@ -804,12 +808,33 @@ async function capturePageCreateParentAdmission(
   );
   if (!row) return null;
   if (row.owner_id !== userId && row.collection_permission !== "ADMIN") return null;
+  const ownerWorkspaceGeneration = Number(row.attachment_generation);
+  if (!Number.isSafeInteger(ownerWorkspaceGeneration) || ownerWorkspaceGeneration < 1) {
+    throw new Error(`Invalid workspace generation for page owner: ${row.owner_id}`);
+  }
   return Object.freeze({
     pageId: row.page_id,
     ownerId: row.owner_id,
+    ownerWorkspaceGeneration,
     collectionId: row.collection_id,
     shareGeneration: row.owner_id === userId ? null : row.share_generation
   });
+}
+
+async function assertPageCreateOwnerWorkspaceGeneration(
+  admission: PageCreateParentAdmission | null,
+  actorId: string,
+  client: DbClient
+) {
+  if (!admission || admission.ownerId === actorId) return;
+  const currentGeneration = await lockUserAttachmentGeneration(client, admission.ownerId);
+  if (currentGeneration === undefined) throw notFound("Page");
+  if (currentGeneration === admission.ownerWorkspaceGeneration) return;
+  throw new ApiError(
+    409,
+    "WORKSPACE_RESTORED",
+    "The page owner's workspace was restored while this page was being created. Refresh before retrying."
+  );
 }
 
 function assertPageCreateParentAdmission(
@@ -1214,6 +1239,10 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
 
     const page = await transaction(async (client) => {
       await assertCurrentAuthSessionBoundary(user.id, authScope, client);
+      // A delegated collection ADMIN's own workspace generation is independent
+      // of the page owner's restore generation. Lock/fence the owner before any
+      // receipt reservation or page insertion so a stale request cannot cross it.
+      await assertPageCreateOwnerWorkspaceGeneration(parentAdmission, user.id, client);
       const id = createId("pag");
       if (mutationId && mutationHash) {
         let reserved = true;

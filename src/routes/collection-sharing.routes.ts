@@ -32,6 +32,7 @@ import {
   needsCollaborationMaterialization
 } from "../lib/collaboration-protocol.js";
 import { assertNoActiveCollaborationWriteLeases } from "../lib/collaboration-write-lease.js";
+import { lockUserAttachmentGeneration } from "../lib/attachments.js";
 import {
   grantDirectPageRecovery,
   grantLegacyYjsPageRecovery,
@@ -118,6 +119,7 @@ async function getManageableCollection(
 
 type CollectionManagementAdmission = Readonly<{
   ownerId: string;
+  ownerWorkspaceGeneration: number;
   shareGeneration: string | null;
 }>;
 
@@ -125,22 +127,23 @@ async function captureCollectionManagementAdmission(
   collectionId: string,
   userId: string
 ): Promise<CollectionManagementAdmission> {
-  // Collection ADMIN is delegated authority owned by another workspace. A
-  // restore or revoke/re-grant can replace that authority without changing the
-  // administrator's own auth/workspace generation, so sparse share mutations
-  // must bind to the grant lineage that admitted the request.
+  // Collection ADMIN is delegated authority owned by another workspace. Bind
+  // admission to both the grant lineage and the owner's workspace generation:
+  // a restore boundary must remain authoritative even if stable IDs reappear.
   const row = await db.queryOne<{
     owner_id: string;
+    attachment_generation: number | bigint | string;
     is_collection: boolean;
     collection_permission: CollectionSharePermission | null;
     collection_share_generation: string | null;
     page_share_user_id: string | null;
   }>(
-    `SELECT p.owner_id, p.is_collection,
+    `SELECT p.owner_id, u.attachment_generation, p.is_collection,
             cs.permission AS collection_permission,
             cs.generation AS collection_share_generation,
             ps.user_id AS page_share_user_id
      FROM pages p
+     INNER JOIN users u ON u.id = p.owner_id
      LEFT JOIN page_collection_memberships pcm ON pcm.page_id = p.id
      LEFT JOIN collection_shares cs
        ON cs.collection_id = pcm.collection_id AND cs.user_id = ?
@@ -163,11 +166,31 @@ async function captureCollectionManagementAdmission(
     );
   }
 
+  const ownerWorkspaceGeneration = Number(row.attachment_generation);
+  if (!Number.isSafeInteger(ownerWorkspaceGeneration) || ownerWorkspaceGeneration < 1) {
+    throw new Error(`Invalid workspace generation for collection owner: ${row.owner_id}`);
+  }
   const shareGeneration = isOwner ? null : row.collection_share_generation;
   if (!isOwner && !shareGeneration) {
     throw new Error(`Missing collection administrator share generation for collection: ${collectionId}`);
   }
-  return Object.freeze({ ownerId: row.owner_id, shareGeneration });
+  return Object.freeze({ ownerId: row.owner_id, ownerWorkspaceGeneration, shareGeneration });
+}
+
+async function assertCollectionOwnerWorkspaceGeneration(
+  admission: CollectionManagementAdmission,
+  actorId: string,
+  client: DbClient
+) {
+  if (admission.ownerId === actorId) return;
+  const currentGeneration = await lockUserAttachmentGeneration(client, admission.ownerId);
+  if (currentGeneration === undefined) throw notFound("Collection");
+  if (currentGeneration === admission.ownerWorkspaceGeneration) return;
+  throw new ApiError(
+    409,
+    "WORKSPACE_RESTORED",
+    "The collection owner's workspace was restored while this request was in progress. Refresh before retrying."
+  );
 }
 
 function assertCollectionManagementAdmission(
@@ -348,6 +371,7 @@ collectionSharingRouter.post(
       const managementAdmission = await captureCollectionManagementAdmission(collectionId, actor.id);
       const result = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(actor.id, authScope, client);
+        await assertCollectionOwnerWorkspaceGeneration(managementAdmission, actor.id, client);
         const collectionAccess = await getManageableCollection(collectionId, actor.id, client, true);
         assertCollectionManagementAdmission(managementAdmission, collectionAccess);
         const ownerId = collectionAccess.page.owner_id;
@@ -478,6 +502,7 @@ collectionSharingRouter.patch(
       const managementAdmission = await captureCollectionManagementAdmission(collectionId, actor.id);
       const result = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(actor.id, authScope, client);
+        await assertCollectionOwnerWorkspaceGeneration(managementAdmission, actor.id, client);
         const collectionAccess = await getManageableCollection(collectionId, actor.id, client, true);
         assertCollectionManagementAdmission(managementAdmission, collectionAccess);
         const ownerId = collectionAccess.page.owner_id;
@@ -549,6 +574,7 @@ collectionSharingRouter.delete(
       const managementAdmission = await captureCollectionManagementAdmission(collectionId, actor.id);
       const result = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(actor.id, authScope, client);
+        await assertCollectionOwnerWorkspaceGeneration(managementAdmission, actor.id, client);
         const collectionAccess = await getManageableCollection(collectionId, actor.id, client, true);
         assertCollectionManagementAdmission(managementAdmission, collectionAccess);
         const ownerId = collectionAccess.page.owner_id;

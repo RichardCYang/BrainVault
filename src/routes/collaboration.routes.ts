@@ -107,6 +107,7 @@ async function lockCollaborationMutationUsers(client: DbClient, userIds: string[
 
 type PageCommentMutationAdmission = Readonly<{
   ownerId: string;
+  ownerWorkspaceGeneration: number;
   shareGeneration: string | null;
 }>;
 
@@ -115,20 +116,22 @@ async function capturePageCommentMutationAdmission(
   userId: string
 ): Promise<PageCommentMutationAdmission> {
   // A collaborator's own workspace generation does not change when the page
-  // owner restores their workspace. Capture the effective target grant in one
-  // statement so a request that waits behind that restore cannot silently adopt
-  // the replacement page/share generation before inserting a new comment.
+  // owner restores their workspace. Capture both the owner generation and the
+  // effective grant so a request cannot adopt a replacement page generation.
   const row = await db.queryOne<{
     owner_id: string;
+    attachment_generation: number | bigint | string;
     access_share_generation: string | null;
   }>(
     `SELECT p.owner_id,
+            u.attachment_generation,
             CASE
               WHEN p.owner_id = ? THEN NULL
               WHEN cs.user_id IS NOT NULL THEN cs.generation
               ELSE ps.generation
             END AS access_share_generation
      FROM pages p
+     INNER JOIN users u ON u.id = p.owner_id
      LEFT JOIN page_collection_memberships pcm ON pcm.page_id = p.id
      LEFT JOIN collection_shares cs
        ON cs.collection_id = pcm.collection_id AND cs.user_id = ?
@@ -144,11 +147,31 @@ async function capturePageCommentMutationAdmission(
   );
   if (!row) throw notFound("Page");
 
+  const ownerWorkspaceGeneration = Number(row.attachment_generation);
+  if (!Number.isSafeInteger(ownerWorkspaceGeneration) || ownerWorkspaceGeneration < 1) {
+    throw new Error(`Invalid workspace generation for page owner: ${row.owner_id}`);
+  }
   const shareGeneration = row.owner_id === userId ? null : row.access_share_generation;
   if (row.owner_id !== userId && !shareGeneration) {
     throw new Error(`Missing collaborator share generation for page comment target: ${pageId}`);
   }
-  return Object.freeze({ ownerId: row.owner_id, shareGeneration });
+  return Object.freeze({ ownerId: row.owner_id, ownerWorkspaceGeneration, shareGeneration });
+}
+
+async function assertPageCommentOwnerWorkspaceGeneration(
+  admission: PageCommentMutationAdmission,
+  actorId: string,
+  client: DbClient
+) {
+  if (admission.ownerId === actorId) return;
+  const currentGeneration = await lockUserAttachmentGeneration(client, admission.ownerId);
+  if (currentGeneration === undefined) throw notFound("Page");
+  if (currentGeneration === admission.ownerWorkspaceGeneration) return;
+  throw new ApiError(
+    409,
+    "WORKSPACE_RESTORED",
+    "The page owner's workspace was restored while this comment request was in progress. Refresh before retrying."
+  );
 }
 
 function assertPageCommentMutationAdmission(
@@ -479,6 +502,7 @@ collaborationRouter.post(
       const admission = await capturePageCommentMutationAdmission(pageId, user.id);
       const comment = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
+        await assertPageCommentOwnerWorkspaceGeneration(admission, user.id, client);
         const access = await getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true });
         assertPageCommentMutationAdmission(admission, access);
         assertPageCanEdit(access, "This shared collection is read-only for your account");
@@ -522,6 +546,7 @@ collaborationRouter.patch(
       const admission = await capturePageCommentMutationAdmission(pageId, user.id);
       const comment = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
+        await assertPageCommentOwnerWorkspaceGeneration(admission, user.id, client);
         const access = await getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true });
         assertPageCommentMutationAdmission(admission, access);
         assertPageCanEdit(access, "This shared collection is read-only for your account");
@@ -584,6 +609,7 @@ collaborationRouter.delete(
       const admission = await capturePageCommentMutationAdmission(pageId, user.id);
       await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
+        await assertPageCommentOwnerWorkspaceGeneration(admission, user.id, client);
         const access = await getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true });
         assertPageCommentMutationAdmission(admission, access);
         assertPageCanEdit(access, "This shared collection is read-only for your account");
