@@ -25,7 +25,9 @@ test("page delete rechecks navigation after snapshot, transition, and request pr
     /!isCurrentWorkspaceNavigation\(navigationGeneration\)/
   );
 
-  const transitionIndex = deletion.indexOf('withWorkspacePersistenceTransition("page-delete"');
+  const transitionIndex = deletion.indexOf(
+    'withWorkspacePersistenceTransitionForOwner(deletionOwnerId, "page-delete"'
+  );
   const submitIndex = deletion.indexOf("submitPageDeleteTask(", transitionIndex);
   assert.ok(transitionIndex >= 0 && submitIndex > transitionIndex);
   assert.match(

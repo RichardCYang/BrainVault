@@ -9372,6 +9372,14 @@ async function submitPageDeleteTask(task, authenticationScope, { requestGuard = 
 async function deleteNavigationTarget() {
   const target = state.activeNavigationMenuTarget;
   if (!target) return;
+  // Page writer sessions are fenced by the page owner's workspace, not by
+  // the acting administrator. Bind that owner before any asynchronous wait so
+  // a delegated collection admin cannot delete around another tab's writer.
+  const deletionOwnerId = getPageSummaryById(target.id)?.ownerId;
+  if (!deletionOwnerId) {
+    closeNavigationContextMenu({ restoreFocus: true });
+    throw new Error(t("errors.invalidResponse"));
+  }
   const authenticationScope = captureAuthenticatedSessionScope();
   const navigationGeneration = workspaceNavigationGeneration;
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
@@ -9476,7 +9484,7 @@ async function deleteNavigationTarget() {
     closeNavigationContextMenu();
     setStatus(t(isCollection ? "status.deletingCollection" : "status.deletingPage"));
 
-    const deleteResult = await withWorkspacePersistenceTransition("page-delete", async () => {
+    const deleteResult = await withWorkspacePersistenceTransitionForOwner(deletionOwnerId, "page-delete", async () => {
       // The transition can wait for every tab's writer lock and IndexedDB
       // recovery refresh. Navigation during that wait cancels an unsubmitted
       // destructive intent instead of carrying it into the newer workspace view.

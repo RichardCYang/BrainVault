@@ -180,7 +180,10 @@ describe("Data-loss prevention integration", () => {
     const deleteStart = client.indexOf("async function deleteNavigationTarget()");
     const deleteEnd = client.indexOf("function renderCollectionView", deleteStart);
     const deleteBody = client.slice(deleteStart, deleteEnd);
-    expect(deleteBody).toContain('withWorkspacePersistenceTransition("page-delete"');
+    expect(deleteBody).toContain("const deletionOwnerId = getPageSummaryById(target.id)?.ownerId");
+    expect(deleteBody).toContain(
+      'withWorkspacePersistenceTransitionForOwner(deletionOwnerId, "page-delete"'
+    );
     expect(deleteBody).toContain(
       'assertNoPendingLocalPageDraftsForPages(serverPageIds, "status.destructiveLocalDraftsPending")'
     );
