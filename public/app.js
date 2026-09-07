@@ -2497,12 +2497,19 @@ const pageTitleSaveQueue = createLatestWriteQueue(async (task) => {
   const storedExpectedVersion = task.userId
     ? pageDraftStore.loadPage(task.userId, task.pageId, task.draftSourceId)?.title?.expectedVersion
     : null;
-  const expectedVersion = getLatestKnownVersion(
-    state.selectedPage?.id === task.pageId ? pageTitleDraftExpectedVersion : null,
-    storedExpectedVersion,
-    task.expectedVersion,
-    currentPage?.version
-  );
+  // A retry of the same mutation id must keep the exact optimistic token that
+  // participated in the original request hash. Pin it only when this task first
+  // reaches the writer so a task queued behind an earlier successful save can
+  // still inherit that save's acknowledged version before its first request.
+  if (task.requestExpectedVersion === undefined) {
+    task.requestExpectedVersion = getLatestKnownVersion(
+      state.selectedPage?.id === task.pageId ? pageTitleDraftExpectedVersion : null,
+      storedExpectedVersion,
+      task.expectedVersion,
+      currentPage?.version
+    );
+  }
+  const expectedVersion = task.requestExpectedVersion;
   const data = await submitWithFreshMutationIdOnReuse(task, () => {
     assertCurrentAuthenticatedSessionScope(task.authenticationScope);
     return api(`/api/pages/${task.pageId}`, {
@@ -14895,12 +14902,18 @@ function getBlockSaveQueue(blockId) {
     const storedExpectedVersion = task.userId
       ? pageDraftStore.loadPage(task.userId, task.pageId, task.draftSourceId)?.blocks?.[blockId]?.expectedVersion
       : null;
-    const currentVersion = getLatestKnownVersion(
-      storedExpectedVersion,
-      task.row?.dataset.draftExpectedVersion,
-      task.expectedVersion,
-      getBlockById(blockId)?.version
-    );
+    // Preserve the optimistic token for the lifetime of this admitted task. An
+    // ambiguous retry reuses its mutation id and therefore must also reuse every
+    // request-hash input; a later queued task will pin its own version on admission.
+    if (task.requestExpectedVersion === undefined) {
+      task.requestExpectedVersion = getLatestKnownVersion(
+        storedExpectedVersion,
+        task.row?.dataset.draftExpectedVersion,
+        task.expectedVersion,
+        getBlockById(blockId)?.version
+      );
+    }
+    const currentVersion = task.requestExpectedVersion;
     const data = await submitWithFreshMutationIdOnReuse(task, () => {
       assertCurrentAuthenticatedSessionScope(task.authenticationScope);
       return api(`/api/blocks/${blockId}`, {
