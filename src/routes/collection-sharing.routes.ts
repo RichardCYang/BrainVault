@@ -107,10 +107,82 @@ async function getManageableCollection(
   client: DbClient,
   lockPage = false
 ) {
-  const access = await getPageAccess(collectionId, userId, client, { lockPage });
+  const access = await getPageAccess(collectionId, userId, client, {
+    lockPage,
+    lockAccess: lockPage
+  });
   if (!access.page.is_collection) throw notFound("Collection");
   assertPageCanAdminister(access, "Administrator permission is required to manage collection sharing");
   return access;
+}
+
+type CollectionManagementAdmission = Readonly<{
+  ownerId: string;
+  shareGeneration: string | null;
+}>;
+
+async function captureCollectionManagementAdmission(
+  collectionId: string,
+  userId: string
+): Promise<CollectionManagementAdmission> {
+  // Collection ADMIN is delegated authority owned by another workspace. A
+  // restore or revoke/re-grant can replace that authority without changing the
+  // administrator's own auth/workspace generation, so sparse share mutations
+  // must bind to the grant lineage that admitted the request.
+  const row = await db.queryOne<{
+    owner_id: string;
+    is_collection: boolean;
+    collection_permission: CollectionSharePermission | null;
+    collection_share_generation: string | null;
+    page_share_user_id: string | null;
+  }>(
+    `SELECT p.owner_id, p.is_collection,
+            cs.permission AS collection_permission,
+            cs.generation AS collection_share_generation,
+            ps.user_id AS page_share_user_id
+     FROM pages p
+     LEFT JOIN page_collection_memberships pcm ON pcm.page_id = p.id
+     LEFT JOIN collection_shares cs
+       ON cs.collection_id = pcm.collection_id AND cs.user_id = ?
+     LEFT JOIN page_shares ps
+       ON ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+     WHERE p.id = ?`,
+    [userId, userId, collectionId]
+  );
+  if (!row) throw notFound("Page");
+
+  const isOwner = row.owner_id === userId;
+  const hasAnyAccess = isOwner || row.collection_permission !== null || row.page_share_user_id !== null;
+  if (!hasAnyAccess) throw notFound("Page");
+  if (!row.is_collection) throw notFound("Collection");
+  if (!isOwner && row.collection_permission !== "ADMIN") {
+    throw new ApiError(
+      403,
+      "PAGE_ADMIN_REQUIRED",
+      "Administrator permission is required to manage collection sharing"
+    );
+  }
+
+  const shareGeneration = isOwner ? null : row.collection_share_generation;
+  if (!isOwner && !shareGeneration) {
+    throw new Error(`Missing collection administrator share generation for collection: ${collectionId}`);
+  }
+  return Object.freeze({ ownerId: row.owner_id, shareGeneration });
+}
+
+function assertCollectionManagementAdmission(
+  admission: CollectionManagementAdmission,
+  currentAccess: Awaited<ReturnType<typeof getPageAccess>>
+) {
+  if (
+    currentAccess.page.owner_id === admission.ownerId
+    && currentAccess.shareGeneration === admission.shareGeneration
+  ) return;
+  throw new ApiError(
+    409,
+    "COLLECTION_SHARE_ACCESS_CHANGED",
+    "Collection administration access changed while this request was in flight. Refresh before retrying."
+  );
 }
 
 async function lockCollectionDocumentPages(collectionId: string, client: DbClient) {
@@ -273,9 +345,11 @@ collectionSharingRouter.post(
       const collectionId = String(req.params.collectionId);
       const username = String(req.body.username);
       const permission = String(req.body.permission) as CollectionSharePermission;
+      const managementAdmission = await captureCollectionManagementAdmission(collectionId, actor.id);
       const result = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(actor.id, authScope, client);
         const collectionAccess = await getManageableCollection(collectionId, actor.id, client, true);
+        assertCollectionManagementAdmission(managementAdmission, collectionAccess);
         const ownerId = collectionAccess.page.owner_id;
         const pages = await lockCollectionDocumentPages(collectionId, client);
         const target = await client.queryOne<UserRow>(
@@ -401,9 +475,11 @@ collectionSharingRouter.patch(
       const sharedUserId = String(req.params.userId);
       const permission = String(req.body.permission) as CollectionSharePermission;
       const expectedGeneration = String(req.body.expectedGeneration);
+      const managementAdmission = await captureCollectionManagementAdmission(collectionId, actor.id);
       const result = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(actor.id, authScope, client);
         const collectionAccess = await getManageableCollection(collectionId, actor.id, client, true);
+        assertCollectionManagementAdmission(managementAdmission, collectionAccess);
         const ownerId = collectionAccess.page.owner_id;
         const pages = await lockCollectionDocumentPages(collectionId, client);
         const existing = await client.queryOne<{ generation: string; permission: CollectionSharePermission }>(
@@ -470,9 +546,11 @@ collectionSharingRouter.delete(
       const collectionId = String(req.params.collectionId);
       const sharedUserId = String(req.params.userId);
       const expectedGeneration = String(req.body.expectedGeneration);
+      const managementAdmission = await captureCollectionManagementAdmission(collectionId, actor.id);
       const result = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(actor.id, authScope, client);
         const collectionAccess = await getManageableCollection(collectionId, actor.id, client, true);
+        assertCollectionManagementAdmission(managementAdmission, collectionAccess);
         const ownerId = collectionAccess.page.owner_id;
         const pages = await lockCollectionDocumentPages(collectionId, client);
         await assertNoActiveCollaborationWriteLeases(client, pages.map((page) => page.id));

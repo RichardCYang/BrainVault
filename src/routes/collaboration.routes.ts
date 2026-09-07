@@ -105,6 +105,69 @@ async function lockCollaborationMutationUsers(client: DbClient, userIds: string[
   if (rows.length !== uniqueIds.length) throw notFound("User");
 }
 
+type PageCommentMutationAdmission = Readonly<{
+  ownerId: string;
+  shareGeneration: string | null;
+}>;
+
+async function capturePageCommentMutationAdmission(
+  pageId: string,
+  userId: string
+): Promise<PageCommentMutationAdmission> {
+  // A collaborator's own workspace generation does not change when the page
+  // owner restores their workspace. Capture the effective target grant in one
+  // statement so a request that waits behind that restore cannot silently adopt
+  // the replacement page/share generation before inserting a new comment.
+  const row = await db.queryOne<{
+    owner_id: string;
+    access_share_generation: string | null;
+  }>(
+    `SELECT p.owner_id,
+            CASE
+              WHEN p.owner_id = ? THEN NULL
+              WHEN cs.user_id IS NOT NULL THEN cs.generation
+              ELSE ps.generation
+            END AS access_share_generation
+     FROM pages p
+     LEFT JOIN page_collection_memberships pcm ON pcm.page_id = p.id
+     LEFT JOIN collection_shares cs
+       ON cs.collection_id = pcm.collection_id AND cs.user_id = ?
+     LEFT JOIN page_shares ps
+       ON ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+     WHERE p.id = ?
+       AND (
+         p.owner_id = ?
+         OR cs.user_id IS NOT NULL
+         OR (cs.user_id IS NULL AND ps.user_id IS NOT NULL)
+       )`,
+    [userId, userId, userId, pageId, userId]
+  );
+  if (!row) throw notFound("Page");
+
+  const shareGeneration = row.owner_id === userId ? null : row.access_share_generation;
+  if (row.owner_id !== userId && !shareGeneration) {
+    throw new Error(`Missing collaborator share generation for page comment target: ${pageId}`);
+  }
+  return Object.freeze({ ownerId: row.owner_id, shareGeneration });
+}
+
+function assertPageCommentMutationAdmission(
+  admission: PageCommentMutationAdmission,
+  currentAccess: Awaited<ReturnType<typeof getPageAccess>>
+) {
+  if (
+    currentAccess.page.owner_id === admission.ownerId
+    && currentAccess.shareGeneration === admission.shareGeneration
+  ) {
+    return;
+  }
+  throw new ApiError(
+    409,
+    "PAGE_COMMENT_ACCESS_CHANGED",
+    "Page access changed while this comment was being created. Refresh before retrying."
+  );
+}
+
 const shareUserSchema = z.object({
   username: usernameSchema
 });
@@ -413,9 +476,11 @@ collaborationRouter.post(
       const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       const body = String(req.body.body).trim();
+      const admission = await capturePageCommentMutationAdmission(pageId, user.id);
       const comment = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
-        const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
+        const access = await getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true });
+        assertPageCommentMutationAdmission(admission, access);
         assertPageCanEdit(access, "This shared collection is read-only for your account");
         assertPageNotArchived(access.page, "Restore the page before adding a comment");
         const countRow = await client.queryOne<{ count: number }>(
@@ -454,9 +519,11 @@ collaborationRouter.patch(
       const commentId = String(req.params.commentId);
       const body = String(req.body.body).trim();
       const expectedVersion = Number(req.body.expectedVersion);
+      const admission = await capturePageCommentMutationAdmission(pageId, user.id);
       const comment = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
-        const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
+        const access = await getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true });
+        assertPageCommentMutationAdmission(admission, access);
         assertPageCanEdit(access, "This shared collection is read-only for your account");
         assertPageNotArchived(access.page, "Restore the page before editing a comment");
         const existing = await client.queryOne<{ user_id: string; edit_version: number }>(
@@ -514,9 +581,11 @@ collaborationRouter.delete(
       const pageId = String(req.params.pageId);
       const commentId = String(req.params.commentId);
       const expectedVersion = Number(req.body.expectedVersion);
+      const admission = await capturePageCommentMutationAdmission(pageId, user.id);
       await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
-        const access = await getPageAccess(pageId, user.id, client, { lockPage: true });
+        const access = await getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true });
+        assertPageCommentMutationAdmission(admission, access);
         assertPageCanEdit(access, "This shared collection is read-only for your account");
         assertPageNotArchived(access.page, "Restore the page before deleting a comment");
         const existing = await client.queryOne<{ user_id: string; edit_version: number }>(
