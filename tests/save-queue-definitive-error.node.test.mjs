@@ -44,6 +44,33 @@ test("an enqueue during drain settlement starts a fresh writer run", async () =>
   assert.equal(queue.busy, false);
 });
 
+test("an enqueue after discard gets a fresh runner when the discarded write later fails", async () => {
+  const first = deferred();
+  const calls = [];
+  const error = new Error("discarded write failed");
+  const queue = createLatestWriteQueue(async (task) => {
+    calls.push(task);
+    if (task === "old") await first.promise;
+    return task;
+  }, {
+    shouldRetry: () => false
+  });
+
+  const oldCompletion = queue.enqueue("old");
+  const oldRejection = assert.rejects(oldCompletion, (caught) => caught === error);
+  await Promise.resolve();
+
+  const discardBarrier = queue.discard();
+  const newCompletion = queue.enqueue("new");
+  first.reject(error);
+
+  await discardBarrier;
+  await oldRejection;
+  assert.equal(await newCompletion, "new");
+  assert.deepEqual(calls, ["old", "new"]);
+  assert.equal(queue.busy, false);
+});
+
 test("a definitive structured metadata rejection does not remain in the retry slot", async () => {
   const calls = [];
   const error = structuredMetadataError();

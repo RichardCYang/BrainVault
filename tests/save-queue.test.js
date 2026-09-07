@@ -126,6 +126,33 @@ describe("Latest write queue", () => {
     expect(calls).toEqual(["old-account", "new-account"]);
   });
 
+  it("runs a new edit in a fresh generation when a discarded in-flight write fails", async () => {
+    const firstAttempt = deferred();
+    const calls = [];
+    const error = new Error("discarded write failed");
+    const queue = createLatestWriteQueue(async (value) => {
+      calls.push(value);
+      if (value === "old") await firstAttempt.promise;
+      return value;
+    }, {
+      shouldRetry: () => false
+    });
+
+    const oldSaving = queue.enqueue("old");
+    const oldFailure = expect(oldSaving).rejects.toBe(error);
+    await Promise.resolve();
+
+    const discardBarrier = queue.discard();
+    const newSaving = queue.enqueue("new");
+    firstAttempt.reject(error);
+
+    await discardBarrier;
+    await oldFailure;
+    await expect(newSaving).resolves.toBe("new");
+    expect(calls).toEqual(["old", "new"]);
+    expect(queue.busy).toBe(false);
+  });
+
   it("preserves a failed task for an explicit retry", async () => {
     let attempts = 0;
     const queue = createLatestWriteQueue(async (value) => {
