@@ -50,14 +50,16 @@ test("share removal is owner-scoped and generation-fenced before destructive rec
   assert.match(route, /validate\(\{ params: shareParamsSchema, body: removeShareSchema \}\)/);
   assert.match(route, /const expectedGeneration = String\(req\.body\.expectedGeneration\)/);
 
-  const ownerLock = route.indexOf("getPageAccess(pageId, actor.id, client, { lockPage: true })");
+  const accessLookup = route.indexOf("const access = await getPageAccess(");
+  const ownerLock = route.indexOf("{ lockPage: true, lockAccess: true }", accessLookup);
   const adminFence = route.indexOf("assertPageCanAdminister(access)");
   const shareLock = route.indexOf("SELECT user_id, generation FROM page_shares");
   const generationFence = route.indexOf("existingShare.generation !== expectedGeneration");
   const recoveryGrant = route.indexOf("await grantDirectPageRecovery");
   const destructiveDelete = route.indexOf("DELETE FROM page_shares");
 
-  assert.ok(ownerLock >= 0, "effective page access must be rechecked under the page lock");
+  assert.ok(accessLookup >= 0, "effective page access must be rechecked before share removal");
+  assert.ok(ownerLock > accessLookup, "effective page access must lock both the page and access grants");
   assert.ok(adminFence > ownerLock, "share management must require owner-or-admin authority");
   assert.ok(shareLock > adminFence, "share lookup must happen only after the administrative page lock");
   assert.ok(generationFence > shareLock, "current grant generation must be compared");

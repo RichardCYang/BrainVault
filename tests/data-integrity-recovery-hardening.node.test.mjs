@@ -113,7 +113,7 @@ test("share removal, hard deletion, and restore fence active collaboration lease
   );
   assertBefore(
     removeShare,
-    "getPageAccess(pageId, actor.id, client, { lockPage: true })",
+    "{ lockPage: true, lockAccess: true }",
     "await assertNoActiveCollaborationWriteLeases(client, [pageId])",
     "share removal"
   );
@@ -170,9 +170,10 @@ test("both page archive routes fence active collaboration write leases", () => {
   );
   const archiveBranch = section(
     deleteRoute,
-    "const access = await getPageAccess(pageId, user.id, client, { lockPage: true })",
+    "const access = await getPageAccess(",
     "const updateResult = await client.execute"
   );
+  assert.match(archiveBranch, /\{ lockPage: true, lockAccess: true \}/);
   assertBefore(
     archiveBranch,
     "await assertCollaborationMaterialized(client, [pageId])",
