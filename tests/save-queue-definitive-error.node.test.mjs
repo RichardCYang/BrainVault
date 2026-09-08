@@ -105,6 +105,31 @@ test("a flush started before discard never adopts post-discard writes", async ()
   assert.equal(queue.busy, false);
 });
 
+test("a discarded successful write cannot seed the next generation's empty flush", async () => {
+  const first = deferred();
+  const queue = createLatestWriteQueue(async (task) => {
+    if (task === "old") await first.promise;
+    return `${task}-result`;
+  }, { shouldRetry: () => false });
+
+  const oldCompletion = queue.enqueue("old");
+  await Promise.resolve();
+
+  const discardBarrier = queue.discard();
+  first.resolve();
+
+  assert.equal(await oldCompletion, "old-result");
+  await discardBarrier;
+  assert.equal(
+    await queue.flush(),
+    undefined,
+    "the new generation must not inherit the discarded generation's acknowledgement"
+  );
+
+  assert.equal(await queue.enqueue("new"), "new-result");
+  assert.equal(await queue.flush(), "new-result");
+});
+
 test("a definitive structured metadata rejection does not remain in the retry slot", async () => {
   const calls = [];
   const error = structuredMetadataError();

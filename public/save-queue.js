@@ -12,6 +12,10 @@ export function createLatestWriteQueue(
   let lastResult;
 
   async function drain(ownerPromise, ownerGeneration) {
+    // Keep the result that resolves this specific runner separate from the queue-wide
+    // current-generation result. A discarded in-flight write may still settle for its
+    // original caller, but it must never donate that acknowledgement to a later generation.
+    let runLastResult = lastResult;
     while (
       (retryTask !== null && retryGeneration === ownerGeneration)
       || (pendingTask !== null && pendingGeneration === ownerGeneration)
@@ -28,7 +32,9 @@ export function createLatestWriteQueue(
       }
 
       try {
-        lastResult = await writer(task);
+        const result = await writer(task);
+        runLastResult = result;
+        if (taskGeneration === discardGeneration) lastResult = result;
       } catch (error) {
         if (taskGeneration !== discardGeneration) throw error;
 
@@ -65,7 +71,7 @@ export function createLatestWriteQueue(
       runningPromise = null;
       runningGeneration = null;
     }
-    return lastResult;
+    return runLastResult;
   }
 
   function ensureRunning(targetGeneration = discardGeneration) {
@@ -124,17 +130,22 @@ export function createLatestWriteQueue(
       // discard occurs while it is waiting for an older request, do not let the
       // obsolete flush adopt writes admitted after that discard boundary.
       const targetGeneration = discardGeneration;
+      let targetResult = lastResult;
       while (
         (retryTask !== null && retryGeneration === targetGeneration)
         || (pendingTask !== null && pendingGeneration === targetGeneration)
         || (runningPromise && runningGeneration === targetGeneration)
       ) {
-        await ensureRunning(targetGeneration);
+        targetResult = await ensureRunning(targetGeneration);
       }
-      return lastResult;
+      return targetResult;
     },
     discard() {
       discardGeneration += 1;
+      // A discard is a result boundary as well as a work boundary. Do not let a
+      // successful acknowledgement from the discarded generation become the
+      // apparent result of an otherwise empty flush in the new generation.
+      lastResult = undefined;
       retryTask = null;
       retryGeneration = null;
       pendingTask = null;
