@@ -494,10 +494,6 @@ async function getCollisionFreeBlockCreateSortOrder(
   return getNextBlockSortOrder(lastBlock?.sort_order);
 }
 
-async function assertAccessiblePage(pageId: string, userId: string, client: DbClient = db) {
-  return getPageAccess(pageId, userId, client);
-}
-
 async function assertAccessibleBlock(blockId: string, userId: string, client: DbClient = db) {
   return getBlockAccess(blockId, userId, client);
 }
@@ -1242,8 +1238,8 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
       throw new ApiError(400, "USE_ATTACHMENT_UPLOAD", "Create attachment blocks through the file upload endpoint");
     }
 
-    const access = await assertAccessiblePage(pageId, user.id);
-    const ownerId = access.page.owner_id;
+    const admission = await capturePageMutationAdmission(pageId, user.id);
+    const ownerId = admission.ownerId;
     const id = createId("blk");
     const mutationHash = mutationId
       ? createMutationRequestHash({ kind: "BLOCK", pageId, basePageContentVersion, creation })
@@ -1251,9 +1247,20 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
     const result = await transaction(async (client) => {
       await lockBlockCreateUsers(client, [user.id, ownerId]);
       await assertCurrentAuthSessionBoundary(user.id, authScope, client);
-      const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
+      const currentWorkspaceGeneration = await lockUserAttachmentGeneration(client, ownerId);
+      if (currentWorkspaceGeneration === undefined) throw notFound("Page owner");
+      assertPageOwnerWorkspaceGeneration(admission.ownerWorkspaceGeneration, currentWorkspaceGeneration);
+
+      const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true });
       if (lockedAccess.page.owner_id !== ownerId) {
         throw new ApiError(409, "PAGE_OWNER_CHANGED", "The page owner changed while the block was being created");
+      }
+      if (lockedAccess.shareGeneration !== admission.actorShareGeneration) {
+        throw new ApiError(
+          409,
+          "PAGE_SHARE_GENERATION_CHANGED",
+          "The collaborator grant changed while this block was being created. Refresh before retrying."
+        );
       }
       const lockedContentVersion = Number(lockedAccess.page.content_version ?? 1);
       const reservation = await reserveBlockCreateMutation(client, {
