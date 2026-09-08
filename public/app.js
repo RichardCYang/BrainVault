@@ -8226,14 +8226,11 @@ async function flushPendingPageEdits({ keepalive = false, allowLocked = false, c
     })
   );
 
-  const visibleBlockIds = new Set(
-    [...elements.blockList.querySelectorAll(".editor-block-row[data-block-id]")].map((row) => row.dataset.blockId)
-  );
-  await Promise.all(
-    [...blockSaveQueues.entries()]
-      .filter(([blockId]) => visibleBlockIds.has(blockId))
-      .map(([, queue]) => queue.flush())
-  );
+  // The queue registry, not the current DOM, is the source of truth for pending writes.
+  // A same-page rebuild can temporarily detach a row while its save is still settling;
+  // skipping that queue would let resetPageEditTracking() drop the settlement barrier.
+  // Explicit block deletion removes its queue via discardBlockSave() before the row is removed.
+  await Promise.all([...blockSaveQueues.values()].map((queue) => queue.flush()));
 
   await requireDirectRecoveryDurability("page-edit-flush", null, {
     allowRecoveryFailure: allowLocked && recoveryStorageFailureDrainInFlight,
