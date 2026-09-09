@@ -15020,6 +15020,9 @@ async function saveBlockRow(row, options = {}) {
   if (!writable || !row?.dataset.blockId || row.dataset.deleting === "true") return null;
 
   const blockId = row.dataset.blockId;
+  const pageId = state.selectedPage?.id;
+  const navigationGeneration = workspaceNavigationGeneration;
+  if (!pageId) return null;
   const authenticationScope = options.authenticationScope
     ?? blockEditAuthenticationScopes.get(blockId)
     ?? captureAuthenticatedSessionScope();
@@ -15028,8 +15031,6 @@ async function saveBlockRow(row, options = {}) {
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
     if (!session?.isReady) throw new Error(t("sharing.syncRequired"));
-    const pageId = state.selectedPage?.id;
-    if (!pageId) return null;
     const current = getBlockById(blockId);
     if (!current) return null;
     let block;
@@ -15106,6 +15107,19 @@ async function saveBlockRow(row, options = {}) {
     allowRecoveryFailure: allowLocked && recoveryStorageFailureDrainInFlight
   });
   assertCurrentAuthenticatedSessionScope(authenticationScope);
+  // A direct save can already be awaiting durable recovery storage when a
+  // navigation or destructive page-edit lock starts. No save queue exists in
+  // that admission window, so the transition cannot flush this operation.
+  // Keep the durable draft as the recovery source instead of admitting a stale
+  // server write after the transition fence. Flush-owned saves use allowLocked.
+  if (
+    !isCurrentWorkspaceNavigation(navigationGeneration)
+    || state.selectedPage?.id !== pageId
+    || (!allowLocked && state.pageEditLockDepth > 0)
+  ) {
+    syncBeforeUnloadProtection();
+    return null;
+  }
   recordBlockEditorHistory(row, payload);
   window.clearTimeout(blockSaveTimers.get(blockId));
   blockSaveTimers.delete(blockId);
@@ -15117,7 +15131,7 @@ async function saveBlockRow(row, options = {}) {
     taskId,
     userId: state.user?.id,
     draftSourceId,
-    pageId: state.selectedPage.id,
+    pageId,
     basePageContentVersion: getPositiveVersion(state.selectedPage.contentVersion),
     editRevision,
     expectedVersion: getLatestKnownVersion(
