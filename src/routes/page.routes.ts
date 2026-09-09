@@ -1364,6 +1364,10 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
     const parentAdmission = await capturePageCreateParentAdmission(creation.parentPageId, user.id);
 
     const page = await transaction(async (client) => {
+      // A delegated collection administrator and the workspace owner may be
+      // different users. Lock both rows in the same deterministic order used
+      // by other cross-workspace page mutations before any per-user fence.
+      await lockPageDeleteUsers(client, [user.id, parentAdmission?.ownerId ?? user.id]);
       await assertCurrentAuthSessionBoundary(user.id, authScope, client);
       // A delegated collection ADMIN's own workspace generation is independent
       // of the page owner's restore generation. Lock/fence the owner before any

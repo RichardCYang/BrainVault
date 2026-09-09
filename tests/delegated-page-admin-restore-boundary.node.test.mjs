@@ -115,7 +115,7 @@ test("collection-admin direct-share removal fences owner restore and current adm
   const capture = route.indexOf("capturePageShareAdministrationAdmission(pageId, actor.id)");
   const transaction = route.indexOf("transaction(async (client)");
   const userLocks = route.indexOf(
-    "lockCollaborationMutationUsers(client, [actor.id, administrationAdmission.ownerId])"
+    "lockCollaborationMutationUsers(client, [actor.id, administrationAdmission.ownerId, sharedUserId])"
   );
   const auth = route.indexOf("assertCurrentAuthSessionBoundary(actor.id, authScope, client)");
   const ownerFence = route.indexOf(

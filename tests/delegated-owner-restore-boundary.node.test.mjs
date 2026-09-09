@@ -30,6 +30,9 @@ test("delegated page creation captures and fences the page owner's workspace gen
   assert.match(admission, /"WORKSPACE_RESTORED"/);
 
   const create = section(pages, 'pageRouter.post("/",', 'pageRouter.get("/:pageId/cover"');
+  const userLocksIndex = create.indexOf(
+    "lockPageDeleteUsers(client, [user.id, parentAdmission?.ownerId ?? user.id])"
+  );
   const authIndex = create.indexOf("assertCurrentAuthSessionBoundary(user.id, authScope, client)");
   const ownerFenceIndex = create.indexOf(
     "assertPageCreateOwnerWorkspaceGeneration(parentAdmission, user.id, client)"
@@ -40,7 +43,8 @@ test("delegated page creation captures and fences the page owner's workspace gen
   );
   const insertIndex = create.indexOf("INSERT INTO pages");
   assert.ok(
-    authIndex >= 0
+    userLocksIndex >= 0
+      && authIndex > userLocksIndex
       && ownerFenceIndex > authIndex
       && receiptIndex > ownerFenceIndex
       && pageLockIndex > ownerFenceIndex

@@ -47,7 +47,13 @@ test("page create, history reset, update, archive/delete, and tags revalidate re
 
   const create = section(pages, 'pageRouter.post("/",', 'pageRouter.get("/:pageId/cover"');
   assert.match(create, /const authScope = requireRequestAuthScope\(req\)/);
-  assert.match(create, /transaction\(async \(client\) => \{\s+await assertCurrentAuthSessionBoundary\(user\.id, authScope, client\)/);
+  const createUserLocks = create.indexOf(
+    "await lockPageDeleteUsers(client, [user.id, parentAdmission?.ownerId ?? user.id])"
+  );
+  const createAuthFence = create.indexOf(
+    "await assertCurrentAuthSessionBoundary(user.id, authScope, client)"
+  );
+  assert.ok(createUserLocks >= 0 && createAuthFence > createUserLocks);
 
   const reset = section(pages, 'pageRouter.delete(\n  "/:pageId/versions"', 'pageRouter.get(\n  "/:pageId/versions/:versionId"');
   assert.match(reset, /const authScope = requireRequestAuthScope\(req\)/);

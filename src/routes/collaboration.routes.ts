@@ -948,13 +948,28 @@ collaborationRouter.post(
       const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       const username = String(req.body.username);
+      const administrationAdmission = await capturePageShareAdministrationAdmission(pageId, actor.id);
+      // Resolve the target before entering the transaction so authorization,
+      // workspace-generation fences, and both user foreign keys share one
+      // deterministic lock order. The target identity is revalidated below.
+      const targetHint = await db.queryOne<{ id: string }>(
+        "SELECT id FROM users WHERE username = ? AND id <> ?",
+        [username, administrationAdmission.ownerId]
+      );
       let firstShare = false;
       let previousDocumentEpoch: string | null = null;
 
       const shareResult = await transaction(async (client) => {
+        await lockCollaborationMutationUsers(client, [
+          actor.id,
+          administrationAdmission.ownerId,
+          ...(targetHint ? [targetHint.id] : [])
+        ]);
         await assertCurrentAuthSessionBoundary(actor.id, authScope, client);
-        const access = await getPageAccess(pageId, actor.id, client, { lockPage: true });
+        await assertPageShareAdministrationOwnerWorkspaceGeneration(administrationAdmission, actor.id, client);
+        const access = await getPageAccess(pageId, actor.id, client, { lockPage: true, lockAccess: true });
         assertPageCanAdminister(access);
+        assertPageShareAdministrationMutationAdmission(administrationAdmission, actor.id, access);
         if (access.role !== "OWNER" || access.scope !== "OWNER") {
           throw new ApiError(403, "PAGE_OWNER_REQUIRED", "Direct page shares can only be created by the workspace owner");
         }
@@ -966,12 +981,12 @@ collaborationRouter.post(
           `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language, u.default_collection_icon, u.theme,
                   u.created_at, u.updated_at
            FROM users u
-           WHERE u.username = ? AND u.id <> ?
+           WHERE u.id = ? AND u.username = ? AND u.id <> ?
              AND NOT EXISTS (
                SELECT 1 FROM page_shares ps
                WHERE ps.page_id = ? AND ps.user_id = u.id AND ps.permission = 'EDIT'
              )`,
-          [username, workspaceOwnerId, pageId]
+          [targetHint?.id ?? "", username, workspaceOwnerId, pageId]
         );
         if (!target) {
           throw new ApiError(400, "SHARE_TARGET_UNAVAILABLE", "The requested account cannot be added");
@@ -1044,7 +1059,7 @@ collaborationRouter.delete(
       const expectedGeneration = String(req.body.expectedGeneration);
       const administrationAdmission = await capturePageShareAdministrationAdmission(pageId, actor.id);
       const result = await transaction(async (client) => {
-        await lockCollaborationMutationUsers(client, [actor.id, administrationAdmission.ownerId]);
+        await lockCollaborationMutationUsers(client, [actor.id, administrationAdmission.ownerId, sharedUserId]);
         await assertCurrentAuthSessionBoundary(actor.id, authScope, client);
         await assertPageShareAdministrationOwnerWorkspaceGeneration(administrationAdmission, actor.id, client);
         const access = await getPageAccess(

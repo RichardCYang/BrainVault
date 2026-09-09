@@ -88,6 +88,15 @@ function toCollectionSharePayload(row: CollectionShareUserRow) {
   };
 }
 
+async function lockCollectionSharingMutationUsers(client: DbClient, userIds: string[]) {
+  const uniqueIds = [...new Set(userIds)].sort();
+  const rows = await client.query<{ id: string }>(
+    `SELECT id FROM users WHERE id IN (${uniqueIds.map(() => "?").join(", ")}) ORDER BY id ASC FOR UPDATE`,
+    uniqueIds
+  );
+  if (rows.length !== uniqueIds.length) throw notFound("User");
+}
+
 async function getCollectionShareRows(collectionId: string, client: DbClient = db) {
   return client.query<CollectionShareUserRow>(
     `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language,
@@ -369,7 +378,18 @@ collectionSharingRouter.post(
       const username = String(req.body.username);
       const permission = String(req.body.permission) as CollectionSharePermission;
       const managementAdmission = await captureCollectionManagementAdmission(collectionId, actor.id);
+      // Resolve the target before taking transaction locks so every user row
+      // touched by authorization or the share foreign keys can be locked in one order.
+      const targetHint = await db.queryOne<{ id: string }>(
+        "SELECT id FROM users WHERE username = ? AND id <> ?",
+        [username, managementAdmission.ownerId]
+      );
       const result = await transaction(async (client) => {
+        await lockCollectionSharingMutationUsers(client, [
+          actor.id,
+          managementAdmission.ownerId,
+          ...(targetHint ? [targetHint.id] : [])
+        ]);
         await assertCurrentAuthSessionBoundary(actor.id, authScope, client);
         await assertCollectionOwnerWorkspaceGeneration(managementAdmission, actor.id, client);
         const collectionAccess = await getManageableCollection(collectionId, actor.id, client, true);
@@ -378,12 +398,12 @@ collectionSharingRouter.post(
         const pages = await lockCollectionDocumentPages(collectionId, client);
         const target = await client.queryOne<UserRow>(
           `SELECT u.* FROM users u
-           WHERE u.username = ? AND u.id <> ?
+           WHERE u.id = ? AND u.username = ? AND u.id <> ?
              AND NOT EXISTS (
                SELECT 1 FROM collection_shares cs
                WHERE cs.collection_id = ? AND cs.user_id = u.id
              )`,
-          [username, ownerId, collectionId]
+          [targetHint?.id ?? "", username, ownerId, collectionId]
         );
         if (!target) {
           throw new ApiError(400, "SHARE_TARGET_UNAVAILABLE", "The requested account cannot be added");
@@ -501,6 +521,7 @@ collectionSharingRouter.patch(
       const expectedGeneration = String(req.body.expectedGeneration);
       const managementAdmission = await captureCollectionManagementAdmission(collectionId, actor.id);
       const result = await transaction(async (client) => {
+        await lockCollectionSharingMutationUsers(client, [actor.id, managementAdmission.ownerId, sharedUserId]);
         await assertCurrentAuthSessionBoundary(actor.id, authScope, client);
         await assertCollectionOwnerWorkspaceGeneration(managementAdmission, actor.id, client);
         const collectionAccess = await getManageableCollection(collectionId, actor.id, client, true);
@@ -573,6 +594,7 @@ collectionSharingRouter.delete(
       const expectedGeneration = String(req.body.expectedGeneration);
       const managementAdmission = await captureCollectionManagementAdmission(collectionId, actor.id);
       const result = await transaction(async (client) => {
+        await lockCollectionSharingMutationUsers(client, [actor.id, managementAdmission.ownerId, sharedUserId]);
         await assertCurrentAuthSessionBoundary(actor.id, authScope, client);
         await assertCollectionOwnerWorkspaceGeneration(managementAdmission, actor.id, client);
         const collectionAccess = await getManageableCollection(collectionId, actor.id, client, true);
