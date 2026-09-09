@@ -17430,6 +17430,7 @@ async function savePageTitleNow({
   // explicitly materializes that fallback when the user actually commits blank.
   if (!elements.pageTitle.value.trim()) return null;
   const pageId = state.selectedPage.id;
+  const navigationGeneration = workspaceNavigationGeneration;
   const title = normalizePageTitle(elements.pageTitle.value);
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
@@ -17475,6 +17476,18 @@ async function savePageTitleNow({
       allowRecoveryFailure: allowLocked && recoveryStorageFailureDrainInFlight
     });
     assertCurrentAuthenticatedSessionScope(authenticationScope);
+  }
+  // A direct title save can already be awaiting durable recovery storage when
+  // navigation or a destructive page-edit lock starts. It has not entered the
+  // save queue yet, so a transition flush cannot wait for it. Keep the durable
+  // title draft for recovery instead of admitting a stale write afterward.
+  if (
+    !isCurrentWorkspaceNavigation(navigationGeneration)
+    || state.selectedPage?.id !== pageId
+    || (!allowLocked && state.pageEditLockDepth > 0)
+  ) {
+    syncBeforeUnloadProtection();
+    return null;
   }
   recordPageTitleEditorHistory();
   const task = {
