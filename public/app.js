@@ -10940,7 +10940,11 @@ async function submitPageComment() {
   if (!body || state.pageComments.loading || state.pageComments.submitting || state.pageComments.busyCommentId) return;
   const navigationGeneration = workspaceNavigationGeneration;
   const authenticationScope = captureAuthenticatedSessionScope();
-  if (!isCurrentPageCommentsContext(pageId, navigationGeneration)) return;
+  const isCommentMutationCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+    && isCurrentPageCommentsContext(pageId, navigationGeneration)
+  );
+  if (!isCommentMutationCurrent()) return;
 
   state.pageComments.submitting = true;
   state.pageComments.message = t("comments.submitting");
@@ -10949,12 +10953,10 @@ async function submitPageComment() {
   try {
     const data = await api(`/api/pages/${encodeURIComponent(pageId)}/comments`, {
       method: "POST",
-      body: { body }
+      body: { body },
+      beforeFetch: isCommentMutationCurrent
     });
-    if (
-      !isCurrentAuthenticatedSessionScope(authenticationScope)
-      || !isCurrentPageCommentsContext(pageId, navigationGeneration)
-    ) return;
+    if (data === skippedApiRequest || !isCommentMutationCurrent()) return;
     if (data?.comment) {
       const existingIndex = state.pageComments.entries.findIndex((entry) => entry.id === data.comment.id);
       if (existingIndex >= 0) state.pageComments.entries[existingIndex] = data.comment;
@@ -11001,6 +11003,11 @@ async function savePageCommentEdit(commentId) {
   }
   const navigationGeneration = workspaceNavigationGeneration;
   const authenticationScope = captureAuthenticatedSessionScope();
+  const isCommentMutationCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+    && isCurrentPageCommentsContext(pageId, navigationGeneration)
+  );
+  if (!isCommentMutationCurrent()) return;
   state.pageComments.busyCommentId = commentId;
   state.pageComments.message = t("comments.saving");
   state.pageComments.messageIsError = false;
@@ -11009,12 +11016,13 @@ async function savePageCommentEdit(commentId) {
   try {
     const data = await api(
       `/api/pages/${encodeURIComponent(pageId)}/comments/${encodeURIComponent(commentId)}`,
-      { method: "PATCH", body: { body, expectedVersion } }
+      {
+        method: "PATCH",
+        body: { body, expectedVersion },
+        beforeFetch: isCommentMutationCurrent
+      }
     );
-    if (
-      !isCurrentAuthenticatedSessionScope(authenticationScope)
-      || !isCurrentPageCommentsContext(pageId, navigationGeneration)
-    ) return;
+    if (data === skippedApiRequest || !isCommentMutationCurrent()) return;
     const index = state.pageComments.entries.findIndex((entry) => entry.id === commentId);
     if (index >= 0 && data?.comment) state.pageComments.entries[index] = data.comment;
     state.pageComments.editingId = null;
@@ -11062,20 +11070,23 @@ async function deletePageComment(commentId) {
   if (!window.confirm(t("comments.deleteConfirm"))) return;
   const navigationGeneration = workspaceNavigationGeneration;
   const authenticationScope = captureAuthenticatedSessionScope();
+  const isCommentMutationCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+    && isCurrentPageCommentsContext(pageId, navigationGeneration)
+  );
+  if (!isCommentMutationCurrent()) return;
   state.pageComments.busyCommentId = commentId;
   state.pageComments.message = t("comments.deleting");
   state.pageComments.messageIsError = false;
   renderPageComments();
 
   try {
-    await api(`/api/pages/${encodeURIComponent(pageId)}/comments/${encodeURIComponent(commentId)}`, {
+    const data = await api(`/api/pages/${encodeURIComponent(pageId)}/comments/${encodeURIComponent(commentId)}`, {
       method: "DELETE",
-      body: { expectedVersion }
+      body: { expectedVersion },
+      beforeFetch: isCommentMutationCurrent
     });
-    if (
-      !isCurrentAuthenticatedSessionScope(authenticationScope)
-      || !isCurrentPageCommentsContext(pageId, navigationGeneration)
-    ) return;
+    if (data === skippedApiRequest || !isCommentMutationCurrent()) return;
     state.pageComments.entries = state.pageComments.entries.filter((entry) => entry.id !== commentId);
     if (state.pageComments.editingId === commentId) {
       state.pageComments.editingId = null;
