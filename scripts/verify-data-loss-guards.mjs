@@ -247,6 +247,10 @@ const pageCreateMutationMigrationSource = readFileSync(
   new URL("../migrations/036_page_create_mutation_receipts.sql", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const pageCreateOwnerGenerationMigrationSource = readFileSync(
+  new URL("../migrations/073_page_create_owner_generation_receipts.sql", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 
 const pageVersionResetMutationMigrationSource = readFileSync(
   new URL("../migrations/037_page_version_reset_mutation_receipts.sql", import.meta.url),
@@ -340,9 +344,13 @@ assert(
     && pageRouteSource.includes("createMutationRequestHash(creation)")
     && pageRouteSource.includes("INSERT INTO page_create_mutations")
     && pageRouteSource.includes("authScope.workspaceGeneration")
+    && pageCreateOwnerGenerationMigrationSource.includes("workspace_owner_id VARCHAR(64) NULL")
+    && pageCreateOwnerGenerationMigrationSource.includes("owner_workspace_generation BIGINT UNSIGNED NULL")
+    && pageRouteSource.includes("receiptWorkspaceOwnerId")
+    && pageRouteSource.includes("receiptOwnerWorkspaceGeneration")
     && pageRouteSource.includes("PAGE_CREATE_REPLAY_SUPERSEDED")
     && pageRouteSource.indexOf("INSERT INTO page_create_mutations") < pageRouteSource.indexOf("INSERT INTO pages"),
-  "Page creation can still duplicate a committed page after an ambiguous POST retry"
+  "Page creation can still duplicate or replay across an ambiguous POST/owner-restore boundary"
 );
 
 assert(

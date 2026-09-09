@@ -14,37 +14,101 @@ function section(source, start, end) {
 }
 
 test("page creation receipts distinguish new requests, valid replays, key reuse, and restored generations", () => {
-  assert.deepEqual(assessPageCreateMutationReceipt(null, "hash-a", 7), { kind: "new" });
+  assert.deepEqual(assessPageCreateMutationReceipt(null, "hash-a", 7, "owner-a", 11), { kind: "new" });
   assert.deepEqual(
     assessPageCreateMutationReceipt(
-      { page_id: "page-a", request_hash: "hash-a", workspace_generation: 7 },
+      {
+        page_id: "page-a",
+        request_hash: "hash-a",
+        workspace_generation: 7,
+        workspace_owner_id: "owner-a",
+        owner_workspace_generation: 11
+      },
       "hash-a",
-      7
+      7,
+      "owner-a",
+      11
     ),
     { kind: "replay", pageId: "page-a" }
   );
 
   assert.deepEqual(
     assessPageCreateMutationReceipt(
-      { page_id: "page-a", request_hash: "hash-a", workspace_generation: 7 },
+      {
+        page_id: "page-a",
+        request_hash: "hash-a",
+        workspace_generation: 7,
+        workspace_owner_id: "owner-a",
+        owner_workspace_generation: 11
+      },
       "hash-b",
-      7
+      7,
+      "owner-a",
+      11
     ),
     { kind: "collision" }
   );
   assert.deepEqual(
     assessPageCreateMutationReceipt(
-      { page_id: "page-a", request_hash: null, workspace_generation: 7 },
+      {
+        page_id: "page-a",
+        request_hash: null,
+        workspace_generation: 7,
+        workspace_owner_id: "owner-a",
+        owner_workspace_generation: 11
+      },
       "hash-a",
-      7
+      7,
+      "owner-a",
+      11
     ),
     { kind: "collision" }
   );
   assert.deepEqual(
     assessPageCreateMutationReceipt(
-      { page_id: "page-a", request_hash: "hash-a", workspace_generation: 6 },
+      {
+        page_id: "page-a",
+        request_hash: "hash-a",
+        workspace_generation: 6,
+        workspace_owner_id: "owner-a",
+        owner_workspace_generation: 11
+      },
       "hash-a",
-      7
+      7,
+      "owner-a",
+      11
+    ),
+    { kind: "superseded" }
+  );
+  assert.deepEqual(
+    assessPageCreateMutationReceipt(
+      {
+        page_id: "page-a",
+        request_hash: "hash-a",
+        workspace_generation: 7,
+        workspace_owner_id: "owner-a",
+        owner_workspace_generation: 10
+      },
+      "hash-a",
+      7,
+      "owner-a",
+      11
+    ),
+    { kind: "superseded" }
+  );
+  assert.deepEqual(
+    assessPageCreateMutationReceipt(
+      {
+        page_id: "page-a",
+        request_hash: "hash-a",
+        workspace_generation: 7,
+        workspace_owner_id: null,
+        owner_workspace_generation: null
+      },
+      "hash-a",
+      7,
+      "owner-a",
+      11
     ),
     { kind: "superseded" }
   );
@@ -60,7 +124,10 @@ test("POST /api/pages reserves an owner-scoped idempotency receipt before durabl
   assert.match(createRoute, /createMutationRequestHash\(creation\)/);
   assert.match(createRoute, /INSERT INTO page_create_mutations/);
   assert.match(createRoute, /if \(!isDuplicateEntryError\(error\)\) throw error;/);
-  assert.match(createRoute, /assessPageCreateMutationReceipt\(\s*receipt,\s*mutationHash,\s*authScope\.workspaceGeneration\s*\)/);
+  assert.match(
+    createRoute,
+    /assessPageCreateMutationReceipt\([\s\S]*receiptWorkspaceOwnerId,[\s\S]*receiptOwnerWorkspaceGeneration[\s\S]*\)/
+  );
   assert.match(createRoute, /PAGE_CREATE_REPLAY_SUPERSEDED/);
   assert.match(createRoute, /PAGE_CREATE_REPLAY_UNAVAILABLE/);
   assert.ok(

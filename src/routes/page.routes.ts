@@ -1373,15 +1373,32 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
       // of the page owner's restore generation. Lock/fence the owner before any
       // receipt reservation or page insertion so a stale request cannot cross it.
       await assertPageCreateOwnerWorkspaceGeneration(parentAdmission, user.id, client);
+      // The actor generation alone is insufficient for delegated creates: the
+      // destination owner can restore independently and recreate stable page IDs.
+      // Persist both workspace lineages so an old receipt cannot acknowledge a
+      // restored reincarnation of the originally-created page.
+      const receiptWorkspaceOwnerId = parentAdmission?.ownerId ?? user.id;
+      const receiptOwnerWorkspaceGeneration = parentAdmission?.ownerId === user.id || !parentAdmission
+        ? authScope.workspaceGeneration
+        : parentAdmission.ownerWorkspaceGeneration;
       const id = createId("pag");
       if (mutationId && mutationHash) {
         let reserved = true;
         try {
           await client.execute(
             `INSERT INTO page_create_mutations
-               (owner_id, mutation_id, page_id, request_hash, workspace_generation)
-             VALUES (?, ?, ?, ?, ?)`,
-            [user.id, mutationId, id, mutationHash, authScope.workspaceGeneration]
+               (owner_id, mutation_id, page_id, request_hash, workspace_generation,
+                workspace_owner_id, owner_workspace_generation)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [
+              user.id,
+              mutationId,
+              id,
+              mutationHash,
+              authScope.workspaceGeneration,
+              receiptWorkspaceOwnerId,
+              receiptOwnerWorkspaceGeneration
+            ]
           );
         } catch (error) {
           if (!isDuplicateEntryError(error)) throw error;
@@ -1389,7 +1406,8 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
         }
         if (!reserved) {
           const receipt = await client.queryOne<PageCreateMutationReceipt>(
-            `SELECT page_id, request_hash, workspace_generation
+            `SELECT page_id, request_hash, workspace_generation,
+                    workspace_owner_id, owner_workspace_generation
              FROM page_create_mutations
              WHERE owner_id = ? AND mutation_id = ?
              FOR UPDATE`,
@@ -1398,7 +1416,9 @@ pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next
           const assessment = assessPageCreateMutationReceipt(
             receipt,
             mutationHash,
-            authScope.workspaceGeneration
+            authScope.workspaceGeneration,
+            receiptWorkspaceOwnerId,
+            receiptOwnerWorkspaceGeneration
           );
           if (assessment.kind === "collision") {
             throw new ApiError(
