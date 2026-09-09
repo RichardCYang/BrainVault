@@ -434,28 +434,52 @@ function assertPageDeletionAuthorizationScope(
   );
 }
 
+function hasPageMoveMembershipOutsideSourceScope(
+  subtreeRows: PageDeletionPageRow[],
+  memberships: PageDeletionCollectionMembershipRow[],
+  collectionId: string | null
+) {
+  if (collectionId) {
+    return hasPageDeletionMembershipOutsideCollectionScope(
+      subtreeRows,
+      memberships,
+      collectionId
+    );
+  }
+
+  const subtreeIds = new Set(subtreeRows.map((row) => row.id));
+  return memberships.some((membership) => subtreeIds.has(membership.page_id));
+}
+
 function assertPageMoveAuthorizationScope(
   access: { role: PageAccessRole; scope: PageAccessScope; collectionId: string | null },
   subtreeRows: PageDeletionPageRow[],
   memberships: PageDeletionCollectionMembershipRow[]
 ) {
-  if (access.role !== "ADMIN") return;
   if (
-    access.scope === "COLLECTION"
-    && access.collectionId
-    && !hasPageDeletionMembershipOutsideCollectionScope(
+    hasPageMoveMembershipOutsideSourceScope(
       subtreeRows,
       memberships,
       access.collectionId
     )
   ) {
-    return;
+    // Even an owner move must fail closed here. The later collaboration fence
+    // derives each descendant's pre-move sharing state from this source
+    // collection id, so a mixed/legacy subtree could otherwise skip
+    // materialization, active-write, and recovery-grant protection for a
+    // differently materialized descendant before its scope is rewritten.
+    throw new ApiError(
+      409,
+      "PAGE_EDIT_CONFLICT",
+      "The page collection membership graph changed or is inconsistent. Nothing was moved."
+    );
   }
 
-  // The hierarchy can contain malformed/legacy descendants whose materialized
-  // collection membership is outside the administrator's grant. A move rewrites
-  // every descendant membership, so validate the full subtree before changing
-  // either its parent edge or its authorization scope.
+  if (access.role !== "ADMIN") return;
+  if (access.scope === "COLLECTION" && access.collectionId) return;
+
+  // Collection administrators must also remain inside the collection that
+  // authorized the mutation.
   throw new ApiError(
     409,
     "PAGE_EDIT_CONFLICT",
@@ -1894,18 +1918,18 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
           throw new ApiError(500, "PAGE_HIERARCHY_LOCK_MISSING", "Page hierarchy validation is unavailable");
         }
         assertPageParentFromLockedRows(pageId, updates.parentPageId, lockedRows);
-        if (initialAccess.role === "ADMIN") {
-          const subtreeRows = getPageSubtreeRows(pageId, lockedRows);
-          // Use a locking/current membership read after the owner-wide hierarchy
-          // locks. A pre-lock REPEATABLE READ view could miss a membership change
-          // that committed while this transaction was waiting for a descendant.
-          const membershipRows = await getPageDeletionCollectionMemberships(
-            client,
-            subtreeRows,
-            true
-          );
-          assertPageMoveAuthorizationScope(initialAccess, subtreeRows, membershipRows);
-        }
+        const subtreeRows = getPageSubtreeRows(pageId, lockedRows);
+        // Use a locking/current membership read after the owner-wide hierarchy
+        // locks for every actor, including the workspace owner. A pre-lock
+        // REPEATABLE READ view could miss a membership change that committed
+        // while this transaction was waiting for a descendant, and an owner
+        // move still relies on this source scope for collaboration durability.
+        const membershipRows = await getPageDeletionCollectionMemberships(
+          client,
+          subtreeRows,
+          true
+        );
+        assertPageMoveAuthorizationScope(initialAccess, subtreeRows, membershipRows);
         const destinationCollectionId = existingPage.is_collection
           ? pageId
           : updates.parentPageId

@@ -53,6 +53,37 @@ test("reproduction: collection-admin move rejects a descendant materialized outs
   );
 });
 
+test("reproduction: owner move also fences a mixed-membership descendant before collaboration teardown", () => {
+  // Reproduction:
+  // 1. The owner has page_a in collection_a.
+  // 2. A malformed/legacy child edge leaves private_child below it, but that
+  //    descendant is materialized in collection_b and has live collaborators.
+  // 3. The old OWNER path skipped the subtree membership check.
+  // 4. Later move code derived private_child's pre-move share count from
+  //    collection_a, so it could read zero and omit the descendant from the
+  //    materialization/write-lease/recovery fence before rewriting its scope.
+  const memberships = [
+    { page_id: "page_a", collection_id: "collection_a" },
+    { page_id: "private_child", collection_id: "collection_b" }
+  ];
+  const sourceCollectionShares = new Map([
+    ["collection_a", 0],
+    ["collection_b", 1]
+  ]);
+
+  assert.equal(sourceCollectionShares.get("collection_a"), 0);
+  assert.equal(sourceCollectionShares.get("collection_b"), 1);
+  assert.equal(
+    hasPageDeletionMembershipOutsideCollectionScope(
+      movedSubtree,
+      memberships,
+      "collection_a"
+    ),
+    true,
+    "the owner move must reject the mixed source scope before collaboration state can be rewritten"
+  );
+});
+
 test("page PATCH validates the full locked subtree before parent or membership mutation", () => {
   const route = readFileSync(
     new URL("../src/routes/page.routes.ts", import.meta.url),
@@ -76,14 +107,12 @@ test("page PATCH validates the full locked subtree before parent or membership m
     "getPageDeletionCollectionMemberships(",
     subtreeRead
   );
-  const lockingArgument = patchRoute.indexOf(
-    "true\n          );",
-    membershipRead
-  );
   const scopeValidation = patchRoute.indexOf(
     "assertPageMoveAuthorizationScope(initialAccess, subtreeRows, membershipRows)",
     membershipRead
   );
+  const membershipReadBlock = patchRoute.slice(membershipRead, scopeValidation);
+  const hierarchyToScope = patchRoute.slice(hierarchyValidation, scopeValidation);
   const parentUpdate = patchRoute.indexOf("UPDATE pages SET", scopeValidation);
   const membershipRewrite = patchRoute.indexOf(
     "replacePageSubtreeCollectionMembership(",
@@ -94,10 +123,15 @@ test("page PATCH validates the full locked subtree before parent or membership m
     "exact response-loss replay handling must remain first");
   assert.ok(subtreeRead > hierarchyValidation,
     "authorization must use the owner-locked hierarchy");
-  assert.ok(membershipRead > subtreeRead && lockingArgument > membershipRead,
+  assert.ok(membershipRead > subtreeRead && membershipReadBlock.includes("true"),
     "membership authorization must use a current SELECT ... FOR UPDATE read");
-  assert.ok(scopeValidation > lockingArgument,
+  assert.ok(scopeValidation > membershipRead,
     "the full subtree must be authorized after current membership capture");
+  assert.doesNotMatch(
+    hierarchyToScope,
+    /if \(initialAccess\.role === "ADMIN"\)/,
+    "owners must not bypass the source-membership durability fence"
+  );
   assert.ok(parentUpdate > scopeValidation,
     "the parent edge must not change before subtree authorization");
   assert.ok(membershipRewrite > scopeValidation,
@@ -105,6 +139,10 @@ test("page PATCH validates the full locked subtree before parent or membership m
 
   assert.match(
     route,
-    /function assertPageMoveAuthorizationScope[\s\S]*access\.role !== "ADMIN"[\s\S]*access\.scope === "COLLECTION"[\s\S]*hasPageDeletionMembershipOutsideCollectionScope/
+    /function hasPageMoveMembershipOutsideSourceScope[\s\S]*hasPageDeletionMembershipOutsideCollectionScope[\s\S]*memberships\.some/
+  );
+  assert.match(
+    route,
+    /function assertPageMoveAuthorizationScope[\s\S]*hasPageMoveMembershipOutsideSourceScope[\s\S]*access\.role !== "ADMIN"[\s\S]*access\.scope === "COLLECTION"/
   );
 });
