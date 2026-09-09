@@ -638,6 +638,11 @@ collaborationRouter.post(
         : null;
       const admission = await capturePageCommentMutationAdmission(pageId, user.id);
       const comment = await transaction(async (client) => {
+        // Comment mutations can span the actor and page-owner workspaces. Lock
+        // both user rows in the repository-wide deterministic order before any
+        // per-user boundary check so reciprocal collaborator writes cannot form
+        // an actor->owner / owner->actor deadlock.
+        await lockCollaborationMutationUsers(client, [user.id, admission.ownerId]);
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
         await assertPageCommentOwnerWorkspaceGeneration(admission, user.id, client);
         const access = await getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true });
@@ -792,6 +797,11 @@ collaborationRouter.patch(
       const expectedVersion = Number(req.body.expectedVersion);
       const admission = await capturePageCommentMutationAdmission(pageId, user.id);
       const comment = await transaction(async (client) => {
+        // Comment mutations can span the actor and page-owner workspaces. Lock
+        // both user rows in the repository-wide deterministic order before any
+        // per-user boundary check so reciprocal collaborator writes cannot form
+        // an actor->owner / owner->actor deadlock.
+        await lockCollaborationMutationUsers(client, [user.id, admission.ownerId]);
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
         await assertPageCommentOwnerWorkspaceGeneration(admission, user.id, client);
         const access = await getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true });
@@ -855,6 +865,8 @@ collaborationRouter.delete(
       const expectedVersion = Number(req.body.expectedVersion);
       const admission = await capturePageCommentMutationAdmission(pageId, user.id);
       await transaction(async (client) => {
+        // Match create/edit lock ordering for the same actor/owner pair.
+        await lockCollaborationMutationUsers(client, [user.id, admission.ownerId]);
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
         await assertPageCommentOwnerWorkspaceGeneration(admission, user.id, client);
         const access = await getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true });
