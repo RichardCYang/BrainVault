@@ -676,8 +676,8 @@ collaborationRouter.patch(
         const update = await client.execute<{ affectedRows: number }>(
           `UPDATE page_comments
            SET body = ?, edit_version = edit_version + 1, updated_at = CURRENT_TIMESTAMP(3)
-           WHERE page_id = ? AND id = ? AND edit_version = ?`,
-          [body, pageId, commentId, expectedVersion]
+           WHERE page_id = ? AND id = ? AND edit_version = ? AND edit_version < ?`,
+          [body, pageId, commentId, expectedVersion, Number.MAX_SAFE_INTEGER]
         );
         if (Number(update.affectedRows) !== 1) {
           throw new ApiError(
@@ -1490,8 +1490,8 @@ collaborationRouter.put(
           if (deletedExistingIds.has(row.id)) continue;
           if (!row.parent_block_id || !deletedExistingIds.has(row.parent_block_id)) continue;
           const detachedSurvivor = await client.execute<{ affectedRows: number }>(
-            "UPDATE blocks SET parent_block_id = NULL, last_mutation_id = NULL, last_mutation_hash = NULL, edit_version = edit_version + 1 WHERE id = ? AND page_id = ?",
-            [row.id, pageId]
+            "UPDATE blocks SET parent_block_id = NULL, last_mutation_id = NULL, last_mutation_hash = NULL, edit_version = edit_version + 1 WHERE id = ? AND page_id = ? AND edit_version < ?",
+            [row.id, pageId, Number.MAX_SAFE_INTEGER]
           );
           if (Number(detachedSurvivor.affectedRows) !== 1) {
             throw new ApiError(
@@ -1553,8 +1553,8 @@ collaborationRouter.put(
               `UPDATE blocks
                SET parent_block_id = ?, sort_order = ?, last_mutation_id = NULL,
                    last_mutation_hash = NULL, edit_version = edit_version + 1
-               WHERE id = ? AND page_id = ?`,
-              [block.parentBlockId, block.sortOrder, block.id, pageId]
+               WHERE id = ? AND page_id = ? AND edit_version < ?`,
+              [block.parentBlockId, block.sortOrder, block.id, pageId, Number.MAX_SAFE_INTEGER]
             );
             if (Number(attachmentUpdate.affectedRows) !== 1) {
               throw new ApiError(
@@ -1575,7 +1575,7 @@ collaborationRouter.put(
                SET parent_block_id = ?, type = ?, markdown = ?, html_cache = ?, checked = ?, sort_order = ?,
                    metadata = ?, last_mutation_id = NULL, last_mutation_hash = NULL,
                    edit_version = edit_version + 1
-               WHERE id = ? AND page_id = ?`,
+               WHERE id = ? AND page_id = ? AND edit_version < ?`,
               [
                 block.parentBlockId,
                 block.type,
@@ -1585,7 +1585,8 @@ collaborationRouter.put(
                 block.sortOrder,
                 metadata,
                 block.id,
-                pageId
+                pageId,
+                Number.MAX_SAFE_INTEGER
               ]
             );
             if (Number(blockUpdate.affectedRows) !== 1) {
@@ -1619,8 +1620,14 @@ collaborationRouter.put(
           `UPDATE pages
            SET title = ?, last_mutation_id = NULL, last_mutation_hash = NULL,
                edit_version = edit_version + 1, content_version = content_version + 1
-           WHERE id = ? AND owner_id = ?`,
-          [materialization.title, pageId, attachmentOwnerId]
+           WHERE id = ? AND owner_id = ? AND edit_version < ? AND content_version < ?`,
+          [
+            materialization.title,
+            pageId,
+            attachmentOwnerId,
+            Number.MAX_SAFE_INTEGER,
+            Number.MAX_SAFE_INTEGER
+          ]
         );
         if (Number(pageUpdate.affectedRows) !== 1) {
           throw new ApiError(

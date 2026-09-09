@@ -87,7 +87,7 @@ test("authorized block write sinks stay scoped to the locked page", () => {
   );
   assert.match(
     mutationRoute,
-    /\[\.\.\.values, blockId, existing\.page_id, body\.expectedVersion\]/
+    /\[\.\.\.values, blockId, existing\.page_id, body\.expectedVersion, Number\.MAX_SAFE_INTEGER\]/
   );
   assert.match(
     mutationRoute,

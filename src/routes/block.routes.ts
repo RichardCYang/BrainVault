@@ -614,10 +614,21 @@ function requireAttachmentUploadTarget(res: Response, actorId: string, pageId: s
 
 async function advancePageContentVersion(client: DbClient, pageId: string, ownerId: string) {
   const result = await client.execute<{ affectedRows: number }>(
-    "UPDATE pages SET content_version = content_version + 1 WHERE id = ? AND owner_id = ?",
-    [pageId, ownerId]
+    "UPDATE pages SET content_version = content_version + 1 WHERE id = ? AND owner_id = ? AND content_version < ?",
+    [pageId, ownerId, Number.MAX_SAFE_INTEGER]
   );
-  if (Number(result.affectedRows) !== 1) throw notFound("Page");
+  if (Number(result.affectedRows) !== 1) {
+    const page = await client.queryOne<Pick<PageRow, "id">>(
+      "SELECT id FROM pages WHERE id = ? AND owner_id = ?",
+      [pageId, ownerId]
+    );
+    if (!page) throw notFound("Page");
+    throw new ApiError(
+      409,
+      "PAGE_EDIT_CONFLICT",
+      "This page can no longer accept block changes because its content version reached the supported limit."
+    );
+  }
   const page = await client.queryOne<PageRow>(
     "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
     [pageId, ownerId]
@@ -732,8 +743,15 @@ async function promoteBlockChildrenBeforeDelete(
       `UPDATE blocks
        SET parent_block_id = ?, sort_order = ?, last_mutation_id = NULL,
            last_mutation_hash = NULL, edit_version = edit_version + 1
-       WHERE id = ? AND page_id = ? AND edit_version = ?`,
-      [update.parentBlockId, update.sortOrder, row.id, row.page_id, Number(row.edit_version ?? 1)]
+       WHERE id = ? AND page_id = ? AND edit_version = ? AND edit_version < ?`,
+      [
+        update.parentBlockId,
+        update.sortOrder,
+        row.id,
+        row.page_id,
+        Number(row.edit_version ?? 1),
+        Number.MAX_SAFE_INTEGER
+      ]
     );
     if (Number(result.affectedRows) !== 1) {
       throw new ApiError(
@@ -1525,8 +1543,8 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
       let pageContentVersion = lockedContentVersion;
       if (fields.length) {
         const result = await client.execute<{ affectedRows: number }>(
-          `UPDATE blocks SET ${[...fields, "edit_version = edit_version + 1"].join(", ")} WHERE id = ? AND page_id = ? AND edit_version = ?`,
-          [...values, blockId, existing.page_id, body.expectedVersion]
+          `UPDATE blocks SET ${[...fields, "edit_version = edit_version + 1"].join(", ")} WHERE id = ? AND page_id = ? AND edit_version = ? AND edit_version < ?`,
+          [...values, blockId, existing.page_id, body.expectedVersion, Number.MAX_SAFE_INTEGER]
         );
         if (Number(result.affectedRows) !== 1) {
           throw new ApiError(
@@ -1798,13 +1816,14 @@ blockRouter.post(
             `UPDATE blocks
              SET parent_block_id = ?, sort_order = ?, last_mutation_id = NULL,
                  last_mutation_hash = NULL, edit_version = edit_version + 1
-             WHERE id = ? AND page_id = ? AND edit_version = ?`,
+             WHERE id = ? AND page_id = ? AND edit_version = ? AND edit_version < ?`,
             [
               parentBlockId,
               sortOrder,
               before.id,
               body.targetPageId,
-              Number(before.edit_version ?? 1)
+              Number(before.edit_version ?? 1),
+              Number.MAX_SAFE_INTEGER
             ]
           );
           if (Number(restored.affectedRows) === 0) {
@@ -2254,15 +2273,15 @@ blockRouter.post(
                 `UPDATE blocks
                  SET sort_order = ?, parent_block_id = ?, last_mutation_id = NULL,
                      last_mutation_hash = NULL, edit_version = edit_version + 1
-                 WHERE id = ? AND page_id = ? AND edit_version = ?`,
-                [item.sortOrder, item.parentBlockId, item.id, pageId, item.expectedVersion]
+                 WHERE id = ? AND page_id = ? AND edit_version = ? AND edit_version < ?`,
+                [item.sortOrder, item.parentBlockId, item.id, pageId, item.expectedVersion, Number.MAX_SAFE_INTEGER]
               )
             : await client.execute<{ affectedRows: number }>(
                 `UPDATE blocks
                  SET sort_order = ?, last_mutation_id = NULL, last_mutation_hash = NULL,
                      edit_version = edit_version + 1
-                 WHERE id = ? AND page_id = ? AND edit_version = ?`,
-                [item.sortOrder, item.id, pageId, item.expectedVersion]
+                 WHERE id = ? AND page_id = ? AND edit_version = ? AND edit_version < ?`,
+                [item.sortOrder, item.id, pageId, item.expectedVersion, Number.MAX_SAFE_INTEGER]
               );
           if (Number(result.affectedRows) !== 1) {
             throw new ApiError(

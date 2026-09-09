@@ -224,7 +224,7 @@ test("collaboration materialization keeps canonical page reads and writes owner-
   assert.match(pageUpdateSink, /WHERE id = \? AND owner_id = \?/);
   assert.match(
     pageUpdateSink,
-    /\[materialization\.title, pageId, attachmentOwnerId\]/
+    /\[\s*materialization\.title,\s*pageId,\s*attachmentOwnerId,\s*Number\.MAX_SAFE_INTEGER,\s*Number\.MAX_SAFE_INTEGER\s*\]/
   );
 
   const ownerScopedPageReads =

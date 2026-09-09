@@ -444,7 +444,15 @@ export async function recordPageVersion(
     "SELECT MAX(revision) AS revision FROM page_versions WHERE page_id = ?",
     [input.pageId]
   );
-  const revision = Number(current?.revision ?? 0) + 1;
+  const currentRevision = Number(current?.revision ?? 0);
+  if (
+    !Number.isSafeInteger(currentRevision)
+    || currentRevision < 0
+    || currentRevision >= Number.MAX_SAFE_INTEGER
+  ) {
+    throw new Error("Page version history revision cannot be advanced safely");
+  }
+  const revision = currentRevision + 1;
   const summary = summarizePageVersionChanges(input.changes);
   const changeCount = countPageVersionChanges(input.changes);
   const actors = input.actors.length ? input.actors : [{ id: "unknown", username: "unknown", name: null }];

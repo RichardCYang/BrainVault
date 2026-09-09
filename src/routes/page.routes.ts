@@ -1963,8 +1963,8 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
           updateFields.push("last_mutation_id = NULL", "last_mutation_hash = NULL");
         }
         const result = await client.execute<{ affectedRows: number }>(
-          `UPDATE pages SET ${[...updateFields, "edit_version = edit_version + 1"].join(", ")} WHERE id = ? AND owner_id = ? AND edit_version = ?`,
-          [...updateValues, pageId, workspaceOwnerId, expectedVersion]
+          `UPDATE pages SET ${[...updateFields, "edit_version = edit_version + 1"].join(", ")} WHERE id = ? AND owner_id = ? AND edit_version = ? AND edit_version < ?`,
+          [...updateValues, pageId, workspaceOwnerId, expectedVersion, Number.MAX_SAFE_INTEGER]
         );
         if (Number(result.affectedRows) === 0) {
           throw new ApiError(
@@ -2367,8 +2367,8 @@ pageRouter.delete(
                edit_version = edit_version + 1,
                last_mutation_id = NULL,
                last_mutation_hash = NULL
-           WHERE id = ? AND owner_id = ? AND edit_version = ?`,
-          [pageId, workspaceOwnerId, expectedVersion]
+           WHERE id = ? AND owner_id = ? AND edit_version = ? AND edit_version < ?`,
+          [pageId, workspaceOwnerId, expectedVersion, Number.MAX_SAFE_INTEGER]
         );
         if (Number(updateResult.affectedRows) === 0) {
           throw new ApiError(
@@ -2429,8 +2429,8 @@ pageRouter.put("/:pageId/tags", validate({ params: idParamSchema, body: tagSchem
          SET edit_version = edit_version + 1,
              last_mutation_id = NULL,
              last_mutation_hash = NULL
-         WHERE id = ? AND owner_id = ? AND edit_version = ?`,
-        [pageId, workspaceOwnerId, expectedVersion]
+         WHERE id = ? AND owner_id = ? AND edit_version = ? AND edit_version < ?`,
+        [pageId, workspaceOwnerId, expectedVersion, Number.MAX_SAFE_INTEGER]
       );
       if (Number(updateResult.affectedRows) === 0) {
         throw new ApiError(
