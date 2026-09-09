@@ -423,6 +423,7 @@ const state = {
     editingVersion: null,
     busyCommentId: null,
     requestId: 0,
+    pendingCreateTask: null,
     message: "",
     messageIsError: false
   },
@@ -10719,6 +10720,7 @@ function resetPageComments(pageId = null) {
   state.pageComments.editingDraft = "";
   state.pageComments.editingVersion = null;
   state.pageComments.busyCommentId = null;
+  state.pageComments.pendingCreateTask = null;
   state.pageComments.message = "";
   state.pageComments.messageIsError = false;
   elements.pageCommentsInput.value = "";
@@ -10946,17 +10948,48 @@ async function submitPageComment() {
   );
   if (!isCommentMutationCurrent()) return;
 
+  let task = state.pageComments.pendingCreateTask;
+  if (
+    !task
+    || task.pageId !== pageId
+    || task.body !== body
+    || !isCurrentAuthenticatedSessionScope(task.authenticationScope)
+  ) {
+    task = {
+      pageId,
+      body,
+      mutationId: createMutationId(),
+      authenticationScope
+    };
+    state.pageComments.pendingCreateTask = task;
+  }
+
   state.pageComments.submitting = true;
   state.pageComments.message = t("comments.submitting");
   state.pageComments.messageIsError = false;
   renderPageComments();
   try {
-    const data = await api(`/api/pages/${encodeURIComponent(pageId)}/comments`, {
-      method: "POST",
-      body: { body },
-      beforeFetch: isCommentMutationCurrent
-    });
+    let data = null;
+    let lastError = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (!isCommentMutationCurrent()) return;
+      try {
+        data = await api(`/api/pages/${encodeURIComponent(pageId)}/comments`, {
+          method: "POST",
+          body: { body, mutationId: task.mutationId },
+          beforeFetch: isCommentMutationCurrent
+        });
+        break;
+      } catch (error) {
+        lastError = error;
+        if (!isAmbiguousApiError(error) || attempt >= 1) throw error;
+        // Retry an ambiguous outcome with the same mutation id. The server
+        // receipt can acknowledge a committed first POST without duplicating it.
+      }
+    }
+    if (!data && lastError) throw lastError;
     if (data === skippedApiRequest || !isCommentMutationCurrent()) return;
+    if (state.pageComments.pendingCreateTask === task) state.pageComments.pendingCreateTask = null;
     if (data?.comment) {
       const existingIndex = state.pageComments.entries.findIndex((entry) => entry.id === data.comment.id);
       if (existingIndex >= 0) state.pageComments.entries[existingIndex] = data.comment;
@@ -10968,6 +11001,12 @@ async function submitPageComment() {
     state.pageComments.message = t("comments.added");
     state.pageComments.messageIsError = false;
   } catch (error) {
+    if (
+      !isAmbiguousApiError(error)
+      && state.pageComments.pendingCreateTask === task
+    ) {
+      state.pageComments.pendingCreateTask = null;
+    }
     if (
       isCurrentAuthenticatedSessionScope(authenticationScope)
       && isCurrentPageCommentsContext(pageId, navigationGeneration)

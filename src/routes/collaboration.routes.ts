@@ -12,6 +12,7 @@ import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { idParamSchema, requireUser, routeIdSchema, safeVersionSchema, usernameSchema } from "../utils/schemas.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { createId } from "../lib/id.js";
+import { createMutationRequestHash } from "../lib/mutation.js";
 import {
   assertCollaborationDocumentEpoch,
   ensureCollaborationState,
@@ -307,9 +308,13 @@ const shareParamsSchema = z.object({
 });
 
 const pageCommentTextSchema = z.string().trim().min(1).max(2_000);
+const pageCommentMutationIdSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
 
 const pageCommentBodySchema = z.object({
-  body: pageCommentTextSchema
+  body: pageCommentTextSchema,
+  // Optional for compatibility with pre-idempotency clients. Current clients
+  // always send it so an ambiguous committed POST can be replayed safely.
+  mutationId: pageCommentMutationIdSchema.optional()
 }).strict();
 
 const pageCommentEditSchema = z.object({
@@ -384,6 +389,16 @@ type PageCommentRow = ShareTargetRow & {
   edit_version: number;
   comment_created_at: string;
   comment_updated_at: string;
+};
+
+type PageCommentCreateMutationReceipt = {
+  page_id: string;
+  request_hash: string;
+  comment_id: string | null;
+  actor_workspace_generation: number | string | bigint;
+  workspace_owner_id: string;
+  owner_workspace_generation: number | string | bigint;
+  share_generation: string | null;
 };
 
 type CollaborationUpdateRow = {
@@ -473,6 +488,22 @@ function toPageCommentPayload(
     canEdit: isAuthor,
     canDelete: isAuthor || viewer.isOwner
   };
+}
+
+function isDuplicateEntryError(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ER_DUP_ENTRY";
+}
+
+function parseCommentReceiptGeneration(value: number | string | bigint, label: string) {
+  const generation = Number(value);
+  if (!Number.isSafeInteger(generation) || generation < 1) {
+    throw new ApiError(
+      500,
+      "PAGE_COMMENT_CREATE_RECEIPT_INCOMPLETE",
+      `The stored comment creation receipt has an invalid ${label} generation.`
+    );
+  }
+  return generation;
 }
 
 function assertLosslessStructuredMetadata(type: BlockRow["type"], metadata: unknown) {
@@ -601,6 +632,10 @@ collaborationRouter.post(
       const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
       const body = String(req.body.body).trim();
+      const mutationId = typeof req.body.mutationId === "string" ? req.body.mutationId : null;
+      const requestHash = mutationId
+        ? createMutationRequestHash({ kind: "PAGE_COMMENT_CREATE", pageId, body })
+        : null;
       const admission = await capturePageCommentMutationAdmission(pageId, user.id);
       const comment = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
@@ -609,6 +644,101 @@ collaborationRouter.post(
         assertPageCommentMutationAdmission(admission, access);
         assertPageCanEdit(access, "This shared collection is read-only for your account");
         assertPageNotArchived(access.page, "Restore the page before adding a comment");
+
+        if (mutationId && requestHash) {
+          let reserved = true;
+          try {
+            // Reserve the receipt before inserting user data. Concurrent copies
+            // of the same request then serialize on one durable mutation id; a
+            // loser can only replay the committed comment, never create another.
+            await client.execute(
+              `INSERT INTO page_comment_create_mutations
+                 (actor_id, mutation_id, page_id, request_hash, comment_id,
+                  actor_workspace_generation, workspace_owner_id, owner_workspace_generation, share_generation)
+               VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+              [
+                user.id,
+                mutationId,
+                pageId,
+                requestHash,
+                authScope.workspaceGeneration,
+                admission.ownerId,
+                admission.ownerWorkspaceGeneration,
+                admission.shareGeneration
+              ]
+            );
+          } catch (error) {
+            if (!isDuplicateEntryError(error)) throw error;
+            reserved = false;
+          }
+
+          if (!reserved) {
+            const receipt = await client.queryOne<PageCommentCreateMutationReceipt>(
+              `SELECT page_id, request_hash, comment_id, actor_workspace_generation,
+                      workspace_owner_id, owner_workspace_generation, share_generation
+               FROM page_comment_create_mutations
+               WHERE actor_id = ? AND mutation_id = ?
+               FOR UPDATE`,
+              [user.id, mutationId]
+            );
+            if (!receipt) {
+              throw new ApiError(
+                500,
+                "PAGE_COMMENT_CREATE_RECEIPT_INCOMPLETE",
+                "The comment creation receipt is incomplete. The comment was not created again."
+              );
+            }
+            if (receipt.page_id !== pageId || receipt.request_hash !== requestHash) {
+              throw new ApiError(
+                409,
+                "MUTATION_ID_REUSED",
+                "This mutation id was already used for a different comment creation request. No additional comment was created."
+              );
+            }
+
+            const actorWorkspaceGeneration = parseCommentReceiptGeneration(
+              receipt.actor_workspace_generation,
+              "actor workspace"
+            );
+            const ownerWorkspaceGeneration = parseCommentReceiptGeneration(
+              receipt.owner_workspace_generation,
+              "page owner workspace"
+            );
+            if (
+              actorWorkspaceGeneration !== authScope.workspaceGeneration
+              || receipt.workspace_owner_id !== admission.ownerId
+              || ownerWorkspaceGeneration !== admission.ownerWorkspaceGeneration
+              || receipt.share_generation !== admission.shareGeneration
+            ) {
+              throw new ApiError(
+                409,
+                "PAGE_COMMENT_CREATE_REPLAY_SUPERSEDED",
+                "This comment creation belongs to an older page or access generation and was not replayed."
+              );
+            }
+            if (!receipt.comment_id) {
+              throw new ApiError(
+                500,
+                "PAGE_COMMENT_CREATE_RECEIPT_INCOMPLETE",
+                "The comment creation receipt is incomplete. The comment was not created again."
+              );
+            }
+
+            const replayed = await getPageCommentRow(pageId, receipt.comment_id, client);
+            if (!replayed || replayed.user_id !== user.id) {
+              throw new ApiError(
+                409,
+                "PAGE_COMMENT_CREATE_REPLAY_SUPERSEDED",
+                "The originally created comment no longer exists in this page generation and was not created again."
+              );
+            }
+            return toPageCommentPayload(replayed, {
+              id: user.id,
+              isOwner: access.role === "OWNER" || access.role === "ADMIN"
+            });
+          }
+        }
+
         const countRow = await client.queryOne<{ count: number }>(
           "SELECT COUNT(*) AS count FROM page_comments WHERE page_id = ?",
           [pageId]
@@ -622,6 +752,21 @@ collaborationRouter.post(
            VALUES (?, ?, ?, ?)`,
           [commentId, pageId, user.id, body]
         );
+        if (mutationId && requestHash) {
+          const receiptUpdate = await client.execute<{ affectedRows: number }>(
+            `UPDATE page_comment_create_mutations
+             SET comment_id = ?
+             WHERE actor_id = ? AND mutation_id = ? AND comment_id IS NULL`,
+            [commentId, user.id, mutationId]
+          );
+          if (Number(receiptUpdate.affectedRows) !== 1) {
+            throw new ApiError(
+              500,
+              "PAGE_COMMENT_CREATE_RECEIPT_INCOMPLETE",
+              "The comment creation receipt could not be finalized. The comment was not committed."
+            );
+          }
+        }
         const created = await getPageCommentRow(pageId, commentId, client);
         if (!created) throw new ApiError(500, "PAGE_COMMENT_CREATE_FAILED", "The comment was not created");
         return toPageCommentPayload(created, { id: user.id, isOwner: access.role === "OWNER" || access.role === "ADMIN" });
