@@ -2499,20 +2499,33 @@ async function importRows(
   // the restored block/page versions are checked.
   await client.execute("DELETE FROM block_move_mutations WHERE actor_id = ?", [userId]);
   await client.execute("DELETE FROM pages WHERE owner_id = ?", [userId]);
-  await client.execute(
+  const restoredUserUpdate = await client.execute<{ affectedRows: number }>(
     `UPDATE users
      SET name = ?, avatar_data = ?, preferred_language = ?, default_collection_icon = ?,
          theme = COALESCE(?, theme), attachment_generation = attachment_generation + 1
-     WHERE id = ?`,
+     WHERE id = ? AND attachment_generation < ?`,
     [
       manifest.account.name,
       normalizeAvatarDataUrl(manifest.account.avatar_data),
       manifest.account.preferred_language,
       restoreIconValue(manifest.account.default_collection_icon),
       manifest.account.theme ?? null,
-      userId
+      userId,
+      Number.MAX_SAFE_INTEGER
     ]
   );
+  if (Number(restoredUserUpdate.affectedRows) !== 1) {
+    const existingOwner = await client.queryOne<Pick<UserRow, "id">>(
+      "SELECT id FROM users WHERE id = ?",
+      [userId]
+    );
+    if (!existingOwner) throw new ApiError(404, "USER_NOT_FOUND", "User not found");
+    throw new ApiError(
+      500,
+      "DATA_RESTORE_VERSION_EXHAUSTED",
+      "The workspace generation cannot be advanced safely"
+    );
+  }
   const restoredOwner = await client.queryOne<Pick<UserRow, "id" | "username" | "name">>(
     "SELECT id, username, name FROM users WHERE id = ?",
     [userId]
