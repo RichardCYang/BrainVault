@@ -431,14 +431,14 @@ export function createPageDraftStore(
     ) {
       return false;
     }
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
-    if (normalizedVersion === null || normalizedRevision === null) return false;
+    const normalizedPayload = normalizeBlockDraftPayload(payload);
+    if (!normalizedPayload || normalizedVersion === null || normalizedRevision === null) return false;
     const prepared = prepareRecordMutation(userId, pageId, recordSourceId, { createIfMissing: true });
     if (!prepared.writable || !prepared.record) return false;
     const record = prepared.record;
     const updatedAt = Date.now();
     record.blocks[blockId] = {
-      payload,
+      payload: normalizedPayload,
       expectedVersion: normalizedVersion,
       revision: normalizedRevision,
       updatedAt

@@ -34,7 +34,7 @@ const blockDraft = {
   userId: "user-1",
   pageId: "page-1",
   blockId: "block-1",
-  payload: { type: "MARKDOWN", markdown: "unsaved", checked: false },
+  payload: { type: "MARKDOWN", markdown: "unsaved", checked: false, metadata: null },
   expectedVersion: 7,
   revision: 3
 };

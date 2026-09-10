@@ -100,3 +100,60 @@ test("valid complete block recovery payloads remain readable", () => {
   assert.equal(inspection.records.length, 1);
   assert.deepEqual(inspection.records[0].blocks["block-1"].payload, payload);
 });
+
+test("direct recovery rejects malformed block writes before they can poison a recoverable record", () => {
+  const storage = new MemoryStorage();
+  const key = "brainvault.pageDraft.v2:user-1:page-1:tab-a";
+  const store = createPageDraftStore(storage, { sourceId: "tab-a" });
+
+  assert.equal(store.saveTitle({
+    userId: "user-1",
+    pageId: "page-1",
+    value: "keep this title",
+    expectedVersion: 4,
+    revision: 1
+  }), true);
+  const original = storage.getItem(key);
+  assert.equal(typeof original, "string");
+
+  for (const payload of [
+    { type: "MARKDOWN", markdown: "missing metadata", checked: false },
+    { type: "MARKDOWN", markdown: "invalid metadata", checked: false, metadata: "damaged" },
+    { type: "MARKDOWN", markdown: "unknown field", checked: false, metadata: null, futureField: true }
+  ]) {
+    assert.equal(store.saveBlock({
+      userId: "user-1",
+      pageId: "page-1",
+      blockId: "block-1",
+      payload,
+      expectedVersion: 7,
+      revision: 2
+    }), false);
+    assert.equal(storage.getItem(key), original);
+    assert.equal(store.loadPage("user-1", "page-1")?.title?.value, "keep this title");
+  }
+});
+
+test("direct recovery accepts complete block writes that remain readable", () => {
+  const storage = new MemoryStorage();
+  const store = createPageDraftStore(storage, { sourceId: "tab-a" });
+  const payload = {
+    type: "MARKDOWN",
+    markdown: "durable unsaved note",
+    checked: false,
+    metadata: null
+  };
+
+  assert.equal(store.saveBlock({
+    userId: "user-1",
+    pageId: "page-1",
+    blockId: "block-1",
+    payload,
+    expectedVersion: 7,
+    revision: 2
+  }), true);
+  assert.deepEqual(
+    store.loadPage("user-1", "page-1")?.blocks["block-1"]?.payload,
+    payload
+  );
+});

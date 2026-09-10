@@ -941,7 +941,7 @@ test("foreign draft acknowledgement cannot overwrite a newer cross-tab IndexedDB
     userId: "user-1",
     pageId: "page-1",
     blockId: "block-1",
-    payload: { type: "MARKDOWN", markdown: "older unsaved block", checked: false },
+    payload: { type: "MARKDOWN", markdown: "older unsaved block", checked: false, metadata: null },
     expectedVersion: 7,
     revision: 3
   }), true);
@@ -960,7 +960,7 @@ test("foreign draft acknowledgement cannot overwrite a newer cross-tab IndexedDB
     userId: "user-1",
     pageId: "page-1",
     blockId: "block-1",
-    payload: { type: "MARKDOWN", markdown: "newer unsaved block", checked: false },
+    payload: { type: "MARKDOWN", markdown: "newer unsaved block", checked: false, metadata: null },
     expectedVersion: 7,
     revision: 4
   }), true);
