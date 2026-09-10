@@ -186,6 +186,26 @@ test("direct recovery safely persists prototype-named block ids", () => {
   }
 });
 
+test("direct recovery block maps do not fall through to Object.prototype", () => {
+  const storage = new MemoryStorage();
+  const store = createPageDraftStore(storage, { sourceId: "tab-a" });
+
+  assert.equal(store.saveTitle({
+    userId: "user-1",
+    pageId: "page-1",
+    value: "title-only recovery",
+    expectedVersion: 4,
+    revision: 1
+  }), true);
+
+  const blocks = store.loadPage("user-1", "page-1")?.blocks;
+  assert.equal(Object.getPrototypeOf(blocks), null);
+  for (const blockId of ["__proto__", "constructor", "toString"]) {
+    assert.equal(Object.prototype.hasOwnProperty.call(blocks, blockId), false);
+    assert.equal(blocks[blockId], undefined);
+  }
+});
+
 test("direct recovery accepts complete block writes that remain readable", () => {
   const storage = new MemoryStorage();
   const store = createPageDraftStore(storage, { sourceId: "tab-a" });

@@ -58,6 +58,12 @@ const pageDraftRecordKeys = new Set([
   "blockOrder"
 ]);
 
+function createBlockDraftMap() {
+  // Resource ids are valid object keys, including names inherited from Object.prototype.
+  // A null-prototype map makes every dynamic lookup own-data-only by construction.
+  return Object.create(null);
+}
+
 // JSON.parse() keeps only one value when an object contains duplicate names.
 // Recovery is an evidence-preservation boundary, so detect duplicates in the raw
 // JSON before normalization can erase a shadowed title, block, or metadata field.
@@ -486,7 +492,7 @@ function normalizeRecord(value, userId, pageId, expectedSourceId = null) {
     if (!blockOrder) return null;
   }
 
-  const blocks = {};
+  const blocks = createBlockDraftMap();
   if (value.blocks !== null && value.blocks !== undefined) {
     if (typeof value.blocks !== "object" || Array.isArray(value.blocks)) return null;
     for (const [blockId, blockDraft] of Object.entries(value.blocks)) {
@@ -730,7 +736,7 @@ export function createPageDraftStore(
       sourceId: recordSourceId,
       updatedAt: Date.now(),
       title: null,
-      blocks: {},
+      blocks: createBlockDraftMap(),
       blockOrder: null
     };
   }
@@ -1021,7 +1027,7 @@ export function createPageDraftStore(
     if (!prepared.record) return true;
     const record = prepared.record;
     record.title = null;
-    record.blocks = {};
+    record.blocks = createBlockDraftMap();
     record.blockOrder = null;
     return writePage(record, prepared.expectedRecord);
   }
@@ -1048,7 +1054,7 @@ export function createPageDraftStore(
     if (JSON.stringify(prepared.record) !== JSON.stringify(expectedRecord)) return false;
     const record = prepared.record;
     record.title = null;
-    record.blocks = {};
+    record.blocks = createBlockDraftMap();
     record.blockOrder = null;
     return writePage(record, prepared.expectedRecord);
   }
