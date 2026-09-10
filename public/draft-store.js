@@ -29,13 +29,38 @@ function normalizeTitleDraft(value) {
   return { value: value.value, revision, expectedVersion, updatedAt: normalizeUpdatedAt(value.updatedAt) };
 }
 
+const blockDraftPayloadKeys = new Set(["type", "markdown", "checked", "metadata"]);
+
+function normalizeBlockDraftPayload(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const keys = Object.keys(value);
+  if (keys.length !== blockDraftPayloadKeys.size || keys.some((key) => !blockDraftPayloadKeys.has(key))) {
+    return null;
+  }
+  if (!isNonEmptyString(value.type) || typeof value.markdown !== "string" || typeof value.checked !== "boolean") {
+    return null;
+  }
+  if (
+    value.metadata !== null
+    && (!value.metadata || typeof value.metadata !== "object" || Array.isArray(value.metadata))
+  ) {
+    return null;
+  }
+  return {
+    type: value.type,
+    markdown: value.markdown,
+    checked: value.checked,
+    metadata: value.metadata
+  };
+}
+
 function normalizeBlockDraft(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const revision = normalizeRevision(value.revision);
   const expectedVersion = normalizeVersion(value.expectedVersion);
-  if (!value.payload || typeof value.payload !== "object" || Array.isArray(value.payload)) return null;
-  if (revision === null || expectedVersion === null) return null;
-  return { payload: value.payload, revision, expectedVersion, updatedAt: normalizeUpdatedAt(value.updatedAt) };
+  const payload = normalizeBlockDraftPayload(value.payload);
+  if (revision === null || expectedVersion === null || !payload) return null;
+  return { payload, revision, expectedVersion, updatedAt: normalizeUpdatedAt(value.updatedAt) };
 }
 
 function normalizeParentBlockId(value) {

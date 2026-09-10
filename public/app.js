@@ -17707,18 +17707,27 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
 
 function normalizeRecoveredBlockPayload(payload, currentBlock) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
-  const type = typeof payload.type === "string" && Object.hasOwn(blockTypeLabels, payload.type)
-    ? payload.type
-    : currentBlock?.type;
-  if (!type || type === "ATTACHMENT") return null;
-  const metadata = payload.metadata && typeof payload.metadata === "object" && !Array.isArray(payload.metadata)
-    ? payload.metadata
-    : null;
+  const keys = Object.keys(payload);
+  if (
+    keys.length !== 4
+    || !keys.every((key) => ["type", "markdown", "checked", "metadata"].includes(key))
+    || typeof payload.type !== "string"
+    || !Object.hasOwn(blockTypeLabels, payload.type)
+    || payload.type === "ATTACHMENT"
+    || typeof payload.markdown !== "string"
+    || typeof payload.checked !== "boolean"
+    || (
+      payload.metadata !== null
+      && (!payload.metadata || typeof payload.metadata !== "object" || Array.isArray(payload.metadata))
+    )
+  ) {
+    return null;
+  }
   return {
-    type,
-    markdown: typeof payload.markdown === "string" ? payload.markdown : "",
-    checked: Boolean(payload.checked),
-    metadata
+    type: payload.type,
+    markdown: payload.markdown,
+    checked: payload.checked,
+    metadata: payload.metadata
   };
 }
 
