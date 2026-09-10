@@ -35,38 +35,63 @@ function isLosslessJsonValue(root) {
   const pending = [root];
   const seen = new WeakSet();
 
-  while (pending.length) {
-    const value = pending.pop();
-    if (value === null || typeof value === "string" || typeof value === "boolean") continue;
-    if (typeof value === "number") {
-      if (!Number.isFinite(value)) return false;
-      continue;
-    }
-    if (!value || typeof value !== "object") return false;
-    if (seen.has(value)) return false;
-    seen.add(value);
+  try {
+    while (pending.length) {
+      const value = pending.pop();
+      if (value === null || typeof value === "string" || typeof value === "boolean") continue;
+      if (typeof value === "number") {
+        // JSON.stringify(-0) emits 0, so accepting signed zero would silently
+        // change metadata at the recovery persistence boundary.
+        if (!Number.isFinite(value) || Object.is(value, -0)) return false;
+        continue;
+      }
+      if (!value || typeof value !== "object") return false;
+      if (seen.has(value)) return false;
+      seen.add(value);
 
-    if (Array.isArray(value)) {
+      if (Array.isArray(value)) {
+        if (Object.getOwnPropertySymbols(value).length > 0) return false;
+        const ownPropertyNames = Object.getOwnPropertyNames(value);
+        const enumerableKeys = Object.keys(value);
+        // A JSON array can preserve only its indexed values. Reject sparse arrays,
+        // hidden/extra properties, and accessor-backed indexes instead of dropping
+        // data or invoking user-defined getters during recovery admission.
+        if (
+          ownPropertyNames.length !== value.length + 1
+          || !ownPropertyNames.includes("length")
+          || enumerableKeys.length !== value.length
+        ) {
+          return false;
+        }
+        for (let index = 0; index < value.length; index += 1) {
+          const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+          if (
+            !descriptor?.enumerable
+            || !Object.prototype.hasOwnProperty.call(descriptor, "value")
+          ) {
+            return false;
+          }
+          pending.push(descriptor.value);
+        }
+        continue;
+      }
+
+      const prototype = Object.getPrototypeOf(value);
+      if (prototype !== Object.prototype && prototype !== null) return false;
       if (Object.getOwnPropertySymbols(value).length > 0) return false;
       const enumerableKeys = Object.keys(value);
-      if (enumerableKeys.length !== value.length) return false;
-      for (let index = 0; index < value.length; index += 1) {
-        if (!Object.prototype.hasOwnProperty.call(value, index)) return false;
-        pending.push(value[index]);
+      if (Object.getOwnPropertyNames(value).length !== enumerableKeys.length) return false;
+      for (const key of enumerableKeys) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (!descriptor?.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, "value")) return false;
+        pending.push(descriptor.value);
       }
-      continue;
     }
-
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return false;
-    if (Object.getOwnPropertySymbols(value).length > 0) return false;
-    const enumerableKeys = Object.keys(value);
-    if (Object.getOwnPropertyNames(value).length !== enumerableKeys.length) return false;
-    for (const key of enumerableKeys) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (!descriptor?.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, "value")) return false;
-      pending.push(descriptor.value);
-    }
+  } catch {
+    // Proxies and exotic objects can throw from reflective operations. Recovery
+    // validation must fail closed rather than let that exception interrupt draft
+    // persistence or replace the last known-good recovery record.
+    return false;
   }
 
   return true;

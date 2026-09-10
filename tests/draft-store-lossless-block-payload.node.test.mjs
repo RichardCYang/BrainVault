@@ -177,12 +177,28 @@ test("direct recovery rejects JSON-lossy block metadata before modifying durable
   cyclicMetadata.self = cyclicMetadata;
   const sparseValues = [];
   sparseValues[1] = "survives";
+  const hiddenValues = ["visible"];
+  Object.defineProperty(hiddenValues, "hidden", {
+    value: "must-not-be-dropped",
+    enumerable: false
+  });
+  const throwingValues = [];
+  Object.defineProperty(throwingValues, 0, {
+    enumerable: true,
+    get() {
+      throw new Error("recovery validation must not invoke array getters");
+    }
+  });
+  throwingValues.length = 1;
   const invalidMetadata = [
     { database: { rows: [{ id: "row-1", value: undefined }] } },
     { database: { score: Number.NaN } },
     { database: { score: Number.POSITIVE_INFINITY } },
+    { database: { score: -0 } },
     { database: { value: 1n } },
     { database: { values: sparseValues } },
+    { database: { values: hiddenValues } },
+    { database: { values: throwingValues } },
     cyclicMetadata
   ];
 
