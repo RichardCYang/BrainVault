@@ -65,12 +65,15 @@ export async function assertNoActiveCollaborationWriteLeases(
          AND expires_at <= CURRENT_TIMESTAMP(6)`,
       group
     );
+    // Callers can reach this fence after waiting on page locks. Under REPEATABLE READ,
+    // use a locking current read so leases committed during that wait are visible.
     const active = await client.queryOne<{ page_id: string }>(
       `SELECT page_id
        FROM page_collaboration_write_leases
        WHERE page_id IN (${placeholders})
          AND expires_at > CURRENT_TIMESTAMP(6)
-       LIMIT 1`,
+       LIMIT 1
+       FOR UPDATE`,
       group
     );
     if (active) {

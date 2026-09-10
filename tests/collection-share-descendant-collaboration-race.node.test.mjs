@@ -9,6 +9,10 @@ const route = readFileSync(
   path.join(root, "src/routes/collection-sharing.routes.ts"),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const writeLease = readFileSync(
+  path.join(root, "src/lib/collaboration-write-lease.ts"),
+  "utf8"
+).replace(/\r\n/g, "\n");
 
 function section(source, start, end) {
   const startIndex = source.indexOf(start);
@@ -84,4 +88,12 @@ test("collection-share removal locks member pages before the collaboration teard
   assert.ok(descendantLocks >= 0, "collection member page rows must be locked");
   assert.ok(writeLeaseFence > descendantLocks, "the write-lease fence must follow descendant locking");
   assert.ok(teardown > writeLeaseFence, "final-share teardown must remain behind both fences");
+});
+
+test("active collaboration write leases are checked with a locking current read", () => {
+  assert.match(
+    writeLease,
+    /expires_at > CURRENT_TIMESTAMP\(6\)[\s\S]*LIMIT 1\s+FOR UPDATE/,
+    "the lease fence must see leases committed while a REPEATABLE READ transaction waited on page locks"
+  );
 });
