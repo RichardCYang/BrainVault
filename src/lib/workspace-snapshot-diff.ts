@@ -88,16 +88,73 @@ function longTextFieldDifference(field: string, snapshot: string | null, current
   return { field, snapshot: summary.snapshot, current: summary.current };
 }
 
-function pageCoverDescription(manifest: BrainVaultBackup, pageId: string, coverUrl: string | null) {
-  const storedCover = (manifest.pageCovers ?? []).find((cover) => cover.pageId === pageId);
+type WorkspaceDiffIndex = {
+  pageCoverByPageId: Map<string, NonNullable<BrainVaultBackup["pageCovers"]>[number]>;
+  attachmentByBlockId: Map<string, BrainVaultBackup["attachments"][number]>;
+  tagsByPageId: Map<string, BrainVaultBackup["data"]["tags"][number][]>;
+  sharesByPageId: Map<string, NonNullable<BrainVaultBackup["data"]["pageShares"]>[number][]>;
+  commentsByPageId: Map<string, NonNullable<BrainVaultBackup["data"]["pageComments"]>[number][]>;
+  versionsByPageId: Map<string, NonNullable<BrainVaultBackup["data"]["pageVersions"]>[number][]>;
+  navigationOrderByPageId: Map<string, number>;
+};
+
+function rowsByPage<T extends { page_id: string }>(rows: T[] | undefined) {
+  const byPage = new Map<string, T[]>();
+  for (const row of rows ?? []) {
+    const items = byPage.get(row.page_id);
+    if (items) items.push(row);
+    else byPage.set(row.page_id, [row]);
+  }
+  return byPage;
+}
+
+function buildWorkspaceDiffIndex(manifest: BrainVaultBackup): WorkspaceDiffIndex {
+  const tagById = new Map(manifest.data.tags.map((tag) => [tag.id, tag]));
+  const tagsByPageId = new Map<string, BrainVaultBackup["data"]["tags"][number][]>();
+  for (const relation of manifest.data.pageTags ?? []) {
+    const tag = tagById.get(relation.tag_id);
+    if (!tag) continue;
+    const tags = tagsByPageId.get(relation.page_id);
+    if (tags) tags.push(tag);
+    else tagsByPageId.set(relation.page_id, [tag]);
+  }
+  for (const tags of tagsByPageId.values()) {
+    tags.sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  const commentsByPageId = rowsByPage(manifest.data.pageComments);
+  for (const comments of commentsByPageId.values()) {
+    comments.sort((left, right) => left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id));
+  }
+
+  const versionsByPageId = rowsByPage(manifest.data.pageVersions);
+  for (const versions of versionsByPageId.values()) {
+    versions.sort((left, right) => left.revision - right.revision);
+  }
+
+  return {
+    pageCoverByPageId: new Map((manifest.pageCovers ?? []).map((cover) => [cover.pageId, cover])),
+    attachmentByBlockId: new Map(manifest.attachments.map((attachment) => [attachment.blockId, attachment])),
+    tagsByPageId,
+    sharesByPageId: rowsByPage(manifest.data.pageShares),
+    commentsByPageId,
+    versionsByPageId,
+    navigationOrderByPageId: new Map(
+      (manifest.data.navigationPageOrder ?? []).map((item) => [item.page_id, item.sort_order])
+    )
+  };
+}
+
+function pageCoverDescription(index: WorkspaceDiffIndex, pageId: string, coverUrl: string | null) {
+  const storedCover = index.pageCoverByPageId.get(pageId);
   if (storedCover) {
     return [storedCover.path, storedCover.mimeType, storedCover.size, storedCover.sha256, storedCover.crc32].join(":");
   }
   return coverUrl;
 }
 
-function attachmentDescription(manifest: BrainVaultBackup, blockId: string) {
-  const attachment = manifest.attachments.find((item) => item.blockId === blockId);
+function attachmentDescription(index: WorkspaceDiffIndex, blockId: string) {
+  const attachment = index.attachmentByBlockId.get(blockId);
   if (!attachment) return null;
   return [attachment.path, attachment.size, attachment.sha256, attachment.crc32].join(":");
 }
@@ -112,30 +169,24 @@ function pageBlockMap<T extends { id: string; page_id: string }>(blocks: T[]) {
   return byPage;
 }
 
-function tagsForPage(manifest: BrainVaultBackup, pageId: string) {
-  const tagById = new Map(manifest.data.tags.map((tag) => [tag.id, tag]));
-  return (manifest.data.pageTags ?? [])
-    .filter((relation) => relation.page_id === pageId)
-    .map((relation) => tagById.get(relation.tag_id))
-    .filter((tag): tag is BrainVaultBackup["data"]["tags"][number] => Boolean(tag))
-    .sort((left, right) => left.id.localeCompare(right.id));
+function tagsForPage(index: WorkspaceDiffIndex, pageId: string) {
+  return index.tagsByPageId.get(pageId) ?? [];
 }
 
-function tagStateForPage(manifest: BrainVaultBackup, pageId: string) {
-  return tagsForPage(manifest, pageId).map((tag) => stableJson({
+function tagStateForPage(tags: BrainVaultBackup["data"]["tags"]) {
+  return tags.map((tag) => stableJson({
     id: tag.id,
     name: tag.name,
     createdAt: tag.created_at
   }));
 }
 
-function tagNamesForPage(manifest: BrainVaultBackup, pageId: string) {
-  return tagsForPage(manifest, pageId).map((tag) => tag.name).sort((a, b) => a.localeCompare(b));
+function tagNamesForPage(tags: BrainVaultBackup["data"]["tags"]) {
+  return tags.map((tag) => tag.name).sort((a, b) => a.localeCompare(b));
 }
 
-function sharingStateForPage(manifest: BrainVaultBackup, pageId: string) {
-  return (manifest.data.pageShares ?? [])
-    .filter((share) => share.page_id === pageId)
+function sharingStateForPage(shares: NonNullable<BrainVaultBackup["data"]["pageShares"]>) {
+  return shares
     .map((share) => stableJson({
       sharedUserId: share.shared_user_id ?? null,
       username: share.shared_username,
@@ -145,49 +196,37 @@ function sharingStateForPage(manifest: BrainVaultBackup, pageId: string) {
     .sort((left, right) => left.localeCompare(right));
 }
 
-function sharedUsernamesForPage(manifest: BrainVaultBackup, pageId: string) {
-  return sortedUnique((manifest.data.pageShares ?? [])
-    .filter((share) => share.page_id === pageId)
-    .map((share) => share.shared_username));
+function sharedUsernamesForPage(shares: NonNullable<BrainVaultBackup["data"]["pageShares"]>) {
+  return sortedUnique(shares.map((share) => share.shared_username));
 }
 
-function pageCommentState(manifest: BrainVaultBackup, pageId: string) {
-  return (manifest.data.pageComments ?? [])
-    .filter((comment) => comment.page_id === pageId)
-    .sort((left, right) => left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id))
-    .map((comment) => ({
-      id: comment.id,
-      authorUserId: comment.author_user_id,
-      authorUsername: comment.author_username,
-      body: comment.body,
-      createdAt: comment.created_at,
-      updatedAt: comment.updated_at
-    }));
+function pageCommentState(index: WorkspaceDiffIndex, pageId: string) {
+  return (index.commentsByPageId.get(pageId) ?? []).map((comment) => ({
+    id: comment.id,
+    authorUserId: comment.author_user_id,
+    authorUsername: comment.author_username,
+    body: comment.body,
+    createdAt: comment.created_at,
+    updatedAt: comment.updated_at
+  }));
 }
 
-function pageVersionState(manifest: BrainVaultBackup, pageId: string) {
-  return (manifest.data.pageVersions ?? [])
-    .filter((version) => version.page_id === pageId)
-    .sort((left, right) => left.revision - right.revision)
-    .map((version) => ({
-      revision: version.revision,
-      pageEditVersion: version.page_edit_version,
-      pageContentVersion: version.page_content_version,
-      actors: version.actors,
-      source: version.source,
-      changeCount: version.change_count,
-      changeSummary: version.change_summary,
-      changes: version.changes,
-      createdAt: version.created_at
-    }));
+function pageVersionState(index: WorkspaceDiffIndex, pageId: string) {
+  return (index.versionsByPageId.get(pageId) ?? []).map((version) => ({
+    revision: version.revision,
+    pageEditVersion: version.page_edit_version,
+    pageContentVersion: version.page_content_version,
+    actors: version.actors,
+    source: version.source,
+    changeCount: version.change_count,
+    changeSummary: version.change_summary,
+    changes: version.changes,
+    createdAt: version.created_at
+  }));
 }
 
-function pageHistoryJson(manifest: BrainVaultBackup, pageId: string) {
-  return stableJson(pageVersionState(manifest, pageId));
-}
-
-function navigationOrder(manifest: BrainVaultBackup, pageId: string) {
-  return (manifest.data.navigationPageOrder ?? []).find((item) => item.page_id === pageId)?.sort_order ?? null;
+function navigationOrder(index: WorkspaceDiffIndex, pageId: string) {
+  return index.navigationOrderByPageId.get(pageId) ?? null;
 }
 
 function workspaceDifferences(snapshot: BrainVaultBackup, current: BrainVaultBackup) {
@@ -254,6 +293,8 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
   const currentBlocks = new Map(current.data.blocks.map((block) => [block.id, block]));
   const snapshotBlocksByPage = pageBlockMap(snapshot.data.blocks);
   const currentBlocksByPage = pageBlockMap(current.data.blocks);
+  const snapshotIndex = buildWorkspaceDiffIndex(snapshot);
+  const currentIndex = buildWorkspaceDiffIndex(current);
   const snapshotCollapsed = new Set(snapshot.data.navigationCollapsedPageIds ?? []);
   const currentCollapsed = new Set(current.data.navigationCollapsedPageIds ?? []);
   const workspace = workspaceDifferences(snapshot, current);
@@ -304,7 +345,7 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
           fieldDifference("checked", Boolean(beforeBlock.checked), Boolean(afterBlock.checked)),
           fieldDifference("sortOrder", Number(beforeBlock.sort_order), Number(afterBlock.sort_order)),
           longTextFieldDifference("metadata", beforeBlock.metadata, afterBlock.metadata),
-          fieldDifference("attachmentFile", attachmentDescription(snapshot, blockId), attachmentDescription(current, blockId)),
+          fieldDifference("attachmentFile", attachmentDescription(snapshotIndex, blockId), attachmentDescription(currentIndex, blockId)),
           fieldDifference("createdAt", beforeBlock.created_at, afterBlock.created_at),
           fieldDifference("updatedAt", beforeBlock.updated_at, afterBlock.updated_at)
         ], [
@@ -360,10 +401,14 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
         blockDetailsTruncated
       };
     } else if (beforePage && afterPage) {
-      const beforeHistory = pageVersionState(snapshot, pageId);
-      const afterHistory = pageVersionState(current, pageId);
-      const beforeComments = pageCommentState(snapshot, pageId);
-      const afterComments = pageCommentState(current, pageId);
+      const beforeHistory = pageVersionState(snapshotIndex, pageId);
+      const afterHistory = pageVersionState(currentIndex, pageId);
+      const beforeComments = pageCommentState(snapshotIndex, pageId);
+      const afterComments = pageCommentState(currentIndex, pageId);
+      const beforeTags = tagsForPage(snapshotIndex, pageId);
+      const afterTags = tagsForPage(currentIndex, pageId);
+      const beforeShares = snapshotIndex.sharesByPageId.get(pageId) ?? [];
+      const afterShares = currentIndex.sharesByPageId.get(pageId) ?? [];
       const hasBlockChanges = Boolean(
         localBlockSummary.added || localBlockSummary.removed || localBlockSummary.modified
       );
@@ -375,22 +420,22 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
       const fields = includeContextualDifferences([
         fieldDifference("title", beforePage.title, afterPage.title),
         fieldDifference("icon", beforePage.icon, afterPage.icon),
-        fieldDifference("cover", pageCoverDescription(snapshot, pageId, beforePage.cover_url), pageCoverDescription(current, pageId, afterPage.cover_url)),
+        fieldDifference("cover", pageCoverDescription(snapshotIndex, pageId, beforePage.cover_url), pageCoverDescription(currentIndex, pageId, afterPage.cover_url)),
         fieldDifference("coverPositionX", Number(beforePage.cover_position_x ?? 50), Number(afterPage.cover_position_x ?? 50)),
         fieldDifference("coverPositionY", Number(beforePage.cover_position_y ?? 50), Number(afterPage.cover_position_y ?? 50)),
         fieldDifference("archived", Boolean(beforePage.is_archived), Boolean(afterPage.is_archived)),
         fieldDifference("collection", Boolean(beforePage.is_collection), Boolean(afterPage.is_collection)),
         fieldDifference("parentPageId", beforePage.parent_page_id, afterPage.parent_page_id),
-        fieldDifference("tags", tagNamesForPage(snapshot, pageId), tagNamesForPage(current, pageId)),
-        longTextFieldDifference("tagState", stableJson(tagStateForPage(snapshot, pageId)), stableJson(tagStateForPage(current, pageId))),
-        fieldDifference("sharedWith", sharedUsernamesForPage(snapshot, pageId), sharedUsernamesForPage(current, pageId)),
-        longTextFieldDifference("sharingState", stableJson(sharingStateForPage(snapshot, pageId)), stableJson(sharingStateForPage(current, pageId))),
+        fieldDifference("tags", tagNamesForPage(beforeTags), tagNamesForPage(afterTags)),
+        longTextFieldDifference("tagState", stableJson(tagStateForPage(beforeTags)), stableJson(tagStateForPage(afterTags))),
+        fieldDifference("sharedWith", sharedUsernamesForPage(beforeShares), sharedUsernamesForPage(afterShares)),
+        longTextFieldDifference("sharingState", stableJson(sharingStateForPage(beforeShares)), stableJson(sharingStateForPage(afterShares))),
         fieldDifference("commentCount", beforeComments.length, afterComments.length),
         longTextFieldDifference("commentState", stableJson(beforeComments), stableJson(afterComments)),
         fieldDifference("navigationCollapsed", snapshotCollapsed.has(pageId), currentCollapsed.has(pageId)),
-        fieldDifference("navigationOrder", navigationOrder(snapshot, pageId), navigationOrder(current, pageId)),
+        fieldDifference("navigationOrder", navigationOrder(snapshotIndex, pageId), navigationOrder(currentIndex, pageId)),
         fieldDifference("historyEntries", beforeHistory.length, afterHistory.length),
-        longTextFieldDifference("historyData", pageHistoryJson(snapshot, pageId), pageHistoryJson(current, pageId)),
+        longTextFieldDifference("historyData", stableJson(beforeHistory), stableJson(afterHistory)),
         fieldDifference("createdAt", beforePage.created_at, afterPage.created_at),
         fieldDifference("updatedAt", beforePage.updated_at, afterPage.updated_at)
       ], [

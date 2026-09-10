@@ -24,6 +24,11 @@ test("backup v3+ makes uploaded custom icons self-contained and restorable", asy
   assert.match(transfer, /const restoreIconValue = \(value: string \| null\) =>\n\s*rebindCustomIconValue\(value, manifest\.source\.userId, userId\);/);
   assert.match(transfer, /restoreIconValue\(manifest\.account\.default_collection_icon\)/);
   assert.match(transfer, /page\.id, page\.title, restoreIconValue\(page\.icon\)/);
+  assert.match(transfer, /function accordionMetadataCustomIconValues\(/);
+  assert.match(transfer, /function rebindBlockMetadataCustomIcons\([\s\S]*?rebindCustomIconValue\(item\.icon, sourceUserId, targetUserId\)/);
+  assert.match(transfer, /Block \$\{block\.id\} custom icon belongs to another account/);
+  assert.match(transfer, /Block \$\{block\.id\} custom icon file is missing from the backup/);
+  assert.match(transfer, /const restoredMetadata = manifest\.version >= uploadedAssetBackupVersion[\s\S]*?rebindBlockMetadataCustomIcons\(block, manifest\.source\.userId, userId\)/);
   assert.match(transfer, /DELETE FROM custom_icons WHERE user_id = \?/);
   assert.match(transfer, /INSERT INTO custom_icons \(id, user_id, file_path, last_used_at, created_at\)/);
   assert.match(transfer, /localRemovalHashMap[\s\S]*?customIconValueHash\(customIconValue\(userId, icon\.fileName\)\)/);

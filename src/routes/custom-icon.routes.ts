@@ -22,20 +22,23 @@ export const customIconRouter = Router();
 
 customIconRouter.use(requireAuth);
 
+const customIconUploadLimits = {
+  fileSize: maxCustomIconBytes,
+  files: 1,
+  fields: 0,
+  // Busboy emits partsLimit when the configured count is reached, not only when it is exceeded.
+  // Keep one spare aggregate slot so a valid one-file upload does not become LIMIT_PART_COUNT;
+  // files: 1, fields: 0, and .single("icon") still enforce the exact request shape.
+  parts: 2,
+  fieldNameSize: 64,
+  headerPairs: 32,
+  fieldNestingDepth: 1,
+  fieldArrayIndexLimit: 0
+};
+
 const customIconUpload = multer({
   storage: multer.memoryStorage(),
-  limits: {
-    fileSize: maxCustomIconBytes,
-    files: 1,
-    fields: 0,
-    // Busboy emits partsLimit when the configured count is reached, not only when it is exceeded.
-    // Keep one spare aggregate slot so a valid one-file upload does not become LIMIT_PART_COUNT;
-    // files: 1, fields: 0, and .single("icon") still enforce the exact request shape.
-    parts: 2,
-    fieldNameSize: 64,
-    headerPairs: 32,
-    fieldNestingDepth: 1
-  },
+  limits: customIconUploadLimits,
   preservePath: false,
   defParamCharset: "utf8"
 }).single("icon");

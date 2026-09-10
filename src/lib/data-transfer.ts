@@ -1054,6 +1054,36 @@ function rebindCustomIconValue(value: string | null, sourceUserId: string, targe
   return `${imageIconPrefix}${customIconPublicPath(targetUserId, fileName)}`;
 }
 
+function accordionMetadataCustomIconValues(block: BrainVaultBackup["data"]["blocks"][number]) {
+  if (block.type !== "ACCORDION" || block.metadata === null) return [];
+  const parsed = JSON.parse(block.metadata) as {
+    accordion?: { items?: Array<{ icon?: unknown }> };
+  };
+  const items = Array.isArray(parsed.accordion?.items) ? parsed.accordion.items : [];
+  return items.flatMap((item) => typeof item?.icon === "string" && localCustomIconPublicPath(item.icon)
+    ? [item.icon]
+    : []);
+}
+
+function rebindBlockMetadataCustomIcons(
+  block: BrainVaultBackup["data"]["blocks"][number],
+  sourceUserId: string,
+  targetUserId: string
+) {
+  if (block.type !== "ACCORDION" || block.metadata === null) return block.metadata;
+  const parsed = JSON.parse(block.metadata) as {
+    accordion?: { items?: Array<{ icon?: unknown }> };
+  };
+  const items = Array.isArray(parsed.accordion?.items) ? parsed.accordion.items : [];
+  let changed = false;
+  for (const item of items) {
+    if (typeof item?.icon !== "string" || !localCustomIconPublicPath(item.icon)) continue;
+    item.icon = rebindCustomIconValue(item.icon, sourceUserId, targetUserId);
+    changed = true;
+  }
+  return changed ? JSON.stringify(parsed) : block.metadata;
+}
+
 function rebindPageVersionChangesJson(value: string, sourceUserId: string, targetUserId: string) {
   let parsed: unknown;
   try {
@@ -1271,8 +1301,8 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
     invalidBackup("Version 1 backups cannot contain page cover entries");
   }
 
+  const declaredCustomIconPaths = new Set<string>();
   if (manifest.version >= uploadedAssetBackupVersion) {
-    const declaredCustomIconPaths = new Set<string>();
     for (const icon of customIcons) {
       if (icon.path !== `custom-icons/${icon.fileName}`) {
         invalidBackup(`Custom icon path is invalid: ${icon.path}`);
@@ -1322,6 +1352,18 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
         });
       }
       throw error;
+    }
+    if (manifest.version >= uploadedAssetBackupVersion) {
+      for (const iconValue of accordionMetadataCustomIconValues(block)) {
+        const publicPath = localCustomIconPublicPath(iconValue)!;
+        const sourcePrefix = `${customIconPublicPrefix}${manifest.source.userId}/`;
+        if (!publicPath.startsWith(sourcePrefix)) {
+          invalidBackup(`Block ${block.id} custom icon belongs to another account: ${publicPath}`);
+        }
+        if (!declaredCustomIconPaths.has(publicPath)) {
+          invalidBackup(`Block ${block.id} custom icon file is missing from the backup: ${publicPath}`);
+        }
+      }
     }
   }
   orderByParent(blocks, (item) => item.id, (item) => item.parent_block_id);
@@ -2574,14 +2616,17 @@ async function importRows(
   // checks before they can affect or acknowledge the restored workspace.
   const orderedBlocks = orderByParent(manifest.data.blocks, (item) => item.id, (item) => item.parent_block_id);
   for (const block of orderedBlocks) {
+    const restoredMetadata = manifest.version >= uploadedAssetBackupVersion
+      ? rebindBlockMetadataCustomIcons(block, manifest.source.userId, userId)
+      : block.metadata;
     await client.execute(
       `INSERT INTO blocks
        (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata, edit_version, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         block.id, block.page_id, block.parent_block_id, block.type, block.markdown,
-        renderBlockHtml(block.type, block.markdown, Boolean(block.checked), block.metadata),
-        block.checked, block.sort_order, block.metadata, restoreVersion, block.created_at, block.updated_at
+        renderBlockHtml(block.type, block.markdown, Boolean(block.checked), restoredMetadata),
+        block.checked, block.sort_order, restoredMetadata, restoreVersion, block.created_at, block.updated_at
       ]
     );
   }

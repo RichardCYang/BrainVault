@@ -434,6 +434,18 @@ function enforceAttachmentUploadRequestSize(req: Request, _res: Response, next: 
   next();
 }
 
+const attachmentUploadLimits = {
+  fileSize: maxAttachmentUploadBytes,
+  files: 1,
+  fields: 5,
+  parts: 7,
+  fieldNameSize: 64,
+  fieldSize: 16 * 1024,
+  headerPairs: 32,
+  fieldNestingDepth: 1,
+  fieldArrayIndexLimit: 0
+};
+
 const attachmentUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, callback) => {
@@ -443,16 +455,7 @@ const attachmentUpload = multer({
     },
     filename: (_req, _file, callback) => callback(null, createId("upload"))
   }),
-  limits: {
-    fileSize: maxAttachmentUploadBytes,
-    files: 1,
-    fields: 5,
-    parts: 7,
-    fieldNameSize: 64,
-    fieldSize: 16 * 1024,
-    headerPairs: 32,
-    fieldNestingDepth: 1
-  },
+  limits: attachmentUploadLimits,
   preservePath: false,
   defParamCharset: "utf8"
 });

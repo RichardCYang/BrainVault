@@ -92,24 +92,81 @@ function enableAiChatCjkStrongEmphasis(markdownIt: MarkdownIt) {
 
 enableAiChatCjkStrongEmphasis(markdown);
 
-function findAiChatBacktickSpanEnd(value: string, start: number) {
-  let runLength = 1;
-  while (value[start + runLength] === "`") runLength += 1;
+type AiChatBacktickRunIndex = {
+  runEndByStart: Map<number, number>;
+  runStartsByLength: Map<number, number[]>;
+};
 
-  let searchFrom = start + runLength;
-  const marker = "`".repeat(runLength);
+function indexAiChatBacktickRuns(value: string): AiChatBacktickRunIndex {
+  const runEndByStart = new Map<number, number>();
+  const runStartsByLength = new Map<number, number[]>();
+
+  let searchFrom = 0;
   while (searchFrom < value.length) {
-    const candidate = value.indexOf(marker, searchFrom);
-    if (candidate < 0) return -1;
-    if (value[candidate - 1] !== "`" && value[candidate + runLength] !== "`") {
-      return candidate + runLength;
-    }
-    searchFrom = candidate + 1;
+    const start = value.indexOf("`", searchFrom);
+    if (start < 0) break;
+    let end = start + 1;
+    while (value[end] === "`") end += 1;
+
+    const runLength = end - start;
+    runEndByStart.set(start, end);
+    const starts = runStartsByLength.get(runLength);
+    if (starts) starts.push(start);
+    else runStartsByLength.set(runLength, [start]);
+    searchFrom = end;
+  }
+
+  return { runEndByStart, runStartsByLength };
+}
+
+function firstRunStartAtOrAfter(starts: number[], minimum: number) {
+  let low = 0;
+  let high = starts.length;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (starts[middle] < minimum) low = middle + 1;
+    else high = middle;
+  }
+  return low < starts.length ? starts[low] : -1;
+}
+
+function aiChatBacktickRunEnd(value: string, start: number, index: AiChatBacktickRunIndex) {
+  const indexedEnd = index.runEndByStart.get(start);
+  if (indexedEnd !== undefined) return indexedEnd;
+
+  // The normalizer can enter a suffix of a maximal run after an escaped
+  // backtick. Cache that suffix boundary so it is never recounted.
+  let end = start + 1;
+  while (value[end] === "`") end += 1;
+  index.runEndByStart.set(start, end);
+  return end;
+}
+
+function findAiChatBacktickSpanEnd(
+  value: string,
+  start: number,
+  backticks: AiChatBacktickRunIndex
+) {
+  const runEnd = aiChatBacktickRunEnd(value, start, backticks);
+
+  // The legacy scanner retried every suffix of an unmatched run. Preserve that
+  // behavior without rescanning the answer: choose the first suffix length that
+  // has a later maximal run of exactly the same length. Across one maximal run,
+  // the loop below examines each backtick at most once.
+  for (let runLength = runEnd - start; runLength > 0; runLength -= 1) {
+    const starts = backticks.runStartsByLength.get(runLength);
+    if (!starts?.length || starts[starts.length - 1] < runEnd) continue;
+    const candidate = firstRunStartAtOrAfter(starts, runEnd);
+    if (candidate >= 0) return candidate + runLength;
   }
   return -1;
 }
 
-function findAiChatReferenceLabelEnd(value: string, start: number) {
+function findAiChatReferenceLabelEnd(
+  value: string,
+  start: number,
+  backticks: AiChatBacktickRunIndex
+) {
   if (value[start] !== "[") return -1;
   for (let index = start + 1; index < value.length; index += 1) {
     const character = value[index];
@@ -118,11 +175,14 @@ function findAiChatReferenceLabelEnd(value: string, start: number) {
       continue;
     }
     if (character === "`") {
-      const codeSpanEnd = findAiChatBacktickSpanEnd(value, index);
+      const runEnd = aiChatBacktickRunEnd(value, index, backticks);
+      const codeSpanEnd = findAiChatBacktickSpanEnd(value, index, backticks);
       if (codeSpanEnd > index) {
         index = codeSpanEnd - 1;
         continue;
       }
+      index = runEnd - 1;
+      continue;
     }
     // markdown-it rejects nested links while parsing the outer link label.
     // Staying conservative here prevents malformed Markdown from being
@@ -136,6 +196,7 @@ function findAiChatReferenceLabelEnd(value: string, start: number) {
 function normalizeAiChatNumericReferenceLinks(value: string, availableReferences: Set<string>) {
   if (!availableReferences.size) return value;
 
+  const backticks = indexAiChatBacktickRuns(value);
   let output = "";
   let index = 0;
   while (index < value.length) {
@@ -146,12 +207,16 @@ function normalizeAiChatNumericReferenceLinks(value: string, availableReferences
       continue;
     }
     if (character === "`") {
-      const codeSpanEnd = findAiChatBacktickSpanEnd(value, index);
+      const runEnd = aiChatBacktickRunEnd(value, index, backticks);
+      const codeSpanEnd = findAiChatBacktickSpanEnd(value, index, backticks);
       if (codeSpanEnd > index) {
         output += value.slice(index, codeSpanEnd);
         index = codeSpanEnd;
         continue;
       }
+      output += value.slice(index, runEnd);
+      index = runEnd;
+      continue;
     }
     if (character !== "[" || value[index - 1] === "!") {
       output += character;
@@ -159,7 +224,7 @@ function normalizeAiChatNumericReferenceLinks(value: string, availableReferences
       continue;
     }
 
-    const titleEnd = findAiChatReferenceLabelEnd(value, index);
+    const titleEnd = findAiChatReferenceLabelEnd(value, index, backticks);
     if (titleEnd < 0) {
       output += character;
       index += 1;
@@ -198,7 +263,7 @@ function normalizeAiChatNumericReferenceLinks(value: string, availableReferences
       continue;
     }
 
-    const referenceEnd = findAiChatReferenceLabelEnd(value, referenceStart);
+    const referenceEnd = findAiChatReferenceLabelEnd(value, referenceStart, backticks);
     if (referenceEnd < 0) {
       output += character;
       index += 1;

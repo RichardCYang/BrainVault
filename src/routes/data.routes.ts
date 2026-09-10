@@ -46,6 +46,17 @@ function enforceBackupUploadRequestSize(req: Request, _res: Response, next: Next
   next();
 }
 
+const backupUploadLimits = {
+  fileSize: maxBackupUploadBytes,
+  files: 1,
+  fields: 0,
+  parts: 2,
+  fieldNameSize: 64,
+  headerPairs: 32,
+  fieldNestingDepth: 1,
+  fieldArrayIndexLimit: 0
+};
+
 const backupUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, callback) => {
@@ -55,15 +66,7 @@ const backupUpload = multer({
     },
     filename: (_req, _file, callback) => callback(null, createId("backup-upload"))
   }),
-  limits: {
-    fileSize: maxBackupUploadBytes,
-    files: 1,
-    fields: 0,
-    parts: 2,
-    fieldNameSize: 64,
-    headerPairs: 32,
-    fieldNestingDepth: 1
-  },
+  limits: backupUploadLimits,
   preservePath: false,
   defParamCharset: "utf8"
 });

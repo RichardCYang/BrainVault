@@ -301,6 +301,8 @@ export class PageCollaborationHub {
   private readonly unauthenticatedUpgradeWindows = new Map<string, { startedAt: number; attempts: number }>();
   private pendingUpgradeCount = 0;
   private readonly pendingUpgradeUserCounts = new Map<string, number>();
+  private pendingWriteBytes = 0;
+  private readonly pendingWriteUserBytes = new Map<string, number>();
   private readonly upgradedSockets = new WeakSet<Socket>();
   private readonly validationPool = new CollaborationValidationPool();
   private readonly upgradeHandler: (request: IncomingMessage, socket: Socket, head: Buffer) => void;
@@ -1286,9 +1288,13 @@ export class PageCollaborationHub {
     writeBytes: number,
     action: () => Promise<void>
   ) {
+    const userId = client.user.id;
+    const pendingUserWriteBytes = this.pendingWriteUserBytes.get(userId) ?? 0;
     const admission = assessCollaborationWriteAdmission({
       pendingWrites: room.pendingWrites,
       pendingWriteBytes: room.pendingWriteBytes,
+      pendingUserWriteBytes,
+      pendingServerWriteBytes: this.pendingWriteBytes,
       nextWriteBytes: writeBytes
     });
     if (!admission.accepted) {
@@ -1298,6 +1304,8 @@ export class PageCollaborationHub {
 
     room.pendingWrites += 1;
     room.pendingWriteBytes += writeBytes;
+    this.pendingWriteBytes += writeBytes;
+    this.pendingWriteUserBytes.set(userId, pendingUserWriteBytes + writeBytes);
     const queuedWrite = room.writeQueue.then(async () => {
       try {
         await action();
@@ -1332,6 +1340,10 @@ export class PageCollaborationHub {
       } finally {
         room.pendingWrites = Math.max(0, room.pendingWrites - 1);
         room.pendingWriteBytes = Math.max(0, room.pendingWriteBytes - writeBytes);
+        this.pendingWriteBytes = Math.max(0, this.pendingWriteBytes - writeBytes);
+        const nextUserWriteBytes = Math.max(0, (this.pendingWriteUserBytes.get(userId) ?? 0) - writeBytes);
+        if (nextUserWriteBytes) this.pendingWriteUserBytes.set(userId, nextUserWriteBytes);
+        else this.pendingWriteUserBytes.delete(userId);
         if (
           room.bootstrapWritePending
           && room.bootstrapLeaderId === client.id

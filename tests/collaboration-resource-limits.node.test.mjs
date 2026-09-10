@@ -84,6 +84,8 @@ test("collaboration write admission bounds both queued operations and retained u
     assessCollaborationWriteAdmission({
       pendingWrites: collaborationResourceLimits.pendingWritesPerRoom - 1,
       pendingWriteBytes: collaborationResourceLimits.pendingWriteBytesPerRoom - 1,
+      pendingUserWriteBytes: 0,
+      pendingServerWriteBytes: 0,
       nextWriteBytes: 1
     }),
     { accepted: true }
@@ -92,6 +94,8 @@ test("collaboration write admission bounds both queued operations and retained u
     assessCollaborationWriteAdmission({
       pendingWrites: collaborationResourceLimits.pendingWritesPerRoom,
       pendingWriteBytes: 0,
+      pendingUserWriteBytes: 0,
+      pendingServerWriteBytes: 0,
       nextWriteBytes: 1
     }),
     { accepted: false, reason: "write-count" }
@@ -100,9 +104,31 @@ test("collaboration write admission bounds both queued operations and retained u
     assessCollaborationWriteAdmission({
       pendingWrites: 0,
       pendingWriteBytes: collaborationResourceLimits.pendingWriteBytesPerRoom,
+      pendingUserWriteBytes: 0,
+      pendingServerWriteBytes: 0,
       nextWriteBytes: 1
     }),
     { accepted: false, reason: "write-bytes" }
+  );
+  assert.deepEqual(
+    assessCollaborationWriteAdmission({
+      pendingWrites: 0,
+      pendingWriteBytes: 0,
+      pendingUserWriteBytes: collaborationResourceLimits.pendingWriteBytesPerUser,
+      pendingServerWriteBytes: 0,
+      nextWriteBytes: 1
+    }),
+    { accepted: false, reason: "user-write-bytes" }
+  );
+  assert.deepEqual(
+    assessCollaborationWriteAdmission({
+      pendingWrites: 0,
+      pendingWriteBytes: 0,
+      pendingUserWriteBytes: 0,
+      pendingServerWriteBytes: collaborationResourceLimits.pendingWriteBytesPerServer,
+      nextWriteBytes: 1
+    }),
+    { accepted: false, reason: "server-write-bytes" }
   );
 });
 

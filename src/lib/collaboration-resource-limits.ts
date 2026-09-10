@@ -8,7 +8,9 @@ export const collaborationResourceLimits = {
   pendingUpgradesPerServer: 64,
   pendingUpgradesPerUser: 4,
   pendingWritesPerRoom: 64,
-  pendingWriteBytesPerRoom: 32 * 1024 * 1024
+  pendingWriteBytesPerRoom: 32 * 1024 * 1024,
+  pendingWriteBytesPerUser: 64 * 1024 * 1024,
+  pendingWriteBytesPerServer: 256 * 1024 * 1024
 } as const;
 
 export type CollaborationConnectionAdmission =
@@ -66,25 +68,39 @@ export function assessCollaborationUpgradeAdmission({
 
 export type CollaborationWriteAdmission =
   | { accepted: true }
-  | { accepted: false; reason: "write-count" | "write-bytes" };
+  | {
+      accepted: false;
+      reason: "write-count" | "write-bytes" | "user-write-bytes" | "server-write-bytes";
+    };
 
 export function assessCollaborationWriteAdmission({
   pendingWrites,
   pendingWriteBytes,
+  pendingUserWriteBytes,
+  pendingServerWriteBytes,
   nextWriteBytes
 }: {
   pendingWrites: number;
   pendingWriteBytes: number;
+  pendingUserWriteBytes: number;
+  pendingServerWriteBytes: number;
   nextWriteBytes: number;
 }): CollaborationWriteAdmission {
   if (pendingWrites >= collaborationResourceLimits.pendingWritesPerRoom) {
     return { accepted: false, reason: "write-count" };
   }
   if (
-    nextWriteBytes < 0
+    !Number.isSafeInteger(nextWriteBytes)
+    || nextWriteBytes < 0
     || nextWriteBytes > collaborationResourceLimits.pendingWriteBytesPerRoom - pendingWriteBytes
   ) {
     return { accepted: false, reason: "write-bytes" };
+  }
+  if (nextWriteBytes > collaborationResourceLimits.pendingWriteBytesPerUser - pendingUserWriteBytes) {
+    return { accepted: false, reason: "user-write-bytes" };
+  }
+  if (nextWriteBytes > collaborationResourceLimits.pendingWriteBytesPerServer - pendingServerWriteBytes) {
+    return { accepted: false, reason: "server-write-bytes" };
   }
   return { accepted: true };
 }
