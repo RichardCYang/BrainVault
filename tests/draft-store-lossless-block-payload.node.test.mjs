@@ -157,3 +157,67 @@ test("direct recovery accepts complete block writes that remain readable", () =>
     payload
   );
 });
+
+test("direct recovery rejects JSON-lossy block metadata before modifying durable recovery state", () => {
+  const storage = new MemoryStorage();
+  const key = "brainvault.pageDraft.v2:user-1:page-1:tab-a";
+  const store = createPageDraftStore(storage, { sourceId: "tab-a" });
+
+  assert.equal(store.saveTitle({
+    userId: "user-1",
+    pageId: "page-1",
+    value: "keep this title",
+    expectedVersion: 4,
+    revision: 1
+  }), true);
+  const original = storage.getItem(key);
+  assert.equal(typeof original, "string");
+
+  const cyclicMetadata = {};
+  cyclicMetadata.self = cyclicMetadata;
+  const sparseValues = [];
+  sparseValues[1] = "survives";
+  const invalidMetadata = [
+    { database: { rows: [{ id: "row-1", value: undefined }] } },
+    { database: { score: Number.NaN } },
+    { database: { score: Number.POSITIVE_INFINITY } },
+    { database: { value: 1n } },
+    { database: { values: sparseValues } },
+    cyclicMetadata
+  ];
+
+  for (const metadata of invalidMetadata) {
+    assert.equal(store.saveBlock({
+      userId: "user-1",
+      pageId: "page-1",
+      blockId: "block-1",
+      payload: { type: "DATABASE", markdown: "draft", checked: false, metadata },
+      expectedVersion: 7,
+      revision: 2
+    }), false);
+    assert.equal(storage.getItem(key), original);
+    assert.equal(store.loadPage("user-1", "page-1")?.title?.value, "keep this title");
+  }
+});
+
+test("direct recovery preserves nested JSON metadata exactly", () => {
+  const storage = new MemoryStorage();
+  const store = createPageDraftStore(storage, { sourceId: "tab-a" });
+  const metadata = {
+    database: {
+      rows: [{ id: "row-1", value: null, cells: ["alpha", 2, false] }],
+      nested: { enabled: true }
+    }
+  };
+  const payload = { type: "DATABASE", markdown: "draft", checked: false, metadata };
+
+  assert.equal(store.saveBlock({
+    userId: "user-1",
+    pageId: "page-1",
+    blockId: "block-1",
+    payload,
+    expectedVersion: 7,
+    revision: 2
+  }), true);
+  assert.deepEqual(store.loadPage("user-1", "page-1")?.blocks["block-1"].payload, payload);
+});

@@ -31,6 +31,47 @@ function normalizeTitleDraft(value) {
 
 const blockDraftPayloadKeys = new Set(["type", "markdown", "checked", "metadata"]);
 
+function isLosslessJsonValue(root) {
+  const pending = [root];
+  const seen = new WeakSet();
+
+  while (pending.length) {
+    const value = pending.pop();
+    if (value === null || typeof value === "string" || typeof value === "boolean") continue;
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) return false;
+      continue;
+    }
+    if (!value || typeof value !== "object") return false;
+    if (seen.has(value)) return false;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      if (Object.getOwnPropertySymbols(value).length > 0) return false;
+      const enumerableKeys = Object.keys(value);
+      if (enumerableKeys.length !== value.length) return false;
+      for (let index = 0; index < value.length; index += 1) {
+        if (!Object.prototype.hasOwnProperty.call(value, index)) return false;
+        pending.push(value[index]);
+      }
+      continue;
+    }
+
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return false;
+    if (Object.getOwnPropertySymbols(value).length > 0) return false;
+    const enumerableKeys = Object.keys(value);
+    if (Object.getOwnPropertyNames(value).length !== enumerableKeys.length) return false;
+    for (const key of enumerableKeys) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor?.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, "value")) return false;
+      pending.push(descriptor.value);
+    }
+  }
+
+  return true;
+}
+
 function normalizeBlockDraftPayload(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const keys = Object.keys(value);
@@ -42,7 +83,12 @@ function normalizeBlockDraftPayload(value) {
   }
   if (
     value.metadata !== null
-    && (!value.metadata || typeof value.metadata !== "object" || Array.isArray(value.metadata))
+    && (
+      !value.metadata
+      || typeof value.metadata !== "object"
+      || Array.isArray(value.metadata)
+      || !isLosslessJsonValue(value.metadata)
+    )
   ) {
     return null;
   }
@@ -321,9 +367,17 @@ export function createPageDraftStore(
     // record is potentially the only recovery copy and must never be replaced.
     if (inspectRecordByKey(key, record.userId, record.pageId, record.sourceId).unreadable) return false;
 
-    const nextValue = !hasTitle && !hasBlocks && !hasBlockOrder
-      ? null
-      : JSON.stringify({ ...record, updatedAt: Date.now() });
+    let nextValue;
+    try {
+      nextValue = !hasTitle && !hasBlocks && !hasBlockOrder
+        ? null
+        : JSON.stringify({ ...record, updatedAt: Date.now() });
+    } catch {
+      // Recovery persistence is a data-preservation boundary. Unexpected values
+      // must fail closed rather than escaping as an exception or partially
+      // replacing the only durable recovery copy.
+      return false;
+    }
 
     // Recovery reconciliation intentionally inspects drafts created by other tabs.
     // Its synchronous mirror can lag a newer IndexedDB commit from that tab, so a
