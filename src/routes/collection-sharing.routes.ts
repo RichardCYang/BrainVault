@@ -541,16 +541,52 @@ collectionSharingRouter.patch(
             "The collection grant changed in another session. Refresh before updating it."
           );
         }
-        // A WRITE/ADMIN -> READ downgrade can strand browser-local Yjs updates.
-        // Preserve a recovery admission before rotating the grant generation, so
-        // those bytes are recoverable without allowing the downgraded session to
-        // keep mutating the live shared document.
-        if (existing.permission !== "READ" && permission === "READ") {
-          await assertNoActiveCollaborationWriteLeases(client, pages.map((page) => page.id));
+
+        // Older BrainVault releases allowed collection administrators to mint
+        // direct EDIT grants on descendant pages. Losing ADMIN authority must
+        // revoke those delegated grants just like removing the collection share
+        // does. Also clean up any already-stranded legacy grants whenever a
+        // non-ADMIN permission is saved.
+        const cascadedDirectGrants: Array<{ pageId: string; userId: string; generation: string }> = [];
+        if (permission !== "ADMIN") {
           for (const page of pages) {
-            await preserveRevokedGrantRecovery(page, ownerId, sharedUserId, client);
+            const delegated = await client.query<{ user_id: string; generation: string }>(
+              `SELECT user_id, generation
+               FROM page_shares
+               WHERE page_id = ? AND shared_by = ? AND permission = 'EDIT'
+               ORDER BY user_id ASC
+               FOR UPDATE`,
+              [page.id, sharedUserId]
+            );
+            for (const grant of delegated) {
+              cascadedDirectGrants.push({ pageId: page.id, userId: grant.user_id, generation: grant.generation });
+            }
           }
         }
+
+        const writeAuthorityRevoked = existing.permission !== "READ" && permission === "READ";
+        const fencedPageIds = new Set<string>();
+        if (writeAuthorityRevoked) {
+          for (const page of pages) fencedPageIds.add(page.id);
+        }
+        for (const grant of cascadedDirectGrants) fencedPageIds.add(grant.pageId);
+        if (fencedPageIds.size > 0) {
+          await assertNoActiveCollaborationWriteLeases(client, [...fencedPageIds]);
+        }
+
+        // Preserve browser-local edits for every principal whose write
+        // authority is being revoked before rotating/deleting the grants.
+        for (const page of pages) {
+          const principals = new Set<string>();
+          if (writeAuthorityRevoked) principals.add(sharedUserId);
+          for (const grant of cascadedDirectGrants) {
+            if (grant.pageId === page.id) principals.add(grant.userId);
+          }
+          for (const principalId of principals) {
+            await preserveRevokedGrantRecovery(page, ownerId, principalId, client);
+          }
+        }
+
         const generation = createId("cshare");
         const update = await client.execute<{ affectedRows: number }>(
           `UPDATE collection_shares
@@ -561,10 +597,20 @@ collectionSharingRouter.patch(
         if (Number(update.affectedRows) !== 1) {
           throw new ApiError(409, "COLLECTION_SHARE_GENERATION_CHANGED", "The collection grant changed in another session.");
         }
+
+        if (cascadedDirectGrants.length > 0) {
+          for (const page of pages) {
+            await client.execute(
+              "DELETE FROM page_shares WHERE page_id = ? AND shared_by = ?",
+              [page.id, sharedUserId]
+            );
+          }
+        }
+
         const updated = (await getCollectionShareRows(collectionId, client))
           .find((row) => row.id === sharedUserId);
         if (!updated) throw notFound("Collection share");
-        return { updated, oldGeneration: existing.generation, pages };
+        return { updated, oldGeneration: existing.generation, pages, cascadedDirectGrants };
       });
 
       for (const page of result.pages) {
@@ -573,6 +619,14 @@ collectionSharingRouter.patch(
           sharedUserId,
           result.oldGeneration,
           "Collection permission changed"
+        );
+      }
+      for (const grant of result.cascadedDirectGrants) {
+        disconnectSharedUserGrant(
+          grant.pageId,
+          grant.userId,
+          grant.generation,
+          "Direct access granted by a downgraded collection administrator was revoked"
         );
       }
       res.json({ share: toCollectionSharePayload(result.updated) });
