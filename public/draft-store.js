@@ -522,6 +522,11 @@ function cloneDraftRecord(record) {
   return record ? JSON.parse(JSON.stringify(record)) : null;
 }
 
+function getOwnBlockDraft(record, blockId) {
+  if (!record?.blocks || !Object.prototype.hasOwnProperty.call(record.blocks, blockId)) return null;
+  return record.blocks[blockId];
+}
+
 function storedRecordMatchesExpected(storedValue, expectedRecord) {
   if (typeof storedValue !== "string" || !expectedRecord) return false;
   const parsed = parseRecoveryJson(storedValue);
@@ -798,12 +803,20 @@ export function createPageDraftStore(
     if (!prepared.writable || !prepared.record) return false;
     const record = prepared.record;
     const updatedAt = Date.now();
-    record.blocks[blockId] = {
-      payload: normalizedPayload,
-      expectedVersion: normalizedVersion,
-      revision: normalizedRevision,
-      updatedAt
-    };
+    // Resource identifiers are allowed to contain names such as "__proto__".
+    // Define an own data property explicitly so recovery never routes a draft
+    // through Object.prototype setters or silently drops it from JSON storage.
+    Object.defineProperty(record.blocks, blockId, {
+      value: {
+        payload: normalizedPayload,
+        expectedVersion: normalizedVersion,
+        revision: normalizedRevision,
+        updatedAt
+      },
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
     record.updatedAt = updatedAt;
     return writePage(record, prepared.expectedRecord);
   }
@@ -869,7 +882,7 @@ export function createPageDraftStore(
     const nextVersion = normalizeVersion(nextExpectedVersion);
     if (!prepared.writable || acknowledgedRevision === null || nextVersion === null) return false;
     const record = prepared.record;
-    const draft = record?.blocks?.[blockId];
+    const draft = getOwnBlockDraft(record, blockId);
     if (!record || !draft) return true;
     if (draft.revision <= acknowledgedRevision) delete record.blocks[blockId];
     else draft.expectedVersion = nextVersion;
@@ -953,7 +966,7 @@ export function createPageDraftStore(
     const prepared = prepareRecordMutation(userId, pageId, recordSourceId);
     if (!prepared.writable) return false;
     const record = prepared.record;
-    const draft = record?.blocks?.[blockId];
+    const draft = getOwnBlockDraft(record, blockId);
     if (!record || !draft) return true;
     if (
       draft.expectedVersion !== normalizedVersion ||

@@ -134,6 +134,58 @@ test("direct recovery rejects malformed block writes before they can poison a re
   }
 });
 
+test("direct recovery safely persists prototype-named block ids", () => {
+  const storage = new MemoryStorage();
+  const store = createPageDraftStore(storage, { sourceId: "tab-a" });
+  const payload = {
+    type: "MARKDOWN",
+    markdown: "durable prototype-named draft",
+    checked: false,
+    metadata: null
+  };
+
+  assert.equal(store.saveBlock({
+    userId: "user-1",
+    pageId: "page-1",
+    blockId: "__proto__",
+    payload,
+    expectedVersion: 7,
+    revision: 2
+  }), true);
+
+  const stored = store.loadPage("user-1", "page-1");
+  assert.equal(Object.prototype.hasOwnProperty.call(stored?.blocks, "__proto__"), true);
+  assert.deepEqual(stored?.blocks["__proto__"]?.payload, payload);
+
+  const previousExpectedVersion = Object.getOwnPropertyDescriptor(Object.prototype, "expectedVersion");
+  try {
+    assert.equal(store.saveTitle({
+      userId: "user-1",
+      pageId: "page-2",
+      value: "keep this title",
+      expectedVersion: 4,
+      revision: 1
+    }), true);
+    assert.equal(store.acknowledgeBlock({
+      userId: "user-1",
+      pageId: "page-2",
+      blockId: "__proto__",
+      revision: 1,
+      nextExpectedVersion: 8
+    }), true);
+    assert.deepEqual(
+      Object.getOwnPropertyDescriptor(Object.prototype, "expectedVersion"),
+      previousExpectedVersion
+    );
+  } finally {
+    if (previousExpectedVersion) {
+      Object.defineProperty(Object.prototype, "expectedVersion", previousExpectedVersion);
+    } else {
+      delete Object.prototype.expectedVersion;
+    }
+  }
+});
+
 test("direct recovery accepts complete block writes that remain readable", () => {
   const storage = new MemoryStorage();
   const store = createPageDraftStore(storage, { sourceId: "tab-a" });
