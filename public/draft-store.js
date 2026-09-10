@@ -956,14 +956,13 @@ export function createPageDraftStore(
   }) {
     const normalizedVersion = normalizeVersion(expectedVersion);
     const normalizedRevision = normalizeRevision(revision);
+    const normalizedPayload = normalizeBlockDraftPayload(payload);
     if (
       !isNonEmptyString(userId) ||
       !isNonEmptyString(pageId) ||
       !isNonEmptyString(blockId) ||
       !isNonEmptyString(recordSourceId) ||
-      !payload ||
-      typeof payload !== "object" ||
-      Array.isArray(payload) ||
+      !normalizedPayload ||
       normalizedVersion === null ||
       normalizedRevision === null
     ) {
@@ -977,7 +976,7 @@ export function createPageDraftStore(
     if (
       draft.expectedVersion !== normalizedVersion ||
       draft.revision !== normalizedRevision ||
-      JSON.stringify(draft.payload) !== JSON.stringify(payload)
+      JSON.stringify(draft.payload) !== JSON.stringify(normalizedPayload)
     ) {
       return true;
     }

@@ -680,3 +680,47 @@ test("foreign-source CAS and durable cleanup refuse a duplicate-key record that 
   assert.equal(await store.removePageIfUnchangedDurably(uploaded), false);
   assert.equal(storage.getItem(key), duplicateRaw);
 });
+
+test("removeBlockIfUnchanged rejects toJSON spoofing instead of deleting a different durable draft", () => {
+  const storage = new MemoryStorage();
+  const store = createPageDraftStore(storage, { sourceId: "tab-a" });
+  const originalPayload = {
+    type: "MARKDOWN",
+    markdown: "keep this unsaved note",
+    checked: false,
+    metadata: null
+  };
+
+  assert.equal(store.saveBlock({
+    userId: "user-1",
+    pageId: "page-1",
+    blockId: "block-1",
+    payload: originalPayload,
+    expectedVersion: 7,
+    revision: 2
+  }), true);
+
+  const spoofedPayload = {
+    type: "MARKDOWN",
+    markdown: "different content",
+    checked: false,
+    metadata: null,
+    toJSON() {
+      return originalPayload;
+    }
+  };
+
+  assert.equal(store.removeBlockIfUnchanged({
+    userId: "user-1",
+    pageId: "page-1",
+    blockId: "block-1",
+    sourceId: "tab-a",
+    payload: spoofedPayload,
+    expectedVersion: 7,
+    revision: 2
+  }), false);
+  assert.deepEqual(
+    store.loadPage("user-1", "page-1")?.blocks["block-1"]?.payload,
+    originalPayload
+  );
+});
