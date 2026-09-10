@@ -230,9 +230,16 @@ function cloneLosslessJsonValue(root) {
         continue;
       }
       if (typeof value === "number") {
-        // JSON.stringify(-0) emits 0, so accepting signed zero would silently
-        // change metadata at the recovery persistence boundary.
-        if (!Number.isFinite(value) || Object.is(value, -0)) return { ok: false };
+        // JSON.stringify(-0) emits 0, and integers outside the safe range may
+        // already have been rounded by JSON.parse. Accepting either case would
+        // silently change metadata at the recovery persistence boundary.
+        if (
+          !Number.isFinite(value)
+          || Object.is(value, -0)
+          || (Number.isInteger(value) && !Number.isSafeInteger(value))
+        ) {
+          return { ok: false };
+        }
         assign(value);
         continue;
       }

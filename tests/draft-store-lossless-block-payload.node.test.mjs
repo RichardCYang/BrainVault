@@ -195,6 +195,7 @@ test("direct recovery rejects JSON-lossy block metadata before modifying durable
     { database: { score: Number.NaN } },
     { database: { score: Number.POSITIVE_INFINITY } },
     { database: { score: -0 } },
+    { database: { score: Number.MAX_SAFE_INTEGER + 1 } },
     { database: { value: 1n } },
     { database: { values: sparseValues } },
     { database: { values: hiddenValues } },
@@ -214,6 +215,27 @@ test("direct recovery rejects JSON-lossy block metadata before modifying durable
     assert.equal(storage.getItem(key), original);
     assert.equal(store.loadPage("user-1", "page-1")?.title?.value, "keep this title");
   }
+});
+
+test("direct recovery rejects unsafe integer metadata before unrelated mutations can rewrite it", () => {
+  const storage = new MemoryStorage();
+  const key = "brainvault.pageDraft.v2:user-1:page-1:tab-a";
+  const raw = '{"schemaVersion":2,"userId":"user-1","pageId":"page-1","sourceId":"tab-a","updatedAt":1,"title":null,"blockOrder":null,"blocks":{"block-1":{"revision":1,"expectedVersion":7,"updatedAt":1,"payload":{"type":"MARKDOWN","markdown":"keep this unsaved note","checked":false,"metadata":{"unsafe":9007199254740993}}}}}';
+  storage.setItem(key, raw);
+
+  const store = createPageDraftStore(storage, { sourceId: "tab-a" });
+  const inspection = store.inspectPageDrafts("user-1", "page-1");
+
+  assert.deepEqual(inspection.records, []);
+  assert.deepEqual(inspection.unreadableKeys, [key]);
+  assert.equal(store.saveTitle({
+    userId: "user-1",
+    pageId: "page-1",
+    value: "ordinary title edit",
+    expectedVersion: 7,
+    revision: 2
+  }), false);
+  assert.equal(storage.getItem(key), raw);
 });
 
 test("direct recovery snapshots validated metadata before persistence so Proxy reads cannot change it", () => {
