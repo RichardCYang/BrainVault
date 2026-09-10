@@ -299,15 +299,29 @@ async function reserveBlockCreateMutation(
     pageId: string;
     blockId: string;
     requestHash: string | undefined;
+    workspaceGeneration: number;
+    workspaceOwnerId: string;
+    ownerWorkspaceGeneration: number;
   }
 ): Promise<{ kind: "new" } | { kind: "replay"; block: BlockRow }> {
   if (!input.mutationId || !input.requestHash) return { kind: "new" };
 
   try {
     await client.execute(
-      `INSERT INTO block_create_mutations (actor_id, mutation_id, page_id, block_id, request_hash)
-       VALUES (?, ?, ?, ?, ?)`,
-      [input.actorId, input.mutationId, input.pageId, input.blockId, input.requestHash]
+      `INSERT INTO block_create_mutations
+         (actor_id, mutation_id, page_id, block_id, request_hash,
+          workspace_generation, workspace_owner_id, owner_workspace_generation)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        input.actorId,
+        input.mutationId,
+        input.pageId,
+        input.blockId,
+        input.requestHash,
+        input.workspaceGeneration,
+        input.workspaceOwnerId,
+        input.ownerWorkspaceGeneration
+      ]
     );
     return { kind: "new" };
   } catch (error) {
@@ -315,7 +329,8 @@ async function reserveBlockCreateMutation(
   }
 
   const receipt = await client.queryOne<BlockCreateMutationReceipt>(
-    `SELECT page_id, block_id, request_hash
+    `SELECT page_id, block_id, request_hash, workspace_generation,
+            workspace_owner_id, owner_workspace_generation
      FROM block_create_mutations
      WHERE actor_id = ? AND mutation_id = ?
      FOR UPDATE`,
@@ -327,13 +342,23 @@ async function reserveBlockCreateMutation(
 
   const assessment = assessBlockCreateMutationReceipt(receipt, {
     pageId: input.pageId,
-    requestHash: input.requestHash
+    requestHash: input.requestHash,
+    workspaceGeneration: input.workspaceGeneration,
+    workspaceOwnerId: input.workspaceOwnerId,
+    ownerWorkspaceGeneration: input.ownerWorkspaceGeneration
   });
   if (assessment.kind === "collision") {
     throw new ApiError(
       409,
       "MUTATION_ID_REUSED",
       "This mutation id was already used for a different block creation request. No additional block was created."
+    );
+  }
+  if (assessment.kind === "superseded") {
+    throw new ApiError(
+      409,
+      "BLOCK_CREATE_REPLAY_SUPERSEDED",
+      "This block creation receipt belongs to an earlier workspace generation. No additional block was created."
     );
   }
   if (assessment.kind !== "replay") {
@@ -981,7 +1006,10 @@ blockRouter.post(
             mutationId: body.mutationId,
             pageId,
             blockId: id,
-            requestHash: mutationHash
+            requestHash: mutationHash,
+            workspaceGeneration: authScope.workspaceGeneration,
+            workspaceOwnerId: ownerId,
+            ownerWorkspaceGeneration: attachmentGeneration
           });
           collaborationDocumentEpochAtWrite = lockedAccess.shareCount > 0
             ? (await ensureCollaborationState(pageId, client)).document_epoch
@@ -1286,7 +1314,10 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
         mutationId,
         pageId,
         blockId: id,
-        requestHash: mutationHash
+        requestHash: mutationHash,
+        workspaceGeneration: authScope.workspaceGeneration,
+        workspaceOwnerId: ownerId,
+        ownerWorkspaceGeneration: currentWorkspaceGeneration
       });
       if (reservation.kind === "replay") {
         return {

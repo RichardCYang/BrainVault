@@ -260,6 +260,10 @@ const blockCreateMutationMigrationSource = readFileSync(
   new URL("../migrations/038_block_create_mutation_receipts.sql", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const blockCreateOwnerGenerationMigrationSource = readFileSync(
+  new URL("../migrations/074_block_create_owner_generation_receipts.sql", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const blockDeleteMutationMigrationSource = readFileSync(
   new URL("../migrations/039_block_delete_mutation_receipts.sql", import.meta.url),
   "utf8"
@@ -410,6 +414,11 @@ assert(
     && attachmentCreateRouteSource.includes("sha256: fileHash")
     && attachmentCreateRouteSource.indexOf("reserveBlockCreateMutation")
       < attachmentCreateRouteSource.indexOf("moveAttachmentFile")
+    && blockCreateOwnerGenerationMigrationSource.includes("workspace_generation BIGINT UNSIGNED NULL")
+    && blockCreateOwnerGenerationMigrationSource.includes("workspace_owner_id VARCHAR(64) NULL")
+    && blockCreateOwnerGenerationMigrationSource.includes("owner_workspace_generation BIGINT UNSIGNED NULL")
+    && blockRouteSource.includes("BLOCK_CREATE_REPLAY_SUPERSEDED")
+    && blockRouteSource.includes("workspaceGeneration: authScope.workspaceGeneration")
     && client.includes("const pendingBlockCreateTasks = new Map()")
     && client.includes("const pendingAttachmentCreateTasks = new Map()")
     && client.includes("basePageContentVersion: task.basePageContentVersion")
@@ -476,6 +485,20 @@ assert(
     && blockCreateReproduction.fixed.attachmentReplayReturnedOriginalId
     && blockCreateReproduction.fixed.changedPayloadCollisionRejected,
   "The block-create response-loss reproduction did not prove both vulnerable and fixed states"
+);
+
+const blockCreateRestoreReplayReproduction = JSON.parse(execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL("./reproduce-block-create-receipt-restore-replay.mjs", import.meta.url))],
+  { encoding: "utf8" }
+));
+assert(
+  blockCreateRestoreReplayReproduction.ownerRestoreReplay.vulnerable === "replayed-restored-block"
+    && blockCreateRestoreReplayReproduction.ownerRestoreReplay.fixed === "superseded"
+    && blockCreateRestoreReplayReproduction.actorRestoreReplay.vulnerable === "replayed-restored-block"
+    && blockCreateRestoreReplayReproduction.actorRestoreReplay.fixed === "superseded"
+    && blockCreateRestoreReplayReproduction.sameGenerationReplay === "replayed-original-block",
+  "A stale block-create receipt can still acknowledge stable IDs recreated by workspace restore"
 );
 
 const pageVersionResetReproduction = JSON.parse(execFileSync(

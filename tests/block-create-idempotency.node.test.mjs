@@ -7,22 +7,79 @@ import { assessBlockCreateMutationReceipt } from "../src/lib/block-create-mutati
 
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
-test("block creation receipt assessment distinguishes replay and collision", () => {
-  const receipt = { page_id: "page_1", block_id: "block_1", request_hash: "hash_1" };
+test("block creation receipt assessment distinguishes replay, collision, and restored lineage", () => {
+  const receipt = {
+    page_id: "page_1",
+    block_id: "block_1",
+    request_hash: "hash_1",
+    workspace_generation: 7,
+    workspace_owner_id: "owner_1",
+    owner_workspace_generation: 11
+  };
+  const currentLineage = {
+    workspaceGeneration: 7,
+    workspaceOwnerId: "owner_1",
+    ownerWorkspaceGeneration: 11
+  };
   assert.deepEqual(
-    assessBlockCreateMutationReceipt(receipt, { pageId: "page_1", requestHash: "hash_1" }),
+    assessBlockCreateMutationReceipt(receipt, {
+      pageId: "page_1",
+      requestHash: "hash_1",
+      ...currentLineage
+    }),
     { kind: "replay", blockId: "block_1" }
   );
   assert.deepEqual(
-    assessBlockCreateMutationReceipt(receipt, { pageId: "page_2", requestHash: "hash_1" }),
+    assessBlockCreateMutationReceipt(receipt, {
+      pageId: "page_2",
+      requestHash: "hash_1",
+      ...currentLineage
+    }),
     { kind: "collision" }
   );
   assert.deepEqual(
-    assessBlockCreateMutationReceipt(receipt, { pageId: "page_1", requestHash: "hash_2" }),
+    assessBlockCreateMutationReceipt(receipt, {
+      pageId: "page_1",
+      requestHash: "hash_2",
+      ...currentLineage
+    }),
     { kind: "collision" }
   );
   assert.deepEqual(
-    assessBlockCreateMutationReceipt(null, { pageId: "page_1", requestHash: "hash_1" }),
+    assessBlockCreateMutationReceipt(receipt, {
+      pageId: "page_1",
+      requestHash: "hash_1",
+      ...currentLineage,
+      workspaceGeneration: 8
+    }),
+    { kind: "superseded" }
+  );
+  assert.deepEqual(
+    assessBlockCreateMutationReceipt(receipt, {
+      pageId: "page_1",
+      requestHash: "hash_1",
+      ...currentLineage,
+      ownerWorkspaceGeneration: 12
+    }),
+    { kind: "superseded" }
+  );
+  assert.deepEqual(
+    assessBlockCreateMutationReceipt(
+      {
+        ...receipt,
+        workspace_generation: null,
+        workspace_owner_id: null,
+        owner_workspace_generation: null
+      },
+      { pageId: "page_1", requestHash: "hash_1", ...currentLineage }
+    ),
+    { kind: "superseded" }
+  );
+  assert.deepEqual(
+    assessBlockCreateMutationReceipt(
+      null,
+      { pageId: "page_1", requestHash: "hash_1", ...currentLineage }
+    ),
     { kind: "new" }
   );
 });
@@ -41,6 +98,14 @@ test("ordinary and attachment creates reserve a receipt before durable side effe
   assert.match(route, /INSERT INTO block_create_mutations/);
   assert.match(route, /assessBlockCreateMutationReceipt/);
   assert.match(ordinary, /createMutationRequestHash\(\{ kind: "BLOCK", pageId, basePageContentVersion, creation \}\)/);
+  assert.ok(
+    ordinary.indexOf("getPageAccess(pageId, user.id, client") < ordinary.indexOf("reserveBlockCreateMutation"),
+    "ordinary receipt replays must remain behind current page authorization"
+  );
+  assert.ok(
+    attachment.indexOf("getPageAccess(pageId, user.id, client") < attachment.indexOf("reserveBlockCreateMutation"),
+    "attachment receipt replays must remain behind current page authorization"
+  );
   assert.ok(ordinary.indexOf("reserveBlockCreateMutation") < ordinary.indexOf("assertDirectBlockMutationAllowed"));
   assert.ok(ordinary.indexOf("reserveBlockCreateMutation") < ordinary.indexOf("INSERT INTO blocks"));
   assert.match(attachment, /kind: "ATTACHMENT"/);
@@ -49,6 +114,9 @@ test("ordinary and attachment creates reserve a receipt before durable side effe
   assert.ok(attachment.indexOf("reserveBlockCreateMutation") < attachment.indexOf("moveAttachmentFile"));
   assert.ok(attachment.indexOf("reserveBlockCreateMutation") < attachment.indexOf("INSERT INTO blocks"));
   assert.match(attachment, /if \(cleanupPath\)[\s\S]*removeAttachmentPath\(cleanupPath\)/);
+  assert.match(route, /workspace_generation, workspace_owner_id, owner_workspace_generation/);
+  assert.match(route, /workspaceGeneration: authScope\.workspaceGeneration/);
+  assert.match(route, /BLOCK_CREATE_REPLAY_SUPERSEDED/);
   assert.match(route, /BLOCK_CREATE_REPLAY_UNAVAILABLE/);
 });
 
