@@ -307,3 +307,99 @@ test("direct recovery preserves nested JSON metadata exactly", () => {
   }), true);
   assert.deepEqual(store.loadPage("user-1", "page-1")?.blocks["block-1"].payload, payload);
 });
+
+
+test("direct recovery rejects unknown wrapper fields before a save or delete can project them away", () => {
+  const key = "brainvault.pageDraft.v2:user-1:page-1:tab-a";
+  const base = () => ({
+    schemaVersion: 2,
+    userId: "user-1",
+    pageId: "page-1",
+    sourceId: "tab-a",
+    updatedAt: 1,
+    title: null,
+    blockOrder: null,
+    blocks: {
+      "block-1": {
+        revision: 1,
+        expectedVersion: 7,
+        updatedAt: 1,
+        payload: {
+          type: "MARKDOWN",
+          markdown: "keep this unsaved note",
+          checked: false,
+          metadata: null
+        }
+      }
+    }
+  });
+
+  const variants = [
+    (record) => {
+      record.futureRecord = { markdown: "future unsaved recovery data" };
+    },
+    (record) => {
+      record.title = {
+        value: "draft title",
+        revision: 1,
+        expectedVersion: 7,
+        updatedAt: 1,
+        futureTitleState: { value: "preserve me" }
+      };
+    },
+    (record) => {
+      record.blocks["block-1"].futureBlockState = { markdown: "preserve me" };
+    },
+    (record) => {
+      record.blockOrder = {
+        parentBlockId: null,
+        orderedIds: ["block-1"],
+        previousIds: ["block-1"],
+        mutationId: "mutation-1",
+        items: [{ id: "block-1", sortOrder: 0, parentBlockId: null, expectedVersion: 7 }],
+        updatedAt: 1,
+        futureOrderState: { value: "preserve me" }
+      };
+    },
+    (record) => {
+      record.blockOrder = {
+        parentBlockId: null,
+        orderedIds: ["block-1"],
+        previousIds: ["block-1"],
+        mutationId: "mutation-1",
+        items: [{
+          id: "block-1",
+          sortOrder: 0,
+          parentBlockId: null,
+          expectedVersion: 7,
+          futureItemState: { value: "preserve me" }
+        }],
+        updatedAt: 1
+      };
+    }
+  ];
+
+  for (const mutate of variants) {
+    const storage = new MemoryStorage();
+    const record = base();
+    mutate(record);
+    const raw = JSON.stringify(record);
+    storage.setItem(key, raw);
+
+    const store = createPageDraftStore(storage, { sourceId: "tab-a" });
+    const inspection = store.inspectPageDrafts("user-1", "page-1");
+
+    assert.deepEqual(inspection.records, []);
+    assert.deepEqual(inspection.unreadableKeys, [key]);
+
+    assert.equal(store.saveTitle({
+      userId: "user-1",
+      pageId: "page-1",
+      value: "ordinary edit",
+      expectedVersion: 7,
+      revision: 2
+    }), false);
+    assert.equal(store.removeBlock("user-1", "page-1", "block-1", "tab-a"), false);
+    assert.equal(storage.getItem(key), raw);
+  }
+});

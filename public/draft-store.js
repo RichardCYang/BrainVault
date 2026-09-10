@@ -22,14 +22,64 @@ function normalizeUpdatedAt(value) {
 }
 
 function normalizeTitleDraft(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (!hasOnlyKnownEnumerableDataProperties(value, titleDraftKeys)) return null;
   const revision = normalizeRevision(value.revision);
   const expectedVersion = normalizeVersion(value.expectedVersion);
   if (typeof value.value !== "string" || revision === null || expectedVersion === null) return null;
   return { value: value.value, revision, expectedVersion, updatedAt: normalizeUpdatedAt(value.updatedAt) };
 }
 
+const titleDraftKeys = new Set(["value", "revision", "expectedVersion", "updatedAt"]);
+const blockDraftKeys = new Set(["payload", "revision", "expectedVersion", "updatedAt"]);
 const blockDraftPayloadKeys = new Set(["type", "markdown", "checked", "metadata"]);
+const blockOrderDraftKeys = new Set([
+  "parentBlockId",
+  "orderedIds",
+  "previousIds",
+  "mutationId",
+  "items",
+  "updatedAt"
+]);
+const blockOrderItemKeys = new Set(["id", "sortOrder", "parentBlockId", "expectedVersion"]);
+const pageDraftRecordKeys = new Set([
+  "schemaVersion",
+  "userId",
+  "pageId",
+  "sourceId",
+  "updatedAt",
+  "title",
+  "blocks",
+  "blockOrder"
+]);
+
+function hasOnlyKnownEnumerableDataProperties(value, allowedKeys) {
+  try {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return false;
+    if (Object.getOwnPropertySymbols(value).length > 0) return false;
+
+    const ownPropertyNames = Object.getOwnPropertyNames(value);
+    const enumerableKeys = Object.keys(value);
+    if (
+      ownPropertyNames.length !== enumerableKeys.length
+      || ownPropertyNames.some((key, index) => key !== enumerableKeys[index])
+      || enumerableKeys.some((key) => !allowedKeys.has(key))
+    ) {
+      return false;
+    }
+
+    return enumerableKeys.every((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return Boolean(
+        descriptor?.enumerable
+        && Object.prototype.hasOwnProperty.call(descriptor, "value")
+      );
+    });
+  } catch {
+    return false;
+  }
+}
 
 function cloneLosslessJsonValue(root) {
   const pending = [];
@@ -208,7 +258,7 @@ function normalizeBlockDraftPayload(value) {
   }
 }
 function normalizeBlockDraft(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (!hasOnlyKnownEnumerableDataProperties(value, blockDraftKeys)) return null;
   const revision = normalizeRevision(value.revision);
   const expectedVersion = normalizeVersion(value.expectedVersion);
   const payload = normalizeBlockDraftPayload(value.payload);
@@ -222,7 +272,7 @@ function normalizeParentBlockId(value) {
 }
 
 function normalizeBlockOrderDraft(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (!hasOnlyKnownEnumerableDataProperties(value, blockOrderDraftKeys)) return null;
   const parentBlockId = normalizeParentBlockId(value.parentBlockId);
   if (parentBlockId === undefined || !isNonEmptyString(value.mutationId)) return null;
   if (!Array.isArray(value.orderedIds) || value.orderedIds.length === 0) return null;
@@ -234,7 +284,8 @@ function normalizeBlockOrderDraft(value) {
   const items = [];
   for (let index = 0; index < value.items.length; index += 1) {
     const item = value.items[index];
-    const itemParentBlockId = normalizeParentBlockId(item?.parentBlockId);
+    if (!hasOnlyKnownEnumerableDataProperties(item, blockOrderItemKeys)) return null;
+    const itemParentBlockId = normalizeParentBlockId(item.parentBlockId);
     const expectedVersion = normalizeVersion(item?.expectedVersion);
     if (
       !item ||
@@ -269,7 +320,11 @@ function normalizeBlockOrderDraft(value) {
 }
 
 function normalizeRecord(value, userId, pageId, expectedSourceId = null) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  // Every accepted record can later be rewritten by an acknowledgement,
+  // save, or delete. Reject unknown/hidden/accessor-backed wrapper fields
+  // instead of projecting them away and silently deleting recovery data
+  // written by a newer build or left by a partially damaged record.
+  if (!hasOnlyKnownEnumerableDataProperties(value, pageDraftRecordKeys)) return null;
   if (
     value.schemaVersion !== draftSchemaVersion ||
     value.userId !== userId ||
