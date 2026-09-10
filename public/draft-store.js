@@ -6,27 +6,33 @@ function isNonEmptyString(value) {
   return typeof value === "string" && value.length > 0;
 }
 
+// Recovery records have already crossed JSON decoding. Coercing strings or
+// synthesizing missing timestamps here would make a malformed record appear
+// writable and let an unrelated mutation destroy its original recovery bytes.
 function normalizeVersion(value) {
-  const version = Number(value);
-  return Number.isSafeInteger(version) && version >= 1 ? version : null;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? value : null;
 }
 
 function normalizeRevision(value) {
-  const revision = Number(value);
-  return Number.isSafeInteger(revision) && revision >= 1 ? revision : null;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? value : null;
 }
 
 function normalizeUpdatedAt(value) {
-  const updatedAt = Number(value);
-  return Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : Date.now();
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }
 
 function normalizeTitleDraft(value) {
   if (!hasOnlyKnownEnumerableDataProperties(value, titleDraftKeys)) return null;
   const revision = normalizeRevision(value.revision);
   const expectedVersion = normalizeVersion(value.expectedVersion);
-  if (typeof value.value !== "string" || revision === null || expectedVersion === null) return null;
-  return { value: value.value, revision, expectedVersion, updatedAt: normalizeUpdatedAt(value.updatedAt) };
+  const updatedAt = normalizeUpdatedAt(value.updatedAt);
+  if (
+    typeof value.value !== "string"
+    || revision === null
+    || expectedVersion === null
+    || updatedAt === null
+  ) return null;
+  return { value: value.value, revision, expectedVersion, updatedAt };
 }
 
 const titleDraftKeys = new Set(["value", "revision", "expectedVersion", "updatedAt"]);
@@ -261,9 +267,10 @@ function normalizeBlockDraft(value) {
   if (!hasOnlyKnownEnumerableDataProperties(value, blockDraftKeys)) return null;
   const revision = normalizeRevision(value.revision);
   const expectedVersion = normalizeVersion(value.expectedVersion);
+  const updatedAt = normalizeUpdatedAt(value.updatedAt);
   const payload = normalizeBlockDraftPayload(value.payload);
-  if (revision === null || expectedVersion === null || !payload) return null;
-  return { payload, revision, expectedVersion, updatedAt: normalizeUpdatedAt(value.updatedAt) };
+  if (revision === null || expectedVersion === null || updatedAt === null || !payload) return null;
+  return { payload, revision, expectedVersion, updatedAt };
 }
 
 function normalizeParentBlockId(value) {
@@ -309,13 +316,15 @@ function normalizeBlockOrderDraft(value) {
     previousIds = [...value.previousIds];
   }
 
+  const updatedAt = normalizeUpdatedAt(value.updatedAt);
+  if (updatedAt === null) return null;
   return {
     parentBlockId,
     orderedIds,
     previousIds,
     mutationId: value.mutationId,
     items,
-    updatedAt: normalizeUpdatedAt(value.updatedAt)
+    updatedAt
   };
 }
 
@@ -364,13 +373,15 @@ function normalizeRecord(value, userId, pageId, expectedSourceId = null) {
     }
   }
 
+  const updatedAt = normalizeUpdatedAt(value.updatedAt);
   if (!title && !blockOrder && Object.keys(blocks).length === 0) return null;
+  if (updatedAt === null) return null;
   return {
     schemaVersion: draftSchemaVersion,
     userId,
     pageId,
     sourceId: value.sourceId,
-    updatedAt: normalizeUpdatedAt(value.updatedAt),
+    updatedAt,
     title,
     blocks,
     blockOrder

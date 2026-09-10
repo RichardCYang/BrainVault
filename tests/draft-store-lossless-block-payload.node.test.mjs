@@ -403,3 +403,83 @@ test("direct recovery rejects unknown wrapper fields before a save or delete can
     assert.equal(storage.getItem(key), raw);
   }
 });
+
+
+test("direct recovery rejects coercive numeric metadata before unrelated mutations can rewrite it", () => {
+  const key = "brainvault.pageDraft.v2:user-1:page-1:tab-a";
+  const base = () => ({
+    schemaVersion: 2,
+    userId: "user-1",
+    pageId: "page-1",
+    sourceId: "tab-a",
+    updatedAt: 1,
+    title: null,
+    blockOrder: null,
+    blocks: {
+      "block-1": {
+        revision: 1,
+        expectedVersion: 7,
+        updatedAt: 1,
+        payload: {
+          type: "MARKDOWN",
+          markdown: "keep this unsaved note",
+          checked: false,
+          metadata: null
+        }
+      }
+    }
+  });
+
+  const variants = [
+    (record) => { record.updatedAt = null; },
+    (record) => { record.updatedAt = "1"; },
+    (record) => { record.blocks["block-1"].revision = "1"; },
+    (record) => { record.blocks["block-1"].expectedVersion = "7"; },
+    (record) => { record.blocks["block-1"].updatedAt = null; },
+    (record) => {
+      record.title = { value: "title", revision: 1, expectedVersion: 7, updatedAt: "1" };
+    },
+    (record) => {
+      record.blockOrder = {
+        parentBlockId: null,
+        orderedIds: ["block-1"],
+        previousIds: ["block-1"],
+        mutationId: "mutation-1",
+        items: [{ id: "block-1", sortOrder: 0, parentBlockId: null, expectedVersion: "7" }],
+        updatedAt: 1
+      };
+    },
+    (record) => {
+      record.blockOrder = {
+        parentBlockId: null,
+        orderedIds: ["block-1"],
+        previousIds: ["block-1"],
+        mutationId: "mutation-1",
+        items: [{ id: "block-1", sortOrder: 0, parentBlockId: null, expectedVersion: 7 }],
+        updatedAt: null
+      };
+    }
+  ];
+
+  for (const mutate of variants) {
+    const storage = new MemoryStorage();
+    const record = base();
+    mutate(record);
+    const raw = JSON.stringify(record);
+    storage.setItem(key, raw);
+
+    const store = createPageDraftStore(storage, { sourceId: "tab-a" });
+    const inspection = store.inspectPageDrafts("user-1", "page-1");
+
+    assert.deepEqual(inspection.records, []);
+    assert.deepEqual(inspection.unreadableKeys, [key]);
+    assert.equal(store.saveTitle({
+      userId: "user-1",
+      pageId: "page-1",
+      value: "ordinary edit",
+      expectedVersion: 7,
+      revision: 2
+    }), false);
+    assert.equal(storage.getItem(key), raw);
+  }
+});
