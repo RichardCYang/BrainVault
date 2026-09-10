@@ -483,3 +483,106 @@ test("direct recovery rejects coercive numeric metadata before unrelated mutatio
     assert.equal(storage.getItem(key), raw);
   }
 });
+
+
+test("direct recovery rejects duplicate JSON object names before a mutation can erase shadowed recovery bytes", () => {
+  const key = "brainvault.pageDraft.v2:user-1:page-1:tab-a";
+  const shadowedBlock = `{"revision":1,"expectedVersion":7,"updatedAt":1,"payload":{"type":"MARKDOWN","markdown":"SHADOWED UNSAVED NOTE","checked":false,"metadata":null}}`;
+  const visibleBlock = `{"revision":1,"expectedVersion":7,"updatedAt":1,"payload":{"type":"MARKDOWN","markdown":"visible note","checked":false,"metadata":null}}`;
+
+  for (const duplicateName of ['"blocks"', '"blo\\u0063ks"']) {
+    const storage = new MemoryStorage();
+    const raw = `{"schemaVersion":2,"userId":"user-1","pageId":"page-1","sourceId":"tab-a","updatedAt":1,"title":null,"blockOrder":null,"blocks":{"shadowed":${shadowedBlock}},${duplicateName}:{"visible":${visibleBlock}}}`;
+    storage.setItem(key, raw);
+
+    const store = createPageDraftStore(storage, { sourceId: "tab-a" });
+    const inspection = store.inspectPageDrafts("user-1", "page-1");
+
+    assert.deepEqual(inspection.records, []);
+    assert.deepEqual(inspection.unreadableKeys, [key]);
+    assert.equal(store.saveTitle({
+      userId: "user-1",
+      pageId: "page-1",
+      value: "ordinary edit",
+      expectedVersion: 1,
+      revision: 1
+    }), false);
+    assert.equal(store.removeBlock("user-1", "page-1", "visible", "tab-a"), false);
+    assert.equal(storage.getItem(key), raw);
+    assert.match(storage.getItem(key), /SHADOWED UNSAVED NOTE/);
+  }
+});
+
+test("foreign-source CAS and durable cleanup refuse a duplicate-key record that parses like the old snapshot", async () => {
+  class DeferredAtomicMemoryStorage extends MemoryStorage {
+    compareAndSet(key, predicate, nextValue) {
+      return Promise.resolve().then(() => {
+        const current = this.getItem(key);
+        if (!predicate(current)) return false;
+        this.setItem(key, nextValue);
+        return true;
+      });
+    }
+
+    compareAndRemove(key, predicate) {
+      return Promise.resolve().then(() => {
+        const current = this.getItem(key);
+        if (!predicate(current)) return false;
+        this.removeItem(key);
+        return true;
+      });
+    }
+  }
+
+  const key = "brainvault.pageDraft.v2:user-1:page-1:tab-a";
+  const visibleRecord = {
+    schemaVersion: 2,
+    userId: "user-1",
+    pageId: "page-1",
+    sourceId: "tab-a",
+    updatedAt: 1,
+    title: { value: "draft title", revision: 1, expectedVersion: 1, updatedAt: 1 },
+    blockOrder: null,
+    blocks: {
+      visible: {
+        revision: 1,
+        expectedVersion: 7,
+        updatedAt: 1,
+        payload: { type: "MARKDOWN", markdown: "visible note", checked: false, metadata: null }
+      }
+    }
+  };
+  const visibleBlocks = JSON.stringify(visibleRecord.blocks);
+  const shadowedBlocks = JSON.stringify({
+    shadowed: {
+      revision: 1,
+      expectedVersion: 7,
+      updatedAt: 1,
+      payload: { type: "MARKDOWN", markdown: "SHADOWED UNSAVED NOTE", checked: false, metadata: null }
+    }
+  });
+  const duplicateRaw = `{"schemaVersion":2,"userId":"user-1","pageId":"page-1","sourceId":"tab-a","updatedAt":1,"title":{"value":"draft title","revision":1,"expectedVersion":1,"updatedAt":1},"blockOrder":null,"blocks":${shadowedBlocks},"blocks":${visibleBlocks}}`;
+
+  const storage = new DeferredAtomicMemoryStorage();
+  storage.setItem(key, JSON.stringify(visibleRecord));
+  const store = createPageDraftStore(storage, { sourceId: "tab-b" });
+
+  assert.equal(store.acknowledgeTitle({
+    userId: "user-1",
+    pageId: "page-1",
+    sourceId: "tab-a",
+    revision: 1,
+    nextExpectedVersion: 2
+  }), true);
+  storage.setItem(key, duplicateRaw);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(storage.getItem(key), duplicateRaw);
+
+  storage.setItem(key, JSON.stringify(visibleRecord));
+  const uploaded = store.loadPage("user-1", "page-1", "tab-a");
+  assert.ok(uploaded);
+  storage.setItem(key, duplicateRaw);
+  assert.equal(await store.removePageIfUnchangedDurably(uploaded), false);
+  assert.equal(storage.getItem(key), duplicateRaw);
+});

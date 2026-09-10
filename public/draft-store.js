@@ -58,6 +58,129 @@ const pageDraftRecordKeys = new Set([
   "blockOrder"
 ]);
 
+// JSON.parse() keeps only one value when an object contains duplicate names.
+// Recovery is an evidence-preservation boundary, so detect duplicates in the raw
+// JSON before normalization can erase a shadowed title, block, or metadata field.
+function hasDuplicateJsonObjectKeys(raw) {
+  let index = 0;
+
+  const skipWhitespace = () => {
+    while (
+      raw[index] === " "
+      || raw[index] === "\t"
+      || raw[index] === "\r"
+      || raw[index] === "\n"
+    ) {
+      index += 1;
+    }
+  };
+
+  const scanString = (decode = false) => {
+    const start = index;
+    index += 1;
+    while (index < raw.length) {
+      if (raw[index] === "\\") {
+        index += 2;
+        continue;
+      }
+      if (raw[index] === "\"") {
+        index += 1;
+        return decode ? JSON.parse(raw.slice(start, index)) : null;
+      }
+      index += 1;
+    }
+    throw new SyntaxError("Unterminated JSON string");
+  };
+
+  const scanPrimitive = () => {
+    while (
+      index < raw.length
+      && raw[index] !== ","
+      && raw[index] !== "]"
+      && raw[index] !== "}"
+      && raw[index] !== " "
+      && raw[index] !== "\t"
+      && raw[index] !== "\r"
+      && raw[index] !== "\n"
+    ) {
+      index += 1;
+    }
+  };
+
+  function scanValue() {
+    skipWhitespace();
+    if (raw[index] === "{") return scanObject();
+    if (raw[index] === "[") return scanArray();
+    if (raw[index] === "\"") {
+      scanString();
+      return false;
+    }
+    scanPrimitive();
+    return false;
+  }
+
+  function scanObject() {
+    index += 1;
+    skipWhitespace();
+    if (raw[index] === "}") {
+      index += 1;
+      return false;
+    }
+
+    const names = new Set();
+    while (index < raw.length) {
+      skipWhitespace();
+      const name = scanString(true);
+      if (names.has(name)) return true;
+      names.add(name);
+
+      skipWhitespace();
+      index += 1; // colon; JSON.parse() already validated the grammar.
+      if (scanValue()) return true;
+
+      skipWhitespace();
+      if (raw[index] === "}") {
+        index += 1;
+        return false;
+      }
+      index += 1; // comma
+    }
+    return false;
+  }
+
+  function scanArray() {
+    index += 1;
+    skipWhitespace();
+    if (raw[index] === "]") {
+      index += 1;
+      return false;
+    }
+
+    while (index < raw.length) {
+      if (scanValue()) return true;
+      skipWhitespace();
+      if (raw[index] === "]") {
+        index += 1;
+        return false;
+      }
+      index += 1; // comma
+    }
+    return false;
+  }
+
+  return scanValue();
+}
+
+function parseRecoveryJson(raw) {
+  try {
+    const value = JSON.parse(raw);
+    if (hasDuplicateJsonObjectKeys(raw)) return { ok: false };
+    return { ok: true, value };
+  } catch {
+    return { ok: false };
+  }
+}
+
 function hasOnlyKnownEnumerableDataProperties(value, allowedKeys) {
   try {
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -394,9 +517,11 @@ function cloneDraftRecord(record) {
 
 function storedRecordMatchesExpected(storedValue, expectedRecord) {
   if (typeof storedValue !== "string" || !expectedRecord) return false;
+  const parsed = parseRecoveryJson(storedValue);
+  if (!parsed.ok) return false;
   try {
     const current = normalizeRecord(
-      JSON.parse(storedValue),
+      parsed.value,
       expectedRecord.userId,
       expectedRecord.pageId,
       expectedRecord.sourceId
@@ -430,7 +555,9 @@ export function createPageDraftStore(
       // Storage.getItem() uses null, not an empty string, to signal absence.
       // Preserve every present but undecodable value instead of overwriting it.
       if (raw === null) return { record: null, unreadable: false };
-      const record = normalizeRecord(JSON.parse(raw), userId, pageId, expectedSourceId);
+      const parsed = parseRecoveryJson(raw);
+      if (!parsed.ok) return { record: null, unreadable: true };
+      const record = normalizeRecord(parsed.value, userId, pageId, expectedSourceId);
       const parsedKey = parseUserDraftKey(key, userId);
       if (
         !record ||
@@ -921,8 +1048,10 @@ export function createPageDraftStore(
     return storage.compareAndRemove(key, (storedValue) => {
       if (typeof storedValue !== "string") return false;
       try {
+        const parsed = parseRecoveryJson(storedValue);
+        if (!parsed.ok) return false;
         const current = normalizeRecord(
-          JSON.parse(storedValue),
+          parsed.value,
           expectedRecord.userId,
           expectedRecord.pageId,
           expectedRecord.sourceId
