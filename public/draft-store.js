@@ -31,100 +31,182 @@ function normalizeTitleDraft(value) {
 
 const blockDraftPayloadKeys = new Set(["type", "markdown", "checked", "metadata"]);
 
-function isLosslessJsonValue(root) {
-  const pending = [root];
+function cloneLosslessJsonValue(root) {
+  const pending = [];
   const seen = new WeakSet();
+  let clonedRoot;
+
+  pending.push({
+    source: root,
+    assign(value) {
+      clonedRoot = value;
+    }
+  });
 
   try {
     while (pending.length) {
-      const value = pending.pop();
-      if (value === null || typeof value === "string" || typeof value === "boolean") continue;
+      const { source: value, assign } = pending.pop();
+      if (value === null || typeof value === "string" || typeof value === "boolean") {
+        assign(value);
+        continue;
+      }
       if (typeof value === "number") {
         // JSON.stringify(-0) emits 0, so accepting signed zero would silently
         // change metadata at the recovery persistence boundary.
-        if (!Number.isFinite(value) || Object.is(value, -0)) return false;
+        if (!Number.isFinite(value) || Object.is(value, -0)) return { ok: false };
+        assign(value);
         continue;
       }
-      if (!value || typeof value !== "object") return false;
-      if (seen.has(value)) return false;
+      if (!value || typeof value !== "object") return { ok: false };
+      if (seen.has(value)) return { ok: false };
       seen.add(value);
 
       if (Array.isArray(value)) {
-        if (Object.getOwnPropertySymbols(value).length > 0) return false;
+        if (Object.getOwnPropertySymbols(value).length > 0) return { ok: false };
         const ownPropertyNames = Object.getOwnPropertyNames(value);
         const enumerableKeys = Object.keys(value);
+        const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+        if (
+          !lengthDescriptor
+          || !Object.prototype.hasOwnProperty.call(lengthDescriptor, "value")
+          || !Number.isSafeInteger(lengthDescriptor.value)
+          || lengthDescriptor.value < 0
+        ) {
+          return { ok: false };
+        }
+        const length = lengthDescriptor.value;
         // A JSON array can preserve only its indexed values. Reject sparse arrays,
         // hidden/extra properties, and accessor-backed indexes instead of dropping
         // data or invoking user-defined getters during recovery admission.
         if (
-          ownPropertyNames.length !== value.length + 1
-          || !ownPropertyNames.includes("length")
-          || enumerableKeys.length !== value.length
+          ownPropertyNames.length !== length + 1
+          || ownPropertyNames[ownPropertyNames.length - 1] !== "length"
+          || enumerableKeys.length !== length
         ) {
-          return false;
+          return { ok: false };
         }
-        for (let index = 0; index < value.length; index += 1) {
-          const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+
+        const clone = new Array(length);
+        assign(clone);
+        for (let index = length - 1; index >= 0; index -= 1) {
+          const key = String(index);
+          if (ownPropertyNames[index] !== key || enumerableKeys[index] !== key) return { ok: false };
+          const descriptor = Object.getOwnPropertyDescriptor(value, key);
           if (
             !descriptor?.enumerable
             || !Object.prototype.hasOwnProperty.call(descriptor, "value")
           ) {
-            return false;
+            return { ok: false };
           }
-          pending.push(descriptor.value);
+          pending.push({
+            source: descriptor.value,
+            assign(clonedValue) {
+              clone[index] = clonedValue;
+            }
+          });
         }
         continue;
       }
 
       const prototype = Object.getPrototypeOf(value);
-      if (prototype !== Object.prototype && prototype !== null) return false;
-      if (Object.getOwnPropertySymbols(value).length > 0) return false;
+      if (prototype !== Object.prototype && prototype !== null) return { ok: false };
+      if (Object.getOwnPropertySymbols(value).length > 0) return { ok: false };
+      const ownPropertyNames = Object.getOwnPropertyNames(value);
       const enumerableKeys = Object.keys(value);
-      if (Object.getOwnPropertyNames(value).length !== enumerableKeys.length) return false;
-      for (const key of enumerableKeys) {
+      if (
+        ownPropertyNames.length !== enumerableKeys.length
+        || ownPropertyNames.some((key, index) => key !== enumerableKeys[index])
+      ) {
+        return { ok: false };
+      }
+
+      const clone = {};
+      assign(clone);
+      // Queue in reverse so assignment happens in the original JSON key order.
+      for (let index = enumerableKeys.length - 1; index >= 0; index -= 1) {
+        const key = enumerableKeys[index];
         const descriptor = Object.getOwnPropertyDescriptor(value, key);
-        if (!descriptor?.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, "value")) return false;
-        pending.push(descriptor.value);
+        if (!descriptor?.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, "value")) {
+          return { ok: false };
+        }
+        pending.push({
+          source: descriptor.value,
+          assign(clonedValue) {
+            Object.defineProperty(clone, key, {
+              value: clonedValue,
+              enumerable: true,
+              configurable: true,
+              writable: true
+            });
+          }
+        });
       }
     }
   } catch {
     // Proxies and exotic objects can throw from reflective operations. Recovery
     // validation must fail closed rather than let that exception interrupt draft
     // persistence or replace the last known-good recovery record.
-    return false;
+    return { ok: false };
   }
 
-  return true;
+  return { ok: true, value: clonedRoot };
 }
-
 function normalizeBlockDraftPayload(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const keys = Object.keys(value);
-  if (keys.length !== blockDraftPayloadKeys.size || keys.some((key) => !blockDraftPayloadKeys.has(key))) {
-    return null;
-  }
-  if (!isNonEmptyString(value.type) || typeof value.markdown !== "string" || typeof value.checked !== "boolean") {
-    return null;
-  }
-  if (
-    value.metadata !== null
-    && (
-      !value.metadata
-      || typeof value.metadata !== "object"
-      || Array.isArray(value.metadata)
-      || !isLosslessJsonValue(value.metadata)
-    )
-  ) {
-    return null;
-  }
-  return {
-    type: value.type,
-    markdown: value.markdown,
-    checked: value.checked,
-    metadata: value.metadata
-  };
-}
+  try {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return null;
+    if (Object.getOwnPropertySymbols(value).length > 0) return null;
 
+    const ownPropertyNames = Object.getOwnPropertyNames(value);
+    if (
+      ownPropertyNames.length !== blockDraftPayloadKeys.size
+      || ownPropertyNames.some((key) => !blockDraftPayloadKeys.has(key))
+    ) {
+      return null;
+    }
+
+    const captured = {};
+    for (const key of blockDraftPayloadKeys) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor?.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, "value")) return null;
+      captured[key] = descriptor.value;
+    }
+
+    if (
+      !isNonEmptyString(captured.type)
+      || typeof captured.markdown !== "string"
+      || typeof captured.checked !== "boolean"
+    ) {
+      return null;
+    }
+
+    let metadata = null;
+    if (captured.metadata !== null) {
+      if (
+        !captured.metadata
+        || typeof captured.metadata !== "object"
+        || Array.isArray(captured.metadata)
+      ) {
+        return null;
+      }
+      const clonedMetadata = cloneLosslessJsonValue(captured.metadata);
+      if (!clonedMetadata.ok) return null;
+      metadata = clonedMetadata.value;
+    }
+
+    return {
+      type: captured.type,
+      markdown: captured.markdown,
+      checked: captured.checked,
+      metadata
+    };
+  } catch {
+    // Treat reflective failures on the payload itself like invalid recovery data.
+    // The caller will leave any existing durable record untouched.
+    return null;
+  }
+}
 function normalizeBlockDraft(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const revision = normalizeRevision(value.revision);

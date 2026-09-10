@@ -216,6 +216,76 @@ test("direct recovery rejects JSON-lossy block metadata before modifying durable
   }
 });
 
+test("direct recovery snapshots validated metadata before persistence so Proxy reads cannot change it", () => {
+  const storage = new MemoryStorage();
+  const store = createPageDraftStore(storage, { sourceId: "tab-a" });
+  const target = { critical: "keep-me" };
+  const metadata = new Proxy(target, {
+    get(current, property, receiver) {
+      if (property === "critical") return undefined;
+      return Reflect.get(current, property, receiver);
+    }
+  });
+
+  assert.equal(store.saveBlock({
+    userId: "user-1",
+    pageId: "page-1",
+    blockId: "block-1",
+    payload: { type: "DATABASE", markdown: "draft", checked: false, metadata },
+    expectedVersion: 7,
+    revision: 2
+  }), true);
+  assert.deepEqual(
+    store.loadPage("user-1", "page-1")?.blocks["block-1"]?.payload.metadata,
+    { critical: "keep-me" }
+  );
+});
+
+test("direct recovery rejects hidden, symbolic, and accessor-backed payload fields without replacing good recovery", () => {
+  const storage = new MemoryStorage();
+  const key = "brainvault.pageDraft.v2:user-1:page-1:tab-a";
+  const store = createPageDraftStore(storage, { sourceId: "tab-a" });
+
+  assert.equal(store.saveTitle({
+    userId: "user-1",
+    pageId: "page-1",
+    value: "keep this title",
+    expectedVersion: 4,
+    revision: 1
+  }), true);
+  const original = storage.getItem(key);
+
+  const hidden = { type: "MARKDOWN", markdown: "draft", checked: false, metadata: null };
+  Object.defineProperty(hidden, "futureField", {
+    value: "must-not-be-dropped",
+    enumerable: false
+  });
+
+  const symbolic = { type: "MARKDOWN", markdown: "draft", checked: false, metadata: null };
+  symbolic[Symbol("futureField")] = "must-not-be-dropped";
+
+  const accessor = { type: "MARKDOWN", checked: false, metadata: null };
+  Object.defineProperty(accessor, "markdown", {
+    enumerable: true,
+    get() {
+      return "must-not-be-invoked";
+    }
+  });
+
+  for (const payload of [hidden, symbolic, accessor]) {
+    assert.equal(store.saveBlock({
+      userId: "user-1",
+      pageId: "page-1",
+      blockId: "block-1",
+      payload,
+      expectedVersion: 7,
+      revision: 2
+    }), false);
+    assert.equal(storage.getItem(key), original);
+    assert.equal(store.loadPage("user-1", "page-1")?.title?.value, "keep this title");
+  }
+});
+
 test("direct recovery preserves nested JSON metadata exactly", () => {
   const storage = new MemoryStorage();
   const store = createPageDraftStore(storage, { sourceId: "tab-a" });
