@@ -1379,3 +1379,36 @@ for (const replacement of ["text", "object", "delete", "clear", "none"]) {
     reopened.close();
   });
 }
+
+for (const race of ["new-draft", "deleted-draft", "lineage-revoked"]) {
+  test(`startup migration preserves concurrent ${race}`, async () => {
+    const indexedDb = new FakeIndexedDb();
+    const key = "brainvault.pageDraft.v2:user:page:tab";
+    const databaseName = `startup-race-${race}`;
+    const options = { databaseName, migrationPrefixes: ["brainvault.pageDraft.v2:"] };
+    const legacy = new MemoryStorage(race === "new-draft" ? [] : [[key, "old"]]);
+    const first = await createIndexedDbRecoveryStorage(indexedDb, legacy, options);
+    first.close();
+    legacy.setItem(key, "legacy-next");
+    const durable = indexedDb.databases.get(databaseName).stores.get("recovery-records");
+    const lineageKey = `\u0000brainvault.recoveryLegacyLineage.v1:${key}`;
+    const getItem = legacy.getItem.bind(legacy);
+    let injected = false;
+    legacy.getItem = (requestedKey) => {
+      if (requestedKey === key && !injected) {
+        injected = true;
+        // A peer commits after startup's getAll snapshot, before migration writes.
+        if (race === "new-draft") durable.set(key, "newer-unsaved-edit");
+        if (race === "deleted-draft") durable.delete(key);
+        durable.delete(lineageKey);
+      }
+      return getItem(requestedKey);
+    };
+    await assert.rejects(createIndexedDbRecoveryStorage(indexedDb, legacy, options),
+      /changed during migration/);
+    assert.equal(durable.get(key), race === "new-draft" ? "newer-unsaved-edit"
+      : race === "deleted-draft" ? undefined : "old");
+    assert.equal(durable.has(lineageKey), false);
+    assert.equal(getItem(key), "legacy-next");
+  });
+}

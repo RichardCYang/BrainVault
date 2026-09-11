@@ -259,47 +259,82 @@ export async function createIndexedDbRecoveryStorage(
           migration.push({ key, value, fingerprint: legacyFingerprint });
         }
 
-        if (migration.length) {
-          const transaction = createStrictWriteTransaction(db, storeName);
-          const objectStore = transaction.objectStore(storeName);
-          for (const record of migration) objectStore.put({ key: record.key, value: record.value });
-          await transactionComplete(transaction);
-
-          // Verify the durable copy before exposing it through the in-memory mirror.
-          await verifyMigratedRecords(
-            db,
-            storeName,
-            migration.map(({ key, value }) => ({ key, value }))
-          );
-          for (const record of migration) {
-            records.set(record.key, record.value);
-            markerUpdates.set(record.key, record.fingerprint);
-            lineageUpdates.set(record.key, record.fingerprint);
-            // A captured event can predate this pass. If this pass imports an
-            // intermediate legacy generation, replay must compare the newest
-            // legacy bytes against that generation rather than the event's
-            // original predecessor.
-            const initializationEvent = initializationLegacyEvents.get(record.key);
-            if (initializationEvent) initializationEvent.oldValue = record.value;
-          }
+        for (const record of migration) {
+          markerUpdates.set(record.key, record.fingerprint);
+          lineageUpdates.set(record.key, record.fingerprint);
         }
-
         if (markerUpdates.size || lineageUpdates.size) {
           const expectedMarkers = [
             ...[...markerUpdates].map(([key, fingerprint]) => ({
-              key: getLegacyMigrationMarkerKey(key),
-              value: fingerprint
+              key: getLegacyMigrationMarkerKey(key), value: fingerprint
             })),
             ...[...lineageUpdates].map(([key, fingerprint]) => ({
-              key: getLegacyLineageMarkerKey(key),
-              value: fingerprint
+              key: getLegacyLineageMarkerKey(key), value: fingerprint
             }))
           ];
-          const markerTransaction = createStrictWriteTransaction(db, storeName);
-          const markerStore = markerTransaction.objectStore(storeName);
-          for (const markerRecord of expectedMarkers) markerStore.put(markerRecord);
-          await transactionComplete(markerTransaction);
-          await verifyMigratedRecords(db, storeName, expectedMarkers);
+          const writes = [
+            ...migration.map(({ key, value }) => ({ key, value })),
+            ...expectedMarkers
+          ];
+          // Hashing and legacy reads above can yield to another tab. Revalidate
+          // both data and causal receipts under the same write transaction that
+          // performs the import. Even equal data bytes cannot authorize a write
+          // after a peer has revoked legacy lineage (the A -> B -> A case).
+          const expected = new Map();
+          for (const key of new Set([...markerUpdates.keys(), ...lineageUpdates.keys()])) {
+            expected.set(key, { exists: records.has(key), value: records.get(key) });
+            expected.set(getLegacyMigrationMarkerKey(key), {
+              exists: legacyMigrationMarkers.has(key), value: legacyMigrationMarkers.get(key)
+            });
+            expected.set(getLegacyLineageMarkerKey(key), {
+              exists: legacyLineageMarkers.has(key), value: legacyLineageMarkers.get(key)
+            });
+          }
+          const transaction = createStrictWriteTransaction(db, storeName);
+          const complete = transactionComplete(transaction);
+          const objectStore = transaction.objectStore(storeName);
+          const comparison = new Promise((resolve, reject) => {
+            let remaining = expected.size;
+            let failed = false;
+            const fail = (error) => {
+              if (failed) return;
+              failed = true;
+              reject(error);
+              try { transaction.abort(); } catch { /* best effort */ }
+            };
+            for (const [key, snapshot] of expected) {
+              const request = objectStore.get(key);
+              request.onerror = () => fail(request.error ?? new Error("Recovery migration read failed"));
+              request.onsuccess = () => {
+                if (failed) return;
+                try {
+                  const current = request.result;
+                  if (snapshot.exists
+                    ? !current || current.key !== key || current.value !== snapshot.value
+                    : current !== undefined) {
+                    fail(new Error("Recovery data changed during migration; retry initialization"));
+                    return;
+                  }
+                  remaining -= 1;
+                  if (remaining === 0) {
+                    // Data and receipts commit together: no crash window may
+                    // leave a new draft with obsolete migration authority.
+                    for (const record of writes) objectStore.put(record);
+                    resolve();
+                  }
+                } catch (error) {
+                  fail(error);
+                }
+              };
+            }
+          });
+          await Promise.all([comparison, complete]);
+          await verifyMigratedRecords(db, storeName, writes);
+          for (const record of migration) {
+            records.set(record.key, record.value);
+            const initializationEvent = initializationLegacyEvents.get(record.key);
+            if (initializationEvent) initializationEvent.oldValue = record.value;
+          }
           for (const [key, fingerprint] of markerUpdates) legacyMigrationMarkers.set(key, fingerprint);
           for (const [key, fingerprint] of lineageUpdates) legacyLineageMarkers.set(key, fingerprint);
         }
