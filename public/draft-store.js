@@ -1117,7 +1117,10 @@ export function createPageDraftStore(
     if (!inspection.reliable || inspection.unreadableKeys.length) return false;
     let succeeded = true;
     for (const record of inspection.records) {
-      succeeded = removePage(userId, pageId, record.sourceId) && succeeded;
+      // Cleanup must stay bound to the record that was inspected. Re-reading
+      // by source id and deleting that newer value can erase another tab's
+      // unsaved edit if it lands between enumeration and cleanup.
+      succeeded = removePageIfUnchanged(record) && succeeded;
     }
     return succeeded;
   }
@@ -1134,7 +1137,10 @@ export function createPageDraftStore(
     if (!inspection.reliable || inspection.unreadableKeys.length) return false;
     let succeeded = true;
     for (const record of inspection.records) {
-      succeeded = removePage(userId, record.pageId, record.sourceId) && succeeded;
+      // Keep account-wide cleanup snapshot-bound for the same cross-tab race
+      // handled by clearPage(). A newer record is preserved and cleanup fails
+      // closed instead of adopting the newer draft as deletion authority.
+      succeeded = removePageIfUnchanged(record) && succeeded;
     }
     return succeeded;
   }

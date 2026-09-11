@@ -780,3 +780,84 @@ test("page recovery cleanup rejects toJSON spoofing instead of deleting a differ
     "KEEP THIS UNSAVED TITLE"
   );
 });
+
+test("cross-source page cleanup preserves a newer draft written after inspection", async () => {
+  class RacingAtomicMemoryStorage extends MemoryStorage {
+    constructor() {
+      super();
+      this.readCounts = new Map();
+      this.mutateOnSecondRead = null;
+    }
+
+    resetReads() {
+      this.readCounts.clear();
+    }
+
+    getItem(key) {
+      const count = (this.readCounts.get(key) ?? 0) + 1;
+      this.readCounts.set(key, count);
+      if (count === 2 && this.mutateOnSecondRead) this.mutateOnSecondRead(key, this);
+      return super.getItem(key);
+    }
+
+    compareAndRemove(key, predicate) {
+      return Promise.resolve().then(() => {
+        const current = this.values.has(key) ? this.values.get(key) : null;
+        if (!predicate(current)) return false;
+        this.removeItem(key);
+        return true;
+      });
+    }
+
+    compareAndSet(key, predicate, nextValue) {
+      return Promise.resolve().then(() => {
+        const current = this.values.has(key) ? this.values.get(key) : null;
+        if (!predicate(current)) return false;
+        this.setItem(key, nextValue);
+        return true;
+      });
+    }
+  }
+
+  for (const cleanup of [
+    (store) => store.clearPage("user-1", "page-1"),
+    (store) => store.clearUser("user-1")
+  ]) {
+    const storage = new RacingAtomicMemoryStorage();
+    const writer = createPageDraftStore(storage, { sourceId: "tab-b" });
+    const cleaner = createPageDraftStore(storage, { sourceId: "tab-a" });
+    const key = "brainvault.pageDraft.v2:user-1:page-1:tab-b";
+
+    assert.equal(writer.saveTitle({
+      userId: "user-1",
+      pageId: "page-1",
+      value: "older unsaved title",
+      expectedVersion: 4,
+      revision: 1
+    }), true);
+
+    storage.resetReads();
+    storage.mutateOnSecondRead = (raceKey, target) => {
+      if (raceKey !== key) return;
+      const current = JSON.parse(target.values.get(key));
+      current.updatedAt += 1;
+      current.title = {
+        ...current.title,
+        value: "NEWER UNSAVED TITLE - MUST SURVIVE",
+        revision: current.title.revision + 1,
+        updatedAt: current.title.updatedAt + 1
+      };
+      target.values.set(key, JSON.stringify(current));
+    };
+
+    // The first read is cleanup enumeration; the second simulates the foreign
+    // tab committing a newer recovery record immediately before deletion.
+    assert.equal(cleanup(cleaner), false);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const surviving = cleaner.loadPage("user-1", "page-1", "tab-b");
+    assert.equal(surviving?.title?.value, "NEWER UNSAVED TITLE - MUST SURVIVE");
+    assert.equal(surviving?.title?.revision, 2);
+  }
+});
