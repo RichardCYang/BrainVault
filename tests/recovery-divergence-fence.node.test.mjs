@@ -91,6 +91,33 @@ test("single same-base recovered title still requires explicit overwrite confirm
   assert.equal(recovery.conflictCount, 1);
 });
 
+test("single same-base recovered block still requires explicit overwrite confirmation", () => {
+  const record = emptyRecord("tab-a");
+  record.blocks = {
+    b1: {
+      payload: { type: "MARKDOWN", markdown: "Discarded intermediate", checked: false, metadata: null },
+      expectedVersion: 4,
+      revision: 1,
+      updatedAt: 1000
+    }
+  };
+
+  const recovery = runRecovery({
+    page: {
+      id: "page-1",
+      title: "Server",
+      version: 1,
+      blocks: [{ id: "b1", type: "MARKDOWN", markdown: "Server", checked: false, metadata: null, version: 4 }]
+    },
+    records: [record]
+  });
+
+  assert.equal(recovery.blocks.length, 1);
+  assert.equal(recovery.blocks[0].conflict, true);
+  assert.equal(recovery.blocks[0].serverConflict, false);
+  assert.equal(recovery.conflictCount, 1);
+});
+
 test("divergent same-base block drafts are marked conflicting before any automatic save", () => {
   const a = emptyRecord("tab-a");
   a.blocks = {

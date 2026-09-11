@@ -17878,17 +17878,22 @@ function applyPersistedPageDraft(page) {
       .slice(1)
       .filter((candidate) => !jsonValuesMatch(candidate.payload, selected.payload));
     const serverVersion = getPositiveVersion(block.version);
-    const conflict =
+    const serverConflict =
       serverVersion !== selected.draft.expectedVersion
       || divergentCandidates.length > 0;
+    // Recovered block content is uncommitted local state. Matching the saved base
+    // version only means an overwrite would currently succeed; it is not user consent
+    // to promote crash recovery into authoritative server state.
+    const conflict = true;
     recovery.blocks.push({
       blockId,
       draft: selected.draft,
       sourceId: selected.sourceId,
       serverVersion,
+      serverConflict,
       conflict
     });
-    recovery.conflictCount += conflict ? 1 : 0;
+    recovery.conflictCount += 1;
     Object.assign(block, selected.payload);
 
     for (const candidate of divergentCandidates) {

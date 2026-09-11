@@ -66,6 +66,11 @@ test("recovered titles are fenced from automatic authoritative promotion", () =>
   assert.match(selection, /const conflict = true;/);
   assert.match(selection, /serverConflict,/);
 
+  const blockSelection = section(selection, "const blockCandidates = new Map();", "const orderCandidates = records");
+  assert.match(blockSelection, /const serverConflict =/);
+  assert.match(blockSelection, /const conflict = true;/);
+  assert.match(blockSelection, /recovery\.conflictCount \+= 1;/);
+
   const activation = section(client, "function activatePersistedPageDraft(recovery)", "function getWorkspaceCreateRequestKey");
   const gate = activation.indexOf("if (recovery.title.conflict)");
   const autoSave = activation.indexOf("savePageTitleNow().catch");

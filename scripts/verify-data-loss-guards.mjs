@@ -1230,6 +1230,17 @@ assert(
     && recoveredTitleSelection.includes("recovery.conflictCount += 1;"),
   "Recovered title state can still be silently promoted into an authoritative server write"
 );
+const recoveredBlockSelection = section(
+  recoveredTitleSelection,
+  "const blockCandidates = new Map();",
+  "const orderCandidates = records"
+);
+assert(
+  recoveredBlockSelection.includes("const serverConflict =")
+    && recoveredBlockSelection.includes("const conflict = true;")
+    && recoveredBlockSelection.includes("recovery.conflictCount += 1;"),
+  "Recovered block state can still be silently promoted into an authoritative server write"
+);
 
 const recoveredDraftActivation = section(
   client,
