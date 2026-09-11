@@ -968,6 +968,13 @@ export async function createIndexedDbRecoveryStorage(
         await Promise.all([comparison, complete]);
         const mirrorStillMatchesRequest = !uncommittedWrites.has(normalizedKey)
           && (keyMutationSequences.get(normalizedKey) ?? 0) === visibleMutationSequence;
+        if (!matched) {
+          // A rejected comparison still observed authoritative durable state.
+          // Carry it into queued cleanup rollback receipts so a failed cleanup
+          // and readback cannot revive the stale pre-comparison mirror. The
+          // helper preserves newer local mutations and uncommitted drafts.
+          reconcileRemovalSnapshot(normalizedKey, visibleMutationSequence, currentExists, currentValue);
+        }
         if (matched) {
           legacyLineageMarkers.delete(normalizedKey);
           reconcileRemovalSnapshot(normalizedKey, visibleMutationSequence, true, nextValue);
@@ -1024,6 +1031,13 @@ export async function createIndexedDbRecoveryStorage(
         await Promise.all([comparison, complete]);
         const mirrorStillMatchesRequest = !uncommittedWrites.has(normalizedKey)
           && (keyMutationSequences.get(normalizedKey) ?? 0) === visibleMutationSequence;
+        if (!matched) {
+          // A rejected comparison still observed authoritative durable state.
+          // Carry it into queued cleanup rollback receipts so a failed cleanup
+          // and readback cannot revive the stale pre-comparison mirror. The
+          // helper preserves newer local mutations and uncommitted drafts.
+          reconcileRemovalSnapshot(normalizedKey, visibleMutationSequence, currentExists, currentValue);
+        }
         if (matched) {
           legacyLineageMarkers.delete(normalizedKey);
           reconcileRemovalSnapshot(normalizedKey, visibleMutationSequence, false);

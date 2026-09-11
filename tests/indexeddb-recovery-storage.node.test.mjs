@@ -1713,3 +1713,36 @@ for (const comparison of ["compareAndRemove", "compareAndSet"]) {
     }
   }
 }
+
+for (const comparison of ["compareAndRemove", "compareAndSet"]) {
+  for (const cleanup of ["removeItem", "clear"]) {
+    for (const peerAction of ["replace", "delete"]) {
+      test(`rejected ${comparison} reconciles peer ${peerAction} before failed ${cleanup} rollback`, async () => {
+        const indexedDb = new FakeIndexedDb();
+        const options = { databaseName: "rejected-comparison-rollback", storageEventTarget: null };
+        const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+        storage.setItem("draft", "obsolete draft");
+        await storage.flush();
+        const peer = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+        if (peerAction === "replace") peer.setItem("draft", "new peer draft");
+        else peer.removeItem("draft");
+        await peer.flush();
+        assert.equal(storage.getItem("draft"), "obsolete draft");
+        const push = indexedDb.transactions.push.bind(indexedDb.transactions);
+        indexedDb.transactions.push = (transaction) => {
+          if (transaction.mode === "readonly") throw new Error("simulated readback unavailable");
+          return push(transaction);
+        };
+        indexedDb.failDeleteKeys.add("draft");
+        indexedDb.failClear = true;
+        const result = storage[comparison]("draft", value => value === "obsolete draft", "stale replacement");
+        storage[cleanup]("draft");
+        assert.equal(await result, false);
+        await assert.rejects(storage.flush(), /simulated/);
+        assert.equal(storage.getItem("draft"), peerAction === "replace" ? "new peer draft" : null);
+        storage.close();
+        peer.close();
+      });
+    }
+  }
+}
