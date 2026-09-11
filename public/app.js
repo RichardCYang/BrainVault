@@ -9233,9 +9233,38 @@ async function refreshPageMovePersistenceMode(
     isCurrentAuthenticatedSessionScope(authenticationScope)
       && (navigationGeneration === null || isCurrentWorkspaceNavigation(navigationGeneration))
   );
+  const isAffectedSelectionCurrent = () => Boolean(
+    isRefreshCurrent()
+      && selectedPageId
+      && affectedPageIds.has(selectedPageId)
+      && state.selectedPage?.id === selectedPageId
+  );
+  const failClosedAffectedSelection = async () => {
+    if (!isAffectedSelectionCurrent()) return;
+
+    // The hierarchy mutation has already committed, so the old direct/Yjs mode
+    // is no longer authoritative. Enter READ synchronously before awaiting
+    // teardown; even a teardown failure must not unlock a stale writable editor.
+    state.pageMode = pageModes.READ;
+    try {
+      await destroyPageCollaboration({ flush: false });
+    } catch (error) {
+      console.error("Page collaboration teardown failed after a committed page move", error);
+    }
+    if (!isAffectedSelectionCurrent()) return;
+    state.pageMode = pageModes.READ;
+    renderSelectedPage();
+  };
   if (!isRefreshCurrent()) return false;
 
-  await loadPages(elements.searchInput.value.trim(), state.activeTag);
+  try {
+    await loadPages(elements.searchInput.value.trim(), state.activeTag);
+  } catch (error) {
+    // A transient refresh failure happens after the move PATCH has committed.
+    // Fail closed before withPageEditLock() can release its interaction fence.
+    await failClosedAffectedSelection();
+    throw error;
+  }
   if (!isRefreshCurrent()) return false;
   if (!selectedPageId || !affectedPageIds.has(selectedPageId) || state.selectedPage?.id !== selectedPageId) {
     return true;
@@ -9246,9 +9275,7 @@ async function refreshPageMovePersistenceMode(
     // The hierarchy mutation already committed. Fail closed rather than leave a
     // stale direct/Yjs editor writable when the authoritative mode cannot be
     // refreshed.
-    await destroyPageCollaboration({ flush: false });
-    state.pageMode = pageModes.READ;
-    renderSelectedPage();
+    await failClosedAffectedSelection();
     throw new Error(t("errors.invalidResponse"));
   }
 

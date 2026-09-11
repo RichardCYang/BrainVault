@@ -71,6 +71,115 @@ test("post-move reconciliation refreshes descendants and restarts a rotated coll
   );
 });
 
+test("post-commit page-summary refresh failure leaves the affected selection read-only", async () => {
+  const refresh = section(
+    client,
+    "async function refreshPageMovePersistenceMode(",
+    "async function moveNavigationPageToParent("
+  );
+  const events = [];
+  const sandbox = {
+    state: {
+      selectedPage: {
+        id: "child",
+        collaboration: { enabled: false, participantCount: 1 },
+        access: { canEdit: true }
+      },
+      activeTag: "",
+      pageMode: "WRITE"
+    },
+    elements: { searchInput: { value: "" } },
+    pageModes: { READ: "READ" },
+    isCurrentAuthenticatedSessionScope: () => true,
+    isCurrentWorkspaceNavigation: () => true,
+    loadPages: async () => {
+      events.push("load");
+      throw new Error("refresh failed");
+    },
+    getPageSummaryById: () => null,
+    isCollaborativePage: (page) => Boolean(page?.collaboration?.enabled),
+    destroyPageCollaboration: async () => {
+      events.push("destroy");
+      throw new Error("teardown failed");
+    },
+    renderSelectedPage: () => events.push("render"),
+    startPageCollaboration: async () => events.push("start"),
+    console: { error: () => events.push("teardown-error") },
+    t: (key) => key,
+    Set,
+    Error,
+    result: null
+  };
+
+  vm.runInNewContext(
+    `${refresh}
+result = refreshPageMovePersistenceMode(
+  new Set(["root", "child"]),
+  "child",
+  false,
+  { generation: 1 },
+  7
+);`,
+    sandbox
+  );
+  await assert.rejects(sandbox.result, /refresh failed/);
+  assert.equal(sandbox.state.pageMode, "READ");
+  assert.deepEqual(events, ["load", "destroy", "teardown-error", "render"]);
+});
+
+test("failed post-move refresh does not alter an unrelated current selection", async () => {
+  const refresh = section(
+    client,
+    "async function refreshPageMovePersistenceMode(",
+    "async function moveNavigationPageToParent("
+  );
+  const events = [];
+  const sandbox = {
+    state: {
+      selectedPage: {
+        id: "other",
+        collaboration: { enabled: false, participantCount: 1 },
+        access: { canEdit: true }
+      },
+      activeTag: "",
+      pageMode: "WRITE"
+    },
+    elements: { searchInput: { value: "" } },
+    pageModes: { READ: "READ" },
+    isCurrentAuthenticatedSessionScope: () => true,
+    isCurrentWorkspaceNavigation: () => true,
+    loadPages: async () => {
+      events.push("load");
+      throw new Error("refresh failed");
+    },
+    getPageSummaryById: () => null,
+    isCollaborativePage: (page) => Boolean(page?.collaboration?.enabled),
+    destroyPageCollaboration: async () => events.push("destroy"),
+    renderSelectedPage: () => events.push("render"),
+    startPageCollaboration: async () => events.push("start"),
+    console,
+    t: (key) => key,
+    Set,
+    Error,
+    result: null
+  };
+
+  vm.runInNewContext(
+    `${refresh}
+result = refreshPageMovePersistenceMode(
+  new Set(["root", "child"]),
+  "child",
+  false,
+  { generation: 1 },
+  7
+);`,
+    sandbox
+  );
+  await assert.rejects(sandbox.result, /refresh failed/);
+  assert.equal(sandbox.state.pageMode, "WRITE");
+  assert.deepEqual(events, ["load"]);
+});
+
 test("runtime reconciliation switches the selected descendant onto the authoritative post-move mode", async () => {
   const refresh = section(
     client,
