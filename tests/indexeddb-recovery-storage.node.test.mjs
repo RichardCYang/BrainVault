@@ -1435,7 +1435,7 @@ for (const kind of ["text", "binary"]) {
       else {
         events.emit({ key: `brainvault.recoveryChange.v1:${databaseName}:recovery-records`,
           newValue: JSON.stringify({ sourceId: "peer", operation: "put", key }) });
-        await storage.flush();
+        await assert.rejects(storage.flush(), /durability/);
       }
       assert.deepEqual(storage.getObject(key), next, "refresh must retain the only copy of failed edits");
       if (kind === "text") storage.setItem(key, next);
@@ -1479,7 +1479,7 @@ for (const operation of ["delete", "clear", "compare-put", "compare-delete", "le
       if (operation === "legacy-put") legacy.setItem(key, "legacy replacement");
       else legacy.removeItem(key);
       events.emit({ key, oldValue: "old", storageArea: legacy });
-      await storage.flush();
+      await assert.rejects(storage.flush(), /durability/);
     }
     await storage.refresh();
     assert.equal(storage.getItem(key), "only unsaved copy");
@@ -1512,3 +1512,63 @@ test("committed recovery writes resume authoritative external refresh", async ()
   storage.close();
   peer.close();
 });
+
+for (const kind of ["text", "binary"]) {
+  test(`uncommitted ${kind} draft keeps every durability barrier and unload guard unsafe`, async () => {
+    const indexedDb = new FakeIndexedDb();
+    const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage());
+    indexedDb.ignoreDurability = true;
+    const value = kind === "text" ? "only unsaved copy" : new Uint8Array([1, 9, 3]);
+    const write = () => kind === "text" ? storage.setItem("draft", value) : storage.setObject("draft", value);
+    write();
+    const barriers = await Promise.allSettled([storage.flush(), storage.flush()]);
+    assert.deepEqual(barriers.map(result => result.status), ["rejected", "rejected"]);
+    assert.equal(storage.hasPendingWrites(), true);
+    await assert.rejects(storage.flush());
+    indexedDb.ignoreDurability = false;
+    storage.setItem("other-draft", "saved");
+    await assert.rejects(storage.flush());
+    await storage.refresh();
+    assert.deepEqual(storage.getObject("draft"), value);
+    assert.equal(storage.hasPendingWrites(), true);
+    write();
+    await storage.flush();
+    assert.equal(storage.hasPendingWrites(), false);
+    storage.close();
+    const reopened = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage());
+    assert.deepEqual(reopened.getObject("draft"), value);
+    reopened.close();
+  });
+}
+
+test("concurrent barriers both report a failed deletion even with no uncommitted put", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage());
+  storage.setItem("draft", "durable");
+  await storage.flush();
+  indexedDb.failDeleteKeys.add("draft");
+  storage.removeItem("draft");
+  const results = await Promise.allSettled([storage.flush(), storage.flush()]);
+  assert.deepEqual(results.map(result => result.status), ["rejected", "rejected"]);
+  assert.equal(storage.getItem("draft"), "durable");
+  assert.equal(storage.hasPendingWrites(), false);
+  await storage.flush();
+  storage.close();
+});
+
+for (const operation of ["delete", "clear"]) {
+  test(`a put committed before failed queued ${operation} is not restored as uncommitted`, async () => {
+    const indexedDb = new FakeIndexedDb();
+    const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage());
+    indexedDb.failDeleteKeys.add("draft");
+    indexedDb.failClear = true;
+    storage.setItem("draft", "committed before removal");
+    if (operation === "delete") storage.removeItem("draft");
+    else storage.clear();
+    await assert.rejects(storage.flush(), /simulated/);
+    assert.equal(storage.getItem("draft"), "committed before removal");
+    assert.equal(storage.hasPendingWrites(), false);
+    await storage.flush();
+    storage.close();
+  });
+}

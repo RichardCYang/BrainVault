@@ -580,7 +580,7 @@ export async function createIndexedDbRecoveryStorage(
     return run;
   }
 
-  function putRecord(key, value, sequence) {
+  function putRecord(key, value, writeToken) {
     return enqueue(async () => {
       const transaction = createStrictWriteTransaction(db, storeName);
       const objectStore = transaction.objectStore(storeName);
@@ -591,7 +591,10 @@ export async function createIndexedDbRecoveryStorage(
       objectStore.delete(getLegacyLineageMarkerKey(key));
       await transactionComplete(transaction);
       legacyLineageMarkers.delete(key);
-      if (uncommittedWrites.get(key) === sequence) uncommittedWrites.delete(key);
+      // Deletion rollback snapshots share this receipt even while the write
+      // is temporarily absent from the visible uncommitted map.
+      writeToken.committed = true;
+      if (uncommittedWrites.get(key) === writeToken) uncommittedWrites.delete(key);
       publishChange("put", key);
     }, { operation: "put", key });
   }
@@ -833,20 +836,22 @@ export async function createIndexedDbRecoveryStorage(
       // A newer local write supersedes any earlier delete whose durable
       // transaction is still settling. Its failure must not resurrect the
       // value that this write intentionally replaced.
-      const sequence = markVisibleMutation(normalizedKey);
-      uncommittedWrites.set(normalizedKey, sequence);
+      markVisibleMutation(normalizedKey);
+      const writeToken = { committed: false };
+      uncommittedWrites.set(normalizedKey, writeToken);
       pendingDeleteTokens.delete(normalizedKey);
       records.set(normalizedKey, normalizedValue);
-      void putRecord(normalizedKey, normalizedValue, sequence).catch(() => undefined);
+      void putRecord(normalizedKey, normalizedValue, writeToken).catch(() => undefined);
     },
     setObject(key, value) {
       const normalizedKey = String(key);
       const cloned = cloneStoredValue(value);
-      const sequence = markVisibleMutation(normalizedKey);
-      uncommittedWrites.set(normalizedKey, sequence);
+      markVisibleMutation(normalizedKey);
+      const writeToken = { committed: false };
+      uncommittedWrites.set(normalizedKey, writeToken);
       pendingDeleteTokens.delete(normalizedKey);
       records.set(normalizedKey, cloned);
-      void putRecord(normalizedKey, cloned, sequence).catch(() => undefined);
+      void putRecord(normalizedKey, cloned, writeToken).catch(() => undefined);
     },
     removeItem(key) {
       const normalizedKey = String(key);
@@ -868,7 +873,7 @@ export async function createIndexedDbRecoveryStorage(
         },
         onFailure: async () => {
           if (pendingDeleteTokens.get(normalizedKey) !== deleteToken) return;
-          if (previousUncommittedWrite !== undefined) {
+          if (previousUncommittedWrite !== undefined && !previousUncommittedWrite.committed) {
             records.set(normalizedKey, cloneStoredValue(previousValue));
             uncommittedWrites.set(normalizedKey, previousUncommittedWrite);
             pendingDeleteTokens.delete(normalizedKey);
@@ -1085,10 +1090,11 @@ export async function createIndexedDbRecoveryStorage(
           }
 
           const recoveryRecords = durableRecords ?? previousRecords;
-          for (const [key, sequence] of previousUncommittedWrites) {
+          for (const [key, writeToken] of previousUncommittedWrites) {
+            if (writeToken.committed) continue;
             if ((keyMutationSequences.get(key) ?? 0) <= clearSequence) {
               recoveryRecords.set(key, cloneStoredValue(previousRecords.get(key)));
-              uncommittedWrites.set(key, sequence);
+              uncommittedWrites.set(key, writeToken);
             }
           }
           if (durableRecords) {
@@ -1110,9 +1116,12 @@ export async function createIndexedDbRecoveryStorage(
       }, { operation: "clear", key: null }).catch(() => undefined);
     },
     hasPendingWrites() {
-      return pendingWrites > 0;
+      return pendingWrites > 0 || uncommittedWrites.size > 0;
     },
     async flush() {
+      // Each waiter owns its failure boundary. Another waiter must not consume
+      // an error while this one is awaiting the same transaction.
+      const observedFailureAtStart = observedFailureSequence;
       // A recovery write or cross-tab refresh can be queued while this barrier
       // is awaiting an earlier generation. Keep draining until both promise
       // chains remain unchanged across the await; otherwise flush() can resolve
@@ -1124,9 +1133,14 @@ export async function createIndexedDbRecoveryStorage(
         await pendingExternalRefreshTail;
         if (pendingTail === tail && pendingExternalRefreshTail === externalRefreshTail) break;
       }
-      if (failureSequence > observedFailureSequence) {
+      if (failureSequence > observedFailureAtStart) {
         observedFailureSequence = failureSequence;
         throw lastFailure ?? new Error("Recovery storage write failed");
+      }
+      // Draining the queue does not commit a failed draft. Keep every barrier
+      // unsafe until that generation is durably retried or explicitly removed.
+      if (uncommittedWrites.size > 0) {
+        throw lastFailure ?? new Error("Recovery storage contains uncommitted drafts");
       }
       if (externalRefreshFailure) throw externalRefreshFailure;
     },
