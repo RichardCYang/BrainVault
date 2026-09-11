@@ -7,6 +7,17 @@ import { ApiError } from "./http.js";
 import { getClientIpAddress } from "./login-history.js";
 import { parseUserAgent } from "./user-agent.js";
 
+// Retain revoked session tombstones until token expiry: authentication lazily
+// inserts missing sessions, so deleting an unexpired tombstone would revive it.
+export async function pruneExpiredAuthSessions(client: DbClient = db) {
+  return client.execute(
+    `DELETE FROM user_auth_sessions
+     WHERE expires_at <= CURRENT_TIMESTAMP(3)
+     ORDER BY expires_at, id
+     LIMIT 1000`
+  );
+}
+
 const sessionIdPattern = /^[a-zA-Z0-9_-]{1,64}$/;
 type AuthSessionRow = {
   id: string;

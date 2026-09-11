@@ -39,7 +39,9 @@ function usernameKey(req: Request) {
   const raw = typeof req.body?.username === "string" ? req.body.username.trim().toLowerCase() : "";
   if (!raw) return `login-account-ip:${ip}`;
 
-  const accountKey = hashRateLimitKey("account", raw);
+  // Unauthenticated failures must not spend another source's six-hour budget.
+  // The database lockout still limits distributed guessing across sources.
+  const accountKey = hashRateLimitKey("account", raw) + `:${ip}`;
   const now = Date.now();
   let namespace = loginAccountKeysByIp.get(ip);
   if (namespace && namespace.expiresAt <= now) {

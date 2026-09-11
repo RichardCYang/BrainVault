@@ -9,6 +9,7 @@ import {
   type ApplicationInstanceLease
 } from "./lib/application-instance-lock.js";
 import { cleanupStaleDataTransferTempFiles, recoverInterruptedDataRestores } from "./lib/data-transfer.js";
+import { pruneExpiredAuthSessions } from "./lib/auth-sessions.js";
 import { cleanupStaleAttachmentTempFiles } from "./lib/attachments.js";
 import { attachPageCollaborationServer } from "./lib/collaboration-server.js";
 import { loadPoshAcmeTls } from "./lib/posh-acme-https.js";
@@ -60,6 +61,17 @@ async function start() {
   await cleanupStaleAttachmentTempFiles();
   await initializePermanentTotpIpEnforcement();
 
+  await pruneExpiredAuthSessions();
+  let sessionPruneInFlight: Promise<unknown> | null = null;
+  const sessionPruneTimer = setInterval(() => {
+    if (sessionPruneInFlight) return;
+    sessionPruneInFlight = pruneExpiredAuthSessions()
+      // Retry on the next tick after a transient database failure.
+      .catch(() => undefined)
+      .finally(() => { sessionPruneInFlight = null; });
+  }, 60_000);
+  sessionPruneTimer.unref();
+
   const app = createApp();
   const displayHost = env.HOST === "0.0.0.0" || env.HOST === "::" ? "localhost" : env.HOST;
   const displayUrlHost = displayHost.includes(":") ? `[${displayHost}]` : displayHost;
@@ -94,6 +106,8 @@ async function start() {
   async function shutdown(signal: string) {
     if (isShuttingDown) return;
     isShuttingDown = true;
+    clearInterval(sessionPruneTimer);
+    await sessionPruneInFlight;
     console.log(`${signal} received. Closing BrainVault API...`);
 
     await collaborationHub.close().catch((error) => {

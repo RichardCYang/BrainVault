@@ -4410,11 +4410,16 @@ function renderPasskeyList() {
       createPasskeyActionButton("mfa.renamePasskey", "secondary compact", async () => {
         const nextName = window.prompt(t("mfa.renamePrompt"), passkey.name)?.trim();
         if (!nextName || nextName === passkey.name) return;
+        const currentPassword = requireMfaPassword();
+        const targetKey = getAccountAvatarTargetKey(state.user);
+        if (!currentPassword || !targetKey) return;
         try {
           await api(`/api/auth/mfa/passkeys/${encodeURIComponent(passkey.id)}`, {
             method: "PATCH",
-            body: { name: nextName }
+            body: { name: nextName, currentPassword }
           });
+          if (!state.accountSettingsOpen || getAccountAvatarTargetKey(state.user) !== targetKey) return;
+          elements.accountMfaPassword.value = "";
           await loadMfaSettings({ showLoading: false });
           setAccountMessage(t("mfa.passkeyRenamed"));
         } catch (error) {

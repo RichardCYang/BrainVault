@@ -7,6 +7,7 @@ import {
 } from "./attachment-metadata-integrity.js";
 import { normalizeCodeLanguage } from "./code-highlighting.js";
 import { isPrivateOrLocalHostname } from "./network-address.js";
+import { isValidIconValue } from "./icon-value.js";
 
 const tableLimits = { rows: 50, columns: 20, cellLength: 4_000 } as const;
 const kanbanLimits = {
@@ -57,7 +58,10 @@ function isValidAccordionIconValue(value: string) {
   }
   if (normalized.startsWith("image:")) {
     const source = normalized.slice("image:".length).trim();
-    if (accordionUploadedIconPattern.test(source) || accordionImageDataPattern.test(source)) return true;
+    if (accordionUploadedIconPattern.test(source)) return true;
+    // Keep legacy backup models lossless, but apply the same decoded image
+    // signature and byte limit as the normal icon validation boundary.
+    if (accordionImageDataPattern.test(source)) return isValidIconValue(normalized);
     if (source.length > 2_048) return false;
     try {
       const url = new URL(source);

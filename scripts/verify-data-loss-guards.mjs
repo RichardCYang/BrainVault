@@ -937,7 +937,8 @@ assertBefore(
 );
 
 assert(
-  collaborationRouteSource.includes("materializeCollaborationUpdates")
+  collaborationRouteSource.includes("collaborationMaterializationPool.materializeHistory")
+    && collaborationRouteSource.includes("updates: updateRows.map((row) => Buffer.from(row.update_data))")
     && collaborationRouteSource.includes("SELECT id, update_data")
     && collaborationRouteSource.includes("FOR UPDATE"),
   "Collaboration SQL state is not rebuilt from the locked durable Yjs log"

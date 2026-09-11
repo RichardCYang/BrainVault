@@ -47,6 +47,7 @@ import {
   type CollaborationBootstrapMismatchSummary
 } from "./collaboration-bootstrap.js";
 import {
+  collaborationResourceLimits,
   assessCollaborationConnectionAdmission,
   assessCollaborationUpgradeAdmission,
   assessCollaborationWriteAdmission

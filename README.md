@@ -124,3 +124,34 @@ npm start         # Run the compiled server
 ```
 
 Before a production deployment, provide explicit unique secrets, configure the browser origins, leave registration disabled unless it is intentionally required, and serve the app over HTTPS in a browser that supports Web Locks so safety-critical cross-tab transitions can run. To let BrainVault serve Posh-ACME's `fullchain.cer` and `cert.key` directly, use `HTTPS_MODE=posh-acme` and set `POSH_ACME_CERT_PATH`. For TLS termination in Caddy, Synology DSM, NGINX, or Nginx Proxy Manager, use `HTTPS_MODE=proxy`. Follow the [HTTPS deployment guide](deploy/README.md), then see [Security](docs/security/2026-07-30/security.md) and [Configuration](docs/configuration/2026-07-28/configuration.md).
+
+## Security report remediation (2026-09-11)
+
+The supplied REPORT.md was checked against this source archive. The changes below address confirmed risks; this is not a certification that the application is vulnerability-free.
+
+| Finding | Verification and disposition |
+| --- | --- |
+| BV-01 | Confirmed. The long-window login limiter now keys by normalized username plus normalized source IP. One source cannot consume another source's six-hour budget. The existing database-backed account lockout remains in place against distributed password guessing, including its default 15-minute maximum lock duration. |
+| BV-02 | Confirmed. Registration now applies the per-IP limiter and body validation before the global limiter. With default limits, one source can consume at most five of the twenty global slots per window. Distributed exhaustion and deployments configured with a per-IP allowance at least as large as the global allowance remain subject to the intentional global cap. |
+| BV-03 | Content-type mismatch behavior confirmed, but no exploitable stored XSS was established. HTML source is valid plain-text content. Forced attachment disposition, safe response MIME types, sandbox CSP, and nosniff remain essential and are preserved. JSON and other unsigned formats are not certified by content inspection; this check is not malware scanning. No blanket rejection of text or arbitrary binary attachments was added. |
+| BV-04 | Confirmed forged-icon validation gap. Backup metadata integrity now applies the shared icon validator's decoded-size and image-signature checks to inline image icons. Invalid data is rejected before restore. Legacy metadata is preserved without imposing the full normal-write canonical model on older backups. |
+| BV-05 | Confirmed expired-session retention. Indexed cleanup deletes at most 1,000 expired session rows at startup and each minute, without overlapping runs. A historical backlog drains over successive runs. Unexpired revoked rows remain as revocation tombstones until token expiry, because deleting them sooner could recreate an active session. |
+| BV-06 | Confirmed rename boundary gap. Rename now requires currentPassword, the account reauthentication limiter, and a transaction that locks and validates the current account, workspace generation, session, and owned passkey. The browser sends the password from the existing MFA password field. Unlike a key replacement, a label change does not rotate credentials. The report overstates sibling-route consistency: existing credential mutations do not all call the shared full session-boundary helper. |
+| BV-07 | Confirmed verification drift. Corrected the reported trackClient and restoredMetadata expectations and the verifier's obsolete in-process collaboration materialization expectation. Added focused regression coverage to verify:security. Also fixed a missing collaborationResourceLimits import and an undefined ZIP-test fixture variable that prevented TypeScript compilation. Other unrelated suite failures remain; see validation limits below. |
+
+### Applying the update
+
+Run the normal dependency installation and database migration workflow (`npm ci`, `npm run db:migrate`, `npm run build`) before restarting the application. New migration `075_auth_session_expiry_index.sql` adds an expiry index; it does not delete account data. Automatic database bootstrap also applies pending migrations when enabled. If automatic bootstrap is disabled, apply migrations explicitly before starting this version.
+
+API clients calling `PATCH /api/auth/mfa/passkeys/:id` must now send both `name` and `currentPassword`. Existing attachment download behavior and valid legacy icon backups remain supported. The archive retains the original project paths and existing Git metadata. It contains no generated audit report or additional log files.
+
+### Validation and limits
+
+- `npm run build`: passed on Node.js 24.19.0.
+- `npm run verify:security`: passed all 100 existing security checks/tests plus 10 new focused regression tests.
+- Browser JavaScript syntax and lockfile registry checks: passed.
+- `npm run test:unit`: did not pass. The broader run encountered a sandbox network-interface enumeration error during collection and existing assertion failures. The report's exact 133/626 failure count was not independently reproduced in this environment.
+- `npm run verify:data-loss`: still stops at the pre-existing browser-recovery assertion, "Block edits can still remain visible when their browser recovery write fails". Correcting earlier obsolete assertions does not establish that every remaining data-loss invariant passes.
+- Regression tests exercise real middleware, validation, and route handlers with database mocks. The test-only network-interface fixture is not a production change. Live MariaDB migrations, transaction locking, browser interaction, and deployed proxy behavior were not exercised here.
+
+Reference guidance: [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html) discusses account-lockout denial of service and sensitive-operation reauthentication. [OWASP File Upload Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html) explains why declared content types and file signatures must not be treated as complete content safety guarantees.

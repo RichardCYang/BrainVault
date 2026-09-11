@@ -16,6 +16,7 @@ import { db, transaction, type DbClient } from "../lib/db.js";
 import { disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
+import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { clearMfaCeremonyBinding, readMfaCeremonyBinding } from "../lib/mfa-ceremony-cookie.js";
 import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
 import { enforceVpnAccessPolicy, getClientTimeZone, getClientWebRtcSignal } from "../lib/vpn-access-policy.js";
@@ -37,6 +38,7 @@ import { toPublicUser } from "../lib/mappers.js";
 import { setAuthSessionCookie } from "../lib/session-cookie.js";
 import {
   requireAuth,
+  requireRequestAuthScope,
   requireJsonRequestBody,
   requireSameOriginBrowserRequest
 } from "../middleware/auth.js";
@@ -207,7 +209,7 @@ const passkeyIdParamsSchema = z.object({
   id: z.string().min(1).max(64)
 });
 
-const passkeyRenameSchema = z.object({ name: passkeyNameSchema });
+const passkeyRenameSchema = currentPasswordSchema.extend({ name: passkeyNameSchema });
 
 export type MfaMethods = {
   totp: boolean;
@@ -929,17 +931,29 @@ mfaRouter.post(
 mfaRouter.patch(
   "/passkeys/:id",
   requireAuth,
+  accountReauthenticationRateLimit,
   validate({ params: passkeyIdParamsSchema, body: passkeyRenameSchema }),
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
       const { id } = req.params as z.infer<typeof passkeyIdParamsSchema>;
-      const { name } = req.body as z.infer<typeof passkeyRenameSchema>;
-      const result = await db.execute<{ affectedRows: number }>(
-        "UPDATE user_passkeys SET name = ? WHERE id = ? AND user_id = ?",
-        [name, id, user.id]
-      );
-      if (Number(result.affectedRows) !== 1) throw new ApiError(404, "PASSKEY_NOT_FOUND", "Passkey not found");
+      const authScope = requireRequestAuthScope(req);
+      const { name, currentPassword } = req.body as z.infer<typeof passkeyRenameSchema>;
+      await transaction(async (client) => {
+        await assertCurrentAuthSessionBoundary(user.id, authScope, client);
+        const lockedUser = await requireCurrentPasswordForUpdate(
+          client, user.id, authScope.authVersion, currentPassword
+        );
+        const passkey = await client.queryOne<{ id: string }>(
+          "SELECT id FROM user_passkeys WHERE id = ? AND user_id = ? FOR UPDATE",
+          [id, lockedUser.id]
+        );
+        if (!passkey) throw new ApiError(404, "PASSKEY_NOT_FOUND", "Passkey not found");
+        await client.execute(
+          "UPDATE user_passkeys SET name = ? WHERE id = ? AND user_id = ?",
+          [name, id, lockedUser.id]
+        );
+      });
       res.json({ ok: true });
     } catch (error) {
       next(error);

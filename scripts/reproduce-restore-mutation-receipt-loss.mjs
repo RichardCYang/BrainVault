@@ -245,7 +245,7 @@ const result = {
     deliberatelyDoesNotPreserveBlockDeleteReceipts:
       !currentTransfer.includes("FROM block_delete_mutations m")
       && !currentTransfer.includes("mutationReceipts.blockDeletes"),
-    restoreBumpsBlockEditVersions: currentTransfer.includes("block.metadata, restoreVersion, block.created_at"),
+    restoreBumpsBlockEditVersions: currentTransfer.includes("restoredMetadata, restoreVersion, block.created_at"),
     staleOrderRetryConflictsAfterRestore:
       fixedOrderRetry.conflicted && fixedOrderRetry.state.localRecoveryDraft,
     preservingDeleteReceiptWouldDeleteRestoredAttachment:

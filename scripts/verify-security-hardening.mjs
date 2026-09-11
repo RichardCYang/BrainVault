@@ -179,7 +179,7 @@ contains("src/lib/collaboration-server.ts", [
   "explicitOrigins.has(parsedOrigin)",
   "this.pageConnectionCounts.get(pageId) ?? 0",
   "this.upgradedSockets.add(socket)",
-  "this.trackClient(room.pageId, client.user.id)",
+  "this.trackClient(room.pageId, client.user.id, client.ipAddress)",
   "pendingWriteBytes",
   "await write",
   "Collaboration write backlog exceeded",
