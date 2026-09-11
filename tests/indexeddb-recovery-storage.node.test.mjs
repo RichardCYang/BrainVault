@@ -1412,3 +1412,103 @@ for (const race of ["new-draft", "deleted-draft", "lineage-revoked"]) {
     assert.equal(getItem(key), "legacy-next");
   });
 }
+
+for (const kind of ["text", "binary"]) {
+  for (const refreshKind of ["explicit", "notification"]) {
+    test(`failed ${kind} write survives ${refreshKind} refresh until a durable retry`, async () => {
+      const indexedDb = new FakeIndexedDb();
+      const events = new FakeStorageEventTarget();
+      const databaseName = `failed-put-${kind}-${refreshKind}`;
+      const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+        databaseName, storageEventTarget: events
+      });
+      const key = "brainvault.pageDraft.v2:user:page:tab";
+      storage.setItem(key, "old durable draft");
+      await storage.flush();
+      indexedDb.ignoreDurability = true;
+      const next = kind === "text" ? "new unsynchronized draft" : new Uint8Array([9, 8, 7]);
+      if (kind === "text") storage.setItem(key, next);
+      else storage.setObject(key, next);
+      await assert.rejects(storage.flush(), /durability/);
+      indexedDb.ignoreDurability = false;
+      if (refreshKind === "explicit") await storage.refresh();
+      else {
+        events.emit({ key: `brainvault.recoveryChange.v1:${databaseName}:recovery-records`,
+          newValue: JSON.stringify({ sourceId: "peer", operation: "put", key }) });
+        await storage.flush();
+      }
+      assert.deepEqual(storage.getObject(key), next, "refresh must retain the only copy of failed edits");
+      if (kind === "text") storage.setItem(key, next);
+      else storage.setObject(key, next);
+      await storage.flush();
+      await storage.refresh();
+      assert.deepEqual(storage.getObject(key), next);
+      storage.close();
+      const reopened = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), { databaseName });
+      assert.deepEqual(reopened.getObject(key), next);
+      reopened.close();
+    });
+  }
+}
+
+for (const operation of ["delete", "clear", "compare-put", "compare-delete", "legacy-put", "legacy-delete"]) {
+  test(`failed draft remains recoverable after ${operation}`, async () => {
+    const indexedDb = new FakeIndexedDb();
+    const events = new FakeStorageEventTarget();
+    const key = "brainvault.pageDraft.v2:user:page:tab";
+    const legacy = new MemoryStorage([[key, "old"]]);
+    const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+      databaseName: `failed-put-followup-${operation}`, storageEventTarget: events,
+      migrationPrefixes: ["brainvault.pageDraft.v2"]
+    });
+    indexedDb.ignoreDurability = true;
+    storage.setItem(key, "only unsaved copy");
+    await assert.rejects(storage.flush(), /durability/);
+    indexedDb.ignoreDurability = false;
+    if (operation === "delete" || operation === "clear") {
+      indexedDb.failDeleteKeys.add(key);
+      indexedDb.failClear = true;
+      if (operation === "delete") storage.removeItem(key);
+      else storage.clear();
+      await assert.rejects(storage.flush(), /simulated/);
+    } else if (operation === "compare-put") {
+      await storage.compareAndSet(key, value => value === "old", "acknowledged old component");
+    } else if (operation === "compare-delete") {
+      await storage.compareAndRemove(key, value => value === "old");
+    } else {
+      if (operation === "legacy-put") legacy.setItem(key, "legacy replacement");
+      else legacy.removeItem(key);
+      events.emit({ key, oldValue: "old", storageArea: legacy });
+      await storage.flush();
+    }
+    await storage.refresh();
+    assert.equal(storage.getItem(key), "only unsaved copy");
+    indexedDb.failDeleteKeys.clear();
+    indexedDb.failClear = false;
+    if (operation === "clear") storage.clear();
+    else storage.removeItem(key);
+    await storage.flush();
+    await storage.refresh();
+    assert.equal(storage.getItem(key), null, "explicit successful deletion must still work");
+    storage.close();
+  });
+}
+
+test("committed recovery writes resume authoritative external refresh", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const options = { databaseName: "successful-write-refresh", storageEventTarget: null };
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  storage.setItem("draft", "local");
+  await storage.flush();
+  const peer = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  peer.setItem("draft", "new peer generation");
+  await peer.flush();
+  await storage.refresh();
+  assert.equal(storage.getItem("draft"), "new peer generation");
+  peer.removeItem("draft");
+  await peer.flush();
+  await storage.refresh();
+  assert.equal(storage.getItem("draft"), null);
+  storage.close();
+  peer.close();
+});

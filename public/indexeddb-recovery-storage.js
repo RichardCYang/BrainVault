@@ -353,6 +353,10 @@ export async function createIndexedDbRecoveryStorage(
   const pendingDeleteTokens = new Map();
   let localMutationSequence = 0;
   const keyMutationSequences = new Map();
+  // A failed write can leave the only copy of newer edits in this mirror.
+  // Retain its generation until that exact write commits or explicit removal
+  // supersedes it; a backing-store read cannot establish that it was saved.
+  const uncommittedWrites = new Map();
   let failureSequence = 0;
   let observedFailureSequence = 0;
   let lastFailure = null;
@@ -421,12 +425,14 @@ export async function createIndexedDbRecoveryStorage(
   async function reloadAllRecords(preserveMutationsAfter = null) {
     const loadedRecords = await loadAllRecords();
     for (const key of [...records.keys()]) {
+      if (uncommittedWrites.has(key)) continue;
       if (
         preserveMutationsAfter === null
         || (keyMutationSequences.get(key) ?? 0) <= preserveMutationsAfter
       ) records.delete(key);
     }
     for (const [key, value] of loadedRecords) {
+      if (uncommittedWrites.has(key)) continue;
       if (
         preserveMutationsAfter === null
         || (keyMutationSequences.get(key) ?? 0) <= preserveMutationsAfter
@@ -473,7 +479,8 @@ export async function createIndexedDbRecoveryStorage(
         // the committed record for both put and delete signals so an older
         // delete cannot hide a newer durable draft from this tab's mirror.
         const record = await loadRecord(message.key);
-        if ((keyMutationSequences.get(message.key) ?? 0) === keySequenceAtNotification) {
+        if (!uncommittedWrites.has(message.key)
+          && (keyMutationSequences.get(message.key) ?? 0) === keySequenceAtNotification) {
           if (record) records.set(record.key, record.value);
           else records.delete(message.key);
         }
@@ -573,7 +580,7 @@ export async function createIndexedDbRecoveryStorage(
     return run;
   }
 
-  function putRecord(key, value) {
+  function putRecord(key, value, sequence) {
     return enqueue(async () => {
       const transaction = createStrictWriteTransaction(db, storeName);
       const objectStore = transaction.objectStore(storeName);
@@ -584,6 +591,7 @@ export async function createIndexedDbRecoveryStorage(
       objectStore.delete(getLegacyLineageMarkerKey(key));
       await transactionComplete(transaction);
       legacyLineageMarkers.delete(key);
+      if (uncommittedWrites.get(key) === sequence) uncommittedWrites.delete(key);
       publishChange("put", key);
     }, { operation: "put", key });
   }
@@ -685,7 +693,8 @@ export async function createIndexedDbRecoveryStorage(
       });
       await Promise.all([comparison, complete]);
 
-      const mirrorStillMatchesRequest = (keyMutationSequences.get(key) ?? 0) === visibleMutationSequence;
+      const mirrorStillMatchesRequest = !uncommittedWrites.has(key)
+        && (keyMutationSequences.get(key) ?? 0) === visibleMutationSequence;
       if (!matched) {
         if (durableMarker === null) legacyMigrationMarkers.delete(key);
         else legacyMigrationMarkers.set(key, durableMarker);
@@ -765,7 +774,8 @@ export async function createIndexedDbRecoveryStorage(
       });
       await Promise.all([comparison, complete]);
 
-      const mirrorStillMatchesRequest = (keyMutationSequences.get(key) ?? 0) === visibleMutationSequence;
+      const mirrorStillMatchesRequest = !uncommittedWrites.has(key)
+        && (keyMutationSequences.get(key) ?? 0) === visibleMutationSequence;
       if (matched) {
         legacyLineageMarkers.delete(key);
         if (mirrorStillMatchesRequest) records.delete(key);
@@ -823,22 +833,26 @@ export async function createIndexedDbRecoveryStorage(
       // A newer local write supersedes any earlier delete whose durable
       // transaction is still settling. Its failure must not resurrect the
       // value that this write intentionally replaced.
-      markVisibleMutation(normalizedKey);
+      const sequence = markVisibleMutation(normalizedKey);
+      uncommittedWrites.set(normalizedKey, sequence);
       pendingDeleteTokens.delete(normalizedKey);
       records.set(normalizedKey, normalizedValue);
-      void putRecord(normalizedKey, normalizedValue).catch(() => undefined);
+      void putRecord(normalizedKey, normalizedValue, sequence).catch(() => undefined);
     },
     setObject(key, value) {
       const normalizedKey = String(key);
       const cloned = cloneStoredValue(value);
-      markVisibleMutation(normalizedKey);
+      const sequence = markVisibleMutation(normalizedKey);
+      uncommittedWrites.set(normalizedKey, sequence);
       pendingDeleteTokens.delete(normalizedKey);
       records.set(normalizedKey, cloned);
-      void putRecord(normalizedKey, cloned).catch(() => undefined);
+      void putRecord(normalizedKey, cloned, sequence).catch(() => undefined);
     },
     removeItem(key) {
       const normalizedKey = String(key);
       markVisibleMutation(normalizedKey);
+      const previousUncommittedWrite = uncommittedWrites.get(normalizedKey);
+      uncommittedWrites.delete(normalizedKey);
       const hadPreviousValue = records.has(normalizedKey);
       const previousValue = hadPreviousValue
         ? cloneStoredValue(records.get(normalizedKey))
@@ -854,6 +868,12 @@ export async function createIndexedDbRecoveryStorage(
         },
         onFailure: async () => {
           if (pendingDeleteTokens.get(normalizedKey) !== deleteToken) return;
+          if (previousUncommittedWrite !== undefined) {
+            records.set(normalizedKey, cloneStoredValue(previousValue));
+            uncommittedWrites.set(normalizedKey, previousUncommittedWrite);
+            pendingDeleteTokens.delete(normalizedKey);
+            return;
+          }
           let durableRecord;
           try {
             durableRecord = await loadRecord(normalizedKey);
@@ -915,8 +935,8 @@ export async function createIndexedDbRecoveryStorage(
         });
 
         await Promise.all([comparison, complete]);
-        const mirrorStillMatchesRequest = (keyMutationSequences.get(normalizedKey) ?? 0)
-          === visibleMutationSequence;
+        const mirrorStillMatchesRequest = !uncommittedWrites.has(normalizedKey)
+          && (keyMutationSequences.get(normalizedKey) ?? 0) === visibleMutationSequence;
         if (matched) {
           legacyLineageMarkers.delete(normalizedKey);
           if (mirrorStillMatchesRequest) records.set(normalizedKey, cloneStoredValue(nextValue));
@@ -970,8 +990,8 @@ export async function createIndexedDbRecoveryStorage(
         });
 
         await Promise.all([comparison, complete]);
-        const mirrorStillMatchesRequest = (keyMutationSequences.get(normalizedKey) ?? 0)
-          === visibleMutationSequence;
+        const mirrorStillMatchesRequest = !uncommittedWrites.has(normalizedKey)
+          && (keyMutationSequences.get(normalizedKey) ?? 0) === visibleMutationSequence;
         if (matched) {
           legacyLineageMarkers.delete(normalizedKey);
           if (mirrorStillMatchesRequest) records.delete(normalizedKey);
@@ -989,6 +1009,8 @@ export async function createIndexedDbRecoveryStorage(
     },
     clear() {
       const clearSequence = ++localMutationSequence;
+      const previousUncommittedWrites = new Map(uncommittedWrites);
+      uncommittedWrites.clear();
       const previousRecords = new Map(
         [...records].map(([key, value]) => [key, cloneStoredValue(value)])
       );
@@ -1063,6 +1085,12 @@ export async function createIndexedDbRecoveryStorage(
           }
 
           const recoveryRecords = durableRecords ?? previousRecords;
+          for (const [key, sequence] of previousUncommittedWrites) {
+            if ((keyMutationSequences.get(key) ?? 0) <= clearSequence) {
+              recoveryRecords.set(key, cloneStoredValue(previousRecords.get(key)));
+              uncommittedWrites.set(key, sequence);
+            }
+          }
           if (durableRecords) {
             for (const key of [...records.keys()]) {
               if ((keyMutationSequences.get(key) ?? 0) <= clearSequence && !durableRecords.has(key)) {
