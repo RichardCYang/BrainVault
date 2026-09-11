@@ -721,6 +721,12 @@ export async function createIndexedDbRecoveryStorage(
         };
       });
       await Promise.all([comparison, complete]);
+      // Rebase queued cleanup only after the legacy transaction completes.
+      // Rejected legacy comparisons also establish the durable fallback; the
+      // shared helper protects newer local edits and uncommitted writes.
+      reconcileRemovalSnapshot(
+        key, visibleMutationSequence, matched ? true : currentExists, matched ? value : currentValue
+      );
 
       const mirrorStillMatchesRequest = !uncommittedWrites.has(key)
         && (keyMutationSequences.get(key) ?? 0) === visibleMutationSequence;
@@ -802,6 +808,12 @@ export async function createIndexedDbRecoveryStorage(
         };
       });
       await Promise.all([comparison, complete]);
+      // Rebase queued cleanup only after the legacy transaction completes.
+      // Rejected legacy comparisons also establish the durable fallback; the
+      // shared helper protects newer local edits and uncommitted writes.
+      reconcileRemovalSnapshot(
+        key, visibleMutationSequence, matched ? false : currentExists, currentValue
+      );
 
       const mirrorStillMatchesRequest = !uncommittedWrites.has(key)
         && (keyMutationSequences.get(key) ?? 0) === visibleMutationSequence;

@@ -1746,3 +1746,75 @@ for (const comparison of ["compareAndRemove", "compareAndSet"]) {
     }
   }
 }
+
+for (const action of ["put", "delete"]) {
+  for (const cleanup of ["removeItem", "clear"]) {
+    for (const peerAction of ["none", "replace", "delete"]) {
+      test(`legacy ${action} with peer ${peerAction} survives failed ${cleanup} rollback`, async () => {
+        const indexedDb = new FakeIndexedDb();
+        const key = "draft:legacy";
+        const legacy = new MemoryStorage([[key, "old"]]);
+        const events = new FakeStorageEventTarget();
+        const options = { databaseName: "legacy-rollback", migrationPrefixes: ["draft"], storageEventTarget: events };
+        const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, options);
+        const peer = await createIndexedDbRecoveryStorage(indexedDb, null, { ...options, storageEventTarget: null });
+        if (peerAction === "replace") peer.setItem(key, "peer");
+        if (peerAction === "delete") peer.removeItem(key);
+        await peer.flush();
+        let writes = 0;
+        const push = indexedDb.transactions.push.bind(indexedDb.transactions);
+        indexedDb.transactions.push = transaction => {
+          if (transaction.mode === "readwrite" && ++writes > 1) throw new Error("simulated cleanup unavailable");
+          if (transaction.mode === "readonly") throw new Error("simulated readback unavailable");
+          return push(transaction);
+        };
+        if (action === "put") legacy.setItem(key, "new");
+        else legacy.removeItem(key);
+        events.emit({ storageArea: legacy, key, oldValue: "old", newValue: action === "put" ? "new" : null });
+        storage[cleanup](key);
+        await assert.rejects(storage.flush());
+        const durable = indexedDb.databases.get(options.databaseName).stores.get("recovery-records").get(key) ?? null;
+        assert.equal(storage.getItem(key), durable);
+        storage.close();
+        peer.close();
+      });
+    }
+  }
+}
+for (const action of ["put", "delete"]) {
+  for (const cleanup of ["removeItem", "clear"]) {
+    for (const peerAction of ["text", "binary"]) {
+      test(`legacy ${action} preserves newer ${peerAction} survives failed ${cleanup} rollback`, async () => {
+        const indexedDb = new FakeIndexedDb();
+        const key = "draft:legacy";
+        const legacy = new MemoryStorage([[key, "old"]]);
+        const events = new FakeStorageEventTarget();
+        const options = { databaseName: "legacy-rollback", migrationPrefixes: ["draft"], storageEventTarget: events };
+        const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, options);
+        const peer = await createIndexedDbRecoveryStorage(indexedDb, null, { ...options, storageEventTarget: null });
+        if (peerAction === "replace") peer.setItem(key, "peer");
+        if (peerAction === "delete") peer.removeItem(key);
+        await peer.flush();
+        let writes = 0;
+        const push = indexedDb.transactions.push.bind(indexedDb.transactions);
+        indexedDb.transactions.push = transaction => {
+          if (transaction.mode === "readwrite" && ++writes > 1) throw new Error("simulated cleanup unavailable");
+          if (transaction.mode === "readonly") throw new Error("simulated readback unavailable");
+          return push(transaction);
+        };
+        if (action === "put") legacy.setItem(key, "new");
+        else legacy.removeItem(key);
+        events.emit({ storageArea: legacy, key, oldValue: "old", newValue: action === "put" ? "new" : null });
+        const newer = peerAction === "text" ? "newer local draft" : new Uint8Array([8, 6, 4]);
+        storage.setObject(key, newer);
+        storage[cleanup](key);
+        await assert.rejects(storage.flush());
+        const durable = indexedDb.databases.get(options.databaseName).stores.get("recovery-records").get(key) ?? null;
+        assert.deepEqual(storage.getObject(key), newer);
+        assert.equal(storage.hasPendingWrites(), true);
+        storage.close();
+        peer.close();
+      });
+    }
+  }
+}
