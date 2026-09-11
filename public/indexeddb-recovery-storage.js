@@ -379,6 +379,18 @@ export async function createIndexedDbRecoveryStorage(
     return sequence;
   }
 
+  function captureRemovalSnapshot(key) {
+    // Consecutive optimistic removals share the last recoverable generation.
+    // A commit invalidates that shared snapshot even if a later removal owns
+    // the mirror, so a subsequent failure cannot resurrect acknowledged data.
+    return pendingDeleteTokens.get(key)?.snapshot ?? {
+      removed: false,
+      hadValue: records.has(key),
+      value: cloneStoredValue(records.get(key)),
+      writeToken: uncommittedWrites.get(key)
+    };
+  }
+
   function notifyChange(change) {
     for (const listener of [...changeListeners]) {
       try {
@@ -856,24 +868,24 @@ export async function createIndexedDbRecoveryStorage(
     removeItem(key) {
       const normalizedKey = String(key);
       markVisibleMutation(normalizedKey);
-      const previousUncommittedWrite = uncommittedWrites.get(normalizedKey);
+      const snapshot = captureRemovalSnapshot(normalizedKey);
+      const previousUncommittedWrite = snapshot.writeToken;
       uncommittedWrites.delete(normalizedKey);
-      const hadPreviousValue = records.has(normalizedKey);
-      const previousValue = hadPreviousValue
-        ? cloneStoredValue(records.get(normalizedKey))
-        : undefined;
-      const deleteToken = {};
+      const hadPreviousValue = snapshot.hadValue;
+      const previousValue = snapshot.value;
+      const deleteToken = { snapshot };
       pendingDeleteTokens.set(normalizedKey, deleteToken);
       records.delete(normalizedKey);
       void deleteRecord(normalizedKey, {
         onCommitted: () => {
+          snapshot.removed = true;
           if (pendingDeleteTokens.get(normalizedKey) === deleteToken) {
             pendingDeleteTokens.delete(normalizedKey);
           }
         },
         onFailure: async () => {
           if (pendingDeleteTokens.get(normalizedKey) !== deleteToken) return;
-          if (previousUncommittedWrite !== undefined && !previousUncommittedWrite.committed) {
+          if (!snapshot.removed && previousUncommittedWrite !== undefined && !previousUncommittedWrite.committed) {
             records.set(normalizedKey, cloneStoredValue(previousValue));
             uncommittedWrites.set(normalizedKey, previousUncommittedWrite);
             pendingDeleteTokens.delete(normalizedKey);
@@ -889,7 +901,7 @@ export async function createIndexedDbRecoveryStorage(
             if (pendingDeleteTokens.get(normalizedKey) !== deleteToken) return;
             // If even the verification read fails, keep the last known copy
             // visible in memory rather than hiding potentially recoverable data.
-            if (hadPreviousValue) records.set(normalizedKey, cloneStoredValue(previousValue));
+            if (!snapshot.removed && hadPreviousValue) records.set(normalizedKey, cloneStoredValue(previousValue));
             pendingDeleteTokens.delete(normalizedKey);
             return;
           }
@@ -1014,15 +1026,15 @@ export async function createIndexedDbRecoveryStorage(
     },
     clear() {
       const clearSequence = ++localMutationSequence;
-      const previousUncommittedWrites = new Map(uncommittedWrites);
+      const removalTokens = new Map();
+      for (const key of new Set([...records.keys(), ...pendingDeleteTokens.keys()])) {
+        const token = { snapshot: captureRemovalSnapshot(key) };
+        removalTokens.set(key, token);
+        pendingDeleteTokens.set(key, token);
+        // Fence older clear rollbacks as well as per-key removals.
+        keyMutationSequences.set(key, clearSequence);
+      }
       uncommittedWrites.clear();
-      const previousRecords = new Map(
-        [...records].map(([key, value]) => [key, cloneStoredValue(value)])
-      );
-
-      // A clear supersedes older per-key removals. If one of those removals
-      // later aborts, it must not resurrect data after a successful clear.
-      pendingDeleteTokens.clear();
       records.clear();
       void enqueue(async () => {
         try {
@@ -1064,6 +1076,10 @@ export async function createIndexedDbRecoveryStorage(
           });
           await Promise.all([preserveMigrationReceipts, complete]);
 
+          for (const [key, token] of removalTokens) {
+            token.snapshot.removed = true;
+            if (pendingDeleteTokens.get(key) === token) pendingDeleteTokens.delete(key);
+          }
           legacyMigrationMarkers.clear();
           for (const [key, fingerprint] of durableMigrationMarkers) {
             legacyMigrationMarkers.set(key, fingerprint);
@@ -1089,11 +1105,18 @@ export async function createIndexedDbRecoveryStorage(
             // unavailable. A later successful refresh can reconcile them.
           }
 
-          const recoveryRecords = durableRecords ?? previousRecords;
-          for (const [key, writeToken] of previousUncommittedWrites) {
-            if (writeToken.committed) continue;
-            if ((keyMutationSequences.get(key) ?? 0) <= clearSequence) {
-              recoveryRecords.set(key, cloneStoredValue(previousRecords.get(key)));
+          const recoveryRecords = durableRecords ?? new Map();
+          for (const [key, token] of removalTokens) {
+            const snapshot = token.snapshot;
+            const writeToken = snapshot.writeToken;
+            if (pendingDeleteTokens.get(key) !== token) continue;
+            pendingDeleteTokens.delete(key);
+            if (snapshot.removed) continue;
+            if (!durableRecords && snapshot.hadValue) {
+              recoveryRecords.set(key, cloneStoredValue(snapshot.value));
+            }
+            if (writeToken !== undefined && !writeToken.committed) {
+              recoveryRecords.set(key, cloneStoredValue(snapshot.value));
               uncommittedWrites.set(key, writeToken);
             }
           }

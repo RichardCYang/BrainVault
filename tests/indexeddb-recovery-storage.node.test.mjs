@@ -1572,3 +1572,74 @@ for (const operation of ["delete", "clear"]) {
     storage.close();
   });
 }
+
+for (const kind of ["text", "binary"]) {
+  for (const operations of [["delete", "delete"], ["delete", "clear"], ["clear", "delete"], ["clear", "clear"]]) {
+    test(`failed queued ${operations.join(" then ")} preserves the only ${kind} draft`, async () => {
+      const indexedDb = new FakeIndexedDb();
+      const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage());
+      storage.setItem("draft", "old durable value");
+      await storage.flush();
+      indexedDb.ignoreDurability = true;
+      const value = kind === "text" ? "only unsaved copy" : new Uint8Array([8, 6, 4]);
+      storage.setObject("draft", value);
+      await assert.rejects(storage.flush());
+      indexedDb.ignoreDurability = false;
+      indexedDb.failDeleteKeys.add("draft");
+      indexedDb.failClear = true;
+      for (const operation of operations) {
+        if (operation === "delete") storage.removeItem("draft");
+        else storage.clear();
+      }
+      await assert.rejects(storage.flush());
+      assert.deepEqual(storage.getObject("draft"), value);
+      assert.equal(storage.hasPendingWrites(), true);
+      await storage.refresh();
+      assert.deepEqual(storage.getObject("draft"), value);
+      await assert.rejects(storage.flush());
+      indexedDb.failDeleteKeys.clear();
+      indexedDb.failClear = false;
+      storage.setObject("draft", value);
+      await storage.flush();
+      storage.close();
+      const reopened = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage());
+      assert.deepEqual(reopened.getObject("draft"), value);
+      reopened.close();
+    });
+  }
+}
+
+for (const operations of [["delete", "delete"], ["delete", "clear"], ["clear", "delete"], ["clear", "clear"]]) {
+  for (const failedIndex of [0, 1]) {
+    test(`queued ${operations.join(" then ")} does not resurrect a draft when operation ${1 - failedIndex} commits`, async () => {
+      const indexedDb = new FakeIndexedDb();
+      const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage());
+      indexedDb.ignoreDurability = true;
+      storage.setItem("draft", "only unsaved copy");
+      await assert.rejects(storage.flush());
+      indexedDb.ignoreDurability = false;
+      let writeIndex = 0;
+      const push = indexedDb.transactions.push.bind(indexedDb.transactions);
+      indexedDb.transactions.push = (transaction) => {
+        if (transaction.mode === "readwrite") {
+          const fail = writeIndex++ === failedIndex;
+          indexedDb.failClear = fail;
+          if (fail) indexedDb.failDeleteKeys.add("draft");
+          else indexedDb.failDeleteKeys.delete("draft");
+        }
+        return push(transaction);
+      };
+      for (const operation of operations) {
+        if (operation === "delete") storage.removeItem("draft");
+        else storage.clear();
+      }
+      await assert.rejects(storage.flush());
+      assert.equal(storage.getItem("draft"), null);
+      assert.equal(storage.hasPendingWrites(), false);
+      await storage.flush();
+      await storage.refresh();
+      assert.equal(storage.getItem("draft"), null);
+      storage.close();
+    });
+  }
+}
