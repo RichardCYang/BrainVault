@@ -724,3 +724,59 @@ test("removeBlockIfUnchanged rejects toJSON spoofing instead of deleting a diffe
     originalPayload
   );
 });
+
+test("page recovery cleanup rejects toJSON spoofing instead of deleting a different draft", async () => {
+  class AtomicMemoryStorage extends MemoryStorage {
+    compareAndRemove(key, predicate) {
+      return Promise.resolve().then(() => {
+        const current = this.getItem(key);
+        if (!predicate(current)) return false;
+        this.removeItem(key);
+        return true;
+      });
+    }
+  }
+
+  const createStoredDraft = (storage) => {
+    const store = createPageDraftStore(storage, { sourceId: "tab-a" });
+    assert.equal(store.saveTitle({
+      userId: "user-1",
+      pageId: "page-1",
+      value: "KEEP THIS UNSAVED TITLE",
+      expectedVersion: 4,
+      revision: 2
+    }), true);
+    const genuine = store.loadPage("user-1", "page-1");
+    assert.ok(genuine);
+    const spoofed = {
+      schemaVersion: 2,
+      userId: "user-1",
+      pageId: "page-1",
+      sourceId: "tab-a",
+      updatedAt: 1,
+      title: null,
+      blocks: {},
+      blockOrder: null,
+      toJSON() {
+        return genuine;
+      }
+    };
+    return { store, spoofed };
+  };
+
+  const synchronousStorage = new AtomicMemoryStorage();
+  const synchronous = createStoredDraft(synchronousStorage);
+  assert.equal(synchronous.store.removePageIfUnchanged(synchronous.spoofed), false);
+  assert.equal(
+    synchronous.store.loadPage("user-1", "page-1")?.title?.value,
+    "KEEP THIS UNSAVED TITLE"
+  );
+
+  const durableStorage = new AtomicMemoryStorage();
+  const durable = createStoredDraft(durableStorage);
+  assert.equal(await durable.store.removePageIfUnchangedDurably(durable.spoofed), false);
+  assert.equal(
+    durable.store.loadPage("user-1", "page-1")?.title?.value,
+    "KEEP THIS UNSAVED TITLE"
+  );
+});

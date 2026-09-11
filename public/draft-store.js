@@ -528,23 +528,45 @@ function cloneDraftRecord(record) {
   return record ? JSON.parse(JSON.stringify(record)) : null;
 }
 
+function normalizeExpectedRecordSnapshot(value) {
+  // Cleanup candidates are deletion authorities for recovery data. Snapshot
+  // them through the same lossless JSON boundary as stored drafts so custom
+  // toJSON hooks, accessors, Proxies, or hidden fields cannot impersonate a
+  // different durable record during an equality check.
+  const snapshot = cloneLosslessJsonValue(value);
+  if (!snapshot.ok || !snapshot.value || typeof snapshot.value !== "object" || Array.isArray(snapshot.value)) {
+    return null;
+  }
+  const candidate = snapshot.value;
+  if (
+    !isNonEmptyString(candidate.userId)
+    || !isNonEmptyString(candidate.pageId)
+    || !isNonEmptyString(candidate.sourceId)
+  ) {
+    return null;
+  }
+  return normalizeRecord(candidate, candidate.userId, candidate.pageId, candidate.sourceId);
+}
+
 function getOwnBlockDraft(record, blockId) {
   if (!record?.blocks || !Object.prototype.hasOwnProperty.call(record.blocks, blockId)) return null;
   return record.blocks[blockId];
 }
 
 function storedRecordMatchesExpected(storedValue, expectedRecord) {
-  if (typeof storedValue !== "string" || !expectedRecord) return false;
+  if (typeof storedValue !== "string") return false;
+  const normalizedExpected = normalizeExpectedRecordSnapshot(expectedRecord);
+  if (!normalizedExpected) return false;
   const parsed = parseRecoveryJson(storedValue);
   if (!parsed.ok) return false;
   try {
     const current = normalizeRecord(
       parsed.value,
-      expectedRecord.userId,
-      expectedRecord.pageId,
-      expectedRecord.sourceId
+      normalizedExpected.userId,
+      normalizedExpected.pageId,
+      normalizedExpected.sourceId
     );
-    return Boolean(current) && JSON.stringify(current) === JSON.stringify(expectedRecord);
+    return Boolean(current) && JSON.stringify(current) === JSON.stringify(normalizedExpected);
   } catch {
     return false;
   }
@@ -1032,25 +1054,18 @@ export function createPageDraftStore(
   }
 
   function removePageIfUnchanged(expectedRecord) {
-    if (
-      !expectedRecord
-      || typeof expectedRecord !== "object"
-      || !isNonEmptyString(expectedRecord.userId)
-      || !isNonEmptyString(expectedRecord.pageId)
-      || !isNonEmptyString(expectedRecord.sourceId)
-    ) {
-      return false;
-    }
+    const normalizedExpected = normalizeExpectedRecordSnapshot(expectedRecord);
+    if (!normalizedExpected) return false;
     const prepared = prepareRecordMutation(
-      expectedRecord.userId,
-      expectedRecord.pageId,
-      expectedRecord.sourceId
+      normalizedExpected.userId,
+      normalizedExpected.pageId,
+      normalizedExpected.sourceId
     );
     if (!prepared.writable) return false;
     if (!prepared.record) return true;
     // A server upload can overlap a newer local edit. Delete only the exact
-    // record that was uploaded; otherwise retain the newer browser recovery.
-    if (JSON.stringify(prepared.record) !== JSON.stringify(expectedRecord)) return false;
+    // validated record that was uploaded; otherwise retain browser recovery.
+    if (JSON.stringify(prepared.record) !== JSON.stringify(normalizedExpected)) return false;
     const record = prepared.record;
     record.title = null;
     record.blocks = createBlockDraftMap();
@@ -1060,32 +1075,19 @@ export function createPageDraftStore(
 
 
   async function removePageIfUnchangedDurably(expectedRecord) {
-    if (
-      !expectedRecord
-      || typeof expectedRecord !== "object"
-      || !isNonEmptyString(expectedRecord.userId)
-      || !isNonEmptyString(expectedRecord.pageId)
-      || !isNonEmptyString(expectedRecord.sourceId)
-      || typeof storage?.compareAndRemove !== "function"
-    ) return false;
+    if (typeof storage?.compareAndRemove !== "function") return false;
+    const normalizedExpected = normalizeExpectedRecordSnapshot(expectedRecord);
+    if (!normalizedExpected) return false;
 
-    const key = getKey(expectedRecord.userId, expectedRecord.pageId, expectedRecord.sourceId);
-    return storage.compareAndRemove(key, (storedValue) => {
-      if (typeof storedValue !== "string") return false;
-      try {
-        const parsed = parseRecoveryJson(storedValue);
-        if (!parsed.ok) return false;
-        const current = normalizeRecord(
-          parsed.value,
-          expectedRecord.userId,
-          expectedRecord.pageId,
-          expectedRecord.sourceId
-        );
-        return Boolean(current) && JSON.stringify(current) === JSON.stringify(expectedRecord);
-      } catch {
-        return false;
-      }
-    });
+    const key = getKey(
+      normalizedExpected.userId,
+      normalizedExpected.pageId,
+      normalizedExpected.sourceId
+    );
+    return storage.compareAndRemove(
+      key,
+      (storedValue) => storedRecordMatchesExpected(storedValue, normalizedExpected)
+    );
   }
   function removePages(userId, pageIds, recordSourceId = sourceId) {
     let succeeded = true;
