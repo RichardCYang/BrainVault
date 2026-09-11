@@ -9222,6 +9222,54 @@ function applyPageMoveMutationResult(committedPage) {
   renderSubpageIndex(state.selectedPage);
 }
 
+async function refreshPageMovePersistenceMode(
+  affectedPageIds,
+  selectedPageId,
+  selectedPageWasCollaborative,
+  authenticationScope,
+  navigationGeneration
+) {
+  const isRefreshCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+      && (navigationGeneration === null || isCurrentWorkspaceNavigation(navigationGeneration))
+  );
+  if (!isRefreshCurrent()) return false;
+
+  await loadPages(elements.searchInput.value.trim(), state.activeTag);
+  if (!isRefreshCurrent()) return false;
+  if (!selectedPageId || !affectedPageIds.has(selectedPageId) || state.selectedPage?.id !== selectedPageId) {
+    return true;
+  }
+
+  const summary = getPageSummaryById(selectedPageId);
+  if (!summary?.collaboration || !state.selectedPage) {
+    // The hierarchy mutation already committed. Fail closed rather than leave a
+    // stale direct/Yjs editor writable when the authoritative mode cannot be
+    // refreshed.
+    await destroyPageCollaboration({ flush: false });
+    state.pageMode = pageModes.READ;
+    renderSelectedPage();
+    throw new Error(t("errors.invalidResponse"));
+  }
+
+  const selectedPageIsCollaborative = isCollaborativePage(summary);
+  state.selectedPage.collaboration = { ...summary.collaboration };
+  if (summary.access) state.selectedPage.access = { ...summary.access };
+
+  // Crossing collection scope rotates the Yjs document epoch whenever the page
+  // was or remains shared. Recreate the selected page's collaboration session
+  // against the authoritative post-move lineage instead of continuing to edit
+  // through a stale direct/Yjs persistence mode.
+  if (selectedPageWasCollaborative || selectedPageIsCollaborative) {
+    await destroyPageCollaboration({ flush: false });
+    if (!isRefreshCurrent() || state.selectedPage?.id !== selectedPageId) return false;
+    renderSelectedPage();
+    if (selectedPageIsCollaborative) await startPageCollaboration(state.selectedPage);
+  }
+
+  return isRefreshCurrent();
+}
+
 async function moveNavigationPageToParent(
   pageId,
   targetPageId,
@@ -9240,8 +9288,27 @@ async function moveNavigationPageToParent(
   await assertWorkspacePersistenceUnlocked();
   if (!isCurrentAuthenticatedSessionScope(scope) || !isPageMoveNavigationCurrent()) return null;
 
-  const sourceIsSelected = state.selectedPage?.id === pageId;
-  if (sourceIsSelected && hasUnresolvedDraftConflicts()) {
+  const sourcePageBeforeFlush = state.selectedPage?.id === pageId
+    ? state.selectedPage
+    : getPageSummaryById(pageId);
+  if (!canMoveNavigationPage(sourcePageBeforeFlush)) throw new Error(t("pageMove.unavailable"));
+  const targetPageBeforeFlush = getPageMoveDestinationPages(sourcePageBeforeFlush)
+    .find((page) => page.id === targetPageId);
+  if (!targetPageBeforeFlush) throw new Error(t("pageMove.destinationUnavailable"));
+
+  const affectedPageIds = getPageSubtreeIds(pageId);
+  const selectedPageId = state.selectedPage?.id ?? null;
+  const selectedPageAffected = Boolean(selectedPageId && affectedPageIds.has(selectedPageId));
+  const sourceIsSelected = selectedPageId === pageId;
+  const sourceCollectionId = getCollectionRootId(pageId);
+  const destinationCollectionId = getCollectionRootId(targetPageId);
+  const collectionScopeChanged = sourceCollectionId !== destinationCollectionId;
+  const selectedPageWasCollaborative = Boolean(
+    selectedPageAffected && isCollaborativePage(state.selectedPage)
+  );
+  const mustFlushSelectedPage = sourceIsSelected || (collectionScopeChanged && selectedPageAffected);
+
+  if (mustFlushSelectedPage && hasUnresolvedDraftConflicts()) {
     throw new Error(t("status.resolveRecoveredDraftConflict"));
   }
 
@@ -9259,12 +9326,43 @@ async function moveNavigationPageToParent(
       const targetPage = getPageMoveDestinationPages(sourcePage).find((page) => page.id === targetPageId);
       if (!targetPage) throw new Error(t("pageMove.destinationUnavailable"));
 
+      // The move may have waited for an editor flush. Do not let a concurrent
+      // local hierarchy refresh widen the subtree or switch collection scope
+      // after the browser recovery boundary was calculated.
+      const currentAffectedPageIds = getPageSubtreeIds(pageId);
+      const currentCollectionScopeChanged =
+        getCollectionRootId(pageId) !== getCollectionRootId(targetPageId);
+      if (
+        currentCollectionScopeChanged !== collectionScopeChanged
+        || currentAffectedPageIds.size !== affectedPageIds.size
+        || [...currentAffectedPageIds].some((id) => !affectedPageIds.has(id))
+      ) {
+        throw new Error(t("pageMove.destinationUnavailable"));
+      }
+
       const expectedVersion = getPositiveVersion(sourcePage.version);
       if (expectedVersion === null) throw new Error(t("errors.invalidResponse"));
 
-      const data = await submitPageMoveMutation(pageId, targetPageId, expectedVersion, scope, {
+      const submitMove = () => submitPageMoveMutation(pageId, targetPageId, expectedVersion, scope, {
         requestGuard: isPageMoveNavigationCurrent
       });
+      const data = collectionScopeChanged
+        ? await withWorkspacePersistenceTransitionForOwner(sourcePage.ownerId, "page-move", async () => {
+          if (!isCurrentAuthenticatedSessionScope(scope) || !isPageMoveNavigationCurrent()) {
+            return skippedApiRequest;
+          }
+          // Moving across collection scope can switch every descendant between
+          // direct persistence and Yjs, or rotate an existing Yjs document epoch.
+          // Drain all same-owner writers, refresh IndexedDB, and refuse to strand
+          // any unconfirmed browser recovery state behind that mode transition.
+          assertNoPendingLocalPageDraftsForPages(
+            affectedPageIds,
+            "sharing.localDraftsPending"
+          );
+          assertNoPendingLocalCollaborationRecoveryForPages(affectedPageIds);
+          return submitMove();
+        })
+        : await submitMove();
       if (
         data === skippedApiRequest
         || data === null
@@ -9277,9 +9375,21 @@ async function moveNavigationPageToParent(
 
       applyPageMoveMutationResult(data.page);
       setNavigationSubpagesExpanded(targetPageId, true);
+
+      if (collectionScopeChanged) {
+        const refreshed = await refreshPageMovePersistenceMode(
+          affectedPageIds,
+          selectedPageId,
+          selectedPageWasCollaborative,
+          scope,
+          navigationGeneration
+        );
+        if (!refreshed) return null;
+      }
+
       return data;
     },
-    { flush: sourceIsSelected }
+    { flush: mustFlushSelectedPage }
   );
 }
 

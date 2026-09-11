@@ -72,16 +72,23 @@ test("page move submits only parent metadata and keeps retry reconciliation idem
   assert.doesNotMatch(submitMove, /content\s*:/i);
 });
 
-test("moving the currently edited page flushes it before the hierarchy mutation", () => {
+test("page move flushes and fences every selected editor affected by a collection-scope transition", () => {
   const moveFlow = extractBetween(
     client,
     "async function moveNavigationPageToParent(",
     "function findPendingPageDeleteTask"
   );
   assert.match(moveFlow, /await assertWorkspacePersistenceUnlocked\(\)/);
-  assert.match(moveFlow, /const sourceIsSelected = state\.selectedPage\?\.id === pageId/);
-  assert.match(moveFlow, /if \(sourceIsSelected && hasUnresolvedDraftConflicts\(\)\)/);
-  assert.match(moveFlow, /\{ flush: sourceIsSelected \}/);
+  assert.match(moveFlow, /const affectedPageIds = getPageSubtreeIds\(pageId\)/);
+  assert.match(moveFlow, /const sourceIsSelected = selectedPageId === pageId/);
+  assert.match(moveFlow, /const collectionScopeChanged = sourceCollectionId !== destinationCollectionId/);
+  assert.match(moveFlow, /const mustFlushSelectedPage = sourceIsSelected \|\| \(collectionScopeChanged && selectedPageAffected\)/);
+  assert.match(moveFlow, /if \(mustFlushSelectedPage && hasUnresolvedDraftConflicts\(\)\)/);
+  assert.match(moveFlow, /withWorkspacePersistenceTransitionForOwner\(sourcePage\.ownerId, "page-move"/);
+  assert.match(moveFlow, /assertNoPendingLocalPageDraftsForPages\([\s\S]*?affectedPageIds/);
+  assert.match(moveFlow, /assertNoPendingLocalCollaborationRecoveryForPages\(affectedPageIds\)/);
+  assert.match(moveFlow, /refreshPageMovePersistenceMode\(/);
+  assert.match(moveFlow, /\{ flush: mustFlushSelectedPage \}/);
   assert.match(moveFlow, /setNavigationSubpagesExpanded\(targetPageId, true\)/);
 });
 

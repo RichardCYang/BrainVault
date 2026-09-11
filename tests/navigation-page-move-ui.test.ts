@@ -39,11 +39,17 @@ describe("Lossless page move from the sidebar navigation menu", () => {
     expect(client).toContain("applyPageMetadataMutationResult(committedPage, { parentPageId: committedPage.parentPageId ?? null })");
   });
 
-  it("flushes unsaved edits for the moved current page and preserves the page/subpage objects in place", () => {
+  it("flushes and fences editors affected by a collection-scope move and preserves page objects in place", () => {
     expect(client).toContain("await assertWorkspacePersistenceUnlocked();");
-    expect(client).toContain("const sourceIsSelected = state.selectedPage?.id === pageId;");
-    expect(client).toContain("if (sourceIsSelected && hasUnresolvedDraftConflicts())");
-    expect(client).toContain("{ flush: sourceIsSelected }");
+    expect(client).toContain("const affectedPageIds = getPageSubtreeIds(pageId);");
+    expect(client).toContain("const sourceIsSelected = selectedPageId === pageId;");
+    expect(client).toContain("const collectionScopeChanged = sourceCollectionId !== destinationCollectionId;");
+    expect(client).toContain("const mustFlushSelectedPage = sourceIsSelected || (collectionScopeChanged && selectedPageAffected);");
+    expect(client).toContain("if (mustFlushSelectedPage && hasUnresolvedDraftConflicts())");
+    expect(client).toContain('withWorkspacePersistenceTransitionForOwner(sourcePage.ownerId, "page-move"');
+    expect(client).toContain("assertNoPendingLocalCollaborationRecoveryForPages(affectedPageIds);");
+    expect(client).toContain("refreshPageMovePersistenceMode(");
+    expect(client).toContain("{ flush: mustFlushSelectedPage }");
     expect(client).toContain("setNavigationSubpagesExpanded(targetPageId, true);");
     expect(client).not.toContain("clonePageForMove");
     expect(client).not.toContain("copyPageForMove");
