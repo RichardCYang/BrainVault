@@ -861,3 +861,71 @@ test("cross-source page cleanup preserves a newer draft written after inspection
     assert.equal(surviving?.title?.revision, 2);
   }
 });
+
+
+test("same-source block cleanup refuses to overwrite a newer recovery snapshot", () => {
+  class RacingMemoryStorage extends MemoryStorage {
+    constructor() {
+      super();
+      this.readCounts = new Map();
+      this.mutateOnSecondRead = null;
+    }
+
+    resetReads() {
+      this.readCounts.clear();
+    }
+
+    getItem(key) {
+      const count = (this.readCounts.get(key) ?? 0) + 1;
+      this.readCounts.set(key, count);
+      if (count === 2 && this.mutateOnSecondRead) this.mutateOnSecondRead(key, this);
+      return super.getItem(key);
+    }
+  }
+
+  const storage = new RacingMemoryStorage();
+  const store = createPageDraftStore(storage, { sourceId: "tab-a" });
+  const payload = (markdown) => ({ type: "MARKDOWN", markdown, checked: false, metadata: null });
+  const key = "brainvault.pageDraft.v2:user-1:page-1:tab-a";
+
+  assert.equal(store.saveBlock({
+    userId: "user-1",
+    pageId: "page-1",
+    blockId: "keep",
+    payload: payload("older keep"),
+    expectedVersion: 1,
+    revision: 1
+  }), true);
+  assert.equal(store.saveBlock({
+    userId: "user-1",
+    pageId: "page-1",
+    blockId: "delete",
+    payload: payload("remove me"),
+    expectedVersion: 1,
+    revision: 1
+  }), true);
+
+  storage.resetReads();
+  storage.mutateOnSecondRead = (raceKey, target) => {
+    if (raceKey !== key) return;
+    const current = JSON.parse(target.values.get(key));
+    current.updatedAt += 1;
+    current.blocks.keep = {
+      ...current.blocks.keep,
+      revision: 2,
+      updatedAt: current.blocks.keep.updatedAt + 1,
+      payload: payload("NEWER UNSAVED KEEP - MUST SURVIVE")
+    };
+    target.values.set(key, JSON.stringify(current));
+  };
+
+  // clearBlocks() first enumerates a snapshot, then writePage() re-reads before
+  // persistence. If that second read observes a newer value, cleanup must fail
+  // closed rather than projecting the stale snapshot back over the new draft.
+  assert.equal(store.clearBlocks("user-1", "page-1", ["delete"]), false);
+
+  const surviving = store.loadPage("user-1", "page-1", "tab-a");
+  assert.equal(surviving?.blocks.keep?.payload.markdown, "NEWER UNSAVED KEEP - MUST SURVIVE");
+  assert.equal(surviving?.blocks.keep?.revision, 2);
+  assert.equal(surviving?.blocks.delete?.payload.markdown, "remove me");
+});

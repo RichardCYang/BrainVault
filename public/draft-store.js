@@ -705,7 +705,24 @@ export function createPageDraftStore(
     const key = getKey(record.userId, record.pageId, record.sourceId);
     // Re-check immediately before every write/removal. A present unreadable
     // record is potentially the only recovery copy and must never be replaced.
-    if (inspectRecordByKey(key, record.userId, record.pageId, record.sourceId).unreadable) return false;
+    // Also keep local-source writes snapshot-bound: cleanup or a save prepared
+    // from an older record must not overwrite a newer recovery value that
+    // appeared between preparation and persistence. Foreign-source writes still
+    // use the durable CAS below because their in-memory mirror can lag IndexedDB.
+    const currentInspection = inspectRecordByKey(key, record.userId, record.pageId, record.sourceId);
+    if (currentInspection.unreadable) return false;
+    try {
+      if (expectedRecord === null) {
+        if (currentInspection.record) return false;
+      } else if (
+        !currentInspection.record
+        || JSON.stringify(currentInspection.record) !== JSON.stringify(expectedRecord)
+      ) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
 
     let nextValue;
     try {
