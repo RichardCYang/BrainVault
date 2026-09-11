@@ -823,6 +823,10 @@ export async function createIndexedDbRecoveryStorage(
           try {
             durableRecord = await loadRecord(normalizedKey);
           } catch {
+            // Verification is asynchronous even when it fails. A newer write,
+            // removal, or clear may now own this key; the obsolete fallback
+            // must neither overwrite its mirror nor consume its delete token.
+            if (pendingDeleteTokens.get(normalizedKey) !== deleteToken) return;
             // If even the verification read fails, keep the last known copy
             // visible in memory rather than hiding potentially recoverable data.
             if (hadPreviousValue) records.set(normalizedKey, cloneStoredValue(previousValue));

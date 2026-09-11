@@ -1334,3 +1334,48 @@ test("initialization journal preserves the newest same-key legacy generation acr
   await storage.flush();
   storage.close();
 });
+
+for (const replacement of ["text", "object", "delete", "clear", "none"]) {
+  test(`failed deletion readback preserves newer ${replacement} during verification`, async () => {
+    const key = "brainvault.pageDraft.v2:user:page:tab";
+    const indexedDb = new FakeIndexedDb();
+    const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+      databaseName: `delete-readback-failure-${replacement}`
+    });
+    storage.setItem(key, "old-draft");
+    await storage.flush();
+    indexedDb.failDeleteKeys.add(key);
+    indexedDb.pausedReadKeys.add(key);
+    storage.removeItem(key);
+    for (let attempt = 0; attempt < 100 && !indexedDb.pendingReads.length; attempt += 1) {
+      await nextTask();
+    }
+    assert.equal(indexedDb.pendingReads.length, 1, "failed delete must be awaiting verification");
+    if (replacement === "text") storage.setItem(key, "newer-draft");
+    if (replacement === "object") storage.setObject(key, { update: new Uint8Array([4, 5, 6]) });
+    if (replacement === "delete") storage.removeItem(key);
+    if (replacement === "clear") storage.clear();
+    const expected = replacement === "text" ? "newer-draft"
+      : replacement === "object" ? { update: new Uint8Array([4, 5, 6]) }
+      : replacement === "none" ? "old-draft" : null;
+    indexedDb.failReadKeys.add(key);
+    indexedDb.failDeleteKeys.delete(key);
+    indexedDb.pausedReadKeys.delete(key);
+    indexedDb.releasePausedReads();
+    await assert.rejects(storage.flush(), /simulated IndexedDB delete failure/);
+    assert.deepEqual(storage.getObject(key), expected, "obsolete fallback must not replace newer intent");
+    // An unrelated field save serializes the recovery mirror. Its source must
+    // still be the newest draft, otherwise stale memory becomes durable loss.
+    if (replacement === "text") {
+      storage.setItem(key, `${storage.getItem(key)}:next-edit`);
+      await storage.flush();
+    }
+    storage.close();
+    indexedDb.failReadKeys.delete(key);
+    const reopened = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+      databaseName: `delete-readback-failure-${replacement}`
+    });
+    assert.deepEqual(reopened.getObject(key), replacement === "text" ? "newer-draft:next-edit" : expected);
+    reopened.close();
+  });
+}
