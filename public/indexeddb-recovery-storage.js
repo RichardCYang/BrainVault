@@ -385,10 +385,24 @@ export async function createIndexedDbRecoveryStorage(
     // the mirror, so a subsequent failure cannot resurrect acknowledged data.
     return pendingDeleteTokens.get(key)?.snapshot ?? {
       removed: false,
+      sequence: keyMutationSequences.get(key) ?? 0,
       hadValue: records.has(key),
       value: cloneStoredValue(records.get(key)),
       writeToken: uncommittedWrites.get(key)
     };
+  }
+
+  function reconcileRemovalSnapshot(key, sequence, exists, value) {
+    const snapshot = pendingDeleteTokens.get(key)?.snapshot;
+    // A queued removal may have captured its fallback before this conditional
+    // write committed. Carry that commit into the shared rollback receipt, but
+    // never replace the snapshot of a newer local edit (including failed puts).
+    if (!snapshot || snapshot.sequence > sequence
+      || (snapshot.writeToken && !snapshot.writeToken.committed)) return;
+    snapshot.removed = !exists;
+    snapshot.hadValue = exists;
+    snapshot.value = exists ? cloneStoredValue(value) : undefined;
+    snapshot.writeToken = undefined;
   }
 
   function notifyChange(change) {
@@ -867,12 +881,9 @@ export async function createIndexedDbRecoveryStorage(
     },
     removeItem(key) {
       const normalizedKey = String(key);
-      markVisibleMutation(normalizedKey);
       const snapshot = captureRemovalSnapshot(normalizedKey);
-      const previousUncommittedWrite = snapshot.writeToken;
+      markVisibleMutation(normalizedKey);
       uncommittedWrites.delete(normalizedKey);
-      const hadPreviousValue = snapshot.hadValue;
-      const previousValue = snapshot.value;
       const deleteToken = { snapshot };
       pendingDeleteTokens.set(normalizedKey, deleteToken);
       records.delete(normalizedKey);
@@ -885,6 +896,9 @@ export async function createIndexedDbRecoveryStorage(
         },
         onFailure: async () => {
           if (pendingDeleteTokens.get(normalizedKey) !== deleteToken) return;
+          const previousUncommittedWrite = snapshot.writeToken;
+          const hadPreviousValue = snapshot.hadValue;
+          const previousValue = snapshot.value;
           if (!snapshot.removed && previousUncommittedWrite !== undefined && !previousUncommittedWrite.committed) {
             records.set(normalizedKey, cloneStoredValue(previousValue));
             uncommittedWrites.set(normalizedKey, previousUncommittedWrite);
@@ -956,6 +970,7 @@ export async function createIndexedDbRecoveryStorage(
           && (keyMutationSequences.get(normalizedKey) ?? 0) === visibleMutationSequence;
         if (matched) {
           legacyLineageMarkers.delete(normalizedKey);
+          reconcileRemovalSnapshot(normalizedKey, visibleMutationSequence, true, nextValue);
           if (mirrorStillMatchesRequest) records.set(normalizedKey, cloneStoredValue(nextValue));
           publishChange("put", normalizedKey);
         } else if (mirrorStillMatchesRequest && currentExists) {
@@ -1011,6 +1026,7 @@ export async function createIndexedDbRecoveryStorage(
           && (keyMutationSequences.get(normalizedKey) ?? 0) === visibleMutationSequence;
         if (matched) {
           legacyLineageMarkers.delete(normalizedKey);
+          reconcileRemovalSnapshot(normalizedKey, visibleMutationSequence, false);
           if (mirrorStillMatchesRequest) records.delete(normalizedKey);
           publishChange("delete", normalizedKey);
         } else if (mirrorStillMatchesRequest && currentExists) {

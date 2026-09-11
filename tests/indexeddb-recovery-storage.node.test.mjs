@@ -1643,3 +1643,73 @@ for (const operations of [["delete", "delete"], ["delete", "clear"], ["clear", "
     });
   }
 }
+
+for (const comparison of ["compareAndRemove", "compareAndSet"]) {
+  for (const cleanup of ["removeItem", "clear"]) {
+    test(`committed ${comparison} survives failed queued ${cleanup} and readback`, async () => {
+      const indexedDb = new FakeIndexedDb();
+      const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage());
+      storage.setItem("draft", "acknowledged old draft");
+      await storage.flush();
+      let writes = 0;
+      const push = indexedDb.transactions.push.bind(indexedDb.transactions);
+      indexedDb.transactions.push = (transaction) => {
+        if (transaction.mode === "readwrite" && ++writes === 2) {
+          indexedDb.failDeleteKeys.add("draft");
+          indexedDb.failClear = true;
+        }
+        if (transaction.mode === "readonly") throw new Error("simulated readback unavailable");
+        return push(transaction);
+      };
+      const acknowledged = storage[comparison]("draft", value => value === "acknowledged old draft", "remaining unsaved component");
+      storage[cleanup]("draft");
+      assert.equal(await acknowledged, true);
+      await assert.rejects(storage.flush(), /simulated/);
+      assert.equal(storage.getItem("draft"), comparison === "compareAndRemove" ? null : "remaining unsaved component");
+      assert.equal(storage.hasPendingWrites(), false);
+      storage.close();
+    });
+  }
+}
+
+for (const comparison of ["compareAndRemove", "compareAndSet"]) {
+  for (const timing of ["before", "after"]) {
+    for (const cleanup of ["removeItem", "clear"]) {
+      test(`${comparison} preserves a failed binary write ${timing} admission across failed ${cleanup}`, async () => {
+        const indexedDb = new FakeIndexedDb();
+        const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage());
+        storage.setItem("draft", "old");
+        await storage.flush();
+        const newer = new Uint8Array([9, 7, 5]);
+        if (timing === "before") {
+          indexedDb.ignoreDurability = true;
+          storage.setObject("draft", newer);
+          await assert.rejects(storage.flush());
+          indexedDb.ignoreDurability = false;
+        }
+        let writes = 0;
+        const push = indexedDb.transactions.push.bind(indexedDb.transactions);
+        indexedDb.transactions.push = (transaction) => {
+          if (transaction.mode === "readwrite" && ++writes > 1) throw new Error("simulated write unavailable");
+          if (transaction.mode === "readonly") throw new Error("simulated readback unavailable");
+          return push(transaction);
+        };
+        const acknowledged = storage[comparison]("draft", value => value === "old", "remaining component");
+        if (timing === "after") storage.setObject("draft", newer);
+        storage[cleanup]("draft");
+        assert.equal(await acknowledged, true);
+        await assert.rejects(storage.flush());
+        assert.deepEqual(storage.getObject("draft"), newer);
+        assert.equal(storage.hasPendingWrites(), true);
+        await assert.rejects(storage.flush());
+        indexedDb.transactions.push = push;
+        storage.setObject("draft", newer);
+        await storage.flush();
+        storage.close();
+        const reopened = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage());
+        assert.deepEqual(reopened.getObject("draft"), newer);
+        reopened.close();
+      });
+    }
+  }
+}
