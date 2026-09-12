@@ -23,6 +23,29 @@ function simulateNavigationBeforeSubmit({ fixed }) {
   };
 }
 
+function simulateTopLevelNavigationBeforeSubmit({ fixed }) {
+  let navigationGeneration = 12;
+  let selectedPageId = "page-a";
+  const requests = [];
+
+  // A top-level New Page click used to pass null, making every later
+  // navigation look current. The fixed path claims a generation immediately.
+  const createGeneration = fixed ? ++navigationGeneration : null;
+
+  // Persistence flush is still pending when the user intentionally opens B.
+  navigationGeneration += 1;
+  selectedPageId = "page-b";
+
+  const intentCurrent = createGeneration === null || createGeneration === navigationGeneration;
+  if (intentCurrent) requests.push({ title: "Untitled" });
+
+  return {
+    requestSent: requests.length > 0,
+    unwantedPageCreated: requests.length > 0,
+    selectedPageId
+  };
+}
+
 function simulateNavigationWhileRequestInFlight({ fixed }) {
   let navigationGeneration = 9;
   let selectedPageId = "page-a";
@@ -59,5 +82,9 @@ console.log(JSON.stringify({
   inFlight: {
     vulnerable: simulateNavigationWhileRequestInFlight({ fixed: false }),
     fixed: simulateNavigationWhileRequestInFlight({ fixed: true })
+  },
+  topLevelBeforeSubmit: {
+    vulnerable: simulateTopLevelNavigationBeforeSubmit({ fixed: false }),
+    fixed: simulateTopLevelNavigationBeforeSubmit({ fixed: true })
   }
 }, null, 2));

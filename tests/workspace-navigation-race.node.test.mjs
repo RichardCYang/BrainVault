@@ -22,6 +22,21 @@ test("workspace navigation applies only the latest page, collection, or home int
   assert.match(source, /if \(!isCurrentWorkspaceNavigation\(navigationGeneration\)\) return;/);
   assert.match(source, /showCollection\(pageId, \{ skipFlush: true, navigationGeneration \}\)/);
   assert.match(source, /await destroyPageCollaboration\(\{ flush: false \}\);\n      if \(!isCurrentWorkspaceNavigation\(navigationGeneration\)\) return;/);
+
+  const loadPagesStart = app.indexOf("async function loadPages(");
+  const loadPagesEnd = app.indexOf("function isCurrentWorkspaceNavigation", loadPagesStart);
+  assert.ok(loadPagesStart >= 0 && loadPagesEnd > loadPagesStart);
+  const loadPages = app.slice(loadPagesStart, loadPagesEnd);
+  assert.match(loadPages, /const loadGeneration = \+\+workspacePageListLoadGeneration;/);
+  assert.match(loadPages, /loadGeneration === workspacePageListLoadGeneration/);
+  assert.match(loadPages, /isCurrentAuthenticatedSessionScope\(authenticationScope\)/);
+  assert.match(loadPages, /navigationGeneration === null \|\| isCurrentWorkspaceNavigation\(navigationGeneration\)/);
+
+  const homeStart = app.indexOf("async function openHomeFromBrand()");
+  const homeEnd = app.indexOf("async function logout", homeStart);
+  const home = app.slice(homeStart, homeEnd);
+  assert.match(home, /const navigationGeneration = \+\+workspaceNavigationGeneration;/);
+  assert.ok(home.indexOf("++workspaceNavigationGeneration") < home.indexOf('await loadPages("", "", { navigationGeneration })'));
 });
 
 test("standalone reproduction proves a slow first click cannot overwrite the latest click", () => {
@@ -36,4 +51,8 @@ test("standalone reproduction proves a slow first click cannot overwrite the lat
   assert.equal(result.fixed.latestClickPreserved, true);
   assert.equal(result.fixed.staleFirstFailureSuppressed, true);
   assert.equal(result.fixed.selectedPageId, "page-b");
+
+  assert.equal(result.refreshRace.vulnerable.slowerFirstRefreshOverwroteLatestIntent, true);
+  assert.equal(result.refreshRace.fixed.slowerFirstRefreshOverwroteLatestIntent, false);
+  assert.equal(result.refreshRace.fixed.view, "collection-b");
 });

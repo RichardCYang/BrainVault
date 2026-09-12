@@ -86,7 +86,43 @@ async function reproduceFixed() {
   };
 }
 
+async function reproducePreRefreshNavigationRace({ fixed }) {
+  let generation = 0;
+  let view = "page-a";
+  let list = ["page-a"];
+  const slowHome = deferred();
+  const fastCollection = deferred();
+
+  const navigate = async (target, request) => {
+    // Vulnerable handlers did not claim a navigation generation until after
+    // their list refresh. Fixed handlers claim it before the first await.
+    const intentGeneration = fixed ? ++generation : null;
+    const pages = await request.promise;
+    if (fixed && intentGeneration !== generation) return;
+    list = pages;
+    if (!fixed) ++generation;
+    view = target;
+  };
+
+  const first = navigate("home", slowHome);
+  const second = navigate("collection-b", fastCollection);
+  fastCollection.resolve(["collection-b"]);
+  await second;
+  slowHome.resolve(["page-a"]);
+  await first;
+
+  return {
+    view,
+    list,
+    slowerFirstRefreshOverwroteLatestIntent: view === "home"
+  };
+}
+
 console.log(JSON.stringify({
   vulnerable: await reproduceVulnerable(),
-  fixed: await reproduceFixed()
+  fixed: await reproduceFixed(),
+  refreshRace: {
+    vulnerable: await reproducePreRefreshNavigationRace({ fixed: false }),
+    fixed: await reproducePreRefreshNavigationRace({ fixed: true })
+  }
 }, null, 2));

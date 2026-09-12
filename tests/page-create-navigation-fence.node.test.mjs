@@ -30,7 +30,13 @@ test("navigation-menu subpage creation is fenced before POST and before stale re
   assert.match(submit, /data === skippedApiRequest/);
 
   assert.match(create, /navigationGeneration = null/);
+  assert.match(
+    create,
+    /const createNavigationGeneration = navigationGeneration \?\? \+\+workspaceNavigationGeneration;/
+  );
+  assert.match(create, /if \(navigationGeneration === null\) cancelPendingPageRead\(\);/);
   assert.match(create, /const isCreateIntentCurrent = \(\) =>/);
+  assert.match(create, /isCurrentWorkspaceNavigation\(createNavigationGeneration\)/);
   assert.match(create, /requestGuard: isCreateIntentCurrent/);
   assert.match(create, /data === skippedApiRequest/);
 
@@ -70,4 +76,10 @@ test("reproduction: stale add-subpage intent is canceled before send and cannot 
   assert.equal(result.inFlight.fixed.staleResponseOverrodeNewerNavigation, false);
   assert.equal(result.inFlight.fixed.committedParentPageId, "page-a");
   assert.equal(result.inFlight.fixed.selectedPageId, "page-b");
+
+  assert.equal(result.topLevelBeforeSubmit.vulnerable.requestSent, true);
+  assert.equal(result.topLevelBeforeSubmit.vulnerable.unwantedPageCreated, true);
+  assert.equal(result.topLevelBeforeSubmit.fixed.requestSent, false);
+  assert.equal(result.topLevelBeforeSubmit.fixed.unwantedPageCreated, false);
+  assert.equal(result.topLevelBeforeSubmit.fixed.selectedPageId, "page-b");
 });

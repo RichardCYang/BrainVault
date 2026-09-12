@@ -239,6 +239,7 @@ const accountSecurityOperationGuards = Object.freeze({
   passkeyRegister: createAccountAvatarOperationGuard()
 });
 let workspaceNavigationGeneration = 0;
+let workspacePageListLoadGeneration = 0;
 let pageNavigationRequestController = null;
 let authenticationSessionGeneration = 0;
 let sharePageRequestGeneration = 0;
@@ -18340,8 +18341,14 @@ async function createWorkspacePage(
 ) {
   if (state.workspaceCreateBusy) return { applied: false };
   const authenticationScope = captureAuthenticatedSessionScope();
+  // Top-level page/collection creation is itself a navigation intent. Older
+  // code left navigationGeneration null for those entry points, which meant a
+  // later navigation during persistence flushes could not cancel the stale
+  // create before its POST reached the server.
+  const createNavigationGeneration = navigationGeneration ?? ++workspaceNavigationGeneration;
+  if (navigationGeneration === null) cancelPendingPageRead();
   const isCreateIntentCurrent = () => (
-    navigationGeneration === null || isCurrentWorkspaceNavigation(navigationGeneration)
+    isCurrentWorkspaceNavigation(createNavigationGeneration)
   );
   if (
     !isCurrentAuthenticatedSessionScope(authenticationScope)
@@ -18565,23 +18572,48 @@ async function fetchOwnedWorkspacePageIds() {
     .map((page) => page.id))].sort();
 }
 
-async function loadAllPages() {
-  state.allPages = await fetchAllPageSummaries();
-}
+async function loadPages(
+  query = state.searchQuery,
+  tag = state.activeTag,
+  { navigationGeneration = null } = {}
+) {
+  const loadGeneration = ++workspacePageListLoadGeneration;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  const isLoadCurrent = () => (
+    loadGeneration === workspacePageListLoadGeneration
+      && isCurrentAuthenticatedSessionScope(authenticationScope)
+      && (navigationGeneration === null || isCurrentWorkspaceNavigation(navigationGeneration))
+  );
 
-async function loadPages(query = state.searchQuery, tag = state.activeTag) {
-  state.searchQuery = query;
-  state.activeTag = tag;
-  state.pages = await fetchAllPageSummaries({ query, tag });
+  let pages;
+  try {
+    pages = await fetchAllPageSummaries({ query, tag });
+  } catch (error) {
+    if (!isLoadCurrent()) return false;
+    throw error;
+  }
+  if (!isLoadCurrent()) return false;
 
-  if (!query && !tag) {
-    state.allPages = state.pages;
-  } else {
-    await loadAllPages();
+  let allPages = pages;
+  if (query || tag) {
+    try {
+      allPages = await fetchAllPageSummaries();
+    } catch (error) {
+      if (!isLoadCurrent()) return false;
+      throw error;
+    }
+    if (!isLoadCurrent()) return false;
   }
 
+  // Apply the list snapshot atomically only after every fetch is complete and
+  // only if no newer list/auth/navigation intent has superseded this one.
+  state.searchQuery = query;
+  state.activeTag = tag;
+  state.pages = pages;
+  state.allPages = allPages;
   renderPages();
   void reconcileServerRecoveryCandidates();
+  return true;
 }
 
 function isCurrentWorkspaceNavigation(generation) {
@@ -18800,15 +18832,19 @@ async function boot() {
 
 async function openHomeFromBrand() {
   if (!state.user) return;
+  const navigationGeneration = ++workspaceNavigationGeneration;
+  cancelPendingPageRead();
   closeMobileSidebar({ restoreFocus: false });
   resetSearchDialogState();
   try {
     await flushPendingPageEdits();
-    await loadPages("", "");
-    await showHome({ skipFlush: true });
-    setStatus(t("status.ready"));
+    if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
+    await loadPages("", "", { navigationGeneration });
+    if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
+    await showHome({ skipFlush: true, navigationGeneration });
+    if (isCurrentWorkspaceNavigation(navigationGeneration)) setStatus(t("status.ready"));
   } catch (error) {
-    setStatus(error.message, true);
+    if (isCurrentWorkspaceNavigation(navigationGeneration)) setStatus(error.message, true);
   }
 }
 
@@ -20025,15 +20061,19 @@ document.addEventListener("keydown", handleSearchDialogKeydown);
 document.addEventListener("keydown", handleWorkspaceSearchShortcut);
 
 elements.defaultCollectionButton.addEventListener("click", async () => {
+  const navigationGeneration = ++workspaceNavigationGeneration;
+  cancelPendingPageRead();
   closeMobileSidebar({ restoreFocus: true });
   try {
     resetSearchDialogState();
     await flushPendingPageEdits();
-    await loadPages("", "");
-    await showCollection(defaultCollectionKey, { skipFlush: true });
-    setStatus(t("status.collectionOpened"));
+    if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
+    await loadPages("", "", { navigationGeneration });
+    if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
+    await showCollection(defaultCollectionKey, { skipFlush: true, navigationGeneration });
+    if (isCurrentWorkspaceNavigation(navigationGeneration)) setStatus(t("status.collectionOpened"));
   } catch (error) {
-    setStatus(error.message, true);
+    if (isCurrentWorkspaceNavigation(navigationGeneration)) setStatus(error.message, true);
   }
 });
 
@@ -20059,18 +20099,31 @@ async function handleSidebarPageClick(event) {
   const item = event.target.closest("[data-page-id], [data-collection-id]");
   if (!item) return;
   closeMobileSidebar({ restoreFocus: true });
+  let collectionNavigationGeneration = null;
   try {
     if (item.dataset.collectionId) {
+      collectionNavigationGeneration = ++workspaceNavigationGeneration;
+      cancelPendingPageRead();
       resetSearchDialogState();
       await flushPendingPageEdits();
-      await loadPages("", "");
-      await showCollection(item.dataset.collectionId, { skipFlush: true });
-      setStatus(t("status.collectionOpened"));
+      if (!isCurrentWorkspaceNavigation(collectionNavigationGeneration)) return;
+      await loadPages("", "", { navigationGeneration: collectionNavigationGeneration });
+      if (!isCurrentWorkspaceNavigation(collectionNavigationGeneration)) return;
+      await showCollection(item.dataset.collectionId, {
+        skipFlush: true,
+        navigationGeneration: collectionNavigationGeneration
+      });
+      if (isCurrentWorkspaceNavigation(collectionNavigationGeneration)) {
+        setStatus(t("status.collectionOpened"));
+      }
       return;
     }
     await openPage(item.dataset.pageId);
   } catch (error) {
-    setStatus(error.message, true);
+    if (
+      collectionNavigationGeneration === null
+      || isCurrentWorkspaceNavigation(collectionNavigationGeneration)
+    ) setStatus(error.message, true);
   }
 }
 
