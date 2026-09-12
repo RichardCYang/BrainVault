@@ -61,6 +61,18 @@ test("recovery durability failures fail closed outside the authoritative server 
 });
 
 
+test("direct block edits roll back when synchronous recovery admission is rejected", () => {
+  const markDirty = section("function markBlockDirty(", "function getBlockSaveQueue(");
+  const failureStart = markDirty.indexOf("if (!persistBlockDraft(row, historyPayload)) {");
+  const admittedStart = markDirty.indexOf("blockEditAuthenticationScopes.set(blockId, authenticationScope);");
+  assert.ok(failureStart >= 0 && admittedStart > failureStart, "direct block recovery rejection path must be explicit");
+  const rejected = markDirty.slice(failureStart, admittedStart);
+  assert.match(rejected, /finishDirectRecoveryVisibilityAdmission\(row, recoveryAdmissionSequence\);/);
+  assert.match(rejected, /restoreBlockRowFromDurableState\(row\);/);
+  assert.match(rejected, /preserveInputAfterRecoveryAdmissionFailure\(\);/);
+  assert.match(rejected, /return false;/);
+});
+
 test("direct edits are hidden until their strict recovery transaction completes", () => {
   const helper = section("function beginDirectRecoveryVisibilityAdmission(", "function persistPageTitleDraftValue(");
   assert.match(helper, /classList\.add\("recovery-admission-pending"\)/);

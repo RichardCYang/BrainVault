@@ -1053,10 +1053,25 @@ for (const [methodName, methodSource] of collaborationMutationSections) {
 }
 
 const markBlockDirtySource = section(client, "function markBlockDirty(", "function getBlockSaveQueue(");
+const rejectedDirectBlockAdmissionSource = section(
+  markBlockDirtySource,
+  "if (!persistBlockDraft(row, historyPayload)) {",
+  "blockEditAuthenticationScopes.set(blockId, authenticationScope);"
+);
 assert(
-  markBlockDirtySource.includes("if (!persistBlockDraft(row))")
-    && markBlockDirtySource.includes("rejectLocalBlockMutation(row, error)"),
-  "Block edits can still remain visible when their browser recovery write fails"
+  rejectedDirectBlockAdmissionSource.includes(
+    "finishDirectRecoveryVisibilityAdmission(row, recoveryAdmissionSequence);"
+  )
+    && rejectedDirectBlockAdmissionSource.includes("restoreBlockRowFromDurableState(row);")
+    && rejectedDirectBlockAdmissionSource.includes("preserveInputAfterRecoveryAdmissionFailure();")
+    && rejectedDirectBlockAdmissionSource.includes("return false;"),
+  "Block edits can still remain visible when their browser recovery admission fails"
+);
+assertBefore(
+  rejectedDirectBlockAdmissionSource,
+  "restoreBlockRowFromDurableState(row);",
+  "return false;",
+  "direct block recovery rejection"
 );
 const durableBlockRestoreSource = section(
   client,
