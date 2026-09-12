@@ -2001,3 +2001,68 @@ test("delayed external refresh cannot resurrect an unobserved draft after clear"
   staleStorage.close();
   writerStorage.close();
 });
+
+
+test("initialization does not miss a peer IndexedDB write committed after its initial snapshot", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const hub = new FakeBroadcastHub();
+  const databaseName = "initialization-indexeddb-handoff-race";
+  const key = "brainvault.pageDraft.v2:user:page:peer";
+  const options = { databaseName, broadcastChannelFactory: hub.create };
+
+  const writer = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  writer.setItem(key, "v1");
+  await writer.flush();
+
+  indexedDb.pauseGetAll = true;
+  const initializing = createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  for (let attempt = 0; attempt < 100 && !indexedDb.pendingGetAll.length; attempt += 1) {
+    await nextTask();
+  }
+  assert.equal(indexedDb.pendingGetAll.length, 1, "reader initialization must pause on its first snapshot");
+
+  writer.setItem(key, "v2");
+  await writer.flush();
+  const durableStore = indexedDb.databases.get(databaseName).stores.get("recovery-records");
+  assert.equal(durableStore.get(key), "v2");
+
+  indexedDb.pauseGetAll = false;
+  indexedDb.releasePausedGetAll();
+  const reader = await initializing;
+  assert.equal(reader.getItem(key), "v2", "reader must reconcile writes committed during initialization");
+
+  reader.close();
+  writer.close();
+});
+
+test("initialization does not resurrect a peer-deleted recovery record from its initial snapshot", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const hub = new FakeBroadcastHub();
+  const databaseName = "initialization-indexeddb-delete-handoff-race";
+  const key = "brainvault.pageDraft.v2:user:page:peer-delete";
+  const options = { databaseName, broadcastChannelFactory: hub.create };
+
+  const writer = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  writer.setItem(key, "obsolete");
+  await writer.flush();
+
+  indexedDb.pauseGetAll = true;
+  const initializing = createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  for (let attempt = 0; attempt < 100 && !indexedDb.pendingGetAll.length; attempt += 1) {
+    await nextTask();
+  }
+  assert.equal(indexedDb.pendingGetAll.length, 1, "reader initialization must pause on its first snapshot");
+
+  writer.removeItem(key);
+  await writer.flush();
+  const durableStore = indexedDb.databases.get(databaseName).stores.get("recovery-records");
+  assert.equal(durableStore.get(key), undefined);
+
+  indexedDb.pauseGetAll = false;
+  indexedDb.releasePausedGetAll();
+  const reader = await initializing;
+  assert.equal(reader.getItem(key), null, "reader must not resurrect a record deleted during initialization");
+
+  reader.close();
+  writer.close();
+});

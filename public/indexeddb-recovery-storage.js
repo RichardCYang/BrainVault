@@ -1280,6 +1280,21 @@ export async function createIndexedDbRecoveryStorage(
       throw error;
     }
   }
+
+  // The initial getAll() snapshot is taken before the live cross-tab listeners
+  // are installed. A peer can commit during that handoff and publish its
+  // notification before this tab is listening, leaving the in-memory mirror
+  // stale for the rest of the session. Now that every live listener is active,
+  // reconcile once more with authoritative IndexedDB state. Any commit racing
+  // with this final snapshot is covered by those listeners and drained by
+  // flush(), closing the startup handoff without weakening mutation fencing.
+  try {
+    await api.refresh();
+    await api.flush();
+  } catch (error) {
+    api.close();
+    throw error;
+  }
   return api;
 }
 
