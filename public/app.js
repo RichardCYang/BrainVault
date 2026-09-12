@@ -18535,7 +18535,8 @@ async function fetchAllPageSummaries({ query = "", tag = "", archived = false } 
     const params = new URLSearchParams({ limit: "500", compact: "true", navigation: "true" });
     if (query) params.set("q", query);
     if (tag) params.set("tag", tag);
-    if (archived) params.set("archived", "true");
+    if (archived === "all") params.set("archived", "all");
+    else if (archived) params.set("archived", "true");
     if (cursor) params.set("cursor", cursor);
 
     const data = await api(`/api/pages?${params.toString()}`);
@@ -18558,11 +18559,8 @@ async function fetchAllPageSummaries({ query = "", tag = "", archived = false } 
 }
 
 async function fetchOwnedWorkspacePageIds() {
-  const [activePages, archivedPages] = await Promise.all([
-    fetchAllPageSummaries(),
-    fetchAllPageSummaries({ archived: true })
-  ]);
-  return [...new Set([...activePages, ...archivedPages]
+  const workspacePages = await fetchAllPageSummaries({ archived: "all" });
+  return [...new Set(workspacePages
     .filter((page) => isPageOwner(page))
     .map((page) => page.id))].sort();
 }

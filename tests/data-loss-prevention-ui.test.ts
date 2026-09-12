@@ -210,7 +210,8 @@ describe("Data-loss prevention integration", () => {
     expect(restoreBody.indexOf("assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds)")).toBeLessThan(
       restoreBody.indexOf('await api("/api/data/import"')
     );
-    expect(client).toContain('fetchAllPageSummaries({ archived: true })');
+    expect(client).toContain('fetchAllPageSummaries({ archived: "all" })');
+    expect(client).not.toContain('fetchAllPageSummaries({ archived: true })');
 
     const createCollectionStart = client.indexOf("async function createCollection()");
     const createCollectionEnd = client.indexOf("async function createUntitledPage()", createCollectionStart);

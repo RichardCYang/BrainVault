@@ -88,9 +88,9 @@ const pageListCursorSchema = z.object({
 const listPagesQuerySchema = z.object({
   q: z.string().trim().min(1).max(100).optional(),
   archived: z
-    .enum(["true", "false"])
+    .enum(["true", "false", "all"])
     .optional()
-    .transform((value) => (value ? value === "true" : false)),
+    .transform((value) => (value === "all" ? "all" : value ? value === "true" : false)),
   tag: z.string().trim().min(1).max(50).optional(),
   cursor: z.string().min(1).max(256).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(50),
@@ -1267,9 +1267,16 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
               WHERE override_membership.page_id = p.id
             )
         ))`,
-      "p.is_archived = ?"
     ];
-    const whereParams: DbValue[] = [user.id, user.id, user.id, query.archived ? 1 : 0];
+    const whereParams: DbValue[] = [user.id, user.id, user.id];
+
+    // Workspace-wide draft/recovery fencing must not split the scan by archive
+    // state. A remote archive/unarchive between two independent list requests can
+    // otherwise make the same owned page absent from both snapshots.
+    if (query.archived !== "all") {
+      where.push("p.is_archived = ?");
+      whereParams.push(query.archived ? 1 : 0);
+    }
 
     if (query.q) {
       where.push(

@@ -177,6 +177,30 @@ describe("Page-list pagination", () => {
     expect(database.query.mock.calls.filter(([sql]) => String(sql).includes("FROM page_tags pt"))).toHaveLength(0);
   });
 
+  it("can scan active and archived pages without an archive-state predicate", async () => {
+    database.pageBatches.push([
+      page("pag_workspace_scan", "2026-07-18 12:00:00.000000")
+    ]);
+
+    const response = await request(createApp())
+      .get("/api/pages?archived=all")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+
+    expect(response.body.pages).toHaveLength(1);
+    const listCall = database.query.mock.calls.find(([sql]) => String(sql).includes("AS cursor_created_at"));
+    expect(listCall?.[0]).not.toContain("p.is_archived = ?");
+    expect(listCall?.[1]).toEqual([
+      user.id,
+      user.id,
+      user.id,
+      user.id,
+      user.id,
+      user.id,
+      51
+    ]);
+  });
+
   it("rejects a malformed cursor before running the page query", async () => {
     const response = await request(createApp())
       .get("/api/pages?cursor=not-a-valid-cursor")
