@@ -21,7 +21,7 @@ test("split active/archive scans can omit a page when a remote archive state cha
 test("workspace-owned page fencing uses one archive-independent list scan", async () => {
   const app = await read("public/app.js");
   const start = app.indexOf("async function fetchOwnedWorkspacePageIds()");
-  const end = app.indexOf("async function loadAllPages()", start);
+  const end = app.indexOf("async function loadPages(", start);
   assert.ok(start >= 0 && end > start);
   const body = app.slice(start, end);
 

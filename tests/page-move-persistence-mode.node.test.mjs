@@ -59,7 +59,11 @@ test("post-move reconciliation refreshes descendants and restarts a rotated coll
     "async function moveNavigationPageToParent("
   );
 
-  assert.match(refresh, /await loadPages\(elements\.searchInput\.value\.trim\(\), state\.activeTag\)/);
+  assert.match(
+    refresh,
+    /pageListRefreshed = await loadPages\([\s\S]*?\{ navigationGeneration \}\s*\)/
+  );
+  assert.match(refresh, /if \(!pageListRefreshed\) \{[\s\S]*?await failClosedAffectedSelection\(\);[\s\S]*?return false;/);
   assert.match(refresh, /state\.selectedPage\.collaboration = \{ \.\.\.summary\.collaboration \}/);
   assert.match(refresh, /if \(selectedPageWasCollaborative \|\| selectedPageIsCollaborative\)/);
   assert.match(refresh, /await destroyPageCollaboration\(\{ flush: false \}\)/);
@@ -125,6 +129,61 @@ result = refreshPageMovePersistenceMode(
   await assert.rejects(sandbox.result, /refresh failed/);
   assert.equal(sandbox.state.pageMode, "READ");
   assert.deepEqual(events, ["load", "destroy", "teardown-error", "render"]);
+});
+
+test("superseded post-move page-list refresh fails closed before the edit lock can reopen", async () => {
+  const refresh = section(
+    client,
+    "async function refreshPageMovePersistenceMode(",
+    "async function moveNavigationPageToParent("
+  );
+  const events = [];
+  const sandbox = {
+    state: {
+      selectedPage: {
+        id: "child",
+        collaboration: { enabled: false, participantCount: 1 },
+        access: { canEdit: true }
+      },
+      activeTag: "",
+      pageMode: "WRITE"
+    },
+    elements: { searchInput: { value: "" } },
+    pageModes: { READ: "READ" },
+    isCurrentAuthenticatedSessionScope: () => true,
+    isCurrentWorkspaceNavigation: () => true,
+    loadPages: async (_query, _tag, options) => {
+      events.push(`load:${options?.navigationGeneration}`);
+      return false;
+    },
+    getPageSummaryById: () => {
+      throw new Error("stale page summary must not be consumed");
+    },
+    isCollaborativePage: (page) => Boolean(page?.collaboration?.enabled),
+    destroyPageCollaboration: async () => events.push("destroy"),
+    renderSelectedPage: () => events.push("render"),
+    startPageCollaboration: async () => events.push("start"),
+    console,
+    t: (key) => key,
+    Set,
+    Error,
+    result: null
+  };
+
+  vm.runInNewContext(
+    `${refresh}
+result = refreshPageMovePersistenceMode(
+  new Set(["root", "child"]),
+  "child",
+  false,
+  { generation: 1 },
+  7
+);`,
+    sandbox
+  );
+  assert.equal(await sandbox.result, false);
+  assert.equal(sandbox.state.pageMode, "READ");
+  assert.deepEqual(events, ["load:7", "destroy", "render"]);
 });
 
 test("failed post-move refresh does not alter an unrelated current selection", async () => {
@@ -206,7 +265,10 @@ test("runtime reconciliation switches the selected descendant onto the authorita
     pageModes: { READ: "READ" },
     isCurrentAuthenticatedSessionScope: () => true,
     isCurrentWorkspaceNavigation: () => true,
-    loadPages: async () => events.push("load"),
+    loadPages: async () => {
+      events.push("load");
+      return true;
+    },
     getPageSummaryById: () => summary,
     isCollaborativePage: (page) => Boolean(page?.collaboration?.enabled),
     destroyPageCollaboration: async () => events.push("destroy"),
@@ -260,7 +322,10 @@ test("runtime reconciliation tears down an old Yjs lineage when the moved subtre
     pageModes: { READ: "READ" },
     isCurrentAuthenticatedSessionScope: () => true,
     isCurrentWorkspaceNavigation: () => true,
-    loadPages: async () => events.push("load"),
+    loadPages: async () => {
+      events.push("load");
+      return true;
+    },
     getPageSummaryById: () => summary,
     isCollaborativePage: (page) => Boolean(page?.collaboration?.enabled),
     destroyPageCollaboration: async () => events.push("destroy"),

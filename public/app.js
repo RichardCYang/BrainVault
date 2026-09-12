@@ -9263,13 +9263,25 @@ async function refreshPageMovePersistenceMode(
   };
   if (!isRefreshCurrent()) return false;
 
+  let pageListRefreshed;
   try {
-    await loadPages(elements.searchInput.value.trim(), state.activeTag);
+    pageListRefreshed = await loadPages(
+      elements.searchInput.value.trim(),
+      state.activeTag,
+      { navigationGeneration }
+    );
   } catch (error) {
     // A transient refresh failure happens after the move PATCH has committed.
     // Fail closed before withPageEditLock() can release its interaction fence.
     await failClosedAffectedSelection();
     throw error;
+  }
+  if (!pageListRefreshed) {
+    // loadPages() also returns false when a newer list/auth/navigation intent
+    // supersedes this committed move refresh. Do not treat the stale pre-move
+    // summary as authoritative or release a writable direct/Yjs editor.
+    await failClosedAffectedSelection();
+    return false;
   }
   if (!isRefreshCurrent()) return false;
   if (!selectedPageId || !affectedPageIds.has(selectedPageId) || state.selectedPage?.id !== selectedPageId) {
