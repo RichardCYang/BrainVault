@@ -41,13 +41,16 @@ test("page delete recovery cleanup remains fenced after the delete request compl
     "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;",
     deleteResponseIndex
   );
-  const recoveryCleanupIndex = remove.indexOf("pageDraftStore.removePages", deleteResponseIndex);
+  const recoveryCleanupIndex = remove.indexOf("pageDraftStore.removePage", deleteResponseIndex);
 
   assert.ok(
-    deleteResponseIndex >= 0
-      && deleteFenceIndex > deleteResponseIndex
-      && recoveryCleanupIndex > deleteFenceIndex,
-    "a stale page-delete completion must not clear durable local recovery drafts"
+    deleteResponseIndex >= 0 && deleteFenceIndex > deleteResponseIndex,
+    "a stale page-delete completion must remain fenced to the initiating authentication scope"
+  );
+  assert.equal(
+    recoveryCleanupIndex,
+    -1,
+    "page delete must not clear durable local recovery created after dispatch"
   );
 });
 

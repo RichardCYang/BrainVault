@@ -411,7 +411,7 @@ describe("Data-loss prevention integration", () => {
 
   it("preserves other-tab drafts during block and page deletion and surfaces orphaned pages", () => {
     expect(client).toContain("pageDraftStore.removeBlockIfUnchanged({");
-    expect(client).toContain("pageDraftStore.removePages(state.user.id, serverPageIds, pageDraftSourceId)");
+    expect(client).not.toContain("pageDraftStore.removePages(state.user.id, serverPageIds, pageDraftSourceId)");
     expect(client).not.toContain("pageDraftStore.clearBlocks(");
     expect(client).not.toContain("pageDraftStore.clearPages(");
     expect(client).toContain(".loadUserDrafts(state.user.id)");

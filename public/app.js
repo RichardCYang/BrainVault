@@ -9655,6 +9655,10 @@ async function deleteNavigationTarget() {
       // older snapshot.
       assertNoPendingLocalPageDraftsForPages(serverPageIds, "status.destructiveLocalDraftsPending");
       assertNoPendingLocalCollaborationRecoveryForPages(serverPageIds);
+      // The page-draft fence above proves that browser recovery was empty at
+      // the destructive boundary. Any page draft that appears after dispatch is
+      // therefore newer recovery evidence and must survive as an orphan instead
+      // of being cleared by this older delete intent.
       return submitPageDeleteTask(task, authenticationScope, {
         requestGuard: () => isCurrentWorkspaceNavigation(navigationGeneration)
       });
@@ -9673,9 +9677,6 @@ async function deleteNavigationTarget() {
     // recovery or mutating workspace state; otherwise an aborted server delete
     // could still erase the same account's only local draft copy.
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
-    if (state.user?.id) {
-      checkDraftStoreWrite(pageDraftStore.removePages(state.user.id, serverPageIds, pageDraftSourceId));
-    }
 
     const shouldClearDeletedSelection = Boolean(
       selectedPageWasDeleted

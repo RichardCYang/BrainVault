@@ -353,11 +353,16 @@ test("page delete auth rotation cannot fall through into local draft cleanup", a
     "if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;",
     submitIndex
   );
-  const cleanupIndex = deleteClient.indexOf("pageDraftStore.removePages", submitIndex);
+  const cleanupIndex = deleteClient.indexOf("pageDraftStore.removePage", submitIndex);
   assert.ok(submitIndex >= 0, "page delete must submit through the auth-scoped task");
   assert.ok(
-    completionFenceIndex > submitIndex && completionFenceIndex < cleanupIndex,
-    "authentication must be revalidated after submit and before local draft cleanup"
+    completionFenceIndex > submitIndex,
+    "authentication must be revalidated after submit before applying delete response state"
+  );
+  assert.equal(
+    cleanupIndex,
+    -1,
+    "page delete must not clear recovery after dispatch because any such record is newer than the destructive boundary"
   );
 
   async function reproduce({ fixed }) {
