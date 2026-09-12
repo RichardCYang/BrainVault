@@ -757,7 +757,11 @@ export async function createIndexedDbRecoveryStorage(
   }
 
   function removeLegacyRecord(key, removedLegacyValue) {
-    const visibleMutationSequence = keyMutationSequences.get(key) ?? 0;
+    // A legacy acknowledgement is a visible recovery-state mutation just like a
+    // legacy put. Fence any explicit refresh that already captured an older
+    // backing-store snapshot so it cannot resurrect the acknowledged draft in
+    // the synchronous mirror after this transaction commits.
+    const visibleMutationSequence = markVisibleMutation(key);
     return enqueue(async () => {
       const removedFingerprint = await fingerprintLegacyValue(removedLegacyValue);
       const transaction = createStrictWriteTransaction(db, storeName);
@@ -944,7 +948,10 @@ export async function createIndexedDbRecoveryStorage(
       }
       const normalizedKey = String(key);
       const nextValue = cloneStoredValue(value);
-      const visibleMutationSequence = keyMutationSequences.get(normalizedKey) ?? 0;
+      // Conditional writes are visible mutations even before their predicate is
+      // known. Advance the per-key generation so an explicit refresh that began
+      // earlier cannot replay its stale snapshot over this transaction's result.
+      const visibleMutationSequence = markVisibleMutation(normalizedKey);
       return enqueue(async () => {
         const transaction = createStrictWriteTransaction(db, storeName);
         const complete = transactionComplete(transaction);
@@ -1007,7 +1014,9 @@ export async function createIndexedDbRecoveryStorage(
         return Promise.reject(new TypeError("A recovery comparison function is required"));
       }
       const normalizedKey = String(key);
-      const visibleMutationSequence = keyMutationSequences.get(normalizedKey) ?? 0;
+      // See compareAndSet(): the generation also fences stale refresh snapshots
+      // when this comparison deletes or merely reconciles authoritative state.
+      const visibleMutationSequence = markVisibleMutation(normalizedKey);
       return enqueue(async () => {
         const transaction = createStrictWriteTransaction(db, storeName);
         const complete = transactionComplete(transaction);

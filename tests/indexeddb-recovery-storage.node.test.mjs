@@ -35,9 +35,14 @@ class FakeIndexedDb {
     this.transactions = [];
     this.pausedReadKeys = new Set();
     this.pendingReads = [];
+    this.pauseGetAll = false;
+    this.pendingGetAll = [];
   }
   releasePausedReads() {
     for (const read of this.pendingReads.splice(0)) queueMicrotask(read);
+  }
+  releasePausedGetAll() {
+    for (const read of this.pendingGetAll.splice(0)) queueMicrotask(read);
   }
   open(name) {
     const request = {};
@@ -71,12 +76,22 @@ class FakeIndexedDb {
           const store = state.stores.get(storeName);
           if (!store) throw new Error(`Missing fake object store ${storeName}`);
           transaction.objectStore = () => ({
-            getAll() {
+            getAll: () => {
               const child = { result: null, error: null, onsuccess: null, onerror: null };
-              queueMicrotask(() => {
-                child.result = [...store.entries()].map(([key, value]) => ({ key, value: clone(value) }));
-                child.onsuccess?.();
-              });
+              if (this.pauseGetAll) {
+                // Freeze the transaction's observed snapshot so tests can let a
+                // later write commit before this older refresh result is applied.
+                const snapshot = [...store.entries()].map(([key, value]) => ({ key, value: clone(value) }));
+                this.pendingGetAll.push(() => {
+                  child.result = snapshot;
+                  child.onsuccess?.();
+                });
+              } else {
+                queueMicrotask(() => {
+                  child.result = [...store.entries()].map(([key, value]) => ({ key, value: clone(value) }));
+                  child.onsuccess?.();
+                });
+              }
               return child;
             },
             get: (key) => {
@@ -1818,3 +1833,82 @@ for (const action of ["put", "delete"]) {
     }
   }
 }
+
+
+for (const comparison of ["compareAndSet", "compareAndRemove"]) {
+  test(`explicit refresh cannot roll back a newer ${comparison} result`, async () => {
+    const indexedDb = new FakeIndexedDb();
+    const databaseName = `refresh-${comparison}-generation-fence`;
+    const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+      databaseName
+    });
+    storage.setItem("draft", "A");
+    await storage.flush();
+
+    indexedDb.pauseGetAll = true;
+    const refreshing = storage.refresh();
+    for (let attempt = 0; attempt < 100 && !indexedDb.pendingGetAll.length; attempt += 1) {
+      await nextTask();
+    }
+    assert.equal(indexedDb.pendingGetAll.length, 1, "refresh must be paused with snapshot A");
+
+    const compared = comparison === "compareAndSet"
+      ? storage.compareAndSet("draft", value => value === "A", "B")
+      : storage.compareAndRemove("draft", value => value === "A");
+    assert.equal(await compared, true);
+    assert.equal(storage.getItem("draft"), comparison === "compareAndSet" ? "B" : null);
+
+    indexedDb.pauseGetAll = false;
+    indexedDb.releasePausedGetAll();
+    await refreshing;
+
+    const durable = indexedDb.databases.get(databaseName).stores.get("recovery-records").get("draft") ?? null;
+    const expected = comparison === "compareAndSet" ? "B" : null;
+    assert.equal(durable, expected);
+    assert.equal(
+      storage.getItem("draft"),
+      expected,
+      "an older refresh snapshot must not overwrite the committed conditional mutation"
+    );
+    storage.close();
+  });
+}
+
+test("explicit refresh cannot resurrect a draft after a legacy acknowledgement commits", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const events = new FakeStorageEventTarget();
+  const key = "brainvault.pageDraft.v2:user:page:tab";
+  const legacy = new MemoryStorage([[key, "A"]]);
+  const databaseName = "refresh-legacy-delete-generation-fence";
+  const storage = await createIndexedDbRecoveryStorage(indexedDb, legacy, {
+    databaseName,
+    migrationPrefixes: ["brainvault.pageDraft.v2"],
+    storageEventTarget: events
+  });
+  await storage.flush();
+
+  indexedDb.pauseGetAll = true;
+  const refreshing = storage.refresh();
+  for (let attempt = 0; attempt < 100 && !indexedDb.pendingGetAll.length; attempt += 1) {
+    await nextTask();
+  }
+  assert.equal(indexedDb.pendingGetAll.length, 1, "refresh must be paused with the migrated draft");
+
+  legacy.removeItem(key);
+  events.emit({ storageArea: legacy, key, oldValue: "A", newValue: null });
+  await storage.flush();
+  assert.equal(storage.getItem(key), null);
+
+  indexedDb.pauseGetAll = false;
+  indexedDb.releasePausedGetAll();
+  await refreshing;
+
+  const durable = indexedDb.databases.get(databaseName).stores.get("recovery-records").get(key);
+  assert.equal(durable, undefined);
+  assert.equal(
+    storage.getItem(key),
+    null,
+    "an older refresh snapshot must not resurrect a legacy-acknowledged draft"
+  );
+  storage.close();
+});
