@@ -56,7 +56,7 @@ test("restore keeps durable reset/create tombstones but invalidates page-generat
   assert.doesNotMatch(transfer, /restoreMutationReceipts/);
   assert.doesNotMatch(transfer, /FROM block_delete_mutations m/);
   assert.doesNotMatch(transfer, /mutationReceipts\.blockDeletes/);
-  assert.match(transfer, /block\.metadata, restoreVersion, block\.created_at/);
+  assert.match(transfer, /restoredMetadata, restoreVersion, block\.created_at/);
 
   const pageDeleteReceiptInvalidationIndex = transfer.indexOf(
     'DELETE FROM page_delete_mutations WHERE actor_id = ?'
