@@ -352,6 +352,7 @@ export async function createIndexedDbRecoveryStorage(
   let pendingWrites = 0;
   const pendingDeleteTokens = new Map();
   let localMutationSequence = 0;
+  let clearMutationSequence = 0;
   const keyMutationSequences = new Map();
   // A failed write can leave the only copy of newer edits in this mirror.
   // Retain its generation until that exact write commits or explicit removal
@@ -450,6 +451,13 @@ export async function createIndexedDbRecoveryStorage(
 
   async function reloadAllRecords(preserveMutationsAfter = null) {
     const loadedRecords = await loadAllRecords();
+    // clear() mutates the entire recovery keyspace, including durable keys
+    // this mirror has never observed. A refresh that captured its snapshot
+    // before that clear must not reintroduce any of those deleted records.
+    if (
+      preserveMutationsAfter !== null
+      && clearMutationSequence > preserveMutationsAfter
+    ) return;
     for (const key of [...records.keys()]) {
       if (uncommittedWrites.has(key)) continue;
       if (
@@ -506,6 +514,7 @@ export async function createIndexedDbRecoveryStorage(
         // delete cannot hide a newer durable draft from this tab's mirror.
         const record = await loadRecord(message.key);
         if (!uncommittedWrites.has(message.key)
+          && clearMutationSequence <= localSequenceAtNotification
           && (keyMutationSequences.get(message.key) ?? 0) === keySequenceAtNotification) {
           if (record) records.set(record.key, record.value);
           else records.delete(message.key);
@@ -1077,6 +1086,10 @@ export async function createIndexedDbRecoveryStorage(
     },
     clear() {
       const clearSequence = ++localMutationSequence;
+      // Unlike a per-key mutation, clear() also covers durable records that
+      // are absent from this tab's mirror. Fence the entire keyspace so an
+      // older full-store refresh cannot resurrect one after this clear.
+      clearMutationSequence = clearSequence;
       const removalTokens = new Map();
       for (const key of new Set([...records.keys(), ...pendingDeleteTokens.keys()])) {
         const token = { snapshot: captureRemovalSnapshot(key) };

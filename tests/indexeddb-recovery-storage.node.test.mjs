@@ -1912,3 +1912,92 @@ test("explicit refresh cannot resurrect a draft after a legacy acknowledgement c
   );
   storage.close();
 });
+
+
+test("explicit refresh cannot resurrect an unobserved durable draft after clear", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const databaseName = "refresh-hidden-draft-clear-generation-fence";
+  const staleStorage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName
+  });
+  const writerStorage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName
+  });
+
+  writerStorage.setItem("hidden-draft", "unsaved note");
+  await writerStorage.flush();
+  assert.equal(staleStorage.getItem("hidden-draft"), null, "the clearing tab starts with a stale mirror");
+
+  indexedDb.pauseGetAll = true;
+  const refreshing = staleStorage.refresh();
+  for (let attempt = 0; attempt < 100 && !indexedDb.pendingGetAll.length; attempt += 1) {
+    await nextTask();
+  }
+  assert.equal(indexedDb.pendingGetAll.length, 1, "refresh must pause with the hidden durable draft");
+
+  indexedDb.pauseGetAll = false;
+  staleStorage.clear();
+  await staleStorage.flush();
+  const durableStore = indexedDb.databases.get(databaseName).stores.get("recovery-records");
+  assert.equal(durableStore.get("hidden-draft"), undefined, "clear must durably delete the hidden draft");
+
+  indexedDb.releasePausedGetAll();
+  await refreshing;
+  assert.equal(
+    staleStorage.getItem("hidden-draft"),
+    null,
+    "a refresh snapshot captured before clear must not resurrect an unobserved durable draft"
+  );
+
+  staleStorage.close();
+  writerStorage.close();
+});
+
+
+test("delayed external refresh cannot resurrect an unobserved draft after clear", async () => {
+  const indexedDb = new FakeIndexedDb();
+  const hub = new QueuedBroadcastHub();
+  const databaseName = "external-refresh-hidden-draft-clear-generation-fence";
+  const key = "hidden-draft";
+  const staleStorage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName,
+    broadcastChannelFactory: hub.create
+  });
+  const writerStorage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {
+    databaseName,
+    broadcastChannelFactory: hub.create
+  });
+
+  writerStorage.setItem(key, "unsaved note");
+  await writerStorage.flush();
+  assert.equal(staleStorage.getItem(key), null, "the clearing tab has not received the peer write yet");
+
+  indexedDb.pausedReadKeys.add(key);
+  hub.deliverAll();
+  for (let attempt = 0; attempt < 100 && !indexedDb.pendingReads.length; attempt += 1) {
+    await nextTask();
+  }
+  assert.equal(indexedDb.pendingReads.length, 1, "peer refresh must pause with the hidden durable draft");
+
+  staleStorage.clear();
+  const durableStore = indexedDb.databases.get(databaseName).stores.get("recovery-records");
+  for (let attempt = 0; attempt < 100 && durableStore.has(key); attempt += 1) {
+    await nextTask();
+  }
+  assert.equal(durableStore.get(key), undefined, "clear must durably delete the hidden draft");
+  // Let the clear transaction complete before releasing the older peer read.
+  await nextTask();
+  await nextTask();
+
+  indexedDb.pausedReadKeys.delete(key);
+  indexedDb.releasePausedReads();
+  await staleStorage.flush();
+  assert.equal(
+    staleStorage.getItem(key),
+    null,
+    "a peer read captured before clear must not resurrect an unobserved durable draft"
+  );
+
+  staleStorage.close();
+  writerStorage.close();
+});
