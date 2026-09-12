@@ -210,7 +210,7 @@ let activePageTransitionLease = null;
 let activePageWriterSession = null;
 let pageTransitionUnlockTimer = null;
 let collaborationRecoveryPanelGeneration = 0;
-let recoveryCandidateSyncPromise = null;
+let recoveryCandidateSyncTask = null;
 let serverRecoveryCandidates = [];
 const pageCoverOperationGuard = createPageCoverOperationGuard();
 const iconPickerOperationGuard = createIconPickerOperationGuard();
@@ -9881,10 +9881,32 @@ async function uploadServerRecoveryCandidate({
 
 async function reconcileServerRecoveryCandidates() {
   if (!state.user?.id) return;
-  if (recoveryCandidateSyncPromise) return recoveryCandidateSyncPromise;
   const accountId = state.user.id;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
 
-  recoveryCandidateSyncPromise = (async () => {
+  const existingTask = recoveryCandidateSyncTask;
+  if (
+    existingTask
+    && existingTask.accountId === accountId
+    && isCurrentAuthenticatedSessionScope(existingTask.authenticationScope)
+  ) {
+    return existingTask.promise;
+  }
+
+  const task = {
+    accountId,
+    authenticationScope,
+    promise: null
+  };
+  recoveryCandidateSyncTask = task;
+  const isCurrentRecoveryCandidateSync = () => (
+    recoveryCandidateSyncTask === task
+    && state.user?.id === accountId
+    && isCurrentAuthenticatedSessionScope(authenticationScope)
+  );
+
+  task.promise = (async () => {
     const directInspection = pageDraftStore.inspectUserDrafts(accountId);
     const collaborationInspection = collaborationRecoveryStore.inspectAccountRecords(accountId);
 
@@ -9894,9 +9916,15 @@ async function reconcileServerRecoveryCandidates() {
     // check and the later IndexedDB deletion. Exact-generation draft checks
     // protect against local draft changes, but cannot make page accessibility
     // and browser-storage cleanup atomic.
+    //
+    // The upload loop is also bound to the authentication generation that
+    // selected these local records. A logout/login or workspace replacement
+    // must never let an older account's recovery payload adopt the newer
+    // session merely because api() captures credentials at a later iteration.
 
     if (directInspection.reliable && !directInspection.unreadableKeys.length) {
       for (const record of directInspection.records) {
+        if (!isCurrentRecoveryCandidateSync()) return;
         const payload = new TextEncoder().encode(JSON.stringify(record));
         try {
           await uploadServerRecoveryCandidate({
@@ -9907,15 +9935,18 @@ async function reconcileServerRecoveryCandidates() {
             payload
           });
         } catch (error) {
+          if (!isCurrentRecoveryCandidateSync()) return;
           if (error?.code !== "RECOVERY_GRANT_NOT_FOUND") {
             console.warn("Failed to preserve a direct recovery candidate on the server", error);
           }
         }
+        if (!isCurrentRecoveryCandidateSync()) return;
       }
     }
 
     if (collaborationInspection.reliable && !collaborationInspection.unreadableKeys.length) {
       for (const record of collaborationInspection.records) {
+        if (!isCurrentRecoveryCandidateSync()) return;
         try {
           await uploadServerRecoveryCandidate({
             pageId: record.pageId,
@@ -9926,28 +9957,31 @@ async function reconcileServerRecoveryCandidates() {
             payload: record.update
           });
         } catch (error) {
+          if (!isCurrentRecoveryCandidateSync()) return;
           if (error?.code !== "RECOVERY_GRANT_NOT_FOUND") {
             console.warn("Failed to preserve a collaboration recovery candidate on the server", error);
           }
         }
+        if (!isCurrentRecoveryCandidateSync()) return;
       }
     }
 
+    if (!isCurrentRecoveryCandidateSync()) return;
     try {
       const data = await api("/api/recovery/candidates");
-      if (state.user?.id === accountId) {
-        serverRecoveryCandidates = Array.isArray(data?.candidates) ? data.candidates : [];
-      }
+      if (!isCurrentRecoveryCandidateSync()) return;
+      serverRecoveryCandidates = Array.isArray(data?.candidates) ? data.candidates : [];
     } catch (error) {
+      if (!isCurrentRecoveryCandidateSync()) return;
       console.warn("Failed to load server recovery candidates", error);
     }
 
-    if (state.workspaceView === "home" && state.user?.id === accountId) renderHome();
+    if (state.workspaceView === "home" && isCurrentRecoveryCandidateSync()) renderHome();
   })().finally(() => {
-    recoveryCandidateSyncPromise = null;
+    if (recoveryCandidateSyncTask === task) recoveryCandidateSyncTask = null;
   });
 
-  return recoveryCandidateSyncPromise;
+  return task.promise;
 }
 
 function getCollaborativePageDrafts(pageId) {
@@ -10005,12 +10039,18 @@ async function sha256BytesHex(bytes) {
 
 async function downloadServerRecoveryCandidate(candidate) {
   const authenticationScope = captureAuthenticatedSessionScope();
+  assertCurrentAuthenticatedSessionScope(authenticationScope);
   const headers = new Headers();
   await applyClientNetworkVerificationHeaders(headers);
+  // Network-signal collection can yield long enough for another login to take
+  // over this browser. Fence the actual credentialed dispatch to the account
+  // that initiated the recovery download.
+  assertCurrentAuthenticatedSessionScope(authenticationScope);
   const response = await fetch(
     `/api/recovery/candidates/${encodeURIComponent(candidate.id)}`,
     { credentials: "include", headers }
   );
+  assertCurrentAuthenticatedSessionScope(authenticationScope);
   if (!response.ok) {
     let data = null;
     try {
@@ -10031,11 +10071,13 @@ async function downloadServerRecoveryCandidate(candidate) {
     });
   }
   const bytes = await response.arrayBuffer();
+  assertCurrentAuthenticatedSessionScope(authenticationScope);
   const expectedSha256 = String(candidate.payloadSha256 ?? "").trim().toLowerCase();
   const servedSha256 = String(
     response.headers.get("X-BrainVault-Recovery-SHA256") ?? ""
   ).trim().toLowerCase();
   const actualSha256 = await sha256BytesHex(bytes);
+  assertCurrentAuthenticatedSessionScope(authenticationScope);
   if (
     !/^[a-f0-9]{64}$/.test(expectedSha256)
     || actualSha256 !== expectedSha256
@@ -10053,6 +10095,7 @@ async function downloadServerRecoveryCandidate(candidate) {
     : `${candidate.id}-yjs.bin`;
   download.hidden = true;
   document.body.append(download);
+  assertCurrentAuthenticatedSessionScope(authenticationScope);
   download.click();
   download.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
