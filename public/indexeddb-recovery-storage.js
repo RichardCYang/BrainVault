@@ -1244,11 +1244,22 @@ export async function createIndexedDbRecoveryStorage(
     async refresh() {
       const localSequenceAtRefresh = localMutationSequence;
       await tail.catch(() => undefined);
-      await externalRefreshTail;
-      await reloadAllRecords(localSequenceAtRefresh);
+      // A peer notification can arrive after the current external-refresh tail
+      // is drained but while getAll() is still reading an older IndexedDB
+      // snapshot. If that live refresh applies first, the late full snapshot
+      // must not become the final mirror state. Repeat until no newer external
+      // refresh generation was queued while the authoritative reload was in
+      // flight.
+      while (true) {
+        const pendingExternalRefreshTail = externalRefreshTail;
+        await pendingExternalRefreshTail;
+        await reloadAllRecords(localSequenceAtRefresh);
+        if (pendingExternalRefreshTail === externalRefreshTail) break;
+      }
       // Cross-tab refresh failures are sticky so synchronous inspections never
       // mistake a stale mirror for an authoritative empty store. Only a full
-      // successful backing-store reload restores a healthy inspection state.
+      // successful backing-store reload after the latest external generation
+      // restores a healthy inspection state.
       externalRefreshFailure = null;
     },
     close() {

@@ -2066,3 +2066,101 @@ test("initialization does not resurrect a peer-deleted recovery record from its 
   reader.close();
   writer.close();
 });
+
+test("explicit refresh cannot overwrite a newer cross-tab update applied while getAll is in flight", async () => {
+  const key = "brainvault.pageDraft.v2:user:page:refresh-update-race";
+  const indexedDb = new FakeIndexedDb();
+  const hub = new FakeBroadcastHub();
+  const options = {
+    databaseName: "refresh-cross-tab-update-order-race",
+    broadcastChannelFactory: hub.create
+  };
+
+  const reader = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  const writer = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+
+  writer.setItem(key, "old");
+  await writer.flush();
+  await reader.flush();
+  assert.equal(reader.getItem(key), "old");
+
+  indexedDb.pauseGetAll = true;
+  const refresh = reader.refresh();
+  await nextTask();
+  assert.equal(indexedDb.pendingGetAll.length, 1);
+
+  writer.setItem(key, "new");
+  await writer.flush();
+  await nextTask();
+  await nextTask();
+  assert.equal(reader.getItem(key), "new");
+
+  indexedDb.releasePausedGetAll();
+  await nextTask();
+  assert.equal(
+    indexedDb.pendingGetAll.length,
+    1,
+    "refresh should retry after observing a newer external refresh generation"
+  );
+  indexedDb.pauseGetAll = false;
+  indexedDb.releasePausedGetAll();
+  await refresh;
+
+  assert.equal(
+    reader.getItem(key),
+    "new",
+    "a late older getAll snapshot must not overwrite a newer cross-tab update"
+  );
+
+  reader.close();
+  writer.close();
+});
+
+test("explicit refresh cannot resurrect a cross-tab deletion applied while getAll is in flight", async () => {
+  const key = "brainvault.pageDraft.v2:user:page:refresh-delete-race";
+  const indexedDb = new FakeIndexedDb();
+  const hub = new FakeBroadcastHub();
+  const options = {
+    databaseName: "refresh-cross-tab-delete-order-race",
+    broadcastChannelFactory: hub.create
+  };
+
+  const reader = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+  const writer = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), options);
+
+  writer.setItem(key, "obsolete");
+  await writer.flush();
+  await reader.flush();
+  assert.equal(reader.getItem(key), "obsolete");
+
+  indexedDb.pauseGetAll = true;
+  const refresh = reader.refresh();
+  await nextTask();
+  assert.equal(indexedDb.pendingGetAll.length, 1);
+
+  writer.removeItem(key);
+  await writer.flush();
+  await nextTask();
+  await nextTask();
+  assert.equal(reader.getItem(key), null);
+
+  indexedDb.releasePausedGetAll();
+  await nextTask();
+  assert.equal(
+    indexedDb.pendingGetAll.length,
+    1,
+    "refresh should retry instead of accepting a stale snapshot that still contains the deleted draft"
+  );
+  indexedDb.pauseGetAll = false;
+  indexedDb.releasePausedGetAll();
+  await refresh;
+
+  assert.equal(
+    reader.getItem(key),
+    null,
+    "a late older getAll snapshot must not resurrect a newer cross-tab deletion"
+  );
+
+  reader.close();
+  writer.close();
+});
