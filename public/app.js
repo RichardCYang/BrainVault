@@ -9885,11 +9885,8 @@ async function reconcileServerRecoveryCandidates() {
   const accountId = state.user.id;
 
   recoveryCandidateSyncPromise = (async () => {
-    const isCurrentlySafeToRemoveLocalRecovery = (pageId) => (
-      state.user?.id === accountId
-      && !state.allPages.some((page) => page.id === pageId)
-      && state.selectedPage?.id !== pageId
-    );
+    const uploadedDirectRecords = [];
+    const uploadedCollaborationRecords = [];
     const directInspection = pageDraftStore.inspectUserDrafts(accountId);
     const collaborationInspection = collaborationRecoveryStore.inspectAccountRecords(accountId);
 
@@ -9904,14 +9901,7 @@ async function reconcileServerRecoveryCandidates() {
             generation: `draft-${record.updatedAt}`,
             payload
           });
-          // Re-check accessibility after the asynchronous upload. A page can be
-          // restored or recreated with the same stable id while this request is
-          // in flight. Never let the stale pre-upload workspace view authorize
-          // deletion of the browser copy needed by that newer live page. Account
-          // switches fail closed for the same reason.
-          if (isCurrentlySafeToRemoveLocalRecovery(record.pageId)) {
-            await pageDraftStore.removePageIfUnchangedDurably(record);
-          }
+          uploadedDirectRecords.push(record);
         } catch (error) {
           if (error?.code !== "RECOVERY_GRANT_NOT_FOUND") {
             console.warn("Failed to preserve a direct recovery candidate on the server", error);
@@ -9931,20 +9921,62 @@ async function reconcileServerRecoveryCandidates() {
             generation: record.generation,
             payload: record.update
           });
-          if (isCurrentlySafeToRemoveLocalRecovery(record.pageId)) {
-            await collaborationRecoveryStore.removeDurably(
-              accountId,
-              record.pageId,
-              record.sourceId,
-              record.documentEpoch,
-              record.generation
-            );
-          }
+          uploadedCollaborationRecords.push(record);
         } catch (error) {
           if (error?.code !== "RECOVERY_GRANT_NOT_FOUND") {
             console.warn("Failed to preserve a collaboration recovery candidate on the server", error);
           }
         }
+      }
+    }
+
+    if (
+      state.user?.id === accountId
+      && (uploadedDirectRecords.length || uploadedCollaborationRecords.length)
+    ) {
+      try {
+        // state.allPages intentionally contains only the active navigation set.
+        // Verify against one archive-independent server snapshot after uploads
+        // settle so an archived, restored, or recreated live page is never
+        // mistaken for an orphan merely because it is absent from navigation.
+        const accessiblePages = await fetchAllPageSummaries({ archived: "all" });
+        if (state.user?.id === accountId) {
+          const accessiblePageIds = new Set(accessiblePages.map((page) => page.id));
+          const isCurrentlySafeToRemoveLocalRecovery = (pageId) => (
+            state.user?.id === accountId
+            && !accessiblePageIds.has(pageId)
+            && !state.allPages.some((page) => page.id === pageId)
+            && state.selectedPage?.id !== pageId
+          );
+
+          for (const record of uploadedDirectRecords) {
+            if (!isCurrentlySafeToRemoveLocalRecovery(record.pageId)) continue;
+            try {
+              await pageDraftStore.removePageIfUnchangedDurably(record);
+            } catch (error) {
+              console.warn("Failed to remove a direct browser recovery candidate after server preservation", error);
+            }
+          }
+
+          for (const record of uploadedCollaborationRecords) {
+            if (!isCurrentlySafeToRemoveLocalRecovery(record.pageId)) continue;
+            try {
+              await collaborationRecoveryStore.removeDurably(
+                accountId,
+                record.pageId,
+                record.sourceId,
+                record.documentEpoch,
+                record.generation
+              );
+            } catch (error) {
+              console.warn("Failed to remove a collaboration browser recovery candidate after server preservation", error);
+            }
+          }
+        }
+      } catch (error) {
+        // If current accessibility cannot be established authoritatively, keep
+        // the browser recovery copy. The durable server candidate is additive.
+        console.warn("Failed to verify page accessibility before recovery cleanup", error);
       }
     }
 

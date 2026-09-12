@@ -317,7 +317,7 @@ test("server upload cleanup cannot delete a newer direct draft written during th
 
 test("browser recovery sync removes local orphan bytes only after a successful durable upload", () => {
   const app = read("public/app.js");
-  const sync = section(app, "async function reconcileServerRecoveryCandidates()", "function getCollaborativePageDrafts");
+  const sync = section(app, "async function reconcileServerRecoveryCandidates()", "function appendPageDraftRecoveryPanel");
   assertBefore(
     sync,
     "await uploadServerRecoveryCandidate({",
@@ -330,7 +330,8 @@ test("browser recovery sync removes local orphan bytes only after a successful d
     "await collaborationRecoveryStore.removeDurably(",
     "Yjs orphan upload"
   );
-  assert.match(sync, /if \(!accessiblePageIds\.has\(record\.pageId\)\)/);
+  assert.match(sync, /fetchAllPageSummaries\(\{ archived: "all" \}\)/);
+  assert.match(sync, /!accessiblePageIds\.has\(pageId\)/);
   assert.match(sync, /YJS_LEGACY_UPDATE/);
   assert.match(sync, /RECOVERY_GRANT_NOT_FOUND/);
 });
