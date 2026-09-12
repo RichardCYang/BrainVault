@@ -41,14 +41,17 @@ test("block move stays bound to the initiating navigation through transition and
   );
 });
 
-test("block move cleanup stays scoped to the source page after a committed move", async () => {
+test("block move cleanup stays scoped to the source page and exact pre-dispatch recovery versions", async () => {
   const source = (await readFile(appUrl, "utf8")).replace(/\r\n/g, "\n");
   const move = section(source, "async function moveBlockToPage", "\nasync function deleteBlockWithVersionCheck");
   assert.match(move, /const sourceDraftScope = getDraftScope\(pageId\);/);
+  assert.match(move, /const sourceDraftRecord = sourceDraftScope/);
+  assert.match(move, /const sourceDraftCleanupOrigins = new Map\(/);
   assert.match(
     move,
-    /pageDraftStore\.removeBlocks\(\s*sourceDraftScope\.userId,\s*sourceDraftScope\.pageId,\s*movedIds,/s
+    /pageDraftStore\.removeBlockIfUnchanged\(\{[\s\S]*?userId: sourceDraftScope\.userId,[\s\S]*?pageId: sourceDraftScope\.pageId,[\s\S]*?blockId: movedId,[\s\S]*?\.\.\.origin/
   );
+  assert.doesNotMatch(move, /pageDraftStore\.removeBlocks\(/);
   assert.doesNotMatch(move, /const draftScope = getDraftScope\(\);/);
 });
 

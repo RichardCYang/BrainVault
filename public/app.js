@@ -11958,6 +11958,32 @@ async function moveBlockToPage(
       expectedVersions,
       expectedSourcePageContentVersion: Number(state.selectedPage?.contentVersion ?? 1)
     });
+
+    // The move request can complete after another same-tab recovery write has
+    // replaced the draft that existed when the destructive intent was sent.
+    // Capture immutable cleanup origins now and acknowledge only those exact
+    // records after the server confirms the move.
+    const sourceDraftRecord = sourceDraftScope
+      ? pageDraftStore.loadPage(
+          sourceDraftScope.userId,
+          sourceDraftScope.pageId,
+          pageDraftSourceId
+        )
+      : null;
+    const sourceDraftCleanupOrigins = new Map(
+      task.payload.expectedVersions.flatMap(({ id }) => {
+        const draft = sourceDraftRecord?.blocks?.[id];
+        return draft
+          ? [[id, {
+              sourceId: pageDraftSourceId,
+              payload: draft.payload,
+              expectedVersion: draft.expectedVersion,
+              revision: draft.revision
+            }]]
+          : [];
+      })
+    );
+
     const data = await submitBlockMoveTask(task, scope, {
       requestGuard: isBlockMoveNavigationCurrent
     });
@@ -11984,16 +12010,23 @@ async function moveBlockToPage(
       }
     }
     // The durable cleanup belongs to the page that initiated the move, not to
-    // whichever page happens to be selected when the response arrives.
+    // whichever page happens to be selected when the response arrives. Remove
+    // only the exact recovery versions observed before dispatch; a newer draft
+    // written while the request was in flight is the user's recovery evidence
+    // for edits that were not part of the committed move.
     if (sourceDraftScope) {
-      checkDraftStoreWrite(
-        pageDraftStore.removeBlocks(
-          sourceDraftScope.userId,
-          sourceDraftScope.pageId,
-          movedIds,
-          pageDraftSourceId
-        )
-      );
+      for (const movedId of movedIds) {
+        const origin = sourceDraftCleanupOrigins.get(movedId);
+        if (!origin) continue;
+        checkDraftStoreWrite(
+          pageDraftStore.removeBlockIfUnchanged({
+            userId: sourceDraftScope.userId,
+            pageId: sourceDraftScope.pageId,
+            blockId: movedId,
+            ...origin
+          })
+        );
+      }
     }
     return data;
   });

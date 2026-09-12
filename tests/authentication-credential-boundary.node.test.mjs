@@ -715,7 +715,7 @@ test("block move response application stays fenced to the initiating authenticat
     "!isCurrentAuthenticatedSessionScope(scope)",
     moveResponseIndex
   );
-  const localCleanupIndex = move.indexOf("pageDraftStore.removeBlocks", moveResponseIndex);
+  const localCleanupIndex = move.indexOf("pageDraftStore.removeBlockIfUnchanged", moveResponseIndex);
   assert.ok(
     moveResponseIndex >= 0 && moveFenceIndex > moveResponseIndex && localCleanupIndex > moveFenceIndex,
     "the initiating auth generation must be revalidated before moved-block recovery drafts are removed"
