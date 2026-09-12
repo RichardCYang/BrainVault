@@ -315,23 +315,15 @@ test("server upload cleanup cannot delete a newer direct draft written during th
   assert.equal(store.loadPage("user-1", "page-1", "tab-a"), null);
 });
 
-test("browser recovery sync removes local orphan bytes only after a successful durable upload", () => {
+test("browser recovery sync uploads additively and never auto-deletes local recovery", () => {
   const app = read("public/app.js");
   const sync = section(app, "async function reconcileServerRecoveryCandidates()", "function appendPageDraftRecoveryPanel");
-  assertBefore(
-    sync,
-    "await uploadServerRecoveryCandidate({",
-    "await pageDraftStore.removePageIfUnchangedDurably(record)",
-    "direct orphan upload"
-  );
-  assertBefore(
-    sync,
-    "await uploadServerRecoveryCandidate({",
-    "await collaborationRecoveryStore.removeDurably(",
-    "Yjs orphan upload"
-  );
-  assert.match(sync, /fetchAllPageSummaries\(\{ archived: "all" \}\)/);
-  assert.match(sync, /!accessiblePageIds\.has\(pageId\)/);
+
+  assert.match(sync, /await uploadServerRecoveryCandidate\(\{/);
+  assert.doesNotMatch(sync, /pageDraftStore\.removePageIfUnchangedDurably\(/);
+  assert.doesNotMatch(sync, /collaborationRecoveryStore\.removeDurably\(/);
+  assert.doesNotMatch(sync, /fetchAllPageSummaries\(\{ archived: "all" \}\)/);
+  assert.doesNotMatch(sync, /!accessiblePageIds\.has\(pageId\)/);
   assert.match(sync, /YJS_LEGACY_UPDATE/);
   assert.match(sync, /RECOVERY_GRANT_NOT_FOUND/);
 });
