@@ -11983,6 +11983,12 @@ async function moveBlockToPage(
           : [];
       })
     );
+    const sourceBlockOrderCleanupOrigin = sourceDraftRecord?.blockOrder
+      ? {
+          mutationId: sourceDraftRecord.blockOrder.mutationId,
+          orderedIds: [...sourceDraftRecord.blockOrder.orderedIds]
+        }
+      : null;
 
     const data = await submitBlockMoveTask(task, scope, {
       requestGuard: isBlockMoveNavigationCurrent
@@ -12024,6 +12030,18 @@ async function moveBlockToPage(
             pageId: sourceDraftScope.pageId,
             blockId: movedId,
             ...origin
+          })
+        );
+      }
+      if (
+        sourceBlockOrderCleanupOrigin?.orderedIds.some((id) => movedIds.includes(id))
+      ) {
+        checkDraftStoreWrite(
+          pageDraftStore.acknowledgeBlockOrder({
+            userId: sourceDraftScope.userId,
+            pageId: sourceDraftScope.pageId,
+            sourceId: pageDraftSourceId,
+            mutationId: sourceBlockOrderCleanupOrigin.mutationId
           })
         );
       }

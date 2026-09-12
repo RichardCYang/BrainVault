@@ -103,7 +103,72 @@ function runScenario(fixed) {
   };
 }
 
+function saveOrder(store, mutationId, orderedIds) {
+  store.saveBlockOrder({
+    userId,
+    pageId,
+    sourceId,
+    parentBlockId: null,
+    orderedIds,
+    previousIds: [...orderedIds].reverse(),
+    mutationId,
+    items: orderedIds.map((id, index) => ({
+      id,
+      sortOrder: index,
+      parentBlockId: null,
+      expectedVersion: 7
+    }))
+  });
+}
+
+function runBlockOrderScenario({ fixed, writeNewerOrder = false }) {
+  const store = createPageDraftStore(new MemoryStorage(), { sourceId });
+  const initialIds = ["keep-block", blockId];
+  saveOrder(store, "order-before-move", initialIds);
+  const cleanup = store.loadPage(userId, pageId, sourceId)?.blockOrder ?? null;
+
+  if (writeNewerOrder) {
+    saveOrder(store, "order-newer", [blockId, "keep-block"]);
+  }
+
+  // A successful cross-page move removes blockId from the source page. The
+  // pre-move order is therefore obsolete and would surface as a recovery
+  // conflict on the next load if it is left behind.
+  if (
+    fixed
+    && cleanup?.orderedIds.includes(blockId)
+  ) {
+    store.acknowledgeBlockOrder({
+      userId,
+      pageId,
+      sourceId,
+      mutationId: cleanup.mutationId
+    });
+  }
+
+  const order = store.loadPage(userId, pageId, sourceId)?.blockOrder ?? null;
+  const serverIdsAfterMove = ["keep-block"];
+  const wouldBecomeRecoveryConflict = Boolean(
+    order
+    && (
+      serverIdsAfterMove.length !== order.orderedIds.length
+      || !serverIdsAfterMove.every((id) => order.orderedIds.includes(id))
+    )
+  );
+  return {
+    staleOrderRetained: Boolean(order),
+    mutationId: order?.mutationId ?? null,
+    orderedIds: order?.orderedIds ?? null,
+    wouldBecomeRecoveryConflict
+  };
+}
+
 console.log(JSON.stringify({
   vulnerable: runScenario(false),
-  fixed: runScenario(true)
+  fixed: runScenario(true),
+  blockOrder: {
+    vulnerable: runBlockOrderScenario({ fixed: false }),
+    fixed: runBlockOrderScenario({ fixed: true }),
+    fixedWithNewerOrder: runBlockOrderScenario({ fixed: true, writeNewerOrder: true })
+  }
 }, null, 2));

@@ -20,8 +20,16 @@ test("block move cleans only source recovery drafts captured before request disp
   const captureIndex = move.indexOf("const sourceDraftRecord = sourceDraftScope");
   const submitIndex = move.indexOf("const data = await submitBlockMoveTask(task, scope");
   const cleanupIndex = move.indexOf("pageDraftStore.removeBlockIfUnchanged", submitIndex);
+  const orderCaptureIndex = move.indexOf("const sourceBlockOrderCleanupOrigin =", captureIndex);
+  const orderCleanupIndex = move.indexOf("pageDraftStore.acknowledgeBlockOrder", submitIndex);
   assert.ok(captureIndex >= 0 && submitIndex > captureIndex && cleanupIndex > submitIndex);
+  assert.ok(orderCaptureIndex > captureIndex && orderCaptureIndex < submitIndex);
+  assert.ok(orderCleanupIndex > submitIndex);
   assert.match(move, /const sourceDraftCleanupOrigins = new Map\(/);
+  assert.match(
+    move,
+    /sourceBlockOrderCleanupOrigin\?\.orderedIds\.some\(\(id\) => movedIds\.includes\(id\)\)/
+  );
   assert.doesNotMatch(
     move,
     /pageDraftStore\.removeBlocks\(/,
@@ -42,4 +50,9 @@ test("standalone reproduction preserves a newer same-source recovery draft after
     result.fixed.markdown,
     "newer recovery edit written while move was in flight"
   );
+  assert.equal(result.blockOrder.vulnerable.staleOrderRetained, true);
+  assert.equal(result.blockOrder.vulnerable.wouldBecomeRecoveryConflict, true);
+  assert.equal(result.blockOrder.fixed.staleOrderRetained, false);
+  assert.equal(result.blockOrder.fixedWithNewerOrder.staleOrderRetained, true);
+  assert.equal(result.blockOrder.fixedWithNewerOrder.mutationId, "order-newer");
 });
