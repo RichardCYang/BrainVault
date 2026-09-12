@@ -9885,7 +9885,11 @@ async function reconcileServerRecoveryCandidates() {
   const accountId = state.user.id;
 
   recoveryCandidateSyncPromise = (async () => {
-    const accessiblePageIds = new Set(state.allPages.map((page) => page.id));
+    const isCurrentlySafeToRemoveLocalRecovery = (pageId) => (
+      state.user?.id === accountId
+      && !state.allPages.some((page) => page.id === pageId)
+      && state.selectedPage?.id !== pageId
+    );
     const directInspection = pageDraftStore.inspectUserDrafts(accountId);
     const collaborationInspection = collaborationRecoveryStore.inspectAccountRecords(accountId);
 
@@ -9900,10 +9904,12 @@ async function reconcileServerRecoveryCandidates() {
             generation: `draft-${record.updatedAt}`,
             payload
           });
-          // If the page is still accessible, retain the browser draft so its
-          // normal optimistic-concurrency recovery path can still run. When the
-          // page is gone, the server candidate is now the durable successor.
-          if (!accessiblePageIds.has(record.pageId)) {
+          // Re-check accessibility after the asynchronous upload. A page can be
+          // restored or recreated with the same stable id while this request is
+          // in flight. Never let the stale pre-upload workspace view authorize
+          // deletion of the browser copy needed by that newer live page. Account
+          // switches fail closed for the same reason.
+          if (isCurrentlySafeToRemoveLocalRecovery(record.pageId)) {
             await pageDraftStore.removePageIfUnchangedDurably(record);
           }
         } catch (error) {
@@ -9925,7 +9931,7 @@ async function reconcileServerRecoveryCandidates() {
             generation: record.generation,
             payload: record.update
           });
-          if (!accessiblePageIds.has(record.pageId)) {
+          if (isCurrentlySafeToRemoveLocalRecovery(record.pageId)) {
             await collaborationRecoveryStore.removeDurably(
               accountId,
               record.pageId,
