@@ -9586,7 +9586,8 @@ async function deleteNavigationTarget() {
         || localPageIds.some((pageId, index) => pageId !== pendingPageIds[index])
       ) {
         closeNavigationContextMenu();
-        await loadPages(elements.searchInput.value.trim(), state.activeTag);
+        await loadPages(elements.searchInput.value.trim(), state.activeTag, { navigationGeneration });
+        if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
         throw new Error(t("errors.PAGE_DELETE_SCOPE_CHANGED"));
       }
     } else {
@@ -9618,7 +9619,8 @@ async function deleteNavigationTarget() {
         })
       ) {
         closeNavigationContextMenu();
-        await loadPages(elements.searchInput.value.trim(), state.activeTag);
+        await loadPages(elements.searchInput.value.trim(), state.activeTag, { navigationGeneration });
+        if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
         throw new Error(t("errors.PAGE_DELETE_SCOPE_CHANGED"));
       }
       task = getPageDeleteTask(authenticationScope, target.id, deletionSnapshot.snapshot, serverPageIds);
@@ -9691,7 +9693,7 @@ async function deleteNavigationTarget() {
       resetPageEditTracking();
       state.selectedPage = null;
     }
-    await loadPages(elements.searchInput.value.trim(), state.activeTag);
+    await loadPages(elements.searchInput.value.trim(), state.activeTag, { navigationGeneration });
     if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
 
     if (shouldClearDeletedSelection || shouldLeaveDeletedCollection) {
@@ -18589,6 +18591,15 @@ async function loadPages(
   tag = state.activeTag,
   { navigationGeneration = null } = {}
 ) {
+  // A stale navigation must not even enter the page-list generation race.
+  // Otherwise it can increment workspacePageListLoadGeneration and cancel a
+  // newer navigation's in-flight list request before its own stale result is
+  // rejected below.
+  if (
+    navigationGeneration !== null
+    && !isCurrentWorkspaceNavigation(navigationGeneration)
+  ) return false;
+
   const loadGeneration = ++workspacePageListLoadGeneration;
   const authenticationScope = captureAuthenticatedSessionScope();
   const isLoadCurrent = () => (
@@ -21056,7 +21067,7 @@ elements.archivePageButton.addEventListener("click", async () => {
       state.selectedPage = null;
       state.workspaceView = "collection";
       state.activeCollectionId = parentCollectionId;
-      await loadPages(elements.searchInput.value.trim(), state.activeTag);
+      await loadPages(elements.searchInput.value.trim(), state.activeTag, { navigationGeneration });
       if (
         !isCurrentAuthenticatedSessionScope(authenticationScope)
         || !isCurrentWorkspaceNavigation(navigationGeneration)
