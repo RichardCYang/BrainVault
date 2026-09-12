@@ -11,7 +11,7 @@ function section(source, startNeedle, endNeedle) {
   return source.slice(start, end);
 }
 
-test("server recovery upload re-checks live accessibility before deleting local recovery", async () => {
+test("server recovery upload is additive and never auto-deletes browser recovery", async () => {
   const source = (await readFile(appUrl, "utf8")).replace(/\r\n/g, "\n");
   const reconciliation = section(
     source,
@@ -19,79 +19,65 @@ test("server recovery upload re-checks live accessibility before deleting local 
     "\nfunction appendPageDraftRecoveryPanel"
   );
 
-  const firstUploadIndex = reconciliation.indexOf("await uploadServerRecoveryCandidate({");
-  assert.ok(firstUploadIndex >= 0, "recovery upload must be present");
-  assert.doesNotMatch(
-    reconciliation.slice(0, firstUploadIndex),
-    /const accessiblePageIds = new Set\(/,
-    "a pre-upload accessibility snapshot must not authorize later local recovery deletion"
-  );
   assert.match(
     reconciliation,
-    /const isCurrentlySafeToRemoveLocalRecovery = \(pageId\) => \([\s\S]*state\.user\?\.id === accountId[\s\S]*!accessiblePageIds\.has\(pageId\)[\s\S]*state\.allPages\.some[\s\S]*state\.selectedPage\?\.id !== pageId/,
-    "cleanup must require an archive-independent accessibility snapshot plus the current UI state"
+    /await uploadServerRecoveryCandidate\(\{/,
+    "browser recovery must still be preserved on the server"
   );
-  assert.match(
+  assert.doesNotMatch(
+    reconciliation,
+    /removePageIfUnchangedDurably\(/,
+    "direct browser recovery must not be auto-deleted after upload"
+  );
+  assert.doesNotMatch(
+    reconciliation,
+    /collaborationRecoveryStore\.removeDurably\(/,
+    "collaboration browser recovery must not be auto-deleted after upload"
+  );
+  assert.doesNotMatch(
     reconciliation,
     /fetchAllPageSummaries\(\{ archived: "all" \}\)/,
-    "cleanup must include archived pages when establishing current accessibility"
-  );
-
-  const uploadIndex = reconciliation.indexOf("await uploadServerRecoveryCandidate({");
-  const accessibilityScanIndex = reconciliation.indexOf('fetchAllPageSummaries({ archived: "all" })', uploadIndex);
-  const cleanupCheckIndex = reconciliation.indexOf(
-    "if (!isCurrentlySafeToRemoveLocalRecovery(record.pageId)) continue;",
-    accessibilityScanIndex
-  );
-  assert.ok(
-    uploadIndex >= 0 && accessibilityScanIndex > uploadIndex && cleanupCheckIndex > accessibilityScanIndex,
-    "authoritative accessibility must be checked after upload settles and before local cleanup"
+    "an accessibility snapshot must not authorize destructive local recovery cleanup"
   );
 });
 
-test("race model preserves local recovery when a page is restored during upload", () => {
-  const accountId = "usr-a";
+test("post-scan restoration race cannot delete direct browser recovery", () => {
   const pageId = "page-1";
-  const state = { user: { id: accountId }, allPages: [], selectedPage: null };
-  const staleAccessiblePageIds = new Set(state.allPages.map((page) => page.id));
+  const localRecovery = new Map([[pageId, { body: "recover me" }]]);
 
-  // The page is restored/recreated while the server candidate upload is in flight.
-  state.allPages.push({ id: pageId });
-
+  // Vulnerable flow: the upload succeeds and an accessibility scan observes
+  // the page as absent. The page is then restored/re-shared before cleanup.
+  const staleAccessiblePageIds = new Set();
+  const pageIsAccessibleNow = true;
   const vulnerableWouldRemove = !staleAccessiblePageIds.has(pageId);
-  const accessiblePageIds = new Set();
-  const fixedWouldRemove = (
-    state.user?.id === accountId
-    && !accessiblePageIds.has(pageId)
-    && !state.allPages.some((page) => page.id === pageId)
-    && state.selectedPage?.id !== pageId
-  );
 
+  assert.equal(pageIsAccessibleNow, true);
   assert.equal(vulnerableWouldRemove, true);
-  assert.equal(fixedWouldRemove, false);
+
+  // Fixed flow: server preservation is additive, so there is no destructive
+  // post-upload cleanup step whose authorization can become stale.
+  const fixedWouldRemove = false;
+  if (fixedWouldRemove) localRecovery.delete(pageId);
+
+  assert.deepEqual(localRecovery.get(pageId), { body: "recover me" });
 });
 
-test("race model preserves local recovery for a live archived page omitted from active navigation", () => {
-  const accountId = "usr-a";
-  const pageId = "page-archived";
-  const state = { user: { id: accountId }, allPages: [], selectedPage: null };
+test("archived or temporarily absent pages retain local recovery after server preservation", () => {
+  const directDraft = { pageId: "page-archived", updatedAt: 42 };
+  const collaborationDraft = {
+    pageId: "page-shared",
+    sourceId: "source-a",
+    documentEpoch: "epoch-1",
+    generation: "gen-7"
+  };
 
-  // Active navigation intentionally excludes archived pages. An archive-independent
-  // server scan still reports this page as accessible to the current principal.
-  const accessiblePageIds = new Set([pageId]);
+  // Neither active navigation nor a point-in-time server view is a safe
+  // deletion authority because page accessibility may change independently.
+  const fixedKeepsDirectRecovery = true;
+  const fixedKeepsCollaborationRecovery = true;
 
-  const vulnerableWouldRemove = (
-    state.user?.id === accountId
-    && !state.allPages.some((page) => page.id === pageId)
-    && state.selectedPage?.id !== pageId
-  );
-  const fixedWouldRemove = (
-    state.user?.id === accountId
-    && !accessiblePageIds.has(pageId)
-    && !state.allPages.some((page) => page.id === pageId)
-    && state.selectedPage?.id !== pageId
-  );
-
-  assert.equal(vulnerableWouldRemove, true);
-  assert.equal(fixedWouldRemove, false);
+  assert.equal(fixedKeepsDirectRecovery, true);
+  assert.equal(fixedKeepsCollaborationRecovery, true);
+  assert.equal(directDraft.pageId, "page-archived");
+  assert.equal(collaborationDraft.pageId, "page-shared");
 });

@@ -9885,10 +9885,15 @@ async function reconcileServerRecoveryCandidates() {
   const accountId = state.user.id;
 
   recoveryCandidateSyncPromise = (async () => {
-    const uploadedDirectRecords = [];
-    const uploadedCollaborationRecords = [];
     const directInspection = pageDraftStore.inspectUserDrafts(accountId);
     const collaborationInspection = collaborationRecoveryStore.inspectAccountRecords(accountId);
+
+    // Server preservation is deliberately additive. Never auto-delete the
+    // browser recovery copy after upload based on a page-accessibility
+    // snapshot: access can be restored or re-shared between that network
+    // check and the later IndexedDB deletion. Exact-generation draft checks
+    // protect against local draft changes, but cannot make page accessibility
+    // and browser-storage cleanup atomic.
 
     if (directInspection.reliable && !directInspection.unreadableKeys.length) {
       for (const record of directInspection.records) {
@@ -9901,7 +9906,6 @@ async function reconcileServerRecoveryCandidates() {
             generation: `draft-${record.updatedAt}`,
             payload
           });
-          uploadedDirectRecords.push(record);
         } catch (error) {
           if (error?.code !== "RECOVERY_GRANT_NOT_FOUND") {
             console.warn("Failed to preserve a direct recovery candidate on the server", error);
@@ -9921,62 +9925,11 @@ async function reconcileServerRecoveryCandidates() {
             generation: record.generation,
             payload: record.update
           });
-          uploadedCollaborationRecords.push(record);
         } catch (error) {
           if (error?.code !== "RECOVERY_GRANT_NOT_FOUND") {
             console.warn("Failed to preserve a collaboration recovery candidate on the server", error);
           }
         }
-      }
-    }
-
-    if (
-      state.user?.id === accountId
-      && (uploadedDirectRecords.length || uploadedCollaborationRecords.length)
-    ) {
-      try {
-        // state.allPages intentionally contains only the active navigation set.
-        // Verify against one archive-independent server snapshot after uploads
-        // settle so an archived, restored, or recreated live page is never
-        // mistaken for an orphan merely because it is absent from navigation.
-        const accessiblePages = await fetchAllPageSummaries({ archived: "all" });
-        if (state.user?.id === accountId) {
-          const accessiblePageIds = new Set(accessiblePages.map((page) => page.id));
-          const isCurrentlySafeToRemoveLocalRecovery = (pageId) => (
-            state.user?.id === accountId
-            && !accessiblePageIds.has(pageId)
-            && !state.allPages.some((page) => page.id === pageId)
-            && state.selectedPage?.id !== pageId
-          );
-
-          for (const record of uploadedDirectRecords) {
-            if (!isCurrentlySafeToRemoveLocalRecovery(record.pageId)) continue;
-            try {
-              await pageDraftStore.removePageIfUnchangedDurably(record);
-            } catch (error) {
-              console.warn("Failed to remove a direct browser recovery candidate after server preservation", error);
-            }
-          }
-
-          for (const record of uploadedCollaborationRecords) {
-            if (!isCurrentlySafeToRemoveLocalRecovery(record.pageId)) continue;
-            try {
-              await collaborationRecoveryStore.removeDurably(
-                accountId,
-                record.pageId,
-                record.sourceId,
-                record.documentEpoch,
-                record.generation
-              );
-            } catch (error) {
-              console.warn("Failed to remove a collaboration browser recovery candidate after server preservation", error);
-            }
-          }
-        }
-      } catch (error) {
-        // If current accessibility cannot be established authoritatively, keep
-        // the browser recovery copy. The durable server candidate is additive.
-        console.warn("Failed to verify page accessibility before recovery cleanup", error);
       }
     }
 
