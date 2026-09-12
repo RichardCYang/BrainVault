@@ -12093,21 +12093,65 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
         task.payload.expectedVersions.map(({ id }) => id),
         { excludeSourceId: pageDraftSourceId }
       );
+
+      // A successful DELETE may complete after another local recovery write has
+      // replaced this tab's draft record. Capture the exact source records that
+      // existed at dispatch and acknowledge only those immutable versions below.
+      const sourceDraftRecord = scope
+        ? pageDraftStore.loadPage(scope.userId, scope.pageId, pageDraftSourceId)
+        : null;
+      const sourceDraftCleanupOrigins = deletedVersions
+        .map(({ id }) => {
+          const draft = sourceDraftRecord?.blocks?.[id];
+          return draft
+            ? {
+                blockId: id,
+                sourceId: pageDraftSourceId,
+                payload: draft.payload,
+                expectedVersion: draft.expectedVersion,
+                revision: draft.revision
+              }
+            : null;
+        })
+        .filter(Boolean);
+      const deletedSourceDraftIds = new Set(deletedVersions.map(({ id }) => id));
+      const sourceBlockOrderMutationId = sourceDraftRecord?.blockOrder?.orderedIds?.some(
+        (id) => deletedSourceDraftIds.has(id)
+      )
+        ? sourceDraftRecord.blockOrder.mutationId
+        : null;
+
       const data = await submitBlockDeleteTask(task, authenticationScope, {
         requestGuard: isDeleteNavigationCurrent
       });
       if (data === skippedApiRequest) return data;
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
-      for (const { id } of deletedVersions) blockDraftRenderSources.delete(id);
+      // These maps describe only the currently rendered editor. A late response
+      // from a superseded navigation must not clear metadata created by that view.
+      if (isDeleteNavigationCurrent()) {
+        for (const { id } of deletedVersions) blockDraftRenderSources.delete(id);
+      }
       if (scope) {
-        checkDraftStoreWrite(
-          pageDraftStore.removeBlocks(
-            scope.userId,
-            scope.pageId,
-            deletedVersions.map(({ id }) => id),
-            pageDraftSourceId
-          )
-        );
+        for (const { blockId: deletedBlockId, ...origin } of sourceDraftCleanupOrigins) {
+          checkDraftStoreWrite(
+            pageDraftStore.removeBlockIfUnchanged({
+              userId: scope.userId,
+              pageId: scope.pageId,
+              blockId: deletedBlockId,
+              ...origin
+            })
+          );
+        }
+        if (sourceBlockOrderMutationId) {
+          checkDraftStoreWrite(
+            pageDraftStore.acknowledgeBlockOrder({
+              userId: scope.userId,
+              pageId: scope.pageId,
+              sourceId: pageDraftSourceId,
+              mutationId: sourceBlockOrderMutationId
+            })
+          );
+        }
         for (const { blockId: deletedBlockId, origin } of recoveredConflictOrigins) {
           const removed = checkDraftStoreWrite(
             pageDraftStore.removeBlockIfUnchanged({
@@ -12117,7 +12161,11 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
               ...origin
             })
           );
-          if (removed && blockDraftConflictOrigins.get(deletedBlockId) === origin) {
+          if (
+            isDeleteNavigationCurrent()
+            && removed
+            && blockDraftConflictOrigins.get(deletedBlockId) === origin
+          ) {
             blockDraftConflictOrigins.delete(deletedBlockId);
           }
         }
