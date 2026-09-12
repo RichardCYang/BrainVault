@@ -20915,14 +20915,35 @@ elements.savePageButton.addEventListener("click", async () => {
     reportUnresolvedDraftConflict();
     return;
   }
+
+  // The edit-lock flush can outlive the page/navigation that initiated this
+  // explicit save. Bind the post-save list refresh to that exact context so a
+  // stale continuation cannot become the newest page-list generation and
+  // supersede a newer navigation's in-flight refresh.
+  const pageId = state.selectedPage.id;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  const navigationGeneration = workspaceNavigationGeneration;
+  const isSaveIntentCurrent = () => (
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+    && isCurrentWorkspaceNavigation(navigationGeneration)
+    && state.selectedPage?.id === pageId
+  );
+  if (!isSaveIntentCurrent()) return;
+
   try {
     await withPageEditLock(async () => {
-      await loadPages(elements.searchInput.value.trim(), state.activeTag);
+      if (!isSaveIntentCurrent()) return;
+      const refreshed = await loadPages(
+        elements.searchInput.value.trim(),
+        state.activeTag,
+        { navigationGeneration }
+      );
+      if (!refreshed || !isSaveIntentCurrent()) return;
       renderSelectedPage();
       setStatus(t("status.pageSaved"));
     });
   } catch (error) {
-    setStatus(error.message, true);
+    if (isSaveIntentCurrent()) setStatus(error.message, true);
   }
 });
 
