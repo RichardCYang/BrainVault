@@ -29,7 +29,11 @@ test("durable HTTP mutations are fenced from a workspace restore generation chan
 
   assert.match(
     sessions,
-    /AuthSessionBoundaryScope = Readonly<\{\s*authVersion: number;\s*workspaceGeneration: number;\s*sessionId: string;/
+    /AuthSessionScope = Readonly<\{\s*authVersion: number;\s*sessionId: string;/
+  );
+  assert.match(
+    sessions,
+    /AuthSessionBoundaryScope = AuthSessionScope & Readonly<\{\s*workspaceGeneration: number;/
   );
   const userLock = sessions.indexOf(
     '"SELECT auth_version, attachment_generation FROM users WHERE id = ? FOR UPDATE"'

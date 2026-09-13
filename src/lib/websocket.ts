@@ -83,6 +83,9 @@ export class WebSocketConnection {
   lastPongAt = Date.now();
 
   constructor(socket: Socket, maxMessageBytes: number) {
+    if (!Number.isSafeInteger(maxMessageBytes) || maxMessageBytes <= 0) {
+      throw new RangeError("WebSocket maxMessageBytes must be a positive safe integer");
+    }
     this.socket = socket;
     this.maxMessageBytes = maxMessageBytes;
     this.maxQueuedMessageBytes = Math.min(
@@ -111,12 +114,18 @@ export class WebSocketConnection {
   start(head: Buffer = Buffer.alloc(0)) {
     if (this.started) return;
     this.started = true;
-    this.socket.on("data", (chunk: Buffer) => this.consume(chunk));
+    this.socket.on("data", (chunk: Buffer) => this.handleIncomingData(chunk));
     this.socket.on("error", () => this.finishClose(1006, "Connection error"));
     this.socket.on("end", () => this.finishClose(this.receivedCloseCode, this.receivedCloseReason));
     this.socket.on("close", () => this.finishClose(this.receivedCloseCode, this.receivedCloseReason));
-    if (head.length) this.consume(head);
-    if (this.acceptingMessages && this.isOpen) this.socket.resume();
+    if (head.length) this.handleIncomingData(head);
+    if (this.acceptingMessages && this.isOpen) {
+      try {
+        this.socket.resume();
+      } catch (error) {
+        this.handleTransportFailure("resume", error);
+      }
+    }
   }
 
   sendText(value: string) {
@@ -126,7 +135,20 @@ export class WebSocketConnection {
 
   sendJson(value: unknown) {
     if (!this.isOpen || this.closeSent) return;
-    this.sendText(JSON.stringify(value));
+    let serialized: string | undefined;
+    try {
+      serialized = JSON.stringify(value);
+    } catch (error) {
+      console.error("WebSocket JSON serialization failed", error);
+      this.close(1011, "WebSocket JSON serialization failed");
+      return;
+    }
+    if (serialized === undefined) {
+      console.error("WebSocket JSON serialization failed: value is not JSON-serializable");
+      this.close(1011, "WebSocket JSON serialization failed");
+      return;
+    }
+    this.sendText(serialized);
   }
 
   sendBinary(value: Uint8Array | Buffer) {
@@ -150,6 +172,7 @@ export class WebSocketConnection {
     payload.write(safeReason, 2, "utf8");
     this.closeSent = true;
     this.writeFrame(0x8, payload, true);
+    if (!this.isOpen) return;
     const timer = setTimeout(() => this.terminate(), 2_000);
     timer.unref();
   }
@@ -158,7 +181,11 @@ export class WebSocketConnection {
     if (!this.open) return;
     this.stopAcceptingMessages();
     this.open = false;
-    this.socket.destroy();
+    try {
+      this.socket.destroy();
+    } catch (error) {
+      console.error("WebSocket socket destroy failed", error);
+    }
     this.finishClose(this.receivedCloseCode, this.receivedCloseReason);
   }
 
@@ -174,7 +201,26 @@ export class WebSocketConnection {
       this.terminate();
       return;
     }
-    this.socket.write(encodeFrame(opcode, payload));
+    try {
+      this.socket.write(encodeFrame(opcode, payload));
+    } catch (error) {
+      this.handleTransportFailure("write", error);
+    }
+  }
+
+  private handleIncomingData(chunk: Buffer) {
+    try {
+      this.consume(chunk);
+    } catch (error) {
+      this.handleTransportFailure("receive", error);
+    }
+  }
+
+  private handleTransportFailure(operation: string, error: unknown) {
+    console.error(`WebSocket socket ${operation} failed`, error);
+    this.receivedCloseCode = 1006;
+    this.receivedCloseReason = "Connection error";
+    this.terminate();
   }
 
   private protocolError(reason: string, code = 1002) {
@@ -443,7 +489,11 @@ export class WebSocketConnection {
     this.fragmentOpcode = null;
     this.fragmentParts = [];
     this.fragmentBytes = 0;
-    this.socket.pause();
+    try {
+      this.socket.pause();
+    } catch (error) {
+      console.error("WebSocket socket pause failed", error);
+    }
   }
 
   private handleCloseFrame(payload: Buffer) {
@@ -474,7 +524,12 @@ export class WebSocketConnection {
       this.closeSent = true;
       this.writeFrame(0x8, payload, true);
     }
-    this.socket.end();
+    if (!this.isOpen) return;
+    try {
+      this.socket.end();
+    } catch (error) {
+      this.handleTransportFailure("end", error);
+    }
   }
 
   private finishClose(code: number, reason: string) {
@@ -482,7 +537,11 @@ export class WebSocketConnection {
     this.closeNotified = true;
     this.stopAcceptingMessages();
     this.open = false;
-    this.closeHandler?.(code, reason);
+    try {
+      this.closeHandler?.(code, reason);
+    } catch (error) {
+      console.error("WebSocket close handler failed", error);
+    }
   }
 }
 

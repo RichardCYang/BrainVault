@@ -1681,7 +1681,10 @@ export class PageCollaborationHub {
       ? { type: "awareness-update", connectionId: client.id, state: null }
       : { type: "awareness-update", ...publicPresence(client, includeIdentity) };
     const targets = [...room.clients.values()].filter((target) => target.id !== client.id);
-    void Promise.all(targets.map(async (target) => {
+    // Presence fan-out is intentionally detached from the sender's request path,
+    // but every recipient task still needs an observer. allSettled prevents an
+    // unexpected target failure from becoming an unhandled rejection.
+    void Promise.allSettled(targets.map(async (target) => {
       // Presence is collaboration data too. Filter each recipient through the
       // same short-lived authorization verdict used for committed updates so a
       // stale/revoked collaborator cannot keep receiving cursor/identity state.
