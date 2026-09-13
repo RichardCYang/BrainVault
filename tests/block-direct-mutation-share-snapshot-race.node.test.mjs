@@ -40,7 +40,7 @@ test("locking page access can refresh every mutable authorization/scope dependen
   );
 });
 
-test("direct block update and delete refresh authorization after taking the current page lock", () => {
+test("direct block update, delete, and reorder refresh authorization after taking the current page lock", () => {
   const routes = source("src/routes/block.routes.ts");
   const update = section(
     routes,
@@ -48,6 +48,7 @@ test("direct block update and delete refresh authorization after taking the curr
     'blockRouter.post(\n  "/blocks/:blockId/move"'
   );
   const deletion = section(routes, 'blockRouter.delete(\n  "/blocks/:blockId"');
+  const reorder = section(routes, 'blockRouter.post(\n  "/pages/:pageId/blocks/reorder"');
 
   assert.match(
     update,
@@ -56,6 +57,10 @@ test("direct block update and delete refresh authorization after taking the curr
   assert.match(
     deletion,
     /getPageAccess\(block\.page_id, user\.id, client, \{ lockPage: true, lockAccess: true \}\)/
+  );
+  assert.match(
+    reorder,
+    /getPageAccess\(pageId, user\.id, client, \{ lockPage: true, lockAccess: true \}\)/
   );
 });
 

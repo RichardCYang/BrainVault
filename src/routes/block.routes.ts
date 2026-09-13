@@ -2192,7 +2192,7 @@ blockRouter.post(
 
       const result = await transaction(async (client) => {
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
-        const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
+        const lockedAccess = await getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true });
         const lockedPage = lockedAccess.page;
 
         if (mutationId) {
