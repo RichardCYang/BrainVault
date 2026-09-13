@@ -54,7 +54,7 @@ Run:
 npm run reproduce:backup-workspace-state-loss
 ```
 
-The reproducer reads the preserved Git `HEAD` version as the vulnerable baseline and compares it with the working tree. It proves that the baseline restore deletes pages whose foreign-key cascades remove both user-visible relations, while the current v4 source exports, validates, fingerprints, and reinserts both relations. It also models destination-account rebinding for history actor IDs and local custom-icon references.
+The reproducer reads the preserved Git `HEAD` version as the vulnerable baseline and compares it with the working tree. It proves that the baseline restore deletes pages whose foreign-key cascades remove both user-visible relations, while the then-current v4 source exported, validated, fingerprinted, and reinserted both relations. The current strict v5 contract and timestamp-fidelity follow-up are documented in `../2026-09-13/backup-v5-completeness-and-metadata-fidelity.md`. It also models destination-account rebinding for history actor IDs and local custom-icon references.
 
 A dependency-free regression test is included in `tests/backup-workspace-state-integrity.node.test.mjs` and runs as part of `npm run test:durability`.
 

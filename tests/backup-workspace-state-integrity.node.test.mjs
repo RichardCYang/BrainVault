@@ -6,16 +6,16 @@ import test from "node:test";
 
 const normalize = (value) => value.replace(/\r\n/g, "\n");
 
-test("backup v4 preserves page version history and owned-page navigation state", async () => {
+test("backup v5 preserves page version history and owned-page navigation state", async () => {
   const transfer = normalize(await readFile(new URL("../src/lib/data-transfer.ts", import.meta.url), "utf8"));
   const authRoutes = normalize(await readFile(new URL("../src/routes/auth.routes.ts", import.meta.url), "utf8"));
 
-  assert.match(transfer, /const uploadedAssetBackupVersion = 3;\nconst backupVersion = 4;/);
+  assert.match(transfer, /const uploadedAssetBackupVersion = 3;\nconst completeWorkspaceBackupVersion = 4;\nconst backupVersion = 5;/);
   assert.match(transfer, /pageVersions: z\.array\(pageVersionSchema\)/);
   assert.match(transfer, /navigationCollapsedPageIds: z\.array\(idSchema\)/);
   assert.match(transfer, /navigationPageOrder: z\.array\(navigationPageOrderSchema\)/);
-  assert.match(transfer, /Version 4 backups must declare page version history/);
-  assert.match(transfer, /Version 4 backups must declare owned-page navigation preferences/);
+  assert.match(transfer, /Version 4 and newer backups must declare page version history/);
+  assert.match(transfer, /Version 4 and newer backups must declare owned-page navigation preferences/);
   assert.match(transfer, /Page version edit version exceeds the current page version/);
   assert.match(transfer, /Page version content version exceeds the current page version/);
   assert.match(transfer, /FROM page_versions pv INNER JOIN pages p ON p\.id = pv\.page_id[\s\S]*?WHERE p\.owner_id = \?/);

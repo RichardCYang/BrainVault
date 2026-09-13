@@ -2398,7 +2398,7 @@ paths:
   /api/data/export:
     get:
       summary: Export the authenticated account workspace as a complete BrainVault ZIP backup
-      description: Streams a complete workspace backup under a per-authenticated-user rate limit. Current version 4 exports include direct page grants, collection grants, page version/history and navigation state, every regular account attachment-upload file (including deliberately retained unlinked files), custom page-cover bytes, every uploaded custom-icon file retained for the account, and custom-icon library/removal state. Security credentials and the historical Yjs update log are excluded.
+      description: Streams a complete workspace backup under a per-authenticated-user rate limit. Current version 5 exports require direct page grants, collection grants (including their update timestamps), page comments, page version/history and navigation state, every regular account attachment-upload file (including deliberately retained unlinked files), custom page-cover bytes, every uploaded custom-icon file retained for the account, and custom-icon library/removal state. Security credentials and the historical Yjs update log are excluded.
       responses:
         '200':
           description: Lossless workspace backup containing the manifest, page and collection sharing grants, all account attachment-upload bytes, page-cover bytes, and uploaded custom-icon bytes

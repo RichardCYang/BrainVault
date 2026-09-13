@@ -106,9 +106,9 @@ Removing a collection grant does not blindly disable collaboration for every mem
 
 ## Backup and restore
 
-Current version 4 backups can include `data.collectionShares` alongside `data.pageShares`. Collection records preserve the collection ID, stable collaborator account ID, username, permission, and creation time. Restore validates the collaborator identity before destructive workspace replacement, rebuilds `page_collection_memberships`, and recreates collection grants with fresh generations.
+Current version 5 backups require `data.collectionShares` alongside `data.pageShares`. Collection records preserve the collection ID, stable collaborator account ID, username, permission, creation time, and update time. Restore validates the collaborator identity before destructive workspace replacement, rebuilds `page_collection_memberships`, and recreates collection grants with fresh generations while preserving the source grant timestamps.
 
-For older version 4 archives that predate explicit `collectionShares`, BrainVault preserves currently valid collection grants for collection IDs that survive the restore rather than silently deleting them. Backups from versions before v4 cannot declare collection-share data.
+For older version 4 archives that predate explicit `collectionShares`, BrainVault preserves currently valid collection grants for collection IDs that survive the restore rather than silently deleting them. Version 4 collection records that predate `updated_at` remain importable with their historical timestamp fallback. Backups from versions before v4 cannot declare collection-share data; v5 is the strict current export contract.
 
 ## Troubleshooting
 

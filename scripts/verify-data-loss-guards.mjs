@@ -625,6 +625,18 @@ assert(
 );
 
 assert(
+  dataTransferSource.includes("const completeWorkspaceBackupVersion = 4;\nconst backupVersion = 5;")
+    && dataTransferSource.includes("Version 5 backups must declare page sharing grants")
+    && dataTransferSource.includes("Version 5 backups must declare collection sharing grants")
+    && dataTransferSource.includes("Version 5 backups must declare page comments")
+    && dataTransferSource.includes("Version 5 backups must declare owned-page navigation order")
+    && dataTransferSource.includes("Version 5 collection shares must preserve their update timestamp")
+    && dataTransferSource.includes("DATE_FORMAT(cs.updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at")
+    && dataTransferSource.includes("share.createdAt, share.updatedAt"),
+  "Current-format backup validation can still accept an incomplete workspace or lose collection-share update metadata"
+);
+
+assert(
   dataTransferSource.includes("ps.user_id AS shared_user_id")
     && dataTransferSource.includes("u.username AS shared_username")
     && dataTransferSource.includes("pageShares: snapshot.pageShares")

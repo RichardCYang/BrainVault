@@ -88,7 +88,8 @@ const backupFormat = "brainvault-backup";
 const legacyBackupVersion = 1;
 const pageCoverFileBackupVersion = 2;
 const uploadedAssetBackupVersion = 3;
-const backupVersion = 4;
+const completeWorkspaceBackupVersion = 4;
+const backupVersion = 5;
 const maxManifestBytes = env.DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024;
 const windowsReservedDeviceNamePattern = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 const idSchema = z
@@ -264,7 +265,10 @@ const collectionShareSchema = z.object({
   shared_user_id: idSchema,
   shared_username: z.string().min(3).max(50).regex(/^[a-zA-Z0-9._-]+$/),
   permission: z.enum(["READ", "WRITE", "ADMIN"]),
-  created_at: timestampSchema
+  created_at: timestampSchema,
+  // Optional only for version 4 compatibility. Version 5 exports and requires
+  // this user-visible grant modification timestamp for lossless round trips.
+  updated_at: timestampSchema.optional()
 }).strict();
 const pageCommentSchema = z.object({
   id: idSchema,
@@ -350,7 +354,10 @@ const pageVersionSchema = z.object({
 
 const navigationPageOrderSchema = z.object({
   page_id: idSchema,
-  sort_order: z.number().int().min(0).max(dataTransferResourceLimits.maxPages - 1)
+  sort_order: z.number().int().min(0).max(dataTransferResourceLimits.maxPages - 1),
+  // Optional only for version 4 compatibility. Version 5 preserves the source
+  // timestamp instead of silently replacing it with restore time.
+  updated_at: timestampSchema.optional()
 }).strict();
 
 const manifestSchema = z.object({
@@ -359,6 +366,7 @@ const manifestSchema = z.object({
     z.literal(legacyBackupVersion),
     z.literal(pageCoverFileBackupVersion),
     z.literal(uploadedAssetBackupVersion),
+    z.literal(completeWorkspaceBackupVersion),
     z.literal(backupVersion)
   ]),
   exportedAt: exportedAtTimestampSchema,
@@ -379,18 +387,17 @@ const manifestSchema = z.object({
     // Optional only for backward compatibility with backups exported before
     // page sharing relationships became part of the complete workspace format.
     pageShares: z.array(pageShareSchema).max(dataTransferResourceLimits.maxPageShares).optional(),
-    // Added compatibly to version 4. Older v4 backups preserve their current
-    // collection grants during restore; new exports round-trip them explicitly.
+    // Added compatibly to version 4, but required by version 5 so a current
+    // backup cannot silently omit collection grants and still validate.
     collectionShares: z.array(collectionShareSchema).max(dataTransferResourceLimits.maxPageShares).optional(),
-    // Added compatibly to version 4. Older v4 backups without page comments
-    // remain importable, while new backups preserve page discussions.
+    // Added compatibly to version 4, but required by version 5 so a current
+    // backup cannot silently omit page discussions and still validate.
     pageComments: z.array(pageCommentSchema).max(dataTransferResourceLimits.maxPageComments).optional(),
-    // Version 4 makes user-visible page history and owned-page navigation state
-    // part of the complete workspace round trip. Older backups did not carry it.
+    // Version 4 introduced user-visible page history and navigation state.
+    // Version 5 retains v4 import compatibility while making all current
+    // workspace-state sections explicit and complete.
     pageVersions: z.array(pageVersionSchema).max(dataTransferResourceLimits.maxPageVersions).optional(),
     navigationCollapsedPageIds: z.array(idSchema).max(dataTransferResourceLimits.maxPages).optional(),
-    // Added compatibly to version 4: older v4 backups without this preference
-    // remain importable, while new backups preserve explicit sidebar order.
     navigationPageOrder: z.array(navigationPageOrderSchema).max(dataTransferResourceLimits.maxPages).optional()
   }).strict(),
   attachments: z.array(attachmentSchema).max(dataTransferResourceLimits.maxAttachments),
@@ -459,22 +466,81 @@ const manifestSchema = z.object({
       message: "Backups before version 3 cannot declare uploaded custom icon state"
     });
   }
-  if (manifest.version === backupVersion && !manifest.data.pageVersions) {
+  if (manifest.version >= completeWorkspaceBackupVersion && !manifest.data.pageVersions) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["data", "pageVersions"],
-      message: "Version 4 backups must declare page version history"
+      message: "Version 4 and newer backups must declare page version history"
     });
   }
-  if (manifest.version === backupVersion && !manifest.data.navigationCollapsedPageIds) {
+  if (manifest.version >= completeWorkspaceBackupVersion && !manifest.data.navigationCollapsedPageIds) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["data", "navigationCollapsedPageIds"],
-      message: "Version 4 backups must declare owned-page navigation preferences"
+      message: "Version 4 and newer backups must declare owned-page navigation preferences"
+    });
+  }
+  if (manifest.version === backupVersion) {
+    if (manifest.account.theme === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["account", "theme"],
+        message: "Version 5 backups must declare the account theme"
+      });
+    }
+    for (const [field, value, message] of [
+      ["pageShares", manifest.data.pageShares, "Version 5 backups must declare page sharing grants"],
+      ["collectionShares", manifest.data.collectionShares, "Version 5 backups must declare collection sharing grants"],
+      ["pageComments", manifest.data.pageComments, "Version 5 backups must declare page comments"],
+      ["navigationPageOrder", manifest.data.navigationPageOrder, "Version 5 backups must declare owned-page navigation order"]
+    ] as const) {
+      if (!value) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["data", field],
+          message
+        });
+      }
+    }
+    manifest.data.pages.forEach((page, index) => {
+      if (page.cover_position_x === undefined || page.cover_position_y === undefined) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["data", "pages", index],
+          message: "Version 5 pages must preserve both cover position coordinates"
+        });
+      }
+    });
+    manifest.data.pageShares?.forEach((share, index) => {
+      if (!share.shared_user_id) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["data", "pageShares", index, "shared_user_id"],
+          message: "Version 5 page shares must bind the collaborator account ID"
+        });
+      }
+    });
+    manifest.data.collectionShares?.forEach((share, index) => {
+      if (!share.updated_at) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["data", "collectionShares", index, "updated_at"],
+          message: "Version 5 collection shares must preserve their update timestamp"
+        });
+      }
+    });
+    manifest.data.navigationPageOrder?.forEach((item, index) => {
+      if (!item.updated_at) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["data", "navigationPageOrder", index, "updated_at"],
+          message: "Version 5 navigation order entries must preserve their update timestamp"
+        });
+      }
     });
   }
   if (
-    manifest.version < backupVersion
+    manifest.version < completeWorkspaceBackupVersion
     && (
       manifest.data.collectionShares
       || manifest.data.pageComments
@@ -547,6 +613,7 @@ type WorkspaceRestoreCollectionShareRow = {
   shared_by: string;
   generation: string;
   shared_at: string;
+  updated_at: string;
 };
 
 type WorkspaceRestorePageCommentRow = {
@@ -601,6 +668,7 @@ type RestoredCollectionShare = {
   userId: string;
   permission: "READ" | "WRITE" | "ADMIN";
   createdAt: string;
+  updatedAt: string;
 };
 
 type RestoreCollectionSharingPlan = {
@@ -900,7 +968,8 @@ async function createWorkspaceRestoreSnapshot(
   );
   const collectionShares = await client.query<WorkspaceRestoreCollectionShareRow>(
     `SELECT cs.collection_id, cs.user_id, cs.permission, cs.shared_by, cs.generation,
-            DATE_FORMAT(cs.created_at, '%Y-%m-%d %H:%i:%s.%f') AS shared_at
+            DATE_FORMAT(cs.created_at, '%Y-%m-%d %H:%i:%s.%f') AS shared_at,
+            DATE_FORMAT(cs.updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at
      FROM collection_shares cs INNER JOIN pages p ON p.id = cs.collection_id
      WHERE p.owner_id = ? AND p.is_collection = 1
      ORDER BY cs.collection_id ASC, cs.user_id ASC${lockClause}`,
@@ -935,8 +1004,9 @@ async function createWorkspaceRestoreSnapshot(
      ORDER BY np.page_id ASC${lockClause}`,
     [userId, userId]
   )).map((row) => row.page_id);
-  const navigationPageOrder = await client.query<{ page_id: string; sort_order: number }>(
-    `SELECT no.page_id, no.sort_order
+  const navigationPageOrder = await client.query<{ page_id: string; sort_order: number; updated_at: string }>(
+    `SELECT no.page_id, no.sort_order,
+            DATE_FORMAT(no.updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at
      FROM user_navigation_page_order no
      INNER JOIN pages p ON p.id = no.page_id
      WHERE no.user_id = ? AND p.owner_id = ?
@@ -995,7 +1065,7 @@ async function createWorkspaceRestoreSnapshot(
   }
   for (const share of collectionShares) {
     hash.update(
-      `collection-share\0${share.collection_id}\0${share.user_id}\0${share.permission}\0${share.shared_by}\0${share.generation}\0${share.shared_at}\n`
+      `collection-share\0${share.collection_id}\0${share.user_id}\0${share.permission}\0${share.shared_by}\0${share.generation}\0${share.shared_at}\0${share.updated_at}\n`
     );
   }
   for (const comment of pageComments) {
@@ -1010,7 +1080,7 @@ async function createWorkspaceRestoreSnapshot(
     hash.update(`navigation-collapsed\0${pageId}\n`);
   }
   for (const item of navigationPageOrder) {
-    hash.update(`navigation-order\0${item.page_id}\0${Number(item.sort_order)}\n`);
+    hash.update(`navigation-order\0${item.page_id}\0${Number(item.sort_order)}\0${item.updated_at}\n`);
   }
   for (const icon of customIcons) {
     hash.update(
@@ -1633,7 +1703,8 @@ export async function prepareUserDataBackup(userId: string) {
       );
       const collectionShares = await client.query<BackupCollectionShare>(
         `SELECT cs.collection_id, cs.user_id AS shared_user_id, u.username AS shared_username, cs.permission,
-                DATE_FORMAT(cs.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
+                DATE_FORMAT(cs.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at,
+                DATE_FORMAT(cs.updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at
          FROM collection_shares cs
          INNER JOIN pages p ON p.id = cs.collection_id
          INNER JOIN users u ON u.id = cs.user_id
@@ -1672,8 +1743,9 @@ export async function prepareUserDataBackup(userId: string) {
          ORDER BY np.page_id ASC`,
         [userId, userId]
       )).map((row) => row.page_id);
-      const navigationPageOrder = await client.query<{ page_id: string; sort_order: number }>(
-        `SELECT no.page_id, no.sort_order
+      const navigationPageOrder = await client.query<{ page_id: string; sort_order: number; updated_at: string }>(
+        `SELECT no.page_id, no.sort_order,
+                DATE_FORMAT(no.updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at
          FROM user_navigation_page_order no
          INNER JOIN pages p ON p.id = no.page_id
          WHERE no.user_id = ? AND p.owner_id = ?
@@ -1980,7 +2052,8 @@ export async function prepareUserDataBackup(userId: string) {
         navigationCollapsedPageIds: snapshot.navigationCollapsedPageIds,
         navigationPageOrder: snapshot.navigationPageOrder.map((item) => ({
           page_id: item.page_id,
-          sort_order: Number(item.sort_order)
+          sort_order: Number(item.sort_order),
+          updated_at: item.updated_at
         }))
       },
       attachments: attachmentFiles.map((item) => ({
@@ -2341,7 +2414,8 @@ async function prepareRestoreCollectionSharingPlan(
         collectionId: share.collection_id,
         userId: share.user_id,
         permission: share.permission,
-        createdAt: share.shared_at
+        createdAt: share.shared_at,
+        updatedAt: share.updated_at
       }));
     for (const group of batch([...new Set(shares.map((share) => share.userId))])) {
       if (!group.length) continue;
@@ -2381,7 +2455,8 @@ async function prepareRestoreCollectionSharingPlan(
       collectionId: share.collection_id,
       userId: target.id,
       permission: share.permission,
-      createdAt: share.created_at
+      createdAt: share.created_at,
+      updatedAt: share.updated_at ?? share.created_at
     };
   });
 
@@ -2668,7 +2743,7 @@ async function importRows(
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         share.collectionId, share.userId, share.permission, userId, createId("cshare"),
-        share.createdAt, share.createdAt
+        share.createdAt, share.updatedAt
       ]
     );
   }
@@ -2758,7 +2833,7 @@ async function importRows(
     );
   }
 
-  if (manifest.version === backupVersion) {
+  if (manifest.version >= completeWorkspaceBackupVersion) {
     for (const version of manifest.data.pageVersions ?? []) {
       await client.execute(
         `INSERT INTO page_versions
@@ -2794,10 +2869,17 @@ async function importRows(
       );
     }
     for (const item of manifest.data.navigationPageOrder ?? []) {
-      await client.execute(
-        `INSERT INTO user_navigation_page_order (user_id, page_id, sort_order) VALUES (?, ?, ?)`,
-        [userId, item.page_id, item.sort_order]
-      );
+      if (item.updated_at) {
+        await client.execute(
+          `INSERT INTO user_navigation_page_order (user_id, page_id, sort_order, updated_at) VALUES (?, ?, ?, ?)`,
+          [userId, item.page_id, item.sort_order, item.updated_at]
+        );
+      } else {
+        await client.execute(
+          `INSERT INTO user_navigation_page_order (user_id, page_id, sort_order) VALUES (?, ?, ?)`,
+          [userId, item.page_id, item.sort_order]
+        );
+      }
     }
   }
 
