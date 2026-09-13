@@ -30,7 +30,10 @@ test("passkey registration exposes an explicit standards-based QR/hybrid path", 
   assert.match(index, /id="account-passkey-registration-target"/);
   assert.match(index, /option value="automatic"/);
   assert.match(index, /option value="remote"/);
-  assert.match(client, /body:\s*\{ currentPassword, name, registrationTarget \}/);
+  assert.match(
+    client,
+    /body:\s*\{\s*currentPassword,\s*name,\s*registrationTarget,\s*\.\.\.\(stepUpToken\s*\?\s*\{\s*stepUpToken\s*\}\s*:\s*\{\s*\}\s*\)\s*\}/
+  );
   assert.match(client, /PublicKeyCredential\.getClientCapabilities/);
   assert.match(client, /capabilities\?\.hybridTransport/);
   assert.match(client, /normalizePasskeyRegistrationError\(error, registrationTarget\)/);
