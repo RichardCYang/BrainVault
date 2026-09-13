@@ -19,16 +19,12 @@ test("collection ADMIN downgrade cascades legacy direct grants created by that a
     'collectionSharingRouter.delete(\n  "/collections/:collectionId/shares/:userId"'
   );
 
-  assert.match(patch, /if \(permission !== "ADMIN"\) \{/);
-  assert.match(
-    patch,
-    /SELECT user_id, generation[\s\S]*WHERE page_id = \? AND shared_by = \? AND permission = 'EDIT'[\s\S]*FOR UPDATE/
-  );
-  assert.match(patch, /cascadedDirectGrants\.push\(\{ pageId: page\.id, userId: grant\.user_id, generation: grant\.generation \}\)/);
+  assert.match(patch, /permission !== "ADMIN"[\s\S]*lockDelegatedDirectGrants\(pages, revokedGrantorIds, client\)/);
+  assert.match(route, /async function lockDelegatedDirectGrants\([\s\S]*FROM page_shares[\s\S]*shared_by IN/);
   assert.match(patch, /await assertNoActiveCollaborationWriteLeases\(client, \[\.\.\.fencedPageIds\]\)/);
   assert.match(patch, /await preserveRevokedGrantRecovery\(page, ownerId, principalId, client\)/);
-  assert.match(patch, /DELETE FROM page_shares WHERE page_id = \? AND shared_by = \?/);
-  assert.match(patch, /return \{ updated, oldGeneration: existing\.generation, pages, cascadedDirectGrants \}/);
+  assert.match(route, /DELETE FROM page_shares WHERE page_id = \? AND shared_by = \?/);
+  assert.match(patch, /cascadedCollectionGrants,[\s\S]*cascadedDirectGrants/);
   assert.match(patch, /for \(const grant of result\.cascadedDirectGrants\)/);
   assert.match(
     patch,

@@ -104,7 +104,7 @@ const createBlockSchema = z.object({
   type: blockTypeSchema.default("MARKDOWN"),
   markdown: z.string().max(20_000).default(""),
   checked: z.boolean().optional(),
-  parentBlockId: z.string().min(1).nullable().optional(),
+  parentBlockId: routeIdSchema.nullable().optional(),
   sortOrder: blockSortOrderSchema.optional(),
   metadata: metadataSchema,
   basePageContentVersion: safeVersionSchema.optional(),
@@ -115,7 +115,7 @@ const updateBlockSchema = z.object({
   type: blockTypeSchema.optional(),
   markdown: z.string().max(20_000).optional(),
   checked: z.boolean().optional(),
-  parentBlockId: z.string().min(1).nullable().optional(),
+  parentBlockId: routeIdSchema.nullable().optional(),
   sortOrder: blockSortOrderSchema.optional(),
   metadata: metadataSchema.nullable().optional(),
   expectedVersion: safeVersionSchema,
@@ -124,7 +124,7 @@ const updateBlockSchema = z.object({
 });
 
 const versionSnapshotSchema = z.object({
-  id: z.string().min(1).max(64),
+  id: routeIdSchema,
   version: safeVersionSchema
 });
 
@@ -396,8 +396,12 @@ const reorderSchema = z.object({
 
 const attachmentFormSchema = z.object({
   parentBlockId: z.preprocess(
-    (value) => (typeof value === "string" && value.trim() ? value.trim() : null),
-    z.string().min(1).nullable()
+    (value) => {
+      if (value === undefined || value === null) return null;
+      if (typeof value !== "string") return value;
+      return value.trim() || null;
+    },
+    routeIdSchema.nullable()
   ),
   sortOrder: z.preprocess(
     (value) => (value === undefined || value === "" ? undefined : Number(value)),

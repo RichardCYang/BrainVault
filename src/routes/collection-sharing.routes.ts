@@ -229,6 +229,136 @@ async function lockCollectionDocumentPages(collectionId: string, client: DbClien
   );
 }
 
+type DelegatedCollectionGrant = Readonly<{
+  userId: string;
+  permission: CollectionSharePermission;
+  generation: string;
+  sharedBy: string;
+}>;
+
+type DelegatedDirectGrant = Readonly<{
+  pageId: string;
+  userId: string;
+  generation: string;
+}>;
+
+async function lockDelegatedCollectionGrantCascade(
+  collectionId: string,
+  rootGrantorId: string,
+  client: DbClient
+): Promise<DelegatedCollectionGrant[]> {
+  // A collection ADMIN can delegate collection access to another account, and
+  // that ADMIN can delegate again. The shared_by provenance is therefore a
+  // grant graph, not merely audit metadata. Lock the complete collection grant
+  // set while the collection root is locked and walk only the subtree whose
+  // authority descends from the grant being revoked. A grant re-authorized by
+  // the owner or another surviving administrator has a different shared_by and
+  // intentionally falls outside this cascade.
+  const rows = await client.query<{
+    user_id: string;
+    permission: CollectionSharePermission;
+    generation: string;
+    shared_by: string;
+  }>(
+    `SELECT user_id, permission, generation, shared_by
+     FROM collection_shares
+     WHERE collection_id = ?
+     ORDER BY user_id ASC
+     FOR UPDATE`,
+    [collectionId]
+  );
+
+  const byGrantor = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const children = byGrantor.get(row.shared_by) ?? [];
+    children.push(row);
+    byGrantor.set(row.shared_by, children);
+  }
+
+  const cascade: DelegatedCollectionGrant[] = [];
+  const queue = [rootGrantorId];
+  const includedUsers = new Set<string>([rootGrantorId]);
+  for (let index = 0; index < queue.length; index += 1) {
+    const grantorId = queue[index]!;
+    for (const child of byGrantor.get(grantorId) ?? []) {
+      // Defensive cycle handling also prevents a self-authored grant from
+      // re-adding the root account to its own revocation cascade.
+      if (includedUsers.has(child.user_id)) continue;
+      includedUsers.add(child.user_id);
+      cascade.push({
+        userId: child.user_id,
+        permission: child.permission,
+        generation: child.generation,
+        sharedBy: child.shared_by
+      });
+      queue.push(child.user_id);
+    }
+  }
+  return cascade;
+}
+
+async function lockDelegatedDirectGrants(
+  pages: PageRow[],
+  grantorIds: string[],
+  client: DbClient
+): Promise<DelegatedDirectGrant[]> {
+  const uniqueGrantorIds = [...new Set(grantorIds)].sort();
+  if (uniqueGrantorIds.length === 0) return [];
+  const grantorPlaceholders = uniqueGrantorIds.map(() => "?").join(", ");
+  const grants: DelegatedDirectGrant[] = [];
+  for (const page of pages) {
+    const delegated = await client.query<{ user_id: string; generation: string }>(
+      `SELECT user_id, generation
+       FROM page_shares
+       WHERE page_id = ? AND shared_by IN (${grantorPlaceholders}) AND permission = 'EDIT'
+       ORDER BY user_id ASC
+       FOR UPDATE`,
+      [page.id, ...uniqueGrantorIds]
+    );
+    for (const grant of delegated) {
+      grants.push({ pageId: page.id, userId: grant.user_id, generation: grant.generation });
+    }
+  }
+  return grants;
+}
+
+async function deleteDelegatedCollectionGrantCascade(
+  collectionId: string,
+  grants: DelegatedCollectionGrant[],
+  client: DbClient
+) {
+  for (const grant of grants) {
+    const deletion = await client.execute<{ affectedRows: number }>(
+      `DELETE FROM collection_shares
+       WHERE collection_id = ? AND user_id = ? AND generation = ?`,
+      [collectionId, grant.userId, grant.generation]
+    );
+    if (Number(deletion.affectedRows) !== 1) {
+      throw new ApiError(
+        409,
+        "COLLECTION_SHARE_GENERATION_CHANGED",
+        "A delegated collection grant changed while its parent authority was being revoked. Refresh before retrying."
+      );
+    }
+  }
+}
+
+async function deleteDelegatedDirectGrants(
+  pages: PageRow[],
+  grantorIds: string[],
+  client: DbClient
+) {
+  const uniqueGrantorIds = [...new Set(grantorIds)].sort();
+  for (const page of pages) {
+    for (const grantorId of uniqueGrantorIds) {
+      await client.execute(
+        "DELETE FROM page_shares WHERE page_id = ? AND shared_by = ?",
+        [page.id, grantorId]
+      );
+    }
+  }
+}
+
 async function resetCollaborationForFirstShare(
   page: PageRow,
   ownerId: string,
@@ -542,31 +672,28 @@ collectionSharingRouter.patch(
           );
         }
 
-        // Older BrainVault releases allowed collection administrators to mint
-        // direct EDIT grants on descendant pages. Losing ADMIN authority must
-        // revoke those delegated grants just like removing the collection share
-        // does. Also clean up any already-stranded legacy grants whenever a
-        // non-ADMIN permission is saved.
-        const cascadedDirectGrants: Array<{ pageId: string; userId: string; generation: string }> = [];
-        if (permission !== "ADMIN") {
-          for (const page of pages) {
-            const delegated = await client.query<{ user_id: string; generation: string }>(
-              `SELECT user_id, generation
-               FROM page_shares
-               WHERE page_id = ? AND shared_by = ? AND permission = 'EDIT'
-               ORDER BY user_id ASC
-               FOR UPDATE`,
-              [page.id, sharedUserId]
-            );
-            for (const grant of delegated) {
-              cascadedDirectGrants.push({ pageId: page.id, userId: grant.user_id, generation: grant.generation });
-            }
-          }
-        }
+        // Collection grants can themselves be delegated by an ADMIN. Once that
+        // ADMIN loses administration authority, every grant whose provenance is
+        // rooted in that authority must be revoked as well. Otherwise a delegated
+        // ADMIN remains capable of administering the collection after its parent
+        // grant has been downgraded. Clean legacy direct grants from every
+        // principal in the same revoked delegation subtree at the same time.
+        const cascadedCollectionGrants = permission !== "ADMIN"
+          ? await lockDelegatedCollectionGrantCascade(collectionId, sharedUserId, client)
+          : [];
+        const revokedGrantorIds = permission !== "ADMIN"
+          ? [sharedUserId, ...cascadedCollectionGrants.map((grant) => grant.userId)]
+          : [];
+        const cascadedDirectGrants = permission !== "ADMIN"
+          ? await lockDelegatedDirectGrants(pages, revokedGrantorIds, client)
+          : [];
 
         const writeAuthorityRevoked = existing.permission !== "READ" && permission === "READ";
+        const delegatedCollectionWriteRevoked = cascadedCollectionGrants.some(
+          (grant) => grant.permission !== "READ"
+        );
         const fencedPageIds = new Set<string>();
-        if (writeAuthorityRevoked) {
+        if (writeAuthorityRevoked || delegatedCollectionWriteRevoked) {
           for (const page of pages) fencedPageIds.add(page.id);
         }
         for (const grant of cascadedDirectGrants) fencedPageIds.add(grant.pageId);
@@ -579,6 +706,9 @@ collectionSharingRouter.patch(
         for (const page of pages) {
           const principals = new Set<string>();
           if (writeAuthorityRevoked) principals.add(sharedUserId);
+          for (const grant of cascadedCollectionGrants) {
+            if (grant.permission !== "READ") principals.add(grant.userId);
+          }
           for (const grant of cascadedDirectGrants) {
             if (grant.pageId === page.id) principals.add(grant.userId);
           }
@@ -598,19 +728,21 @@ collectionSharingRouter.patch(
           throw new ApiError(409, "COLLECTION_SHARE_GENERATION_CHANGED", "The collection grant changed in another session.");
         }
 
+        await deleteDelegatedCollectionGrantCascade(collectionId, cascadedCollectionGrants, client);
         if (cascadedDirectGrants.length > 0) {
-          for (const page of pages) {
-            await client.execute(
-              "DELETE FROM page_shares WHERE page_id = ? AND shared_by = ?",
-              [page.id, sharedUserId]
-            );
-          }
+          await deleteDelegatedDirectGrants(pages, revokedGrantorIds, client);
         }
 
         const updated = (await getCollectionShareRows(collectionId, client))
           .find((row) => row.id === sharedUserId);
         if (!updated) throw notFound("Collection share");
-        return { updated, oldGeneration: existing.generation, pages, cascadedDirectGrants };
+        return {
+          updated,
+          oldGeneration: existing.generation,
+          pages,
+          cascadedCollectionGrants,
+          cascadedDirectGrants
+        };
       });
 
       for (const page of result.pages) {
@@ -620,6 +752,16 @@ collectionSharingRouter.patch(
           result.oldGeneration,
           "Collection permission changed"
         );
+      }
+      for (const grant of result.cascadedCollectionGrants) {
+        for (const page of result.pages) {
+          disconnectSharedUserGrant(
+            page.id,
+            grant.userId,
+            grant.generation,
+            "Collection access delegated by a downgraded administrator was revoked"
+          );
+        }
       }
       for (const grant of result.cascadedDirectGrants) {
         disconnectSharedUserGrant(
@@ -656,8 +798,11 @@ collectionSharingRouter.delete(
         const ownerId = collectionAccess.page.owner_id;
         const pages = await lockCollectionDocumentPages(collectionId, client);
         await assertNoActiveCollaborationWriteLeases(client, pages.map((page) => page.id));
-        const existing = await client.queryOne<{ generation: string }>(
-          `SELECT generation FROM collection_shares
+        const existing = await client.queryOne<{
+          generation: string;
+          permission: CollectionSharePermission;
+        }>(
+          `SELECT generation, permission FROM collection_shares
            WHERE collection_id = ? AND user_id = ? FOR UPDATE`,
           [collectionId, sharedUserId]
         );
@@ -670,24 +815,27 @@ collectionSharingRouter.delete(
           );
         }
 
+        const cascadedCollectionGrants = await lockDelegatedCollectionGrantCascade(
+          collectionId,
+          sharedUserId,
+          client
+        );
+        const revokedGrantorIds = [
+          sharedUserId,
+          ...cascadedCollectionGrants.map((grant) => grant.userId)
+        ];
+        const cascadedDirectGrants = await lockDelegatedDirectGrants(pages, revokedGrantorIds, client);
         const preRemovalStates = new Map<string, Awaited<ReturnType<typeof getCollaborationState>>>();
-        const cascadedDirectGrants: Array<{ pageId: string; userId: string; generation: string }> = [];
         for (const page of pages) {
-          const delegated = await client.query<{ user_id: string; generation: string }>(
-            `SELECT user_id, generation
-             FROM page_shares
-             WHERE page_id = ? AND shared_by = ? AND permission = 'EDIT'
-             ORDER BY user_id ASC
-             FOR UPDATE`,
-            [page.id, sharedUserId]
-          );
-          for (const grant of delegated) {
-            cascadedDirectGrants.push({ pageId: page.id, userId: grant.user_id, generation: grant.generation });
-          }
-
-          // Preserve recovery for every principal whose write authority is being
-          // revoked by this lifecycle operation, including legacy delegated grants.
-          const principals = new Set([sharedUserId, ...delegated.map((grant) => grant.user_id)]);
+          // Preserve recovery for every principal whose collection or direct
+          // authority is being revoked by this lifecycle operation.
+          const principals = new Set([
+            sharedUserId,
+            ...cascadedCollectionGrants.map((grant) => grant.userId),
+            ...cascadedDirectGrants
+              .filter((grant) => grant.pageId === page.id)
+              .map((grant) => grant.userId)
+          ]);
           let state: Awaited<ReturnType<typeof getCollaborationState>> = null;
           for (const principalId of principals) {
             const preservedState = await preserveRevokedGrantRecovery(page, ownerId, principalId, client);
@@ -704,14 +852,13 @@ collectionSharingRouter.delete(
           throw new ApiError(409, "COLLECTION_SHARE_GENERATION_CHANGED", "The collection grant changed in another session.");
         }
 
+        await deleteDelegatedCollectionGrantCascade(collectionId, cascadedCollectionGrants, client);
+
         // Direct grants carry their creator in page_shares.shared_by. Remove any
-        // grants planted by the revoked collection administrator on pages in
-        // this collection, while preserving direct grants created by the owner.
-        for (const page of pages) {
-          await client.execute(
-            "DELETE FROM page_shares WHERE page_id = ? AND shared_by = ?",
-            [page.id, sharedUserId]
-          );
+        // grants planted anywhere in the revoked delegation subtree while
+        // preserving grants re-authorized by the owner or a surviving ADMIN.
+        if (cascadedDirectGrants.length > 0) {
+          await deleteDelegatedDirectGrants(pages, revokedGrantorIds, client);
         }
 
         const removedDocumentLineages: Array<{ pageId: string; documentEpoch: string }> = [];
@@ -730,6 +877,7 @@ collectionSharingRouter.delete(
           count: rows.length,
           oldGeneration: existing.generation,
           pages,
+          cascadedCollectionGrants,
           cascadedDirectGrants,
           removedDocumentLineages
         };
@@ -739,6 +887,16 @@ collectionSharingRouter.delete(
         // Match the revoked collection generation so stale sockets are closed
         // even if another independent direct grant remains effective.
         disconnectSharedUserGrant(page.id, sharedUserId, result.oldGeneration, "Collection access was removed");
+      }
+      for (const grant of result.cascadedCollectionGrants) {
+        for (const page of result.pages) {
+          disconnectSharedUserGrant(
+            page.id,
+            grant.userId,
+            grant.generation,
+            "Collection access delegated by a removed administrator was revoked"
+          );
+        }
       }
       for (const grant of result.cascadedDirectGrants) {
         disconnectSharedUserGrant(

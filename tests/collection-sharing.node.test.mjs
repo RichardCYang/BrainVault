@@ -77,13 +77,13 @@ test("direct page grants cannot be minted by collection administrators and admin
   assert.match(directRoute, /PAGE_OWNER_REQUIRED/);
   assert.match(
     collectionRoute,
-    /SELECT user_id, generation[\s\S]*WHERE page_id = \? AND shared_by = \? AND permission = 'EDIT'[\s\S]*FOR UPDATE/
+    /async function lockDelegatedDirectGrants\([\s\S]*SELECT user_id, generation[\s\S]*FROM page_shares[\s\S]*shared_by IN/
   );
   assert.match(
     collectionRoute,
     /DELETE FROM page_shares WHERE page_id = \? AND shared_by = \?/
   );
-  assert.match(collectionRoute, /\[page\.id, sharedUserId\]/);
+  assert.match(collectionRoute, /deleteDelegatedDirectGrants\(pages, revokedGrantorIds, client\)/);
   assert.match(collectionRoute, /preserveRevokedGrantRecovery\(page, ownerId, principalId, client\)/);
   assert.match(collectionRoute, /for \(const grant of result\.cascadedDirectGrants\)/);
   assert.match(collectionRoute, /grant\.userId,[\s\S]*grant\.generation/);
