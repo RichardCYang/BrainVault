@@ -28,6 +28,7 @@ import {
   getCollaborationState
 } from "../lib/collaboration-lineage.js";
 import {
+  isUnsupportedCollaborationMaterializationVersion,
   needsCollaborationMaterialization
 } from "../lib/collaboration-protocol.js";
 import { assertNoActiveCollaborationWriteLeases } from "../lib/collaboration-write-lease.js";
@@ -377,6 +378,16 @@ async function resetCollaborationForFirstShare(
     ownerId,
     reason: "SHARE_STARTED"
   });
+  if (
+    previousState
+    && isUnsupportedCollaborationMaterializationVersion(previousState.materialization_version)
+  ) {
+    throw new ApiError(
+      409,
+      "COLLABORATION_MATERIALIZATION_VERSION_UNSUPPORTED",
+      "This retained collaboration state was written by a newer BrainVault version. Upgrade this server before sharing the collection again."
+    );
+  }
   if (previousState) {
     const quarantined = await quarantineCollaborationHistoryForOwner(client, {
       pageId: page.id,
@@ -471,6 +482,12 @@ async function teardownCollaborationIfFinalShare(
   const materializationVersion = Number(state?.materialization_version ?? 0);
   if (!Number.isSafeInteger(latestUpdateId) || latestUpdateId < 0) {
     throw new ApiError(500, "INVALID_COLLABORATION_STATE", "Collaboration update id exceeded the supported range");
+  }
+  if (state && isUnsupportedCollaborationMaterializationVersion(materializationVersion)) {
+    // Authorization has already been revoked. Preserve the newer lineage in
+    // place because this older server cannot prove that replay/quarantine is
+    // lossless for invariants introduced by the newer materializer.
+    return 0;
   }
   if (needsCollaborationMaterialization({ latestUpdateId, materializedUpdateId, materializationVersion })) {
     const quarantined = state

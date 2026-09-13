@@ -1012,6 +1012,16 @@ collaborationRouter.post(
             reason: "SHARE_STARTED"
           });
           await assertNoActiveCollaborationWriteLeases(client, [pageId]);
+          if (
+            previousState
+            && isUnsupportedCollaborationMaterializationVersion(previousState.materialization_version)
+          ) {
+            throw new ApiError(
+              409,
+              "COLLABORATION_MATERIALIZATION_VERSION_UNSUPPORTED",
+              "This retained collaboration state was written by a newer BrainVault version. Upgrade this server before sharing the page again."
+            );
+          }
           if (previousState) {
             const quarantined = await quarantineCollaborationHistoryForOwner(client, {
               pageId,
@@ -1171,6 +1181,19 @@ collaborationRouter.delete(
               "INVALID_COLLABORATION_STATE",
               "Collaboration update id exceeded the supported range"
             );
+          }
+          if (
+            collaborationState
+            && isUnsupportedCollaborationMaterializationVersion(materializationVersion)
+          ) {
+            // Access has already been revoked. An older server cannot prove that
+            // replaying a future-version lineage preserves every newer invariant,
+            // so leave the durable Yjs rows/state inert for a future upgrade.
+            return {
+              remaining,
+              removedShareGeneration: existingShare.generation,
+              removedDocumentEpoch: preRemovalState?.document_epoch ?? null
+            };
           }
           if (needsCollaborationMaterialization({
             latestUpdateId,

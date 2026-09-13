@@ -16,6 +16,7 @@ function assertBefore(source, first, second, label) {
 
 const protocolSource = readSource("../src/lib/collaboration-protocol.ts");
 const collaborationRoutes = readSource("../src/routes/collaboration.routes.ts");
+const collectionSharingRoutes = readSource("../src/routes/collection-sharing.routes.ts");
 const pageRoutes = readSource("../src/routes/page.routes.ts");
 const dataTransfer = readSource("../src/lib/data-transfer.ts");
 
@@ -30,14 +31,14 @@ test("future collaboration provenance is distinguishable from a legacy checkpoin
   const latestUpdateId = 73;
   const materializedUpdateId = 73;
 
-  // Before the fix, the generic stale predicate treated both legacy and future
-  // provenance as materialization work and sent a future document into this
-  // older final sink.
-  const oldWouldRematerialize =
+  // The generic stale predicate intentionally treats both legacy and future
+  // provenance as work. Destructive callers must distinguish the future case
+  // before attempting replay, teardown, or canonical rewriting.
+  const genericWouldRematerialize =
     latestUpdateId !== materializedUpdateId
     || (latestUpdateId > 0 && futureVersion !== currentVersion);
 
-  assert.equal(oldWouldRematerialize, true);
+  assert.equal(genericWouldRematerialize, true);
   assert.match(
     protocolSource,
     /return materializationVersion > currentCollaborationMaterializationVersion;/
@@ -71,7 +72,7 @@ test("the collaboration final sink rejects future provenance before canonical re
   );
 });
 
-test("destructive page/share and workspace-transfer paths fail closed on future provenance", () => {
+test("access revocation succeeds while future collaboration lineage remains intact", () => {
   const shareStart = collaborationRoutes.indexOf(
     'collaborationRouter.delete(\n  "/pages/:pageId/shares/:userId"'
   );
@@ -84,11 +85,100 @@ test("destructive page/share and workspace-transfer paths fail closed on future 
 
   assertBefore(
     shareRemoval,
-    "isUnsupportedCollaborationMaterializationVersion(preRemovalState.materialization_version)",
     "DELETE FROM page_shares",
-    "final-share future-version fence"
+    "isUnsupportedCollaborationMaterializationVersion(materializationVersion)",
+    "direct revocation must remain authoritative"
+  );
+  assertBefore(
+    shareRemoval,
+    "isUnsupportedCollaborationMaterializationVersion(materializationVersion)",
+    'DELETE FROM page_yjs_updates WHERE page_id = ?',
+    "future direct lineage preservation"
+  );
+  assertBefore(
+    shareRemoval,
+    "isUnsupportedCollaborationMaterializationVersion(materializationVersion)",
+    'DELETE FROM page_collaboration_state WHERE page_id = ?',
+    "future direct lineage preservation"
+  );
+  assert.match(
+    shareRemoval,
+    /isUnsupportedCollaborationMaterializationVersion\(materializationVersion\)[\s\S]*?return \{[\s\S]*?remaining,/
   );
 
+  const collectionTeardownStart = collectionSharingRoutes.indexOf(
+    "async function teardownCollaborationIfFinalShare("
+  );
+  const collectionTeardownEnd = collectionSharingRoutes.indexOf(
+    "\ncollectionSharingRouter.get(",
+    collectionTeardownStart
+  );
+  assert.notEqual(collectionTeardownStart, -1, "missing collection collaboration teardown");
+  const collectionTeardown = collectionSharingRoutes.slice(
+    collectionTeardownStart,
+    collectionTeardownEnd
+  );
+  assertBefore(
+    collectionTeardown,
+    "isUnsupportedCollaborationMaterializationVersion(materializationVersion)",
+    'DELETE FROM page_yjs_updates WHERE page_id = ?',
+    "future collection lineage preservation"
+  );
+  assertBefore(
+    collectionTeardown,
+    "isUnsupportedCollaborationMaterializationVersion(materializationVersion)",
+    'DELETE FROM page_collaboration_state WHERE page_id = ?',
+    "future collection lineage preservation"
+  );
+});
+
+test("starting a new collaboration lineage fails closed on future retained provenance", () => {
+  const shareStart = collaborationRoutes.indexOf(
+    'collaborationRouter.post(\n  "/pages/:pageId/shares"'
+  );
+  const shareEnd = collaborationRoutes.indexOf(
+    'collaborationRouter.delete(\n  "/pages/:pageId/shares/:userId"',
+    shareStart
+  );
+  assert.notEqual(shareStart, -1, "missing direct page-share creation route");
+  const shareCreation = collaborationRoutes.slice(shareStart, shareEnd);
+  assertBefore(
+    shareCreation,
+    "isUnsupportedCollaborationMaterializationVersion(previousState.materialization_version)",
+    "quarantineCollaborationHistoryForOwner",
+    "future direct lineage reset fence"
+  );
+  assertBefore(
+    shareCreation,
+    "isUnsupportedCollaborationMaterializationVersion(previousState.materialization_version)",
+    'DELETE FROM page_yjs_updates WHERE page_id = ?',
+    "future direct lineage reset fence"
+  );
+
+  const collectionResetStart = collectionSharingRoutes.indexOf(
+    "async function resetCollaborationForFirstShare("
+  );
+  const collectionResetEnd = collectionSharingRoutes.indexOf(
+    "\nasync function preserveRevokedGrantRecovery(",
+    collectionResetStart
+  );
+  assert.notEqual(collectionResetStart, -1, "missing collection collaboration reset");
+  const collectionReset = collectionSharingRoutes.slice(collectionResetStart, collectionResetEnd);
+  assertBefore(
+    collectionReset,
+    "isUnsupportedCollaborationMaterializationVersion(previousState.materialization_version)",
+    "quarantineCollaborationHistoryForOwner",
+    "future collection lineage reset fence"
+  );
+  assertBefore(
+    collectionReset,
+    "isUnsupportedCollaborationMaterializationVersion(previousState.materialization_version)",
+    'DELETE FROM page_yjs_updates WHERE page_id = ?',
+    "future collection lineage reset fence"
+  );
+});
+
+test("destructive page and workspace-transfer paths fail closed on future provenance", () => {
   const pageGuardStart = pageRoutes.indexOf("async function assertCollaborationMaterialized");
   assert.notEqual(pageGuardStart, -1, "missing destructive page materialization guard");
   const pageGuard = pageRoutes.slice(pageGuardStart, pageRoutes.indexOf("\n}\n", pageGuardStart) + 3);
