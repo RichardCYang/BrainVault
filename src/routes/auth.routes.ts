@@ -49,6 +49,7 @@ import {
 import { toPublicUser } from "../lib/mappers.js";
 import { clearAuthSessionCookie, setAuthSessionCookie } from "../lib/session-cookie.js";
 import {
+  assertCurrentAuthSession,
   assertCurrentAuthSessionBoundary,
   listActiveAuthSessions,
   revokeAuthSession
@@ -356,8 +357,10 @@ authRouter.post(
 authRouter.post("/logout", requireAuth, async (req, res, next) => {
   try {
     const currentUser = requireUser(req.user);
-    const expectedAuthVersion = requireRequestAuthVersion(req);
+    const authScope = requireRequestAuthScope(req);
+    const expectedAuthVersion = authScope.authVersion;
     const revokedUser = await transaction(async (client) => {
+      await assertCurrentAuthSession(currentUser.id, authScope, client);
       const user = await client.queryOne<UserRow>("SELECT * FROM users WHERE id = ? FOR UPDATE", [currentUser.id]);
       if (!user) throw new ApiError(401, "UNAUTHENTICATED", "User no longer exists");
       assertAuthenticationVersion(user, expectedAuthVersion);
@@ -575,8 +578,11 @@ authRouter.get("/sessions", requireAuth, async (req, res, next) => {
 authRouter.delete("/sessions/:sessionId", requireAuth, async (req, res, next) => {
   try {
     const user = requireUser(req.user);
-    const authVersion = requireRequestAuthVersion(req);
-    const sessionId = await revokeAuthSession(user.id, req.params.sessionId, authVersion);
+    const authScope = requireRequestAuthScope(req);
+    const sessionId = await transaction(async (client) => {
+      await assertCurrentAuthSession(user.id, authScope, client);
+      return revokeAuthSession(user.id, req.params.sessionId, authScope.authVersion, client);
+    });
     const currentSession = Boolean(req.auth?.sessionId && req.auth.sessionId === sessionId);
 
     disconnectAuthSessionCollaborators(user.id, sessionId, "Authentication session was revoked");
@@ -648,10 +654,12 @@ authRouter.put(
   async (req, res, next) => {
     try {
       const currentUser = requireUser(req.user);
-      const expectedAuthVersion = requireRequestAuthVersion(req);
+      const authScope = requireRequestAuthScope(req);
+      const expectedAuthVersion = authScope.authVersion;
       const { currentPassword, enabled, maxAttempts } = req.body as z.infer<typeof totpIpBlockPolicySchema>;
 
       const updatedUser = await transaction(async (client) => {
+        await assertCurrentAuthSession(currentUser.id, authScope, client);
         const user = await client.queryOne<UserRow>(
           "SELECT * FROM users WHERE id = ? FOR UPDATE",
           [currentUser.id]
@@ -725,11 +733,13 @@ authRouter.delete(
   async (req, res, next) => {
     try {
       const currentUser = requireUser(req.user);
-      const expectedAuthVersion = requireRequestAuthVersion(req);
+      const authScope = requireRequestAuthScope(req);
+      const expectedAuthVersion = authScope.authVersion;
       const { ipAddress } = req.params as z.infer<typeof totpIpBlockParamsSchema>;
       const { currentPassword } = req.body as z.infer<typeof totpIpUnblockSchema>;
 
       await transaction(async (client) => {
+        await assertCurrentAuthSession(currentUser.id, authScope, client);
         const user = await client.queryOne<UserRow>(
           "SELECT * FROM users WHERE id = ? FOR UPDATE",
           [currentUser.id]
@@ -804,7 +814,8 @@ authRouter.put(
   async (req, res, next) => {
     try {
       const currentUser = requireUser(req.user);
-      const expectedAuthVersion = requireRequestAuthVersion(req);
+      const authScope = requireRequestAuthScope(req);
+      const expectedAuthVersion = authScope.authVersion;
       const { currentPassword, enabled } = req.body as z.infer<typeof vpnBlockPolicySchema>;
       const sourceIp = getClientIpAddress(req);
       const clientTimeZone = getClientTimeZone(req);
@@ -816,6 +827,7 @@ authRouter.put(
       );
 
       const updatedUser = await transaction(async (client) => {
+        await assertCurrentAuthSession(currentUser.id, authScope, client);
         const user = await client.queryOne<UserRow>(
           "SELECT * FROM users WHERE id = ? FOR UPDATE",
           [currentUser.id]
@@ -896,7 +908,8 @@ authRouter.put(
   async (req, res, next) => {
     try {
       const currentUser = requireUser(req.user);
-      const expectedAuthVersion = requireRequestAuthVersion(req);
+      const authScope = requireRequestAuthScope(req);
+      const expectedAuthVersion = authScope.authVersion;
       const { currentPassword, mode: rawMode, countries: rawCountries } =
         req.body as z.infer<typeof countryLoginPolicySchema>;
       const mode = normalizeCountryLoginMode(rawMode);
@@ -911,6 +924,7 @@ authRouter.put(
         : await assertPolicyAllowsCurrentLocation(mode, countries, sourceIp);
 
       const updatedUser = await transaction(async (client) => {
+        await assertCurrentAuthSession(currentUser.id, authScope, client);
         const user = await client.queryOne<UserRow>(
           "SELECT * FROM users WHERE id = ? FOR UPDATE",
           [currentUser.id]
@@ -1011,10 +1025,12 @@ authRouter.post(
   async (req, res, next) => {
     try {
       const currentUser = requireUser(req.user);
-      const expectedAuthVersion = requireRequestAuthVersion(req);
+      const authScope = requireRequestAuthScope(req);
+      const expectedAuthVersion = authScope.authVersion;
       const { currentPassword, newPassword } = req.body as z.infer<typeof passwordSchema>;
       const passwordHash = await hashPassword(newPassword);
       const updatedUser = await transaction(async (client) => {
+        await assertCurrentAuthSession(currentUser.id, authScope, client);
         const user = await client.queryOne<UserRow>(
           "SELECT * FROM users WHERE id = ? FOR UPDATE",
           [currentUser.id]

@@ -16,7 +16,7 @@ import { db, transaction, type DbClient } from "../lib/db.js";
 import { disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
-import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
+import { assertCurrentAuthSession } from "../lib/auth-sessions.js";
 import { clearMfaCeremonyBinding, readMfaCeremonyBinding } from "../lib/mfa-ceremony-cookie.js";
 import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
 import { enforceVpnAccessPolicy, getClientTimeZone, getClientWebRtcSignal } from "../lib/vpn-access-policy.js";
@@ -347,14 +347,6 @@ function toPublicPasskey(row: PasskeyRow) {
   };
 }
 
-function requireRequestAuthVersion(req: Request) {
-  const authVersion = Number(req.auth?.authVersion);
-  if (!Number.isSafeInteger(authVersion) || authVersion < 1) {
-    throw new ApiError(401, "UNAUTHENTICATED", "Authentication context is missing");
-  }
-  return authVersion;
-}
-
 async function getAuthenticationUserForUpdate(
   client: DbClient,
   userId: string,
@@ -637,7 +629,8 @@ mfaRouter.post(
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
-      const expectedAuthVersion = requireRequestAuthVersion(req);
+      const authScope = requireRequestAuthScope(req);
+      const expectedAuthVersion = authScope.authVersion;
       const { currentPassword } = req.body as z.infer<typeof currentPasswordSchema>;
       const secret = generateTotpSecret();
       const encrypted = encryptMfaSecret(secret);
@@ -650,6 +643,7 @@ mfaRouter.post(
       });
 
       await transaction(async (client) => {
+        await assertCurrentAuthSession(user.id, authScope, client);
         const lockedUser = await requireCurrentPasswordForUpdate(
           client,
           user.id,
@@ -687,11 +681,13 @@ mfaRouter.post(
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
-      const expectedAuthVersion = requireRequestAuthVersion(req);
+      const authScope = requireRequestAuthScope(req);
+      const expectedAuthVersion = authScope.authVersion;
       const { setupToken, code } = req.body as z.infer<typeof totpVerifySchema>;
       const setupTokenHash = hashOpaqueToken(setupToken);
 
       const updatedUser = await transaction(async (client) => {
+        await assertCurrentAuthSession(user.id, authScope, client);
         const lockedUser = await getAuthenticationUserForUpdate(client, user.id, expectedAuthVersion);
         const setup = await client.queryOne<TotpSetupRow>(
           `SELECT token_hash, user_id, secret_ciphertext, secret_iv, secret_tag, expires_at
@@ -743,9 +739,11 @@ mfaRouter.delete(
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
-      const expectedAuthVersion = requireRequestAuthVersion(req);
+      const authScope = requireRequestAuthScope(req);
+      const expectedAuthVersion = authScope.authVersion;
       const { currentPassword } = req.body as z.infer<typeof currentPasswordSchema>;
       const updatedUser = await transaction(async (client) => {
+        await assertCurrentAuthSession(user.id, authScope, client);
         const lockedUser = await requireCurrentPasswordForUpdate(
           client,
           user.id,
@@ -773,9 +771,11 @@ mfaRouter.post(
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
-      const expectedAuthVersion = requireRequestAuthVersion(req);
+      const authScope = requireRequestAuthScope(req);
+      const expectedAuthVersion = authScope.authVersion;
       const { currentPassword, name, registrationTarget } = req.body as z.infer<typeof passkeyOptionsSchema>;
       const result = await transaction(async (client) => {
+        await assertCurrentAuthSession(user.id, authScope, client);
         const lockedUser = await requireCurrentPasswordForUpdate(
           client,
           user.id,
@@ -851,7 +851,8 @@ mfaRouter.post(
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
-      const expectedAuthVersion = requireRequestAuthVersion(req);
+      const authScope = requireRequestAuthScope(req);
+      const expectedAuthVersion = authScope.authVersion;
       const { challengeToken, response } = req.body as z.infer<typeof passkeyRegistrationSchema>;
       const challenge = await consumeChallenge(challengeToken, user.id, "registration", null);
       const metadata = parseMetadata(challenge.metadata);
@@ -888,6 +889,7 @@ mfaRouter.post(
       const id = createId("pky");
 
       const result = await transaction(async (client) => {
+        await assertCurrentAuthSession(user.id, authScope, client);
         const lockedUser = await getAuthenticationUserForUpdate(client, user.id, expectedAuthVersion);
         await client.execute(
           `INSERT INTO user_passkeys
@@ -940,7 +942,7 @@ mfaRouter.patch(
       const authScope = requireRequestAuthScope(req);
       const { name, currentPassword } = req.body as z.infer<typeof passkeyRenameSchema>;
       await transaction(async (client) => {
-        await assertCurrentAuthSessionBoundary(user.id, authScope, client);
+        await assertCurrentAuthSession(user.id, authScope, client);
         const lockedUser = await requireCurrentPasswordForUpdate(
           client, user.id, authScope.authVersion, currentPassword
         );
@@ -969,10 +971,12 @@ mfaRouter.delete(
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
-      const expectedAuthVersion = requireRequestAuthVersion(req);
+      const authScope = requireRequestAuthScope(req);
+      const expectedAuthVersion = authScope.authVersion;
       const { id } = req.params as z.infer<typeof passkeyIdParamsSchema>;
       const { currentPassword } = req.body as z.infer<typeof currentPasswordSchema>;
       const updatedUser = await transaction(async (client) => {
+        await assertCurrentAuthSession(user.id, authScope, client);
         const lockedUser = await requireCurrentPasswordForUpdate(
           client,
           user.id,

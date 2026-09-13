@@ -225,11 +225,40 @@ export async function isAuthSessionActive(
   return Boolean(row);
 }
 
-export type AuthSessionBoundaryScope = Readonly<{
+export type AuthSessionScope = Readonly<{
   authVersion: number;
-  workspaceGeneration: number;
   sessionId: string;
 }>;
+
+export type AuthSessionBoundaryScope = AuthSessionScope & Readonly<{
+  workspaceGeneration: number;
+}>;
+
+export async function assertCurrentAuthSession(
+  userId: string,
+  scope: AuthSessionScope,
+  client: DbClient = db
+) {
+  const authVersion = Number(scope.authVersion);
+  if (!Number.isSafeInteger(authVersion) || authVersion < 1) {
+    throw new ApiError(401, "UNAUTHENTICATED", "Authentication context is invalid");
+  }
+
+  const sessionId = normalizeAuthSessionId(scope.sessionId);
+  const account = await client.queryOne<{ auth_version?: number; attachment_generation?: number }>(
+    "SELECT auth_version, attachment_generation FROM users WHERE id = ? FOR UPDATE",
+    [userId]
+  );
+  if (!account || Number(account.auth_version ?? 1) !== authVersion) {
+    throw new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid");
+  }
+
+  const active = await isAuthSessionActive(userId, sessionId, authVersion, client, { lock: true });
+  if (!active) {
+    throw new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid");
+  }
+  return account;
+}
 
 export async function assertCurrentAuthSessionBoundary(
   userId: string,
