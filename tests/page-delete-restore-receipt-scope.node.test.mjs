@@ -23,14 +23,15 @@ test("owner restore invalidates delegated permanent-delete receipts", () => {
   assert.equal(fixedKeepsReceipt, false);
 });
 
-test("restore cleanup is scoped to actor or target workspace and indexed", () => {
+test("restore cleanup is scoped to the target workspace and indexed", () => {
   const transfer = read("../src/lib/data-transfer.ts");
   const migration = read("../migrations/071_page_delete_restore_receipt_scope.sql");
 
   assert.match(
     transfer,
-    /DELETE FROM page_delete_mutations WHERE actor_id = \? OR workspace_owner_id = \?[\s\S]*\[userId, userId\]/
+    /DELETE FROM page_delete_mutations[\s\S]*workspace_owner_id = \?[\s\S]*workspace_owner_id IS NULL AND actor_id = \?[\s\S]*\[userId, userId\]/
   );
+  assert.doesNotMatch(transfer, /WHERE actor_id = \? OR workspace_owner_id = \?/);
   assert.match(
     migration,
     /CREATE INDEX IF NOT EXISTS idx_page_delete_mutations_workspace_owner[\s\S]*ON page_delete_mutations\(workspace_owner_id\)/

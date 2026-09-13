@@ -75,6 +75,7 @@ import { getClientWebRtcSignal } from "../lib/vpn-access-policy.js";
 import { readAuthSessionCookie } from "../lib/session-cookie.js";
 import type { BlockRow, PageRow, UserRow } from "../types/domain.js";
 import { assertNoActiveCollaborationWriteLeases } from "../lib/collaboration-write-lease.js";
+import { quarantineCollaborationHistoryForOwner } from "../lib/collaboration-quarantine.js";
 import {
   deleteRecoveryCandidate,
   directRecoveryLineageKey,
@@ -1011,6 +1012,21 @@ collaborationRouter.post(
             reason: "SHARE_STARTED"
           });
           await assertNoActiveCollaborationWriteLeases(client, [pageId]);
+          if (previousState) {
+            const quarantined = await quarantineCollaborationHistoryForOwner(client, {
+              pageId,
+              ownerId: workspaceOwnerId,
+              documentEpoch: previousState.document_epoch,
+              reason: "SHARE_STARTED"
+            });
+            if (!quarantined) {
+              throw new ApiError(
+                409,
+                "COLLABORATION_RECOVERY_REQUIRED",
+                "Retained collaboration history could not be moved into recovery. Free recovery capacity or retry before sharing this page again."
+              );
+            }
+          }
           await client.execute("DELETE FROM page_yjs_updates WHERE page_id = ?", [pageId]);
           await client.execute("DELETE FROM page_collaboration_state WHERE page_id = ?", [pageId]);
           await ensureCollaborationState(pageId, client);
@@ -1111,16 +1127,6 @@ collaborationRouter.delete(
           reason: "SHARE_REMOVED"
         });
         const preRemovalState = await getCollaborationState(pageId, client, { lock: true });
-        if (
-          preRemovalState
-          && isUnsupportedCollaborationMaterializationVersion(preRemovalState.materialization_version)
-        ) {
-          throw new ApiError(
-            409,
-            "COLLABORATION_MATERIALIZATION_VERSION_UNSUPPORTED",
-            "This collaboration state was written by a newer BrainVault version. Upgrade this server before removing access."
-          );
-        }
         if (preRemovalState) {
           await grantYjsPageRecovery(client, {
             pageId,
@@ -1171,12 +1177,24 @@ collaborationRouter.delete(
             materializedUpdateId,
             materializationVersion
           })) {
-            throw new ApiError(
-              409,
-              "COLLABORATION_CHANGES_PENDING",
-              "Synchronize the latest collaborative edits before removing the final shared user",
-              { latestUpdateId, materializedUpdateId, materializationVersion }
-            );
+            const quarantined = collaborationState
+              ? await quarantineCollaborationHistoryForOwner(client, {
+                  pageId,
+                  ownerId: workspaceOwnerId,
+                  documentEpoch: collaborationState.document_epoch,
+                  reason: "SHARE_REMOVED"
+                })
+              : false;
+            // Access revocation is the security boundary. If recovery storage or
+            // bounded replay is temporarily unavailable, keep the old history
+            // inert instead of rolling the share deletion back.
+            if (!quarantined) {
+              return {
+                remaining,
+                removedShareGeneration: existingShare.generation,
+                removedDocumentEpoch: preRemovalState?.document_epoch ?? null
+              };
+            }
           }
           await client.execute("DELETE FROM page_yjs_updates WHERE page_id = ?", [pageId]);
           await client.execute("DELETE FROM page_collaboration_state WHERE page_id = ?", [pageId]);

@@ -186,7 +186,8 @@ describe("page sharing and Yjs collaboration wiring", () => {
     expect(routes).not.toContain("body.deletedAttachmentIds");
     expect(routes).toContain("BLOCK_ID_CONFLICT");
     expect(routes).toContain("USE_ATTACHMENT_UPLOAD");
-    expect(routes).toContain("COLLABORATION_CHANGES_PENDING");
+    expect(routes).toContain("quarantineCollaborationHistoryForOwner");
+    expect(routes).toContain("COLLABORATION_RECOVERY_REQUIRED");
     expect(routes).toContain("documentEpochProtocol: z.literal(2)");
     expect(routes).toContain("COLLABORATION_CLIENT_REFRESH_REQUIRED");
     expect(routes).toContain("documentEpoch: session.collaborationState.document_epoch");

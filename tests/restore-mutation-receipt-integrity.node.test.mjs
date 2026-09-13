@@ -59,13 +59,13 @@ test("restore keeps durable reset/create tombstones but invalidates page-generat
   assert.match(transfer, /restoredMetadata, restoreVersion, block\.created_at/);
 
   const pageDeleteReceiptInvalidationIndex = transfer.indexOf(
-    'DELETE FROM page_delete_mutations WHERE actor_id = ?'
+    'DELETE FROM page_delete_mutations'
   );
   const blockOrderReceiptInvalidationIndex = transfer.indexOf(
     'DELETE FROM block_order_mutations WHERE owner_id = ?'
   );
   const blockMoveReceiptInvalidationIndex = transfer.indexOf(
-    'DELETE FROM block_move_mutations WHERE actor_id = ?'
+    'DELETE bmm FROM block_move_mutations bmm'
   );
   const pageReplacementIndex = transfer.indexOf('DELETE FROM pages WHERE owner_id = ?');
   assert.ok(

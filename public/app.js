@@ -874,15 +874,19 @@ function normalizeBookmarkData(value) {
     while (seenIds.has(id)) id = createClientId(`bookmark-${index + 1}`);
     seenIds.add(id);
     const parsedUrl = new URL(url);
+    const verified = rawItem.verified !== false;
 
     items.push({
       id,
       url,
       title: normalizeBookmarkText(rawItem.title, bookmarkLimits.titleLength) || parsedUrl.hostname,
       description: normalizeBookmarkText(rawItem.description, bookmarkLimits.descriptionLength),
-      imageUrl: normalizeBookmarkUrl(rawItem.imageUrl, url),
-      faviconUrl: normalizeBookmarkUrl(rawItem.faviconUrl, url) || new URL("/favicon.ico", url).toString(),
-      siteName: normalizeBookmarkText(rawItem.siteName, bookmarkLimits.siteNameLength) || parsedUrl.hostname
+      imageUrl: verified ? normalizeBookmarkUrl(rawItem.imageUrl, url) : "",
+      faviconUrl: verified
+        ? normalizeBookmarkUrl(rawItem.faviconUrl, url) || new URL("/favicon.ico", url).toString()
+        : "",
+      siteName: normalizeBookmarkText(rawItem.siteName, bookmarkLimits.siteNameLength) || parsedUrl.hostname,
+      verified
     });
   }
 
@@ -3842,12 +3846,14 @@ async function saveTotpIpBlockPolicy() {
   renderTotpIpBlockPolicy();
   setAccountMessage();
   try {
+    const stepUpToken = await requestMfaStepUpToken({ trigger: elements.accountTotpIpBlockSave });
     const data = await api("/api/auth/totp-ip-block-policy", {
       method: "PUT",
       body: {
         currentPassword: elements.accountTotpIpBlockPassword.value,
         enabled,
-        maxAttempts
+        maxAttempts,
+        ...(stepUpToken ? { stepUpToken } : {})
       }
     });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpIpPolicy, operation)) return;
@@ -4089,12 +4095,14 @@ async function saveCountryLoginPolicy() {
   renderCountryLoginPolicy();
   setAccountMessage();
   try {
+    const stepUpToken = await requestMfaStepUpToken({ trigger: elements.accountCountryLoginSave });
     const data = await api("/api/auth/country-login-policy", {
       method: "PUT",
       body: {
         currentPassword: elements.accountCountryLoginPassword.value,
         mode,
-        countries
+        countries,
+        ...(stepUpToken ? { stepUpToken } : {})
       }
     });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.countryPolicy, operation)) return;
@@ -4262,11 +4270,13 @@ async function saveVpnBlockPolicy() {
   renderVpnBlockPolicy();
   setAccountMessage();
   try {
+    const stepUpToken = await requestMfaStepUpToken({ trigger: elements.accountVpnBlockSave });
     const data = await api("/api/auth/vpn-block-policy", {
       method: "PUT",
       body: {
         currentPassword: elements.accountVpnBlockPassword.value,
-        enabled
+        enabled,
+        ...(stepUpToken ? { stepUpToken } : {})
       }
     });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.vpnPolicy, operation)) return;

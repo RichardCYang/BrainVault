@@ -97,7 +97,35 @@ const idSchema = z
   .max(64)
   .regex(/^[a-zA-Z0-9_-]+$/)
   .refine((value) => !windowsReservedDeviceNamePattern.test(value), "Identifier is reserved on Windows");
-const timestampSchema = z.string().min(1).max(40);
+const databaseTimestampPattern = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?$/;
+const exportedAtTimestampPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?Z$/;
+
+function isValidMachineTimestamp(value: string, pattern: RegExp) {
+  const match = pattern.exec(value);
+  if (!match) return false;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  if (
+    !Number.isInteger(year) || year < 1000 || year > 9999
+    || month < 1 || month > 12
+    || hour < 0 || hour > 23
+    || minute < 0 || minute > 59
+    || second < 0 || second > 59
+  ) return false;
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day >= 1 && day <= daysInMonth[month - 1];
+}
+
+const timestampSchema = z.string().min(1).max(40)
+  .refine((value) => isValidMachineTimestamp(value, databaseTimestampPattern), "Backup timestamp is invalid");
+const exportedAtTimestampSchema = z.string().min(1).max(40)
+  .refine((value) => isValidMachineTimestamp(value, exportedAtTimestampPattern), "Backup export timestamp is invalid");
 const profileThemeSchema = z.enum(["light", "dark"]);
 const preferredLanguageSchema = z.enum(supportedProfileLanguages);
 const nullableString = (max: number) => z.string().max(max).nullable();
@@ -333,7 +361,7 @@ const manifestSchema = z.object({
     z.literal(uploadedAssetBackupVersion),
     z.literal(backupVersion)
   ]),
-  exportedAt: timestampSchema,
+  exportedAt: exportedAtTimestampSchema,
   source: z.object({ userId: idSchema, username: z.string().min(1).max(50) }).strict(),
   account: z.object({
     name: nullableString(80),
@@ -2545,14 +2573,13 @@ async function importRows(
 ) {
   const restoreIconValue = (value: string | null) =>
     rebindCustomIconValue(value, manifest.source.userId, userId);
-  // Page-delete receipts can replay post-COMMIT attachment cleanup. A restore
-  // starts a new attachment filesystem generation and may intentionally restore
-  // unreferenced files as retainedAttachments, so pre-restore delete receipts
-  // must not survive into that new generation. Collection administrators can
-  // create receipts whose actor_id differs from the page owner's workspace;
-  // invalidate both roles while the caller holds the owner user-row lock.
+  // Page-delete receipts can replay post-COMMIT attachment cleanup. Invalidate
+  // only receipts owned by the workspace being restored; a delegated actor may
+  // also have receipts for another owner's workspace and those must survive.
   await client.execute(
-    "DELETE FROM page_delete_mutations WHERE actor_id = ? OR workspace_owner_id = ?",
+    `DELETE FROM page_delete_mutations
+     WHERE workspace_owner_id = ?
+        OR (workspace_owner_id IS NULL AND actor_id = ?)`,
     [userId, userId]
   );
   // Block-order receipts are page-generation scoped. A full restore replaces every
@@ -2560,11 +2587,22 @@ async function importRows(
   // pre-restore reorder must conflict against restoreVersion instead of being
   // falsely acknowledged by an old receipt before version validation.
   await client.execute("DELETE FROM block_order_mutations WHERE owner_id = ?", [userId]);
-  // Block-move receipts are also page-generation scoped, but their actor-only
-  // foreign key means they survive page replacement unless restore invalidates
-  // them explicitly. Otherwise a delayed move retry can be acknowledged before
-  // the restored block/page versions are checked.
-  await client.execute("DELETE FROM block_move_mutations WHERE actor_id = ?", [userId]);
+  // Block-move receipts are workspace-scoped as of migration 078. For legacy
+  // NULL-scoped rows, remove the receipt only when a still-present endpoint
+  // proves that it belongs to this restored workspace. This preserves replay
+  // protection for delegated moves performed in somebody else's workspace.
+  await client.execute(
+    `DELETE bmm FROM block_move_mutations bmm
+     LEFT JOIN pages source_page ON source_page.id = bmm.source_page_id
+     LEFT JOIN pages target_page ON target_page.id = bmm.target_page_id
+     WHERE bmm.workspace_owner_id = ?
+        OR (
+          bmm.workspace_owner_id IS NULL
+          AND bmm.actor_id = ?
+          AND (source_page.owner_id = ? OR target_page.owner_id = ?)
+        )`,
+    [userId, userId, userId, userId]
+  );
   await client.execute("DELETE FROM pages WHERE owner_id = ?", [userId]);
   const restoredUserUpdate = await client.execute<{ affectedRows: number }>(
     `UPDATE users

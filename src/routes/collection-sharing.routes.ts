@@ -28,10 +28,10 @@ import {
   getCollaborationState
 } from "../lib/collaboration-lineage.js";
 import {
-  isUnsupportedCollaborationMaterializationVersion,
   needsCollaborationMaterialization
 } from "../lib/collaboration-protocol.js";
 import { assertNoActiveCollaborationWriteLeases } from "../lib/collaboration-write-lease.js";
+import { quarantineCollaborationHistoryForOwner } from "../lib/collaboration-quarantine.js";
 import { lockUserAttachmentGeneration } from "../lib/attachments.js";
 import {
   grantDirectPageRecovery,
@@ -377,6 +377,21 @@ async function resetCollaborationForFirstShare(
     ownerId,
     reason: "SHARE_STARTED"
   });
+  if (previousState) {
+    const quarantined = await quarantineCollaborationHistoryForOwner(client, {
+      pageId: page.id,
+      ownerId,
+      documentEpoch: previousState.document_epoch,
+      reason: "SHARE_STARTED"
+    });
+    if (!quarantined) {
+      throw new ApiError(
+        409,
+        "COLLABORATION_RECOVERY_REQUIRED",
+        "Retained collaboration history could not be moved into recovery. Free recovery capacity or retry before sharing this collection again."
+      );
+    }
+  }
   await client.execute("DELETE FROM page_yjs_updates WHERE page_id = ?", [page.id]);
   await client.execute("DELETE FROM page_collaboration_state WHERE page_id = ?", [page.id]);
   await ensureCollaborationState(page.id, client);
@@ -409,13 +424,6 @@ async function preserveRevokedGrantRecovery(
   });
 
   const state = await getCollaborationState(page.id, client, { lock: true });
-  if (state && isUnsupportedCollaborationMaterializationVersion(state.materialization_version)) {
-    throw new ApiError(
-      409,
-      "COLLABORATION_MATERIALIZATION_VERSION_UNSUPPORTED",
-      "This collaboration state was written by a newer BrainVault version. Upgrade this server before removing collection access."
-    );
-  }
   if (state) {
     await grantYjsPageRecovery(client, {
       pageId: page.id,
@@ -437,6 +445,7 @@ async function preserveRevokedGrantRecovery(
 
 async function teardownCollaborationIfFinalShare(
   pageId: string,
+  ownerId: string,
   preRemovalState: Awaited<ReturnType<typeof getCollaborationState>>,
   client: DbClient
 ) {
@@ -464,12 +473,17 @@ async function teardownCollaborationIfFinalShare(
     throw new ApiError(500, "INVALID_COLLABORATION_STATE", "Collaboration update id exceeded the supported range");
   }
   if (needsCollaborationMaterialization({ latestUpdateId, materializedUpdateId, materializationVersion })) {
-    throw new ApiError(
-      409,
-      "COLLABORATION_CHANGES_PENDING",
-      "Synchronize the latest collaborative edits before removing the final collection collaborator",
-      { pageId, latestUpdateId, materializedUpdateId, materializationVersion }
-    );
+    const quarantined = state
+      ? await quarantineCollaborationHistoryForOwner(client, {
+          pageId,
+          ownerId,
+          documentEpoch: state.document_epoch,
+          reason: "SHARE_REMOVED"
+        })
+      : false;
+    // Never roll access revocation back because attacker-influenced content is
+    // not currently materializable. Retain inert history if quarantine fails.
+    if (!quarantined) return 0;
   }
   await client.execute("DELETE FROM page_yjs_updates WHERE page_id = ?", [pageId]);
   await client.execute("DELETE FROM page_collaboration_state WHERE page_id = ?", [pageId]);
@@ -864,7 +878,7 @@ collectionSharingRouter.delete(
         const removedDocumentLineages: Array<{ pageId: string; documentEpoch: string }> = [];
         for (const page of pages) {
           const preRemovalState = preRemovalStates.get(page.id) ?? null;
-          const remaining = await teardownCollaborationIfFinalShare(page.id, preRemovalState, client);
+          const remaining = await teardownCollaborationIfFinalShare(page.id, ownerId, preRemovalState, client);
           if (remaining === 0 && preRemovalState?.document_epoch) {
             removedDocumentLineages.push({
               pageId: page.id,

@@ -45,7 +45,8 @@ describe("bookmark OpenGraph parsing", () => {
       description: 'OpenGraph "description"',
       imageUrl: "https://example.com/media/cover.jpg",
       faviconUrl: "https://example.com/icons/favicon.png",
-      siteName: "Example News"
+      siteName: "Example News",
+      verified: true
     });
   });
 
@@ -368,8 +369,31 @@ describe("bookmark network address selection", () => {
       description: "",
       imageUrl: "",
       faviconUrl: "https://example.com/favicon.ico",
-      siteName: "example.com"
+      siteName: "example.com",
+      verified: false
     });
+  });
+
+  it("keeps unverified fallback bookmarks media-free after normalization", () => {
+    const bookmark = getBookmarkData({
+      bookmark: {
+        title: "Bookmarks",
+        view: "gallery",
+        listColumns: 1,
+        maxItems: 50,
+        items: [{
+          id: "bookmark-1",
+          url: "https://example.com/",
+          title: "example.com",
+          description: "",
+          imageUrl: "https://example.com/cover.png",
+          faviconUrl: "https://example.com/favicon.ico",
+          siteName: "example.com",
+          verified: false
+        }]
+      }
+    });
+    expect(bookmark.items[0]).toMatchObject({ verified: false, imageUrl: "", faviconUrl: "" });
   });
 });
 

@@ -670,13 +670,13 @@ assert(
 );
 
 const restorePageDeleteReceiptInvalidationIndex = dataTransferSource.indexOf(
-  'DELETE FROM page_delete_mutations WHERE actor_id = ?'
+  'DELETE FROM page_delete_mutations'
 );
 const restoreBlockOrderReceiptInvalidationIndex = dataTransferSource.indexOf(
   'DELETE FROM block_order_mutations WHERE owner_id = ?'
 );
 const restoreBlockMoveReceiptInvalidationIndex = dataTransferSource.indexOf(
-  'DELETE FROM block_move_mutations WHERE actor_id = ?'
+  'DELETE bmm FROM block_move_mutations bmm'
 );
 const restoreOwnedPageReplacementIndex = dataTransferSource.indexOf(
   'DELETE FROM pages WHERE owner_id = ?'

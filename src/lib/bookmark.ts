@@ -51,6 +51,7 @@ export type BookmarkItem = {
   imageUrl: string;
   faviconUrl: string;
   siteName: string;
+  verified: boolean;
 };
 
 export type BookmarkData = {
@@ -178,14 +179,20 @@ export function getBookmarkData(metadata: unknown): BookmarkData {
 
     const parsedUrl = new URL(url);
     const title = normalizeText(item.title, bookmarkLimits.titleLength) || parsedUrl.hostname;
+    // Backward compatibility: stored previews created before the verified flag
+    // existed were produced by the validated fetch path and remain trusted.
+    const verified = item.verified !== false;
     items.push({
       id,
       url,
       title,
       description: normalizeText(item.description, bookmarkLimits.descriptionLength),
-      imageUrl: normalizeBookmarkUrl(item.imageUrl, url),
-      faviconUrl: normalizeBookmarkUrl(item.faviconUrl, url) || new URL("/favicon.ico", url).toString(),
-      siteName: normalizeText(item.siteName, bookmarkLimits.siteNameLength) || parsedUrl.hostname
+      imageUrl: verified ? normalizeBookmarkUrl(item.imageUrl, url) : "",
+      faviconUrl: verified
+        ? normalizeBookmarkUrl(item.faviconUrl, url) || new URL("/favicon.ico", url).toString()
+        : "",
+      siteName: normalizeText(item.siteName, bookmarkLimits.siteNameLength) || parsedUrl.hostname,
+      verified
     });
   }
 
@@ -839,7 +846,8 @@ export function parseBookmarkPreview(html: string, pageUrl: string | URL): Bookm
     description,
     imageUrl,
     faviconUrl,
-    siteName
+    siteName,
+    verified: true
   };
 }
 
@@ -1146,7 +1154,8 @@ export function createFallbackBookmarkPreview(
     description: "",
     imageUrl: "",
     faviconUrl: includeFavicon ? new URL("/favicon.ico", url).toString() : "",
-    siteName: parsedUrl.hostname
+    siteName: parsedUrl.hostname,
+    verified: false
   };
 }
 

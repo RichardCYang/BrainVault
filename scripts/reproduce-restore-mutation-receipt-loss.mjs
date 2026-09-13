@@ -253,7 +253,8 @@ const result = {
     staleDeleteRetryConflictsWithoutTouchingRestoredAttachment:
       fixedDeleteRetry.conflicted && fixedDeleteRetry.state.files.has(restoredAttachmentId),
     restoreInvalidatesPageDeleteReceipts:
-      currentTransfer.includes('DELETE FROM page_delete_mutations WHERE actor_id = ?'),
+      currentTransfer.includes('DELETE FROM page_delete_mutations')
+      && currentTransfer.includes('workspace_owner_id IS NULL AND actor_id = ?'),
     preservingPageDeleteReceiptWouldDeleteRetainedAttachment:
       unsafePreservedPageDeleteRetry.replayed
       && !unsafePreservedPageDeleteRetry.state.files.has(retainedOrphanAttachmentId),

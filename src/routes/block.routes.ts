@@ -1912,11 +1912,12 @@ blockRouter.post(
 
         await client.execute(
           `INSERT INTO block_move_mutations
-             (actor_id, mutation_id, block_id, source_page_id, target_page_id, request_hash,
+             (actor_id, workspace_owner_id, mutation_id, block_id, source_page_id, target_page_id, request_hash,
               moved_block_ids, source_page_content_version, target_page_content_version)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             user.id,
+            sourceAccess.page.owner_id,
             body.mutationId,
             blockId,
             sourcePageId,

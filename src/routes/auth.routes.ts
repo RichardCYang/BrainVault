@@ -124,15 +124,19 @@ const countryBlockHistoryQuerySchema = z.object({
   months: z.coerce.number().int().min(1).max(maxCountryBlockHistoryMonths).default(defaultCountryBlockHistoryMonths)
 });
 
+const mfaStepUpTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+
 const vpnBlockPolicySchema = z.object({
   currentPassword: passwordInputSchema(1),
-  enabled: z.boolean()
+  enabled: z.boolean(),
+  stepUpToken: mfaStepUpTokenSchema.optional()
 });
 
 const totpIpBlockPolicySchema = z.object({
   currentPassword: passwordInputSchema(1),
   enabled: z.boolean(),
-  maxAttempts: z.coerce.number().int().min(minTotpIpBlockThreshold).max(maxTotpIpBlockThreshold)
+  maxAttempts: z.coerce.number().int().min(minTotpIpBlockThreshold).max(maxTotpIpBlockThreshold),
+  stepUpToken: mfaStepUpTokenSchema.optional()
 });
 
 const totpIpBlockParamsSchema = z.object({
@@ -149,6 +153,7 @@ const countryLoginPolicySchema = z
   .object({
     currentPassword: passwordInputSchema(1),
     mode: z.enum(countryLoginModes),
+    stepUpToken: mfaStepUpTokenSchema.optional(),
     countries: z.array(
       z.string()
         .transform((value) => value.trim().toUpperCase())
@@ -190,8 +195,6 @@ const navigationOrderSchema = z.object({
     });
   }
 });
-
-const mfaStepUpTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 
 const passwordSchema = z
   .object({
@@ -666,7 +669,7 @@ authRouter.put(
       const currentUser = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
       const expectedAuthVersion = authScope.authVersion;
-      const { currentPassword, enabled, maxAttempts } = req.body as z.infer<typeof totpIpBlockPolicySchema>;
+      const { currentPassword, enabled, maxAttempts, stepUpToken } = req.body as z.infer<typeof totpIpBlockPolicySchema>;
 
       const updatedUser = await transaction(async (client) => {
         await assertCurrentAuthSession(currentUser.id, authScope, client);
@@ -679,6 +682,7 @@ authRouter.put(
         if (!(await verifyPassword(currentPassword, user.password_hash))) {
           throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
         }
+        await consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken);
 
         const authVersion = normalizeAuthVersion(user.auth_version) + 1;
         await client.execute(
@@ -694,6 +698,7 @@ authRouter.put(
         await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [user.id]);
         await client.execute("DELETE FROM webauthn_challenges WHERE user_id = ?", [user.id]);
         await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [user.id]);
+        await client.execute("DELETE FROM mfa_step_up_sessions WHERE user_id = ?", [user.id]);
         return {
           ...user,
           totp_ip_block_enabled: enabled ? 1 : 0,
@@ -826,7 +831,7 @@ authRouter.put(
       const currentUser = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
       const expectedAuthVersion = authScope.authVersion;
-      const { currentPassword, enabled } = req.body as z.infer<typeof vpnBlockPolicySchema>;
+      const { currentPassword, enabled, stepUpToken } = req.body as z.infer<typeof vpnBlockPolicySchema>;
       const sourceIp = getClientIpAddress(req);
       const clientTimeZone = getClientTimeZone(req);
       const risk = await assertVpnPolicyAllowsCurrentConnection(
@@ -847,6 +852,7 @@ authRouter.put(
         if (!(await verifyPassword(currentPassword, user.password_hash))) {
           throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
         }
+        await consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken);
 
         const authVersion = normalizeAuthVersion(user.auth_version) + 1;
         await client.execute(
@@ -856,6 +862,7 @@ authRouter.put(
         await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [user.id]);
         await client.execute("DELETE FROM webauthn_challenges WHERE user_id = ?", [user.id]);
         await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [user.id]);
+        await client.execute("DELETE FROM mfa_step_up_sessions WHERE user_id = ?", [user.id]);
         return { ...user, vpn_block_enabled: enabled ? 1 : 0, auth_version: authVersion };
       });
 
@@ -920,7 +927,7 @@ authRouter.put(
       const currentUser = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
       const expectedAuthVersion = authScope.authVersion;
-      const { currentPassword, mode: rawMode, countries: rawCountries } =
+      const { currentPassword, mode: rawMode, countries: rawCountries, stepUpToken } =
         req.body as z.infer<typeof countryLoginPolicySchema>;
       const mode = normalizeCountryLoginMode(rawMode);
       const countries = [...new Set(
@@ -944,6 +951,7 @@ authRouter.put(
         if (!(await verifyPassword(currentPassword, user.password_hash))) {
           throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
         }
+        await consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken);
 
         const authVersion = normalizeAuthVersion(user.auth_version) + 1;
         await client.execute(
@@ -961,6 +969,7 @@ authRouter.put(
         await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [user.id]);
         await client.execute("DELETE FROM webauthn_challenges WHERE user_id = ?", [user.id]);
         await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [user.id]);
+        await client.execute("DELETE FROM mfa_step_up_sessions WHERE user_id = ?", [user.id]);
         return { ...user, country_login_mode: mode, auth_version: authVersion };
       });
 
