@@ -26,6 +26,8 @@ const markdown = new MarkdownIt({
 
 const aiChatCjkStrongEmphasisEnvKey = "__brainVaultAiChatCjkStrongEmphasis";
 const aiChatNumericReferenceLinksEnvKey = "__brainVaultAiChatNumericReferenceLinks";
+const aiChatImageGalleryEnvKey = "__brainVaultAiChatImageGallery";
+const aiChatImageGroupActiveEnvKey = "__brainVaultAiChatImageGroupActive";
 const aiChatCitationReferenceClass = "rendered-ai-chat-citation-reference";
 const cjkOrFullwidthCharacterPattern = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3000-\u303f\uff00-\uffef]/u;
 const aiChatNumericReferenceLabelPattern = /^\s*(\d{1,3})\s*$/;
@@ -91,6 +93,98 @@ function enableAiChatCjkStrongEmphasis(markdownIt: MarkdownIt) {
 }
 
 enableAiChatCjkStrongEmphasis(markdown);
+
+function getAiChatImageProxySource(value: unknown) {
+  const source = typeof value === "string" ? value.trim() : "";
+  if (!source || source.length > 2_048) return source;
+  try {
+    const parsed = new URL(source);
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return source;
+    return `/api/ai-chat/image?url=${encodeURIComponent(parsed.toString())}`;
+  } catch {
+    return source;
+  }
+}
+
+function isAiChatImageOnlyParagraph(tokens: any[], index: number) {
+  const inlineToken = tokens[index + 1];
+  const closeToken = tokens[index + 2];
+  if (inlineToken?.type !== "inline" || closeToken?.type !== "paragraph_close") return 0;
+
+  const children = Array.isArray(inlineToken.children) ? inlineToken.children : [];
+  if (!children.length) return 0;
+
+  let imageCount = 0;
+  for (const child of children) {
+    if (child?.type === "image") {
+      imageCount += 1;
+      continue;
+    }
+    if (child?.type === "softbreak" || child?.type === "hardbreak") continue;
+    return 0;
+  }
+  return imageCount;
+}
+
+function enableAiChatImageGalleries(markdownIt: MarkdownIt) {
+  const renderToken = (tokens: any[], index: number, options: any, _env: any, self: any) =>
+    self.renderToken(tokens, index, options);
+  const defaultImageRenderer = markdownIt.renderer.rules.image ?? renderToken;
+  const defaultParagraphOpenRenderer = markdownIt.renderer.rules.paragraph_open ?? renderToken;
+  const defaultParagraphCloseRenderer = markdownIt.renderer.rules.paragraph_close ?? renderToken;
+  const defaultSoftbreakRenderer = markdownIt.renderer.rules.softbreak ?? renderToken;
+  const defaultHardbreakRenderer = markdownIt.renderer.rules.hardbreak ?? renderToken;
+
+  markdownIt.renderer.rules.paragraph_open = (tokens, index, options, env, self) => {
+    const environment = env as Record<string, unknown> | undefined;
+    if (environment?.[aiChatImageGalleryEnvKey] !== true) {
+      return defaultParagraphOpenRenderer(tokens, index, options, env, self);
+    }
+
+    const imageCount = isAiChatImageOnlyParagraph(tokens, index);
+    if (!imageCount) {
+      return defaultParagraphOpenRenderer(tokens, index, options, env, self);
+    }
+
+    environment[aiChatImageGroupActiveEnvKey] = true;
+    const groupSize = Math.min(imageCount, 3);
+    return `<div class="rendered-ai-chat-image-group rendered-ai-chat-image-group--${groupSize}">`;
+  };
+
+  markdownIt.renderer.rules.paragraph_close = (tokens, index, options, env, self) => {
+    const environment = env as Record<string, unknown> | undefined;
+    if (environment?.[aiChatImageGalleryEnvKey] === true && environment?.[aiChatImageGroupActiveEnvKey] === true) {
+      delete environment[aiChatImageGroupActiveEnvKey];
+      return "</div>\n";
+    }
+    return defaultParagraphCloseRenderer(tokens, index, options, env, self);
+  };
+
+  markdownIt.renderer.rules.softbreak = (tokens, index, options, env, self) => {
+    const environment = env as Record<string, unknown> | undefined;
+    if (environment?.[aiChatImageGroupActiveEnvKey] === true) return "";
+    return defaultSoftbreakRenderer(tokens, index, options, env, self);
+  };
+
+  markdownIt.renderer.rules.hardbreak = (tokens, index, options, env, self) => {
+    const environment = env as Record<string, unknown> | undefined;
+    if (environment?.[aiChatImageGroupActiveEnvKey] === true) return "";
+    return defaultHardbreakRenderer(tokens, index, options, env, self);
+  };
+
+  markdownIt.renderer.rules.image = (tokens, index, options, env, self) => {
+    const environment = env as Record<string, unknown> | undefined;
+    if (environment?.[aiChatImageGalleryEnvKey] === true) {
+      tokens[index].attrJoin("class", "rendered-ai-chat-image");
+      tokens[index].attrSet("src", getAiChatImageProxySource(tokens[index].attrGet("src")));
+      tokens[index].attrSet("loading", "lazy");
+      tokens[index].attrSet("referrerpolicy", "no-referrer");
+    }
+    return defaultImageRenderer(tokens, index, options, env, self);
+  };
+}
+
+enableAiChatImageGalleries(markdown);
 
 type AiChatBacktickRunIndex = {
   runEndByStart: Map<number, number>;
@@ -485,7 +579,7 @@ const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   header: ["class"],
   small: ["class"],
   p: ["class"],
-  img: ["src", "alt", "title", "width", "height", "loading", "referrerpolicy"],
+  img: ["class", "src", "alt", "title", "width", "height", "loading", "referrerpolicy"],
   pre: ["class"],
   code: ["class"],
   span: ["class", "style", "data-latex", "data-math-display", "data-icon-value", "aria-hidden"],
@@ -806,7 +900,8 @@ export function renderMarkdown(raw: string) {
 function renderAiChatAnswerMarkdown(raw: string) {
   return renderMarkdownWithEnvironment(raw, {
     [aiChatCjkStrongEmphasisEnvKey]: true,
-    [aiChatNumericReferenceLinksEnvKey]: true
+    [aiChatNumericReferenceLinksEnvKey]: true,
+    [aiChatImageGalleryEnvKey]: true
   });
 }
 

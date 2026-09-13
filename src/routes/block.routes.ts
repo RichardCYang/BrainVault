@@ -37,6 +37,7 @@ import {
   type BlockCreateMutationReceipt
 } from "../lib/block-create-mutation.js";
 import {
+  fetchAiChatImage,
   fetchBookmarkPreviewWithFallback,
   fetchDatabaseUrlPreview,
   getBookmarkData,
@@ -87,7 +88,7 @@ import {
   beginAttachmentUploadProcessing
 } from "../middleware/attachment-rate-limit.js";
 import { bookmarkPreviewRateLimit } from "../middleware/bookmark-rate-limit.js";
-import { validate } from "../middleware/validate.js";
+import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { blockTypeSchema, idParamSchema, metadataSchema, requireUser, routeIdSchema, safeVersionSchema } from "../utils/schemas.js";
 import type { BlockRow, PageRow } from "../types/domain.js";
 
@@ -166,6 +167,10 @@ type BlockMoveMutationReceipt = {
 const bookmarkPreviewSchema = z.object({
   url: z.string().trim().min(1).max(2_048),
   mode: z.enum(["bookmark", "database-url"]).default("bookmark")
+});
+
+const aiChatImageQuerySchema = z.object({
+  url: z.string().trim().min(1).max(2_048)
 });
 
 function assertLosslessStructuredMetadata(type: BlockRow["type"], metadata: unknown) {
@@ -477,6 +482,26 @@ blockRouter.post(
       }
       const result = await fetchBookmarkPreviewWithFallback(String(req.body.url));
       res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+blockRouter.get(
+  "/ai-chat/image",
+  bookmarkPreviewRateLimit,
+  validate({ query: aiChatImageQuerySchema }),
+  async (req, res, next) => {
+    try {
+      const { url } = getValidatedQuery<z.infer<typeof aiChatImageQuerySchema>>(req);
+      const image = await fetchAiChatImage(url);
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      res.setHeader("Content-Type", image.contentType);
+      res.setHeader("Content-Length", String(image.bytes.length));
+      res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.send(image.bytes);
     } catch (error) {
       next(error);
     }

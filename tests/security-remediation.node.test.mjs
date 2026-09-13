@@ -71,13 +71,21 @@ test("server highlighting cannot execute code through a Node VM context", () => 
 test("shared content cannot auto-load arbitrary third-party images", () => {
   const app = read("src/app.ts");
   const markdown = read("src/lib/markdown.ts");
+  const bookmark = read("src/lib/bookmark.ts");
+  const blockRoutes = read("src/routes/block.routes.ts");
   const browser = read("public/app.js");
 
   assert.match(app, /imgSrc:\s*\[[^\]]*"'self'"[^\]]*"data:"[^\]]*"blob:"[^\]]*"https:\/\/cdn\.jsdelivr\.net\/gh\/jdecked\/twemoji@17\.0\.3\/assets\/svg\/"[^\]]*\]/);
   assert.doesNotMatch(app, /imgSrc:\s*\[[^\]]*(?:"http:"|"https:")/);
   assert.match(markdown, /function normalizeRenderedImageSource/);
   assert.match(markdown, /allowedSchemesByTag: \{ img: \["data"\] \}/);
+  assert.match(markdown, /`\/api\/ai-chat\/image\?url=\$\{encodeURIComponent\(parsed\.toString\(\)\)\}`/);
   assert.doesNotMatch(markdown, /img:\s*\[[^\]]*"srcset"/);
+  assert.match(bookmark, /const \{ url, addresses \} = await validateFetchUrl\(value, deadline\)/);
+  assert.match(bookmark, /AI_CHAT_IMAGE_TOO_LARGE/);
+  assert.match(bookmark, /detectAiChatImageMimeType\(bytes\)/);
+  assert.match(blockRoutes, /blockRouter\.get\(\s*"\/ai-chat\/image"/);
+  assert.match(blockRoutes, /Cross-Origin-Resource-Policy", "same-origin"/);
   assert.match(browser, /url\.origin !== window\.location\.origin/);
   assert.match(browser, /getRenderableImageSource\(item\?\.faviconUrl, \{ allowData: false \}\)/);
   assert.match(browser, /getRenderableImageSource\(page\?\.coverUrl\)/);

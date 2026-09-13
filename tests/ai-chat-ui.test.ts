@@ -5,7 +5,7 @@ import {
   normalizeAiChatMetadata,
   summarizeAiChatData
 } from "../src/lib/ai-chat.js";
-import { renderBlockHtml } from "../src/lib/markdown.js";
+import { renderBlockHtml, renderMarkdown } from "../src/lib/markdown.js";
 import { toBlock } from "../src/lib/mappers.js";
 
 const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
@@ -205,6 +205,74 @@ describe("AI conversation block", () => {
     expect(html).toContain("<code>npm test</code>");
     expect(html).toContain('<pre class="rendered-code-pre"><code class="language-bash">');
     expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content :not\(pre\) > code\s*\{[^}]*border:\s*1px solid color-mix\(in srgb, var\(--accent-text\) 38%, var\(--line-strong\)\);[^}]*background:\s*var\(--accent-soft-strong\);[^}]*color:\s*var\(--ink-strong\);[^}]*padding:\s*0\.1em 0\.34em;[^}]*font-weight:\s*600;/s);
+  });
+
+  it("renders remote Markdown images only in AI answers and groups consecutive image lines", () => {
+    const twoImageHtml = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        turns: [{
+          answeredAt: "",
+          question: "Show two images",
+          answer: [
+            "![Image](https://images.example.com/one.png)",
+            "![Image](https://images.example.com/two.jpg)"
+          ].join("\n")
+        }]
+      }
+    });
+    const threeImageHtml = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        turns: [{
+          answeredAt: "",
+          question: "Show three images",
+          answer: [
+            "![One](https://images.example.com/one.png)",
+            "![Two](https://images.example.com/two.jpg)",
+            "![Three](https://images.example.com/three.webp)"
+          ].join("\n")
+        }]
+      }
+    });
+
+    expect(twoImageHtml).toContain('class="rendered-ai-chat-image-group rendered-ai-chat-image-group--2"');
+    expect(twoImageHtml.match(/class="rendered-ai-chat-image"/g)).toHaveLength(2);
+    expect(twoImageHtml).toContain('src="/api/ai-chat/image?url=https%3A%2F%2Fimages.example.com%2Fone.png"');
+    expect(twoImageHtml).toContain('src="/api/ai-chat/image?url=https%3A%2F%2Fimages.example.com%2Ftwo.jpg"');
+    expect(twoImageHtml).not.toContain('src="https://images.example.com/');
+    expect(twoImageHtml).toContain('loading="lazy"');
+    expect(twoImageHtml).toContain('referrerpolicy="no-referrer"');
+    expect(twoImageHtml).not.toContain("<br>");
+
+    expect(threeImageHtml).toContain('class="rendered-ai-chat-image-group rendered-ai-chat-image-group--3"');
+    expect(threeImageHtml.match(/class="rendered-ai-chat-image"/g)).toHaveLength(3);
+    expect(threeImageHtml).toContain('src="/api/ai-chat/image?url=https%3A%2F%2Fimages.example.com%2Fthree.webp"');
+
+    // Keep the existing generic Markdown boundary: only AI answers may turn a
+    // remote URL into the authenticated same-origin image proxy.
+    expect(renderMarkdown("![Image](https://images.example.com/outside.png)")).not.toContain('src="https://images.example.com/outside.png"');
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-image-group--2\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-image-group--3\s*\{[^}]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/s);
+  });
+
+  it("keeps mixed prose intact while rendering a remote AI-answer image", () => {
+    const html = renderBlockHtml("AI_CHAT", "", false, {
+      aiChat: {
+        provider: "chatgpt",
+        turns: [{
+          answeredAt: "",
+          question: "Mixed content",
+          answer: "Before ![Diagram](https://images.example.com/diagram.png) after"
+        }]
+      }
+    });
+
+    expect(html).toContain("Before ");
+    expect(html).toContain('class="rendered-ai-chat-image"');
+    expect(html).toContain('src="/api/ai-chat/image?url=https%3A%2F%2Fimages.example.com%2Fdiagram.png"');
+    expect(html).toContain(" after");
+    expect(html).not.toContain("rendered-ai-chat-image-group--1");
   });
 
   it("does not let AI Markdown forge pagination controls", () => {

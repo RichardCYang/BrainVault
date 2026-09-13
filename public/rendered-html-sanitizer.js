@@ -20,7 +20,7 @@ const commonAllowedAttributes = Object.freeze({
   header: ["class"],
   small: ["class"],
   p: ["class"],
-  img: ["src", "alt", "title", "width", "height", "loading", "referrerpolicy"],
+  img: ["class", "src", "alt", "title", "width", "height", "loading", "referrerpolicy"],
   pre: ["class"],
   code: ["class"],
   span: ["class", "style", "data-latex", "data-math-display", "data-icon-value", "aria-hidden"],

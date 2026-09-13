@@ -14615,6 +14615,55 @@ button.danger {
   margin-bottom: 0;
 }
 
+/* AI-answer Markdown images use a compact ChatGPT-like gallery. Consecutive
+   image-only lines are emitted into one grid by the server renderer, while a
+   single image keeps the same rounded card treatment at full readable size. */
+.rendered-ai-chat-answer .rendered-ai-chat-image-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.48rem;
+  width: 100%;
+  max-width: 100%;
+  margin: 0.72rem 0;
+}
+
+.rendered-ai-chat-answer .rendered-ai-chat-image-group--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.rendered-ai-chat-answer .rendered-ai-chat-image-group--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.rendered-ai-chat-answer .rendered-ai-chat-image {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  max-height: 34rem;
+  border: 1px solid color-mix(in srgb, var(--line-strong) 82%, transparent);
+  border-radius: 10px;
+  background: var(--panel-soft);
+  object-fit: contain;
+  box-shadow: var(--shadow-card);
+}
+
+.rendered-ai-chat-answer .rendered-ai-chat-image-group--2 .rendered-ai-chat-image,
+.rendered-ai-chat-answer .rendered-ai-chat-image-group--3 .rendered-ai-chat-image {
+  aspect-ratio: 1 / 1;
+  height: 100%;
+  max-height: 22rem;
+  object-fit: cover;
+}
+
+/* Keep images embedded in mixed prose usable even when they are not part of
+   an image-only paragraph. */
+.rendered-ai-chat-answer .rendered-ai-chat-content p > .rendered-ai-chat-image {
+  width: auto;
+  max-width: 100%;
+  margin: 0.55rem 0;
+}
+
 /* Keep quoted Markdown distinct without dimming the prose itself. The
    accent-tinted surface provides structure while the normal ink color keeps
    long quotations as readable as surrounding answer text in both themes. */
