@@ -26,9 +26,25 @@ const strictTransactionalSqlMode =
   "@@SESSION.sql_mode, " +
   "CONCAT_WS(',', NULLIF(@@SESSION.sql_mode, ''), 'STRICT_TRANS_TABLES'))";
 
+// Keep only one permanently-idle connection instead of the connector default of
+// keeping the whole pool at minimumIdle=connectionLimit. BrainVault already runs
+// a lightweight auth-session prune every minute, so that single connection is
+// exercised in the background while burst-only connections are retired quickly.
+// This prevents long-idle deployments from accumulating server-expired sockets
+// that must be rediscovered on the first user request after an idle period.
+const databasePoolMinimumIdle = 1;
+const databasePoolIdleTimeoutSeconds = 30;
+const databaseSocketKeepAliveDelayMs = 30_000;
+
 export const pool: Pool = mariadb.createPool({
   ...databaseOptionsWithSchema(databaseConfig),
   connectionLimit: env.DATABASE_CONNECTION_LIMIT,
+  minimumIdle: Math.min(databasePoolMinimumIdle, env.DATABASE_CONNECTION_LIMIT),
+  idleTimeout: databasePoolIdleTimeoutSeconds,
+  // TCP keepalive does not replace MariaDB wait_timeout management, but it helps
+  // the kernel discover half-open network paths before they become a user-visible
+  // first-query stall. The pool still validates an idle connection on checkout.
+  keepAliveDelay: databaseSocketKeepAliveDelayMs,
   insertIdAsNumber: true,
   bigIntAsNumber: true,
   // Version counters are BIGINT UNSIGNED. Never approximate a value outside

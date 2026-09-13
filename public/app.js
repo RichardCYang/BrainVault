@@ -1839,7 +1839,11 @@ function isWebAuthnSupported() {
 }
 
 let webAuthnClientCapabilitiesPromise = null;
-const directPasskeyOptionsWarmupMaxAgeMs = 45_000;
+// The server-side direct-login challenge lives for five minutes. Keep an
+// intent-warmed challenge for three minutes so hover/focus can pay the network
+// and DB cost well before the click while still leaving at least two minutes
+// for the native authenticator ceremony and server verification.
+const directPasskeyOptionsWarmupMaxAgeMs = 3 * 60_000;
 let directPasskeyOptionsWarmup = null;
 let directPasskeyOptionsWarmupPromise = null;
 let directPasskeyOptionsWarmupGeneration = 0;

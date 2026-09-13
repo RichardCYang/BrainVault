@@ -60,11 +60,13 @@ export type VpnRiskResolution = {
 type VpnProviderCacheEntry = {
   signal: VpnProviderSignal;
   expiresAt: number;
+  staleUntil: number;
 };
 
 type VpnGateMatchCacheEntry = {
   match: VpnGateRelayMatch;
   expiresAt: number;
+  staleUntil: number;
 };
 
 const ipQueryEndpoint = "https://api.ipquery.io";
@@ -77,8 +79,11 @@ const torListMaxBytes = 4 * 1024 * 1024;
 const torListRefreshMs = 60 * 60_000;
 const torListStaleMs = 6 * 60 * 60_000;
 const providerSignalCacheMs = 5 * 60_000;
+const providerSignalStaleMs = 15 * 60_000;
 const unavailableProviderSignalCacheMs = 60_000;
+const unavailableProviderSignalStaleMs = 2 * 60_000;
 const vpnGateMatchCacheMs = 60_000;
+const vpnGateMatchStaleMs = 5 * 60_000;
 const maxExternalFactCacheEntries = 8_192;
 const timezoneMismatchThresholdMinutes = 180;
 const maxClientWebRtcHeaderLength = 256;
@@ -250,56 +255,102 @@ function trimOldestEntries<T>(cache: Map<string, T>) {
   }
 }
 
-async function resolveProviderSignal(
+function startProviderSignalRefresh(
   provider: VpnProviderSignal["provider"],
-  ipAddress: string
-): Promise<VpnProviderSignal> {
-  const cacheKey = `${provider}|${ipAddress}`;
-  const cached = providerSignalCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.signal;
-
+  ipAddress: string,
+  cacheKey: string
+) {
   const existing = providerSignalInFlight.get(cacheKey);
   if (existing) return existing;
 
   const query = provider === "ipquery" ? queryIpQuery : queryIpApi;
   const inFlight = (async () => {
     const signal = await query(ipAddress);
+    const now = Date.now();
+    const freshMs = signal.available ? providerSignalCacheMs : unavailableProviderSignalCacheMs;
+    const staleMs = signal.available ? providerSignalStaleMs : unavailableProviderSignalStaleMs;
     providerSignalCache.delete(cacheKey);
     providerSignalCache.set(cacheKey, {
       signal,
-      expiresAt: Date.now() + (signal.available ? providerSignalCacheMs : unavailableProviderSignalCacheMs)
+      expiresAt: now + freshMs,
+      staleUntil: now + staleMs
     });
     trimOldestEntries(providerSignalCache);
     return signal;
   })();
   providerSignalInFlight.set(cacheKey, inFlight);
-  try {
-    return await inFlight;
-  } finally {
-    if (providerSignalInFlight.get(cacheKey) === inFlight) providerSignalInFlight.delete(cacheKey);
-  }
+  // Use a two-arm `then` rather than an ignored `finally()` promise so an
+  // unexpected refresh rejection cannot become an unhandled rejection solely
+  // because the caller is on the stale/background path.
+  void inFlight.then(
+    () => {
+      if (providerSignalInFlight.get(cacheKey) === inFlight) providerSignalInFlight.delete(cacheKey);
+    },
+    () => {
+      if (providerSignalInFlight.get(cacheKey) === inFlight) providerSignalInFlight.delete(cacheKey);
+    }
+  );
+  return inFlight;
 }
 
-async function resolveVpnGateMatch(ipAddress: string): Promise<VpnGateRelayMatch> {
-  const cached = vpnGateMatchCache.get(ipAddress);
-  if (cached && cached.expiresAt > Date.now()) return cached.match;
+async function resolveProviderSignal(
+  provider: VpnProviderSignal["provider"],
+  ipAddress: string
+): Promise<VpnProviderSignal> {
+  const cacheKey = `${provider}|${ipAddress}`;
+  const now = Date.now();
+  const cached = providerSignalCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.signal;
 
+  // Provider calls can take multiple seconds. Once we have a recently verified
+  // signal for this exact IP, serve it during a short bounded stale window and
+  // refresh in the background. This prevents the first authenticated request
+  // after the five-minute freshness boundary from inheriting provider latency.
+  if (cached && cached.staleUntil > now) {
+    void startProviderSignalRefresh(provider, ipAddress, cacheKey);
+    return cached.signal;
+  }
+
+  return startProviderSignalRefresh(provider, ipAddress, cacheKey);
+}
+
+function startVpnGateMatchRefresh(ipAddress: string) {
   const existing = vpnGateMatchInFlight.get(ipAddress);
   if (existing) return existing;
 
   const inFlight = (async () => {
     const match = await matchVpnGateRelay(ipAddress);
+    const now = Date.now();
     vpnGateMatchCache.delete(ipAddress);
-    vpnGateMatchCache.set(ipAddress, { match, expiresAt: Date.now() + vpnGateMatchCacheMs });
+    vpnGateMatchCache.set(ipAddress, {
+      match,
+      expiresAt: now + vpnGateMatchCacheMs,
+      staleUntil: now + vpnGateMatchStaleMs
+    });
     trimOldestEntries(vpnGateMatchCache);
     return match;
   })();
   vpnGateMatchInFlight.set(ipAddress, inFlight);
-  try {
-    return await inFlight;
-  } finally {
-    if (vpnGateMatchInFlight.get(ipAddress) === inFlight) vpnGateMatchInFlight.delete(ipAddress);
+  void inFlight.then(
+    () => {
+      if (vpnGateMatchInFlight.get(ipAddress) === inFlight) vpnGateMatchInFlight.delete(ipAddress);
+    },
+    () => {
+      if (vpnGateMatchInFlight.get(ipAddress) === inFlight) vpnGateMatchInFlight.delete(ipAddress);
+    }
+  );
+  return inFlight;
+}
+
+async function resolveVpnGateMatch(ipAddress: string): Promise<VpnGateRelayMatch> {
+  const now = Date.now();
+  const cached = vpnGateMatchCache.get(ipAddress);
+  if (cached && cached.expiresAt > now) return cached.match;
+  if (cached && cached.staleUntil > now) {
+    void startVpnGateMatchRefresh(ipAddress);
+    return cached.match;
   }
+  return startVpnGateMatchRefresh(ipAddress);
 }
 
 function startTorExitAddressRefresh() {

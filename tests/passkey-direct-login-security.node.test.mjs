@@ -53,7 +53,7 @@ test("discoverable-passkey login keeps the WebAuthn ceremony server-authoritativ
   assert.match(route, /res\.once\("finish", schedulePasskeyLoginChallengeCleanup\);\s+res\.json\(result\);/);
   assert.match(route, /DELETE FROM passkey_login_challenges\s+WHERE expires_at <= CURRENT_TIMESTAMP\(3\)/);
 
-  assert.match(client, /const directPasskeyOptionsWarmupMaxAgeMs = 45_000/);
+  assert.match(client, /const directPasskeyOptionsWarmupMaxAgeMs = 3 \* 60_000/);
   assert.match(client, /function primeDirectPasskeyOptions\(\)/);
   assert.match(client, /function takeDirectPasskeyOptionsWarmup\(\)/);
   assert.match(client, /addEventListener\("pointerenter", primeDirectPasskeyOptionsFromIntent/);

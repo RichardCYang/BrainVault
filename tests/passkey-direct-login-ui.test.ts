@@ -36,7 +36,7 @@ describe("direct passkey login UI contract", () => {
   });
 
   it("warms direct-login options from explicit intent and keeps ready options on the click activation task", () => {
-    expect(client).toContain("const directPasskeyOptionsWarmupMaxAgeMs = 45_000");
+    expect(client).toContain("const directPasskeyOptionsWarmupMaxAgeMs = 3 * 60_000");
     expect(client).toContain("function requestDirectPasskeyOptions()");
     expect(client).toContain("function primeDirectPasskeyOptions()");
     expect(client).toContain("function takeDirectPasskeyOptionsWarmup()");

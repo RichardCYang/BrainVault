@@ -28,6 +28,7 @@ export const countryBlockHistoryResultLimit = 500;
 const countryBlockHistoryRetentionMonths = maxCountryBlockHistoryMonths + 1;
 
 const successfulCountryCacheMs = 10 * 60_000;
+const successfulCountryStaleMs = 30 * 60_000;
 const unresolvedCountryCacheMs = 60_000;
 const providerFailureCacheMs = 15_000;
 const maxCountryCacheEntries = 4_096;
@@ -42,6 +43,7 @@ type CountryCacheEntry = {
   countryCode: IsoCountryCode | null;
   resolved: boolean;
   expiresAt: number;
+  staleUntil: number;
 };
 
 type CountryPolicy = {
@@ -58,6 +60,7 @@ type CountryBlockRow = {
 };
 
 const countryCache = new Map<string, CountryCacheEntry>();
+const countryResolutionInFlight = new Map<string, Promise<CountryResolution>>();
 
 export function normalizeCountryLoginMode(value: unknown): CountryLoginMode {
   return countryLoginModes.includes(value as CountryLoginMode) ? value as CountryLoginMode : "OFF";
@@ -82,6 +85,53 @@ function rememberCountryResolution(ipAddress: string, entry: CountryCacheEntry) 
   }
 }
 
+function startCountryResolutionRefresh(normalizedIp: string) {
+  const existing = countryResolutionInFlight.get(normalizedIp);
+  if (existing) return existing;
+
+  const inFlight = (async (): Promise<CountryResolution> => {
+    const countries = await lookupCountryCodes([normalizedIp]);
+    const now = Date.now();
+    if (!countries.has(normalizedIp)) {
+      rememberCountryResolution(normalizedIp, {
+        countryCode: null,
+        resolved: false,
+        expiresAt: now + providerFailureCacheMs,
+        staleUntil: now + providerFailureCacheMs
+      });
+      return { ipAddress: normalizedIp, countryCode: null, resolved: false };
+    }
+
+    const countryCode = normalizeIsoCountryCode(countries.get(normalizedIp));
+    const resolved = Boolean(countryCode);
+    rememberCountryResolution(normalizedIp, {
+      countryCode,
+      resolved,
+      expiresAt: now + (resolved ? successfulCountryCacheMs : unresolvedCountryCacheMs),
+      // Only a previously successful exact-IP lookup gets stale-while-revalidate.
+      // Provider failures and unresolved responses stay fail-closed after their
+      // normal short cache lifetime instead of being prolonged in the background.
+      staleUntil: now + (resolved ? successfulCountryStaleMs : unresolvedCountryCacheMs)
+    });
+    return { ipAddress: normalizedIp, countryCode, resolved };
+  })();
+
+  countryResolutionInFlight.set(normalizedIp, inFlight);
+  void inFlight.then(
+    () => {
+      if (countryResolutionInFlight.get(normalizedIp) === inFlight) {
+        countryResolutionInFlight.delete(normalizedIp);
+      }
+    },
+    () => {
+      if (countryResolutionInFlight.get(normalizedIp) === inFlight) {
+        countryResolutionInFlight.delete(normalizedIp);
+      }
+    }
+  );
+  return inFlight;
+}
+
 export async function resolveCountryLoginLocation(ipAddress: string): Promise<CountryResolution> {
   const normalizedIp = normalizeCountryLookupIp(ipAddress);
   if (!normalizedIp || !isPublicCountryLookupIp(normalizedIp)) {
@@ -98,24 +148,21 @@ export async function resolveCountryLoginLocation(ipAddress: string): Promise<Co
     };
   }
 
-  const countries = await lookupCountryCodes([normalizedIp]);
-  if (!countries.has(normalizedIp)) {
-    rememberCountryResolution(normalizedIp, {
-      countryCode: null,
-      resolved: false,
-      expiresAt: now + providerFailureCacheMs
-    });
-    return { ipAddress: normalizedIp, countryCode: null, resolved: false };
+  // Country enforcement runs in the authenticated request path. Once this exact
+  // public IP has a successful mapping, do not make the first request after the
+  // ten-minute freshness boundary wait on country.is. Revalidate in the
+  // background for a bounded window, while cold/failed/too-old lookups retain
+  // the existing synchronous fail-closed behavior.
+  if (cached?.resolved && cached.countryCode && cached.staleUntil > now) {
+    void startCountryResolutionRefresh(normalizedIp);
+    return {
+      ipAddress: normalizedIp,
+      countryCode: cached.countryCode,
+      resolved: true
+    };
   }
 
-  const countryCode = normalizeIsoCountryCode(countries.get(normalizedIp));
-  const resolved = Boolean(countryCode);
-  rememberCountryResolution(normalizedIp, {
-    countryCode,
-    resolved,
-    expiresAt: now + (resolved ? successfulCountryCacheMs : unresolvedCountryCacheMs)
-  });
-  return { ipAddress: normalizedIp, countryCode, resolved };
+  return startCountryResolutionRefresh(normalizedIp);
 }
 
 export async function getCountryLoginPolicy(
@@ -338,4 +385,5 @@ export async function listCountryLoginBlocks(
 
 export function resetCountryLoginLocationCacheForTests() {
   countryCache.clear();
+  countryResolutionInFlight.clear();
 }
