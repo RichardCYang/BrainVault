@@ -28,12 +28,13 @@ test("TOTP attempt limiting scopes blocks to one account and expires them", asyn
   assert.match(policy, /recordCountryLoginBlockStrict\([\s\S]*?"TOTP_ATTEMPTS_EXCEEDED"/);
   assert.match(countryPolicy, /\| "TOTP_ATTEMPTS_EXCEEDED"/);
   assert.match(mfaRoutes, /await recordTotpIpFailure\(session\.user_id, session\.source_ip\)/);
-  assert.match(mfaRoutes, /disconnectUserCollaborators\(session\.user_id/);
-  assert.doesNotMatch(mfaRoutes, /disconnectIpCollaborators\(session\.source_ip/);
+  assert.match(mfaRoutes, /isPermanentlyBlockedTotpIp\(pendingSession\.source_ip, pendingSession\.user_id\)/);
+  assert.doesNotMatch(policy, /DELETE FROM mfa_login_sessions WHERE user_id = \? AND source_ip = \?/);
+  assert.doesNotMatch(mfaRoutes, /disconnectUserCollaborators\(session\.user_id, "Access from this IP/);
   assert.match(mfaRoutes, /await clearTotpIpFailures\(activeSession\.user_id, activeSession\.source_ip, client\)/);
 });
 
-test("TOTP IP enforcement is post-authentication, account-scoped, and self-unblockable with an existing session", async () => {
+test("TOTP IP enforcement is scoped to TOTP verification and leaves sessions/passkeys available", async () => {
   const [server, app, middleware, authMiddleware, authRoutes, passkeyRoutes, collaborationServer] = await Promise.all([
     read("src/server.ts"),
     read("src/app.ts"),
@@ -46,13 +47,11 @@ test("TOTP IP enforcement is post-authentication, account-scoped, and self-unblo
 
   assert.match(server, /await initializePermanentTotpIpEnforcement\(\)/);
   assert.doesNotMatch(app, /app\.use\(enforcePermanentTotpIpBlock\)/);
-  assert.match(middleware, /!req\.user\?\.id/);
-  assert.match(middleware, /isPermanentlyBlockedTotpIp\(ipAddress, req\.user\.id\)/);
-  assert.match(authMiddleware, /isPermanentlyBlockedTotpIp\(clientIp, user\.id\)/);
-  assert.match(authRoutes, /isPermanentlyBlockedTotpIp\(sourceIp, user\.id\)/);
-  assert.match(passkeyRoutes, /isPermanentlyBlockedTotpIp\(sourceIp, passkey\.user_id\)/);
+  assert.doesNotMatch(middleware, /isPermanentlyBlockedTotpIp/);
+  assert.doesNotMatch(authMiddleware, /isPermanentlyBlockedTotpIp/);
+  assert.doesNotMatch(authRoutes, /isPermanentlyBlockedTotpIp/);
+  assert.doesNotMatch(passkeyRoutes, /isPermanentlyBlockedTotpIp/);
   assert.match(authRoutes, /"\/totp-ip-blocks\/:ipAddress",\s*requireAuthAllowTotpIpBlock,\s*accountReauthenticationRateLimit/);
   assert.match(authRoutes, /verifyPassword\(currentPassword, user\.password_hash\)/);
-  assert.match(collaborationServer, /isPermanentlyBlockedTotpIp\(sourceIp, payload\.sub\)/);
-  assert.match(collaborationServer, /isPermanentlyBlockedTotpIp\(client\.ipAddress, client\.user\.id\)/);
+  assert.doesNotMatch(collaborationServer, /isPermanentlyBlockedTotpIp/);
 });

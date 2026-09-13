@@ -36,6 +36,7 @@ export const attachmentUploadRoot = path.resolve(projectRoot, env.ATTACHMENT_UPL
 export const attachmentTempDir = path.join(attachmentUploadRoot, ".tmp");
 export const maxAttachmentStorageBytes = BigInt(env.ATTACHMENT_STORAGE_MAX_MB) * 1024n * 1024n;
 export const maxAttachmentFilesPerAccount = dataTransferResourceLimits.maxAttachments;
+const restoreGenerationMarkerName = ".brainvault-restore-generation.json";
 
 function comparablePath(value: string) {
   const resolved = path.resolve(value);
@@ -292,11 +293,12 @@ export async function getAttachmentStorageUsage(ownerId: string) {
   let totalBytes = 0n;
   let totalFiles = 0;
   for (const entry of entries) {
+    if (entry.name === restoreGenerationMarkerName) continue;
     const filePath = path.join(ownerDirectory, entry.name);
     const info = await lstat(filePath, { bigint: true });
-    if (!info.isFile()) {
-      throw new Error(`Attachment storage contains an unsupported entry: ${filePath}`);
-    }
+    // Quota accounting counts only attachment files. Unexpected local entries
+    // are ignored here so one operator/filesystem artifact cannot brick uploads.
+    if (!info.isFile()) continue;
     totalBytes += info.size;
     totalFiles += 1;
   }

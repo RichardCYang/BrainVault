@@ -41,7 +41,6 @@ import {
 } from "./collaboration-protocol.js";
 import { CollaborationDocumentError } from "./collaboration-document.js";
 import { getClientIpAddressFromTrustedProxyRequest, isHttpsRequestFromTrustedProxy } from "./reverse-proxy.js";
-import { isPermanentlyBlockedTotpIp } from "./totp-ip-block.js";
 import {
   assessInitialCollaborationBootstrap,
   type CollaborationBootstrapMismatchSummary
@@ -618,10 +617,6 @@ export class PageCollaborationHub {
       }
       const collaborationState = await getCollaborationState(pageId);
       assertCollaborationDocumentEpoch(collaborationState, payload.documentEpoch);
-      if (await isPermanentlyBlockedTotpIp(sourceIp, payload.sub)) {
-        rejectWebSocketUpgrade(socket, 403, "Access from this IP is blocked");
-        return;
-      }
       const webRtcSignal: ClientWebRtcSignal = {
         state: payload.webRtcState ?? "ABSENT",
         observedIps: payload.webRtcObservedIps ?? []
@@ -741,10 +736,6 @@ export class PageCollaborationHub {
       }
 
       try {
-        if (await isPermanentlyBlockedTotpIp(sourceIp, payload.sub)) {
-          connection.close(4003, "Access from this IP is blocked");
-          return;
-        }
         const currentUser = await db.queryOne<{
           auth_version?: number;
           attachment_generation?: number | bigint | string;
@@ -1200,9 +1191,6 @@ export class PageCollaborationHub {
         // transaction write path below independently re-authorizes under locks.
         // This removes per-frame and per-recipient database amplification without
         // turning authorization into a long-lived ticket.
-        if (await isPermanentlyBlockedTotpIp(client.ipAddress, client.user.id)) {
-          throw new ApiError(403, "TOTP_IP_PERMANENTLY_BLOCKED", "Access from this IP is blocked");
-        }
         const currentUser = await db.queryOne<{
           auth_version?: number;
           attachment_generation?: number | bigint | string;
@@ -1266,9 +1254,7 @@ export class PageCollaborationHub {
                   ? "Access from this IP country is blocked"
                   : error instanceof ApiError && error.code === "VPN_ACCESS_BLOCKED"
                     ? "Access from this VPN, proxy, or Tor network is blocked"
-                    : error instanceof ApiError && error.code === "TOTP_IP_PERMANENTLY_BLOCKED"
-                      ? "Access from this IP is blocked"
-                      : "Page access was removed"
+                    : "Page access was removed"
           );
         }
         return false;
@@ -1858,10 +1844,6 @@ export class PageCollaborationHub {
         for (const client of room.clients.values()) {
           checks.push((async () => {
             try {
-              if (await isPermanentlyBlockedTotpIp(client.ipAddress, client.user.id)) {
-                client.socket.close(4003, "Access from this IP is blocked");
-                return;
-              }
               const currentUser = await db.queryOne<{
                 auth_version?: number;
                 attachment_generation?: number | bigint | string;

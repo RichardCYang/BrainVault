@@ -142,7 +142,12 @@ const restoreJournalV3Schema = z.object({
 const customIconFilenameSchema = z.string()
   .min(1)
   .max(100)
-  .regex(/^[A-Za-z0-9_-]{1,96}\.(?:png|jpg|webp|ico)$/);
+  .regex(/^[A-Za-z0-9_-]{1,96}\.(?:png|jpg|webp|ico)$/)
+  .refine((value) => {
+    const extensionIndex = value.lastIndexOf(".");
+    const basename = extensionIndex > 0 ? value.slice(0, extensionIndex) : value;
+    return !windowsReservedDeviceNamePattern.test(basename);
+  }, "Custom icon filename is reserved on Windows");
 const restoreJournalV4Schema = z.object({
   version: z.literal(4),
   userId: idSchema,
@@ -1099,6 +1104,24 @@ function rebindPageVersionChangesJson(value: string, sourceUserId: string, targe
     }
     return rebindCustomIconValue(candidate as string | null, sourceUserId, targetUserId);
   };
+  const rebindHistoryBlockMetadata = (blockType: unknown, candidate: unknown) => {
+    if (blockType !== "ACCORDION" || candidate === null) return candidate;
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      invalidBackup("Page version history contains invalid block metadata");
+    }
+    const metadata = candidate as Record<string, unknown>;
+    const accordion = metadata.accordion;
+    if (!accordion || typeof accordion !== "object" || Array.isArray(accordion)) return candidate;
+    const items = (accordion as Record<string, unknown>).items;
+    if (!Array.isArray(items)) return candidate;
+    for (const item of items) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const itemRecord = item as Record<string, unknown>;
+      if (typeof itemRecord.icon !== "string" || !localCustomIconPublicPath(itemRecord.icon)) continue;
+      itemRecord.icon = rebindCustomIconValue(itemRecord.icon, sourceUserId, targetUserId);
+    }
+    return candidate;
+  };
 
   for (const change of parsed) {
     if (!change || typeof change !== "object" || Array.isArray(change)) continue;
@@ -1111,13 +1134,31 @@ function rebindPageVersionChangesJson(value: string, sourceUserId: string, targe
       }
       continue;
     }
-    if (record.kind !== "page-updated" || !Array.isArray(record.fields)) continue;
+    if (record.kind === "block-created" || record.kind === "block-deleted") {
+      const block = record.block;
+      if (block && typeof block === "object" && !Array.isArray(block)) {
+        const blockRecord = block as Record<string, unknown>;
+        if ("metadata" in blockRecord) {
+          blockRecord.metadata = rebindHistoryBlockMetadata(blockRecord.type, blockRecord.metadata);
+        }
+      }
+      continue;
+    }
+    if ((record.kind !== "page-updated" && record.kind !== "block-updated") || !Array.isArray(record.fields)) continue;
     for (const field of record.fields) {
       if (!field || typeof field !== "object" || Array.isArray(field)) continue;
       const fieldRecord = field as Record<string, unknown>;
-      if (fieldRecord.field !== "icon") continue;
-      if ("before" in fieldRecord) fieldRecord.before = rebindHistoryIcon(fieldRecord.before);
-      if ("after" in fieldRecord) fieldRecord.after = rebindHistoryIcon(fieldRecord.after);
+      if (record.kind === "page-updated" && fieldRecord.field === "icon") {
+        if ("before" in fieldRecord) fieldRecord.before = rebindHistoryIcon(fieldRecord.before);
+        if ("after" in fieldRecord) fieldRecord.after = rebindHistoryIcon(fieldRecord.after);
+      } else if (record.kind === "block-updated" && fieldRecord.field === "metadata") {
+        if ("before" in fieldRecord) {
+          fieldRecord.before = rebindHistoryBlockMetadata(record.blockType, fieldRecord.before);
+        }
+        if ("after" in fieldRecord) {
+          fieldRecord.after = rebindHistoryBlockMetadata(record.blockType, fieldRecord.after);
+        }
+      }
     }
   }
 
@@ -1353,16 +1394,14 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
       }
       throw error;
     }
-    if (manifest.version >= uploadedAssetBackupVersion) {
-      for (const iconValue of accordionMetadataCustomIconValues(block)) {
-        const publicPath = localCustomIconPublicPath(iconValue)!;
-        const sourcePrefix = `${customIconPublicPrefix}${manifest.source.userId}/`;
-        if (!publicPath.startsWith(sourcePrefix)) {
-          invalidBackup(`Block ${block.id} custom icon belongs to another account: ${publicPath}`);
-        }
-        if (!declaredCustomIconPaths.has(publicPath)) {
-          invalidBackup(`Block ${block.id} custom icon file is missing from the backup: ${publicPath}`);
-        }
+    for (const iconValue of accordionMetadataCustomIconValues(block)) {
+      const publicPath = localCustomIconPublicPath(iconValue)!;
+      const sourcePrefix = `${customIconPublicPrefix}${manifest.source.userId}/`;
+      if (!publicPath.startsWith(sourcePrefix)) {
+        invalidBackup(`Block ${block.id} custom icon belongs to another account: ${publicPath}`);
+      }
+      if (manifest.version >= uploadedAssetBackupVersion && !declaredCustomIconPaths.has(publicPath)) {
+        invalidBackup(`Block ${block.id} custom icon file is missing from the backup: ${publicPath}`);
       }
     }
   }
@@ -2101,20 +2140,6 @@ async function assertNoForeignIdConflicts(userId: string, manifest: BrainVaultBa
     const conflict = rows.find((row) => row.owner_id !== userId);
     if (conflict) throw new ApiError(409, "BACKUP_ID_CONFLICT", "The backup contains an identifier owned by another account");
   }
-  if (manifest.version >= uploadedAssetBackupVersion) {
-    const libraryIds = (manifest.customIcons ?? []).flatMap((item) => item.library ? [item.library.id] : []);
-    for (const ids of batch(libraryIds)) {
-      if (!ids.length) continue;
-      const rows = await db.query<{ id: string; user_id: string }>(
-        `SELECT id, user_id FROM custom_icons WHERE id IN (${ids.map(() => "?").join(",")})`,
-        ids
-      );
-      const conflict = rows.find((row) => row.user_id !== userId);
-      if (conflict) {
-        throw new ApiError(409, "BACKUP_ID_CONFLICT", "The backup contains a custom icon identifier owned by another account");
-      }
-    }
-  }
 }
 
 async function getExistingTags(client: DbClient, tags: BackupTag[]) {
@@ -2616,9 +2641,11 @@ async function importRows(
   // checks before they can affect or acknowledge the restored workspace.
   const orderedBlocks = orderByParent(manifest.data.blocks, (item) => item.id, (item) => item.parent_block_id);
   for (const block of orderedBlocks) {
-    const restoredMetadata = manifest.version >= uploadedAssetBackupVersion
-      ? rebindBlockMetadataCustomIcons(block, manifest.source.userId, userId)
-      : block.metadata;
+    const restoredMetadata = rebindBlockMetadataCustomIcons(
+      block,
+      manifest.source.userId,
+      userId
+    );
     await client.execute(
       `INSERT INTO blocks
        (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata, edit_version, created_at, updated_at)

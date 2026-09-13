@@ -140,7 +140,7 @@ test("collaboration revalidation amortizes durable checks and protects presence 
   assert.match(source, /const accessRevalidationCacheMs = 2_000;/);
   assert.match(source, /if \(!force && now - client\.accessValidatedAt < accessRevalidationCacheMs\) return true;/);
   assert.match(source, /if \(client\.accessValidationPromise\) return client\.accessValidationPromise;/);
-  assert.match(source, /isPermanentlyBlockedTotpIp\(client\.ipAddress, client\.user\.id\)/);
+  assert.doesNotMatch(source, /isPermanentlyBlockedTotpIp/);
   assert.match(source, /enforceCountryLoginPolicy\(client\.user\.id, currentUser\.country_login_mode, client\.ipAddress\)/);
   assert.ok(source.includes("enforceVpnAccessPolicy("));
   assert.ok(source.includes("client.ipAddress"));

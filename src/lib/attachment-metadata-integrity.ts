@@ -149,9 +149,15 @@ export function sanitizeAttachmentFilename(value: string) {
     .split("/")
     .pop()
     ?.replace(unsafeAttachmentFilenameFormatting, "_")
+    .normalize("NFC")
     .trim();
 
-  const safeName = !basename || basename === "." || basename === ".." ? "attachment" : basename;
+  // A colon introduces an NTFS alternate data stream. Apply policy to the
+  // canonical base filename so an ADS suffix cannot hide a blocked extension.
+  const canonicalBasename = basename?.split(":", 1)[0]?.replace(/[. ]+$/g, "").trim();
+  const safeName = !canonicalBasename || canonicalBasename === "." || canonicalBasename === ".."
+    ? "attachment"
+    : canonicalBasename;
   return safeName.slice(0, 255);
 }
 

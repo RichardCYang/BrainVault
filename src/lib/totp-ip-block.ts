@@ -169,10 +169,6 @@ export async function recordTotpIpFailure(userId: string, ipAddress: string) {
         "DELETE FROM user_totp_ip_failures WHERE user_id = ? AND ip_address = ?",
         [userId, normalizedIp]
       );
-      await client.execute(
-        "DELETE FROM mfa_login_sessions WHERE user_id = ? AND source_ip = ?",
-        [userId, normalizedIp]
-      );
       if (newlyBlocked) {
         await recordCountryLoginBlockStrict(
           userId,

@@ -21,7 +21,7 @@ import { clearMfaCeremonyBinding, readMfaCeremonyBinding } from "../lib/mfa-cere
 import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
 import { enforceVpnAccessPolicy, getClientTimeZone, getClientWebRtcSignal } from "../lib/vpn-access-policy.js";
 import { getClientIpAddress, recordLoginAttempt, type LoginAttemptOutcome } from "../lib/login-history.js";
-import { clearTotpIpFailures, recordTotpIpFailure } from "../lib/totp-ip-block.js";
+import { clearTotpIpFailures, isPermanentlyBlockedTotpIp, recordTotpIpFailure } from "../lib/totp-ip-block.js";
 import { createId } from "../lib/id.js";
 import {
   buildTotpUri,
@@ -63,6 +63,7 @@ mfaRouter.use((_req, res, next) => {
 
 const mfaSessionLifetimeMs = 5 * 60_000;
 const challengeLifetimeMs = 5 * 60_000;
+const mfaStepUpLifetimeMs = 5 * 60_000;
 // Cross-device passkey registration includes QR scanning, nearby-device
 // verification, provider selection, and device unlock. SimpleWebAuthn's
 // default is 60 seconds, which is unnecessarily tight for that ceremony.
@@ -139,8 +140,13 @@ const clientExtensionResultsSchema = z.custom<Record<string, unknown>>(
 );
 
 const currentPasswordSchema = z.object({
-  currentPassword: passwordInputSchema(1)
+  currentPassword: passwordInputSchema(1),
+  stepUpToken: opaqueTokenSchema.optional()
 });
+
+const mfaStepUpTotpSchema = z.object({
+  code: z.string().trim().regex(/^\d{6}$/)
+}).strict();
 
 const totpVerifySchema = z.object({
   setupToken: z.string().min(20).max(256),
@@ -160,6 +166,7 @@ const passkeyNameSchema = z.string().trim().min(1).max(80);
 
 const passkeyOptionsSchema = z.object({
   currentPassword: passwordInputSchema(1),
+  stepUpToken: opaqueTokenSchema.optional(),
   name: passkeyNameSchema,
   registrationTarget: z.enum(["automatic", "remote"]).default("automatic")
 });
@@ -271,6 +278,15 @@ type ChallengeRow = {
   used_at: string | null;
 };
 
+type MfaStepUpSessionRow = {
+  token_hash: string;
+  user_id: string;
+  session_id: string;
+  auth_version: number;
+  expires_at: string;
+  used_at: string | null;
+};
+
 function expiresAt(msFromNow: number) {
   return new Date(Date.now() + msFromNow);
 }
@@ -373,12 +389,82 @@ async function requireCurrentPasswordForUpdate(
   return user;
 }
 
+function mfaStepUpContextHash(userId: string, authVersion: number, sessionId: string) {
+  return hashOpaqueToken(`brainvault:mfa-step-up:${userId}:${authVersion}:${sessionId}`);
+}
+
+async function createMfaStepUpSession(
+  client: DbClient,
+  userId: string,
+  authVersion: number,
+  sessionId: string
+) {
+  const token = createOpaqueToken();
+  await client.execute(
+    `DELETE FROM mfa_step_up_sessions
+     WHERE user_id = ? AND (used_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP(3))`,
+    [userId]
+  );
+  await client.execute(
+    `INSERT INTO mfa_step_up_sessions
+       (token_hash, user_id, session_id, auth_version, expires_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [hashOpaqueToken(token), userId, sessionId, authVersion, expiresAt(mfaStepUpLifetimeMs)]
+  );
+  return token;
+}
+
+async function hasExistingMfaFactor(client: DbClient, userId: string) {
+  const row = await client.queryOne<{ totp_enabled: number; passkey_count: number }>(
+    `SELECT
+       EXISTS(SELECT 1 FROM user_totp_credentials WHERE user_id = ?) AS totp_enabled,
+       (SELECT COUNT(*) FROM user_passkeys WHERE user_id = ?) AS passkey_count`,
+    [userId, userId]
+  );
+  return Boolean(Number(row?.totp_enabled ?? 0)) || Number(row?.passkey_count ?? 0) > 0;
+}
+
+export async function consumeMfaStepUpIfRequired(
+  client: DbClient,
+  userId: string,
+  authScope: { authVersion: number; sessionId: string },
+  stepUpToken: string | undefined
+) {
+  if (!(await hasExistingMfaFactor(client, userId))) return;
+  if (!stepUpToken) {
+    throw new ApiError(403, "MFA_STEP_UP_REQUIRED", "Verify an existing two-step verification method before making this security change");
+  }
+
+  const tokenHash = hashOpaqueToken(stepUpToken);
+  const row = await client.queryOne<MfaStepUpSessionRow>(
+    `SELECT token_hash, user_id, session_id, auth_version, expires_at, used_at
+     FROM mfa_step_up_sessions
+     WHERE token_hash = ? AND user_id = ? AND session_id = ? AND auth_version = ?
+       AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)
+     FOR UPDATE`,
+    [tokenHash, userId, authScope.sessionId, authScope.authVersion]
+  );
+  if (!row) {
+    throw new ApiError(403, "MFA_STEP_UP_EXPIRED", "The two-step verification confirmation expired; verify again");
+  }
+
+  const consumed = await client.execute<{ affectedRows: number }>(
+    `UPDATE mfa_step_up_sessions SET used_at = CURRENT_TIMESTAMP(3)
+     WHERE token_hash = ? AND used_at IS NULL`,
+    [tokenHash]
+  );
+  if (Number(consumed.affectedRows) !== 1) {
+    throw new ApiError(403, "MFA_STEP_UP_EXPIRED", "The two-step verification confirmation expired; verify again");
+  }
+}
+
 async function rotateAuthenticationCredentials(client: DbClient, user: UserRow) {
   const authVersion = normalizeAuthVersion(user.auth_version) + 1;
   await client.execute("UPDATE users SET auth_version = ? WHERE id = ?", [authVersion, user.id]);
   await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [user.id]);
   await client.execute("DELETE FROM webauthn_challenges WHERE user_id = ?", [user.id]);
   await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [user.id]);
+  await client.execute("DELETE FROM mfa_step_up_sessions WHERE user_id = ?", [user.id]);
   return { ...user, auth_version: authVersion };
 }
 
@@ -637,6 +723,217 @@ mfaRouter.get("/status", requireAuth, async (req, res, next) => {
 });
 
 mfaRouter.post(
+  "/step-up/totp",
+  requireAuth,
+  mfaSetupRateLimit,
+  validate({ body: mfaStepUpTotpSchema }),
+  async (req, res, next) => {
+    const user = requireUser(req.user);
+    const sourceIp = getClientIpAddress(req);
+    try {
+      const authScope = requireRequestAuthScope(req);
+      const { code } = req.body as z.infer<typeof mfaStepUpTotpSchema>;
+      if (await isPermanentlyBlockedTotpIp(sourceIp, user.id)) {
+        throw new ApiError(
+          403,
+          "TOTP_IP_PERMANENTLY_BLOCKED",
+          "TOTP verification from this IP address is temporarily blocked for this account"
+        );
+      }
+      const stepUpToken = await transaction(async (client) => {
+        await assertCurrentAuthSession(user.id, authScope, client);
+        const credential = await client.queryOne<TotpCredentialRow>(
+          `SELECT user_id, secret_ciphertext, secret_iv, secret_tag, last_used_step
+           FROM user_totp_credentials WHERE user_id = ? FOR UPDATE`,
+          [user.id]
+        );
+        if (!credential) {
+          throw new ApiError(400, "MFA_METHOD_UNAVAILABLE", "TOTP is not available for this account");
+        }
+
+        const secret = decryptMfaSecret({
+          ciphertext: credential.secret_ciphertext,
+          iv: credential.secret_iv,
+          tag: credential.secret_tag
+        });
+        const matchedStep = findMatchingTotpStep(secret, code);
+        if (matchedStep === null) {
+          throw new ApiError(401, "INVALID_MFA_CODE", "The verification code is invalid");
+        }
+        if (credential.last_used_step !== null && Number(credential.last_used_step) >= matchedStep) {
+          throw new ApiError(401, "MFA_CODE_REUSED", "The verification code was already used");
+        }
+
+        const updated = await client.execute<{ affectedRows: number }>(
+          `UPDATE user_totp_credentials
+           SET last_used_step = ?
+           WHERE user_id = ? AND (last_used_step IS NULL OR last_used_step < ?)`,
+          [matchedStep, user.id, matchedStep]
+        );
+        if (Number(updated.affectedRows) !== 1) {
+          throw new ApiError(401, "MFA_CODE_REUSED", "The verification code was already used");
+        }
+        await clearTotpIpFailures(user.id, sourceIp, client);
+        return createMfaStepUpSession(client, user.id, authScope.authVersion, authScope.sessionId);
+      });
+      res.json({ stepUpToken, expiresInSeconds: Math.floor(mfaStepUpLifetimeMs / 1000) });
+    } catch (error) {
+      if (error instanceof ApiError && ["INVALID_MFA_CODE", "MFA_CODE_REUSED"].includes(error.code)) {
+        try {
+          const attempt = await recordTotpIpFailure(user.id, sourceIp);
+          if (attempt.blocked) {
+            next(new ApiError(
+              403,
+              "TOTP_IP_PERMANENTLY_BLOCKED",
+              "TOTP verification from this IP address is temporarily blocked after too many invalid codes",
+              { attempts: attempt.attempts, maxAttempts: attempt.maxAttempts }
+            ));
+            return;
+          }
+        } catch (securityError) {
+          next(securityError);
+          return;
+        }
+      }
+      next(error);
+    }
+  }
+);
+
+mfaRouter.post(
+  "/step-up/passkey/options",
+  requireAuth,
+  mfaSetupRateLimit,
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
+      const result = await transaction(async (client) => {
+        await assertCurrentAuthSession(user.id, authScope, client);
+        const passkeys = await client.query<PasskeyRow>(
+          `SELECT id, user_id, credential_id, webauthn_user_id, public_key, counter, transports,
+                  device_type, backed_up, aaguid, name, created_at, updated_at, last_used_at
+           FROM user_passkeys WHERE user_id = ?`,
+          [user.id]
+        );
+        if (!passkeys.length) throw new ApiError(400, "MFA_METHOD_UNAVAILABLE", "No passkey is registered");
+        const options = await generateAuthenticationOptions({
+          rpID: webAuthnConfig.rpID,
+          allowCredentials: passkeys.map((passkey) => ({
+            id: toBase64Url(passkey.credential_id),
+            transports: parseTransports(passkey.transports)
+          })),
+          userVerification: "required"
+        });
+        const contextHash = mfaStepUpContextHash(user.id, authScope.authVersion, authScope.sessionId);
+        const challengeToken = await createChallenge(
+          client,
+          user.id,
+          "authentication",
+          options.challenge,
+          contextHash,
+          { purpose: "mfa-step-up", authVersion: authScope.authVersion, sessionId: authScope.sessionId }
+        );
+        return { options, challengeToken };
+      });
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+mfaRouter.post(
+  "/step-up/passkey/verify",
+  requireAuth,
+  mfaSetupRateLimit,
+  validate({ body: z.object({ challengeToken: opaqueTokenSchema, response: authenticationResponseSchema }).strict() }),
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
+      const { challengeToken, response } = req.body as {
+        challengeToken: string;
+        response: z.infer<typeof authenticationResponseSchema>;
+      };
+      const contextHash = mfaStepUpContextHash(user.id, authScope.authVersion, authScope.sessionId);
+      const challenge = await consumeChallenge(challengeToken, user.id, "authentication", contextHash);
+      const authenticationFailure = () =>
+        new ApiError(401, "PASSKEY_AUTHENTICATION_FAILED", "The passkey could not be verified");
+      const credentialId = assertMatchingCredentialIds(response, authenticationFailure);
+      const passkey = await db.queryOne<PasskeyRow>(
+        `SELECT id, user_id, credential_id, webauthn_user_id, public_key, counter, transports,
+                device_type, backed_up, aaguid, name, created_at, updated_at, last_used_at
+         FROM user_passkeys WHERE user_id = ? AND credential_id = ?`,
+        [user.id, credentialId]
+      );
+      if (!passkey) throw authenticationFailure();
+
+      if (response.response.userHandle) {
+        const userHandle = decodeBase64UrlStrict(
+          response.response.userHandle,
+          maxUserHandleBytes,
+          authenticationFailure
+        );
+        if (!equalBytes(userHandle, passkey.webauthn_user_id)) throw authenticationFailure();
+      }
+
+      let verification;
+      try {
+        verification = await verifyAuthenticationResponse({
+          response: response as AuthenticationResponseJSON,
+          expectedChallenge: challenge.challenge,
+          expectedOrigin: webAuthnConfig.origins,
+          expectedRPID: webAuthnConfig.rpID,
+          credential: {
+            id: toBase64Url(passkey.credential_id),
+            publicKey: new Uint8Array(passkey.public_key),
+            counter: Number(passkey.counter),
+            transports: parseTransports(passkey.transports)
+          },
+          requireUserVerification: true
+        });
+      } catch {
+        throw authenticationFailure();
+      }
+      if (!verification.verified) throw authenticationFailure();
+
+      const previousCounter = Number(passkey.counter);
+      const newCounter = Number(verification.authenticationInfo.newCounter);
+      if (!Number.isSafeInteger(previousCounter) || previousCounter < 0) throw authenticationFailure();
+      if (!Number.isSafeInteger(newCounter) || newCounter < 0) throw authenticationFailure();
+      if (previousCounter > 0 && newCounter <= previousCounter) {
+        throw new ApiError(401, "PASSKEY_COUNTER_REGRESSION", "The passkey counter did not advance");
+      }
+
+      const stepUpToken = await transaction(async (client) => {
+        await assertCurrentAuthSession(user.id, authScope, client);
+        const updated = await client.execute<{ affectedRows: number }>(
+          `UPDATE user_passkeys
+           SET counter = ?, device_type = ?, backed_up = ?, last_used_at = CURRENT_TIMESTAMP(3)
+           WHERE id = ? AND user_id = ? AND counter = ?`,
+          [
+            newCounter,
+            verification.authenticationInfo.credentialDeviceType,
+            verification.authenticationInfo.credentialBackedUp,
+            passkey.id,
+            user.id,
+            previousCounter
+          ]
+        );
+        if (Number(updated.affectedRows) !== 1) {
+          throw new ApiError(401, "PASSKEY_AUTHENTICATION_FAILED", "The passkey state changed during verification");
+        }
+        return createMfaStepUpSession(client, user.id, authScope.authVersion, authScope.sessionId);
+      });
+      res.json({ stepUpToken, expiresInSeconds: Math.floor(mfaStepUpLifetimeMs / 1000) });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+mfaRouter.post(
   "/totp/setup",
   requireAuth,
   accountReauthenticationRateLimit,
@@ -646,7 +943,7 @@ mfaRouter.post(
       const user = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
       const expectedAuthVersion = authScope.authVersion;
-      const { currentPassword } = req.body as z.infer<typeof currentPasswordSchema>;
+      const { currentPassword, stepUpToken } = req.body as z.infer<typeof currentPasswordSchema>;
       const secret = generateTotpSecret();
       const encrypted = encryptMfaSecret(secret);
       const setupToken = createOpaqueToken();
@@ -665,6 +962,7 @@ mfaRouter.post(
           expectedAuthVersion,
           currentPassword
         );
+        await consumeMfaStepUpIfRequired(client, lockedUser.id, authScope, stepUpToken);
         await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [lockedUser.id]);
         await client.execute(
           `INSERT INTO mfa_totp_setups
@@ -756,7 +1054,7 @@ mfaRouter.delete(
       const user = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
       const expectedAuthVersion = authScope.authVersion;
-      const { currentPassword } = req.body as z.infer<typeof currentPasswordSchema>;
+      const { currentPassword, stepUpToken } = req.body as z.infer<typeof currentPasswordSchema>;
       const updatedUser = await transaction(async (client) => {
         await assertCurrentAuthSession(user.id, authScope, client);
         const lockedUser = await requireCurrentPasswordForUpdate(
@@ -765,6 +1063,7 @@ mfaRouter.delete(
           expectedAuthVersion,
           currentPassword
         );
+        await consumeMfaStepUpIfRequired(client, lockedUser.id, authScope, stepUpToken);
         await client.execute("DELETE FROM user_totp_credentials WHERE user_id = ?", [lockedUser.id]);
         await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [lockedUser.id]);
         return rotateAuthenticationCredentials(client, lockedUser);
@@ -788,7 +1087,7 @@ mfaRouter.post(
       const user = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
       const expectedAuthVersion = authScope.authVersion;
-      const { currentPassword, name, registrationTarget } = req.body as z.infer<typeof passkeyOptionsSchema>;
+      const { currentPassword, stepUpToken, name, registrationTarget } = req.body as z.infer<typeof passkeyOptionsSchema>;
       const result = await transaction(async (client) => {
         await assertCurrentAuthSession(user.id, authScope, client);
         const lockedUser = await requireCurrentPasswordForUpdate(
@@ -797,6 +1096,7 @@ mfaRouter.post(
           expectedAuthVersion,
           currentPassword
         );
+        await consumeMfaStepUpIfRequired(client, lockedUser.id, authScope, stepUpToken);
         const existingPasskeys = await client.query<PasskeyRow>(
           `SELECT id, user_id, credential_id, webauthn_user_id, public_key, counter, transports,
                   device_type, backed_up, aaguid, name, created_at, updated_at, last_used_at
@@ -955,12 +1255,13 @@ mfaRouter.patch(
       const user = requireUser(req.user);
       const { id } = req.params as z.infer<typeof passkeyIdParamsSchema>;
       const authScope = requireRequestAuthScope(req);
-      const { name, currentPassword } = req.body as z.infer<typeof passkeyRenameSchema>;
+      const { name, currentPassword, stepUpToken } = req.body as z.infer<typeof passkeyRenameSchema>;
       await transaction(async (client) => {
         await assertCurrentAuthSession(user.id, authScope, client);
         const lockedUser = await requireCurrentPasswordForUpdate(
           client, user.id, authScope.authVersion, currentPassword
         );
+        await consumeMfaStepUpIfRequired(client, lockedUser.id, authScope, stepUpToken);
         const passkey = await client.queryOne<{ id: string }>(
           "SELECT id FROM user_passkeys WHERE id = ? AND user_id = ? FOR UPDATE",
           [id, lockedUser.id]
@@ -989,7 +1290,7 @@ mfaRouter.delete(
       const authScope = requireRequestAuthScope(req);
       const expectedAuthVersion = authScope.authVersion;
       const { id } = req.params as z.infer<typeof passkeyIdParamsSchema>;
-      const { currentPassword } = req.body as z.infer<typeof currentPasswordSchema>;
+      const { currentPassword, stepUpToken } = req.body as z.infer<typeof currentPasswordSchema>;
       const updatedUser = await transaction(async (client) => {
         await assertCurrentAuthSession(user.id, authScope, client);
         const lockedUser = await requireCurrentPasswordForUpdate(
@@ -998,6 +1299,7 @@ mfaRouter.delete(
           expectedAuthVersion,
           currentPassword
         );
+        await consumeMfaStepUpIfRequired(client, lockedUser.id, authScope, stepUpToken);
         const result = await client.execute<{ affectedRows: number }>(
           "DELETE FROM user_passkeys WHERE id = ? AND user_id = ?",
           [id, lockedUser.id]
@@ -1031,6 +1333,13 @@ mfaRouter.post(
       const binding = requireMfaCeremonyBinding(req);
       const pendingSession = await getActiveMfaSession(mfaToken, sourceIp, binding);
       await enforceMfaLoginNetworkAccess(pendingSession, req);
+      if (await isPermanentlyBlockedTotpIp(pendingSession.source_ip, pendingSession.user_id)) {
+        throw new ApiError(
+          403,
+          "TOTP_IP_PERMANENTLY_BLOCKED",
+          "TOTP verification from this IP address is temporarily blocked for this account"
+        );
+      }
       const activeSession = await reserveMfaAttempt(mfaToken, sourceIp, binding);
       session = activeSession;
       const result = await transaction(async (client) => {
@@ -1082,8 +1391,7 @@ mfaRouter.post(
             const attempt = await recordTotpIpFailure(session.user_id, session.source_ip);
             await recordReservedMfaFailure(session, attempt.blocked ? "LOCKED" : "FAILURE");
             if (attempt.blocked) {
-              disconnectUserCollaborators(session.user_id, "Access from this IP is blocked for this account");
-              next(new ApiError(403, "TOTP_IP_PERMANENTLY_BLOCKED", "This IP address is temporarily blocked after too many invalid TOTP codes", {
+              next(new ApiError(403, "TOTP_IP_PERMANENTLY_BLOCKED", "TOTP verification from this IP address is temporarily blocked after too many invalid codes", {
                 attempts: attempt.attempts,
                 maxAttempts: attempt.maxAttempts
               }));

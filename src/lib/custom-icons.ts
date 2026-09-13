@@ -338,7 +338,8 @@ export async function restoreCustomIconToLibrary(
     await client.execute(
       `INSERT INTO custom_icons (id, user_id, file_path, last_used_at)
        VALUES (?, ?, ?, CURRENT_TIMESTAMP(3))
-       ON DUPLICATE KEY UPDATE last_used_at = VALUES(last_used_at)`,
+       ON DUPLICATE KEY UPDATE
+         last_used_at = IF(user_id = VALUES(user_id), VALUES(last_used_at), last_used_at)`,
       [iconId, safeUserId, publicPath]
     );
   });

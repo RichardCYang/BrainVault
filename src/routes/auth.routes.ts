@@ -43,8 +43,7 @@ import {
   listPermanentTotpIpBlocks,
   maxTotpIpBlockThreshold,
   minTotpIpBlockThreshold,
-  normalizeTotpBlockIpAddress,
-  isPermanentlyBlockedTotpIp
+  normalizeTotpBlockIpAddress
 } from "../lib/totp-ip-block.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { clearAuthSessionCookie, setAuthSessionCookie } from "../lib/session-cookie.js";
@@ -78,7 +77,12 @@ import {
 import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { passwordInputSchema, requireUser, usernameSchema } from "../utils/schemas.js";
 import type { UserRow } from "../types/domain.js";
-import { createMfaLoginSession, getMfaMethods, mfaRouter } from "./mfa.routes.js";
+import {
+  consumeMfaStepUpIfRequired,
+  createMfaLoginSession,
+  getMfaMethods,
+  mfaRouter
+} from "./mfa.routes.js";
 import { passkeyLoginRouter } from "./passkey-login.routes.js";
 
 export const authRouter = Router();
@@ -187,10 +191,13 @@ const navigationOrderSchema = z.object({
   }
 });
 
+const mfaStepUpTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+
 const passwordSchema = z
   .object({
     currentPassword: passwordInputSchema(1),
-    newPassword: passwordInputSchema(8)
+    newPassword: passwordInputSchema(8),
+    stepUpToken: mfaStepUpTokenSchema.optional()
   })
   .refine((value) => value.currentPassword !== value.newPassword, {
     path: ["newPassword"],
@@ -235,9 +242,9 @@ authRouter.post(
   "/register",
   requireSameOriginBrowserRequest,
   requireJsonRequestBody,
-  registrationGlobalRateLimit,
   registrationRateLimit,
   validate({ body: registerSchema }),
+  registrationGlobalRateLimit,
   async (req, res, next) => {
     try {
       if (!env.REGISTRATION_ENABLED) {
@@ -303,21 +310,19 @@ authRouter.post(
         throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid ID or password");
       }
 
-      let policyDenied = await isPermanentlyBlockedTotpIp(sourceIp, user.id);
-      if (!policyDenied) {
-        try {
-          await enforceCountryLoginPolicy(user.id, user.country_login_mode, sourceIp);
-          await enforceVpnAccessPolicy(
-            user.id,
-            user.vpn_block_enabled,
-            sourceIp,
-            getClientTimeZone(req),
-            getClientWebRtcSignal(req)
-          );
-        } catch (error) {
-          if (!isPreAuthLoginPolicyDenial(error)) throw error;
-          policyDenied = true;
-        }
+      let policyDenied = false;
+      try {
+        await enforceCountryLoginPolicy(user.id, user.country_login_mode, sourceIp);
+        await enforceVpnAccessPolicy(
+          user.id,
+          user.vpn_block_enabled,
+          sourceIp,
+          getClientTimeZone(req),
+          getClientWebRtcSignal(req)
+        );
+      } catch (error) {
+        if (!isPreAuthLoginPolicyDenial(error)) throw error;
+        policyDenied = true;
       }
       if (policyDenied) {
         await padLoginResponse(startedAt);
@@ -1032,7 +1037,7 @@ authRouter.post(
       const currentUser = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
       const expectedAuthVersion = authScope.authVersion;
-      const { currentPassword, newPassword } = req.body as z.infer<typeof passwordSchema>;
+      const { currentPassword, newPassword, stepUpToken } = req.body as z.infer<typeof passwordSchema>;
       const passwordHash = await hashPassword(newPassword);
       const updatedUser = await transaction(async (client) => {
         await assertCurrentAuthSession(currentUser.id, authScope, client);
@@ -1049,6 +1054,8 @@ authRouter.post(
           throw new ApiError(400, "NEW_PASSWORD_SAME", "New password must differ from the current password");
         }
 
+        await consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken);
+
         const authVersion = normalizeAuthVersion(user.auth_version) + 1;
         await client.execute(
           "UPDATE users SET password_hash = ?, auth_version = ? WHERE id = ?",
@@ -1057,6 +1064,11 @@ authRouter.post(
         await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [user.id]);
         await client.execute("DELETE FROM webauthn_challenges WHERE user_id = ?", [user.id]);
         await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [user.id]);
+        await client.execute("DELETE FROM mfa_step_up_sessions WHERE user_id = ?", [user.id]);
+        // Password rotation is an incident-response boundary. Remove every enrolled
+        // authenticator so a credential added before the rotation cannot survive it.
+        await client.execute("DELETE FROM user_passkeys WHERE user_id = ?", [user.id]);
+        await client.execute("DELETE FROM user_totp_credentials WHERE user_id = ?", [user.id]);
         return { ...user, password_hash: passwordHash, auth_version: authVersion };
       });
 

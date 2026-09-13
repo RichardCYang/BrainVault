@@ -4372,6 +4372,31 @@ function requireMfaPassword() {
   return null;
 }
 
+async function requestMfaStepUpToken({ trigger = null } = {}) {
+  const passkeys = Array.isArray(state.mfaStatus.passkeys) ? state.mfaStatus.passkeys : [];
+  if (!state.mfaStatus.totpEnabled && !passkeys.length) return null;
+
+  if (state.mfaStatus.totpEnabled) {
+    const code = window.prompt(t("mfa.stepUpTotpPrompt"))?.trim();
+    if (!code) throw new Error(t("mfa.stepUpRequired"));
+    const result = await api("/api/auth/mfa/step-up/totp", {
+      method: "POST",
+      body: { code }
+    });
+    return result.stepUpToken;
+  }
+
+  if (!isWebAuthnSupported()) throw new Error(t("mfa.stepUpPasskeyRequired"));
+  setAccountMessage(t("mfa.stepUpPasskeyPrompt"));
+  const optionsData = await api("/api/auth/mfa/step-up/passkey/options", { method: "POST", body: {} });
+  const response = await getWebAuthnCredential(optionsData.options, { trigger });
+  const result = await api("/api/auth/mfa/step-up/passkey/verify", {
+    method: "POST",
+    body: { challengeToken: optionsData.challengeToken, response }
+  });
+  return result.stepUpToken;
+}
+
 function createPasskeyActionButton(labelKey, className, handler) {
   const button = document.createElement("button");
   button.type = "button";
@@ -4412,18 +4437,20 @@ function renderPasskeyList() {
     const actions = document.createElement("div");
     actions.className = "passkey-list-actions";
     actions.append(
-      createPasskeyActionButton("mfa.renamePasskey", "secondary compact", async () => {
+      createPasskeyActionButton("mfa.renamePasskey", "secondary compact", async (event) => {
         const nextName = window.prompt(t("mfa.renamePrompt"), passkey.name)?.trim();
         if (!nextName || nextName === passkey.name) return;
         const currentPassword = requireMfaPassword();
         const targetKey = getAccountAvatarTargetKey(state.user);
         if (!currentPassword || !targetKey) return;
         try {
+          const stepUpToken = await requestMfaStepUpToken({ trigger: event.currentTarget });
           await api(`/api/auth/mfa/passkeys/${encodeURIComponent(passkey.id)}`, {
             method: "PATCH",
-            body: { name: nextName, currentPassword }
+            body: { name: nextName, currentPassword, ...(stepUpToken ? { stepUpToken } : {}) }
           });
           if (!state.accountSettingsOpen || getAccountAvatarTargetKey(state.user) !== targetKey) return;
+          acceptRotatedAuthenticationSession();
           elements.accountMfaPassword.value = "";
           await loadMfaSettings({ showLoading: false });
           setAccountMessage(t("mfa.passkeyRenamed"));
@@ -4431,15 +4458,16 @@ function renderPasskeyList() {
           setAccountMessage(error.message, true);
         }
       }),
-      createPasskeyActionButton("mfa.removePasskey", "secondary danger compact", async () => {
+      createPasskeyActionButton("mfa.removePasskey", "secondary danger compact", async (event) => {
         if (!window.confirm(t("mfa.removePasskeyConfirm", { name: passkey.name }))) return;
         const currentPassword = requireMfaPassword();
         const targetKey = getAccountAvatarTargetKey(state.user);
         if (!currentPassword || !targetKey) return;
         try {
+          const stepUpToken = await requestMfaStepUpToken({ trigger: event.currentTarget });
           await api(`/api/auth/mfa/passkeys/${encodeURIComponent(passkey.id)}`, {
             method: "DELETE",
-            body: { currentPassword }
+            body: { currentPassword, ...(stepUpToken ? { stepUpToken } : {}) }
           });
           if (!state.accountSettingsOpen || getAccountAvatarTargetKey(state.user) !== targetKey) return;
           acceptRotatedAuthenticationSession();
@@ -19680,14 +19708,22 @@ elements.accountPasswordForm.addEventListener("submit", async (event) => {
   elements.accountPasswordSave.disabled = true;
   try {
     setAccountMessage(t("account.changingPassword"));
-    await api("/api/auth/password", { method: "POST", body: { currentPassword, newPassword } });
+    const stepUpToken = await requestMfaStepUpToken({ trigger: elements.accountPasswordSave });
+    await api("/api/auth/password", {
+      method: "POST",
+      body: { currentPassword, newPassword, ...(stepUpToken ? { stepUpToken } : {}) }
+    });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.password, operation)) return;
     // The server rotated the authentication cookie. Fence every response that began
     // under the previous credential generation, even though the account ID is unchanged.
     acceptRotatedAuthenticationSession();
     elements.accountPasswordForm.reset();
-    setAccountMessage(t("account.passwordChanged"));
-    setStatus(t("account.passwordChanged"));
+    elements.accountMfaPassword.value = "";
+    hideTotpSetup();
+    await loadMfaSettings({ showLoading: false });
+    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.password, operation)) return;
+    setAccountMessage(t("account.passwordChangedMfaReset"));
+    setStatus(t("account.passwordChangedMfaReset"));
   } catch (error) {
     if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.password, operation)) {
       setAccountMessage(error.message, true);
@@ -19699,7 +19735,7 @@ elements.accountPasswordForm.addEventListener("submit", async (event) => {
   }
 });
 
-elements.accountTotpSetup.addEventListener("click", async () => {
+elements.accountTotpSetup.addEventListener("click", async (event) => {
   const targetKey = getAccountAvatarTargetKey(state.user);
   const currentPassword = requireMfaPassword();
   if (!targetKey || !currentPassword) return;
@@ -19707,9 +19743,10 @@ elements.accountTotpSetup.addEventListener("click", async () => {
   elements.accountTotpSetup.disabled = true;
   try {
     setAccountMessage(t("mfa.loading"));
+    const stepUpToken = await requestMfaStepUpToken({ trigger: event.currentTarget });
     const data = await api("/api/auth/mfa/totp/setup", {
       method: "POST",
-      body: { currentPassword }
+      body: { currentPassword, ...(stepUpToken ? { stepUpToken } : {}) }
     });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpSetup, operation)) return;
     state.totpSetupToken = data.setupToken;
@@ -19780,7 +19817,7 @@ elements.accountTotpCancel.addEventListener("click", () => {
   setAccountMessage();
 });
 
-elements.accountTotpDisable.addEventListener("click", async () => {
+elements.accountTotpDisable.addEventListener("click", async (event) => {
   if (!window.confirm(t("mfa.disableTotpConfirm"))) return;
   const targetKey = getAccountAvatarTargetKey(state.user);
   const currentPassword = requireMfaPassword();
@@ -19788,9 +19825,10 @@ elements.accountTotpDisable.addEventListener("click", async () => {
   const operation = accountSecurityOperationGuards.totpDisable.begin(targetKey);
   elements.accountTotpDisable.disabled = true;
   try {
+    const stepUpToken = await requestMfaStepUpToken({ trigger: event.currentTarget });
     await api("/api/auth/mfa/totp", {
       method: "DELETE",
-      body: { currentPassword }
+      body: { currentPassword, ...(stepUpToken ? { stepUpToken } : {}) }
     });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpDisable, operation)) return;
     acceptRotatedAuthenticationSession();
@@ -19831,10 +19869,11 @@ elements.accountPasskeyRegisterForm.addEventListener("submit", async (event) => 
   const operation = accountSecurityOperationGuards.passkeyRegister.begin(targetKey);
   setAccountPasskeyRegistering(true);
   try {
+    const stepUpToken = await requestMfaStepUpToken({ trigger: elements.accountPasskeyRegister });
     setAccountMessage(t(registrationTarget === "remote" ? "mfa.passkeyAddingRemote" : "mfa.passkeyAdding"));
     const optionsData = await api("/api/auth/mfa/passkeys/options", {
       method: "POST",
-      body: { currentPassword, name, registrationTarget }
+      body: { currentPassword, name, registrationTarget, ...(stepUpToken ? { stepUpToken } : {}) }
     });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.passkeyRegister, operation)) return;
     const response = await createWebAuthnCredential(optionsData.options);

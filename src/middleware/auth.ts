@@ -7,7 +7,6 @@ import { ApiError } from "../lib/http.js";
 import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
 import { enforceVpnAccessPolicy, getClientTimeZone, getClientWebRtcSignal } from "../lib/vpn-access-policy.js";
 import { getClientIpAddress } from "../lib/login-history.js";
-import { isPermanentlyBlockedTotpIp } from "../lib/totp-ip-block.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { clearAuthSessionCookie, readAuthSessionCookie } from "../lib/session-cookie.js";
 import { ensureAuthSessionForRequest } from "../lib/auth-sessions.js";
@@ -93,8 +92,7 @@ export function requireJsonRequestBody(req: Request, _res: Response, next: NextF
 async function authenticateRequest(
   req: Request,
   res: Response,
-  next: NextFunction,
-  { allowTotpIpBlock = false }: { allowTotpIpBlock?: boolean } = {}
+  next: NextFunction
 ) {
   setPrivateNoStoreCacheControl(res);
   let source: "bearer" | "cookie" | null = null;
@@ -139,13 +137,6 @@ async function authenticateRequest(
     }
 
     const clientIp = getClientIpAddress(req);
-    if (!allowTotpIpBlock && await isPermanentlyBlockedTotpIp(clientIp, user.id)) {
-      throw new ApiError(
-        403,
-        "TOTP_IP_PERMANENTLY_BLOCKED",
-        "Access from this IP address is temporarily blocked for this account"
-      );
-    }
 
     await enforceCountryLoginPolicy(user.id, user.country_login_mode, clientIp);
     await enforceVpnAccessPolicy(
@@ -204,5 +195,5 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 }
 
 export function requireAuthAllowTotpIpBlock(req: Request, res: Response, next: NextFunction) {
-  void authenticateRequest(req, res, next, { allowTotpIpBlock: true });
+  void authenticateRequest(req, res, next);
 }
