@@ -405,14 +405,29 @@ export async function getMfaMethods(userId: string): Promise<MfaMethods> {
   };
 }
 
-export async function createMfaLoginSession(userId: string, sourceIp: string, binding: string) {
+export async function createMfaLoginSession(
+  userId: string,
+  sourceIp: string,
+  binding: string,
+  expectedAuthVersion: number
+) {
   const token = createOpaqueToken();
   const tokenHash = hashOpaqueToken(token);
   const carryCutoff = new Date(Date.now() - mfaFailureCarryWindowMs);
 
   await transaction(async (client) => {
-    const user = await client.queryOne<{ id: string }>("SELECT id FROM users WHERE id = ? FOR UPDATE", [userId]);
-    if (!user) throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid ID or password");
+    const user = await client.queryOne<{ id: string; auth_version: number }>(
+      "SELECT id, auth_version FROM users WHERE id = ? FOR UPDATE",
+      [userId]
+    );
+    if (
+      !user
+      || !Number.isSafeInteger(expectedAuthVersion)
+      || expectedAuthVersion < 1
+      || normalizeAuthVersion(user.auth_version) !== expectedAuthVersion
+    ) {
+      throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid ID or password");
+    }
 
     const previous = await client.queryOne<{ failed_attempts: number | null }>(
       `SELECT MAX(failed_attempts) AS failed_attempts

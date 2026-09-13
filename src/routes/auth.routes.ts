@@ -327,7 +327,12 @@ authRouter.post(
       const methods = await getMfaMethods(user.id);
       if (methods.totp || methods.passkey) {
         const mfaBinding = getOrCreateMfaCeremonyBinding(req, res);
-        const mfaToken = await createMfaLoginSession(user.id, sourceIp, mfaBinding);
+        const mfaToken = await createMfaLoginSession(
+          user.id,
+          sourceIp,
+          mfaBinding,
+          normalizeAuthVersion(user.auth_version)
+        );
         res.locals.authenticationPending = true;
         clearAuthSessionCookie(res);
         await padLoginResponse(startedAt);

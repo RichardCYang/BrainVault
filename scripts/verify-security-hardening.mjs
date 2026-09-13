@@ -121,7 +121,9 @@ const authRoutesSource = contains("src/routes/auth.routes.ts", [
 assert.doesNotMatch(authRoutesSource, /res\.json\(\{[^}]*token/, "Authentication responses must not expose JWTs");
 
 const mfaRoutesSource = contains("src/routes/mfa.routes.ts", [
-  "SELECT id FROM users WHERE id = ? FOR UPDATE",
+  "SELECT id, auth_version FROM users WHERE id = ? FOR UPDATE",
+  "expectedAuthVersion: number",
+  "normalizeAuthVersion(user.auth_version) !== expectedAuthVersion",
   "MAX(failed_attempts) AS failed_attempts",
   'new ApiError(429, "MFA_TEMPORARILY_LOCKED"',
   "mfaLoginIpRateLimit",
@@ -141,6 +143,11 @@ const mfaRoutesSource = contains("src/routes/mfa.routes.ts", [
   'res.setHeader("Cache-Control", "private, no-store")',
   "currentPassword: passwordInputSchema(1)"
 ]);
+assert.match(
+  authRoutesSource,
+  /createMfaLoginSession\(\s*user\.id,\s*sourceIp,\s*mfaBinding,\s*normalizeAuthVersion\(user\.auth_version\)\s*\)/,
+  "MFA admission must stay bound to the auth_version captured by password verification"
+);
 assert.ok(!mfaRoutesSource.includes("DELETE FROM mfa_login_sessions WHERE user_id = ? OR"), "MFA re-login must not reset failures");
 assert.ok(!mfaRoutesSource.includes("async function recordMfaFailure"), "MFA failures must consume a reserved attempt before verification");
 assert.ok(!mfaRoutesSource.includes("failed_attempts < ?"), "A successful final reserved MFA attempt must remain completable");
