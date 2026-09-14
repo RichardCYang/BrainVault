@@ -3,6 +3,7 @@ import {
   applyDocumentTranslations,
   formatDateTime,
   formatNumber,
+  formatRegionName,
   getLanguage,
   getLanguageLabel,
   getLocale,
@@ -2115,12 +2116,8 @@ function formatLoginCountry(countryCode) {
   const normalized = typeof countryCode === "string" ? countryCode.trim().toUpperCase() : "";
   if (!/^[A-Z]{2}$/.test(normalized)) return t("account.loginHistoryUnknownCountry");
 
-  try {
-    const label = new Intl.DisplayNames([getLocale()], { type: "region" }).of(normalized);
-    return label && label !== normalized ? `${label} (${normalized})` : normalized;
-  } catch {
-    return normalized;
-  }
+  const label = formatRegionName(normalized);
+  return label && label !== normalized ? `${label} (${normalized})` : normalized;
 }
 
 function translateApiError(data, status) {
@@ -2769,7 +2766,7 @@ function formatSnapshotSize(value) {
     amount /= 1024;
     index += 1;
   }
-  return `${new Intl.NumberFormat(getLocale(), { maximumFractionDigits: amount >= 100 ? 0 : 1 }).format(amount)} ${units[index]}`;
+  return `${formatNumber(amount, { maximumFractionDigits: amount >= 100 ? 0 : 1 })} ${units[index]}`;
 }
 
 function snapshotIntegrityLabel(integrity) {
@@ -3400,12 +3397,8 @@ function populateBlockHistoryMonths() {
 function getCountryLoginCountryLabel(countryCode) {
   const normalized = typeof countryCode === "string" ? countryCode.trim().toUpperCase() : "";
   if (!/^[A-Z]{2}$/.test(normalized)) return normalized;
-  try {
-    const label = new Intl.DisplayNames([getLocale()], { type: "region" }).of(normalized);
-    return label && label !== normalized ? `${label} (${normalized})` : normalized;
-  } catch {
-    return normalized;
-  }
+  const label = formatRegionName(normalized);
+  return label && label !== normalized ? `${label} (${normalized})` : normalized;
 }
 
 function populateCountryLoginCountryOptions() {
@@ -11782,7 +11775,7 @@ function formatAttachmentSize(size) {
     value /= 1024;
     unitIndex += 1;
   }
-  return `${new Intl.NumberFormat(getLocale(), { maximumFractionDigits: value >= 10 ? 0 : 1 }).format(value)} ${units[unitIndex]}`;
+  return `${formatNumber(value, { maximumFractionDigits: value >= 10 ? 0 : 1 })} ${units[unitIndex]}`;
 }
 
 function getBlockById(blockId, blocks = state.selectedPage?.blocks ?? []) {

@@ -5511,24 +5511,7 @@ export function getLanguageLabel(code = currentLanguage) {
   return supportedLanguages.find((language) => language.code === normalizeLanguage(code))?.label ?? code;
 }
 
-const numberFormattersByLocale = new Map();
-
-function getNumberFormatter(locale) {
-  let formatter = numberFormattersByLocale.get(locale);
-  if (!formatter) {
-    formatter = new Intl.NumberFormat(locale);
-    numberFormattersByLocale.set(locale, formatter);
-  }
-  return formatter;
-}
-
-export function formatNumber(value) {
-  return getNumberFormatter(getLocale()).format(value);
-}
-
-const dateTimeFormattersByKey = new Map();
-
-function getDateTimeFormatOptionsKey(options) {
+function getIntlFormatOptionsKey(options) {
   return Object.entries(options ?? {})
     .filter(([, value]) => value !== undefined)
     .sort(([left], [right]) => left.localeCompare(right))
@@ -5536,8 +5519,47 @@ function getDateTimeFormatOptionsKey(options) {
     .join("&");
 }
 
+const numberFormattersByKey = new Map();
+
+function getNumberFormatter(locale, options) {
+  const key = `${locale}\u0000${getIntlFormatOptionsKey(options)}`;
+  let formatter = numberFormattersByKey.get(key);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat(locale, options);
+    numberFormattersByKey.set(key, formatter);
+  }
+  return formatter;
+}
+
+export function formatNumber(value, options) {
+  return getNumberFormatter(getLocale(), options).format(value);
+}
+
+const regionDisplayNamesByLocale = new Map();
+
+function getRegionDisplayNames(locale) {
+  let formatter = regionDisplayNamesByLocale.get(locale);
+  if (!formatter) {
+    formatter = new Intl.DisplayNames([locale], { type: "region" });
+    regionDisplayNamesByLocale.set(locale, formatter);
+  }
+  return formatter;
+}
+
+export function formatRegionName(regionCode) {
+  const normalized = typeof regionCode === "string" ? regionCode.trim().toUpperCase() : "";
+  if (!/^[A-Z]{2}$/.test(normalized)) return normalized;
+  try {
+    return getRegionDisplayNames(getLocale()).of(normalized) ?? normalized;
+  } catch {
+    return normalized;
+  }
+}
+
+const dateTimeFormattersByKey = new Map();
+
 function getDateTimeFormatter(locale, options) {
-  const key = `${locale}\u0000${getDateTimeFormatOptionsKey(options)}`;
+  const key = `${locale}\u0000${getIntlFormatOptionsKey(options)}`;
   let formatter = dateTimeFormattersByKey.get(key);
   if (!formatter) {
     formatter = new Intl.DateTimeFormat(locale, options);
