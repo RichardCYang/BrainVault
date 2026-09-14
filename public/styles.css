@@ -20026,10 +20026,26 @@ html[data-theme="dark"] {
     height: 28px;
   }
 
-  .app-mode .document-item-row.active,
   .app-mode .collection-title-row.active,
   .app-mode .sidebar-utility-button.active {
     box-shadow: inset 2px 0 0 var(--focus);
+  }
+
+  .app-mode .document-item-row.active {
+    position: relative;
+    box-shadow: none;
+  }
+
+  .app-mode .document-item-row.active::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 4px;
+    border-radius: 4px 0 0 4px;
+    background: var(--focus);
+    pointer-events: none;
   }
 
   .app-mode .document-item-row.active .doc-label {
