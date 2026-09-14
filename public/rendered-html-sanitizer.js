@@ -13,7 +13,7 @@ const allowedRenderedTags = new Set([
 ]);
 
 const commonAllowedAttributes = Object.freeze({
-  a: ["class", "href", "name", "target", "rel"],
+  a: ["class", "href", "target", "rel"],
   div: ["class", "data-latex", "data-math-display"],
   section: ["class"],
   article: ["class"],

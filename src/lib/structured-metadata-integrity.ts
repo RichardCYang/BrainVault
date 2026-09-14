@@ -741,7 +741,7 @@ function assertBookmarkMetadata(root: MetadataRecord) {
     const path = `metadata.bookmark.items[${itemIndex}]`;
     const item = optionalRecord(rawItem, path);
     if (!item) fail(path, "must be an object");
-    assertAllowedKeys(item, path, ["id", "url", "title", "description", "imageUrl", "faviconUrl", "siteName"]);
+    assertAllowedKeys(item, path, ["id", "url", "title", "description", "imageUrl", "faviconUrl", "siteName", "verified"]);
     const id = assertCanonicalBookmarkText(item.id, `${path}.id`, bookmarkLimits.idLength, { required: true });
     ids.push(id);
     const url = canonicalBookmarkUrl(item.url, `${path}.url`);
@@ -752,6 +752,7 @@ function assertBookmarkMetadata(root: MetadataRecord) {
     assertCanonicalBookmarkText(item.siteName, `${path}.siteName`, bookmarkLimits.siteNameLength);
     canonicalBookmarkUrl(item.imageUrl, `${path}.imageUrl`, url);
     canonicalBookmarkUrl(item.faviconUrl, `${path}.faviconUrl`, url);
+    optionalBoolean(item.verified, `${path}.verified`);
   });
   assertUnique(ids, "metadata.bookmark.items");
   if (new Set(urls).size !== urls.length) fail("metadata.bookmark.items", "contains duplicate URLs that the editor would discard");

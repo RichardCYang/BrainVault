@@ -189,8 +189,20 @@ export function isBlockedAttachmentFilename(value: string) {
   return blockedAttachmentExtensions.has(extension);
 }
 
+const windowsReservedAttachmentDeviceNamePattern = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
+function isWindowsReservedAttachmentFilename(value: string) {
+  const filename = sanitizeAttachmentFilename(value).replace(/[. ]+$/g, "");
+  const basename = filename.split(".", 1)[0] ?? "";
+  return windowsReservedAttachmentDeviceNamePattern.test(basename);
+}
+
 export function sanitizeAttachmentDownloadFilename(value: string) {
   const filename = sanitizeAttachmentFilename(value);
+  if (isWindowsReservedAttachmentFilename(filename)) {
+    const prefix = "attachment-";
+    return `${prefix}${filename}`.slice(0, 255);
+  }
   if (!isBlockedAttachmentFilename(filename)) return filename;
   const suffix = ".download";
   return `${filename.slice(0, 255 - suffix.length)}${suffix}`;

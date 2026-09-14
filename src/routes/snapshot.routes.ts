@@ -10,6 +10,7 @@ import { toPublicUser } from "../lib/mappers.js";
 import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import {
   beginDataImportProcessing,
+  dataExportConcurrencyLimit,
   dataExportRateLimit,
   dataImportConcurrencyLimit,
   dataImportRateLimit
@@ -27,7 +28,7 @@ snapshotRouter.get("/", async (req, res) => {
   res.json({ snapshots });
 });
 
-snapshotRouter.post("/", dataExportRateLimit, async (req, res) => {
+snapshotRouter.post("/", dataExportRateLimit, dataExportConcurrencyLimit, async (req, res) => {
   const user = requireUser(req.user);
   const authScope = requireRequestAuthScope(req);
   const snapshot = await createWorkspaceSnapshot(user.id, authScope);

@@ -572,7 +572,7 @@ const allowedTags = sanitizeHtml.defaults.allowedTags.concat([
 
 const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   ...sanitizeHtml.defaults.allowedAttributes,
-  a: ["class", "href", "name", "target", "rel"],
+  a: ["class", "href", "target", "rel"],
   div: ["class", "data-latex", "data-math-display"],
   section: ["class"],
   article: ["class"],

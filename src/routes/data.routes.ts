@@ -16,6 +16,7 @@ import { toPublicUser } from "../lib/mappers.js";
 import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import {
   beginDataImportProcessing,
+  dataExportConcurrencyLimit,
   dataExportRateLimit,
   dataImportConcurrencyLimit,
   dataImportRateLimit
@@ -71,7 +72,11 @@ const backupUpload = multer({
   defParamCharset: "utf8"
 });
 
-dataRouter.get("/export", dataExportRateLimit, async (req, res, next) => {
+dataRouter.get("/export", dataExportRateLimit, dataExportConcurrencyLimit, async (req, res, next) => {
+  const exportDeadline = setTimeout(() => {
+    res.destroy(new Error("Data export response deadline exceeded"));
+  }, env.DATA_EXPORT_TIMEOUT_MS);
+  exportDeadline.unref?.();
   try {
     const user = requireUser(req.user);
     const plan = await prepareUserDataBackup(user.id);
@@ -94,6 +99,8 @@ dataRouter.get("/export", dataExportRateLimit, async (req, res, next) => {
       return;
     }
     next(error);
+  } finally {
+    clearTimeout(exportDeadline);
   }
 });
 

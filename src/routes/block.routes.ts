@@ -39,7 +39,7 @@ import {
 import {
   fetchAiChatImage,
   fetchBookmarkPreviewWithFallback,
-  fetchDatabaseUrlPreview,
+  fetchDatabaseUrlPreviewWithFallback,
   getBookmarkData,
   summarizeBookmarkData
 } from "../lib/bookmark.js";
@@ -476,7 +476,7 @@ blockRouter.post(
   async (req, res, next) => {
     try {
       if (req.body.mode === "database-url") {
-        const preview = await fetchDatabaseUrlPreview(String(req.body.url));
+        const preview = await fetchDatabaseUrlPreviewWithFallback(String(req.body.url));
         res.json({ preview });
         return;
       }

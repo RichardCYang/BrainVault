@@ -10,6 +10,7 @@ import {
   normalizeBookmarkFetchHostname
 } from "./bookmark-host-policy.js";
 import {
+  canonicalIpAddressKey,
   isPrivateAddress,
   isPrivateOrLocalHostname,
   prioritizeResolvedAddresses,
@@ -255,29 +256,10 @@ function isDnsNoDataError(error: unknown) {
   return code === "ENODATA" || code === "ENOTFOUND";
 }
 
-function comparableBookmarkAddress(value: string) {
-  const address = value.trim().toLowerCase().replace(/^\[|\]$/g, "").split("%", 1)[0];
-  const family = net.isIP(address);
-  if (family === 4) return address;
-  if (family !== 6) return "";
-
-  try {
-    const normalized = new URL(`http://[${address}]/`).hostname.slice(1, -1);
-    const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(normalized);
-    if (!mapped) return normalized;
-
-    const high = Number.parseInt(mapped[1], 16);
-    const low = Number.parseInt(mapped[2], 16);
-    return `${high >>> 8}.${high & 255}.${low >>> 8}.${low & 255}`;
-  } catch {
-    return "";
-  }
-}
-
 const localBookmarkSelfAddresses = new Set(
   Object.values(os.networkInterfaces())
     .flatMap((entries) => entries ?? [])
-    .map((entry) => comparableBookmarkAddress(entry.address))
+    .map((entry) => canonicalIpAddressKey(entry.address))
     .filter(Boolean)
 );
 let publicOriginAddressKeys: ReadonlySet<string> | null = null;
@@ -288,7 +270,7 @@ async function resolvePublicOriginAddressKeys(deadline: number): Promise<Readonl
   if (publicOriginAddressResolution) return publicOriginAddressResolution;
 
   const publicHost = normalizeBookmarkFetchHostname(new URL(env.PUBLIC_ORIGIN).hostname);
-  const literalKey = comparableBookmarkAddress(publicHost);
+  const literalKey = canonicalIpAddressKey(publicHost);
   if (literalKey) {
     publicOriginAddressKeys = new Set([literalKey]);
     return publicOriginAddressKeys;
@@ -319,7 +301,7 @@ async function resolvePublicOriginAddressKeys(deadline: number): Promise<Readonl
         ...(ipv4.status === "fulfilled" ? ipv4.value : []),
         ...(ipv6.status === "fulfilled" ? ipv6.value : [])
       ];
-      const keys = new Set(resolved.map(comparableBookmarkAddress).filter(Boolean));
+      const keys = new Set(resolved.map(canonicalIpAddressKey).filter(Boolean));
       if (!keys.size) {
         throw new ApiError(422, "BOOKMARK_FETCH_FAILED", "The canonical BrainVault hostname could not be resolved for self-origin protection");
       }
@@ -351,7 +333,7 @@ async function resolvePublicOriginAddressKeys(deadline: number): Promise<Readonl
 async function assertBookmarkAddressesAreNotSelfOrigin(addresses: ResolvedAddress[], deadline: number) {
   const canonicalOriginAddresses = await resolvePublicOriginAddressKeys(deadline);
   const selfAddresses = new Set([...localBookmarkSelfAddresses, ...canonicalOriginAddresses]);
-  if (addresses.some((item) => selfAddresses.has(comparableBookmarkAddress(item.address)))) {
+  if (addresses.some((item) => selfAddresses.has(canonicalIpAddressKey(item.address)))) {
     throw new ApiError(403, "BOOKMARK_URL_BLOCKED", "Self-origin bookmark previews are not allowed");
   }
 }
@@ -1247,6 +1229,19 @@ export async function fetchDatabaseUrlPreview(value: string): Promise<DatabaseUr
   }
 
   return { title: metadata.title, faviconUrl };
+}
+
+export async function fetchDatabaseUrlPreviewWithFallback(value: string): Promise<DatabaseUrlPreview> {
+  try {
+    return await fetchDatabaseUrlPreview(value);
+  } catch (error) {
+    if (error instanceof ApiError && recoverableBookmarkPreviewCodes.has(error.code)) {
+      const normalized = normalizeBookmarkUrl(value);
+      if (!normalized) throw new ApiError(400, "BOOKMARK_URL_INVALID", "Enter a valid HTTP or HTTPS URL");
+      return { title: new URL(normalized).hostname, faviconUrl: "" };
+    }
+    throw error;
+  }
 }
 
 async function normalizePublicPreviewUrl(value: string, fallback = "", deadline = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS) {

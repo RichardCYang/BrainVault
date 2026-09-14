@@ -51,7 +51,7 @@ function assertBrowserRequestOrigin(
     throw new ApiError(403, "ORIGIN_NOT_ALLOWED", "Request origin is not allowed");
   }
   if (requirePublicOrigin && parsedOrigin !== env.PUBLIC_ORIGIN) {
-    throw new ApiError(403, "ORIGIN_MISMATCH", "Cookie-authenticated mutations must originate from the public application origin");
+    throw new ApiError(403, "ORIGIN_MISMATCH", "Browser authentication requests must originate from the public application origin");
   }
 }
 
@@ -74,7 +74,7 @@ function getClientWorkspaceGeneration(req: Request) {
 
 export function requireSameOriginBrowserRequest(req: Request, _res: Response, next: NextFunction) {
   try {
-    assertBrowserRequestOrigin(req, { requireOrigin: true });
+    assertBrowserRequestOrigin(req, { requireOrigin: true, requirePublicOrigin: true });
     next();
   } catch (error) {
     next(error);

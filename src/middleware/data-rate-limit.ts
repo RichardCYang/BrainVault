@@ -30,6 +30,47 @@ export const dataExportRateLimit = rateLimit({
   }
 });
 
+
+const activeDataExportPrincipals = new Set<string>();
+let activeDataExportCount = 0;
+
+export function dataExportConcurrencyLimit(req: Request, res: Response, next: NextFunction) {
+  const principal = dataKey("export", req);
+  if (activeDataExportPrincipals.has(principal)) {
+    res.status(429).json({
+      error: {
+        code: "DATA_EXPORT_IN_PROGRESS",
+        message: "Another data export or snapshot is already active for this account."
+      }
+    });
+    return;
+  }
+  if (activeDataExportCount >= env.DATA_EXPORT_MAX_CONCURRENT) {
+    res.setHeader("Retry-After", "5");
+    res.status(503).json({
+      error: {
+        code: "DATA_EXPORT_BUSY",
+        message: "The server is already processing the maximum number of data exports. Try again later."
+      }
+    });
+    return;
+  }
+
+  activeDataExportPrincipals.add(principal);
+  activeDataExportCount += 1;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    activeDataExportPrincipals.delete(principal);
+    activeDataExportCount = Math.max(0, activeDataExportCount - 1);
+  };
+  res.once("finish", release);
+  res.once("close", release);
+  req.once("aborted", release);
+  next();
+}
+
 export const dataImportRateLimit = rateLimit({
   windowMs: env.DATA_IMPORT_WINDOW_MS,
   limit: env.DATA_IMPORT_MAX,

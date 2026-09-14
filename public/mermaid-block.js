@@ -44,11 +44,15 @@ function setPreviewMessage(target, state, message) {
   target.append(messageElement);
 }
 
+function isMermaidApi(value) {
+  return Boolean(value && typeof value.initialize === "function" && typeof value.render === "function");
+}
+
 async function loadMermaid() {
   if (!mermaidModulePromise) {
     mermaidModulePromise = new Promise((resolve, reject) => {
       const loaded = globalThis.mermaid;
-      if (loaded) {
+      if (isMermaidApi(loaded)) {
         resolve(loaded);
         return;
       }
@@ -59,7 +63,7 @@ async function loadMermaid() {
       script.dataset.brainvaultMermaid = MERMAID_VERSION;
       script.addEventListener("load", () => {
         const mermaid = globalThis.mermaid;
-        if (!mermaid) {
+        if (!isMermaidApi(mermaid)) {
           reject(new Error("The local Mermaid bundle did not expose the Mermaid API"));
           return;
         }

@@ -112,6 +112,8 @@ const envSchema = z.object({
   DATA_TRANSFER_MAX_MANIFEST_SIZE_MB: z.coerce.number().int().min(1).max(64).default(16),
   DATA_EXPORT_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60_000),
   DATA_EXPORT_MAX: z.coerce.number().int().positive().default(20),
+  DATA_EXPORT_MAX_CONCURRENT: z.coerce.number().int().min(1).max(32).default(2),
+  DATA_EXPORT_TIMEOUT_MS: z.coerce.number().int().min(60_000).max(24 * 60 * 60_000).default(30 * 60_000),
   DATA_IMPORT_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60_000),
   DATA_IMPORT_MAX: z.coerce.number().int().min(1).max(100).default(3),
   DATA_IMPORT_MAX_CONCURRENT: z.coerce.number().int().min(1).max(32).default(2),

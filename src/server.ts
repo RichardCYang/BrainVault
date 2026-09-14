@@ -59,6 +59,12 @@ async function start() {
   await recoverInterruptedDataRestores();
   await cleanupStaleDataTransferTempFiles();
   await cleanupStaleAttachmentTempFiles();
+  const dataTransferCleanupTimer = setInterval(() => {
+    // Best-effort periodic cleanup supplements per-request deletion without
+    // creating a separate audit/logging surface for routine housekeeping.
+    void cleanupStaleDataTransferTempFiles().catch(() => undefined);
+  }, Math.min(env.ATTACHMENT_TEMP_MAX_AGE_MS, 10 * 60_000));
+  dataTransferCleanupTimer.unref?.();
   await initializePermanentTotpIpEnforcement();
 
   await pruneExpiredAuthSessions();

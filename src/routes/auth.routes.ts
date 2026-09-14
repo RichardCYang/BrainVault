@@ -146,7 +146,8 @@ const totpIpBlockParamsSchema = z.object({
 });
 
 const totpIpUnblockSchema = z.object({
-  currentPassword: passwordInputSchema(1)
+  currentPassword: passwordInputSchema(1),
+  stepUpToken: mfaStepUpTokenSchema.optional()
 });
 
 const countryLoginPolicySchema = z
@@ -751,7 +752,7 @@ authRouter.delete(
       const authScope = requireRequestAuthScope(req);
       const expectedAuthVersion = authScope.authVersion;
       const { ipAddress } = req.params as z.infer<typeof totpIpBlockParamsSchema>;
-      const { currentPassword } = req.body as z.infer<typeof totpIpUnblockSchema>;
+      const { currentPassword, stepUpToken } = req.body as z.infer<typeof totpIpUnblockSchema>;
 
       await transaction(async (client) => {
         await assertCurrentAuthSession(currentUser.id, authScope, client);
@@ -764,6 +765,7 @@ authRouter.delete(
         if (!(await verifyPassword(currentPassword, user.password_hash))) {
           throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
         }
+        await consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken);
 
         const deleted = await client.execute<{ affectedRows: number }>(
           "DELETE FROM user_totp_ip_blocks WHERE user_id = ? AND ip_address = ?",

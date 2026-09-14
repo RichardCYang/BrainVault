@@ -73,20 +73,35 @@ function embeddedIpv4(parts: string[]) {
   return `${high >>> 8}.${high & 255}.${low >>> 8}.${low & 255}`;
 }
 
+function embeddedIpv4Translation(parts: string[]) {
+  const isMappedIpv4 = parts.slice(0, 5).every((part) => part === "0000") && parts[5] === "ffff";
+  const isTranslatedIpv4 = parts.slice(0, 4).every((part) => part === "0000")
+    && parts[4] === "ffff"
+    && parts[5] === "0000";
+  return isMappedIpv4 || isTranslatedIpv4 ? embeddedIpv4(parts) : null;
+}
+
+export function canonicalIpAddressKey(value: string) {
+  const address = value.trim().toLowerCase().replace(/^\[|\]$/g, "").split("%", 1)[0];
+  const family = net.isIP(address);
+  if (family === 4) return `4:${address}`;
+  if (family !== 6) return "";
+
+  const parts = expandIpv6(address);
+  if (parts.length !== 8 || parts.some((part) => !/^[0-9a-f]{4}$/i.test(part))) return "";
+  const translated = embeddedIpv4Translation(parts);
+  if (translated) return `4:${translated}`;
+  return `6:${parts.join(":")}`;
+}
+
 function isPrivateIpv6(address: string) {
   const parts = expandIpv6(address);
   if (parts.length !== 8 || parts.some((part) => !/^[0-9a-f]{4}$/i.test(part))) return true;
 
-  const isMappedIpv4 = parts.slice(0, 5).every((part) => part === "0000") && parts[5] === "ffff";
-  if (isMappedIpv4) return isPrivateIpv4(embeddedIpv4(parts));
-
-  // RFC 2765/6145 IPv4-translated form: 0:0:0:0:ffff:0::/96
-  // (commonly written ::ffff:0:a.b.c.d). Validate the embedded IPv4
-  // address with the same special/private-space rules as mapped IPv4.
-  const isTranslatedIpv4 = parts.slice(0, 4).every((part) => part === "0000")
-    && parts[4] === "ffff"
-    && parts[5] === "0000";
-  if (isTranslatedIpv4) return isPrivateIpv4(embeddedIpv4(parts));
+  // Keep private/special-use classification and self-origin comparison on the
+  // same canonical interpretation of mapped and translated IPv4 forms.
+  const translated = embeddedIpv4Translation(parts);
+  if (translated) return isPrivateIpv4(translated);
 
   const specialUseRanges: Array<[string, number]> = [
     ["::", 96],
