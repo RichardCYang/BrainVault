@@ -86,6 +86,7 @@ const vpnGateMatchCacheMs = 60_000;
 const vpnGateMatchStaleMs = 5 * 60_000;
 const maxExternalFactCacheEntries = 8_192;
 const timezoneMismatchThresholdMinutes = 180;
+const maxTimeZoneFormatterCacheEntries = 512;
 const maxClientWebRtcHeaderLength = 256;
 const maxClientWebRtcObservedIps = 4;
 
@@ -98,6 +99,7 @@ const providerSignalCache = new Map<string, VpnProviderCacheEntry>();
 const providerSignalInFlight = new Map<string, Promise<VpnProviderSignal>>();
 const vpnGateMatchCache = new Map<string, VpnGateMatchCacheEntry>();
 const vpnGateMatchInFlight = new Map<string, Promise<VpnGateRelayMatch>>();
+const timeZoneOffsetFormatters = new Map<string, Intl.DateTimeFormat>();
 let torExitAddresses = new Set<string>();
 let torExitListFetchedAt = 0;
 let torExitListInFlight: Promise<Set<string>> | null = null;
@@ -401,10 +403,31 @@ async function refreshTorExitAddresses() {
   return startTorExitAddressRefresh();
 }
 
+function getTimeZoneOffsetFormatter(timeZone: string) {
+  const cached = timeZoneOffsetFormatters.get(timeZone);
+  if (cached) return cached;
+
+  // Intl.DateTimeFormat construction is substantially more expensive than
+  // formatting with an existing instance. VPN policy evaluation runs on every
+  // authenticated request when enabled, so keep a bounded formatter cache by
+  // exact time-zone identifier. Invalid identifiers throw before insertion.
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    timeZoneName: "longOffset",
+    hour: "2-digit"
+  });
+  if (timeZoneOffsetFormatters.size >= maxTimeZoneFormatterCacheEntries) {
+    const oldest = timeZoneOffsetFormatters.keys().next().value;
+    if (oldest !== undefined) timeZoneOffsetFormatters.delete(oldest);
+  }
+  timeZoneOffsetFormatters.set(timeZone, formatter);
+  return formatter;
+}
+
 function isValidTimeZone(value: string | null | undefined): value is string {
   if (!value || value.length > 64) return false;
   try {
-    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date());
+    getTimeZoneOffsetFormatter(value);
     return true;
   } catch {
     return false;
@@ -413,11 +436,9 @@ function isValidTimeZone(value: string | null | undefined): value is string {
 
 function getTimeZoneOffsetMinutes(timeZone: string, date = new Date()) {
   try {
-    const part = new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      timeZoneName: "longOffset",
-      hour: "2-digit"
-    }).formatToParts(date).find((item) => item.type === "timeZoneName")?.value;
+    const part = getTimeZoneOffsetFormatter(timeZone)
+      .formatToParts(date)
+      .find((item) => item.type === "timeZoneName")?.value;
     if (!part || part === "GMT" || part === "UTC") return 0;
     const match = /^GMT([+-])(\d{1,2})(?::(\d{2}))?$/.exec(part);
     if (!match) return null;
@@ -863,6 +884,7 @@ export function resetVpnAccessPolicyCachesForTests() {
   providerSignalInFlight.clear();
   vpnGateMatchCache.clear();
   vpnGateMatchInFlight.clear();
+  timeZoneOffsetFormatters.clear();
   torExitAddresses = new Set<string>();
   torExitListFetchedAt = 0;
   torExitListInFlight = null;

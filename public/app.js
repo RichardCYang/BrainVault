@@ -2259,13 +2259,24 @@ function canSupersedeBlockSaveError(error) {
   return isDefinitiveApiError(error) && error?.code === "BLOCK_METADATA_WOULD_TRUNCATE";
 }
 
+const browserTimeZoneCacheMs = 5 * 60_000;
+let browserTimeZoneCache = null;
+let browserTimeZoneCacheExpiresAt = 0;
+
 function getBrowserTimeZone() {
+  const now = Date.now();
+  if (now < browserTimeZoneCacheExpiresAt) return browserTimeZoneCache;
+
+  let value = null;
   try {
-    const value = new Intl.DateTimeFormat().resolvedOptions().timeZone;
-    return typeof value === "string" && value.length > 0 && value.length <= 64 ? value : null;
+    const resolved = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    value = typeof resolved === "string" && resolved.length > 0 && resolved.length <= 64 ? resolved : null;
   } catch {
-    return null;
+    value = null;
   }
+  browserTimeZoneCache = value;
+  browserTimeZoneCacheExpiresAt = now + browserTimeZoneCacheMs;
+  return value;
 }
 
 async function applyClientNetworkVerificationHeaders(headers) {
