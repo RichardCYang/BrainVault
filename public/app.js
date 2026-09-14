@@ -92,6 +92,7 @@ import { createPageCollaboration, decodeCollaborationRecoveryRecords } from "./c
 import {
   assignRemoteCaretColors,
   getRemoteCaretClientKey,
+  hasRemotePresenceDecorationChanges,
   getRowTextSelectionControls,
   getTextControlCaretRect,
   getTextSelectionControlByKey,
@@ -10851,8 +10852,17 @@ async function startPageCollaboration(page = state.selectedPage) {
       },
       onPresence: (presence) => {
         if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) return;
+        const previousPresence = state.collaborationPresence;
         state.collaborationPresence = presence;
-        renderCollaborationChrome();
+        if (hasRemotePresenceDecorationChanges(previousPresence, presence)) {
+          renderCollaborationChrome();
+        } else {
+          // Selection/control updates can arrive many times per second while a
+          // collaborator is typing. They only move the remote caret; rebuilding
+          // avatars and scanning every block row for editor labels is unchanged
+          // work and makes CPU cost scale with document size.
+          scheduleRemoteCollaborationCaretRender();
+        }
       },
       onStatus: (status) => {
         if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) return;

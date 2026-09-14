@@ -60,6 +60,29 @@ export function getRemoteCaretClientKey(client) {
   return String(client?.connectionId || getRemoteCaretIdentity(client));
 }
 
+function hasPresenceIdentityDecorationChange(left, right) {
+  if (left?.user === right?.user) return false;
+  return left?.user?.id !== right?.user?.id
+    || left?.user?.username !== right?.user?.username
+    || left?.user?.name !== right?.user?.name
+    || left?.user?.avatarData !== right?.user?.avatarData;
+}
+
+export function hasRemotePresenceDecorationChanges(previousClients, nextClients) {
+  const previous = Array.isArray(previousClients) ? previousClients : [];
+  const next = Array.isArray(nextClients) ? nextClients : [];
+  if (previous.length !== next.length) return true;
+
+  for (let index = 0; index < previous.length; index += 1) {
+    const left = previous[index];
+    const right = next[index];
+    if (getRemoteCaretClientKey(left) !== getRemoteCaretClientKey(right)) return true;
+    if (hasPresenceIdentityDecorationChange(left, right)) return true;
+    if ((left?.state?.blockId ?? null) !== (right?.state?.blockId ?? null)) return true;
+  }
+  return false;
+}
+
 export function assignRemoteCaretColors(clients) {
   const identities = [...new Set((clients ?? []).map(getRemoteCaretIdentity))].sort();
   const identityColors = new Map();

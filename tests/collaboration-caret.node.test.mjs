@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   assignRemoteCaretColors,
   getRemoteCaretClientKey,
+  hasRemotePresenceDecorationChanges,
   getTextSelectionControlByKey,
   getTextSelectionControlKey
 } from "../public/collaboration-caret.js";
@@ -38,4 +39,41 @@ test("text control awareness keys identify the same control on another render", 
   assert.equal(getTextSelectionControlByKey(row, key), controls[1]);
   assert.equal(getTextSelectionControlByKey(row, "text:999"), null);
   assert.equal(getTextSelectionControlByKey(row, "unsafe-selector"), null);
+});
+
+
+test("selection-only awareness changes do not require rebuilding remote presence decorations", () => {
+  const user = { id: "user-a", username: "alice", name: "Alice", avatarData: "data:image/png;base64,abc" };
+  const previous = [{
+    connectionId: "connection-a",
+    user,
+    state: { blockId: "block-1", field: "markdown", control: "text:0", selection: { anchor: 10, head: 10 } }
+  }];
+  const selectionOnly = [{
+    ...previous[0],
+    state: { blockId: "block-1", field: "markdown", control: "text:0", selection: { anchor: 11, head: 11 } }
+  }];
+  const otherControlSameBlock = [{
+    ...previous[0],
+    state: { blockId: "block-1", field: "table", control: "text:3", selection: { anchor: 2, head: 4 } }
+  }];
+
+  assert.equal(hasRemotePresenceDecorationChanges(previous, selectionOnly), false);
+  assert.equal(hasRemotePresenceDecorationChanges(selectionOnly, otherControlSameBlock), false);
+});
+
+test("presence decoration changes still trigger a full collaboration chrome refresh", () => {
+  const base = [{
+    connectionId: "connection-a",
+    user: { id: "user-a", username: "alice", name: "Alice", avatarData: null },
+    state: { blockId: "block-1", selection: { anchor: 1, head: 1 } }
+  }];
+
+  assert.equal(hasRemotePresenceDecorationChanges(base, []), true);
+  assert.equal(hasRemotePresenceDecorationChanges(base, [{ ...base[0], state: { ...base[0].state, blockId: "block-2" } }]), true);
+  assert.equal(hasRemotePresenceDecorationChanges(base, [{ ...base[0], connectionId: "connection-b" }]), true);
+  assert.equal(hasRemotePresenceDecorationChanges(base, [{
+    ...base[0],
+    user: { ...base[0].user, name: "Alicia" }
+  }]), true);
 });
