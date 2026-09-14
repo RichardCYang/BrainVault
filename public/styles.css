@@ -14342,6 +14342,7 @@ button.danger {
 .ai-chat-answer-input {
   display: block;
   width: 100%;
+  field-sizing: content;
   overflow: hidden;
   resize: none;
   border: 1px solid transparent;

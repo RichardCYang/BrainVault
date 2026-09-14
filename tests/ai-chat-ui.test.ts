@@ -608,6 +608,9 @@ describe("AI conversation block", () => {
   it("re-measures AI textarea heights when read mode switches back to write mode", () => {
     expect(moduleSource).toContain("export function syncAiChatTextareaHeights(root = document)");
     expect(moduleSource).toContain("textarea.getClientRects?.().length === 0");
+    expect(moduleSource).toContain('CSS.supports("field-sizing", "content")');
+    expect(moduleSource).toContain("measureAiChatTextareaHeight(textarea, minimum)");
+    expect(styles).toMatch(/\.ai-chat-question-input,[\s\S]*field-sizing:\s*content;/s);
     expect(client).toContain("syncAiChatTextareaHeights,");
     expect(client).toContain("if (!isPageReadOnly()) syncAiChatTextareaHeights(elements.pageView);");
   });

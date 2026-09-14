@@ -1519,20 +1519,75 @@ export function createAiProviderIcon(providerValue, className = "") {
   return wrapper;
 }
 
+function supportsNativeAiTextareaSizing() {
+  return typeof CSS !== "undefined"
+    && typeof CSS.supports === "function"
+    && CSS.supports("field-sizing", "content");
+}
+
+function measureAiChatTextareaHeight(textarea, minimum) {
+  const rect = textarea.getBoundingClientRect?.();
+  const documentRef = textarea.ownerDocument;
+  if (
+    !documentRef?.body
+    || !rect
+    || !(rect.width > 0)
+    || typeof textarea.cloneNode !== "function"
+  ) {
+    return Math.max(Number(textarea.scrollHeight) || 0, minimum);
+  }
+
+  // Older browsers need JavaScript autosizing, but collapsing the live textarea
+  // to `auto` while it owns the caret makes the browser reveal the caret against
+  // the temporary short box. That can move the document by thousands of pixels
+  // before the textarea is expanded again. Measure an off-screen clone instead
+  // so the focused control never changes to an intermediate height.
+  const probe = textarea.cloneNode(false);
+  probe.removeAttribute("id");
+  probe.removeAttribute("name");
+  probe.setAttribute("aria-hidden", "true");
+  probe.tabIndex = -1;
+  probe.value = textarea.value ?? "";
+  Object.assign(probe.style, {
+    position: "fixed",
+    left: "0",
+    top: "-10000px",
+    width: `${rect.width}px`,
+    height: "0px",
+    minHeight: "0px",
+    maxHeight: "none",
+    overflow: "hidden",
+    resize: "none",
+    visibility: "hidden",
+    pointerEvents: "none",
+    fieldSizing: "fixed"
+  });
+  documentRef.body.append(probe);
+  const height = Math.max(probe.scrollHeight, minimum);
+  probe.remove();
+  return height;
+}
+
 function autoGrow(textarea) {
   const minimum = textarea.classList.contains("ai-chat-question-input") ? 38 : 112;
-  textarea.style.height = "auto";
+
+  // Modern browsers can size textareas from their contents without mutating the
+  // live control on every keystroke. This avoids caret-reveal/scroll-anchoring
+  // feedback while editing long AI answers.
+  if (supportsNativeAiTextareaSizing()) {
+    if (textarea.style.height) textarea.style.removeProperty("height");
+    return;
+  }
 
   // Read mode hides the whole editing surface with display:none. In that state
-  // the textarea has no layout box, so scrollHeight cannot describe the actual
-  // wrapped content height. Leave the height unset and measure again after the
-  // editor becomes visible instead of freezing the control at its minimum size.
+  // the textarea has no layout box, so content height cannot be measured. Leave
+  // the height unset and measure again after the editor becomes visible.
   if (textarea.getClientRects?.().length === 0) {
     textarea.style.removeProperty("height");
     return;
   }
 
-  textarea.style.height = `${Math.max(textarea.scrollHeight, minimum)}px`;
+  textarea.style.height = `${measureAiChatTextareaHeight(textarea, minimum)}px`;
 }
 
 export function syncAiChatTextareaHeights(root = document) {

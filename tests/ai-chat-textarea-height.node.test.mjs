@@ -55,6 +55,53 @@ test("AI textarea sizing preserves the existing question and answer minimum heig
   assert.equal(answer.style.height, "112px");
 });
 
+test("native AI textarea sizing removes stale inline heights without reading or collapsing the live control", () => {
+  const previousCss = globalThis.CSS;
+  const answer = createTextarea({ scrollHeight: 486, visible: true });
+  answer.style.height = "486px";
+  Object.defineProperty(answer, "scrollHeight", {
+    get() {
+      throw new Error("native field sizing must not read scrollHeight during typing");
+    }
+  });
+
+  globalThis.CSS = { supports: (property, value) => property === "field-sizing" && value === "content" };
+  try {
+    syncAiChatTextareaHeights({ querySelectorAll: () => [answer] });
+    assert.equal(answer.style.height, "");
+  } finally {
+    if (previousCss === undefined) delete globalThis.CSS;
+    else globalThis.CSS = previousCss;
+  }
+});
+
+test("legacy AI textarea sizing never collapses the focused textarea to an intermediate auto height", () => {
+  const previousCss = globalThis.CSS;
+  const assignments = [];
+  const answer = createTextarea({ scrollHeight: 486, visible: true });
+  let liveHeight = "486px";
+  Object.defineProperty(answer.style, "height", {
+    configurable: true,
+    get() {
+      return liveHeight;
+    },
+    set(value) {
+      liveHeight = value;
+      assignments.push(value);
+    }
+  });
+
+  globalThis.CSS = { supports: () => false };
+  try {
+    syncAiChatTextareaHeights({ querySelectorAll: () => [answer] });
+    assert.deepEqual(assignments, ["486px"]);
+    assert.equal(assignments.includes("auto"), false);
+  } finally {
+    if (previousCss === undefined) delete globalThis.CSS;
+    else globalThis.CSS = previousCss;
+  }
+});
+
 test("write-mode UI synchronization re-measures mounted AI textarea heights after layout is restored", () => {
   assert.match(appSource, /syncAiChatTextareaHeights,/);
   assert.match(
