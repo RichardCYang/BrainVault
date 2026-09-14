@@ -12,6 +12,15 @@ function loadSetPageMode() {
   return source.slice(start, end).trim();
 }
 
+function loadSyncPageModeUi() {
+  const source = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
+  const start = source.indexOf("function syncPageModeUi()");
+  const end = source.indexOf("function hasPendingPageEdits", start);
+  assert.notEqual(start, -1, "syncPageModeUi must exist");
+  assert.notEqual(end, -1, "syncPageModeUi boundary must exist");
+  return source.slice(start, end).trim();
+}
+
 function createHarness(
   blocks = [],
   {
@@ -144,6 +153,15 @@ test("entering read mode applies the materialized rendered cache before completi
   assert.equal(state.pageMode, pageModes.READ);
   assert.equal(state.pageModeChanging, false);
   assert.deepEqual(calls, { created: 0, opened: 0, appliedMaterialization: 1 });
+});
+
+
+test("entering read mode rehydrates fenced code after a write-mode DOM rebuild", () => {
+  const source = loadSyncPageModeUi();
+  assert.match(
+    source,
+    /requestAnimationFrame\(\(\) => \{[\s\S]*if \(isPageReadOnly\(\)\) hydrateHighlightedCodeBlocks\(elements\.pageView\);/
+  );
 });
 
 

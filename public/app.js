@@ -7649,6 +7649,13 @@ function syncPageModeUi() {
     // surface is display:none. Re-measure textarea content only after write
     // mode has made that surface participate in layout again.
     if (!isPageReadOnly()) syncAiChatTextareaHeights(elements.pageView);
+    // Explicit Save rebuilds the block DOM while the page is still in write
+    // mode. That hidden rendered preview therefore has not gone through the
+    // read-mode code hydration performed by renderSelectedPage(). Hydrate at
+    // the visibility boundary as well so fenced Markdown code receives the
+    // .hljs class/token markup and its read-mode font, spacing, theme, and
+    // copy-button shell without requiring a full page reload.
+    if (isPageReadOnly()) hydrateHighlightedCodeBlocks(elements.pageView);
     hydrateMathExpressions(elements.pageView);
     void hydrateMermaidPreviews(elements.pageView);
   });
