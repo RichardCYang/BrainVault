@@ -25,6 +25,7 @@
   --shadow-popover: 0 10px 30px rgba(38, 80, 112, 0.13), 0 2px 8px rgba(38, 80, 112, 0.08);
   --shadow-card: 0 1px 2px rgba(38, 80, 112, 0.05);
   --radius-lg: 10px;
+  --radius-dialog: 12px;
   --radius-md: 6px;
   --radius-sm: 4px;
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
@@ -4035,7 +4036,7 @@ body.is-kanban-column-dragging {
   max-height: none;
   margin: auto;
   border: 1px solid rgba(38, 38, 37, 0.14);
-  border-radius: 18px;
+  border-radius: var(--radius-dialog);
   background: #ffffff;
   color: var(--ink);
   box-shadow: 0 32px 110px rgba(20, 20, 18, 0.3);
@@ -4498,7 +4499,7 @@ body.is-kanban-column-dragging {
   .page-version-history-dialog {
     width: calc(100vw - 1rem);
     height: calc(100vh - 1rem);
-    border-radius: 14px;
+    border-radius: var(--radius-dialog);
   }
 
   .page-version-history-header {
@@ -4860,7 +4861,7 @@ body.is-kanban-column-dragging {
   max-height: min(40rem, calc(100vh - 2rem));
   overflow: auto;
   border: 0;
-  border-radius: 16px;
+  border-radius: var(--radius-dialog);
   background: var(--panel);
   color: var(--ink);
   padding: 0;
@@ -10432,7 +10433,7 @@ body.search-dialog-open {
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid rgba(64, 137, 194, 0.18);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-dialog);
   background: var(--panel);
   box-shadow: 0 24px 80px rgba(27, 63, 88, 0.28);
   animation: account-settings-enter 150ms ease-out;
@@ -10757,7 +10758,7 @@ body.search-dialog-open {
     border-right: 0;
     border-bottom: 0;
     border-left: 0;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-radius: var(--radius-dialog) var(--radius-dialog) 0 0;
   }
 
   .search-dialog {
@@ -10931,7 +10932,7 @@ body.search-dialog-open {
   height: min(35rem, calc(100vh - 1.5rem));
   overflow: hidden;
   border: 1px solid rgba(62, 126, 174, 0.2);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-dialog);
   background: var(--panel);
   box-shadow: 0 24px 72px rgba(30, 70, 101, 0.22), 0 4px 14px rgba(30, 70, 101, 0.1);
   transform: translate(-50%, -50%);
@@ -12298,7 +12299,7 @@ body.search-dialog-open {
   .app-mode .account-settings-dialog {
     width: min(58rem, 100%);
     border-color: rgba(38, 38, 37, 0.12);
-    border-radius: 18px;
+    border-radius: var(--radius-dialog);
     background: var(--chrome-surface);
     box-shadow: 0 30px 100px rgba(20, 20, 18, 0.28);
   }
@@ -12469,7 +12470,7 @@ body.search-dialog-open {
 
   .app-mode .emoji-picker {
     border-color: rgba(38, 38, 37, 0.13);
-    border-radius: 14px;
+    border-radius: var(--radius-dialog);
     background: #ffffff;
     box-shadow: var(--chrome-shadow-float);
   }
@@ -12611,7 +12612,7 @@ body.search-dialog-open {
     }
 
     .app-mode .account-settings-dialog {
-      border-radius: 18px 18px 0 0;
+      border-radius: var(--radius-dialog) var(--radius-dialog) 0 0;
     }
 
     .app-mode .account-settings-body {
@@ -15706,7 +15707,7 @@ body.pdf-export-mode .remote-collaboration-caret {
   gap: 1rem;
   overflow: auto;
   border: 1px solid var(--line-strong);
-  border-radius: 14px;
+  border-radius: var(--radius-dialog);
   background: var(--panel);
   padding: 1.25rem;
   box-shadow: var(--shadow-popover);
@@ -18360,7 +18361,7 @@ html[data-theme="dark"] .rendered-gantt-status--blocked { background: #513529; c
   max-height: min(48rem, calc(100vh - 2rem));
   overflow: auto;
   border: 0;
-  border-radius: 18px;
+  border-radius: var(--radius-dialog);
   background: #ffffff;
   color: var(--ink);
   padding: 0;

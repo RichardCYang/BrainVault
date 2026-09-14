@@ -25,6 +25,22 @@ test("page and block move dialogs use the defined theme panel surface", () => {
   assert.match(destinationSelect, /background:\s*var\(--panel\);/);
 });
 
+test("modal and picker surfaces share the restrained dialog radius token", () => {
+  const root = cssRule(":root");
+  assert.match(root, /--radius-dialog:\s*12px;/);
+
+  for (const selector of [
+    ".page-version-history-dialog",
+    ".block-move-dialog",
+    ".account-settings-dialog",
+    ".share-page-dialog",
+    ".emoji-picker",
+    ".page-cover-dialog"
+  ]) {
+    assert.match(cssRule(selector), /border-radius:\s*var\(--radius-dialog\);/);
+  }
+});
+
 test("move-dialog surfaces do not depend on the removed undefined surface tokens", () => {
   assert.doesNotMatch(styles, /var\(--surface(?:-soft)?\)/);
 });

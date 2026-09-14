@@ -79,7 +79,7 @@ describe("page and collection emoji picker", () => {
     expect(app).toContain("new URL(source)");
     expect(app).toContain('from "./custom-icon-library.js"');
     expect(app).toContain("handleIconPickerTabKeydown");
-    expect(styles).toMatch(/\.emoji-picker\s*\{[^}]*border-radius:\s*var\(--radius-lg\);/s);
+    expect(styles).toMatch(/\.emoji-picker\s*\{[^}]*border-radius:\s*var\(--radius-dialog\);/s);
     expect(styles).toMatch(/\.emoji-search-label\s*\{[^}]*border-radius:\s*var\(--radius-md\);/s);
     expect(styles).toContain("border-radius: var(--radius-lg);");
   });

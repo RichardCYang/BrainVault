@@ -85,9 +85,9 @@ describe("Account settings layer", () => {
     expect(styles).toContain('.rendered-kanban-card--pink');
     expect(styles).toContain('.rendered-database-card');
     expect(styles).toContain('.rendered-gantt-stage');
-    expect(styles).toMatch(/\.account-settings-dialog\s*\{[^}]*border-radius:\s*var\(--radius-lg\);/s);
+    expect(styles).toMatch(/\.account-settings-dialog\s*\{[^}]*border-radius:\s*var\(--radius-dialog\);/s);
     expect(styles).toMatch(/\.account-preference-card\s*\{[^}]*border-radius:\s*8px;/s);
-    expect(styles).toContain("border-radius: var(--radius-lg) var(--radius-lg) 0 0;");
+    expect(styles).toContain("border-radius: var(--radius-dialog) var(--radius-dialog) 0 0;");
     expect(i18n).toContain('open: "계정 설정 열기"');
     expect(i18n).toContain('passwordChanged: "비밀번호를 변경했습니다."');
     expect(i18n).toContain('activeSessionsTab: "로그인된 기기"');
