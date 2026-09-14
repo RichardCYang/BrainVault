@@ -8,6 +8,7 @@ export const MERMAID_SCRIPT_URL = `/vendor/mermaid/${MERMAID_VERSION}/mermaid.mi
 
 const previewRevisions = new WeakMap();
 const previewTimers = new WeakMap();
+let mermaidHydrationObserver = null;
 let renderSequence = 0;
 let mermaidModulePromise = null;
 let renderQueue = Promise.resolve();
@@ -192,11 +193,41 @@ export function scheduleMermaidPreview(target, source, options = {}, delay = 260
   previewTimers.set(target, timer);
 }
 
-export function hydrateMermaidPreviews(root = document, { force = false } = {}) {
-  const previews = [...root.querySelectorAll(".mermaid-block-preview")];
-  return Promise.allSettled(previews.map((preview) => {
+function getMermaidHydrationObserver() {
+  if (mermaidHydrationObserver || typeof IntersectionObserver !== "function") return mermaidHydrationObserver;
+  mermaidHydrationObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      mermaidHydrationObserver?.unobserve(entry.target);
+      const target = /** @type {HTMLElement} */ (entry.target);
+      void renderMermaidPreview(
+        target,
+        target.dataset.mermaidSource ?? "",
+        readPreviewOptions(target)
+      );
+    }
+  }, { rootMargin: "320px" });
+  return mermaidHydrationObserver;
+}
+
+export function hydrateMermaidPreviews(root = document, { force = false, eager = false } = {}) {
+  const previews = [...root.querySelectorAll(".mermaid-block-preview")].map((preview) => {
     const target = /** @type {HTMLElement} */ (preview);
     if (force) delete target.dataset.mermaidRenderedKey;
-    return renderMermaidPreview(target, target.dataset.mermaidSource ?? "", readPreviewOptions(target));
-  }));
+    return target;
+  });
+
+  // PDF export and environments without IntersectionObserver still require a
+  // complete render. Normal interactive views hydrate only diagrams near the
+  // viewport so a page with many Mermaid blocks cannot monopolize the UI thread
+  // parsing and laying out diagrams the user has not reached yet.
+  if (eager || typeof IntersectionObserver !== "function") {
+    return Promise.allSettled(previews.map((target) =>
+      renderMermaidPreview(target, target.dataset.mermaidSource ?? "", readPreviewOptions(target))
+    ));
+  }
+
+  const observer = getMermaidHydrationObserver();
+  for (const target of previews) observer?.observe(target);
+  return Promise.resolve([]);
 }

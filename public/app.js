@@ -17246,7 +17246,7 @@ async function exportCurrentPageToPdf() {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     elements.blockList.querySelectorAll("textarea").forEach(autoGrowTextarea);
     hydrateMathExpressions(elements.pageView);
-    await hydrateMermaidPreviews(elements.pageView);
+    await hydrateMermaidPreviews(elements.pageView, { eager: true });
     hydrateAccordionIcons(elements.pageView);
     restoreToggleDetails = expandToggleDetailsForPdf();
     restoreComputedStyles = freezePdfExportComputedStyles();
