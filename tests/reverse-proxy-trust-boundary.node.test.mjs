@@ -56,7 +56,13 @@ test("websocket client IP follows the same explicit trusted-proxy boundary", () 
     socket: { remoteAddress: "127.0.0.1" }
   };
   assert.equal(getClientIpAddressFromTrustedProxyRequest(appendedSpoof, ["loopback"]), "198.51.100.10");
-  assert.deepEqual(forwardedForAddresses({ "x-forwarded-for": "192.0.2.99, nope" }), null);
+
+  const malformedChain = {
+    headers: { "x-forwarded-for": "nope, 198.51.100.10" },
+    socket: { remoteAddress: "127.0.0.1" }
+  };
+  assert.deepEqual(forwardedForAddresses(malformedChain.headers), null);
+  assert.equal(getClientIpAddressFromTrustedProxyRequest(malformedChain, ["loopback"]), "unknown");
 });
 
 test("production wiring requires encrypted transport and exact reverse-proxy peers", () => {
@@ -74,4 +80,6 @@ test("production wiring requires encrypted transport and exact reverse-proxy pee
     collaborationSource,
     /isHttpsRequestFromTrustedProxy\(request, env\.TRUST_PROXY_ADDRESSES\)/
   );
+  assert.match(collaborationSource, /if \(sourceIp === "unknown"\) \{/);
+  assert.match(collaborationSource, /rejectWebSocketUpgrade\(socket, 400, "A valid client network address is required"\)/);
 });

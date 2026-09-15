@@ -81,7 +81,7 @@ import {
   toPageVersionActor
 } from "../lib/page-version-history.js";
 import { ApiError, notFound } from "../lib/http.js";
-import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
+import { requireAuth, requireRequestAuthScope, requireSameOriginCookieRequest } from "../middleware/auth.js";
 import {
   attachmentUploadConcurrencyLimit,
   attachmentUploadRateLimit,
@@ -490,6 +490,7 @@ blockRouter.post(
 
 blockRouter.get(
   "/ai-chat/image",
+  requireSameOriginCookieRequest,
   bookmarkPreviewRateLimit,
   validate({ query: aiChatImageQuerySchema }),
   async (req, res, next) => {

@@ -148,12 +148,14 @@ export function getClientIpAddressFromTrustedProxyRequest(
   if (!isTrustedProxyRemoteAddress(remoteAddress, trustedProxyAddresses)) return remoteAddress;
 
   const forwardedAddresses = forwardedForAddresses(request.headers);
-  if (!forwardedAddresses?.length) return remoteAddress;
+  if (forwardedAddresses === null) return "unknown";
+  if (!forwardedAddresses.length) return remoteAddress;
 
   // Match Express/proxy-addr's right-to-left trust boundary: only walk farther
   // into X-Forwarded-For while the immediately closer hop is explicitly trusted.
   // A client-supplied leftmost value is therefore never selected through an
-  // untrusted hop. Malformed chains fall back to the socket peer above.
+  // untrusted hop. Malformed chains fail closed above rather than being
+  // reclassified as the trusted proxy itself.
   let selectedAddress = remoteAddress;
   let closerHop = remoteAddress;
   for (let index = forwardedAddresses.length - 1; index >= 0; index -= 1) {

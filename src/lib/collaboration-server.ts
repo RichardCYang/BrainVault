@@ -553,6 +553,10 @@ export class PageCollaborationHub {
       request,
       env.HTTPS_MODE === "proxy" ? env.TRUST_PROXY_ADDRESSES : []
     );
+    if (sourceIp === "unknown") {
+      rejectWebSocketUpgrade(socket, 400, "A valid client network address is required");
+      return;
+    }
     if (!this.consumeUnauthenticatedUpgradeBudget(sourceIp)) {
       rejectWebSocketUpgrade(socket, 429, "Too many collaboration upgrade attempts");
       return;

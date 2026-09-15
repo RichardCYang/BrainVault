@@ -82,6 +82,24 @@ const opaqueTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const canonicalBase64Url = (maxLength: number) =>
   z.string().min(1).max(maxLength).regex(base64UrlPattern);
 const mfaFailureCarryWindowMs = env.AUTH_MFA_ACCOUNT_WINDOW_MS;
+const mfaStepUpActionSchema = z.enum([
+  "totp-ip-policy",
+  "totp-ip-unblock",
+  "vpn-policy",
+  "country-policy",
+  "password-change",
+  "totp-setup",
+  "totp-disable",
+  "passkey-register",
+  "passkey-rename",
+  "passkey-delete"
+]);
+type MfaStepUpAction = z.infer<typeof mfaStepUpActionSchema>;
+const mfaStepUpResourceSchema = z.string().trim().min(1).max(128).optional();
+const mfaStepUpScopeShape = {
+  action: mfaStepUpActionSchema,
+  resourceId: mfaStepUpResourceSchema
+} as const;
 
 function isBoundedJsonValue(value: unknown) {
   const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
@@ -145,8 +163,11 @@ const currentPasswordSchema = z.object({
 });
 
 const mfaStepUpTotpSchema = z.object({
-  code: z.string().trim().regex(/^\d{6}$/)
+  code: z.string().trim().regex(/^\d{6}$/),
+  ...mfaStepUpScopeShape
 }).strict();
+
+const mfaStepUpPasskeyOptionsSchema = z.object(mfaStepUpScopeShape).strict();
 
 const totpVerifySchema = z.object({
   setupToken: z.string().min(20).max(256),
@@ -204,6 +225,12 @@ const authenticationResponseSchema = z.object({
     signature: canonicalBase64Url(4_096),
     userHandle: canonicalBase64Url(128).optional()
   }).strict()
+}).strict();
+
+const mfaStepUpPasskeyVerifySchema = z.object({
+  challengeToken: opaqueTokenSchema,
+  response: authenticationResponseSchema,
+  ...mfaStepUpScopeShape
 }).strict();
 
 const passkeyLoginVerifySchema = z.object({
@@ -283,6 +310,8 @@ type MfaStepUpSessionRow = {
   user_id: string;
   session_id: string;
   auth_version: number;
+  action: MfaStepUpAction;
+  resource_id: string | null;
   expires_at: string;
   used_at: string | null;
 };
@@ -389,15 +418,35 @@ async function requireCurrentPasswordForUpdate(
   return user;
 }
 
-function mfaStepUpContextHash(userId: string, authVersion: number, sessionId: string) {
-  return hashOpaqueToken(`brainvault:mfa-step-up:${userId}:${authVersion}:${sessionId}`);
+function normalizeMfaStepUpResourceId(resourceId: string | undefined) {
+  const normalized = resourceId?.trim();
+  return normalized || null;
+}
+
+function mfaStepUpContextHash(
+  userId: string,
+  authVersion: number,
+  sessionId: string,
+  action: MfaStepUpAction,
+  resourceId: string | null
+) {
+  return hashOpaqueToken(JSON.stringify([
+    "brainvault:mfa-step-up",
+    userId,
+    authVersion,
+    sessionId,
+    action,
+    resourceId
+  ]));
 }
 
 async function createMfaStepUpSession(
   client: DbClient,
   userId: string,
   authVersion: number,
-  sessionId: string
+  sessionId: string,
+  action: MfaStepUpAction,
+  resourceId: string | null
 ) {
   const token = createOpaqueToken();
   await client.execute(
@@ -407,9 +456,17 @@ async function createMfaStepUpSession(
   );
   await client.execute(
     `INSERT INTO mfa_step_up_sessions
-       (token_hash, user_id, session_id, auth_version, expires_at)
-     VALUES (?, ?, ?, ?, ?)`,
-    [hashOpaqueToken(token), userId, sessionId, authVersion, expiresAt(mfaStepUpLifetimeMs)]
+       (token_hash, user_id, session_id, auth_version, action, resource_id, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      hashOpaqueToken(token),
+      userId,
+      sessionId,
+      authVersion,
+      action,
+      resourceId,
+      expiresAt(mfaStepUpLifetimeMs)
+    ]
   );
   return token;
 }
@@ -428,7 +485,9 @@ export async function consumeMfaStepUpIfRequired(
   client: DbClient,
   userId: string,
   authScope: { authVersion: number; sessionId: string },
-  stepUpToken: string | undefined
+  stepUpToken: string | undefined,
+  action: MfaStepUpAction,
+  resourceId: string | null = null
 ) {
   if (!(await hasExistingMfaFactor(client, userId))) return;
   if (!stepUpToken) {
@@ -437,12 +496,13 @@ export async function consumeMfaStepUpIfRequired(
 
   const tokenHash = hashOpaqueToken(stepUpToken);
   const row = await client.queryOne<MfaStepUpSessionRow>(
-    `SELECT token_hash, user_id, session_id, auth_version, expires_at, used_at
+    `SELECT token_hash, user_id, session_id, auth_version, action, resource_id, expires_at, used_at
      FROM mfa_step_up_sessions
      WHERE token_hash = ? AND user_id = ? AND session_id = ? AND auth_version = ?
+       AND action = ? AND resource_id <=> ?
        AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP(3)
      FOR UPDATE`,
-    [tokenHash, userId, authScope.sessionId, authScope.authVersion]
+    [tokenHash, userId, authScope.sessionId, authScope.authVersion, action, resourceId]
   );
   if (!row) {
     throw new ApiError(403, "MFA_STEP_UP_EXPIRED", "The two-step verification confirmation expired; verify again");
@@ -732,7 +792,8 @@ mfaRouter.post(
     const sourceIp = getClientIpAddress(req);
     try {
       const authScope = requireRequestAuthScope(req);
-      const { code } = req.body as z.infer<typeof mfaStepUpTotpSchema>;
+      const { code, action, resourceId } = req.body as z.infer<typeof mfaStepUpTotpSchema>;
+      const scopedResourceId = normalizeMfaStepUpResourceId(resourceId);
       if (await isPermanentlyBlockedTotpIp(sourceIp, user.id)) {
         throw new ApiError(
           403,
@@ -774,7 +835,14 @@ mfaRouter.post(
           throw new ApiError(401, "MFA_CODE_REUSED", "The verification code was already used");
         }
         await clearTotpIpFailures(user.id, sourceIp, client);
-        return createMfaStepUpSession(client, user.id, authScope.authVersion, authScope.sessionId);
+        return createMfaStepUpSession(
+          client,
+          user.id,
+          authScope.authVersion,
+          authScope.sessionId,
+          action,
+          scopedResourceId
+        );
       });
       res.json({ stepUpToken, expiresInSeconds: Math.floor(mfaStepUpLifetimeMs / 1000) });
     } catch (error) {
@@ -804,10 +872,13 @@ mfaRouter.post(
   "/step-up/passkey/options",
   requireAuth,
   mfaSetupRateLimit,
+  validate({ body: mfaStepUpPasskeyOptionsSchema }),
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
+      const { action, resourceId } = req.body as z.infer<typeof mfaStepUpPasskeyOptionsSchema>;
+      const scopedResourceId = normalizeMfaStepUpResourceId(resourceId);
       const result = await transaction(async (client) => {
         await assertCurrentAuthSession(user.id, authScope, client);
         const passkeys = await client.query<PasskeyRow>(
@@ -825,14 +896,26 @@ mfaRouter.post(
           })),
           userVerification: "required"
         });
-        const contextHash = mfaStepUpContextHash(user.id, authScope.authVersion, authScope.sessionId);
+        const contextHash = mfaStepUpContextHash(
+          user.id,
+          authScope.authVersion,
+          authScope.sessionId,
+          action,
+          scopedResourceId
+        );
         const challengeToken = await createChallenge(
           client,
           user.id,
           "authentication",
           options.challenge,
           contextHash,
-          { purpose: "mfa-step-up", authVersion: authScope.authVersion, sessionId: authScope.sessionId }
+          {
+            purpose: "mfa-step-up",
+            authVersion: authScope.authVersion,
+            sessionId: authScope.sessionId,
+            action,
+            resourceId: scopedResourceId
+          }
         );
         return { options, challengeToken };
       });
@@ -847,16 +930,20 @@ mfaRouter.post(
   "/step-up/passkey/verify",
   requireAuth,
   mfaSetupRateLimit,
-  validate({ body: z.object({ challengeToken: opaqueTokenSchema, response: authenticationResponseSchema }).strict() }),
+  validate({ body: mfaStepUpPasskeyVerifySchema }),
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
-      const { challengeToken, response } = req.body as {
-        challengeToken: string;
-        response: z.infer<typeof authenticationResponseSchema>;
-      };
-      const contextHash = mfaStepUpContextHash(user.id, authScope.authVersion, authScope.sessionId);
+      const { challengeToken, response, action, resourceId } = req.body as z.infer<typeof mfaStepUpPasskeyVerifySchema>;
+      const scopedResourceId = normalizeMfaStepUpResourceId(resourceId);
+      const contextHash = mfaStepUpContextHash(
+        user.id,
+        authScope.authVersion,
+        authScope.sessionId,
+        action,
+        scopedResourceId
+      );
       const challenge = await consumeChallenge(challengeToken, user.id, "authentication", contextHash);
       const authenticationFailure = () =>
         new ApiError(401, "PASSKEY_AUTHENTICATION_FAILED", "The passkey could not be verified");
@@ -924,7 +1011,14 @@ mfaRouter.post(
         if (Number(updated.affectedRows) !== 1) {
           throw new ApiError(401, "PASSKEY_AUTHENTICATION_FAILED", "The passkey state changed during verification");
         }
-        return createMfaStepUpSession(client, user.id, authScope.authVersion, authScope.sessionId);
+        return createMfaStepUpSession(
+          client,
+          user.id,
+          authScope.authVersion,
+          authScope.sessionId,
+          action,
+          scopedResourceId
+        );
       });
       res.json({ stepUpToken, expiresInSeconds: Math.floor(mfaStepUpLifetimeMs / 1000) });
     } catch (error) {
@@ -962,7 +1056,7 @@ mfaRouter.post(
           expectedAuthVersion,
           currentPassword
         );
-        await consumeMfaStepUpIfRequired(client, lockedUser.id, authScope, stepUpToken);
+        await consumeMfaStepUpIfRequired(client, lockedUser.id, authScope, stepUpToken, "totp-setup");
         await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [lockedUser.id]);
         await client.execute(
           `INSERT INTO mfa_totp_setups
@@ -1063,7 +1157,7 @@ mfaRouter.delete(
           expectedAuthVersion,
           currentPassword
         );
-        await consumeMfaStepUpIfRequired(client, lockedUser.id, authScope, stepUpToken);
+        await consumeMfaStepUpIfRequired(client, lockedUser.id, authScope, stepUpToken, "totp-disable");
         await client.execute("DELETE FROM user_totp_credentials WHERE user_id = ?", [lockedUser.id]);
         await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [lockedUser.id]);
         return rotateAuthenticationCredentials(client, lockedUser);
@@ -1096,7 +1190,7 @@ mfaRouter.post(
           expectedAuthVersion,
           currentPassword
         );
-        await consumeMfaStepUpIfRequired(client, lockedUser.id, authScope, stepUpToken);
+        await consumeMfaStepUpIfRequired(client, lockedUser.id, authScope, stepUpToken, "passkey-register");
         const existingPasskeys = await client.query<PasskeyRow>(
           `SELECT id, user_id, credential_id, webauthn_user_id, public_key, counter, transports,
                   device_type, backed_up, aaguid, name, created_at, updated_at, last_used_at
@@ -1261,7 +1355,7 @@ mfaRouter.patch(
         const lockedUser = await requireCurrentPasswordForUpdate(
           client, user.id, authScope.authVersion, currentPassword
         );
-        await consumeMfaStepUpIfRequired(client, lockedUser.id, authScope, stepUpToken);
+        await consumeMfaStepUpIfRequired(client, lockedUser.id, authScope, stepUpToken, "passkey-rename", id);
         const passkey = await client.queryOne<{ id: string }>(
           "SELECT id FROM user_passkeys WHERE id = ? AND user_id = ? FOR UPDATE",
           [id, lockedUser.id]
@@ -1299,7 +1393,7 @@ mfaRouter.delete(
           expectedAuthVersion,
           currentPassword
         );
-        await consumeMfaStepUpIfRequired(client, lockedUser.id, authScope, stepUpToken);
+        await consumeMfaStepUpIfRequired(client, lockedUser.id, authScope, stepUpToken, "passkey-delete", id);
         const result = await client.execute<{ affectedRows: number }>(
           "DELETE FROM user_passkeys WHERE id = ? AND user_id = ?",
           [id, lockedUser.id]

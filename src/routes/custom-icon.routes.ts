@@ -5,6 +5,7 @@ import {
   customIconLibraryLimit,
   listCustomIconLibraryRemovalKeys,
   listCustomIcons,
+  publishCustomIconForPage,
   rememberCustomIconPaths,
   removeCustomIconFromLibrary,
   restoreCustomIconToLibrary,
@@ -16,7 +17,7 @@ import { iconValueSchema, maxCustomIconBytes } from "../lib/icon-value.js";
 import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import { customIconUploadRateLimit } from "../middleware/attachment-rate-limit.js";
 import { validate } from "../middleware/validate.js";
-import { requireUser } from "../utils/schemas.js";
+import { requireUser, routeIdSchema } from "../utils/schemas.js";
 
 export const customIconRouter = Router();
 
@@ -65,6 +66,11 @@ const customIconLibraryEntrySchema = z.object({
   value: iconValueSchema
 });
 
+const customIconPublicationSchema = z.object({
+  pageId: routeIdSchema,
+  value: iconValueSchema
+}).strict();
+
 customIconRouter.get("/", async (req, res, next) => {
   try {
     const user = requireUser(req.user);
@@ -101,6 +107,20 @@ customIconRouter.post("/touch", validate({ body: touchCustomIconsSchema }), asyn
     const authScope = requireRequestAuthScope(req);
     const body = req.body as z.infer<typeof touchCustomIconsSchema>;
     await rememberCustomIconPaths(user.id, body.values, {
+      beforeMutation: (client) => assertCurrentAuthSessionBoundary(user.id, authScope, client)
+    });
+    res.status(204).end();
+  } catch (error) {
+    next(error);
+  }
+});
+
+customIconRouter.post("/publish", validate({ body: customIconPublicationSchema }), async (req, res, next) => {
+  try {
+    const user = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
+    const body = req.body as z.infer<typeof customIconPublicationSchema>;
+    await publishCustomIconForPage(user.id, body.pageId, body.value, {
       beforeMutation: (client) => assertCurrentAuthSessionBoundary(user.id, authScope, client)
     });
     res.status(204).end();

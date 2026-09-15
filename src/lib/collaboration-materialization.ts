@@ -1,6 +1,6 @@
 import * as Y from "yjs";
 import { z } from "zod";
-import { blockTypeSchema } from "../utils/schemas.js";
+import { blockTypeSchema, metadataSchema } from "../utils/schemas.js";
 import {
   CollaborationDocumentError,
   validateCollaborationBlockHierarchy
@@ -121,9 +121,17 @@ function readBlock(id: string, value: unknown, budget: DecodeBudget): Materializ
     }
   }
 
-  const metadata = readYjsValue(value.get("metadata"), 0, budget);
-  if (metadata !== null && !isDecodedObject(metadata)) {
+  const decodedMetadata = readYjsValue(value.get("metadata"), 0, budget);
+  if (decodedMetadata !== null && !isDecodedObject(decodedMetadata)) {
     return invalidDocument("The collaboration document contains invalid block metadata");
+  }
+  let metadata: Record<string, unknown> | null = null;
+  if (decodedMetadata !== null) {
+    const envelope = metadataSchema.safeParse(decodedMetadata);
+    if (!envelope.success || envelope.data === undefined) {
+      return invalidDocument("The collaboration document contains block metadata outside the supported storage envelope");
+    }
+    metadata = envelope.data;
   }
 
   const parsed = collaborationBlockSchema.safeParse({

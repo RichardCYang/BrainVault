@@ -81,6 +81,51 @@ export function requireSameOriginBrowserRequest(req: Request, _res: Response, ne
   }
 }
 
+export function requireSameOriginCookieRequest(req: Request, _res: Response, next: NextFunction) {
+  try {
+    // Bearer-authenticated API clients are not vulnerable to ambient-cookie
+    // CSRF and may legitimately omit browser Fetch Metadata headers.
+    if (!readAuthSessionCookie(req)) {
+      next();
+      return;
+    }
+
+    const fetchSite = req.header("sec-fetch-site")?.trim().toLowerCase();
+    if (fetchSite) {
+      if (fetchSite !== "same-origin") {
+        throw new ApiError(403, "CROSS_ORIGIN_REQUEST_BLOCKED", "This request must originate from the BrainVault application origin");
+      }
+      next();
+      return;
+    }
+
+    const origin = req.header("origin");
+    if (origin) {
+      assertBrowserRequestOrigin(req, { requireOrigin: true, requirePublicOrigin: true });
+      next();
+      return;
+    }
+
+    const referer = req.header("referer");
+    if (referer) {
+      let refererOrigin: string | null = null;
+      try {
+        refererOrigin = new URL(referer).origin;
+      } catch {
+        refererOrigin = null;
+      }
+      if (refererOrigin === env.PUBLIC_ORIGIN) {
+        next();
+        return;
+      }
+    }
+
+    throw new ApiError(403, "ORIGIN_REQUIRED", "A same-origin browser request is required");
+  } catch (error) {
+    next(error);
+  }
+}
+
 export function requireJsonRequestBody(req: Request, _res: Response, next: NextFunction) {
   if (!req.is("application/json")) {
     next(new ApiError(415, "JSON_BODY_REQUIRED", "This authentication endpoint requires an application/json body"));

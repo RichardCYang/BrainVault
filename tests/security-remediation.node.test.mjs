@@ -308,22 +308,18 @@ test("archived pages reject direct REST mutations while preserving the restore-o
   assert.match(pages, /pageRouter\.put\("\/:pageId\/tags"[\s\S]*?assertPageNotArchived\(existingPage\);/);
 });
 
-test("password login account limiter bounds attacker-controlled username key cardinality", () => {
+test("password login account limiter is account-wide across source networks", () => {
   const limiter = read("src/middleware/auth-rate-limit.ts");
 
-  assert.match(limiter, /const maxDistinctLoginAccountKeysPerIpWindow = 50;/);
-  assert.match(limiter, /const maxTrackedLoginAccountIpNamespaces = 1_024;/);
-  assert.match(limiter, /const loginAccountKeysByIp = new Map<string, LoginAccountKeyNamespace>\(\);/);
-  assert.match(limiter, /expiresAt: now \+ env\.AUTH_LOGIN_ACCOUNT_WINDOW_MS/);
-  assert.match(limiter, /pruneExpiredLoginAccountKeyNamespaces\(now\)/);
-  assert.match(limiter, /namespace\.accountKeys\.size >= maxDistinctLoginAccountKeysPerIpWindow/);
-  assert.match(limiter, /Math\.floor\(now \/ Math\.max\(1, env\.AUTH_LOGIN_IP_WINDOW_MS\)\)/);
-  assert.equal((limiter.match(/return loginAccountOverflowKey\(ip, now\);/g) ?? []).length, 2);
-  assert.match(limiter, /return accountKey;/);
-  assert.doesNotMatch(limiter, /hashRateLimitKey\("account-network", `\$\{accountKey\}:\$\{ip\}`\)/);
-  assert.match(limiter, /namespace\.accountKeys\.has\(accountKey\)\) return accountKey;/);
-  assert.match(limiter, /namespace\.accountKeys\.add\(accountKey\);\s*return accountKey;/);
-  assert.match(limiter, /keyGenerator: usernameKey/);
+  assert.match(limiter, /return hashRateLimitKey\("account", raw\);/);
+  assert.match(limiter, /const ip = clientIpKey\(req\);/);
+  assert.match(limiter, /if \(!raw\) return `login-account-ip:\$\{ip\}`;/);
+  assert.doesNotMatch(limiter, /loginAccountKeysByIp/);
+  assert.doesNotMatch(limiter, /loginAccountOverflowKey/);
+  assert.doesNotMatch(limiter, /maxDistinctLoginAccountKeysPerIpWindow/);
+  assert.doesNotMatch(limiter, /hashRateLimitKey\("account-network"/);
+  assert.match(limiter, /export const loginIpRateLimit = rateLimit\(/);
+  assert.match(limiter, /export const loginAccountRateLimit = rateLimit\([\s\S]*?keyGenerator: usernameKey/);
 });
 
 test("404 responses do not reflect the raw request URL", () => {

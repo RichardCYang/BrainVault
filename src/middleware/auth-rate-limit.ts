@@ -13,63 +13,13 @@ function hashRateLimitKey(prefix: string, value: string) {
   return `${prefix}:${createHash("sha256").update(value.slice(0, 256), "utf8").digest("hex")}`;
 }
 
-const maxDistinctLoginAccountKeysPerIpWindow = 50;
-const maxTrackedLoginAccountIpNamespaces = 1_024;
-
-type LoginAccountKeyNamespace = {
-  expiresAt: number;
-  accountKeys: Set<string>;
-};
-
-const loginAccountKeysByIp = new Map<string, LoginAccountKeyNamespace>();
-
-function pruneExpiredLoginAccountKeyNamespaces(now: number) {
-  for (const [ip, namespace] of loginAccountKeysByIp) {
-    if (namespace.expiresAt <= now) loginAccountKeysByIp.delete(ip);
-  }
-}
-
-function loginAccountOverflowKey(ip: string, now: number) {
-  const bucket = Math.floor(now / Math.max(1, env.AUTH_LOGIN_IP_WINDOW_MS));
-  return hashRateLimitKey("login-account-overflow", `${ip}:${bucket}`);
-}
-
 function usernameKey(req: Request) {
   const ip = clientIpKey(req);
   const raw = typeof req.body?.username === "string" ? req.body.username.trim().toLowerCase() : "";
   if (!raw) return `login-account-ip:${ip}`;
-
-  // Unauthenticated failures must not spend another source's six-hour budget.
-  // The database lockout still limits distributed guessing across sources.
-  const accountKey = hashRateLimitKey("account", raw) + `:${ip}`;
-  const now = Date.now();
-  let namespace = loginAccountKeysByIp.get(ip);
-  if (namespace && namespace.expiresAt <= now) {
-    loginAccountKeysByIp.delete(ip);
-    namespace = undefined;
-  }
-
-  if (!namespace) {
-    if (loginAccountKeysByIp.size >= maxTrackedLoginAccountIpNamespaces) {
-      pruneExpiredLoginAccountKeyNamespaces(now);
-    }
-    if (loginAccountKeysByIp.size >= maxTrackedLoginAccountIpNamespaces) {
-      return loginAccountOverflowKey(ip, now);
-    }
-    namespace = {
-      expiresAt: now + env.AUTH_LOGIN_ACCOUNT_WINDOW_MS,
-      accountKeys: new Set<string>()
-    };
-    loginAccountKeysByIp.set(ip, namespace);
-  }
-
-  if (namespace.accountKeys.has(accountKey)) return accountKey;
-  if (namespace.accountKeys.size >= maxDistinctLoginAccountKeysPerIpWindow) {
-    return loginAccountOverflowKey(ip, now);
-  }
-
-  namespace.accountKeys.add(accountKey);
-  return accountKey;
+  // This is intentionally account-wide across source networks. The short
+  // loginIpRateLimit remains the independent per-source control.
+  return hashRateLimitKey("account", raw);
 }
 
 async function mfaAccountKey(req: Request) {

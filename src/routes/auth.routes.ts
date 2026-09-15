@@ -683,7 +683,7 @@ authRouter.put(
         if (!(await verifyPassword(currentPassword, user.password_hash))) {
           throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
         }
-        await consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken);
+        await consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken, "totp-ip-policy");
 
         const authVersion = normalizeAuthVersion(user.auth_version) + 1;
         await client.execute(
@@ -765,7 +765,7 @@ authRouter.delete(
         if (!(await verifyPassword(currentPassword, user.password_hash))) {
           throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
         }
-        await consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken);
+        await consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken, "totp-ip-unblock", ipAddress);
 
         const deleted = await client.execute<{ affectedRows: number }>(
           "DELETE FROM user_totp_ip_blocks WHERE user_id = ? AND ip_address = ?",
@@ -854,7 +854,7 @@ authRouter.put(
         if (!(await verifyPassword(currentPassword, user.password_hash))) {
           throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
         }
-        await consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken);
+        await consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken, "vpn-policy");
 
         const authVersion = normalizeAuthVersion(user.auth_version) + 1;
         await client.execute(
@@ -953,7 +953,7 @@ authRouter.put(
         if (!(await verifyPassword(currentPassword, user.password_hash))) {
           throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
         }
-        await consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken);
+        await consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken, "country-policy");
 
         const authVersion = normalizeAuthVersion(user.auth_version) + 1;
         await client.execute(
@@ -1065,7 +1065,7 @@ authRouter.post(
           throw new ApiError(400, "NEW_PASSWORD_SAME", "New password must differ from the current password");
         }
 
-        await consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken);
+        await consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken, "password-change");
 
         const authVersion = normalizeAuthVersion(user.auth_version) + 1;
         await client.execute(

@@ -72,9 +72,10 @@ test("custom icon uploads and backup restores enforce the same durable resource 
 });
 
 
-test("custom icon reads require authentication, ownership or an exact shared-page reference, and private caching", async () => {
+test("custom icon reads require authentication, ownership or an owner-controlled shared-page publication, and private caching", async () => {
   const appSource = read("src/app.ts");
   const customIcons = read("src/lib/custom-icons.ts");
+  const customIconRoutes = read("src/routes/custom-icon.routes.ts");
   const iconMountStart = appSource.indexOf('"/upload/icons"');
   const iconMountEnd = appSource.indexOf("app.use(express.static(publicDir", iconMountStart);
   const iconMount = appSource.slice(iconMountStart, iconMountEnd);
@@ -83,11 +84,14 @@ test("custom icon reads require authentication, ownership or an exact shared-pag
   assert.match(iconMount, /canUserReadCustomIcon\(userId, publicPath\)/);
   assert.match(iconMount, /setPrivateNoStoreCacheControl\(res\)/);
   assert.doesNotMatch(iconMount, /public, max-age=31536000, immutable/);
-  assert.match(customIcons, /p\.owner_id = \?/);
+  assert.match(customIcons, /FROM custom_icon_page_publications cip/);
+  assert.match(customIcons, /cip\.owner_id = \? AND cip\.file_path = \?/);
   assert.match(customIcons, /INNER JOIN collection_shares cs ON cs\.collection_id = pcm\.collection_id/);
   assert.match(customIcons, /SELECT 1 FROM page_shares ps/);
   assert.match(customIcons, /NOT EXISTS \(\s*SELECT 1 FROM page_collection_memberships pcm2/);
-  assert.match(customIcons, /JSON_SEARCH\(b\.metadata, 'one', \?, '#'\) IS NOT NULL/);
+  assert.doesNotMatch(customIcons, /JSON_SEARCH\(/);
+  assert.match(customIconRoutes, /"\/publish"/);
+  assert.match(customIconRoutes, /publishCustomIconForPage\(req\.user!\.id, pageId, value/);
 
   process.env.NODE_ENV = "test";
   const { canUserReadCustomIcon } = await import("../src/lib/custom-icons.ts");
@@ -95,13 +99,12 @@ test("custom icon reads require authentication, ownership or an exact shared-pag
   const fakeClient = {
     async queryOne(sql, params) {
       queryCount += 1;
-      assert.match(sql, /p\.owner_id = \?/);
+      assert.match(sql, /FROM custom_icon_page_publications cip/);
       assert.equal(params[0], "owner_1");
-      assert.equal(params[1], "editor_1");
+      assert.equal(params[1], "/upload/icons/owner_1/cicon_value_1.png");
       assert.equal(params[2], "editor_1");
       assert.equal(params[3], "editor_1");
-      assert.equal(params[4], "image:/upload/icons/owner_1/cicon_value_1.png");
-      assert.equal(params[5], "image:/upload/icons/owner#_1/cicon#_value#_1.png");
+      assert.equal(params[4], "editor_1");
       return { allowed: 1 };
     }
   };

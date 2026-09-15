@@ -10,6 +10,7 @@ export const maxRemoteIconUrlLength = 2048;
 export const maxIconValueLength = Math.ceil((maxCustomIconBytes * 4) / 3) + 256;
 
 const builtInIconPattern = /^icon:[a-z0-9-]{1,27}$/;
+const unsafeBuiltInIconNames = new Set(["constructor", "prototype", "__proto__"]);
 const uploadedImagePathPattern = /^\/upload\/icons\/[A-Za-z0-9_-]{1,64}\/[A-Za-z0-9_-]{1,96}\.(?:png|jpg|webp|ico)$/;
 const imageDataUrlPattern = /^data:image\/(png|jpeg|webp|vnd\.microsoft\.icon|x-icon);base64,([A-Za-z0-9+/]+={0,2})$/i;
 
@@ -86,7 +87,8 @@ export function normalizeIconValue(value: string | null) {
 
   if (normalized.toLowerCase().startsWith(builtInIconPrefix)) {
     const canonical = normalized.toLowerCase();
-    if (!builtInIconPattern.test(canonical)) {
+    const name = canonical.slice(builtInIconPrefix.length);
+    if (!builtInIconPattern.test(canonical) || unsafeBuiltInIconNames.has(name)) {
       throw new ApiError(400, "INVALID_ICON", "Built-in icon identifier is invalid");
     }
     return canonical;

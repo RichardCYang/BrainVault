@@ -3859,7 +3859,10 @@ async function saveTotpIpBlockPolicy() {
   renderTotpIpBlockPolicy();
   setAccountMessage();
   try {
-    const stepUpToken = await requestMfaStepUpToken({ trigger: elements.accountTotpIpBlockSave });
+    const stepUpToken = await requestMfaStepUpToken({
+      trigger: elements.accountTotpIpBlockSave,
+      action: "totp-ip-policy"
+    });
     const data = await api("/api/auth/totp-ip-block-policy", {
       method: "PUT",
       body: {
@@ -3980,9 +3983,13 @@ async function unblockPermanentTotpIp(ipAddress) {
   renderPermanentTotpIpBlocks();
   setAccountMessage();
   try {
+    const stepUpToken = await requestMfaStepUpToken({
+      action: "totp-ip-unblock",
+      resourceId: ipAddress
+    });
     await api(`/api/auth/totp-ip-blocks/${encodeURIComponent(ipAddress)}`, {
       method: "DELETE",
-      body: { currentPassword }
+      body: { currentPassword, ...(stepUpToken ? { stepUpToken } : {}) }
     });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpIpBlocks, operation)) return;
     elements.accountTotpIpUnblockPassword.value = "";
@@ -4108,7 +4115,10 @@ async function saveCountryLoginPolicy() {
   renderCountryLoginPolicy();
   setAccountMessage();
   try {
-    const stepUpToken = await requestMfaStepUpToken({ trigger: elements.accountCountryLoginSave });
+    const stepUpToken = await requestMfaStepUpToken({
+      trigger: elements.accountCountryLoginSave,
+      action: "country-policy"
+    });
     const data = await api("/api/auth/country-login-policy", {
       method: "PUT",
       body: {
@@ -4283,7 +4293,10 @@ async function saveVpnBlockPolicy() {
   renderVpnBlockPolicy();
   setAccountMessage();
   try {
-    const stepUpToken = await requestMfaStepUpToken({ trigger: elements.accountVpnBlockSave });
+    const stepUpToken = await requestMfaStepUpToken({
+      trigger: elements.accountVpnBlockSave,
+      action: "vpn-policy"
+    });
     const data = await api("/api/auth/vpn-block-policy", {
       method: "PUT",
       body: {
@@ -4395,27 +4408,29 @@ function requireMfaPassword() {
   return null;
 }
 
-async function requestMfaStepUpToken({ trigger = null } = {}) {
+async function requestMfaStepUpToken({ trigger = null, action, resourceId = null } = {}) {
   const passkeys = Array.isArray(state.mfaStatus.passkeys) ? state.mfaStatus.passkeys : [];
   if (!state.mfaStatus.totpEnabled && !passkeys.length) return null;
+  if (typeof action !== "string" || !action) throw new Error(t("mfa.stepUpRequired"));
+  const scope = { action, ...(resourceId ? { resourceId } : {}) };
 
   if (state.mfaStatus.totpEnabled) {
     const code = window.prompt(t("mfa.stepUpTotpPrompt"))?.trim();
     if (!code) throw new Error(t("mfa.stepUpRequired"));
     const result = await api("/api/auth/mfa/step-up/totp", {
       method: "POST",
-      body: { code }
+      body: { code, ...scope }
     });
     return result.stepUpToken;
   }
 
   if (!isWebAuthnSupported()) throw new Error(t("mfa.stepUpPasskeyRequired"));
   setAccountMessage(t("mfa.stepUpPasskeyPrompt"));
-  const optionsData = await api("/api/auth/mfa/step-up/passkey/options", { method: "POST", body: {} });
+  const optionsData = await api("/api/auth/mfa/step-up/passkey/options", { method: "POST", body: scope });
   const response = await getWebAuthnCredential(optionsData.options, { trigger });
   const result = await api("/api/auth/mfa/step-up/passkey/verify", {
     method: "POST",
-    body: { challengeToken: optionsData.challengeToken, response }
+    body: { challengeToken: optionsData.challengeToken, response, ...scope }
   });
   return result.stepUpToken;
 }
@@ -4467,7 +4482,11 @@ function renderPasskeyList() {
         const targetKey = getAccountAvatarTargetKey(state.user);
         if (!currentPassword || !targetKey) return;
         try {
-          const stepUpToken = await requestMfaStepUpToken({ trigger: event.currentTarget });
+          const stepUpToken = await requestMfaStepUpToken({
+            trigger: event.currentTarget,
+            action: "passkey-rename",
+            resourceId: passkey.id
+          });
           await api(`/api/auth/mfa/passkeys/${encodeURIComponent(passkey.id)}`, {
             method: "PATCH",
             body: { name: nextName, currentPassword, ...(stepUpToken ? { stepUpToken } : {}) }
@@ -4487,7 +4506,11 @@ function renderPasskeyList() {
         const targetKey = getAccountAvatarTargetKey(state.user);
         if (!currentPassword || !targetKey) return;
         try {
-          const stepUpToken = await requestMfaStepUpToken({ trigger: event.currentTarget });
+          const stepUpToken = await requestMfaStepUpToken({
+            trigger: event.currentTarget,
+            action: "passkey-delete",
+            resourceId: passkey.id
+          });
           await api(`/api/auth/mfa/passkeys/${encodeURIComponent(passkey.id)}`, {
             method: "DELETE",
             body: { currentPassword, ...(stepUpToken ? { stepUpToken } : {}) }
@@ -5501,8 +5524,9 @@ function normalizeEmojiSearch(value) {
 }
 
 function createBuiltInIconSvg(name) {
+  if (!Object.hasOwn(iconSvgNodes, name)) return null;
   const nodes = iconSvgNodes[name];
-  if (!nodes) return null;
+  if (!Array.isArray(nodes)) return null;
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.classList.add("app-icon-svg");
@@ -5751,6 +5775,19 @@ function rememberCustomIconSelection(value) {
   void rememberCustomIconLibraryEntry(userId, normalized, entry.lastUsedAt)
     .then(() => refreshCustomIconLibrary())
     .catch(() => {});
+}
+
+async function publishCustomIconForOwnedPage(pageId, value) {
+  const source = getCustomImageSource(value);
+  if (!source?.startsWith("/upload/icons/")) return;
+  const page = state.selectedPage?.id === pageId
+    ? state.selectedPage
+    : getPageSummaryById(pageId);
+  if (!page || page.ownerId !== state.user?.id) return;
+  await api("/api/custom-icons/publish", {
+    method: "POST",
+    body: { pageId, value }
+  });
 }
 
 function isEmojiIconValue(value) {
@@ -6325,6 +6362,7 @@ async function saveEmojiSelection(
       if (isEmojiIconValue(emoji)) rememberRecentEmoji(emoji);
       else if (getCustomImageSource(emoji)) rememberCustomIconSelection(emoji);
       await saveBlockRow(row, { quiet: true, authenticationScope });
+      await publishCustomIconForOwnedPage(target.pageId, emoji);
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
       if (iconPickerOperationGuard.isCurrent(activeOperation, targetKey)) {
         closeEmojiPicker({ restoreFocus: false });
@@ -6360,6 +6398,7 @@ async function saveEmojiSelection(
       });
       if (isEmojiIconValue(emoji)) rememberRecentEmoji(emoji);
       else if (getCustomImageSource(emoji)) rememberCustomIconSelection(emoji);
+      await publishCustomIconForOwnedPage(target.pageId, emoji);
       if (state.selectedPage?.id === target.pageId) renderSelectedPage();
       if (isPageIconIntentCurrent()) {
         closeEmojiPicker({ restoreFocus: false });
@@ -19753,7 +19792,10 @@ elements.accountPasswordForm.addEventListener("submit", async (event) => {
   elements.accountPasswordSave.disabled = true;
   try {
     setAccountMessage(t("account.changingPassword"));
-    const stepUpToken = await requestMfaStepUpToken({ trigger: elements.accountPasswordSave });
+    const stepUpToken = await requestMfaStepUpToken({
+      trigger: elements.accountPasswordSave,
+      action: "password-change"
+    });
     await api("/api/auth/password", {
       method: "POST",
       body: { currentPassword, newPassword, ...(stepUpToken ? { stepUpToken } : {}) }
@@ -19788,7 +19830,10 @@ elements.accountTotpSetup.addEventListener("click", async (event) => {
   elements.accountTotpSetup.disabled = true;
   try {
     setAccountMessage(t("mfa.loading"));
-    const stepUpToken = await requestMfaStepUpToken({ trigger: event.currentTarget });
+    const stepUpToken = await requestMfaStepUpToken({
+      trigger: event.currentTarget,
+      action: "totp-setup"
+    });
     const data = await api("/api/auth/mfa/totp/setup", {
       method: "POST",
       body: { currentPassword, ...(stepUpToken ? { stepUpToken } : {}) }
@@ -19870,7 +19915,10 @@ elements.accountTotpDisable.addEventListener("click", async (event) => {
   const operation = accountSecurityOperationGuards.totpDisable.begin(targetKey);
   elements.accountTotpDisable.disabled = true;
   try {
-    const stepUpToken = await requestMfaStepUpToken({ trigger: event.currentTarget });
+    const stepUpToken = await requestMfaStepUpToken({
+      trigger: event.currentTarget,
+      action: "totp-disable"
+    });
     await api("/api/auth/mfa/totp", {
       method: "DELETE",
       body: { currentPassword, ...(stepUpToken ? { stepUpToken } : {}) }
@@ -19914,7 +19962,10 @@ elements.accountPasskeyRegisterForm.addEventListener("submit", async (event) => 
   const operation = accountSecurityOperationGuards.passkeyRegister.begin(targetKey);
   setAccountPasskeyRegistering(true);
   try {
-    const stepUpToken = await requestMfaStepUpToken({ trigger: elements.accountPasskeyRegister });
+    const stepUpToken = await requestMfaStepUpToken({
+      trigger: elements.accountPasskeyRegister,
+      action: "passkey-register"
+    });
     setAccountMessage(t(registrationTarget === "remote" ? "mfa.passkeyAddingRemote" : "mfa.passkeyAdding"));
     const optionsData = await api("/api/auth/mfa/passkeys/options", {
       method: "POST",

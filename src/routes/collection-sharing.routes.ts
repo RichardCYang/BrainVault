@@ -689,8 +689,12 @@ collectionSharingRouter.patch(
         assertCollectionManagementAdmission(managementAdmission, collectionAccess);
         const ownerId = collectionAccess.page.owner_id;
         const pages = await lockCollectionDocumentPages(collectionId, client);
-        const existing = await client.queryOne<{ generation: string; permission: CollectionSharePermission }>(
-          `SELECT generation, permission FROM collection_shares
+        const existing = await client.queryOne<{
+          generation: string;
+          permission: CollectionSharePermission;
+          shared_by: string;
+        }>(
+          `SELECT generation, permission, shared_by FROM collection_shares
            WHERE collection_id = ? AND user_id = ? FOR UPDATE`,
           [collectionId, sharedUserId]
         );
@@ -700,6 +704,13 @@ collectionSharingRouter.patch(
             409,
             "COLLECTION_SHARE_GENERATION_CHANGED",
             "The collection grant changed in another session. Refresh before updating it."
+          );
+        }
+        if (sharedUserId === actor.id && actor.id !== ownerId) {
+          throw new ApiError(
+            403,
+            "COLLECTION_SHARE_SELF_MANAGEMENT_FORBIDDEN",
+            "Delegated collection administrators cannot change their own collection grant"
           );
         }
 
@@ -749,11 +760,16 @@ collectionSharingRouter.patch(
         }
 
         const generation = createId("cshare");
+        // shared_by is authorization provenance, not mutable audit metadata. A
+        // delegated administrator may change a member's permission but cannot
+        // rewrite the lineage that the owner's revocation cascade follows. The
+        // owner may deliberately re-anchor an existing grant by updating it.
+        const sharedBy = actor.id === ownerId ? ownerId : existing.shared_by;
         const update = await client.execute<{ affectedRows: number }>(
           `UPDATE collection_shares
            SET permission = ?, generation = ?, shared_by = ?, updated_at = CURRENT_TIMESTAMP(3)
            WHERE collection_id = ? AND user_id = ? AND generation = ?`,
-          [permission, generation, actor.id, collectionId, sharedUserId, expectedGeneration]
+          [permission, generation, sharedBy, collectionId, sharedUserId, expectedGeneration]
         );
         if (Number(update.affectedRows) !== 1) {
           throw new ApiError(409, "COLLECTION_SHARE_GENERATION_CHANGED", "The collection grant changed in another session.");

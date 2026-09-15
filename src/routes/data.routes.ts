@@ -13,7 +13,7 @@ import {
 import { createId } from "../lib/id.js";
 import { ApiError } from "../lib/http.js";
 import { toPublicUser } from "../lib/mappers.js";
-import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
+import { requireAuth, requireRequestAuthScope, requireSameOriginCookieRequest } from "../middleware/auth.js";
 import {
   beginDataImportProcessing,
   dataExportConcurrencyLimit,
@@ -72,7 +72,12 @@ const backupUpload = multer({
   defParamCharset: "utf8"
 });
 
-dataRouter.get("/export", dataExportRateLimit, dataExportConcurrencyLimit, async (req, res, next) => {
+dataRouter.get(
+  "/export",
+  requireSameOriginCookieRequest,
+  dataExportRateLimit,
+  dataExportConcurrencyLimit,
+  async (req, res, next) => {
   const exportDeadline = setTimeout(() => {
     res.destroy(new Error("Data export response deadline exceeded"));
   }, env.DATA_EXPORT_TIMEOUT_MS);
@@ -102,7 +107,8 @@ dataRouter.get("/export", dataExportRateLimit, dataExportConcurrencyLimit, async
   } finally {
     clearTimeout(exportDeadline);
   }
-});
+  }
+);
 
 dataRouter.post(
   "/import",

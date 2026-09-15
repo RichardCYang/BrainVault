@@ -28,12 +28,16 @@ test("security posture schemas accept the existing MFA step-up token", () => {
   }
 });
 
-test("all login-defense policy mutations consume MFA step-up before changing security posture", () => {
-  for (const path of ["/totp-ip-block-policy", "/vpn-block-policy", "/country-login-policy"]) {
+test("all login-defense policy mutations consume operation-scoped MFA step-up before changing security posture", () => {
+  for (const [path, action] of [
+    ["/totp-ip-block-policy", "totp-ip-policy"],
+    ["/vpn-block-policy", "vpn-policy"],
+    ["/country-login-policy", "country-policy"]
+  ]) {
     const section = routeSection(path);
-    const consume = section.indexOf("consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken)");
+    const consume = section.indexOf(`consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken, "${action}")`);
     const update = section.indexOf("UPDATE users");
-    assert.ok(consume >= 0, `${path} must consume MFA step-up proof`);
+    assert.ok(consume >= 0, `${path} must consume the matching operation-scoped MFA step-up proof`);
     assert.ok(update > consume, `${path} must verify step-up before updating the policy`);
     assert.match(section, /DELETE FROM mfa_step_up_sessions WHERE user_id = \?/);
   }

@@ -97,10 +97,6 @@ export function getCustomIconFilePath(publicPath: string) {
   return path.join(customIconUploadRoot, safeStorageSegment(userId), filename);
 }
 
-function escapeJsonSearchPattern(value: string) {
-  return value.replaceAll("#", "##").replaceAll("%", "#%").replaceAll("_", "#_");
-}
-
 export async function canUserReadCustomIcon(
   requesterId: string,
   publicPath: string,
@@ -113,12 +109,11 @@ export async function canUserReadCustomIcon(
   const ownerId = match[1];
   if (ownerId === safeRequesterId) return true;
 
-  const iconValue = `${imageIconPrefix}${publicPath}`;
-  const jsonSearchPattern = escapeJsonSearchPattern(iconValue);
-  const sharedReference = await client.queryOne<{ allowed: number }>(
+  const sharedPublication = await client.queryOne<{ allowed: number }>(
     `SELECT 1 AS allowed
-     FROM pages p
-     WHERE p.owner_id = ?
+     FROM custom_icon_page_publications cip
+     INNER JOIN pages p ON p.id = cip.page_id AND p.owner_id = cip.owner_id
+     WHERE cip.owner_id = ? AND cip.file_path = ?
        AND (
          EXISTS (
            SELECT 1 FROM page_collection_memberships pcm
@@ -135,20 +130,47 @@ export async function canUserReadCustomIcon(
              )
          )
        )
-       AND (
-         p.icon = ?
-         OR EXISTS (
-           SELECT 1
-           FROM blocks b
-           WHERE b.page_id = p.id
-             AND b.metadata IS NOT NULL
-             AND JSON_SEARCH(b.metadata, 'one', ?, '#') IS NOT NULL
-         )
-       )
      LIMIT 1`,
-    [ownerId, safeRequesterId, safeRequesterId, safeRequesterId, iconValue, jsonSearchPattern]
+    [ownerId, publicPath, safeRequesterId, safeRequesterId, safeRequesterId]
   );
-  return Boolean(sharedReference);
+  return Boolean(sharedPublication);
+}
+
+export async function publishCustomIconForPage(
+  userId: string,
+  pageId: string,
+  value: string,
+  { beforeMutation }: CustomIconMutationOptions = {}
+) {
+  const safeUserId = safeStorageSegment(userId);
+  const normalized = normalizeCustomIconLibraryValue(value);
+  const publicPath = normalized.slice(imageIconPrefix.length);
+  if (!publicPath.startsWith(`${customIconPublicPrefix}${safeUserId}/`)) {
+    throw new ApiError(403, "CUSTOM_ICON_PUBLICATION_FORBIDDEN", "Only the icon owner can publish this custom icon");
+  }
+
+  await withUserAttachmentLock(safeUserId, async (client) => {
+    await beforeMutation?.(client);
+    const page = await client.queryOne<{ owner_id: string }>(
+      "SELECT owner_id FROM pages WHERE id = ?",
+      [pageId]
+    );
+    if (!page || page.owner_id !== safeUserId) {
+      throw new ApiError(404, "PAGE_NOT_FOUND", "Page not found");
+    }
+    const icon = await client.queryOne<{ id: string }>(
+      "SELECT id FROM custom_icons WHERE user_id = ? AND file_path = ?",
+      [safeUserId, publicPath]
+    );
+    if (!icon) throw new ApiError(404, "CUSTOM_ICON_NOT_FOUND", "Custom icon not found");
+
+    await client.execute(
+      `INSERT INTO custom_icon_page_publications (page_id, owner_id, file_path)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE owner_id = VALUES(owner_id)`,
+      [pageId, safeUserId, publicPath]
+    );
+  });
 }
 
 export async function getCustomIconStorageUsage(userId: string) {

@@ -9,6 +9,7 @@ export const maxRecoveryCandidateBytes = 20 * 1024 * 1024;
 export const maxRecoveryVaultBytesPerPrincipal = 256 * 1024 * 1024;
 export const maxRecoveryVaultCandidatesPerPrincipal = 256;
 const recoveryGrantBatchSize = 200;
+const recoveryGrantLifetimeMs = 7 * 24 * 60 * 60_000;
 
 export type RecoveryGrantReason =
   | "SHARE_STARTED"
@@ -39,16 +40,18 @@ async function upsertRecoveryGrant(
     reason: RecoveryGrantReason;
   }
 ) {
+  const expiresAt = new Date(Date.now() + recoveryGrantLifetimeMs);
   await client.execute(
     `INSERT INTO page_recovery_grants
-       (page_id, principal_id, owner_id, lineage_key, reason, purged_at)
-     VALUES (?, ?, ?, ?, ?, NULL)
+       (page_id, principal_id, owner_id, lineage_key, reason, expires_at, purged_at)
+     VALUES (?, ?, ?, ?, ?, ?, NULL)
      ON DUPLICATE KEY UPDATE
        owner_id = VALUES(owner_id),
        reason = VALUES(reason),
+       expires_at = VALUES(expires_at),
        purged_at = NULL,
        updated_at = CURRENT_TIMESTAMP(6)`,
-    [input.pageId, input.principalId, input.ownerId, input.lineageKey, input.reason]
+    [input.pageId, input.principalId, input.ownerId, input.lineageKey, input.reason, expiresAt]
   );
 }
 
@@ -206,10 +209,19 @@ export async function storeRecoveryCandidate(input: {
     );
     if (!principal) throw new ApiError(401, "UNAUTHENTICATED", "The recovery account no longer exists");
 
+    await client.execute(
+      `UPDATE page_recovery_grants
+       SET purged_at = CURRENT_TIMESTAMP(6)
+       WHERE page_id = ? AND principal_id = ? AND lineage_key = ?
+         AND purged_at IS NULL AND expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP(6)`,
+      [input.pageId, input.principalId, input.lineageKey]
+    );
+
     const grant = await client.queryOne<{ owner_id: string }>(
       `SELECT owner_id
        FROM page_recovery_grants
-       WHERE page_id = ? AND principal_id = ? AND lineage_key = ? AND purged_at IS NULL
+       WHERE page_id = ? AND principal_id = ? AND lineage_key = ?
+         AND purged_at IS NULL AND expires_at > CURRENT_TIMESTAMP(6)
        FOR UPDATE`,
       [input.pageId, input.principalId, input.lineageKey]
     );
@@ -342,13 +354,13 @@ export async function getRecoveryCandidate(candidateId: string, userId: string) 
 
 export async function deleteRecoveryCandidate(
   candidateId: string,
-  principalId: string,
+  userId: string,
   client: DbClient = db
 ) {
   const result = await client.execute<{ affectedRows: number }>(
     `DELETE FROM page_recovery_candidates
-     WHERE id = ? AND principal_id = ?`,
-    [candidateId, principalId]
+     WHERE id = ? AND (principal_id = ? OR owner_id = ?)`,
+    [candidateId, userId, userId]
   );
   if (Number(result.affectedRows) === 0) throw notFound("Recovery candidate");
 }

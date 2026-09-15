@@ -45,7 +45,6 @@ const treeViewLimits = {
   idLength: 64
 } as const;
 const accordionIconMaxLength = Math.ceil(((512 * 1024) * 4) / 3) + 256;
-const accordionBuiltInIconPattern = /^icon:[a-z0-9-]{1,27}$/;
 const accordionUploadedIconPattern = /^\/upload\/icons\/[A-Za-z0-9_-]{1,64}\/[A-Za-z0-9_-]{1,96}\.(?:png|jpg|webp|ico)$/;
 const accordionImageDataPattern = /^data:image\/(?:png|jpeg|webp|vnd\.microsoft\.icon|x-icon);base64,[A-Za-z0-9+/]+={0,2}$/i;
 
@@ -54,7 +53,7 @@ function isValidAccordionIconValue(value: string) {
   const normalized = value.trim();
   if (!normalized) return false;
   if (normalized.toLowerCase().startsWith("icon:")) {
-    return normalized === normalized.toLowerCase() && accordionBuiltInIconPattern.test(normalized);
+    return normalized === normalized.toLowerCase() && isValidIconValue(normalized);
   }
   if (normalized.startsWith("image:")) {
     const source = normalized.slice("image:".length).trim();
