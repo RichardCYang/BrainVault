@@ -89,6 +89,45 @@ test("workspace navigation opts into compact 500-item keyset batches", async () 
   assert.match(fetcher, /return sortByRecent\(pages\);/);
 });
 
+test("navigation preference save queues are pruned to the live workspace snapshot", async () => {
+  const app = await read("public/app.js");
+  const pruner = section(
+    app,
+    "function pruneNavigationPreferenceSaveQueues(",
+    "function getNavigationPreferenceSaveQueue("
+  );
+  const loader = section(app, "async function loadPages(", "function isCurrentWorkspaceNavigation(");
+
+  assert.match(
+    loader,
+    /state\.allPages = allPages;\s*renderPages\(\);\s*pruneNavigationPreferenceSaveQueues\(allPages\);/
+  );
+  assert.match(pruner, /const livePagesById = getPageSummaryLookup\(pages\);/);
+  assert.doesNotMatch(pruner, /new Set\(/);
+
+  let discardCalls = 0;
+  const liveQueue = { discard: () => { discardCalls += 1; } };
+  const deletedQueue = { discard: () => { discardCalls += 1; } };
+  const sandbox = {
+    getPageSummaryLookup: () => new Map([["live-page", { id: "live-page" }]]),
+    navigationPreferenceSaveQueues: new Map([
+      ["live-page", liveQueue],
+      ["deleted-page", deletedQueue],
+      ["also-deleted", deletedQueue]
+    ])
+  };
+
+  vm.runInNewContext(
+    `${pruner}
+pruneNavigationPreferenceSaveQueues([{ id: "live-page" }, { id: "" }, null]);`,
+    sandbox
+  );
+
+  assert.deepEqual([...sandbox.navigationPreferenceSaveQueues.keys()], ["live-page"]);
+  assert.equal(sandbox.navigationPreferenceSaveQueues.get("live-page"), liveQueue);
+  assert.equal(discardCalls, 0, "pruning must not cancel or mutate in-flight queue work");
+});
+
 test("selected-page rerenders update navigation selection without rebuilding or rescanning the workspace tree", async () => {
   const app = await read("public/app.js");
   const selectorSync = section(app, "function setPageNavigationEntryActive(", "function flattenBlocks(");

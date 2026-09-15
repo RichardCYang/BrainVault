@@ -2480,6 +2480,14 @@ function discardNavigationPreferenceSaves() {
   navigationPreferenceSaveQueues.clear();
 }
 
+function pruneNavigationPreferenceSaveQueues(pages) {
+  if (!navigationPreferenceSaveQueues.size) return;
+  const livePagesById = getPageSummaryLookup(pages);
+  for (const pageId of navigationPreferenceSaveQueues.keys()) {
+    if (!livePagesById.has(pageId)) navigationPreferenceSaveQueues.delete(pageId);
+  }
+}
+
 function getNavigationPreferenceSaveQueue(pageId) {
   let queue = navigationPreferenceSaveQueues.get(pageId);
   if (queue) return queue;
@@ -18832,6 +18840,7 @@ async function loadPages(
   state.pages = pages;
   state.allPages = allPages;
   renderPages();
+  pruneNavigationPreferenceSaveQueues(allPages);
   void reconcileServerRecoveryCandidates();
   return true;
 }
