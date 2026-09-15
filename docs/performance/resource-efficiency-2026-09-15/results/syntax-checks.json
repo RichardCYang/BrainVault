@@ -1,0 +1,43 @@
+[
+  {
+    "file": "public/app.js",
+    "command": "node --check public/app.js",
+    "exitCode": 0,
+    "output": ""
+  },
+  {
+    "file": "public/draft-store.js",
+    "command": "node --check public/draft-store.js",
+    "exitCode": 0,
+    "output": ""
+  },
+  {
+    "file": "public/editor-history.js",
+    "command": "node --check public/editor-history.js",
+    "exitCode": 0,
+    "output": ""
+  },
+  {
+    "file": "tests/helpers/resource-efficiency-harness.mjs",
+    "command": "node --check tests/helpers/resource-efficiency-harness.mjs",
+    "exitCode": 0,
+    "output": ""
+  },
+  {
+    "file": "tests/resource-efficiency.node.test.mjs",
+    "command": "node --check tests/resource-efficiency.node.test.mjs",
+    "exitCode": 0,
+    "output": ""
+  },
+  {
+    "file": "scripts/benchmark-resource-efficiency.mjs",
+    "command": "node --check scripts/benchmark-resource-efficiency.mjs",
+    "exitCode": 0,
+    "output": ""
+  },
+  {
+    "file": "scripts/verify-resource-efficiency-browser.py",
+    "command": "Python compile() syntax check (no pyc written)",
+    "exitCode": 0
+  }
+]

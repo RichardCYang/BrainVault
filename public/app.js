@@ -10448,10 +10448,26 @@ function flattenBlocks(blocks) {
 }
 
 function buildCollaborationBlockTree(flatBlocks) {
+  // Snapshot-local indexing avoids a full old-tree search for every incoming
+  // block. Keep the first depth-first match, just like getBlockById(), and do
+  // not retain this index across page/account changes or version updates.
+  const previousById = new Map();
+  let previousBlocksIndexed = false;
+  const indexPreviousBlocks = (blocks) => {
+    for (const block of blocks) {
+      if (!previousById.has(block.id)) previousById.set(block.id, block);
+      if (block.children?.length) indexPreviousBlocks(block.children);
+    }
+  };
+
   const nodes = new Map();
   for (const block of flatBlocks ?? []) {
     if (!block?.id || nodes.has(block.id)) continue;
-    const previous = getBlockById(block.id);
+    if (!previousBlocksIndexed) {
+      indexPreviousBlocks(state.selectedPage?.blocks ?? []);
+      previousBlocksIndexed = true;
+    }
+    const previous = previousById.get(block.id);
     nodes.set(block.id, {
       ...(previous ?? {}),
       ...block,
@@ -10583,9 +10599,15 @@ function updatePageCollaborationSummary(pageId, collaboration) {
 function applyCollaborationSnapshot(snapshot, { source = "remote" } = {}) {
   if (!state.selectedPage || state.workspaceView !== "page" || !isCollaborativePage()) return;
   const previousTitle = state.selectedPage.title ?? "";
-  const previousBlockSignature = getCollaborationBlockSignature(state.selectedPage.blocks);
+  // Local snapshots update state below but return before DOM change detection.
+  // Avoid serializing two complete documents for signatures no caller will use.
+  const previousBlockSignature = source === "local"
+    ? null
+    : getCollaborationBlockSignature(state.selectedPage.blocks);
   const nextBlocks = buildCollaborationBlockTree(snapshot.blocks ?? []);
-  const nextBlockSignature = getCollaborationBlockSignature(nextBlocks);
+  const nextBlockSignature = source === "local"
+    ? null
+    : getCollaborationBlockSignature(nextBlocks);
   const nextTitle = requirePageTitleWithinLimit(snapshot.title);
 
   state.selectedPage.title = nextTitle;

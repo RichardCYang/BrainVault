@@ -1,0 +1,32 @@
+[
+  {
+    "name": "npm-test",
+    "command": "npm test",
+    "exitCode": 127
+  },
+  {
+    "name": "npm-build",
+    "command": "npm run build",
+    "exitCode": 1
+  },
+  {
+    "name": "verify-data-loss",
+    "command": "npm run verify:data-loss",
+    "exitCode": 1
+  },
+  {
+    "name": "verify-security",
+    "command": "npm run verify:security",
+    "exitCode": 1
+  },
+  {
+    "name": "verify-collaboration",
+    "command": "npm run verify:collaboration",
+    "exitCode": 1
+  },
+  {
+    "name": "lockfile-check",
+    "command": "npm run lockfile:check",
+    "exitCode": 0
+  }
+]

@@ -76,7 +76,10 @@ export function createEditorHistory({
   };
 
   const buildEntry = ({ key, before, after, meta, captureGroup, timestamp }) => {
-    const beforeValue = cloneHistoryValue(before);
+    // Baselines are already private clones and are never mutated in place.
+    // Reuse that immutable snapshot; cloning it on every keystroke only creates
+    // another full copy of the same structured block.
+    const beforeValue = before;
     const afterValue = cloneHistoryValue(after);
     const normalizedCaptureGroup = typeof captureGroup === "string" && captureGroup ? captureGroup : null;
     const bytes = estimateSerializedBytes(serializeHistoryValue({
@@ -130,7 +133,9 @@ export function createEditorHistory({
 
       const timestamp = Number.isFinite(now) ? Number(now) : Date.now();
       const next = buildEntry({ key, before, after: value, meta, captureGroup, timestamp });
-      baselines.set(key, cloneHistoryValue(value));
+      // The new entry owns a defensive clone. Sharing it internally is safe:
+      // coalescing replaces snapshots, while peek() still returns a deep copy.
+      baselines.set(key, next.after);
       clearRedo();
 
       if (!Number.isFinite(next.bytes) || next.bytes > byteLimit) {

@@ -1,0 +1,62 @@
+{
+  "command": "node --experimental-strip-types --test --test-concurrency=4 tests/*.node.test.mjs",
+  "runtime": "Node.js v22.16.0 (below project-supported engine floor; supplemental native run, not npm test)",
+  "baseline": {
+    "tests": 1212,
+    "pass": 1195,
+    "fail": 17,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "failedNames": [
+      "tests/ai-chat-timestamp-integrity.node.test.mjs",
+      "the HTTP reproduction demonstrates legacy cross-user disclosure and fixed isolation",
+      "custom icon mutations revalidate authentication inside the storage transaction",
+      "authentication route source retains all hardened ordering guarantees",
+      "tests/backup-metadata-integrity.node.test.mjs",
+      "every created database table has an explicit backup-scope classification",
+      "identity-rebinding reproducer proves vulnerable and fixed states",
+      "standalone reproduction shows the vulnerable collision and remediated rejection",
+      "bookmark fetch path preserves the SSRF, redirect, port, pinning, deadline, and body guards",
+      "custom icon reads require authentication, ownership or an owner-controlled shared-page publication, and private caching",
+      "workspace restore carries and revalidates auth, device-session, and workspace-generation scope",
+      "read mode reuses the existing secured bookmark preview API without changing save serialization",
+      "standalone reproduction proves the vulnerable and corrected backup states",
+      "the standalone reproduction demonstrates the metadata gap and the fail-closed remediation",
+      "bookmark preview modes share the same egress policy and translated IPv6 is classified",
+      "tests/structured-metadata-integrity.node.test.mjs",
+      "tests/theme-preference-persistence.node.test.mjs"
+    ],
+    "durationMs": 29957.74666
+  },
+  "modified": {
+    "tests": 1264,
+    "pass": 1247,
+    "fail": 17,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "failedNames": [
+      "tests/ai-chat-timestamp-integrity.node.test.mjs",
+      "the HTTP reproduction demonstrates legacy cross-user disclosure and fixed isolation",
+      "custom icon mutations revalidate authentication inside the storage transaction",
+      "authentication route source retains all hardened ordering guarantees",
+      "tests/backup-metadata-integrity.node.test.mjs",
+      "every created database table has an explicit backup-scope classification",
+      "identity-rebinding reproducer proves vulnerable and fixed states",
+      "standalone reproduction shows the vulnerable collision and remediated rejection",
+      "bookmark fetch path preserves the SSRF, redirect, port, pinning, deadline, and body guards",
+      "custom icon reads require authentication, ownership or an owner-controlled shared-page publication, and private caching",
+      "workspace restore carries and revalidates auth, device-session, and workspace-generation scope",
+      "read mode reuses the existing secured bookmark preview API without changing save serialization",
+      "standalone reproduction proves the vulnerable and corrected backup states",
+      "the standalone reproduction demonstrates the metadata gap and the fail-closed remediation",
+      "bookmark preview modes share the same egress policy and translated IPv6 is classified",
+      "tests/structured-metadata-integrity.node.test.mjs",
+      "tests/theme-preference-persistence.node.test.mjs"
+    ],
+    "durationMs": 29959.385214
+  },
+  "newFailingNames": [],
+  "resolvedFailingNames": []
+}

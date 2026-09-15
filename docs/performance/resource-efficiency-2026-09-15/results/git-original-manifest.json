@@ -1,0 +1,574 @@
+{
+  ".git/": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 18
+  },
+  ".git/config": {
+    "sha256": "797758ce61b4e45aaf43c2a901d6254619eb603beb229d236b384c4700583c89",
+    "bytes": 305,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 32
+  },
+  ".git/description": {
+    "sha256": "85ab6c163d43a17ea9cf7788308bca1466f1b0a8d1cc92e26e9bf63da4062aee",
+    "bytes": 73,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 32
+  },
+  ".git/HEAD": {
+    "sha256": "28d25bf82af4c0e2b72f50959b2beb859e3e60b9630a5e8c603dad4ddb2b6e80",
+    "bytes": 21,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 32
+  },
+  ".git/hooks/": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 16
+  },
+  ".git/hooks/applypatch-msg.sample": {
+    "sha256": "0223497a0b8b033aa58a3a521b8629869386cf7ab0e2f101963d328aa62193f7",
+    "bytes": 478,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 32
+  },
+  ".git/hooks/commit-msg.sample": {
+    "sha256": "1f74d5e9292979b573ebd59741d46cb93ff391acdd083d340b94370753d92437",
+    "bytes": 896,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 32
+  },
+  ".git/hooks/fsmonitor-watchman.sample": {
+    "sha256": "e0549964e93897b519bd8e333c037e51fff0f88ba13e086a331592bf801fa1d0",
+    "bytes": 4726,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 32
+  },
+  ".git/hooks/post-update.sample": {
+    "sha256": "81765af2daef323061dcbc5e61fc16481cb74b3bac9ad8a174b186523586f6c5",
+    "bytes": 189,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 32
+  },
+  ".git/hooks/pre-applypatch.sample": {
+    "sha256": "e15c5b469ea3e0a695bea6f2c82bcf8e62821074939ddd85b77e0007ff165475",
+    "bytes": 424,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 32
+  },
+  ".git/hooks/pre-commit.sample": {
+    "sha256": "57185b7b9f05239d7ab52db045f5b89eb31348d7b2177eab214f5eb872e1971b",
+    "bytes": 1649,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 32
+  },
+  ".git/hooks/pre-merge-commit.sample": {
+    "sha256": "d3825a70337940ebbd0a5c072984e13245920cdf8898bd225c8d27a6dfc9cb53",
+    "bytes": 416,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 32
+  },
+  ".git/hooks/pre-push.sample": {
+    "sha256": "ecce9c7e04d3f5dd9d8ada81753dd1d549a9634b26770042b58dda00217d086a",
+    "bytes": 1374,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 32
+  },
+  ".git/hooks/pre-rebase.sample": {
+    "sha256": "4febce867790052338076f4e66cc47efb14879d18097d1d61c8261859eaaa7b3",
+    "bytes": 4898,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 32
+  },
+  ".git/hooks/pre-receive.sample": {
+    "sha256": "a4c3d2b9c7bb3fd8d1441c31bd4ee71a595d66b44fcf49ddb310252320169989",
+    "bytes": 544,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 32
+  },
+  ".git/hooks/prepare-commit-msg.sample": {
+    "sha256": "e9ddcaa4189fddd25ed97fc8c789eca7b6ca16390b2392ae3276f0c8e1aa4619",
+    "bytes": 1492,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 32
+  },
+  ".git/hooks/push-to-checkout.sample": {
+    "sha256": "a53d0741798b287c6dd7afa64aee473f305e65d3f49463bb9d7408ec3b12bf5f",
+    "bytes": 2783,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 32
+  },
+  ".git/hooks/sendemail-validate.sample": {
+    "sha256": "44ebfc923dc5466bc009602f0ecf067b9c65459abfe8868ddc49b78e6ced7a92",
+    "bytes": 2308,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 32
+  },
+  ".git/hooks/update.sample": {
+    "sha256": "8d5f2fa83e103cf08b57eaa67521df9194f45cbdbcb37da52ad586097a14d106",
+    "bytes": 3650,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 32
+  },
+  ".git/index": {
+    "sha256": "b60eb167f5b86a829cde7b3eae6e4ae77f533b4e652aae139d338bfc8fedc689",
+    "bytes": 94987,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 32
+  },
+  ".git/info/": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 16
+  },
+  ".git/info/exclude": {
+    "sha256": "6671fe83b7a07c8932ee89164d1f2793b2318058eb8b98dc5c06ee0a5a3b0ec1",
+    "bytes": 240,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 32
+  },
+  ".git/logs/": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 16
+  },
+  ".git/logs/HEAD": {
+    "sha256": "cda9f8ece45ef85961024c3e1bb8bda76ee970b3c00d369d02b46165a96924f5",
+    "bytes": 194,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 32
+  },
+  ".git/logs/refs/": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 16
+  },
+  ".git/logs/refs/heads/": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 16
+  },
+  ".git/logs/refs/heads/main": {
+    "sha256": "cda9f8ece45ef85961024c3e1bb8bda76ee970b3c00d369d02b46165a96924f5",
+    "bytes": 194,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 32
+  },
+  ".git/logs/refs/remotes/": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 16
+  },
+  ".git/logs/refs/remotes/origin/": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 16
+  },
+  ".git/logs/refs/remotes/origin/HEAD": {
+    "sha256": "cda9f8ece45ef85961024c3e1bb8bda76ee970b3c00d369d02b46165a96924f5",
+    "bytes": 194,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 32
+  },
+  ".git/objects/": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 16
+  },
+  ".git/objects/info/": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 16
+  },
+  ".git/objects/pack/": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 16
+  },
+  ".git/objects/pack/pack-2a32366e8523e49d135f4754f49179cae3e54c07.idx": {
+    "sha256": "358b5fdc64c180d0409f3933030d5119611995b9094dd00e84fd2d6c2059f286",
+    "bytes": 230084,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 33
+  },
+  ".git/objects/pack/pack-2a32366e8523e49d135f4754f49179cae3e54c07.pack": {
+    "sha256": "6fe4f594107c8a17bb3925578d5ecadf5085b25b336bc56ac8b4f36495236e96",
+    "bytes": 36858326,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 33
+  },
+  ".git/objects/pack/pack-2a32366e8523e49d135f4754f49179cae3e54c07.rev": {
+    "sha256": "d5a335863a3f12604e9c518eaeddbad794abf681389475e45ee676a3cc000dac",
+    "bytes": 32768,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 33
+  },
+  ".git/packed-refs": {
+    "sha256": "47a85d097cec6d164b1a6a73733c926306c415a7c0133143295bb171bb73d851",
+    "bytes": 112,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 32
+  },
+  ".git/refs/": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 16
+  },
+  ".git/refs/heads/": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 16
+  },
+  ".git/refs/heads/main": {
+    "sha256": "2630ebcce1fd7d8c6c2a6efef3f725c1af01053db8f211002651f8e9a2cdefc5",
+    "bytes": 41,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 32
+  },
+  ".git/refs/remotes/": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 16
+  },
+  ".git/refs/remotes/origin/": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 16
+  },
+  ".git/refs/remotes/origin/HEAD": {
+    "sha256": "2bb6a24aa0fc6c484100f5d51a29bbad841cd2c755f5d93faa204e5dbb4eb2b4",
+    "bytes": 30,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      18
+    ],
+    "external_attr": 32
+  },
+  ".git/refs/tags/": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "date_time": [
+      2026,
+      9,
+      15,
+      21,
+      28,
+      14
+    ],
+    "external_attr": 16
+  }
+}

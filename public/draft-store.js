@@ -422,7 +422,11 @@ function normalizeBlockOrderDraft(value) {
   if (!Array.isArray(value.items) || value.items.length !== value.orderedIds.length) return null;
 
   const orderedIds = value.orderedIds.every(isNonEmptyString) ? [...value.orderedIds] : null;
-  if (!orderedIds || new Set(orderedIds).size !== orderedIds.length) return null;
+  if (!orderedIds) return null;
+  // Reuse the uniqueness index for membership checks below; scanning the full
+  // ordered array for every previous ID makes recovery validation quadratic.
+  const orderedIdSet = new Set(orderedIds);
+  if (orderedIdSet.size !== orderedIds.length) return null;
 
   const items = [];
   for (let index = 0; index < value.items.length; index += 1) {
@@ -448,7 +452,7 @@ function normalizeBlockOrderDraft(value) {
   if (value.previousIds !== null && value.previousIds !== undefined) {
     if (!Array.isArray(value.previousIds) || value.previousIds.length !== orderedIds.length) return null;
     if (!value.previousIds.every(isNonEmptyString) || new Set(value.previousIds).size !== orderedIds.length) return null;
-    if (value.previousIds.some((id) => !orderedIds.includes(id))) return null;
+    if (value.previousIds.some((id) => !orderedIdSet.has(id))) return null;
     previousIds = [...value.previousIds];
   }
 

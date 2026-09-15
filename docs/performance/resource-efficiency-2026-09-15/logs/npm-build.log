@@ -1,0 +1,28 @@
+
+> brainvault@1.0.0 build
+> npm run vendor:mermaid && node scripts/clean-dist.mjs && tsc -p tsconfig.json
+
+
+> brainvault@1.0.0 vendor:mermaid
+> node scripts/vendor-mermaid.mjs
+
+node:internal/deps/undici/undici:13510
+      Error.captureStackTrace(err);
+            ^
+
+TypeError: fetch failed
+    at node:internal/deps/undici/undici:13510:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async fetchTarball (file:///mnt/data/brainvault_audit/project/scripts/vendor-mermaid.mjs:82:20)
+    at async main (file:///mnt/data/brainvault_audit/project/scripts/vendor-mermaid.mjs:103:19)
+    at async file:///mnt/data/brainvault_audit/project/scripts/vendor-mermaid.mjs:128:1 {
+  [cause]: Error: getaddrinfo EAI_AGAIN registry.npmjs.org
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3001,
+    code: 'EAI_AGAIN',
+    syscall: 'getaddrinfo',
+    hostname: 'registry.npmjs.org'
+  }
+}
+
+Node.js v22.16.0
