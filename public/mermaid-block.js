@@ -215,6 +215,10 @@ function getMermaidHydrationObserver() {
 }
 
 export function hydrateMermaidPreviews(root = document, { force = false, eager = false } = {}) {
+  // The observer is process-global for the page. Explicitly release targets from
+  // the previous render before discovering the current DOM so detached/offscreen
+  // previews cannot remain retained across page navigation or rerenders.
+  mermaidHydrationObserver?.disconnect();
   const previews = [...root.querySelectorAll(".mermaid-block-preview")].map((preview) => {
     const target = /** @type {HTMLElement} */ (preview);
     if (force) delete target.dataset.mermaidRenderedKey;

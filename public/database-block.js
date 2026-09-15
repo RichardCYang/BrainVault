@@ -932,6 +932,11 @@ async function hydrateDatabaseUrlPreview(preview, fetchPreview) {
 
 export function hydrateDatabaseUrlPreviews(root, fetchPreview) {
   if (!root || typeof fetchPreview !== "function") return;
+  // `root` is normally the long-lived page view. Release targets from the
+  // previous render even when the new render has no URL previews, otherwise an
+  // IntersectionObserver can keep detached offscreen preview nodes registered.
+  let observerState = databaseUrlPreviewObservers.get(root);
+  observerState?.observer?.disconnect();
   const previews = [...root.querySelectorAll(".database-url-preview[data-url]")]
     .filter((preview) => !["loading", "loaded"].includes(preview.dataset.previewState));
   if (!previews.length) return;
@@ -941,9 +946,7 @@ export function hydrateDatabaseUrlPreviews(root, fetchPreview) {
     return;
   }
 
-  let observerState = databaseUrlPreviewObservers.get(root);
   if (!observerState || observerState.fetchPreview !== fetchPreview) {
-    observerState?.observer?.disconnect();
     const observer = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
         if (!entry.isIntersecting) return;

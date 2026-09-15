@@ -1303,6 +1303,11 @@ async function hydrateRenderedAiChatLink(citation, fetchPreview) {
 
 export function hydrateRenderedAiChatLinks(root, fetchPreview) {
   if (!root || typeof fetchPreview !== "function") return;
+  // A block row/preview can be rerendered in place while the observer state is
+  // reused. Drop registrations for the previous DOM before preparing the new
+  // citation links so detached targets cannot accumulate across rerenders.
+  let observerState = aiChatLinkPreviewObservers.get(root);
+  observerState?.observer?.disconnect();
   relocateRenderedAiChatCitationLinks(root);
   collapseRenderedAiChatInlineCitationGroups(root);
   const citations = [...root.querySelectorAll(".rendered-ai-chat-answer .rendered-ai-chat-content a[href]")]
@@ -1320,9 +1325,7 @@ export function hydrateRenderedAiChatLinks(root, fetchPreview) {
     return;
   }
 
-  let observerState = aiChatLinkPreviewObservers.get(root);
   if (!observerState || observerState.fetchPreview !== fetchPreview) {
-    observerState?.observer?.disconnect();
     const observer = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
         if (!entry.isIntersecting) return;
