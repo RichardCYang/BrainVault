@@ -24,6 +24,7 @@ const providerById = new Map(aiProviderPresets.map((provider) => [provider.id, p
 const svgNamespace = "http://www.w3.org/2000/svg";
 
 const aiChatLinkPreviewCache = new Map();
+const aiChatLinkPreviewCacheMaxEntries = 250;
 const aiChatLinkPreviewObservers = new WeakMap();
 const aiChatLinkPreviewFaviconDataUrlMaxLength = Math.ceil((128 * 1024 * 4) / 3) + 128;
 const aiChatLinkPreviewFaviconDataPattern = /^data:image\/(?:png|jpeg|gif|webp|vnd\.microsoft\.icon);base64,[a-z0-9+/]+={0,2}$/i;
@@ -1270,18 +1271,30 @@ function applyRenderedAiChatLinkPreview(citation, previewData, requestedUrl) {
 
 function getAiChatLinkPreviewRequest(url, fetchPreview) {
   const cached = aiChatLinkPreviewCache.get(url);
-  if (cached) return cached;
+  if (cached) {
+    // Map iteration follows insertion order. Refresh the entry on a hit so the
+    // bounded cache behaves as LRU instead of evicting frequently reused URLs
+    // merely because they were first inserted a long time ago.
+    aiChatLinkPreviewCache.delete(url);
+    aiChatLinkPreviewCache.set(url, cached);
+    return cached;
+  }
 
   const request = Promise.resolve()
     .then(() => fetchPreview(url))
     .then((value) => value?.preview ?? value ?? null)
     .catch(() => null)
     .then((value) => {
-      if (!value) aiChatLinkPreviewCache.delete(url);
+      // An older in-flight request may have been evicted and replaced by a new
+      // request for the same URL. Only remove the cache entry if this exact
+      // request still owns it, otherwise a late failure would erase newer work.
+      if (!value && aiChatLinkPreviewCache.get(url) === request) {
+        aiChatLinkPreviewCache.delete(url);
+      }
       return value;
     });
   aiChatLinkPreviewCache.set(url, request);
-  if (aiChatLinkPreviewCache.size > 250) {
+  if (aiChatLinkPreviewCache.size > aiChatLinkPreviewCacheMaxEntries) {
     const oldest = aiChatLinkPreviewCache.keys().next().value;
     if (oldest) aiChatLinkPreviewCache.delete(oldest);
   }

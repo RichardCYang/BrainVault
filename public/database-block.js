@@ -818,6 +818,7 @@ function sortDirectionLabel(direction) {
 }
 
 const databaseUrlPreviewCache = new Map();
+const databaseUrlPreviewCacheMaxEntries = 250;
 const databaseUrlPreviewObservers = new WeakMap();
 
 function getDatabasePreviewUrl(value) {
@@ -899,18 +900,28 @@ function applyDatabaseUrlPreview(preview, previewData, requestedUrl) {
 
 function getDatabaseUrlPreviewRequest(url, fetchPreview) {
   const cached = databaseUrlPreviewCache.get(url);
-  if (cached) return cached;
+  if (cached) {
+    // Keep frequently reused previews resident when one-off URLs churn through
+    // the bounded cache; Map iteration order is insertion order.
+    databaseUrlPreviewCache.delete(url);
+    databaseUrlPreviewCache.set(url, cached);
+    return cached;
+  }
 
   const request = Promise.resolve()
     .then(() => fetchPreview(url))
     .then((value) => value?.preview ?? value ?? null)
     .catch(() => null)
     .then((value) => {
-      if (!value) databaseUrlPreviewCache.delete(url);
+      // Do not let a late failure from an evicted request delete a newer
+      // in-flight/result entry for the same URL.
+      if (!value && databaseUrlPreviewCache.get(url) === request) {
+        databaseUrlPreviewCache.delete(url);
+      }
       return value;
     });
   databaseUrlPreviewCache.set(url, request);
-  if (databaseUrlPreviewCache.size > 250) {
+  if (databaseUrlPreviewCache.size > databaseUrlPreviewCacheMaxEntries) {
     const oldest = databaseUrlPreviewCache.keys().next().value;
     if (oldest) databaseUrlPreviewCache.delete(oldest);
   }
