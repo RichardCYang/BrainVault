@@ -65,49 +65,104 @@ function normalizeVpnGateHostname(value: unknown) {
   return hostname;
 }
 
-export function parseVpnGateCsv(text: string) {
+function createVpnGateCsvParser() {
   const relays = new Map<string, VpnGateRelayRecord>();
-  const lines = text.split(/\r?\n/);
-  const headerIndex = lines.findIndex((line) => line.startsWith("#HostName,"));
-  if (headerIndex < 0) return relays;
-
-  const header = parseCsvRow(lines[headerIndex].slice(1));
-  if (!header) return relays;
-  const hostnameIndex = header.indexOf("HostName");
-  const ipIndex = header.indexOf("IP");
-  const countryIndex = header.indexOf("CountryShort");
-  if (hostnameIndex < 0 || ipIndex < 0 || countryIndex < 0) return relays;
-
+  let parserState: "SEARCHING_HEADER" | "READING_ROWS" | "DONE" = "SEARCHING_HEADER";
+  let hostnameIndex = -1;
+  let ipIndex = -1;
+  let countryIndex = -1;
   let acceptedRows = 0;
-  for (const line of lines.slice(headerIndex + 1)) {
-    if (!line || line.startsWith("*")) continue;
-    const fields = parseCsvRow(line);
-    if (!fields) continue;
-    const rawIp = fields[ipIndex] ?? "";
-    const ipAddress = normalizeCountryLookupIp(rawIp);
-    if (!ipAddress || !isPublicCountryLookupIp(ipAddress)) continue;
 
-    const hostname = normalizeVpnGateHostname(fields[hostnameIndex]);
-    if (!hostname) continue;
-    const countryCode = normalizeIsoCountryCode(fields[countryIndex]);
-    const existing = relays.get(ipAddress);
-    if (existing) {
-      if (!existing.hostnames.includes(hostname) && existing.hostnames.length < vpnGateMaxHostnamesPerIp) {
-        existing.hostnames.push(hostname);
+  return {
+    relays,
+    get done() {
+      return parserState === "DONE";
+    },
+    pushLine(line: string) {
+      if (parserState === "DONE") return;
+
+      if (parserState === "SEARCHING_HEADER") {
+        if (!line.startsWith("#HostName,")) return;
+        const header = parseCsvRow(line.slice(1));
+        if (!header) {
+          parserState = "DONE";
+          return;
+        }
+        hostnameIndex = header.indexOf("HostName");
+        ipIndex = header.indexOf("IP");
+        countryIndex = header.indexOf("CountryShort");
+        if (hostnameIndex < 0 || ipIndex < 0 || countryIndex < 0) {
+          parserState = "DONE";
+          return;
+        }
+        parserState = "READING_ROWS";
+        return;
       }
-      if (!existing.countryCode && countryCode) existing.countryCode = countryCode;
-    } else {
-      relays.set(ipAddress, { ipAddress, countryCode, hostnames: [hostname] });
+
+      if (!line || line.startsWith("*")) return;
+      const fields = parseCsvRow(line);
+      if (!fields) return;
+      const rawIp = fields[ipIndex] ?? "";
+      const ipAddress = normalizeCountryLookupIp(rawIp);
+      if (!ipAddress || !isPublicCountryLookupIp(ipAddress)) return;
+
+      const hostname = normalizeVpnGateHostname(fields[hostnameIndex]);
+      if (!hostname) return;
+      const countryCode = normalizeIsoCountryCode(fields[countryIndex]);
+      const existing = relays.get(ipAddress);
+      if (existing) {
+        if (!existing.hostnames.includes(hostname) && existing.hostnames.length < vpnGateMaxHostnamesPerIp) {
+          existing.hostnames.push(hostname);
+        }
+        if (!existing.countryCode && countryCode) existing.countryCode = countryCode;
+      } else {
+        relays.set(ipAddress, { ipAddress, countryCode, hostnames: [hostname] });
+      }
+
+      acceptedRows += 1;
+      if (acceptedRows >= vpnGateMaxRows) parserState = "DONE";
     }
-
-    acceptedRows += 1;
-    if (acceptedRows >= vpnGateMaxRows) break;
-  }
-
-  return relays;
+  };
 }
 
-async function fetchVpnGateCsv() {
+function pushVpnGateCsvText(parser: ReturnType<typeof createVpnGateCsvParser>, text: string) {
+  let lineStart = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text.charCodeAt(index) !== 10) continue;
+    const lineEnd = index > lineStart && text.charCodeAt(index - 1) === 13 ? index - 1 : index;
+    parser.pushLine(text.slice(lineStart, lineEnd));
+    if (parser.done) return;
+    lineStart = index + 1;
+  }
+  parser.pushLine(text.slice(lineStart));
+}
+
+export function parseVpnGateCsv(text: string) {
+  const parser = createVpnGateCsvParser();
+  pushVpnGateCsvText(parser, text);
+  return parser.relays;
+}
+
+function pushVpnGateCsvDecodedChunk(
+  parser: ReturnType<typeof createVpnGateCsvParser>,
+  pendingText: string,
+  decodedText: string
+) {
+  const text = pendingText + decodedText;
+  let lineStart = 0;
+  while (!parser.done) {
+    const newlineIndex = text.indexOf("\n", lineStart);
+    if (newlineIndex < 0) break;
+    const lineEnd = newlineIndex > lineStart && text.charCodeAt(newlineIndex - 1) === 13
+      ? newlineIndex - 1
+      : newlineIndex;
+    parser.pushLine(text.slice(lineStart, lineEnd));
+    lineStart = newlineIndex + 1;
+  }
+  return parser.done ? "" : text.slice(lineStart);
+}
+
+async function fetchVpnGateRelays() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), vpnGateFetchTimeoutMs);
   try {
@@ -129,7 +184,10 @@ async function fetchVpnGateCsv() {
     }
     const reader = response.body?.getReader();
     if (!reader) throw new Error("VPN Gate directory did not contain a body");
-    const chunks: Buffer[] = [];
+
+    const parser = createVpnGateCsvParser();
+    const decoder = new TextDecoder();
+    let pendingText = "";
     let totalBytes = 0;
     try {
       while (true) {
@@ -141,12 +199,23 @@ async function fetchVpnGateCsv() {
           await reader.cancel().catch(() => undefined);
           throw new Error("VPN Gate directory exceeded the configured size limit");
         }
-        chunks.push(Buffer.from(value));
+        if (!parser.done) {
+          pendingText = pushVpnGateCsvDecodedChunk(
+            parser,
+            pendingText,
+            decoder.decode(value, { stream: true })
+          );
+        }
       }
     } finally {
       reader.releaseLock();
     }
-    return Buffer.concat(chunks, totalBytes).toString("utf8");
+
+    if (!parser.done) {
+      pendingText = pushVpnGateCsvDecodedChunk(parser, pendingText, decoder.decode());
+      if (!parser.done) parser.pushLine(pendingText);
+    }
+    return parser.relays;
   } finally {
     clearTimeout(timer);
   }
@@ -157,7 +226,7 @@ function startVpnGateRelayRefresh() {
 
   vpnGateRelaysInFlight = (async () => {
     try {
-      const next = parseVpnGateCsv(await fetchVpnGateCsv());
+      const next = await fetchVpnGateRelays();
       if (!next.size) throw new Error("VPN Gate directory was empty or invalid");
       vpnGateRelays = next;
       vpnGateRelaysFetchedAt = Date.now();

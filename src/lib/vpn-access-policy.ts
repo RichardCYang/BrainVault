@@ -160,7 +160,7 @@ async function fetchLimitedText(url: string, timeoutMs: number, maxBytes: number
     }
     const reader = response.body?.getReader();
     if (!reader) throw new Error("Provider response did not contain a body");
-    const chunks: Buffer[] = [];
+    const chunks: Uint8Array[] = [];
     let totalBytes = 0;
     try {
       while (true) {
@@ -172,7 +172,7 @@ async function fetchLimitedText(url: string, timeoutMs: number, maxBytes: number
           await reader.cancel().catch(() => undefined);
           throw new Error("Response exceeded the configured size limit");
         }
-        chunks.push(Buffer.from(value));
+        chunks.push(value);
       }
     } finally {
       reader.releaseLock();

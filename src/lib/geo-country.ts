@@ -102,7 +102,7 @@ async function readLimitedJson(response: Response, maxBytes: number): Promise<un
 
   const reader = response.body?.getReader();
   if (!reader) throw new Error("Country.is response did not contain a body");
-  const chunks: Buffer[] = [];
+  const chunks: Uint8Array[] = [];
   let totalBytes = 0;
   try {
     while (true) {
@@ -114,7 +114,7 @@ async function readLimitedJson(response: Response, maxBytes: number): Promise<un
         await reader.cancel().catch(() => undefined);
         throw new Error("Country.is response exceeded the configured size limit");
       }
-      chunks.push(Buffer.from(value));
+      chunks.push(value);
     }
   } finally {
     reader.releaseLock();
