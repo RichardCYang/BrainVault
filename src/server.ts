@@ -59,10 +59,16 @@ async function start() {
   await recoverInterruptedDataRestores();
   await cleanupStaleDataTransferTempFiles();
   await cleanupStaleAttachmentTempFiles();
+  let dataTransferCleanupInFlight: Promise<unknown> | null = null;
   const dataTransferCleanupTimer = setInterval(() => {
     // Best-effort periodic cleanup supplements per-request deletion without
     // creating a separate audit/logging surface for routine housekeeping.
-    void cleanupStaleDataTransferTempFiles().catch(() => undefined);
+    // Do not start a second filesystem scan while the previous one is still
+    // running; slow or stalled storage must not multiply background I/O.
+    if (dataTransferCleanupInFlight) return;
+    dataTransferCleanupInFlight = cleanupStaleDataTransferTempFiles()
+      .catch(() => undefined)
+      .finally(() => { dataTransferCleanupInFlight = null; });
   }, Math.min(env.ATTACHMENT_TEMP_MAX_AGE_MS, 10 * 60_000));
   dataTransferCleanupTimer.unref?.();
   await initializePermanentTotpIpEnforcement();
@@ -112,6 +118,7 @@ async function start() {
   async function shutdown(signal: string) {
     if (isShuttingDown) return;
     isShuttingDown = true;
+    clearInterval(dataTransferCleanupTimer);
     clearInterval(sessionPruneTimer);
     await sessionPruneInFlight;
     console.log(`${signal} received. Closing BrainVault API...`);
