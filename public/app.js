@@ -10715,6 +10715,11 @@ function renderRemoteCollaborationCarets() {
 }
 
 function scheduleRemoteCollaborationCaretRender() {
+  // Global scroll/resize listeners call this scheduler for every workspace view.
+  // Avoid spending an animation frame on caret cleanup/layout when collaboration
+  // is not active; renderCollaborationChrome() already removes stale carets when
+  // the active page leaves collaboration mode.
+  if (!state.selectedPage || state.workspaceView !== "page" || !isCollaborativePage()) return;
   if (collaborationCaretRenderFrame !== null) return;
   collaborationCaretRenderFrame = window.requestAnimationFrame(renderRemoteCollaborationCarets);
 }
