@@ -471,13 +471,22 @@ export class PageCollaborationHub {
       return true;
     }
 
-    if (!existing && this.unauthenticatedUpgradeWindows.size >= collaborationResourceLimits.trackedUnauthenticatedUpgradeIps) {
-      for (const [ip, entry] of this.unauthenticatedUpgradeWindows) {
-        if (now - entry.startedAt >= windowMs) this.unauthenticatedUpgradeWindows.delete(ip);
-      }
-      if (this.unauthenticatedUpgradeWindows.size >= collaborationResourceLimits.trackedUnauthenticatedUpgradeIps) {
-        return false;
-      }
+    // Keep insertion order aligned with window start time. Replacing an expired
+    // existing entry without deleting it first would leave the key at its old
+    // Map position and break the oldest-first eviction invariant below.
+    if (existing) this.unauthenticatedUpgradeWindows.delete(sourceIp);
+
+    // Map insertion order now matches startedAt order, so a full table only
+    // needs to inspect the oldest entry. If it is still fresh, every later entry
+    // is fresh too and the new unauthenticated IP can be rejected in O(1)
+    // instead of rescanning all tracked IPs on every probe. When entries have
+    // expired, remove only the expired prefix until there is room.
+    while (this.unauthenticatedUpgradeWindows.size >= collaborationResourceLimits.trackedUnauthenticatedUpgradeIps) {
+      const oldest = this.unauthenticatedUpgradeWindows.entries().next().value;
+      if (!oldest) break;
+      const [ip, entry] = oldest;
+      if (now - entry.startedAt < windowMs) return false;
+      this.unauthenticatedUpgradeWindows.delete(ip);
     }
     this.unauthenticatedUpgradeWindows.set(sourceIp, { startedAt: now, attempts: 1 });
     return true;
