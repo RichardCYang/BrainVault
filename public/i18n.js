@@ -5487,7 +5487,10 @@ export function detectInitialLanguage() {
   return normalizeLanguage(readStorage(languageStorageKey)) ?? detectBrowserLanguage();
 }
 
+const supportedLanguageByCode = new Map(supportedLanguages.map((language) => [language.code, language]));
+
 let currentLanguage = detectInitialLanguage();
+let currentLocale = supportedLanguageByCode.get(currentLanguage)?.locale ?? "en-US";
 
 function getPath(source, key) {
   return key.split(".").reduce((value, segment) => value?.[segment], source);
@@ -5504,25 +5507,44 @@ export function getLanguage() {
 }
 
 export function getLocale() {
-  return supportedLanguages.find(({ code }) => code === currentLanguage)?.locale ?? "en-US";
+  return currentLocale;
 }
 
 export function getLanguageLabel(code = currentLanguage) {
-  return supportedLanguages.find((language) => language.code === normalizeLanguage(code))?.label ?? code;
+  return supportedLanguageByCode.get(normalizeLanguage(code))?.label ?? code;
 }
 
 function getIntlFormatOptionsKey(options) {
-  return Object.entries(options ?? {})
-    .filter(([, value]) => value !== undefined)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, value]) => `${key}=${String(value)}`)
-    .join("&");
+  if (!options) return "";
+  const keys = Object.keys(options);
+  if (!keys.length) return "";
+  keys.sort();
+
+  let result = "";
+  for (const key of keys) {
+    const value = options[key];
+    if (value === undefined) continue;
+    if (result) result += "&";
+    result += `${key}=${String(value)}`;
+  }
+  return result;
 }
 
+const defaultNumberFormattersByLocale = new Map();
 const numberFormattersByKey = new Map();
 
 function getNumberFormatter(locale, options) {
-  const key = `${locale}\u0000${getIntlFormatOptionsKey(options)}`;
+  const optionsKey = getIntlFormatOptionsKey(options);
+  if (!optionsKey) {
+    let formatter = defaultNumberFormattersByLocale.get(locale);
+    if (!formatter) {
+      formatter = new Intl.NumberFormat(locale);
+      defaultNumberFormattersByLocale.set(locale, formatter);
+    }
+    return formatter;
+  }
+
+  const key = `${locale}\u0000${optionsKey}`;
   let formatter = numberFormattersByKey.get(key);
   if (!formatter) {
     formatter = new Intl.NumberFormat(locale, options);
@@ -5532,7 +5554,7 @@ function getNumberFormatter(locale, options) {
 }
 
 export function formatNumber(value, options) {
-  return getNumberFormatter(getLocale(), options).format(value);
+  return getNumberFormatter(currentLocale, options).format(value);
 }
 
 const regionDisplayNamesByLocale = new Map();
@@ -5550,16 +5572,27 @@ export function formatRegionName(regionCode) {
   const normalized = typeof regionCode === "string" ? regionCode.trim().toUpperCase() : "";
   if (!/^[A-Z]{2}$/.test(normalized)) return normalized;
   try {
-    return getRegionDisplayNames(getLocale()).of(normalized) ?? normalized;
+    return getRegionDisplayNames(currentLocale).of(normalized) ?? normalized;
   } catch {
     return normalized;
   }
 }
 
+const defaultDateTimeFormattersByLocale = new Map();
 const dateTimeFormattersByKey = new Map();
 
 function getDateTimeFormatter(locale, options) {
-  const key = `${locale}\u0000${getIntlFormatOptionsKey(options)}`;
+  const optionsKey = getIntlFormatOptionsKey(options);
+  if (!optionsKey) {
+    let formatter = defaultDateTimeFormattersByLocale.get(locale);
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat(locale);
+      defaultDateTimeFormattersByLocale.set(locale, formatter);
+    }
+    return formatter;
+  }
+
+  const key = `${locale}\u0000${optionsKey}`;
   let formatter = dateTimeFormattersByKey.get(key);
   if (!formatter) {
     formatter = new Intl.DateTimeFormat(locale, options);
@@ -5569,7 +5602,7 @@ function getDateTimeFormatter(locale, options) {
 }
 
 export function formatDateTime(value, options) {
-  return getDateTimeFormatter(getLocale(), options).format(value);
+  return getDateTimeFormatter(currentLocale, options).format(value);
 }
 
 export function populateLanguageSelect(select) {
@@ -5626,6 +5659,7 @@ export function setLanguage(language, { persist = true } = {}) {
   }
 
   currentLanguage = nextLanguage;
+  currentLocale = supportedLanguageByCode.get(nextLanguage)?.locale ?? "en-US";
   applyDocumentTranslations();
   if (typeof globalThis.dispatchEvent === "function" && typeof CustomEvent === "function") {
     globalThis.dispatchEvent(
