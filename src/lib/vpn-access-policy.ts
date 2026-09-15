@@ -3,6 +3,7 @@ import { db, type DbClient } from "./db.js";
 import { normalizeIsoCountryCode, type IsoCountryCode } from "./country-codes.js";
 import { isPublicCountryLookupIp, normalizeCountryLookupIp } from "./geo-country.js";
 import { ApiError } from "./http.js";
+import { readTorExitAddresses } from "./tor-exit-list.js";
 import {
   matchVpnGateRelay,
   resetVpnGateRelayCacheForTests,
@@ -355,19 +356,31 @@ async function resolveVpnGateMatch(ipAddress: string): Promise<VpnGateRelayMatch
   return startVpnGateMatchRefresh(ipAddress);
 }
 
+async function fetchTorExitAddresses() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), torListTimeoutMs);
+  try {
+    const response = await fetch(torExitListEndpoint, {
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json, text/plain;q=0.9",
+        "User-Agent": "BrainVault/1.0 VPN-access-policy"
+      },
+      redirect: "error"
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return readTorExitAddresses(response, torListMaxBytes);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function startTorExitAddressRefresh() {
   if (torExitListInFlight) return torExitListInFlight;
 
   torExitListInFlight = (async () => {
     try {
-      const text = await fetchLimitedText(torExitListEndpoint, torListTimeoutMs, torListMaxBytes);
-      const next = new Set<string>();
-      for (const line of text.split(/\r?\n/)) {
-        if (!line.startsWith("ExitAddress ")) continue;
-        const rawIp = line.split(/\s+/)[1] ?? "";
-        const normalizedIp = normalizeCountryLookupIp(rawIp);
-        if (normalizedIp && isPublicCountryLookupIp(normalizedIp)) next.add(normalizedIp);
-      }
+      const next = await fetchTorExitAddresses();
       if (!next.size) throw new Error("Tor exit list was empty");
       torExitAddresses = next;
       torExitListFetchedAt = Date.now();
