@@ -85,6 +85,7 @@ import { iconCategoryDefinitions, iconRecords, iconSvgNodes } from "./icon-data.
 import { createPageDraftStore } from "./draft-store.js";
 import { createLatestWriteQueue } from "./save-queue.js";
 import { createEditorHistory } from "./editor-history.js";
+import { planConfirmedBlockInsertion } from "./block-insertion-result.js";
 import { createAccountProfileMutationQueue } from "./account-profile-mutation-queue.js";
 import { createMutationId, submitWithFreshMutationIdOnReuse } from "./mutation-id.js";
 import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-rebase.js";
@@ -15545,6 +15546,28 @@ async function saveBlockRow(row, options = {}) {
   const storedDraft = scope
     ? pageDraftStore.loadPage(scope.userId, scope.pageId, draftSourceId)?.blocks?.[blockId]
     : null;
+  // Enter and focusout can both save an already acknowledged row. Do not turn
+  // a clean, unchanged block into a fresh durable draft and an HTTP PATCH.
+  // Equality alone is insufficient: a retry, recovery draft, or pending write
+  // must still traverse the original durability/conflict/idempotency path.
+  const acknowledgedBlock = getBlockById(blockId);
+  if (
+    !resolveConflict
+    && !storedDraft
+    && !row.dataset.draftExpectedVersion
+    && !row.dataset.draftSourceId
+    && !row.classList.contains("is-dirty")
+    && !row.classList.contains("is-saving")
+    && !row.classList.contains("save-error")
+    && !row.classList.contains("recovery-admission-pending")
+    && !blockSaveTimers.has(blockId)
+    && !blockSaveQueues.get(blockId)?.busy
+    && !blockEditAuthenticationScopes.has(blockId)
+    && acknowledgedBlock
+    && blockPayloadsMatch(acknowledgedBlock, payload)
+  ) {
+    return { block: acknowledgedBlock };
+  }
   let editRevision = Math.max(
     Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0,
     Number.parseInt(String(storedDraft?.revision ?? 0), 10) || 0
@@ -16917,6 +16940,84 @@ async function createEmptyBlock(
   return data;
 }
 
+function captureDirectBlockInsertionContext(authenticationScope) {
+  if (isCollaborativePage()) return null;
+  return {
+    page: state.selectedPage,
+    authenticationScope,
+    navigationGeneration: workspaceNavigationGeneration,
+    baseContentVersion: getPositiveVersion(state.selectedPage?.contentVersion),
+    // Snapshot the scalar concurrency validators, not mutable block references.
+    beforeBlocks: flattenBlocks(state.selectedPage?.blocks).map((block) => ({
+      id: block.id,
+      pageId: block.pageId,
+      parentBlockId: block.parentBlockId,
+      sortOrder: block.sortOrder,
+      version: block.version
+    }))
+  };
+}
+
+function isCurrentDirectBlockInsertionContext(context) {
+  return Boolean(
+    context
+    && isCurrentAuthenticatedSessionScope(context.authenticationScope)
+    && isCurrentWorkspaceNavigation(context.navigationGeneration)
+    && state.selectedPage === context.page
+    && state.workspaceView === "page"
+  );
+}
+
+async function tryRenderConfirmedBlockInsertion(context, data, parentBlockId, orderedIds, orderData = null) {
+  const isContextCurrent = () => (
+    isCurrentDirectBlockInsertionContext(context)
+    && !isCollaborativePage()
+    && canEditSelectedPage()
+  );
+  if (!isContextCurrent()) return false;
+  // Successful acknowledgements may still be removing recovery records. Wait
+  // only for local strict durability, never for another server round trip. A
+  // storage failure remains on the existing recovery/fallback path.
+  if (recoveryStorage.hasPendingWrites?.()) {
+    try {
+      await requireDirectRecoveryDurability("direct-block-insertion-recovery", null, { preserveInput: false });
+    } catch {
+      return false;
+    }
+  }
+  // A keystroke, logout, same-page navigation, share refresh or storage failure
+  // can occur during that await. Never replace live or recovered local edits.
+  if (
+    !isContextCurrent()
+    || hasPendingPageEdits()
+    || pageTitleDraftConflict
+    || elements.blockList.querySelector('.save-error, [data-draft-conflict="true"], .recovery-admission-pending')
+  ) return false;
+
+  const plan = planConfirmedBlockInsertion({
+    pageId: context.page.id,
+    baseContentVersion: context.baseContentVersion,
+    currentContentVersion: getPositiveVersion(context.page.contentVersion),
+    beforeBlocks: context.beforeBlocks,
+    currentBlocks: flattenBlocks(context.page.blocks),
+    parentBlockId,
+    orderedIds,
+    createResult: data,
+    orderResult: orderData
+  });
+  if (!plan) return false;
+  context.page.blocks = plan.blocks;
+  // Preserve the page timestamp/recent-document UI that openPage() refreshed.
+  // This timestamp comes from the same locked server transaction as the ACK.
+  applyPageSummaryUpdate(context.page.id, { updatedAt: plan.pageUpdatedAt });
+  state.pendingFocusBlockId = plan.createdBlock.id;
+  // Reuse the normal sanitized renderer and history handling. In particular,
+  // do not reset edit tracking or openPage() for a server-confirmed insertion.
+  renderSelectedPage();
+  syncBeforeUnloadProtection();
+  return true;
+}
+
 async function insertBlockRelative(
   referenceRow,
   placement = "after",
@@ -16933,6 +17034,7 @@ async function insertBlockRelative(
 
   const insertionIndex = placement === "before" ? referenceIndex : referenceIndex + 1;
   const pageId = state.selectedPage.id;
+  const insertionContext = captureDirectBlockInsertionContext(authenticationScope);
   const data = await createEmptyBlock(pageId, {
     parentBlockId,
     sortOrder: insertionIndex,
@@ -16944,15 +17046,24 @@ async function insertBlockRelative(
   const orderedIds = [...siblingIds];
   orderedIds.splice(insertionIndex, 0, data.block.id);
 
-  let canonicalOrderReconciled = false;
-  if (!isCollaborativePage() && shouldReconcileCanonicalCreatedBlockOrder(data)) {
+  let canonicalOrderReconciled = await tryRenderConfirmedBlockInsertion(
+    insertionContext, data, parentBlockId, orderedIds
+  );
+  if (insertionContext && !isCurrentDirectBlockInsertionContext(insertionContext)) return null;
+  if (canonicalOrderReconciled) {
+    // The create acknowledgement already proves the requested canonical order.
+  } else if (!isCollaborativePage() && shouldReconcileCanonicalCreatedBlockOrder(data)) {
     await reconcileCanonicalCreatedBlock(pageId, data.block, { authenticationScope });
     canonicalOrderReconciled = true;
   } else {
     try {
-      await persistBlockOrder(parentBlockId, orderedIds, { [data.block.id]: data.block.version });
+      const orderData = await persistBlockOrder(parentBlockId, orderedIds, { [data.block.id]: data.block.version });
+      canonicalOrderReconciled = await tryRenderConfirmedBlockInsertion(
+        insertionContext, data, parentBlockId, orderedIds, orderData
+      );
     } catch (error) {
       if (isCollaborativePage() || !isCurrentAuthenticatedSessionScope(authenticationScope)) throw error;
+      if (insertionContext && !isCurrentDirectBlockInsertionContext(insertionContext)) return null;
       // The create POST has already committed. Any follow-up reorder failure is
       // now a reconciliation problem, not a failed create that should be retried.
       await reconcileCanonicalCreatedBlock(pageId, data.block, { authenticationScope });
@@ -16960,6 +17071,7 @@ async function insertBlockRelative(
     }
   }
 
+  if (insertionContext && !isCurrentDirectBlockInsertionContext(insertionContext) && !canonicalOrderReconciled) return null;
   if (!canonicalOrderReconciled) {
     state.pendingFocusBlockId = data.block.id;
     if (isCollaborativePage()) renderSelectedPage();
@@ -16986,25 +17098,36 @@ async function appendBlock(afterRow = null) {
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
   const siblingIds = getBlockSiblings(null).map((block) => block.id);
   const pageId = state.selectedPage.id;
+  const insertionContext = captureDirectBlockInsertionContext(authenticationScope);
   const requestedSortOrder = siblingIds.length;
   const data = await createEmptyBlock(pageId, { sortOrder: requestedSortOrder });
   if (!data || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
 
   const orderedIds = [...siblingIds, data.block.id];
-  let canonicalOrderReconciled = false;
-  if (!isCollaborativePage() && shouldReconcileCanonicalCreatedBlockOrder(data)) {
+  let canonicalOrderReconciled = await tryRenderConfirmedBlockInsertion(
+    insertionContext, data, null, orderedIds
+  );
+  if (insertionContext && !isCurrentDirectBlockInsertionContext(insertionContext)) return null;
+  if (canonicalOrderReconciled) {
+    // The create acknowledgement already proves the requested canonical order.
+  } else if (!isCollaborativePage() && shouldReconcileCanonicalCreatedBlockOrder(data)) {
     await reconcileCanonicalCreatedBlock(pageId, data.block, { authenticationScope });
     canonicalOrderReconciled = true;
   } else {
     try {
-      await persistBlockOrder(null, orderedIds, { [data.block.id]: data.block.version });
+      const orderData = await persistBlockOrder(null, orderedIds, { [data.block.id]: data.block.version });
+      canonicalOrderReconciled = await tryRenderConfirmedBlockInsertion(
+        insertionContext, data, null, orderedIds, orderData
+      );
     } catch (error) {
       if (isCollaborativePage() || !isCurrentAuthenticatedSessionScope(authenticationScope)) throw error;
+      if (insertionContext && !isCurrentDirectBlockInsertionContext(insertionContext)) return null;
       await reconcileCanonicalCreatedBlock(pageId, data.block, { authenticationScope });
       canonicalOrderReconciled = true;
     }
   }
 
+  if (insertionContext && !isCurrentDirectBlockInsertionContext(insertionContext) && !canonicalOrderReconciled) return null;
   if (!canonicalOrderReconciled) {
     state.pendingFocusBlockId = data.block.id;
     if (isCollaborativePage()) renderSelectedPage();

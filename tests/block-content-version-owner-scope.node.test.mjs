@@ -23,9 +23,11 @@ test("page content-version writes remain owner-scoped at the final SQL sink", ()
     "function partialMutationVersionPayload"
   );
 
+  // The optional committed-page metadata observer may wrap the signature;
+  // ownerId must still be the third argument at every mutation boundary.
   assert.match(
     helper,
-    /advancePageContentVersion\(client: DbClient, pageId: string, ownerId: string\)/
+    /advancePageContentVersion\(\s*client: DbClient,\s*pageId: string,\s*ownerId: string(?:\s*[,)]|$)/
   );
   assert.match(
     helper,
@@ -68,6 +70,6 @@ test("block mutation call sites pass the locked page owner instead of the actor 
   );
   assert.match(
     route,
-    /advancePageContentVersion\(client, pageId, lockedAccess\.page\.owner_id\)/
+    /advancePageContentVersion\(client, pageId, lockedAccess\.page\.owner_id(?:\)|,)/
   );
 });

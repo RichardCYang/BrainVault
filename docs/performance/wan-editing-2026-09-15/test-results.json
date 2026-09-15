@@ -1,0 +1,291 @@
+{
+  "date": "2026-09-15",
+  "status": "scoped_fix_and_regression_comparison_complete; full_release_validation_blocked",
+  "environment": {
+    "node": "22.16.0",
+    "npm": "10.9.2",
+    "requiredNode": "^22.23.2 || ^24.18.1 || >=26.5.1",
+    "engineConstraintUnchanged": true,
+    "dependenciesInstalled": false
+  },
+  "baselineNode": {
+    "tests": 936,
+    "pass": 872,
+    "fail": 64
+  },
+  "modifiedNode": {
+    "tests": 1028,
+    "pass": 964,
+    "fail": 64
+  },
+  "targetedAddedTests": {
+    "tests": 92,
+    "pass": 92,
+    "fail": 0
+  },
+  "newFailingTestNames": [],
+  "originalFailingTestNames": [
+    "tests/ai-chat-timestamp-integrity.node.test.mjs",
+    "tests/archived-share-backup-integrity.node.test.mjs",
+    "tests/attachment-upload-admission.node.test.mjs",
+    "tests/auth-device-sessions.node.test.mjs",
+    "tests/authenticated-response-cache-policy.node.test.mjs",
+    "custom icon mutations revalidate authentication inside the storage transaction",
+    "tests/authentication-security.node.test.mjs",
+    "tests/backup-attachment-metadata-integrity.node.test.mjs",
+    "tests/backup-metadata-integrity.node.test.mjs",
+    "every created database table has an explicit backup-scope classification",
+    "tests/backup-share-identity-integrity.node.test.mjs",
+    "tests/backup-stream-integrity.node.test.mjs",
+    "tests/bcrypt-password-boundary.node.test.mjs",
+    "tests/block-create-idempotency.node.test.mjs",
+    "tests/block-delete-idempotency.node.test.mjs",
+    "tests/block-move-lossless.node.test.mjs",
+    "tests/block-order-integrity.node.test.mjs",
+    "tests/block-preserve-children-delete.node.test.mjs",
+    "tests/bookmark-public-web-policy.node.test.mjs",
+    "tests/bookmark-reddit-fallback.node.test.mjs",
+    "tests/code-highlighting-resource-limits.node.test.mjs",
+    "tests/collaboration-bootstrap-integrity.node.test.mjs",
+    "tests/collaboration-destructive-delete.node.test.mjs",
+    "tests/collaboration-materialization-version-upgrade.node.test.mjs",
+    "tests/collaboration-resource-limits.node.test.mjs",
+    "tests/country-policy-local-network.node.test.mjs",
+    "tests/custom-icon-resource-boundary.node.test.mjs",
+    "workspace restore carries and revalidates auth, device-session, and workspace-generation scope",
+    "tests/data-transfer-resource-limits.node.test.mjs",
+    "tests/database-durability.node.test.mjs",
+    "tests/database-normalizer-parity.node.test.mjs",
+    "tests/database-transport-security.node.test.mjs",
+    "read mode reuses the existing secured bookmark preview API without changing save serialization",
+    "tests/filesystem-presence-integrity.node.test.mjs",
+    "Gantt server rendering reuses the three fixed UTC date formatters",
+    "Gantt task-invariant timeline decorations are computed outside the task loop without changing rendered multiplicity",
+    "tests/page-cover-backup-integrity.node.test.mjs",
+    "tests/page-create-auth-boundary.node.test.mjs",
+    "tests/page-delete-collection-cascade-closure.node.test.mjs",
+    "tests/page-delete-collection-membership-snapshot.node.test.mjs",
+    "tests/page-delete-comment-snapshot.node.test.mjs",
+    "tests/page-delete-idempotency.node.test.mjs",
+    "tests/page-delete-owner-workspace-generation.node.test.mjs",
+    "tests/page-delete-version-history-snapshot.node.test.mjs",
+    "tests/page-move-collection-scope-integrity.node.test.mjs",
+    "tests/page-version-reset-idempotency.node.test.mjs",
+    "tests/request-deadline.node.test.mjs",
+    "tests/reverse-proxy-trust-boundary.node.test.mjs",
+    "tests/runtime-security-floor.node.test.mjs",
+    "tests/runtime-stability-regression.node.test.mjs",
+    "tests/search-literal-query.node.test.mjs",
+    "tests/security-followup-remediation.node.test.mjs",
+    "bookmark preview modes share the same egress policy and translated IPv6 is classified",
+    "tests/structured-metadata-integrity.node.test.mjs",
+    "tests/theme-preference-persistence.node.test.mjs",
+    "tests/treeview-regression.node.test.mjs",
+    "Public-relay refresh serves a still-safe cached directory without blocking the next authenticated request",
+    "country batch JSON decoding remains correct when Uint8Array chunks are retained without copying",
+    "streaming VPN Gate parsing preserves chunk-boundary, CRLF, quoted CSV, and public-relay behavior",
+    "streaming parser keeps the 20,000 accepted-row cap and four-hostname-per-IP cap",
+    "streaming refresh still reads raw bytes after the row cap and rejects an oversized chunked body",
+    "declared VPN Gate bodies above the byte limit are rejected before any body data is accepted",
+    "tests/websocket-resource-limits.node.test.mjs",
+    "tests/workspace-snapshot-diff.node.test.mjs"
+  ],
+  "existingTestAdjustment": {
+    "file": "tests/block-content-version-owner-scope.node.test.mjs",
+    "purpose": "Two source-shape assertions accept multiline signature and optional metadata callback; owner identity/SQL assertions preserved. New dynamic observer tests added."
+  },
+  "syntax": {
+    "modifiedJavaScript": "passed node --check",
+    "modifiedTypeScript": "parsed/stripped and transpile diagnostics 0; semantic tsc not completed"
+  },
+  "lockfile": {
+    "approvedResolvedURLs": 352,
+    "passed": true,
+    "unchanged": true
+  },
+  "blocked": {
+    "npm ci": "EBADENGINE: runtime below original patched security floor; dependencies unavailable offline",
+    "npm test": "lockfile check passes, then vitest not found",
+    "npm run build": "Mermaid vendor fetch fails with EAI_AGAIN for registry.npmjs.org before tsc",
+    "verify:security / verify:collaboration": "tsx is not installed",
+    "verify:data-loss": "script stops when child process requires unavailable tsx",
+    "browserE2E": "Chromium navigation ERR_BLOCKED_BY_ADMINISTRATOR; no browser DOM/IME end-to-end result",
+    "productionWANAndDatabase": "not available; latency benchmark uses real extracted app functions plus mocked HTTP/storage/browser globals"
+  },
+  "latencyModel": {
+    "perRequestDelayMs": 200,
+    "realNetwork": false,
+    "before": [
+      {
+        "latencyMs": 200,
+        "dirty": false,
+        "middle": false,
+        "elapsedMs": 809.11,
+        "requests": [
+          "PATCH /api/blocks/a",
+          "POST /api/pages/p/blocks",
+          "POST /api/pages/p/blocks/reorder",
+          "GET /api/pages/p"
+        ],
+        "committedCreates": 1,
+        "finalBlockIds": [
+          "a",
+          "new-3"
+        ],
+        "finalVersions": [
+          3,
+          2
+        ]
+      },
+      {
+        "latencyMs": 200,
+        "dirty": false,
+        "middle": true,
+        "elapsedMs": 813.5,
+        "requests": [
+          "PATCH /api/blocks/a",
+          "POST /api/pages/p/blocks",
+          "POST /api/pages/p/blocks/reorder",
+          "GET /api/pages/p"
+        ],
+        "committedCreates": 1,
+        "finalBlockIds": [
+          "a",
+          "new-3",
+          "b"
+        ],
+        "finalVersions": [
+          3,
+          2,
+          2
+        ]
+      },
+      {
+        "latencyMs": 200,
+        "dirty": true,
+        "middle": false,
+        "elapsedMs": 803.54,
+        "requests": [
+          "PATCH /api/blocks/a",
+          "POST /api/pages/p/blocks",
+          "POST /api/pages/p/blocks/reorder",
+          "GET /api/pages/p"
+        ],
+        "committedCreates": 1,
+        "finalBlockIds": [
+          "a",
+          "new-3"
+        ],
+        "finalVersions": [
+          3,
+          2
+        ]
+      },
+      {
+        "latencyMs": 200,
+        "dirty": true,
+        "middle": true,
+        "elapsedMs": 839.36,
+        "requests": [
+          "PATCH /api/blocks/a",
+          "POST /api/pages/p/blocks",
+          "POST /api/pages/p/blocks/reorder",
+          "GET /api/pages/p"
+        ],
+        "committedCreates": 1,
+        "finalBlockIds": [
+          "a",
+          "new-3",
+          "b"
+        ],
+        "finalVersions": [
+          3,
+          2,
+          2
+        ]
+      }
+    ],
+    "after": [
+      {
+        "latencyMs": 200,
+        "dirty": false,
+        "middle": false,
+        "elapsedMs": 204,
+        "requests": [
+          "POST /api/pages/p/blocks"
+        ],
+        "committedCreates": 1,
+        "finalBlockIds": [
+          "a",
+          "new-2"
+        ],
+        "finalVersions": [
+          1,
+          1
+        ]
+      },
+      {
+        "latencyMs": 200,
+        "dirty": false,
+        "middle": true,
+        "elapsedMs": 415.21,
+        "requests": [
+          "POST /api/pages/p/blocks",
+          "POST /api/pages/p/blocks/reorder"
+        ],
+        "committedCreates": 1,
+        "finalBlockIds": [
+          "a",
+          "new-2",
+          "b"
+        ],
+        "finalVersions": [
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "latencyMs": 200,
+        "dirty": true,
+        "middle": false,
+        "elapsedMs": 412.25,
+        "requests": [
+          "PATCH /api/blocks/a",
+          "POST /api/pages/p/blocks"
+        ],
+        "committedCreates": 1,
+        "finalBlockIds": [
+          "a",
+          "new-3"
+        ],
+        "finalVersions": [
+          2,
+          1
+        ]
+      },
+      {
+        "latencyMs": 200,
+        "dirty": true,
+        "middle": true,
+        "elapsedMs": 602.89,
+        "requests": [
+          "PATCH /api/blocks/a",
+          "POST /api/pages/p/blocks",
+          "POST /api/pages/p/blocks/reorder"
+        ],
+        "committedCreates": 1,
+        "finalBlockIds": [
+          "a",
+          "new-3",
+          "b"
+        ],
+        "finalVersions": [
+          3,
+          2,
+          2
+        ]
+      }
+    ]
+  }
+}

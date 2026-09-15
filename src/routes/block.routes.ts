@@ -670,7 +670,12 @@ function requireAttachmentUploadTarget(res: Response, actorId: string, pageId: s
   return target;
 }
 
-async function advancePageContentVersion(client: DbClient, pageId: string, ownerId: string) {
+async function advancePageContentVersion(
+  client: DbClient,
+  pageId: string,
+  ownerId: string,
+  onCommittedPage?: (page: PageRow) => void
+) {
   const result = await client.execute<{ affectedRows: number }>(
     "UPDATE pages SET content_version = content_version + 1 WHERE id = ? AND owner_id = ? AND content_version < ?",
     [pageId, ownerId, Number.MAX_SAFE_INTEGER]
@@ -692,6 +697,9 @@ async function advancePageContentVersion(client: DbClient, pageId: string, owner
     [pageId, ownerId]
   );
   if (!page) throw notFound("Page");
+  // Reuse this already-required, transaction-protected read for response
+  // metadata; no extra query and no change to mutation/access validation.
+  onCommittedPage?.(page);
   return Number(page.content_version ?? 1);
 }
 
@@ -1355,6 +1363,7 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
       if (reservation.kind === "replay") {
         return {
           block: reservation.block,
+          pageUpdatedAt: lockedAccess.page.updated_at,
           ...partialMutationVersionPayload(
             lockedContentVersion,
             isAuthoritativePartialMutationReplay(basePageContentVersion, lockedContentVersion)
@@ -1389,7 +1398,10 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
           prepared.metadata ? JSON.stringify(prepared.metadata) : null
         ]
       );
-      const pageContentVersion = await advancePageContentVersion(client, pageId, ownerId);
+      let pageUpdatedAt: PageRow["updated_at"] | undefined;
+      const pageContentVersion = await advancePageContentVersion(client, pageId, ownerId, (page) => {
+        pageUpdatedAt = page.updated_at;
+      });
       const block = await client.queryOne<BlockRow>("SELECT * FROM blocks WHERE id = ?", [id]);
       if (!block) throw new ApiError(500, "BLOCK_CREATE_FAILED", "Block was not created");
       await recordPageVersion(client, {
@@ -1400,6 +1412,7 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
       });
       return {
         block,
+        pageUpdatedAt,
         ...partialMutationVersionPayload(
           pageContentVersion,
           basePageContentVersion !== undefined && basePageContentVersion === lockedContentVersion
@@ -1409,6 +1422,7 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
 
     res.status(201).json({
       block: toBlock(result.block),
+      pageUpdatedAt: result.pageUpdatedAt,
       pageContentVersion: result.pageContentVersion,
       pageContentVersionAuthoritative: result.pageContentVersionAuthoritative
     });
@@ -2241,7 +2255,7 @@ blockRouter.post(
               "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC",
               [pageId]
             );
-            return { rows, pageContentVersion: Number(lockedPage.content_version ?? 1) };
+            return { rows, pageContentVersion: Number(lockedPage.content_version ?? 1), pageUpdatedAt: lockedPage.updated_at };
           }
         }
 
@@ -2357,7 +2371,10 @@ blockRouter.post(
           }
         }
 
-        const pageContentVersion = await advancePageContentVersion(client, pageId, lockedAccess.page.owner_id);
+        let pageUpdatedAt: PageRow["updated_at"] | undefined;
+        const pageContentVersion = await advancePageContentVersion(client, pageId, lockedAccess.page.owner_id, (page) => {
+          pageUpdatedAt = page.updated_at;
+        });
         if (mutationId && mutationHash) {
           await client.execute(
             `INSERT INTO block_order_mutations (owner_id, mutation_id, page_id, request_hash)
@@ -2375,10 +2392,10 @@ blockRouter.post(
           source: "BLOCK_REORDER",
           changes: diffPageVersionBlocks(hierarchyRows, rows)
         });
-        return { rows, pageContentVersion };
+        return { rows, pageContentVersion, pageUpdatedAt };
       });
 
-      res.json({ blocks: result.rows.map(toBlock), pageContentVersion: result.pageContentVersion });
+      res.json({ blocks: result.rows.map(toBlock), pageContentVersion: result.pageContentVersion, pageUpdatedAt: result.pageUpdatedAt });
     } catch (error) {
       next(error);
     }

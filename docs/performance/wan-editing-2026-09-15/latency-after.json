@@ -1,0 +1,87 @@
+{
+  "kind": "synthetic-app-function-network-latency-reproduction",
+  "source": "public/app.js",
+  "caveat": "Runs real app functions with mocked HTTP/browser/storage. Not real WAN, browser DOM/IME, server authorization or MariaDB E2E.",
+  "results": [
+    {
+      "latencyMs": 200,
+      "dirty": false,
+      "middle": false,
+      "elapsedMs": 204,
+      "requests": [
+        "POST /api/pages/p/blocks"
+      ],
+      "committedCreates": 1,
+      "finalBlockIds": [
+        "a",
+        "new-2"
+      ],
+      "finalVersions": [
+        1,
+        1
+      ]
+    },
+    {
+      "latencyMs": 200,
+      "dirty": false,
+      "middle": true,
+      "elapsedMs": 415.21,
+      "requests": [
+        "POST /api/pages/p/blocks",
+        "POST /api/pages/p/blocks/reorder"
+      ],
+      "committedCreates": 1,
+      "finalBlockIds": [
+        "a",
+        "new-2",
+        "b"
+      ],
+      "finalVersions": [
+        2,
+        2,
+        2
+      ]
+    },
+    {
+      "latencyMs": 200,
+      "dirty": true,
+      "middle": false,
+      "elapsedMs": 412.25,
+      "requests": [
+        "PATCH /api/blocks/a",
+        "POST /api/pages/p/blocks"
+      ],
+      "committedCreates": 1,
+      "finalBlockIds": [
+        "a",
+        "new-3"
+      ],
+      "finalVersions": [
+        2,
+        1
+      ]
+    },
+    {
+      "latencyMs": 200,
+      "dirty": true,
+      "middle": true,
+      "elapsedMs": 602.89,
+      "requests": [
+        "PATCH /api/blocks/a",
+        "POST /api/pages/p/blocks",
+        "POST /api/pages/p/blocks/reorder"
+      ],
+      "committedCreates": 1,
+      "finalBlockIds": [
+        "a",
+        "new-3",
+        "b"
+      ],
+      "finalVersions": [
+        3,
+        2,
+        2
+      ]
+    }
+  ]
+}

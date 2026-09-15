@@ -1,0 +1,95 @@
+{
+  "kind": "synthetic-app-function-network-latency-reproduction",
+  "source": "original uploaded public/app.js (extracted outside project)",
+  "caveat": "Runs real app functions with mocked HTTP/browser/storage. Not real WAN, browser DOM/IME, server authorization or MariaDB E2E.",
+  "results": [
+    {
+      "latencyMs": 200,
+      "dirty": false,
+      "middle": false,
+      "elapsedMs": 809.11,
+      "requests": [
+        "PATCH /api/blocks/a",
+        "POST /api/pages/p/blocks",
+        "POST /api/pages/p/blocks/reorder",
+        "GET /api/pages/p"
+      ],
+      "committedCreates": 1,
+      "finalBlockIds": [
+        "a",
+        "new-3"
+      ],
+      "finalVersions": [
+        3,
+        2
+      ]
+    },
+    {
+      "latencyMs": 200,
+      "dirty": false,
+      "middle": true,
+      "elapsedMs": 813.5,
+      "requests": [
+        "PATCH /api/blocks/a",
+        "POST /api/pages/p/blocks",
+        "POST /api/pages/p/blocks/reorder",
+        "GET /api/pages/p"
+      ],
+      "committedCreates": 1,
+      "finalBlockIds": [
+        "a",
+        "new-3",
+        "b"
+      ],
+      "finalVersions": [
+        3,
+        2,
+        2
+      ]
+    },
+    {
+      "latencyMs": 200,
+      "dirty": true,
+      "middle": false,
+      "elapsedMs": 803.54,
+      "requests": [
+        "PATCH /api/blocks/a",
+        "POST /api/pages/p/blocks",
+        "POST /api/pages/p/blocks/reorder",
+        "GET /api/pages/p"
+      ],
+      "committedCreates": 1,
+      "finalBlockIds": [
+        "a",
+        "new-3"
+      ],
+      "finalVersions": [
+        3,
+        2
+      ]
+    },
+    {
+      "latencyMs": 200,
+      "dirty": true,
+      "middle": true,
+      "elapsedMs": 839.36,
+      "requests": [
+        "PATCH /api/blocks/a",
+        "POST /api/pages/p/blocks",
+        "POST /api/pages/p/blocks/reorder",
+        "GET /api/pages/p"
+      ],
+      "committedCreates": 1,
+      "finalBlockIds": [
+        "a",
+        "new-3",
+        "b"
+      ],
+      "finalVersions": [
+        3,
+        2,
+        2
+      ]
+    }
+  ]
+}
