@@ -20,6 +20,7 @@ import {
   summarizeBookmarkData
 } from "../src/lib/bookmark.js";
 import { renderBlockHtml } from "../src/lib/markdown.js";
+import { parseNat64Prefix } from "../src/lib/network-address.js";
 
 const bookmarkSource = readFileSync(new URL("../src/lib/bookmark.ts", import.meta.url), "utf8");
 const envSource = readFileSync(new URL("../src/config/env.ts", import.meta.url), "utf8");
@@ -46,7 +47,8 @@ describe("bookmark OpenGraph parsing", () => {
       imageUrl: "https://example.com/media/cover.jpg",
       faviconUrl: "https://example.com/icons/favicon.png",
       siteName: "Example News",
-      verified: true
+      verified: false,
+      previewToken: ""
     });
   });
 
@@ -189,8 +191,9 @@ describe("bookmark data normalization and rendering", () => {
     expect(data.items).toHaveLength(1);
     expect(data.listColumns).toBe(1);
     expect(data.maxItems).toBe(50);
-    expect(data.items[0].imageUrl).toBe("https://example.com/cover.jpg");
-    expect(data.items[0].faviconUrl).toBe("https://example.com/favicon.png");
+    expect(data.items[0].imageUrl).toBe("");
+    expect(data.items[0].faviconUrl).toBe("");
+    expect(data.items[0]).toMatchObject({ verified: false, previewToken: "" });
     expect(data.title).toBe("Research <script>alert(2)</script>");
     expect(summarizeBookmarkData(data)).toContain("Research <script>alert(2)</script>");
     expect(summarizeBookmarkData(data)).toContain("https://example.com/post");
@@ -221,7 +224,7 @@ describe("bookmark data normalization and rendering", () => {
     });
     expect(html).toContain("rendered-bookmarks--list");
     expect(html).toContain("rendered-bookmarks--list-columns-3");
-    expect(html).toContain("rendered-bookmark-favicon");
+    expect(html).not.toContain("rendered-bookmark-favicon");
     expect(html).toContain("Unsafe &lt;script&gt;");
     expect(html).not.toContain("rendered-bookmark-description");
     expect(html).not.toContain("Description &lt;img");
@@ -316,6 +319,17 @@ describe("bookmark network address selection", () => {
     ]);
   });
 
+  it("drops private IPv4 destinations embedded in an operator NAT64 prefix", () => {
+    const prefix = parseNat64Prefix("2a00:64::/96");
+    expect(prefix).not.toBeNull();
+    expect(prioritizeResolvedAddresses([
+      { address: "2a00:64::7f00:1", family: 6 },
+      { address: "2606:4700:4700::1111", family: 6 }
+    ], prefix ? [prefix] : [])).toEqual([
+      { address: "2606:4700:4700::1111", family: 6 }
+    ]);
+  });
+
   it("returns all pinned public addresses when Node requests family autoselection", async () => {
     const lookup = createPinnedLookup([
       { address: "2606:4700:4700::1111", family: 6 },
@@ -370,7 +384,8 @@ describe("bookmark network address selection", () => {
       imageUrl: "",
       faviconUrl: "https://example.com/favicon.ico",
       siteName: "example.com",
-      verified: false
+      verified: false,
+      previewToken: ""
     });
   });
 

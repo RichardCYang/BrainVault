@@ -260,11 +260,14 @@ export function isPrivateOrLocalHostname(hostname: string) {
     || normalized.endsWith(".home.arpa");
 }
 
-export function prioritizeResolvedAddresses(addresses: Array<{ address: string; family: number }>) {
+export function prioritizeResolvedAddresses(
+  addresses: Array<{ address: string; family: number }>,
+  nat64Prefixes: readonly Nat64Prefix[] = []
+) {
   const unique = new Map<string, ResolvedAddress>();
   for (const item of addresses) {
     const family = net.isIP(item.address);
-    if ((family !== 4 && family !== 6) || isPrivateAddress(item.address)) continue;
+    if ((family !== 4 && family !== 6) || isPrivateOrNat64TranslatedAddress(item.address, nat64Prefixes)) continue;
     unique.set(`${family}:${item.address}`, { address: item.address, family });
   }
 

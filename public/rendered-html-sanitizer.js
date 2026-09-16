@@ -44,15 +44,41 @@ const renderedImageDataPattern = /^data:image\/(?:png|jpeg|webp|vnd\.microsoft\.
 const youtubeEmbedPattern = /^https:\/\/www\.youtube(?:-nocookie)?\.com\/embed\//i;
 const booleanAttributes = new Set(["checked", "disabled", "open", "allowfullscreen"]);
 
-function normalizeRenderedImageSource(value) {
-  const source = typeof value === "string" ? value.trim() : "";
-  if (!source) return "";
-  if (source.startsWith("/") && !source.startsWith("//") && !source.includes("\\")) {
-    const pathOnly = source.split(/[?#]/, 1)[0].toLowerCase();
-    if (pathOnly === "/api" || pathOnly.startsWith("/api/")) return "";
-    return source;
+const renderedImageSyntheticOrigin = "https://brainvault.invalid";
+
+function decodedRenderedPathForPolicy(pathname) {
+  let decoded = pathname;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    if (/[\u0000-\u001f\u007f\\]/.test(decoded)) return "";
+    let next;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch {
+      return "";
+    }
+    if (next === decoded) return decoded.toLowerCase();
+    decoded = next;
   }
-  return renderedImageDataPattern.test(source) ? source : "";
+  return /%[0-9a-f]{2}/i.test(decoded) ? "" : decoded.toLowerCase();
+}
+
+function normalizeRenderedImageSource(value) {
+  const rawSource = typeof value === "string" ? value.trim() : "";
+  if (!rawSource) return "";
+  if (renderedImageDataPattern.test(rawSource)) return rawSource;
+
+  const source = rawSource.replace(/[\u0000-\u001f\u007f]/g, "");
+  if (!source || !source.startsWith("/") || source.startsWith("//") || source.includes("\\")) return "";
+
+  try {
+    const parsed = new URL(source, `${renderedImageSyntheticOrigin}/`);
+    if (parsed.origin !== renderedImageSyntheticOrigin) return "";
+    const policyPath = decodedRenderedPathForPolicy(parsed.pathname);
+    if (!policyPath || policyPath === "/api" || policyPath.startsWith("/api/")) return "";
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return "";
+  }
 }
 
 function normalizeRenderedHref(value) {

@@ -11,13 +11,16 @@ test("policy-blocked bookmark fallbacks are structurally unverified and media-fr
   assert.ok(fallbackStart >= 0 && fallbackEnd > fallbackStart);
   const fallback = server.slice(fallbackStart, fallbackEnd);
   assert.match(fallback, /verified:\s*false/);
-  assert.match(server, /const verified = item\.verified !== false/);
-  assert.match(server, /imageUrl:\s*verified \? normalizeBookmarkUrl\(item\.imageUrl, url\) : ""/);
-  assert.match(server, /faviconUrl:\s*verified[\s\S]*:\s*""/);
+  assert.match(fallback, /previewToken:\s*""/);
+  assert.match(server, /const verified = item\.verified === true && hasValidBookmarkPreviewToken/);
+  assert.match(server, /imageUrl:\s*verified \? imageUrl : ""/);
+  assert.match(server, /faviconUrl:\s*verified \? faviconUrl : ""/);
+  assert.match(server, /previewToken:\s*verified \? previewToken : ""/);
 });
 
 test("browser normalization cannot recreate remote media for an unverified fallback", () => {
-  assert.match(client, /const verified = rawItem\.verified !== false/);
+  assert.match(client, /const verified = rawItem\.verified === true && hasPreviewToken/);
   assert.match(client, /imageUrl:\s*verified \? normalizeBookmarkUrl\(rawItem\.imageUrl, url\) : ""/);
   assert.match(client, /faviconUrl:\s*verified[\s\S]*:\s*""/);
+  assert.match(client, /previewToken:\s*verified \? previewToken : ""/);
 });

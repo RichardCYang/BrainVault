@@ -81,14 +81,15 @@ test("shared content cannot auto-load arbitrary third-party images", () => {
   assert.match(markdown, /allowedSchemesByTag: \{ img: \["data"\] \}/);
   assert.match(markdown, /function getAiChatExternalImageLink/);
   assert.match(markdown, /rendered-ai-chat-image-link/);
-  assert.match(markdown, /pathOnly === "\/api" \|\| pathOnly\.startsWith\("\/api\/"\)/);
+  assert.match(markdown, /decodedRenderedPathForPolicy\(parsed\.pathname\)/);
   assert.doesNotMatch(markdown, /img:\s*\[[^\]]*"srcset"/);
   assert.match(bookmark, /const \{ url, addresses \} = await validateFetchUrl\(value, deadline\)/);
   assert.doesNotMatch(bookmark, /fetchAiChatImage|AI_CHAT_IMAGE_/);
   assert.doesNotMatch(blockRoutes, /blockRouter\.get\(\s*"\/ai-chat\/image"/);
   assert.match(browser, /url\.origin !== window\.location\.origin/);
   assert.match(browser, /getRenderableImageSource\(item\?\.faviconUrl, \{ allowData: false \}\)/);
-  assert.match(browser, /getRenderableImageSource\(page\?\.coverUrl\)/);
+  assert.match(browser, /allowedApplicationApiPath: page\?\.id \? `\/api\/pages\/\$\{encodeURIComponent\(page\.id\)\}\/cover` : ""/);
+  assert.match(browser, /policyPath !== allowedPath/);
 });
 
 test("rendered HTML explicitly excludes foreign and raw-text parser contexts", () => {

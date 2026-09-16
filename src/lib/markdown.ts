@@ -603,25 +603,48 @@ const allowedAttributes: sanitizeHtml.IOptions["allowedAttributes"] = {
   li: ["class"]
 };
 
-function normalizeRenderedImageSource(value: unknown) {
-  const source = typeof value === "string" ? value.trim() : "";
-  if (!source) return "";
+const renderedImageSyntheticOrigin = "https://brainvault.invalid";
 
-  // Persisted HTML may render only same-origin application paths or bounded
-  // raster-image data URLs. Do not preserve absolute/protocol-relative URLs:
-  // collaborator-authored markup must never trigger third-party viewer egress.
-  if (source.startsWith("/") && !source.startsWith("//") && !source.includes("\\")) {
-    // Rendered content must never auto-dispatch authenticated API requests.
-    // Application API paths can have server-side effects even when the HTML
-    // itself is same-origin and otherwise safe to display.
-    const pathOnly = source.split(/[?#]/, 1)[0].toLowerCase();
-    if (pathOnly === "/api" || pathOnly.startsWith("/api/")) return "";
-    return source;
+function decodedRenderedPathForPolicy(pathname: string) {
+  let decoded = pathname;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    if (/[\u0000-\u001f\u007f\\]/.test(decoded)) return "";
+    let next: string;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch {
+      return "";
+    }
+    if (next === decoded) return decoded.toLowerCase();
+    decoded = next;
   }
-  if (/^data:image\/(?:png|jpeg|webp|vnd\.microsoft\.icon|x-icon);base64,[a-z0-9+/]+={0,2}$/i.test(source)) {
-    return source;
+  // Deeply nested percent-encoding is not needed for local image paths and is
+  // safer to reject than to guess how downstream routing will decode it.
+  return /%[0-9a-f]{2}/i.test(decoded) ? "" : decoded.toLowerCase();
+}
+
+function normalizeRenderedImageSource(value: unknown) {
+  const rawSource = typeof value === "string" ? value.trim() : "";
+  if (!rawSource) return "";
+  if (/^data:image\/(?:png|jpeg|webp|vnd\.microsoft\.icon|x-icon);base64,[a-z0-9+/]+={0,2}$/i.test(rawSource)) {
+    return rawSource;
   }
-  return "";
+
+  // The WHATWG URL parser removes ASCII tabs/newlines before routing. Mirror
+  // that behavior before classification so HTML character-reference variants
+  // cannot disguise an authenticated application API request.
+  const source = rawSource.replace(/[\u0000-\u001f\u007f]/g, "");
+  if (!source || !source.startsWith("/") || source.startsWith("//") || source.includes("\\")) return "";
+
+  try {
+    const parsed = new URL(source, `${renderedImageSyntheticOrigin}/`);
+    if (parsed.origin !== renderedImageSyntheticOrigin) return "";
+    const policyPath = decodedRenderedPathForPolicy(parsed.pathname);
+    if (!policyPath || policyPath === "/api" || policyPath.startsWith("/api/")) return "";
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return "";
+  }
 }
 
 const sanitizeOptions: sanitizeHtml.IOptions = {

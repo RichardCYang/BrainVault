@@ -28,8 +28,10 @@ test("BV-33 rendered content cannot auto-dispatch API image requests", () => {
   const clientSanitizer = read("public/rendered-html-sanitizer.js");
   const blockRoutes = read("src/routes/block.routes.ts");
 
-  assert.match(serverSanitizer, /pathOnly === "\/api" \|\| pathOnly\.startsWith\("\/api\/"\)/);
-  assert.match(clientSanitizer, /pathOnly === "\/api" \|\| pathOnly\.startsWith\("\/api\/"\)/);
+  assert.match(serverSanitizer, /new URL\(source, `\$\{renderedImageSyntheticOrigin\}\/`\)/);
+  assert.match(serverSanitizer, /decodedRenderedPathForPolicy\(parsed\.pathname\)/);
+  assert.match(clientSanitizer, /new URL\(source, `\$\{renderedImageSyntheticOrigin\}\/`\)/);
+  assert.match(clientSanitizer, /decodedRenderedPathForPolicy\(parsed\.pathname\)/);
   assert.match(serverSanitizer, /rendered-ai-chat-image-link/);
   assert.doesNotMatch(serverSanitizer, /\/api\/ai-chat\/image\?url=/);
   assert.doesNotMatch(blockRoutes, /"\/ai-chat\/image"/);
@@ -56,6 +58,9 @@ test("BV-34 infers RFC 6052 NAT64 prefixes from RFC 7050 ipv4only.arpa answers",
   const bookmark = read("src/lib/bookmark.ts");
   assert.match(bookmark, /resolver\.resolve6\("ipv4only\.arpa"\)/);
   assert.match(bookmark, /isPrivateOrNat64TranslatedAddress\(item\.address, nat64Prefixes\)/);
+  assert.match(bookmark, /discoveredPrefixes === null[\s\S]*addresses\.filter\(\(item\) => net\.isIP\(item\.address\) === 4\)/);
+  assert.match(bookmark, /const pinned = prioritizeResolvedAddresses\(addresses, knownNat64Prefixes\)/);
+  assert.doesNotMatch(bookmark, /discoveredNat64Prefixes = \[\]/);
 });
 
 

@@ -684,6 +684,7 @@ const bookmarkLimits = {
   titleLength: 300,
   descriptionLength: 1000,
   siteNameLength: 160,
+  previewTokenLength: 64,
   maxListColumns: 5
 };
 
@@ -877,7 +878,12 @@ function normalizeBookmarkData(value) {
     while (seenIds.has(id)) id = createClientId(`bookmark-${index + 1}`);
     seenIds.add(id);
     const parsedUrl = new URL(url);
-    const verified = rawItem.verified !== false;
+    const previewToken = typeof rawItem.previewToken === "string" ? rawItem.previewToken.trim() : "";
+    const hasPreviewToken = previewToken.length <= bookmarkLimits.previewTokenLength
+      && /^[A-Za-z0-9_-]{43}$/.test(previewToken);
+    // The browser can preserve a server-issued token, but it cannot establish trust itself.
+    // Rendering remains independently restricted to safe same-origin non-API image sources.
+    const verified = rawItem.verified === true && hasPreviewToken;
 
     items.push({
       id,
@@ -889,7 +895,8 @@ function normalizeBookmarkData(value) {
         ? normalizeBookmarkUrl(rawItem.faviconUrl, url) || new URL("/favicon.ico", url).toString()
         : "",
       siteName: normalizeBookmarkText(rawItem.siteName, bookmarkLimits.siteNameLength) || parsedUrl.hostname,
-      verified
+      verified,
+      previewToken: verified ? previewToken : ""
     });
   }
 
@@ -5548,7 +5555,28 @@ function createBuiltInIconSvg(name) {
   return svg;
 }
 
-function getRenderableImageSource(value, { allowData = true } = {}) {
+function decodedApplicationPathForPolicy(pathname) {
+  let decoded = pathname;
+  for (let pass = 0; pass < 8; pass += 1) {
+    let next;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch {
+      return null;
+    }
+    if (/[\u0000-\u001f\u007f\\]/.test(next)) return null;
+    if (next === decoded) return next.toLowerCase();
+    decoded = next;
+  }
+  return /%[0-9a-f]{2}/i.test(decoded) ? null : decoded.toLowerCase();
+}
+
+function isApplicationApiImagePath(pathname) {
+  const path = decodedApplicationPathForPolicy(pathname);
+  return path === null || path === "/api" || path.startsWith("/api/");
+}
+
+function getRenderableImageSource(value, { allowData = true, allowedApplicationApiPath = "" } = {}) {
   const source = typeof value === "string" ? value.trim() : "";
   if (!source) return null;
   if (
@@ -5564,6 +5592,12 @@ function getRenderableImageSource(value, { allowData = true } = {}) {
       || url.username
       || url.password
     ) return null;
+    const policyPath = decodedApplicationPathForPolicy(url.pathname);
+    if (!policyPath) return null;
+    if (isApplicationApiImagePath(url.pathname)) {
+      const allowedPath = decodedApplicationPathForPolicy(allowedApplicationApiPath);
+      if (!allowedPath || policyPath !== allowedPath) return null;
+    }
     return url.toString();
   } catch {
     return null;
@@ -17521,7 +17555,9 @@ function closePageCoverPositionEditor({ restore = false } = {}) {
 function syncPageCoverControls() {
   const page = state.workspaceView === "page" ? state.selectedPage : null;
   const hasCurrentPositionDraft = isPageCoverPositionDraftForPage(pageCoverPositionDraft, page?.id);
-  const hasCover = Boolean(getRenderableImageSource(page?.coverUrl));
+  const hasCover = Boolean(getRenderableImageSource(page?.coverUrl, {
+    allowedApplicationApiPath: page?.id ? `/api/pages/${encodeURIComponent(page.id)}/cover` : ""
+  }));
   const canEditCover = Boolean(
     page && hasCover && !isPageReadOnly() && canManagePage(page) && !isPageInteractionLocked() && !pageCoverSaving
   );
@@ -17554,7 +17590,9 @@ function renderPageCover(page) {
   if (pageCoverPositionDraft && !isPageCoverPositionDraftForPage(pageCoverPositionDraft, page?.id)) {
     closePageCoverPositionEditor();
   }
-  const coverSource = getRenderableImageSource(page?.coverUrl);
+  const coverSource = getRenderableImageSource(page?.coverUrl, {
+    allowedApplicationApiPath: page?.id ? `/api/pages/${encodeURIComponent(page.id)}/cover` : ""
+  });
   const hasCover = Boolean(coverSource);
   elements.pageViewHeader.classList.toggle("has-page-cover", hasCover);
   elements.pageView.classList.toggle("has-page-cover", hasCover);

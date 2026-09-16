@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import dns from "node:dns";
 import http from "node:http";
 import https from "node:https";
@@ -39,6 +40,7 @@ export const bookmarkLimits = {
   titleLength: 300,
   descriptionLength: 1_000,
   siteNameLength: 160,
+  previewTokenLength: 64,
   maxListColumns: 5,
   htmlBytes: 768 * 1024,
   redirects: 5
@@ -56,6 +58,7 @@ export type BookmarkItem = {
   faviconUrl: string;
   siteName: string;
   verified: boolean;
+  previewToken: string;
 };
 
 export type BookmarkData = {
@@ -139,6 +142,57 @@ export function normalizeBookmarkUrl(value: unknown, baseUrl?: string | URL) {
   }
 }
 
+type BookmarkPreviewTokenFields = Pick<BookmarkItem, "url" | "title" | "description" | "imageUrl" | "faviconUrl" | "siteName">;
+
+function normalizeBookmarkPreviewToken(value: unknown) {
+  const token = typeof value === "string" ? value.trim() : "";
+  return token.length <= bookmarkLimits.previewTokenLength && /^[A-Za-z0-9_-]{43}$/.test(token) ? token : "";
+}
+
+function bookmarkPreviewTokenPayload(fields: BookmarkPreviewTokenFields) {
+  return JSON.stringify([
+    1,
+    fields.url,
+    fields.title,
+    fields.description,
+    fields.imageUrl,
+    fields.faviconUrl,
+    fields.siteName
+  ]);
+}
+
+function createBookmarkPreviewToken(fields: BookmarkPreviewTokenFields) {
+  return createHmac("sha256", env.JWT_SECRET)
+    .update("brainvault-bookmark-preview-v1\0")
+    .update(bookmarkPreviewTokenPayload(fields))
+    .digest("base64url");
+}
+
+function hasValidBookmarkPreviewToken(fields: BookmarkPreviewTokenFields, value: unknown) {
+  const token = normalizeBookmarkPreviewToken(value);
+  if (!token) return false;
+  const expected = createBookmarkPreviewToken(fields);
+  const suppliedBytes = Buffer.from(token, "utf8");
+  const expectedBytes = Buffer.from(expected, "utf8");
+  return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
+}
+
+function signBookmarkPreview(preview: BookmarkPreview): BookmarkPreview {
+  const fields: BookmarkPreviewTokenFields = {
+    url: preview.url,
+    title: preview.title,
+    description: preview.description,
+    imageUrl: preview.imageUrl,
+    faviconUrl: preview.faviconUrl,
+    siteName: preview.siteName
+  };
+  return {
+    ...preview,
+    verified: true,
+    previewToken: createBookmarkPreviewToken(fields)
+  };
+}
+
 export function createDefaultBookmarkData(): BookmarkData {
   return {
     title: "Bookmarks",
@@ -183,20 +237,27 @@ export function getBookmarkData(metadata: unknown): BookmarkData {
 
     const parsedUrl = new URL(url);
     const title = normalizeText(item.title, bookmarkLimits.titleLength) || parsedUrl.hostname;
-    // Backward compatibility: stored previews created before the verified flag
-    // existed were produced by the validated fetch path and remain trusted.
-    const verified = item.verified !== false;
+    const description = normalizeText(item.description, bookmarkLimits.descriptionLength);
+    const imageUrl = normalizeBookmarkUrl(item.imageUrl, url);
+    const faviconUrl = normalizeBookmarkUrl(item.faviconUrl, url) || new URL("/favicon.ico", url).toString();
+    const siteName = normalizeText(item.siteName, bookmarkLimits.siteNameLength) || parsedUrl.hostname;
+    const previewToken = normalizeBookmarkPreviewToken(item.previewToken);
+    // `verified` is server-derived. A client cannot opt arbitrary stored media
+    // into trusted-preview semantics without the HMAC returned by the validated
+    // preview fetch path. Rendering still applies an independent URL policy.
+    const verified = item.verified === true && hasValidBookmarkPreviewToken({
+      url, title, description, imageUrl, faviconUrl, siteName
+    }, previewToken);
     items.push({
       id,
       url,
       title,
-      description: normalizeText(item.description, bookmarkLimits.descriptionLength),
-      imageUrl: verified ? normalizeBookmarkUrl(item.imageUrl, url) : "",
-      faviconUrl: verified
-        ? normalizeBookmarkUrl(item.faviconUrl, url) || new URL("/favicon.ico", url).toString()
-        : "",
-      siteName: normalizeText(item.siteName, bookmarkLimits.siteNameLength) || parsedUrl.hostname,
-      verified
+      description,
+      imageUrl: verified ? imageUrl : "",
+      faviconUrl: verified ? faviconUrl : "",
+      siteName,
+      verified,
+      previewToken: verified ? previewToken : ""
     });
   }
 
@@ -268,14 +329,25 @@ const localBookmarkSelfAddresses = new Set(
 let publicOriginAddressKeys: ReadonlySet<string> | null = null;
 let publicOriginAddressResolution: Promise<ReadonlySet<string>> | null = null;
 let discoveredNat64Prefixes: readonly Nat64Prefix[] | null = null;
-let nat64PrefixResolution: Promise<readonly Nat64Prefix[]> | null = null;
+let discoveredNat64PrefixesAt = 0;
+let nat64PrefixResolution: Promise<readonly Nat64Prefix[] | null> | null = null;
+const nat64PrefixCacheTtlMs = 60_000;
 
-async function resolveNat64Prefixes(deadline: number): Promise<readonly Nat64Prefix[]> {
-  if (discoveredNat64Prefixes) return discoveredNat64Prefixes;
+async function resolveNat64Prefixes(deadline: number): Promise<readonly Nat64Prefix[] | null> {
+  const configured = env.BOOKMARK_FETCH_NAT64_PREFIXES as readonly Nat64Prefix[];
+  const mergePrefixes = (discovered: readonly Nat64Prefix[]) => {
+    const unique = new Map(
+      [...configured, ...discovered].map((prefix) => [`${prefix.base}/${prefix.prefixLength}`, prefix])
+    );
+    return [...unique.values()];
+  };
+
+  if (discoveredNat64Prefixes && Date.now() - discoveredNat64PrefixesAt < nat64PrefixCacheTtlMs) {
+    return mergePrefixes(discoveredNat64Prefixes);
+  }
   if (nat64PrefixResolution) return nat64PrefixResolution;
 
   nat64PrefixResolution = (async () => {
-    const configured = env.BOOKMARK_FETCH_NAT64_PREFIXES as readonly Nat64Prefix[];
     const remainingTime = deadline - Date.now();
     if (remainingTime <= 0) throw new ApiError(504, "BOOKMARK_FETCH_TIMEOUT", "The bookmark page took too long to respond");
 
@@ -283,20 +355,23 @@ async function resolveNat64Prefixes(deadline: number): Promise<readonly Nat64Pre
     const cancelTimer = setTimeout(() => resolver.cancel(), remainingTime);
     cancelTimer.unref?.();
     try {
-      let answers: string[] = [];
+      let answers: string[];
       try {
         answers = await resolver.resolve6("ipv4only.arpa");
       } catch (error) {
-        if (!isDnsNoDataError(error)) throw error;
+        if (isDnsNoDataError(error)) return configured.length ? configured : null;
+        throw error;
       }
       const inferred = answers
         .map(inferNat64PrefixFromIpv4OnlyAddress)
         .filter((prefix): prefix is Nat64Prefix => prefix !== null);
-      const unique = new Map(
-        [...configured, ...inferred].map((prefix) => [`${prefix.base}/${prefix.prefixLength}`, prefix])
+      if (!inferred.length) return configured.length ? configured : null;
+      const uniqueDiscovered = new Map(
+        inferred.map((prefix) => [`${prefix.base}/${prefix.prefixLength}`, prefix])
       );
-      discoveredNat64Prefixes = [...unique.values()];
-      return discoveredNat64Prefixes;
+      discoveredNat64Prefixes = [...uniqueDiscovered.values()];
+      discoveredNat64PrefixesAt = Date.now();
+      return mergePrefixes(discoveredNat64Prefixes);
     } catch (error) {
       const systemCode = error && typeof error === "object" && "code" in error ? String(error.code) : undefined;
       if (systemCode === "ETIMEOUT" || systemCode === "ECANCELLED") {
@@ -313,9 +388,10 @@ async function resolveNat64Prefixes(deadline: number): Promise<readonly Nat64Pre
 
   try {
     return await nat64PrefixResolution;
-  } catch (error) {
+  } finally {
+    // Do not cache an empty discovery result for the process lifetime. A later
+    // resolver epoch may expose a NAT64 prefix that must participate in SSRF checks.
     nat64PrefixResolution = null;
-    throw error;
   }
 }
 
@@ -447,14 +523,29 @@ async function resolvePublicAddresses(
     });
   }
 
-  const nat64Prefixes = addresses.some((item) => net.isIP(item.address) === 6)
-    ? await resolveNat64Prefixes(deadline)
-    : env.BOOKMARK_FETCH_NAT64_PREFIXES as readonly Nat64Prefix[];
-  const hasUnsafeAddress = addresses.some((item) => {
+  const hasIpv6 = addresses.some((item) => net.isIP(item.address) === 6);
+  const configuredNat64Prefixes = env.BOOKMARK_FETCH_NAT64_PREFIXES as readonly Nat64Prefix[];
+  const discoveredPrefixes = hasIpv6 ? await resolveNat64Prefixes(deadline) : configuredNat64Prefixes;
+  const nat64Prefixes = discoveredPrefixes ?? [];
+
+  // An empty RFC 7050 result is ambiguous: it can mean "no NAT64" or that
+  // discovery is unavailable. Never send an IPv6-only request when that posture
+  // is unknown. For dual-stack names, safely fall back to the validated IPv4
+  // answers instead of sacrificing normal public-web availability.
+  const candidateAddresses = hasIpv6 && discoveredPrefixes === null
+    ? addresses.filter((item) => net.isIP(item.address) === 4)
+    : addresses;
+  if (!candidateAddresses.length) {
+    throw new ApiError(422, "BOOKMARK_FETCH_FAILED", "The NAT64 translation prefix could not be validated", {
+      reason: "nat64-discovery"
+    });
+  }
+
+  const hasUnsafeAddress = candidateAddresses.some((item) => {
     const family = net.isIP(item.address);
     return (family !== 4 && family !== 6) || isPrivateOrNat64TranslatedAddress(item.address, nat64Prefixes);
   });
-  const publicAddresses = prioritizeResolvedAddresses(addresses);
+  const publicAddresses = prioritizeResolvedAddresses(candidateAddresses, nat64Prefixes);
   if (!publicAddresses.length || hasUnsafeAddress) {
     throw new ApiError(400, "BOOKMARK_URL_BLOCKED", "Local and private network addresses are not allowed");
   }
@@ -463,7 +554,15 @@ async function resolvePublicAddresses(
 }
 
 export function createPinnedLookup(addresses: ResolvedAddress[]): LookupFunction {
-  const pinned = prioritizeResolvedAddresses(addresses);
+  // Re-apply the same NAT64-aware policy at the DNS-pinning boundary. If RFC
+  // 7050 discovery is unavailable, resolvePublicAddresses() never forwards IPv6
+  // candidates here; when a prefix is known, this is an independent defense.
+  const configuredNat64Prefixes = env.BOOKMARK_FETCH_NAT64_PREFIXES as readonly Nat64Prefix[];
+  const knownNat64Prefixes = [...new Map(
+    [...configuredNat64Prefixes, ...(discoveredNat64Prefixes ?? [])]
+      .map((prefix) => [`${prefix.base}/${prefix.prefixLength}`, prefix])
+  ).values()];
+  const pinned = prioritizeResolvedAddresses(addresses, knownNat64Prefixes);
   return (_hostname, options, callback) => {
     const requestedFamily = Number(options.family ?? 0);
     const matching = requestedFamily === 4 || requestedFamily === 6
@@ -886,7 +985,8 @@ export function parseBookmarkPreview(html: string, pageUrl: string | URL): Bookm
     imageUrl,
     faviconUrl,
     siteName,
-    verified: true
+    verified: false,
+    previewToken: ""
   };
 }
 
@@ -1162,13 +1262,15 @@ async function fetchBookmarkPreviewFromHtml(value: string, deadline: number): Pr
     normalizePublicPreviewUrl(parsed.faviconUrl, fallbackFavicon, deadline)
   ]);
 
-  return {
+  return signBookmarkPreview({
     ...parsed,
     url: pageUrl,
     imageUrl,
     faviconUrl,
-    siteName: parsed.siteName || new URL(pageUrl).hostname
-  };
+    siteName: parsed.siteName || new URL(pageUrl).hostname,
+    verified: false,
+    previewToken: ""
+  });
 }
 
 export async function fetchBookmarkPreview(value: string): Promise<BookmarkPreview> {
@@ -1209,7 +1311,8 @@ export function createFallbackBookmarkPreview(
     imageUrl: "",
     faviconUrl: includeFavicon ? new URL("/favicon.ico", url).toString() : "",
     siteName: parsedUrl.hostname,
-    verified: false
+    verified: false,
+    previewToken: ""
   };
 }
 

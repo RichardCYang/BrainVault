@@ -66,11 +66,11 @@ test("bookmark fetch path preserves the SSRF, redirect, port, pinning, deadline,
   assert.match(bookmarkSource, /isSelfOrSubdomainBookmarkFetchHost\(url\.hostname\)/);
   assert.match(bookmarkSource, /BOOKMARK_FETCH_ALLOWED_PORTS\.includes\(effectivePort\)/);
   assert.match(bookmarkSource, /const addresses = await resolvePublicAddresses\(url, deadline\)/);
-  assert.match(bookmarkSource, /addresses\.some[\s\S]*isPrivateAddress\(item\.address\)/);
+  assert.match(bookmarkSource, /isPrivateOrNat64TranslatedAddress\(item\.address, nat64Prefixes\)/);
   assert.match(bookmarkSource, /Object\.values\(os\.networkInterfaces\(\)\)/);
   assert.match(bookmarkSource, /resolvePublicOriginAddressKeys\(deadline\)/);
   assert.match(bookmarkSource, /assertBookmarkAddressesAreNotSelfOrigin\(addresses, deadline\)/);
-  assert.match(bookmarkSource, /selfAddresses\.has\(comparableBookmarkAddress\(item\.address\)\)/);
+  assert.match(bookmarkSource, /selfAddresses\.has\(canonicalIpAddressKey\(item\.address\)\)/);
   assert.match(bookmarkSource, /\[bookmarkFetchGuardHeader\]: bookmarkFetchGuardValue/);
   assert.match(bookmarkSource, /lookup: createPinnedLookup\(addresses\)/);
   assert.match(bookmarkSource, /async function fetchHtml\([\s\S]*const \{ url, addresses \} = await validateFetchUrl\(value, deadline\)/);
