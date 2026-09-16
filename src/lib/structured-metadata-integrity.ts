@@ -566,14 +566,20 @@ function assertTreeViewMetadata(root: MetadataRecord) {
     }
   }
 
+  // Each parent edge only needs checking once. Keep this cache local to the
+  // immutable parent map built above: a later edit must be validated afresh.
+  const acyclicIds = new Set<string>();
+  const path = new Set<string>();
   for (const id of ids) {
-    const seen = new Set<string>([id]);
-    let current = parentById.get(id) ?? null;
-    while (current) {
-      if (seen.has(current)) fail("metadata.treeView.nodes", "contains a parent cycle");
-      seen.add(current);
+    if (acyclicIds.has(id)) continue;
+    let current: string | null = id;
+    while (current && !acyclicIds.has(current)) {
+      if (path.has(current)) fail("metadata.treeView.nodes", "contains a parent cycle");
+      path.add(current);
       current = parentById.get(current) ?? null;
     }
+    for (const visited of path) acyclicIds.add(visited);
+    path.clear();
   }
 }
 

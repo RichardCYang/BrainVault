@@ -545,13 +545,42 @@ function mergeAiChatInlineCitationGroup(units, group) {
   group.slice(1).forEach(({ unit }) => unit?.node?.remove?.());
 }
 
+function hasAiChatCitationGroupCandidates(node) {
+  let links = 0;
+  const visit = (parent) => {
+    for (const child of Array.from(parent?.childNodes ?? [])) {
+      if (child?.nodeType !== 1) continue;
+      const tagName = getAiChatElementTagName(child);
+      if (tagName === "A"
+        && getAiChatReferenceNumber(child)
+        && getAiChatWebUrl(child?.href ?? child?.getAttribute?.("href"))) {
+        links += 1;
+        if (links >= 2) return true;
+      } else if (aiChatCitationTailInlineTags.has(tagName) && visit(child)) {
+        return true;
+      }
+    }
+    return false;
+  };
+  // Mirror the collector's element boundaries, but do not expand prose into
+  // per-code-unit objects when a group of two links cannot possibly exist.
+  // This is only a conservative preflight; all citation checks still run below.
+  return visit(node);
+}
+
 function collapseAiChatInlineCitationGroupsInBlock(block) {
+  if (!hasAiChatCitationGroupCandidates(block)) return;
   const units = [];
   collectAiChatCitationGroupUnits(block, units);
-  const candidates = units.map((unit, index) => ({ unit, index }))
-    .filter(({ unit }) => unit.type === "link")
-    .filter(({ unit }) => unit.node?.dataset?.aiChatSourceDefinition !== "true")
-    .filter(({ unit }) => isAiChatInlineCitationLink(unit.node));
+  const candidates = [];
+  for (let index = 0; index < units.length; index += 1) {
+    const unit = units[index];
+    if (unit.type === "link"
+      && unit.node?.dataset?.aiChatSourceDefinition !== "true"
+      && isAiChatInlineCitationLink(unit.node)) {
+      candidates.push({ unit, index });
+    }
+  }
   if (candidates.length < 2) return;
 
   const groups = [];
@@ -591,9 +620,10 @@ function collectAiChatReferenceWrapperUnits(node, units) {
   for (const child of Array.from(node?.childNodes ?? [])) {
     if (child?.nodeType === 3) {
       const value = typeof child.nodeValue === "string" ? child.nodeValue : (child.textContent ?? "");
-      for (let index = 0; index < value.length; index += 1) {
-        units.push({ char: value[index], node: child, offset: index });
-      }
+      // Keep a text-node span, not one object per UTF-16 code unit. The
+      // flattened matching text is identical; only two edit positions need
+      // mapping back to DOM offsets after a successful parentheses match.
+      if (value) units.push({ char: value, node: child });
       continue;
     }
     if (child?.nodeType !== 1) continue;
@@ -613,10 +643,22 @@ function collectAiChatReferenceWrapperUnits(node, units) {
   }
 }
 
+function getAiChatReferenceWrapperPoint(units, index) {
+  for (const unit of units) {
+    if (index < unit.char.length) {
+      return { char: unit.char[index], node: unit.node, offset: index };
+    }
+    index -= unit.char.length;
+  }
+  return null;
+}
+
 function stripAiChatTrailingReferenceParentheses(block) {
   const units = [];
   collectAiChatReferenceWrapperUnits(block, units);
-  if (!units.some((unit) => unit.char === aiChatReferenceWrapperPlaceholder)) return;
+  // A literal placeholder in a text node has always participated in this
+  // matching rule, so use includes rather than requiring an actual link node.
+  if (!units.some((unit) => unit.char.includes(aiChatReferenceWrapperPlaceholder))) return;
 
   const linearText = units.map((unit) => unit.char).join("");
   const match = linearText.match(aiChatReferenceWrapperPattern);
@@ -624,8 +666,8 @@ function stripAiChatTrailingReferenceParentheses(block) {
 
   const openingIndex = match.index;
   const closingIndex = linearText.lastIndexOf(")", linearText.length - match[1].length - 1);
-  const opening = units[openingIndex];
-  const closing = units[closingIndex];
+  const opening = getAiChatReferenceWrapperPoint(units, openingIndex);
+  const closing = getAiChatReferenceWrapperPoint(units, closingIndex);
   if (opening?.char !== "(" || closing?.char !== ")" || !opening.node || !closing.node) return;
 
   const edits = new Map();
