@@ -13,6 +13,14 @@ function sliceBetween(source, startText, endText) {
   return source.slice(start, end).trim();
 }
 
+// Recovery now uses a per-call block lookup. Execute the production helper,
+// rather than replacing it with a mock or weakening any conflict assertions.
+const blockLookupSource = sliceBetween(
+  client,
+  "function createBlockLookup(blocks)",
+  "function getBlockVersionSnapshot"
+);
+
 const recoverySource = sliceBetween(
   client,
   "function applyPersistedPageDraft(page)",
@@ -46,7 +54,7 @@ function runRecovery({ page, records }) {
     reorderPageBlockSiblings: () => true
   };
   vm.createContext(context);
-  vm.runInContext(`${recoverySource}\nthis.applyPersistedPageDraft = applyPersistedPageDraft;`, context);
+  vm.runInContext(`${blockLookupSource}\n${recoverySource}\nthis.applyPersistedPageDraft = applyPersistedPageDraft;`, context);
   return context.applyPersistedPageDraft(page);
 }
 

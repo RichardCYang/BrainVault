@@ -2195,11 +2195,13 @@ function adoptCommittedCreatedBlockLocally(
     });
   }
 
+  const orderedIdSet = Array.isArray(orderedIds) && orderedIds.length === siblings.length
+    ? new Set(orderedIds)
+    : null;
   if (
-    Array.isArray(orderedIds)
-    && orderedIds.length === siblings.length
-    && orderedIds.includes(committedBlock.id)
-    && siblings.every((block) => orderedIds.includes(block.id))
+    orderedIdSet
+    && orderedIdSet.has(committedBlock.id)
+    && siblings.every((block) => orderedIdSet.has(block.id))
   ) {
     reorderPageBlockSiblings(state.selectedPage, parentBlockId, orderedIds);
     return true;
@@ -11917,6 +11919,35 @@ function getBlockById(blockId, blocks = state.selectedPage?.blocks ?? []) {
   return null;
 }
 
+// A lookup belongs to one synchronous reconciliation only. Cache the visited
+// depth-first prefix, so a single early dirty row does not index an entire page.
+// Nothing is retained across page/account changes; duplicate IDs keep the first match.
+function createBlockLookup(blocks) {
+  let byId = null;
+  let cursor = null;
+  function* visitBlocks(items) {
+    for (const block of items) {
+      yield block;
+      if (block.children?.length) yield* visitBlocks(block.children);
+    }
+  }
+  return (blockId) => {
+    // Map uses SameValueZero, while getBlockById uses strict equality.
+    if (blockId !== blockId) return null;
+    if (!byId) {
+      byId = new Map();
+      cursor = visitBlocks(blocks ?? []);
+    }
+    if (byId.has(blockId)) return byId.get(blockId);
+    for (let next = cursor.next(); !next.done; next = cursor.next()) {
+      const block = next.value;
+      if (!byId.has(block.id)) byId.set(block.id, block);
+      if (block.id === blockId) return block;
+    }
+    return null;
+  };
+}
+
 function getBlockVersionSnapshot(blockId, { includeDescendants = true } = {}) {
   const block = getBlockById(blockId);
   if (!block) return [];
@@ -14224,11 +14255,11 @@ function extractTableData(row) {
   });
 }
 
-function buildBlockPayload(row) {
+function buildBlockPayload(row, knownBlock) {
   const type = row.dataset.blockType ?? "MARKDOWN";
   const textarea = getBlockTextarea(row);
   const checked = getBlockChecked(row);
-  const block = getBlockById(row.dataset.blockId);
+  const block = knownBlock === undefined ? getBlockById(row.dataset.blockId) : knownBlock;
   if (type === "ATTACHMENT") {
     return {
       type,
@@ -14571,11 +14602,12 @@ function getBlockSiblings(parentBlockId) {
 }
 
 function syncVisibleBlocksToState({ dirtyOnly = false } = {}) {
+  const findBlock = createBlockLookup(state.selectedPage?.blocks ?? []);
   for (const row of elements.blockList.querySelectorAll(".editor-block-row")) {
     if (dirtyOnly && !row.classList.contains("is-dirty")) continue;
-    const block = getBlockById(row.dataset.blockId);
+    const block = findBlock(row.dataset.blockId);
     if (!block) continue;
-    Object.assign(block, buildBlockPayload(row));
+    Object.assign(block, buildBlockPayload(row, block));
   }
 }
 
@@ -18367,6 +18399,7 @@ function applyPersistedPageDraft(page) {
     conflictCount: 0
   };
   if (!scope || records.length === 0 || !page) return recovery;
+  const findBlock = createBlockLookup(page.blocks ?? []);
 
   const titleCandidates = [];
   for (const record of records) {
@@ -18430,7 +18463,7 @@ function applyPersistedPageDraft(page) {
   }
 
   for (const [blockId, candidates] of blockCandidates) {
-    const block = getBlockById(blockId, page.blocks ?? []);
+    const block = findBlock(blockId);
     if (!block) {
       for (const candidate of candidates) recovery.missing.push({ blockId, ...candidate });
       recovery.conflictCount += candidates.length;
@@ -18524,12 +18557,13 @@ function applyPersistedPageDraft(page) {
     const divergentCandidates = pendingOrderCandidates
       .slice(1)
       .filter((candidate) => !jsonValuesMatch(candidate.draft.orderedIds, selected.draft.orderedIds));
-    const itemBlocks = selected.draft.items.map((item) => getBlockById(item.id, page.blocks ?? []));
+    const itemBlocks = selected.draft.items.map((item) => findBlock(item.id));
     const siblings = getPageBlockSiblings(page, selected.draft.parentBlockId);
     const siblingIds = siblings.map((block) => block.id);
+    const orderedIdSet = new Set(selected.draft.orderedIds);
     const replayable =
       siblingIds.length === selected.draft.orderedIds.length &&
-      siblingIds.every((id) => selected.draft.orderedIds.includes(id)) &&
+      siblingIds.every((id) => orderedIdSet.has(id)) &&
       itemBlocks.every(
         (block, index) =>
           block &&

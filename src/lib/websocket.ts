@@ -50,7 +50,9 @@ function encodeFrame(opcode: number, payload: Buffer, fin = true) {
 }
 
 function truncateCloseReason(reason: string) {
-  let value = reason;
+  // A UTF-8 prefix of at most 123 bytes cannot exceed 123 UTF-16 code units.
+  // Start there instead of repeatedly rescanning an arbitrarily long reason.
+  let value = reason.slice(0, 123);
   while (Buffer.byteLength(value, "utf8") > 123) value = value.slice(0, -1);
   return value;
 }
@@ -78,6 +80,7 @@ export class WebSocketConnection {
   private readonly maxBufferedOutputBytes: number;
   private started = false;
   private closeSent = false;
+  private closeTimer: ReturnType<typeof setTimeout> | null = null;
   private closeNotified = false;
   private receivedCloseCode = 1006;
   private receivedCloseReason = "Connection closed unexpectedly";
@@ -156,7 +159,11 @@ export class WebSocketConnection {
 
   sendBinary(value: Uint8Array | Buffer) {
     if (!this.isOpen || this.closeSent) return;
-    this.writeFrame(0x2, Buffer.isBuffer(value) ? value : Buffer.from(value));
+    // writeFrame synchronously copies into the owned wire frame. A bounded view
+    // avoids a redundant payload copy without retaining or sending adjacent bytes.
+    this.writeFrame(0x2, Buffer.isBuffer(value)
+      ? value
+      : Buffer.from(value.buffer, value.byteOffset, value.byteLength));
   }
 
   ping(value: Uint8Array | Buffer = Buffer.alloc(0)) {
@@ -176,8 +183,11 @@ export class WebSocketConnection {
     this.closeSent = true;
     this.writeFrame(0x8, payload, true);
     if (!this.isOpen) return;
-    const timer = setTimeout(() => this.terminate(), 2_000);
-    timer.unref();
+    this.closeTimer = setTimeout(() => {
+      this.closeTimer = null;
+      this.terminate();
+    }, 2_000);
+    this.closeTimer.unref();
   }
 
   terminate() {
@@ -562,6 +572,10 @@ export class WebSocketConnection {
   private finishClose(code: number, reason: string) {
     if (this.closeNotified) return;
     this.closeNotified = true;
+    if (this.closeTimer) {
+      clearTimeout(this.closeTimer);
+      this.closeTimer = null;
+    }
     this.stopAcceptingMessages();
     this.open = false;
     try {
