@@ -161,6 +161,31 @@ function attachmentDescription(index: WorkspaceDiffIndex, blockId: string) {
   return [attachment.path, attachment.size, attachment.sha256, attachment.crc32].join(":");
 }
 
+function blockHasSemanticDifference(
+  before: BrainVaultBackup["data"]["blocks"][number],
+  after: BrainVaultBackup["data"]["blocks"][number],
+  snapshotIndex: WorkspaceDiffIndex,
+  currentIndex: WorkspaceDiffIndex,
+  blockId: string
+) {
+  // Once block details are full, only change counts are observable. Keep the
+  // exact field equality rules (including null/empty text and JSON number
+  // semantics) without hashing or constructing excerpts that will be discarded.
+  // This is display-only: backup validation and cryptographic integrity checks
+  // are separate and are never skipped.
+  return Boolean(
+    fieldDifference("type", before.type, after.type)
+    || fieldDifference("parentBlockId", before.parent_block_id, after.parent_block_id)
+    || (before.markdown ?? "") !== (after.markdown ?? "")
+    || fieldDifference("checked", Boolean(before.checked), Boolean(after.checked))
+    || fieldDifference("sortOrder", Number(before.sort_order), Number(after.sort_order))
+    || (before.metadata ?? "") !== (after.metadata ?? "")
+    || fieldDifference("attachmentFile", attachmentDescription(snapshotIndex, blockId), attachmentDescription(currentIndex, blockId))
+    || fieldDifference("createdAt", before.created_at, after.created_at)
+    || fieldDifference("updatedAt", before.updated_at, after.updated_at)
+  );
+}
+
 function pageBlockMap<T extends { id: string; page_id: string }>(blocks: T[]) {
   const byPage = new Map<string, T[]>();
   for (const block of blocks) {
@@ -334,6 +359,15 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
         blockSummary.removed += 1;
         difference = { blockId, status: "removed", snapshotType: beforeBlock.type, currentType: null, fields: [] };
       } else if (beforeBlock && afterBlock) {
+        if (totalBlockDetails >= maxBlockDetails) {
+          if (blockHasSemanticDifference(beforeBlock, afterBlock, snapshotIndex, currentIndex, blockId)) {
+            localBlockSummary.modified += 1;
+            blockSummary.modified += 1;
+            blockDetailsTruncated = true;
+            detailsTruncated = true;
+          }
+          continue;
+        }
         // html_cache is regenerated from the canonical block payload during a
         // restore, and edit_version is deliberately rebased to the restore
         // generation so stale optimistic writes cannot cross that boundary.

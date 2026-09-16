@@ -715,7 +715,7 @@ function searchableValue(property, value) {
   return value === null || value === undefined ? "" : String(value);
 }
 
-function rowMatchesFilter(dataRow, filter, propertyById) {
+function rowMatchesFilter(dataRow, filter, propertyById, getFilterText) {
   const property = propertyById.get(filter.propertyId);
   if (!property) return true;
   const value = dataRow.values[property.id];
@@ -735,7 +735,7 @@ function rowMatchesFilter(dataRow, filter, propertyById) {
       : values.includes(String(filter.value ?? ""));
   }
   const left = searchableValue(property, value).toLocaleLowerCase();
-  const right = String(filter.value ?? "").toLocaleLowerCase();
+  const right = getFilterText(filter);
   return filter.operator === "equals" ? left === right : left.includes(right);
 }
 
@@ -750,7 +750,20 @@ function compareValues(property, left, right, compareText) {
 
 export function applyDatabaseView(database, view = getDatabaseActiveView(database)) {
   const propertyById = new Map(database.properties.map((property) => [property.id, property]));
-  const rows = database.rows.filter((dataRow) => view.filters.every((filter) => rowMatchesFilter(dataRow, filter, propertyById)));
+  // Filter text is unchanged throughout this synchronous view pass. Normalize
+  // it lazily once per reached text filter, not once per row. Never retain it
+  // across edits, locale changes, pages, or accounts.
+  let filterTextByFilter;
+  const getFilterText = (filter) => {
+    filterTextByFilter ??= new Map();
+    let text = filterTextByFilter.get(filter);
+    if (text === undefined) {
+      text = String(filter.value ?? "").toLocaleLowerCase();
+      filterTextByFilter.set(filter, text);
+    }
+    return text;
+  };
+  const rows = database.rows.filter((dataRow) => view.filters.every((filter) => rowMatchesFilter(dataRow, filter, propertyById, getFilterText)));
   if (!view.sorts.length) return rows;
   // Scope the collator to this invocation: locale and edited labels stay fresh,
   // and numeric/empty-only sorts never allocate an internationalized comparator.

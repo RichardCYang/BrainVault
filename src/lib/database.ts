@@ -656,7 +656,12 @@ function searchableValue(property: DatabaseProperty, value: DatabaseValue) {
   return value === null || value === undefined ? "" : String(value);
 }
 
-function rowMatchesFilter(row: DatabaseRow, filter: DatabaseFilter, propertyById: Map<string, DatabaseProperty>) {
+function rowMatchesFilter(
+  row: DatabaseRow,
+  filter: DatabaseFilter,
+  propertyById: Map<string, DatabaseProperty>,
+  getFilterText: (filter: DatabaseFilter) => string
+) {
   const property = propertyById.get(filter.propertyId);
   if (!property) return true;
   const value = row.values[property.id];
@@ -679,7 +684,7 @@ function rowMatchesFilter(row: DatabaseRow, filter: DatabaseFilter, propertyById
 
   if (property.type === "select") return value === filter.value;
   const left = searchableValue(property, value).toLocaleLowerCase();
-  const right = String(filter.value ?? "").toLocaleLowerCase();
+  const right = getFilterText(filter);
   return filter.operator === "equals" ? left === right : left.includes(right);
 }
 
@@ -699,7 +704,20 @@ function compareValues(
 
 export function applyDatabaseView(database: DatabaseData, view = getDatabaseActiveView(database)) {
   const propertyById = new Map(database.properties.map((property) => [property.id, property]));
-  const rows = database.rows.filter((row) => view.filters.every((filter) => rowMatchesFilter(row, filter, propertyById)));
+  // Filter text is unchanged throughout this synchronous view pass. Normalize
+  // it lazily once per reached text filter, not once per row. Never retain it
+  // across edits, locale changes, pages, or accounts.
+  let filterTextByFilter: Map<DatabaseFilter, string> | undefined;
+  const getFilterText = (filter: DatabaseFilter) => {
+    filterTextByFilter ??= new Map();
+    let text = filterTextByFilter.get(filter);
+    if (text === undefined) {
+      text = String(filter.value ?? "").toLocaleLowerCase();
+      filterTextByFilter.set(filter, text);
+    }
+    return text;
+  };
+  const rows = database.rows.filter((row) => view.filters.every((filter) => rowMatchesFilter(row, filter, propertyById, getFilterText)));
   if (!view.sorts.length) return rows;
 
   // Scope the collator to this invocation: locale and edited labels stay fresh,
