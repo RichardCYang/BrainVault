@@ -14129,13 +14129,27 @@ function mountBlockEditor(row, block) {
   );
 }
 
-function getBlockRenderDraft(pageId, blockId) {
+function getBlockRenderDraft(pageId, blockId, draftRecordsBySource = null) {
   const conflictOrigin = blockDraftConflictOrigins.get(blockId);
   const hasUnresolvedConflict = Boolean(conflictOrigin && conflictOrigin.resolved !== true);
   const sourceId = blockDraftRenderSources.get(blockId) ?? (conflictOrigin ? pageDraftSourceId : null);
   if (!state.user?.id || !sourceId) return null;
 
-  const storedDraft = pageDraftStore.loadPage(state.user.id, pageId, sourceId)?.blocks?.[blockId];
+  // Only renderSelectedPage supplies this map, scoped to its synchronous render
+  // of one user's page. Validate each source once, rather than parsing and
+  // cloning the entire page record for every block. Cache null results too.
+  // Standalone block refreshes still read fresh storage, and these snapshots
+  // are never used as save/acknowledgment/deletion authorities.
+  let record;
+  if (draftRecordsBySource) {
+    if (!draftRecordsBySource.has(sourceId)) {
+      draftRecordsBySource.set(sourceId, pageDraftStore.loadPage(state.user.id, pageId, sourceId));
+    }
+    record = draftRecordsBySource.get(sourceId);
+  } else {
+    record = pageDraftStore.loadPage(state.user.id, pageId, sourceId);
+  }
+  const storedDraft = record?.blocks?.[blockId];
   const draft = storedDraft ?? conflictOrigin;
   if (!draft) return null;
   return { ...draft, sourceId, conflict: hasUnresolvedConflict };
@@ -17481,28 +17495,45 @@ function expandToggleDetailsForPdf() {
 }
 
 async function waitForPdfExportAssets() {
-  const imagePromises = [...elements.pageView.querySelectorAll("img")].map((image) => {
-    if (image.complete) return image.decode?.().catch(() => {}) ?? Promise.resolve();
-    return new Promise((resolve) => {
-      image.addEventListener("load", resolve, { once: true });
-      image.addEventListener("error", resolve, { once: true });
-    });
+  const pendingAssets = new Set();
+  let timeoutId = null;
+  const waitForAsset = (asset) => new Promise((resolve) => {
+    const finish = () => {
+      // A once-listener removes only itself, not the other event listener.
+      // Release both on success/error, and settle pending waits at the deadline.
+      asset.removeEventListener("load", finish);
+      asset.removeEventListener("error", finish);
+      pendingAssets.delete(finish);
+      resolve();
+    };
+    pendingAssets.add(finish);
+    asset.addEventListener("load", finish, { once: true });
+    asset.addEventListener("error", finish, { once: true });
   });
-  const mermaidFramePromises = [...elements.pageView.querySelectorAll(".mermaid-sandbox-frame")].map((frame) => {
-    frame.setAttribute("loading", "eager");
-    if (frame.dataset.mermaidLoaded === "true") return Promise.resolve();
-    return new Promise((resolve) => {
-      frame.addEventListener("load", resolve, { once: true });
-      frame.addEventListener("error", resolve, { once: true });
+
+  try {
+    const imagePromises = [...elements.pageView.querySelectorAll("img")].map((image) => {
+      if (image.complete) return image.decode?.().catch(() => {}) ?? Promise.resolve();
+      return waitForAsset(image);
     });
-  });
-  const assetsReady = Promise.allSettled([
-    document.fonts?.ready ?? Promise.resolve(),
-    ...imagePromises,
-    ...mermaidFramePromises
-  ]);
-  const timeout = new Promise((resolve) => window.setTimeout(resolve, 2500));
-  await Promise.race([assetsReady, timeout]);
+    const mermaidFramePromises = [...elements.pageView.querySelectorAll(".mermaid-sandbox-frame")].map((frame) => {
+      frame.setAttribute("loading", "eager");
+      if (frame.dataset.mermaidLoaded === "true") return Promise.resolve();
+      return waitForAsset(frame);
+    });
+    const assetsReady = Promise.allSettled([
+      document.fonts?.ready ?? Promise.resolve(),
+      ...imagePromises,
+      ...mermaidFramePromises
+    ]);
+    const timeout = new Promise((resolve) => { timeoutId = window.setTimeout(resolve, 2500); });
+    await Promise.race([assetsReady, timeout]);
+  } finally {
+    if (timeoutId !== null) window.clearTimeout(timeoutId);
+    // Promise.race does not cancel losing work. Do not retain a stalled image
+    // or iframe's listeners/promise graph after export has stopped waiting.
+    for (const finish of pendingAssets) finish();
+  }
 }
 
 async function exportCurrentPageToPdf() {
@@ -17900,9 +17931,12 @@ function renderSelectedPage() {
     empty.classList.add("block-empty-message");
     elements.blockList.append(empty);
   } else {
+    // Discard the snapshots after this render; never retain them across page,
+    // account, source, or subsequent recovery-storage changes.
+    const draftRecordsBySource = new Map();
     for (const block of flatBlocks) {
       elements.blockList.append(
-        renderBlock(block, isCollaborativePage(page) ? null : getBlockRenderDraft(page.id, block.id))
+        renderBlock(block, isCollaborativePage(page) ? null : getBlockRenderDraft(page.id, block.id, draftRecordsBySource))
       );
     }
   }
