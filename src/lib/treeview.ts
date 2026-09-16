@@ -56,14 +56,26 @@ function parseMetadata(metadata: unknown) {
   return {};
 }
 
-function parentWouldCycle(nodeId: string, parentId: string, parentById: Map<string, string | null>) {
+function parentWouldCycle(
+  nodeId: string,
+  parentId: string,
+  parentById: Map<string, string | null>,
+  acyclicIds: Set<string>
+) {
+  // This cache belongs only to the current normalization. Parent links below
+  // can only be removed, so a path already proved acyclic stays acyclic.
+  if (acyclicIds.has(nodeId) || acyclicIds.has(parentId)) return false;
   const seen = new Set([nodeId]);
   let current: string | null = parentId;
   while (current) {
+    if (acyclicIds.has(current)) break;
     if (seen.has(current)) return true;
     seen.add(current);
     current = parentById.get(current) ?? null;
   }
+  // Do not cache a cyclic path: preserve the original input-order repair rule,
+  // including nodes outside a cycle whose ancestors enter that cycle.
+  for (const id of seen) acyclicIds.add(id);
   return false;
 }
 
@@ -103,11 +115,16 @@ export function normalizeTreeViewData(value: unknown): TreeViewData {
     if (node.parentId === node.id || (node.parentId && !ids.has(node.parentId))) node.parentId = null;
   }
   const parentById = new Map(nodes.map((node) => [node.id, node.parentId]));
+  // Flat outlines need no ancestor cache or extra retained IDs.
+  let acyclicIds: Set<string> | null = null;
   for (const node of nodes) {
-    if (node.parentId && parentWouldCycle(node.id, node.parentId, parentById)) {
+    if (!node.parentId) continue;
+    acyclicIds ??= new Set<string>();
+    if (parentWouldCycle(node.id, node.parentId, parentById, acyclicIds)) {
       node.parentId = null;
       parentById.set(node.id, null);
     }
+    acyclicIds.add(node.id);
   }
 
   return {

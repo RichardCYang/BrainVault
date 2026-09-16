@@ -61,17 +61,29 @@ async function loadMermaid() {
       script.src = MERMAID_SCRIPT_URL;
       script.async = true;
       script.dataset.brainvaultMermaid = MERMAID_VERSION;
-      script.addEventListener("load", () => {
+      const removeLoadListeners = () => {
+        script.removeEventListener("load", handleLoad);
+        script.removeEventListener("error", handleError);
+      };
+      const handleLoad = () => {
+        removeLoadListeners();
         const mermaid = globalThis.mermaid;
         if (!isMermaidApi(mermaid)) {
+          script.remove();
           reject(new Error("The local Mermaid bundle did not expose the Mermaid API"));
           return;
         }
         resolve(mermaid);
-      }, { once: true });
-      script.addEventListener("error", () => {
+      };
+      const handleError = () => {
+        removeLoadListeners();
+        // Retries must not retain failed script nodes and their load closures
+        // in document.head. Keep the successful pinned bundle's behavior intact.
+        script.remove();
         reject(new Error("The local Mermaid bundle could not be loaded"));
-      }, { once: true });
+      };
+      script.addEventListener("load", handleLoad, { once: true });
+      script.addEventListener("error", handleError, { once: true });
       document.head.append(script);
     }).catch((error) => {
       mermaidModulePromise = null;

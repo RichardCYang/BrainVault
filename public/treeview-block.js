@@ -37,14 +37,21 @@ function uniqueId(requested, seen, fallbackPrefix) {
   return id;
 }
 
-function parentWouldCycle(nodeId, parentId, parentById) {
+function parentWouldCycle(nodeId, parentId, parentById, acyclicIds) {
+  // This cache belongs only to the current normalization. Parent links below
+  // can only be removed, so a path already proved acyclic stays acyclic.
+  if (acyclicIds.has(nodeId) || acyclicIds.has(parentId)) return false;
   const seen = new Set([nodeId]);
   let current = parentId;
   while (current) {
+    if (acyclicIds.has(current)) break;
     if (seen.has(current)) return true;
     seen.add(current);
     current = parentById.get(current) ?? null;
   }
+  // Do not cache a cyclic path: preserve the original input-order repair rule,
+  // including nodes outside a cycle whose ancestors enter that cycle.
+  for (const id of seen) acyclicIds.add(id);
   return false;
 }
 
@@ -89,11 +96,16 @@ export function normalizeTreeViewData(value) {
   });
 
   const parentById = new Map(nodes.map((node) => [node.id, node.parentId]));
+  // Flat outlines need no ancestor cache or extra retained IDs.
+  let acyclicIds = null;
   nodes.forEach((node) => {
-    if (node.parentId && parentWouldCycle(node.id, node.parentId, parentById)) {
+    if (!node.parentId) return;
+    acyclicIds ??= new Set();
+    if (parentWouldCycle(node.id, node.parentId, parentById, acyclicIds)) {
       node.parentId = null;
       parentById.set(node.id, null);
     }
+    acyclicIds.add(node.id);
   });
 
   return {
@@ -129,12 +141,16 @@ function getNodePath(data, nodeId) {
   const labels = [];
   const seen = new Set();
   let current = getNode(data, nodeId);
+  // Root selections need no index. For a nested selection, build one local
+  // index instead of scanning every node again for every ancestor. IDs in the
+  // normalized editor data are unique; never retain this index across edits.
+  const byId = current?.parentId ? new Map(data.nodes.map((node) => [node.id, node])) : null;
   while (current && !seen.has(current.id)) {
     seen.add(current.id);
-    labels.unshift(current.title || t("treeview.defaultNodeTitle", { number: formatNumber(labels.length + 1) }));
-    current = current.parentId ? getNode(data, current.parentId) : null;
+    labels.push(current.title || t("treeview.defaultNodeTitle", { number: formatNumber(labels.length + 1) }));
+    current = current.parentId ? byId?.get(current.parentId) ?? null : null;
   }
-  return labels.join(" / ");
+  return labels.reverse().join(" / ");
 }
 
 function getVisibleNodeIds(data) {
