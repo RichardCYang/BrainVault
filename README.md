@@ -78,26 +78,14 @@ For database permissions, opt-in demo data, alternative environment setup, and p
 
 | Guide | Contents |
 | --- | --- |
-| [Documentation index](docs/README.md) | Entry point for all project documentation |
+| [Documentation index](docs/README.md) | Entry point for maintained project documentation |
 | [Getting started](docs/getting-started/2026-07-27/getting-started.md) | Requirements, secure setup, database bootstrap, opt-in demo data, and production |
 | [Features](docs/features/2026-07-30/features.md) | Editor behavior, sharing, block types, backup/restore, PDF export, and languages |
 | [Collaboration](docs/collaboration/2026-07-29/collaboration.md) | Sharing permissions, Yjs/WebSocket flow, persistence, proxy setup, and verification |
 | [Collection sharing](docs/collaboration/2026-09-02/collection-sharing.md) | Custom-collection UI entry point, READ/WRITE/ADMIN permissions, inheritance, API routes, and troubleshooting |
-| [Collaboration verification](docs/data-loss/2026-07-29/collaboration-verification.md) | Delivery checks, integrity-proof scope, and reproducible deployment validation |
-| [Data-loss and integrity reports](docs/README.md#data-loss-and-integrity-reports) | Dated audits, reproductions, corrections, and verification evidence |
-| [In-depth review and remediation results](docs/data-loss/2026-08-05/in-depth-review-and-remediation-results.md) | Consolidated authentication-boundary, idempotency, deletion-atomicity, and verification findings |
-| [Page-cover integrity review](docs/data-loss/2026-08-04/page-cover-integrity-review.md) | Backup v2, async race, preview, asset-loading, and regression corrections |
-| [Page-cover follow-up review](docs/data-loss/2026-08-05/page-cover-interaction-and-pdf-regression-review.md) | Dialog cancellation, cross-page draft scope, PDF measurement, and restore ambiguity |
-| [Complete uploaded-asset backup review](docs/data-loss/2026-08-10/complete-upload-asset-backup-restore.md) | Backup v3 complete upload assets, account-ID rebinding, and crash-safe multi-asset restore |
-| [Backup workspace-state round-trip review](docs/data-loss/2026-08-11/backup-workspace-state-roundtrip-integrity.md) | Backup v4 page-history/navigation-state completeness, rebinding, and restore conflict fencing |
-| [Account-security and UI request-scope review](docs/data-loss/2026-08-05/account-security-and-ui-request-scope.md) | Authentication-boundary privacy, page-share request identity, and latest navigation intent |
-| [Authentication, account-data, and editor-lock boundary review](docs/data-loss/2026-08-05/auth-data-and-lock-boundary-review.md) | Boot/login supersession, backup account scope, and cross-authentication lock ownership |
-| [Block-delete response-loss idempotency review](docs/data-loss/2026-08-05/block-delete-response-loss-idempotency.md) | Committed DELETE acknowledgement, exact mutation replay, and attachment cleanup healing |
 | [Configuration](docs/configuration/2026-07-28/configuration.md) | Environment variables and runtime configuration |
 | [HTTPS deployment](deploy/README.md) | Direct Posh-ACME TLS plus Caddy, Synology DSM, NGINX, and Nginx Proxy Manager setup |
-| [Security](docs/security/2026-07-30/security.md) | MFA, production secrets, attachment safety, and security defaults |
-| [Security review and remediation report](docs/security/2026-08-04/security-review-and-remediation-report.md) | Security findings, reproductions, remediations, and verification limits |
-| [Direct passkey-login verification](docs/security/2026-08-09/passkey-direct-login-verification.md) | Discoverable-credential design, threat model, attack reproductions, and verification evidence |
+| [Security](docs/security/2026-07-30/security.md) | MFA, production secrets, attachments, backup safety, and production boundaries |
 | [API](docs/api/2026-07-30/api.md) | Route overview, authentication, health check, and OpenAPI access |
 | [Development](docs/development/2026-07-28/development.md) | Scripts, lockfile policy, project structure, translations, and preview capture |
 | [OpenAPI specification](docs/api/2026-07-30/openapi.yaml) | Full OpenAPI 3.1 document |

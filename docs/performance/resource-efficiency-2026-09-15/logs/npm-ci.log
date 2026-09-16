@@ -1,7 +1,0 @@
-npm error code EBADENGINE
-npm error engine Unsupported engine
-npm error engine Not compatible with your version of node/npm: brainvault@1.0.0
-npm error notsup Not compatible with your version of node/npm: brainvault@1.0.0
-npm error notsup Required: {"node":"^22.23.2 || ^24.18.1 || >=26.5.1","npm":">=10.9.0"}
-npm error notsup Actual:   {"npm":"10.9.2","node":"v22.16.0"}
-npm error A complete log of this run can be found in: /home/oai/.npm/_logs/2026-09-15T12_44_30_036Z-debug-0.log

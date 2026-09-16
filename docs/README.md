@@ -1,99 +1,21 @@
 # BrainVault documentation
 
-The root [README](../README.md) provides the project overview. Detailed documentation is organized by **topic** and then by **document date**.
+The root [README](../README.md) provides the project overview. This directory keeps the maintained product, setup, operations, API, and development documentation. Historical audit output, benchmark logs, transient verification artifacts, and superseded preview assets are intentionally excluded.
 
-## Directory convention
+## Maintained documentation
 
-```text
-docs/<topic>/<YYYY-MM-DD>/<document>
-```
+| Topic | Document |
+| --- | --- |
+| Getting started | [Setup, database bootstrap, and production](getting-started/2026-07-27/getting-started.md) |
+| Configuration | [Environment variables and runtime behavior](configuration/2026-07-28/configuration.md) |
+| Deployment | [Direct Posh-ACME HTTPS and trusted reverse-proxy setup](../deploy/README.md) |
+| Development | [Scripts, repository structure, translations, and preview capture](development/2026-07-28/development.md) |
+| Collaboration | [Page/collection sharing, Yjs/WebSocket synchronization, persistence, and deployment](collaboration/2026-07-29/collaboration.md) |
+| Collection sharing | [UI entry point, READ/WRITE/ADMIN roles, inheritance, API, backup/restore, and troubleshooting](collaboration/2026-09-02/collection-sharing.md) |
+| Features | [Editor behavior, blocks, backup/restore, languages, and export](features/2026-07-30/features.md) |
+| Security | [MFA, secrets, attachments, backup safety, and production boundaries](security/2026-07-30/security.md) |
+| API | [REST route overview and authentication](api/2026-07-30/api.md) |
+| OpenAPI | [OpenAPI 3.1 specification](api/2026-07-30/openapi.yaml) |
+| Preview asset | [Current workspace preview](assets/2026-08-09/preview.png) |
 
-`docs/README.md` is the only undated file because it is the navigation index.
-
-## Product and operations
-
-| Topic | Date | Document |
-| --- | --- | --- |
-| Getting started | 2026-07-27 | [Setup, database bootstrap, and production](getting-started/2026-07-27/getting-started.md) |
-| Configuration | 2026-07-28 | [Environment variables and runtime behavior](configuration/2026-07-28/configuration.md) |
-| Deployment | Current | [Direct Posh-ACME HTTPS and trusted reverse-proxy setup](../deploy/README.md) |
-| Development | 2026-07-28 | [Scripts, repository structure, translations, and preview capture](development/2026-07-28/development.md) |
-| Collaboration | 2026-07-29 | [Page/collection sharing, Yjs/WebSocket synchronization, persistence, and deployment](collaboration/2026-07-29/collaboration.md) |
-| Collection sharing | 2026-09-02 | [UI entry point, READ/WRITE/ADMIN roles, inheritance, API, backup/restore, and troubleshooting](collaboration/2026-09-02/collection-sharing.md) |
-| Features | 2026-07-30 | [Editor behavior, blocks, backup/restore, languages, and export](features/2026-07-30/features.md) |
-| Security | 2026-07-30 | [MFA, secrets, attachments, backup safety, and production boundaries](security/2026-07-30/security.md) |
-| API | 2026-07-30 | [REST route overview and authentication](api/2026-07-30/api.md) |
-| API | 2026-07-30 | [OpenAPI 3.1 specification](api/2026-07-30/openapi.yaml) |
-| Assets | 2026-07-17 | [Workspace preview image](assets/2026-07-17/preview.png) |
-
-## Security reviews
-
-### 2026-08-09
-
-- [Direct passkey-login security and reproducibility verification](security/2026-08-09/passkey-direct-login-verification.md)
-
-### 2026-08-06
-
-- [Security review and remediation report](security/2026-08-06/security-review-and-remediation-report.md)
-
-### 2026-08-04
-
-- [Security review and remediation report](security/2026-08-04/security-review-and-remediation-report.md)
-
-## Data-loss and integrity reports
-
-### 2026-08-15
-
-- [Cross-field editor-history undo integrity review](data-loss/2026-08-15/editor-history-cross-field-undo-integrity.md)
-
-### 2026-08-11
-
-- [Backup workspace-state round-trip integrity review](data-loss/2026-08-11/backup-workspace-state-roundtrip-integrity.md)
-
-### 2026-08-10
-
-- [Complete uploaded-asset backup and restore review](data-loss/2026-08-10/complete-upload-asset-backup-restore.md)
-
-### 2026-07-28
-
-- [Critical persistence and recovery paths](data-loss/2026-07-28/critical-persistence-and-recovery-paths.md)
-
-### 2026-07-29
-
-- [Collaboration and data-loss fix verification](data-loss/2026-07-29/collaboration-verification.md)
-- [Browser recovery-write durability](data-loss/2026-07-29/browser-recovery-write-durability.md)
-- [Attachment-position integrity](data-loss/2026-07-29/attachment-position-integrity.md)
-- [Content limits and attachment lock ordering](data-loss/2026-07-29/content-limits-and-attachment-lock-order.md)
-
-### 2026-07-30
-
-- [Backup-restore structured-metadata integrity](data-loss/2026-07-30/backup-restore-structured-metadata-integrity.md)
-- [Backup sharing-permission integrity](data-loss/2026-07-30/backup-share-integrity.md)
-- [Backup collaborator identity integrity](data-loss/2026-07-30/backup-share-identity-integrity.md)
-- [Archived-page sharing backup round-trip integrity](data-loss/2026-07-30/archived-share-backup-roundtrip-integrity.md)
-- [Backup stream and transport integrity](data-loss/2026-07-30/backup-stream-integrity.md)
-- [Block-order range integrity](data-loss/2026-07-30/block-order-integrity.md)
-- [Collaborative block-deletion integrity](data-loss/2026-07-30/collaboration-block-delete-integrity.md)
-- [Initial collaboration-bootstrap integrity](data-loss/2026-07-30/collaboration-bootstrap-integrity.md)
-- [Cross-page block-parent integrity](data-loss/2026-07-30/cross-page-parent-integrity.md)
-- [Structured-block metadata integrity](data-loss/2026-07-30/structured-metadata-integrity.md)
-- [Independent data-integrity review](data-loss/2026-07-30/independent-data-integrity-review.md)
-- [Final data-integrity review](data-loss/2026-07-30/final-data-integrity-review.md)
-
-### 2026-08-04
-
-- [Page-cover backup, race, and regression integrity review](data-loss/2026-08-04/page-cover-integrity-review.md)
-
-### 2026-08-05
-
-- [In-depth review and remediation results](data-loss/2026-08-05/in-depth-review-and-remediation-results.md)
-- [Page-cover interaction, PDF, and restore-ambiguity review](data-loss/2026-08-05/page-cover-interaction-and-pdf-regression-review.md)
-- [Account profile save and newer-draft race review](data-loss/2026-08-05/account-profile-save-draft-race.md)
-- [Account profile mutation ordering and preference race review](data-loss/2026-08-05/account-profile-mutation-order.md)
-- [Account profile authentication-boundary queue isolation review](data-loss/2026-08-05/account-profile-auth-boundary-queue-isolation.md)
-- [Account security, share-dialog, and workspace-navigation request-scope review](data-loss/2026-08-05/account-security-and-ui-request-scope.md)
-- [Authentication, account-data, and editor-lock boundary review](data-loss/2026-08-05/auth-data-and-lock-boundary-review.md)
-- [Page-creation idempotency and authenticated download boundary review](data-loss/2026-08-05/page-create-idempotency-and-download-boundary.md)
-- [Page-version reset idempotency and response-loss retry review](data-loss/2026-08-05/page-version-reset-idempotency.md)
-- [Block-deletion response-loss idempotency review](data-loss/2026-08-05/block-delete-response-loss-idempotency.md)
-
+The dated directory names are retained for stable links. New durable documentation should be added only when it remains useful to users or maintainers beyond a one-off audit or benchmark run.
