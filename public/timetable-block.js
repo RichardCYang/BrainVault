@@ -1,3 +1,4 @@
+import { joinSummaryPrefix } from "./summary-prefix.js";
 import { formatDateTime, formatNumber, t } from "./i18n.js";
 
 export const timetableLimits = Object.freeze({
@@ -82,7 +83,7 @@ function normalizeRange(startValue, endValue, fallbackStart) {
 
 function normalizeEntry(rawEntry, index, interval, seenIds) {
   const source = recordValue(rawEntry) ?? {};
-  let id = stringValue(source.id, createId("entry"), timetableLimits.idLength).trim() || createId("entry");
+  let id = stringValue(source.id, "", timetableLimits.idLength).trim() || createId("entry");
   let suffix = 1;
   while (seenIds.has(id)) {
     id = `entry-${index + 1}-${suffix}`.slice(0, timetableLimits.idLength);
@@ -506,9 +507,13 @@ export function extractTimetableData(row) {
 
 export function summarizeTimetableData(value) {
   const timetable = normalizeTimetableData(value);
-  const lines = [timetable.title, timetable.date];
-  timetable.entries.forEach((entry) => {
-    lines.push(`${entry.start}-${entry.end} ${entry.completed ? "[x]" : "[ ]"} ${entry.title}`.trim(), entry.note);
-  });
-  return lines.filter(Boolean).join("\n").slice(0, 20_000);
+  function* lines() {
+    yield timetable.title;
+    yield timetable.date;
+    for (const entry of timetable.entries) {
+      yield `${entry.start}-${entry.end} ${entry.completed ? "[x]" : "[ ]"} ${entry.title}`.trim();
+      yield entry.note;
+    }
+  }
+  return joinSummaryPrefix(lines());
 }

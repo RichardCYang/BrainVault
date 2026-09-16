@@ -1,3 +1,4 @@
+import { joinSummaryPrefix } from "./summary-prefix.js";
 import { getAiChatAnswerMaxLength } from "../config/ai-chat-limits.js";
 
 export const aiProviderIds = ["chatgpt", "gemini", "claude", "deepseek", "grok"] as const;
@@ -133,19 +134,15 @@ export function normalizeAiChatMetadata(metadata: unknown): Record<string, unkno
 }
 
 export function summarizeAiChatData(data: AiChatData) {
-  const sections = [
-    data.title,
-    `${getAiProviderLabel(data.provider)}${data.model ? ` · ${data.model}` : ""}`,
-    ...data.turns.flatMap((turn, index) => [
-      `Question ${index + 1}`,
-      turn.answeredAt,
-      turn.question,
-      turn.answer
-    ])
-  ];
-
-  return sections
-    .filter(Boolean)
-    .join("\n\n")
-    .slice(0, 20_000);
+  function* sections() {
+    yield data.title;
+    yield `${getAiProviderLabel(data.provider)}${data.model ? ` · ${data.model}` : ""}`;
+    for (const [index, turn] of data.turns.entries()) {
+      yield `Question ${index + 1}`;
+      yield turn.answeredAt;
+      yield turn.question;
+      yield turn.answer;
+    }
+  }
+  return joinSummaryPrefix(sections(), { separator: "\n\n" });
 }

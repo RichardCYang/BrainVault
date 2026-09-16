@@ -1,3 +1,4 @@
+import { joinSummaryPrefix } from "./summary-prefix.js";
 import { formatNumber, t } from "./i18n.js";
 import { renderServerBlockHtml } from "./rendered-html-sanitizer.js";
 
@@ -67,7 +68,7 @@ export function normalizeAccordionData(value) {
     .map(recordValue)
     .filter(Boolean)
     .map((item, index) => ({
-      id: uniqueId(safeId(item.id, createId("accordion-item")), seen, `accordion-item-${index + 1}`),
+      id: uniqueId((safeId(item.id, "") || createId("accordion-item")), seen, `accordion-item-${index + 1}`),
       icon: normalizeIcon(item.icon),
       title: stringValue(
         item.title,
@@ -550,8 +551,12 @@ export function setAccordionItemIcon(row, itemId, icon, renderIcon) {
 
 export function summarizeAccordionData(value) {
   const accordion = normalizeAccordionData(value);
-  return [accordion.title, ...accordion.items.flatMap((item) => [item.title, item.content])]
-    .filter(Boolean)
-    .join("\n")
-    .slice(0, 20000);
+  function* lines() {
+    yield accordion.title;
+    for (const item of accordion.items) {
+      yield item.title;
+      yield item.content;
+    }
+  }
+  return joinSummaryPrefix(lines());
 }

@@ -1,3 +1,4 @@
+import { joinSummaryPrefix } from "./summary-prefix.js";
 import { formatDateTime, formatNumber, t } from "./i18n.js";
 
 export const ganttLimits = Object.freeze({
@@ -78,7 +79,7 @@ function normalizeProgress(value) {
 
 function normalizeTask(rawTask, index, seenIds, fallbackDay) {
   const source = recordValue(rawTask) ?? {};
-  let id = stringValue(source.id, createId("task"), ganttLimits.idLength).trim() || createId("task");
+  let id = stringValue(source.id, "", ganttLimits.idLength).trim() || createId("task");
   let suffix = 1;
   while (seenIds.has(id)) {
     id = `task-${index + 1}-${suffix}`.slice(0, ganttLimits.idLength);
@@ -826,15 +827,15 @@ export function extractGanttData(row) {
 
 export function summarizeGanttData(value) {
   const gantt = normalizeGanttData(value);
-  const lines = [gantt.title];
-  gantt.tasks.forEach((task) => {
-    lines.push(
-      task.title,
-      statusLabel(task.status),
-      task.assignee,
-      `${task.start} ${task.end}`,
-      `${task.progress}%`
-    );
-  });
-  return lines.filter(Boolean).join("\n").slice(0, 20_000);
+  function* lines() {
+    yield gantt.title;
+    for (const task of gantt.tasks) {
+      yield task.title;
+      yield statusLabel(task.status);
+      yield task.assignee;
+      yield `${task.start} ${task.end}`;
+      yield `${task.progress}%`;
+    }
+  }
+  return joinSummaryPrefix(lines());
 }

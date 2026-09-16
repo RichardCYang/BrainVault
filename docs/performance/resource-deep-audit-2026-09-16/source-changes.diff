@@ -1,0 +1,333 @@
+--- a/public/accordion-block.js
++++ b/public/accordion-block.js
+@@ -1,3 +1,4 @@
++import { joinSummaryPrefix } from "./summary-prefix.js";
+ import { formatNumber, t } from "./i18n.js";
+ import { renderServerBlockHtml } from "./rendered-html-sanitizer.js";
+ 
+@@ -67,7 +68,7 @@
+     .map(recordValue)
+     .filter(Boolean)
+     .map((item, index) => ({
+-      id: uniqueId(safeId(item.id, createId("accordion-item")), seen, `accordion-item-${index + 1}`),
++      id: uniqueId((safeId(item.id, "") || createId("accordion-item")), seen, `accordion-item-${index + 1}`),
+       icon: normalizeIcon(item.icon),
+       title: stringValue(
+         item.title,
+@@ -550,8 +551,12 @@
+ 
+ export function summarizeAccordionData(value) {
+   const accordion = normalizeAccordionData(value);
+-  return [accordion.title, ...accordion.items.flatMap((item) => [item.title, item.content])]
+-    .filter(Boolean)
+-    .join("\n")
+-    .slice(0, 20000);
+-}
++  function* lines() {
++    yield accordion.title;
++    for (const item of accordion.items) {
++      yield item.title;
++      yield item.content;
++    }
++  }
++  return joinSummaryPrefix(lines());
++}
+--- a/public/ai-chat-block.js
++++ b/public/ai-chat-block.js
+@@ -1,3 +1,4 @@
++import { joinSummaryPrefix } from "./summary-prefix.js";
+ import { formatDateTime, t } from "./i18n.js";
+ import { AI_CHAT_ANSWER_MAX_LENGTH } from "./runtime-config.js";
+ import { renderServerBlockHtml } from "./rendered-html-sanitizer.js";
+@@ -1461,19 +1462,17 @@
+ export function summarizeAiChatData(value) {
+   const data = normalizeAiChatData(value);
+   const provider = getAiProviderPreset(data.provider).label;
+-  return [
+-    data.title,
+-    `${provider}${data.model ? ` · ${data.model}` : ""}`,
+-    ...data.turns.flatMap((turn, index) => [
+-      `Question ${index + 1}`,
+-      turn.answeredAt,
+-      turn.question,
+-      turn.answer
+-    ])
+-  ]
+-    .filter(Boolean)
+-    .join("\n\n")
+-    .slice(0, 20_000);
++  function* sections() {
++    yield data.title;
++    yield `${provider}${data.model ? ` · ${data.model}` : ""}`;
++    for (const [index, turn] of data.turns.entries()) {
++      yield `Question ${index + 1}`;
++      yield turn.answeredAt;
++      yield turn.question;
++      yield turn.answer;
++    }
++  }
++  return joinSummaryPrefix(sections(), { separator: "\n\n" });
+ }
+ 
+ function addSvgShape(svg, tagName, attributes, text = "") {
+--- a/public/database-block.js
++++ b/public/database-block.js
+@@ -1,3 +1,4 @@
++import { joinSummaryPrefix } from "./summary-prefix.js";
+ import { formatNumber, t } from "./i18n.js";
+ 
+ export const databaseLimits = {
+@@ -1847,12 +1848,17 @@
+ 
+ export function summarizeDatabaseData(databaseValue) {
+   const database = normalizeDatabaseData(databaseValue);
+-  const lines = [database.title, ...database.properties.map((property) => property.name)];
+-  database.rows.forEach((dataRow) => {
+-    database.properties.forEach((property) => {
+-      const value = searchableValue(property, dataRow.values[property.id]);
+-      if (value) lines.push(value);
+-    });
+-  });
+-  return lines.join("\n").slice(0, 20000);
+-}
++  function* lines() {
++    yield database.title;
++    for (const property of database.properties) yield property.name;
++    for (const dataRow of database.rows) {
++      for (const property of database.properties) {
++        const value = searchableValue(property, dataRow.values[property.id]);
++        if (value) yield value;
++      }
++    }
++  }
++  // Title/property empty strings keep their original separators; only cells
++  // were filtered in the old summary. Full metadata above stays normalized.
++  return joinSummaryPrefix(lines(), { skipEmpty: false });
++}
+--- a/public/gantt-block.js
++++ b/public/gantt-block.js
+@@ -1,3 +1,4 @@
++import { joinSummaryPrefix } from "./summary-prefix.js";
+ import { formatDateTime, formatNumber, t } from "./i18n.js";
+ 
+ export const ganttLimits = Object.freeze({
+@@ -78,7 +79,7 @@
+ 
+ function normalizeTask(rawTask, index, seenIds, fallbackDay) {
+   const source = recordValue(rawTask) ?? {};
+-  let id = stringValue(source.id, createId("task"), ganttLimits.idLength).trim() || createId("task");
++  let id = stringValue(source.id, "", ganttLimits.idLength).trim() || createId("task");
+   let suffix = 1;
+   while (seenIds.has(id)) {
+     id = `task-${index + 1}-${suffix}`.slice(0, ganttLimits.idLength);
+@@ -826,15 +827,15 @@
+ 
+ export function summarizeGanttData(value) {
+   const gantt = normalizeGanttData(value);
+-  const lines = [gantt.title];
+-  gantt.tasks.forEach((task) => {
+-    lines.push(
+-      task.title,
+-      statusLabel(task.status),
+-      task.assignee,
+-      `${task.start} ${task.end}`,
+-      `${task.progress}%`
+-    );
+-  });
+-  return lines.filter(Boolean).join("\n").slice(0, 20_000);
+-}
++  function* lines() {
++    yield gantt.title;
++    for (const task of gantt.tasks) {
++      yield task.title;
++      yield statusLabel(task.status);
++      yield task.assignee;
++      yield `${task.start} ${task.end}`;
++      yield `${task.progress}%`;
++    }
++  }
++  return joinSummaryPrefix(lines());
++}
+--- a/public/timetable-block.js
++++ b/public/timetable-block.js
+@@ -1,3 +1,4 @@
++import { joinSummaryPrefix } from "./summary-prefix.js";
+ import { formatDateTime, formatNumber, t } from "./i18n.js";
+ 
+ export const timetableLimits = Object.freeze({
+@@ -82,7 +83,7 @@
+ 
+ function normalizeEntry(rawEntry, index, interval, seenIds) {
+   const source = recordValue(rawEntry) ?? {};
+-  let id = stringValue(source.id, createId("entry"), timetableLimits.idLength).trim() || createId("entry");
++  let id = stringValue(source.id, "", timetableLimits.idLength).trim() || createId("entry");
+   let suffix = 1;
+   while (seenIds.has(id)) {
+     id = `entry-${index + 1}-${suffix}`.slice(0, timetableLimits.idLength);
+@@ -506,9 +507,13 @@
+ 
+ export function summarizeTimetableData(value) {
+   const timetable = normalizeTimetableData(value);
+-  const lines = [timetable.title, timetable.date];
+-  timetable.entries.forEach((entry) => {
+-    lines.push(`${entry.start}-${entry.end} ${entry.completed ? "[x]" : "[ ]"} ${entry.title}`.trim(), entry.note);
+-  });
+-  return lines.filter(Boolean).join("\n").slice(0, 20_000);
+-}
++  function* lines() {
++    yield timetable.title;
++    yield timetable.date;
++    for (const entry of timetable.entries) {
++      yield `${entry.start}-${entry.end} ${entry.completed ? "[x]" : "[ ]"} ${entry.title}`.trim();
++      yield entry.note;
++    }
++  }
++  return joinSummaryPrefix(lines());
++}
+--- a/public/treeview-block.js
++++ b/public/treeview-block.js
+@@ -72,7 +72,7 @@
+     .map(recordValue)
+     .filter(Boolean)
+     .map((node, index) => ({
+-      id: uniqueId(safeId(node.id, createId("tree-node")), seen, `tree-node-${index + 1}`),
++      id: uniqueId((safeId(node.id, "") || createId("tree-node")), seen, `tree-node-${index + 1}`),
+       parentId: typeof node.parentId === "string" ? node.parentId.trim().slice(0, treeViewLimits.idLength) || null : null,
+       title: stringValue(
+         node.title,
+--- a/src/lib/accordion.ts
++++ b/src/lib/accordion.ts
+@@ -1,3 +1,4 @@
++import { joinSummaryPrefix } from "./summary-prefix.js";
+ import { normalizeIconValue } from "./icon-value.js";
+ 
+ export const accordionLimits = {
+@@ -140,13 +141,14 @@
+ 
+ export function summarizeAccordionData(value: unknown) {
+   const accordion = normalizeAccordionData(value);
+-  return [
+-    accordion.title,
+-    ...accordion.items.flatMap((item) => [item.title, item.content])
+-  ]
+-    .filter(Boolean)
+-    .join("\n")
+-    .slice(0, 20_000);
++  function* lines() {
++    yield accordion.title;
++    for (const item of accordion.items) {
++      yield item.title;
++      yield item.content;
++    }
++  }
++  return joinSummaryPrefix(lines());
+ }
+ 
+ export function renderAccordionHtml(metadata: unknown, renderContent: AccordionContentRenderer = renderPlainContent) {
+--- a/src/lib/ai-chat.ts
++++ b/src/lib/ai-chat.ts
+@@ -1,3 +1,4 @@
++import { joinSummaryPrefix } from "./summary-prefix.js";
+ import { getAiChatAnswerMaxLength } from "../config/ai-chat-limits.js";
+ 
+ export const aiProviderIds = ["chatgpt", "gemini", "claude", "deepseek", "grok"] as const;
+@@ -133,19 +134,15 @@
+ }
+ 
+ export function summarizeAiChatData(data: AiChatData) {
+-  const sections = [
+-    data.title,
+-    `${getAiProviderLabel(data.provider)}${data.model ? ` · ${data.model}` : ""}`,
+-    ...data.turns.flatMap((turn, index) => [
+-      `Question ${index + 1}`,
+-      turn.answeredAt,
+-      turn.question,
+-      turn.answer
+-    ])
+-  ];
+-
+-  return sections
+-    .filter(Boolean)
+-    .join("\n\n")
+-    .slice(0, 20_000);
++  function* sections() {
++    yield data.title;
++    yield `${getAiProviderLabel(data.provider)}${data.model ? ` · ${data.model}` : ""}`;
++    for (const [index, turn] of data.turns.entries()) {
++      yield `Question ${index + 1}`;
++      yield turn.answeredAt;
++      yield turn.question;
++      yield turn.answer;
++    }
++  }
++  return joinSummaryPrefix(sections(), { separator: "\n\n" });
+ }
+--- /dev/null
++++ b/public/summary-prefix.js
+@@ -0,0 +1,32 @@
++// @ts-check
++
++/**
++ * Return the existing search-summary prefix without joining the discarded tail.
++ * Inputs are already-normalized strings. This is NOT a validator or sanitizer:
++ * callers must finish normalization/validation before yielding summary fields.
++ * Length and slicing intentionally use UTF-16 code units, including lone surrogates.
++ * No input, iterator, or result is cached across calls/pages/accounts.
++ * @param {Iterable<string>} lines
++ * @param {{separator?: string, skipEmpty?: boolean, maxLength?: number}} [options]
++ */
++export function joinSummaryPrefix(lines, { separator = "\n", skipEmpty = true, maxLength = 20_000 } = {}) {
++  if (!Number.isSafeInteger(maxLength) || maxLength < 0) throw new RangeError("Invalid summary length");
++  if (maxLength === 0) return "";
++  const parts = [];
++  let remaining = maxLength;
++  let first = true;
++  for (const line of lines) {
++    if (skipEmpty && !line) continue;
++    if (!first) {
++      const delimiter = separator.slice(0, remaining);
++      parts.push(delimiter);
++      remaining -= delimiter.length;
++    }
++    const part = line.slice(0, remaining);
++    parts.push(part);
++    remaining -= part.length;
++    first = false;
++    if (remaining === 0) break;
++  }
++  return parts.join("");
++}
+--- /dev/null
++++ b/src/lib/summary-prefix.ts
+@@ -0,0 +1,31 @@
++/**
++ * Return the existing search-summary prefix without joining the discarded tail.
++ * Inputs are already-normalized strings. This is NOT a validator or sanitizer:
++ * callers must finish normalization/validation before yielding summary fields.
++ * Length and slicing intentionally use UTF-16 code units, including lone surrogates.
++ * No input, iterator, or result is cached across calls/pages/accounts.
++ */
++export function joinSummaryPrefix(
++  lines: Iterable<string>,
++  { separator = "\n", skipEmpty = true, maxLength = 20_000 }: { separator?: string; skipEmpty?: boolean; maxLength?: number } = {}
++) {
++  if (!Number.isSafeInteger(maxLength) || maxLength < 0) throw new RangeError("Invalid summary length");
++  if (maxLength === 0) return "";
++  const parts: string[] = [];
++  let remaining = maxLength;
++  let first = true;
++  for (const line of lines) {
++    if (skipEmpty && !line) continue;
++    if (!first) {
++      const delimiter = separator.slice(0, remaining);
++      parts.push(delimiter);
++      remaining -= delimiter.length;
++    }
++    const part = line.slice(0, remaining);
++    parts.push(part);
++    remaining -= part.length;
++    first = false;
++    if (remaining === 0) break;
++  }
++  return parts.join("");
++}

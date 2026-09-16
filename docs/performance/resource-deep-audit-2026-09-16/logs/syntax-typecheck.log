@@ -1,0 +1,18 @@
+$ node --version
+v22.16.0
+$ tsc --version
+Version 5.8.3
+node --check public/summary-prefix.js
+node --check public/ai-chat-block.js
+node --check public/accordion-block.js
+node --check public/database-block.js
+node --check public/timetable-block.js
+node --check public/gantt-block.js
+node --check public/treeview-block.js
+node --check tests/helpers/resource-deep-audit-harness.mjs
+node --check tests/summary-prefix-resource.node.test.mjs
+node --check tests/normalizer-uuid-resource.node.test.mjs
+node --check scripts/benchmark-resource-deep-audit.mjs
+$ tsc --noEmit --skipLibCheck --strict --target ES2023 --module NodeNext --moduleResolution NodeNext src/lib/summary-prefix.ts
+$ tsc --noEmit --allowJs --checkJs --skipLibCheck --strict --target ES2023 --module NodeNext --moduleResolution NodeNext public/summary-prefix.js
+PASS: syntax and isolated new-helper strict type checks (NOT full application build).

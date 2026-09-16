@@ -1,3 +1,4 @@
+import { joinSummaryPrefix } from "./summary-prefix.js";
 import { normalizeIconValue } from "./icon-value.js";
 
 export const accordionLimits = {
@@ -140,13 +141,14 @@ type AccordionContentRenderer = (value: string) => string;
 
 export function summarizeAccordionData(value: unknown) {
   const accordion = normalizeAccordionData(value);
-  return [
-    accordion.title,
-    ...accordion.items.flatMap((item) => [item.title, item.content])
-  ]
-    .filter(Boolean)
-    .join("\n")
-    .slice(0, 20_000);
+  function* lines() {
+    yield accordion.title;
+    for (const item of accordion.items) {
+      yield item.title;
+      yield item.content;
+    }
+  }
+  return joinSummaryPrefix(lines());
 }
 
 export function renderAccordionHtml(metadata: unknown, renderContent: AccordionContentRenderer = renderPlainContent) {

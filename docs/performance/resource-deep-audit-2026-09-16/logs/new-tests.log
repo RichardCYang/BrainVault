@@ -1,0 +1,601 @@
+TAP version 13
+# Subtest: accordion: 0 existing IDs are unchanged without discarded UUIDs
+ok 1 - accordion: 0 existing IDs are unchanged without discarded UUIDs
+  ---
+  duration_ms: 41.666728
+  type: 'test'
+  ...
+# Subtest: accordion: 1 existing IDs are unchanged without discarded UUIDs
+ok 2 - accordion: 1 existing IDs are unchanged without discarded UUIDs
+  ---
+  duration_ms: 3.875393
+  type: 'test'
+  ...
+# Subtest: accordion: 10 existing IDs are unchanged without discarded UUIDs
+ok 3 - accordion: 10 existing IDs are unchanged without discarded UUIDs
+  ---
+  duration_ms: 3.363772
+  type: 'test'
+  ...
+# Subtest: accordion: 50 existing IDs are unchanged without discarded UUIDs
+ok 4 - accordion: 50 existing IDs are unchanged without discarded UUIDs
+  ---
+  duration_ms: 5.889892
+  type: 'test'
+  ...
+# Subtest: accordion: missing, blank, overlength, duplicate and prototype-name IDs remain safe and unique
+ok 5 - accordion: missing, blank, overlength, duplicate and prototype-name IDs remain safe and unique
+  ---
+  duration_ms: 8.702335
+  type: 'test'
+  ...
+# Subtest: accordion: default data and generated ID algorithm are not replaced with weaker randomness
+ok 6 - accordion: default data and generated ID algorithm are not replaced with weaker randomness
+  ---
+  duration_ms: 1.681164
+  type: 'test'
+  ...
+# Subtest: accordion: 100 normalizations do not rotate saved IDs or mutate metadata
+ok 7 - accordion: 100 normalizations do not rotate saved IDs or mutate metadata
+  ---
+  duration_ms: 6.993076
+  type: 'test'
+  ...
+# Subtest: treeview: 0 existing IDs are unchanged without discarded UUIDs
+ok 8 - treeview: 0 existing IDs are unchanged without discarded UUIDs
+  ---
+  duration_ms: 2.331705
+  type: 'test'
+  ...
+# Subtest: treeview: 1 existing IDs are unchanged without discarded UUIDs
+ok 9 - treeview: 1 existing IDs are unchanged without discarded UUIDs
+  ---
+  duration_ms: 3.23532
+  type: 'test'
+  ...
+# Subtest: treeview: 10 existing IDs are unchanged without discarded UUIDs
+ok 10 - treeview: 10 existing IDs are unchanged without discarded UUIDs
+  ---
+  duration_ms: 2.4338
+  type: 'test'
+  ...
+# Subtest: treeview: 300 existing IDs are unchanged without discarded UUIDs
+ok 11 - treeview: 300 existing IDs are unchanged without discarded UUIDs
+  ---
+  duration_ms: 5.745736
+  type: 'test'
+  ...
+# Subtest: treeview: missing, blank, overlength, duplicate and prototype-name IDs remain safe and unique
+ok 12 - treeview: missing, blank, overlength, duplicate and prototype-name IDs remain safe and unique
+  ---
+  duration_ms: 7.357094
+  type: 'test'
+  ...
+# Subtest: treeview: default data and generated ID algorithm are not replaced with weaker randomness
+ok 13 - treeview: default data and generated ID algorithm are not replaced with weaker randomness
+  ---
+  duration_ms: 8.021831
+  type: 'test'
+  ...
+# Subtest: treeview: 100 normalizations do not rotate saved IDs or mutate metadata
+ok 14 - treeview: 100 normalizations do not rotate saved IDs or mutate metadata
+  ---
+  duration_ms: 13.832086
+  type: 'test'
+  ...
+# Subtest: timetable: 0 existing IDs are unchanged without discarded UUIDs
+ok 15 - timetable: 0 existing IDs are unchanged without discarded UUIDs
+  ---
+  duration_ms: 4.506475
+  type: 'test'
+  ...
+# Subtest: timetable: 1 existing IDs are unchanged without discarded UUIDs
+ok 16 - timetable: 1 existing IDs are unchanged without discarded UUIDs
+  ---
+  duration_ms: 3.429487
+  type: 'test'
+  ...
+# Subtest: timetable: 10 existing IDs are unchanged without discarded UUIDs
+ok 17 - timetable: 10 existing IDs are unchanged without discarded UUIDs
+  ---
+  duration_ms: 3.140385
+  type: 'test'
+  ...
+# Subtest: timetable: 200 existing IDs are unchanged without discarded UUIDs
+ok 18 - timetable: 200 existing IDs are unchanged without discarded UUIDs
+  ---
+  duration_ms: 15.540938
+  type: 'test'
+  ...
+# Subtest: timetable: missing, blank, overlength, duplicate and prototype-name IDs remain safe and unique
+ok 19 - timetable: missing, blank, overlength, duplicate and prototype-name IDs remain safe and unique
+  ---
+  duration_ms: 11.534935
+  type: 'test'
+  ...
+# Subtest: timetable: default data and generated ID algorithm are not replaced with weaker randomness
+ok 20 - timetable: default data and generated ID algorithm are not replaced with weaker randomness
+  ---
+  duration_ms: 1.420107
+  type: 'test'
+  ...
+# Subtest: timetable: 100 normalizations do not rotate saved IDs or mutate metadata
+ok 21 - timetable: 100 normalizations do not rotate saved IDs or mutate metadata
+  ---
+  duration_ms: 10.844566
+  type: 'test'
+  ...
+# Subtest: gantt: 0 existing IDs are unchanged without discarded UUIDs
+ok 22 - gantt: 0 existing IDs are unchanged without discarded UUIDs
+  ---
+  duration_ms: 5.186513
+  type: 'test'
+  ...
+# Subtest: gantt: 1 existing IDs are unchanged without discarded UUIDs
+ok 23 - gantt: 1 existing IDs are unchanged without discarded UUIDs
+  ---
+  duration_ms: 7.673996
+  type: 'test'
+  ...
+# Subtest: gantt: 10 existing IDs are unchanged without discarded UUIDs
+ok 24 - gantt: 10 existing IDs are unchanged without discarded UUIDs
+  ---
+  duration_ms: 2.428737
+  type: 'test'
+  ...
+# Subtest: gantt: 200 existing IDs are unchanged without discarded UUIDs
+ok 25 - gantt: 200 existing IDs are unchanged without discarded UUIDs
+  ---
+  duration_ms: 7.234185
+  type: 'test'
+  ...
+# Subtest: gantt: missing, blank, overlength, duplicate and prototype-name IDs remain safe and unique
+ok 26 - gantt: missing, blank, overlength, duplicate and prototype-name IDs remain safe and unique
+  ---
+  duration_ms: 7.123012
+  type: 'test'
+  ...
+# Subtest: gantt: default data and generated ID algorithm are not replaced with weaker randomness
+ok 27 - gantt: default data and generated ID algorithm are not replaced with weaker randomness
+  ---
+  duration_ms: 3.802977
+  type: 'test'
+  ...
+# Subtest: gantt: 100 normalizations do not rotate saved IDs or mutate metadata
+ok 28 - gantt: 100 normalizations do not rotate saved IDs or mutate metadata
+  ---
+  duration_ms: 18.29517
+  type: 'test'
+  ...
+# (node:12896) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: deep audit baseline is byte-exact: public/ai-chat-block.js
+ok 29 - deep audit baseline is byte-exact: public/ai-chat-block.js
+  ---
+  duration_ms: 3.787398
+  type: 'test'
+  ...
+# Subtest: deep audit baseline is byte-exact: public/accordion-block.js
+ok 30 - deep audit baseline is byte-exact: public/accordion-block.js
+  ---
+  duration_ms: 0.368063
+  type: 'test'
+  ...
+# Subtest: deep audit baseline is byte-exact: public/database-block.js
+ok 31 - deep audit baseline is byte-exact: public/database-block.js
+  ---
+  duration_ms: 0.62839
+  type: 'test'
+  ...
+# Subtest: deep audit baseline is byte-exact: public/timetable-block.js
+ok 32 - deep audit baseline is byte-exact: public/timetable-block.js
+  ---
+  duration_ms: 0.302957
+  type: 'test'
+  ...
+# Subtest: deep audit baseline is byte-exact: public/gantt-block.js
+ok 33 - deep audit baseline is byte-exact: public/gantt-block.js
+  ---
+  duration_ms: 0.42988
+  type: 'test'
+  ...
+# Subtest: deep audit baseline is byte-exact: public/treeview-block.js
+ok 34 - deep audit baseline is byte-exact: public/treeview-block.js
+  ---
+  duration_ms: 0.359695
+  type: 'test'
+  ...
+# Subtest: deep audit baseline is byte-exact: src/lib/ai-chat.ts
+ok 35 - deep audit baseline is byte-exact: src/lib/ai-chat.ts
+  ---
+  duration_ms: 0.224918
+  type: 'test'
+  ...
+# Subtest: deep audit baseline is byte-exact: src/lib/accordion.ts
+ok 36 - deep audit baseline is byte-exact: src/lib/accordion.ts
+  ---
+  duration_ms: 0.202813
+  type: 'test'
+  ...
+# Subtest: browser prefix parity / separator "" / skipEmpty false
+ok 37 - browser prefix parity / separator "" / skipEmpty false
+  ---
+  duration_ms: 6.332183
+  type: 'test'
+  ...
+# Subtest: browser prefix parity / separator "" / skipEmpty true
+ok 38 - browser prefix parity / separator "" / skipEmpty true
+  ---
+  duration_ms: 5.425998
+  type: 'test'
+  ...
+# Subtest: browser prefix parity / separator "\\n" / skipEmpty false
+ok 39 - browser prefix parity / separator "\\n" / skipEmpty false
+  ---
+  duration_ms: 0.552425
+  type: 'test'
+  ...
+# Subtest: browser prefix parity / separator "\\n" / skipEmpty true
+ok 40 - browser prefix parity / separator "\\n" / skipEmpty true
+  ---
+  duration_ms: 0.938821
+  type: 'test'
+  ...
+# Subtest: browser prefix parity / separator "\\n\\n" / skipEmpty false
+ok 41 - browser prefix parity / separator "\\n\\n" / skipEmpty false
+  ---
+  duration_ms: 0.906544
+  type: 'test'
+  ...
+# Subtest: browser prefix parity / separator "\\n\\n" / skipEmpty true
+ok 42 - browser prefix parity / separator "\\n\\n" / skipEmpty true
+  ---
+  duration_ms: 0.520228
+  type: 'test'
+  ...
+# Subtest: browser prefix parity / separator "😀" / skipEmpty false
+ok 43 - browser prefix parity / separator "😀" / skipEmpty false
+  ---
+  duration_ms: 2.109173
+  type: 'test'
+  ...
+# Subtest: browser prefix parity / separator "😀" / skipEmpty true
+ok 44 - browser prefix parity / separator "😀" / skipEmpty true
+  ---
+  duration_ms: 4.291008
+  type: 'test'
+  ...
+# Subtest: browser stops generator at the existing prefix, runs finally, and never visits the discarded tail
+ok 45 - browser stops generator at the existing prefix, runs finally, and never visits the discarded tail
+  ---
+  duration_ms: 0.315006
+  type: 'test'
+  ...
+# Subtest: browser empty budget does not start an iterator; errors before the limit propagate
+ok 46 - browser empty budget does not start an iterator; errors before the limit propagate
+  ---
+  duration_ms: 1.126935
+  type: 'test'
+  ...
+# Subtest: browser 2,000 seeded UTF-16 / delimiter / empty-line differential cases
+ok 47 - browser 2,000 seeded UTF-16 / delimiter / empty-line differential cases
+  ---
+  duration_ms: 32.631698
+  type: 'test'
+  ...
+# Subtest: server prefix parity / separator "" / skipEmpty false
+ok 48 - server prefix parity / separator "" / skipEmpty false
+  ---
+  duration_ms: 0.683973
+  type: 'test'
+  ...
+# Subtest: server prefix parity / separator "" / skipEmpty true
+ok 49 - server prefix parity / separator "" / skipEmpty true
+  ---
+  duration_ms: 0.734619
+  type: 'test'
+  ...
+# Subtest: server prefix parity / separator "\\n" / skipEmpty false
+ok 50 - server prefix parity / separator "\\n" / skipEmpty false
+  ---
+  duration_ms: 0.392961
+  type: 'test'
+  ...
+# Subtest: server prefix parity / separator "\\n" / skipEmpty true
+ok 51 - server prefix parity / separator "\\n" / skipEmpty true
+  ---
+  duration_ms: 0.35989
+  type: 'test'
+  ...
+# Subtest: server prefix parity / separator "\\n\\n" / skipEmpty false
+ok 52 - server prefix parity / separator "\\n\\n" / skipEmpty false
+  ---
+  duration_ms: 0.93057
+  type: 'test'
+  ...
+# Subtest: server prefix parity / separator "\\n\\n" / skipEmpty true
+ok 53 - server prefix parity / separator "\\n\\n" / skipEmpty true
+  ---
+  duration_ms: 0.390979
+  type: 'test'
+  ...
+# Subtest: server prefix parity / separator "😀" / skipEmpty false
+ok 54 - server prefix parity / separator "😀" / skipEmpty false
+  ---
+  duration_ms: 0.765073
+  type: 'test'
+  ...
+# Subtest: server prefix parity / separator "😀" / skipEmpty true
+ok 55 - server prefix parity / separator "😀" / skipEmpty true
+  ---
+  duration_ms: 0.386597
+  type: 'test'
+  ...
+# Subtest: server stops generator at the existing prefix, runs finally, and never visits the discarded tail
+ok 56 - server stops generator at the existing prefix, runs finally, and never visits the discarded tail
+  ---
+  duration_ms: 0.099947
+  type: 'test'
+  ...
+# Subtest: server empty budget does not start an iterator; errors before the limit propagate
+ok 57 - server empty budget does not start an iterator; errors before the limit propagate
+  ---
+  duration_ms: 0.323915
+  type: 'test'
+  ...
+# Subtest: server 2,000 seeded UTF-16 / delimiter / empty-line differential cases
+ok 58 - server 2,000 seeded UTF-16 / delimiter / empty-line differential cases
+  ---
+  duration_ms: 20.107617
+  type: 'test'
+  ...
+# Subtest: ai-chat exact original summary and immutable normalized metadata / large false
+ok 59 - ai-chat exact original summary and immutable normalized metadata / large false
+  ---
+  duration_ms: 14.698875
+  type: 'test'
+  ...
+# Subtest: ai-chat exact original summary and immutable normalized metadata / large true
+ok 60 - ai-chat exact original summary and immutable normalized metadata / large true
+  ---
+  duration_ms: 167.368565
+  type: 'test'
+  ...
+# Subtest: ai-chat native ESM exports agree with source harness
+ok 61 - ai-chat native ESM exports agree with source harness
+  ---
+  duration_ms: 49.529573
+  type: 'test'
+  ...
+# Subtest: ai-chat malformed/empty/default inputs retain exact search text
+ok 62 - ai-chat malformed/empty/default inputs retain exact search text
+  ---
+  duration_ms: 10.485541
+  type: 'test'
+  ...
+# Subtest: ai-chat 7-language seeded summary differential tests
+ok 63 - ai-chat 7-language seeded summary differential tests
+  ---
+  duration_ms: 288.556347
+  type: 'test'
+  ...
+# Subtest: ai-chat full normalization is NOT skipped after the summary is full
+ok 64 - ai-chat full normalization is NOT skipped after the summary is full
+  ---
+  duration_ms: 5.054342
+  type: 'test'
+  ...
+# Subtest: accordion exact original summary and immutable normalized metadata / large false
+ok 65 - accordion exact original summary and immutable normalized metadata / large false
+  ---
+  duration_ms: 31.103446
+  type: 'test'
+  ...
+# Subtest: accordion exact original summary and immutable normalized metadata / large true
+ok 66 - accordion exact original summary and immutable normalized metadata / large true
+  ---
+  duration_ms: 16.986252
+  type: 'test'
+  ...
+# Subtest: accordion native ESM exports agree with source harness
+ok 67 - accordion native ESM exports agree with source harness
+  ---
+  duration_ms: 7.573747
+  type: 'test'
+  ...
+# Subtest: accordion malformed/empty/default inputs retain exact search text
+ok 68 - accordion malformed/empty/default inputs retain exact search text
+  ---
+  duration_ms: 1.514605
+  type: 'test'
+  ...
+# Subtest: accordion 7-language seeded summary differential tests
+ok 69 - accordion 7-language seeded summary differential tests
+  ---
+  duration_ms: 128.806733
+  type: 'test'
+  ...
+# Subtest: accordion full normalization is NOT skipped after the summary is full
+ok 70 - accordion full normalization is NOT skipped after the summary is full
+  ---
+  duration_ms: 1.130429
+  type: 'test'
+  ...
+# Subtest: database exact original summary and immutable normalized metadata / large false
+ok 71 - database exact original summary and immutable normalized metadata / large false
+  ---
+  duration_ms: 17.377768
+  type: 'test'
+  ...
+# Subtest: database exact original summary and immutable normalized metadata / large true
+ok 72 - database exact original summary and immutable normalized metadata / large true
+  ---
+  duration_ms: 149.894711
+  type: 'test'
+  ...
+# Subtest: database native ESM exports agree with source harness
+ok 73 - database native ESM exports agree with source harness
+  ---
+  duration_ms: 20.711252
+  type: 'test'
+  ...
+# Subtest: database malformed/empty/default inputs retain exact search text
+ok 74 - database malformed/empty/default inputs retain exact search text
+  ---
+  duration_ms: 7.007897
+  type: 'test'
+  ...
+# Subtest: database 7-language seeded summary differential tests
+ok 75 - database 7-language seeded summary differential tests
+  ---
+  duration_ms: 138.056371
+  type: 'test'
+  ...
+# Subtest: database full normalization is NOT skipped after the summary is full
+ok 76 - database full normalization is NOT skipped after the summary is full
+  ---
+  duration_ms: 5.218118
+  type: 'test'
+  ...
+# Subtest: timetable exact original summary and immutable normalized metadata / large false
+ok 77 - timetable exact original summary and immutable normalized metadata / large false
+  ---
+  duration_ms: 7.608119
+  type: 'test'
+  ...
+# Subtest: timetable exact original summary and immutable normalized metadata / large true
+ok 78 - timetable exact original summary and immutable normalized metadata / large true
+  ---
+  duration_ms: 167.045712
+  type: 'test'
+  ...
+# Subtest: timetable native ESM exports agree with source harness
+ok 79 - timetable native ESM exports agree with source harness
+  ---
+  duration_ms: 40.926061
+  type: 'test'
+  ...
+# Subtest: timetable malformed/empty/default inputs retain exact search text
+ok 80 - timetable malformed/empty/default inputs retain exact search text
+  ---
+  duration_ms: 1.621077
+  type: 'test'
+  ...
+# Subtest: timetable 7-language seeded summary differential tests
+ok 81 - timetable 7-language seeded summary differential tests
+  ---
+  duration_ms: 97.801094
+  type: 'test'
+  ...
+# Subtest: timetable full normalization is NOT skipped after the summary is full
+ok 82 - timetable full normalization is NOT skipped after the summary is full
+  ---
+  duration_ms: 2.227098
+  type: 'test'
+  ...
+# Subtest: gantt exact original summary and immutable normalized metadata / large false
+ok 83 - gantt exact original summary and immutable normalized metadata / large false
+  ---
+  duration_ms: 4.15542
+  type: 'test'
+  ...
+# Subtest: gantt exact original summary and immutable normalized metadata / large true
+ok 84 - gantt exact original summary and immutable normalized metadata / large true
+  ---
+  duration_ms: 161.860072
+  type: 'test'
+  ...
+# Subtest: gantt native ESM exports agree with source harness
+ok 85 - gantt native ESM exports agree with source harness
+  ---
+  duration_ms: 15.894506
+  type: 'test'
+  ...
+# (node:12896) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time
+# Subtest: gantt malformed/empty/default inputs retain exact search text
+ok 86 - gantt malformed/empty/default inputs retain exact search text
+  ---
+  duration_ms: 4.041357
+  type: 'test'
+  ...
+# Subtest: gantt 7-language seeded summary differential tests
+ok 87 - gantt 7-language seeded summary differential tests
+  ---
+  duration_ms: 184.451559
+  type: 'test'
+  ...
+# Subtest: gantt full normalization is NOT skipped after the summary is full
+ok 88 - gantt full normalization is NOT skipped after the summary is full
+  ---
+  duration_ms: 4.966318
+  type: 'test'
+  ...
+# Subtest: AI summary prefix retains exact two-newline and surrogate boundaries
+ok 89 - AI summary prefix retains exact two-newline and surrogate boundaries
+  ---
+  duration_ms: 10.433389
+  type: 'test'
+  ...
+# Subtest: database preserves empty title/property separators and typed cell search values
+ok 90 - database preserves empty title/property separators and typed cell search values
+  ---
+  duration_ms: 9.658909
+  type: 'test'
+  ...
+# Subtest: ai-chat exact server summary function agrees with original and client
+ok 91 - ai-chat exact server summary function agrees with original and client
+  ---
+  duration_ms: 42.596782
+  type: 'test'
+  ...
+# Subtest: accordion exact server summary function agrees with original and client
+ok 92 - accordion exact server summary function agrees with original and client
+  ---
+  duration_ms: 10.992097
+  type: 'test'
+  ...
+# Subtest: server validation/normalization bodies are unchanged (only summary and its import changed)
+ok 93 - server validation/normalization bodies are unchanged (only summary and its import changed)
+  ---
+  duration_ms: 1.036753
+  type: 'test'
+  ...
+# Subtest: ai-chat: reproducible bounded summary allocation with full metadata retained
+ok 94 - ai-chat: reproducible bounded summary allocation with full metadata retained
+  ---
+  duration_ms: 30.711825
+  type: 'test'
+  ...
+# Subtest: accordion: reproducible bounded summary allocation with full metadata retained
+ok 95 - accordion: reproducible bounded summary allocation with full metadata retained
+  ---
+  duration_ms: 11.081842
+  type: 'test'
+  ...
+# Subtest: database: reproducible bounded summary allocation with full metadata retained
+ok 96 - database: reproducible bounded summary allocation with full metadata retained
+  ---
+  duration_ms: 60.857928
+  type: 'test'
+  ...
+# Subtest: timetable: reproducible bounded summary allocation with full metadata retained
+ok 97 - timetable: reproducible bounded summary allocation with full metadata retained
+  ---
+  duration_ms: 18.576096
+  type: 'test'
+  ...
+# Subtest: gantt: reproducible bounded summary allocation with full metadata retained
+ok 98 - gantt: reproducible bounded summary allocation with full metadata retained
+  ---
+  duration_ms: 10.328148
+  type: 'test'
+  ...
+1..98
+# tests 98
+# suites 0
+# pass 98
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2700.540573

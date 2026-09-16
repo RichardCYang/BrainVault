@@ -1,3 +1,4 @@
+import { joinSummaryPrefix } from "./summary-prefix.js";
 import { formatDateTime, t } from "./i18n.js";
 import { AI_CHAT_ANSWER_MAX_LENGTH } from "./runtime-config.js";
 import { renderServerBlockHtml } from "./rendered-html-sanitizer.js";
@@ -1461,19 +1462,17 @@ export function normalizeAiChatData(value, { fallbackAnsweredAt = "" } = {}) {
 export function summarizeAiChatData(value) {
   const data = normalizeAiChatData(value);
   const provider = getAiProviderPreset(data.provider).label;
-  return [
-    data.title,
-    `${provider}${data.model ? ` · ${data.model}` : ""}`,
-    ...data.turns.flatMap((turn, index) => [
-      `Question ${index + 1}`,
-      turn.answeredAt,
-      turn.question,
-      turn.answer
-    ])
-  ]
-    .filter(Boolean)
-    .join("\n\n")
-    .slice(0, 20_000);
+  function* sections() {
+    yield data.title;
+    yield `${provider}${data.model ? ` · ${data.model}` : ""}`;
+    for (const [index, turn] of data.turns.entries()) {
+      yield `Question ${index + 1}`;
+      yield turn.answeredAt;
+      yield turn.question;
+      yield turn.answer;
+    }
+  }
+  return joinSummaryPrefix(sections(), { separator: "\n\n" });
 }
 
 function addSvgShape(svg, tagName, attributes, text = "") {

@@ -72,7 +72,7 @@ export function normalizeTreeViewData(value) {
     .map(recordValue)
     .filter(Boolean)
     .map((node, index) => ({
-      id: uniqueId(safeId(node.id, createId("tree-node")), seen, `tree-node-${index + 1}`),
+      id: uniqueId((safeId(node.id, "") || createId("tree-node")), seen, `tree-node-${index + 1}`),
       parentId: typeof node.parentId === "string" ? node.parentId.trim().slice(0, treeViewLimits.idLength) || null : null,
       title: stringValue(
         node.title,

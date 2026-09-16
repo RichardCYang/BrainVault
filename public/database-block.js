@@ -1,3 +1,4 @@
+import { joinSummaryPrefix } from "./summary-prefix.js";
 import { formatNumber, t } from "./i18n.js";
 
 export const databaseLimits = {
@@ -1847,12 +1848,17 @@ export function extractDatabaseData(row) {
 
 export function summarizeDatabaseData(databaseValue) {
   const database = normalizeDatabaseData(databaseValue);
-  const lines = [database.title, ...database.properties.map((property) => property.name)];
-  database.rows.forEach((dataRow) => {
-    database.properties.forEach((property) => {
-      const value = searchableValue(property, dataRow.values[property.id]);
-      if (value) lines.push(value);
-    });
-  });
-  return lines.join("\n").slice(0, 20000);
+  function* lines() {
+    yield database.title;
+    for (const property of database.properties) yield property.name;
+    for (const dataRow of database.rows) {
+      for (const property of database.properties) {
+        const value = searchableValue(property, dataRow.values[property.id]);
+        if (value) yield value;
+      }
+    }
+  }
+  // Title/property empty strings keep their original separators; only cells
+  // were filtered in the old summary. Full metadata above stays normalized.
+  return joinSummaryPrefix(lines(), { skipEmpty: false });
 }
