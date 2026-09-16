@@ -182,16 +182,19 @@ export function createEditorHistory({
 
     commit(pageId, direction) {
       ensurePage(pageId);
+      // Entries own private snapshots; peek() clones before exposing them.
+      // Reuse those snapshots as baselines just as record() does, rather than
+      // deep-cloning an unchanged block on every undo/redo transition.
       if (direction === "redo") {
         const entry = redoStack.pop();
         if (!entry) return false;
         undoStack.push(entry);
-        baselines.set(entry.key, cloneHistoryValue(entry.after));
+        baselines.set(entry.key, entry.after);
       } else {
         const entry = undoStack.pop();
         if (!entry) return false;
         redoStack.push(entry);
-        baselines.set(entry.key, cloneHistoryValue(entry.before));
+        baselines.set(entry.key, entry.before);
       }
       captureEpoch += 1;
       return true;

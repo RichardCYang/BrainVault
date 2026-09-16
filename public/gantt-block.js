@@ -359,7 +359,19 @@ function createTaskEditorRow(task) {
   return taskRow;
 }
 
-function createTimelineHeader(viewStartDay, setting, showWeekends) {
+function getTimelineDecorations(viewStartDay, setting, showWeekends) {
+  // Calendar decorations are identical for every task in this render. Keep
+  // this state render-local so range/scale changes and the next day are fresh.
+  const weekendIndexes = new Set();
+  if (showWeekends) {
+    for (let index = 0; index < setting.days; index += 1) {
+      if (isWeekend(viewStartDay + index)) weekendIndexes.add(index);
+    }
+  }
+  return { weekendIndexes, today: getTodayDay() };
+}
+
+function createTimelineHeader(viewStartDay, setting, decorations) {
   const header = document.createElement("div");
   header.className = "gantt-timeline-header";
   header.style.width = `${setting.days * setting.dayWidth}px`;
@@ -380,8 +392,8 @@ function createTimelineHeader(viewStartDay, setting, showWeekends) {
     const day = viewStartDay + index;
     const cell = document.createElement("div");
     cell.className = "gantt-day-cell";
-    if (showWeekends && isWeekend(day)) cell.classList.add("is-weekend");
-    if (day === getTodayDay()) cell.classList.add("is-today");
+    if (decorations.weekendIndexes.has(index)) cell.classList.add("is-weekend");
+    if (day === decorations.today) cell.classList.add("is-today");
     cell.style.width = `${setting.dayWidth}px`;
     cell.textContent = formatDayHeader(day, setting.dayWidth < 24);
     cell.title = formatDateLabel(day);
@@ -392,27 +404,23 @@ function createTimelineHeader(viewStartDay, setting, showWeekends) {
   return header;
 }
 
-function createTimelineRow(editor, row, task, gantt, viewStartDay, setting, onDirty) {
+function createTimelineRow(editor, row, task, decorations, viewStartDay, setting, onDirty) {
   const timelineRow = document.createElement("div");
   timelineRow.className = "gantt-timeline-row";
   timelineRow.style.width = `${setting.days * setting.dayWidth}px`;
   timelineRow.style.setProperty("--gantt-day-width", `${setting.dayWidth}px`);
   timelineRow.dataset.taskId = task.id;
 
-  if (gantt.showWeekends) {
-    for (let index = 0; index < setting.days; index += 1) {
-      const day = viewStartDay + index;
-      if (!isWeekend(day)) continue;
-      const shade = document.createElement("span");
-      shade.className = "gantt-weekend-shade";
-      shade.style.left = `${index * setting.dayWidth}px`;
-      shade.style.width = `${setting.dayWidth}px`;
-      shade.setAttribute("aria-hidden", "true");
-      timelineRow.append(shade);
-    }
+  for (const index of decorations.weekendIndexes) {
+    const shade = document.createElement("span");
+    shade.className = "gantt-weekend-shade";
+    shade.style.left = `${index * setting.dayWidth}px`;
+    shade.style.width = `${setting.dayWidth}px`;
+    shade.setAttribute("aria-hidden", "true");
+    timelineRow.append(shade);
   }
 
-  const today = getTodayDay();
+  const today = decorations.today;
   if (today >= viewStartDay && today < viewStartDay + setting.days) {
     const line = document.createElement("span");
     line.className = "gantt-today-line";
@@ -698,10 +706,11 @@ export function createGanttEditor(row, value, { onDirty = () => {} } = {}) {
 
   const timelinePanel = document.createElement("div");
   timelinePanel.className = "gantt-timeline-panel";
-  timelinePanel.append(createTimelineHeader(viewStartDay, setting, gantt.showWeekends));
+  const decorations = getTimelineDecorations(viewStartDay, setting, gantt.showWeekends);
+  timelinePanel.append(createTimelineHeader(viewStartDay, setting, decorations));
   const timelineRows = document.createElement("div");
   timelineRows.className = "gantt-timeline-rows";
-  gantt.tasks.forEach((task) => timelineRows.append(createTimelineRow(editor, row, task, gantt, viewStartDay, setting, onDirty)));
+  gantt.tasks.forEach((task) => timelineRows.append(createTimelineRow(editor, row, task, decorations, viewStartDay, setting, onDirty)));
   timelinePanel.append(timelineRows);
 
   stage.append(taskPanel, timelinePanel);

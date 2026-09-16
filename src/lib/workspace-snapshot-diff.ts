@@ -74,12 +74,14 @@ function compactFieldDifferences(values: Array<FieldDifference | null>) {
 
 function includeContextualDifferences(
   semantic: Array<FieldDifference | null>,
-  contextual: Array<FieldDifference | null>,
+  contextual: () => Array<FieldDifference | null>,
   hasRelatedSemanticChange = false
 ) {
   const semanticDifferences = compactFieldDifferences(semantic);
   if (!semanticDifferences.length && !hasRelatedSemanticChange) return [];
-  return [...semanticDifferences, ...compactFieldDifferences(contextual)];
+  // Context is display-only: avoid hashing regenerated HTML that will be
+  // discarded when canonical user data has not changed.
+  return [...semanticDifferences, ...compactFieldDifferences(contextual())];
 }
 
 function longTextFieldDifference(field: string, snapshot: string | null, current: string | null): FieldDifference | null {
@@ -348,7 +350,7 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
           fieldDifference("attachmentFile", attachmentDescription(snapshotIndex, blockId), attachmentDescription(currentIndex, blockId)),
           fieldDifference("createdAt", beforeBlock.created_at, afterBlock.created_at),
           fieldDifference("updatedAt", beforeBlock.updated_at, afterBlock.updated_at)
-        ], [
+        ], () => [
           longTextFieldDifference("htmlCache", beforeBlock.html_cache, afterBlock.html_cache),
           fieldDifference("editVersion", beforeBlock.edit_version ?? null, afterBlock.edit_version ?? null)
         ]);
@@ -438,7 +440,7 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
         longTextFieldDifference("historyData", stableJson(beforeHistory), stableJson(afterHistory)),
         fieldDifference("createdAt", beforePage.created_at, afterPage.created_at),
         fieldDifference("updatedAt", beforePage.updated_at, afterPage.updated_at)
-      ], [
+      ], () => [
         fieldDifference("editVersion", beforePage.edit_version ?? null, afterPage.edit_version ?? null),
         fieldDifference("contentVersion", beforePage.content_version ?? null, afterPage.content_version ?? null)
       ], hasBlockChanges);
