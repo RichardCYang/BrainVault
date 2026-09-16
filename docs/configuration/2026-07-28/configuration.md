@@ -64,6 +64,7 @@ Never commit a real `.env` file.
 | `BOOKMARK_FETCH_TIMEOUT_MS` | `8000` | Maximum duration of one OpenGraph page fetch |
 | `BOOKMARK_FETCH_MAX_BYTES` | `524288` | Maximum document-head bytes inspected for one bookmark preview |
 | `BOOKMARK_FETCH_ALLOWED_PORTS` | `80,443` | Comma-separated destination ports permitted for server-side bookmark preview fetches |
+| `BOOKMARK_FETCH_NAT64_PREFIXES` | Empty | Optional comma-separated RFC 6052 NAT64 network-specific prefixes; BrainVault also attempts RFC 7050 discovery via `ipv4only.arpa` |
 | `ATTACHMENT_UPLOAD_DIR` | `uploads` | Private on-disk directory for attachment bytes; startup rejects the public web root and its descendants |
 | `ATTACHMENT_TEMP_MAX_AGE_MS` | `86400000` | Age after which stale files in the private attachment staging directory are removed at startup |
 | `MAX_ATTACHMENT_SIZE_MB` | `25` | Maximum size of one uploaded attachment in megabytes |

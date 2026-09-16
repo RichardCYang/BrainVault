@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import net from "node:net";
 import { z } from "zod";
 import { assertSecureDatabaseTransport } from "../lib/database-url.js";
+import { parseNat64Prefix } from "../lib/network-address.js";
 import { aiChatAnswerMaxLengthSchema } from "./ai-chat-limits.js";
 
 const knownInsecureSecrets = new Set(
@@ -99,6 +100,7 @@ const envSchema = z.object({
   BOOKMARK_FETCH_MAX_BYTES: z.coerce.number().int().min(64 * 1024).max(768 * 1024).default(512 * 1024),
   BOOKMARK_FETCH_ALLOWED_PORTS: z.string().trim().min(1).default("80,443"),
   BOOKMARK_FETCH_ALLOWED_HOSTS: z.string().trim().max(4_096).default(""),
+  BOOKMARK_FETCH_NAT64_PREFIXES: z.string().trim().max(4_096).default(""),
   ATTACHMENT_UPLOAD_DIR: z.string().min(1).default("uploads"),
   ATTACHMENT_TEMP_MAX_AGE_MS: z.coerce.number().int().min(60_000).max(30 * 24 * 60 * 60_000).default(24 * 60 * 60_000),
   MAX_ATTACHMENT_SIZE_MB: z.coerce.number().int().min(1).max(500).default(25),
@@ -212,6 +214,21 @@ function parsePublicOrigin(value: string) {
   return normalized;
 }
 
+function parseBookmarkFetchNat64Prefixes(value: string) {
+  const prefixes = value.split(",").map((item) => item.trim()).filter(Boolean);
+  const parsed = prefixes.map((item) => {
+    const prefix = parseNat64Prefix(item);
+    if (!prefix) {
+      throw new Error(
+        "BOOKMARK_FETCH_NAT64_PREFIXES must contain comma-separated, network-aligned RFC 6052 IPv6 prefixes using /32, /40, /48, /56, /64, or /96"
+      );
+    }
+    return prefix;
+  });
+  const unique = new Map(parsed.map((prefix) => [`${prefix.base}/${prefix.prefixLength}`, prefix]));
+  return [...unique.values()];
+}
+
 function parseBookmarkFetchAllowedPorts(value: string) {
   const ports = value.split(",").map((item) => item.trim()).filter(Boolean).map(Number);
   if (!ports.length || ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65_535)) {
@@ -308,6 +325,7 @@ for (const origin of webAuthnOrigins) {
 const publicOrigin = parsePublicOrigin(parsedEnv.PUBLIC_ORIGIN ?? webAuthnOrigins[0]);
 const bookmarkFetchAllowedPorts = parseBookmarkFetchAllowedPorts(parsedEnv.BOOKMARK_FETCH_ALLOWED_PORTS);
 const bookmarkFetchAllowedHosts = parseBookmarkFetchAllowedHosts(parsedEnv.BOOKMARK_FETCH_ALLOWED_HOSTS);
+const bookmarkFetchNat64Prefixes = parseBookmarkFetchNat64Prefixes(parsedEnv.BOOKMARK_FETCH_NAT64_PREFIXES);
 const httpsRedirect = parsedEnv.HTTPS_REDIRECT ?? parsedEnv.HTTPS_MODE === "proxy";
 const secureHttpsMode = parsedEnv.HTTPS_MODE !== "off";
 const trustedProxyAddresses = parsedEnv.TRUST_PROXY_ADDRESSES
@@ -349,6 +367,7 @@ export const env = {
   PUBLIC_ORIGIN: publicOrigin,
   BOOKMARK_FETCH_ALLOWED_PORTS: bookmarkFetchAllowedPorts,
   BOOKMARK_FETCH_ALLOWED_HOSTS: bookmarkFetchAllowedHosts,
+  BOOKMARK_FETCH_NAT64_PREFIXES: bookmarkFetchNat64Prefixes,
   HTTPS_REDIRECT: httpsRedirect,
   TRUST_PROXY_ADDRESSES: trustedProxyAddresses,
   AUTH_ALLOW_BEARER_TOKENS: parsedEnv.AUTH_ALLOW_BEARER_TOKENS ?? false,

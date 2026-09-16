@@ -11,9 +11,12 @@ import {
 } from "./bookmark-host-policy.js";
 import {
   canonicalIpAddressKey,
+  inferNat64PrefixFromIpv4OnlyAddress,
   isPrivateAddress,
   isPrivateOrLocalHostname,
+  isPrivateOrNat64TranslatedAddress,
   prioritizeResolvedAddresses,
+  type Nat64Prefix,
   type ResolvedAddress
 } from "./network-address.js";
 export { isPrivateAddress, isPrivateOrLocalHostname, prioritizeResolvedAddresses, type ResolvedAddress } from "./network-address.js";
@@ -264,6 +267,57 @@ const localBookmarkSelfAddresses = new Set(
 );
 let publicOriginAddressKeys: ReadonlySet<string> | null = null;
 let publicOriginAddressResolution: Promise<ReadonlySet<string>> | null = null;
+let discoveredNat64Prefixes: readonly Nat64Prefix[] | null = null;
+let nat64PrefixResolution: Promise<readonly Nat64Prefix[]> | null = null;
+
+async function resolveNat64Prefixes(deadline: number): Promise<readonly Nat64Prefix[]> {
+  if (discoveredNat64Prefixes) return discoveredNat64Prefixes;
+  if (nat64PrefixResolution) return nat64PrefixResolution;
+
+  nat64PrefixResolution = (async () => {
+    const configured = env.BOOKMARK_FETCH_NAT64_PREFIXES as readonly Nat64Prefix[];
+    const remainingTime = deadline - Date.now();
+    if (remainingTime <= 0) throw new ApiError(504, "BOOKMARK_FETCH_TIMEOUT", "The bookmark page took too long to respond");
+
+    const resolver = new dns.promises.Resolver({ timeout: Math.max(1, remainingTime), tries: 1 });
+    const cancelTimer = setTimeout(() => resolver.cancel(), remainingTime);
+    cancelTimer.unref?.();
+    try {
+      let answers: string[] = [];
+      try {
+        answers = await resolver.resolve6("ipv4only.arpa");
+      } catch (error) {
+        if (!isDnsNoDataError(error)) throw error;
+      }
+      const inferred = answers
+        .map(inferNat64PrefixFromIpv4OnlyAddress)
+        .filter((prefix): prefix is Nat64Prefix => prefix !== null);
+      const unique = new Map(
+        [...configured, ...inferred].map((prefix) => [`${prefix.base}/${prefix.prefixLength}`, prefix])
+      );
+      discoveredNat64Prefixes = [...unique.values()];
+      return discoveredNat64Prefixes;
+    } catch (error) {
+      const systemCode = error && typeof error === "object" && "code" in error ? String(error.code) : undefined;
+      if (systemCode === "ETIMEOUT" || systemCode === "ECANCELLED") {
+        throw new ApiError(504, "BOOKMARK_FETCH_TIMEOUT", "The bookmark page took too long to respond");
+      }
+      throw new ApiError(422, "BOOKMARK_FETCH_FAILED", "The NAT64 translation prefix could not be validated", {
+        reason: "nat64-discovery",
+        systemCode
+      });
+    } finally {
+      clearTimeout(cancelTimer);
+    }
+  })();
+
+  try {
+    return await nat64PrefixResolution;
+  } catch (error) {
+    nat64PrefixResolution = null;
+    throw error;
+  }
+}
 
 async function resolvePublicOriginAddressKeys(deadline: number): Promise<ReadonlySet<string>> {
   if (publicOriginAddressKeys) return publicOriginAddressKeys;
@@ -393,9 +447,12 @@ async function resolvePublicAddresses(
     });
   }
 
+  const nat64Prefixes = addresses.some((item) => net.isIP(item.address) === 6)
+    ? await resolveNat64Prefixes(deadline)
+    : env.BOOKMARK_FETCH_NAT64_PREFIXES as readonly Nat64Prefix[];
   const hasUnsafeAddress = addresses.some((item) => {
     const family = net.isIP(item.address);
-    return (family !== 4 && family !== 6) || isPrivateAddress(item.address);
+    return (family !== 4 && family !== 6) || isPrivateOrNat64TranslatedAddress(item.address, nat64Prefixes);
   });
   const publicAddresses = prioritizeResolvedAddresses(addresses);
   if (!publicAddresses.length || hasUnsafeAddress) {
@@ -844,7 +901,6 @@ export type DatabaseUrlPreview = {
 };
 
 export const databaseUrlPreviewFaviconMaxBytes = 128 * 1024;
-export const aiChatImageMaxBytes = 8 * 1024 * 1024;
 
 function validIcoStructure(bytes: Buffer) {
   if (bytes.length < 22 || bytes.readUInt16LE(0) !== 0 || bytes.readUInt16LE(2) !== 1) return false;
@@ -1049,165 +1105,6 @@ async function fetchDatabaseFaviconBytes(
 }
 
 
-function detectAiChatImageMimeType(bytes: Buffer) {
-  if (!bytes.length || bytes.length > aiChatImageMaxBytes) return "";
-  if (
-    bytes.length >= 8
-    && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
-  ) return "image/png";
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
-  if (bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP") {
-    return "image/webp";
-  }
-  if (bytes.length >= 6) {
-    const signature = bytes.toString("ascii", 0, 6);
-    if (signature === "GIF87a" || signature === "GIF89a") return "image/gif";
-  }
-  if (
-    bytes.length >= 12
-    && bytes.toString("ascii", 4, 8) === "ftyp"
-    && ["avif", "avis"].includes(bytes.toString("ascii", 8, 12))
-  ) return "image/avif";
-  if (validIcoStructure(bytes)) return "image/vnd.microsoft.icon";
-  return "";
-}
-
-async function fetchAiChatImageBytes(
-  value: string | URL,
-  redirectsLeft: number,
-  deadline: number
-): Promise<Buffer> {
-  const { url, addresses } = await validateFetchUrl(value, deadline);
-  const client = url.protocol === "https:" ? https : http;
-  const remainingTime = deadline - Date.now();
-  if (remainingTime <= 0) throw createBookmarkFetchTimeoutError();
-
-  return new Promise<Buffer>((resolve, reject) => {
-    let settled = false;
-    const rejectFetch = (error: unknown) => {
-      if (settled) return;
-      settled = true;
-      if (error instanceof ApiError) {
-        reject(error);
-        return;
-      }
-      const systemCode = error && typeof error === "object" && "code" in error ? String(error.code) : undefined;
-      reject(new ApiError(422, "AI_CHAT_IMAGE_FETCH_FAILED", "The AI chat image could not be fetched", {
-        reason: "network",
-        systemCode
-      }));
-    };
-
-    const request = client.request(
-      url,
-      {
-        method: "GET",
-        headers: {
-          Accept: "image/avif,image/webp,image/png,image/jpeg,image/gif,image/x-icon,image/vnd.microsoft.icon,*/*;q=0.1",
-          "Accept-Encoding": "identity",
-          "Cache-Control": "no-cache",
-          Pragma: "no-cache",
-          "User-Agent": bookmarkFetchUserAgent(url),
-          [bookmarkFetchGuardHeader]: bookmarkFetchGuardValue
-        },
-        lookup: createPinnedLookup(addresses),
-        agent: createBookmarkFetchAgent(url, addresses)
-      },
-      (response) => {
-        const status = response.statusCode ?? 0;
-        const location = response.headers.location;
-        if (status >= 300 && status < 400 && location) {
-          response.resume();
-          if (redirectsLeft <= 0) {
-            rejectFetch(new ApiError(422, "AI_CHAT_IMAGE_REDIRECT_LIMIT", "The AI chat image URL redirected too many times"));
-            return;
-          }
-          let nextUrl: URL;
-          try {
-            nextUrl = new URL(location, url);
-          } catch {
-            rejectFetch(new ApiError(422, "AI_CHAT_IMAGE_FETCH_FAILED", "The AI chat image URL returned an invalid redirect"));
-            return;
-          }
-          if (url.protocol === "https:" && nextUrl.protocol !== "https:") {
-            rejectFetch(new ApiError(403, "BOOKMARK_URL_BLOCKED", "AI chat image redirects must not downgrade from HTTPS to HTTP"));
-            return;
-          }
-          fetchAiChatImageBytes(nextUrl, redirectsLeft - 1, deadline).then(
-            (result) => {
-              if (settled) return;
-              settled = true;
-              resolve(result);
-            },
-            rejectFetch
-          );
-          return;
-        }
-
-        if (status < 200 || status >= 300) {
-          response.resume();
-          rejectFetch(new ApiError(
-            422,
-            "AI_CHAT_IMAGE_FETCH_FAILED",
-            `The AI chat image URL returned HTTP ${status || "error"}`,
-            { reason: "http", status }
-          ));
-          return;
-        }
-
-        const contentEncoding = String(response.headers["content-encoding"] ?? "").toLowerCase().trim();
-        if (contentEncoding && contentEncoding !== "identity") {
-          response.resume();
-          rejectFetch(new ApiError(422, "AI_CHAT_IMAGE_FETCH_FAILED", "The AI chat image ignored the requested response encoding"));
-          return;
-        }
-
-        const declaredLength = Number(response.headers["content-length"] ?? 0);
-        if (Number.isFinite(declaredLength) && declaredLength > aiChatImageMaxBytes) {
-          response.resume();
-          rejectFetch(new ApiError(422, "AI_CHAT_IMAGE_TOO_LARGE", "The AI chat image is too large"));
-          return;
-        }
-
-        const chunks: Buffer[] = [];
-        let total = 0;
-        response.on("data", (rawChunk: Buffer | string) => {
-          if (settled) return;
-          const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
-          total += chunk.length;
-          if (total > aiChatImageMaxBytes) {
-            response.destroy();
-            rejectFetch(new ApiError(422, "AI_CHAT_IMAGE_TOO_LARGE", "The AI chat image is too large"));
-            return;
-          }
-          chunks.push(chunk);
-        });
-        response.on("end", () => {
-          if (settled) return;
-          settled = true;
-          resolve(Buffer.concat(chunks));
-        });
-        response.on("aborted", () => rejectFetch(new Error("The AI chat image response was aborted")));
-        response.on("error", rejectFetch);
-      }
-    );
-
-    enforceAbsoluteRequestDeadline(request, remainingTime);
-    request.setTimeout(remainingTime, () => request.destroy(createBookmarkFetchTimeoutError()));
-    request.on("error", rejectFetch);
-    request.end();
-  });
-}
-
-export async function fetchAiChatImage(value: string) {
-  const deadline = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS;
-  const bytes = await fetchAiChatImageBytes(value, bookmarkLimits.redirects, deadline);
-  const contentType = detectAiChatImageMimeType(bytes);
-  if (!contentType) {
-    throw new ApiError(422, "AI_CHAT_IMAGE_INVALID", "The AI chat image is not a supported raster image");
-  }
-  return { bytes, contentType };
-}
 
 export async function fetchDatabaseUrlPreview(value: string): Promise<DatabaseUrlPreview> {
   const deadline = Date.now() + env.BOOKMARK_FETCH_TIMEOUT_MS;

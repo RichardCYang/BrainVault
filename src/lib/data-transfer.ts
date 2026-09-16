@@ -341,7 +341,7 @@ function pageVersionJsonColumnSchema(label: string, validateValue: (value: strin
 }
 const pageVersionSchema = z.object({
   page_id: idSchema,
-  revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  revision: z.number().int().min(1).max(dataTransferResourceLimits.maxPageVersions),
   page_edit_version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   page_content_version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   actors: pageVersionJsonColumnSchema("page version actors", parsePageVersionActorsJson),

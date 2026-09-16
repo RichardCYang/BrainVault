@@ -47,7 +47,11 @@ const booleanAttributes = new Set(["checked", "disabled", "open", "allowfullscre
 function normalizeRenderedImageSource(value) {
   const source = typeof value === "string" ? value.trim() : "";
   if (!source) return "";
-  if (source.startsWith("/") && !source.startsWith("//") && !source.includes("\\")) return source;
+  if (source.startsWith("/") && !source.startsWith("//") && !source.includes("\\")) {
+    const pathOnly = source.split(/[?#]/, 1)[0].toLowerCase();
+    if (pathOnly === "/api" || pathOnly.startsWith("/api/")) return "";
+    return source;
+  }
   return renderedImageDataPattern.test(source) ? source : "";
 }
 

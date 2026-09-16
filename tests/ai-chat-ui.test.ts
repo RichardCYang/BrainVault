@@ -237,20 +237,19 @@ describe("AI conversation block", () => {
     });
 
     expect(twoImageHtml).toContain('class="rendered-ai-chat-image-group rendered-ai-chat-image-group--2"');
-    expect(twoImageHtml.match(/class="rendered-ai-chat-image"/g)).toHaveLength(2);
-    expect(twoImageHtml).toContain('src="/api/ai-chat/image?url=https%3A%2F%2Fimages.example.com%2Fone.png"');
-    expect(twoImageHtml).toContain('src="/api/ai-chat/image?url=https%3A%2F%2Fimages.example.com%2Ftwo.jpg"');
-    expect(twoImageHtml).not.toContain('src="https://images.example.com/');
-    expect(twoImageHtml).toContain('loading="lazy"');
-    expect(twoImageHtml).toContain('referrerpolicy="no-referrer"');
+    expect(twoImageHtml.match(/class="rendered-ai-chat-image-link"/g)).toHaveLength(2);
+    expect(twoImageHtml).toContain('href="https://images.example.com/one.png"');
+    expect(twoImageHtml).toContain('href="https://images.example.com/two.jpg"');
+    expect(twoImageHtml).not.toContain('<img');
+    expect(twoImageHtml).not.toContain('/api/ai-chat/image');
     expect(twoImageHtml).not.toContain("<br>");
 
     expect(threeImageHtml).toContain('class="rendered-ai-chat-image-group rendered-ai-chat-image-group--3"');
-    expect(threeImageHtml.match(/class="rendered-ai-chat-image"/g)).toHaveLength(3);
-    expect(threeImageHtml).toContain('src="/api/ai-chat/image?url=https%3A%2F%2Fimages.example.com%2Fthree.webp"');
+    expect(threeImageHtml.match(/class="rendered-ai-chat-image-link"/g)).toHaveLength(3);
+    expect(threeImageHtml).toContain('href="https://images.example.com/three.webp"');
 
-    // Keep the existing generic Markdown boundary: only AI answers may turn a
-    // remote URL into the authenticated same-origin image proxy.
+    // Generic Markdown must not auto-load remote content either. AI-answer
+    // images are explicit external links, so viewing a page causes no egress.
     expect(renderMarkdown("![Image](https://images.example.com/outside.png)")).not.toContain('src="https://images.example.com/outside.png"');
     expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-image-group--2\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/s);
     expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-image-group--3\s*\{[^}]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/s);
@@ -269,8 +268,9 @@ describe("AI conversation block", () => {
     });
 
     expect(html).toContain("Before ");
-    expect(html).toContain('class="rendered-ai-chat-image"');
-    expect(html).toContain('src="/api/ai-chat/image?url=https%3A%2F%2Fimages.example.com%2Fdiagram.png"');
+    expect(html).toContain('class="rendered-ai-chat-image-link"');
+    expect(html).toContain('href="https://images.example.com/diagram.png"');
+    expect(html).not.toContain('/api/ai-chat/image');
     expect(html).toContain(" after");
     expect(html).not.toContain("rendered-ai-chat-image-group--1");
   });

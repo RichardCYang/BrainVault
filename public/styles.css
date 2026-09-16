@@ -14637,6 +14637,19 @@ button.danger {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.rendered-ai-chat-answer .rendered-ai-chat-image-link {
+  display: flex;
+  min-height: 4.5rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--line-strong) 82%, transparent);
+  border-radius: 10px;
+  background: var(--panel-soft);
+  padding: 0.8rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
 .rendered-ai-chat-answer .rendered-ai-chat-image {
   display: block;
   width: 100%;

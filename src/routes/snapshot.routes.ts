@@ -35,7 +35,7 @@ snapshotRouter.post("/", dataExportRateLimit, dataExportConcurrencyLimit, async 
   res.status(201).json({ snapshot });
 });
 
-snapshotRouter.get<SnapshotRouteParams>("/:snapshotId/diff", dataExportRateLimit, async (req, res) => {
+snapshotRouter.get<SnapshotRouteParams>("/:snapshotId/diff", dataExportRateLimit, dataExportConcurrencyLimit, async (req, res) => {
   const user = requireUser(req.user);
   const diff = await diffWorkspaceSnapshot(user.id, req.params.snapshotId);
   res.json({ diff });

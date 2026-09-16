@@ -5,6 +5,13 @@ export type ResolvedAddress = {
   family: 4 | 6;
 };
 
+export const rfc6052Nat64PrefixLengths = [32, 40, 48, 56, 64, 96] as const;
+export type Nat64PrefixLength = (typeof rfc6052Nat64PrefixLengths)[number];
+export type Nat64Prefix = {
+  base: string;
+  prefixLength: Nat64PrefixLength;
+};
+
 function ipv4ToNumber(address: string) {
   return address.split(".").reduce((total, part) => (total << 8) + Number(part), 0) >>> 0;
 }
@@ -54,6 +61,106 @@ function expandIpv6(address: string) {
   return [...leftParts, ...Array.from({ length: missing }, () => "0"), ...rightParts]
     .map((part) => part.padStart(4, "0"))
     .slice(0, 8);
+}
+
+function ipv6PartsToBytes(parts: string[]) {
+  return Uint8Array.from(parts.flatMap((part) => {
+    const value = Number.parseInt(part, 16);
+    return [value >>> 8, value & 0xff];
+  }));
+}
+
+function ipv6BytesToAddress(bytes: Uint8Array) {
+  const parts: string[] = [];
+  for (let index = 0; index < 16; index += 2) {
+    parts.push(((bytes[index] << 8) | bytes[index + 1]).toString(16).padStart(4, "0"));
+  }
+  return parts.join(":");
+}
+
+const rfc6052Ipv4BytePositions: Record<Nat64PrefixLength, readonly number[]> = {
+  32: [4, 5, 6, 7],
+  40: [5, 6, 7, 9],
+  48: [6, 7, 9, 10],
+  56: [7, 9, 10, 11],
+  64: [9, 10, 11, 12],
+  96: [12, 13, 14, 15]
+};
+
+function canonicalNat64PrefixBase(address: string, prefixLength: Nat64PrefixLength) {
+  const parts = expandIpv6(address);
+  if (parts.length !== 8 || parts.some((part) => !/^[0-9a-f]{4}$/i.test(part))) return "";
+  const bytes = ipv6PartsToBytes(parts);
+  const prefixBytes = prefixLength / 8;
+  bytes.fill(0, prefixBytes);
+  return ipv6BytesToAddress(bytes);
+}
+
+export function parseNat64Prefix(value: string): Nat64Prefix | null {
+  const match = value.trim().toLowerCase().match(/^(.+)\/(32|40|48|56|64|96)$/);
+  if (!match) return null;
+  const address = match[1].replace(/^\[|\]$/g, "");
+  if (net.isIP(address) !== 6) return null;
+  const prefixLength = Number(match[2]) as Nat64PrefixLength;
+  const base = canonicalNat64PrefixBase(address, prefixLength);
+  if (!base) return null;
+  const canonicalInput = canonicalIpAddressKey(address);
+  const canonicalBase = canonicalIpAddressKey(base);
+  if (!canonicalInput || canonicalInput !== canonicalBase) return null;
+  return { base, prefixLength };
+}
+
+function extractRfc6052Ipv4(address: string, prefix: Nat64Prefix) {
+  if (net.isIP(address) !== 6) return null;
+  const parts = expandIpv6(address);
+  const baseParts = expandIpv6(prefix.base);
+  if (parts.length !== 8 || baseParts.length !== 8) return null;
+  const bytes = ipv6PartsToBytes(parts);
+  const baseBytes = ipv6PartsToBytes(baseParts);
+  const prefixBytes = prefix.prefixLength / 8;
+  for (let index = 0; index < prefixBytes; index += 1) {
+    if (bytes[index] !== baseBytes[index]) return null;
+  }
+  if (prefix.prefixLength < 96 && bytes[8] !== 0) return null;
+  const positions = rfc6052Ipv4BytePositions[prefix.prefixLength];
+  return positions.map((index) => bytes[index]).join(".");
+}
+
+function hasZeroRfc6052DiscoverySuffix(bytes: Uint8Array, prefixLength: Nat64PrefixLength) {
+  if (prefixLength === 96) return true;
+  const suffixStart = ({ 32: 9, 40: 10, 48: 11, 56: 12, 64: 13 } as const)[prefixLength as 32 | 40 | 48 | 56 | 64];
+  for (let index = suffixStart; index < 16; index += 1) {
+    if (bytes[index] !== 0) return false;
+  }
+  return true;
+}
+
+export function inferNat64PrefixFromIpv4OnlyAddress(address: string): Nat64Prefix | null {
+  if (net.isIP(address) !== 6) return null;
+  const parts = expandIpv6(address);
+  if (parts.length !== 8) return null;
+  const bytes = ipv6PartsToBytes(parts);
+  for (const prefixLength of [...rfc6052Nat64PrefixLengths].reverse()) {
+    if (prefixLength < 96 && bytes[8] !== 0) continue;
+    if (!hasZeroRfc6052DiscoverySuffix(bytes, prefixLength)) continue;
+    const positions = rfc6052Ipv4BytePositions[prefixLength];
+    const embedded = positions.map((index) => bytes[index]).join(".");
+    if (embedded !== "192.0.0.170" && embedded !== "192.0.0.171") continue;
+    return {
+      base: canonicalNat64PrefixBase(address, prefixLength),
+      prefixLength
+    };
+  }
+  return null;
+}
+
+export function isPrivateOrNat64TranslatedAddress(address: string, prefixes: readonly Nat64Prefix[] = []) {
+  if (isPrivateAddress(address)) return true;
+  for (const prefix of prefixes) {
+    const embedded = extractRfc6052Ipv4(address, prefix);
+    if (embedded && isPrivateIpv4(embedded)) return true;
+  }
+  return false;
 }
 
 function ipv6PartsToBigInt(parts: string[]) {
@@ -134,7 +241,7 @@ export function isPrivateOrLocalHostname(hostname: string) {
     .trim()
     .toLowerCase()
     .replace(/^\[|\]$/g, "")
-    .replace(/\.$/, "");
+    .replace(/\.+$/, "");
   if (!normalized) return true;
 
   const family = net.isIP(normalized);

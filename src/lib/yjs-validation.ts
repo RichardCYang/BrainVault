@@ -86,6 +86,10 @@ function encodeBoundedState(document: Y.Doc, maxStateBytes: number) {
   if (stateUpdate.byteLength > maxStateBytes) {
     throw new InvalidYjsUpdateError("The resulting collaboration document is too large");
   }
+  // The persisted canonical state must satisfy the same structural budget as
+  // client input. Otherwise multiple individually valid updates can combine
+  // into a server-generated state that this server can no longer replay.
+  assertUpdatePreflight(stateUpdate, maxStateBytes);
   return stateUpdate;
 }
 
@@ -166,6 +170,9 @@ export function applyValidatedYjsStateUpdate(
     Y.applyUpdate(candidate, update);
     const stateUpdate = encodeBoundedState(candidate, maxStateBytes);
     const incrementalUpdate = Y.encodeStateAsUpdate(candidate, currentStateVector);
+    // Pending Yjs structs can be re-emitted when an incremental encoding is
+    // generated. Validate the exact row candidate before callers persist it.
+    assertUpdatePreflight(incrementalUpdate, maxStateBytes);
     return {
       document: candidate,
       stateUpdate,

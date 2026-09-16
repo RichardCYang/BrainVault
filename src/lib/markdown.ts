@@ -94,15 +94,15 @@ function enableAiChatCjkStrongEmphasis(markdownIt: MarkdownIt) {
 
 enableAiChatCjkStrongEmphasis(markdown);
 
-function getAiChatImageProxySource(value: unknown) {
+function getAiChatExternalImageLink(value: unknown) {
   const source = typeof value === "string" ? value.trim() : "";
-  if (!source || source.length > 2_048) return source;
+  if (!source || source.length > 2_048) return "";
   try {
     const parsed = new URL(source);
-    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return source;
-    return `/api/ai-chat/image?url=${encodeURIComponent(parsed.toString())}`;
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return "";
+    return parsed.toString();
   } catch {
-    return source;
+    return "";
   }
 }
 
@@ -175,8 +175,12 @@ function enableAiChatImageGalleries(markdownIt: MarkdownIt) {
   markdownIt.renderer.rules.image = (tokens, index, options, env, self) => {
     const environment = env as Record<string, unknown> | undefined;
     if (environment?.[aiChatImageGalleryEnvKey] === true) {
+      const externalImage = getAiChatExternalImageLink(tokens[index].attrGet("src"));
+      if (externalImage) {
+        const label = String(tokens[index].content || "Open image").trim() || "Open image";
+        return `<a class="rendered-ai-chat-image-link" href="${markdownIt.utils.escapeHtml(externalImage)}" target="_blank" rel="noopener noreferrer">${markdownIt.utils.escapeHtml(label)}</a>`;
+      }
       tokens[index].attrJoin("class", "rendered-ai-chat-image");
-      tokens[index].attrSet("src", getAiChatImageProxySource(tokens[index].attrGet("src")));
       tokens[index].attrSet("loading", "lazy");
       tokens[index].attrSet("referrerpolicy", "no-referrer");
     }
@@ -607,6 +611,11 @@ function normalizeRenderedImageSource(value: unknown) {
   // raster-image data URLs. Do not preserve absolute/protocol-relative URLs:
   // collaborator-authored markup must never trigger third-party viewer egress.
   if (source.startsWith("/") && !source.startsWith("//") && !source.includes("\\")) {
+    // Rendered content must never auto-dispatch authenticated API requests.
+    // Application API paths can have server-side effects even when the HTML
+    // itself is same-origin and otherwise safe to display.
+    const pathOnly = source.split(/[?#]/, 1)[0].toLowerCase();
+    if (pathOnly === "/api" || pathOnly.startsWith("/api/")) return "";
     return source;
   }
   if (/^data:image\/(?:png|jpeg|webp|vnd\.microsoft\.icon|x-icon);base64,[a-z0-9+/]+={0,2}$/i.test(source)) {
