@@ -1,0 +1,14 @@
+
+> brainvault@1.0.0 test
+> npm run lockfile:check && npm run test:unit && npm run test:durability
+
+
+> brainvault@1.0.0 lockfile:check
+> node scripts/lockfile-registry.mjs
+
+[lockfile-registry] OK: 352 resolved URL(s) use approved portable registry hosts.
+
+> brainvault@1.0.0 test:unit
+> vitest run --exclude 'tests/*.node.test.mjs'
+
+sh: 1: vitest: not found

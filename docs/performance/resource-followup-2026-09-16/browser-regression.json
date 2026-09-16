@@ -1,0 +1,163 @@
+{
+  "scope": "Actual complete TreeView browser module and i18n in Chromium DOM; no HTTP/API/database/authenticated full-app session.",
+  "results": [
+    {
+      "name": "DOM/ARIA/selection and memo values are identical on initial render",
+      "passed": true,
+      "ms": 145.80000000004657
+    },
+    {
+      "name": "edit outline title, node title, and multiline memo",
+      "passed": true,
+      "ms": 133.10000000009313
+    },
+    {
+      "name": "collapse and expand without reordering child content",
+      "passed": true,
+      "ms": 133.39999999990687
+    },
+    {
+      "name": "move siblings up and down",
+      "passed": true,
+      "ms": 133.69999999995343
+    },
+    {
+      "name": "indent and outdent after structural replacement uses current parent links",
+      "passed": true,
+      "ms": 132.9000000001397
+    },
+    {
+      "name": "add child, edit memo and select existing root",
+      "passed": true,
+      "ms": 133.29999999981374
+    },
+    {
+      "name": "add new root and preserve keyboard focus",
+      "passed": true,
+      "ms": 133.4000000001397
+    },
+    {
+      "name": "delete parent preserves children by reparenting",
+      "passed": true,
+      "ms": 133.39999999990687
+    },
+    {
+      "name": "delete leaf then add sibling",
+      "passed": true,
+      "ms": 133.4000000001397
+    },
+    {
+      "name": "arrow/Home/End/Enter keyboard navigation and expansion",
+      "passed": true,
+      "ms": 666.3999999999069
+    },
+    {
+      "name": "readonly mode allows selection and folding but no dirty notification",
+      "passed": true,
+      "ms": 200.10000000009313
+    },
+    {
+      "name": "readonly guard rejects title, memo and structural mutations",
+      "passed": true,
+      "ms": 133.5999999998603
+    },
+    {
+      "name": "empty-tree display and first root insertion",
+      "passed": true,
+      "ms": 132.9000000001397
+    },
+    {
+      "name": "cycle, orphan, duplicate and prototype-like IDs normalize identically",
+      "passed": true,
+      "ms": 133.30000000004657
+    },
+    {
+      "name": "locale en: labels, fallback title, paths and counts",
+      "passed": true,
+      "ms": 133.19999999995343
+    },
+    {
+      "name": "locale ko: labels, fallback title, paths and counts",
+      "passed": true,
+      "ms": 133.10000000009313
+    },
+    {
+      "name": "locale ja: labels, fallback title, paths and counts",
+      "passed": true,
+      "ms": 133.19999999995343
+    },
+    {
+      "name": "locale fr: labels, fallback title, paths and counts",
+      "passed": true,
+      "ms": 133.29999999981374
+    },
+    {
+      "name": "locale de: labels, fallback title, paths and counts",
+      "passed": true,
+      "ms": 133.10000000009313
+    },
+    {
+      "name": "locale es: labels, fallback title, paths and counts",
+      "passed": true,
+      "ms": 133.19999999995343
+    },
+    {
+      "name": "locale pt: labels, fallback title, paths and counts",
+      "passed": true,
+      "ms": 133.19999999995343
+    },
+    {
+      "name": "300-node limit, ordering controls and all ARIA positions",
+      "passed": true,
+      "ms": 187.0999999998603
+    },
+    {
+      "name": "real DOM: full-list parent comparisons 180300 -> 0; index visits 300",
+      "passed": true,
+      "ms": 38.5
+    },
+    {
+      "name": "large memos preserve full editable metadata while summary remains exact",
+      "passed": true,
+      "ms": 27.300000000046566
+    }
+  ],
+  "benchmarks": [
+    {
+      "mode": "baseline",
+      "nodes": 300,
+      "samples": 7,
+      "includes": "complete editor construction, attach and layout; actual DOM",
+      "allWallMs": [
+        36.199999999953434,
+        39.4000000001397,
+        42.200000000186265,
+        43.9000000001397,
+        41.5,
+        50.199999999953434,
+        37.4000000001397
+      ],
+      "medianWallMs": 41.5
+    },
+    {
+      "mode": "current",
+      "nodes": 300,
+      "samples": 7,
+      "includes": "complete editor construction, attach and layout; actual DOM",
+      "allWallMs": [
+        35.800000000046566,
+        31.899999999906868,
+        35.60000000009313,
+        37.5,
+        35.60000000009313,
+        42.60000000009313,
+        49
+      ],
+      "medianWallMs": 35.800000000046566
+    }
+  ],
+  "passed": 24,
+  "failed": 0,
+  "browserVersion": "144.0.7559.96",
+  "pageErrors": []
+}

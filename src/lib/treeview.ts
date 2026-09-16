@@ -120,8 +120,19 @@ export function getTreeViewData(metadata: unknown) {
   return normalizeTreeViewData(recordValue(parseMetadata(metadata).treeView));
 }
 
-function getChildren(data: TreeViewData, parentId: string | null) {
-  return data.nodes.filter((node) => node.parentId === parentId);
+function indexTreeViewChildren(data: TreeViewData) {
+  // The normalized snapshot is stable for one render/summary. Do not cache
+  // indexes across edits or accounts, where parent links may have changed.
+  const childrenByParentId = new Map<string | null, TreeViewNode[]>();
+  for (const node of data.nodes) {
+    let children = childrenByParentId.get(node.parentId);
+    if (!children) {
+      children = [];
+      childrenByParentId.set(node.parentId, children);
+    }
+    children.push(node);
+  }
+  return childrenByParentId;
 }
 
 function escapeHtml(value: string) {
@@ -137,20 +148,19 @@ function noteHtml(note: string) {
   return escapeHtml(note).replaceAll("\n", "<br>");
 }
 
-function renderTreeBranch(data: TreeViewData, parentId: string | null): string {
-  const children = getChildren(data, parentId);
+function renderTreeBranch(childrenByParentId: Map<string | null, TreeViewNode[]>, parentId: string | null): string {
+  const children = childrenByParentId.get(parentId) ?? [];
   if (!children.length) return "";
   const items = children.map((node) => {
-    const descendants = renderTreeBranch(data, node.id);
+    const descendants = renderTreeBranch(childrenByParentId, node.id);
     const marker = descendants ? '<span class="rendered-treeview-chevron" aria-hidden="true">⌄</span>' : '<span class="rendered-treeview-leaf" aria-hidden="true">•</span>';
     return `<li class="rendered-treeview-node"><div>${marker}<span>${escapeHtml(node.title || "Untitled item")}</span></div>${descendants}</li>`;
   }).join("");
   return `<ul class="rendered-treeview-branch">${items}</ul>`;
 }
 
-function getNodePath(data: TreeViewData, node: TreeViewNode) {
+function getNodePath(byId: Map<string, TreeViewNode>, node: TreeViewNode) {
   const labels = [node.title || "Untitled item"];
-  const byId = new Map(data.nodes.map((candidate) => [candidate.id, candidate]));
   const seen = new Set([node.id]);
   let parent = node.parentId ? byId.get(node.parentId) : undefined;
   while (parent && !seen.has(parent.id)) {
@@ -163,24 +173,37 @@ function getNodePath(data: TreeViewData, node: TreeViewNode) {
 
 export function summarizeTreeViewData(value: unknown) {
   const data = normalizeTreeViewData(value);
-  const lines = [data.title];
+  const childrenByParentId = indexTreeViewChildren(data);
+  const limit = 20_000;
+  let summary = "";
+  const appendLine = (line: string) => {
+    if (!line || summary.length >= limit) return;
+    summary += `${summary ? "\n" : ""}${line}`.slice(0, limit - summary.length);
+  };
+  appendLine(data.title);
   const visit = (parentId: string | null, depth: number) => {
-    for (const node of getChildren(data, parentId)) {
-      lines.push(`${"  ".repeat(depth)}- ${node.title}`);
-      if (node.note) lines.push(`${"  ".repeat(depth + 1)}${node.note}`);
+    for (const node of childrenByParentId.get(parentId) ?? []) {
+      if (summary.length >= limit) return;
+      appendLine(`${"  ".repeat(depth)}- ${node.title}`);
+      if (node.note) appendLine(`${"  ".repeat(depth + 1)}${node.note}`);
       visit(node.id, depth + 1);
     }
   };
+  // The search summary has always been a 20k-code-unit prefix. Keep complete
+  // metadata/normalization, but do not construct the discarded multi-MB suffix.
   visit(null, 0);
-  return lines.filter(Boolean).join("\n").slice(0, 20_000);
+  return summary;
 }
 
 export function renderTreeViewHtml(metadata: unknown) {
   const data = getTreeViewData(metadata);
-  const tree = renderTreeBranch(data, null) || '<div class="rendered-treeview-empty">No items yet.</div>';
-  const notes = data.nodes
-    .filter((node) => node.note.trim())
-    .map((node) => `<article class="rendered-treeview-note"><header><strong>${escapeHtml(node.title || "Untitled item")}</strong><small>${escapeHtml(getNodePath(data, node))}</small></header><div>${noteHtml(node.note)}</div></article>`)
+  const childrenByParentId = indexTreeViewChildren(data);
+  const tree = renderTreeBranch(childrenByParentId, null) || '<div class="rendered-treeview-empty">No items yet.</div>';
+  const memoNodes = data.nodes.filter((node) => node.note.trim());
+  // Only memo paths need ID lookup; construct it once, not once per memo.
+  const byId = new Map(memoNodes.length ? data.nodes.map((node) => [node.id, node] as const) : []);
+  const notes = memoNodes
+    .map((node) => `<article class="rendered-treeview-note"><header><strong>${escapeHtml(node.title || "Untitled item")}</strong><small>${escapeHtml(getNodePath(byId, node))}</small></header><div>${noteHtml(node.note)}</div></article>`)
     .join("") || '<div class="rendered-treeview-empty-note">No item memos yet.</div>';
 
   return `<section class="rendered-treeview"><header><h3>${escapeHtml(data.title || "Tree view")}</h3><span>Tree view · ${data.nodes.length} items</span></header><div class="rendered-treeview-layout"><div class="rendered-treeview-tree"><strong>Structure</strong>${tree}</div><div class="rendered-treeview-notes"><strong>Memos</strong>${notes}</div></div></section>`;

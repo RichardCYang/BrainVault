@@ -9,6 +9,8 @@ const maxQueuedExtraBytes = 256 * 1024;
 const maxFrameHeaderBytes = 10;
 const maxFragmentsPerMessage = 1_024;
 const maxTransportFramesPerSecond = 600;
+const initialReadBufferBytes = 64 * 1024;
+const idleReadBufferReleaseMs = 5_000;
 
 export type WebSocketMessage =
   | { type: "text"; text: string }
@@ -59,6 +61,7 @@ export class WebSocketConnection {
   private readBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   private readStart = 0;
   private readEnd = 0;
+  private readBufferReleaseTimer: ReturnType<typeof setTimeout> | null = null;
   private fragmentOpcode: 1 | 2 | null = null;
   private fragmentParts: Buffer[] = [];
   private fragmentBytes = 0;
@@ -260,7 +263,7 @@ export class WebSocketConnection {
     }
 
     const maxBufferBytes = this.maxMessageBytes + 64 * 1024;
-    let nextCapacity = Math.max(64 * 1024, this.readBuffer.length || 1);
+    let nextCapacity = Math.max(initialReadBufferBytes, this.readBuffer.length || 1);
     while (nextCapacity < neededBytes) {
       nextCapacity = Math.min(maxBufferBytes, nextCapacity * 2);
     }
@@ -282,7 +285,27 @@ export class WebSocketConnection {
     if (this.readStart === this.readEnd) {
       this.readStart = 0;
       this.readEnd = 0;
+      this.scheduleReadBufferRelease();
     }
+  }
+
+  private scheduleReadBufferRelease() {
+    if (this.readBuffer.length <= initialReadBufferBytes) return;
+    if (this.readBufferReleaseTimer) {
+      // Reuse the timer during bursts instead of allocating one per frame.
+      this.readBufferReleaseTimer.refresh();
+      return;
+    }
+    this.readBufferReleaseTimer = setTimeout(() => {
+      this.readBufferReleaseTimer = null;
+      // Never discard a partially received frame. Complete payloads/fragments
+      // were copied before consumption and do not borrow this scratch buffer.
+      if (this.unreadByteLength() !== 0) return;
+      this.readBuffer = Buffer.alloc(0);
+      this.readStart = 0;
+      this.readEnd = 0;
+    }, idleReadBufferReleaseMs);
+    this.readBufferReleaseTimer.unref();
   }
 
   private consume(chunk: Buffer) {
@@ -482,6 +505,10 @@ export class WebSocketConnection {
   }
 
   private stopAcceptingMessages() {
+    if (this.readBufferReleaseTimer) {
+      clearTimeout(this.readBufferReleaseTimer);
+      this.readBufferReleaseTimer = null;
+    }
     this.acceptingMessages = false;
     this.messageQueue = [];
     this.queuedMessageBytes = 0;

@@ -1,0 +1,23 @@
+[
+  {
+    "path": "public/treeview-block.js",
+    "originalSha256": "189bdefffe6e18c894fbfd1ba5b461c4710391cdd8afda915ceed1537e680521",
+    "modifiedSha256": "6d9e7c3301dbe84246c082db2df338b41c1a34bb0c694aec5ab89a703697535f",
+    "originalBytes": 23971,
+    "modifiedBytes": 25149
+  },
+  {
+    "path": "src/lib/treeview.ts",
+    "originalSha256": "f5dfb530e5c94743ba81fadafa664f9e973b4cbea11700ba582aba497cb2c910",
+    "modifiedSha256": "e4862de7ed1f316e5c1fb997b3558b90ab0bcfcc61b6c94fdb20b9b7283ff63e",
+    "originalBytes": 6934,
+    "modifiedBytes": 8064
+  },
+  {
+    "path": "src/lib/websocket.ts",
+    "originalSha256": "f503000c49f9bfc62602ddf41247fd04ba2434b15557ff650cf23c89f9ee9270",
+    "modifiedSha256": "b049e52c11f59e36ccac3e7df861c05d51036b275785c99ecfce87a15c612cf7",
+    "originalBytes": 21098,
+    "modifiedBytes": 22232
+  }
+]

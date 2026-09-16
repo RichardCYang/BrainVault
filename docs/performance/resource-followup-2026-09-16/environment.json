@@ -1,0 +1,36 @@
+{
+  "auditDate": "2026-09-16",
+  "node": "v22.16.0",
+  "npm": "10.9.2",
+  "v8": "12.4.254.21-node.26",
+  "cpu": "AMD EPYC 9V74 80-Core Processor",
+  "os": "Linux localhost 6.18.44 #1 SMP Sat Sep 12 15:35:21 UTC 2026 x86_64 GNU/Linux",
+  "chromium": "144.0.7559.96",
+  "projectNodeRequirement": "^22.23.2 || ^24.18.1 || >=26.5.1",
+  "projectDependenciesInstalled": false,
+  "networkRegistryResolution": "registry.npmjs.org: EAI_AGAIN (build.log)",
+  "selectedTypecheck": {
+    "files": [
+      "src/lib/treeview.ts",
+      "src/lib/websocket.ts"
+    ],
+    "typescript": "5.8.3",
+    "nodeTypes": "25.1.0 (provided globally, not project-installed)",
+    "baselineExitCode": 0,
+    "currentExitCode": 0,
+    "command": "tsc --noEmit --target ES2023 --module NodeNext --moduleResolution NodeNext --lib ES2023 --strict --esModuleInterop --skipLibCheck --types node --typeRoots /opt/nvm/versions/node/v22.16.0/lib/node_modules/ts-node/node_modules/@types src/lib/treeview.ts src/lib/websocket.ts"
+  },
+  "notExecutedSuccessfully": [
+    "supported-runtime npm ci",
+    "full npm run build",
+    "Vitest unit/route suite",
+    "official npm test",
+    "official verify:data-loss",
+    "official verify:collaboration",
+    "official verify:security",
+    "MariaDB-backed logged-in full-app end-to-end tests",
+    "production load/soak testing"
+  ],
+  "browserScope": "real Chromium DOM, actual complete TreeView JS + i18n, no app CSS, no HTTP auth/API/database session",
+  "websocketScope": "actual parser with deterministic and native timers; native WebSocket client over loopback TCP/HTTP Upgrade; no authenticated collaboration/API/database session"
+}

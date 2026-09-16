@@ -1,0 +1,37 @@
+[
+  {
+    "name": "current-node-final",
+    "command": "node --experimental-strip-types --test --test-concurrency=4 tests/*.node.test.mjs",
+    "exitCode": 1,
+    "durationSeconds": 18.286,
+    "log": "logs/current-node-final.log"
+  },
+  {
+    "name": "new-regression-final",
+    "command": "node --experimental-strip-types --test tests/treeview-resource-followup.node.test.mjs tests/websocket-idle-buffer-resource.node.test.mjs tests/websocket-loopback-resource.node.test.mjs",
+    "exitCode": 0,
+    "durationSeconds": 10.885,
+    "log": "logs/new-regression-final.log"
+  },
+  {
+    "name": "browser-regression-final",
+    "command": "python scripts/verify-resource-followup-browser.py --output /mnt/data/audit_run/browser-regression.json",
+    "exitCode": 0,
+    "durationSeconds": 5.784,
+    "log": "logs/browser-regression-final.log"
+  },
+  {
+    "name": "benchmark-final",
+    "command": "node --expose-gc --experimental-strip-types scripts/benchmark-resource-followup.mjs",
+    "exitCode": 0,
+    "durationSeconds": 14.224,
+    "log": "logs/benchmark-final.log"
+  },
+  {
+    "name": "syntax",
+    "command": "node --check public/treeview-block.js && node --check tests/helpers/resource-followup-harness.mjs && node --check tests/treeview-resource-followup.node.test.mjs && node --check tests/websocket-idle-buffer-resource.node.test.mjs && node --check tests/websocket-loopback-resource.node.test.mjs && node --check scripts/benchmark-resource-followup.mjs",
+    "exitCode": 0,
+    "durationSeconds": 0.164,
+    "log": "logs/syntax.log"
+  }
+]

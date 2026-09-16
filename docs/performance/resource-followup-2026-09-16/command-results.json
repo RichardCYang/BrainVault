@@ -1,0 +1,51 @@
+[
+  {
+    "name": "current-node",
+    "command": "node --experimental-strip-types --test --test-concurrency=4 tests/*.node.test.mjs",
+    "exitCode": 1,
+    "durationSeconds": 15.081,
+    "log": "logs/current-node.log"
+  },
+  {
+    "name": "lockfile-check",
+    "command": "npm run lockfile:check",
+    "exitCode": 0,
+    "durationSeconds": 0.165,
+    "log": "logs/lockfile-check.log"
+  },
+  {
+    "name": "build",
+    "command": "npm run build",
+    "exitCode": 1,
+    "durationSeconds": 0.315,
+    "log": "logs/build.log"
+  },
+  {
+    "name": "npm-test",
+    "command": "npm test",
+    "exitCode": 127,
+    "durationSeconds": 0.315,
+    "log": "logs/npm-test.log"
+  },
+  {
+    "name": "verify-data-loss",
+    "command": "npm run verify:data-loss",
+    "exitCode": 1,
+    "durationSeconds": 0.417,
+    "log": "logs/verify-data-loss.log"
+  },
+  {
+    "name": "verify-collaboration",
+    "command": "npm run verify:collaboration",
+    "exitCode": 1,
+    "durationSeconds": 0.165,
+    "log": "logs/verify-collaboration.log"
+  },
+  {
+    "name": "verify-security",
+    "command": "npm run verify:security",
+    "exitCode": 1,
+    "durationSeconds": 0.164,
+    "log": "logs/verify-security.log"
+  }
+]

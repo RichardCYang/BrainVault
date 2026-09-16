@@ -106,6 +106,21 @@ function getChildren(data, parentId) {
   return data.nodes.filter((node) => node.parentId === parentId);
 }
 
+function indexTreeViewChildren(data) {
+  // Use only for a single normalized render/traversal. Event handlers below
+  // still inspect live data after structural edits rather than a stale cache.
+  const childrenByParentId = new Map();
+  for (const node of data.nodes) {
+    let children = childrenByParentId.get(node.parentId);
+    if (!children) {
+      children = [];
+      childrenByParentId.set(node.parentId, children);
+    }
+    children.push(node);
+  }
+  return childrenByParentId;
+}
+
 function getNode(data, nodeId) {
   return data.nodes.find((node) => node.id === nodeId) ?? null;
 }
@@ -124,8 +139,9 @@ function getNodePath(data, nodeId) {
 
 function getVisibleNodeIds(data) {
   const visible = [];
+  const childrenByParentId = indexTreeViewChildren(data);
   const visit = (parentId) => {
-    for (const node of getChildren(data, parentId)) {
+    for (const node of childrenByParentId.get(parentId) ?? []) {
       visible.push(node.id);
       if (node.expanded) visit(node.id);
     }
@@ -220,8 +236,9 @@ export function createTreeViewEditor(row, value, options = {}) {
   emptyTree.hidden = data.nodes.length > 0;
   emptyTree.textContent = t("treeview.emptyState");
 
+  const childrenByParentId = indexTreeViewChildren(data);
   const renderBranch = (parentId, level, host) => {
-    const children = getChildren(data, parentId);
+    const children = childrenByParentId.get(parentId) ?? [];
     for (const [childIndex, node] of children.entries()) {
       const shell = document.createElement("div");
       shell.className = "treeview-node-shell";
@@ -231,7 +248,7 @@ export function createTreeViewEditor(row, value, options = {}) {
       rowElement.className = "treeview-node-row";
       rowElement.classList.toggle("is-selected", node.id === selectedNodeId);
 
-      const nodeChildren = getChildren(data, node.id);
+      const nodeChildren = childrenByParentId.get(node.id) ?? [];
       if (nodeChildren.length) {
         const toggle = document.createElement("button");
         toggle.type = "button";
@@ -275,8 +292,10 @@ export function createTreeViewEditor(row, value, options = {}) {
 
       const actions = document.createElement("div");
       actions.className = "treeview-node-actions";
-      const siblings = getChildren(data, node.parentId);
-      const siblingIndex = siblings.findIndex((candidate) => candidate.id === node.id);
+      // Normalization guarantees unique IDs, so this loop already supplies
+      // the exact sibling list and position used by the movement controls.
+      const siblings = children;
+      const siblingIndex = childIndex;
       const addChild = makeActionButton("treeview-add-child", node.id, t("treeview.addChild"), "+");
       addChild.disabled = data.nodes.length >= treeViewLimits.nodes;
       const moveUp = makeActionButton("treeview-move-up", node.id, t("treeview.moveUp"), "↑");
@@ -590,14 +609,24 @@ export function extractTreeViewData(row) {
 
 export function summarizeTreeViewData(value) {
   const data = normalizeTreeViewData(value);
-  const lines = [data.title];
+  const childrenByParentId = indexTreeViewChildren(data);
+  const limit = 20_000;
+  let summary = "";
+  const appendLine = (line) => {
+    if (!line || summary.length >= limit) return;
+    summary += `${summary ? "\n" : ""}${line}`.slice(0, limit - summary.length);
+  };
+  appendLine(data.title);
   const visit = (parentId, depth) => {
-    for (const node of getChildren(data, parentId)) {
-      lines.push(`${"  ".repeat(depth)}- ${node.title}`);
-      if (node.note) lines.push(`${"  ".repeat(depth + 1)}${node.note}`);
+    for (const node of childrenByParentId.get(parentId) ?? []) {
+      if (summary.length >= limit) return;
+      appendLine(`${"  ".repeat(depth)}- ${node.title}`);
+      if (node.note) appendLine(`${"  ".repeat(depth + 1)}${node.note}`);
       visit(node.id, depth + 1);
     }
   };
+  // Only the search summary is bounded; the full normalized node/memo data
+  // remains available to editing, collaboration, backup, and rendering.
   visit(null, 0);
-  return lines.filter(Boolean).join("\n").slice(0, 20000);
+  return summary;
 }
