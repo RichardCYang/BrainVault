@@ -692,14 +692,15 @@ function compareValues(
   property: DatabaseProperty,
   left: DatabaseValue,
   right: DatabaseValue,
-  compareText: (left: string, right: string) => number
+  compareText: (left: string, right: string) => number,
+  getSortText: (property: DatabaseProperty, value: DatabaseValue) => string = searchableValue
 ) {
   if (isEmptyValue(left) && isEmptyValue(right)) return 0;
   if (isEmptyValue(left)) return 1;
   if (isEmptyValue(right)) return -1;
   if (property.type === "number") return Number(left) - Number(right);
   if (property.type === "checkbox") return Number(Boolean(left)) - Number(Boolean(right));
-  return compareText(searchableValue(property, left), searchableValue(property, right));
+  return compareText(getSortText(property, left), getSortText(property, right));
 }
 
 export function applyDatabaseView(database: DatabaseData, view = getDatabaseActiveView(database)) {
@@ -727,12 +728,33 @@ export function applyDatabaseView(database: DatabaseData, view = getDatabaseActi
     collator ??= new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
     return collator.compare(left, right);
   };
+  // Resolving option labels (especially joining multi-select values) is much
+  // more expensive than comparing the resulting text. Memoize only those
+  // derived keys, lazily and only for this synchronous sort. Object-keyed maps
+  // keep properties/array values distinct without serializing user data; a
+  // later edit, option rename or view change always starts with a fresh cache.
+  let sortTextByProperty: Map<DatabaseProperty, Map<DatabaseValue, string>> | undefined;
+  const getSortText = (property: DatabaseProperty, value: DatabaseValue) => {
+    if (property.type !== "select" && property.type !== "multi_select") return searchableValue(property, value);
+    sortTextByProperty ??= new Map();
+    let textByValue = sortTextByProperty.get(property);
+    if (!textByValue) {
+      textByValue = new Map();
+      sortTextByProperty.set(property, textByValue);
+    }
+    let text = textByValue.get(value);
+    if (text === undefined) {
+      text = searchableValue(property, value);
+      textByValue.set(value, text);
+    }
+    return text;
+  };
   // filter() already owns this array; sorting it cannot mutate database.rows.
   return rows.sort((left, right) => {
     for (const sort of view.sorts) {
       const property = propertyById.get(sort.propertyId);
       if (!property) continue;
-      const result = compareValues(property, left.values[property.id], right.values[property.id], compareText);
+      const result = compareValues(property, left.values[property.id], right.values[property.id], compareText, getSortText);
       if (result !== 0) return sort.direction === "descending" ? -result : result;
     }
     return 0;

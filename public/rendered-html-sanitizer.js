@@ -43,6 +43,7 @@ const commonAllowedAttributes = Object.freeze({
 const renderedImageDataPattern = /^data:image\/(?:png|jpeg|webp|vnd\.microsoft\.icon|x-icon);base64,[a-z0-9+/]+={0,2}$/i;
 const youtubeEmbedPattern = /^https:\/\/www\.youtube(?:-nocookie)?\.com\/embed\//i;
 const booleanAttributes = new Set(["checked", "disabled", "open", "allowfullscreen"]);
+const allowedRenderedHrefSchemes = new Set(["http:", "https:", "mailto:"]);
 
 const renderedImageSyntheticOrigin = "https://brainvault.invalid";
 
@@ -89,7 +90,7 @@ function normalizeRenderedHref(value) {
     // without trusting the current document URL. It also catches whitespace or
     // character tricks around dangerous schemes that a regex can miss.
     const parsed = new URL(href, "https://brainvault.invalid/");
-    if (!new Set(["http:", "https:", "mailto:"]).has(parsed.protocol)) return "";
+    if (!allowedRenderedHrefSchemes.has(parsed.protocol)) return "";
     return href;
   } catch {
     return "";
@@ -157,6 +158,8 @@ function copySafeAttributes(source, target, tagName, allowAiControls) {
   }
 }
 
+// The parsed source tree is never mutated: build fresh nodes in a separate
+// fragment and iterate its source NodeLists directly, without per-node copies.
 function appendSanitizedNode(parent, node, allowAiControls) {
   if (node.nodeType === Node.TEXT_NODE) {
     parent.append(document.createTextNode(node.nodeValue ?? ""));
@@ -169,7 +172,7 @@ function appendSanitizedNode(parent, node, allowAiControls) {
 
   const aiTag = allowAiControls && (tagName === "button" || tagName === "nav");
   if (!allowedRenderedTags.has(tagName) && !aiTag) {
-    for (const child of [...node.childNodes]) appendSanitizedNode(parent, child, allowAiControls);
+    for (const child of node.childNodes) appendSanitizedNode(parent, child, allowAiControls);
     return;
   }
 
@@ -179,7 +182,7 @@ function appendSanitizedNode(parent, node, allowAiControls) {
 
   const clean = document.createElement(tagName);
   copySafeAttributes(node, clean, tagName, allowAiControls);
-  for (const child of [...node.childNodes]) appendSanitizedNode(clean, child, allowAiControls);
+  for (const child of node.childNodes) appendSanitizedNode(clean, child, allowAiControls);
   parent.append(clean);
 }
 
@@ -191,6 +194,6 @@ export function renderServerBlockHtml(target, html, { allowAiControls = false } 
   const template = document.createElement("template");
   template.innerHTML = html;
   const fragment = document.createDocumentFragment();
-  for (const child of [...template.content.childNodes]) appendSanitizedNode(fragment, child, allowAiControls);
+  for (const child of template.content.childNodes) appendSanitizedNode(fragment, child, allowAiControls);
   target.replaceChildren(fragment);
 }
