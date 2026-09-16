@@ -739,27 +739,32 @@ function rowMatchesFilter(dataRow, filter, propertyById) {
   return filter.operator === "equals" ? left === right : left.includes(right);
 }
 
-function compareValues(property, left, right) {
+function compareValues(property, left, right, compareText) {
   if (isEmptyValue(left) && isEmptyValue(right)) return 0;
   if (isEmptyValue(left)) return 1;
   if (isEmptyValue(right)) return -1;
   if (property.type === "number") return Number(left) - Number(right);
   if (property.type === "checkbox") return Number(Boolean(left)) - Number(Boolean(right));
-  return searchableValue(property, left).localeCompare(searchableValue(property, right), undefined, {
-    numeric: true,
-    sensitivity: "base"
-  });
+  return compareText(searchableValue(property, left), searchableValue(property, right));
 }
 
 export function applyDatabaseView(database, view = getDatabaseActiveView(database)) {
   const propertyById = new Map(database.properties.map((property) => [property.id, property]));
   const rows = database.rows.filter((dataRow) => view.filters.every((filter) => rowMatchesFilter(dataRow, filter, propertyById)));
   if (!view.sorts.length) return rows;
-  return rows.slice().sort((left, right) => {
+  // Scope the collator to this invocation: locale and edited labels stay fresh,
+  // and numeric/empty-only sorts never allocate an internationalized comparator.
+  let collator;
+  const compareText = (left, right) => {
+    collator ??= new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+    return collator.compare(left, right);
+  };
+  // filter() already owns this array; sorting it cannot mutate database.rows.
+  return rows.sort((left, right) => {
     for (const sort of view.sorts) {
       const property = propertyById.get(sort.propertyId);
       if (!property) continue;
-      const result = compareValues(property, left.values[property.id], right.values[property.id]);
+      const result = compareValues(property, left.values[property.id], right.values[property.id], compareText);
       if (result) return sort.direction === "descending" ? -result : result;
     }
     return 0;

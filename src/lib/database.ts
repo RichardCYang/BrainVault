@@ -683,16 +683,18 @@ function rowMatchesFilter(row: DatabaseRow, filter: DatabaseFilter, propertyById
   return filter.operator === "equals" ? left === right : left.includes(right);
 }
 
-function compareValues(property: DatabaseProperty, left: DatabaseValue, right: DatabaseValue) {
+function compareValues(
+  property: DatabaseProperty,
+  left: DatabaseValue,
+  right: DatabaseValue,
+  compareText: (left: string, right: string) => number
+) {
   if (isEmptyValue(left) && isEmptyValue(right)) return 0;
   if (isEmptyValue(left)) return 1;
   if (isEmptyValue(right)) return -1;
   if (property.type === "number") return Number(left) - Number(right);
   if (property.type === "checkbox") return Number(Boolean(left)) - Number(Boolean(right));
-  return searchableValue(property, left).localeCompare(searchableValue(property, right), undefined, {
-    numeric: true,
-    sensitivity: "base"
-  });
+  return compareText(searchableValue(property, left), searchableValue(property, right));
 }
 
 export function applyDatabaseView(database: DatabaseData, view = getDatabaseActiveView(database)) {
@@ -700,11 +702,19 @@ export function applyDatabaseView(database: DatabaseData, view = getDatabaseActi
   const rows = database.rows.filter((row) => view.filters.every((filter) => rowMatchesFilter(row, filter, propertyById)));
   if (!view.sorts.length) return rows;
 
-  return rows.slice().sort((left, right) => {
+  // Scope the collator to this invocation: locale and edited labels stay fresh,
+  // and numeric/empty-only sorts never allocate an internationalized comparator.
+  let collator: Intl.Collator | undefined;
+  const compareText = (left: string, right: string) => {
+    collator ??= new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+    return collator.compare(left, right);
+  };
+  // filter() already owns this array; sorting it cannot mutate database.rows.
+  return rows.sort((left, right) => {
     for (const sort of view.sorts) {
       const property = propertyById.get(sort.propertyId);
       if (!property) continue;
-      const result = compareValues(property, left.values[property.id], right.values[property.id]);
+      const result = compareValues(property, left.values[property.id], right.values[property.id], compareText);
       if (result !== 0) return sort.direction === "descending" ? -result : result;
     }
     return 0;

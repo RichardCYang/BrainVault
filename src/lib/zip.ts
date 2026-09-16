@@ -1,5 +1,6 @@
 import { createReadStream, createWriteStream } from "node:fs";
 import { createHash } from "node:crypto";
+import { crc32 as nativeCrc32 } from "node:zlib";
 import { open, stat } from "node:fs/promises";
 import { once } from "node:events";
 import type { Writable } from "node:stream";
@@ -16,19 +17,11 @@ const UINT16_MAX = 0xffff;
 const UINT32_MAX = 0xffffffff;
 const MAX_EOCD_SEARCH = 22 + 0xffff + 20;
 
-const crcTable = new Uint32Array(256);
-for (let index = 0; index < crcTable.length; index += 1) {
-  let value = index;
-  for (let bit = 0; bit < 8; bit += 1) {
-    value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
-  }
-  crcTable[index] = value >>> 0;
-}
-
 export function updateCrc32(current: number, chunk: Uint8Array) {
-  let crc = current ^ 0xffffffff;
-  for (const byte of chunk) crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
-  return (crc ^ 0xffffffff) >>> 0;
+  // Node's native CRC32 uses the same ZIP polynomial without a JavaScript
+  // iteration per byte. Preserve the previous unsigned seed coercion and feed
+  // the exact view (including its offset/length), without allocating a copy.
+  return nativeCrc32(chunk, current >>> 0);
 }
 
 export function crc32(data: Uint8Array) {

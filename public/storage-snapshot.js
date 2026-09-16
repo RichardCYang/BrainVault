@@ -6,11 +6,14 @@ function normalizePositiveInteger(value, fallback) {
   return Number.isSafeInteger(number) && number >= 1 ? number : fallback;
 }
 
-function getSignature(keys) {
-  // Storage keys are strings and may themselves contain NUL. JSON encoding
-  // preserves item boundaries, so different key sets cannot share a
-  // delimiter-colliding stability signature.
-  return JSON.stringify([...keys].sort());
+function storageKeySetsMatch(left, right) {
+  if (!right || left.size !== right.size) return false;
+  // Compare exact keys, including embedded NULs, without sorting or constructing
+  // a potentially large JSON string on every pass. These sets are call-local.
+  for (const key of left) {
+    if (!right.has(key)) return false;
+  }
+  return true;
 }
 
 export function inspectStorageKeys(
@@ -22,7 +25,7 @@ export function inspectStorageKeys(
   const observedKeys = new Set();
   const normalizedMaxPasses = normalizePositiveInteger(maxPasses, defaultMaxPasses);
   const normalizedStablePasses = normalizePositiveInteger(stablePasses, defaultStablePasses);
-  let previousSignature = null;
+  let previousKeys = null;
   let consecutiveStablePasses = 0;
 
   try {
@@ -51,13 +54,12 @@ export function inspectStorageKeys(
       }
 
       const lengthAfter = storage.length;
-      const signature = getSignature(passKeys);
       const completePass = lengthBefore === lengthAfter && passKeys.size === lengthAfter;
 
-      if (completePass && signature === previousSignature) consecutiveStablePasses += 1;
+      if (completePass && storageKeySetsMatch(passKeys, previousKeys)) consecutiveStablePasses += 1;
       else consecutiveStablePasses = completePass ? 1 : 0;
 
-      previousSignature = completePass ? signature : null;
+      previousKeys = completePass ? passKeys : null;
       if (consecutiveStablePasses >= normalizedStablePasses) {
         return { keys: [...observedKeys], reliable: true, error: null };
       }
