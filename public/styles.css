@@ -20041,16 +20041,17 @@ html[data-theme="dark"] {
     height: 28px;
   }
 
-  .app-mode .collection-title-row.active,
-  .app-mode .sidebar-utility-button.active {
+  .app-mode .collection-title-row.active {
     box-shadow: inset 2px 0 0 var(--focus);
   }
 
+  .app-mode .sidebar-utility-button.active,
   .app-mode .document-item-row.active {
     position: relative;
     box-shadow: none;
   }
 
+  .app-mode .sidebar-utility-button.active::before,
   .app-mode .document-item-row.active::before {
     content: "";
     position: absolute;
