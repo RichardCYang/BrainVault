@@ -110,28 +110,45 @@ export function assignRemoteCaretColors(clients) {
   );
 }
 
+function isTextSelectionControl(control) {
+  try {
+    return typeof control.value === "string"
+      && Number.isInteger(control.selectionStart)
+      && Number.isInteger(control.selectionEnd);
+  } catch {
+    return false;
+  }
+}
+
 export function getRowTextSelectionControls(row) {
   if (!row?.querySelectorAll) return [];
-  return [...row.querySelectorAll("input, textarea")].filter((control) => {
-    try {
-      return typeof control.value === "string"
-        && Number.isInteger(control.selectionStart)
-        && Number.isInteger(control.selectionEnd);
-    } catch {
-      return false;
-    }
-  });
+  return [...row.querySelectorAll("input, textarea")].filter(isTextSelectionControl);
 }
 
 export function getTextSelectionControlKey(target, row) {
-  const index = getRowTextSelectionControls(row).indexOf(target);
-  return index >= 0 ? `text:${index}` : null;
+  if (!row?.querySelectorAll) return null;
+  // Awareness updates need one control, not an allocated array containing
+  // every table/database input. Resolve against the current DOM each time.
+  let index = 0;
+  for (const control of row.querySelectorAll("input, textarea")) {
+    if (!isTextSelectionControl(control)) continue;
+    if (control === target) return `text:${index}`;
+    index += 1;
+  }
+  return null;
 }
 
 export function getTextSelectionControlByKey(row, key) {
   const match = /^text:(\d{1,4})$/.exec(typeof key === "string" ? key : "");
-  if (!match) return null;
-  return getRowTextSelectionControls(row)[Number(match[1])] ?? null;
+  if (!match || !row?.querySelectorAll) return null;
+  const requestedIndex = Number(match[1]);
+  let index = 0;
+  for (const control of row.querySelectorAll("input, textarea")) {
+    if (!isTextSelectionControl(control)) continue;
+    if (index === requestedIndex) return control;
+    index += 1;
+  }
+  return null;
 }
 
 function parsePixels(value) {

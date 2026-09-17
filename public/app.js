@@ -94,7 +94,6 @@ import {
   assignRemoteCaretColors,
   getRemoteCaretClientKey,
   hasRemotePresenceDecorationChanges,
-  getRowTextSelectionControls,
   getTextControlCaretRect,
   getTextSelectionControlByKey,
   getTextSelectionControlKey
@@ -8325,6 +8324,11 @@ function getJsonPayloadByteLength(payload) {
 }
 
 function getPendingSavePayloadBytes({ saveTitle, rowsToSave }) {
+  // One synchronous snapshot only; keep payload and map-key version lookups
+  // separate, since recovery rows can carry a different block ID.
+  const findBlock = rowsToSave.size === 1
+    ? getBlockById
+    : createBlockLookup(state.selectedPage?.blocks ?? []);
   let totalBytes = 0;
   if (saveTitle) {
     totalBytes += getJsonPayloadByteLength({
@@ -8335,9 +8339,11 @@ function getPendingSavePayloadBytes({ saveTitle, rowsToSave }) {
 
   for (const [blockId, row] of rowsToSave) {
     if (!row?.dataset.blockId || row.dataset.deleting === "true") continue;
+    const block = findBlock(row.dataset.blockId);
     totalBytes += getJsonPayloadByteLength({
-      ...buildBlockPayload(row),
-      expectedVersion: getPositiveVersion(row.dataset.draftExpectedVersion) ?? getBlockById(blockId)?.version
+      ...buildBlockPayload(row, block),
+      expectedVersion: getPositiveVersion(row.dataset.draftExpectedVersion)
+        ?? (blockId === row.dataset.blockId ? block : findBlock(blockId))?.version
     });
   }
   return totalBytes;
@@ -10799,7 +10805,7 @@ function getRemoteCollaborationCaretTarget(client) {
   if (exactControl) return exactControl;
   if (awareness.field === "markdown") return row.querySelector('textarea[name="markdown"]');
   if (awareness.field === "table") return row.querySelector(".table-cell-input");
-  return getRowTextSelectionControls(row)[0] ?? null;
+  return getTextSelectionControlByKey(row, "text:0");
 }
 
 function renderRemoteCollaborationCarets() {
@@ -16651,8 +16657,13 @@ function createBlockOrderTask(
 ) {
   if (!pageId || !userId || !sourceId || !orderedIds.length) throw new Error(t("errors.currentBlockOrder"));
   assertCurrentAuthenticatedSessionScope(authenticationScope);
+  // Reuse the existing lazy lookup for this batch, never across page/account
+  // changes. Fully overridden versions do not allocate an index at all.
+  const findBlock = orderedIds.length === 1
+    ? getBlockById
+    : createBlockLookup(state.selectedPage?.blocks ?? []);
   const items = orderedIds.map((id, index) => {
-    const expectedVersion = Number(versionOverrides[id] ?? getBlockById(id)?.version);
+    const expectedVersion = Number(versionOverrides[id] ?? findBlock(id)?.version);
     if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
       throw new Error(t("errors.BLOCK_EDIT_CONFLICT"));
     }
@@ -16864,8 +16875,11 @@ async function persistBlockOrder(
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
     if (!session?.isReady) throw new Error(t("sharing.syncRequired"));
+    const findBlock = orderedIds.length === 1
+      ? getBlockById
+      : createBlockLookup(state.selectedPage?.blocks ?? []);
     const updates = orderedIds.map((id, sortOrder) => {
-      const block = getBlockById(id);
+      const block = findBlock(id);
       if (!block) throw new Error(t("errors.currentBlockOrder"));
       return { ...block, parentBlockId: parentBlockId ?? null, sortOrder };
     });

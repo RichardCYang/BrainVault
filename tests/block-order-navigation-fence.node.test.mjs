@@ -264,13 +264,21 @@ test("block drag keeps the navigation generation captured before the page-edit f
 
 test("collaborative block reorder rechecks navigation immediately before the queued Yjs commit", async () => {
   const persistSource = sliceBetween(client, "async function persistBlockOrder", "function getBlockCreateTask");
+  // Run the real operation-local lookup, rather than a permissive ID stub,
+  // while keeping the asynchronous navigation/commit fence under test.
+  const lookupSource = sliceBetween(client, "function getBlockById", "function getBlockVersionSnapshot");
   const skippedApiRequest = Symbol("skipped-api-request");
   let releaseCommit;
   let commitCount = 0;
 
   const context = {
     state: {
-      selectedPage: { id: "page-a" },
+      selectedPage: {
+        id: "page-a",
+        blocks: ["block-a", "block-b"].map((id) => ({
+          id, version: 1, parentBlockId: null, sortOrder: 0, children: []
+        }))
+      },
       workspaceView: "page",
       collaborationSession: {
         isReady: true,
@@ -295,11 +303,10 @@ test("collaborative block reorder rechecks navigation immediately before the que
     canPersistSelectedPage: () => true,
     requireWritablePage: () => true,
     isCollaborativePage: () => true,
-    getBlockById: (id) => ({ id, version: 1, parentBlockId: null, sortOrder: 0 }),
     t: (key) => key
   };
   vm.createContext(context);
-  vm.runInContext(`${persistSource}\nthis.persistBlockOrder = persistBlockOrder;`, context);
+  vm.runInContext(`${lookupSource}\n${persistSource}\nthis.persistBlockOrder = persistBlockOrder;`, context);
 
   const pending = context.persistBlockOrder(
     null,
