@@ -357,7 +357,7 @@ function normalizeFilterValue(value) {
   return null;
 }
 
-function normalizePropertyValue(property, value) {
+function normalizePropertyValue(property, value, validOptionIds = null) {
   if (property.type === "number") {
     if (value === null || value === "" || value === undefined) return null;
     const number = Number(value);
@@ -366,12 +366,12 @@ function normalizePropertyValue(property, value) {
   if (property.type === "checkbox") return value === true;
   if (property.type === "select") {
     const optionId = typeof value === "string" ? value : "";
-    return property.options.some((option) => option.id === optionId) ? optionId : "";
+    return (validOptionIds ? validOptionIds.has(optionId) : property.options.some((option) => option.id === optionId)) ? optionId : "";
   }
   if (property.type === "multi_select") {
     const values = Array.isArray(value) ? value : [];
     return [...new Set(values.filter((item) => typeof item === "string"))]
-      .filter((id) => property.options.some((option) => option.id === id))
+      .filter((id) => validOptionIds ? validOptionIds.has(id) : property.options.some((option) => option.id === id))
       .slice(0, databaseLimits.optionsPerProperty);
   }
   if (property.type === "date") return stringValue(value, "", 32);
@@ -380,35 +380,54 @@ function normalizePropertyValue(property, value) {
 }
 
 function readSourcePropertyValue(sourceValues, descriptor, propertyAliases) {
-  const candidates = [descriptor.sourceId, descriptor.requestedId, descriptor.property.id];
-  const seen = new Set();
-  for (const candidate of candidates) {
-    if (!candidate || seen.has(candidate)) continue;
-    seen.add(candidate);
-    if (!Object.prototype.hasOwnProperty.call(sourceValues, candidate)) continue;
-    if (resolveIdReference(candidate, propertyAliases) !== descriptor.property.id) continue;
-    return sourceValues[candidate];
+  // Aliases and schema are fixed for this normalization. Resolve their ownership
+  // once per property, not once per cell; own-value precedence still applies to
+  // each individual row, including an explicitly stored undefined value.
+  if (!descriptor.valueKeys) {
+    const candidates = [descriptor.sourceId, descriptor.requestedId, descriptor.property.id];
+    const seen = new Set();
+    descriptor.valueKeys = [];
+    for (const candidate of candidates) {
+      if (!candidate || seen.has(candidate)) continue;
+      seen.add(candidate);
+      if (resolveIdReference(candidate, propertyAliases) === descriptor.property.id) {
+        descriptor.valueKeys.push(candidate);
+      }
+    }
+  }
+  for (const candidate of descriptor.valueKeys) {
+    if (Object.prototype.hasOwnProperty.call(sourceValues, candidate)) return sourceValues[candidate];
   }
   return undefined;
 }
 
+// Descriptor-local indexes are discarded with this call's row/view batch.
+// Never cache on persisted properties or across edits, pages, or accounts.
+function getDescriptorOptionIds(descriptor) {
+  return descriptor.validOptionIds ??= new Set(descriptor.property.options.map((option) => option.id));
+}
+
 function normalizeReferencedPropertyValue(descriptor, value) {
+  const validOptionIds = descriptor.property.type === "select" || descriptor.property.type === "multi_select"
+    ? getDescriptorOptionIds(descriptor)
+    : null;
   if (descriptor.property.type === "select" && typeof value === "string") {
-    return normalizePropertyValue(descriptor.property, resolveIdReference(value, descriptor.optionAliases));
+    return normalizePropertyValue(descriptor.property, resolveIdReference(value, descriptor.optionAliases), validOptionIds);
   }
   if (descriptor.property.type === "multi_select" && Array.isArray(value)) {
     const remapped = value.map((item) =>
       typeof item === "string" ? resolveIdReference(item, descriptor.optionAliases) : item
     );
-    return normalizePropertyValue(descriptor.property, remapped);
+    return normalizePropertyValue(descriptor.property, remapped, validOptionIds);
   }
-  return normalizePropertyValue(descriptor.property, value);
+  return normalizePropertyValue(descriptor.property, value, validOptionIds);
 }
 
 function normalizeFilterValueForProperty(descriptor, value) {
   if (["select", "multi_select"].includes(descriptor.property.type) && typeof value === "string") {
     const remapped = resolveIdReference(value, descriptor.optionAliases);
-    if (descriptor.property.options.some((option) => option.id === remapped)) return remapped;
+    const validOptionIds = getDescriptorOptionIds(descriptor);
+    if (validOptionIds.has(remapped)) return remapped;
   }
   return normalizeFilterValue(value);
 }

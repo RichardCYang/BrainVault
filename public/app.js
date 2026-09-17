@@ -8544,11 +8544,17 @@ async function setPageMode(nextMode, { announce = true } = {}) {
 
 
 function closePageActionsMenu({ restoreFocus = false } = {}) {
-  elements.pageActionsMenu.classList.add("hidden");
+  if (!elements.pageActionsMenu.classList.contains("hidden")) {
+    elements.pageActionsMenu.classList.add("hidden");
+  }
   elements.pageActionsMenu.style.removeProperty("left");
   elements.pageActionsMenu.style.removeProperty("top");
   elements.pageActionsMenu.style.removeProperty("visibility");
-  elements.pageActionsButton.setAttribute("aria-expanded", "false");
+  // Scroll/resize closes already-hidden menus too. Avoid generating native DOM
+  // mutation records when the accessibility state is already correct.
+  if (elements.pageActionsButton.getAttribute("aria-expanded") !== "false") {
+    elements.pageActionsButton.setAttribute("aria-expanded", "false");
+  }
   if (restoreFocus && elements.pageActionsButton.isConnected) elements.pageActionsButton.focus();
 }
 
@@ -9131,7 +9137,9 @@ function getNavigationContextMenuItems() {
 function closeNavigationContextMenu({ restoreFocus = false } = {}) {
   const trigger = state.activeNavigationMenuTrigger;
   trigger?.closest(".document-item-row, .collection-title-row, .home-document-row")?.classList.remove("is-menu-open");
-  elements.navigationContextMenu.classList.add("hidden");
+  if (!elements.navigationContextMenu.classList.contains("hidden")) {
+    elements.navigationContextMenu.classList.add("hidden");
+  }
   elements.navigationContextMenu.style.removeProperty("left");
   elements.navigationContextMenu.style.removeProperty("top");
   elements.navigationContextMenu.style.removeProperty("visibility");
@@ -14990,7 +14998,9 @@ function openBlockMoveDialog(blockId, returnFocus = null) {
 function closeBlockContextMenu({ restoreFocus = false } = {}) {
   const handle = state.activeBlockMenuHandle;
   getBlockRow(handle)?.classList.remove("is-menu-open");
-  elements.blockContextMenu.classList.add("hidden");
+  if (!elements.blockContextMenu.classList.contains("hidden")) {
+    elements.blockContextMenu.classList.add("hidden");
+  }
   elements.blockContextMenu.style.removeProperty("left");
   elements.blockContextMenu.style.removeProperty("top");
   elements.blockContextMenu.style.removeProperty("visibility");
