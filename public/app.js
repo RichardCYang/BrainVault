@@ -1,3 +1,4 @@
+import { joinSummaryPrefix } from "./summary-prefix.js";
 import { isoCountryCodes } from "./country-codes.js";
 import {
   applyDocumentTranslations,
@@ -541,6 +542,17 @@ function normalizeTableData(value) {
   };
 }
 
+// All cells remain in metadata; only the derived search/export summary is bounded.
+// Bound each row as well so a single wide row cannot allocate a discarded tail.
+function summarizeTableData(table) {
+  function* rows() {
+    for (const cells of table.rows) {
+      yield joinSummaryPrefix(cells, { separator: "\t", skipEmpty: false });
+    }
+  }
+  return joinSummaryPrefix(rows(), { skipEmpty: false });
+}
+
 const kanbanLimits = {
   columns: 12,
   cardsPerColumn: 50,
@@ -635,7 +647,7 @@ function normalizeKanbanData(value) {
   const columns = sourceColumns
     .filter((column) => column && typeof column === "object" && !Array.isArray(column))
     .map((column, columnIndex) => {
-      let columnId = normalizeKanbanText(column.id, createClientId("col"), 64).trim() || createClientId("col");
+      let columnId = normalizeKanbanText(column.id, "", 64).trim() || createClientId("col");
       while (seenColumnIds.has(columnId)) columnId = createClientId("col");
       seenColumnIds.add(columnId);
 
@@ -643,7 +655,7 @@ function normalizeKanbanData(value) {
       const cards = sourceCards
         .filter((card) => card && typeof card === "object" && !Array.isArray(card))
         .map((card) => {
-          let cardId = normalizeKanbanText(card.id, createClientId("card"), 64).trim() || createClientId("card");
+          let cardId = normalizeKanbanText(card.id, "", 64).trim() || createClientId("card");
           while (seenCardIds.has(cardId)) cardId = createClientId("card");
           seenCardIds.add(cardId);
           return {
@@ -666,10 +678,9 @@ function normalizeKanbanData(value) {
       };
     });
 
-  const fallback = createDefaultKanbanData();
   return {
-    title: normalizeKanbanText(source.title, fallback.title, kanbanLimits.boardTitleLength),
-    columns: columns.length ? columns : fallback.columns
+    title: normalizeKanbanText(source.title, t("kanban.defaultTitle"), kanbanLimits.boardTitleLength),
+    columns: columns.length ? columns : createDefaultKanbanData().columns
   };
 }
 
@@ -903,11 +914,15 @@ function normalizeBookmarkData(value) {
 }
 
 function summarizeBookmarkData(data) {
+  // Normalize every item, including items beyond the summary prefix.
   const bookmark = normalizeBookmarkData(data);
-  const itemSummary = bookmark.items
-    .map((item) => `${item.title}\n${item.description}\n${item.url}`.trim())
-    .join("\n\n");
-  return [bookmark.title, itemSummary].filter(Boolean).join("\n\n").slice(0, 20_000);
+  function* items() {
+    for (const item of bookmark.items) {
+      yield `${item.title}\n${item.description}\n${item.url}`.trim();
+    }
+  }
+  const itemSummary = joinSummaryPrefix(items(), { separator: "\n\n", skipEmpty: false });
+  return joinSummaryPrefix([bookmark.title, itemSummary], { separator: "\n\n" });
 }
 
 const slashCommands = [
@@ -13019,17 +13034,19 @@ function extractKanbanData(row) {
 }
 
 function summarizeKanbanData(board) {
-  const lines = [board.title];
-  board.columns.forEach((column) => {
-    lines.push(`${column.title}:`);
-    column.cards.forEach((card) => {
-      const tags = card.tags.length ? ` [${card.tags.join(", ")}]` : "";
-      const icon = card.icon ? `${card.icon} ` : "";
-      lines.push(`- ${icon}${card.title || t("kanban.untitledCard")}${tags}`);
-      if (card.description) lines.push(`  ${card.description}`);
-    });
-  });
-  return lines.join("\n").slice(0, 20_000);
+  function* lines() {
+    yield board.title;
+    for (const column of board.columns) {
+      yield `${column.title}:`;
+      for (const card of column.cards) {
+        const tags = card.tags.length ? ` [${card.tags.join(", ")}]` : "";
+        const icon = card.icon ? `${card.icon} ` : "";
+        yield `- ${icon}${card.title || t("kanban.untitledCard")}${tags}`;
+        if (card.description) yield `  ${card.description}`;
+      }
+    }
+  }
+  return joinSummaryPrefix(lines(), { skipEmpty: false });
 }
 
 function replaceKanbanData(
@@ -14351,7 +14368,7 @@ function buildBlockPayload(row, knownBlock) {
     delete metadata.aiChat;
     delete metadata.accordion;
     delete metadata.treeView;
-    payload.markdown = table.rows.map((cells) => cells.join("\t")).join("\n").slice(0, 20_000);
+    payload.markdown = summarizeTableData(table);
     payload.metadata = metadata;
   } else if (type === "KANBAN") {
     const kanban = extractKanbanData(row);

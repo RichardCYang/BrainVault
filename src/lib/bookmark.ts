@@ -1,3 +1,4 @@
+import { joinSummaryPrefix } from "./summary-prefix.js";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import dns from "node:dns";
 import http from "node:http";
@@ -270,10 +271,13 @@ export function normalizeBookmarkMetadata(metadata: unknown) {
 }
 
 export function summarizeBookmarkData(data: BookmarkData) {
-  const itemSummary = data.items
-    .map((item) => `${item.title}\n${item.description}\n${item.url}`.trim())
-    .join("\n\n");
-  return [data.title, itemSummary].filter(Boolean).join("\n\n").slice(0, 20_000);
+  function* items() {
+    for (const item of data.items) {
+      yield `${item.title}\n${item.description}\n${item.url}`.trim();
+    }
+  }
+  const itemSummary = joinSummaryPrefix(items(), { separator: "\n\n", skipEmpty: false });
+  return joinSummaryPrefix([data.title, itemSummary], { separator: "\n\n" });
 }
 
 function escapeHtml(value: string) {
