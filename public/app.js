@@ -8435,11 +8435,12 @@ async function flushPendingPageEdits({ keepalive = false, allowLocked = false, c
 function applyMaterializedHtmlCaches(result) {
   if (!result?.blocks?.length || !state.selectedPage) return;
   const localBlocks = new Map(flattenBlocks(state.selectedPage.blocks ?? []).map((block) => [block.id, block]));
+  const findRow = createRenderedBlockRowLookup(result.blocks.length);
   for (const serverBlock of result.blocks) {
     const block = localBlocks.get(serverBlock?.id);
     if (!block || typeof serverBlock?.htmlCache !== "string") continue;
     block.htmlCache = serverBlock.htmlCache;
-    const row = findRenderedBlockRow(block.id);
+    const row = findRow(block.id);
     if (row) updateRenderedBlockPreview(row, block);
   }
 }
@@ -12078,11 +12079,12 @@ function getBlockVersionSnapshot(blockId, { includeDescendants = true } = {}) {
 }
 
 function blockSnapshotHasUnresolvedDraftConflict(expectedVersions) {
+  const findRow = createRenderedBlockRowLookup(expectedVersions.length);
   return expectedVersions.some(({ id }) => {
     const storedOrigin = blockDraftConflictOrigins.get(id);
     return (
       Boolean(storedOrigin && storedOrigin.resolved !== true) ||
-      findRenderedBlockRow(id)?.dataset.draftConflict === "true"
+      findRow(id)?.dataset.draftConflict === "true"
     );
   });
 }
@@ -18753,9 +18755,35 @@ function applyPersistedPageDraft(page) {
 }
 
 function findRenderedBlockRow(blockId) {
-  return [...elements.blockList.querySelectorAll(".editor-block-row[data-block-id]")].find(
-    (row) => row.dataset.blockId === blockId
-  );
+  // Generated IDs need no CSS escaping. Query only the first match instead of
+  // materializing every editor row and copying the NodeList for one lookup.
+  // Keep strict comparison for other values (including legacy IDs containing
+  // quotes, Unicode or NUL); never interpolate them into a selector.
+  if (typeof blockId === "string" && /^[A-Za-z0-9_-]+$/.test(blockId)) {
+    return elements.blockList.querySelector(`.editor-block-row[data-block-id="${blockId}"]`) ?? undefined;
+  }
+  for (const row of elements.blockList.querySelectorAll(".editor-block-row[data-block-id]")) {
+    if (row.dataset.blockId === blockId) return row;
+  }
+  return undefined;
+}
+
+// Only for synchronous batches that keep the editor rows in place. This lazy
+// index never survives a batch/page/account transition. Preserve the first DOM
+// match for duplicate IDs, just as findRenderedBlockRow does.
+function createRenderedBlockRowLookup(expectedLookups) {
+  if (expectedLookups <= 1) return findRenderedBlockRow;
+  let byId = null;
+  return (blockId) => {
+    if (!byId) {
+      byId = new Map();
+      for (const row of elements.blockList.querySelectorAll(".editor-block-row[data-block-id]")) {
+        const id = row.dataset.blockId;
+        if (!byId.has(id)) byId.set(id, row);
+      }
+    }
+    return byId.get(blockId);
+  };
 }
 
 function appendDraftRecoveryPanel(recovery) {
@@ -18831,8 +18859,9 @@ function activatePersistedPageDraft(recovery) {
     }
   }
 
+  const findRow = createRenderedBlockRowLookup(recovery.blocks.length);
   for (const recovered of recovery.blocks) {
-    const row = findRenderedBlockRow(recovered.blockId);
+    const row = findRow(recovered.blockId);
     if (!row) continue;
     row.dataset.editRevision = String(Math.max(1, recovered.draft.revision));
     row.dataset.draftExpectedVersion = String(recovered.draft.expectedVersion);
