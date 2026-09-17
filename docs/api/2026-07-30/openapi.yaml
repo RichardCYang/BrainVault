@@ -1314,6 +1314,34 @@ paths:
           description: Authentication endpoints accept only application/json
         '429':
           description: Failed passkey verification rate limit exceeded
+  /api/auth/login-lockout/reset:
+    post:
+      summary: Clear the authenticated account's password-login lock
+      description: >-
+        Requires a current authenticated session and JSON body. Cookie-authenticated
+        browser requests must pass the existing exact-origin protections. Revalidates
+        the session and authentication version under the transaction boundary, then
+        clears only this account's persisted lock and account-wide login counter.
+        Never clears shared per-IP failures or accepts a target username. Limited
+        to three requests per account per AUTH_LOGIN_IP_WINDOW_MS.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+            example: {}
+      responses:
+        '204':
+          description: Account password-login lock cleared
+        '401':
+          description: Missing, expired, or revoked authentication
+        '403':
+          description: Browser origin policy rejected the request
+        '415':
+          description: An application/json request body is required
+        '429':
+          description: Recovery or outer request-rate limit exceeded
   /api/auth/logout:
     post:
       summary: Revoke all current account sessions and clear the browser session cookie

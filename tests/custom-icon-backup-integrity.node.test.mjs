@@ -8,10 +8,10 @@ test("backup v3+ makes uploaded custom icons self-contained and restorable", asy
   const transfer = normalize(await readFile(new URL("../src/lib/data-transfer.ts", import.meta.url), "utf8"));
   const customIcons = normalize(await readFile(new URL("../src/lib/custom-icons.ts", import.meta.url), "utf8"));
 
-  assert.match(transfer, /const pageCoverFileBackupVersion = 2;\nconst uploadedAssetBackupVersion = 3;\nconst completeWorkspaceBackupVersion = 4;\nconst backupVersion = 5;/);
+  assert.match(transfer, /const pageCoverFileBackupVersion = 2;\nconst uploadedAssetBackupVersion = 3;\nconst completeWorkspaceBackupVersion = 4;\nconst explicitWorkspaceBackupVersion = 5;\nconst backupVersion = 6;/);
   assert.match(transfer, /customIcons: z\.array\(customIconFileSchema\)/);
   assert.match(transfer, /customIconLibraryRemovals: z\.array\(customIconLibraryRemovalSchema\)/);
-  assert.match(transfer, /const customIconOwnerDir = path\.join\(customIconUploadRoot, userId\)/);
+  assert.match(transfer, /const customIconOwnerDir = storageOwnerDirectory\(customIconUploadRoot, userId\)/);
   assert.match(transfer, /customIconEntries = customIconEntries\.filter\(\(entry\) => entry\.name !== dataRestoreGenerationMarkerName\)/);
   assert.match(transfer, /path: `custom-icons\/\$\{entry\.name\}`/);
   assert.match(transfer, /for \(const item of customIconFiles\) \{[\s\S]*?writer\.add/);

@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import QRCode from "qrcode";
 import { z } from "zod";
 import {
@@ -45,6 +45,7 @@ import {
 import {
   accountReauthenticationRateLimit,
   mfaLoginAccountRateLimit,
+  mfaLoginTokenRateLimit,
   mfaLoginIpRateLimit,
   mfaLoginOptionsAccountRateLimit,
   mfaLoginOptionsIpRateLimit,
@@ -175,12 +176,12 @@ const totpVerifySchema = z.object({
 });
 
 const mfaLoginTotpSchema = z.object({
-  mfaToken: z.string().min(20).max(256),
+  mfaToken: opaqueTokenSchema,
   code: z.string().trim().regex(/^\d{6}$/)
 });
 
 const mfaTokenSchema = z.object({
-  mfaToken: z.string().min(20).max(256)
+  mfaToken: opaqueTokenSchema
 });
 
 const passkeyNameSchema = z.string().trim().min(1).max(80);
@@ -619,6 +620,16 @@ async function getActiveMfaSession(mfaToken: string, sourceIp: string, binding: 
     throw new ApiError(401, "MFA_SESSION_EXPIRED", "The two-step verification session expired");
   }
   return row;
+}
+
+async function requireActiveMfaLoginSession(req: Request, res: Response, next: NextFunction) {
+  try {
+    const token = req.body.mfaToken as string;
+    res.locals.mfaLoginSession = await getActiveMfaSession(
+      token, getClientIpAddress(req), requireMfaCeremonyBinding(req)
+    );
+    next();
+  } catch (error) { next(error); }
 }
 
 function requireMfaCeremonyBinding(req: Request) {
@@ -1418,14 +1429,16 @@ mfaRouter.post(
   requireSameOriginBrowserRequest,
   requireJsonRequestBody,
   mfaLoginIpRateLimit,
-  mfaLoginAccountRateLimit,
+  mfaLoginTokenRateLimit,
   validate({ body: mfaLoginTotpSchema }),
+  requireActiveMfaLoginSession,
+  mfaLoginAccountRateLimit,
   async (req, res, next) => {
     const { mfaToken, code } = req.body as z.infer<typeof mfaLoginTotpSchema>;
     try {
       const sourceIp = getClientIpAddress(req);
       const binding = requireMfaCeremonyBinding(req);
-      const pendingSession = await getActiveMfaSession(mfaToken, sourceIp, binding);
+      const pendingSession = res.locals.mfaLoginSession as MfaSessionRow;
       await enforceMfaLoginNetworkAccess(pendingSession, req);
       // Fast rejection is only an optimization. The authoritative gate below
       // holds the account lock through code evaluation AND failure persistence.
@@ -1509,13 +1522,15 @@ mfaRouter.post(
   requireSameOriginBrowserRequest,
   requireJsonRequestBody,
   mfaLoginOptionsIpRateLimit,
-  mfaLoginOptionsAccountRateLimit,
+  mfaLoginTokenRateLimit,
   validate({ body: mfaTokenSchema }),
+  requireActiveMfaLoginSession,
+  mfaLoginOptionsAccountRateLimit,
   async (req, res, next) => {
     try {
       const { mfaToken } = req.body as z.infer<typeof mfaTokenSchema>;
       const binding = requireMfaCeremonyBinding(req);
-      const session = await getActiveMfaSession(mfaToken, getClientIpAddress(req), binding);
+      const session = res.locals.mfaLoginSession as MfaSessionRow;
       await enforceCountryLoginPolicy(session.user_id, undefined, session.source_ip);
       await enforceVpnAccessPolicy(session.user_id, undefined, session.source_ip, getClientTimeZone(req), getClientWebRtcSignal(req));
       const passkeys = await db.query<PasskeyRow>(
@@ -1555,15 +1570,17 @@ mfaRouter.post(
   requireSameOriginBrowserRequest,
   requireJsonRequestBody,
   mfaLoginIpRateLimit,
-  mfaLoginAccountRateLimit,
+  mfaLoginTokenRateLimit,
   validate({ body: passkeyLoginVerifySchema }),
+  requireActiveMfaLoginSession,
+  mfaLoginAccountRateLimit,
   async (req, res, next) => {
     const { mfaToken, challengeToken, response } = req.body as z.infer<typeof passkeyLoginVerifySchema>;
     let session: MfaSessionRow | undefined;
     try {
       const sourceIp = getClientIpAddress(req);
       const binding = requireMfaCeremonyBinding(req);
-      const pendingSession = await getActiveMfaSession(mfaToken, sourceIp, binding);
+      const pendingSession = res.locals.mfaLoginSession as MfaSessionRow;
       await enforceMfaLoginNetworkAccess(pendingSession, req);
       const activeSession = await reserveMfaAttempt(mfaToken, sourceIp, binding);
       session = activeSession;

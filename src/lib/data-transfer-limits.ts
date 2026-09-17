@@ -9,6 +9,7 @@ export const dataTransferResourceLimits = Object.freeze({
   maxAttachments: 5_000,
   maxPageCovers: 20_000,
   maxCustomIcons: 20_000,
+  maxCustomIconPublications: 200_000,
   maxCustomIconLibraryRemovals: 50_000,
   // manifest + uploaded attachment files (active + retained) + page covers + uploaded custom icons
   maxZipEntries: 45_001,

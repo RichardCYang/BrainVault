@@ -44,7 +44,7 @@ describe("MFA login gate", () => {
       if (sql.includes("EXISTS(SELECT 1 FROM user_totp_credentials")) {
         return { totp_enabled: 1, passkey_count: 2 };
       }
-      if (sql.includes("SELECT id FROM users WHERE id = ? FOR UPDATE")) return { id: user.id };
+      if (sql.includes("SELECT id, auth_version FROM users WHERE id = ? FOR UPDATE")) return { id: user.id, auth_version: user.auth_version };
       if (sql.includes("MAX(failed_attempts)")) return { failed_attempts: 0 };
       return undefined;
     });

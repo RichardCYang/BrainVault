@@ -82,8 +82,8 @@ const result = {
     navigationCollapseStateLostAfterSuccessfulRestore: vulnerableAfter.navigationCollapsedPageIds.length === 0
   },
   fixed: {
-    currentBackupVersionIs5: currentTransfer.includes("const uploadedAssetBackupVersion = 3;\nconst completeWorkspaceBackupVersion = 4;\nconst backupVersion = 5;"),
-    v1ThroughV5ImportCompatibilityRetained: /z\.literal\(legacyBackupVersion\)[\s\S]*?z\.literal\(pageCoverFileBackupVersion\)[\s\S]*?z\.literal\(uploadedAssetBackupVersion\)[\s\S]*?z\.literal\(completeWorkspaceBackupVersion\)[\s\S]*?z\.literal\(backupVersion\)/.test(currentTransfer),
+    currentBackupVersionIs6: currentTransfer.includes("const uploadedAssetBackupVersion = 3;\nconst completeWorkspaceBackupVersion = 4;\nconst explicitWorkspaceBackupVersion = 5;\nconst backupVersion = 6;"),
+    v1ThroughV6ImportCompatibilityRetained: /z\.literal\(legacyBackupVersion\)[\s\S]*?z\.literal\(pageCoverFileBackupVersion\)[\s\S]*?z\.literal\(uploadedAssetBackupVersion\)[\s\S]*?z\.literal\(completeWorkspaceBackupVersion\)[\s\S]*?z\.literal\(explicitWorkspaceBackupVersion\)[\s\S]*?z\.literal\(backupVersion\)/.test(currentTransfer),
     manifestExportsPageVersions: currentTransfer.includes("pageVersions: snapshot.pageVersions"),
     manifestExportsNavigationState: currentTransfer.includes("navigationCollapsedPageIds: snapshot.navigationCollapsedPageIds"),
     restoreReinsertsPageVersions: currentTransfer.includes("INSERT INTO page_versions"),
@@ -109,8 +109,8 @@ assert.equal(result.vulnerability.pageVersionRowsCascadeOnPageDelete, true);
 assert.equal(result.vulnerability.navigationRowsCascadeOnPageDelete, true);
 assert.equal(result.vulnerability.pageVersionHistoryLostAfterSuccessfulRestore, true);
 assert.equal(result.vulnerability.navigationCollapseStateLostAfterSuccessfulRestore, true);
-assert.equal(result.fixed.currentBackupVersionIs5, true);
-assert.equal(result.fixed.v1ThroughV5ImportCompatibilityRetained, true);
+assert.equal(result.fixed.currentBackupVersionIs6, true);
+assert.equal(result.fixed.v1ThroughV6ImportCompatibilityRetained, true);
 assert.equal(result.fixed.manifestExportsPageVersions, true);
 assert.equal(result.fixed.manifestExportsNavigationState, true);
 assert.equal(result.fixed.restoreReinsertsPageVersions, true);

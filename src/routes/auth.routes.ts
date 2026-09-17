@@ -68,6 +68,8 @@ import {
 } from "../middleware/auth.js";
 import {
   accountReauthenticationRateLimit,
+  clearPasswordLoginAccountLimit,
+  loginLockoutRecoveryRateLimit,
   loginAccountRateLimit,
   loginIpRateLimit,
   navigationOrderRateLimit,
@@ -290,16 +292,31 @@ authRouter.post(
       const startedAt = Date.now();
       const { username, password } = req.body as z.infer<typeof loginSchema>;
       const sourceIp = getClientIpAddress(req);
+      // Snapshot credentials without retaining a pooled connection or row lock
+      // during bcrypt. Copy primitive values before the asynchronous compare.
+      const account = await db.queryOne<UserRow>(
+        "SELECT * FROM users WHERE username = ?", [username]
+      );
+      const snapshotId = account?.id;
+      const snapshotHash = account?.password_hash;
+      const snapshotVersion = normalizeAuthVersion(account?.auth_version);
+      const snapshotApproved = Boolean(account) && Number(account?.registration_approved ?? 1) === 1;
+      const passwordMatches = await verifyPassword(
+        password, snapshotApproved ? snapshotHash! : await dummyPasswordHash
+      );
       const result = await transaction(async (client) => {
         const lockedUser = await client.queryOne<UserRow>(
           "SELECT * FROM users WHERE username = ? FOR UPDATE",
           [username]
         );
-        const approved = Boolean(lockedUser) && Number(lockedUser?.registration_approved ?? 1) === 1;
-        const passwordMatches = await verifyPassword(
-          password,
-          approved ? lockedUser!.password_hash : await dummyPasswordHash
-        );
+        // Fail closed on deletion/recreation, credential rotation, revocation,
+        // or approval changes during hashing. Do not charge a changed account
+        // a failed-password attempt based on its obsolete credential snapshot.
+        const approved = Boolean(lockedUser) && snapshotApproved
+          && lockedUser!.id === snapshotId
+          && lockedUser!.password_hash === snapshotHash
+          && normalizeAuthVersion(lockedUser!.auth_version) === snapshotVersion
+          && Number(lockedUser!.registration_approved ?? 1) === 1;
         const workingUserId = approved ? lockedUser!.id : syntheticLoginUserId;
         const decision = await evaluatePasswordLogin(client, workingUserId, approved && passwordMatches);
         if (decision !== "ALLOWED") {
@@ -395,6 +412,35 @@ authRouter.post("/logout", requireAuth, async (req, res, next) => {
     next(error);
   }
 });
+
+authRouter.post(
+  "/login-lockout/reset",
+  requireAuth,
+  requireJsonRequestBody,
+  loginLockoutRecoveryRateLimit,
+  async (req, res, next) => {
+    try {
+      const currentUser = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
+      const username = await transaction(async (client) => {
+        await assertCurrentAuthSession(currentUser.id, authScope, client);
+        const user = await client.queryOne<UserRow>(
+          "SELECT * FROM users WHERE id = ? FOR UPDATE", [currentUser.id]
+        );
+        if (!user) throw new ApiError(401, "UNAUTHENTICATED", "User no longer exists");
+        assertAuthenticationVersion(user, authScope.authVersion);
+        await client.execute(
+          `UPDATE users
+           SET failed_login_attempts = 0, last_failed_login_at = NULL, login_locked_until = NULL
+           WHERE id = ?`, [user.id]
+        );
+        return user.username;
+      });
+      await clearPasswordLoginAccountLimit(username);
+      res.status(204).end();
+    } catch (error) { next(error); }
+  }
+);
 
 authRouter.get("/me", requireAuth, async (req, res) => {
   const user = requireUser(req.user);
@@ -665,6 +711,8 @@ authRouter.put(
   "/totp-ip-block-policy",
   requireAuth,
   accountReauthenticationRateLimit,
+  clearPasswordLoginAccountLimit,
+  loginLockoutRecoveryRateLimit,
   validate({ body: totpIpBlockPolicySchema }),
   async (req, res, next) => {
     try {
@@ -746,6 +794,8 @@ authRouter.delete(
   "/totp-ip-blocks/:ipAddress",
   requireAuthAllowTotpIpBlock,
   accountReauthenticationRateLimit,
+  clearPasswordLoginAccountLimit,
+  loginLockoutRecoveryRateLimit,
   validate({ params: totpIpBlockParamsSchema, body: totpIpUnblockSchema }),
   async (req, res, next) => {
     try {
@@ -828,6 +878,8 @@ authRouter.put(
   "/vpn-block-policy",
   requireAuth,
   accountReauthenticationRateLimit,
+  clearPasswordLoginAccountLimit,
+  loginLockoutRecoveryRateLimit,
   validate({ body: vpnBlockPolicySchema }),
   async (req, res, next) => {
     try {
@@ -924,6 +976,8 @@ authRouter.put(
   "/country-login-policy",
   requireAuth,
   accountReauthenticationRateLimit,
+  clearPasswordLoginAccountLimit,
+  loginLockoutRecoveryRateLimit,
   validate({ body: countryLoginPolicySchema }),
   async (req, res, next) => {
     try {
@@ -1043,6 +1097,8 @@ authRouter.post(
   "/password",
   requireAuth,
   accountReauthenticationRateLimit,
+  clearPasswordLoginAccountLimit,
+  loginLockoutRecoveryRateLimit,
   validate({ body: passwordSchema }),
   async (req, res, next) => {
     try {

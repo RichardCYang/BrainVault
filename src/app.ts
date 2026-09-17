@@ -7,6 +7,7 @@ import helmet from "helmet";
 import cors from "cors";
 import morgan from "morgan";
 import rateLimit from "express-rate-limit";
+import { BoundedRateLimitStore } from "./lib/bounded-rate-limit-store.js";
 import { corsOrigins, env } from "./config/env.js";
 import { corsOptionsDelegate } from "./middleware/cors.js";
 import { authRouter } from "./routes/auth.routes.js";
@@ -144,6 +145,7 @@ export function createApp() {
   app.use(morgan(env.NODE_ENV === "production" ? productionAccessLogFormat : developmentAccessLogFormat));
   app.use(
     rateLimit({
+      store: new BoundedRateLimitStore(),
       windowMs: env.RATE_LIMIT_WINDOW_MS,
       limit: env.RATE_LIMIT_MAX,
       standardHeaders: "draft-8",

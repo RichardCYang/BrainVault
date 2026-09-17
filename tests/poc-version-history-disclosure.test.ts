@@ -68,7 +68,7 @@ const version = {
     blocksDeleted: 1,
     blocksMoved: 0
   }),
-  changes: JSON.stringify([{ kind: "block-deleted", block: { id: "blk_secret", type: "MARKDOWN", markdown: deletedSecret } }]),
+  changes: JSON.stringify([{ kind: "block-deleted", block: { id: "blk_secret", type: "MARKDOWN", markdown: deletedSecret, parentBlockId: null, checked: false, sortOrder: 0, metadata: null } }]),
   created_at: "2026-08-04T00:03:00.000Z"
 };
 

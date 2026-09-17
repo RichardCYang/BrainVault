@@ -45,8 +45,8 @@ test("external cover entries prevent valid custom images from exhausting the JSO
 
 test("backup v2/v3 cover files remain importable while current v5 preserves the same integrity checks", async () => {
   const transfer = (await readFile(new URL("../src/lib/data-transfer.ts", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
-  assert.match(transfer, /const legacyBackupVersion = 1;\nconst pageCoverFileBackupVersion = 2;\nconst uploadedAssetBackupVersion = 3;\nconst completeWorkspaceBackupVersion = 4;\nconst backupVersion = 5;/);
-  assert.match(transfer, /z\.literal\(legacyBackupVersion\),\n\s*z\.literal\(pageCoverFileBackupVersion\),\n\s*z\.literal\(uploadedAssetBackupVersion\),\n\s*z\.literal\(completeWorkspaceBackupVersion\),\n\s*z\.literal\(backupVersion\)/);
+  assert.match(transfer, /const legacyBackupVersion = 1;\nconst pageCoverFileBackupVersion = 2;\nconst uploadedAssetBackupVersion = 3;\nconst completeWorkspaceBackupVersion = 4;\nconst explicitWorkspaceBackupVersion = 5;\nconst backupVersion = 6;/);
+  assert.match(transfer, /z\.literal\(legacyBackupVersion\),\n\s*z\.literal\(pageCoverFileBackupVersion\),\n\s*z\.literal\(uploadedAssetBackupVersion\),\n\s*z\.literal\(completeWorkspaceBackupVersion\),\n\s*z\.literal\(explicitWorkspaceBackupVersion\),\n\s*z\.literal\(backupVersion\)/);
   assert.match(transfer, /CASE WHEN cover_url LIKE 'data:image\/%;base64,%' THEN \? ELSE cover_url END AS cover_url/);
   assert.match(transfer, /page\.cover_url = null;/);
   assert.match(transfer, /path: `page-covers\/\$\{page\.id\}`/);

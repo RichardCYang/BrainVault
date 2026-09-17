@@ -91,7 +91,7 @@ test("custom icon reads require authentication, ownership or an owner-controlled
   assert.match(customIcons, /NOT EXISTS \(\s*SELECT 1 FROM page_collection_memberships pcm2/);
   assert.doesNotMatch(customIcons, /JSON_SEARCH\(/);
   assert.match(customIconRoutes, /"\/publish"/);
-  assert.match(customIconRoutes, /publishCustomIconForPage\(req\.user!\.id, pageId, value/);
+  assert.match(customIconRoutes, /publishCustomIconForPage\(user\.id, body\.pageId, body\.value/);
 
   process.env.NODE_ENV = "test";
   const { canUserReadCustomIcon } = await import("../src/lib/custom-icons.ts");

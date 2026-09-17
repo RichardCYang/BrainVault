@@ -16,7 +16,7 @@ test("workspace restore carries and revalidates auth, device-session, and worksp
   const transfer = await read("src/lib/data-transfer.ts");
   const sessions = await read("src/lib/auth-sessions.ts");
 
-  assert.match(routes, /import \{ requireAuth, requireRequestAuthScope \} from "\.\.\/middleware\/auth\.js"/);
+  assert.match(routes, /import \{ requireAuth, requireRequestAuthScope, requireSameOriginCookieRequest \} from "\.\.\/middleware\/auth\.js"/);
   assert.match(routes, /const authScope = requireRequestAuthScope\(req\)/);
   assert.match(routes, /importUserDataBackup\(user\.id, uploadPath, authScope\)/);
 

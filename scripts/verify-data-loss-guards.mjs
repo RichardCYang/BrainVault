@@ -625,7 +625,7 @@ assert(
 );
 
 assert(
-  dataTransferSource.includes("const completeWorkspaceBackupVersion = 4;\nconst backupVersion = 5;")
+  dataTransferSource.includes("const completeWorkspaceBackupVersion = 4;\nconst explicitWorkspaceBackupVersion = 5;\nconst backupVersion = 6;")
     && dataTransferSource.includes("Version 5 backups must declare page sharing grants")
     && dataTransferSource.includes("Version 5 backups must declare collection sharing grants")
     && dataTransferSource.includes("Version 5 backups must declare page comments")

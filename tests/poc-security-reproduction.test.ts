@@ -18,7 +18,7 @@ describe("reported security reproductions are now blocked", () => {
 
   it("P2 carries MFA failures across replacement sessions", async () => {
     const routes = await source("src/routes/mfa.routes.ts");
-    expect(routes).toContain("SELECT id FROM users WHERE id = ? FOR UPDATE");
+    expect(routes).toContain("SELECT id, auth_version FROM users WHERE id = ? FOR UPDATE");
     expect(routes).toContain("MAX(failed_attempts) AS failed_attempts");
     expect(routes).toContain("MFA_TEMPORARILY_LOCKED");
     expect(routes).not.toMatch(
@@ -40,7 +40,8 @@ describe("reported security reproductions are now blocked", () => {
     ]);
     expect(authRoutes).not.toMatch(/res\.json\(\{[^}]*token/);
     expect(mfaRoutes).toContain("res.json({ user: result.user })");
-    expect(authMiddleware).toContain("assertBrowserRequestOrigin(req)");
+    expect(authMiddleware).toContain("assertBrowserRequestOrigin(req, { requireOrigin: cookieMutation, requirePublicOrigin: cookieMutation })");
+    expect(authMiddleware).toContain('fetchSite === "cross-site"');
     expect(authMiddleware).not.toContain('if (source === "cookie") assert');
   });
 

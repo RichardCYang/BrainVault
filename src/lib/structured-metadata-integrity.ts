@@ -97,7 +97,7 @@ const timetableLimits = {
   noteLength: 500,
   idLength: 64
 } as const;
-const bookmarkLimits = {
+export const bookmarkLimits = {
   defaultMaxItems: 50,
   minMaxItems: 1,
   maxMaxItems: 500,

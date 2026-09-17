@@ -75,7 +75,7 @@ const authMiddlewareSource = contains("src/middleware/auth.ts", [
   'new ApiError(401, "SESSION_REVOKED"',
   "req.auth = { authVersion, workspaceGeneration }",
   'new ApiError(403, "ORIGIN_REQUIRED"',
-  "assertBrowserRequestOrigin(req, { requireOrigin: true })",
+  "assertBrowserRequestOrigin(req, { requireOrigin: cookieMutation, requirePublicOrigin: cookieMutation })",
   "requiresCookieMutationOrigin(req, selectedSource)",
   'fetchSite === "cross-site"',
   "requireSameOriginBrowserRequest",
@@ -630,7 +630,8 @@ contains("public/app.js", [
   "function getRenderableImageSource",
   "url.origin !== window.location.origin",
   "const imageSource = getRenderableImageSource(item?.faviconUrl, { allowData: false })",
-  "const coverSource = getRenderableImageSource(page?.coverUrl)"
+  "const coverSource = getRenderableImageSource(page?.coverUrl, {",
+  "allowedApplicationApiPath: page?.id ? `/api/pages/${encodeURIComponent(page.id)}/cover` : \"\""
 ]);
 
 for (const address of [

@@ -117,7 +117,7 @@ test("read mode reuses the existing secured bookmark preview API without changin
   assert.match(appSource, /api\("\/api\/bookmarks\/preview"/);
   assert.match(appSource, /body: \{ url, mode: "database-url" \}/);
   assert.match(blockRoutesSource, /req\.body\.mode === "database-url"/);
-  assert.match(blockRoutesSource, /fetchDatabaseUrlPreview\(String\(req\.body\.url\)\)/);
+  assert.match(blockRoutesSource, /fetchDatabaseUrlPreviewWithFallback\(String\(req\.body\.url\)\)/);
   assert.match(bookmarkSource, /fetchHtml\(value, bookmarkLimits\.redirects, deadline\)/);
   assert.match(bookmarkSource, /parseDatabaseUrlDocumentMetadata\(response\.html, response\.url\)/);
   assert.match(bookmarkSource, /createDatabaseFaviconDataUrl/);

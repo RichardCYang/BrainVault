@@ -223,6 +223,7 @@ function totpHarness(threshold=3, {enabled=true,reused=false}={}) {
     ...globals,...ip,
     mfaRouter:{post:(_p,...handlers)=>{handler=handlers.at(-1);}},
     requireSameOriginBrowserRequest:noop,requireJsonRequestBody:noop,mfaLoginIpRateLimit:noop,mfaLoginAccountRateLimit:noop,
+    mfaLoginTokenRateLimit:noop,requireActiveMfaLoginSession:noop,
     validate:noop,mfaLoginTotpSchema:{},maxMfaAttempts:8,hashOpaqueToken:v=>v,
     getClientIpAddress:()=> '8.8.8.8',requireMfaCeremonyBinding:()=> 'binding',
     getActiveMfaSession:async token=>session(token),enforceMfaLoginNetworkAccess:async()=>{},
@@ -232,7 +233,7 @@ function totpHarness(threshold=3, {enabled=true,reused=false}={}) {
     clearMfaCeremonyBinding:noop,setAuthSessionCookie:noop
   },[]);
   const invoke=async(token,code='invalid')=>{
-    let error,body;await handler({body:{mfaToken:token,code}},{json:value=>{body=value;}},e=>{error=e;});return {error,body};
+    let error,body;await handler({body:{mfaToken:token,code}},{locals:{mfaLoginSession:session(token)},json:value=>{body=value;}},e=>{error=e;});return {error,body};
   };
   return {state,invoke};
 }

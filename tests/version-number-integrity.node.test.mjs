@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -29,7 +30,7 @@ test("optimistic version inputs are bounded to JavaScript's exact integer range"
 test("reproduction demonstrates the unsafe adjacent-BIGINT collision that the connector guard rejects", () => {
   const output = execFileSync(
     process.execPath,
-    [new URL("../scripts/reproduce-bigint-version-collision.mjs", import.meta.url).pathname],
+    [fileURLToPath(new URL("../scripts/reproduce-bigint-version-collision.mjs", import.meta.url))],
     { encoding: "utf8" }
   );
   const result = JSON.parse(output);

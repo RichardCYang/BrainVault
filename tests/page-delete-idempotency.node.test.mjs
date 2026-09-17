@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -422,7 +423,7 @@ test("baseline and upgrade schemas keep page-delete receipts after page rows are
 test("response-loss reproduction shows vulnerable 404 and fixed receipt replay", () => {
   const output = execFileSync(
     process.execPath,
-    [new URL("../scripts/reproduce-page-delete-response-loss.mjs", import.meta.url).pathname],
+    [fileURLToPath(new URL("../scripts/reproduce-page-delete-response-loss.mjs", import.meta.url))],
     { encoding: "utf8" }
   );
   const result = JSON.parse(output);

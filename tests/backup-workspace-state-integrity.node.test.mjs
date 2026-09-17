@@ -10,7 +10,7 @@ test("backup v5 preserves page version history and owned-page navigation state",
   const transfer = normalize(await readFile(new URL("../src/lib/data-transfer.ts", import.meta.url), "utf8"));
   const authRoutes = normalize(await readFile(new URL("../src/routes/auth.routes.ts", import.meta.url), "utf8"));
 
-  assert.match(transfer, /const uploadedAssetBackupVersion = 3;\nconst completeWorkspaceBackupVersion = 4;\nconst backupVersion = 5;/);
+  assert.match(transfer, /const uploadedAssetBackupVersion = 3;\nconst completeWorkspaceBackupVersion = 4;\nconst explicitWorkspaceBackupVersion = 5;\nconst backupVersion = 6;/);
   assert.match(transfer, /pageVersions: z\.array\(pageVersionSchema\)/);
   assert.match(transfer, /navigationCollapsedPageIds: z\.array\(idSchema\)/);
   assert.match(transfer, /navigationPageOrder: z\.array\(navigationPageOrderSchema\)/);

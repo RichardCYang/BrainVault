@@ -6,6 +6,7 @@ import { metadataSchema } from "../src/utils/schemas.ts";
 import { getAiChatAnswerMaxLength } from "../src/config/ai-chat-limits.ts";
 import {
   assertStructuredBlockMetadataIntegrity,
+  bookmarkLimits,
   StructuredMetadataIntegrityError
 } from "../src/lib/structured-metadata-integrity.ts";
 
@@ -395,7 +396,7 @@ test("multi-turn AI metadata enforces title, turn, and per-turn limits", () => {
       title: "",
       provider: "chatgpt",
       model: "",
-      turns: [{ answeredAt: "", question: "", answer: "a".repeat(12_001) }]
+      turns: [{ answeredAt: "", question: "", answer: "a".repeat(aiChatAnswerMaxLength + 1) }]
     }
   }, "metadata.aiChat.turns[0].answer");
 });
@@ -509,7 +510,7 @@ test("collection overflows that editor normalizers would discard fail closed", (
   expectIntegrityFailure("BOOKMARK", {
     bookmark: {
       view: "gallery",
-      items: Array.from({ length: 51 }, (_, index) => ({
+      items: Array.from({ length: bookmarkLimits.maxMaxItems + 1 }, (_, index) => ({
         id: `bookmark-${index}`,
         url: `https://example.com/${index}`,
         title: `Example ${index}`,

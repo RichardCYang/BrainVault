@@ -90,7 +90,8 @@ const legacyBackupVersion = 1;
 const pageCoverFileBackupVersion = 2;
 const uploadedAssetBackupVersion = 3;
 const completeWorkspaceBackupVersion = 4;
-const backupVersion = 5;
+const explicitWorkspaceBackupVersion = 5;
+const backupVersion = 6;
 const maxManifestBytes = env.DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024;
 const windowsReservedDeviceNamePattern = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 const idSchema = z
@@ -324,6 +325,11 @@ const customIconFileSchema = z.object({
   crc32: z.number().int().min(0).max(0xffffffff),
   library: customIconLibraryMetadataSchema.nullable()
 }).strict();
+const customIconPublicationSchema = z.object({
+  page_id: idSchema,
+  fileName: customIconFilenameSchema,
+  created_at: timestampSchema
+}).strict();
 const customIconLibraryRemovalSchema = z.object({
   value_hash: z.string().regex(/^[a-f0-9]{64}$/),
   removed_at: timestampSchema
@@ -368,6 +374,7 @@ const manifestSchema = z.object({
     z.literal(pageCoverFileBackupVersion),
     z.literal(uploadedAssetBackupVersion),
     z.literal(completeWorkspaceBackupVersion),
+    z.literal(explicitWorkspaceBackupVersion),
     z.literal(backupVersion)
   ]),
   exportedAt: exportedAtTimestampSchema,
@@ -416,8 +423,24 @@ const manifestSchema = z.object({
   customIcons: z.array(customIconFileSchema).max(dataTransferResourceLimits.maxCustomIcons).optional(),
   customIconLibraryRemovals: z.array(customIconLibraryRemovalSchema)
     .max(dataTransferResourceLimits.maxCustomIconLibraryRemovals)
-    .optional()
+    .optional(),
+  // Version 6 preserves explicit owner-controlled icon publication grants.
+  // Owner and public path are reconstructed, never trusted from the archive.
+  customIconPublications: z.array(customIconPublicationSchema)
+    .max(dataTransferResourceLimits.maxCustomIconPublications).optional()
 }).strict().superRefine((manifest, context) => {
+  if (manifest.version >= backupVersion && !manifest.customIconPublications) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom, path: ["customIconPublications"],
+      message: "Version 6 backups must declare custom icon publications"
+    });
+  }
+  if (manifest.version < backupVersion && manifest.customIconPublications !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom, path: ["customIconPublications"],
+      message: "Backups before version 6 cannot declare custom icon publications"
+    });
+  }
   if (manifest.version !== legacyBackupVersion && !manifest.pageCovers) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -481,7 +504,7 @@ const manifestSchema = z.object({
       message: "Version 4 and newer backups must declare owned-page navigation preferences"
     });
   }
-  if (manifest.version === backupVersion) {
+  if (manifest.version >= explicitWorkspaceBackupVersion) {
     if (manifest.account.theme === undefined) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -1023,6 +1046,17 @@ async function createWorkspaceRestoreSnapshot(
      ORDER BY id ASC${lockClause}`,
     [userId]
   );
+  const customIconPublications = await client.query<{
+    page_id: string; file_path: string; created_at: string
+  }>(
+    `SELECT cip.page_id, cip.file_path,
+            DATE_FORMAT(cip.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
+     FROM custom_icon_page_publications cip
+     INNER JOIN pages p ON p.id = cip.page_id AND p.owner_id = cip.owner_id
+     WHERE cip.owner_id = ? AND p.owner_id = ?
+     ORDER BY cip.page_id ASC, cip.file_path ASC${lockClause}`,
+    [userId, userId]
+  );
   const customIconRemovals = await client.query<WorkspaceRestoreCustomIconRemovalRow>(
     `SELECT value_hash,
             DATE_FORMAT(removed_at, '%Y-%m-%d %H:%i:%s.%f') AS removed_at
@@ -1087,6 +1121,9 @@ async function createWorkspaceRestoreSnapshot(
     hash.update(
       `custom-icon\0${icon.id}\0${icon.file_path}\0${icon.last_used_at}\0${icon.created_at}\n`
     );
+  }
+  for (const publication of customIconPublications) {
+    hash.update(`custom-icon-publication\0${JSON.stringify(publication)}\n`);
   }
   for (const removal of customIconRemovals) {
     hash.update(`custom-icon-removal\0${removal.value_hash}\0${removal.removed_at}\n`);
@@ -1341,6 +1378,18 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
   const pageCovers = manifest.pageCovers ?? [];
   const customIcons = manifest.customIcons ?? [];
   const customIconLibraryRemovals = manifest.customIconLibraryRemovals ?? [];
+  const customIconPublications = manifest.customIconPublications ?? [];
+  assertUnique(
+    customIconPublications.map((item) => `${item.page_id}\u0000${item.fileName}`),
+    "custom icon publication"
+  );
+  const publicationPageIds = new Set(pages.map((item) => item.id));
+  const publicationFileNames = new Set(customIcons.map((item) => item.fileName));
+  for (const publication of customIconPublications) {
+    if (!publicationPageIds.has(publication.page_id) || !publicationFileNames.has(publication.fileName)) {
+      invalidBackup("Custom icon publication references a page or file outside this backup");
+    }
+  }
   assertUnique(pages.map((item) => item.id), "page ID");
   assertUnique(blocks.map((item) => item.id), "block ID");
   assertUnique(tags.map((item) => item.id), "tag ID");
@@ -1770,6 +1819,29 @@ export async function prepareUserDataBackup(userId: string) {
          ORDER BY removed_at ASC, value_hash ASC`,
         [userId]
       );
+      const publicationRows = await client.query<{
+        page_id: string; file_path: string; created_at: string
+      }>(
+        `SELECT cip.page_id, cip.file_path,
+                DATE_FORMAT(cip.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
+         FROM custom_icon_page_publications cip
+         INNER JOIN pages p ON p.id = cip.page_id AND p.owner_id = cip.owner_id
+         WHERE cip.owner_id = ? AND p.owner_id = ?
+         ORDER BY cip.page_id ASC, cip.file_path ASC`,
+        [userId, userId]
+      );
+      assertExportCount("custom icon publications", publicationRows.length, dataTransferResourceLimits.maxCustomIconPublications);
+      const publicationPrefix = `${customIconPublicPrefix}${userId}/`;
+      const customIconPublications = publicationRows.map((row) => {
+        if (!row.file_path.startsWith(publicationPrefix)) {
+          invalidBackup("Custom icon publication references a foreign owner");
+        }
+        return customIconPublicationSchema.parse({
+          page_id: row.page_id,
+          fileName: row.file_path.slice(publicationPrefix.length),
+          created_at: row.created_at
+        });
+      });
       const attachmentBlocks = blocks.filter((item) => item.type === "ATTACHMENT");
       assertExportCount("pages", pages.length, dataTransferResourceLimits.maxPages);
       assertExportCount("blocks", blocks.length, dataTransferResourceLimits.maxBlocks);
@@ -2021,7 +2093,8 @@ export async function prepareUserDataBackup(userId: string) {
 
       const snapshot = {
         account, pages, blocks, tags, pageTags, pageShares, collectionShares, pageComments, pageVersions, navigationCollapsedPageIds, navigationPageOrder,
-        customIconLibraryRemovals
+        customIconLibraryRemovals,
+        customIconPublications
       };
       return { snapshot, attachmentFiles, retainedAttachmentFiles, pageCoverFiles, customIconFiles };
     });
@@ -2088,7 +2161,8 @@ export async function prepareUserDataBackup(userId: string) {
         crc32: item.inspection.crc32,
         library: item.library
       })),
-      customIconLibraryRemovals: snapshot.customIconLibraryRemovals
+      customIconLibraryRemovals: snapshot.customIconLibraryRemovals,
+      customIconPublications: snapshot.customIconPublications
     };
     validateManifestRelations(manifest);
     const measuredManifestBytes = measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1);
@@ -2885,6 +2959,7 @@ async function importRows(
   }
 
   if (manifest.version >= uploadedAssetBackupVersion) {
+    await client.execute("DELETE FROM custom_icon_page_publications WHERE owner_id = ?", [userId]);
     await client.execute("DELETE FROM custom_icons WHERE user_id = ?", [userId]);
     await client.execute("DELETE FROM custom_icon_library_removals WHERE user_id = ?", [userId]);
 
@@ -2903,6 +2978,8 @@ async function importRows(
       );
     }
 
+    await restoreCustomIconPublications(client, userId, manifest);
+
     const localRemovalHashMap = new Map(
       (manifest.customIcons ?? []).map((icon) => [
         customIconValueHash(customIconValue(manifest.source.userId, icon.fileName)),
@@ -2916,6 +2993,23 @@ async function importRows(
         [userId, localRemovalHashMap.get(removal.value_hash) ?? removal.value_hash, removal.removed_at]
       );
     }
+  }
+}
+
+async function restoreCustomIconPublications(client: DbClient, userId: string, manifest: BrainVaultBackup) {
+  const pageIds = new Set(manifest.data.pages.map((page) => page.id));
+  const fileNames = new Set((manifest.customIcons ?? []).map((icon) => icon.fileName));
+  for (const publication of manifest.customIconPublications ?? []) {
+    // Repeat the boundary check at the write site as defense in depth. A
+    // malformed grant aborts the restore transaction instead of widening access.
+    if (!pageIds.has(publication.page_id) || !fileNames.has(publication.fileName)) {
+      invalidBackup("Custom icon publication references a page or file outside this backup");
+    }
+    await client.execute(
+      `INSERT INTO custom_icon_page_publications (page_id, owner_id, file_path, created_at)
+       VALUES (?, ?, ?, ?)`,
+      [publication.page_id, userId, customIconPublicPath(userId, publication.fileName), publication.created_at]
+    );
   }
 }
 

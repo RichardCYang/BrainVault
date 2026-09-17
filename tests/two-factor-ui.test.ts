@@ -53,7 +53,7 @@ describe("Two-step verification UI and persistence", () => {
 
   it("rate-limits passkey option generation even when the option response succeeds", () => {
     expect(mfaRoutes).toMatch(
-      /"\/login\/passkey\/options",[\s\S]*?mfaLoginOptionsIpRateLimit,[\s\S]*?mfaLoginOptionsAccountRateLimit,[\s\S]*?validate\(\{ body: mfaTokenSchema \}\)/
+      /"\/login\/passkey\/options",[\s\S]*?mfaLoginOptionsIpRateLimit,[\s\S]*?mfaLoginTokenRateLimit,[\s\S]*?validate\(\{ body: mfaTokenSchema \}\),[\s\S]*?requireActiveMfaLoginSession,[\s\S]*?mfaLoginOptionsAccountRateLimit,/
     );
     const ipLimiter = /export const mfaLoginOptionsIpRateLimit = rateLimit\(\{([\s\S]*?)\n\}\);/.exec(authRateLimits)?.[1] ?? "";
     const accountLimiter = /export const mfaLoginOptionsAccountRateLimit = rateLimit\(\{([\s\S]*?)\n\}\);/.exec(authRateLimits)?.[1] ?? "";

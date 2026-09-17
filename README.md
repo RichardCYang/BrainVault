@@ -16,7 +16,7 @@ The preview is captured from the real browser UI. See [Development guide](docs/d
 - Rich text, Markdown, syntax-highlighted code blocks, callouts, bookmarks, privacy-enhanced video embeds, file attachments, AI conversation blocks, and KaTeX formulas
 - Crash-resilient browser drafts, automatic title saving, and search across page titles and block content
 - Owner- and administrator-managed sharing: ordinary pages use direct `EDIT` grants, while custom collections use inherited `READ`, `WRITE`, or `ADMIN` grants; shared documents use Yjs live synchronization, presence, reconnect recovery, and MariaDB persistence
-- Page collections, nesting, built-in or custom cover images with adjustable focal positions, archiving, permanent deletion, PDF export, and complete ZIP backup/restore including page and collection sharing grants, page version history, owned-page navigation state, every account attachment-upload file, and uploaded custom-icon assets
+- Page collections, nesting, built-in or custom cover images with adjustable focal positions, archiving, permanent deletion, PDF export, and complete ZIP backup/restore including page and collection sharing grants, page version history, owned-page navigation state, every account attachment-upload file, and uploaded custom-icon assets with their explicit page-publication grants
 - Custom page/collection icon uploads stored as physical files under `upload/icons/`; MariaDB stores only the generated file path, and missing files fall back to the default page icon
 - JWT authentication with an HttpOnly browser session cookie, profile settings, TOTP authenticator support, multiple WebAuthn/FIDO2 passkeys, and passwordless passkey-first login from the sign-in screen
 - Seven interface languages: English, Japanese, Korean, French, German, Spanish, and Portuguese
@@ -38,7 +38,7 @@ BrainVault can share an entire **custom collection** with another existing Brain
 
 A collection grant is authoritative for a user inside that collection and takes precedence over a direct page `EDIT` grant. For example, a collection-level `READ` grant keeps member pages read-only for that user even if an older direct `EDIT` grant is still stored for one of those pages. If the collection grant is later removed, a still-valid direct page grant can become effective again.
 
-Collection sharing is persisted in `collection_shares`, while `page_collection_memberships` materializes each page's collection scope. Current version 5 backups strictly require collection grants in addition to direct page grants and preserve collection-share update timestamps. See [Collection sharing](docs/collaboration/2026-09-02/collection-sharing.md) for UI behavior, permission semantics, API routes, inheritance rules, backup behavior, and troubleshooting.
+Collection sharing is persisted in `collection_shares`, while `page_collection_memberships` materializes each page's collection scope. Current version 6 backups strictly require collection grants in addition to direct page grants and preserve collection-share update timestamps. See [Collection sharing](docs/collaboration/2026-09-02/collection-sharing.md) for UI behavior, permission semantics, API routes, inheritance rules, backup behavior, and troubleshooting.
 
 ## Syntax-highlighted code blocks
 
@@ -134,6 +134,31 @@ node --import=tsx --test tests/security-assessment-remediation.node.test.mjs
 ```
 
 Use a Node.js version satisfying the unchanged `package.json` engine requirement and install the locked dependencies. Before production rollout, run `npm run build`, `npm test`, and `npm run verify:security`, then validate the migration and parallel TOTP behavior against the deployment's MariaDB instance. The focused suite contains deterministic transaction simulations, not live database concurrency or translator integration tests.
+
+## Authentication availability and backup format 6
+
+Authentication and the global request limiter use independent, process-local bounded stores with a maximum of 10,000 keys per store. Expired counters are reclaimed; live counters are never evicted to make room for attacker-chosen identities. At capacity, a previously unseen key receives HTTP 429 until space becomes available. Existing keys retain their failure budgets. This deliberately favors brute-force protection and bounded memory over admitting new identities during saturation. The stores remain single-process, matching the existing application-instance boundary; they are not a distributed rate-limiting solution.
+
+Password hashing runs before the database transaction. The short transaction rechecks the account ID, password hash, authentication version, and registration approval before applying the existing lockout decision. A credential changed during hashing fails closed. Unknown and unapproved accounts still perform a dummy comparison and receive the generic padded failure response. The password-hashing cost and existing request budgets are unchanged.
+
+Anonymous MFA admission validates the server-generated token shape and applies source/token limits before looking up the live, source- and ceremony-bound session. The account-wide limiter then uses only that verified session, without its former additional database query. Authoritative attempt reservation, factor verification, expiry checks, and replay protections remain in place.
+
+An already authenticated account can POST an application/json body `{}` to `/api/auth/login-lockout/reset` to clear its own persisted password lock and account-wide login counter. The endpoint revalidates the current session and authentication version inside the transaction. Browser cookie requests must pass the existing same-origin protections. Recovery is limited to three requests per account per `AUTH_LOGIN_IP_WINDOW_MS`; no caller-supplied username is used. A completed passwordless passkey login also clears the account-wide password-login counter. Neither recovery path clears the shared per-IP failure budget. **Residual limitation:** a password-only account with neither a valid session nor an enrolled passkey can still be denied password login by intentional account lockout. Hard lockout has not been disabled or replaced by unlimited password comparisons.
+
+New exports use backup format 6 and explicitly include `customIconPublications`, including an empty array when there are no grants. Each publication must reference an owned page and a custom-icon file in the same backup. Restore reconstructs the canonical path using the destination account, never an archive-supplied owner; foreign, duplicate, or dangling references fail validation. Publication writes occur in the restore transaction and participate in the workspace-change fingerprint. A restored publication alone does not grant access: the existing current page/collection sharing checks still apply.
+
+Formats 1 through 5 remain accepted with their existing completeness rules. They contain no publication history, so the restore does not invent grants; owners must re-publish affected icons from those older backups. Format 6 requires the existing `079_security_assessment_remediation.sql` table. Run the normal migrations, including `080_registration_approval.sql`; this update does not restore registration approval or other security-state fields from a backup.
+
+The security gate now includes both prior report-regression suites, the availability regression suite, and the backup contract guards, plus the previously unenforced focused Vitest checks. Tests preserve the hardened origin policy, storage-owner path validation, and current metadata size limits rather than restoring obsolete behavior. Test subprocess paths use `fileURLToPath` where the Windows URL-path bug was present.
+
+```bash
+npm ci
+npm run build
+npm test
+npm run verify:security
+```
+
+Use the unchanged supported Node.js engine range. `tests/report-availability-remediation.node.test.mjs` exercises the bounded store and isolated production functions with explicit dependency doubles. These checks are not live HTTP, bcrypt performance, MariaDB transaction/restore, or browser WebAuthn integration tests. Run those integration checks on the deployment stack before production rollout.
 
 ## Maintenance and audit notes
 

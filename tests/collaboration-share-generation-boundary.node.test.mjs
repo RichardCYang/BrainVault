@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -51,7 +52,7 @@ test("live and queued collaboration writes revalidate grant generation", () => {
 test("revoke then re-add reproducer rejects the old grant and accepts the replacement", () => {
   const output = execFileSync(
     process.execPath,
-    [new URL("../scripts/reproduce-collaboration-share-generation-revival.mjs", import.meta.url).pathname],
+    [fileURLToPath(new URL("../scripts/reproduce-collaboration-share-generation-revival.mjs", import.meta.url))],
     { encoding: "utf8" }
   );
   const result = JSON.parse(output);
@@ -90,7 +91,7 @@ test("attachment uploads stay bound to the collaborator grant admitted before mu
 test("attachment revoke-then-readd reproducer rejects the stale upload grant", () => {
   const output = execFileSync(
     process.execPath,
-    [new URL("../scripts/reproduce-attachment-share-generation-revival.mjs", import.meta.url).pathname],
+    [fileURLToPath(new URL("../scripts/reproduce-attachment-share-generation-revival.mjs", import.meta.url))],
     { encoding: "utf8" }
   );
   const result = JSON.parse(output);

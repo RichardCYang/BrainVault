@@ -31,6 +31,7 @@ import {
   requireSameOriginBrowserRequest
 } from "../middleware/auth.js";
 import {
+  clearPasswordLoginAccountLimit,
   passkeyLoginOptionsIpRateLimit,
   passkeyLoginVerifyIpRateLimit
 } from "../middleware/auth-rate-limit.js";
@@ -338,6 +339,7 @@ passkeyLoginRouter.post(
   "/options",
   requireSameOriginBrowserRequest,
   requireJsonRequestBody,
+  clearPasswordLoginAccountLimit,
   passkeyLoginOptionsIpRateLimit,
   validate({ body: optionsSchema }),
   async (req, res, next) => {
@@ -500,6 +502,7 @@ passkeyLoginRouter.post(
         };
       });
 
+      await clearPasswordLoginAccountLimit(result.user.username);
       setAuthSessionCookie(res, result.token);
       clearPasskeyCeremonyBinding(res);
       res.json({ user: result.user });

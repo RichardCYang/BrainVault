@@ -2,8 +2,7 @@ import { createHash } from "node:crypto";
 import type { Request, Response } from "express";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { env } from "../config/env.js";
-import { db } from "../lib/db.js";
-import { hashOpaqueToken } from "../lib/mfa.js";
+import { BoundedRateLimitStore } from "../lib/bounded-rate-limit-store.js";
 
 function clientIpKey(req: Request) {
   return ipKeyGenerator(req.ip || req.socket.remoteAddress || "unknown");
@@ -22,17 +21,21 @@ function usernameKey(req: Request) {
   return hashRateLimitKey("account", raw);
 }
 
-async function mfaAccountKey(req: Request) {
-  const mfaToken = typeof req.body?.mfaToken === "string" ? req.body.mfaToken.trim() : "";
-  if (!mfaToken) return `ip:${clientIpKey(req)}`;
+function mfaTokenKey(req: Request) {
+  const token = req.body?.mfaToken;
+  // Malformed anonymous input must neither access the database nor create a
+  // distinct key. The request schema rejects it after source admission.
+  return typeof token === "string" && /^[A-Za-z0-9_-]{43}$/.test(token)
+    ? hashRateLimitKey("mfa-token", token)
+    : `mfa-invalid:${clientIpKey(req)}`;
+}
 
-  const row = await db.queryOne<{ user_id: string }>(
-    "SELECT user_id FROM mfa_login_sessions WHERE token_hash = ?",
-    [hashOpaqueToken(mfaToken)]
-  );
-  return row?.user_id
-    ? hashRateLimitKey("mfa-account", row.user_id)
-    : hashRateLimitKey("mfa-token", mfaToken);
+function mfaAccountKey(_req: Request, res: Response) {
+  // Set only after a live, source- and ceremony-bound session was read by the
+  // route middleware. Never trust a client-supplied user ID or query here.
+  const userId = res.locals.mfaLoginSession?.user_id;
+  if (typeof userId !== "string" || !userId) throw new Error("Verified MFA session required");
+  return hashRateLimitKey("mfa-account", userId);
 }
 
 function accountReauthenticationKey(req: Request) {
@@ -72,6 +75,7 @@ const handler = (_req: Request, res: Response) => {
 };
 
 export const loginIpRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
   windowMs: env.AUTH_LOGIN_IP_WINDOW_MS,
   limit: env.AUTH_LOGIN_IP_MAX,
   standardHeaders: "draft-8",
@@ -83,6 +87,7 @@ export const loginIpRateLimit = rateLimit({
 });
 
 export const loginAccountRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
   windowMs: env.AUTH_LOGIN_ACCOUNT_WINDOW_MS,
   limit: env.AUTH_LOGIN_ACCOUNT_MAX,
   standardHeaders: "draft-8",
@@ -94,6 +99,7 @@ export const loginAccountRateLimit = rateLimit({
 });
 
 export const passkeyLoginOptionsIpRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
   windowMs: env.AUTH_PASSKEY_OPTIONS_IP_WINDOW_MS,
   limit: env.AUTH_PASSKEY_OPTIONS_IP_MAX,
   standardHeaders: "draft-8",
@@ -103,6 +109,7 @@ export const passkeyLoginOptionsIpRateLimit = rateLimit({
 });
 
 export const passkeyLoginVerifyIpRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
   windowMs: env.AUTH_PASSKEY_VERIFY_IP_WINDOW_MS,
   limit: env.AUTH_PASSKEY_VERIFY_IP_MAX,
   standardHeaders: "draft-8",
@@ -114,6 +121,7 @@ export const passkeyLoginVerifyIpRateLimit = rateLimit({
 });
 
 export const mfaLoginIpRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
   windowMs: env.AUTH_MFA_IP_WINDOW_MS,
   limit: env.AUTH_MFA_IP_MAX,
   standardHeaders: "draft-8",
@@ -124,6 +132,7 @@ export const mfaLoginIpRateLimit = rateLimit({
 });
 
 export const mfaLoginAccountRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
   windowMs: env.AUTH_MFA_ACCOUNT_WINDOW_MS,
   limit: env.AUTH_MFA_ACCOUNT_MAX,
   standardHeaders: "draft-8",
@@ -137,6 +146,7 @@ export const mfaLoginAccountRateLimit = rateLimit({
 // successful option responses must consume the same MFA request budget instead
 // of being removed by skipSuccessfulRequests.
 export const mfaLoginOptionsIpRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
   windowMs: env.AUTH_MFA_IP_WINDOW_MS,
   limit: env.AUTH_MFA_IP_MAX,
   standardHeaders: "draft-8",
@@ -146,6 +156,7 @@ export const mfaLoginOptionsIpRateLimit = rateLimit({
 });
 
 export const mfaLoginOptionsAccountRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
   windowMs: env.AUTH_MFA_ACCOUNT_WINDOW_MS,
   limit: env.AUTH_MFA_ACCOUNT_MAX,
   standardHeaders: "draft-8",
@@ -155,6 +166,7 @@ export const mfaLoginOptionsAccountRateLimit = rateLimit({
 });
 
 export const accountReauthenticationRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
   windowMs: env.AUTH_MFA_SETUP_WINDOW_MS,
   limit: env.AUTH_MFA_SETUP_MAX,
   standardHeaders: "draft-8",
@@ -165,6 +177,7 @@ export const accountReauthenticationRateLimit = rateLimit({
 });
 
 export const mfaSetupRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
   windowMs: env.AUTH_MFA_SETUP_WINDOW_MS,
   limit: env.AUTH_MFA_SETUP_MAX,
   standardHeaders: "draft-8",
@@ -175,6 +188,7 @@ export const mfaSetupRateLimit = rateLimit({
 });
 
 export const registrationGlobalRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
   windowMs: env.AUTH_REGISTER_WINDOW_MS,
   limit: env.AUTH_REGISTER_GLOBAL_MAX,
   standardHeaders: "draft-8",
@@ -184,6 +198,7 @@ export const registrationGlobalRateLimit = rateLimit({
 });
 
 export const registrationRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
   windowMs: env.AUTH_REGISTER_WINDOW_MS,
   limit: env.AUTH_REGISTER_MAX,
   standardHeaders: "draft-8",
@@ -202,6 +217,7 @@ const collaborationShareHandler = (_req: Request, res: Response) => {
 };
 
 export const collaborationShareIpRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
   windowMs: env.COLLABORATION_SHARE_WINDOW_MS,
   limit: env.COLLABORATION_SHARE_IP_MAX,
   standardHeaders: "draft-8",
@@ -211,6 +227,7 @@ export const collaborationShareIpRateLimit = rateLimit({
 });
 
 export const collaborationShareAccountRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
   windowMs: env.COLLABORATION_SHARE_WINDOW_MS,
   limit: env.COLLABORATION_SHARE_ACCOUNT_MAX,
   standardHeaders: "draft-8",
@@ -220,6 +237,7 @@ export const collaborationShareAccountRateLimit = rateLimit({
 });
 
 export const collaborationSessionPageRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
   windowMs: env.COLLABORATION_SESSION_WINDOW_MS,
   limit: env.COLLABORATION_SESSION_PAGE_MAX,
   standardHeaders: "draft-8",
@@ -236,6 +254,7 @@ export const collaborationSessionPageRateLimit = rateLimit({
 });
 
 export const navigationOrderRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
   windowMs: env.NAVIGATION_ORDER_WINDOW_MS,
   limit: env.NAVIGATION_ORDER_ACCOUNT_MAX,
   standardHeaders: "draft-8",
@@ -251,3 +270,32 @@ export const navigationOrderRateLimit = rateLimit({
   }
 });
 
+
+// This admission gate precedes the live-session lookup. Account-wide budgets
+// remain separate and are applied after the single authenticated session read.
+export const mfaLoginTokenRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
+  windowMs: env.AUTH_MFA_ACCOUNT_WINDOW_MS,
+  limit: env.AUTH_MFA_ACCOUNT_MAX,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: mfaTokenKey,
+  handler
+});
+
+export const loginLockoutRecoveryRateLimit = rateLimit({
+  store: new BoundedRateLimitStore(),
+  windowMs: env.AUTH_LOGIN_IP_WINDOW_MS,
+  limit: 3,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: (req) => authenticatedAccountKey("login-lockout-recovery", req),
+  handler
+});
+
+// Only call after an independently authenticated recovery operation. Never
+// reset the shared per-IP failure budget (other accounts may use that IP).
+export async function clearPasswordLoginAccountLimit(username: string): Promise<void> {
+  const normalized = username.trim().toLowerCase();
+  if (normalized) await loginAccountRateLimit.resetKey(hashRateLimitKey("account", normalized));
+}

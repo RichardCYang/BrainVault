@@ -9,7 +9,7 @@ test("backup v3 preserves every per-account attachment file, including retained 
 
   assert.match(transfer, /retainedAttachments: z\.array\(retainedAttachmentSchema\)/);
   assert.match(transfer, /Version 3 and newer backups must declare retained attachment files/);
-  assert.match(transfer, /const attachmentOwnerDir = path\.join\(attachmentUploadRoot, userId\)/);
+  assert.match(transfer, /const attachmentOwnerDir = storageOwnerDirectory\(attachmentUploadRoot, userId\)/);
   assert.match(transfer, /attachmentEntries = attachmentEntries\.filter\(\(entry\) => entry\.name !== dataRestoreGenerationMarkerName\)/);
   assert.match(transfer, /if \(activeAttachmentNames\.has\(entry\.name\)\) continue;/);
   assert.match(transfer, /retainedAttachmentFiles\.push\(\{[\s\S]*?path: `attachments\/\$\{entry\.name\}`/);

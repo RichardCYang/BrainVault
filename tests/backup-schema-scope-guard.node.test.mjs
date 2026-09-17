@@ -12,6 +12,9 @@ const tableScope = new Map([
   ["collection_shares", "portable"],
   ["custom_icon_library_removals", "portable"],
   ["custom_icons", "portable"],
+  // Explicit owner publication grants are portable only with their owned pages
+  // and archived icon files; restore rebinds the owner to the destination user.
+  ["custom_icon_page_publications", "portable"],
   ["page_comments", "portable"],
   ["page_shares", "portable"],
   ["page_tags", "portable"],
@@ -113,7 +116,10 @@ const reviewedPortableDdlMigrations = [
   "067_page_comments.sql",
   "068_collection_sharing.sql",
   "070_page_comment_edit_versions.sql",
-  "077_custom_icon_tenant_identity.sql"
+  "077_custom_icon_tenant_identity.sql",
+  "079_security_assessment_remediation.sql",
+  // Registration approval is security state; it is never imported from a backup.
+  "080_registration_approval.sql"
 ];
 
 const createTablePattern = /CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+`?([A-Za-z0-9_]+)`?/gi;
