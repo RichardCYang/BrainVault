@@ -5149,7 +5149,19 @@ async function logout() {
 }
 
 function sortByRecent(items) {
-  return [...items].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  // Keep parsed dates only for this synchronous sort. Page objects (not IDs)
+  // distinguish duplicate IDs, and later in-place edits always get fresh keys.
+  let timestamps;
+  const getTimestamp = (item) => {
+    timestamps ??= new Map();
+    let timestamp = timestamps.get(item);
+    if (timestamp === undefined) {
+      timestamp = new Date(item.updatedAt).getTime();
+      timestamps.set(item, timestamp);
+    }
+    return timestamp;
+  };
+  return [...items].sort((a, b) => getTimestamp(b) - getTimestamp(a));
 }
 
 function takeMostRecent(items, limit) {
@@ -5168,7 +5180,7 @@ function takeMostRecent(items, limit) {
   return selected.map((entry) => entry.item);
 }
 
-function compareNavigationOrder(a, b) {
+function compareNavigationOrder(a, b, getTimestamp = null) {
   const aOrder = state.navigationPageOrder.get(a.id);
   const bOrder = state.navigationPageOrder.get(b.id);
   const aRanked = Number.isSafeInteger(aOrder) && aOrder >= 0;
@@ -5180,13 +5192,27 @@ function compareNavigationOrder(a, b) {
   if (aRanked !== bRanked) return aRanked ? 1 : -1;
   if (aRanked && bRanked && aOrder !== bOrder) return aOrder - bOrder;
 
-  const recent = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  const recent = getTimestamp
+    ? getTimestamp(b) - getTimestamp(a)
+    : new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
   if (recent !== 0) return recent;
   return String(a.id).localeCompare(String(b.id));
 }
 
 function sortByNavigationOrder(items) {
-  return [...items].sort(compareNavigationOrder);
+  // Explicit navigation ranks can decide the order without reading dates.
+  // Allocate the per-sort cache lazily, only when the date tie-break is used.
+  let timestamps;
+  const getTimestamp = (item) => {
+    timestamps ??= new Map();
+    let timestamp = timestamps.get(item);
+    if (timestamp === undefined) {
+      timestamp = new Date(item.updatedAt).getTime();
+      timestamps.set(item, timestamp);
+    }
+    return timestamp;
+  };
+  return [...items].sort((a, b) => compareNavigationOrder(a, b, getTimestamp));
 }
 
 function buildPageTree(pages, { useNavigationOrder = false } = {}) {

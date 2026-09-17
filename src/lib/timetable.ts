@@ -134,15 +134,14 @@ function normalizeEntry(
 }
 
 function sortEntries(entries: TimetableEntry[]) {
-  return entries
-    .map((entry, index) => ({ entry, index }))
-    .sort((left, right) => {
-      const startDifference = (parseTime(left.entry.start) ?? 0) - (parseTime(right.entry.start) ?? 0);
-      if (startDifference !== 0) return startDifference;
-      const endDifference = (parseTime(left.entry.end) ?? 0) - (parseTime(right.entry.end) ?? 0);
-      return endDifference !== 0 ? endDifference : left.index - right.index;
-    })
-    .map(({ entry }) => entry);
+  // normalizeEntry has already validated and zero-padded both endpoints.
+  // Stable native sorting needs neither per-comparison parsing nor index
+  // wrapper objects. Keep the original non-mutating array contract.
+  return [...entries].sort((left, right) => {
+    if (left.start !== right.start) return left.start < right.start ? -1 : 1;
+    if (left.end !== right.end) return left.end < right.end ? -1 : 1;
+    return 0;
+  });
 }
 
 export function createDefaultTimetableData(): TimetableData {

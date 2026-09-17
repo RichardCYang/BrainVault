@@ -105,10 +105,13 @@ function normalizeEntry(rawEntry, index, interval, seenIds) {
 }
 
 function sortEntries(entries) {
+  // All callers normalize ranges to zero-padded HH:mm first. Their lexical
+  // order is chronological, so comparisons need no regex matches or parsing.
+  // Native stable sorting preserves input order when both endpoints tie.
   entries.sort((left, right) => {
-    const startDifference = (parseTime(left.start) ?? 0) - (parseTime(right.start) ?? 0);
-    if (startDifference !== 0) return startDifference;
-    return (parseTime(left.end) ?? 0) - (parseTime(right.end) ?? 0);
+    if (left.start !== right.start) return left.start < right.start ? -1 : 1;
+    if (left.end !== right.end) return left.end < right.end ? -1 : 1;
+    return 0;
   });
   return entries;
 }
