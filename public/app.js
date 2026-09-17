@@ -10617,17 +10617,26 @@ function buildCollaborationBlockTree(flatBlocks) {
 }
 
 function getCollaborationBlockSignature(blocks) {
-  return JSON.stringify(
-    flattenBlocks(blocks ?? []).map((block) => ({
-      id: block.id,
-      type: block.type,
-      markdown: block.markdown ?? "",
-      checked: Boolean(block.checked),
-      parentBlockId: block.parentBlockId ?? null,
-      sortOrder: Number(block.sortOrder ?? 0),
-      metadata: block.metadata ?? null
-    }))
-  );
+  // The signature needs only these fields, not flattenBlocks' depth, HTML,
+  // timestamps or temporary block copies. Preserve the same depth-first order
+  // and field/default order without retaining a second full-document array.
+  const values = [];
+  const visit = (items) => {
+    for (const block of items) {
+      values.push({
+        id: block.id,
+        type: block.type,
+        markdown: block.markdown ?? "",
+        checked: Boolean(block.checked),
+        parentBlockId: block.parentBlockId ?? null,
+        sortOrder: Number(block.sortOrder ?? 0),
+        metadata: block.metadata ?? null
+      });
+      if (block.children?.length) visit(block.children);
+    }
+  };
+  visit(blocks ?? []);
+  return JSON.stringify(values);
 }
 
 function captureCollaborationEditorFocus() {

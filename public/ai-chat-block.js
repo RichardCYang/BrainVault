@@ -440,8 +440,23 @@ function collectAiChatCitationGroupUnits(node, units) {
   for (const child of Array.from(node?.childNodes ?? [])) {
     if (child?.nodeType === 3) {
       const value = typeof child.nodeValue === "string" ? child.nodeValue : (child.textContent ?? "");
+      // Only separator-only spans can join citation links. For wrapper
+      // matching, only the leading/trailing separator characters matter.
+      // Collapse the intervening prose to one barrier instead of allocating
+      // one object per code unit whenever a paragraph has two numeric links.
+      // Keep original UTF-16 offsets; the DOM text itself is never shortened.
+      const proseStart = value.search(/[^\s,;:，；：、\[\](){}]/);
+      let proseEnd = value.length - 1;
+      if (proseStart >= 0) {
+        while (proseEnd > proseStart && aiChatCitationGroupSeparatorPattern.test(value[proseEnd])) proseEnd -= 1;
+      }
       for (let index = 0; index < value.length; index += 1) {
-        units.push({ type: "text", char: value[index], node: child, offset: index });
+        if (index === proseStart) {
+          units.push({ type: "barrier", node: child });
+          index = proseEnd;
+        } else {
+          units.push({ type: "text", char: value[index], node: child, offset: index });
+        }
       }
       continue;
     }
@@ -484,6 +499,24 @@ function findAiChatCitationWrapperUnit(units, startIndex, direction) {
     index += direction;
   }
   return null;
+}
+
+function removeAiChatTextOffsets(value, offsets) {
+  // Copy only the surviving spans, not two arrays covering the entire text.
+  // Offsets are UTF-16 code units, matching the former split/filter/join path.
+  const ordered = [...offsets]
+    .filter((offset) => Number.isInteger(offset) && offset >= 0 && offset < value.length)
+    .sort((left, right) => left - right);
+  if (!ordered.length) return value;
+  const parts = [];
+  let cursor = 0;
+  for (const offset of ordered) {
+    if (offset < cursor) continue;
+    if (offset > cursor) parts.push(value.slice(cursor, offset));
+    cursor = offset + 1;
+  }
+  if (cursor < value.length) parts.push(value.slice(cursor));
+  return parts.join("");
 }
 
 function mergeAiChatInlineCitationGroup(units, group) {
@@ -540,7 +573,7 @@ function mergeAiChatInlineCitationGroup(units, group) {
 
   deletions.forEach((offsets, textNode) => {
     const value = typeof textNode.nodeValue === "string" ? textNode.nodeValue : (textNode.textContent ?? "");
-    textNode.nodeValue = value.split("").filter((_, index) => !offsets.has(index)).join("");
+    textNode.nodeValue = removeAiChatTextOffsets(value, offsets);
   });
   group.slice(1).forEach(({ unit }) => unit?.node?.remove?.());
 }
@@ -678,7 +711,7 @@ function stripAiChatTrailingReferenceParentheses(block) {
   }
   edits.forEach((offsets, textNode) => {
     const value = typeof textNode.nodeValue === "string" ? textNode.nodeValue : (textNode.textContent ?? "");
-    textNode.nodeValue = value.split("").filter((_, index) => !offsets.has(index)).join("");
+    textNode.nodeValue = removeAiChatTextOffsets(value, offsets);
   });
 }
 
