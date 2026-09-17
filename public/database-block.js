@@ -734,6 +734,43 @@ function searchableValue(property, value) {
   return value === null || value === undefined ? "" : String(value);
 }
 
+function createDatabaseSearchValueReader(database, rowCount = database.rows.length) {
+  // Linear lookup is cheaper for a single row or tiny option lists. Avoid
+  // allocating indexes where there is too little repeated work to amortize them.
+  if (rowCount < 2 || !database.properties.some((property) =>
+    (property.type === "select" || property.type === "multi_select") && property.options.length >= 8
+  )) return searchableValue;
+  // Search snapshots are synchronous. Index only option properties that
+  // are actually reached, and never retain labels across edits or accounts.
+  let optionsByProperty;
+  let labels;
+  return (property, value) => {
+    if ((property.type !== "select" && property.type !== "multi_select") || property.options.length < 8) {
+      return searchableValue(property, value);
+    }
+    if (property.type === "multi_select" && (!Array.isArray(value) || !value.length)) return "";
+    optionsByProperty ??= new Map();
+    let byId = optionsByProperty.get(property);
+    if (!byId) {
+      byId = new Map();
+      for (const option of property.options) {
+        const id = option.id;
+        // Keep find()'s first-match behavior even for duplicate option IDs.
+        if (!byId.has(id)) byId.set(id, option);
+      }
+      optionsByProperty.set(property, byId);
+    }
+    if (property.type === "select") return byId.get(value)?.name ?? "";
+    // Empty/unknown labels still contribute the original space separators.
+    // Reuse this short-lived scratch array across cells rather than allocating
+    // a mapped array for every row/property. join() returns an independent string.
+    labels ??= [];
+    labels.length = value.length;
+    for (let index = 0; index < value.length; index += 1) labels[index] = byId.get(value[index])?.name ?? "";
+    return labels.join(" ");
+  };
+}
+
 function rowMatchesFilter(dataRow, filter, propertyById, getFilterText) {
   const property = propertyById.get(filter.propertyId);
   if (!property) return true;
@@ -827,8 +864,9 @@ export function applyDatabaseView(database, view = getDatabaseActiveView(databas
 function applyDatabaseSearch(database, rows, query) {
   const normalizedQuery = String(query ?? "").trim().toLocaleLowerCase();
   if (!normalizedQuery) return rows;
+  const readValue = createDatabaseSearchValueReader(database, rows.length);
   return rows.filter((dataRow) => database.properties.some((property) =>
-    searchableValue(property, dataRow.values[property.id]).toLocaleLowerCase().includes(normalizedQuery)
+    readValue(property, dataRow.values[property.id]).toLocaleLowerCase().includes(normalizedQuery)
   ));
 }
 

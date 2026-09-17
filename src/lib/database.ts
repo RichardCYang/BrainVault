@@ -818,16 +818,45 @@ function renderDatabaseValue(property: DatabaseProperty, value: DatabaseValue) {
   return escapeHtml(value === null || value === undefined ? "" : String(value));
 }
 
-function renderDatabaseTable(database: DatabaseData, view: DatabaseView, rows: DatabaseRow[]) {
+function createDatabaseValueRenderer() {
+  // Cache only within one synchronous HTML render, keyed by property identity.
+  // Hidden/empty properties allocate nothing. Each used option is escaped once;
+  // subsequent rows reuse its immutable HTML, not a persistent user-data cache.
+  let optionsByProperty: Map<DatabaseProperty, Map<unknown, { option: DatabaseOption; html?: string }>> | undefined;
+  return (property: DatabaseProperty, value: DatabaseValue) => {
+    if (property.type !== "select" && property.type !== "multi_select") return renderDatabaseValue(property, value);
+    if (property.type === "multi_select" && (!Array.isArray(value) || !value.length)) return "";
+    optionsByProperty ??= new Map();
+    let byId = optionsByProperty.get(property);
+    if (!byId) {
+      byId = new Map();
+      for (const option of property.options) {
+        const id = option.id;
+        if (!byId.has(id)) byId.set(id, { option });
+      }
+      optionsByProperty.set(property, byId);
+    }
+    const renderOption = (optionId: unknown) => {
+      const entry = byId.get(optionId);
+      if (!entry) return "";
+      return entry.html ??= `<span class="rendered-database-option rendered-database-option--${entry.option.color}">${escapeHtml(entry.option.name)}</span>`;
+    };
+    return property.type === "select"
+      ? renderOption(value)
+      : (value as unknown[]).map(renderOption).filter(Boolean).join(" ");
+  };
+}
+
+function renderDatabaseTable(database: DatabaseData, view: DatabaseView, rows: DatabaseRow[], renderValue: typeof renderDatabaseValue) {
   const visibleProperties = database.properties.filter((property) => !view.hiddenPropertyIds.includes(property.id));
   const head = visibleProperties.map((property) => `<th scope="col">${escapeHtml(property.name)}</th>`).join("");
   const body = rows.map((row) => `<tr>${visibleProperties
-    .map((property) => `<td>${renderDatabaseValue(property, row.values[property.id])}</td>`)
+    .map((property) => `<td>${renderValue(property, row.values[property.id])}</td>`)
     .join("")}</tr>`).join("");
   return `<div class="rendered-database-table-wrap"><table class="rendered-database-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
-function renderDatabaseList(database: DatabaseData, view: DatabaseView, rows: DatabaseRow[]) {
+function renderDatabaseList(database: DatabaseData, view: DatabaseView, rows: DatabaseRow[], renderValue: typeof renderDatabaseValue) {
   const titleProperty = getDatabaseTitleProperty(database);
   const visibleProperties = database.properties.filter(
     (property) => property.id !== titleProperty.id && !view.hiddenPropertyIds.includes(property.id)
@@ -835,17 +864,17 @@ function renderDatabaseList(database: DatabaseData, view: DatabaseView, rows: Da
   const items = rows.map((row) => {
     const details = visibleProperties
       .map((property) => {
-        const rendered = renderDatabaseValue(property, row.values[property.id]);
+        const rendered = renderValue(property, row.values[property.id]);
         return rendered ? `<span class="rendered-database-list-property"><small>${escapeHtml(property.name)}</small>${rendered}</span>` : "";
       })
       .filter(Boolean)
       .join("");
-    return `<li><strong>${renderDatabaseValue(titleProperty, row.values[titleProperty.id]) || "Untitled"}</strong><div>${details}</div></li>`;
+    return `<li><strong>${renderValue(titleProperty, row.values[titleProperty.id]) || "Untitled"}</strong><div>${details}</div></li>`;
   }).join("");
   return `<ul class="rendered-database-list">${items}</ul>`;
 }
 
-function renderDatabaseBoard(database: DatabaseData, view: DatabaseView, rows: DatabaseRow[]) {
+function renderDatabaseBoard(database: DatabaseData, view: DatabaseView, rows: DatabaseRow[], renderValue: typeof renderDatabaseValue) {
   const titleProperty = getDatabaseTitleProperty(database);
   const groupProperty = database.properties.find((property) => property.id === view.groupPropertyId) ?? null;
   const visibleProperties = database.properties.filter(
@@ -875,12 +904,12 @@ function renderDatabaseBoard(database: DatabaseData, view: DatabaseView, rows: D
     const cards = group.rows.map((row) => {
       const details = visibleProperties
         .map((property) => {
-          const rendered = renderDatabaseValue(property, row.values[property.id]);
+          const rendered = renderValue(property, row.values[property.id]);
           return rendered ? `<span class="rendered-database-card-property"><small>${escapeHtml(property.name)}</small>${rendered}</span>` : "";
         })
         .filter(Boolean)
         .join("");
-      return `<article class="rendered-database-card"><strong>${renderDatabaseValue(titleProperty, row.values[titleProperty.id]) || "Untitled"}</strong>${details}</article>`;
+      return `<article class="rendered-database-card"><strong>${renderValue(titleProperty, row.values[titleProperty.id]) || "Untitled"}</strong>${details}</article>`;
     }).join("");
     return `<section class="rendered-database-board-column rendered-database-board-column--${group.color}"><header><span>${escapeHtml(group.name)}</span><small>${group.rows.length}</small></header><div>${cards}</div></section>`;
   }).join("");
@@ -892,10 +921,11 @@ export function renderDatabaseHtml(metadata: unknown) {
   const database = getDatabaseData(metadata);
   const view = getDatabaseActiveView(database);
   const rows = applyDatabaseView(database, view);
+  const renderValue = rows.length > 1 ? createDatabaseValueRenderer() : renderDatabaseValue;
   const content = view.type === "board"
-    ? renderDatabaseBoard(database, view, rows)
+    ? renderDatabaseBoard(database, view, rows, renderValue)
     : view.type === "list"
-      ? renderDatabaseList(database, view, rows)
-      : renderDatabaseTable(database, view, rows);
+      ? renderDatabaseList(database, view, rows, renderValue)
+      : renderDatabaseTable(database, view, rows, renderValue);
   return `<div class="rendered-database"><header><h3>${escapeHtml(database.title)}</h3><span>${escapeHtml(view.name)} · ${rows.length}</span></header>${content}</div>`;
 }
