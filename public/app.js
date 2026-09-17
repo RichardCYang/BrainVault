@@ -10578,15 +10578,44 @@ function buildCollaborationBlockTree(flatBlocks) {
     });
   }
 
+  // Cache only depths of complete, valid paths for this snapshot. Such paths
+  // cannot be reparented by the input-order cycle/depth repair below. Do not
+  // cache paths ending at a missing parent: that parent link may be removed
+  // later in this same loop, changing the depth seen by subsequent children.
+  let validatedDepths = null;
   const wouldCreateCycleOrExcessiveDepth = (node) => {
+    validatedDepths ??= new Map();
+    if (validatedDepths.has(node.id)) return false;
+    const parentDepth = validatedDepths.get(node.parentBlockId);
+    if (parentDepth !== undefined) {
+      if (parentDepth >= 128) return true;
+      validatedDepths.set(node.id, parentDepth + 1);
+      return false;
+    }
+
     const visited = new Set([node.id]);
+    const path = [node.id];
     let parentId = node.parentBlockId;
     let depth = 0;
+    let resolvedDepth = 0;
     while (parentId) {
       if (visited.has(parentId) || depth >= 128) return true;
+      const cachedDepth = validatedDepths.get(parentId);
+      if (cachedDepth !== undefined) {
+        if (depth + 1 + cachedDepth > 128) return true;
+        resolvedDepth = cachedDepth + 1;
+        break;
+      }
       visited.add(parentId);
-      parentId = nodes.get(parentId)?.parentBlockId ?? null;
+      const parent = nodes.get(parentId);
+      if (!parent) return false;
+      path.push(parentId);
+      parentId = parent.parentBlockId ?? null;
       depth += 1;
+    }
+    for (let index = path.length - 1; index >= 0; index -= 1) {
+      validatedDepths.set(path[index], resolvedDepth);
+      resolvedDepth += 1;
     }
     return false;
   };
@@ -10923,7 +10952,10 @@ function renderCollaborationPresence() {
     elements.collaborationPresence.append(avatar);
   }
 
-  for (const row of elements.blockList.querySelectorAll(".editor-block-row")) {
+  // Only rows annotated by the previous presence render need cleanup. Every
+  // annotation below sets this class before adding its color and labels; avoid
+  // touching all unannotated rows on each presence-decoration change.
+  for (const row of elements.blockList.querySelectorAll(".editor-block-row.has-remote-editor")) {
     row.classList.remove("has-remote-editor");
     row.style.removeProperty("--remote-caret-color");
     row.querySelectorAll(".remote-editor-label").forEach((label) => label.remove());

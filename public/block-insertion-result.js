@@ -35,8 +35,12 @@ export function planConfirmedBlockInsertion({
     || !Array.isArray(beforeBlocks)
     || !Array.isArray(currentBlocks)
     || !Array.isArray(orderedIds)
-    || new Set(orderedIds).size !== orderedIds.length
   ) return null;
+
+  // Reuse one operation-local membership index. Repeated includes() calls for
+  // every sibling otherwise rescan the full order list quadratically.
+  const orderedIdSet = new Set(orderedIds);
+  if (orderedIdSet.size !== orderedIds.length) return null;
 
   const indexBlocks = (blocks) => {
     if (!Array.isArray(blocks)) return null;
@@ -72,8 +76,8 @@ export function planConfirmedBlockInsertion({
   const originalSiblings = beforeBlocks.filter((block) => parent(block) === parentBlockId);
   if (
     orderedIds.length !== originalSiblings.length + 1
-    || !orderedIds.includes(created.id)
-    || originalSiblings.some((block) => !orderedIds.includes(block.id))
+    || !orderedIdSet.has(created.id)
+    || originalSiblings.some((block) => !orderedIdSet.has(block.id))
   ) return null;
 
   const canonical = orderResult === null ? [...currentBlocks, created] : orderResult.blocks;
@@ -81,7 +85,7 @@ export function planConfirmedBlockInsertion({
   if (!byId || byId.size !== before.size + 1 || !byId.has(created.id)) return null;
   // Reordering bumps only the requested siblings by exactly one version. A
   // version gap/replayed later state must use the canonical refresh instead.
-  const reorderedIds = new Set(orderResult === null ? [] : orderedIds);
+  const reorderedIds = orderResult === null ? new Set() : orderedIdSet;
   for (const [id, block] of byId) {
     const initial = id === created.id ? created : before.get(id);
     if (
@@ -102,6 +106,8 @@ export function planConfirmedBlockInsertion({
   // drop a missing-parent block or truncate a cycle/deep tree to make it fit.
   const depths = new Map();
   for (const id of byId.keys()) {
+    // An earlier leaf-first walk may already have validated this entire path.
+    if (depths.has(id)) continue;
     let cursor = id;
     const trail = [];
     const seen = new Set();
