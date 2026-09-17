@@ -324,12 +324,18 @@ function isDnsNoDataError(error: unknown) {
   return code === "ENODATA" || code === "ENOTFOUND";
 }
 
-const localBookmarkSelfAddresses = new Set(
-  Object.values(os.networkInterfaces())
-    .flatMap((entries) => entries ?? [])
-    .map((entry) => canonicalIpAddressKey(entry.address))
-    .filter(Boolean)
-);
+// Read interfaces at each validation boundary, including after redirects.
+// A process-lifetime snapshot misses addresses added after startup.
+function getLocalBookmarkSelfAddresses() {
+  return new Set(
+    Object.values(os.networkInterfaces())
+      .flatMap((entries) => entries ?? [])
+      .map((entry) => canonicalIpAddressKey(entry.address))
+      .filter(Boolean)
+  );
+}
+const publicOriginAddressCacheTtlMs = 60_000;
+let publicOriginAddressKeysAt = 0;
 let publicOriginAddressKeys: ReadonlySet<string> | null = null;
 let publicOriginAddressResolution: Promise<ReadonlySet<string>> | null = null;
 let discoveredNat64Prefixes: readonly Nat64Prefix[] | null = null;
@@ -363,13 +369,15 @@ async function resolveNat64Prefixes(deadline: number): Promise<readonly Nat64Pre
       try {
         answers = await resolver.resolve6("ipv4only.arpa");
       } catch (error) {
-        if (isDnsNoDataError(error)) return configured.length ? configured : null;
+        if (isDnsNoDataError(error)) return null;
         throw error;
       }
       const inferred = answers
         .map(inferNat64PrefixFromIpv4OnlyAddress)
         .filter((prefix): prefix is Nat64Prefix => prefix !== null);
-      if (!inferred.length) return configured.length ? configured : null;
+      // Configured prefixes supplement discovery; they cannot prove that a
+      // deployment still uses them when discovery is unavailable or ambiguous.
+      if (!inferred.length || inferred.length !== answers.length) return null;
       const uniqueDiscovered = new Map(
         inferred.map((prefix) => [`${prefix.base}/${prefix.prefixLength}`, prefix])
       );
@@ -400,17 +408,21 @@ async function resolveNat64Prefixes(deadline: number): Promise<readonly Nat64Pre
 }
 
 async function resolvePublicOriginAddressKeys(deadline: number): Promise<ReadonlySet<string>> {
-  if (publicOriginAddressKeys) return publicOriginAddressKeys;
+  if (publicOriginAddressKeys && Date.now() - publicOriginAddressKeysAt < publicOriginAddressCacheTtlMs) {
+    return publicOriginAddressKeys;
+  }
   if (publicOriginAddressResolution) return publicOriginAddressResolution;
 
   const publicHost = normalizeBookmarkFetchHostname(new URL(env.PUBLIC_ORIGIN).hostname);
   const literalKey = canonicalIpAddressKey(publicHost);
   if (literalKey) {
     publicOriginAddressKeys = new Set([literalKey]);
+    publicOriginAddressKeysAt = Date.now();
     return publicOriginAddressKeys;
   }
   if (isPrivateOrLocalHostname(publicHost)) {
     publicOriginAddressKeys = new Set();
+    publicOriginAddressKeysAt = Date.now();
     return publicOriginAddressKeys;
   }
 
@@ -440,6 +452,7 @@ async function resolvePublicOriginAddressKeys(deadline: number): Promise<Readonl
         throw new ApiError(422, "BOOKMARK_FETCH_FAILED", "The canonical BrainVault hostname could not be resolved for self-origin protection");
       }
       publicOriginAddressKeys = keys;
+      publicOriginAddressKeysAt = Date.now();
       return keys;
     } catch (error) {
       const systemCode = error && typeof error === "object" && "code" in error ? String(error.code) : undefined;
@@ -458,15 +471,15 @@ async function resolvePublicOriginAddressKeys(deadline: number): Promise<Readonl
 
   try {
     return await publicOriginAddressResolution;
-  } catch (error) {
+  } finally {
+    // Clear successful in-flight promises too; otherwise they bypass the TTL.
     publicOriginAddressResolution = null;
-    throw error;
   }
 }
 
 async function assertBookmarkAddressesAreNotSelfOrigin(addresses: ResolvedAddress[], deadline: number) {
   const canonicalOriginAddresses = await resolvePublicOriginAddressKeys(deadline);
-  const selfAddresses = new Set([...localBookmarkSelfAddresses, ...canonicalOriginAddresses]);
+  const selfAddresses = new Set([...getLocalBookmarkSelfAddresses(), ...canonicalOriginAddresses]);
   if (addresses.some((item) => selfAddresses.has(canonicalIpAddressKey(item.address)))) {
     throw new ApiError(403, "BOOKMARK_URL_BLOCKED", "Self-origin bookmark previews are not allowed");
   }

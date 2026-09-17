@@ -412,6 +412,11 @@ function assertPageDeletionAuthorizationScope(
   memberships: PageDeletionCollectionMembershipRow[]
 ) {
   if (access.role !== "ADMIN") return;
+  // A delegated collection grant authorizes member-page administration, not
+  // destruction of the container that defines the grant's own security scope.
+  if (access.collectionId && subtreeRows.some((page) => page.id === access.collectionId)) {
+    throw new ApiError(403, "COLLECTION_OWNER_REQUIRED", "Only the workspace owner can permanently delete a collection root");
+  }
   if (
     access.scope === "COLLECTION"
     && access.collectionId

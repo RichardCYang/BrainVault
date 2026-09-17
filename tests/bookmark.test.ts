@@ -204,7 +204,8 @@ describe("bookmark data normalization and rendering", () => {
     expect(html).toContain('<div class="rendered-bookmark-block"><h3>Research &lt;script&gt;alert(2)&lt;/script&gt;</h3>');
     expect(html).toContain("Research &lt;script&gt;alert(2)&lt;/script&gt;");
     expect(html).toContain('class="rendered-bookmarks rendered-bookmarks--gallery"');
-    expect(html).toContain('class="rendered-bookmark-image"');
+    expect(html).toContain('class="rendered-bookmark-image rendered-bookmark-image--placeholder"');
+    expect(html).not.toContain('<img');
     expect(html).toContain("Unsafe &lt;script&gt;");
     expect(html).not.toContain("<script>");
 
@@ -371,7 +372,7 @@ describe("bookmark network address selection", () => {
     expect(isBookmarkFetchHostAllowed("1.1.1.1", ["1.1.1.1"])).toBe(true);
     expect(isBookmarkFetchHostAllowed("1.1.1.2", ["1.1.1.1"])).toBe(false);
     expect(bookmarkSource).toContain('BOOKMARK_PORT_BLOCKED');
-    expect(bookmarkSource).toContain('if (!contentType || !/text\/html|application\/xhtml\+xml/i.test(contentType))');
+    expect(bookmarkSource).toContain(String.raw`if (!contentType || !/text\/html|application\/xhtml\+xml/i.test(contentType))`);
     expect(bookmarkSource).toContain('blockedTarget ? "BOOKMARK_FETCH_FAILED" : error.code');
     expect(createFallbackBookmarkPreview("http://127.0.0.1/", { includeFavicon: false }).faviconUrl).toBe("");
   });

@@ -8,6 +8,12 @@ export const maxRecoveryCandidateBytes = 20 * 1024 * 1024;
 // uploads fail closed and the browser intentionally retains its local copy.
 export const maxRecoveryVaultBytesPerPrincipal = 256 * 1024 * 1024;
 export const maxRecoveryVaultCandidatesPerPrincipal = 256;
+// Non-owner recovery is untrusted input, not renewed editing authority. Bound
+// it independently so changing source IDs/generations cannot refill the vault.
+export const maxSharedRecoveryCandidatesPerPrincipal = 8;
+export const maxSharedRecoveryBytesPerPrincipal = 32 * 1024 * 1024;
+export const maxSharedRecoveryCandidatesPerLineage = 3;
+export const maxSharedRecoveryBytesPerLineage = 20 * 1024 * 1024;
 const recoveryGrantBatchSize = 200;
 const recoveryGrantLifetimeMs = 7 * 24 * 60 * 60_000;
 
@@ -195,7 +201,14 @@ export async function storeRecoveryCandidate(input: {
   generation: string;
   payload: Buffer;
 }, client?: DbClient) {
-  if (!input.payload.length || input.payload.length > maxRecoveryCandidateBytes) {
+  const expectedLineage = input.kind === "DIRECT_DRAFT" ? directRecoveryLineageKey()
+    : input.kind === "YJS_LEGACY_UPDATE" ? legacyYjsRecoveryLineageKey()
+      : input.kind === "YJS_UPDATE" && /^yjs:[A-Za-z0-9_-]{1,128}$/.test(input.lineageKey) && input.lineageKey !== legacyYjsRecoveryLineageKey()
+        ? input.lineageKey : null;
+  if (!expectedLineage || input.lineageKey !== expectedLineage) {
+    throw new ApiError(400, "INVALID_RECOVERY_LINEAGE", "The recovery kind does not match its registered lineage");
+  }
+  if (!Buffer.isBuffer(input.payload) || !input.payload.length || input.payload.length > maxRecoveryCandidateBytes) {
     throw new ApiError(413, "RECOVERY_CANDIDATE_TOO_LARGE", "The recovery candidate exceeds the supported size");
   }
   const payloadSha256 = createHash("sha256").update(input.payload).digest("hex");
@@ -268,6 +281,32 @@ export async function storeRecoveryCandidate(input: {
           maxCandidates: maxRecoveryVaultCandidatesPerPrincipal,
           maxBytes: maxRecoveryVaultBytesPerPrincipal
         });
+    }
+
+    if (grant.owner_id !== input.principalId) {
+      const sharedUsage = await client.queryOne<{
+        candidate_count: number | bigint; payload_bytes: number | bigint;
+        lineage_count: number | bigint; lineage_bytes: number | bigint;
+      }>(
+        `SELECT COUNT(*) AS candidate_count, COALESCE(SUM(OCTET_LENGTH(payload)), 0) AS payload_bytes,
+                COALESCE(SUM(page_id = ? AND lineage_key = ?), 0) AS lineage_count,
+                COALESCE(SUM(CASE WHEN page_id = ? AND lineage_key = ? THEN OCTET_LENGTH(payload) ELSE 0 END), 0) AS lineage_bytes
+         FROM page_recovery_candidates
+         WHERE principal_id = ? AND owner_id <> principal_id`,
+        [input.pageId, input.lineageKey, input.pageId, input.lineageKey, input.principalId]
+      );
+      const metrics = [sharedUsage?.candidate_count ?? 0, sharedUsage?.payload_bytes ?? 0,
+        sharedUsage?.lineage_count ?? 0, sharedUsage?.lineage_bytes ?? 0].map(Number);
+      if (metrics.some((value) => !Number.isSafeInteger(value) || value < 0)) {
+        throw new ApiError(500, "INVALID_RECOVERY_VAULT_STATE", "Stored shared recovery usage is invalid");
+      }
+      if (metrics[0] >= maxSharedRecoveryCandidatesPerPrincipal
+        || metrics[1] + input.payload.length > maxSharedRecoveryBytesPerPrincipal
+        || metrics[2] >= maxSharedRecoveryCandidatesPerLineage
+        || metrics[3] + input.payload.length > maxSharedRecoveryBytesPerLineage) {
+        throw new ApiError(409, "RECOVERY_VAULT_QUOTA_EXCEEDED",
+          "The shared recovery allowance is full. The browser recovery copy was not removed.");
+      }
     }
 
     const id = createId("rcv");

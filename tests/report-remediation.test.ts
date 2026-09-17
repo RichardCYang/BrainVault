@@ -36,19 +36,18 @@ async function invoke(handler: any, req: any, res: any) {
 function route(router: any, path: string, method: string) {
   return router.stack.find((layer: any) => layer.route?.path === path && layer.route.methods[method]).route.stack.map((layer: any) => layer.handle);
 }
-it("isolates the long login budget across IPs while throttling repeat failures", async () => {
+it("shares the account-wide login budget across source IPs and normalized usernames", async () => {
   for (let i = 1; i <= env.AUTH_LOGIN_ACCOUNT_MAX; i++) {
     const res = response();
     expect(await invoke(loginAccountRateLimit, request(`198.51.100.${i}`, { username: "victim" }), res)).toBe(true);
     res.status(401).json({});
   }
-  expect(await invoke(loginAccountRateLimit, request("203.0.113.200", { username: "victim" }), response())).toBe(true);
-  for (let i = 0; i < env.AUTH_LOGIN_ACCOUNT_MAX; i++) {
-    const res = response(); await invoke(loginAccountRateLimit, request("203.0.113.201", { username: "victim" }), res); res.status(401).json({});
+  for (const ip of ["203.0.113.200", "203.0.113.201"]) {
+    const blocked = response();
+    expect(await invoke(loginAccountRateLimit, request(ip, { username: " VICTIM " }), blocked)).toBe(false);
+    expect(blocked.statusCode).toBe(429);
   }
-  const blocked = response();
-  expect(await invoke(loginAccountRateLimit, request("203.0.113.201", { username: " VICTIM " }), blocked)).toBe(false);
-  expect(blocked.statusCode).toBe(429);
+  expect(await invoke(loginAccountRateLimit, request("203.0.113.202", { username: "different-account" }), response())).toBe(true);
 });
 it("actual registration middleware stops one source exhausting the global budget", async () => {
   const handlers = route(authRouter, "/register", "post");
@@ -103,12 +102,16 @@ it("rename requires the current password", async () => {
   await expect(rename({ name: "Renamed", currentPassword: "wrong" })).rejects.toMatchObject({ code: "CURRENT_PASSWORD_INCORRECT" });
   expect(state.execute).not.toHaveBeenCalled();
 });
-it.each(["session", "version", "generation"])("rename rejects a stale %s before writing", async (boundary) => {
+it.each(["session", "version"])("rename rejects a stale %s before writing", async (boundary) => {
   if (boundary === "session") state.session = false;
   if (boundary === "version") state.version = 2;
-  if (boundary === "generation") state.generation = 2;
-  await expect(rename({ name: "Renamed", currentPassword: "current-password" })).rejects.toMatchObject({ code: boundary === "generation" ? "WORKSPACE_RESTORED" : "SESSION_REVOKED" });
+  await expect(rename({ name: "Renamed", currentPassword: "current-password" })).rejects.toMatchObject({ code: "SESSION_REVOKED" });
   expect(state.execute).not.toHaveBeenCalled();
+});
+it("credential rename remains independent of workspace content generations", async () => {
+  state.generation = 2;
+  expect((await rename({ name: "Renamed", currentPassword: "current-password" })).statusCode).toBe(200);
+  expect(state.execute).toHaveBeenCalledWith("UPDATE user_passkeys SET name = ? WHERE id = ? AND user_id = ?", ["Renamed", "key_test", "usr_test"]);
 });
 it("rename updates only an owned credential inside a transaction", async () => {
   expect((await rename({ name: "Renamed", currentPassword: "current-password" })).statusCode).toBe(200);

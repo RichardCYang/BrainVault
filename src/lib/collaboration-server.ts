@@ -3,6 +3,7 @@ import type { Server as HttpsServer } from "node:https";
 import type { Socket } from "node:net";
 import { z } from "zod";
 import { createId } from "./id.js";
+import { CollaborationMemoryBudget, type CollaborationMemoryReservation } from "./collaboration-memory-budget.js";
 import { corsOrigins, env } from "../config/env.js";
 import { createExactHttpOriginSet, parseExactHttpOrigin } from "./request-origin.js";
 import { db, transaction, type DbClient } from "./db.js";
@@ -63,6 +64,8 @@ import {
   assessCollaborationHistoryReplay,
   assessCollaborationUpdatePersistence,
   maxCollaborationRetainedHistoryBytes,
+  maxCollaborationHistoryReplayBytes,
+  maxCollaborationHistoryReplayEntries,
   shouldCompactCollaborationHistory
 } from "./collaboration-update-policy.js";
 import {
@@ -200,6 +203,8 @@ function assertCurrentCollaborationGrant(
 type Room = {
   pageId: string;
   documentEpoch: string;
+  memoryReservation: CollaborationMemoryReservation;
+  memoryReleaseScheduled: boolean;
   clients: Map<string, ClientContext>;
   history: YjsHistoryEntry[];
   historyBytes: number;
@@ -221,6 +226,13 @@ type Room = {
 };
 
 const activeHubs = new Set<PageCollaborationHub>();
+// Reserve worst-case canonical state and metadata for every resident room,
+// plus the full bounded replay payload while loading. This avoids races when
+// a validated update grows a document after another room has been admitted.
+const residentRoomReservationBytes = maxCollaborationDocumentBytes
+  + maxCollaborationHistoryReplayEntries * 128 + 64 * 1024;
+const loadingRoomReservationBytes = residentRoomReservationBytes + maxCollaborationHistoryReplayBytes;
+const sharedRoomMemoryBudget = new CollaborationMemoryBudget(env.COLLABORATION_ROOM_MEMORY_MAX_BYTES);
 
 const explicitOrigins = createExactHttpOriginSet(corsOrigins);
 
@@ -301,6 +313,7 @@ export class PageCollaborationHub {
   private readonly unauthenticatedUpgradeWindows = new Map<string, { startedAt: number; attempts: number }>();
   private pendingUpgradeCount = 0;
   private readonly pendingUpgradeUserCounts = new Map<string, number>();
+  private readonly pendingUpgradeIpCounts = new Map<string, number>();
   private pendingWriteBytes = 0;
   private readonly pendingWriteUserBytes = new Map<string, number>();
   private readonly upgradedSockets = new WeakSet<Socket>();
@@ -343,7 +356,11 @@ export class PageCollaborationHub {
     }
     await Promise.allSettled(rooms.map((room) => room.writeQueue));
     await this.validationPool.close();
-    for (const room of rooms) room.invalidated = true;
+    for (const room of rooms) {
+      room.invalidated = true;
+      this.releaseRoomMemoryWhenSettled(room);
+    }
+    await Promise.allSettled(rooms.map((room) => room.loadPromise));
     this.rooms.clear();
   }
 
@@ -399,6 +416,7 @@ export class PageCollaborationHub {
     if (!room) return;
     room.invalidated = true;
     this.rooms.delete(pageId);
+    this.releaseRoomMemoryWhenSettled(room);
     this.clearRoomTimers(room);
     room.bootstrapLeaderId = null;
     room.waitingForBootstrap.clear();
@@ -419,6 +437,7 @@ export class PageCollaborationHub {
     if (room.invalidated || this.rooms.get(room.pageId) !== room) return;
     room.invalidated = true;
     this.rooms.delete(room.pageId);
+    this.releaseRoomMemoryWhenSettled(room);
     this.clearRoomTimers(room);
     room.bootstrapLeaderId = null;
     room.waitingForBootstrap.clear();
@@ -501,10 +520,12 @@ export class PageCollaborationHub {
     });
     const upgradeAdmission = assessCollaborationUpgradeAdmission({
       pendingUpgrades: this.pendingUpgradeCount,
-      pendingUserUpgrades: this.pendingUpgradeUserCounts.get(userId) ?? 0
+      pendingUserUpgrades: this.pendingUpgradeUserCounts.get(userId) ?? 0,
+      pendingIpUpgrades: this.pendingUpgradeIpCounts.get(sourceIp) ?? 0
     });
     if (!connectionAdmission.accepted || !upgradeAdmission.accepted) return false;
 
+    this.pendingUpgradeIpCounts.set(sourceIp, (this.pendingUpgradeIpCounts.get(sourceIp) ?? 0) + 1);
     this.pendingUpgradeCount += 1;
     this.pendingUpgradeUserCounts.set(
       userId,
@@ -513,7 +534,10 @@ export class PageCollaborationHub {
     return true;
   }
 
-  private releaseUpgrade(userId: string) {
+  private releaseUpgrade(userId: string, sourceIp: string) {
+    const nextIp = Math.max(0, (this.pendingUpgradeIpCounts.get(sourceIp) ?? 0) - 1);
+    if (nextIp) this.pendingUpgradeIpCounts.set(sourceIp, nextIp);
+    else this.pendingUpgradeIpCounts.delete(sourceIp);
     this.pendingUpgradeCount = Math.max(0, this.pendingUpgradeCount - 1);
     const next = Math.max(0, (this.pendingUpgradeUserCounts.get(userId) ?? 0) - 1);
     if (next) this.pendingUpgradeUserCounts.set(userId, next);
@@ -684,14 +708,18 @@ export class PageCollaborationHub {
         return;
       }
 
+      // Admit room memory before sending HTTP 101; exhaustion is retryable 503.
+      const room = this.getOrCreateRoom(pageId, payload.documentEpoch);
       const connection = acceptWebSocketUpgrade(request, socket, {
         selectedProtocol: collaborationWebSocketProtocol,
         maxMessageBytes: maxCollaborationUpdateBytes + 64 * 1024
       });
-      if (!connection) return;
+      if (!connection) {
+        this.removeRoomWhenIdle(room);
+        return;
+      }
       this.upgradedSockets.add(socket);
 
-      const room = this.getOrCreateRoom(pageId, payload.documentEpoch);
       const client: ClientContext = {
         id: createId("con"),
         socket: connection,
@@ -720,7 +748,7 @@ export class PageCollaborationHub {
       connection.onMessage((message) => this.handleMessage(room, client, message));
       connection.onClose(() => this.handleClientClose(room, client));
       connection.start(head);
-      this.releaseUpgrade(payload.sub);
+      this.releaseUpgrade(payload.sub, sourceIp);
       upgradeReserved = false;
 
       await room.loadPromise;
@@ -857,8 +885,19 @@ export class PageCollaborationHub {
       }
       this.broadcastPresenceUpdate(room, client, { includeIdentity: true });
     } finally {
-      if (upgradeReserved) this.releaseUpgrade(payload.sub);
+      if (upgradeReserved) this.releaseUpgrade(payload.sub, sourceIp);
     }
+  }
+
+  private releaseRoomMemoryWhenSettled(room: Room) {
+    if (room.memoryReleaseScheduled) return;
+    room.memoryReleaseScheduled = true;
+    // Never release while an asynchronous loader/writer still retains the room.
+    void Promise.allSettled([room.loadPromise, room.writeQueue]).then(() => {
+      room.stateUpdate = Buffer.alloc(0);
+      room.history = [];
+      room.memoryReservation.release();
+    });
   }
 
   private getOrCreateRoom(pageId: string, documentEpoch: string) {
@@ -872,11 +911,25 @@ export class PageCollaborationHub {
       this.invalidateRoomForLineageChange(existing);
     } else if (existing) {
       this.rooms.delete(pageId);
+      this.releaseRoomMemoryWhenSettled(existing);
       this.clearRoomTimers(existing);
     }
 
+    const memoryReservation = sharedRoomMemoryBudget.reserve(loadingRoomReservationBytes);
+    if (!memoryReservation) {
+      // Idle rooms are safe to evict. Reservations are returned only after
+      // their tasks settle; the caller retries rather than overcommitting.
+      for (const idle of this.rooms.values()) {
+        if (idle.loaded && !idle.clients.size && !idle.pendingWrites && !idle.bootstrapWritePending) {
+          this.invalidateRoom(idle, 1013, "Collaboration memory pressure");
+        }
+      }
+      throw new ApiError(503, "COLLABORATION_MEMORY_LIMIT", "Collaboration capacity is busy. Retry shortly.");
+    }
     const room = {} as Room;
     Object.assign(room, {
+      memoryReservation,
+      memoryReleaseScheduled: false,
       pageId,
       documentEpoch,
       clients: new Map<string, ClientContext>(),
@@ -1055,7 +1108,11 @@ export class PageCollaborationHub {
       this.clearRoomTimers(room);
       if (this.rooms.get(pageId) === room) this.rooms.delete(pageId);
       for (const client of room.clients.values()) client.socket.close(1011, "Unable to load collaboration history");
+      this.releaseRoomMemoryWhenSettled(room);
       console.error("Failed to load collaboration history", { pageId, error });
+    }).finally(() => {
+      room.memoryReservation.shrinkTo(residentRoomReservationBytes);
+      if (room.invalidated) this.releaseRoomMemoryWhenSettled(room);
     });
     this.rooms.set(pageId, room);
     return room;
@@ -1813,7 +1870,9 @@ export class PageCollaborationHub {
         || this.rooms.get(room.pageId) !== room
       ) return;
       this.clearBootstrapLeaderTimer(room);
+      room.invalidated = true;
       this.rooms.delete(room.pageId);
+      this.releaseRoomMemoryWhenSettled(room);
     }, idleRoomTtlMs);
     timer.unref();
     room.idleRemovalTimer = timer;

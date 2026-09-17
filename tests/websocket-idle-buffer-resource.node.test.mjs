@@ -61,7 +61,12 @@ test('large bursts reuse both capacity and one unreferenced refreshable timer', 
     assert.strictEqual(h.connection.readBufferReleaseTimer, timer);
     assert.equal(h.clock.timers.size, 1);
   }
-  assert.equal(h.clock.metrics.created, 1); assert.equal(h.clock.metrics.refreshed, 20);
+  // Each chunked message now needs one absolute partial-frame deadline. The
+  // same single idle-release timer is still reused across all 21 messages.
+  assert.equal(h.clock.metrics.created, 22);
+  assert.equal(h.clock.metrics.cleared, 21);
+  assert.equal(h.connection.partialFrameTimer, null);
+  assert.equal(h.clock.metrics.refreshed, 20);
   h.clock.tick(4999); assert.strictEqual(h.connection.readBuffer, buffer);
   h.clock.tick(1); assert.equal(h.connection.readBuffer.length, 0);
   h.connection.terminate(); await settle();

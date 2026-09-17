@@ -114,7 +114,7 @@ test("authentication route source retains all hardened ordering guarantees", asy
   assert.match(authMiddleware, /req\.is\("application\/json"\)/);
   assert.match(envConfig, /AUTH_ALLOW_BEARER_TOKENS:\s*parsedEnv\.AUTH_ALLOW_BEARER_TOKENS \?\? false/);
   assert.match(authMiddleware, /new ApiError\(403, "ORIGIN_REQUIRED"/);
-  assert.match(authMiddleware, /assertBrowserRequestOrigin\(req, \{ requireOrigin: true \}\)/);
+  assert.match(authMiddleware, /assertBrowserRequestOrigin\(req, \{ requireOrigin: true, requirePublicOrigin: true \}\)/);
   assert.match(authMiddleware, /requiresCookieMutationOrigin\(req, selectedSource\)/);
   assert.match(authMiddleware, /requirePublicOrigin: cookieMutation/);
   assert.match(authMiddleware, /parsedOrigin !== env\.PUBLIC_ORIGIN/);
@@ -127,7 +127,9 @@ test("authentication route source retains all hardened ordering guarantees", asy
   assert.match(mfaRoutes, /FROM mfa_login_sessions[\s\S]{0,220}FOR UPDATE/);
   assert.match(mfaRoutes, /SET failed_attempts = failed_attempts \+ 1/);
   assert.match(mfaRoutes, /WHERE token_hash = \? AND source_ip = \?/);
-  assert.match(mfaRoutes, /const sourceIp = getClientIpAddress\(req\);[\s\S]{0,320}reserveMfaAttempt\(mfaToken, sourceIp, binding\)/);
+  const totpRoute = mfaRoutes.slice(mfaRoutes.indexOf('"/login/totp"'), mfaRoutes.indexOf('"/login/passkey/options"'));
+  assert.match(totpRoute, /reserveMfaAttempt\(mfaToken, sourceIp, binding, client\)/);
+  assert.ok(totpRoute.indexOf("getLoginUserForUpdate(client") < totpRoute.indexOf("reserveMfaAttempt(mfaToken"));
   assert.doesNotMatch(mfaRoutes, /async function recordMfaFailure/);
   assert.doesNotMatch(mfaRoutes, /failed_attempts < \?/);
 

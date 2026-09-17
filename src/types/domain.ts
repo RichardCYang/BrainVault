@@ -8,6 +8,7 @@ export type UserRow = {
   theme: "light" | "dark" | null;
   country_login_mode?: "OFF" | "ALLOWLIST" | "BLOCKLIST";
   password_hash: string;
+  registration_approved?: 0 | 1 | boolean | number | string;
   vpn_block_enabled?: 0 | 1 | boolean | number | string;
   totp_ip_block_enabled?: 0 | 1 | boolean | number | string;
   totp_ip_block_threshold?: number | bigint | string;

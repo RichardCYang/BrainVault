@@ -1,4 +1,5 @@
 import path from "node:path";
+import { storageOwnerDirectory } from "./storage-owner-path.js";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import type { Dirent } from "node:fs";
@@ -1031,13 +1032,13 @@ async function createWorkspaceRestoreSnapshot(
     [userId]
   );
   const attachmentAssetFiles = await listWorkspaceRestoreAssetFiles(
-    path.join(attachmentUploadRoot, userId),
+    storageOwnerDirectory(attachmentUploadRoot, userId),
     "Attachment",
     (name) => idSchema.safeParse(name).success
   );
   const customIconAssetFiles = includeCustomIconAssets
     ? await listWorkspaceRestoreAssetFiles(
-      path.join(customIconUploadRoot, userId),
+      storageOwnerDirectory(customIconUploadRoot, userId),
       "Custom icon",
       (name) => customIconFilenameSchema.safeParse(name).success
     )
@@ -1872,7 +1873,7 @@ export async function prepareUserDataBackup(userId: string) {
       }
 
       const activeAttachmentNames = new Set(attachmentFiles.map((item) => item.blockId));
-      const attachmentOwnerDir = path.join(attachmentUploadRoot, userId);
+      const attachmentOwnerDir = storageOwnerDirectory(attachmentUploadRoot, userId);
       let attachmentEntries: Dirent[];
       try {
         attachmentEntries = await readdir(attachmentOwnerDir, { withFileTypes: true });
@@ -1949,7 +1950,7 @@ export async function prepareUserDataBackup(userId: string) {
         customIconRowsByFileName.set(fileName, row);
       }
 
-      const customIconOwnerDir = path.join(customIconUploadRoot, userId);
+      const customIconOwnerDir = storageOwnerDirectory(customIconUploadRoot, userId);
       let customIconEntries: Dirent[];
       try {
         customIconEntries = await readdir(customIconOwnerDir, { withFileTypes: true });

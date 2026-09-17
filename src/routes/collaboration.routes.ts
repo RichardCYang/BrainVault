@@ -204,9 +204,8 @@ async function capturePageShareAdministrationAdmission(
   pageId: string,
   userId: string
 ): Promise<PageShareAdministrationAdmission> {
-  // Direct-share removal is also available to collection administrators. Capture
-  // the page owner's workspace generation with the exact administrator grant so
-  // a stale request cannot cross a restore that recreates the same stable IDs.
+  // Direct grants are owner-controlled capabilities. Preserve the admission
+  // snapshot and transaction-bound revalidation across workspace restores.
   const row = await db.queryOne<{
     owner_id: string;
     attachment_generation: number | bigint | string;
@@ -235,12 +234,7 @@ async function capturePageShareAdministrationAdmission(
 
   if (row.owner_id !== userId) {
     if (!row.collection_permission && !row.direct_share_user_id) throw notFound("Page");
-    if (row.collection_permission !== "ADMIN") {
-      throw new ApiError(403, "PAGE_ADMIN_REQUIRED", "Administrator permission is required for this operation");
-    }
-    if (!row.collection_share_generation) {
-      throw new Error(`Missing collection administrator generation for page share target: ${pageId}`);
-    }
+    throw new ApiError(403, "PAGE_OWNER_REQUIRED", "Direct page shares can only be changed by the workspace owner");
   }
 
   const ownerWorkspaceGeneration = Number(row.attachment_generation);
@@ -1095,6 +1089,9 @@ collaborationRouter.delete(
           { lockPage: true, lockAccess: true }
         );
         assertPageCanAdminister(access);
+        if (access.role !== "OWNER" || access.scope !== "OWNER") {
+          throw new ApiError(403, "PAGE_OWNER_REQUIRED", "Direct page shares can only be removed by the workspace owner");
+        }
         assertPageShareAdministrationMutationAdmission(administrationAdmission, actor.id, access);
         const page = access.page;
         const workspaceOwnerId = page.owner_id;
@@ -1306,6 +1303,7 @@ collaborationRouter.get("/recovery/candidates", async (req, res, next) => {
         pageId: candidate.page_id,
         principalId: candidate.principal_id,
         ownerId: candidate.owner_id,
+        untrusted: candidate.principal_id !== candidate.owner_id,
         lineageKey: candidate.lineage_key,
         kind: candidate.kind,
         sourceId: candidate.source_id,

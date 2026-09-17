@@ -257,14 +257,14 @@ authRouter.post(
 
       const startedAt = Date.now();
       const { username, password, name, preferredLanguage } = req.body as z.infer<typeof registerSchema>;
-      // Always perform the password hash and the same INSERT statement. INSERT IGNORE
-      // converts a username collision into the same success-shaped response without
-      // exposing a fast existing-account branch.
+      // A uniform response is not enough if the submitted password can log in
+      // immediately. New accounts remain pending until out-of-band operator
+      // approval; a duplicate request never changes an existing account.
       const passwordHash = await hashPassword(password);
       const id = createId("usr");
       await db.execute(
-        `INSERT IGNORE INTO users (id, username, name, preferred_language, password_hash)
-         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT IGNORE INTO users (id, username, name, preferred_language, password_hash, registration_approved)
+         VALUES (?, ?, ?, ?, ?, 0)`,
         [id, username, name ?? null, preferredLanguage ?? null, passwordHash]
       );
 
@@ -295,12 +295,13 @@ authRouter.post(
           "SELECT * FROM users WHERE username = ? FOR UPDATE",
           [username]
         );
+        const approved = Boolean(lockedUser) && Number(lockedUser?.registration_approved ?? 1) === 1;
         const passwordMatches = await verifyPassword(
           password,
-          lockedUser?.password_hash ?? (await dummyPasswordHash)
+          approved ? lockedUser!.password_hash : await dummyPasswordHash
         );
-        const workingUserId = lockedUser?.id ?? syntheticLoginUserId;
-        const decision = await evaluatePasswordLogin(client, workingUserId, Boolean(lockedUser) && passwordMatches);
+        const workingUserId = approved ? lockedUser!.id : syntheticLoginUserId;
+        const decision = await evaluatePasswordLogin(client, workingUserId, approved && passwordMatches);
         if (decision !== "ALLOWED") {
           await recordLoginAttempt(workingUserId, sourceIp, decision === "LOCKED" ? "LOCKED" : "FAILURE", client);
         }

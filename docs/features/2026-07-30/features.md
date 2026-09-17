@@ -16,7 +16,7 @@ Owners can replace or remove a cover at any time and add it again later. **Repos
 
 ### Direct page sharing
 
-Open an ordinary page and select **Share** to add an existing BrainVault account by login ID. Direct page sharing creates an `EDIT` grant for that page. Only the page owner can create a new direct grant; the owner or a user with effective `ADMIN` access can inspect and revoke existing direct access entries. A direct page collaborator can edit the shared page, but a direct grant by itself does not expose the owner's surrounding page hierarchy.
+Open an ordinary page and select **Share** to add an existing BrainVault account by login ID. Direct page sharing creates an `EDIT` grant for that page. Only the page owner can create or revoke direct grants. A user with effective `ADMIN` access can inspect the entries but cannot revoke owner-issued access. A direct page collaborator can edit the shared page, but a direct grant by itself does not expose the owner's surrounding page hierarchy.
 
 Archived ordinary pages cannot accept a new direct grant or use live collaboration. Existing direct grants are retained while the page is archived and become usable again after the page is restored.
 
@@ -30,7 +30,7 @@ To open the collection-sharing UI, click the custom collection's **name** in the
 | --- | --- |
 | `READ` | Browse the shared collection and read member documents. The browser can receive live Yjs changes, but server-side collaboration writes are rejected. |
 | `WRITE` | Read plus edit shared document titles and blocks. Sharing and page-administration controls remain unavailable. |
-| `ADMIN` | Read/write plus collection sharing and page/collection administration within the shared collection scope. Moving pages outside that collection is rejected. |
+| `ADMIN` | Read/write plus collection sharing and member-page administration within the shared collection scope. Moving pages outside that collection, permanently deleting its collection root, and revoking owner-issued direct page grants are rejected. |
 
 For a particular user, a collection grant is authoritative over a direct page `EDIT` grant on a member page. A collection `READ` grant therefore keeps that page read-only even when an older direct `EDIT` grant exists. Removing the collection grant may allow the lower-priority direct page grant to become effective again.
 

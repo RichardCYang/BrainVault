@@ -654,12 +654,12 @@ test("custom icon mutations revalidate authentication inside the storage transac
   assert.match(route, /import \{ requireAuth, requireRequestAuthScope \} from "\.\.\/middleware\/auth\.js"/);
   assert.equal(
     (route.match(/const authScope = requireRequestAuthScope\(req\);/g) ?? []).length,
-    4,
+    (route.match(/customIconRouter\.(?:post|put|patch|delete)\(/g) ?? []).length,
     "every custom-icon write route must bind the request authentication scope"
   );
   assert.equal(
     (route.match(/beforeMutation: \(client\) => assertCurrentAuthSessionBoundary\(user\.id, authScope, client\)/g) ?? []).length,
-    4,
+    (route.match(/customIconRouter\.(?:post|put|patch|delete)\(/g) ?? []).length,
     "every custom-icon write route must carry the auth scope to its durable transaction"
   );
 

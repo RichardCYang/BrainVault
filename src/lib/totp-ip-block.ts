@@ -76,7 +76,7 @@ export async function isPermanentlyBlockedTotpIp(
   const row = await client.queryOne<{ blocked: number }>(
     `SELECT 1 AS blocked FROM user_totp_ip_blocks
      WHERE user_id = ? AND ip_address = ? AND expires_at > CURRENT_TIMESTAMP(3)
-     LIMIT 1`,
+     LIMIT 1${client === db ? "" : " FOR UPDATE"}`,
     [userId, normalizedIp]
   );
   return Boolean(row);
@@ -94,7 +94,7 @@ export async function getTotpIpBlockPolicy(userId: string, client: DbClient = db
   };
 }
 
-export async function recordTotpIpFailure(userId: string, ipAddress: string) {
+export async function recordTotpIpFailure(userId: string, ipAddress: string, client?: DbClient) {
   const normalizedIp = normalizeTotpBlockIpAddress(ipAddress);
   if (normalizedIp === "unknown") {
     return {
@@ -106,7 +106,7 @@ export async function recordTotpIpFailure(userId: string, ipAddress: string) {
     };
   }
 
-  return transaction(async (client) => {
+  const persist = async (client: DbClient) => {
     const user = await client.queryOne<TotpIpPolicyRow & { id: string }>(
       `SELECT id, totp_ip_block_enabled, totp_ip_block_threshold
        FROM users WHERE id = ? FOR UPDATE`,
@@ -188,7 +188,8 @@ export async function recordTotpIpFailure(userId: string, ipAddress: string) {
       [userId, normalizedIp, attempts]
     );
     return { enabled: true, blocked: false, newlyBlocked: false, attempts, maxAttempts };
-  });
+  };
+  return client ? persist(client) : transaction(persist);
 }
 
 export async function clearTotpIpFailures(

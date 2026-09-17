@@ -192,7 +192,9 @@ test("password account-enumeration paths perform comparable cryptographic and da
 
   const login = routes.slice(loginStart, routes.indexOf('authRouter.post("/logout"', loginStart));
   assert.match(login, /const result = await transaction/);
-  assert.match(login, /lockedUser\?\.id \?\? syntheticLoginUserId/);
+  assert.match(login, /approved \? lockedUser!\.id : syntheticLoginUserId/);
+  assert.match(login, /approved \? lockedUser!\.password_hash : await dummyPasswordHash/);
+  assert.match(login, /evaluatePasswordLogin\(client, workingUserId, approved && passwordMatches\)/);
   assert.match(login, /evaluatePasswordLogin\(client, workingUserId/);
   assert.match(login, /recordLoginAttempt\(workingUserId/);
   assert.match(lockout, /UPDATE users SET failed_login_attempts = failed_login_attempts WHERE id = \?/);

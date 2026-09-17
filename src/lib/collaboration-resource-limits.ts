@@ -7,6 +7,7 @@ export const collaborationResourceLimits = {
   trackedUnauthenticatedUpgradeIps: 4_096,
   pendingUpgradesPerServer: 64,
   pendingUpgradesPerUser: 4,
+  pendingUpgradesPerIp: 8,
   pendingWritesPerRoom: 64,
   pendingWriteBytesPerRoom: 32 * 1024 * 1024,
   pendingWriteBytesPerUser: 64 * 1024 * 1024,
@@ -48,20 +49,25 @@ export function assessCollaborationConnectionAdmission({
 
 export type CollaborationUpgradeAdmission =
   | { accepted: true }
-  | { accepted: false; reason: "server-upgrades" | "user-upgrades" };
+  | { accepted: false; reason: "server-upgrades" | "user-upgrades" | "ip-upgrades" };
 
 export function assessCollaborationUpgradeAdmission({
   pendingUpgrades,
-  pendingUserUpgrades
+  pendingUserUpgrades,
+  pendingIpUpgrades = 0
 }: {
   pendingUpgrades: number;
   pendingUserUpgrades: number;
+  pendingIpUpgrades?: number;
 }): CollaborationUpgradeAdmission {
   if (pendingUpgrades >= collaborationResourceLimits.pendingUpgradesPerServer) {
     return { accepted: false, reason: "server-upgrades" };
   }
   if (pendingUserUpgrades >= collaborationResourceLimits.pendingUpgradesPerUser) {
     return { accepted: false, reason: "user-upgrades" };
+  }
+  if (pendingIpUpgrades >= collaborationResourceLimits.pendingUpgradesPerIp) {
+    return { accepted: false, reason: "ip-upgrades" };
   }
   return { accepted: true };
 }

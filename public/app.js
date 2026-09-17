@@ -9200,6 +9200,12 @@ function openNavigationContextMenu(trigger, { focusFirst = false } = {}) {
   elements.navigationDeleteLabel.textContent = t(
     kind === "collection" ? "navigationMenu.deleteCollection" : "navigationMenu.deletePage"
   );
+  const deleteButton = elements.navigationDeleteLabel.closest("button");
+  if (deleteButton) {
+    const ownerRequired = kind === "collection" && !isPageOwner(getPageSummaryById(id));
+    deleteButton.disabled = ownerRequired;
+    deleteButton.title = ownerRequired ? "Only the workspace owner can permanently delete a collection root." : "";
+  }
   positionNavigationContextMenu(trigger);
 
   if (focusFirst) getNavigationContextMenuItems()[0]?.focus();
@@ -9710,6 +9716,10 @@ async function submitPageDeleteTask(task, authenticationScope, { requestGuard = 
 async function deleteNavigationTarget() {
   const target = state.activeNavigationMenuTarget;
   if (!target) return;
+  if (target.kind === "collection" && !isPageOwner(getPageSummaryById(target.id))) {
+    closeNavigationContextMenu({ restoreFocus: true });
+    throw new Error("Only the workspace owner can permanently delete a collection root.");
+  }
   // Page writer sessions are fenced by the page owner's workspace, not by
   // the acting administrator. Bind that owner before any asynchronous wait so
   // a delegated collection admin cannot delete around another tab's writer.
@@ -10297,10 +10307,17 @@ function appendServerRecoveryCandidatePanel() {
   panel.append(heading);
 
   for (const candidate of serverRecoveryCandidates) {
+    if (candidate.untrusted || candidate.principalId !== candidate.ownerId) {
+      const warning = document.createElement("p");
+      warning.textContent = "Untrusted collaborator recovery draft. Download only after verifying its author; it is never restored automatically.";
+      panel.append(warning);
+    }
     const details = document.createElement("pre");
     details.tabIndex = 0;
     details.textContent = JSON.stringify({
       pageId: candidate.pageId,
+      principalId: candidate.principalId,
+      ownerId: candidate.ownerId,
       kind: candidate.kind,
       lineageKey: candidate.lineageKey,
       payloadSha256: candidate.payloadSha256,
@@ -11609,6 +11626,9 @@ function renderSharePageList() {
     remove.dataset.username = share.user?.username;
     remove.dataset.generation = share.generation ?? "";
     remove.textContent = t("sharing.remove");
+    const ownerCanRevoke = isPageOwner(state.selectedPage);
+    remove.disabled = !ownerCanRevoke;
+    if (!ownerCanRevoke) remove.title = "Only the workspace owner can revoke a direct page grant.";
     item.append(avatar, copy, remove);
     elements.sharePageList.append(item);
   }
@@ -20603,7 +20623,7 @@ elements.authForm.addEventListener("submit", async (event) => {
       setAuthMode("login");
       elements.username.value = body.username;
       elements.password.value = "";
-      setStatus(t("status.loginPrompt"));
+      setStatus("Registration request received. New accounts require operator approval before sign-in.");
       return;
     }
     if (data?.mfaRequired) {

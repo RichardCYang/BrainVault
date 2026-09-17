@@ -65,6 +65,7 @@ const envSchema = z.object({
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
   AI_CHAT_ANSWER_MAX_LENGTH: aiChatAnswerMaxLengthSchema,
+  COLLABORATION_ROOM_MEMORY_MAX_BYTES: z.coerce.number().int().min(96 * 1024 * 1024).max(4 * 1024 ** 3).default(512 * 1024 * 1024),
   COLLABORATION_SHARE_WINDOW_MS: z.coerce.number().int().min(60_000).max(24 * 60 * 60_000).default(60 * 60_000),
   COLLABORATION_SHARE_ACCOUNT_MAX: z.coerce.number().int().min(1).max(100).default(30),
   COLLABORATION_SHARE_IP_MAX: z.coerce.number().int().min(1).max(500).default(60),

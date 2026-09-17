@@ -76,7 +76,7 @@ test("BV-38 browser rendered-HTML sanitizer rejects URL-normalization bypasses",
 });
 
 test("BV-39 NAT64 filtering fails closed when prefix discovery is unknown", () => {
-  assert.match(bookmarkSource, /if \(isDnsNoDataError\(error\)\) return configured\.length \? configured : null;/);
+  assert.match(bookmarkSource, /if \(isDnsNoDataError\(error\)\) return null;/);
   assert.match(bookmarkSource, /hasIpv6 && discoveredPrefixes === null[\s\S]*addresses\.filter\(\(item\) => net\.isIP\(item\.address\) === 4\)/);
   assert.match(bookmarkSource, /reason: "nat64-discovery"/);
   assert.match(bookmarkSource, /const pinned = prioritizeResolvedAddresses\(addresses, knownNat64Prefixes\)/);

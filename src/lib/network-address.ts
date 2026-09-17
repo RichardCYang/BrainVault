@@ -103,7 +103,7 @@ export function parseNat64Prefix(value: string): Nat64Prefix | null {
   if (net.isIP(address) !== 6) return null;
   const prefixLength = Number(match[2]) as Nat64PrefixLength;
   const base = canonicalNat64PrefixBase(address, prefixLength);
-  if (!base) return null;
+  if (!base || (prefixLength === 96 && ipv6PartsToBytes(expandIpv6(base))[8] !== 0)) return null;
   const canonicalInput = canonicalIpAddressKey(address);
   const canonicalBase = canonicalIpAddressKey(base);
   if (!canonicalInput || canonicalInput !== canonicalBase) return null;
@@ -121,9 +121,14 @@ function extractRfc6052Ipv4(address: string, prefix: Nat64Prefix) {
   for (let index = 0; index < prefixBytes; index += 1) {
     if (bytes[index] !== baseBytes[index]) return null;
   }
-  if (prefix.prefixLength < 96 && bytes[8] !== 0) return null;
   const positions = rfc6052Ipv4BytePositions[prefix.prefixLength];
-  return positions.map((index) => bytes[index]).join(".");
+  return {
+    ipv4: positions.map((index) => bytes[index]).join("."),
+    // A matched prefix must never fall back to ordinary public IPv6 merely
+    // because its embedded address is malformed. The zero-suffix requirement
+    // is an intentionally stricter fetch policy than RFC 6052 section 2.2.
+    malformed: bytes[8] !== 0 || !hasZeroRfc6052DiscoverySuffix(bytes, prefix.prefixLength)
+  };
 }
 
 function hasZeroRfc6052DiscoverySuffix(bytes: Uint8Array, prefixLength: Nat64PrefixLength) {
@@ -141,7 +146,7 @@ export function inferNat64PrefixFromIpv4OnlyAddress(address: string): Nat64Prefi
   if (parts.length !== 8) return null;
   const bytes = ipv6PartsToBytes(parts);
   for (const prefixLength of [...rfc6052Nat64PrefixLengths].reverse()) {
-    if (prefixLength < 96 && bytes[8] !== 0) continue;
+    if (bytes[8] !== 0) continue;
     if (!hasZeroRfc6052DiscoverySuffix(bytes, prefixLength)) continue;
     const positions = rfc6052Ipv4BytePositions[prefixLength];
     const embedded = positions.map((index) => bytes[index]).join(".");
@@ -158,7 +163,7 @@ export function isPrivateOrNat64TranslatedAddress(address: string, prefixes: rea
   if (isPrivateAddress(address)) return true;
   for (const prefix of prefixes) {
     const embedded = extractRfc6052Ipv4(address, prefix);
-    if (embedded && isPrivateIpv4(embedded)) return true;
+    if (embedded && (embedded.malformed || isPrivateIpv4(embedded.ipv4))) return true;
   }
   return false;
 }

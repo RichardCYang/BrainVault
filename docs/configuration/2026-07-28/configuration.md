@@ -30,8 +30,9 @@ Never commit a real `.env` file.
 | `POSH_ACME_KEY_PATH` | Sibling `cert.key` | Optional private-key override for `posh-acme` mode |
 | `HTTPS_REDIRECT` | Enabled in proxy mode | Proxy-mode redirect for unrecognized HTTP requests; direct Posh-ACME mode opens HTTPS only |
 | `HTTPS_HEALTHCHECK_BYPASS` | `true` | Allow `/health` on the private backend HTTP listener in proxy mode |
-| `REGISTRATION_ENABLED` | Enabled outside production; disabled in production | Allow unauthenticated account creation |
+| `REGISTRATION_ENABLED` | Enabled outside production; disabled in production | Accept public registration requests; new accounts require independent operator approval with `npm run registration:approve -- <username>` before sign-in |
 | `SERVE_INTERNAL_DOCS` | `false` | Serve the repository `docs/` directory at authenticated `/docs` routes |
+| `COLLABORATION_ROOM_MEMORY_MAX_BYTES` | `536870912` | Process-wide conservative resident-room/replay reservations in bytes; range 96 MiB to 4 GiB. Not an RSS limit; transport and validation-worker accounting are separate. |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window in milliseconds |
 | `RATE_LIMIT_MAX` | `120` | Maximum requests per global window |
 | `AI_CHAT_ANSWER_MAX_LENGTH` | `50000` | Maximum Markdown characters in each AI chat answer; accepted range is 1 through 500000 and the browser/server share the same runtime value |
@@ -64,7 +65,7 @@ Never commit a real `.env` file.
 | `BOOKMARK_FETCH_TIMEOUT_MS` | `8000` | Maximum duration of one OpenGraph page fetch |
 | `BOOKMARK_FETCH_MAX_BYTES` | `524288` | Maximum document-head bytes inspected for one bookmark preview |
 | `BOOKMARK_FETCH_ALLOWED_PORTS` | `80,443` | Comma-separated destination ports permitted for server-side bookmark preview fetches |
-| `BOOKMARK_FETCH_NAT64_PREFIXES` | Empty | Optional comma-separated RFC 6052 NAT64 network-specific prefixes; BrainVault also attempts RFC 7050 discovery via `ipv4only.arpa` |
+| `BOOKMARK_FETCH_NAT64_PREFIXES` | Empty | Optional RFC 6052 prefixes augment successful RFC 7050 discovery via `ipv4only.arpa`; unknown discovery always excludes IPv6 fetch candidates, even with configured prefixes |
 | `ATTACHMENT_UPLOAD_DIR` | `uploads` | Private on-disk directory for attachment bytes; startup rejects the public web root and its descendants |
 | `ATTACHMENT_TEMP_MAX_AGE_MS` | `86400000` | Age after which stale files in the private attachment staging directory are removed at startup |
 | `MAX_ATTACHMENT_SIZE_MB` | `25` | Maximum size of one uploaded attachment in megabytes |

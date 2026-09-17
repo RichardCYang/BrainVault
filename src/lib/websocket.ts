@@ -45,6 +45,10 @@ export class WebSocketFragmentBudget {
 }
 
 const sharedFragmentBudget = new WebSocketFragmentBudget();
+// Independent process-wide ceilings include all hubs/accounts. These account
+// retained payload/capacity bytes, not the entire V8 heap or kernel buffers.
+const sharedReadBudget = new WebSocketFragmentBudget();
+const sharedMessageBudget = new WebSocketFragmentBudget();
 
 export type WebSocketMessage =
   | { type: "text"; text: string }
@@ -98,6 +102,11 @@ export class WebSocketConnection {
   private readStart = 0;
   private readEnd = 0;
   private readBufferReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly readBudget: WebSocketFragmentBudget;
+  private readonly messageBudget: WebSocketFragmentBudget;
+  private queuedMemoryBytes = 0;
+  private partialFrameStartedAt: number | null = null;
+  private partialFrameTimer: ReturnType<typeof setTimeout> | null = null;
   private fragmentOpcode: 1 | 2 | null = null;
   private fragmentParts: Buffer[] = [];
   private fragmentBytes = 0;
@@ -128,7 +137,9 @@ export class WebSocketConnection {
   constructor(
     socket: Socket,
     maxMessageBytes: number,
-    fragmentBudget: WebSocketFragmentBudget = sharedFragmentBudget
+    fragmentBudget: WebSocketFragmentBudget = sharedFragmentBudget,
+    readBudget: WebSocketFragmentBudget = sharedReadBudget,
+    messageBudget: WebSocketFragmentBudget = sharedMessageBudget
   ) {
     if (!Number.isSafeInteger(maxMessageBytes) || maxMessageBytes <= 0) {
       throw new RangeError("WebSocket maxMessageBytes must be a positive safe integer");
@@ -136,6 +147,8 @@ export class WebSocketConnection {
     this.socket = socket;
     this.maxMessageBytes = maxMessageBytes;
     this.fragmentBudget = fragmentBudget;
+    this.readBudget = readBudget;
+    this.messageBudget = messageBudget;
     this.maxQueuedMessageBytes = Math.min(
       Number.MAX_SAFE_INTEGER,
       maxMessageBytes + Math.min(maxMessageBytes, maxQueuedExtraBytes)
@@ -268,6 +281,12 @@ export class WebSocketConnection {
       this.consume(chunk);
     } catch (error) {
       this.handleTransportFailure("receive", error);
+    } finally {
+      // Complete interactive frames need no timer allocation. Arm a deadline
+      // only when parsing actually leaves a partial frame in the scratch buffer.
+      if (this.isOpen && this.acceptingMessages && this.unreadByteLength() > 0) {
+        this.armPartialFrameDeadline();
+      }
     }
   }
 
@@ -311,33 +330,72 @@ export class WebSocketConnection {
         this.readStart = 0;
         this.readEnd = unreadBytes;
       }
-      return;
+      return true;
     }
-
     const maxBufferBytes = this.maxMessageBytes + 64 * 1024;
     let nextCapacity = Math.max(initialReadBufferBytes, this.readBuffer.length || 1);
-    while (nextCapacity < neededBytes) {
-      nextCapacity = Math.min(maxBufferBytes, nextCapacity * 2);
+    while (nextCapacity < neededBytes) nextCapacity = Math.min(maxBufferBytes, nextCapacity * 2);
+    // Reserve the complete replacement before allocation: old and new buffers
+    // coexist during a grow/copy, so reserving only the delta is insufficient.
+    if (!this.readBudget.tryReserve(nextCapacity)) {
+      this.protocolError("WebSocket receive memory budget exceeded", 1008);
+      return false;
     }
-    const grown = Buffer.allocUnsafe(nextCapacity);
-    if (unreadBytes) this.readBuffer.copy(grown, 0, this.readStart, this.readEnd);
+    let grown: Buffer;
+    try {
+      grown = Buffer.allocUnsafe(nextCapacity);
+      if (unreadBytes) this.readBuffer.copy(grown, 0, this.readStart, this.readEnd);
+    } catch (error) {
+      this.readBudget.release(nextCapacity);
+      throw error;
+    }
+    this.readBudget.release(this.readBuffer.length);
     this.readBuffer = grown;
     this.readStart = 0;
     this.readEnd = unreadBytes;
+    return true;
+  }
+
+  private clearPartialFrameDeadline() {
+    if (this.partialFrameTimer) clearTimeout(this.partialFrameTimer);
+    this.partialFrameTimer = null;
+    this.partialFrameStartedAt = null;
+  }
+
+  private startPartialFrameDeadline() {
+    if (this.partialFrameStartedAt !== null) return;
+    this.partialFrameStartedAt = Date.now();
+  }
+
+  private armPartialFrameDeadline() {
+    if (this.partialFrameTimer || this.partialFrameStartedAt === null) return;
+    const remaining = Math.max(0, fragmentCompletionTimeoutMs - (Date.now() - this.partialFrameStartedAt));
+    this.partialFrameTimer = setTimeout(() => {
+      this.partialFrameTimer = null;
+      this.protocolError("WebSocket frame completion timed out", 1008);
+    }, remaining);
+    this.partialFrameTimer.unref();
   }
 
   private appendReadChunk(chunk: Buffer) {
-    this.ensureReadCapacity(chunk.length);
+    if (!this.ensureReadCapacity(chunk.length)) return false;
+    this.startPartialFrameDeadline();
     chunk.copy(this.readBuffer, this.readEnd);
     this.readEnd += chunk.length;
+    return true;
   }
 
   private consumeReadBytes(byteCount: number) {
     this.readStart += byteCount;
+    // Only a complete frame advances this deadline. Additional bytes, including
+    // a trickled header, never refresh the deadline of an unfinished frame.
+    this.clearPartialFrameDeadline();
     if (this.readStart === this.readEnd) {
       this.readStart = 0;
       this.readEnd = 0;
       this.scheduleReadBufferRelease();
+    } else {
+      this.startPartialFrameDeadline();
     }
   }
 
@@ -353,6 +411,7 @@ export class WebSocketConnection {
       // Never discard a partially received frame. Complete payloads/fragments
       // were copied before consumption and do not borrow this scratch buffer.
       if (this.unreadByteLength() !== 0) return;
+      this.readBudget.release(this.readBuffer.length);
       this.readBuffer = Buffer.alloc(0);
       this.readStart = 0;
       this.readEnd = 0;
@@ -392,7 +451,11 @@ export class WebSocketConnection {
       this.protocolError("WebSocket message is too large", 1009);
       return;
     }
-    this.appendReadChunk(chunk);
+    if (this.partialFrameStartedAt !== null && Date.now() - this.partialFrameStartedAt >= fragmentCompletionTimeoutMs) {
+      this.protocolError("WebSocket frame completion timed out", 1008);
+      return;
+    }
+    if (!this.appendReadChunk(chunk)) return;
 
     while (this.unreadByteLength() >= 2 && this.isOpen && this.acceptingMessages) {
       const frameStart = this.readStart;
@@ -540,6 +603,11 @@ export class WebSocketConnection {
     return message.type === "text" ? Buffer.byteLength(message.text, "utf8") : message.data.length;
   }
 
+  private messageMemoryBytes(message: WebSocketMessage) {
+    // Count UTF-16 storage conservatively rather than UTF-8 wire length.
+    return message.type === "text" ? message.text.length * 2 : message.data.length;
+  }
+
   private enqueueMessage(message: WebSocketMessage) {
     if (!this.acceptingMessages || !this.isOpen) return;
     const messageBytes = this.messageByteLength(message);
@@ -553,6 +621,12 @@ export class WebSocketConnection {
       return;
     }
 
+    const memoryBytes = this.messageMemoryBytes(message);
+    if (!this.messageBudget.tryReserve(memoryBytes)) {
+      this.rejectMessageBacklog();
+      return;
+    }
+    this.queuedMemoryBytes += memoryBytes;
     this.messageQueue.push(message);
     this.queuedMessageBytes += messageBytes;
     void this.drainMessages();
@@ -577,8 +651,16 @@ export class WebSocketConnection {
         const messageBytes = this.messageByteLength(message);
         this.queuedMessageBytes -= messageBytes;
         this.activeMessageBytes = messageBytes;
-        await this.messageHandler(message);
-        this.activeMessageBytes = 0;
+        const memoryBytes = this.messageMemoryBytes(message);
+        this.queuedMemoryBytes -= memoryBytes;
+        try {
+          await this.messageHandler(message);
+        } finally {
+          // An in-flight handler may still own its message after close. Keep
+          // its reservation until it settles, not merely until socket closure.
+          this.messageBudget.release(memoryBytes);
+          this.activeMessageBytes = 0;
+        }
       }
     } catch (error) {
       console.error("WebSocket message handler failed", error);
@@ -609,6 +691,10 @@ export class WebSocketConnection {
     this.acceptingMessages = false;
     this.messageQueue = [];
     this.queuedMessageBytes = 0;
+    this.messageBudget.release(this.queuedMemoryBytes);
+    this.queuedMemoryBytes = 0;
+    this.clearPartialFrameDeadline();
+    this.readBudget.release(this.readBuffer.length);
     this.readBuffer = Buffer.alloc(0);
     this.readStart = 0;
     this.readEnd = 0;

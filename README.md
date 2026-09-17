@@ -113,6 +113,28 @@ npm start         # Run the compiled server
 
 Before a production deployment, provide explicit unique secrets, configure the browser origins, leave registration disabled unless it is intentionally required, and serve the app over HTTPS in a browser that supports Web Locks so safety-critical cross-tab transitions can run. To let BrainVault serve Posh-ACME's `fullchain.cer` and `cert.key` directly, use `HTTPS_MODE=posh-acme` and set `POSH_ACME_CERT_PATH`. For TLS termination in Caddy, Synology DSM, NGINX, or Nginx Proxy Manager, use `HTTPS_MODE=proxy`. Follow the [HTTPS deployment guide](deploy/README.md), then see [Security](docs/security/2026-07-30/security.md) and [Configuration](docs/configuration/2026-07-28/configuration.md).
 
+## Security update: deployment requirements (2026-09-17)
+
+Apply migration `080_registration_approval.sql` with `npm run db:migrate` before starting this revision, including deployments with `AUTO_BOOTSTRAP_DATABASE=false`. Existing accounts remain approved. When `REGISTRATION_ENABLED=true`, new public registrations receive the same generic response but cannot authenticate until an operator independently verifies the applicant and runs:
+
+```bash
+npm run registration:approve -- <username>
+```
+
+Collection administrators retain member-page administration, but only the workspace owner can permanently delete a collection root or create/revoke a direct page grant. Non-owner recovery uploads remain download-only, are labeled untrusted, and have separate bounded quotas. A recovery upload is not proof that its contents predate revocation.
+
+IPv6 bookmark fetching now requires successful RFC 7050 prefix discovery even when `BOOKMARK_FETCH_NAT64_PREFIXES` is configured. Unknown discovery drops IPv6 candidates; safe IPv4 candidates remain usable. No new bookmark-host allowlist is introduced. Public-origin DNS is refreshed after 60 seconds, and local interfaces are checked on every validation.
+
+`COLLABORATION_ROOM_MEMORY_MAX_BYTES` defaults to 536870912 (512 MiB) of conservative process-wide room/replay reservations. Separate 128 MiB ceilings cover receive-buffer capacity, fragments, and queued/active message payloads. These are application accounting limits, not a guarantee of total RSS; retain an operating-system/container memory limit. Capacity exhaustion is retryable. Partial WebSocket frames have an absolute 15-second completion deadline.
+
+The focused regression suite is included in `verify:security` and can also be run directly:
+
+```bash
+node --import=tsx --test tests/security-assessment-remediation.node.test.mjs
+```
+
+Use a Node.js version satisfying the unchanged `package.json` engine requirement and install the locked dependencies. Before production rollout, run `npm run build`, `npm test`, and `npm run verify:security`, then validate the migration and parallel TOTP behavior against the deployment's MariaDB instance. The focused suite contains deterministic transaction simulations, not live database concurrency or translator integration tests.
+
 ## Maintenance and audit notes
 
 Detailed dated remediation and recovery reviews are kept under `docs/` so this README stays focused on setup and day-to-day use:

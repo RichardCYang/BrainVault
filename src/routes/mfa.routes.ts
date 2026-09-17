@@ -634,9 +634,9 @@ async function enforceMfaLoginNetworkAccess(pendingSession: MfaSessionRow, req: 
   await enforceVpnAccessPolicy(pendingSession.user_id, undefined, pendingSession.source_ip, getClientTimeZone(req), getClientWebRtcSignal(req));
 }
 
-async function reserveMfaAttempt(mfaToken: string, sourceIp: string, binding: string) {
+async function reserveMfaAttempt(mfaToken: string, sourceIp: string, binding: string, client?: DbClient) {
   const tokenHash = hashOpaqueToken(mfaToken);
-  return transaction(async (client) => {
+  const reserve = async (client: DbClient) => {
     const row = await client.queryOne<MfaSessionRow>(
       `SELECT token_hash, user_id, source_ip, binding_hash, failed_attempts, expires_at, used_at
        FROM mfa_login_sessions
@@ -662,7 +662,8 @@ async function reserveMfaAttempt(mfaToken: string, sourceIp: string, binding: st
       throw new ApiError(401, "MFA_SESSION_EXPIRED", "The two-step verification session expired");
     }
     return { ...row, failed_attempts: failedAttempts + 1 };
-  });
+  };
+  return client ? reserve(client) : transaction(reserve);
 }
 
 async function recordReservedMfaFailure(
@@ -1421,32 +1422,50 @@ mfaRouter.post(
   validate({ body: mfaLoginTotpSchema }),
   async (req, res, next) => {
     const { mfaToken, code } = req.body as z.infer<typeof mfaLoginTotpSchema>;
-    let session: MfaSessionRow | undefined;
     try {
       const sourceIp = getClientIpAddress(req);
       const binding = requireMfaCeremonyBinding(req);
       const pendingSession = await getActiveMfaSession(mfaToken, sourceIp, binding);
       await enforceMfaLoginNetworkAccess(pendingSession, req);
+      // Fast rejection is only an optimization. The authoritative gate below
+      // holds the account lock through code evaluation AND failure persistence.
       if (await isPermanentlyBlockedTotpIp(pendingSession.source_ip, pendingSession.user_id)) {
-        throw new ApiError(
-          403,
-          "TOTP_IP_PERMANENTLY_BLOCKED",
-          "TOTP verification from this IP address is temporarily blocked for this account"
-        );
+        throw new ApiError(403, "TOTP_IP_PERMANENTLY_BLOCKED", "TOTP verification from this IP address is temporarily blocked for this account");
       }
-      const activeSession = await reserveMfaAttempt(mfaToken, sourceIp, binding);
-      session = activeSession;
       const result = await transaction(async (client) => {
-        const loginUser = await getLoginUserForUpdate(client, activeSession.user_id);
+        // A common user-row lock serializes all sessions and application nodes.
+        // Lock it before session/credential/block rows to retain lock ordering.
+        const loginUser = await getLoginUserForUpdate(client, pendingSession.user_id);
+        if (await isPermanentlyBlockedTotpIp(pendingSession.source_ip, pendingSession.user_id, client)) {
+          throw new ApiError(403, "TOTP_IP_PERMANENTLY_BLOCKED", "TOTP verification from this IP address is temporarily blocked for this account");
+        }
+        const activeSession = await reserveMfaAttempt(mfaToken, sourceIp, binding, client);
+        if (activeSession.user_id !== loginUser.id) {
+          throw new ApiError(401, "MFA_SESSION_EXPIRED", "The two-step verification session expired");
+        }
         const credential = await client.queryOne<TotpCredentialRow>(
           `SELECT user_id, secret_ciphertext, secret_iv, secret_tag, last_used_step
            FROM user_totp_credentials WHERE user_id = ? FOR UPDATE`,
           [activeSession.user_id]
         );
         if (!credential) {
-          throw new ApiError(400, "MFA_METHOD_UNAVAILABLE", "TOTP is not available for this account");
+          await recordLoginAttempt(activeSession.user_id, activeSession.source_ip, "FAILURE", client);
+          return { error: new ApiError(400, "MFA_METHOD_UNAVAILABLE", "TOTP is not available for this account") };
         }
 
+        // Return expected failures from the transaction, rather than throwing:
+        // throwing would roll back both the attempt reservation and IP block.
+        const failVerification = async (error: ApiError) => {
+          const attempt = await recordTotpIpFailure(activeSession.user_id, activeSession.source_ip, client);
+          await recordLoginAttempt(activeSession.user_id, activeSession.source_ip, attempt.blocked ? "LOCKED" : "FAILURE", client);
+          return {
+            error: attempt.blocked
+              ? new ApiError(403, "TOTP_IP_PERMANENTLY_BLOCKED", "TOTP verification from this IP address is temporarily blocked after too many invalid codes", {
+                attempts: attempt.attempts, maxAttempts: attempt.maxAttempts
+              })
+              : error
+          };
+        };
         const secret = decryptMfaSecret({
           ciphertext: credential.secret_ciphertext,
           iv: credential.secret_iv,
@@ -1454,10 +1473,10 @@ mfaRouter.post(
         });
         const matchedStep = findMatchingTotpStep(secret, code);
         if (matchedStep === null) {
-          throw new ApiError(401, "INVALID_MFA_CODE", "The verification code is invalid");
+          return failVerification(new ApiError(401, "INVALID_MFA_CODE", "The verification code is invalid"));
         }
         if (credential.last_used_step !== null && Number(credential.last_used_step) >= matchedStep) {
-          throw new ApiError(401, "MFA_CODE_REUSED", "The verification code was already used");
+          return failVerification(new ApiError(401, "MFA_CODE_REUSED", "The verification code was already used"));
         }
 
         const updated = await client.execute<{ affectedRows: number }>(
@@ -1467,7 +1486,7 @@ mfaRouter.post(
           [matchedStep, activeSession.user_id, matchedStep]
         );
         if (Number(updated.affectedRows) !== 1) {
-          throw new ApiError(401, "MFA_CODE_REUSED", "The verification code was already used");
+          return failVerification(new ApiError(401, "MFA_CODE_REUSED", "The verification code was already used"));
         }
         await clearTotpIpFailures(activeSession.user_id, activeSession.source_ip, client);
         await recordLoginAttempt(activeSession.user_id, activeSession.source_ip, "SUCCESS", client);
@@ -1475,30 +1494,11 @@ mfaRouter.post(
         return createMfaLoginResult(loginUser);
       });
 
+      if ("error" in result) throw result.error;
       clearMfaCeremonyBinding(res);
       setAuthSessionCookie(res, result.token);
       res.json({ user: result.user });
     } catch (error) {
-      if (session && error instanceof ApiError) {
-        if (["INVALID_MFA_CODE", "MFA_CODE_REUSED"].includes(error.code)) {
-          try {
-            const attempt = await recordTotpIpFailure(session.user_id, session.source_ip);
-            await recordReservedMfaFailure(session, attempt.blocked ? "LOCKED" : "FAILURE");
-            if (attempt.blocked) {
-              next(new ApiError(403, "TOTP_IP_PERMANENTLY_BLOCKED", "TOTP verification from this IP address is temporarily blocked after too many invalid codes", {
-                attempts: attempt.attempts,
-                maxAttempts: attempt.maxAttempts
-              }));
-              return;
-            }
-          } catch (securityError) {
-            next(securityError);
-            return;
-          }
-        } else if (error.code === "MFA_METHOD_UNAVAILABLE") {
-          await recordReservedMfaFailure(session);
-        }
-      }
       next(error);
     }
   }

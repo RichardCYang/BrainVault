@@ -158,3 +158,47 @@ The server includes:
 - Sanitized Markdown/HTML output with bounded, deadline-protected syntax highlighting
 
 These defaults are a starting point, not a substitute for HTTPS, secure secret storage, database and attachment backups, dependency updates, and production monitoring.
+
+## Report-driven hardening (2026-09-17)
+
+The changes below address the code paths identified as BV-30 through BV-38 in the supplied assessment. They do not assert that every part of the application or deployment is vulnerability-free.
+
+### Outbound address classification (BV-30 and BV-38)
+
+A matched RFC 6052 prefix with a nonzero reserved octet or suffix now fails closed rather than becoming ordinary public IPv6. The zero-suffix fetch policy is intentionally stricter than RFC 6052: the RFC recommends a zero suffix but says translators should ignore nonzero suffix bits. A `/96` configured prefix must also have the reserved octet set to zero.
+
+The report's literal `2a00:64::1:7f00:1` is outside `2a00:64::/96`; it changes prefix bits, not the reserved octet. Its classification alone therefore does not establish the reported `/96` bypass. The shorter-prefix fail-open path is real and is covered by generated `/32`, `/40`, `/48`, `/56`, and `/64` regression cases. Valid public translations remain supported after successful discovery.
+
+Configured prefixes supplement, rather than replace, successful RFC 7050 discovery. Empty, failed, or malformed discovery cannot silently retain IPv6 eligibility through a configured prefix. NAT64 and canonical-origin caches have 60-second lifetimes; local interface addresses are read at each validation. Address changes within the cache lifetime remain a deployment consideration. Network-level egress filtering is still recommended, but no proxy, container routing, or translator changes are silently installed by this source update.
+
+References: [RFC 6052, section 2.2](https://www.rfc-editor.org/rfc/rfc6052.html#section-2.2) and [RFC 7050](https://www.rfc-editor.org/rfc/rfc7050.html).
+
+### Delegated authority and recovery (BV-31 and BV-32)
+
+Permanent collection-root deletion and direct-page grant creation/removal are owner-only. The deletion-snapshot path and the final locked delete path enforce the same collection-root restriction. Direct-grant removal checks ownership both at admission and again under transaction-bound access locks. The existing snapshot, mutation receipt, grant-generation, authentication, and workspace checks remain in place. Delegated administrators retain their other collection-management and member-page capabilities; this is not a blanket removal of administration rights.
+
+Recovery remains a quarantine/download facility, not a second editing channel. Non-owner uploads are limited to eight candidates and 32 MiB per principal across all shared pages, with three candidates and 20 MiB per page/lineage. Existing overall principal quotas, exact registered-lineage checks, payload hashing/deduplication, authentication, and seven-day grant expiry remain. Changing a client `sourceId` or `generation` does not reset these quotas. Existing stored recovery candidates are not silently deleted.
+
+A recovery `generation` is a local draft/persistence identifier, not the collaboration grant generation. Equating those fields as suggested by the report would reject legitimate recovery without proving provenance. The implementation instead validates kind/lineage consistency, bounds the untrusted input, and prominently identifies non-owner candidates and their submitting principal. Arbitrary candidate content is still possible within the allowance; it is never automatically rendered or applied, and it is not evidence of pre-revocation authorship.
+
+### Authentication boundaries (BV-33 and BV-34)
+
+TOTP login locks the user row before the current block check, session-attempt reservation, credential verification, and failure/block persistence. All of these now use the same transaction. Expected verification failures are returned from the transaction and thrown only after commit; throwing inside would undo the attempt counter and recreate the race. The existing eight-attempt session limit and used-step replay checks remain. The source-IP precheck is only an optimization, not the authoritative gate.
+
+Migration `080_registration_approval.sql` adds `registration_approved` with a default of one, preserving existing and operator-provisioned accounts. Public registration explicitly inserts zero. Pending accounts use the dummy-password/invalid-credential path until independently approved by the operator CLI. Duplicate registrations neither activate nor overwrite existing accounts. Registration remains disabled by default in production. Do not automatically approve unverified applicants: approval is the out-of-band trust boundary, not a delay intended to conceal account existence indefinitely.
+
+References: [MariaDB FOR UPDATE](https://mariadb.com/docs/server/reference/sql-statements/data-manipulation/selecting-data/for-update) and [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html).
+
+### Resource, path, and regression controls (BV-35 through BV-37)
+
+Resident collaboration rooms reserve a worst-case canonical document and history-metadata allowance before admission; loading additionally reserves bounded replay bytes. The shared ceiling defaults to 512 MiB and is configured with `COLLABORATION_ROOM_MEMORY_MAX_BYTES`. Exhaustion rejects new loads before the WebSocket upgrade with a retryable 503 and evicts safely idle rooms. Reservations are not returned while an invalidated room still has an outstanding loader or writer.
+
+Receive capacity, retained fragments, and queued/active message payloads each have separate process-wide 128 MiB budgets. Capacity growth reserves the replacement buffer before allocation; active-handler payload reservations survive socket closure until the handler settles. Pending upgrades are also limited to eight per IP. Any partial frame, including a one-byte header or a nonfragmented frame, must finish within 15 seconds; additional bytes do not renew its deadline. Complete small frames do not allocate partial-frame timers. These limits do not measure all JavaScript object, worker, driver, or kernel memory; operating-system containment remains necessary.
+
+The report overstates one room component: retained `history` entries contain metadata, not every historical BLOB. Durable history and transient replay bytes are distinct from resident room state. The aggregate availability risk nevertheless warranted the new accounting.
+
+All four export/restore owner-directory joins use `storageOwnerDirectory`, which rejects unsafe storage segments rather than normalizing them into aliases and verifies lexical containment. Existing IDs are server-generated; this is a defense-in-depth correction, not a demonstrated HTTP traversal exploit. Existing archive validation and symlink protections remain unchanged.
+
+Stale regression expectations now track account-wide login throttling, current authentication boundaries for passkey rename, unverified bookmark placeholders, literal regex escaping, the actual custom-icon mutation count, and the stronger origin policy. Related source assertions were aligned with approval-aware login and fail-closed discovery. WebSocket performance assertions still require scratch-buffer and idle-timer reuse while accounting for the new partial-frame deadlines. The focused regression suite executes production functions with isolated DNS, clock, and transaction simulations. Live MariaDB, real NAT64 translation, dependency-backed compilation, and browser end-to-end behavior require deployment-environment verification.
+
+No new audit trail or log-file subsystem is added by this update.

@@ -27,7 +27,7 @@ test("TOTP attempt limiting scopes blocks to one account and expires them", asyn
   assert.match(policy, /INSERT INTO user_totp_ip_blocks \(user_id, ip_address, failed_attempts, expires_at\)/);
   assert.match(policy, /recordCountryLoginBlockStrict\([\s\S]*?"TOTP_ATTEMPTS_EXCEEDED"/);
   assert.match(countryPolicy, /\| "TOTP_ATTEMPTS_EXCEEDED"/);
-  assert.match(mfaRoutes, /await recordTotpIpFailure\(session\.user_id, session\.source_ip\)/);
+  assert.match(mfaRoutes, /await recordTotpIpFailure\(activeSession\.user_id, activeSession\.source_ip, client\)/);
   assert.match(mfaRoutes, /isPermanentlyBlockedTotpIp\(pendingSession\.source_ip, pendingSession\.user_id\)/);
   assert.doesNotMatch(policy, /DELETE FROM mfa_login_sessions WHERE user_id = \? AND source_ip = \?/);
   assert.doesNotMatch(mfaRoutes, /disconnectUserCollaborators\(session\.user_id, "Access from this IP/);
