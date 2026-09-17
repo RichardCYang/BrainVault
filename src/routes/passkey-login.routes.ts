@@ -339,7 +339,6 @@ passkeyLoginRouter.post(
   "/options",
   requireSameOriginBrowserRequest,
   requireJsonRequestBody,
-  clearPasswordLoginAccountLimit,
   passkeyLoginOptionsIpRateLimit,
   validate({ body: optionsSchema }),
   async (req, res, next) => {

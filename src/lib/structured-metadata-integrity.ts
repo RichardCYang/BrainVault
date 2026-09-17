@@ -107,6 +107,7 @@ export const bookmarkLimits = {
   titleLength: 300,
   descriptionLength: 1_000,
   siteNameLength: 160,
+  previewTokenLength: 64,
   maxListColumns: 5
 } as const;
 const aiChatLimits = {

@@ -711,7 +711,6 @@ authRouter.put(
   "/totp-ip-block-policy",
   requireAuth,
   accountReauthenticationRateLimit,
-  clearPasswordLoginAccountLimit,
   loginLockoutRecoveryRateLimit,
   validate({ body: totpIpBlockPolicySchema }),
   async (req, res, next) => {
@@ -794,7 +793,6 @@ authRouter.delete(
   "/totp-ip-blocks/:ipAddress",
   requireAuthAllowTotpIpBlock,
   accountReauthenticationRateLimit,
-  clearPasswordLoginAccountLimit,
   loginLockoutRecoveryRateLimit,
   validate({ params: totpIpBlockParamsSchema, body: totpIpUnblockSchema }),
   async (req, res, next) => {
@@ -878,7 +876,6 @@ authRouter.put(
   "/vpn-block-policy",
   requireAuth,
   accountReauthenticationRateLimit,
-  clearPasswordLoginAccountLimit,
   loginLockoutRecoveryRateLimit,
   validate({ body: vpnBlockPolicySchema }),
   async (req, res, next) => {
@@ -976,7 +973,6 @@ authRouter.put(
   "/country-login-policy",
   requireAuth,
   accountReauthenticationRateLimit,
-  clearPasswordLoginAccountLimit,
   loginLockoutRecoveryRateLimit,
   validate({ body: countryLoginPolicySchema }),
   async (req, res, next) => {
@@ -1097,7 +1093,6 @@ authRouter.post(
   "/password",
   requireAuth,
   accountReauthenticationRateLimit,
-  clearPasswordLoginAccountLimit,
   loginLockoutRecoveryRateLimit,
   validate({ body: passwordSchema }),
   async (req, res, next) => {
