@@ -98,8 +98,8 @@ test("snapshot retains object-level access revalidation under the page lock befo
   const pageAccess = snapshot.indexOf(
     "const access = await getPageAccess(pageId, user.id, client, { lockPage: true });"
   );
-  const existingBlocks = snapshot.indexOf(
-    'const existingRows = await client.query<BlockRow>(\n          "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE"'
+  const existingBlocks = snapshot.search(
+    /const existingRows = await client\.query<BlockRow>\(\s*"SELECT \* FROM blocks WHERE page_id = \? ORDER BY id ASC FOR UPDATE"/
   );
   const deleteBlock = snapshot.indexOf(
     '"DELETE FROM blocks WHERE id = ? AND page_id = ?"'

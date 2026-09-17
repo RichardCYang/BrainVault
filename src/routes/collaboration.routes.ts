@@ -1468,7 +1468,7 @@ collaborationRouter.put(
       const attachmentOwnerId = preflightAccess.page.owner_id;
       attachmentCleanupOwnerId = attachmentOwnerId;
 
-      const result = await transaction(async (client) => {
+      const lockMaterializationAccess = async (client: DbClient) => {
         // Shared editors can differ from the attachment owner. Lock every
         // participating user row deterministically before the auth/session
         // boundary and page row to preserve the global user-before-page order.
@@ -1491,9 +1491,65 @@ collaborationRouter.put(
         if (access.shareCount < 1) {
           throw new ApiError(409, "COLLABORATION_DISABLED", "Collaboration is no longer enabled");
         }
+        if (access.shareGeneration !== preflightAccess.shareGeneration) {
+          throw new ApiError(
+            409,
+            "COLLABORATION_GRANT_REPLACED",
+            "The collaboration grant changed. Refresh before materializing this page."
+          );
+        }
+        return { access, attachmentGeneration };
+      };
 
+      const readMaterializationCheckpoint = async (client: DbClient, latestUpdateId: number) => {
+        const state = await getCollaborationState(pageId, client, { lock: true });
+        assertCollaborationDocumentEpoch(state, body.documentEpoch);
+        const materializedUpdateId = Number(state.materialized_update_id ?? 0);
+        const materializationVersion = Number(state.materialization_version ?? 0);
+        if (isUnsupportedCollaborationMaterializationVersion(materializationVersion)) {
+          throw new ApiError(
+            409,
+            "COLLABORATION_MATERIALIZATION_VERSION_UNSUPPORTED",
+            "This collaboration state was written by a newer BrainVault version. Upgrade this server before materializing the page."
+          );
+        }
+        if (materializedUpdateId > latestUpdateId) {
+          throw new ApiError(
+            500,
+            "INVALID_COLLABORATION_STATE",
+            "The collaboration materialization checkpoint is ahead of durable history"
+          );
+        }
+        return { materializedUpdateId, materializationVersion };
+      };
+
+      const readCurrentMaterialization = async (
+        client: DbClient, attachmentGeneration: number, materializedUpdateId: number
+      ) => {
+        const currentPage = await client.queryOne<PageRow>(
+          "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
+          [pageId, attachmentOwnerId]
+        );
+        const currentBlocks = await client.query<BlockRow>(
+          "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
+          [pageId]
+        );
+        if (!currentPage) throw notFound("Page");
+        return {
+          applied: false,
+          page: currentPage,
+          blocks: currentBlocks,
+          ownerId: currentPage.owner_id,
+          attachmentGeneration,
+          materializedUpdateId
+        };
+      };
+
+      const replaySnapshot = await transaction(async (client) => {
+        const { access, attachmentGeneration } = await lockMaterializationAccess(client);
         // Every Yjs writer first locks the page row. Holding the same lock makes
-        // this ordered history immutable until the relational transaction ends.
+        // this bounded history immutable while it is copied. Release all locks
+        // before worker replay; the commit transaction revalidates the copy.
         // Inspect aggregate metadata before selecting BLOBs so a legacy or
         // tampered log cannot force an unbounded HTTP materialization replay.
         const historyStats = await client.queryOne<CollaborationHistoryStatsRow>(
@@ -1543,49 +1599,29 @@ collaborationRouter.put(
           );
         }
 
-        const state = await getCollaborationState(pageId, client, { lock: true });
-        assertCollaborationDocumentEpoch(state, body.documentEpoch);
-        const materializedUpdateId = Number(state.materialized_update_id ?? 0);
-        const materializationVersion = Number(state.materialization_version ?? 0);
-        if (isUnsupportedCollaborationMaterializationVersion(materializationVersion)) {
-          throw new ApiError(
-            409,
-            "COLLABORATION_MATERIALIZATION_VERSION_UNSUPPORTED",
-            "This collaboration state was written by a newer BrainVault version. Upgrade this server before materializing the page."
-          );
-        }
-        if (materializedUpdateId > latestUpdateId) {
-          throw new ApiError(
-            500,
-            "INVALID_COLLABORATION_STATE",
-            "The collaboration materialization checkpoint is ahead of durable history"
-          );
-        }
-
-        if (!needsCollaborationMaterialization({
-          latestUpdateId,
-          materializedUpdateId,
-          materializationVersion
-        })) {
-          const currentPage = await client.queryOne<PageRow>(
-            "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
-            [pageId, attachmentOwnerId]
-          );
-          const currentBlocks = await client.query<BlockRow>(
-            "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
-            [pageId]
-          );
-          if (!currentPage) throw notFound("Page");
+        const { materializedUpdateId, materializationVersion } =
+          await readMaterializationCheckpoint(client, latestUpdateId);
+        if (!needsCollaborationMaterialization({ latestUpdateId, materializedUpdateId, materializationVersion })) {
           return {
-            applied: false,
-            page: currentPage,
-            blocks: currentBlocks,
-            ownerId: currentPage.owner_id,
-            attachmentGeneration,
-            materializedUpdateId
+            kind: "current" as const,
+            result: await readCurrentMaterialization(client, attachmentGeneration, materializedUpdateId)
           };
         }
+        return {
+          kind: "replay" as const,
+          updateRows,
+          latestUpdateId,
+          attachmentGeneration,
+          pageEditVersion: Number(access.page.edit_version ?? 1),
+          pageContentVersion: Number(access.page.content_version ?? 1)
+        };
+      });
 
+      let result;
+      if (replaySnapshot.kind === "current") {
+        result = replaySnapshot.result;
+      } else {
+        const { updateRows, latestUpdateId } = replaySnapshot;
         let materialization: CollaborationMaterialization;
         try {
           // The durable Yjs log is the sole content authority. updateId is only
@@ -1613,371 +1649,421 @@ collaborationRouter.put(
           throw error;
         }
 
-        const orderedBlocks = materialization.blocks.map((block) => ({
-          ...block,
-          metadata: assertLosslessStructuredMetadata(block.type, block.metadata) as Record<string, unknown> | null
-        }));
-        const activeIds = new Set(orderedBlocks.map((block) => block.id));
-        const deletedAttachmentIds = new Set(materialization.deletedAttachmentIds);
-        for (const blockId of deletedAttachmentIds) {
-          if (activeIds.has(blockId)) {
-            throw new ApiError(
-              409,
-              "ATTACHMENT_DELETE_CONFLICT",
-              "An attachment cannot be active and deleted in the same collaboration document"
-            );
+        // No database transaction, user lock, or page lock is held during
+        // the worker await above. Re-authorize and fence every mutable boundary
+        // before using that replay result for any canonical write.
+        result = await transaction(async (client) => {
+          const { access, attachmentGeneration } = await lockMaterializationAccess(client);
+          if (attachmentGeneration !== replaySnapshot.attachmentGeneration) {
+            throw new ApiError(409, "COLLABORATION_LINEAGE_CHANGED", "The owner workspace changed during replay");
           }
-        }
-
-        const existingRows = await client.query<BlockRow>(
-          "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",
-          [pageId]
-        );
-        // Access projections intentionally hide custom cover bytes. Version diffs need the
-        // raw row so an unrelated collaboration materialization does not look like a cover change.
-        const versionBeforePage = await client.queryOne<PageRow>(
-          "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
-          [pageId, attachmentOwnerId]
-        );
-        if (!versionBeforePage) throw notFound("Page");
-        const versionBeforeRows = existingRows.map((row) => ({ ...row }));
-        const existingById = new Map(existingRows.map((row) => [row.id, row]));
-        const newBlockIds = orderedBlocks
-          .map((block) => block.id)
-          .filter((blockId) => !existingById.has(blockId));
-        for (let offset = 0; offset < newBlockIds.length; offset += 500) {
-          const batch = newBlockIds.slice(offset, offset + 500);
-          if (!batch.length) continue;
-          const placeholders = batch.map(() => "?").join(", ");
-          const conflicts = await client.query<{ id: string }>(
-            `SELECT id FROM blocks WHERE id IN (${placeholders}) FOR UPDATE`,
-            batch
+          // Locking metadata reads see current rows even if an earlier auth
+          // read established a REPEATABLE READ snapshot before the page lock.
+          // Do not fetch or decode the BLOB history a second time under locks.
+          // One extra row is enough to detect growth without an unbounded read.
+          const currentHistory = await client.query<{ id: number; update_bytes: number }>(
+            `SELECT id, OCTET_LENGTH(update_data) AS update_bytes
+             FROM page_yjs_updates
+             WHERE page_id = ? ORDER BY id ASC LIMIT ? FOR UPDATE`,
+            [pageId, updateRows.length + 1]
           );
-          if (conflicts.length) {
+          const currentUpdateId = Number(currentHistory.at(-1)?.id ?? 0);
+          if (
+            !Number.isSafeInteger(currentUpdateId)
+            || currentUpdateId !== latestUpdateId
+            || currentHistory.length !== updateRows.length
+            || currentHistory.some((row, index) =>
+              Number(row.id) !== Number(updateRows[index].id)
+              || Number(row.update_bytes) !== updateRows[index].update_data.length
+            )
+          ) {
             throw new ApiError(
-              409,
-              "BLOCK_ID_CONFLICT",
-              "A collaboration block id is already in use"
+              409, "COLLABORATION_SNAPSHOT_STALE",
+              "Collaboration history changed during replay. Apply the latest updates and retry.",
+              { lastUpdateId: currentUpdateId }
             );
           }
-        }
-
-        for (const block of orderedBlocks) {
-          const existing = existingById.get(block.id);
-          if (block.type === "ATTACHMENT" && !existing) {
+          const { materializedUpdateId, materializationVersion } =
+            await readMaterializationCheckpoint(client, latestUpdateId);
+          if (!needsCollaborationMaterialization({ latestUpdateId, materializedUpdateId, materializationVersion })) {
+            return readCurrentMaterialization(client, attachmentGeneration, materializedUpdateId);
+          }
+          if (
+            Number(access.page.edit_version ?? 1) !== replaySnapshot.pageEditVersion
+            || Number(access.page.content_version ?? 1) !== replaySnapshot.pageContentVersion
+          ) {
             throw new ApiError(
-              400,
-              "USE_ATTACHMENT_UPLOAD",
-              "Attachment blocks must be created through the file upload endpoint"
+              409, "COLLABORATION_MATERIALIZATION_CONFLICT",
+              "The canonical page changed during replay. Refresh and retry."
             );
           }
-          if (existing?.type === "ATTACHMENT" && block.type !== "ATTACHMENT") {
-            throw new ApiError(400, "ATTACHMENT_TYPE_IMMUTABLE", "Attachment blocks cannot be converted");
-          }
-          if (existing && existing.type !== "ATTACHMENT" && block.type === "ATTACHMENT") {
-            throw new ApiError(400, "ATTACHMENT_TYPE_IMMUTABLE", "Blocks cannot be converted into attachments");
-          }
-        }
 
-        // Materialization can rewrite or delete any canonical non-attachment row based
-        // on the Yjs document. Validate the full raw relational set first so a
-        // recoverable block omitted from orderedBlocks cannot bypass the guard and be
-        // deleted below before explicit recovery or repair.
-        for (const existing of existingRows) {
-          if (existing.type !== "ATTACHMENT") {
-            assertExistingMetadataSafeToMaterialize(existing);
-          }
-        }
-
-        // The block parent FK uses ON DELETE CASCADE. Detach every row that must survive
-        // before deleting an obsolete ancestor, otherwise a legitimate moved child (or a
-        // canonical attachment omitted from the Yjs document) could be deleted implicitly.
-        const deletedExistingIds = new Set(
-          existingRows
-            .filter((row) => row.type === "ATTACHMENT"
-              ? deletedAttachmentIds.has(row.id)
-              : !activeIds.has(row.id))
-            .map((row) => row.id)
-        );
-        for (const row of existingRows) {
-          if (deletedExistingIds.has(row.id)) continue;
-          if (!row.parent_block_id || !deletedExistingIds.has(row.parent_block_id)) continue;
-          const detachedSurvivor = await client.execute<{ affectedRows: number }>(
-            "UPDATE blocks SET parent_block_id = NULL, last_mutation_id = NULL, last_mutation_hash = NULL, edit_version = edit_version + 1 WHERE id = ? AND page_id = ? AND edit_version < ?",
-            [row.id, pageId, Number.MAX_SAFE_INTEGER]
-          );
-          if (Number(detachedSurvivor.affectedRows) !== 1) {
-            throw new ApiError(
-              409,
-              "COLLABORATION_MATERIALIZATION_CONFLICT",
-              "A canonical block changed before collaboration materialization completed"
-            );
-          }
-          row.parent_block_id = null;
-        }
-
-        // Delete intended descendants before ancestors so the parent FK cascade never
-        // substitutes for an explicit, page-scoped destructive write. This lets every
-        // canonical deletion prove that exactly one locked row was removed.
-        const parentByDeletedId = new Map(
-          existingRows
-            .filter((row) => deletedExistingIds.has(row.id))
-            .map((row) => [row.id, row.parent_block_id] as const)
-        );
-        const deletedDepth = (row: BlockRow) => {
-          let depth = 0;
-          let currentId = row.id;
-          const visited = new Set<string>();
-          while (!visited.has(currentId)) {
-            visited.add(currentId);
-            const parentId = parentByDeletedId.get(currentId);
-            if (!parentId || !deletedExistingIds.has(parentId)) break;
-            depth += 1;
-            currentId = parentId;
-          }
-          return depth;
-        };
-        const rowsToDelete = existingRows
-          .filter((row) => deletedExistingIds.has(row.id))
-          .sort((left, right) => deletedDepth(right) - deletedDepth(left) || left.id.localeCompare(right.id));
-
-        for (const row of rowsToDelete) {
-          const deletion = await client.execute<{ affectedRows: number }>(
-            "DELETE FROM blocks WHERE id = ? AND page_id = ?",
-            [row.id, pageId]
-          );
-          if (Number(deletion.affectedRows) !== 1) {
-            throw new ApiError(
-              409,
-              "COLLABORATION_MATERIALIZATION_CONFLICT",
-              "A canonical block changed before collaboration materialization completed"
-            );
-          }
-          if (row.type === "ATTACHMENT" && deletedAttachmentIds.has(row.id)) {
-            deletedFiles.push(row.id);
-          }
-          existingById.delete(row.id);
-        }
-
-        for (const block of orderedBlocks) {
-          const existing = existingById.get(block.id);
-          if (existing?.type === "ATTACHMENT") {
-            const attachmentUpdate = await client.execute<{ affectedRows: number }>(
-              `UPDATE blocks
-               SET parent_block_id = ?, sort_order = ?, last_mutation_id = NULL,
-                   last_mutation_hash = NULL, edit_version = edit_version + 1
-               WHERE id = ? AND page_id = ? AND edit_version < ?`,
-              [block.parentBlockId, block.sortOrder, block.id, pageId, Number.MAX_SAFE_INTEGER]
-            );
-            if (Number(attachmentUpdate.affectedRows) !== 1) {
+          const orderedBlocks = materialization.blocks.map((block) => ({
+            ...block,
+            metadata: assertLosslessStructuredMetadata(block.type, block.metadata) as Record<string, unknown> | null
+          }));
+          const activeIds = new Set(orderedBlocks.map((block) => block.id));
+          const deletedAttachmentIds = new Set(materialization.deletedAttachmentIds);
+          for (const blockId of deletedAttachmentIds) {
+            if (activeIds.has(blockId)) {
               throw new ApiError(
                 409,
-                "COLLABORATION_MATERIALIZATION_CONFLICT",
-                "A canonical attachment changed before collaboration materialization completed"
+                "ATTACHMENT_DELETE_CONFLICT",
+                "An attachment cannot be active and deleted in the same collaboration document"
               );
             }
-            continue;
           }
 
-          const prepared = prepareBlockContent(block.type, block.markdown, block.metadata);
-          const html = renderBlockHtml(block.type, prepared.markdown, block.checked, prepared.metadata);
-          const metadata = prepared.metadata ? JSON.stringify(prepared.metadata) : null;
-          if (existing) {
-            const blockUpdate = await client.execute<{ affectedRows: number }>(
-              `UPDATE blocks
-               SET parent_block_id = ?, type = ?, markdown = ?, html_cache = ?, checked = ?, sort_order = ?,
-                   metadata = ?, last_mutation_id = NULL, last_mutation_hash = NULL,
-                   edit_version = edit_version + 1
-               WHERE id = ? AND page_id = ? AND edit_version < ?`,
-              [
-                block.parentBlockId,
-                block.type,
-                prepared.markdown,
-                html,
-                block.checked ? 1 : 0,
-                block.sortOrder,
-                metadata,
-                block.id,
-                pageId,
-                Number.MAX_SAFE_INTEGER
-              ]
+          const existingRows = await client.query<BlockRow>(
+            "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",
+            [pageId]
+          );
+          // Access projections intentionally hide custom cover bytes. Version diffs need the
+          // raw row so an unrelated collaboration materialization does not look like a cover change.
+          const versionBeforePage = await client.queryOne<PageRow>(
+            "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
+            [pageId, attachmentOwnerId]
+          );
+          if (!versionBeforePage) throw notFound("Page");
+          const versionBeforeRows = existingRows.map((row) => ({ ...row }));
+          const existingById = new Map(existingRows.map((row) => [row.id, row]));
+          const newBlockIds = orderedBlocks
+            .map((block) => block.id)
+            .filter((blockId) => !existingById.has(blockId));
+          for (let offset = 0; offset < newBlockIds.length; offset += 500) {
+            const batch = newBlockIds.slice(offset, offset + 500);
+            if (!batch.length) continue;
+            const placeholders = batch.map(() => "?").join(", ");
+            const conflicts = await client.query<{ id: string }>(
+              `SELECT id FROM blocks WHERE id IN (${placeholders}) FOR UPDATE`,
+              batch
             );
-            if (Number(blockUpdate.affectedRows) !== 1) {
+            if (conflicts.length) {
+              throw new ApiError(
+                409,
+                "BLOCK_ID_CONFLICT",
+                "A collaboration block id is already in use"
+              );
+            }
+          }
+
+          for (const block of orderedBlocks) {
+            const existing = existingById.get(block.id);
+            if (block.type === "ATTACHMENT" && !existing) {
+              throw new ApiError(
+                400,
+                "USE_ATTACHMENT_UPLOAD",
+                "Attachment blocks must be created through the file upload endpoint"
+              );
+            }
+            if (existing?.type === "ATTACHMENT" && block.type !== "ATTACHMENT") {
+              throw new ApiError(400, "ATTACHMENT_TYPE_IMMUTABLE", "Attachment blocks cannot be converted");
+            }
+            if (existing && existing.type !== "ATTACHMENT" && block.type === "ATTACHMENT") {
+              throw new ApiError(400, "ATTACHMENT_TYPE_IMMUTABLE", "Blocks cannot be converted into attachments");
+            }
+          }
+
+          // Materialization can rewrite or delete any canonical non-attachment row based
+          // on the Yjs document. Validate the full raw relational set first so a
+          // recoverable block omitted from orderedBlocks cannot bypass the guard and be
+          // deleted below before explicit recovery or repair.
+          for (const existing of existingRows) {
+            if (existing.type !== "ATTACHMENT") {
+              assertExistingMetadataSafeToMaterialize(existing);
+            }
+          }
+
+          // The block parent FK uses ON DELETE CASCADE. Detach every row that must survive
+          // before deleting an obsolete ancestor, otherwise a legitimate moved child (or a
+          // canonical attachment omitted from the Yjs document) could be deleted implicitly.
+          const deletedExistingIds = new Set(
+            existingRows
+              .filter((row) => row.type === "ATTACHMENT"
+                ? deletedAttachmentIds.has(row.id)
+                : !activeIds.has(row.id))
+              .map((row) => row.id)
+          );
+          for (const row of existingRows) {
+            if (deletedExistingIds.has(row.id)) continue;
+            if (!row.parent_block_id || !deletedExistingIds.has(row.parent_block_id)) continue;
+            const detachedSurvivor = await client.execute<{ affectedRows: number }>(
+              "UPDATE blocks SET parent_block_id = NULL, last_mutation_id = NULL, last_mutation_hash = NULL, edit_version = edit_version + 1 WHERE id = ? AND page_id = ? AND edit_version < ?",
+              [row.id, pageId, Number.MAX_SAFE_INTEGER]
+            );
+            if (Number(detachedSurvivor.affectedRows) !== 1) {
               throw new ApiError(
                 409,
                 "COLLABORATION_MATERIALIZATION_CONFLICT",
                 "A canonical block changed before collaboration materialization completed"
               );
             }
-          } else {
-            await client.execute(
-              `INSERT INTO blocks
-                 (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [
-                block.id,
-                pageId,
-                block.parentBlockId,
-                block.type,
-                prepared.markdown,
-                html,
-                block.checked ? 1 : 0,
-                block.sortOrder,
-                metadata
-              ]
+            row.parent_block_id = null;
+          }
+
+          // Delete intended descendants before ancestors so the parent FK cascade never
+          // substitutes for an explicit, page-scoped destructive write. This lets every
+          // canonical deletion prove that exactly one locked row was removed.
+          const parentByDeletedId = new Map(
+            existingRows
+              .filter((row) => deletedExistingIds.has(row.id))
+              .map((row) => [row.id, row.parent_block_id] as const)
+          );
+          const deletedDepth = (row: BlockRow) => {
+            let depth = 0;
+            let currentId = row.id;
+            const visited = new Set<string>();
+            while (!visited.has(currentId)) {
+              visited.add(currentId);
+              const parentId = parentByDeletedId.get(currentId);
+              if (!parentId || !deletedExistingIds.has(parentId)) break;
+              depth += 1;
+              currentId = parentId;
+            }
+            return depth;
+          };
+          const rowsToDelete = existingRows
+            .filter((row) => deletedExistingIds.has(row.id))
+            .sort((left, right) => deletedDepth(right) - deletedDepth(left) || left.id.localeCompare(right.id));
+
+          for (const row of rowsToDelete) {
+            const deletion = await client.execute<{ affectedRows: number }>(
+              "DELETE FROM blocks WHERE id = ? AND page_id = ?",
+              [row.id, pageId]
+            );
+            if (Number(deletion.affectedRows) !== 1) {
+              throw new ApiError(
+                409,
+                "COLLABORATION_MATERIALIZATION_CONFLICT",
+                "A canonical block changed before collaboration materialization completed"
+              );
+            }
+            if (row.type === "ATTACHMENT" && deletedAttachmentIds.has(row.id)) {
+              deletedFiles.push(row.id);
+            }
+            existingById.delete(row.id);
+          }
+
+          for (const block of orderedBlocks) {
+            const existing = existingById.get(block.id);
+            if (existing?.type === "ATTACHMENT") {
+              const attachmentUpdate = await client.execute<{ affectedRows: number }>(
+                `UPDATE blocks
+                 SET parent_block_id = ?, sort_order = ?, last_mutation_id = NULL,
+                     last_mutation_hash = NULL, edit_version = edit_version + 1
+                 WHERE id = ? AND page_id = ? AND edit_version < ?`,
+                [block.parentBlockId, block.sortOrder, block.id, pageId, Number.MAX_SAFE_INTEGER]
+              );
+              if (Number(attachmentUpdate.affectedRows) !== 1) {
+                throw new ApiError(
+                  409,
+                  "COLLABORATION_MATERIALIZATION_CONFLICT",
+                  "A canonical attachment changed before collaboration materialization completed"
+                );
+              }
+              continue;
+            }
+
+            const prepared = prepareBlockContent(block.type, block.markdown, block.metadata);
+            const html = renderBlockHtml(block.type, prepared.markdown, block.checked, prepared.metadata);
+            const metadata = prepared.metadata ? JSON.stringify(prepared.metadata) : null;
+            if (existing) {
+              const blockUpdate = await client.execute<{ affectedRows: number }>(
+                `UPDATE blocks
+                 SET parent_block_id = ?, type = ?, markdown = ?, html_cache = ?, checked = ?, sort_order = ?,
+                     metadata = ?, last_mutation_id = NULL, last_mutation_hash = NULL,
+                     edit_version = edit_version + 1
+                 WHERE id = ? AND page_id = ? AND edit_version < ?`,
+                [
+                  block.parentBlockId,
+                  block.type,
+                  prepared.markdown,
+                  html,
+                  block.checked ? 1 : 0,
+                  block.sortOrder,
+                  metadata,
+                  block.id,
+                  pageId,
+                  Number.MAX_SAFE_INTEGER
+                ]
+              );
+              if (Number(blockUpdate.affectedRows) !== 1) {
+                throw new ApiError(
+                  409,
+                  "COLLABORATION_MATERIALIZATION_CONFLICT",
+                  "A canonical block changed before collaboration materialization completed"
+                );
+              }
+            } else {
+              await client.execute(
+                `INSERT INTO blocks
+                   (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                  block.id,
+                  pageId,
+                  block.parentBlockId,
+                  block.type,
+                  prepared.markdown,
+                  html,
+                  block.checked ? 1 : 0,
+                  block.sortOrder,
+                  metadata
+                ]
+              );
+            }
+          }
+
+          const pageUpdate = await client.execute<{ affectedRows: number }>(
+            `UPDATE pages
+             SET title = ?, last_mutation_id = NULL, last_mutation_hash = NULL,
+                 edit_version = edit_version + 1, content_version = content_version + 1
+             WHERE id = ? AND owner_id = ? AND edit_version < ? AND content_version < ?`,
+            [
+              materialization.title,
+              pageId,
+              attachmentOwnerId,
+              Number.MAX_SAFE_INTEGER,
+              Number.MAX_SAFE_INTEGER
+            ]
+          );
+          if (Number(pageUpdate.affectedRows) !== 1) {
+            throw new ApiError(
+              409,
+              "COLLABORATION_MATERIALIZATION_CONFLICT",
+              "The canonical page changed before collaboration materialization completed"
             );
           }
-        }
 
-        const pageUpdate = await client.execute<{ affectedRows: number }>(
-          `UPDATE pages
-           SET title = ?, last_mutation_id = NULL, last_mutation_hash = NULL,
-               edit_version = edit_version + 1, content_version = content_version + 1
-           WHERE id = ? AND owner_id = ? AND edit_version < ? AND content_version < ?`,
-          [
-            materialization.title,
-            pageId,
-            attachmentOwnerId,
-            Number.MAX_SAFE_INTEGER,
-            Number.MAX_SAFE_INTEGER
-          ]
-        );
-        if (Number(pageUpdate.affectedRows) !== 1) {
-          throw new ApiError(
-            409,
-            "COLLABORATION_MATERIALIZATION_CONFLICT",
-            "The canonical page changed before collaboration materialization completed"
+          // Do not advance the durable materialization checkpoint until the canonical
+          // relational state exactly matches the collaboration document. Checking IDs
+          // alone can certify a same-ID row whose content or hierarchy was not persisted
+          // as intended. Attachments omitted from Yjs are intentionally retained unless
+          // explicitly tombstoned, so verify their retained hierarchy separately.
+          const currentPage = await client.queryOne<PageRow>(
+            "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
+            [pageId, attachmentOwnerId]
           );
-        }
-
-        // Do not advance the durable materialization checkpoint until the canonical
-        // relational state exactly matches the collaboration document. Checking IDs
-        // alone can certify a same-ID row whose content or hierarchy was not persisted
-        // as intended. Attachments omitted from Yjs are intentionally retained unless
-        // explicitly tombstoned, so verify their retained hierarchy separately.
-        const currentPage = await client.queryOne<PageRow>(
-          "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
-          [pageId, attachmentOwnerId]
-        );
-        const currentBlocks = await client.query<BlockRow>(
-          "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
-          [pageId]
-        );
-        if (!currentPage) throw notFound("Page");
-        const expectedFinalBlockIds = new Set(activeIds);
-        for (const row of existingRows) {
-          if (row.type === "ATTACHMENT" && !deletedAttachmentIds.has(row.id)) {
-            expectedFinalBlockIds.add(row.id);
-          }
-        }
-        const currentBlockIds = new Set(currentBlocks.map((row) => row.id));
-        const canonicalBlockSetMatches = currentBlockIds.size === expectedFinalBlockIds.size
-          && [...expectedFinalBlockIds].every((blockId) => currentBlockIds.has(blockId));
-        const currentBlocksById = new Map(currentBlocks.map((row) => [row.id, row]));
-        let canonicalMaterializedStateMatches = currentPage.title === materialization.title;
-
-        for (const block of orderedBlocks) {
-          if (!canonicalMaterializedStateMatches) break;
-          const current = currentBlocksById.get(block.id);
-          if (
-            !current
-            || current.type !== block.type
-            || current.parent_block_id !== block.parentBlockId
-            || Number(current.sort_order) !== Number(block.sortOrder)
-          ) {
-            canonicalMaterializedStateMatches = false;
-            break;
-          }
-
-          // Attachment payload metadata is owned by the upload route. Collaboration
-          // materialization is authoritative only for its hierarchy/order.
-          if (block.type === "ATTACHMENT") continue;
-
-          const prepared = prepareBlockContent(block.type, block.markdown, block.metadata);
-          const expectedHtml = renderBlockHtml(block.type, prepared.markdown, block.checked, prepared.metadata);
-          if (
-            current.markdown !== prepared.markdown
-            || current.html_cache !== expectedHtml
-            || Number(current.checked) !== (block.checked ? 1 : 0)
-            || canonicalJsonForComparison(current.metadata) !== canonicalJsonForComparison(prepared.metadata)
-          ) {
-            canonicalMaterializedStateMatches = false;
-            break;
-          }
-        }
-
-        if (canonicalMaterializedStateMatches) {
+          const currentBlocks = await client.query<BlockRow>(
+            "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
+            [pageId]
+          );
+          if (!currentPage) throw notFound("Page");
+          const expectedFinalBlockIds = new Set(activeIds);
           for (const row of existingRows) {
-            if (
-              row.type !== "ATTACHMENT"
-              || deletedAttachmentIds.has(row.id)
-              || activeIds.has(row.id)
-            ) continue;
-            const current = currentBlocksById.get(row.id);
+            if (row.type === "ATTACHMENT" && !deletedAttachmentIds.has(row.id)) {
+              expectedFinalBlockIds.add(row.id);
+            }
+          }
+          const currentBlockIds = new Set(currentBlocks.map((row) => row.id));
+          const canonicalBlockSetMatches = currentBlockIds.size === expectedFinalBlockIds.size
+            && [...expectedFinalBlockIds].every((blockId) => currentBlockIds.has(blockId));
+          const currentBlocksById = new Map(currentBlocks.map((row) => [row.id, row]));
+          let canonicalMaterializedStateMatches = currentPage.title === materialization.title;
+
+          for (const block of orderedBlocks) {
+            if (!canonicalMaterializedStateMatches) break;
+            const current = currentBlocksById.get(block.id);
             if (
               !current
-              || current.type !== "ATTACHMENT"
-              || current.parent_block_id !== row.parent_block_id
-              || Number(current.sort_order) !== Number(row.sort_order)
+              || current.type !== block.type
+              || current.parent_block_id !== block.parentBlockId
+              || Number(current.sort_order) !== Number(block.sortOrder)
+            ) {
+              canonicalMaterializedStateMatches = false;
+              break;
+            }
+
+            // Attachment payload metadata is owned by the upload route. Collaboration
+            // materialization is authoritative only for its hierarchy/order.
+            if (block.type === "ATTACHMENT") continue;
+
+            const prepared = prepareBlockContent(block.type, block.markdown, block.metadata);
+            const expectedHtml = renderBlockHtml(block.type, prepared.markdown, block.checked, prepared.metadata);
+            if (
+              current.markdown !== prepared.markdown
+              || current.html_cache !== expectedHtml
+              || Number(current.checked) !== (block.checked ? 1 : 0)
+              || canonicalJsonForComparison(current.metadata) !== canonicalJsonForComparison(prepared.metadata)
             ) {
               canonicalMaterializedStateMatches = false;
               break;
             }
           }
-        }
 
-        if (!canonicalBlockSetMatches || !canonicalMaterializedStateMatches) {
-          throw new ApiError(
-            409,
-            "COLLABORATION_MATERIALIZATION_CONFLICT",
-            "The canonical page state did not match the collaboration document"
+          if (canonicalMaterializedStateMatches) {
+            for (const row of existingRows) {
+              if (
+                row.type !== "ATTACHMENT"
+                || deletedAttachmentIds.has(row.id)
+                || activeIds.has(row.id)
+              ) continue;
+              const current = currentBlocksById.get(row.id);
+              if (
+                !current
+                || current.type !== "ATTACHMENT"
+                || current.parent_block_id !== row.parent_block_id
+                || Number(current.sort_order) !== Number(row.sort_order)
+              ) {
+                canonicalMaterializedStateMatches = false;
+                break;
+              }
+            }
+          }
+
+          if (!canonicalBlockSetMatches || !canonicalMaterializedStateMatches) {
+            throw new ApiError(
+              409,
+              "COLLABORATION_MATERIALIZATION_CONFLICT",
+              "The canonical page state did not match the collaboration document"
+            );
+          }
+
+          const checkpoint = await client.execute<{ affectedRows: number }>(
+            `UPDATE page_collaboration_state
+             SET materialized_update_id = ?, materialization_version = ?,
+                 materialized_at = CURRENT_TIMESTAMP(3)
+             WHERE page_id = ? AND document_epoch = ?`,
+            [
+              latestUpdateId,
+              currentCollaborationMaterializationVersion,
+              pageId,
+              body.documentEpoch
+            ]
           );
-        }
+          if (Number(checkpoint.affectedRows) !== 1) {
+            throw new ApiError(
+              409,
+              "COLLABORATION_LINEAGE_CHANGED",
+              "The collaboration document was replaced before materialization completed"
+            );
+          }
 
-        const checkpoint = await client.execute<{ affectedRows: number }>(
-          `UPDATE page_collaboration_state
-           SET materialized_update_id = ?, materialization_version = ?,
-               materialized_at = CURRENT_TIMESTAMP(3)
-           WHERE page_id = ? AND document_epoch = ?`,
-          [
-            latestUpdateId,
-            currentCollaborationMaterializationVersion,
+          const versionActors = await loadPageVersionActors(
+            client,
+            updateRows
+              .filter((row) => Number(row.id) > materializedUpdateId)
+              .map((row) => row.user_id)
+          );
+          await recordPageVersion(client, {
             pageId,
-            body.documentEpoch
-          ]
-        );
-        if (Number(checkpoint.affectedRows) !== 1) {
-          throw new ApiError(
-            409,
-            "COLLABORATION_LINEAGE_CHANGED",
-            "The collaboration document was replaced before materialization completed"
-          );
-        }
-
-        const versionActors = await loadPageVersionActors(
-          client,
-          updateRows
-            .filter((row) => Number(row.id) > materializedUpdateId)
-            .map((row) => row.user_id)
-        );
-        await recordPageVersion(client, {
-          pageId,
-          actors: versionActors.length ? versionActors : [toPageVersionActor(user)],
-          source: "COLLABORATION",
-          changes: [
-            ...diffPageVersionPage(versionBeforePage, currentPage),
-            ...diffPageVersionBlocks(versionBeforeRows, currentBlocks)
-          ]
+            actors: versionActors.length ? versionActors : [toPageVersionActor(user)],
+            source: "COLLABORATION",
+            changes: [
+              ...diffPageVersionPage(versionBeforePage, currentPage),
+              ...diffPageVersionBlocks(versionBeforeRows, currentBlocks)
+            ]
+          });
+          return {
+            applied: true,
+            page: currentPage,
+            blocks: currentBlocks,
+            ownerId: currentPage.owner_id,
+            attachmentGeneration,
+            materializedUpdateId: latestUpdateId
+          };
         });
-        return {
-          applied: true,
-          page: currentPage,
-          blocks: currentBlocks,
-          ownerId: currentPage.owner_id,
-          attachmentGeneration,
-          materializedUpdateId: latestUpdateId
-        };
-      });
+      }
 
       await reconcileDeletedAttachmentFiles();
       res.json({

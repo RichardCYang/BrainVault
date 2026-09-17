@@ -99,7 +99,7 @@ test("deferred attachment cleanup is fenced from workspace restore generations",
   );
 
   const collabTransactionIndex = collaborationRoute.indexOf(
-    "const result = await transaction(async (client) => {",
+    "const lockMaterializationAccess = async (client: DbClient) => {",
     collaborationRoute.indexOf('"/pages/:pageId/collaboration/snapshot"')
   );
   const collabGenerationIndex = collaborationRoute.indexOf(
@@ -113,6 +113,12 @@ test("deferred attachment cleanup is fenced from workspace restore generations",
   assert.ok(
     collabGenerationIndex > collabTransactionIndex && collabGenerationIndex < collabPageLockIndex,
     "collaboration cleanup authorization must lock the owner before the page"
+  );
+  const snapshotRoute = collaborationRoute.slice(collabTransactionIndex);
+  assert.equal(
+    snapshotRoute.match(/await lockMaterializationAccess\(client\)/g)?.length,
+    2,
+    "both history capture and materialization commit must use the owner-before-page authorization helper"
   );
 });
 

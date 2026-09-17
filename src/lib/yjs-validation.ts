@@ -1,4 +1,5 @@
 import * as Y from "yjs";
+import { assertYjsDeleteSetBudget } from "./yjs-delete-set-budget.js";
 
 export class InvalidYjsUpdateError extends Error {
   readonly code = "INVALID_YJS_UPDATE";
@@ -66,7 +67,19 @@ function assertUpdatePreflight(update: Uint8Array, maxStateBytes: number) {
     // fixed aggregate struct budget without materializing the update. This is
     // deliberately checked before applyUpdate, whose V1 decoder eagerly
     // allocates an array sized from the attacker-controlled per-section count.
-    const metadata = Y.parseUpdateMetaV2(update, BoundedUpdateDecoderV1);
+    // Keep this decoder local to the invocation: parseUpdateMetaV2 consumes
+    // structs only and leaves restDecoder at the delete-set boundary. Reuse
+    // that exact cursor rather than re-parsing or importing private Yjs APIs.
+    const decoderHolder: { value?: BoundedUpdateDecoderV1 } = {};
+    class PreflightDecoderV1 extends BoundedUpdateDecoderV1 {
+      constructor(...args: ConstructorParameters<typeof Y.UpdateDecoderV1>) {
+        super(...args);
+        decoderHolder.value = this;
+      }
+    }
+    const metadata = Y.parseUpdateMetaV2(update, PreflightDecoderV1);
+    if (!decoderHolder.value) throw new InvalidYjsUpdateError("The collaboration decoder was not initialized");
+    assertYjsDeleteSetBudget(decoderHolder.value.restDecoder);
     if (metadata.from.size > maxYjsClientSections || metadata.to.size > maxYjsClientSections) {
       throw new InvalidYjsUpdateError("The collaboration update references too many clients");
     }
@@ -77,7 +90,7 @@ function assertUpdatePreflight(update: Uint8Array, maxStateBytes: number) {
     }
   } catch (error) {
     if (error instanceof InvalidYjsUpdateError) throw error;
-    throw new InvalidYjsUpdateError("The collaboration update metadata is malformed", { cause: error });
+    throw new InvalidYjsUpdateError("The collaboration update encoding is malformed", { cause: error });
   }
 }
 
@@ -101,6 +114,10 @@ function rebuildValidatedYjsHistory(
   for (const update of updates) {
     assertUpdatePreflight(update, maxStateBytes);
     Y.applyUpdate(document, update);
+    // Individually bounded delete-only updates can accumulate in pendingDs.
+    // Check their combined canonical encoding before applying another history
+    // row. Ordinary, fully integrated histories avoid this extra encoding.
+    if (document.store.pendingDs !== null) encodeBoundedState(document, maxStateBytes);
   }
   return encodeBoundedState(document, maxStateBytes);
 }

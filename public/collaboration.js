@@ -166,12 +166,23 @@ function reconcileYValue(Y, current, value, replace) {
   }
 }
 
+const unsafeCollaborationObjectKeys = new Set(["__proto__", "prototype", "constructor"]);
+
 function readYValue(Y, value) {
   if (value instanceof Y.Text) return value.toString();
   if (value instanceof Y.Array) return value.toArray().map((item) => readYValue(Y, item));
   if (value instanceof Y.Map) {
-    const result = {};
-    for (const [key, item] of value.entries()) result[key] = readYValue(Y, item);
+    const result = Object.create(null);
+    for (const [key, item] of value.entries()) {
+      // Match server materialization: reject, rather than silently omit, a
+      // malformed field. This also protects locally restored recovery state.
+      if (unsafeCollaborationObjectKeys.has(key)) {
+        throw new Error("The collaboration document contains an unsafe object key");
+      }
+      Object.defineProperty(result, key, {
+        value: readYValue(Y, item), enumerable: true, configurable: true, writable: true
+      });
+    }
     return result;
   }
   return value ?? null;

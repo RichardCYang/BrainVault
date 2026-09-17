@@ -11,6 +11,40 @@ const maxFragmentsPerMessage = 1_024;
 const maxTransportFramesPerSecond = 600;
 const initialReadBufferBytes = 64 * 1024;
 const idleReadBufferReleaseMs = 5_000;
+const fragmentCompletionTimeoutMs = 15_000;
+
+// Shared by every connection in this process, not just by one page or account.
+// This bounds retained fragment payloads; existing queue/read limits still
+// apply separately. A deadline alone would allow many simultaneous large pins.
+export class WebSocketFragmentBudget {
+  private bytes = 0;
+
+  private readonly maximumBytes: number;
+
+  constructor(maximumBytes: number = 128 * 1024 * 1024) {
+    if (!Number.isSafeInteger(maximumBytes) || maximumBytes <= 0) {
+      throw new RangeError("WebSocket fragment budget must be a positive safe integer");
+    }
+    this.maximumBytes = maximumBytes;
+  }
+
+  get retainedBytes() { return this.bytes; }
+
+  tryReserve(bytes: number) {
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.maximumBytes - this.bytes) return false;
+    this.bytes += bytes;
+    return true;
+  }
+
+  release(bytes: number) {
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.bytes) {
+      throw new RangeError("Invalid WebSocket fragment budget release");
+    }
+    this.bytes -= bytes;
+  }
+}
+
+const sharedFragmentBudget = new WebSocketFragmentBudget();
 
 export type WebSocketMessage =
   | { type: "text"; text: string }
@@ -67,6 +101,9 @@ export class WebSocketConnection {
   private fragmentOpcode: 1 | 2 | null = null;
   private fragmentParts: Buffer[] = [];
   private fragmentBytes = 0;
+  private readonly fragmentBudget: WebSocketFragmentBudget;
+  private fragmentStartedAt: number | null = null;
+  private fragmentCompletionTimer: ReturnType<typeof setTimeout> | null = null;
   private frameWindowStartedAt = Date.now();
   private consumedFramesInWindow = 0;
   private messageHandler: MessageHandler | null = null;
@@ -88,12 +125,17 @@ export class WebSocketConnection {
 
   lastPongAt = Date.now();
 
-  constructor(socket: Socket, maxMessageBytes: number) {
+  constructor(
+    socket: Socket,
+    maxMessageBytes: number,
+    fragmentBudget: WebSocketFragmentBudget = sharedFragmentBudget
+  ) {
     if (!Number.isSafeInteger(maxMessageBytes) || maxMessageBytes <= 0) {
       throw new RangeError("WebSocket maxMessageBytes must be a positive safe integer");
     }
     this.socket = socket;
     this.maxMessageBytes = maxMessageBytes;
+    this.fragmentBudget = fragmentBudget;
     this.maxQueuedMessageBytes = Math.min(
       Number.MAX_SAFE_INTEGER,
       maxMessageBytes + Math.min(maxMessageBytes, maxQueuedExtraBytes)
@@ -318,8 +360,34 @@ export class WebSocketConnection {
     this.readBufferReleaseTimer.unref();
   }
 
+  private startFragmentDeadline() {
+    if (this.fragmentCompletionTimer) return;
+    this.fragmentStartedAt = Date.now();
+    // Never refresh this timer for continuations, pings, or pongs. It is an
+    // absolute message-completion deadline, independent of socket liveness.
+    this.fragmentCompletionTimer = setTimeout(() => {
+      this.fragmentCompletionTimer = null;
+      this.protocolError("WebSocket fragmented message completion timed out", 1008);
+    }, fragmentCompletionTimeoutMs);
+    this.fragmentCompletionTimer.unref();
+  }
+
+  private clearFragmentState() {
+    if (this.fragmentCompletionTimer) clearTimeout(this.fragmentCompletionTimer);
+    this.fragmentCompletionTimer = null;
+    this.fragmentStartedAt = null;
+    this.fragmentBudget.release(this.fragmentBytes);
+    this.fragmentOpcode = null;
+    this.fragmentParts = [];
+    this.fragmentBytes = 0;
+  }
+
   private consume(chunk: Buffer) {
     if (!this.isOpen || !this.acceptingMessages || !chunk.length) return;
+    if (this.fragmentStartedAt !== null && Date.now() - this.fragmentStartedAt >= fragmentCompletionTimeoutMs) {
+      this.protocolError("WebSocket fragmented message completion timed out", 1008);
+      return;
+    }
     if (this.unreadByteLength() + chunk.length > this.maxMessageBytes + 64 * 1024) {
       this.protocolError("WebSocket message is too large", 1009);
       return;
@@ -366,13 +434,44 @@ export class WebSocketConnection {
         this.protocolError("Invalid WebSocket control frame");
         return;
       }
-      if (payloadLength > this.maxMessageBytes || this.fragmentBytes + payloadLength > this.maxMessageBytes) {
+      if (payloadLength > this.maxMessageBytes || (!controlFrame && this.fragmentBytes + payloadLength > this.maxMessageBytes)) {
         this.protocolError("WebSocket message is too large", 1009);
         return;
+      }
+      if (!controlFrame) {
+        if (opcode === 0x0) {
+          if (this.fragmentOpcode === null) {
+            this.protocolError("Unexpected continuation frame");
+            return;
+          }
+          if (this.fragmentParts.length >= maxFragmentsPerMessage) {
+            this.protocolError("WebSocket fragmented message has too many fragments", 1009);
+            return;
+          }
+        } else if (opcode !== 0x1 && opcode !== 0x2) {
+          this.protocolError("Unsupported WebSocket opcode");
+          return;
+        } else if (this.fragmentOpcode !== null) {
+          this.protocolError("A fragmented message is already in progress");
+          return;
+        } else if (!fin) {
+          // Start even if the first fragment's payload has not fully arrived.
+          this.startFragmentDeadline();
+        }
       }
       if (availableBytes < offset + 4 + payloadLength) return;
       if (!this.consumeFrameRateBudget()) return;
 
+      const fragmentedPayload = !controlFrame && (opcode === 0x0 || !fin);
+      if (fragmentedPayload) {
+        // Reserve before allocating the retained payload copy. Include the
+        // reservation in fragmentBytes so every failure/close path releases it.
+        if (!this.fragmentBudget.tryReserve(payloadLength)) {
+          this.protocolError("WebSocket fragment memory budget exceeded", 1008);
+          return;
+        }
+        this.fragmentBytes += payloadLength;
+      }
       const mask = this.readBuffer.subarray(frameStart + offset, frameStart + offset + 4);
       offset += 4;
       const payloadStart = frameStart + offset;
@@ -395,22 +494,11 @@ export class WebSocketConnection {
         continue;
       }
       if (opcode === 0x0) {
-        if (this.fragmentOpcode === null) {
-          this.protocolError("Unexpected continuation frame");
-          return;
-        }
-        if (this.fragmentParts.length >= maxFragmentsPerMessage) {
-          this.protocolError("WebSocket fragmented message has too many fragments", 1009);
-          return;
-        }
         this.fragmentParts.push(payload);
-        this.fragmentBytes += payload.length;
         if (fin) {
           const complete = Buffer.concat(this.fragmentParts, this.fragmentBytes);
-          const completeOpcode = this.fragmentOpcode;
-          this.fragmentOpcode = null;
-          this.fragmentParts = [];
-          this.fragmentBytes = 0;
+          const completeOpcode = this.fragmentOpcode!;
+          this.clearFragmentState();
           this.dispatchPayload(completeOpcode, complete);
         }
         continue;
@@ -428,7 +516,6 @@ export class WebSocketConnection {
       } else {
         this.fragmentOpcode = opcode;
         this.fragmentParts = [payload];
-        this.fragmentBytes = payload.length;
       }
     }
   }
@@ -523,9 +610,9 @@ export class WebSocketConnection {
     this.messageQueue = [];
     this.queuedMessageBytes = 0;
     this.readBuffer = Buffer.alloc(0);
-    this.fragmentOpcode = null;
-    this.fragmentParts = [];
-    this.fragmentBytes = 0;
+    this.readStart = 0;
+    this.readEnd = 0;
+    this.clearFragmentState();
     try {
       this.socket.pause();
     } catch (error) {

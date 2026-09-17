@@ -127,7 +127,9 @@ test("collaboration updates are semantically validated off the event loop before
   assert.match(source, /principalKey: client\.user\.id/);
   const yjsValidation = read("src/lib/yjs-validation.ts");
   assert.match(yjsValidation, /class BoundedUpdateDecoderV1 extends Y\.UpdateDecoderV1/);
-  assert.match(yjsValidation, /Y\.parseUpdateMetaV2\(update, BoundedUpdateDecoderV1\)/);
+  assert.match(yjsValidation, /class PreflightDecoderV1 extends BoundedUpdateDecoderV1/);
+  assert.match(yjsValidation, /Y\.parseUpdateMetaV2\(update, PreflightDecoderV1\)/);
+  assert.match(yjsValidation, /assertYjsDeleteSetBudget\(decoderHolder\.value\.restDecoder\)/);
   assert.ok(source.indexOf("revalidateClientPageAccess(room, client)") < validationIndex);
   assert.match(source, /const authorizedTargets = \(await Promise\.all/);
   assert.match(source, /for \(const target of authorizedTargets\) target\.socket\.sendBinary\(envelope\)/);
