@@ -221,7 +221,7 @@ test("page-version reset retry stops when authentication rotates after an ambigu
     "isCurrentAuthenticatedSessionScope",
     "skippedApiRequest",
     "t",
-    `${helperSource}\nreturn submitPageVersionResetTask;`
+    `const pageVersionResetRequestTimeoutMs = 15_000;\n${helperSource}\nreturn submitPageVersionResetTask;`
   );
   const submit = factory(
     api,
@@ -270,7 +270,7 @@ test("page-version reset is canceled if navigation changes during async request 
     "isCurrentAuthenticatedSessionScope",
     "skippedApiRequest",
     "t",
-    `${helperSource}\nreturn submitPageVersionResetTask;`
+    `const pageVersionResetRequestTimeoutMs = 15_000;\n${helperSource}\nreturn submitPageVersionResetTask;`
   );
   const submit = factory(
     api,
@@ -322,7 +322,7 @@ test("page-version reset ambiguous retry does not cross a newer navigation", asy
     "isCurrentAuthenticatedSessionScope",
     "skippedApiRequest",
     "t",
-    `${helperSource}\nreturn submitPageVersionResetTask;`
+    `const pageVersionResetRequestTimeoutMs = 15_000;\n${helperSource}\nreturn submitPageVersionResetTask;`
   );
   const submit = factory(
     api,

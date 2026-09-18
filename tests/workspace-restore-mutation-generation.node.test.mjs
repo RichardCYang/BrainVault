@@ -18,7 +18,7 @@ test("durable HTTP mutations are fenced from a workspace restore generation chan
 
   assert.match(
     auth,
-    /password_hash, vpn_block_enabled, auth_version, attachment_generation, created_at, updated_at/
+    /password_hash, vpn_block_enabled, auth_version, attachment_generation, registration_approved, created_at, updated_at/
   );
   assert.match(auth, /const workspaceGeneration = Number\(user\.attachment_generation \?\? 1\)/);
   assert.match(auth, /req\.auth = \{ authVersion, workspaceGeneration \}/);
@@ -81,7 +81,7 @@ test("live collaboration is fenced from the collaborator's workspace restore gen
   assert.match(collaborationServer, /workspaceGeneration: number/);
   assert.match(
     collaborationServer,
-    /SELECT auth_version, attachment_generation FROM users WHERE id = \?\$\{lock \? " FOR UPDATE" : ""\}/
+    /SELECT auth_version, attachment_generation, registration_approved FROM users WHERE id = \?\$\{lock \? " FOR UPDATE" : ""\}/
   );
   assert.match(collaborationServer, /currentWorkspaceGeneration !== client\.workspaceGeneration/);
   assert.match(collaborationServer, /"WORKSPACE_RESTORED"/);

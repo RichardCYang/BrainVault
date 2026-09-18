@@ -14,7 +14,7 @@ function loadSetPageMode() {
 
 function loadSyncPageModeUi() {
   const source = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
-  const start = source.indexOf("function syncPageModeUi()");
+  const start = source.indexOf("function syncPageModeUi(");
   const end = source.indexOf("function hasPendingPageEdits", start);
   assert.notEqual(start, -1, "syncPageModeUi must exist");
   assert.notEqual(end, -1, "syncPageModeUi boundary must exist");
@@ -157,10 +157,12 @@ test("entering read mode applies the materialized rendered cache before completi
 
 
 test("entering read mode rehydrates fenced code after a write-mode DOM rebuild", () => {
+  const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   const source = loadSyncPageModeUi();
+  assert.match(source, /if \(presentationHydrationChanged\)[\s\S]*schedulePageViewHydration\(\{/);
   assert.match(
-    source,
-    /requestAnimationFrame\(\(\) => \{[\s\S]*if \(isPageReadOnly\(\)\) hydrateHighlightedCodeBlocks\(elements\.pageView\);/
+    app,
+    /function schedulePageViewHydration\([\s\S]*window\.requestAnimationFrame\(\(\) => \{[\s\S]*if \(isPageReadOnly\(\)\) hydrateHighlightedCodeBlocks\(elements\.pageView\);/
   );
 });
 
