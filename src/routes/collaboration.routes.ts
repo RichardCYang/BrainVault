@@ -400,6 +400,7 @@ type CollaborationUpdateRow = {
   id: number | bigint;
   user_id: string;
   update_data: Buffer;
+  update_hash: string;
 };
 
 type CollaborationHistoryStatsRow = {
@@ -1569,7 +1570,7 @@ collaborationRouter.put(
         }
 
         const updateRows = await client.query<CollaborationUpdateRow>(
-          `SELECT id, update_data, user_id
+          `SELECT id, update_data, user_id, SHA2(update_data, 256) AS update_hash
            FROM page_yjs_updates
            WHERE page_id = ?
            ORDER BY id ASC
@@ -1658,9 +1659,15 @@ collaborationRouter.put(
           // Locking metadata reads see current rows even if an earlier auth
           // read established a REPEATABLE READ snapshot before the page lock.
           // Do not fetch or decode the BLOB history a second time under locks.
-          // One extra row is enough to detect growth without an unbounded read.
-          const currentHistory = await client.query<{ id: number; update_bytes: number }>(
-            `SELECT id, OCTET_LENGTH(update_data) AS update_bytes
+          // Hash the bounded payloads in SQL so a same-id, same-length compaction
+          // cannot make a stale worker replay look current. One extra row detects growth.
+          const currentHistory = await client.query<{
+            id: number;
+            update_bytes: number;
+            update_hash: string;
+          }>(
+            `SELECT id, OCTET_LENGTH(update_data) AS update_bytes,
+                    SHA2(update_data, 256) AS update_hash
              FROM page_yjs_updates
              WHERE page_id = ? ORDER BY id ASC LIMIT ? FOR UPDATE`,
             [pageId, updateRows.length + 1]
@@ -1673,6 +1680,7 @@ collaborationRouter.put(
             || currentHistory.some((row, index) =>
               Number(row.id) !== Number(updateRows[index].id)
               || Number(row.update_bytes) !== updateRows[index].update_data.length
+              || row.update_hash !== updateRows[index].update_hash
             )
           ) {
             throw new ApiError(

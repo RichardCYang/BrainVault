@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
@@ -38,7 +39,12 @@ function setup({ duringReplay, beforeRequest, workerError } = {}) {
     transactionId: 0, activeTransaction: false, workerCalls: 0, blobReads: 0,
     authChecks: 0, lockedAccessChecks: 0, writes: [], trace: []
   };
-  const cloneHistory = () => state.history.map((row) => ({ ...row, update_data: Buffer.from(row.update_data) }));
+  const hashUpdate = (updateData) => createHash("sha256").update(updateData).digest("hex");
+  const cloneHistory = () => state.history.map((row) => ({
+    ...row,
+    update_data: Buffer.from(row.update_data),
+    update_hash: hashUpdate(row.update_data)
+  }));
   const locked = () => assert.equal(state.activeTransaction, true);
   const client = {
     async queryOne(sql) {
@@ -61,7 +67,9 @@ function setup({ duringReplay, beforeRequest, workerError } = {}) {
       if (sql.includes("OCTET_LENGTH(update_data) AS update_bytes")) {
         assert.ok(sql.includes("LIMIT ? FOR UPDATE"));
         return state.history.slice(0, params[1]).map((row) => ({
-          id: row.id, update_bytes: row.update_data.length
+          id: row.id,
+          update_bytes: row.update_data.length,
+          update_hash: hashUpdate(row.update_data)
         }));
       }
       if (sql.startsWith("SELECT * FROM blocks")) return [];
@@ -211,6 +219,7 @@ const races = [
   ["document replacement", (s) => { s.checkpoint.document_epoch = "replacement"; }, "COLLABORATION_LINEAGE_CHANGED"],
   ["new durable update", (s) => { s.history.push({ id: 8, user_id: "owner", update_data: Buffer.from([0, 0]) }); }, "COLLABORATION_SNAPSHOT_STALE"],
   ["history compaction", (s) => { s.history[0].update_data = Buffer.from([0, 0, 0]); }, "COLLABORATION_SNAPSHOT_STALE"],
+  ["same-length history replacement", (s) => { s.history[0].update_data = Buffer.from([0, 1]); }, "COLLABORATION_SNAPSHOT_STALE"],
   ["page edits", (s) => { s.page.edit_version += 1; }, "COLLABORATION_MATERIALIZATION_CONFLICT"],
   ["content edits", (s) => { s.page.content_version += 1; }, "COLLABORATION_MATERIALIZATION_CONFLICT"],
   ["newer materialization schema", (s) => { s.checkpoint.materialization_version = 3; }, "COLLABORATION_MATERIALIZATION_VERSION_UNSUPPORTED"],
