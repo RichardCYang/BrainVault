@@ -1567,6 +1567,7 @@ pageRouter.get("/:pageId/cover", validate({ params: idParamSchema }), async (req
     res.setHeader("Content-Type", mimeType);
     res.setHeader("Content-Length", String(bytes.length));
     res.setHeader("Content-Disposition", "inline");
+    res.setHeader("X-Content-Type-Options", "nosniff");
     res.end(bytes);
   } catch (error) {
     next(error);

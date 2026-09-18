@@ -468,6 +468,13 @@ authRouter.get("/navigation-preferences", requireAuth, async (req, res, next) =>
            ) OR EXISTS (
              SELECT 1 FROM page_shares ps
              WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+              AND NOT EXISTS (
+                SELECT 1 FROM page_collection_memberships override_pcm
+                INNER JOIN collection_shares override_cs
+                  ON override_cs.collection_id = override_pcm.collection_id
+                 AND override_cs.user_id = ps.user_id
+                WHERE override_pcm.page_id = p.id
+              )
            ))
          ORDER BY np.page_id`,
         [currentUser.id, currentUser.id, currentUser.id, currentUser.id]
@@ -484,6 +491,13 @@ authRouter.get("/navigation-preferences", requireAuth, async (req, res, next) =>
            ) OR EXISTS (
              SELECT 1 FROM page_shares ps
              WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+              AND NOT EXISTS (
+                SELECT 1 FROM page_collection_memberships override_pcm
+                INNER JOIN collection_shares override_cs
+                  ON override_cs.collection_id = override_pcm.collection_id
+                 AND override_cs.user_id = ps.user_id
+                WHERE override_pcm.page_id = p.id
+              )
            ))
          ORDER BY no.sort_order ASC, no.page_id ASC`,
         [currentUser.id, currentUser.id, currentUser.id, currentUser.id]
@@ -530,6 +544,13 @@ authRouter.patch(
            ) OR EXISTS (
              SELECT 1 FROM page_shares ps
              WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+              AND NOT EXISTS (
+                SELECT 1 FROM page_collection_memberships override_pcm
+                INNER JOIN collection_shares override_cs
+                  ON override_cs.collection_id = override_pcm.collection_id
+                 AND override_cs.user_id = ps.user_id
+                WHERE override_pcm.page_id = p.id
+              )
            ))
            LIMIT 1`,
           [pageId, currentUser.id, currentUser.id, currentUser.id]
@@ -595,6 +616,13 @@ authRouter.patch(
              ) OR EXISTS (
                SELECT 1 FROM page_shares ps
                WHERE ps.page_id = p.id AND ps.user_id = ? AND ps.permission = 'EDIT'
+              AND NOT EXISTS (
+                SELECT 1 FROM page_collection_memberships override_pcm
+                INNER JOIN collection_shares override_cs
+                  ON override_cs.collection_id = override_pcm.collection_id
+                 AND override_cs.user_id = ps.user_id
+                WHERE override_pcm.page_id = p.id
+              )
              ))`,
           [...pageIds, currentUser.id, currentUser.id, currentUser.id]
         );

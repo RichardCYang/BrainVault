@@ -158,7 +158,7 @@ async function authenticateRequest(
     const payload = verifyAuthToken(token);
     const user = await db.queryOne<UserRow>(
       `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon, theme, country_login_mode,
-              password_hash, vpn_block_enabled, auth_version, attachment_generation, created_at, updated_at
+              password_hash, vpn_block_enabled, auth_version, attachment_generation, registration_approved, created_at, updated_at
        FROM users WHERE id = ?`,
       [payload.sub]
     );
@@ -166,6 +166,12 @@ async function authenticateRequest(
     if (!user) {
       if (source === "cookie") clearAuthSessionCookie(res);
       next(new ApiError(401, "UNAUTHENTICATED", "User no longer exists"));
+      return;
+    }
+
+    if (Number(user.registration_approved ?? 1) !== 1) {
+      if (source === "cookie") clearAuthSessionCookie(res);
+      next(new ApiError(403, "ACCOUNT_NOT_APPROVED", "This account is not approved for access"));
       return;
     }
 

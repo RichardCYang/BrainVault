@@ -563,8 +563,8 @@ export async function createMfaLoginSession(
   const carryCutoff = new Date(Date.now() - mfaFailureCarryWindowMs);
 
   await transaction(async (client) => {
-    const user = await client.queryOne<{ id: string; auth_version: number }>(
-      "SELECT id, auth_version FROM users WHERE id = ? FOR UPDATE",
+    const user = await client.queryOne<{ id: string; auth_version: number; registration_approved?: number | boolean | string }>(
+      "SELECT id, auth_version, registration_approved FROM users WHERE id = ? FOR UPDATE",
       [userId]
     );
     if (
@@ -572,6 +572,7 @@ export async function createMfaLoginSession(
       || !Number.isSafeInteger(expectedAuthVersion)
       || expectedAuthVersion < 1
       || normalizeAuthVersion(user.auth_version) !== expectedAuthVersion
+      || Number(user.registration_approved ?? 1) !== 1
     ) {
       throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid ID or password");
     }
@@ -762,6 +763,9 @@ async function consumeChallenge(
 async function getLoginUserForUpdate(client: DbClient, userId: string) {
   const user = await client.queryOne<UserRow>("SELECT * FROM users WHERE id = ? FOR UPDATE", [userId]);
   if (!user) throw new ApiError(401, "UNAUTHENTICATED", "User no longer exists");
+  if (Number(user.registration_approved ?? 1) !== 1) {
+    throw new ApiError(403, "ACCOUNT_NOT_APPROVED", "This account is not approved for access");
+  }
   return user;
 }
 

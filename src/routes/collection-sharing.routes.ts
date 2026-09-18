@@ -127,6 +127,36 @@ async function getManageableCollection(
   return access;
 }
 
+const collectionSharePermissionRank: Record<CollectionSharePermission, number> = { READ: 0, WRITE: 1, ADMIN: 2 };
+
+function collectionContainsArchivedContent(collection: PageRow, pages: readonly PageRow[]) {
+  return Boolean(collection.is_archived) || pages.some((page) => Boolean(page.is_archived));
+}
+
+function assertArchivedCollectionShareCreationAllowed(collection: PageRow, pages: readonly PageRow[]) {
+  if (!collectionContainsArchivedContent(collection, pages)) return;
+  throw new ApiError(
+    400,
+    "ARCHIVED_COLLECTION_SHARING_UNSUPPORTED",
+    "Restore archived collection content before sharing it"
+  );
+}
+
+function assertArchivedCollectionPermissionChangeAllowed(
+  collection: PageRow,
+  pages: readonly PageRow[],
+  currentPermission: CollectionSharePermission,
+  requestedPermission: CollectionSharePermission
+) {
+  if (!collectionContainsArchivedContent(collection, pages)) return;
+  if (collectionSharePermissionRank[requestedPermission] <= collectionSharePermissionRank[currentPermission]) return;
+  throw new ApiError(
+    400,
+    "ARCHIVED_COLLECTION_SHARING_UNSUPPORTED",
+    "Restore archived collection content before increasing shared access"
+  );
+}
+
 type CollectionManagementAdmission = Readonly<{
   ownerId: string;
   ownerWorkspaceGeneration: number;
@@ -557,6 +587,7 @@ collectionSharingRouter.post(
         assertCollectionManagementAdmission(managementAdmission, collectionAccess);
         const ownerId = collectionAccess.page.owner_id;
         const pages = await lockCollectionDocumentPages(collectionId, client);
+        assertArchivedCollectionShareCreationAllowed(collectionAccess.page, pages);
         const target = await client.queryOne<UserRow>(
           `SELECT u.* FROM users u
            WHERE u.id = ? AND u.username = ? AND u.id <> ?
@@ -706,6 +737,7 @@ collectionSharingRouter.patch(
             "The collection grant changed in another session. Refresh before updating it."
           );
         }
+        assertArchivedCollectionPermissionChangeAllowed(collectionAccess.page, pages, existing.permission, permission);
         if (sharedUserId === actor.id && actor.id !== ownerId) {
           throw new ApiError(
             403,

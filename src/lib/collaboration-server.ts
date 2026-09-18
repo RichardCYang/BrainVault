@@ -152,12 +152,16 @@ async function assertCurrentCollaborationAuthentication(
   const user = await dbClient.queryOne<{
     auth_version?: number;
     attachment_generation?: number | bigint | string;
+    registration_approved?: number | boolean | string;
   }>(
-    `SELECT auth_version, attachment_generation FROM users WHERE id = ?${lock ? " FOR UPDATE" : ""}`,
+    `SELECT auth_version, attachment_generation, registration_approved FROM users WHERE id = ?${lock ? " FOR UPDATE" : ""}`,
     [client.user.id]
   );
   if (!user || Number(user.auth_version ?? 1) !== client.authVersion) {
     throw new ApiError(401, "SESSION_REVOKED", "Authentication session was revoked");
+  }
+  if (Number(user.registration_approved ?? 1) !== 1) {
+    throw new ApiError(403, "ACCOUNT_NOT_APPROVED", "This account is not approved for access");
   }
   const currentWorkspaceGeneration = Number(user.attachment_generation ?? 1);
   if (!Number.isSafeInteger(currentWorkspaceGeneration) || currentWorkspaceGeneration < 1) {
@@ -590,11 +594,6 @@ export class PageCollaborationHub {
       rejectWebSocketUpgrade(socket, 400, "A valid client network address is required");
       return;
     }
-    if (!this.consumeUnauthenticatedUpgradeBudget(sourceIp)) {
-      rejectWebSocketUpgrade(socket, 429, "Too many collaboration upgrade attempts");
-      return;
-    }
-
     const pageId = parsePageId(request);
     if (!pageId) {
       rejectWebSocketUpgrade(socket, 404, "WebSocket endpoint not found");
@@ -639,6 +638,14 @@ export class PageCollaborationHub {
       return;
     }
     const authSessionId = resolveAuthSessionId(authSessionToken, authPayload);
+    // Charge the coarse upgrade budget only after cryptographic browser-session
+    // binding. This prevents unauthenticated junk traffic from exhausting a
+    // shared NAT/IP budget before legitimate users reach authenticated limits.
+    const upgradeBudgetKey = `${sourceIp}\0${payload.sub}`;
+    if (!this.consumeUnauthenticatedUpgradeBudget(upgradeBudgetKey)) {
+      rejectWebSocketUpgrade(socket, 429, "Too many collaboration upgrade attempts");
+      return;
+    }
     if (!this.reserveUpgrade(payload.sub, pageId, sourceIp)) {
       this.rejectConnectionLimit(socket);
       return;
@@ -661,10 +668,11 @@ export class PageCollaborationHub {
       const user = await db.queryOne<CollaborationProfile & {
         auth_version?: number;
         attachment_generation?: number | bigint | string;
+        registration_approved?: number | boolean | string;
         country_login_mode?: UserRow["country_login_mode"];
         vpn_block_enabled?: UserRow["vpn_block_enabled"];
       }>(
-        "SELECT id, username, name, avatar_data, auth_version, attachment_generation, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
+        "SELECT id, username, name, avatar_data, auth_version, attachment_generation, registration_approved, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
         [payload.sub]
       );
       if (!user) {
@@ -674,6 +682,10 @@ export class PageCollaborationHub {
       const currentAuthVersion = Number(user.auth_version ?? 1);
       if (!Number.isSafeInteger(currentAuthVersion) || currentAuthVersion < 1 || currentAuthVersion !== payload.authVersion) {
         rejectWebSocketUpgrade(socket, 401, "Authentication session was revoked");
+        return;
+      }
+      if (Number(user.registration_approved ?? 1) !== 1) {
+        rejectWebSocketUpgrade(socket, 403, "Account is not approved for access");
         return;
       }
       const currentWorkspaceGeneration = Number(user.attachment_generation ?? 1);
@@ -780,14 +792,19 @@ export class PageCollaborationHub {
         const currentUser = await db.queryOne<{
           auth_version?: number;
           attachment_generation?: number | bigint | string;
+          registration_approved?: number | boolean | string;
           country_login_mode?: UserRow["country_login_mode"];
           vpn_block_enabled?: UserRow["vpn_block_enabled"];
         }>(
-          "SELECT auth_version, attachment_generation, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
+          "SELECT auth_version, attachment_generation, registration_approved, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
           [payload.sub]
         );
         if (!currentUser || Number(currentUser.auth_version ?? 1) !== payload.authVersion) {
           connection.close(4003, "Authentication session was revoked");
+          return;
+        }
+        if (Number(currentUser.registration_approved ?? 1) !== 1) {
+          connection.close(4003, "Account is not approved for access");
           return;
         }
         if (Number(currentUser.attachment_generation ?? 1) !== payload.workspaceGeneration) {
@@ -1264,14 +1281,18 @@ export class PageCollaborationHub {
         const currentUser = await db.queryOne<{
           auth_version?: number;
           attachment_generation?: number | bigint | string;
+          registration_approved?: number | boolean | string;
           country_login_mode?: UserRow["country_login_mode"];
           vpn_block_enabled?: UserRow["vpn_block_enabled"];
         }>(
-          "SELECT auth_version, attachment_generation, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
+          "SELECT auth_version, attachment_generation, registration_approved, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
           [client.user.id]
         );
         if (!currentUser || Number(currentUser.auth_version ?? 1) !== client.authVersion) {
           throw new ApiError(401, "SESSION_REVOKED", "Authentication session was revoked");
+        }
+        if (Number(currentUser.registration_approved ?? 1) !== 1) {
+          throw new ApiError(403, "ACCOUNT_NOT_APPROVED", "This account is not approved for access");
         }
         const currentWorkspaceGeneration = Number(currentUser.attachment_generation ?? 1);
         if (!Number.isSafeInteger(currentWorkspaceGeneration) || currentWorkspaceGeneration < 1) {
@@ -1919,14 +1940,19 @@ export class PageCollaborationHub {
               const currentUser = await db.queryOne<{
                 auth_version?: number;
                 attachment_generation?: number | bigint | string;
+                registration_approved?: number | boolean | string;
                 country_login_mode?: UserRow["country_login_mode"];
                 vpn_block_enabled?: UserRow["vpn_block_enabled"];
               }>(
-                "SELECT auth_version, attachment_generation, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
+                "SELECT auth_version, attachment_generation, registration_approved, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
                 [client.user.id]
               );
               if (!currentUser || Number(currentUser.auth_version ?? 1) !== client.authVersion) {
                 client.socket.close(4003, "Authentication session was revoked");
+                return;
+              }
+              if (Number(currentUser.registration_approved ?? 1) !== 1) {
+                client.socket.close(4003, "Account is not approved for access");
                 return;
               }
               if (Number(currentUser.attachment_generation ?? 1) !== client.workspaceGeneration) {

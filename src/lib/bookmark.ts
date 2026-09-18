@@ -143,6 +143,21 @@ export function normalizeBookmarkUrl(value: unknown, baseUrl?: string | URL) {
   }
 }
 
+function normalizeBookmarkFallbackUrl(value: unknown) {
+  const raw = normalizeText(value, bookmarkLimits.urlLength);
+  if (!raw) return "";
+
+  try {
+    const url = new URL(raw);
+    if (!(["http:", "https:"] as string[]).includes(url.protocol)) return "";
+    if (url.username || url.password) return "";
+    url.hash = "";
+    return url.toString().slice(0, bookmarkLimits.urlLength);
+  } catch {
+    return "";
+  }
+}
+
 type BookmarkPreviewTokenFields = Pick<BookmarkItem, "url" | "title" | "description" | "imageUrl" | "faviconUrl" | "siteName">;
 
 function normalizeBookmarkPreviewToken(value: unknown) {
@@ -1316,17 +1331,18 @@ export function createFallbackBookmarkPreview(
   value: string,
   { includeFavicon = true }: { includeFavicon?: boolean } = {}
 ): BookmarkPreview {
-  const url = normalizeBookmarkUrl(value);
+  const url = normalizeBookmarkFallbackUrl(value);
   if (!url) {
     throw new ApiError(400, "BOOKMARK_URL_INVALID", "Enter a valid HTTP or HTTPS URL");
   }
   const parsedUrl = new URL(url);
+  const allowFavicon = includeFavicon && !isPrivateOrLocalHostname(parsedUrl.hostname);
   return {
     url,
     title: parsedUrl.hostname,
     description: "",
     imageUrl: "",
-    faviconUrl: includeFavicon ? new URL("/favicon.ico", url).toString() : "",
+    faviconUrl: allowFavicon ? new URL("/favicon.ico", url).toString() : "",
     siteName: parsedUrl.hostname,
     verified: false,
     previewToken: ""
@@ -1337,8 +1353,13 @@ export async function fetchBookmarkPreviewWithFallback(value: string): Promise<B
   try {
     return { preview: await fetchBookmarkPreview(value) };
   } catch (error) {
-    if (error instanceof ApiError && recoverableBookmarkPreviewCodes.has(error.code)) {
-      const blockedTarget = error.code === "BOOKMARK_URL_BLOCKED" || error.code === "BOOKMARK_PORT_BLOCKED";
+    const fallbackUrl = normalizeBookmarkFallbackUrl(value);
+    const blockedLiteral = error instanceof ApiError
+      && error.code === "BOOKMARK_URL_INVALID"
+      && fallbackUrl !== ""
+      && isPrivateOrLocalHostname(new URL(fallbackUrl).hostname);
+    if (error instanceof ApiError && (recoverableBookmarkPreviewCodes.has(error.code) || blockedLiteral)) {
+      const blockedTarget = blockedLiteral || error.code === "BOOKMARK_URL_BLOCKED" || error.code === "BOOKMARK_PORT_BLOCKED";
       return {
         preview: createFallbackBookmarkPreview(value, { includeFavicon: false }),
         warning: { code: blockedTarget ? "BOOKMARK_FETCH_FAILED" : error.code }

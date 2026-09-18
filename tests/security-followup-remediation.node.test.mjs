@@ -285,6 +285,11 @@ test("report follow-up hardening closes client HTML, bookmark, WebSocket, passke
   const browserSanitizer = read("public/rendered-html-sanitizer.js");
   const collaborationServer = read("src/lib/collaboration-server.ts");
   const websocket = read("src/lib/websocket.ts");
+  const authMiddleware = read("src/middleware/auth.ts");
+  const authRoutes = read("src/routes/auth.routes.ts");
+  const collectionSharing = read("src/routes/collection-sharing.routes.ts");
+  const pageRoutes = read("src/routes/page.routes.ts");
+  const bookmarkServer = read("src/lib/bookmark.ts");
   const passkeyLogin = read("src/routes/passkey-login.routes.ts");
   const mfaRoutes = read("src/routes/mfa.routes.ts");
   const transfer = read("src/lib/data-transfer.ts");
@@ -302,10 +307,27 @@ test("report follow-up hardening closes client HTML, bookmark, WebSocket, passke
   assert.match(appClient, /\["100\.64\.0\.0", 10\]/);
   assert.match(appClient, /normalized\.endsWith\("\.internal"\)/);
 
-  assert.match(collaborationServer, /consumeUnauthenticatedUpgradeBudget\(sourceIp\)/);
+  const sessionBindingIndex = collaborationServer.indexOf("createCollaborationSessionBinding(authSessionToken)");
+  const upgradeBudgetIndex = collaborationServer.indexOf("const upgradeBudgetKey =");
+  assert.ok(sessionBindingIndex >= 0 && upgradeBudgetIndex > sessionBindingIndex);
+  assert.match(collaborationServer, /consumeUnauthenticatedUpgradeBudget\(upgradeBudgetKey\)/);
   assert.match(collaborationServer, /Too many collaboration upgrade attempts/);
   assert.match(collaborationServer, /ipConnections: this\.ipConnectionCounts\.get\(sourceIp\)/);
   assert.match(websocket, /const maxQueuedExtraBytes = 256 \* 1024/);
+
+  assert.match(authMiddleware, /registration_approved/);
+  assert.match(authMiddleware, /ACCOUNT_NOT_APPROVED/);
+  assert.match(passkeyLogin, /registration_approved/);
+  assert.match(mfaRoutes, /registration_approved/);
+  assert.ok((collaborationServer.match(/registration_approved/g) ?? []).length >= 8);
+
+  assert.match(collectionSharing, /collectionContainsArchivedContent/);
+  assert.match(collectionSharing, /assertArchivedCollectionShareCreationAllowed\(collectionAccess\.page, pages\)/);
+  assert.match(collectionSharing, /assertArchivedCollectionPermissionChangeAllowed\(collectionAccess\.page, pages, existing\.permission, permission\)/);
+  assert.equal((authRoutes.match(/INNER JOIN collection_shares override_cs/g) ?? []).length, 4);
+  assert.match(pageRoutes, /X-Content-Type-Options", "nosniff"/);
+  assert.match(bookmarkServer, /function normalizeBookmarkFallbackUrl/);
+  assert.match(bookmarkServer, /const blockedLiteral = error instanceof ApiError/);
 
   const verifiedIndex = passkeyLogin.indexOf("if (!verification.verified) throw loginFailure();");
   const attributionIndex = passkeyLogin.indexOf("knownUserId = passkey.user_id;");

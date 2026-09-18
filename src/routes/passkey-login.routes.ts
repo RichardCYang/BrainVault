@@ -424,7 +424,7 @@ passkeyLoginRouter.post(
           "SELECT * FROM users WHERE id = ? FOR UPDATE",
           [passkey.user_id]
         );
-        if (!user) throw loginFailure();
+        if (!user || Number(user.registration_approved ?? 1) !== 1) throw loginFailure();
 
         const currentPasskey = assertStablePasskey(
           await client.queryOne<PasskeyRow>(
