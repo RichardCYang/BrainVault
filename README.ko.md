@@ -1,4 +1,4 @@
-[English](README.md) | **한국어**
+[English](README.md) | **한국어** | [日本語](README.ja.md)
 
 # BrainVault — 셀프호스팅 블록 기반 노트 웹앱
 
