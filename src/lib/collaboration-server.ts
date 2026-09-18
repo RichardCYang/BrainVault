@@ -1,6 +1,7 @@
 import type { IncomingMessage, Server as HttpServer } from "node:http";
 import type { Server as HttpsServer } from "node:https";
 import type { Socket } from "node:net";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { createId } from "./id.js";
 import { CollaborationMemoryBudget, type CollaborationMemoryReservation } from "./collaboration-memory-budget.js";
@@ -215,6 +216,7 @@ type Room = {
   historyBytes: number;
   stateUpdate: Buffer;
   maxUpdateId: number;
+  maxUpdateHash: string | null;
   loaded: boolean;
   loadFailed: boolean;
   invalidated: boolean;
@@ -774,12 +776,20 @@ export class PageCollaborationHub {
       ) return;
 
       if (room.requiresDurableRecheck) {
-        const cursor = await db.queryOne<{ max_update_id: number | bigint | string | null }>(
-          "SELECT COALESCE(MAX(id), 0) AS max_update_id FROM page_yjs_updates WHERE page_id = ?",
+        const cursor = await db.queryOne<{
+          max_update_id: number | bigint | string | null;
+          update_hash: string | null;
+        }>(
+          `SELECT id AS max_update_id, SHA2(update_data, 256) AS update_hash
+           FROM page_yjs_updates
+           WHERE page_id = ?
+           ORDER BY id DESC
+           LIMIT 1`,
           [pageId]
         );
         const durableUpdateId = toSafeUpdateId(cursor?.max_update_id ?? 0);
-        if (durableUpdateId !== room.maxUpdateId) {
+        const durableUpdateHash = cursor?.update_hash ?? null;
+        if (durableUpdateId !== room.maxUpdateId || durableUpdateHash !== room.maxUpdateHash) {
           this.invalidateRoomForReload(
             room,
             "Collaboration state changed while the room was idle; reloading durable history"
@@ -955,6 +965,7 @@ export class PageCollaborationHub {
       historyBytes: 0,
       stateUpdate: Buffer.alloc(0),
       maxUpdateId: 0,
+      maxUpdateHash: null,
       loaded: false,
       loadFailed: false,
       invalidated: false,
@@ -1080,7 +1091,8 @@ export class PageCollaborationHub {
               history: historyMetadata,
               historyBytes: snapshot.historyBytes,
               stateUpdate,
-              maxUpdateId: snapshot.maxUpdateId
+              maxUpdateId: snapshot.maxUpdateId,
+              maxUpdateHash: snapshot.history.at(-1)?.update_hash ?? null
             };
           }
 
@@ -1111,7 +1123,8 @@ export class PageCollaborationHub {
             history: [{ id: updateId, is_snapshot: 1 as const }],
             historyBytes: stateUpdate.length,
             stateUpdate,
-            maxUpdateId: updateId
+            maxUpdateId: updateId,
+            maxUpdateHash: createHash("sha256").update(stateUpdate).digest("hex")
           };
         });
 
@@ -1129,6 +1142,7 @@ export class PageCollaborationHub {
       room.historyBytes = loaded.historyBytes;
       room.stateUpdate = loaded.stateUpdate;
       room.maxUpdateId = loaded.maxUpdateId;
+      room.maxUpdateHash = loaded.maxUpdateHash;
       room.loaded = true;
     }).catch((error) => {
       room.loadFailed = true;
@@ -1520,6 +1534,7 @@ export class PageCollaborationHub {
       nextUpdateBytes: canonicalIncrementalUpdate.length
     });
     const persistedUpdate = durableSnapshot ? Buffer.from(validation.stateUpdate) : canonicalIncrementalUpdate;
+    const persistedUpdateHash = createHash("sha256").update(persistedUpdate).digest("hex");
 
     // Reserve the durable write lease only after bounded worker validation and
     // no-op filtering. Destructive owner operations can therefore win during
@@ -1547,7 +1562,7 @@ export class PageCollaborationHub {
     };
 
     let result:
-      | { accepted: true; updateId: number }
+      | { accepted: true; updateId: number; updateHash: string }
       | {
           accepted: false;
           currentUpdateId: number;
@@ -1578,14 +1593,25 @@ export class PageCollaborationHub {
         const collaborationState = await getCollaborationState(room.pageId, dbClient, { lock: true });
         assertCollaborationDocumentEpoch(collaborationState, client.documentEpoch);
 
-        const currentRow = await dbClient.queryOne<{ max_update_id: number | null }>(
-          "SELECT MAX(id) AS max_update_id FROM page_yjs_updates WHERE page_id = ?",
+        const currentRow = await dbClient.queryOne<{
+          max_update_id: number | null;
+          update_hash: string | null;
+        }>(
+          `SELECT id AS max_update_id, SHA2(update_data, 256) AS update_hash
+           FROM page_yjs_updates
+           WHERE page_id = ?
+           ORDER BY id DESC
+           LIMIT 1
+           FOR UPDATE`,
           [room.pageId]
         );
         const currentUpdateId = toSafeUpdateId(currentRow?.max_update_id ?? 0);
+        const currentUpdateHash = currentRow?.update_hash ?? null;
         const checkpoint = assessCollaborationWriteCheckpoint({
           durableUpdateId: currentUpdateId,
+          durableUpdateHash: currentUpdateHash,
           roomUpdateId: room.maxUpdateId,
+          roomUpdateHash: room.maxUpdateHash,
           snapshot,
           snapshotBaseUpdateId: baseUpdateId
         });
@@ -1635,7 +1661,7 @@ export class PageCollaborationHub {
         if (durableSnapshot) {
           await dbClient.execute("DELETE FROM page_yjs_updates WHERE page_id = ? AND id < ?", [room.pageId, updateId]);
         }
-        return { accepted: true as const, updateId };
+        return { accepted: true as const, updateId, updateHash: persistedUpdateHash };
       }).catch((error) => {
         if (error instanceof ApiError && error.code === "COLLABORATION_LINEAGE_CHANGED") {
           this.invalidateRoomForLineageChange(room);
@@ -1696,6 +1722,7 @@ export class PageCollaborationHub {
       is_snapshot: durableSnapshot ? 1 : 0
     };
     room.maxUpdateId = result.updateId;
+    room.maxUpdateHash = result.updateHash;
     room.history = durableSnapshot ? [row] : [...room.history, row];
     room.historyBytes = durableSnapshot
       ? persistedUpdate.length

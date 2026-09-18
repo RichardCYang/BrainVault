@@ -192,8 +192,10 @@ test("password account-enumeration paths perform comparable cryptographic and da
 
   const login = routes.slice(loginStart, routes.indexOf('authRouter.post("/logout"', loginStart));
   assert.match(login, /const result = await transaction/);
+  assert.match(login, /snapshotApproved \? snapshotHash! : await dummyPasswordHash/);
+  assert.match(login, /SELECT \* FROM users WHERE username = \? FOR UPDATE/);
+  assert.match(login, /lockedUser!\.password_hash === snapshotHash/);
   assert.match(login, /approved \? lockedUser!\.id : syntheticLoginUserId/);
-  assert.match(login, /approved \? lockedUser!\.password_hash : await dummyPasswordHash/);
   assert.match(login, /evaluatePasswordLogin\(client, workingUserId, approved && passwordMatches\)/);
   assert.match(login, /evaluatePasswordLogin\(client, workingUserId/);
   assert.match(login, /recordLoginAttempt\(workingUserId/);
@@ -232,7 +234,11 @@ test("data-transfer temp cleanup and collaboration lifecycle defenses are active
   assert.match(collaboration, /const idleRoomTtlMs = 30_000/);
   assert.match(collaboration, /idleRemovalTimer/);
   assert.match(collaboration, /requiresDurableRecheck/);
-  assert.match(collaboration, /SELECT COALESCE\(MAX\(id\), 0\) AS max_update_id FROM page_yjs_updates/);
+  assert.match(
+    collaboration,
+    /SELECT id AS max_update_id, SHA2\(update_data, 256\) AS update_hash[\s\S]*ORDER BY id DESC[\s\S]*LIMIT 1/
+  );
+  assert.match(collaboration, /durableUpdateHash !== room\.maxUpdateHash/);
 });
 
 test("page sharing has dedicated account and IP abuse ceilings", () => {

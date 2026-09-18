@@ -17,22 +17,32 @@ export type CollaborationWriteCheckpoint =
 
 /**
  * A process-local room may accept a write only when its in-memory Yjs state is
- * known to include the latest durable update. This is checked while the page
+ * known to include the latest durable update. The cursor and, when supplied,
+ * the SHA-256 fingerprint identify the durable tip so an in-place compaction
+ * cannot create an ABA-style stale-room match. This is checked while the page
  * row is locked, so an overlapping application process cannot advance or
  * compact the log from a stale room.
  */
 export function assessCollaborationWriteCheckpoint({
   durableUpdateId,
+  durableUpdateHash,
   roomUpdateId,
+  roomUpdateHash,
   snapshot,
   snapshotBaseUpdateId
 }: {
   durableUpdateId: number;
+  durableUpdateHash?: string | null;
   roomUpdateId: number;
+  roomUpdateHash?: string | null;
   snapshot: boolean;
   snapshotBaseUpdateId: number | null;
 }): CollaborationWriteCheckpoint {
-  if (roomUpdateId !== durableUpdateId) {
+  const hashCheckRequested = durableUpdateHash !== undefined || roomUpdateHash !== undefined;
+  if (
+    roomUpdateId !== durableUpdateId
+    || (hashCheckRequested && roomUpdateHash !== durableUpdateHash)
+  ) {
     return {
       accepted: false,
       currentUpdateId: durableUpdateId,

@@ -22,6 +22,30 @@ describe("collaboration durable-room freshness checkpoint", () => {
     });
   });
 
+  it("rejects an ABA-style durable-tip replacement even when the row id is unchanged", () => {
+    expect(assessCollaborationWriteCheckpoint({
+      durableUpdateId: 9,
+      durableUpdateHash: "new-payload-hash",
+      roomUpdateId: 9,
+      roomUpdateHash: "old-payload-hash",
+      snapshot: false,
+      snapshotBaseUpdateId: null
+    })).toEqual({
+      accepted: false,
+      currentUpdateId: 9,
+      reason: "room-stale"
+    });
+
+    expect(assessCollaborationWriteCheckpoint({
+      durableUpdateId: 9,
+      durableUpdateHash: "same-payload-hash",
+      roomUpdateId: 9,
+      roomUpdateHash: "same-payload-hash",
+      snapshot: false,
+      snapshotBaseUpdateId: null
+    })).toEqual({ accepted: true });
+  });
+
   it("rejects a stale room before considering a client snapshot checkpoint", () => {
     expect(assessCollaborationWriteCheckpoint({
       durableUpdateId: 12,
