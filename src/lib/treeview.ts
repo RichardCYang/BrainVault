@@ -176,7 +176,38 @@ function renderTreeBranch(childrenByParentId: Map<string | null, TreeViewNode[]>
   return `<ul class="rendered-treeview-branch">${items}</ul>`;
 }
 
-function getNodePath(byId: Map<string, TreeViewNode>, node: TreeViewNode) {
+function getNodePath(byId: Map<string, TreeViewNode>, node: TreeViewNode, pathsById: Map<string, string> | null) {
+  if (pathsById) {
+    const cached = pathsById.get(node.id);
+    if (cached !== undefined) return cached;
+    const pending: TreeViewNode[] = [];
+    const seen = new Set<string>();
+    let current: TreeViewNode | undefined = node;
+    let prefix = "";
+    while (current) {
+      const cachedPath = pathsById.get(current.id);
+      if (cachedPath !== undefined) {
+        prefix = cachedPath;
+        break;
+      }
+      // Normalization already removes cycles. Retain a defensive guard without
+      // caching a partial cyclic path, whose meaning depends on its start node.
+      if (seen.has(current.id)) {
+        return pending.map((item) => item.title || "Untitled item").reverse().join(" / ");
+      }
+      seen.add(current.id);
+      pending.push(current);
+      current = current.parentId ? byId.get(current.parentId) : undefined;
+    }
+    for (let index = pending.length - 1; index >= 0; index -= 1) {
+      const item = pending[index]!;
+      const label = item.title || "Untitled item";
+      prefix = prefix ? `${prefix} / ${label}` : label;
+      pathsById.set(item.id, prefix);
+    }
+    return prefix;
+  }
+
   const labels = [node.title || "Untitled item"];
   const seen = new Set([node.id]);
   let parent = node.parentId ? byId.get(node.parentId) : undefined;
@@ -219,8 +250,11 @@ export function renderTreeViewHtml(metadata: unknown) {
   const memoNodes = data.nodes.filter((node) => node.note.trim());
   // Only memo paths need ID lookup; construct it once, not once per memo.
   const byId = new Map(memoNodes.length ? data.nodes.map((node) => [node.id, node] as const) : []);
+  // Reuse shared ancestor paths only within this immutable render snapshot.
+  // A single memo or flat outline has nothing to share; keep its uncached path.
+  const pathsById = memoNodes.length > 1 && memoNodes.some((node) => node.parentId) ? new Map<string, string>() : null;
   const notes = memoNodes
-    .map((node) => `<article class="rendered-treeview-note"><header><strong>${escapeHtml(node.title || "Untitled item")}</strong><small>${escapeHtml(getNodePath(byId, node))}</small></header><div>${noteHtml(node.note)}</div></article>`)
+    .map((node) => `<article class="rendered-treeview-note"><header><strong>${escapeHtml(node.title || "Untitled item")}</strong><small>${escapeHtml(getNodePath(byId, node, pathsById))}</small></header><div>${noteHtml(node.note)}</div></article>`)
     .join("") || '<div class="rendered-treeview-empty-note">No item memos yet.</div>';
 
   return `<section class="rendered-treeview"><header><h3>${escapeHtml(data.title || "Tree view")}</h3><span>Tree view · ${data.nodes.length} items</span></header><div class="rendered-treeview-layout"><div class="rendered-treeview-tree"><strong>Structure</strong>${tree}</div><div class="rendered-treeview-notes"><strong>Memos</strong>${notes}</div></div></section>`;

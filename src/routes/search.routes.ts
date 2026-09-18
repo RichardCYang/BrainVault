@@ -35,8 +35,8 @@ searchRouter.get("/", validate({ query: searchQuerySchema }), async (req, res, n
     // delete/recreate stable page IDs; separate autocommit reads could otherwise
     // assemble one search response from different workspace generations.
     const { pages, blocks } = await transaction(async (client) => {
-      const pages = await client.query<PageRow>(
-        `SELECT p.* FROM pages p
+      const pages = await client.query<Pick<PageRow, "id" | "title" | "icon" | "updated_at">>(
+        `SELECT p.id, p.title, p.icon, p.updated_at FROM pages p
          WHERE (p.owner_id = ? OR EXISTS (
            SELECT 1 FROM collection_shares cs
            INNER JOIN page_collection_memberships pcm ON pcm.collection_id = cs.collection_id
@@ -55,8 +55,9 @@ searchRouter.get("/", validate({ query: searchQuerySchema }), async (req, res, n
         [user.id, user.id, user.id, user.id, search, query.limit]
       );
 
-      const blocks = await client.query<BlockRow & { page_title: string; page_icon: string | null }>(
-        `SELECT b.*, p.title AS page_title, p.icon AS page_icon
+      // Search only returns a markdown snippet, never full metadata/HTML caches.
+      const blocks = await client.query<Pick<BlockRow, "id" | "page_id" | "type" | "markdown" | "updated_at"> & { page_title: string; page_icon: string | null }>(
+        `SELECT b.id, b.page_id, b.type, b.markdown, b.updated_at, p.title AS page_title, p.icon AS page_icon
          FROM blocks b
          INNER JOIN pages p ON p.id = b.page_id
          WHERE (p.owner_id = ? OR EXISTS (

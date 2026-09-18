@@ -4764,7 +4764,11 @@ function handleSearchDialogKeydown(event) {
     return;
   }
 
-  const resultButtons = getSearchResultButtons();
+  const navigatesResults = event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End";
+  // Typing/IME/modifier keys do not navigate results. Tab only needs the dialog
+  // focus trap, so avoid a redundant result scan and geometry reads there too.
+  if (!navigatesResults && event.key !== "Tab") return;
+  const resultButtons = navigatesResults ? getSearchResultButtons() : [];
   if (event.key === "ArrowDown" && event.target === elements.searchInput && resultButtons.length) {
     event.preventDefault();
     resultButtons[0].focus();
