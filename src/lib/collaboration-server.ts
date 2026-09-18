@@ -91,6 +91,7 @@ const idleRoomTtlMs = 30_000;
 type YjsUpdateRow = {
   id: number;
   update_data: Buffer;
+  update_hash: string;
   is_snapshot: 0 | 1;
 };
 
@@ -1000,7 +1001,7 @@ export class PageCollaborationHub {
           }
 
           const rows = await dbClient.query<YjsUpdateRow>(
-            `SELECT id, update_data, is_snapshot
+            `SELECT id, update_data, SHA2(update_data, 256) AS update_hash, is_snapshot
              FROM page_yjs_updates
              WHERE page_id = ?
              ORDER BY id ASC`,
@@ -1045,21 +1046,30 @@ export class PageCollaborationHub {
           const collaborationState = await getCollaborationState(pageId, dbClient, { lock: true });
           assertCollaborationDocumentEpoch(collaborationState, documentEpoch);
 
-          const statsRow = await dbClient.queryOne<CollaborationHistoryStatsRow>(
-            `SELECT COUNT(*) AS history_entries,
-                    COALESCE(SUM(OCTET_LENGTH(update_data)), 0) AS history_bytes,
-                    COALESCE(MAX(id), 0) AS max_update_id
+          // Revalidate the exact durable payloads, not only aggregate metadata.
+          // A concurrent compaction can replace update_data in-place while keeping
+          // the same row id and byte length; accepting a replay from the replaced
+          // bytes would seed this process-local room with stale collaboration state.
+          const currentHistory = await dbClient.query<{
+            id: number;
+            update_bytes: number;
+            update_hash: string;
+          }>(
+            `SELECT id, OCTET_LENGTH(update_data) AS update_bytes,
+                    SHA2(update_data, 256) AS update_hash
              FROM page_yjs_updates
-             WHERE page_id = ?`,
-            [pageId]
+             WHERE page_id = ? ORDER BY id ASC LIMIT ? FOR UPDATE`,
+            [pageId, snapshot.history.length + 1]
           );
-          const currentHistoryEntries = toSafeHistoryMetric(statsRow?.history_entries, "entry count");
-          const currentHistoryBytes = toSafeHistoryMetric(statsRow?.history_bytes, "byte count");
-          const currentMaxUpdateId = toSafeUpdateId(statsRow?.max_update_id ?? 0);
+          const currentMaxUpdateId = toSafeUpdateId(currentHistory.at(-1)?.id ?? 0);
           if (
-            currentHistoryEntries !== snapshot.history.length
-            || currentHistoryBytes !== snapshot.historyBytes
+            currentHistory.length !== snapshot.history.length
             || currentMaxUpdateId !== snapshot.maxUpdateId
+            || currentHistory.some((row, index) =>
+              Number(row.id) !== snapshot.history[index].id
+              || Number(row.update_bytes) !== snapshot.history[index].update_data.length
+              || row.update_hash !== snapshot.history[index].update_hash
+            )
           ) {
             return null;
           }
