@@ -1,3 +1,5 @@
+**English** | [한국어](README.ko.md)
+
 # BrainVault
 
 BrainVault is a self-hosted block-based notes app built with Node.js, Express, TypeScript, and MariaDB. It runs as a browser workspace and also exposes a REST API for integrations or other clients.
