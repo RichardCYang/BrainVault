@@ -72,6 +72,8 @@ describe("Page version history", () => {
     expect(client).toContain("function loadPageVersionHistory");
     expect(client).toContain("function loadPageVersionDetail");
     expect(client).toContain("async function resetPageVersionHistory");
+    expect(client).toContain("const pageVersionResetRequestTimeoutMs = 15_000");
+    expect(client).toMatch(/submitPageVersionResetTask[\s\S]*mutationTimeoutMs: pageVersionResetRequestTimeoutMs/);
     expect(client).toContain('method: "DELETE"');
     expect(client).toContain("window.confirm");
     expect(client).toContain("createPageVersionFieldChange");

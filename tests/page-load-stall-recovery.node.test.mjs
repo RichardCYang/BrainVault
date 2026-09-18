@@ -109,6 +109,27 @@ test("a GET that stalls twice surfaces a deterministic timeout", async () => {
   assert.equal(calls, 2);
 });
 
+test("an opted-in mutation timeout aborts a stalled write without transport auto-retry", async () => {
+  let calls = 0;
+  const fetchImpl = async (_input, init) => {
+    calls += 1;
+    return {
+      status: 200,
+      text: () => abortableNever(init.signal)
+    };
+  };
+
+  await assert.rejects(
+    fetchApiResponseText("/api/pages/page-1/versions", { method: "DELETE" }, {
+      fetchImpl,
+      mutationTimeoutMs: 15,
+      readRetryCount: 5
+    }),
+    (error) => error instanceof ApiReadTimeoutError && error.code === "REQUEST_TIMEOUT"
+  );
+  assert.equal(calls, 1, "mutation timeout must not add an unsafe transport retry");
+});
+
 test("mutation transport failures are never auto-retried", async () => {
   let calls = 0;
   const fetchImpl = async () => {
@@ -200,6 +221,8 @@ test("the app routes API reads through the bounded transport without weakening a
   const apiSource = client.slice(apiStart, nextFunction);
 
   assert.match(apiSource, /fetchApiResponseText/);
+  assert.match(apiSource, /mutationTimeoutMs = 0/);
+  assert.match(apiSource, /mutationTimeoutMs,/);
   assert.match(apiSource, /beforeAttempt: assertAuthenticationScopeCurrent/);
   assert.match(apiSource, /beforeDispatch: assertRequestDispatchCurrent/);
   assert.match(apiSource, /beforeRead: assertAuthenticationScopeCurrent/);

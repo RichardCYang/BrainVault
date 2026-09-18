@@ -2330,6 +2330,7 @@ async function api(path, options = {}) {
     skipAuthReset = false,
     skipClientNetworkVerification = false,
     beforeFetch = null,
+    mutationTimeoutMs = 0,
     ...requestOptions
   } = options;
   const authenticationScope = captureAuthenticatedSessionScope();
@@ -2386,6 +2387,7 @@ async function api(path, options = {}) {
       {
         // Re-check at every retry boundary, after response headers, and again
         // after the response body. A retry can never cross into a newer login.
+        mutationTimeoutMs,
         beforeAttempt: assertAuthenticationScopeCurrent,
         beforeDispatch: assertRequestDispatchCurrent,
         beforeRead: assertAuthenticationScopeCurrent,
@@ -8758,6 +8760,8 @@ function createPageVersionChangeCard(change) {
   return card;
 }
 
+const pageVersionResetRequestTimeoutMs = 15_000;
+
 function getPageVersionResetTaskKey(scope, pageId) {
   return `${scope.generation}\u0000${scope.targetKey}\u0000${scope.workspaceGeneration}\u0000${pageId}`;
 }
@@ -8816,6 +8820,9 @@ async function submitPageVersionResetTask(
           expectedContentVersion: task.expectedContentVersion,
           expectedRevision: task.expectedRevision
         },
+        // This reset is idempotent through its mutation receipt. Bound the
+        // transport so a lost/stalled response cannot pin the dialog in busy state.
+        mutationTimeoutMs: pageVersionResetRequestTimeoutMs,
         beforeFetch: () => {
           if (
             !isCurrentAuthenticatedSessionScope(task.scope)

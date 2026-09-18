@@ -95,10 +95,11 @@ async function runTimedFetchAttempt(
 
 /**
  * Fetches an API response and consumes its text body under the same deadline.
- * Only safe reads (GET/HEAD) receive a deadline and automatic retry. Mutations
- * deliberately keep their existing one-shot semantics so a lost response can
- * never turn into an accidental duplicate write. `beforeDispatch` is a synchronous
- * last-moment guard; it intentionally cannot yield between validation and fetch.
+ * Safe reads (GET/HEAD) receive the default deadline and automatic retry. Mutations
+ * are never auto-retried here, but callers with idempotency/reconciliation support
+ * may opt into `mutationTimeoutMs` so a stalled write cannot leave the UI pending
+ * forever. `beforeDispatch` is a synchronous last-moment guard; it intentionally
+ * cannot yield between validation and fetch.
  */
 export async function fetchApiResponseText(
   input,
@@ -107,6 +108,7 @@ export async function fetchApiResponseText(
     fetchImpl = globalThis.fetch,
     readTimeoutMs = apiReadRequestTimeoutMs,
     readRetryCount = apiReadRequestRetryCount,
+    mutationTimeoutMs = 0,
     beforeAttempt = null,
     beforeDispatch = null,
     beforeRead = null,
@@ -116,7 +118,7 @@ export async function fetchApiResponseText(
   if (typeof fetchImpl !== "function") throw new TypeError("fetch is unavailable");
 
   const safeRead = isSafeApiReadMethod(init.method);
-  const timeoutMs = safeRead ? normalizeTimeoutMs(readTimeoutMs) : 0;
+  const timeoutMs = normalizeTimeoutMs(safeRead ? readTimeoutMs : mutationTimeoutMs);
   const retryCount = safeRead ? normalizeRetryCount(readRetryCount) : 0;
   let attempt = 0;
 
