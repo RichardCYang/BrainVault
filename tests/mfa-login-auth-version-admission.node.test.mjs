@@ -41,11 +41,15 @@ test("MFA login-session creation is bound to the auth_version observed during pa
   );
   assert.match(
     mfaRoutes,
-    /SELECT id, auth_version FROM users WHERE id = \? FOR UPDATE/
+    /SELECT id, auth_version, registration_approved FROM users WHERE id = \? FOR UPDATE/
   );
   assert.match(
     mfaRoutes,
     /normalizeAuthVersion\(user\.auth_version\) !== expectedAuthVersion/
+  );
+  assert.match(
+    mfaRoutes,
+    /Number\(user\.registration_approved \?\? 1\) !== 1/
   );
   assert.match(
     authRoutes,
