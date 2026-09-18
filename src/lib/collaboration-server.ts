@@ -1010,6 +1010,7 @@ export class PageCollaborationHub {
           const history = rows.map((row) => ({
             id: toSafeUpdateId(row.id),
             update_data: Buffer.from(row.update_data),
+            update_hash: row.update_hash,
             is_snapshot: row.is_snapshot === 1 ? 1 as const : 0 as const
           }));
           const actualHistoryBytes = history.reduce((total, row) => total + row.update_data.length, 0);

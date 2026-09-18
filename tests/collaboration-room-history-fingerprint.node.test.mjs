@@ -22,6 +22,10 @@ test("room loading fingerprints Yjs payload bytes across unlocked worker replay"
     loader,
     /SELECT id, OCTET_LENGTH\(update_data\) AS update_bytes,[\s\S]*SHA2\(update_data, 256\) AS update_hash[\s\S]*LIMIT \? FOR UPDATE/
   );
+  assert.match(
+    loader,
+    /const history = rows\.map\(\(row\) => \(\{[\s\S]*update_hash:\s*row\.update_hash[\s\S]*is_snapshot:/
+  );
   assert.match(loader, /row\.update_hash !== snapshot\.history\[index\]\.update_hash/);
 });
 
