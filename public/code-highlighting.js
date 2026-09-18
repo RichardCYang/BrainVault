@@ -155,18 +155,26 @@ export function highlightLuaSource(value) {
   if (source.length > highlightResourceLimits.maxLuaSourceLength) return null;
 
   const output = [];
+  let plainStart = 0;
+  // Escape adjacent unstyled text together; token boundaries and the shared
+  // HTML escaping routine remain unchanged, including all resource limits.
+  const appendToken = (scope, start, end) => {
+    if (start > plainStart) output.push(escapeHighlightedHtml(source.slice(plainStart, start)));
+    output.push(wrapHighlightedToken(scope, source.slice(start, end)));
+    plainStart = end;
+  };
   let cursor = 0;
   while (cursor < source.length) {
     if (source.startsWith("--", cursor)) {
       const longCommentEnd = getLuaLongBracketEnd(source, cursor + 2);
       if (longCommentEnd !== null) {
-        output.push(wrapHighlightedToken("comment", source.slice(cursor, longCommentEnd)));
+        appendToken("comment", cursor, longCommentEnd);
         cursor = longCommentEnd;
         continue;
       }
       const lineEnd = source.indexOf("\n", cursor + 2);
       const end = lineEnd === -1 ? source.length : lineEnd;
-      output.push(wrapHighlightedToken("comment", source.slice(cursor, end)));
+      appendToken("comment", cursor, end);
       cursor = end;
       continue;
     }
@@ -174,7 +182,7 @@ export function highlightLuaSource(value) {
     const current = source[cursor];
     if (current === "\"" || current === "'") {
       const end = getLuaQuotedStringEnd(source, cursor);
-      output.push(wrapHighlightedToken("string", source.slice(cursor, end)));
+      appendToken("string", cursor, end);
       cursor = end;
       continue;
     }
@@ -182,7 +190,7 @@ export function highlightLuaSource(value) {
     if (current === "[") {
       const longStringEnd = getLuaLongBracketEnd(source, cursor);
       if (longStringEnd !== null) {
-        output.push(wrapHighlightedToken("string", source.slice(cursor, longStringEnd)));
+        appendToken("string", cursor, longStringEnd);
         cursor = longStringEnd;
         continue;
       }
@@ -192,7 +200,7 @@ export function highlightLuaSource(value) {
       ? getLuaNumberLength(source, cursor)
       : 0;
     if (numberLength > 0) {
-      output.push(wrapHighlightedToken("number", source.slice(cursor, cursor + numberLength)));
+      appendToken("number", cursor, cursor + numberLength);
       cursor += numberLength;
       continue;
     }
@@ -201,18 +209,17 @@ export function highlightLuaSource(value) {
       let end = cursor + 1;
       while (end < source.length && /[A-Za-z0-9_]/.test(source[end])) end += 1;
       const identifier = source.slice(cursor, end);
-      if (luaKeywords.has(identifier)) output.push(wrapHighlightedToken("keyword", identifier));
-      else if (luaLiterals.has(identifier)) output.push(wrapHighlightedToken("literal", identifier));
-      else if (luaBuiltIns.has(identifier)) output.push(wrapHighlightedToken("built_in", identifier));
-      else output.push(escapeHighlightedHtml(identifier));
+      if (luaKeywords.has(identifier)) appendToken("keyword", cursor, end);
+      else if (luaLiterals.has(identifier)) appendToken("literal", cursor, end);
+      else if (luaBuiltIns.has(identifier)) appendToken("built_in", cursor, end);
       cursor = end;
       continue;
     }
 
-    output.push(escapeHighlightedHtml(current));
     cursor += 1;
   }
 
+  if (plainStart < source.length) output.push(escapeHighlightedHtml(source.slice(plainStart)));
   return output.join("");
 }
 

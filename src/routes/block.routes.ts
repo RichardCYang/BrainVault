@@ -705,15 +705,28 @@ function assertReorderDoesNotCreateCycle(
   for (const item of items) {
     if (item.parentBlockId !== undefined) parentById.set(item.id, item.parentBlockId);
   }
+  // Parent links are fixed during this check. Reuse proven acyclic paths only
+  // within this invocation so shared ancestry is not walked once per block.
+  const checked = new Set<string>();
+  const path = new Set<string>();
   for (const startId of parentById.keys()) {
-    const path = new Set<string>();
     let currentId: string | null | undefined = startId;
-    while (currentId) {
+    while (currentId && !checked.has(currentId)) {
+      const parentId = parentById.get(currentId);
+      if (!parentId) {
+        // Roots (and absent terminal parents) need no temporary path entry.
+        checked.add(currentId);
+        break;
+      }
       if (path.has(currentId)) {
         throw new ApiError(400, "INVALID_PARENT_BLOCK", "Block hierarchy cannot contain a cycle");
       }
       path.add(currentId);
-      currentId = parentById.get(currentId);
+      currentId = parentId;
+    }
+    if (path.size) {
+      for (const id of path) checked.add(id);
+      path.clear();
     }
   }
 }
@@ -2281,19 +2294,45 @@ blockRouter.post(
           affectedParentIds.add(requestedParentId);
         }
 
+        // A single-parent reorder needs only one scan; avoid building indexes
+        // on that common path. Multi-parent requests index the final lists once
+        // instead of rescanning the page per parent. Keep validation order intact.
+        let requestedSiblingsByParent: Map<string | null, typeof items> | null = null;
+        let finalSiblingIdsByParent: Map<string | null, string[]> | null = null;
+        if (affectedParentIds.size > 1) {
+          requestedSiblingsByParent = new Map();
+          finalSiblingIdsByParent = new Map();
+          for (const item of items) {
+            const requestedParentId = requestedParentById.get(item.id)!;
+            const requestedSiblings = requestedSiblingsByParent.get(requestedParentId) ?? [];
+            requestedSiblings.push(item);
+            requestedSiblingsByParent.set(requestedParentId, requestedSiblings);
+          }
+          for (const row of hierarchyRows) {
+            const finalParentId = requestedParentById.has(row.id)
+              ? requestedParentById.get(row.id)!
+              : row.parent_block_id;
+            if (!affectedParentIds.has(finalParentId)) continue;
+            const finalSiblingIds = finalSiblingIdsByParent.get(finalParentId) ?? [];
+            finalSiblingIds.push(row.id);
+            finalSiblingIdsByParent.set(finalParentId, finalSiblingIds);
+          }
+        }
+
         for (const parentBlockId of affectedParentIds) {
-          const requestedSiblings = items.filter(
-            (item) => requestedParentById.get(item.id) === parentBlockId
-          );
+          // With one affected parent, every requested item is its sibling.
+          const requestedSiblings = requestedSiblingsByParent
+            ? requestedSiblingsByParent.get(parentBlockId) ?? []
+            : items;
           const requestedSiblingIds = new Set(requestedSiblings.map((item) => item.id));
-          const finalSiblingIds = hierarchyRows
-            .filter((row) => {
-              const finalParentId = requestedParentById.has(row.id)
-                ? requestedParentById.get(row.id)!
-                : row.parent_block_id;
-              return finalParentId === parentBlockId;
-            })
-            .map((row) => row.id);
+          const finalSiblingIds = finalSiblingIdsByParent
+            ? finalSiblingIdsByParent.get(parentBlockId) ?? []
+            : hierarchyRows.filter((row) => {
+                const finalParentId = requestedParentById.has(row.id)
+                  ? requestedParentById.get(row.id)!
+                  : row.parent_block_id;
+                return finalParentId === parentBlockId;
+              }).map((row) => row.id);
 
           if (
             finalSiblingIds.length !== requestedSiblings.length

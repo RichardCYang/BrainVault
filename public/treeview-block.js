@@ -555,13 +555,18 @@ export function createTreeViewEditor(row, value, options = {}) {
   });
 
   tree.addEventListener("keydown", (event) => {
+    const usesVisibleOrder = event.key === "ArrowDown" || event.key === "ArrowUp"
+      || event.key === "Home" || event.key === "End";
+    if (!usesVisibleOrder && event.key !== "ArrowRight" && event.key !== "ArrowLeft"
+      && event.key !== "Enter" && event.key !== " ") return;
     const label = event.target.closest('[data-action="treeview-select-node"]');
     if (!label || !tree.contains(label)) return;
     const nodeId = label.dataset.treeviewNodeId;
     const node = getNode(data, nodeId);
     if (!node) return;
-    const visible = getVisibleNodeIds(data);
-    const index = visible.indexOf(node.id);
+    // Horizontal navigation and selection do not need a full visible-tree walk.
+    const visible = usesVisibleOrder ? getVisibleNodeIds(data) : null;
+    const index = visible?.indexOf(node.id) ?? -1;
     let focusId = null;
 
     if (event.key === "ArrowDown") focusId = visible[index + 1] ?? null;
