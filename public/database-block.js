@@ -1068,7 +1068,53 @@ export function hydrateDatabaseUrlPreviews(root, fetchPreview) {
   previews.forEach((preview) => observerState.observer.observe(preview));
 }
 
-function createValueEditor(dataRow, property, { compact = false, onDirty, onStructuralChange = null } = {}) {
+function formatDatabaseMultiSelectValue(property, value) {
+  return Array.isArray(value)
+    ? value.map((id) => getOption(property, id)?.name).filter(Boolean).join(", ")
+    : "";
+}
+
+function createDatabaseMultiSelectValueReader(rowCount) {
+  if (rowCount < 2) return formatDatabaseMultiSelectValue;
+  // Only this synchronous view render owns these indexes. Event handlers still
+  // resolve the current options, so renames, edits and account switches cannot
+  // observe a stale label cache. Hidden/empty cells allocate no index.
+  let optionsByProperty;
+  let labels;
+  const read = (property, value) => {
+    if (!Array.isArray(value) || !value.length) return "";
+    if (property.options.length < 8) return formatDatabaseMultiSelectValue(property, value);
+    optionsByProperty ??= new Map();
+    let byId = optionsByProperty.get(property);
+    if (!byId) {
+      byId = new Map();
+      for (const option of property.options) {
+        // Match find()'s first result rather than letting a duplicate overwrite it.
+        if (!byId.has(option.id)) byId.set(option.id, option);
+      }
+      optionsByProperty.set(property, byId);
+    }
+    labels ??= [];
+    let labelCount = 0;
+    for (let index = 0; index < value.length; index += 1) {
+      // map() skips holes. Retain that behavior for a sparse caller-owned array.
+      if (!(index in value)) continue;
+      const name = byId.get(value[index])?.name;
+      if (name) labels[labelCount++] = name;
+    }
+    labels.length = labelCount;
+    return labels.join(", ");
+  };
+  // A callback may retain its surrounding view scope. Drop the index contents
+  // explicitly once the synchronous render has finished, not on the next render.
+  read.release = () => {
+    optionsByProperty = undefined;
+    labels = undefined;
+  };
+  return read;
+}
+
+function createValueEditor(dataRow, property, { compact = false, onDirty, onStructuralChange = null, readMultiSelectValue = formatDatabaseMultiSelectValue } = {}) {
   const value = dataRow.values[property.id];
   let control;
   let urlPreview = null;
@@ -1091,7 +1137,7 @@ function createValueEditor(dataRow, property, { compact = false, onDirty, onStru
     control = document.createElement("input");
     control.type = property.type === "number" ? "number" : property.type === "date" ? "date" : "text";
     control.value = property.type === "multi_select"
-      ? (Array.isArray(value) ? value.map((id) => getOption(property, id)?.name).filter(Boolean).join(", ") : "")
+      ? readMultiSelectValue(property, value)
       : value === null || value === undefined ? "" : String(value);
     control.maxLength = property.type === "url" ? databaseLimits.urlLength : databaseLimits.textLength;
     if (property.type === "url") control.inputMode = "url";
@@ -1124,8 +1170,13 @@ function createValueEditor(dataRow, property, { compact = false, onDirty, onStru
     else if (property.type === "number") dataRow.values[property.id] = control.value === "" ? null : Number(control.value);
     else if (property.type === "multi_select") {
       const names = control.value.split(",").map((item) => item.trim().toLocaleLowerCase()).filter(Boolean);
+      // Large pasted lists otherwise rescan every name for every option.
+      // Keep tiny edits allocation-light, and preserve option order/duplicates.
+      const selectedNames = names.length >= 8 && property.options.length >= 8 ? new Set(names) : null;
       dataRow.values[property.id] = property.options
-        .filter((option) => names.includes(option.name.toLocaleLowerCase()))
+        .filter((option) => selectedNames
+          ? selectedNames.has(option.name.toLocaleLowerCase())
+          : names.includes(option.name.toLocaleLowerCase()))
         .map((option) => option.id);
     } else dataRow.values[property.id] = control.value;
     if (property.type === "select") control.dataset.optionColor = getOption(property, control.value)?.color ?? "gray";
@@ -1494,6 +1545,7 @@ function createViewSettings(editor, row, database, onDirty, replaceEditor) {
 }
 
 function createTableView(row, database, view, rows, onDirty, replaceEditor) {
+  const readMultiSelectValue = createDatabaseMultiSelectValueReader(rows.length);
   const viewSensitivePropertyIds = new Set([...view.filters, ...view.sorts].map((rule) => rule.propertyId));
   const visibleProperties = database.properties.filter((property) => !view.hiddenPropertyIds.includes(property.id));
   const scroller = document.createElement("div");
@@ -1521,6 +1573,7 @@ function createTableView(row, database, view, rows, onDirty, replaceEditor) {
       const td = document.createElement("td");
       td.dataset.propertyType = property.type;
       const valueEditor = createValueEditor(dataRow, property, {
+        readMultiSelectValue,
         onDirty,
         onStructuralChange: viewSensitivePropertyIds.has(property.id) ? () => replaceEditor() : null
       });
@@ -1547,10 +1600,12 @@ function createTableView(row, database, view, rows, onDirty, replaceEditor) {
 
   table.append(thead, tbody);
   scroller.append(table);
+  readMultiSelectValue.release?.();
   return scroller;
 }
 
 function createListView(row, database, view, rows, onDirty, replaceEditor) {
+  const readMultiSelectValue = createDatabaseMultiSelectValueReader(rows.length);
   const viewSensitivePropertyIds = new Set([...view.filters, ...view.sorts].map((rule) => rule.propertyId));
   const titleProperty = getTitleProperty(database);
   const visibleProperties = database.properties.filter(
@@ -1563,6 +1618,7 @@ function createListView(row, database, view, rows, onDirty, replaceEditor) {
     item.className = "database-list-row";
     item.dataset.databaseRowId = dataRow.id;
     const title = createValueEditor(dataRow, titleProperty, {
+      readMultiSelectValue,
       onDirty,
       onStructuralChange: viewSensitivePropertyIds.has(titleProperty.id) ? () => replaceEditor() : null
     });
@@ -1576,6 +1632,7 @@ function createListView(row, database, view, rows, onDirty, replaceEditor) {
       label.dataset.propertyLabel = property.id;
       label.textContent = property.name;
       field.append(label, createValueEditor(dataRow, property, {
+        readMultiSelectValue,
         compact: true,
         onDirty,
         onStructuralChange: viewSensitivePropertyIds.has(property.id) ? () => replaceEditor() : null
@@ -1587,10 +1644,12 @@ function createListView(row, database, view, rows, onDirty, replaceEditor) {
     item.append(title, properties, remove);
     list.append(item);
   });
+  readMultiSelectValue.release?.();
   return list;
 }
 
 function createBoardView(row, database, view, rows, onDirty, replaceEditor) {
+  const readMultiSelectValue = createDatabaseMultiSelectValueReader(rows.length);
   const viewSensitivePropertyIds = new Set([...view.filters, ...view.sorts].map((rule) => rule.propertyId));
   const titleProperty = getTitleProperty(database);
   const groupProperty = database.properties.find((property) => property.id === view.groupPropertyId) ?? null;
@@ -1640,6 +1699,7 @@ function createBoardView(row, database, view, rows, onDirty, replaceEditor) {
       card.className = "database-board-card";
       card.dataset.databaseRowId = dataRow.id;
       const title = createValueEditor(dataRow, titleProperty, {
+        readMultiSelectValue,
         onDirty,
         onStructuralChange: viewSensitivePropertyIds.has(titleProperty.id) ? () => replaceEditor() : null
       });
@@ -1652,6 +1712,7 @@ function createBoardView(row, database, view, rows, onDirty, replaceEditor) {
         const groupLabel = document.createElement("span");
         groupLabel.textContent = groupProperty.name;
         const groupEditor = createValueEditor(dataRow, groupProperty, {
+          readMultiSelectValue,
           compact: true,
           onDirty,
           onStructuralChange: () => replaceEditor({ focusRowId: dataRow.id })
@@ -1667,6 +1728,7 @@ function createBoardView(row, database, view, rows, onDirty, replaceEditor) {
         label.dataset.propertyLabel = property.id;
         label.textContent = property.name;
         field.append(label, createValueEditor(dataRow, property, {
+          readMultiSelectValue,
           compact: true,
           onDirty,
           onStructuralChange: viewSensitivePropertyIds.has(property.id) ? () => replaceEditor() : null
@@ -1690,6 +1752,7 @@ function createBoardView(row, database, view, rows, onDirty, replaceEditor) {
   });
 
   scroller.append(board);
+  readMultiSelectValue.release?.();
   return scroller;
 }
 
