@@ -99,7 +99,10 @@ import {
   getTextSelectionControlByKey,
   getTextSelectionControlKey
 } from "./collaboration-caret.js";
-import { assertCollaborationExitSafe } from "./collaboration-exit-guard.js";
+import {
+  assertCollaborationExitSafe,
+  shouldFlushCollaborationMaterialization
+} from "./collaboration-exit-guard.js";
 import { createCollaborationRecoveryStore } from "./collaboration-recovery-store.js";
 import { createPageTransitionLock } from "./page-transition-lock.js";
 import { createRecoveryStoragePersistenceGuard } from "./recovery-storage-persistence.js";
@@ -1191,6 +1194,14 @@ let navigationOrderSaving = false;
 let blockOrderSaving = false;
 let pendingBlockOrderTask = null;
 let collaborationCaretRenderFrame = null;
+let pageViewContentGeneration = 0;
+let pageViewHydrationFrame = null;
+let pageViewHydrationRequest = {
+  syncAiChatTextareaHeights: false,
+  hydrateAccordionIcons: false,
+  focusPendingBlock: false
+};
+let lastPageModePresentationState = null;
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -7729,7 +7740,42 @@ function syncBlockReadOnlyState(row, readOnly = isPageReadOnly() || isPageIntera
   }
 }
 
-function syncPageModeUi() {
+function schedulePageViewHydration({
+  syncAiChatTextareaHeights: shouldSyncAiChatTextareaHeights = false,
+  hydrateAccordionIcons: shouldHydrateAccordionIcons = false,
+  focusPendingBlock: shouldFocusPendingBlock = false
+} = {}) {
+  pageViewHydrationRequest.syncAiChatTextareaHeights ||= shouldSyncAiChatTextareaHeights;
+  pageViewHydrationRequest.hydrateAccordionIcons ||= shouldHydrateAccordionIcons;
+  pageViewHydrationRequest.focusPendingBlock ||= shouldFocusPendingBlock;
+  if (pageViewHydrationFrame !== null) return;
+
+  pageViewHydrationFrame = window.requestAnimationFrame(() => {
+    pageViewHydrationFrame = null;
+    const request = pageViewHydrationRequest;
+    pageViewHydrationRequest = {
+      syncAiChatTextareaHeights: false,
+      hydrateAccordionIcons: false,
+      focusPendingBlock: false
+    };
+
+    // renderSelectedPage(), writer-lock updates, and collaboration status changes
+    // can all request presentation work before the same paint. Always operate on
+    // the newest page once rather than replaying stale full-page DOM scans.
+    if (!state.selectedPage || state.workspaceView !== "page") return;
+    if (request.syncAiChatTextareaHeights) {
+      if (!isPageReadOnly()) syncAiChatTextareaHeights(elements.pageView);
+    }
+    if (isPageReadOnly()) hydrateHighlightedCodeBlocks(elements.pageView);
+    hydrateMathExpressions(elements.pageView);
+    void hydrateMermaidPreviews(elements.pageView);
+    if (request.hydrateAccordionIcons) hydrateAccordionIcons(elements.pageView);
+    if (request.focusPendingBlock) focusPendingBlock();
+  });
+}
+
+function syncPageModeUi({ contentRebuilt = false, focusPending = false } = {}) {
+  if (contentRebuilt) pageViewContentGeneration += 1;
   syncWorkspaceLocation();
   syncPageWriterSessionForCurrentPage();
   const readOnly = isPageReadOnly();
@@ -7739,6 +7785,21 @@ function syncPageModeUi() {
   const modeDescriptionKey = readOnly ? "page.readModeDescription" : "page.writeModeDescription";
   const manager = canManagePage();
   const canEdit = canEditPage();
+  const presentationPageId = state.workspaceView === "page" ? state.selectedPage?.id ?? null : null;
+  const previousPresentationState = lastPageModePresentationState;
+  const contentChanged = Boolean(
+    contentRebuilt
+    || previousPresentationState?.pageId !== presentationPageId
+    || previousPresentationState?.contentGeneration !== pageViewContentGeneration
+  );
+  const blockControlStateChanged = Boolean(
+    contentChanged
+    || previousPresentationState?.controlsReadOnly !== controlsReadOnly
+  );
+  const presentationHydrationChanged = Boolean(
+    contentChanged
+    || previousPresentationState?.readOnly !== readOnly
+  );
 
   elements.pageView.classList.toggle("is-read-only", readOnly);
   elements.pageView.classList.toggle("is-collaborative", isCollaborativePage());
@@ -7770,26 +7831,39 @@ function syncPageModeUi() {
   elements.pageModeBadgeLabel.textContent = t(modeLabelKey);
   syncPageCoverControls();
 
-  for (const row of elements.blockList.querySelectorAll(".editor-block-row")) {
-    syncBlockReadOnlyState(row, controlsReadOnly);
+  // syncPageModeUi() is also the cheap status/lock refresh path. Only walk every
+  // block control when the effective interaction state or rendered content has
+  // actually changed; collaboration connecting/syncing/synced events otherwise
+  // made navigation cost proportional to the full page several times per open.
+  if (blockControlStateChanged) {
+    for (const row of elements.blockList.querySelectorAll(".editor-block-row")) {
+      syncBlockReadOnlyState(row, controlsReadOnly);
+    }
   }
-  if (readOnly) hydrateDatabaseUrlPreviews(elements.pageView, fetchDatabaseUrlPreview);
+  if (readOnly && presentationHydrationChanged) {
+    hydrateDatabaseUrlPreviews(elements.pageView, fetchDatabaseUrlPreview);
+  }
   renderCollaborationChrome();
-  requestAnimationFrame(() => {
-    // AI chat editors are mounted even in read mode, where their editing
-    // surface is display:none. Re-measure textarea content only after write
-    // mode has made that surface participate in layout again.
-    if (!isPageReadOnly()) syncAiChatTextareaHeights(elements.pageView);
-    // Explicit Save rebuilds the block DOM while the page is still in write
-    // mode. That hidden rendered preview therefore has not gone through the
-    // read-mode code hydration performed by renderSelectedPage(). Hydrate at
-    // the visibility boundary as well so fenced Markdown code receives the
-    // .hljs class/token markup and its read-mode font, spacing, theme, and
-    // copy-button shell without requiring a full page reload.
-    if (isPageReadOnly()) hydrateHighlightedCodeBlocks(elements.pageView);
-    hydrateMathExpressions(elements.pageView);
-    void hydrateMermaidPreviews(elements.pageView);
-  });
+
+  if (presentationHydrationChanged) {
+    schedulePageViewHydration({
+      // AI chat editors are mounted even in read mode, where their editing
+      // surface is display:none. Re-measure only when a rebuild/mode change can
+      // make those controls participate in layout again.
+      syncAiChatTextareaHeights: true,
+      hydrateAccordionIcons: contentRebuilt,
+      focusPendingBlock: focusPending
+    });
+  } else if (focusPending) {
+    schedulePageViewHydration({ focusPendingBlock: true });
+  }
+
+  lastPageModePresentationState = {
+    pageId: presentationPageId,
+    contentGeneration: pageViewContentGeneration,
+    readOnly,
+    controlsReadOnly
+  };
 
   if (readOnly) {
     closeSlashMenu();
@@ -8377,7 +8451,10 @@ async function flushPendingPageEdits({ keepalive = false, allowLocked = false, c
       await Promise.all(pendingCollaborationMutations);
     }
     assertCollaborationExitSafe(session, t("sharing.syncRequired"));
-    const materialization = session?.isReady
+    // A collaboration session may be fully synchronized and already materialized.
+    // Do not put an idempotent snapshot PUT in front of every page navigation;
+    // only the pending timer/update/recovery path needs an exit materialization.
+    const materialization = shouldFlushCollaborationMaterialization(session)
       ? await session.flushMaterialization({ compact: collaborationCompact })
       : null;
     syncBeforeUnloadProtection();
@@ -18079,14 +18156,9 @@ function renderSelectedPage() {
   }
   if (isCollaborativePage(page)) refreshCollaborativePageDraftRecovery();
 
-  syncPageModeUi();
-  requestAnimationFrame(() => {
-    hydrateMathExpressions(elements.pageView);
-    void hydrateMermaidPreviews(elements.pageView);
-    if (isPageReadOnly()) hydrateHighlightedCodeBlocks(elements.pageView);
-    hydrateAccordionIcons(elements.pageView);
-    focusPendingBlock();
-  });
+  // The DOM was rebuilt above. Mark that generation once so mode/UI synchronization
+  // performs one block-state pass and one coalesced presentation hydration.
+  syncPageModeUi({ contentRebuilt: true, focusPending: true });
 }
 
 function normalizePageTitle(value) {
