@@ -254,6 +254,12 @@ type PageDeletionCollaborationRow = {
   document_epoch: string;
 };
 
+type PageDeletionCustomIconPublicationRow = {
+  page_id: string;
+  owner_id: string;
+  file_path: string;
+};
+
 type PageDeletionCommentRow = {
   id: string;
   page_id: string;
@@ -554,6 +560,27 @@ async function getPageDeletionCollaborationStates(
   return states;
 }
 
+async function getPageDeletionCustomIconPublications(
+  client: DbClient,
+  subtreeRows: PageDeletionPageRow[],
+  lock = false
+) {
+  const pageIds = [...new Set(subtreeRows.map((page) => page.id).filter(Boolean))];
+  const publications: PageDeletionCustomIconPublicationRow[] = [];
+  for (let offset = 0; offset < pageIds.length; offset += 500) {
+    const group = pageIds.slice(offset, offset + 500);
+    const rows = await client.query<PageDeletionCustomIconPublicationRow>(
+      `SELECT page_id, owner_id, file_path
+       FROM custom_icon_page_publications
+       WHERE page_id IN (${group.map(() => "?").join(", ")})
+       ORDER BY page_id ASC, owner_id ASC, file_path ASC${lock ? " FOR UPDATE" : ""}`,
+      group
+    );
+    publications.push(...rows);
+  }
+  return publications;
+}
+
 async function getPageDeletionComments(
   client: DbClient,
   subtreeRows: PageDeletionPageRow[],
@@ -620,6 +647,7 @@ function assertPageDeletionSnapshot(
   blocks: PageDeletionBlockRow[],
   shares: PageDeletionShareRow[],
   collaborationStates: PageDeletionCollaborationRow[],
+  customIconPublications: PageDeletionCustomIconPublicationRow[],
   comments: PageDeletionCommentRow[],
   collectionMemberships: PageDeletionCollectionMembershipRow[],
   versionHistory: PageDeletionVersionHistoryRow[],
@@ -635,7 +663,8 @@ function assertPageDeletionSnapshot(
       comments,
       collectionMemberships,
       versionHistory,
-      { ownerId: workspaceOwnerId, generation: workspaceGeneration }
+      { ownerId: workspaceOwnerId, generation: workspaceGeneration },
+      customIconPublications
     ) === expectedSnapshot
   ) return;
   throw new ApiError(
@@ -1841,6 +1870,7 @@ pageRouter.get(
         assertPageDeletionAuthorizationScope(access, subtreeRows, membershipRows);
         const shareRows = await getPageDeletionShares(client, subtreeRows);
         const collaborationRows = await getPageDeletionCollaborationStates(client, subtreeRows);
+        const customIconPublicationRows = await getPageDeletionCustomIconPublications(client, subtreeRows);
         const commentRows = await getPageDeletionComments(client, subtreeRows);
         const versionHistoryRows = await getPageDeletionVersionHistory(client, subtreeRows);
         return {
@@ -1852,7 +1882,8 @@ pageRouter.get(
             commentRows,
             membershipRows,
             versionHistoryRows,
-            { ownerId: access.page.owner_id, generation: workspaceGeneration }
+            { ownerId: access.page.owner_id, generation: workspaceGeneration },
+            customIconPublicationRows
           ),
           pageIds: subtreeRows.map((page) => page.id).sort((left, right) => left.localeCompare(right)),
           pages: subtreeRows
@@ -2294,6 +2325,10 @@ pageRouter.delete(
           // creates a fresh document epoch without changing page/block/share
           // versions, so bind permanent deletion to that lineage as well.
           const collaborationRows = await getPageDeletionCollaborationStates(client, subtreeRows, true);
+          // Owner-controlled icon publication is authorization state introduced after
+          // the original deletion snapshot design. It cascades with the page but
+          // does not advance page/block versions, so lock and hash it explicitly.
+          const customIconPublicationRows = await getPageDeletionCustomIconPublications(client, subtreeRows, true);
           // Discussions are user-authored page data and cascade with the page.
           // Bind and lock them too, so a comment committed after the preview
           // invalidates this stale destructive request instead of being erased.
@@ -2308,6 +2343,7 @@ pageRouter.delete(
             blockRows,
             shareRows,
             collaborationRows,
+            customIconPublicationRows,
             commentRows,
             membershipRows,
             versionHistoryRows,

@@ -30,6 +30,12 @@ export type PageDeletionSnapshotCollaborationState = {
   document_epoch: string;
 };
 
+export type PageDeletionSnapshotCustomIconPublication = {
+  page_id: string;
+  owner_id: string;
+  file_path: string;
+};
+
 export type PageDeletionSnapshotComment = {
   id: string;
   page_id: string;
@@ -88,7 +94,8 @@ export function createPageDeletionSnapshot(
   comments: readonly PageDeletionSnapshotComment[],
   collectionMemberships: readonly PageDeletionSnapshotCollectionMembership[],
   versionHistory: readonly PageDeletionSnapshotVersionHistory[],
-  workspace: PageDeletionSnapshotWorkspace
+  workspace: PageDeletionSnapshotWorkspace,
+  customIconPublications: readonly PageDeletionSnapshotCustomIconPublication[] = []
 ) {
   if (!workspace?.ownerId || !Number.isSafeInteger(workspace.generation) || workspace.generation < 1) {
     throw new Error("Invalid page deletion workspace generation");
@@ -126,6 +133,22 @@ export function createPageDeletionSnapshot(
     compareText(left.page_id, right.page_id)
   )) {
     hash.update(`collaboration\0${state.page_id}\0${state.document_epoch}\n`);
+  }
+  for (const publication of [...customIconPublications].sort((left, right) =>
+    compareText(left.page_id, right.page_id)
+      || compareText(left.owner_id, right.owner_id)
+      || compareText(left.file_path, right.file_path)
+  )) {
+    // Owner-controlled custom-icon publication is authorization state that
+    // cascades with the page. A publication created after the delete preview
+    // must therefore make the destructive snapshot stale just like a new share.
+    hash.update(
+      `custom-icon-publication\0${JSON.stringify([
+        publication.page_id,
+        publication.owner_id,
+        publication.file_path
+      ])}\n`
+    );
   }
   for (const comment of [...comments].sort((left, right) =>
     compareText(left.page_id, right.page_id) || compareText(left.id, right.id)
