@@ -12,7 +12,8 @@
 | `npm run db:init` | Prepare the database and verify connectivity |
 | `npm run db:migrate` | Reconcile the schema and apply migrations |
 | `npm run db:seed` | Add the demo account and starter content |
-| `npm run setup` | Run environment, database, migration, and seed tasks |
+| `npm run setup` | Prepare the environment, database, and migrations |
+| `npm run setup:demo` | Run setup and add the demo workspace |
 | `npm run dev` | Start the server and open a private/incognito browser window after database readiness; normal-profile fallback is disabled |
 | `npm run build` | Compile TypeScript into `dist/` |
 | `npm run reproduce:materialization-loss` | Reproduce the old browser-payload materialization loss and verify the server-authoritative fix from preserved Git history |
@@ -27,7 +28,7 @@
 
 ## Dependency lockfile reliability
 
-`package-lock.json` is intentionally committed and must not be deleted during a normal install. The project-level `.npmrc` keeps registry downloads portable, replaces stale registry hosts with the configured registry, and limits fetch retries so an unreachable registry produces a bounded failure instead of appearing to loop indefinitely.
+`package-lock.json` is committed and should stay in place during normal installs. The project-level `.npmrc` keeps registry URLs portable and limits fetch retries so registry failures return promptly instead of looking like a hung install.
 
 Before committing dependency changes, validate the lockfile:
 
@@ -54,7 +55,7 @@ Teams that intentionally use a private registry can temporarily add its hostname
 
 ```text
 BrainVault/
-├── docs/                 # Topic/date-organized guides, audit reports, assets, and OpenAPI
+├── docs/                 # Guides, assets, and OpenAPI
 ├── migrations/           # MariaDB schema migrations
 ├── public/               # Browser UI
 ├── uploads/              # Runtime attachment bytes (Git-ignored; created automatically)
@@ -81,7 +82,7 @@ The supported language identifiers are `en`, `ja`, `ko`, `fr`, `de`, `es`, and `
 
 ## Preview capture
 
-The root README image is captured from the actual BrainVault browser UI (`public/index.html` and `public/app.js`) in the default English read mode. It uses the same English sample workspace data as `npm run db:seed`; it is not a separately drawn mockup.
+The root README image is captured from the BrainVault browser UI (`public/index.html` and `public/app.js`) in the default English read mode. It uses the same English sample workspace data as `npm run db:seed`.
 
 Regenerate it locally with:
 
