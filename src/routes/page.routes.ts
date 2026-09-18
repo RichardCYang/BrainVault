@@ -260,6 +260,15 @@ type PageDeletionCustomIconPublicationRow = {
   file_path: string;
 };
 
+type PageDeletionNavigationCollapsedRow = {
+  page_id: string;
+};
+
+type PageDeletionNavigationOrderRow = {
+  page_id: string;
+  sort_order: number;
+};
+
 type PageDeletionCommentRow = {
   id: string;
   page_id: string;
@@ -581,6 +590,38 @@ async function getPageDeletionCustomIconPublications(
   return publications;
 }
 
+async function getPageDeletionOwnerNavigationPreferences(
+  client: DbClient,
+  subtreeRows: PageDeletionPageRow[],
+  ownerId: string,
+  lock = false
+) {
+  const pageIds = [...new Set(subtreeRows.map((page) => page.id).filter(Boolean))];
+  const collapsed: PageDeletionNavigationCollapsedRow[] = [];
+  const order: PageDeletionNavigationOrderRow[] = [];
+  for (let offset = 0; offset < pageIds.length; offset += 500) {
+    const group = pageIds.slice(offset, offset + 500);
+    const placeholders = group.map(() => "?").join(", ");
+    const collapsedRows = await client.query<PageDeletionNavigationCollapsedRow>(
+      `SELECT page_id
+       FROM user_navigation_collapsed_pages
+       WHERE user_id = ? AND page_id IN (${placeholders})
+       ORDER BY page_id ASC${lock ? " FOR UPDATE" : ""}`,
+      [ownerId, ...group]
+    );
+    const orderRows = await client.query<PageDeletionNavigationOrderRow>(
+      `SELECT page_id, sort_order
+       FROM user_navigation_page_order
+       WHERE user_id = ? AND page_id IN (${placeholders})
+       ORDER BY page_id ASC${lock ? " FOR UPDATE" : ""}`,
+      [ownerId, ...group]
+    );
+    collapsed.push(...collapsedRows);
+    order.push(...orderRows);
+  }
+  return { collapsed, order };
+}
+
 async function getPageDeletionComments(
   client: DbClient,
   subtreeRows: PageDeletionPageRow[],
@@ -648,6 +689,8 @@ function assertPageDeletionSnapshot(
   shares: PageDeletionShareRow[],
   collaborationStates: PageDeletionCollaborationRow[],
   customIconPublications: PageDeletionCustomIconPublicationRow[],
+  ownerNavigationCollapsed: PageDeletionNavigationCollapsedRow[],
+  ownerNavigationOrder: PageDeletionNavigationOrderRow[],
   comments: PageDeletionCommentRow[],
   collectionMemberships: PageDeletionCollectionMembershipRow[],
   versionHistory: PageDeletionVersionHistoryRow[],
@@ -664,7 +707,9 @@ function assertPageDeletionSnapshot(
       collectionMemberships,
       versionHistory,
       { ownerId: workspaceOwnerId, generation: workspaceGeneration },
-      customIconPublications
+      customIconPublications,
+      ownerNavigationCollapsed,
+      ownerNavigationOrder
     ) === expectedSnapshot
   ) return;
   throw new ApiError(
@@ -1871,6 +1916,11 @@ pageRouter.get(
         const shareRows = await getPageDeletionShares(client, subtreeRows);
         const collaborationRows = await getPageDeletionCollaborationStates(client, subtreeRows);
         const customIconPublicationRows = await getPageDeletionCustomIconPublications(client, subtreeRows);
+        const ownerNavigation = await getPageDeletionOwnerNavigationPreferences(
+          client,
+          subtreeRows,
+          access.page.owner_id
+        );
         const commentRows = await getPageDeletionComments(client, subtreeRows);
         const versionHistoryRows = await getPageDeletionVersionHistory(client, subtreeRows);
         return {
@@ -1883,7 +1933,9 @@ pageRouter.get(
             membershipRows,
             versionHistoryRows,
             { ownerId: access.page.owner_id, generation: workspaceGeneration },
-            customIconPublicationRows
+            customIconPublicationRows,
+            ownerNavigation.collapsed,
+            ownerNavigation.order
           ),
           pageIds: subtreeRows.map((page) => page.id).sort((left, right) => left.localeCompare(right)),
           pages: subtreeRows
@@ -2329,6 +2381,17 @@ pageRouter.delete(
           // the original deletion snapshot design. It cascades with the page but
           // does not advance page/block versions, so lock and hash it explicitly.
           const customIconPublicationRows = await getPageDeletionCustomIconPublications(client, subtreeRows, true);
+          // The owner's navigation state is durable user-visible workspace data.
+          // It cascades with the page but does not advance page/block versions,
+          // so bind the destructive confirmation to the current preference rows.
+          // Only owner preferences participate: collaborator-only UI churn must
+          // not become an authorization-independent denial of owner deletion.
+          const ownerNavigation = await getPageDeletionOwnerNavigationPreferences(
+            client,
+            subtreeRows,
+            workspaceOwnerId,
+            true
+          );
           // Discussions are user-authored page data and cascade with the page.
           // Bind and lock them too, so a comment committed after the preview
           // invalidates this stale destructive request instead of being erased.
@@ -2344,6 +2407,8 @@ pageRouter.delete(
             shareRows,
             collaborationRows,
             customIconPublicationRows,
+            ownerNavigation.collapsed,
+            ownerNavigation.order,
             commentRows,
             membershipRows,
             versionHistoryRows,

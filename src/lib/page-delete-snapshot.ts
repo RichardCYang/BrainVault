@@ -36,6 +36,15 @@ export type PageDeletionSnapshotCustomIconPublication = {
   file_path: string;
 };
 
+export type PageDeletionSnapshotNavigationCollapsed = {
+  page_id: string;
+};
+
+export type PageDeletionSnapshotNavigationOrder = {
+  page_id: string;
+  sort_order: number;
+};
+
 export type PageDeletionSnapshotComment = {
   id: string;
   page_id: string;
@@ -95,7 +104,9 @@ export function createPageDeletionSnapshot(
   collectionMemberships: readonly PageDeletionSnapshotCollectionMembership[],
   versionHistory: readonly PageDeletionSnapshotVersionHistory[],
   workspace: PageDeletionSnapshotWorkspace,
-  customIconPublications: readonly PageDeletionSnapshotCustomIconPublication[] = []
+  customIconPublications: readonly PageDeletionSnapshotCustomIconPublication[] = [],
+  ownerNavigationCollapsed: readonly PageDeletionSnapshotNavigationCollapsed[] = [],
+  ownerNavigationOrder: readonly PageDeletionSnapshotNavigationOrder[] = []
 ) {
   if (!workspace?.ownerId || !Number.isSafeInteger(workspace.generation) || workspace.generation < 1) {
     throw new Error("Invalid page deletion workspace generation");
@@ -147,6 +158,27 @@ export function createPageDeletionSnapshot(
         publication.page_id,
         publication.owner_id,
         publication.file_path
+      ])}\n`
+    );
+  }
+  for (const preference of [...ownerNavigationCollapsed].sort((left, right) =>
+    compareText(left.page_id, right.page_id)
+  )) {
+    // Owner navigation preferences are user-visible workspace state and cascade
+    // with the page. A post-preview interaction must make an old destructive
+    // confirmation stale rather than silently deleting that newer state.
+    hash.update(
+      `navigation-collapsed\0${JSON.stringify([preference.page_id])}\n`
+    );
+  }
+  for (const preference of [...ownerNavigationOrder].sort((left, right) =>
+    compareText(left.page_id, right.page_id)
+      || Number(left.sort_order) - Number(right.sort_order)
+  )) {
+    hash.update(
+      `navigation-order\0${JSON.stringify([
+        preference.page_id,
+        Number(preference.sort_order)
       ])}\n`
     );
   }
