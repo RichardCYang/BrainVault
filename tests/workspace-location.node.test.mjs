@@ -50,7 +50,16 @@ test("authenticated navigation synchronizes the URL and boot restores it", () =>
   assert.match(appSource, /await restoreWorkspaceLocationFromHash\(\{ fallbackToHome: true \}\);/);
   assert.match(appSource, /result\.outcome === "ready"[\s\S]*renderPages\(\);[\s\S]*await restoreWorkspaceLocationFromHash\(\{ fallbackToHome: true \}\);[\s\S]*renderShell\(\);/);
   assert.match(appSource, /state\.pageMode = normalizedRequestedPageMode \?\? pageModes\.READ/);
-  assert.match(appSource, /function syncPageModeUi\(\) \{\n\s+syncWorkspaceLocation\(\);/);
+  const modeUiStart = appSource.indexOf("function syncPageModeUi(");
+  assert.notEqual(modeUiStart, -1);
+  const modeUiEnd = appSource.indexOf("\nfunction ", modeUiStart);
+  assert.ok(modeUiEnd > modeUiStart);
+  const modeUiSource = appSource.slice(modeUiStart, modeUiEnd);
+  assert.match(modeUiSource, /syncWorkspaceLocation\(\);/);
+  assert.ok(
+    modeUiSource.indexOf("syncWorkspaceLocation();") < modeUiSource.indexOf("syncPageWriterSessionForCurrentPage();"),
+    "URL synchronization must precede writer-session synchronization"
+  );
   assert.match(appSource, /window\.addEventListener\("hashchange", \(\) => \{\n\s+if \(state\.authenticated && state\.user\)/);
 });
 

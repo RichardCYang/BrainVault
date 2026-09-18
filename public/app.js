@@ -15911,6 +15911,16 @@ async function saveBlockRow(row, options = {}) {
     syncBeforeUnloadProtection();
     return null;
   }
+  // Durability can settle after a newer edit or even its completed save.
+  // Check the live row: editor rebuilds can leave the initiating row detached.
+  // An obsolete snapshot must not cancel the newer timer or enter the queue
+  // with a version acknowledged for newer content.
+  const admissionRow = findRenderedBlockRow(blockId) ?? row;
+  const admissionRevision = Number.parseInt(admissionRow.dataset.editRevision ?? "0", 10) || 0;
+  if (admissionRevision !== editRevision) {
+    syncBeforeUnloadProtection();
+    return null;
+  }
   recordBlockEditorHistory(row, payload);
   window.clearTimeout(blockSaveTimers.get(blockId));
   blockSaveTimers.delete(blockId);
@@ -18381,6 +18391,9 @@ async function savePageTitleNow({
     if (!quiet) setStatus(t("status.pageTitleSaved"));
     return { page: state.selectedPage };
   }
+  // Keep the value and its recovery revision/source in one pre-await snapshot.
+  const editRevision = pageTitleEditRevision;
+  const draftSourceId = pageTitleDraftSourceId || pageDraftSourceId;
   window.clearTimeout(pageTitleSaveTimer);
   pageTitleSaveTimer = null;
   if (pageTitleEditRevision > 0 && !persistPageTitleDraft()) {
@@ -18407,13 +18420,23 @@ async function savePageTitleNow({
     syncBeforeUnloadProtection();
     return null;
   }
+  // A newer edit (including a blank title) can arrive during durability.
+  // Never label the old value with its revision, acknowledge its draft,
+  // or let the old value borrow a version from its already completed save.
+  if (
+    pageTitleEditRevision !== editRevision
+    || (pageTitleDraftSourceId || pageDraftSourceId) !== draftSourceId
+  ) {
+    syncBeforeUnloadProtection();
+    return null;
+  }
   recordPageTitleEditorHistory();
   const task = {
     userId: state.user?.id,
-    draftSourceId: pageTitleDraftSourceId || pageDraftSourceId,
+    draftSourceId,
     pageId,
     title,
-    editRevision: pageTitleEditRevision,
+    editRevision,
     expectedVersion: getPositiveVersion(pageTitleDraftExpectedVersion),
     recoveredConflictOrigin: pageTitleConflictOrigin,
     taskId: ++pageTitleTaskId,
