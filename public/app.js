@@ -8001,45 +8001,89 @@ function finishDirectRecoveryVisibilityAdmission(element, sequence) {
 }
 
 function scheduleDirectTitleRecoveryAdmission(sequence, pageId) {
+  const authenticationScope = captureAuthenticatedSessionScope();
+  const navigationGeneration = workspaceNavigationGeneration;
+  const input = elements.pageTitle;
+  const editRevision = pageTitleEditRevision;
+  const draftSourceId = pageTitleDraftSourceId || pageDraftSourceId;
+  const value = input.value;
+  // The title element and its sequence counter can be reused after navigation,
+  // login, or workspace replacement. A sequence alone is not an edit identity.
+  const isCurrentAdmission = () => Boolean(
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+      && isCurrentWorkspaceNavigation(navigationGeneration)
+      && state.selectedPage?.id === pageId
+      && !isCollaborativePage()
+      && elements.pageTitle === input
+      && pageTitleEditRevision === editRevision
+      && (pageTitleDraftSourceId || pageDraftSourceId) === draftSourceId
+      && input.value === value
+      && (Number.parseInt(input.dataset.recoveryAdmissionSequence ?? "0", 10) || 0) === sequence
+  );
+  if (!isCurrentAdmission()) return;
   void requireDirectRecoveryDurability("direct-title-visible-admission", null, { preserveInput: false })
     .then(() => {
-      if (state.selectedPage?.id !== pageId) return;
-      if (finishDirectRecoveryVisibilityAdmission(elements.pageTitle, sequence)) {
-        pageTitleLastDurableValue = elements.pageTitle.value;
+      if (!isCurrentAdmission()) return;
+      if (finishDirectRecoveryVisibilityAdmission(input, sequence)) {
+        pageTitleLastDurableValue = value;
       }
     })
     .catch(async (error) => {
+      // Refresh is asynchronous too. Recheck on both sides so a failure cannot
+      // roll back input belonging to an editor that replaced this admission.
+      if (!isCurrentAdmission()) return;
       try { await recoveryStorage.refresh?.(); } catch { /* the original durability error remains authoritative */ }
-      if (state.selectedPage?.id !== pageId) return;
-      if ((Number.parseInt(elements.pageTitle.dataset.recoveryAdmissionSequence ?? "0", 10) || 0) !== sequence) return;
+      if (!isCurrentAdmission()) return;
       const scope = getDraftScope(pageId);
-      const draftSourceId = pageTitleDraftSourceId || pageDraftSourceId;
       const durableDraft = scope
         ? pageDraftStore.loadPage(scope.userId, scope.pageId, draftSourceId)?.title
         : null;
       const fallback = durableDraft?.value ?? pageTitleLastDurableValue ?? state.selectedPage?.title ?? "";
       pageTitleEditRevision = durableDraft?.revision ?? pageTitleSavedRevision;
       pageTitleDraftExpectedVersion = durableDraft?.expectedVersion ?? getPositiveVersion(state.selectedPage?.version);
-      updateInputValuePreservingSelection(elements.pageTitle, fallback);
+      updateInputValuePreservingSelection(input, fallback);
       applyPageSummaryUpdate(pageId, { title: fallback });
-      finishDirectRecoveryVisibilityAdmission(elements.pageTitle, sequence);
+      finishDirectRecoveryVisibilityAdmission(input, sequence);
       setStatus(error?.message || t("status.localDraftStorageFailed"), true);
     });
 }
 
 function scheduleDirectBlockRecoveryAdmission(row, sequence) {
   const blockId = row?.dataset.blockId;
-  if (!blockId) return;
+  const pageId = state.selectedPage?.id;
+  if (!blockId || !pageId) return;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  const navigationGeneration = workspaceNavigationGeneration;
+  const editRevision = Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0;
+  const draftSourceId = row.dataset.draftSourceId || pageDraftSourceId;
+  const payload = buildBlockPayload(row);
+  // A rebuilt row starts a new visibility admission even when it has the same
+  // block id and sequence. Never fall back to a detached row: restoring it can
+  // rerender the selected page or cancel the replacement editor's autosave.
+  const isCurrentAdmission = () => Boolean(
+    isCurrentAuthenticatedSessionScope(authenticationScope)
+      && isCurrentWorkspaceNavigation(navigationGeneration)
+      && state.selectedPage?.id === pageId
+      && !isCollaborativePage()
+      && findRenderedBlockRow(blockId) === row
+      && getBlockById(blockId)
+      && row.dataset.deleting !== "true"
+      && (Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0) === editRevision
+      && (row.dataset.draftSourceId || pageDraftSourceId) === draftSourceId
+      && (Number.parseInt(row.dataset.recoveryAdmissionSequence ?? "0", 10) || 0) === sequence
+      && jsonValuesMatch(buildBlockPayload(row), payload)
+  );
+  if (!isCurrentAdmission()) return;
   void requireDirectRecoveryDurability("direct-block-visible-admission", row, { preserveInput: false })
     .then(() => {
-      const currentRow = findRenderedBlockRow(blockId) ?? row;
-      finishDirectRecoveryVisibilityAdmission(currentRow, sequence);
+      if (!isCurrentAdmission()) return;
+      finishDirectRecoveryVisibilityAdmission(row, sequence);
     })
     .catch(async (error) => {
+      if (!isCurrentAdmission()) return;
       try { await recoveryStorage.refresh?.(); } catch { /* preserve the original failure */ }
-      const currentRow = findRenderedBlockRow(blockId) ?? row;
-      if ((Number.parseInt(currentRow?.dataset.recoveryAdmissionSequence ?? "0", 10) || 0) !== sequence) return;
-      const restored = restoreBlockRowFromDurableState(currentRow);
+      if (!isCurrentAdmission()) return;
+      const restored = restoreBlockRowFromDurableState(row);
       if (restored) finishDirectRecoveryVisibilityAdmission(restored, sequence);
       setStatus(error?.message || t("status.localDraftStorageFailed"), true);
     });

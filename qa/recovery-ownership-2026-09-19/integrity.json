@@ -1,0 +1,68 @@
+{
+  "original_zip_members": 966,
+  "git_zip_entries": 44,
+  "git_regular_files": 28,
+  "git_metadata_compared_fields": [
+    "date_time",
+    "compress_type",
+    "comment",
+    "extra",
+    "create_system",
+    "create_version",
+    "extract_version",
+    "reserved",
+    "flag_bits",
+    "volume",
+    "internal_attr",
+    "external_attr",
+    "CRC",
+    "compress_size",
+    "file_size",
+    "header_offset"
+  ],
+  "git_metadata_mismatches": [],
+  "byte_identical_zip_prefix_including_all_git_entries": 44505085,
+  "original_source_files_changed": [
+    "public/app.js"
+  ],
+  "git_head": "10009d80c07b5fd7fa2763b0e6613ed11bc225f6",
+  "git_final_archive_sha256_manifest_identical": true,
+  "original_non_git_files_unchanged": 881,
+  "original_non_git_files_modified": [
+    "public/app.js"
+  ],
+  "original_non_git_files_missing": [],
+  "git_files_hash_identical": 28,
+  "validation": {
+    "focused": {
+      "tests": 119,
+      "pass": 119,
+      "fail": 0
+    },
+    "new_regressions_baseline": {
+      "pass": 10,
+      "fail": 39
+    },
+    "new_regressions_patched": {
+      "pass": 49,
+      "fail": 0
+    },
+    "native": {
+      "tests": 2295,
+      "pass": 2284,
+      "fail": 11,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "native_files": 289,
+    "baseline_reproduced_environment_failures": 11,
+    "syntax_files": 704,
+    "syntax_errors": 0,
+    "supported_runtime_build_completed": false
+  },
+  "source_sha256": {
+    "public/app.js": "36fd2f114e797a46e2f70cc1d7124756a4936be435e59b633892d8a790b123ae",
+    "tests/recovery-visibility-ownership.node.test.mjs": "f0fb00ce7d3a1bd90e915406c5bdbd8596c7a8d01d5b0191a40f31b1b7356914"
+  }
+}
