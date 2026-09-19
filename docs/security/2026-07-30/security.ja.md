@@ -1,0 +1,203 @@
+# セキュリティ
+
+## パスワードなしpasskeyログイン
+
+サインイン画面はIDやパスワードを先に受け取らず、discoverable WebAuthn資格情報で直接認証できます。匿名optionsルートは空の`allowCredentials`一覧を返し、user verificationを要求します。そのワンタイムチャレンジはハッシュだけで保存され、別個の`HttpOnly`、`SameSite=Strict` ceremony Cookieにバインドされ、5分後に期限切れとなります。また完全なassertionを解析する前に原子的に消費されるため、不正な試行を修正してreplayすることはできません。
+
+検証にはcanonicalかつバイト単位で同一の`id`/`rawId`値、値が設定された資格情報の`userHandle`、設定された正確なoriginとRP ID、user presenceとuser verification、有効な署名、さらにカウンター対応時には後退しないカウンターが必要です。トランザクションはアカウントと資格情報の両方を再ロックし、署名検証後に資格情報のセキュリティフィールドが変更されていないことを確認し、compare-and-swapセマンティクスでカウンターを更新します。不明な資格情報、誤ったhandle、暗号学的失敗、replayはすべて同じ汎用エラーを返します。新しいpasskey登録には`residentKey: "required"`が必要です。古いnon-discoverable passkeyは、直接ログインに現れる前に再登録が必要な場合があります。
+
+匿名passkey本文は64 KiBに制限され、正確なオブジェクトキー集合に加え、明示的なbase64url、extension-result、深さ、ノード制限を使用します。optionsとverificationには別々のIP rate limitがあります。これらのストアはプロセスローカルなので、水平スケールするデプロイでは同等のedge limitまたは共有ストアを適用する必要があります。
+
+## 2段階認証
+
+いずれかの認証方式を設定するには**設定 → セキュリティ**を開きます。
+
+- **認証アプリ（TOTP）：** BrainVaultはQRコードと手動設定キーを表示し、有効な6桁コードが確認された後にのみ方式を有効化します。保存されるTOTPシークレットはAES-256-GCMで暗号化され、同一time step内でコードをreplayできません。
+- **Passkey（WebAuthn/FIDO2）：** 複数のプラットフォームpasskeyまたは外部ハードウェアセキュリティキーを追加、命名、名称変更、削除できます。各資格情報は別々に保存されるため、主端末と復旧キーを共存させられます。
+
+パスワードが受理された後、1つ以上の方式を設定済みのアカウントにはJWT応答の代わりに短寿命のワンタイムMFAセッションが発行されます。利用可能なTOTPまたはpasskeyチャレンジを完了すると、通常の`HttpOnly`、`SameSite=Strict`セッションCookieが作成されます。設定済みpublic originまたはHTTPSモードがTLSを使用する場合、Cookieには`Secure`が付与されます。認証応答はJWTをJSONに含めず、組み込みブラウザクライアントもセッション資格情報をWeb Storageへ永続化しません。互換用bearerセッションは本番環境で既定で無効であり、明示的に有効化してもブラウザorigin検査の対象です。
+
+ローカルWebAuthn開発は`http://localhost:4000`で動作します。本番デプロイではHTTPSを使用し、`WEBAUTHN_RP_ID`と`WEBAUTHN_ORIGIN`を正確なrelying-partyドメインとブラウザoriginに設定してください。
+
+ユーザーがTOTPを登録した後に`MFA_ENCRYPTION_KEY`を変更すると、暗号化済みauthenticatorシークレットが無効になります。管理されたsecretプロセスで保存・ローテーションしてください。
+
+## シークレット生成と起動ガード
+
+`npm run env:init`はMariaDBアプリケーションパスワード、`JWT_SECRET`、`MFA_ENCRYPTION_KEY`について互いに独立した暗号学的ランダム値を生成し、exampleファイルから使用可能な公開シークレットをコピーしません。`npm run secrets:generate`はJWT設定とMFA設定向けに別々の32バイト（256ビット）base64url値を出力します。既存`.env`の欠落または生成placeholder代入を埋めるには`-- --write`を追加します。実際の既存値は`--force`も指定しない限り保護されます。MFAキーの強制置換は、既存登録済みTOTPシークレットが読めなくなるため管理されたmigrationとして扱ってください。`DATABASE_URL`には空でないパスワードが必要で、既知の公開／既定値は拒否されます。本番では両方の暗号学的変数を明示する必要があります。既知のplaceholder、legacy開発値、両用途で同じ暗号学的値を再利用する設定は起動時に拒否されます。本番以外で暗号学的シークレットが設定されていない場合、BrainVaultは共有リポジトリ定数ではなくプロセスごとの一時値を使用します。
+
+HTTPサーバーは既定で`127.0.0.1`にbindします。外部bindには明示的な`HOST`設定が必要です。
+
+## ランタイムセキュリティ基準
+
+依存関係のインストールは2026年7月29日のセキュリティ更新より古いNode.jsリリースでブロックされます。対応最低バージョンは22.x系のNode.js 22.23.2、24.x系のNode.js 24.18.1、またはNode.js 26.5.1以降です。package engine範囲はlockfileにも反映され、`.npmrc`で`engine-strict=true`が有効なため、古いランタイムでは`npm install`と`npm ci`が警告だけでなく失敗します。
+
+これらのバージョンには、2026年7月のセキュリティリリースで告知されたHTTP/2メモリ枯渇とuse-after-free、permission-model境界欠陥、HTTPS identity/session-reuse問題、DNSとzlibのdenial-of-service条件、request-header desynchronization、同梱Undici/llhttp更新に対するNode.js修正が含まれます。本番イメージとCI runnerは最低範囲だけに依存せず、現在のpatch済みリリースを固定してください。
+
+`MARIADB_ADMIN_URL`を使用する場合、bootstrapは`DB_USER_HOSTS`にある正確なhostについてのみアプリケーションアカウントを作成し、`ALTER USER`でパスワードを更新し、BrainVaultに必要なschema権限だけを付与し、legacyの`brainvault@'%'`形式wildcardアカウントを削除します。既存デプロイでは新しいデータベースパスワードと正確なアカウントhostを選んだ後、管理者接続で`npm run db:init`を再実行してください。
+
+## 認証応答キャッシュ分離
+
+`requireAuth`境界を通過するすべての要求には、資格情報解析、データベースアクセス、ルート実行より前に`Cache-Control: private, no-store`が設定されます。これによりCookie認証API JSON、認証エラー、data export、添付、オプションの内部ドキュメントがブラウザや中間装置によって再利用されることを防ぎます。内部ドキュメントstatic handlerは自身のcache metadataを無効化するため、認証境界ポリシーを置き換えられません。
+
+カスタムpage-coverバイナリendpointだけが意図的な例外です。privateのまま即時revalidationを使用し、`Cookie`と`Authorization`の両方でvaryするため、変更されていない画像は一致する資格情報コンテキスト内でのみ条件付き再利用できます。
+
+## 認証悪用対策
+
+ログインはIPキーおよび正規化アカウントキーによる要求制限と、データベース永続化されたアカウントbackoffで保護されます。パスワード失敗はuser-row lock下で更新され、設定された閾値を超えるとlock期間が設定最大まで指数的に増加するため、分散source IPでアカウント状態をリセットできません。アクティブな永続lockはパスワード失敗だけでなく正しいパスワードの受理にも適用されます。保存済み期限が過ぎるまでは正しいパスワードもロックされ、期限後に正しいパスワードが失敗カウンターを消去します。それでも設定済みMFAチャレンジは完了する必要があります。アカウントがまだロック中という理由だけで拒否された試行は通常の資格情報失敗ではなく`LOCKED`として記録されます。パスワードが有効でもMFAが必要な応答は完了済み成功ログインとしてではなく試行として数えられます。TOTPとpasskeyログイン検証には別のIP・アカウント制限があり、短寿命MFAログイントークンは作成元source IPにバインドされます。TOTP登録検証には独自のアカウント制限があり、登録コードのtime stepは即時保存されるため同じコードをログインに再利用できません。MFA失敗はuser-row lock下で置換ログインセッションへ持ち越されるため、再サインインしても8回のセッション試行予算をリセットできません。MFA成功で持越し状態は消去されます。登録にはIP単位・プロセス全体の制限があり、本番では既定で無効、既存ユーザー名へのパスワードhashingを繰り返さず、同じpadded受付応答を返します。公開登録を有効にすると、登録とログイン動作の組み合わせから正規化ログインIDの存在が分かる可能性があります。open enrollmentを意図しない限り本番では登録を無効にしてください。メモリ内request limiterは1プロセス向けです。複数instanceでは共有rate-limit storeを使用する必要がありますが、パスワードbackoffはMariaDB経由で共有されます。
+
+## 資格情報変更時のセッション失効
+
+API access tokenとページスコープ共同編集ticketは別々のJWT audience、固定HS256アルゴリズム、`brainvault` issuerを使用します。セッショントークン既定寿命は12時間で、設定は24時間を超える寿命を拒否します。トークンにはアカウントの現在のauthentication generationも含まれます。パスワード変更またはログアウトではそのgenerationを増やし、未完了のMFAおよびWebAuthnログイン状態を削除し、ローカル共同編集ソケットを即時閉鎖します。パスワード変更を開始したブラウザには置換Cookieが発行され、ログアウトではCookieが消去されます。古いAPIトークン、共同編集ticket、定期再検査ソケットはfail closedします。
+
+`024_auth_session_revocation.sql` migrationは秘密ではない`users.auth_version` generationカウンターを追加します。このバージョンをデプロイすると厳格なissuer、audience、generation claimを含まないlegacy JWTが無効になるため、アップグレード後にユーザーは一度再サインインする必要があります。
+
+## ブラウザoriginポリシー
+
+本番環境では`HTTPS_MODE`が`proxy`または`posh-acme`でない限り起動を拒否し、`PUBLIC_ORIGIN`はHTTPSでなければなりません。開発loopback originとportを含むすべてのブラウザoriginを`CORS_ORIGIN`に明示的に列挙する必要があります。API CORSと共同編集WebSocket origin検査は`X-Forwarded-Host`や`X-Forwarded-Proto`から認可を導出しません。`HTTPS_MODE=proxy`では、直接接続peerが`TRUST_PROXY_ADDRESSES`と一致する場合のみforwarding headerを受理します。数値hop trustとcatch-all `/0` CIDRは拒否され、カンマ区切りまたは重複したforwarded-protocol値はfail closedします。`HTTPS_MODE=posh-acme`ではBrainVaultが設定証明書を`PUBLIC_ORIGIN`に対して検証し、forwarding headerを信頼しないnative TLS listenerを作成します。redirect先は要求headerではなく固定`PUBLIC_ORIGIN`を常に使用します。無制限のboolean proxy trustは使用しません。
+
+## レンダリングHTML制限
+
+sanitize済みノートHTMLは、対応動画hostからのembedded video frameだけを許可します。ユーザー指定iframe permission属性は削除され、input要素はdisabled checkbox描画に限って保持されます。passwordその他の対話可能input typeは破棄されます。
+
+## Content Security Policy
+
+Content Security Policyはsame-originアプリケーションscriptと、現行クライアントが使用する正確なversionのKaTeXおよびYjs resourceだけを許可します。外部CDN host全体は信頼しません。WebSocket destinationはすべての`ws:`または`wss:` endpointを許可するのではなく、正確に設定されたブラウザoriginから導出されます。動的page-render属性はescapeされ、共同編集block IDはバックアップデータと同じ制限付きidentifier alphabetを使用し、クライアント側attribute selectorは`CSS.escape()`を使用します。
+
+## ブックマークプレビューの安全性
+
+ブラウザのcross-origin規則によりeditorは任意ページHTMLを直接読めないため、OpenGraph取得には認証済み`/api/bookmarks/preview`サーバーendpointを使用します。サーバー側preview fetchは設定された宛先port（既定80と443）だけを許可し、明示的HTML content typeを要求し、検証済みpublic DNS応答をoutbound要求にpinし、すべてのredirectを再検証します。ブロックされたprivate-network宛先と通常のremote fetch失敗は同じrecoverable warning形式を返すため、endpointは有用な内部DNSまたはport oracleになりません。
+
+保存済みブックマーク、画像、favicon URLは別viewerのブラウザに描画される前にprivateまたはlocal IP literalを拒否します。後からprivate addressへresolveするhostnameは、この同期保存検証では拒否できません。operatorは内部DNS名を機微情報として扱うべきであり、サーバー側preview経路では完全なDNS検証とpinningを引き続き実行します。
+
+fetcherは次を行います。
+
+- public HTTP(S)宛先のみ受理
+- すべてのredirectを再検証
+- local、private、reserved IP rangeを拒否
+- 検証済みDNS結果をpin
+- Node.jsがIPv4とIPv6接続試行間でfallbackできるようにする
+- 設定済みbyte limitまでdocument headだけを読む
+- 一般的なlegacyページ文字セットをサポート
+
+専用の認証ユーザーlimiterが、このサーバー側fetch経路の呼び出し頻度を制限します。この制限には`BOOKMARK_PREVIEW_WINDOW_MS`と`BOOKMARK_PREVIEW_MAX`を、個々のfetchには`BOOKMARK_FETCH_TIMEOUT_MS`と`BOOKMARK_FETCH_MAX_BYTES`を使用してください。
+
+## ページバージョン履歴のプライバシー
+
+ページバージョン履歴には削除済みブロックの完全なスナップショットが含まれる場合があります。そのため一覧、詳細、リセット操作は所有者専用で、ブラウザは招待編集者からバージョン履歴操作を隠します。通常のページおよび共同編集アクセスは編集者にも引き続き利用可能で、過去スナップショットストアだけが制限されます。
+
+## 共有ページ共同編集の安全性
+
+ページ所有者だけが編集者権限を作成・削除できます。セッション発行、WebSocket upgrade、定期的live-connection検査、relational materialization、添付アクセス、通常ページ読み取りはそれぞれ認証ユーザーの所有者／編集者アクセスを再確認します。ページが共同編集に入った後は直接REST添付作成が拒否され、直接block-mutation invariantと一致してout-of-band relational writeを防ぎます。権限を削除するとそのユーザーのsocketを即時閉鎖し、ページをアーカイブまたは削除するとroomを閉じます。
+
+共同編集ticketは短寿命のページスコープJWTで、URLではなくWebSocket subprotocolで送信されます。サーバーはブラウザorigin、RFC 6455 framingとmasking、frame/message size、update rate、現在のページ状態、ticketのuser/page scopeを検証します。受理されたバイナリupdateはacknowledgementおよびbroadcastの前にMariaDBへcommitされます。各writeではプロセスローカルroom tipとlock済みdurable update tipも比較し、別プロセスのupdateを見逃したroomはinsertまたはcompaction前に無効化されます。
+
+クライアントはYjsメタデータを挿入するだけで添付を作成できません。新しい添付blockは認証済みupload endpointから作成する必要があり、relational materializationはcanonical file metadataを保持または検証します。スナップショット検証では重複／global block ID、親欠落、cycle、過剰nesting、古いupdate marker、置換済みdocument epoch、title/block limitも拒否します。session ticket、WebSocket room、database write、browser recovery recordは同じepochを持つため、restore前のoffline Yjs文書を同じpage IDで新規初期化されたページへreplayできません。session発行にはgeneration-aware client protocol markerが必要で、デプロイ後も開いたままの修正前タブがlegacy recovery動作で再接続することを防ぎます。
+
+共同編集文書にすでに存在する添付の親と順序は、遅延し得るrelational session snapshotではなくacknowledged Yjs stateから取得します。SQL snapshotは変更不能なfile identityとmetadataについて引き続きauthoritativeであり、添付が実際にYjsから欠落している場合だけpositionに使われます。共同編集protocol version 2とWebSocket subprotocol `brainvault-yjs-v2`は、デプロイ中にcacheされた修正前writerを拒否します。
+
+完全なアクセス／永続化モデルについては[共同編集](../../collaboration/2026-07-29/collaboration.ja.md)を参照してください。
+
+## 信頼できないコードのレンダリング
+
+Highlight.js grammarは正規表現を同期実行します。そのためBrainVaultはサーバーとブラウザの両方で、信頼できないcode blockごとに最大2,000 UTF-16 code unitだけをhighlightします。サーバー描画は25 ms実行deadline付きNode.js VM invocation内でgrammarを実行します。より長い入力、不明grammar、エラー、timeoutでは、ノート内容を削除・切り詰める代わりに完全なsourceをHTML-escaped plain textとして保持します。
+
+初期browser hydrationはさらにrender passあたり20 block、合計8,000 code unitに制限されます。これらの制御はeditor preview、Markdown fence、read-onlyレンダリング、backup restore、保存コードに遭遇し得る共同編集materialization経路に適用されます。
+
+## 添付の安全性
+
+アップロードbyteは`ATTACHMENT_UPLOAD_DIR`の下に保存され、既定はプロジェクトルートの`uploads/`です。このディレクトリはGitでignoreされ、public staticディレクトリとしてmountされることはありません。
+
+upload検証ではactive webおよびexecutable拡張子・media typeを拒否し、executable signatureを検出し、安定したmagic byteを持つ形式のsignatureを検証し、認識できないクライアント宣言media typeを`application/octet-stream`へ降格します。クライアント`Content-Type`だけを唯一の信頼信号として受理することはありません。既存legacy metadataもdownload時に正規化され、active legacyファイル名には中立的な`.download` suffixが付加されます。
+
+multipart byteを受け付ける前に、uploadルートは現在のページアクセスを検証し、共有またはアーカイブ対象を拒否し、利用可能なら宣言要求サイズを確認し、専用アカウント別rate limitを適用し、制限されたプロセス全体concurrency pool内でアカウントごとに最大1つのactive uploadだけをadmitします。受信後のtransactionでも認可とページ状態を再確認するため、アクセス失効、共有変更、アーカイブ変更はfail closedします。これらのadmission controlはプロセスローカルです。複数instanceデプロイではproxyまたはdistributed storeで同等の共有制限を適用する必要があります。
+
+すべてのdownloadは`/api/blocks/:blockId/attachment`を通り、現在のユーザーの現在のページアクセスを再確認し、強制download disposition、`nosniff`、sandboxing Content Security Policy、same-origin resource policyを適用します。backup restoreは直接uploadと同じblocked-filenameおよびactive-MIMEポリシーを適用します。設定されたattachment rootがpublic web rootと同一またはその配下なら、大文字小文字を区別しないWindows pathを含めて拒否され、起動時はcommit済み添付に触れず古いstaging fileを削除します。添付block、添付を含むparent block、または完全削除されたpage subtreeを削除すると関連ファイルも削除されます。
+
+`ATTACHMENT_STORAGE_MAX_MB`は既定2048 MBで、アカウントごとのcommit済み添付byteを制限します。アカウントはcommit済み添付ファイル5,000件にも制限され、ゼロbyteや小さなuploadでbyte quotaを越えずfilesystem inodeを枯渇させることを防ぎます。upload accountingはowner rowのlock中に実行されるため、同時writerが同じ残容量をそれぞれ予約できません。backup restoreはreplacement attachment generationをstagingする前に両方の上限に対して検証します。byte上限は専用添付volumeの実使用可能容量より小さく設定し、一時upload、backup staging、中断restore recovery generation用の追加容量を確保してください。
+
+`ATTACHMENT_UPLOAD_DIR`を`public/`、`docs/`、`.git/`、またはプロジェクトルートに向けないでください。
+
+## バックアップと復元の安全性
+
+exportされる各attachment-upload file、custom page-cover、アップロードcustom-iconエントリはbyte size、CRC-32、SHA-256 digestとともに記録されます。restoreはworkspace dataを置換する前にZIP directory、manifest relationship、entry path、count、media signature、digestを検証します。現行v5バックアップはより厳格なcomplete-manifest contractで、ユーザーに見えるpage Version履歴、page/collection sharing状態、page comment、owned-page navigation状態を保持します。uploaded-asset処理はv3動作を保持し、DB参照中のactive assetだけでなくアカウントのattachment-upload directoryと完全なuploaded custom-icon directoryを列挙します。曖昧なdatabase commit後に意図的に保持された追加添付は`retainedAttachments`として記録され、library removal後に意図的に保持されたicon fileは`custom-icons/`内でself-containedに保たれます。
+
+ファイルを先にstagingし、データベース置換をtransaction内で実行するため、不正または不完全なバックアップがアカウントを部分的に上書きしません。添付とアップロードcustom iconは1つのuser-row lockと共有restore journalを使用します。以前のdirectoryはdatabase commit結果が判明するまで保持され、中断rollbackは失敗restore generationに属さない後続の同時uploadを保持します。
+restore preflight fingerprintとlock済みrecheckには、page Version履歴、owned-page navigation collapse状態、live attachment/custom-icon filesystem generation、custom-icon library row/removal rowも含まれるため、より新しいhistory reset、navigation preference write、upload、icon-library mutationが古い宛先状態から準備されたrestoreで黙って上書きされることはありません。navigation preference mutationはbackup/restoreと同じユーザー単位row lockを使用します。
+
+ブラウザはsame-originタブ全体でrenewable page/workspace transition leaseも取得します。開いている各editorにはflushの機会が与えられます。所有するactiveまたはarchived pageに未保存direct draftまたは未acknowledged local Yjs recovery snapshotがある間はexportがブロックされ、restoreはYjs recovery条件でブロックされ、完全subtree削除はサーバー検証済み削除scopeの全ページに同じYjs guardを適用し、ページにlocal recovery recordがある場合archivingはcollaborator切断を拒否します。これによりサーバー側version checkとブラウザstorageだけに存在する編集の間の隙間を閉じます。
+
+restoreはworkspace contentに対して意図的に破壊的です。現在のpage、collection、block、tag link、page sharing grant、ユーザー可視page Version履歴、owned-page navigation collapse状態、attachment directoryは現行v5バックアップ状態に置換されます。v5はv3 uploaded-asset動作を保持し、アカウントのuploaded custom-icon directoryとcustom-icon library/removal状態を置換します。v3より前のバックアップはその新しいasset状態を変更しません。local uploaded-icon URLとremoval hashはsource account IDからdestination account IDへ再bindされ、v5はpage Version履歴に保存されたlocal icon referenceとsource-owner actor IDにも同じrebindingを適用します。ログイン資格情報とMFA/passkeyセキュリティ素材はexportされず、変更されません。
+
+現行形式バックアップはpage sharing grantを協力者の安定account IDとusernameの両方へbindします。restoreはIDでアカウントをlockし、ページを1つでも削除する前に正確なpair一致を要求します。同じusernameを持つ無関係なdestination accountは受理されません。以前のbackup形式にあるusername-only sharing recordは、各recordが現在lock済みpage-to-account grantと一致する場合に限り受理されます。username lookupだけは使われず、legacy/current recordが混在するとfail closedします。`pageShares`フィールドがないlegacyバックアップは、importされる一致した通常page IDについてアカウントの現行grantを保持し、archived pageも対象です。これによりpage deletion cascadeでgrantが黙って消えることを防ぎます。historical Yjs update logは引き続き除外されます。バックアップは最新server-materialized document stateを保存し、restoreは新しいcollaboration generationを作成します。
+
+`DATA_TRANSFER_MAX_SIZE_MB`は既定1024 MBで、`Content-Length`がある場合のmultipart受信前、Multerによるfile streaming中、ZIPのtotal stored-entry size、export attachment staging中、完成export planに対して適用されます。`DATA_TRANSFER_MAX_MANIFEST_SIZE_MB`は既定16 MBで、過大manifestはparsing用byteを割り当てる前に拒否されます。exportは完全なバックアップをメモリbufferingせず最終archiveをstreamし続けます。
+
+backup manifestは20,000 page、50,000 block、20,000 tag、100,000 page-tag relation、20,000 sharing grant、200,000 page Version-history entry、20,000 owned-page navigation-collapse entry、合計5,000 uploaded attachment file（live-block添付＋保持されたunlinked file）、20,000 custom page-cover entry、20,000 uploaded custom-icon file、50,000 custom-icon library-removal recordに制限されます。importはmanifest込み最大45,001 ZIP entry、最大8 MiB central directoryを受理します。BrainVaultは自身のUTF-8、store-mode ZIP形式だけを受理するため、compressed-entry expansionをimport経路として利用できません。
+
+認証済みimportはmultipart byteを受信する前に制限されます。既定ではprincipalごとに1時間3回、principalごとにactive import 1件、アプリケーションプロセスごとに同時import 2件です。これらはプロセスローカル制御なので、複数instanceではproxyまたはdistributed limiterで同等の共有ポリシーを適用する必要があります。BrainVaultのdata exportで生成されたZIPだけを受理します。
+
+## メタデータ、URL、復元検証
+
+未認証health応答は`{ "ok": true }`だけを含みます。`SERVE_INTERNAL_DOCS=true`が明示設定されない限り内部リポジトリドキュメントは配信されず、有効化されたドキュメントルートにも認証済みセッションが必要です。不正JSONはclient errorとして報告され、database constraint応答は安定したapplication error codeを使用し、backup conflictは別アカウント所有identifierを開示しません。page cover URLはbackup restore時も含め`http:`と`https:` schemeだけを受理します。復元profile avatarはアカウントデータ置換前にMIME type、image signature、sizeを再検証します。
+
+## セキュリティ既定値
+
+サーバーには次が含まれます。
+
+- 依存関係インストール時に強制されるセキュリティpatch済みNode.jsランタイム
+- すべての環境でHelmet security header、正確にversion固定された外部resource、明示的CORS/WebSocket origin allowlist
+- global、bookmark-preview、data export/import、login、MFA-login、MFA-enrollment、registration rate limiting
+- 永続化された指数パスワード失敗backoffと、password/MFA変更時の現在パスワード確認
+- 既定でcurrent-step replay protection付きの暗号化TOTPシークレット
+- ワンタイムかつ期限付きMFAおよびWebAuthn challenge
+- WebAuthn user verification、厳格なJWT audience分離、資格情報変更時session revocation
+- Zod input validationと検証済みprofile-image data
+- filename、media-type、signature、認証download、upload-size制御を備えたprivate attachment storage
+- 認証middleware境界での`private, no-store` caching。page-cover byteだけ資格情報に応じたprivate revalidationを使用
+- 上限・deadline保護されたsyntax highlightingを伴うsanitize済みMarkdown/HTML出力
+
+これらの既定値は出発点であり、HTTPS、安全なsecret storage、database・attachment backup、dependency update、本番monitoringの代替ではありません。
+
+## レポートに基づく強化（2026-09-17）
+
+以下の変更は提供されたassessmentでBV-30からBV-38として特定されたcode pathに対応します。アプリケーションまたはデプロイのすべての部分に脆弱性がないと主張するものではありません。
+
+### outboundアドレス分類（BV-30およびBV-38）
+
+一致したRFC 6052 prefixに0でないreserved octetまたはsuffixがある場合、通常public IPv6として扱わずfail closedするようになりました。zero-suffix fetch policyは意図的にRFC 6052より厳格です。RFCはzero suffixを推奨しますが、translatorはnonzero suffix bitを無視すべきとも述べています。設定済み`/96` prefixもreserved octetがzeroでなければなりません。
+
+レポートのliteral `2a00:64::1:7f00:1`は`2a00:64::/96`の外側にあり、reserved octetではなくprefix bitを変更します。したがってその分類だけでは報告された`/96` bypassを立証しません。shorter-prefixのfail-open経路は実在し、生成した`/32`、`/40`、`/48`、`/56`、`/64` regression caseでカバーしています。有効なpublic translationはdiscovery成功後もサポートされます。
+
+設定prefixは成功したRFC 7050 discoveryを置換せず補完します。空、失敗、malformed discoveryが設定prefix経由でIPv6 eligibilityを黙って保持することはできません。NAT64とcanonical-origin cacheは60秒lifeで、local interface addressは検証ごとに読み取られます。cache life内のaddress changeは引き続きdeployment considerationです。network-level egress filteringは今も推奨されますが、このsource updateがproxy、container routing、translator変更を黙ってインストールすることはありません。
+
+参照: [RFC 6052, section 2.2](https://www.rfc-editor.org/rfc/rfc6052.html#section-2.2)および[RFC 7050](https://www.rfc-editor.org/rfc/rfc7050.html)。
+
+### 委譲権限とリカバリ（BV-31およびBV-32）
+
+collection-rootの完全削除とdirect-page grant作成／削除は所有者専用です。deletion-snapshot経路と最終lock済みdelete経路は同じcollection-root制限を強制します。direct-grant removalはadmission時にownershipを確認し、transaction-bound access lock下でも再確認します。既存snapshot、mutation receipt、grant-generation、authentication、workspace検査は維持されます。委譲administratorは他のcollection-managementおよびmember-page機能を保持し、administration権限全体を除去するものではありません。
+
+recoveryは第二のediting channelではなくquarantine/download機能のままです。non-owner uploadは全共有page合計でprincipalごとに8 candidate・32 MiB、page/lineageごとに3 candidate・20 MiBへ制限されます。既存の総principal quota、正確なregistered-lineage検査、payload hashing/deduplication、authentication、7日grant expiryは維持されます。client `sourceId`や`generation`を変えてもquotaはリセットされません。既存保存recovery candidateは黙って削除されません。
+
+recovery `generation`はlocal draft/persistence identifierであり、collaboration grant generationではありません。レポート提案のように両者を同一視するとprovenanceを証明しないまま正当なrecoveryを拒否してしまいます。実装は代わりにkind/lineage一貫性を検証し、信頼できない入力を制限し、non-owner candidateと提出principalを目立つ形で表示します。許容量内では任意candidate contentが依然可能ですが、自動render・applyされず、revocation前の著作を示す証拠ではありません。
+
+### 認証境界（BV-33およびBV-34）
+
+TOTPログインは現在block検査、session-attempt reservation、credential verification、failure/block persistenceの前にuser rowをlockします。これらはすべて同一transactionを使用するようになりました。想定内verification failureはtransactionから返し、commit後にのみthrowします。内部でthrowするとattempt counterがrollbackしraceを再発させます。既存8-attempt session limitとused-step replay検査は維持されます。source-IP precheckは最適化に過ぎずauthoritative gateではありません。
+
+migration `080_registration_approval.sql`は既定値1の`registration_approved`を追加し、既存およびoperator-provisioned accountを保持します。public registrationは明示的に0を挿入します。pending accountはoperator CLIで独立承認されるまでdummy-password/invalid-credential経路を使用します。duplicate registrationは既存accountを有効化も上書きもしません。registrationは本番で引き続き既定無効です。未検証applicantを自動承認しないでください。approvalはアカウント存在を無期限に隠すためのdelayではなくout-of-band trust boundaryです。
+
+参照: [MariaDB FOR UPDATE](https://mariadb.com/docs/server/reference/sql-statements/data-manipulation/selecting-data/for-update)および[OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)。
+
+### リソース、パス、regression制御（BV-35～BV-37）
+
+resident collaboration roomはadmission前にworst-case canonical documentとhistory-metadata allowanceを予約し、loadingではさらにbounded replay byteを予約します。共有ceiling既定値は512 MiBで`COLLABORATION_ROOM_MEMORY_MAX_BYTES`により設定します。枯渇時はWebSocket upgrade前にretryable 503で新規loadを拒否し、安全にidleなroomをevictします。invalidated roomに未完了loaderまたはwriterが残る間、reservationは返却されません。
+
+receive capacity、retained fragment、queued/active message payloadはそれぞれ別のプロセス全体128 MiB budgetを持ちます。capacity growthはallocation前にreplacement bufferを予約し、active-handler payload reservationはsocket close後もhandlerがsettleするまで維持されます。pending upgradeもIPごとに8件へ制限されます。1-byte headerやnonfragmented frameを含むpartial frameはすべて15秒以内に完了する必要があり、追加byteでdeadlineは更新されません。完了したsmall frameはpartial-frame timerを割り当てません。これらの制限はすべてのJavaScript object、worker、driver、kernel memoryを測定するものではなく、OSレベルcontainmentは依然必要です。
+
+レポートはroom componentの1つを誇張しています。保持される`history` entryにはすべてのhistorical BLOBではなくmetadataが含まれます。durable historyとtransient replay byteはresident room stateとは別です。それでもaggregate availability riskは新しいaccountingを導入するに値するものでした。
+
+4つすべてのexport/restore owner-directory joinは`storageOwnerDirectory`を使用し、安全でないstorage segmentをaliasへ正規化するのではなく拒否し、lexical containmentを検証します。既存IDはサーバー生成です。これはdefense-in-depth修正であり、実証済みHTTP traversal exploitではありません。既存archive validationとsymlink protectionは変更されません。
+
+古いregression expectationはaccount-wide login throttling、passkey renameの現在authentication boundary、未検証bookmark placeholder、literal regex escaping、実際のcustom-icon mutation count、より強いorigin policyを追跡するようになりました。関連source assertionもapproval-aware loginとfail-closed discoveryに合わせました。WebSocket performance assertionは新しいpartial-frame deadlineを考慮しながらscratch-bufferとidle-timer再利用を引き続き要求します。focused regression suiteは分離されたDNS、clock、transaction simulationでproduction functionを実行します。live MariaDB、実際のNAT64 translation、dependency-backed compilation、browser end-to-end behaviorはdeployment環境での検証が必要です。
+
+この更新は新しいaudit trailまたはlog-file subsystemを追加しません。

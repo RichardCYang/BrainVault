@@ -99,16 +99,16 @@ BrainVault는 Posh-ACME 인증서 파일을 사용해 HTTPS를 직접 종료하�
 
 | 가이드 | 내용 |
 | --- | --- |
-| [문서 인덱스](docs/README.md) | 주요 문서 링크 |
-| [시작하기](docs/getting-started/2026-07-27/getting-started.md) | 설치, 데이터베이스 설정, 데모 데이터, 운영 환경 설정 |
-| [설정](docs/configuration/2026-07-28/configuration.md) | 환경 변수와 런타임 옵션 |
-| [기능](docs/features/2026-07-30/features.md) | 편집기, 블록, 백업/복원, 내보내기, 언어 |
-| [협업](docs/collaboration/2026-07-29/collaboration.md) | 공유, Yjs/WebSocket 흐름, 영속성 |
-| [컬렉션 공유](docs/collaboration/2026-09-02/collection-sharing.md) | 컬렉션 권한과 상속 |
-| [보안](docs/security/2026-07-30/security.md) | 인증, 비밀값, 첨부파일, 운영 환경 보안 경계 |
-| [API](docs/api/2026-07-30/api.md) | REST API 개요 |
+| [문서 인덱스](docs/README.ko.md) | 주요 문서 링크 |
+| [시작하기](docs/getting-started/2026-07-27/getting-started.ko.md) | 설치, 데이터베이스 설정, 데모 데이터, 운영 환경 설정 |
+| [설정](docs/configuration/2026-07-28/configuration.ko.md) | 환경 변수와 런타임 옵션 |
+| [기능](docs/features/2026-07-30/features.ko.md) | 편집기, 블록, 백업/복원, 내보내기, 언어 |
+| [협업](docs/collaboration/2026-07-29/collaboration.ko.md) | 공유, Yjs/WebSocket 흐름, 영속성 |
+| [컬렉션 공유](docs/collaboration/2026-09-02/collection-sharing.ko.md) | 컬렉션 권한과 상속 |
+| [보안](docs/security/2026-07-30/security.ko.md) | 인증, 비밀값, 첨부파일, 운영 환경 보안 경계 |
+| [API](docs/api/2026-07-30/api.ko.md) | REST API 개요 |
 | [OpenAPI](docs/api/2026-07-30/openapi.yaml) | OpenAPI 3.1 명세 |
-| [개발](docs/development/2026-07-28/development.md) | 프로젝트 구조, 스크립트, 번역, 미리보기 캡처 |
+| [개발](docs/development/2026-07-28/development.ko.md) | 프로젝트 구조, 스크립트, 번역, 미리보기 캡처 |
 
 ## 개발 참고사항
 

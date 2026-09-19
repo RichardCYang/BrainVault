@@ -99,16 +99,16 @@ BrainVaultは、Posh-ACMEの証明書ファイルを使用してHTTPSを直接�
 
 | ガイド | 内容 |
 | --- | --- |
-| [ドキュメントインデックス](docs/README.md) | 主要ドキュメントへのリンク |
-| [はじめに](docs/getting-started/2026-07-27/getting-started.md) | インストール、データベース設定、デモデータ、本番環境設定 |
-| [設定](docs/configuration/2026-07-28/configuration.md) | 環境変数とランタイムオプション |
-| [機能](docs/features/2026-07-30/features.md) | エディター、ブロック、バックアップ／復元、エクスポート、言語 |
-| [共同編集](docs/collaboration/2026-07-29/collaboration.md) | 共有、Yjs/WebSocketフロー、永続化 |
-| [コレクション共有](docs/collaboration/2026-09-02/collection-sharing.md) | コレクション権限と継承 |
-| [セキュリティ](docs/security/2026-07-30/security.md) | 認証、シークレット、添付ファイル、本番環境のセキュリティ境界 |
-| [API](docs/api/2026-07-30/api.md) | REST API概要 |
+| [ドキュメントインデックス](docs/README.ja.md) | 主要ドキュメントへのリンク |
+| [はじめに](docs/getting-started/2026-07-27/getting-started.ja.md) | インストール、データベース設定、デモデータ、本番環境設定 |
+| [設定](docs/configuration/2026-07-28/configuration.ja.md) | 環境変数とランタイムオプション |
+| [機能](docs/features/2026-07-30/features.ja.md) | エディター、ブロック、バックアップ／復元、エクスポート、言語 |
+| [共同編集](docs/collaboration/2026-07-29/collaboration.ja.md) | 共有、Yjs/WebSocketフロー、永続化 |
+| [コレクション共有](docs/collaboration/2026-09-02/collection-sharing.ja.md) | コレクション権限と継承 |
+| [セキュリティ](docs/security/2026-07-30/security.ja.md) | 認証、シークレット、添付ファイル、本番環境のセキュリティ境界 |
+| [API](docs/api/2026-07-30/api.ja.md) | REST API概要 |
 | [OpenAPI](docs/api/2026-07-30/openapi.yaml) | OpenAPI 3.1仕様 |
-| [開発](docs/development/2026-07-28/development.md) | プロジェクト構成、スクリプト、翻訳、プレビューキャプチャ |
+| [開発](docs/development/2026-07-28/development.ja.md) | プロジェクト構成、スクリプト、翻訳、プレビューキャプチャ |
 
 ## 開発上の注意
 
