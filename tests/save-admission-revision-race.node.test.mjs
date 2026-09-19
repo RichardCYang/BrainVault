@@ -89,6 +89,13 @@ function createHarness() {
     blockDraftConflictOrigins: new Map(),
     blockSaveTimers: new Map(),
     blockSaveRows: new Map(),
+    collaborationBlockMutationPromises: new Map(),
+    beginDirectRecoveryVisibilityAdmission: () => 1,
+    scheduleDirectBlockRecoveryAdmission: () => {},
+    finishDirectRecoveryVisibilityAdmission: () => {},
+    normalizeParentBlockId: (id) => id || null,
+    updateCollaborationAwareness: () => {},
+    document: { activeElement: null },
     createLatestWriteQueue,
     rebaseCommittedBlockContent,
     rebaseCommittedPageTitle,
@@ -166,9 +173,13 @@ function createHarness() {
   vm.runInContext([
     sourceBetween("function persistPageTitleDraftValue(", "function confirmRecoveredDraftOverwrite("),
     sourceBetween("const pageTitleSaveQueue = createLatestWriteQueue", "async function downloadAttachment("),
+    sourceBetween("function isCurrentCollaborationMutationContext(", "function cancelScheduledBlockSave("),
+    sourceBetween("function cancelScheduledBlockSave(", "function restoreBlockRowFromDurableState("),
+    sourceBetween("function markBlockDirty(", "function getBlockSaveQueue("),
     sourceBetween("function getBlockSaveQueue(", "function scheduleBlockSave("),
+    sourceBetween("function scheduleBlockSave(", "function getTextareaSelection("),
     sourceBetween("async function savePageTitleNow(", "function schedulePageTitleSave("),
-    "globalThis.subject = { savePageTitleNow, saveBlockRow, persistPageTitleDraftValue, persistBlockDraft };"
+    "globalThis.subject = { savePageTitleNow, saveBlockRow, persistPageTitleDraftValue, persistBlockDraft, markBlockDirty, scheduleBlockSave };"
   ].join("\n"), context);
 
   const harness = {
@@ -215,6 +226,17 @@ function createHarness() {
       if (oldRow.classList.contains("is-dirty")) currentRow.classList.add("is-dirty");
       return oldRow;
     },
+    navigateToOtherPage() {
+      const oldRow = currentRow;
+      currentRow = { dataset: { blockId: "block-2", editRevision: "0" }, classList: classList(), payload: payload("other block") };
+      context.state.selectedPage = {
+        id: "page-2", title: "other title", version: 1, contentVersion: 1,
+        blocks: [{ id: "block-2", pageId: "page-2", version: 1, ...payload("other block") }]
+      };
+      context.workspaceNavigationGeneration += 1;
+      return oldRow;
+    },
+    removeRenderedRow() { currentRow = { dataset: {}, classList: classList(), payload: payload("") }; },
     saveTitle(options = {}) { return context.subject.savePageTitleNow({ quiet: true, ...options }); },
     saveBlock(options = {}) { return context.subject.saveBlockRow(currentRow, { quiet: true, ...options }); }
   };
@@ -480,4 +502,167 @@ test("a block marked for deletion during durability is not re-admitted", async (
   assert.equal(await delayedSave, null);
   assert.equal(h.requests.length, 0);
   assert.equal(h.blockDraft.payload.markdown, "pending deletion");
+});
+
+
+// Follow-up audit: protect the earlier dirty/scheduling entry points, not only
+// saveBlockRow's asynchronous admission boundary.
+test("a detached dirty callback cannot replace the live row's durable recovery payload", () => {
+  const h = createHarness();
+  h.editBlock("older A");
+  const stale = h.rebuildRow();
+  h.editBlock("newer B");
+  const before = JSON.stringify(h.blockDraft);
+  const revision = stale.dataset.editRevision;
+  const result = h.context.subject.markBlockDirty(stale);
+  assert.equal(JSON.stringify(h.blockDraft), before, "stale input must not overwrite B in recovery storage");
+  assert.equal(stale.dataset.editRevision, revision, "an obsolete callback must not manufacture a matching revision");
+  assert.equal(h.histories.length, 0, "obsolete input must not enter undo history");
+  assert.equal(result, false);
+});
+
+test("a detached scheduled callback cannot replace the live row's autosave timer", async () => {
+  const h = createHarness();
+  h.editBlock("older A");
+  const stale = h.rebuildRow();
+  h.editBlock("newer B");
+  const timer = h.context.blockSaveTimers.get("block-1");
+  const before = JSON.stringify(h.blockDraft);
+  const result = h.context.subject.scheduleBlockSave(stale);
+  assert.ok(h.timers.has(timer), "B's timer must survive stale scheduler admission");
+  assert.equal(h.context.blockSaveTimers.get("block-1"), timer);
+  assert.equal(h.context.blockSaveRows.get("block-1"), h.row);
+  assert.equal(JSON.stringify(h.blockDraft), before);
+  assert.equal(result, false);
+  await h.saveBlock();
+  assert.equal(h.serverMarkdown, "newer B");
+});
+
+test("a detached dirty callback cannot recreate recovery data after the newer save completes", async () => {
+  const h = createHarness();
+  h.editBlock("older A");
+  const stale = h.rebuildRow();
+  h.editBlock("newer B");
+  await h.saveBlock();
+  assert.equal(h.blockDraft, undefined);
+  const historyCount = h.histories.length;
+  assert.equal(h.context.subject.markBlockDirty(stale), false);
+  assert.equal(h.blockDraft, undefined, "completed content must not acquire an obsolete recovery draft");
+  assert.equal(h.serverMarkdown, "newer B");
+  assert.equal(h.histories.length, historyCount);
+});
+
+test("a deleting row cannot admit another dirty or scheduled mutation", () => {
+  const h = createHarness();
+  h.editBlock("keep this recovery value");
+  const before = JSON.stringify(h.blockDraft);
+  const timer = h.context.blockSaveTimers.get("block-1");
+  h.row.dataset.deleting = "true";
+  h.row.payload.markdown = "late input during deletion";
+  assert.equal(h.context.subject.markBlockDirty(h.row), false);
+  assert.equal(h.context.subject.scheduleBlockSave(h.row), false);
+  assert.equal(JSON.stringify(h.blockDraft), before);
+  assert.ok(h.timers.has(timer), "an ignored callback cannot alter the deletion owner's timer state");
+});
+
+test("a row whose block left the selected page cannot write a recovery draft", () => {
+  const h = createHarness();
+  h.editBlock("existing draft");
+  const before = JSON.stringify(h.blockDraft);
+  h.context.state.selectedPage.blocks = [];
+  h.row.payload.markdown = "input for a removed block";
+  assert.equal(h.context.subject.markBlockDirty(h.row), false);
+  assert.equal(JSON.stringify(h.blockDraft), before);
+});
+
+test("a previous page's direct callback cannot save its block under the new page's draft scope", async () => {
+  const h = createHarness();
+  h.editBlock("stale previous-page content");
+  const stale = h.navigateToOtherPage();
+  const result = await h.context.subject.saveBlockRow(stale, { quiet: true });
+  assert.equal(h.requests.length, 0, "navigation must not re-scope an old row into a new page's save task");
+  assert.equal(result, null);
+  assert.equal(h.serverMarkdown, "original block");
+  assert.equal(h.store.loadPage("user-1", "page-2", "tab-1"), null);
+  assert.equal(h.blockDraft?.payload.markdown, "stale previous-page content");
+});
+
+test("a direct callback for a block absent from the selected model sends no PATCH", async () => {
+  const h = createHarness();
+  h.editBlock("keep recovery");
+  const before = JSON.stringify(h.blockDraft);
+  h.context.state.selectedPage.blocks = [];
+  assert.equal(await h.saveBlock(), null);
+  assert.equal(h.requests.length, 0);
+  assert.equal(JSON.stringify(h.blockDraft), before);
+});
+
+test("a removed editor row cannot use the detached fallback after recovery durability settles", async () => {
+  const h = createHarness();
+  h.editBlock("keep recovery");
+  const before = JSON.stringify(h.blockDraft);
+  const barrier = h.pauseNextSave();
+  const save = h.saveBlock();
+  h.removeRenderedRow();
+  barrier.resolve();
+  assert.equal(await save, null);
+  assert.equal(h.requests.length, 0);
+  assert.equal(JSON.stringify(h.blockDraft), before);
+});
+
+test("a block removed from the model during durability is not admitted from a leftover row", async () => {
+  const h = createHarness();
+  h.editBlock("keep recovery");
+  const before = JSON.stringify(h.blockDraft);
+  const barrier = h.pauseNextSave();
+  const save = h.saveBlock();
+  h.context.state.selectedPage.blocks = [];
+  barrier.resolve();
+  assert.equal(await save, null);
+  assert.equal(h.requests.length, 0);
+  assert.equal(JSON.stringify(h.blockDraft), before);
+});
+
+test("a current dirty editor still schedules, saves, and acknowledges its payload", async () => {
+  const h = createHarness();
+  h.row.payload.markdown = "valid current input";
+  assert.equal(h.context.subject.scheduleBlockSave(h.row), true);
+  assert.equal(h.blockDraft?.payload.markdown, "valid current input");
+  assert.ok(h.timers.has(h.context.blockSaveTimers.get("block-1")));
+  await h.saveBlock();
+  assert.equal(h.serverMarkdown, "valid current input");
+  assert.equal(h.blockDraft, undefined);
+});
+
+test("a detached collaborative dirty callback cannot overwrite the live shared block", async () => {
+  const h = createHarness();
+  const stale = h.rebuildRow();
+  h.row.payload.markdown = "new shared input";
+  const mutations = [];
+  h.context.isCollaborativePage = () => true;
+  h.context.state.collaborationSession = {
+    isReady: true, upsertBlock: async (block) => { mutations.push(block); return block; }
+  };
+  assert.equal(h.context.subject.markBlockDirty(stale), false);
+  assert.equal(h.context.subject.scheduleBlockSave(stale), false);
+  await Promise.resolve();
+  assert.equal(mutations.length, 0, "obsolete editors must never submit to the active Yjs session");
+  assert.equal(h.histories.length, 0);
+});
+
+test("a current collaborative dirty callback still submits and settles normally", async () => {
+  const h = createHarness();
+  h.row.payload.markdown = "valid shared input";
+  const mutations = [];
+  h.context.isCollaborativePage = () => true;
+  h.context.state.collaborationSession = {
+    isReady: true, upsertBlock: async (block) => { mutations.push(block); return block; }
+  };
+  assert.equal(h.context.subject.scheduleBlockSave(h.row), true);
+  await Promise.resolve();
+  assert.equal(mutations.length, 1);
+  assert.equal(mutations[0].markdown, "valid shared input");
+  assert.equal(h.context.collaborationBlockMutationPromises.size, 0);
+  assert.equal(h.histories.length, 1);
+  assert.equal(h.blockDraft, undefined);
 });

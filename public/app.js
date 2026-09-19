@@ -15583,6 +15583,15 @@ function rejectLocalBlockMutation(row, error) {
 function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
   if (!row?.dataset.blockId) return false;
   const blockId = row.dataset.blockId;
+  // Editor-owned callbacks must belong to the live row and selected page.
+  // Unlike a direct save of an equivalent rebuilt row, a dirty callback carries
+  // new input: admitting a detached editor here can overwrite recovery storage
+  // or the active collaboration document before saveBlockRow can reject it.
+  if (
+    row.dataset.deleting === "true"
+    || findRenderedBlockRow(blockId) !== row
+    || !getBlockById(blockId)
+  ) return false;
   const authenticationScope = captureAuthenticatedSessionScope();
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return false;
   const historyPayload = buildBlockPayload(row);
@@ -15800,7 +15809,10 @@ async function saveBlockRow(row, options = {}) {
   // reorder, or recovery rebuild. Reject obsolete input before it can replace
   // the durable draft or manufacture a revision equal to a newer saved edit.
   const renderedRow = findRenderedBlockRow(blockId);
-  if (renderedRow && renderedRow !== row) {
+  // Do not re-scope a previous page's row into the currently selected page's
+  // recovery record or send its old block id through a newly captured scope.
+  if (!renderedRow || !getBlockById(blockId)) return null;
+  if (renderedRow !== row) {
     const sourceRevision = Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0;
     const renderedRevision = Number.parseInt(renderedRow.dataset.editRevision ?? "0", 10) || 0;
     if (
@@ -15936,7 +15948,13 @@ async function saveBlockRow(row, options = {}) {
   // Check the live row: editor rebuilds can leave the initiating row detached.
   // An obsolete snapshot must not cancel the newer timer or enter the queue
   // with a version acknowledged for newer content.
-  const admissionRow = findRenderedBlockRow(blockId) ?? row;
+  const admissionRow = findRenderedBlockRow(blockId);
+  // A removed row/block is no longer an editor admission source. Falling back
+  // to the detached initiating row would undo the pre-await ownership check.
+  if (!admissionRow || !getBlockById(blockId)) {
+    syncBeforeUnloadProtection();
+    return null;
+  }
   const admissionRevision = Number.parseInt(admissionRow.dataset.editRevision ?? "0", 10) || 0;
   if (
     admissionRevision !== editRevision
@@ -16009,6 +16027,9 @@ async function saveBlockRow(row, options = {}) {
 
 function scheduleBlockSave(row, { allowConflictPrompt = true } = {}) {
   if (!requireWritablePage({ announce: false }) || !row?.dataset.blockId) return false;
+  // Reject obsolete callbacks before the failure branch can cancel a timer
+  // owned by the replacement editor (timers are keyed by block id, not row).
+  if (row.dataset.deleting === "true" || findRenderedBlockRow(row.dataset.blockId) !== row) return false;
   if (isCollaborativePage()) {
     return markBlockDirty(row, { allowConflictPrompt });
   }
