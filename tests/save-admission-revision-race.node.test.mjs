@@ -7,7 +7,12 @@ import { createPageDraftStore } from "../public/draft-store.js";
 import { createLatestWriteQueue } from "../public/save-queue.js";
 import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "../public/save-rebase.js";
 
-const appSource = readFileSync(new URL("../public/app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+// Point at an extracted pre-patch app.js to reproduce the same failures without
+// modifying the working tree or Git metadata.
+const appSource = readFileSync(
+  process.env.BRAINVAULT_QA_APP_SOURCE ?? new URL("../public/app.js", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 
 function sourceBetween(startMarker, endMarker) {
   const start = appSource.indexOf(startMarker);
@@ -46,7 +51,8 @@ function classList() {
 // HTTP endpoint are simulated; these are not live IndexedDB/MariaDB tests.
 function createHarness() {
   const authScope = Object.freeze({ userId: "user-1", generation: 1 });
-  const store = createPageDraftStore(new MemoryStorage(), { sourceId: "tab-1" });
+  const storage = new MemoryStorage();
+  const store = createPageDraftStore(storage, { sourceId: "tab-1" });
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const payload = (markdown) => ({ type: "MARKDOWN", markdown, checked: false, metadata: null });
   let serverBlock = { id: "block-1", pageId: "page-1", version: 1, ...payload("original block") };
@@ -141,12 +147,16 @@ function createHarness() {
     api: async (url, options) => {
       requests.push({ url, body: clone(options.body) });
       if (url === "/api/pages/page-1") {
-        assert.equal(options.body.expectedVersion, serverPage.version, "page optimistic version");
+        if (options.body.expectedVersion !== serverPage.version) {
+          throw Object.assign(new Error("Remote title changed"), { code: "PAGE_EDIT_CONFLICT" });
+        }
         serverPage = { ...serverPage, title: options.body.title, version: serverPage.version + 1 };
         return { page: clone(serverPage) };
       }
       assert.equal(url, "/api/blocks/block-1");
-      assert.equal(options.body.expectedVersion, serverBlock.version, "block optimistic version");
+      if (options.body.expectedVersion !== serverBlock.version) {
+        throw Object.assign(new Error("Remote block changed"), { code: "BLOCK_EDIT_CONFLICT" });
+      }
       const { type, markdown, checked, metadata } = options.body;
       serverBlock = { ...serverBlock, type, markdown, checked, metadata, version: serverBlock.version + 1 };
       serverPage.contentVersion += 1;
@@ -162,13 +172,25 @@ function createHarness() {
   ].join("\n"), context);
 
   const harness = {
-    context, requests, histories, timers, store,
+    context, requests, histories, timers, store, storage,
     get row() { return currentRow; },
     get serverTitle() { return serverPage.title; },
     get serverMarkdown() { return serverBlock.markdown; },
     get titleDraft() { return store.loadPage("user-1", "page-1", "tab-1")?.title; },
     get blockDraft() { return store.loadPage("user-1", "page-1", "tab-1")?.blocks?.["block-1"]; },
     pauseNextSave() { const barrier = deferred(); nextDurabilityBarrier = barrier; return barrier; },
+    remoteEdit(kind, value) {
+      if (kind === "title") {
+        serverPage = { ...serverPage, title: value, version: serverPage.version + 1 };
+      } else {
+        serverBlock = { ...serverBlock, ...payload(value), version: serverBlock.version + 1 };
+        serverPage.contentVersion += 1;
+      }
+    },
+    refreshCanonicalVersion(kind) {
+      if (kind === "title") context.state.selectedPage.version = serverPage.version;
+      else context.state.selectedPage.blocks = [clone(serverBlock)];
+    },
     editTitle(value) {
       context.elements.pageTitle.value = value;
       context.pageTitleEditRevision += 1;
@@ -337,3 +359,125 @@ for (const kind of ["title", "block"]) {
     assert.ok(kind === "title" ? h.titleDraft : h.blockDraft);
   });
 }
+
+
+// Delayed callbacks can hold an old DOM row before saveBlockRow even starts.
+// A post-await revision check is too late: persistence itself can replace the
+// newer recovery record, and a manufactured revision can alias a completed edit.
+test("a detached callback cannot replace a newer durable draft before admission", async () => {
+  const h = createHarness();
+  h.editBlock("block A");
+  const detachedRow = h.rebuildRow();
+  h.editBlock("block B");
+  const timer = h.context.blockSaveTimers.get("block-1");
+  const before = JSON.stringify(h.blockDraft);
+  assert.equal(await h.context.subject.saveBlockRow(detachedRow, { quiet: true }), null);
+  assert.equal(JSON.stringify(h.blockDraft), before, "B must remain the crash-recovery copy");
+  assert.equal(h.requests.length, 0);
+  assert.ok(h.timers.has(timer));
+});
+
+test("a detached callback cannot overwrite a newer completed block save", async () => {
+  const h = createHarness();
+  h.editBlock("block A");
+  const detachedRow = h.rebuildRow();
+  h.editBlock("block B");
+  await h.saveBlock();
+  assert.equal(h.serverMarkdown, "block B");
+  assert.equal(h.blockDraft, undefined);
+  await h.context.subject.saveBlockRow(detachedRow, { quiet: true });
+  assert.equal(h.serverMarkdown, "block B", "an old DOM row must not manufacture B's revision");
+  assert.equal(h.blockDraft, undefined);
+  assert.equal(h.requests.length, 1);
+});
+
+test("an equivalent rebuilt row can still be saved by its pending callback", async () => {
+  const h = createHarness();
+  h.editBlock("unchanged rebuild");
+  const detachedRow = h.rebuildRow();
+  await h.context.subject.saveBlockRow(detachedRow, { quiet: true });
+  assert.equal(h.serverMarkdown, "unchanged rebuild");
+  assert.equal(h.blockDraft, undefined);
+  assert.equal(h.requests.length, 1);
+});
+
+for (const kind of ["title", "block"]) {
+  test(`a paused ${kind} save cannot bypass a conflict raised by another save`, async () => {
+    const h = createHarness();
+    const save = () => kind === "title" ? h.saveTitle() : h.saveBlock();
+    if (kind === "title") h.editTitle("local draft");
+    else h.editBlock("local draft");
+    const barrier = h.pauseNextSave();
+    const delayedSave = save();
+    h.remoteEdit(kind, "new remote content");
+    await assert.rejects(save(), { code: kind === "title" ? "PAGE_EDIT_CONFLICT" : "BLOCK_EDIT_CONFLICT" });
+    // A canonical summary/row refresh must not count as overwrite consent.
+    h.refreshCanonicalVersion(kind);
+    const requestCount = h.requests.length;
+    const draft = kind === "title" ? h.titleDraft : h.blockDraft;
+    barrier.resolve();
+    assert.equal(await delayedSave, null);
+    assert.equal(h.requests.length, requestCount, "the rejected draft must not be silently re-admitted");
+    assert.equal(kind === "title" ? h.serverTitle : h.serverMarkdown, "new remote content");
+    assert.deepEqual(kind === "title" ? h.titleDraft : h.blockDraft, draft);
+    assert.equal(kind === "title" ? h.context.pageTitleDraftConflict : h.row.dataset.draftConflict === "true", true);
+  });
+}
+
+test("same-revision block payload replacement during durability is not stale-save consent", async () => {
+  const h = createHarness();
+  h.editBlock("old local payload");
+  const barrier = h.pauseNextSave();
+  const delayedSave = h.saveBlock();
+  h.rebuildRow();
+  h.row.payload.markdown = "replacement recovery payload";
+  h.context.subject.persistBlockDraft(h.row);
+  barrier.resolve();
+  assert.equal(await delayedSave, null);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.blockDraft.payload.markdown, "replacement recovery payload");
+});
+
+test("same-revision block recovery-source replacement cannot authorize the old source", async () => {
+  const h = createHarness();
+  h.editBlock("old source payload");
+  const barrier = h.pauseNextSave();
+  const delayedSave = h.saveBlock();
+  const otherStore = createPageDraftStore(h.storage, { sourceId: "replacement-source" });
+  assert.equal(otherStore.saveBlock({
+    userId: "user-1", pageId: "page-1", blockId: "block-1",
+    payload: h.row.payload, expectedVersion: 1, revision: 1
+  }), true);
+  h.row.dataset.draftSourceId = "replacement-source";
+  barrier.resolve();
+  assert.equal(await delayedSave, null);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.blockDraft.payload.markdown, "old source payload");
+  assert.ok(h.store.loadPage("user-1", "page-1", "replacement-source")?.blocks?.["block-1"]);
+});
+
+
+test("a same-revision replacement title during durability remains recoverable", async () => {
+  const h = createHarness();
+  h.editTitle("old title");
+  const barrier = h.pauseNextSave();
+  const delayedSave = h.saveTitle();
+  h.context.elements.pageTitle.value = "replacement title";
+  h.context.subject.persistPageTitleDraftValue("replacement title");
+  barrier.resolve();
+  assert.equal(await delayedSave, null);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.titleDraft.value, "replacement title");
+});
+
+test("a block marked for deletion during durability is not re-admitted", async () => {
+  const h = createHarness();
+  h.editBlock("pending deletion");
+  const barrier = h.pauseNextSave();
+  const delayedSave = h.saveBlock({ allowLocked: true });
+  h.row.dataset.deleting = "true";
+  barrier.resolve();
+  assert.equal(await delayedSave, null);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.blockDraft.payload.markdown, "pending deletion");
+});

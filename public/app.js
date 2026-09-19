@@ -15796,6 +15796,27 @@ async function saveBlockRow(row, options = {}) {
     ?? blockEditAuthenticationScopes.get(blockId)
     ?? captureAuthenticatedSessionScope();
   assertCurrentAuthenticatedSessionScope(authenticationScope);
+  // A delayed editor callback may still hold the row from before a locale,
+  // reorder, or recovery rebuild. Reject obsolete input before it can replace
+  // the durable draft or manufacture a revision equal to a newer saved edit.
+  const renderedRow = findRenderedBlockRow(blockId);
+  if (renderedRow && renderedRow !== row) {
+    const sourceRevision = Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0;
+    const renderedRevision = Number.parseInt(renderedRow.dataset.editRevision ?? "0", 10) || 0;
+    if (
+      sourceRevision !== renderedRevision
+      || (row.dataset.draftSourceId || pageDraftSourceId)
+        !== (renderedRow.dataset.draftSourceId || pageDraftSourceId)
+      || !jsonValuesMatch(buildBlockPayload(row), buildBlockPayload(renderedRow))
+    ) {
+      syncBeforeUnloadProtection();
+      return null;
+    }
+    // Equivalent rebuilds remain saveable, but their current conflict/deletion
+    // flags and recovery metadata, not those on the detached row, are binding.
+    row = renderedRow;
+  }
+  if (row.dataset.deleting === "true") return null;
   const payload = buildBlockPayload(row);
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
@@ -15917,10 +15938,19 @@ async function saveBlockRow(row, options = {}) {
   // with a version acknowledged for newer content.
   const admissionRow = findRenderedBlockRow(blockId) ?? row;
   const admissionRevision = Number.parseInt(admissionRow.dataset.editRevision ?? "0", 10) || 0;
-  if (admissionRevision !== editRevision) {
+  if (
+    admissionRevision !== editRevision
+    || admissionRow.dataset.deleting === "true"
+    || admissionRow.dataset.draftConflict === "true"
+    || (admissionRow.dataset.draftSourceId || pageDraftSourceId) !== draftSourceId
+    || !jsonValuesMatch(buildBlockPayload(admissionRow), payload)
+  ) {
+    // Revisions are local to a recovery source. A same-revision replacement
+    // or a conflict raised by another save is not permission to overwrite it.
     syncBeforeUnloadProtection();
     return null;
   }
+  row = admissionRow;
   recordBlockEditorHistory(row, payload);
   window.clearTimeout(blockSaveTimers.get(blockId));
   blockSaveTimers.delete(blockId);
@@ -18426,6 +18456,9 @@ async function savePageTitleNow({
   if (
     pageTitleEditRevision !== editRevision
     || (pageTitleDraftSourceId || pageDraftSourceId) !== draftSourceId
+    || pageTitleDraftConflict
+    || !elements.pageTitle.value.trim()
+    || normalizePageTitle(elements.pageTitle.value) !== title
   ) {
     syncBeforeUnloadProtection();
     return null;
