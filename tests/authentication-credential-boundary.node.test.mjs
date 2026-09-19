@@ -795,13 +795,16 @@ test("collaboration mutation completions stay bound to their initiating auth/pag
   const awaitedBlockStart = source.indexOf("async function saveBlockRow");
   const awaitedBlockEnd = source.indexOf("function scheduleBlockSave", awaitedBlockStart);
   const awaitedBlock = source.slice(awaitedBlockStart, awaitedBlockEnd);
-  const awaitedBlockMutation = awaitedBlock.indexOf("block = await session.upsertBlock");
+  const awaitedBlockMutation = awaitedBlock.indexOf("block = await mutation;");
+  const blockOwnership = awaitedBlock.indexOf("collaborationBlockMutationPromises.set(blockId, mutation)");
+  assert.ok(blockOwnership >= 0 && blockOwnership < awaitedBlockMutation,
+    "direct block saves must register their completion owner before awaiting durability");
   const awaitedBlockCatch = awaitedBlock.indexOf("} catch (error) {", awaitedBlockMutation);
   const awaitedBlockRejectedFence = awaitedBlock.indexOf(
     "if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;",
     awaitedBlockCatch
   );
-  const awaitedBlockRejectedUi = awaitedBlock.indexOf("rejectLocalBlockMutation(row, error)", awaitedBlockCatch);
+  const awaitedBlockRejectedUi = awaitedBlock.indexOf("rejectLocalBlockMutation(currentRow, error)", awaitedBlockCatch);
   const awaitedBlockResolvedFence = awaitedBlock.indexOf(
     "if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;",
     awaitedBlockRejectedUi
@@ -819,7 +822,10 @@ test("collaboration mutation completions stay bound to their initiating auth/pag
   const saveTitleStart = source.indexOf("async function savePageTitleNow");
   const scheduleTitleStart = source.indexOf("function schedulePageTitleSave", saveTitleStart);
   const saveTitle = source.slice(saveTitleStart, scheduleTitleStart);
-  const awaitedTitleMutation = saveTitle.indexOf("await session.setTitle(title)");
+  const awaitedTitleMutation = saveTitle.indexOf("await mutation;");
+  const titleOwnership = saveTitle.indexOf("collaborationTitleMutationPromise = mutation");
+  assert.ok(titleOwnership >= 0 && titleOwnership < awaitedTitleMutation,
+    "direct title saves must register their completion owner before awaiting durability");
   const rejectedFence = saveTitle.indexOf(
     "if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;",
     awaitedTitleMutation

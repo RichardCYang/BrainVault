@@ -7,6 +7,13 @@ import { createPageDraftStore } from "../public/draft-store.js";
 import { createLatestWriteQueue } from "../public/save-queue.js";
 import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "../public/save-rebase.js";
 
+// Recovery persistence legitimately refreshes updatedAt. Keep time deterministic
+// so byte-for-byte draft assertions do not depend on two writes sharing a real
+// millisecond. Node's per-test mock is reset automatically after each case.
+test.beforeEach((context) => {
+  context.mock.timers.enable({ apis: ["Date"], now: 1_800_000_000_000 });
+});
+
 // Point at an extracted pre-patch app.js to reproduce the same failures without
 // modifying the working tree or Git metadata.
 const appSource = readFileSync(

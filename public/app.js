@@ -15836,25 +15836,63 @@ async function saveBlockRow(row, options = {}) {
     const current = getBlockById(blockId);
     if (!current) return null;
     let block;
+    let mutation;
     try {
-      block = await session.upsertBlock({
+      mutation = session.upsertBlock({
         ...current,
         ...payload,
         parentBlockId: normalizeParentBlockId(row.dataset.parentBlockId),
         sortOrder: Number(current.sortOrder ?? 0)
       });
+      // Direct saves and input-driven saves must share one completion owner.
+      // A session/page fence alone cannot distinguish two edits in this session.
+      collaborationBlockMutationPromises.set(blockId, mutation);
+      syncBeforeUnloadProtection();
+      block = await mutation;
     } catch (error) {
       // Access/share refreshes can replace the collaboration session while this
       // awaited write is settling. An obsolete rejection must not restore or
       // rerender the replacement editor.
+      if (mutation && collaborationBlockMutationPromises.get(blockId) === mutation) {
+        collaborationBlockMutationPromises.delete(blockId);
+        syncBeforeUnloadProtection();
+      } else if (mutation) {
+        // Preserve failure propagation for the initiating caller, but never
+        // restore the editor or clear tracking owned by a newer local edit.
+        if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;
+        throw error;
+      }
       if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;
-      rejectLocalBlockMutation(row, error);
+      const currentRow = findRenderedBlockRow(blockId);
+      if (
+        currentRow
+        && currentRow.dataset.deleting !== "true"
+        && getBlockById(blockId)
+        && jsonValuesMatch(buildBlockPayload(currentRow), payload)
+      ) rejectLocalBlockMutation(currentRow, error);
+      syncBeforeUnloadProtection();
       throw error;
     }
+    if (collaborationBlockMutationPromises.get(blockId) !== mutation) return null;
+    collaborationBlockMutationPromises.delete(blockId);
+    syncBeforeUnloadProtection();
     // The old session may resolve after a same-page collaboration generation
     // has been replaced. Never seed editor history or mutate the active UI from
     // a write that belongs to that obsolete session.
     if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;
+    const currentRow = findRenderedBlockRow(blockId);
+    if (
+      !currentRow
+      || currentRow.dataset.deleting === "true"
+      || !getBlockById(blockId)
+      || !jsonValuesMatch(buildBlockPayload(currentRow), payload)
+    ) {
+      syncBeforeUnloadProtection();
+      return null;
+    }
+    // An equivalent rebuild is still the same edit, but only its live row may
+    // receive preview, history and saved-state changes after the await.
+    row = currentRow;
     recordBlockEditorHistory(row, payload, current);
     row.classList.remove("is-dirty", "is-saving", "save-error");
     row.classList.add("is-saved");
@@ -18416,20 +18454,49 @@ async function savePageTitleNow({
     if (!session?.isReady) throw new Error(t("sharing.syncRequired"));
     const previousTitle = state.selectedPage.title ?? "";
     elements.pageTitle.value = title;
+    let mutation;
     try {
-      await session.setTitle(title);
+      mutation = session.setTitle(title);
+      // Use the same ownership slot as scheduled title edits. Matching text is
+      // not enough: an A -> B -> A sequence still has a newer mutation owner.
+      collaborationTitleMutationPromise = mutation;
+      syncBeforeUnloadProtection();
+      await mutation;
     } catch (error) {
+      if (mutation && collaborationTitleMutationPromise === mutation) {
+        collaborationTitleMutationPromise = null;
+        syncBeforeUnloadProtection();
+      } else if (mutation) {
+        if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;
+        throw error;
+      }
       if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;
+      // New input can be deliberately unscheduled (notably a blank title).
+      // The failed request has no authority to restore over that input either.
+      if (elements.pageTitle.value !== title) {
+        syncBeforeUnloadProtection();
+        throw error;
+      }
+      elements.pageTitle.classList.remove("is-saving");
       if (error?.code === "COLLABORATION_RECOVERY_WRITE_FAILED") {
         elements.pageTitle.classList.add("save-error");
         handleDurableRecoveryStorageWriteError(error, { operation: "collaboration-title-recovery" });
       } else {
-        elements.pageTitle.value = previousTitle;
+        elements.pageTitle.value = state.selectedPage?.title ?? previousTitle;
       }
       setStatus(getRejectedLocalMutationMessage(error), true);
+      syncBeforeUnloadProtection();
       throw error;
     }
+    if (collaborationTitleMutationPromise !== mutation) return null;
+    collaborationTitleMutationPromise = null;
+    syncBeforeUnloadProtection();
     if (!isCurrentCollaborationMutationContext(authenticationScope, pageId, session)) return null;
+    if (elements.pageTitle.value !== title) {
+      syncBeforeUnloadProtection();
+      return null;
+    }
+    elements.pageTitle.classList.remove("is-saving", "save-error");
     recordPageTitleEditorHistory(previousTitle);
     state.selectedPage.title = title;
     const pageLists = state.pages === state.allPages ? [state.allPages] : [state.pages, state.allPages];

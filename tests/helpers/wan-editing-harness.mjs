@@ -98,6 +98,7 @@ export function createHarness({ source = defaultAppSource, latencyMs = 0, blocks
     pageDraftSourceId: "tab", recoveryStorageFailureDrainInFlight: false, pageTitleDraftConflict: false,
     blockSaveTimers: new Map(), blockSaveQueues: new Map(), blockSaveRows: new Map(), blockSaveTaskIds: new Map(),
     blockEditAuthenticationScopes: new Map(), blockDraftConflictOrigins: new Map(),
+    collaborationBlockMutationPromises: new Map(),
     elements: { blockList: { querySelector: () => controls.unsafeRow ? {} : null } },
     t: (key) => key,
     setStatus: (text) => metrics.statuses.push(text),
@@ -170,7 +171,7 @@ export function createHarness({ source = defaultAppSource, latencyMs = 0, blocks
     }
     return queue;
   };
-  // The production collaborative save branch remains in saveBlockRow unchanged.
+  // Exercise the production collaborative save path with explicit session doubles.
   ctx.state.collaborationSession = { isReady: true, async upsertBlock(block) { metrics.collaborativeWrites = (metrics.collaborativeWrites ?? 0) + 1; return block; } };
   ctx.isCurrentCollaborationMutationContext = (scope, id, session) => ctx.isCurrentAuthenticatedSessionScope(scope) && ctx.state.selectedPage.id === id && ctx.state.collaborationSession === session;
   const names = ["getPositiveVersion", "getLatestKnownVersion", "sortJsonValue", "jsonValuesMatch", "normalizeComparableMetadata", "blockPayloadsMatch", "flattenBlocks", "getBlockById", "updateBlockInState", "normalizeParentBlockId", "getPageBlockSiblings", "getBlockSiblings", "reorderPageBlockSiblings", "applyAuthoritativePageContentVersion", "shouldReconcileCanonicalCreatedBlockOrder", "adoptCommittedCreatedBlockLocally", "reconcileCanonicalCreatedBlock", "saveBlockRow", "getBlockCreateTask", "submitBlockCreateTask", "createEmptyBlock", "captureDirectBlockInsertionContext", "isCurrentDirectBlockInsertionContext", "tryRenderConfirmedBlockInsertion", "insertBlockRelative", "appendBlock"];
