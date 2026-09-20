@@ -12531,6 +12531,7 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
   const preserveChildren = options.preserveChildren === true;
   const replacementBlock = options.replacementBlock ?? null;
   const expectedSourceBlock = options.expectedSourceBlock ?? null;
+  const expectedPromoteStructure = options.expectedPromoteStructure ?? null;
   const authenticationScope = options.authenticationScope ?? captureAuthenticatedSessionScope();
   const navigationGeneration = options.navigationGeneration ?? null;
   const isDeleteNavigationCurrent = () => (
@@ -12568,6 +12569,7 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
           cascade: options.includeDescendants !== false,
           promoteChildren: preserveChildren,
           expectedSourceBlock,
+          expectedPromoteStructure,
           beforeCommit: isDeleteIntentCurrent
         })
       };
@@ -17668,6 +17670,18 @@ async function deleteEmptyBlock(row) {
         sortOrder: Number(collaborativeSourceBlockAtIntent.sortOrder ?? 0)
       }
     : null;
+  const collaborativePromoteStructureAtStart = collaborativeDeleteSourceSnapshotAtStart
+    ? flattenBlocks(state.selectedPage?.blocks ?? [])
+        .filter((block) => (
+          normalizeParentBlockId(block.parentBlockId) === collaborativeDeleteSourceSnapshotAtStart.parentBlockId
+          || normalizeParentBlockId(block.parentBlockId) === blockIdAtIntent
+        ))
+        .map((block) => ({
+          id: block.id,
+          parentBlockId: normalizeParentBlockId(block.parentBlockId),
+          sortOrder: Number(block.sortOrder ?? 0)
+        }))
+    : null;
   if (!pageId || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
 
   return withPageEditLock(async () => {
@@ -17702,7 +17716,8 @@ async function deleteEmptyBlock(row) {
       preserveChildren: true,
       authenticationScope,
       navigationGeneration,
-      expectedSourceBlock: collaborativeDeleteSourceSnapshotAtStart
+      expectedSourceBlock: collaborativeDeleteSourceSnapshotAtStart,
+      expectedPromoteStructure: collaborativePromoteStructureAtStart
     });
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
       row.dataset.deleting = "false";

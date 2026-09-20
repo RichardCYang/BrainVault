@@ -1,4 +1,7 @@
-import { matchesCollaborativeBlockSnapshot } from "../public/collaboration.js";
+import {
+  matchesCollaborativeBlockSnapshot,
+  matchesCollaborativePromoteStructure
+} from "../public/collaboration.js";
 
 function block(markdown = "") {
   return {
@@ -38,4 +41,39 @@ const fixed = {
   currentMarkdown: preparedDocumentTarget.markdown
 };
 
-process.stdout.write(`${JSON.stringify({ vulnerable, fixed }, null, 2)}\n`);
+// A second race exists when preserve-children deletion rewrites the structural
+// scope around an unchanged empty target. A peer can move/reorder a child while
+// the delete waits; checking only the target block would still allow the delete.
+const structuralIntent = [
+  { ...block(""), id: "before", sortOrder: 0 },
+  { ...block(""), id: "target", sortOrder: 1 },
+  { ...block("child"), id: "child", parentBlockId: "target", sortOrder: 0 },
+  { ...block(""), id: "after", sortOrder: 2 }
+];
+const structuralAfterPeerMove = structuralIntent.map((item) => ({ ...item }));
+const movedChild = structuralAfterPeerMove.find((item) => item.id === "child");
+movedChild.parentBlockId = null;
+movedChild.sortOrder = 3;
+
+const expectedPromoteStructure = structuralIntent
+  .filter((item) => item.parentBlockId === null || item.parentBlockId === "target")
+  .map(({ id, parentBlockId, sortOrder }) => ({ id, parentBlockId, sortOrder }));
+const targetOnlyFenceWouldDelete = matchesCollaborativeBlockSnapshot(
+  structuralAfterPeerMove.find((item) => item.id === "target"),
+  structuralIntent.find((item) => item.id === "target")
+);
+const structuralFenceAllowsDelete = matchesCollaborativePromoteStructure(
+  structuralAfterPeerMove,
+  "target",
+  expectedPromoteStructure
+);
+
+process.stdout.write(`${JSON.stringify({
+  vulnerable,
+  fixed,
+  structuralRace: {
+    targetOnlyFenceWouldDelete,
+    structuralFenceAllowsDelete,
+    peerMovePreserved: !structuralFenceAllowsDelete
+  }
+}, null, 2)}\n`);

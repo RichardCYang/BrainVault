@@ -258,6 +258,36 @@ export function matchesCollaborativeReplacementSource(currentBlock, expectedBloc
   return matchesCollaborativeBlockSnapshot(currentBlock, expectedBlock);
 }
 
+export function matchesCollaborativePromoteStructure(snapshot, blockId, expectedStructure) {
+  if (!Array.isArray(expectedStructure)) return true;
+  const normalizedBlockId = String(blockId ?? "");
+  const target = (snapshot ?? []).map(normalizeBlock).find((block) => block.id === normalizedBlockId);
+  if (!target) return false;
+
+  const structuralScope = (snapshot ?? [])
+    .map(normalizeBlock)
+    .filter((block) => (
+      block.parentBlockId === target.parentBlockId
+      || block.parentBlockId === normalizedBlockId
+    ))
+    .map((block) => ({
+      id: block.id,
+      parentBlockId: block.parentBlockId,
+      sortOrder: block.sortOrder
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const expected = expectedStructure
+    .map((block) => normalizeBlock(block))
+    .map((block) => ({
+      id: block.id,
+      parentBlockId: block.parentBlockId,
+      sortOrder: block.sortOrder
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+
+  return plainValuesEqual(structuralScope, expected);
+}
+
 export function planCollaborativeBlockReplacement(
   snapshot,
   targetId,
@@ -865,6 +895,7 @@ class PageCollaborationSession {
     cascade = true,
     promoteChildren = false,
     expectedSourceBlock = null,
+    expectedPromoteStructure = null,
     allowDisconnected = false,
     beforeCommit = null
   } = {}) {
@@ -888,6 +919,13 @@ class PageCollaborationSession {
       const target = snapshot.find((block) => block.id === blockId);
       if (!target) return;
       if (expectedSourceBlock && !matchesCollaborativeBlockSnapshot(target, expectedSourceBlock)) {
+        return;
+      }
+      if (
+        promoteChildren
+        && expectedPromoteStructure
+        && !matchesCollaborativePromoteStructure(snapshot, blockId, expectedPromoteStructure)
+      ) {
         return;
       }
 
