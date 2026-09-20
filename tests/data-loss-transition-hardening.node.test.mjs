@@ -191,7 +191,10 @@ test("UI mutation and archive paths contain the new fail-closed guards", async (
   assert.match(archiveSource, /archivePageWithReconciliation/);
   assert.match(archiveSource, /lockPageWriteOutcomeFence\(pageId\)/);
   assert.match(archiveSource, /data\?\.page\?\.isArchived === true/);
-  assert.match(archiveSource, /archivePageIdempotently\(pageId, expectedVersion, authenticationScope, \{ requestGuard \}\)/);
+  assert.match(
+    archiveSource,
+    /archivePageIdempotently\(pageId, expectedVersion, authenticationScope, \{\s*requestGuard,\s*expectedContentVersion\s*\}\)/
+  );
   assert.match(archiveSource, /if \(!isCurrentAuthenticatedSessionScope\(authenticationScope\)\) return null/);
 
   const archiveClick = client.indexOf('elements.archivePageButton.addEventListener("click"');

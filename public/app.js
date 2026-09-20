@@ -21981,7 +21981,7 @@ async function archivePageIdempotently(
   pageId,
   expectedVersion,
   authenticationScope,
-  { requestGuard = null } = {}
+  { requestGuard = null, expectedContentVersion = null } = {}
 ) {
   const task = {
     mutationId: createMutationId(),
@@ -22000,6 +22000,7 @@ async function archivePageIdempotently(
           body: {
             isArchived: true,
             expectedVersion,
+            expectedContentVersion,
             mutationId: task.mutationId
           },
           beforeFetch: () => {
@@ -22031,7 +22032,7 @@ async function archivePageWithReconciliation(
   pageId,
   expectedVersion,
   authenticationScope,
-  { requestGuard = null } = {}
+  { requestGuard = null, expectedContentVersion = null } = {}
 ) {
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
   if (requestGuard?.() === false) return skippedApiRequest;
@@ -22039,7 +22040,10 @@ async function archivePageWithReconciliation(
   let keepFence = false;
   try {
     try {
-      return await archivePageIdempotently(pageId, expectedVersion, authenticationScope, { requestGuard });
+      return await archivePageIdempotently(pageId, expectedVersion, authenticationScope, {
+        requestGuard,
+        expectedContentVersion
+      });
     } catch (error) {
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       if (!isAmbiguousApiError(error)) throw error;
@@ -22103,8 +22107,10 @@ elements.archivePageButton.addEventListener("click", async () => {
         assertNoPendingLocalPageDrafts(pageId, "status.destructiveLocalDraftsPending");
         assertNoPendingLocalCollaborationRecovery(pageId);
         const expectedVersion = state.selectedPage.version;
+        const expectedContentVersion = state.selectedPage.contentVersion;
         return archivePageWithReconciliation(pageId, expectedVersion, authenticationScope, {
-          requestGuard: isArchiveIntentCurrent
+          requestGuard: isArchiveIntentCurrent,
+          expectedContentVersion
         });
       });
 

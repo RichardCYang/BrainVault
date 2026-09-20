@@ -139,6 +139,7 @@ const updatePageSchema = z.object({
   parentPageId: routeIdSchema.nullable().optional(),
   tags: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
   expectedVersion: safeVersionSchema,
+  expectedContentVersion: safeVersionSchema.optional(),
   mutationId: mutationIdSchema.optional()
 });
 
@@ -158,6 +159,7 @@ const deletePageBodySchema = z
   .object({
     expectedSnapshot: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     expectedVersion: safeVersionSchema.optional(),
+    expectedContentVersion: safeVersionSchema.optional(),
     mutationId: mutationIdSchema.optional()
   })
   .default({});
@@ -1962,10 +1964,24 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
     const authScope = requireRequestAuthScope(req);
     const pageId = String(req.params.pageId);
     const body = req.body as z.infer<typeof updatePageSchema>;
-    const { tags, expectedVersion, mutationId, ...updates } = body;
+    const { tags, expectedVersion, expectedContentVersion, mutationId, ...updates } = body;
+    const archiveExpectedContentVersion =
+      updates.isArchived === true ? expectedContentVersion : undefined;
+    if (updates.isArchived === true && archiveExpectedContentVersion === undefined) {
+      throw new ApiError(
+        400,
+        "PAGE_EDIT_VERSION_REQUIRED",
+        "The last observed page and content versions are required before archiving this page."
+      );
+    }
     const administrationAdmission = await capturePageAdministrationMutationAdmission(pageId, user.id);
     const mutationHash = mutationId
-      ? createMutationRequestHash({ expectedVersion, tags, updates })
+      ? createMutationRequestHash({
+          expectedVersion,
+          expectedContentVersion: archiveExpectedContentVersion,
+          tags,
+          updates
+        })
       : undefined;
     const fields: string[] = [];
     const values: DbValue[] = [];
@@ -2106,9 +2122,20 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
           // for the latest page mutation and inherit an unrelated edit version.
           updateFields.push("last_mutation_id = NULL", "last_mutation_hash = NULL");
         }
+        const archiveContentVersionPredicate =
+          archiveExpectedContentVersion === undefined ? "" : " AND content_version = ?";
+        const archiveContentVersionValues: DbValue[] =
+          archiveExpectedContentVersion === undefined ? [] : [archiveExpectedContentVersion];
         const result = await client.execute<{ affectedRows: number }>(
-          `UPDATE pages SET ${[...updateFields, "edit_version = edit_version + 1"].join(", ")} WHERE id = ? AND owner_id = ? AND edit_version = ? AND edit_version < ?`,
-          [...updateValues, pageId, workspaceOwnerId, expectedVersion, Number.MAX_SAFE_INTEGER]
+          `UPDATE pages SET ${[...updateFields, "edit_version = edit_version + 1"].join(", ")} WHERE id = ? AND owner_id = ? AND edit_version = ?${archiveContentVersionPredicate} AND edit_version < ?`,
+          [
+            ...updateValues,
+            pageId,
+            workspaceOwnerId,
+            expectedVersion,
+            ...archiveContentVersionValues,
+            Number.MAX_SAFE_INTEGER
+          ]
         );
         if (Number(result.affectedRows) === 0) {
           throw new ApiError(
@@ -2499,14 +2526,15 @@ pageRouter.delete(
       }
 
       const administrationAdmission = await capturePageAdministrationMutationAdmission(pageId, user.id);
-      if (!body.expectedVersion) {
+      if (!body.expectedVersion || !body.expectedContentVersion) {
         throw new ApiError(
           400,
           "PAGE_EDIT_VERSION_REQUIRED",
-          "The last observed page version is required before archiving this page."
+          "The last observed page and content versions are required before archiving this page."
         );
       }
       const expectedVersion = body.expectedVersion;
+      const expectedContentVersion = body.expectedContentVersion;
       const archivedPage = await transaction(async (client) => {
         await lockPageDeleteUsers(client, [user.id, administrationAdmission.ownerId]);
         await assertCurrentAuthSessionBoundary(user.id, authScope, client);
@@ -2529,8 +2557,8 @@ pageRouter.delete(
                edit_version = edit_version + 1,
                last_mutation_id = NULL,
                last_mutation_hash = NULL
-           WHERE id = ? AND owner_id = ? AND edit_version = ? AND edit_version < ?`,
-          [pageId, workspaceOwnerId, expectedVersion, Number.MAX_SAFE_INTEGER]
+           WHERE id = ? AND owner_id = ? AND edit_version = ? AND content_version = ? AND edit_version < ?`,
+          [pageId, workspaceOwnerId, expectedVersion, expectedContentVersion, Number.MAX_SAFE_INTEGER]
         );
         if (Number(updateResult.affectedRows) === 0) {
           throw new ApiError(
