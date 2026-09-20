@@ -66,10 +66,12 @@ test("block delete carries the initiating navigation through transition and requ
   const menuStart = source.indexOf('if (button.dataset.action === "delete-block")');
   const menuEnd = source.indexOf("\n    }\n  } catch", menuStart);
   assert.ok(menuStart >= 0 && menuEnd > menuStart);
-  assert.match(
-    source.slice(menuStart, menuEnd),
-    /deleteBlockWithVersionCheck\(blockId, \{ authenticationScope, navigationGeneration \}\)/
-  );
+  const menuDelete = source.slice(menuStart, menuEnd);
+  assert.match(menuDelete, /deleteBlockWithVersionCheck\(blockId, \{/);
+  assert.match(menuDelete, /authenticationScope,/);
+  assert.match(menuDelete, /navigationGeneration,/);
+  assert.match(menuDelete, /expectedCollaborationMode:\s*collaborativeAtIntent/);
+  assert.match(menuDelete, /expectedDeleteSubtree/);
 
   const submit = section(source, "async function submitBlockDeleteTask", "\nfunction getBlockMoveTask");
   assert.match(submit, /beforeFetch:\s*\(\) => \{/);

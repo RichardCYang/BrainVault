@@ -90,7 +90,11 @@ import { planConfirmedBlockInsertion } from "./block-insertion-result.js";
 import { createAccountProfileMutationQueue } from "./account-profile-mutation-queue.js";
 import { createMutationId, submitWithFreshMutationIdOnReuse } from "./mutation-id.js";
 import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-rebase.js";
-import { createPageCollaboration, decodeCollaborationRecoveryRecords } from "./collaboration.js";
+import {
+  createPageCollaboration,
+  decodeCollaborationRecoveryRecords,
+  getCollaborativeDeleteSubtreeSnapshot
+} from "./collaboration.js";
 import {
   assignRemoteCaretColors,
   getRemoteCaretClientKey,
@@ -12531,7 +12535,11 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
   const preserveChildren = options.preserveChildren === true;
   const replacementBlock = options.replacementBlock ?? null;
   const expectedSourceBlock = options.expectedSourceBlock ?? null;
+  const expectedDeleteSubtree = options.expectedDeleteSubtree ?? null;
   const expectedPromoteStructure = options.expectedPromoteStructure ?? null;
+  const expectedCollaborationMode = typeof options.expectedCollaborationMode === "boolean"
+    ? options.expectedCollaborationMode
+    : null;
   const authenticationScope = options.authenticationScope ?? captureAuthenticatedSessionScope();
   const navigationGeneration = options.navigationGeneration ?? null;
   const isDeleteNavigationCurrent = () => (
@@ -12549,6 +12557,12 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
     throw new Error(t("errors.UNAUTHENTICATED"));
   }
   if (!isDeleteNavigationCurrent()) return null;
+  if (
+    expectedCollaborationMode !== null
+    && isCollaborativePage() !== expectedCollaborationMode
+  ) {
+    throw new Error(t("sharing.syncRequired"));
+  }
   if (isCollaborativePage()) {
     return withCollaborativeDestructiveTransition(pageId, "block-delete", async (session) => {
       // The transition can wait for queued local/peer persistence before this
@@ -12570,6 +12584,7 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
           cascade: options.includeDescendants !== false,
           promoteChildren: preserveChildren,
           expectedSourceBlock,
+          expectedDeleteSubtree,
           expectedPromoteStructure,
           beforeCommit: isDeleteIntentCurrent
         })
@@ -12581,7 +12596,7 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
   // operation is waiting, the direct path would build a fresh SQL version
   // snapshot and could thereby authorize deleting peer content that did not
   // exist when the original intent was formed. Fail closed instead.
-  if (replacementBlock || expectedSourceBlock || expectedPromoteStructure) {
+  if (replacementBlock || expectedSourceBlock || expectedDeleteSubtree || expectedPromoteStructure) {
     throw new Error(t("sharing.syncRequired"));
   }
   // Retry tasks must distinguish the exact destructive intent. A root-only
@@ -17687,7 +17702,8 @@ async function deleteEmptyBlock(row) {
   const pageId = state.selectedPage?.id;
   const navigationGeneration = workspaceNavigationGeneration;
   const blockIdAtIntent = row.dataset.blockId;
-  const collaborativeSourceBlockAtIntent = isCollaborativePage()
+  const collaborativeAtIntent = isCollaborativePage();
+  const collaborativeSourceBlockAtIntent = collaborativeAtIntent
     ? getBlockById(blockIdAtIntent)
     : null;
   const collaborativeDeleteSourceSnapshotAtStart = collaborativeSourceBlockAtIntent
@@ -17744,6 +17760,7 @@ async function deleteEmptyBlock(row) {
       preserveChildren: true,
       authenticationScope,
       navigationGeneration,
+      expectedCollaborationMode: collaborativeAtIntent,
       expectedSourceBlock: collaborativeDeleteSourceSnapshotAtStart,
       expectedPromoteStructure: collaborativePromoteStructureAtStart
     });
@@ -22924,6 +22941,18 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
         reportUnresolvedDraftConflict();
         return;
       }
+      const collaborativeAtIntent = isCollaborativePage();
+      const expectedDeleteSubtree = collaborativeAtIntent
+        ? getCollaborativeDeleteSubtreeSnapshot(
+            state.collaborationSession?.getSnapshot()?.blocks,
+            blockId
+          )
+        : null;
+      if (collaborativeAtIntent && !expectedDeleteSubtree) {
+        closeBlockContextMenu({ restoreFocus: true });
+        setStatus(t("sharing.syncRequired"), true);
+        return;
+      }
       const ok = window.confirm(t("confirm.deleteBlock"));
       if (!ok) return;
       const authenticationScope = captureAuthenticatedSessionScope();
@@ -22938,8 +22967,14 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
         if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
         if (!isCurrentWorkspaceNavigation(navigationGeneration) || state.selectedPage?.id !== pageId) return;
         row.dataset.deleting = "true";
+        let deletionResult;
         try {
-          await deleteBlockWithVersionCheck(blockId, { authenticationScope, navigationGeneration });
+          deletionResult = await deleteBlockWithVersionCheck(blockId, {
+            authenticationScope,
+            navigationGeneration,
+            expectedCollaborationMode: collaborativeAtIntent,
+            expectedDeleteSubtree
+          });
         } catch (error) {
           row.dataset.deleting = "false";
           throw error;
@@ -22953,6 +22988,10 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
           navigationGeneration
         });
         if (!reconciled || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+        if (collaborativeAtIntent && !deletionResult?.deletedIds?.includes(blockId)) {
+          setStatus(t("errors.BLOCK_EDIT_CONFLICT"), true);
+          return;
+        }
         setStatus(t("status.blockDeleted"));
       });
     }

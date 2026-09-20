@@ -254,6 +254,57 @@ export function matchesCollaborativeBlockSnapshot(currentBlock, expectedBlock) {
   );
 }
 
+export function getCollaborativeDeleteSubtreeSnapshot(snapshot, blockId) {
+  if (!Array.isArray(snapshot)) return null;
+  const normalizedBlockId = String(blockId ?? "");
+  if (!normalizedBlockId) return null;
+
+  const normalized = [];
+  const seenIds = new Set();
+  for (const item of snapshot) {
+    if (!item?.id) return null;
+    const block = normalizeBlock(item);
+    if (seenIds.has(block.id)) return null;
+    seenIds.add(block.id);
+    normalized.push(block);
+  }
+  if (!seenIds.has(normalizedBlockId)) return null;
+
+  const subtreeIds = new Set([normalizedBlockId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const block of normalized) {
+      if (subtreeIds.has(block.id)) continue;
+      if (block.parentBlockId && subtreeIds.has(block.parentBlockId)) {
+        subtreeIds.add(block.id);
+        changed = true;
+      }
+    }
+  }
+  return normalized.filter((block) => subtreeIds.has(block.id));
+}
+
+export function matchesCollaborativeDeleteSubtreeSnapshot(snapshot, blockId, expectedSubtree) {
+  if (!Array.isArray(expectedSubtree)) return true;
+  const currentSubtree = getCollaborativeDeleteSubtreeSnapshot(snapshot, blockId);
+  const normalizedExpected = getCollaborativeDeleteSubtreeSnapshot(expectedSubtree, blockId);
+  if (
+    !currentSubtree
+    || !normalizedExpected
+    || normalizedExpected.length !== expectedSubtree.length
+    || currentSubtree.length !== normalizedExpected.length
+  ) {
+    return false;
+  }
+
+  const currentById = new Map(currentSubtree.map((block) => [block.id, block]));
+  return normalizedExpected.every((expectedBlock) => {
+    const currentBlock = currentById.get(expectedBlock.id);
+    return Boolean(currentBlock && matchesCollaborativeBlockSnapshot(currentBlock, expectedBlock));
+  });
+}
+
 export function matchesCollaborativeReplacementSource(currentBlock, expectedBlock) {
   return matchesCollaborativeBlockSnapshot(currentBlock, expectedBlock);
 }
@@ -909,6 +960,7 @@ class PageCollaborationSession {
     cascade = true,
     promoteChildren = false,
     expectedSourceBlock = null,
+    expectedDeleteSubtree = null,
     expectedPromoteStructure = null,
     allowDisconnected = false,
     beforeCommit = null
@@ -918,6 +970,15 @@ class PageCollaborationSession {
     }
     if (expectedSourceBlock && String(expectedSourceBlock?.id ?? "") !== String(blockId ?? "")) {
       throw new Error("The collaborative delete source snapshot does not match the target block");
+    }
+    if (expectedDeleteSubtree !== null && !Array.isArray(expectedDeleteSubtree)) {
+      throw new Error("The collaborative delete subtree snapshot must be an array");
+    }
+    if (
+      Array.isArray(expectedDeleteSubtree)
+      && !expectedDeleteSubtree.some((block) => String(block?.id ?? "") === String(blockId ?? ""))
+    ) {
+      throw new Error("The collaborative delete subtree snapshot does not contain the target block");
     }
 
     let deletedIds = [];
@@ -933,6 +994,12 @@ class PageCollaborationSession {
       const target = snapshot.find((block) => block.id === blockId);
       if (!target) return;
       if (expectedSourceBlock && !matchesCollaborativeBlockSnapshot(target, expectedSourceBlock)) {
+        return;
+      }
+      if (
+        expectedDeleteSubtree !== null
+        && !matchesCollaborativeDeleteSubtreeSnapshot(snapshot, blockId, expectedDeleteSubtree)
+      ) {
         return;
       }
       if (

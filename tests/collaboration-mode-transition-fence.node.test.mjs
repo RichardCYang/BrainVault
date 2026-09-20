@@ -20,16 +20,19 @@ test("a collaborative destructive snapshot cannot silently fall through to direc
     "\nfunction updateBlockInState"
   );
 
+  const intentModeFence = deletion.indexOf("isCollaborativePage() !== expectedCollaborationMode");
   const collaborativeBranch = deletion.indexOf("if (isCollaborativePage())");
   const crossModeFence = deletion.indexOf(
-    "if (replacementBlock || expectedSourceBlock || expectedPromoteStructure)"
+    "if (replacementBlock || expectedSourceBlock || expectedDeleteSubtree || expectedPromoteStructure)"
   );
   const directSnapshot = deletion.indexOf("const expectedVersions = getBlockVersionSnapshot");
 
-  assert.ok(collaborativeBranch >= 0);
-  assert.ok(crossModeFence > collaborativeBranch, "the cross-mode fence must run after the collaborative branch");
+  assert.ok(intentModeFence >= 0, "the captured intent mode must be checked before choosing a persistence path");
+  assert.ok(collaborativeBranch > intentModeFence, "the intent-mode fence must run before the collaborative branch");
+  assert.ok(crossModeFence > collaborativeBranch, "snapshot-bearing collaborative intent must still fail closed before direct deletion");
   assert.ok(directSnapshot > crossModeFence, "the cross-mode fence must run before any direct deletion snapshot");
-  assert.match(crossModeFence >= 0 ? deletion.slice(crossModeFence, directSnapshot) : "", /sharing\.syncRequired/);
+  assert.match(deletion.slice(intentModeFence, collaborativeBranch), /sharing\.syncRequired/);
+  assert.match(deletion.slice(crossModeFence, directSnapshot), /sharing\.syncRequired/);
 });
 
 test("an attachment replacement that began collaborative preserves the source after a direct-mode transition", () => {
