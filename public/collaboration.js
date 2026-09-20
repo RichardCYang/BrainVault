@@ -864,11 +864,15 @@ class PageCollaborationSession {
   async deleteBlock(blockId, {
     cascade = true,
     promoteChildren = false,
+    expectedSourceBlock = null,
     allowDisconnected = false,
     beforeCommit = null
   } = {}) {
     if (cascade && promoteChildren) {
       throw new Error("A collaborative block deletion cannot cascade and promote children together");
+    }
+    if (expectedSourceBlock && String(expectedSourceBlock?.id ?? "") !== String(blockId ?? "")) {
+      throw new Error("The collaborative delete source snapshot does not match the target block");
     }
 
     let deletedIds = [];
@@ -883,6 +887,9 @@ class PageCollaborationSession {
       }
       const target = snapshot.find((block) => block.id === blockId);
       if (!target) return;
+      if (expectedSourceBlock && !matchesCollaborativeBlockSnapshot(target, expectedSourceBlock)) {
+        return;
+      }
 
       const children = snapshot
         .filter((block) => block.parentBlockId === blockId)

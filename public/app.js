@@ -12567,6 +12567,7 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
         deletedIds: await session.deleteBlock(blockId, {
           cascade: options.includeDescendants !== false,
           promoteChildren: preserveChildren,
+          expectedSourceBlock,
           beforeCommit: isDeleteIntentCurrent
         })
       };
@@ -17655,13 +17656,25 @@ async function deleteEmptyBlock(row) {
   const authenticationScope = captureAuthenticatedSessionScope();
   const pageId = state.selectedPage?.id;
   const navigationGeneration = workspaceNavigationGeneration;
+  const blockIdAtIntent = row.dataset.blockId;
+  const collaborativeSourceBlockAtIntent = isCollaborativePage()
+    ? getBlockById(blockIdAtIntent)
+    : null;
+  const collaborativeDeleteSourceSnapshotAtStart = collaborativeSourceBlockAtIntent
+    ? {
+        ...collaborativeSourceBlockAtIntent,
+        ...buildBlockPayload(row, collaborativeSourceBlockAtIntent),
+        parentBlockId: normalizeParentBlockId(row.dataset.parentBlockId),
+        sortOrder: Number(collaborativeSourceBlockAtIntent.sortOrder ?? 0)
+      }
+    : null;
   if (!pageId || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
 
   return withPageEditLock(async () => {
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
     if (!isCurrentWorkspaceNavigation(navigationGeneration) || state.selectedPage?.id !== pageId) return;
 
-    const blockId = row.dataset.blockId;
+    const blockId = blockIdAtIntent;
     if (!isCollaborativePage()) {
       assertNoPendingLocalBlockDrafts(pageId, [blockId], {
         excludeSourceId: pageDraftSourceId
@@ -17684,23 +17697,30 @@ async function deleteEmptyBlock(row) {
     closeInlineToolbar();
     closeBlockContextMenu();
 
-    await deleteBlockWithVersionCheck(blockId, {
+    const deletionResult = await deleteBlockWithVersionCheck(blockId, {
       includeDescendants: false,
       preserveChildren: true,
       authenticationScope,
-      navigationGeneration
+      navigationGeneration,
+      expectedSourceBlock: collaborativeDeleteSourceSnapshotAtStart
     });
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) {
       row.dataset.deleting = "false";
       return;
     }
 
+    const collaborativeDeleteApplied = !collaborativeDeleteSourceSnapshotAtStart
+      || deletionResult?.deletedIds?.includes(blockId);
     const reconciled = await refreshSelectedPageAfterBlockDeletion(pageId, {
       focusBlockId,
       authenticationScope,
       navigationGeneration
     });
     if (!reconciled || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    if (!collaborativeDeleteApplied) {
+      setStatus(t("errors.BLOCK_EDIT_CONFLICT"), true);
+      return false;
+    }
     setStatus(t("status.emptyBlockDeleted"));
   });
 }
