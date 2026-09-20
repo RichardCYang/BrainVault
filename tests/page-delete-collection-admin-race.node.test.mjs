@@ -32,7 +32,7 @@ test("permanent collection-admin deletion authorizes only after current page loc
   const receiptLookup = deleteRoute.indexOf("FROM page_delete_mutations", transactionStart);
   const missingHintCheck = deleteRoute.indexOf('if (!pageOwnerHint) throw notFound("Page")', transactionStart);
   const lockedAuthorization = deleteRoute.indexOf(
-    "getPageAccess(pageId, user.id, client, { lockPage: true })",
+    "getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true })",
     transactionStart
   );
 
@@ -47,6 +47,11 @@ test("permanent collection-admin deletion authorizes only after current page loc
   );
   assert.match(deleteRoute, /workspaceOwnerId !== pageOwnerHint\.owner_id/);
   assert.match(deleteRoute, /assertPageCanAdminister\(deletionAccess\)/);
+  assert.match(
+    deleteRoute,
+    /getPageAccess\(pageId, user\.id, client, \{ lockPage: true, lockAccess: true \}\)/,
+    "permanent deletion must lock mutable collection/page grants in the same authorization generation"
+  );
 });
 
 test("race reproducer rejects stale ADMIN and eliminates reciprocal user-lock cycles", () => {

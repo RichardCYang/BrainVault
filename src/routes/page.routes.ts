@@ -2350,7 +2350,7 @@ pageRouter.delete(
             : await lockUserAttachmentGeneration(client, pageOwnerHint.owner_id);
           if (attachmentGeneration === undefined) throw notFound("Page owner");
 
-          const deletionAccess = await getPageAccess(pageId, user.id, client, { lockPage: true });
+          const deletionAccess = await getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true });
           assertPageCanAdminister(deletionAccess);
           const workspaceOwnerId = deletionAccess.page.owner_id;
           if (workspaceOwnerId !== pageOwnerHint.owner_id) {
