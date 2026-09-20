@@ -93,6 +93,19 @@ const completeWorkspaceBackupVersion = 4;
 const explicitWorkspaceBackupVersion = 5;
 const backupVersion = 6;
 const maxManifestBytes = env.DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024;
+export type DataTransferOptions = Readonly<{
+  /**
+   * Keep the configured aggregate archive/manifest byte ceilings for ordinary
+   * network backup import/export. Server-owned workspace snapshots opt out of
+   * only these byte ceilings while retaining structural ZIP/count validation,
+   * authentication fences, storage validation, and route-level admission.
+   */
+  enforceConfiguredSizeLimits?: boolean;
+}>;
+
+function configuredSizeLimitsEnabled(options: DataTransferOptions | undefined) {
+  return options?.enforceConfiguredSizeLimits !== false;
+}
 const windowsReservedDeviceNamePattern = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 const idSchema = z
   .string()
@@ -335,7 +348,7 @@ const customIconLibraryRemovalSchema = z.object({
   removed_at: timestampSchema
 }).strict();
 function pageVersionJsonColumnSchema(label: string, validateValue: (value: string) => unknown) {
-  return z.string().min(1).max(maxManifestBytes).superRefine((value, context) => {
+  return z.string().min(1).superRefine((value, context) => {
     try {
       validateValue(value);
     } catch (error) {
@@ -1624,7 +1637,11 @@ function validateManifestRelations(manifest: BrainVaultBackup) {
   }
 }
 
-export async function readUserDataBackupManifest(zipPath: string): Promise<BrainVaultBackup> {
+export async function readUserDataBackupManifest(
+  zipPath: string,
+  options: DataTransferOptions = {}
+): Promise<BrainVaultBackup> {
+  const enforceConfiguredSizeLimits = configuredSizeLimitsEnabled(options);
   let entries;
   try {
     entries = await readZipDirectory(zipPath, {
@@ -1652,19 +1669,23 @@ export async function readUserDataBackupManifest(zipPath: string): Promise<Brain
   }
 
   const maxBytes = BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n;
-  if (totalSize > maxBytes) {
+  if (enforceConfiguredSizeLimits && totalSize > maxBytes) {
     throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
   }
 
   const manifestEntry = entryByName.get(manifestName);
   if (!manifestEntry) invalidBackup(`${manifestName} is missing`);
-  if (manifestEntry.uncompressedSize > BigInt(maxManifestBytes)) {
+  if (enforceConfiguredSizeLimits && manifestEntry.uncompressedSize > BigInt(maxManifestBytes)) {
     throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup manifest exceeds the configured manifest limit");
   }
 
   let manifest: BrainVaultBackup;
   try {
-    const buffer = await readZipEntryBuffer(zipPath, manifestEntry, maxManifestBytes);
+    const buffer = await readZipEntryBuffer(
+      zipPath,
+      manifestEntry,
+      enforceConfiguredSizeLimits ? maxManifestBytes : null
+    );
     manifest = manifestSchema.parse(JSON.parse(buffer.toString("utf8")));
   } catch (error) {
     invalidBackup("The backup manifest is invalid", error instanceof z.ZodError ? error.flatten() : undefined);
@@ -1685,8 +1706,9 @@ export async function readUserDataBackupManifest(zipPath: string): Promise<Brain
   return manifest;
 }
 
-export async function prepareUserDataBackup(userId: string) {
+export async function prepareUserDataBackup(userId: string, options: DataTransferOptions = {}) {
   await ensureDataTransferDirectories();
+  const enforceConfiguredSizeLimits = configuredSizeLimitsEnabled(options);
   const maxTransferBytes = BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n;
   const operationRoot = path.join(dataTransferTempDir, createId("export"));
   const stagedAttachmentDir = path.join(operationRoot, "attachments");
@@ -1887,7 +1909,7 @@ export async function prepareUserDataBackup(userId: string) {
         }
         const stagedPath = path.join(stagedPageCoverDir, page.id);
         const nextStagedBytes = stagedFileBytes + BigInt(inspectedCover.bytes.length);
-        if (nextStagedBytes > maxTransferBytes) {
+        if (enforceConfiguredSizeLimits && nextStagedBytes > maxTransferBytes) {
           throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
         }
         await writeFile(stagedPath, inspectedCover.bytes, { flag: "wx", mode: 0o600 });
@@ -1910,7 +1932,7 @@ export async function prepareUserDataBackup(userId: string) {
         try {
           const fileStat = await lstat(sourcePath);
           if (!fileStat.isFile()) throw new Error("not a file");
-          if (stagedFileBytes + BigInt(fileStat.size) > maxTransferBytes) {
+          if (enforceConfiguredSizeLimits && stagedFileBytes + BigInt(fileStat.size) > maxTransferBytes) {
             throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
           }
           await copyFile(sourcePath, stagedPath);
@@ -1920,7 +1942,7 @@ export async function prepareUserDataBackup(userId: string) {
         }
         const inspection = await inspectFile(stagedPath);
         stagedFileBytes += inspection.size;
-        if (stagedFileBytes > maxTransferBytes) {
+        if (enforceConfiguredSizeLimits && stagedFileBytes > maxTransferBytes) {
           throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
         }
         try {
@@ -1982,13 +2004,13 @@ export async function prepareUserDataBackup(userId: string) {
         if (!fileStat.isFile()) {
           throw new ApiError(409, "BACKUP_ATTACHMENT_STORAGE_INVALID", `Retained attachment is not a file: ${entry.name}`);
         }
-        if (stagedFileBytes + BigInt(fileStat.size) > maxTransferBytes) {
+        if (enforceConfiguredSizeLimits && stagedFileBytes + BigInt(fileStat.size) > maxTransferBytes) {
           throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
         }
         await copyFile(sourcePath, stagedPath);
         const inspection = await inspectFile(stagedPath);
         stagedFileBytes += inspection.size;
-        if (stagedFileBytes > maxTransferBytes) {
+        if (enforceConfiguredSizeLimits && stagedFileBytes > maxTransferBytes) {
           throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
         }
         retainedAttachmentFiles.push({
@@ -2059,7 +2081,7 @@ export async function prepareUserDataBackup(userId: string) {
         if (!fileStat.isFile() || fileStat.size <= 0 || fileStat.size > maxCustomIconBytes) {
           throw new ApiError(409, "BACKUP_CUSTOM_ICON_INVALID", `Custom icon file is invalid: ${entry.name}`);
         }
-        if (stagedFileBytes + BigInt(fileStat.size) > maxTransferBytes) {
+        if (enforceConfiguredSizeLimits && stagedFileBytes + BigInt(fileStat.size) > maxTransferBytes) {
           throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
         }
         await copyFile(sourcePath, stagedPath);
@@ -2165,16 +2187,18 @@ export async function prepareUserDataBackup(userId: string) {
       customIconPublications: snapshot.customIconPublications
     };
     validateManifestRelations(manifest);
-    const measuredManifestBytes = measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1);
-    if (measuredManifestBytes === null) {
-      throw new ApiError(
-        413,
-        "DATA_BACKUP_TOO_LARGE",
-        "The backup manifest exceeds the supported import limit"
-      );
+    if (enforceConfiguredSizeLimits) {
+      const measuredManifestBytes = measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1);
+      if (measuredManifestBytes === null) {
+        throw new ApiError(
+          413,
+          "DATA_BACKUP_TOO_LARGE",
+          "The backup manifest exceeds the supported import limit"
+        );
+      }
     }
     const manifestBuffer = Buffer.from(`${JSON.stringify(manifest)}\n`, "utf8");
-    if (manifestBuffer.length > maxManifestBytes) {
+    if (enforceConfiguredSizeLimits && manifestBuffer.length > maxManifestBytes) {
       throw new ApiError(
         413,
         "DATA_BACKUP_TOO_LARGE",
@@ -2185,7 +2209,7 @@ export async function prepareUserDataBackup(userId: string) {
       (total, item) => total + item.inspection.size,
       BigInt(manifestBuffer.length)
     );
-    if (totalUncompressedSize > maxTransferBytes) {
+    if (enforceConfiguredSizeLimits && totalUncompressedSize > maxTransferBytes) {
       throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
     }
     const archiveSize = calculateZipArchiveSize([
@@ -3632,8 +3656,10 @@ export async function importUserDataBackup(
   userId: string,
   zipPath: string,
   authScope: DataRestoreAuthScope,
-  commitBoundaryGuard?: DataRestoreCommitBoundaryGuard
+  commitBoundaryGuard?: DataRestoreCommitBoundaryGuard,
+  options: DataTransferOptions = {}
 ) {
+  const enforceConfiguredSizeLimits = configuredSizeLimitsEnabled(options);
   let entries;
   try {
     entries = await readZipDirectory(zipPath, {
@@ -3660,16 +3686,22 @@ export async function importUserDataBackup(
     totalSize += entry.uncompressedSize;
   }
   const maxBytes = BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n;
-  if (totalSize > maxBytes) throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
+  if (enforceConfiguredSizeLimits && totalSize > maxBytes) {
+    throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
+  }
 
   const manifestEntry = entryByName.get(manifestName);
   if (!manifestEntry) invalidBackup(`${manifestName} is missing`);
-  if (manifestEntry.uncompressedSize > BigInt(maxManifestBytes)) {
+  if (enforceConfiguredSizeLimits && manifestEntry.uncompressedSize > BigInt(maxManifestBytes)) {
     throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup manifest exceeds the configured manifest limit");
   }
   let manifest: BrainVaultBackup;
   try {
-    const buffer = await readZipEntryBuffer(zipPath, manifestEntry, maxManifestBytes);
+    const buffer = await readZipEntryBuffer(
+      zipPath,
+      manifestEntry,
+      enforceConfiguredSizeLimits ? maxManifestBytes : null
+    );
     manifest = manifestSchema.parse(JSON.parse(buffer.toString("utf8")));
   } catch (error) {
     invalidBackup("The backup manifest is invalid", error instanceof z.ZodError ? error.flatten() : undefined);

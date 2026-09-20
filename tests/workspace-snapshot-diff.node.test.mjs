@@ -215,7 +215,7 @@ test("added and removed pages and blocks are counted without losing summary tota
   assert.equal(result.pages.length, 2);
 });
 
-test("detail limits truncate expansion only while preserving complete counts", () => {
+test("comparison returns every page and block detail within the preserved structural workspace bounds", () => {
   const before = manifest({
     data: {
       pages: [], blocks: [], tags: [], pageTags: [], pageShares: [], pageVersions: [],
@@ -227,9 +227,18 @@ test("detail limits truncate expansion only while preserving complete counts", (
     id: `page_${index.toString(16).padStart(32, "0")}`,
     title: `Page ${index}`
   }));
+  const blockPageId = currentPages[0].id;
+  const currentBlocks = Array.from({ length: 505 }, (_, index) => block({
+    id: `block_${index.toString(16).padStart(32, "0")}`,
+    page_id: blockPageId,
+    type: "MARKDOWN",
+    markdown: `Block ${index}`,
+    html_cache: `<p>Block ${index}</p>`,
+    metadata: "{}"
+  }));
   const current = manifest({
     data: {
-      pages: currentPages, blocks: [], tags: [], pageTags: [], pageShares: [], pageVersions: [],
+      pages: currentPages, blocks: currentBlocks, tags: [], pageTags: [], pageShares: [], pageVersions: [],
       navigationCollapsedPageIds: [], navigationPageOrder: []
     },
     attachments: []
@@ -237,7 +246,9 @@ test("detail limits truncate expansion only while preserving complete counts", (
 
   const result = diffWorkspaceManifests(before, current);
   assert.equal(result.summary.pages.added, 205);
-  assert.equal(result.pages.length, 200);
-  assert.equal(result.detailsTruncated, true);
-  assert.deepEqual(result.limits, { pageDetails: 200, blockDetails: 500 });
+  assert.equal(result.summary.blocks.added, 505);
+  assert.equal(result.pages.length, 205);
+  assert.equal(result.pages.find((item) => item.pageId === blockPageId)?.blocks.length, 505);
+  assert.equal(Object.hasOwn(result, "detailsTruncated"), false);
+  assert.equal(Object.hasOwn(result, "limits"), false);
 });

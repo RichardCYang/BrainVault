@@ -9,6 +9,31 @@ for (const [path, record] of Object.entries(baseline.files)) test(`render/histor
   assert.equal(createHash('sha256').update(record.source).digest('hex'), record.sha256);
 });
 
+function withoutLegacyDiffCaps(result) {
+  const value = structuredClone(result);
+  delete value.detailsTruncated;
+  delete value.limits;
+  for (const page of value.pages) delete page.blockDetailsTruncated;
+  return value;
+}
+
+function assertLegacyDiffPrefix(actual, legacy, message = undefined) {
+  const expected = withoutLegacyDiffCaps(legacy);
+  assert.deepEqual(actual.summary, expected.summary, message);
+  assert.deepEqual(actual.workspace, expected.workspace, message);
+  assert.equal(actual.identical, expected.identical, message);
+  for (let index = 0; index < expected.pages.length; index++) {
+    const expectedPage = expected.pages[index];
+    const actualPage = actual.pages[index];
+    assert.ok(actualPage, message);
+    assert.deepEqual(
+      { ...actualPage, blocks: actualPage.blocks.slice(0, expectedPage.blocks.length) },
+      expectedPage,
+      message
+    );
+  }
+}
+
 for (const nativeClone of [true, false]) {
   test(`1000 undo/redo commits avoid redundant defensive clones (${nativeClone ? 'structuredClone' : 'JSON fallback'})`, () => {
     const modules = ['baseline', 'current'].map(mode => makeHistory(mode, { instrument: true, nativeClone }));
@@ -93,7 +118,7 @@ test('1000 restore-only blocks perform zero discarded HTML SHA-256 calculations'
   const restored = freeze(regenerated(input));
   const before = makeDiff('baseline', { instrument: true }), after = makeDiff('current', { instrument: true });
   const expected = before.diff(input, restored), actual = after.diff(input, restored);
-  assert.deepEqual(actual, expected); assert.equal(actual.identical, true); assert.equal(actual.pages.length, 0);
+  assertLegacyDiffPrefix(actual, expected); assert.equal(actual.identical, true); assert.equal(actual.pages.length, 0);
   assert.equal(before.metrics.hashCalls, 2000); assert.equal(before.metrics.hashInputBytes, 40_000_000);
   assert.equal(after.metrics.hashCalls, 0); assert.equal(after.metrics.hashInputBytes, 0);
   assert.deepEqual(diffWorkspaceManifests(input, restored), actual);
@@ -105,7 +130,7 @@ for (const [field, value] of Object.entries({ type: 'CODE', parent_block_id: 'bl
     changed.data.blocks[0][field] = value;
     const before = makeDiff('baseline', { instrument: true }), after = makeDiff('current', { instrument: true });
     const actual = after.diff(freeze(input), freeze(changed));
-    assert.deepEqual(actual, before.diff(input, changed));
+    assertLegacyDiffPrefix(actual, before.diff(input, changed));
     assert.deepEqual(after.metrics, before.metrics);
     const fields = actual.pages[0].blocks[0].fields;
     const html = fields.find(item => item.field === 'htmlCache');
@@ -119,19 +144,21 @@ test('attachment-file changes preserve contextual detail and complete integrity 
   const input = manifest(), changed = regenerated(input);
   changed.attachments.push({ blockId: input.data.blocks[0].id, path: 'file/x', size: 3, sha256: 'digest', crc32: 123 });
   const actual = makeDiff().diff(input, changed);
-  assert.deepEqual(actual, makeDiff('baseline').diff(input, changed));
+  assertLegacyDiffPrefix(actual, makeDiff('baseline').diff(input, changed));
   assert.ok(actual.pages[0].blocks[0].fields.some(item => item.field === 'attachmentFile'));
   assert.ok(actual.pages[0].blocks[0].fields.some(item => item.field === 'htmlCache'));
 });
 
-for (const [pages, blocksPerPage] of [[1, 501], [201, 3], [205, 0]]) test(`page/block detail caps, total counts and truncation flags retain exact output (${pages}×${blocksPerPage})`, () => {
+for (const [pages, blocksPerPage] of [[1, 501], [201, 3], [205, 0]]) test(`page/block details are complete beyond the former caps (${pages}×${blocksPerPage})`, () => {
   const input = manifest({ pages, blocksPerPage }), changed = regenerated(input);
   for (const block of changed.data.blocks) block.markdown = 'real semantic modification';
   for (const page of changed.data.pages) page.title += ' changed';
   const actual = makeDiff().diff(freeze(input), freeze(changed));
-  assert.deepEqual(actual, makeDiff('baseline').diff(input, changed));
+  assertLegacyDiffPrefix(actual, makeDiff('baseline').diff(input, changed));
   assert.equal(actual.summary.pages.modified, pages); assert.equal(actual.summary.blocks.modified, pages * blocksPerPage);
-  assert.equal(actual.detailsTruncated, true);
+  assert.equal(actual.pages.length, pages);
+  assert.equal(actual.pages.reduce((total, page) => total + page.blocks.length, 0), pages * blocksPerPage);
+  assert.equal(Object.hasOwn(actual, 'detailsTruncated'), false);
 });
 
 test('500 deterministic mixed diff scenarios retain exact fields, excerpts, hashes, versions and workspace identity', () => {
@@ -156,6 +183,6 @@ test('500 deterministic mixed diff scenarios retain exact fields, excerpts, hash
     }
     if (random() < .15) changed.data.pages.pop();
     if (random() < .1) changed.account.name = 'changed account';
-    assert.deepEqual(after.diff(freeze(input), freeze(changed)), before.diff(input, changed), `scenario ${run}`);
+    assertLegacyDiffPrefix(after.diff(freeze(input), freeze(changed)), before.diff(input, changed), `scenario ${run}`);
   }
 });

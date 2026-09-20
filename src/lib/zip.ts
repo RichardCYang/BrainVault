@@ -483,8 +483,11 @@ export async function readZipDirectory(filePath: string, limits: ZipDirectoryRea
   }
 }
 
-export async function readZipEntryBuffer(filePath: string, entry: ZipReadEntry, maxBytes: number) {
-  if (entry.uncompressedSize > BigInt(maxBytes)) throw new Error("ZIP entry exceeds the allowed size");
+export async function readZipEntryBuffer(filePath: string, entry: ZipReadEntry, maxBytes: number | null) {
+  if (maxBytes !== null) {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new TypeError("ZIP entry size limit is invalid");
+    if (entry.uncompressedSize > BigInt(maxBytes)) throw new Error("ZIP entry exceeds the allowed size");
+  }
   if (entry.uncompressedSize === 0n) return Buffer.alloc(0);
   const file = await open(filePath, "r");
   try {

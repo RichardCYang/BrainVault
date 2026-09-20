@@ -1,8 +1,6 @@
 import { createHash } from "node:crypto";
 import type { BrainVaultBackup } from "./data-transfer.js";
 
-const maxPageDetails = 200;
-const maxBlockDetails = 500;
 const textContextLength = 180;
 
 export type DiffValue = string | number | boolean | null | string[] | {
@@ -33,7 +31,6 @@ export type PageDifference = {
   fields: FieldDifference[];
   blocks: BlockDifference[];
   blockSummary: { added: number; removed: number; modified: number };
-  blockDetailsTruncated: boolean;
 };
 
 function sortedUnique(values: string[]) {
@@ -159,31 +156,6 @@ function attachmentDescription(index: WorkspaceDiffIndex, blockId: string) {
   const attachment = index.attachmentByBlockId.get(blockId);
   if (!attachment) return null;
   return [attachment.path, attachment.size, attachment.sha256, attachment.crc32].join(":");
-}
-
-function blockHasSemanticDifference(
-  before: BrainVaultBackup["data"]["blocks"][number],
-  after: BrainVaultBackup["data"]["blocks"][number],
-  snapshotIndex: WorkspaceDiffIndex,
-  currentIndex: WorkspaceDiffIndex,
-  blockId: string
-) {
-  // Once block details are full, only change counts are observable. Keep the
-  // exact field equality rules (including null/empty text and JSON number
-  // semantics) without hashing or constructing excerpts that will be discarded.
-  // This is display-only: backup validation and cryptographic integrity checks
-  // are separate and are never skipped.
-  return Boolean(
-    fieldDifference("type", before.type, after.type)
-    || fieldDifference("parentBlockId", before.parent_block_id, after.parent_block_id)
-    || (before.markdown ?? "") !== (after.markdown ?? "")
-    || fieldDifference("checked", Boolean(before.checked), Boolean(after.checked))
-    || fieldDifference("sortOrder", Number(before.sort_order), Number(after.sort_order))
-    || (before.metadata ?? "") !== (after.metadata ?? "")
-    || fieldDifference("attachmentFile", attachmentDescription(snapshotIndex, blockId), attachmentDescription(currentIndex, blockId))
-    || fieldDifference("createdAt", before.created_at, after.created_at)
-    || fieldDifference("updatedAt", before.updated_at, after.updated_at)
-  );
 }
 
 function pageBlockMap<T extends { id: string; page_id: string }>(blocks: T[]) {
@@ -329,8 +301,6 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
   const pageSummary = { added: 0, removed: 0, modified: 0 };
   const blockSummary = { added: 0, removed: 0, modified: 0 };
   const pageDifferences: PageDifference[] = [];
-  let totalBlockDetails = 0;
-  let detailsTruncated = false;
 
   const pageIds = sortedUnique([...snapshotPages.keys(), ...currentPages.keys()]);
   for (const pageId of pageIds) {
@@ -340,7 +310,6 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
     const afterPageBlocks = currentBlocksByPage.get(pageId) ?? [];
     const localBlockSummary = { added: 0, removed: 0, modified: 0 };
     const blockDifferences: BlockDifference[] = [];
-    let blockDetailsTruncated = false;
 
     const blockIds = sortedUnique([
       ...beforePageBlocks.map((block) => block.id),
@@ -359,15 +328,6 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
         blockSummary.removed += 1;
         difference = { blockId, status: "removed", snapshotType: beforeBlock.type, currentType: null, fields: [] };
       } else if (beforeBlock && afterBlock) {
-        if (totalBlockDetails >= maxBlockDetails) {
-          if (blockHasSemanticDifference(beforeBlock, afterBlock, snapshotIndex, currentIndex, blockId)) {
-            localBlockSummary.modified += 1;
-            blockSummary.modified += 1;
-            blockDetailsTruncated = true;
-            detailsTruncated = true;
-          }
-          continue;
-        }
         // html_cache is regenerated from the canonical block payload during a
         // restore, and edit_version is deliberately rebased to the restore
         // generation so stale optimistic writes cannot cross that boundary.
@@ -401,13 +361,7 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
         }
       }
       if (difference) {
-        if (totalBlockDetails < maxBlockDetails) {
-          blockDifferences.push(difference);
-          totalBlockDetails += 1;
-        } else {
-          blockDetailsTruncated = true;
-          detailsTruncated = true;
-        }
+        blockDifferences.push(difference);
       }
     }
 
@@ -421,8 +375,7 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
         currentTitle: afterPage.title,
         fields: [],
         blocks: blockDifferences,
-        blockSummary: localBlockSummary,
-        blockDetailsTruncated
+        blockSummary: localBlockSummary
       };
     } else if (beforePage && !afterPage) {
       pageSummary.removed += 1;
@@ -433,8 +386,7 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
         currentTitle: null,
         fields: [],
         blocks: blockDifferences,
-        blockSummary: localBlockSummary,
-        blockDetailsTruncated
+        blockSummary: localBlockSummary
       };
     } else if (beforePage && afterPage) {
       const beforeHistory = pageVersionState(snapshotIndex, pageId);
@@ -487,16 +439,12 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
           currentTitle: afterPage.title,
           fields,
           blocks: blockDifferences,
-          blockSummary: localBlockSummary,
-          blockDetailsTruncated
+          blockSummary: localBlockSummary
         };
       }
     }
 
-    if (pageDifference) {
-      if (pageDifferences.length < maxPageDetails) pageDifferences.push(pageDifference);
-      else detailsTruncated = true;
-    }
+    if (pageDifference) pageDifferences.push(pageDifference);
   }
 
   return {
@@ -506,8 +454,6 @@ export function diffWorkspaceManifests(snapshot: BrainVaultBackup, current: Brai
       && workspace.length === 0,
     summary: { pages: pageSummary, blocks: blockSummary, workspace: workspace.length },
     workspace,
-    pages: pageDifferences,
-    detailsTruncated,
-    limits: { pageDetails: maxPageDetails, blockDetails: maxBlockDetails }
+    pages: pageDifferences
   };
 }

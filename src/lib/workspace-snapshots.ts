@@ -20,7 +20,7 @@ import { diffWorkspaceManifests } from "./workspace-snapshot-diff.js";
 
 const snapshotIdPattern = /^snapshot_[a-f0-9]{32}$/;
 const snapshotStorageRoot = path.join(attachmentUploadRoot, ".workspace-snapshots");
-const maxSnapshotStorageBytes = BigInt(env.SNAPSHOT_STORAGE_MAX_MB) * 1024n * 1024n;
+const snapshotDataTransferOptions = Object.freeze({ enforceConfiguredSizeLimits: false });
 
 type SnapshotRow = {
   id: string;
@@ -134,7 +134,7 @@ async function ensureSnapshotArchiveIntegrity(userId: string, row: SnapshotRow) 
 
 async function writeSnapshotArchive(userId: string, snapshotId: string) {
   const directory = await ensureSnapshotUserDirectory(userId);
-  const plan = await prepareUserDataBackup(userId);
+  const plan = await prepareUserDataBackup(userId, snapshotDataTransferOptions);
   const finalPath = snapshotArchivePath(userId, snapshotId);
   const temporaryPath = path.join(directory, `.${snapshotId}.${createId("tmp")}.zip`);
   let output: ReturnType<typeof createWriteStream> | null = null;
@@ -213,18 +213,14 @@ export async function createWorkspaceSnapshot(
       // Revalidate the exact credential/device session at the durable insertion
       // boundary so a request admitted before revocation cannot persist recovery data.
       await assertCurrentAuthSessionBoundary(userId, authScope, client);
-      const usage = await client.queryOne<{ snapshot_count: number; snapshot_bytes: string | number | bigint }>(
-        `SELECT COUNT(*) AS snapshot_count, COALESCE(SUM(archive_size), 0) AS snapshot_bytes
+      const usage = await client.queryOne<{ snapshot_count: number }>(
+        `SELECT COUNT(*) AS snapshot_count
          FROM workspace_snapshots WHERE user_id = ?`,
         [userId]
       );
       const snapshotCount = Number(usage?.snapshot_count ?? 0);
-      const snapshotBytes = BigInt(usage?.snapshot_bytes ?? 0);
       if (snapshotCount >= env.SNAPSHOT_MAX_COUNT) {
         throw new ApiError(409, "SNAPSHOT_LIMIT_REACHED", "Delete an existing snapshot before creating another one");
-      }
-      if (snapshotBytes + inspection.size > maxSnapshotStorageBytes) {
-        throw new ApiError(413, "SNAPSHOT_STORAGE_LIMIT_REACHED", "Snapshot storage quota would be exceeded");
       }
       await client.execute(
         `INSERT INTO workspace_snapshots
@@ -385,15 +381,15 @@ export async function restoreWorkspaceSnapshot(
         "The snapshot changed while the restore was being prepared. No data was replaced."
       );
     }
-  });
+  }, snapshotDataTransferOptions);
 }
 
 export async function diffWorkspaceSnapshot(userId: string, snapshotId: string) {
   const row = await getOwnedSnapshotRow(userId, snapshotId);
   const filePath = await ensureSnapshotArchiveIntegrity(userId, row);
-  const currentPlan = await prepareUserDataBackup(userId);
+  const currentPlan = await prepareUserDataBackup(userId, snapshotDataTransferOptions);
   try {
-    const manifest = await readUserDataBackupManifest(filePath);
+    const manifest = await readUserDataBackupManifest(filePath, snapshotDataTransferOptions);
     return diffWorkspaceManifests(manifest, currentPlan.manifest);
   } finally {
     await rm(currentPlan.operationRoot, { recursive: true, force: true }).catch(() => undefined);

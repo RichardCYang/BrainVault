@@ -2938,12 +2938,6 @@ function createSnapshotPageDifference(pageDifference) {
     pageDifference.blocks.forEach((block) => blockList.append(createSnapshotBlockDifference(block)));
     details.append(blockList);
   }
-  if (pageDifference.blockDetailsTruncated) {
-    const note = document.createElement("p");
-    note.className = "account-snapshot-truncated";
-    note.textContent = t("account.snapshotDiffTruncated");
-    details.append(note);
-  }
   return details;
 }
 
@@ -2990,12 +2984,6 @@ function createSnapshotDiffView(diff) {
   list.className = "account-snapshot-page-list";
   (diff.pages ?? []).forEach((page) => list.append(createSnapshotPageDifference(page)));
   wrapper.append(list);
-  if (diff.detailsTruncated) {
-    const note = document.createElement("p");
-    note.className = "account-snapshot-truncated";
-    note.textContent = t("account.snapshotDiffTruncated");
-    wrapper.append(note);
-  }
   return wrapper;
 }
 

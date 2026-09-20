@@ -603,7 +603,8 @@ describe("Data-loss prevention integration", () => {
     expect(transfer).toContain('await handle.sync()');
     expect(transfer).toContain('await syncPath(attachmentUploadRoot)');
     expect(transfer).toContain('await syncPath(dataTransferTempDir)');
-    expect(transfer).toContain('if (manifestBuffer.length > maxManifestBytes)');
+    expect(transfer).toContain('if (enforceConfiguredSizeLimits && manifestBuffer.length > maxManifestBytes)');
+    expect(transfer).toContain('enforceConfiguredSizeLimits ? maxManifestBytes : null');
     expect(transfer).toContain('const totalUncompressedSize = attachmentFiles.reduce(');
     expect(transfer).toContain('const maxTransferBytes = BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n');
   });

@@ -5277,7 +5277,6 @@ const snapshotAccountTranslationAdditions = {
       snapshotDiffSummary: "Pages +{pagesAdded} / −{pagesRemoved} / ~{pagesModified} · Blocks +{blocksAdded} / −{blocksRemoved} / ~{blocksModified}",
       snapshotWorkspaceChanges: "Workspace-level changes",
       snapshotWorkspaceChangeCount: "{count} changed fields",
-      snapshotDiffTruncated: "The comparison contains more changes than can be expanded at once. Summary counts remain complete.",
       snapshotAdded: "Added",
       snapshotRemoved: "Removed",
       snapshotModified: "Changed",
@@ -5334,7 +5333,6 @@ const snapshotAccountTranslationAdditions = {
       SNAPSHOT_NOT_FOUND: "The snapshot was not found.",
       SNAPSHOT_INTEGRITY_FAILED: "The snapshot archive failed its integrity check and was not used.",
       SNAPSHOT_LIMIT_REACHED: "The snapshot count limit was reached. Delete an older snapshot first.",
-      SNAPSHOT_STORAGE_LIMIT_REACHED: "Creating this snapshot would exceed the snapshot storage quota.",
       SNAPSHOT_WRITE_FAILED: "The snapshot archive could not be written and verified.",
       SNAPSHOT_CREATE_OUTCOME_UNKNOWN: "The snapshot creation result could not be verified safely. Its archive was preserved for recovery.",
       SNAPSHOT_DELETE_OUTCOME_UNKNOWN: "The snapshot deletion result could not be verified safely. Snapshot bytes were preserved when possible."
@@ -5376,7 +5374,6 @@ const snapshotAccountTranslationAdditions = {
       snapshotDiffSummary: "페이지 +{pagesAdded} / −{pagesRemoved} / ~{pagesModified} · 블록 +{blocksAdded} / −{blocksRemoved} / ~{blocksModified}",
       snapshotWorkspaceChanges: "워크스페이스 수준 변경",
       snapshotWorkspaceChangeCount: "변경 필드 {count}개",
-      snapshotDiffTruncated: "변경 항목이 많아 일부 상세 항목은 한 번에 펼쳐 표시하지 않습니다. 요약 개수는 전체 변경분을 반영합니다.",
       snapshotAdded: "추가됨",
       snapshotRemoved: "삭제됨",
       snapshotModified: "변경됨",
@@ -5433,7 +5430,6 @@ const snapshotAccountTranslationAdditions = {
       SNAPSHOT_NOT_FOUND: "스냅샷을 찾을 수 없습니다.",
       SNAPSHOT_INTEGRITY_FAILED: "스냅샷 압축파일의 무결성 검증에 실패하여 사용하지 않았습니다.",
       SNAPSHOT_LIMIT_REACHED: "스냅샷 개수 한도에 도달했습니다. 기존 스냅샷을 삭제한 뒤 다시 시도해 주세요.",
-      SNAPSHOT_STORAGE_LIMIT_REACHED: "이 스냅샷을 생성하면 스냅샷 저장 용량 한도를 초과합니다.",
       SNAPSHOT_WRITE_FAILED: "스냅샷 압축파일을 안전하게 기록하고 검증하지 못했습니다.",
       SNAPSHOT_CREATE_OUTCOME_UNKNOWN: "스냅샷 생성 결과를 안전하게 확인할 수 없습니다. 복구를 위해 압축파일은 보존했습니다.",
       SNAPSHOT_DELETE_OUTCOME_UNKNOWN: "스냅샷 삭제 결과를 안전하게 확인할 수 없습니다. 가능한 경우 스냅샷 파일을 보존했습니다."

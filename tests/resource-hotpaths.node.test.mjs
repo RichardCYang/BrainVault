@@ -104,44 +104,81 @@ function changedFixture(blocks = 2000, pages = 1) {
   return [a, b];
 }
 
-test('2000 changed blocks retain 500 complete details while reducing SHA-256 calls from 8000 to 2000', () => {
+function withoutLegacyDiffCaps(result) {
+  const value = structuredClone(result);
+  delete value.detailsTruncated;
+  delete value.limits;
+  for (const page of value.pages) delete page.blockDetailsTruncated;
+  return value;
+}
+
+function assertLegacyPrefix(actual, legacy) {
+  const expected = withoutLegacyDiffCaps(legacy);
+  assert.deepEqual(actual.summary, expected.summary);
+  assert.deepEqual(actual.workspace, expected.workspace);
+  for (let index = 0; index < expected.pages.length; index++) {
+    const expectedPage = expected.pages[index];
+    const actualPage = actual.pages[index];
+    assert.ok(actualPage);
+    assert.deepEqual(
+      { ...actualPage, blocks: actualPage.blocks.slice(0, expectedPage.blocks.length) },
+      expectedPage
+    );
+  }
+}
+
+test('2000 changed blocks return every complete detail, including contextual hashes', () => {
   const [a, b] = changedFixture();
   const original = makeDiff('baseline', { instrument: true }), current = makeDiff('current', { instrument: true });
   const expected = original.diff(a, b), actual = current.diff(a, b);
-  assert.deepEqual(actual, expected);
-  assert.equal(JSON.stringify(actual), JSON.stringify(expected));
+  assertLegacyPrefix(actual, expected);
   assert.equal(original.metrics.hashCalls, 8000);
-  assert.equal(current.metrics.hashCalls, 2000);
+  assert.equal(current.metrics.hashCalls, 8000);
   assert.equal(actual.summary.blocks.modified, 2000);
-  assert.equal(actual.pages[0].blocks.length, 500);
-  assert.equal(actual.detailsTruncated, true);
+  assert.equal(actual.pages[0].blocks.length, 2000);
+  assert.equal(Object.hasOwn(actual, 'detailsTruncated'), false);
+  assert.equal(Object.hasOwn(actual.pages[0], 'blockDetailsTruncated'), false);
   assert.deepEqual(diffWorkspaceManifests(a, b), actual);
 });
 
-for (const count of [0, 1, 499, 500, 501, 700]) test(`detail cap boundary ${count}: exact serialized output, summaries, hashes, and truncation flags`, () => {
+for (const count of [0, 1, 499, 500, 501, 700]) test(`uncapped detail boundary ${count}: summaries and legacy-prefix details stay exact`, () => {
   const [a, b] = changedFixture(count);
   const original = makeDiff('baseline'), current = makeDiff();
-  assert.equal(JSON.stringify(current.diff(freeze(a), freeze(b))), JSON.stringify(original.diff(a, b)));
+  const expected = original.diff(a, b), actual = current.diff(freeze(a), freeze(b));
+  assertLegacyPrefix(actual, expected);
+  if (count === 0) assert.equal(actual.pages.length, 0);
+  else assert.equal(actual.pages[0].blocks.length, count);
+  assert.equal(Object.hasOwn(actual, 'detailsTruncated'), false);
 });
 
-test('after the detail cap, every semantic field is still counted and operational-only restores are not', () => {
+test('details beyond the former cap are returned for semantic fields while operational-only restores remain ignored', () => {
   const mutations = [
     block => { block.type = 'CODE'; }, block => { block.parent_block_id = 'parent'; },
     block => { block.markdown = 'new'; }, block => { block.checked = 1; },
     block => { block.sort_order = 19; }, block => { block.metadata = '{"x":1}'; },
     block => { block.created_at = '2026-09-15'; }, block => { block.updated_at = '2026-09-17'; },
-    (_block, backup) => { backup.attachments.push({ blockId: backup.data.blocks.at(-1).id, path: 'safe/data', size: 9, crc32: 1, sha256: 'f'.repeat(64) }); },
-    block => { block.html_cache = 'regenerated only'; block.edit_version = 900; }
+    (_block, backup) => { backup.attachments.push({ blockId: backup.data.blocks.at(-1).id, path: 'safe/data', size: 9, crc32: 1, sha256: 'f'.repeat(64) }); }
   ];
   for (const mutate of mutations) {
     const [a, b] = changedFixture(501);
     b.data.blocks[500] = structuredClone(a.data.blocks[500]);
     mutate(b.data.blocks[500], b);
-    assert.deepEqual(makeDiff().diff(a, b), makeDiff('baseline').diff(a, b));
+    const actual = makeDiff().diff(a, b);
+    assert.equal(actual.summary.blocks.modified, 501);
+    assert.equal(actual.pages[0].blocks.length, 501);
+    assert.equal(actual.pages[0].blocks.at(-1).blockId, b.data.blocks[500].id);
   }
+
+  const [a, b] = changedFixture(501);
+  b.data.blocks[500] = structuredClone(a.data.blocks[500]);
+  b.data.blocks[500].html_cache = 'regenerated only';
+  b.data.blocks[500].edit_version = 900;
+  const operationalOnly = makeDiff().diff(a, b);
+  assert.equal(operationalOnly.summary.blocks.modified, 500);
+  assert.equal(operationalOnly.pages[0].blocks.length, 500);
 });
 
-test('truncated text comparison preserves null/empty equivalence, Unicode, lone surrogates, and JSON-number semantics', () => {
+test('long-text comparison preserves null/empty equivalence, Unicode, lone surrogates, and JSON-number semantics', () => {
   const [a, b] = changedFixture(510);
   const values = [null, '', '한글😀', '\ud800', '<script>', '{"a":1}', ' ', undefined, '\u0000', 'tail'];
   values.forEach((value, i) => {
@@ -151,10 +188,14 @@ test('truncated text comparison preserves null/empty equivalence, Unicode, lone 
   });
   a.data.blocks[508].sort_order = NaN;
   b.data.blocks[508].sort_order = Infinity;
-  assert.deepEqual(makeDiff().diff(a, b), makeDiff('baseline').diff(a, b));
+  const actual = makeDiff().diff(a, b);
+  const legacy = makeDiff('baseline').diff(a, b);
+  assertLegacyPrefix(actual, legacy);
+  assert.equal(actual.summary.blocks.modified, 500);
+  assert.equal(actual.pages[0].blocks.length, 500);
 });
 
-test('added/removed blocks, cross-page IDs, archived pages and the 200-page cap retain exact aggregate and admission behavior', () => {
+test('added/removed blocks, cross-page IDs and archived pages preserve aggregates while all page details are returned', () => {
   const a = manifest({ pages: 205, blocksPerPage: 3, htmlLength: 100 });
   const b = regenerated(a);
   b.data.blocks.forEach((block, i) => { if (i % 3) block.markdown += ' modified'; });
@@ -164,10 +205,14 @@ test('added/removed blocks, cross-page IDs, archived pages and the 200-page cap 
   b.data.pages.forEach((page, i) => { page.title += ' changed'; if (i % 4 === 0) page.is_archived = 1; });
   b.data.pages.splice(12, 1);
   b.data.pages.push({ ...b.data.pages.at(-1), id: 'added_page' });
-  assert.deepEqual(makeDiff().diff(freeze(a), freeze(b)), makeDiff('baseline').diff(a, b));
+  const actual = makeDiff().diff(freeze(a), freeze(b));
+  const legacy = makeDiff('baseline').diff(a, b);
+  assertLegacyPrefix(actual, legacy);
+  assert.ok(actual.pages.length > 200);
+  assert.equal(Object.hasOwn(actual, 'detailsTruncated'), false);
 });
 
-test('100 seeded above-cap differential cases preserve account/workspace metadata and all disclosed fields', () => {
+test('100 seeded above-former-cap differential cases preserve metadata, summaries, and every legacy-prefix field', () => {
   const random = randomGenerator(0x991426);
   const original = makeDiff('baseline'), current = makeDiff();
   for (let run = 0; run < 100; run++) {
@@ -181,14 +226,17 @@ test('100 seeded above-cap differential cases preserve account/workspace metadat
     if (run % 3 === 0) b.data.blocks.pop();
     if (run % 4 === 0) b.data.blocks.push({ ...b.data.blocks[0], id: 'new_' + run });
     if (run % 5 === 0) b.account.name = 'another account label';
-    assert.equal(JSON.stringify(current.diff(a, b)), JSON.stringify(original.diff(a, b)), `seeded diff ${run}`);
+    const actual = current.diff(a, b), expected = original.diff(a, b);
+    assertLegacyPrefix(actual, expected);
+    assert.equal(Object.hasOwn(actual, 'detailsTruncated'), false, `seeded diff ${run}`);
   }
 });
 
-test('no long-lived memoization or validation/integrity bypass was introduced', () => {
+test('no long-lived memoization or comparison truncation was introduced', () => {
   const source = sourceFor('src/lib/workspace-snapshot-diff.ts');
-  assert.match(source, /totalBlockDetails >= maxBlockDetails/);
-  assert.match(source, /blockHasSemanticDifference/);
+  assert.doesNotMatch(source, /maxBlockDetails|maxPageDetails|detailsTruncated|blockDetailsTruncated/);
+  assert.match(source, /blockDifferences\.push\(difference\)/);
+  assert.match(source, /pageDifferences\.push\(pageDifference\)/);
   for (const path of ['public/database-block.js', 'src/lib/database.ts']) {
     const text = sourceFor(path);
     const start = text.indexOf('export function applyDatabaseView(');
