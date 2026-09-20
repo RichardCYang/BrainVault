@@ -321,7 +321,7 @@ test("destructive block actions stay bound to the initiating authentication gene
   );
   assert.match(
     contextDelete,
-    /await deleteBlockWithVersionCheck\(blockId, \{ authenticationScope, navigationGeneration \}\)/
+    /await deleteBlockWithVersionCheck\(blockId,\s*\{\s*authenticationScope,\s*navigationGeneration,\s*expectedCollaborationMode:\s*collaborativeAtIntent,\s*expectedDeleteSubtree\s*\}\)/
   );
 });
 
