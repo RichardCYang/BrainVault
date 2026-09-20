@@ -1,9 +1,0 @@
-{
-  "protected_git_file_hashes_equal": true,
-  "protected_git_file_directory_metadata_equal_excluding_atime": true,
-  "git_file_count": 28,
-  "git_zip_entry_count": 44,
-  "initial_inspection_copy_index_changed": true,
-  "initial_inspection_copy_excluded_from_deliverable": true,
-  "final_packaging_method": "Copy original ZIP; replace only the two patched source/test entries; append new QA artifacts. Never repack .git from an inspection workspace."
-}
