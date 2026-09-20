@@ -249,6 +249,35 @@ test("direct title failure cannot erase a newer unscheduled blank", async () => 
   assert.equal(h.value("title"), "");
 });
 
+test("scheduled title success cannot acknowledge a newer unscheduled blank", async () => {
+  const h = harness(); h.input("title", "A");
+  assert.equal(h.scheduled("title"), true);
+  h.input("title", "");
+  assert.equal(h.scheduled("title"), true);
+  const historyCountBeforeSettlement = h.histories.length;
+  await h.resolve(0);
+  assert.equal(h.value("title"), "", "newer visible blank must survive");
+  assert.equal(h.histories.length, historyCountBeforeSettlement, "obsolete scheduled completion cannot publish history");
+  assert.equal(h.context.state.selectedPage.title, "initial title", "obsolete completion cannot acknowledge canonical UI state");
+});
+
+test("scheduled title failure cannot mark a newer unscheduled blank as failed", async () => {
+  const h = harness(); h.input("title", "A");
+  assert.equal(h.scheduled("title"), true);
+  h.input("title", "");
+  assert.equal(h.scheduled("title"), true);
+  await h.reject(0);
+  assert.equal(h.value("title"), "", "newer visible blank must survive");
+  assert.equal(h.context.elements.pageTitle.classList.contains("save-error"), false, "obsolete failure cannot poison the newer editor state");
+});
+
+test("current scheduled title failure still marks and restores the owned editor", async () => {
+  const h = harness(); h.input("title", "current");
+  assert.equal(h.scheduled("title"), true);
+  await h.reject(0);
+  assert.equal(h.value("title"), "initial title");
+  assert.equal(h.context.elements.pageTitle.classList.contains("save-error"), true);
+});
 test("direct block completion follows an equivalent rebuilt live row", async () => {
   const h = harness(); h.input("block", "current");
   const saving = h.direct("block");

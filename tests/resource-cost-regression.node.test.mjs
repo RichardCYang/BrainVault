@@ -127,10 +127,19 @@ test("native ZIP CRC interoperates with directory reads, extraction, and corrupt
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("ZIP reader/writer guards remain unchanged outside the CRC implementation and import", () => {
-  const tail = source => source.slice(source.indexOf("export function crc32(data"));
-  assert.equal(tail(sourceFor("src/lib/zip.ts")), tail(sourceFor("src/lib/zip.ts", "baseline")));
-  assert.match(sourceFor("src/lib/zip.ts"), /import \{ crc32 as nativeCrc32 \} from "node:zlib"/);
+test("ZIP reader/writer guards remain unchanged outside CRC and the intentional nullable entry-read limit", () => {
+  const normalizeTail = (source) => {
+    const tail = source.slice(source.indexOf("export function crc32(data"));
+    return tail.replace(
+      /export async function readZipEntryBuffer\(filePath: string, entry: ZipReadEntry, maxBytes: number(?: \| null)?\) \{[\s\S]*?(?=  if \(entry\.uncompressedSize === 0n\))/u,
+      "export async function readZipEntryBuffer(filePath: string, entry: ZipReadEntry, maxBytes: ENTRY_LIMIT) {\n"
+    );
+  };
+  const current = sourceFor("src/lib/zip.ts");
+  assert.equal(normalizeTail(current), normalizeTail(sourceFor("src/lib/zip.ts", "baseline")));
+  assert.match(current, /import \{ crc32 as nativeCrc32 \} from "node:zlib"/);
+  assert.match(current, /readZipEntryBuffer\(filePath: string, entry: ZipReadEntry, maxBytes: number \| null\)/);
+  assert.match(current, /maxBytes !== null[\s\S]*Number\.isSafeInteger\(maxBytes\)[\s\S]*ZIP entry exceeds the allowed size/u);
 });
 
 for (const [side, modules] of Object.entries(databases)) {

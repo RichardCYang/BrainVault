@@ -18654,6 +18654,14 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
         syncBeforeUnloadProtection();
         return;
       }
+      // A newer focused edit can be intentionally unscheduled (notably a blank title).
+      // Promise ownership alone is therefore insufficient: the settled mutation must
+      // still own the visible editor value before it can acknowledge UI/canonical state.
+      if (elements.pageTitle.value !== title) {
+        elements.pageTitle.classList.remove("is-saving");
+        syncBeforeUnloadProtection();
+        return;
+      }
       elements.pageTitle.classList.remove("is-saving", "save-error");
       recordPageTitleEditorHistory(previousTitle);
       if (state.selectedPage?.id === pageId) state.selectedPage.title = title;
@@ -18673,10 +18681,12 @@ function schedulePageTitleSave({ allowConflictPrompt = true } = {}) {
         return;
       }
       elements.pageTitle.classList.remove("is-saving");
-      elements.pageTitle.classList.add("save-error");
+      const ownsVisibleInput = elements.pageTitle.value === title;
       if (error?.code === "COLLABORATION_RECOVERY_WRITE_FAILED") {
+        if (ownsVisibleInput) elements.pageTitle.classList.add("save-error");
         handleDurableRecoveryStorageWriteError(error, { operation: "collaboration-title-recovery" });
-      } else if (elements.pageTitle.value === title) {
+      } else if (ownsVisibleInput) {
+        elements.pageTitle.classList.add("save-error");
         updateInputValuePreservingSelection(elements.pageTitle, state.selectedPage?.title ?? previousTitle);
       }
       setStatus(getRejectedLocalMutationMessage(error), true);
