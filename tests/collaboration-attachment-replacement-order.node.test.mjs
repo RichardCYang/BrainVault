@@ -34,10 +34,19 @@ test("attachment replacement keeps promoted children and sibling order dense in 
     block("attachment", null, 1, "ATTACHMENT")
   ];
 
+  const replacement = block("attachment", null, 1, "ATTACHMENT");
+  const expectedPromoteStructure = snapshot
+    .filter((item) => item.id !== replacement.id && (item.parentBlockId === null || item.parentBlockId === "target"))
+    .map(({ id, parentBlockId, sortOrder }) => ({ id, parentBlockId, sortOrder }));
   const plan = planCollaborativeBlockReplacement(
     snapshot,
     "target",
-    block("attachment", null, 1, "ATTACHMENT")
+    replacement,
+    {
+      expectedSourceBlock: snapshot.find((item) => item.id === "target"),
+      expectedReplacementBlock: replacement,
+      expectedPromoteStructure
+    }
   );
 
   assert.ok(plan);
@@ -83,6 +92,33 @@ test("attachment replacement refuses to delete a source changed while upload is 
     plan,
     null,
     "a stale empty-source snapshot must never authorize deleting newer collaborative content"
+  );
+});
+
+test("attachment replacement refuses a child inserted while upload is in flight", () => {
+  const before = block("before", null, 0);
+  const source = block("target", null, 1);
+  const after = block("after", null, 2);
+  const attachment = block("attachment", null, 1, "ATTACHMENT");
+  const expectedPromoteStructure = [before, source, after]
+    .map(({ id, parentBlockId, sortOrder }) => ({ id, parentBlockId, sortOrder }));
+  const peerChild = block("peer-child", "target", 0);
+
+  const plan = planCollaborativeBlockReplacement(
+    [before, source, peerChild, after, attachment],
+    "target",
+    attachment,
+    {
+      expectedSourceBlock: source,
+      expectedReplacementBlock: attachment,
+      expectedPromoteStructure
+    }
+  );
+
+  assert.equal(
+    plan,
+    null,
+    "a stale replacement must not re-parent a child created after the upload intent"
   );
 });
 
@@ -140,7 +176,9 @@ test("the attachment replacement UI uses the atomic prepared-document mutation",
   assert.ok(end > start);
   const upload = app.slice(start, end);
 
+  assert.match(upload, /const collaborativeReplacementStructureAtStart = collaborativeSourceSnapshotAtStart/);
   assert.match(upload, /expectedSourceBlock:\s*collaborativeSourceSnapshotAtStart/);
+  assert.match(upload, /expectedPromoteStructure:\s*collaborativeReplacementStructureAtStart/);
   assert.match(upload, /replacementBlock:\s*\{/);
   assert.match(upload, /preserveChildren:\s*true/);
   assert.match(upload, /if \(replacementResult\?\.replaced\)/);

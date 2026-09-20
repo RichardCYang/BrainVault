@@ -12561,6 +12561,7 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
       if (replacementBlock) {
         return session.replaceBlockWithAttachmentPreservingChildren(blockId, replacementBlock, {
           expectedSourceBlock,
+          expectedPromoteStructure,
           beforeCommit: isDeleteIntentCurrent
         });
       }
@@ -16584,9 +16585,21 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
   const collaborativeAtStart = isCollaborativePage();
   const collaborationSessionAtStart = collaborativeAtStart ? state.collaborationSession : null;
   const blockId = row.dataset.blockId;
-  const collaborativeSourceSnapshotAtStart = collaborationSessionAtStart
-    ?.getSnapshot()
-    .blocks.find((item) => item.id === blockId) ?? null;
+  const collaborativeSnapshotAtStart = collaborationSessionAtStart?.getSnapshot() ?? null;
+  const collaborativeSourceSnapshotAtStart = collaborativeSnapshotAtStart
+    ?.blocks.find((item) => item.id === blockId) ?? null;
+  const collaborativeReplacementStructureAtStart = collaborativeSourceSnapshotAtStart
+    ? collaborativeSnapshotAtStart.blocks
+        .filter((item) => (
+          normalizeParentBlockId(item.parentBlockId) === collaborativeSourceSnapshotAtStart.parentBlockId
+          || normalizeParentBlockId(item.parentBlockId) === blockId
+        ))
+        .map((item) => ({
+          id: item.id,
+          parentBlockId: normalizeParentBlockId(item.parentBlockId),
+          sortOrder: Number(item.sortOrder ?? 0)
+        }))
+    : null;
   const sourceEditRevision = Number.parseInt(row.dataset.editRevision ?? "0", 10) || 0;
   row.classList.add("is-uploading");
   row.setAttribute("aria-busy", "true");
@@ -16694,6 +16707,7 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
           authenticationScope,
           navigationGeneration,
           expectedSourceBlock: collaborativeSourceSnapshotAtStart,
+          expectedPromoteStructure: collaborativeReplacementStructureAtStart,
           replacementBlock: {
             ...data.block,
             parentBlockId,

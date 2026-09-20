@@ -292,7 +292,11 @@ export function planCollaborativeBlockReplacement(
   snapshot,
   targetId,
   replacementBlock,
-  { expectedSourceBlock = null, expectedReplacementBlock = null } = {}
+  {
+    expectedSourceBlock = null,
+    expectedReplacementBlock = null,
+    expectedPromoteStructure = null
+  } = {}
 ) {
   const replacement = normalizeBlock(replacementBlock);
   const normalizedTargetId = String(targetId ?? "");
@@ -323,6 +327,16 @@ export function planCollaborativeBlockReplacement(
       throw new Error("The collaborative replacement source snapshot does not match the target block");
     }
     if (!matchesCollaborativeReplacementSource(target, expectedSourceBlock)) return null;
+  }
+  if (
+    expectedPromoteStructure
+    && !matchesCollaborativePromoteStructure(
+      preparedSnapshot,
+      normalizedTargetId,
+      expectedPromoteStructure
+    )
+  ) {
+    return null;
   }
 
   const children = preparedSnapshot
@@ -985,6 +999,7 @@ class PageCollaborationSession {
 
   async replaceBlockWithAttachmentPreservingChildren(blockId, replacementBlock, {
     expectedSourceBlock = null,
+    expectedPromoteStructure = null,
     allowDisconnected = false,
     beforeCommit = null
   } = {}) {
@@ -1010,7 +1025,8 @@ class PageCollaborationSession {
       }
       const plan = planCollaborativeBlockReplacement(snapshot, blockId, replacement, {
         expectedSourceBlock,
-        expectedReplacementBlock: replacement
+        expectedReplacementBlock: replacement,
+        expectedPromoteStructure
       });
       // The source may have gained text, metadata, a new type, or a new position
       // while the upload was in flight. In that case preserve it and let the UI
