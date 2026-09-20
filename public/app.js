@@ -12576,11 +12576,14 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
       };
     });
   }
-  // A replacement block is only safe when it is committed atomically with the
-  // collaborative delete. If collaboration disappears between UI decisions,
-  // fail closed rather than deleting the source and leaving the attachment
-  // placement as a separate, partially completed operation.
-  if (replacementBlock) throw new Error(t("sharing.syncRequired"));
+  // Any destructive intent captured against a collaborative Yjs snapshot must
+  // remain collaborative until commit. If sharing is disabled while this
+  // operation is waiting, the direct path would build a fresh SQL version
+  // snapshot and could thereby authorize deleting peer content that did not
+  // exist when the original intent was formed. Fail closed instead.
+  if (replacementBlock || expectedSourceBlock || expectedPromoteStructure) {
+    throw new Error(t("sharing.syncRequired"));
+  }
   // Retry tasks must distinguish the exact destructive intent. A root-only
   // replacement check is deliberately fail-closed when descendants exist and
   // must never inherit an older ambiguous subtree-delete snapshot.
@@ -16686,6 +16689,17 @@ async function uploadAttachmentFromRow(row, file, slashContext = null) {
         parentBlockId,
         sortOrder: referenceIndex + 1
       });
+      setStatus(t("status.attachmentUploaded", { name: file.name }));
+      return data;
+    }
+
+    // An upload that began against a collaborative document must never turn
+    // into a direct-mode source deletion after the last share is removed.
+    // The attachment POST is already durable, so preserve both blocks and
+    // refresh the server-canonical placement instead of reporting a failure
+    // that could encourage a duplicate retry.
+    if (collaborativeAtStart && !isCollaborativePage()) {
+      await reconcileCanonicalCreatedBlock(pageId, data.block, { authenticationScope });
       setStatus(t("status.attachmentUploaded", { name: file.name }));
       return data;
     }
