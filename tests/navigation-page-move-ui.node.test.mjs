@@ -64,7 +64,7 @@ test("page move submits only parent metadata and keeps retry reconciliation idem
     "function applyPageMoveMutationResult(committedPage)"
   );
   assert.match(submitMove, /method:\s*"PATCH"/);
-  assert.match(submitMove, /body:\s*\{\s*parentPageId:\s*targetPageId,\s*expectedVersion,\s*mutationId:\s*task\.mutationId\s*\}/s);
+  assert.match(submitMove, /body:\s*\{\s*parentPageId:\s*targetPageId,\s*expectedVersion,\s*expectedContentVersion,\s*mutationId:\s*task\.mutationId\s*\}/s);
   assert.match(submitMove, /submitWithFreshMutationIdOnReuse\(task/);
   assert.match(submitMove, /reconciled\?\.page\?\.parentPageId === targetPageId/);
   assert.doesNotMatch(submitMove, /blocks\s*:/i);

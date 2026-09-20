@@ -33,6 +33,7 @@ describe("Lossless page move from the sidebar navigation menu", () => {
     expect(client).toContain('method: "PATCH"');
     expect(client).toContain("parentPageId: targetPageId");
     expect(client).toContain("expectedVersion,");
+    expect(client).toContain("expectedContentVersion,");
     expect(client).toContain("mutationId: task.mutationId");
     expect(client).toContain("submitWithFreshMutationIdOnReuse(task");
     expect(client).toContain("reconciled?.page?.parentPageId === targetPageId");

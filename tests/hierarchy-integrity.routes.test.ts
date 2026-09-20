@@ -111,7 +111,7 @@ describe("Hierarchy and archive integrity", () => {
     const response = await request(createApp())
       .patch("/api/pages/pag_a")
       .set("Authorization", `Bearer ${token}`)
-      .send({ parentPageId: "pag_b", expectedVersion: 1 })
+      .send({ parentPageId: "pag_b", expectedVersion: 1, expectedContentVersion: 1 })
       .expect(400);
 
     expect(response.body.error.code).toBe("INVALID_PARENT_PAGE");

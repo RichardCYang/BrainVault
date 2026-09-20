@@ -17,7 +17,10 @@ test("page parent move is an in-place hierarchy mutation guarded by owner-wide r
     patchRoute.indexOf("isMatchingMutationReplay") < patchRoute.indexOf("assertPageParentFromLockedRows"),
     "exact response-loss replays must resolve before mutable destination validation"
   );
-  assert.match(patchRoute, /WHERE id = \? AND owner_id = \? AND edit_version = \?/);
+  assert.match(patchRoute, /updates\.isArchived === true \|\| updates\.parentPageId !== undefined/);
+  assert.match(patchRoute, /expectedContentVersion: mutationExpectedContentVersion/);
+  assert.match(patchRoute, /WHERE id = \? AND owner_id = \? AND edit_version = \?\$\{contentVersionPredicate\}/);
+  assert.match(patchRoute, /mutationExpectedContentVersion === undefined \? \[\] : \[mutationExpectedContentVersion\]/);
   assert.match(patchRoute, /edit_version = edit_version \+ 1/);
 });
 

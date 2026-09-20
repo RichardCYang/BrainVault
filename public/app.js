@@ -9478,6 +9478,7 @@ async function submitPageMoveMutation(
   pageId,
   targetPageId,
   expectedVersion,
+  expectedContentVersion,
   authenticationScope,
   { requestGuard = null } = {}
 ) {
@@ -9496,6 +9497,7 @@ async function submitPageMoveMutation(
           body: {
             parentPageId: targetPageId,
             expectedVersion,
+            expectedContentVersion,
             mutationId: task.mutationId
           },
           beforeFetch: () => {
@@ -9710,11 +9712,19 @@ async function moveNavigationPageToParent(
       }
 
       const expectedVersion = getPositiveVersion(sourcePage.version);
-      if (expectedVersion === null) throw new Error(t("errors.invalidResponse"));
+      const expectedContentVersion = getPositiveVersion(sourcePage.contentVersion);
+      if (expectedVersion === null || expectedContentVersion === null) {
+        throw new Error(t("errors.invalidResponse"));
+      }
 
-      const submitMove = () => submitPageMoveMutation(pageId, targetPageId, expectedVersion, scope, {
-        requestGuard: isPageMoveNavigationCurrent
-      });
+      const submitMove = () => submitPageMoveMutation(
+        pageId,
+        targetPageId,
+        expectedVersion,
+        expectedContentVersion,
+        scope,
+        { requestGuard: isPageMoveNavigationCurrent }
+      );
       const data = collectionScopeChanged
         ? await withWorkspacePersistenceTransitionForOwner(sourcePage.ownerId, "page-move", async () => {
           if (!isCurrentAuthenticatedSessionScope(scope) || !isPageMoveNavigationCurrent()) {

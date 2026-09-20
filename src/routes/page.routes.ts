@@ -1965,20 +1965,24 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
     const pageId = String(req.params.pageId);
     const body = req.body as z.infer<typeof updatePageSchema>;
     const { tags, expectedVersion, expectedContentVersion, mutationId, ...updates } = body;
-    const archiveExpectedContentVersion =
-      updates.isArchived === true ? expectedContentVersion : undefined;
-    if (updates.isArchived === true && archiveExpectedContentVersion === undefined) {
+    const contentVersionFenceRequired =
+      updates.isArchived === true || updates.parentPageId !== undefined;
+    const mutationExpectedContentVersion =
+      contentVersionFenceRequired ? expectedContentVersion : undefined;
+    if (contentVersionFenceRequired && mutationExpectedContentVersion === undefined) {
       throw new ApiError(
         400,
         "PAGE_EDIT_VERSION_REQUIRED",
-        "The last observed page and content versions are required before archiving this page."
+        updates.isArchived === true
+          ? "The last observed page and content versions are required before archiving this page."
+          : "The last observed page and content versions are required before moving this page."
       );
     }
     const administrationAdmission = await capturePageAdministrationMutationAdmission(pageId, user.id);
     const mutationHash = mutationId
       ? createMutationRequestHash({
           expectedVersion,
-          expectedContentVersion: archiveExpectedContentVersion,
+          expectedContentVersion: mutationExpectedContentVersion,
           tags,
           updates
         })
@@ -2122,18 +2126,18 @@ pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageS
           // for the latest page mutation and inherit an unrelated edit version.
           updateFields.push("last_mutation_id = NULL", "last_mutation_hash = NULL");
         }
-        const archiveContentVersionPredicate =
-          archiveExpectedContentVersion === undefined ? "" : " AND content_version = ?";
-        const archiveContentVersionValues: DbValue[] =
-          archiveExpectedContentVersion === undefined ? [] : [archiveExpectedContentVersion];
+        const contentVersionPredicate =
+          mutationExpectedContentVersion === undefined ? "" : " AND content_version = ?";
+        const contentVersionValues: DbValue[] =
+          mutationExpectedContentVersion === undefined ? [] : [mutationExpectedContentVersion];
         const result = await client.execute<{ affectedRows: number }>(
-          `UPDATE pages SET ${[...updateFields, "edit_version = edit_version + 1"].join(", ")} WHERE id = ? AND owner_id = ? AND edit_version = ?${archiveContentVersionPredicate} AND edit_version < ?`,
+          `UPDATE pages SET ${[...updateFields, "edit_version = edit_version + 1"].join(", ")} WHERE id = ? AND owner_id = ? AND edit_version = ?${contentVersionPredicate} AND edit_version < ?`,
           [
             ...updateValues,
             pageId,
             workspaceOwnerId,
             expectedVersion,
-            ...archiveContentVersionValues,
+            ...contentVersionValues,
             Number.MAX_SAFE_INTEGER
           ]
         );

@@ -37,11 +37,11 @@ test("archive preconditions include the content generation that direct block sav
   );
   assert.match(
     patchRoute,
-    /updates\.isArchived === true \? expectedContentVersion : undefined/
+    /updates\.isArchived === true \|\| updates\.parentPageId !== undefined/
   );
   assert.match(
     patchRoute,
-    /archiveExpectedContentVersion === undefined/
+    /contentVersionFenceRequired \? expectedContentVersion : undefined/
   );
   assert.match(
     patchRoute,
@@ -49,7 +49,7 @@ test("archive preconditions include the content generation that direct block sav
   );
   assert.match(
     patchRoute,
-    /expectedContentVersion: archiveExpectedContentVersion/
+    /expectedContentVersion: mutationExpectedContentVersion/
   );
 
   const legacyArchiveStart = pages.lastIndexOf("pageRouter.delete(");
