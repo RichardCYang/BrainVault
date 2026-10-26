@@ -127,7 +127,7 @@ TRUST_PROXY_ADDRESSES="loopback"
 TRUST_PROXY_HOPS=0
 ```
 
-For a proxy in another container or host, replace `loopback` with the exact proxy IP or narrowest practical CIDR. `HTTPS_MODE=proxy` refuses to start without `TRUST_PROXY_ADDRESSES`, numeric hop trust and catch-all `/0` CIDRs are rejected, and `PUBLIC_ORIGIN` must be HTTPS and present in both `WEBAUTHN_ORIGIN` and `CORS_ORIGIN`. Keep the backend port private.
+For a proxy in another container or host, replace `loopback` with the exact proxy IP or narrowest practical CIDR. An IPv4-mapped IPv6 rule such as `::ffff:10.0.0.0/8` is unsafe and rejected; use `10.0.0.0/8` or the correct mapped prefix `::ffff:10.0.0.0/104` (normalized internally to IPv4). `HTTPS_MODE=proxy` refuses to start without `TRUST_PROXY_ADDRESSES`, numeric hop trust and catch-all `/0` CIDRs are rejected, and `PUBLIC_ORIGIN` must be HTTPS and present in both `WEBAUTHN_ORIGIN` and `CORS_ORIGIN`. Keep the backend port private.
 
 To terminate TLS in BrainVault with Posh-ACME instead, replace the proxy-specific values with:
 

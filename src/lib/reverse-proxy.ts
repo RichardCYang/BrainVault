@@ -10,7 +10,7 @@ export function createExpressTrustProxySetting(
   if (trustedProxyHops !== 0) {
     throw new Error("TRUST_PROXY_HOPS must remain 0; configure TRUST_PROXY_ADDRESSES with exact proxy peers");
   }
-  return trustedProxyAddresses.length > 0 ? [...trustedProxyAddresses] : false;
+  return trustedProxyAddresses.length > 0 ? trustedProxyAddresses.map(normalizeTrustedProxyAddressRule) : false;
 }
 
 export function describeExpressTrustProxySetting(setting: ExpressTrustProxySetting) {
@@ -81,6 +81,32 @@ function parseIpv6(address: string): ParsedAddress | null {
     value = (value << 16n) | BigInt(Number.parseInt(part, 16));
   }
   return { family: 6, bits: 128, value };
+}
+
+/**
+ * IPv4-mapped IPv6 trusted-proxy CIDRs have a 96-bit IPv6 mapping prefix.
+ * Interpret them as their equivalent IPv4 CIDR before handing them to either
+ * Express/proxy-addr or BrainVault's own WebSocket/HTTPS proxy checks. A
+ * short prefix such as ::ffff:10.0.0.0/8 is ambiguous and must fail closed.
+ */
+export function normalizeTrustedProxyAddressRule(rule: string): string {
+  const slashIndex = rule.lastIndexOf("/");
+  const address = slashIndex === -1 ? rule : rule.slice(0, slashIndex);
+  const parsed = parseIpv6(address);
+  if (!parsed || parsed.value >> 32n !== 0xffffn) return rule;
+
+  const ipv4Value = parsed.value & 0xffff_ffffn;
+  const ipv4Address = [24n, 16n, 8n, 0n]
+    .map((shift) => String(Number((ipv4Value >> shift) & 255n)))
+    .join(".");
+  if (slashIndex === -1) return ipv4Address;
+
+  const prefixText = rule.slice(slashIndex + 1);
+  const prefix = Number(prefixText);
+  if (!/^\d+$/.test(prefixText) || !Number.isInteger(prefix) || prefix < 97 || prefix > 128) {
+    throw new Error(`TRUST_PROXY_ADDRESSES contains an unsafe IPv4-mapped IPv6 CIDR prefix: ${rule}`);
+  }
+  return `${ipv4Address}/${prefix - 96}`;
 }
 
 function parseAddress(address: string) {

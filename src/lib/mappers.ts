@@ -1,5 +1,6 @@
 import type { BlockRow, PageRow, TagRow, UserRow } from "../types/domain.js";
 import { renderBlockHtml, sanitizeRenderedBlockHtml } from "./markdown.js";
+import { isCurrentAiChatHtmlCache } from "./ai-chat-cache.js";
 import { validateStoredBlockMetadata } from "./structured-metadata-integrity.js";
 
 const storedCustomPageCoverSentinel = "custom-image:stored";
@@ -72,10 +73,9 @@ export function toPage(row: PageRow) {
 
 export function toBlock(row: BlockRow) {
   const metadata = validateStoredBlockMetadata(row.type, row.metadata);
-  // AI chat HTML is derived from canonical metadata and includes renderer-version-sensitive
-  // citation normalization. Re-render it at the read boundary so legacy html_cache rows
-  // cannot bypass newer read-mode citation/chip semantics.
-  const renderedHtml = row.type === "AI_CHAT" || row.html_cache === null
+  // Regenerate AI chat HTML when its cache lacks the current renderer version.
+  // Fresh caches still undergo type-scoped HTML sanitization on every read.
+  const renderedHtml = (row.type === "AI_CHAT" && !isCurrentAiChatHtmlCache(row.html_cache)) || row.html_cache === null
     ? renderBlockHtml(row.type, row.markdown, Boolean(row.checked), metadata)
     : sanitizeRenderedBlockHtml(row.type, row.html_cache);
   return {

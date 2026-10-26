@@ -1,5 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import type { ZodTypeAny } from "zod";
+import { ApiError } from "../lib/http.js";
+import { isWithinRequestValidationBudget } from "../lib/request-validation-budget.js";
 
 type ValidationSchemas = {
   body?: ZodTypeAny;
@@ -18,6 +20,9 @@ export function validate(schemas: ValidationSchemas) {
       const validated = ensureValidated(req);
 
       if (schemas.body) {
+        if (!isWithinRequestValidationBudget(req.body)) {
+          throw new ApiError(413, "REQUEST_COMPLEXITY_EXCEEDED", "Request body has too many nested values");
+        }
         const body = schemas.body.parse(req.body);
         req.body = body;
         validated.body = body;

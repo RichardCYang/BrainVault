@@ -127,7 +127,7 @@ TRUST_PROXY_ADDRESSES="loopback"
 TRUST_PROXY_HOPS=0
 ```
 
-다른 컨테이너나 호스트의 프록시를 사용한다면 `loopback`을 정확한 프록시 IP 또는 가능한 한 좁은 CIDR로 바꾸세요. `HTTPS_MODE=proxy`는 `TRUST_PROXY_ADDRESSES` 없이 시작을 거부하고, 숫자 기반 hop trust 및 catch-all `/0` CIDR도 거부합니다. `PUBLIC_ORIGIN`은 HTTPS여야 하고 `WEBAUTHN_ORIGIN`과 `CORS_ORIGIN` 양쪽에 포함되어야 합니다. 백엔드 포트는 비공개로 유지하세요.
+다른 컨테이너나 호스트의 프록시를 사용한다면 `loopback`을 정확한 프록시 IP 또는 가능한 한 좁은 CIDR로 바꾸세요. IPv4-mapped IPv6 표기 `::ffff:10.0.0.0/8`은 위험하므로 거부됩니다. 대신 IPv4 `10.0.0.0/8` 또는 정상적인 mapped prefix `::ffff:10.0.0.0/104`를 사용하세요. 후자는 내부에서 IPv4 CIDR로 변환됩니다. `HTTPS_MODE=proxy`는 `TRUST_PROXY_ADDRESSES` 없이 시작을 거부하고, 숫자 기반 hop trust 및 catch-all `/0` CIDR도 거부합니다. `PUBLIC_ORIGIN`은 HTTPS여야 하고 `WEBAUTHN_ORIGIN`과 `CORS_ORIGIN` 양쪽에 포함되어야 합니다. 백엔드 포트는 비공개로 유지하세요.
 
 대신 Posh-ACME로 BrainVault에서 TLS를 종료하려면 프록시 전용 값을 다음과 같이 바꿉니다.
 

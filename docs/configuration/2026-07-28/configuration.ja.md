@@ -127,6 +127,8 @@ TRUST_PROXY_ADDRESSES="loopback"
 TRUST_PROXY_HOPS=0
 ```
 
+IPv4-mapped IPv6 CIDR `::ffff:10.0.0.0/8` は危険なため拒否されます。`10.0.0.0/8` または `::ffff:10.0.0.0/104` を使用してください。後者は内部でIPv4 CIDRに正規化されます。
+
 別コンテナまたは別ホストのプロキシを使う場合は、`loopback`を正確なプロキシIPまたは可能な限り狭いCIDRへ置き換えます。`HTTPS_MODE=proxy`は`TRUST_PROXY_ADDRESSES`なしでは起動を拒否し、数値hop trustとcatch-all `/0` CIDRも拒否します。`PUBLIC_ORIGIN`はHTTPSであり、`WEBAUTHN_ORIGIN`と`CORS_ORIGIN`の両方に含まれている必要があります。バックエンドポートは非公開にしてください。
 
 代わりにPosh-ACMEを使用してBrainVault自身でTLSを終端する場合、プロキシ固有の値を次へ置き換えます。

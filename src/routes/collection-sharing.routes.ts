@@ -75,7 +75,7 @@ type CollectionShareUserRow = Pick<
 > & {
   permission: CollectionSharePermission;
   shared_at: string;
-  updated_at: string;
+  share_updated_at: string;
   share_generation: string;
 };
 
@@ -84,7 +84,7 @@ function toCollectionSharePayload(row: CollectionShareUserRow) {
     user: toPublicUser(row),
     permission: row.permission,
     sharedAt: row.shared_at,
-    updatedAt: row.updated_at,
+    updatedAt: row.share_updated_at,
     generation: row.share_generation
   };
 }
@@ -102,7 +102,7 @@ async function getCollectionShareRows(collectionId: string, client: DbClient = d
   return client.query<CollectionShareUserRow>(
     `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language,
             u.default_collection_icon, u.theme, u.created_at, u.updated_at,
-            cs.permission, cs.created_at AS shared_at, cs.updated_at AS updated_at,
+            cs.permission, cs.created_at AS shared_at, cs.updated_at AS share_updated_at,
             cs.generation AS share_generation
      FROM collection_shares cs
      INNER JOIN users u ON u.id = cs.user_id

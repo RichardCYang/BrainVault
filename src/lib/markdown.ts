@@ -11,6 +11,8 @@ import { renderTimetableHtml } from "./timetable.js";
 import { renderGanttHtml } from "./gantt.js";
 import { renderBookmarkHtml } from "./bookmark.js";
 import { getAiChatData, getAiProviderLabel } from "./ai-chat.js";
+import { isAiChatWithinRenderBudget } from "./ai-chat-render-budget.js";
+import { AI_CHAT_RENDERER_VERSION } from "./ai-chat-cache.js";
 import { renderAccordionHtml } from "./accordion.js";
 import { getCodeLanguage, renderHighlightedCode, renderMarkdownCodeFence } from "./code-highlighting.js";
 import { parseYouTubeVideoUrl } from "./youtube.js";
@@ -691,8 +693,8 @@ const aiChatSanitizeOptions: sanitizeHtml.IOptions = {
   allowedTags: [...allowedTags, "button", "nav"],
   allowedAttributes: {
     ...allowedAttributes,
+    section: ["class", "aria-hidden", "data-ai-chat-renderer-version"],
     nav: ["class", "aria-label"],
-    section: ["class", "aria-hidden"],
     button: ["class", "type", "data-ai-chat-page", "aria-label", "aria-current"]
   }
 };
@@ -857,6 +859,15 @@ function renderYouTubeVideo(raw: string) {
 
 function renderAiChat(metadata: unknown) {
   const data = getAiChatData(metadata);
+  // Over-budget legacy notes and oversized new notes remain fully stored and
+  // editable; only their Markdown-to-HTML preview is replaced with a cheap,
+  // constant-size marker. Never parse an attacker-controlled giant answer.
+  if (!isAiChatWithinRenderBudget(data)) {
+    return sanitizeHtml(
+      `<section data-ai-chat-renderer-version="${AI_CHAT_RENDERER_VERSION}" class="rendered-ai-chat rendered-ai-chat--resource-limited"><div class="rendered-ai-chat-content">AI conversation preview limited for server safety. The complete questions and answers remain saved; open this block in the editor to view them.</div></section>`,
+      aiChatSanitizeOptions
+    );
+  }
   const escapeText = (value: string) => sanitizeHtml(value, { allowedTags: [], allowedAttributes: {} });
   const provider = escapeText(getAiProviderLabel(data.provider));
   const model = escapeText(data.model);
@@ -888,7 +899,7 @@ function renderAiChat(metadata: unknown) {
     : "";
 
   return sanitizeHtml(
-    `<section class="rendered-ai-chat${paginated ? " rendered-ai-chat--paginated" : ""}${answerBorderClass}">${title ? `<div class="rendered-ai-chat-title">${title}</div>` : ""}<div class="rendered-ai-chat-viewport"><div class="rendered-ai-chat-track">${turns}</div></div>${pagination}</section>`,
+    `<section data-ai-chat-renderer-version="${AI_CHAT_RENDERER_VERSION}" class="rendered-ai-chat${paginated ? " rendered-ai-chat--paginated" : ""}${answerBorderClass}">${title ? `<div class="rendered-ai-chat-title">${title}</div>` : ""}<div class="rendered-ai-chat-viewport"><div class="rendered-ai-chat-track">${turns}</div></div>${pagination}</section>`,
     aiChatSanitizeOptions
   );
 }

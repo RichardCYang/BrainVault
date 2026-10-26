@@ -6,6 +6,7 @@ import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { createId } from "../lib/id.js";
 import { lockUserAttachmentGeneration, removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { renderBlockHtml, sanitizeRenderedBlockHtml } from "../lib/markdown.js";
+import { isCurrentAiChatHtmlCache } from "../lib/ai-chat-cache.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
 import { assessPageCreateMutationReceipt, type PageCreateMutationReceipt } from "../lib/page-create-mutation.js";
 import { assessPageDeleteMutationReceipt, type PageDeleteMutationReceipt } from "../lib/page-delete-mutation.js";
@@ -2675,10 +2676,11 @@ pageRouter.get("/:pageId/render", validate({ params: idParamSchema }), async (re
 
       return rows
         .map((block) => {
-          // AI chat citation rendering is version-sensitive: regenerate from canonical metadata
-          // so an older cache that still contains the visible [title][n] label cannot leak into
-          // read mode and skip favicon/domain-chip hydration.
-          const blockHtml = block.type === "CALLOUT" || block.type === "AI_CHAT" || block.html_cache === null
+          // AI chat citation rendering is version-sensitive. Only use html_cache
+          // when it bears the current renderer marker; legacy caches regenerate
+          // safely under the AI rendering budget, while current ones are reused
+          // after their type-scoped sanitizer is reapplied at the read boundary.
+          const blockHtml = block.type === "CALLOUT" || (block.type === "AI_CHAT" && !isCurrentAiChatHtmlCache(block.html_cache)) || block.html_cache === null
             ? renderBlockHtml(block.type, block.markdown, Boolean(block.checked), block.metadata)
             : sanitizeRenderedBlockHtml(block.type, block.html_cache);
           return `<section data-block-id="${escapeHtmlAttribute(block.id)}" data-block-type="${escapeHtmlAttribute(block.type)}">${blockHtml}</section>`;

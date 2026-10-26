@@ -12,7 +12,7 @@
     "lockfile:check": "node scripts/lockfile-registry.mjs",
     "verify:collaboration": "node --import=tsx scripts/verify-collaboration.mjs",
     "verify:data-loss": "node scripts/verify-data-loss-guards.mjs",
-    "verify:security": "node --import=tsx scripts/verify-security-hardening.mjs && node --import=tsx --test tests/security-remediation.node.test.mjs tests/security-assessment-remediation.node.test.mjs tests/code-highlighting-resource-limits.node.test.mjs tests/data-transfer-resource-limits.node.test.mjs tests/authentication-credential-boundary.node.test.mjs tests/security-followup-remediation.node.test.mjs tests/custom-icon-resource-boundary.node.test.mjs tests/reverse-proxy-trust-boundary.node.test.mjs tests/attachment-upload-admission.node.test.mjs tests/authenticated-response-cache-policy.node.test.mjs tests/bcrypt-password-boundary.node.test.mjs tests/passkey-direct-login-security.node.test.mjs tests/runtime-security-floor.node.test.mjs tests/database-transport-security.node.test.mjs tests/report-security-remediation.node.test.mjs tests/report-followup-security-remediation.node.test.mjs tests/report-availability-remediation.node.test.mjs tests/backup-schema-scope-guard.node.test.mjs tests/backup-v5-completeness.node.test.mjs && vitest run tests/report-remediation.test.ts tests/security-hardening.test.ts tests/poc-security-reproduction.test.ts tests/poc-version-history-disclosure.test.ts",
+    "verify:security": "node --import=tsx scripts/verify-security-hardening.mjs && node --import=tsx --test tests/security-remediation.node.test.mjs tests/security-assessment-remediation.node.test.mjs tests/code-highlighting-resource-limits.node.test.mjs tests/data-transfer-resource-limits.node.test.mjs tests/authentication-credential-boundary.node.test.mjs tests/security-followup-remediation.node.test.mjs tests/custom-icon-resource-boundary.node.test.mjs tests/reverse-proxy-trust-boundary.node.test.mjs tests/attachment-upload-admission.node.test.mjs tests/authenticated-response-cache-policy.node.test.mjs tests/bcrypt-password-boundary.node.test.mjs tests/passkey-direct-login-security.node.test.mjs tests/runtime-security-floor.node.test.mjs tests/database-transport-security.node.test.mjs tests/report-security-remediation.node.test.mjs tests/report-followup-security-remediation.node.test.mjs tests/report-availability-remediation.node.test.mjs tests/report-2026-10-26-remediation.node.test.mjs tests/backup-schema-scope-guard.node.test.mjs tests/backup-v5-completeness.node.test.mjs && vitest run tests/report-remediation.test.ts tests/security-hardening.test.ts tests/poc-security-reproduction.test.ts tests/poc-version-history-disclosure.test.ts",
     "reproduce:security-followup": "node --import=tsx scripts/reproduce-security-followup.mjs",
     "reproduce:authenticated-cache-isolation": "node --import=tsx scripts/reproduce-authenticated-cache-isolation.mjs",
     "reproduce:bcrypt-password-boundary": "node --import=tsx scripts/reproduce-bcrypt-password-boundary.mjs",
@@ -89,12 +89,12 @@
     "express-rate-limit": "^8.0.0",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
-    "mariadb": "^3.5.3",
-    "markdown-it": "^14.3.0",
-    "morgan": "^1.12.0",
-    "multer": "^2.3.0",
+    "mariadb": "^3.5.4",
+    "markdown-it": "^14.3.3",
+    "morgan": "^1.12.1",
+    "multer": "^2.5.0",
     "qrcode": "^1.5.4",
-    "sanitize-html": "^2.17.7",
+    "sanitize-html": "^2.18.1",
     "yjs": "13.6.31",
     "zod": "^3.25.0"
   },
@@ -116,7 +116,10 @@
     "vitest": "^5.0.1"
   },
   "overrides": {
-    "ip-address": "10.3.1"
+    "ip-address": "10.7.5",
+    "body-parser": "2.4.0",
+    "proxy-addr": "2.0.8",
+    "source-map-js": "1.2.2"
   },
   "packageManager": "npm@10.9.2"
 }

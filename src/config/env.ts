@@ -4,6 +4,7 @@ import net from "node:net";
 import { z } from "zod";
 import { assertSecureDatabaseTransport } from "../lib/database-url.js";
 import { parseNat64Prefix } from "../lib/network-address.js";
+import { normalizeTrustedProxyAddressRule } from "../lib/reverse-proxy.js";
 import { aiChatAnswerMaxLengthSchema } from "./ai-chat-limits.js";
 
 const knownInsecureSecrets = new Set(
@@ -283,6 +284,8 @@ function assertTrustedProxyAddress(value: string) {
   if (prefix === 0) {
     throw new Error(`TRUST_PROXY_ADDRESSES must not trust every address: ${value}`);
   }
+  // Also reject ::ffff:10.0.0.0/8 (including fully expanded or hex spellings).
+  normalizeTrustedProxyAddressRule(value);
 }
 
 assertDatabasePasswordIsSecure(parsedEnv.DATABASE_URL);
@@ -331,9 +334,11 @@ const secureHttpsMode = parsedEnv.HTTPS_MODE !== "off";
 const trustedProxyAddresses = parsedEnv.TRUST_PROXY_ADDRESSES
   .split(",")
   .map((value) => value.trim())
-  .filter(Boolean);
-
-for (const address of trustedProxyAddresses) assertTrustedProxyAddress(address);
+  .filter(Boolean)
+  .map((address) => {
+    assertTrustedProxyAddress(address);
+    return normalizeTrustedProxyAddressRule(address);
+  });
 
 if (parsedEnv.TRUST_PROXY_HOPS !== 0) {
   throw new Error("TRUST_PROXY_HOPS must remain 0; configure TRUST_PROXY_ADDRESSES with exact proxy peers");
