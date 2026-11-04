@@ -8,20 +8,12 @@ const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a
 
 const assets = [
   {
-    path: "public/img/icon_origin.png",
-    width: 1254,
-    height: 1254,
-    colorType: 6,
-    originalBytes: 1_959_371,
-    rgbaSha256: "b89443b655b50a2560dd077d481b4ed5e49f3cd528334850f8b5562af316d996"
-  },
-  {
     path: "public/img/icon_normal.png",
     width: 256,
     height: 256,
     colorType: 6,
     originalBytes: 56_015,
-    rgbaSha256: "fea8caf0bd1281f8bb7f59a9394f27518892806dcbb6beaeb93b48111c2fc3e3"
+    rgbaSha256: "ccb80780f3fa5791129fa8de4008f545d1ff74e1d991944fe84ab10ecc96e396"
   },
   {
     path: "public/img/default_cover/coverimg2.png",

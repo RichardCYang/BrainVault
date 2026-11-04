@@ -159,7 +159,7 @@ const themeStorageKey = "brainvault.theme";
 const supportedThemes = new Set(["light", "dark"]);
 const pageEditorHistory = createEditorHistory({ maxEntries: 80, maxBytes: 8 * 1024 * 1024, captureTimeout: 600 });
 let applyingEditorHistory = false;
-const themeColorByTheme = Object.freeze({ light: "#e7eef3", dark: "#17191d" });
+const themeColorByTheme = Object.freeze({ light: "#f6f4f1", dark: "#15161a" });
 const emojiSkinToneModifiers = Object.freeze(["🏻", "🏼", "🏽", "🏾", "🏿"]);
 const emojiBatchSize = 240;
 const builtInIconPrefix = "icon:";
@@ -1139,6 +1139,15 @@ const slashCommandIconShapes = {
   ]
 };
 
+// Closed outlines receive the translucent two-tone fill; open strokes and tiny dots stay line-only.
+function isDuotoneIconShape(tagName, attributes) {
+  if (tagName === "rect" || tagName === "ellipse" || tagName === "polygon") return true;
+  if (tagName === "circle") return Number(attributes.r) >= 2.5;
+  if (tagName !== "path") return false;
+  const d = String(attributes.d ?? "").trim();
+  return /z$/i.test(d) && (d.match(/m/gi) ?? []).length === 1;
+}
+
 function createSlashCommandIcon(iconName) {
   const icon = document.createElement("span");
   icon.className = "slash-menu-icon";
@@ -1156,6 +1165,7 @@ function createSlashCommandIcon(iconName) {
   shapes.forEach(([tagName, attributes]) => {
     const shape = document.createElementNS(svgNamespace, tagName);
     Object.entries(attributes).forEach(([name, value]) => shape.setAttribute(name, value));
+    if (isDuotoneIconShape(tagName, attributes)) shape.classList.add("icon-duo-shape");
     svg.append(shape);
   });
 
@@ -1338,7 +1348,6 @@ const elements = {
   mfaLoginPasskey: $("#mfa-login-passkey"),
   mfaLoginDivider: $("#mfa-login-panel .mfa-login-divider"),
   mfaLoginCancel: $("#mfa-login-cancel"),
-  authKicker: $("#auth-kicker"),
   authTitle: $("#auth-title"),
   authDescription: $("#auth-description"),
   authSubmit: $("#auth-submit"),
@@ -1799,7 +1808,6 @@ function setAuthMode(mode, updateHash = true) {
   const isRegister = state.authMode === "register";
   if (isRegister) clearDirectPasskeyOptionsWarmup();
 
-  elements.authKicker.textContent = t(isRegister ? "auth.registerKicker" : "auth.loginKicker");
   elements.authTitle.textContent = t(isRegister ? "auth.registerTitle" : "auth.loginTitle");
   elements.authDescription.textContent = isRegister
     ? t("auth.registerDescription")
@@ -5601,6 +5609,7 @@ function createBuiltInIconSvg(name) {
   for (const [tagName, attributes] of nodes) {
     const node = document.createElementNS("http://www.w3.org/2000/svg", tagName);
     for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
+    if (isDuotoneIconShape(tagName, attributes)) node.classList.add("icon-duo-shape");
     svg.append(node);
   }
   return svg;

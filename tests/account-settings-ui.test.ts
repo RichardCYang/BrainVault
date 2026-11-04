@@ -81,12 +81,12 @@ describe("Account settings layer", () => {
     expect(styles).toContain(".login-history-table");
     expect(styles).toContain(".login-history-result.failure");
     expect(styles).toContain('html[data-theme="dark"]');
-    expect(styles).toContain('--chrome-canvas: #17191d');
+    expect(styles).toContain('--chrome-canvas: #15161a');
     expect(styles).toContain('.rendered-kanban-card--pink');
     expect(styles).toContain('.rendered-database-card');
     expect(styles).toContain('.rendered-gantt-stage');
     expect(styles).toMatch(/\.account-settings-dialog\s*\{[^}]*border-radius:\s*var\(--radius-dialog\);/s);
-    expect(styles).toMatch(/\.account-preference-card\s*\{[^}]*border-radius:\s*8px;/s);
+    expect(styles).toMatch(/\.account-preference-card\s*\{[^}]*border-radius:\s*var\(--radius-md\);/s);
     expect(styles).toContain("border-radius: var(--radius-dialog) var(--radius-dialog) 0 0;");
     expect(i18n).toContain('open: "계정 설정 열기"');
     expect(i18n).toContain('passwordChanged: "비밀번호를 변경했습니다."');

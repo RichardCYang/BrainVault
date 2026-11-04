@@ -185,7 +185,7 @@ describe("AI conversation block", () => {
 
     expect(borderlessHtml).toContain("rendered-ai-chat--hide-answer-border");
     expect(borderlessHtml).toContain('<pre class="rendered-code-pre"><code class="language-javascript">');
-    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-code-pre\s*\{[^}]*border:\s*1px solid rgba\(93, 132, 160, 0\.2\);[^}]*border-radius:\s*var\(--radius-md\);/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-code-pre\s*\{[^}]*border:\s*1px solid rgba\(148, 122, 85, 0\.2\);[^}]*border-radius:\s*var\(--radius-md\);/s);
   });
 
   it("gives inline Markdown code a compact background without restyling fenced code", () => {

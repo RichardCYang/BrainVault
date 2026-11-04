@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="BrainVault">
+  <!-- Dark tile; the hairline keeps it visible on dark surfaces. -->
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="14.5" fill="#1b1c21" stroke="#3a3b43" stroke-width="1.5"/>
+  <!-- Upper half: brain contour. Lower half: vault dial with ticks. -->
+  <g fill="none" stroke="#e2a33a" stroke-linecap="round" stroke-linejoin="round" transform="rotate(90 32 32)">
+    <path stroke-width="3.5" d="M32 13A6.6 6.6 0 0 0 20.83 16.63A6.6 6.6 0 0 0 13.93 26.13A6.6 6.6 0 0 0 13.93 37.87A6.6 6.6 0 0 0 20.83 47.37A6.6 6.6 0 0 0 32 51"/>
+    <path stroke-width="3.5" d="M32 13a19 19 0 0 1 0 38"/>
+    <path stroke-width="2" opacity="0.55" d="M38.25 21.17L39.5 19.01M42.83 25.75L44.99 24.5M44.5 32L47 32M42.83 38.25L44.99 39.5M38.25 42.83L39.5 44.99"/>
+  </g>
+  <circle cx="32" cy="32" r="5" fill="#e2a33a"/>
+</svg>

@@ -68,17 +68,17 @@ describe("BrainVault web shell and health endpoint", () => {
   });
 
 
-  it("serves the sky-blue document-first workspace theme", async () => {
+  it("serves the warm document-first workspace theme", async () => {
     const response = await request(createApp()).get("/styles.css").expect(200);
 
     expect(response.headers["content-type"]).toContain("text/css");
     const css = response.text.replace(/\r\n/g, "\n");
-    expect(css).toContain("--sidebar: #eff8ff");
-    expect(css).toContain("--ink: #26384a");
-    expect(css).toContain("--accent: #bfe5ff");
-    expect(css).toContain("--accent-soft: #eaf7ff");
-    expect(css).toContain("--radius-lg: 10px");
-    expect(css).toContain("--radius-md: 6px");
+    expect(css).toContain("--sidebar: #f6f4f1");
+    expect(css).toContain("--ink: #2b2724");
+    expect(css).toContain("--accent: #e2a33a");
+    expect(css).toContain("--accent-soft: #fbf1e0");
+    expect(css).toContain("--radius-lg: 12px");
+    expect(css).toContain("--radius-md: 8px");
     expect(css).toContain(".auth-switch");
     expect(css).not.toContain(".language-switcher");
     expect(css).toContain(".account-settings-layer");
@@ -114,7 +114,7 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(css).not.toContain(".preview {");
     expect(css).toContain(".slash-menu-item");
     expect(css).toContain(".inline-toolbar");
-    expect(css).toContain("background: #eaf7ff;");
+    expect(css).toContain("background: #faf4ed;");
     expect(css).not.toContain("background: #2f3437;");
     expect(css).toContain(".color-sky");
     expect(css).not.toContain(".add-block-button");
@@ -134,7 +134,7 @@ describe("BrainVault web shell and health endpoint", () => {
     expect(css).toContain('.editor-block-row[data-block-type="CALLOUT"][data-callout-type="warning"]');
     expect(css).toContain('.callout-type-group button[aria-checked="true"]');
     expect(css).toContain(".rendered-callout--danger");
-    expect(css).toContain("box-shadow: inset 0 0 0 2px rgba(36, 118, 184, 0.28)");
+    expect(css).toContain("box-shadow: inset 0 0 0 2px rgba(151, 103, 5, 0.28)");
     expect(css).toContain(".block-row-input:focus-visible");
     expect(css).toContain("outline: none;");
   });

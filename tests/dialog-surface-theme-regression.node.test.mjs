@@ -49,6 +49,6 @@ test("dark mode keeps an explicit opaque move-dialog surface and backdrop stylin
   const darkDialog = cssRule('html[data-theme="dark"] .block-move-dialog');
   const backdrop = cssRule(".block-move-dialog::backdrop");
 
-  assert.match(darkDialog, /background:\s*#24282d;/);
-  assert.match(backdrop, /background:\s*rgba\(20, 27, 34, 0\.48\);/);
+  assert.match(darkDialog, /background:\s*#202127;/);
+  assert.match(backdrop, /background:\s*rgba\(23, 27, 30, 0\.48\);/);
 });

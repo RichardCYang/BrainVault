@@ -13,43 +13,19 @@ describe("Dark theme surface coverage", () => {
     );
   });
 
-  it("provides a complete dark palette for the Office-style authentication frame", () => {
-    expect(styles).toMatch(
-      /html\[data-theme="dark"\] body\.auth-mode\s*\{[^}]*--auth-office-panel:\s*#20242a;[^}]*--auth-office-sidebar:\s*#1a1e23;[^}]*--auth-office-text-strong:\s*#f4f7fa;/s
-    );
-    expect(styles).toMatch(
-      /html\[data-theme="dark"\] \.auth-mode \.brand,[\s\S]*?\.auth-mode \.auth-visual\s*\{[^}]*background:\s*var\(--auth-office-sidebar\);/
-    );
-    expect(styles).toMatch(
-      /html\[data-theme="dark"\] \.auth-mode \.auth-card\s*\{[^}]*background:\s*var\(--auth-office-panel\);[^}]*box-shadow:\s*none;/s
-    );
-    expect(styles).toMatch(
-      /html\[data-theme="dark"\] \.auth-mode \.auth-header h2,[\s\S]*?\.auth-card \.form-field label\s*\{[^}]*color:\s*var\(--auth-office-text-strong\);/
-    );
+  it("builds the authentication screen from theme tokens so dark mode follows automatically", () => {
+    const authStyles = styles.slice(styles.indexOf("/* Sign-in and sign-up:"));
+
+    expect(authStyles).toMatch(/body\.auth-mode\s*\{[^}]*background:\s*var\(--bg\);[^}]*color:\s*var\(--ink\);/s);
+    expect(authStyles).toMatch(/\.auth-mode \.auth-visual\s*\{[^}]*background:\s*var\(--sidebar\);/s);
+    expect(authStyles).toMatch(/\.auth-card input\s*\{[^}]*border:\s*1px solid var\(--line-strong\);[^}]*background:\s*var\(--panel\);/s);
+    expect(authStyles).toMatch(/\.auth-actions button\s*\{[^}]*background:\s*var\(--accent\);[^}]*color:\s*var\(--accent-ink\);/s);
+    expect(authStyles).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+    expect(styles).not.toContain('html[data-theme="dark"] .auth-mode');
   });
 
-  it("themes the nested login preview surfaces, separators, cards, tags, and database rows", () => {
-    const requiredSelectors = [
-      ".office-preview-page-heading",
-      ".office-preview-page-icon",
-      ".office-preview-view-tools b",
-      ".office-preview-status-label--blue",
-      ".office-preview-card--complete",
-      ".office-preview-tag--purple",
-      ".office-preview-database",
-      ".office-preview-database-row > span",
-      ".office-preview-database-row--head"
-    ];
-
-    for (const selector of requiredSelectors) {
-      expect(styles).toContain(`html[data-theme="dark"] ${selector}`);
-    }
-
-    expect(styles).toMatch(
-      /html\[data-theme="dark"\] \.office-preview-card\s*\{[^}]*background:\s*var\(--auth-office-panel-raised\);[^}]*box-shadow:\s*2px 2px 0 rgba\(0, 0, 0, 0\.16\);/s
-    );
-    expect(styles).not.toMatch(
-      /html\[data-theme="dark"\][^{]*\.office-preview-card[^}]*box-shadow:\s*0 18px 48px/s
-    );
+  it("no longer ships the retired login preview mockups", () => {
+    expect(styles).not.toContain(".office-preview");
+    expect(styles).not.toContain(".auth-preview");
   });
 });

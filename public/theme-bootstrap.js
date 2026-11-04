@@ -15,6 +15,6 @@
   document.documentElement.style.colorScheme = theme;
   document.querySelector('meta[name="theme-color"]')?.setAttribute(
     "content",
-    theme === "dark" ? "#17191d" : "#e7eef3"
+    theme === "dark" ? "#15161a" : "#f6f4f1"
   );
 })();
