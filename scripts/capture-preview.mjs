@@ -1,15 +1,15 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
-import { access, readFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, readFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const publicRoot = join(projectRoot, "public");
-const outputPath = join(projectRoot, "docs", "assets", "2026-08-09", "preview.png");
+const outputPath = join(projectRoot, "docs", "assets", "2026-11-04", "preview.png");
 const fixture = JSON.parse(await readFile(new URL("./demo-workspace.json", import.meta.url), "utf8"));
-const now = "2026-08-09T08:00:00.000Z";
+const now = "2026-11-04T08:00:00.000Z";
 const previewPageId = "preview-page";
 
 const tagObjects = fixture.page.tags.map((name, index) => ({
@@ -23,6 +23,8 @@ const previewSummary = {
   title: fixture.page.title,
   icon: fixture.page.icon,
   coverUrl: null,
+  version: 1,
+  contentVersion: 1,
   isArchived: false,
   isCollection: false,
   ownerId: "preview-user",
@@ -39,6 +41,8 @@ const supportingPages = [
     title: "Weekly Meeting Notes",
     icon: "🗒️",
     coverUrl: null,
+    version: 1,
+    contentVersion: 1,
     isArchived: false,
     isCollection: false,
     ownerId: "preview-user",
@@ -53,6 +57,8 @@ const supportingPages = [
     title: "User Research",
     icon: "🔬",
     coverUrl: null,
+    version: 1,
+    contentVersion: 1,
     isArchived: false,
     isCollection: false,
     ownerId: "preview-user",
@@ -90,6 +96,8 @@ const user = {
   avatarData: null,
   preferredLanguage: "en",
   defaultCollectionIcon: "📚",
+  theme: "light",
+  workspaceGeneration: 1,
   createdAt: now,
   updatedAt: now
 };
@@ -116,6 +124,9 @@ function previewInjection() {
       body.preview-capture-ready * { caret-color: transparent !important; }
     </style>
     <script>
+      // The API client probes a public STUN server before workspace requests.
+      // Report WebRTC as disabled so the offline capture never waits on the network.
+      window.RTCPeerConnection = undefined;
       localStorage.setItem("brainvault.language", "en");
       window.addEventListener("DOMContentLoaded", () => {
         let opened = false;
@@ -149,6 +160,11 @@ async function handleRequest(request, response) {
     return;
   }
 
+  if (url.pathname === "/api/auth/navigation-preferences") {
+    sendJson(response, 200, { collapsedPageIds: [], navigationPageOrder: [] });
+    return;
+  }
+
   if (url.pathname === "/api/pages") {
     sendJson(response, 200, { pages: [previewSummary, ...supportingPages] });
     return;
@@ -156,6 +172,11 @@ async function handleRequest(request, response) {
 
   if (url.pathname === `/api/pages/${previewPageId}`) {
     sendJson(response, 200, { page: previewDetail });
+    return;
+  }
+
+  if (url.pathname === `/api/pages/${previewPageId}/comments`) {
+    sendJson(response, 200, { comments: [] });
     return;
   }
 
@@ -198,7 +219,7 @@ function findChromium() {
   return null;
 }
 
-await mkdir(join(projectRoot, "docs", "assets", "2026-08-09"), { recursive: true });
+await mkdir(join(projectRoot, "docs", "assets", "2026-11-04"), { recursive: true });
 const chromiumPath = findChromium();
 if (!chromiumPath) {
   throw new Error("Chromium/Chrome was not found. Set BRAINVAULT_CHROMIUM_PATH and retry.");
@@ -219,6 +240,84 @@ await new Promise((resolve, reject) => {
   server.listen(0, "127.0.0.1", resolve);
 });
 
+const viewport = { width: 1600, height: 1250 };
+const captureTimeoutMs = 45_000;
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function readDevToolsEndpoint(profilePath, deadline) {
+  // Chromium writes the chosen debugging port to DevToolsActivePort when it is
+  // started with --remote-debugging-port=0, which avoids port collisions.
+  while (Date.now() < deadline) {
+    try {
+      const [port] = (await readFile(join(profilePath, "DevToolsActivePort"), "utf8")).split(/\r?\n/);
+      if (port) return `http://127.0.0.1:${port.trim()}`;
+    } catch {
+      // The browser has not written the file yet.
+    }
+    await delay(100);
+  }
+  throw new Error("Chromium did not expose a DevTools endpoint");
+}
+
+async function connectToPage(endpoint, deadline) {
+  while (Date.now() < deadline) {
+    try {
+      const targets = await (await fetch(`${endpoint}/json/list`)).json();
+      const page = targets.find((target) => target.type === "page");
+      if (page?.webSocketDebuggerUrl) return openCdpSession(page.webSocketDebuggerUrl);
+    } catch {
+      // The page target is not ready yet.
+    }
+    await delay(100);
+  }
+  throw new Error("Chromium did not expose a page target");
+}
+
+function openCdpSession(webSocketUrl) {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(webSocketUrl);
+    const pending = new Map();
+    let nextId = 0;
+    socket.addEventListener("message", (event) => {
+      const message = JSON.parse(event.data);
+      if (message.method === "Runtime.exceptionThrown") {
+        console.error("Preview page error:", message.params.exceptionDetails?.exception?.description
+          ?? message.params.exceptionDetails?.text);
+      }
+      const request = pending.get(message.id);
+      if (!request) return;
+      pending.delete(message.id);
+      if (message.error) request.reject(new Error(`${request.method}: ${message.error.message}`));
+      else request.resolve(message.result);
+    });
+    socket.addEventListener("error", () => reject(new Error("DevTools connection failed")));
+    socket.addEventListener("open", () => resolve({
+      send(method, params = {}) {
+        const id = ++nextId;
+        socket.send(JSON.stringify({ id, method, params }));
+        return new Promise((resolveRequest, rejectRequest) => {
+          pending.set(id, { method, resolve: resolveRequest, reject: rejectRequest });
+        });
+      },
+      close: () => socket.close()
+    }));
+  });
+}
+
+async function waitForPreviewReady(session, deadline) {
+  while (Date.now() < deadline) {
+    const { result } = await session.send("Runtime.evaluate", {
+      expression: "document.body?.classList.contains('preview-capture-ready') === true",
+      returnByValue: true
+    });
+    if (result?.value === true) return;
+    await delay(100);
+  }
+  throw new Error("The preview page did not finish rendering the demo workspace");
+}
+
+let browser = null;
 try {
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Preview server did not expose a TCP port");
@@ -237,37 +336,59 @@ try {
     "--no-first-run",
     "--lang=en-US",
     "--force-device-scale-factor=1",
-    "--run-all-compositor-stages-before-draw",
-    "--virtual-time-budget=7000",
-    "--window-size=1600,1250",
+    `--window-size=${viewport.width},${viewport.height}`,
+    "--remote-debugging-port=0",
     `--user-data-dir=${browserProfilePath}`,
-    `--screenshot=${outputPath}`,
-    url
+    "about:blank"
   ];
   if (typeof process.getuid === "function" && process.getuid() === 0) args.unshift("--no-sandbox");
 
-  await new Promise((resolve, reject) => {
-    const browser = spawn(chromiumPath, args, { stdio: "inherit" });
-    let settled = false;
-    let timeout;
-    const finish = (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (error) reject(error);
-      else resolve();
-    };
-    timeout = setTimeout(() => {
-      browser.kill("SIGKILL");
-      finish(new Error("Chromium preview capture timed out after 45 seconds"));
-    }, 45_000);
-    browser.once("error", finish);
-    browser.once("exit", (code) => finish(code === 0 ? null : new Error(`Chromium exited with code ${code}`)));
+  browser = spawn(chromiumPath, args, { stdio: "ignore" });
+  const browserExit = new Promise((resolve) => browser.once("exit", resolve));
+  const browserFailure = new Promise((_, reject) => {
+    browser.once("error", reject);
+    browserExit.then((code) => reject(new Error(`Chromium exited early with code ${code}`)));
   });
+  browserFailure.catch(() => {});
 
+  const deadline = Date.now() + captureTimeoutMs;
+  const capture = (async () => {
+    const endpoint = await readDevToolsEndpoint(browserProfilePath, deadline);
+    const session = await connectToPage(endpoint, deadline);
+    try {
+      await session.send("Runtime.enable");
+      await session.send("Emulation.setDeviceMetricsOverride", {
+        width: viewport.width,
+        height: viewport.height,
+        deviceScaleFactor: 1,
+        mobile: false
+      });
+      await session.send("Emulation.setTimezoneOverride", { timezoneId: "UTC" });
+      await session.send("Page.enable");
+      await session.send("Page.navigate", { url });
+      await waitForPreviewReady(session, deadline);
+      // Let web fonts, emoji images, and the final layout settle before capturing.
+      await session.send("Runtime.evaluate", {
+        expression: "document.fonts.ready.then(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))",
+        awaitPromise: true
+      });
+      await delay(500);
+      const { data } = await session.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+      await writeFile(outputPath, Buffer.from(data, "base64"));
+    } finally {
+      session.close();
+    }
+  })();
+
+  await Promise.race([capture, browserFailure]);
   await access(outputPath);
   console.log(`Preview captured: ${outputPath}`);
 } finally {
+  if (browser && browser.exitCode === null) {
+    const exited = new Promise((resolve) => browser.once("exit", resolve));
+    browser.kill();
+    await Promise.race([exited, delay(5_000)]);
+  }
   await new Promise((resolve) => server.close(resolve));
-  await rm(browserProfilePath, { recursive: true, force: true });
+  await rm(browserProfilePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }

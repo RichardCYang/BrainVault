@@ -24,7 +24,7 @@
 | `npm start` | 컴파일된 서버를 실행합니다. |
 | `npm test` | lockfile을 검증하고 테스트 스위트를 한 번 실행합니다. |
 | `npm run test:watch` | watch 모드로 테스트를 실행합니다. |
-| `npm run preview:capture` | 로컬 브라우저 UI에서 `docs/assets/2026-08-09/preview.png`를 캡처합니다. |
+| `npm run preview:capture` | 로컬 브라우저 UI에서 `docs/assets/2026-11-04/preview.png`를 캡처합니다. |
 
 ## 의존성 lockfile 신뢰성
 
@@ -90,7 +90,7 @@ BrainVault/
 npm run preview:capture
 ```
 
-Chromium 또는 Chrome이 필요합니다. 이 명령은 [`docs/assets/2026-08-09/preview.png`](../../assets/2026-08-09/preview.png)를 업데이트합니다.
+Chromium 또는 Chrome이 필요합니다. 이 명령은 [`docs/assets/2026-11-04/preview.png`](../../assets/2026-11-04/preview.png)를 업데이트합니다.
 
 ## 협업 구현
 

@@ -4,7 +4,7 @@
 
 BrainVault is a self-hosted block-based notes app built with Node.js, Express, TypeScript, and MariaDB. It runs as a browser workspace and also exposes a REST API for integrations or other clients.
 
-![BrainVault workspace](docs/assets/2026-08-09/preview.png)
+![BrainVault workspace](docs/assets/2026-11-04/preview.png)
 
 ## What it includes
 

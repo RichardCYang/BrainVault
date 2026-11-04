@@ -4,7 +4,7 @@
 
 BrainVault는 Node.js, Express, TypeScript, MariaDB로 구축한 **셀프호스팅 블록 기반 노트 웹앱**입니다. 브라우저에서 노트와 문서를 작성·정리·검색할 수 있고, Yjs 기반 실시간 협업과 페이지·컬렉션 공유, REST API 연동을 지원합니다.
 
-![BrainVault 블록 기반 노트 워크스페이스](docs/assets/2026-08-09/preview.png)
+![BrainVault 블록 기반 노트 워크스페이스](docs/assets/2026-11-04/preview.png)
 
 ## 주요 기능
 
