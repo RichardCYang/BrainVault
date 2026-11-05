@@ -54,8 +54,10 @@ assert.match(vulnerableRoute, /\[body\.title, pageId\]/);
 assert.match(vulnerableRoute, /materialized_update_id = \?/);
 
 // Prove the working tree has removed that authority from the request and now
-// reconstructs under the same database lock used by durable Yjs writers.
-assert.match(fixedRoute, /materializeCollaborationUpdates/);
+// reconstructs durable history in a worker and fences the relational commit
+// under the same database lock used by durable Yjs writers.
+assert.match(fixedRoute, /collaborationMaterializationPool\.materializeHistory/);
+assert.match(read("src/lib/collaboration-update-worker.ts"), /materializeCollaborationUpdates\(request\.updates\)/);
 assert.match(fixedRoute, /SELECT id, update_data[\s\S]*ORDER BY id ASC[\s\S]*FOR UPDATE/);
 assert.doesNotMatch(fixedRoute, /body\.(?:title|blocks|deletedAttachmentIds)/);
 assert.match(fixedRoute, /materialization_version = \?/);

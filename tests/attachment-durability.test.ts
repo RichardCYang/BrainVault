@@ -4,28 +4,18 @@ import { describe, expect, it, vi } from "vitest";
 
 const injectedSyncFailure = vi.hoisted(() => ({ enabled: false, syncCalls: 0, failAt: 0 }));
 
-vi.mock("node:fs/promises", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs/promises")>();
+vi.mock("../src/lib/storage-sync.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/storage-sync.js")>();
   return {
-    ...actual,
-    async open(...args: Parameters<typeof actual.open>) {
-      const handle = await actual.open(...args);
-      if (!injectedSyncFailure.enabled) return handle;
-
-      return {
-        async sync() {
-          injectedSyncFailure.syncCalls += 1;
-          if (injectedSyncFailure.syncCalls === injectedSyncFailure.failAt) {
-            const error = new Error("simulated directory sync failure") as NodeJS.ErrnoException;
-            error.code = "EIO";
-            throw error;
-          }
-          await handle.sync();
-        },
-        async close() {
-          await handle.close();
-        }
-      };
+    async syncPath(target: string) {
+      // Inject at the durability boundary on both Windows and POSIX, even when
+      // the host cannot open a directory handle through node:fs.
+      if (injectedSyncFailure.enabled && ++injectedSyncFailure.syncCalls === injectedSyncFailure.failAt) {
+        const error = new Error("simulated directory sync failure") as NodeJS.ErrnoException;
+        error.code = "EIO";
+        throw error;
+      }
+      await actual.syncPath(target);
     }
   };
 });

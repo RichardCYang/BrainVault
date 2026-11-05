@@ -62,7 +62,7 @@ test("navigation-order migration is additive and backup round-trip preserves the
   assert.match(migration, /FOREIGN KEY \(user_id\) REFERENCES users\(id\) ON DELETE CASCADE/);
   assert.match(migration, /FOREIGN KEY \(page_id\) REFERENCES pages\(id\) ON DELETE CASCADE/);
   assert.doesNotMatch(migration, /^\s*(?:DROP|TRUNCATE|DELETE|ALTER)\b/im);
-  assert.match(transfer, /navigationPageOrder: z\.array\(navigationPageOrderSchema\)[^\n]*\.optional\(\)/);
+  assert.match(transfer, /navigationPageOrder: backupArray\(navigationPageOrderSchema, dataTransferResourceLimits.maxPages\)\.optional\(\)/);
   assert.match(transfer, /FROM user_navigation_page_order no/);
   assert.match(transfer, /INSERT INTO user_navigation_page_order/);
   assert.match(transfer, /navigationOrderedPages/);

@@ -202,3 +202,13 @@ All four export/restore owner-directory joins use `storageOwnerDirectory`, which
 Stale regression expectations now track account-wide login throttling, current authentication boundaries for passkey rename, unverified bookmark placeholders, literal regex escaping, the actual custom-icon mutation count, and the stronger origin policy. Related source assertions were aligned with approval-aware login and fail-closed discovery. WebSocket performance assertions still require scratch-buffer and idle-timer reuse while accounting for the new partial-frame deadlines. The focused regression suite executes production functions with isolated DNS, clock, and transaction simulations. Live MariaDB, real NAT64 translation, dependency-backed compilation, and browser end-to-end behavior require deployment-environment verification.
 
 No new audit trail or log-file subsystem is added by this update.
+
+## Backup validation and Windows storage (2026-11-05)
+
+ZIP manifests are checked for depth, object width, array length, and total values before schema validation. Collections and embedded page-history JSON stop on the first invalid item, and cross-version validation collects at most 20 issues. Import errors omit schema details; other request-validation errors expose at most 20 messages of 200 characters each. Existing backup versions 1–6 and section row limits remain supported.
+
+Snapshot deletion propagates ownership and session errors. Only an uncertain database COMMIT enters outcome verification; archive cleanup starts after a successful or verified deletion. Unknown outcomes preserve recovery bytes.
+
+Attachment moves, backup restore, and snapshots share the storage sync helper. It flushes regular files on Windows and POSIX. Windows directory synchronization is skipped because Node's directory fsync returns EPERM; POSIX directory fsync and all regular-file I/O failures remain enforced. Windows therefore does not gain a directory-entry power-loss durability guarantee from this change.
+
+The qs, Vite, and Vitest patches are installed. Zod 3 remains in use for schema compatibility, so its advisory still appears in npm audit despite the application-level controls above. A Zod 4 migration requires separate compatibility validation; this update does not claim a clean dependency audit. See [the Zod advisory](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5).

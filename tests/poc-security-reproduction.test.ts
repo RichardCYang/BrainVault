@@ -18,7 +18,7 @@ describe("reported security reproductions are now blocked", () => {
 
   it("P2 carries MFA failures across replacement sessions", async () => {
     const routes = await source("src/routes/mfa.routes.ts");
-    expect(routes).toContain("SELECT id, auth_version FROM users WHERE id = ? FOR UPDATE");
+    expect(routes).toMatch(/SELECT id, auth_version(?:, registration_approved)? FROM users WHERE id = \? FOR UPDATE/);
     expect(routes).toContain("MAX(failed_attempts) AS failed_attempts");
     expect(routes).toContain("MFA_TEMPORARILY_LOCKED");
     expect(routes).not.toMatch(

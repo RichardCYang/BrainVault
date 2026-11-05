@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { failFastArray } from "./validation-errors.js";
 import type { DbClient } from "./db.js";
 import { describePageCoverUrlForHistory } from "./page-cover.js";
 import type { BlockRow, PageRow, UserRow } from "../types/domain.js";
@@ -68,11 +69,11 @@ const pageVersionActorSchema = z.object({
   username: z.string().min(1).max(50),
   name: z.string().max(80).nullable()
 }).strict();
-const pageVersionActorsSchema = z.array(pageVersionActorSchema);
+const pageVersionActorsSchema = failFastArray(pageVersionActorSchema, pageVersionHistoryMaxNodes);
 const pageVersionSummarySchema = z.object({
   baseline: z.number().int().min(0).max(0xffffffff),
   pageCreated: z.number().int().min(0).max(0xffffffff),
-  pageFields: z.array(z.string().min(1).max(64)).max(64),
+  pageFields: failFastArray(z.string().min(1).max(64), 64),
   blocksCreated: z.number().int().min(0).max(0xffffffff),
   blocksUpdated: z.number().int().min(0).max(0xffffffff),
   blocksDeleted: z.number().int().min(0).max(0xffffffff),
@@ -92,7 +93,7 @@ const pageVersionPageStateSchema = z.object({
   isArchived: z.boolean(),
   isCollection: z.boolean(),
   parentPageId: historyNullableIdSchema,
-  tags: z.array(z.string().max(50)).max(20)
+  tags: failFastArray(z.string().max(50), 20)
 }).strict();
 const pageVersionBlockStateSchema = z.object({
   id: historyIdSchema,
@@ -114,7 +115,7 @@ const pageVersionChangeSchema = z.discriminatedUnion("kind", [
   }).strict(),
   z.object({
     kind: z.literal("page-updated"),
-    fields: z.array(pageVersionFieldChangeSchema)
+    fields: failFastArray(pageVersionFieldChangeSchema, pageVersionHistoryMaxNodes)
   }).strict(),
   z.object({
     kind: z.literal("block-created"),
@@ -124,14 +125,14 @@ const pageVersionChangeSchema = z.discriminatedUnion("kind", [
     kind: z.literal("block-updated"),
     blockId: historyIdSchema,
     blockType: blockTypeSchema,
-    fields: z.array(pageVersionFieldChangeSchema)
+    fields: failFastArray(pageVersionFieldChangeSchema, pageVersionHistoryMaxNodes)
   }).strict(),
   z.object({
     kind: z.literal("block-deleted"),
     block: pageVersionBlockStateSchema
   }).strict()
 ]);
-const pageVersionChangesSchema = z.array(pageVersionChangeSchema);
+const pageVersionChangesSchema = failFastArray(pageVersionChangeSchema, pageVersionHistoryMaxNodes);
 
 export class PageVersionHistoryIntegrityError extends Error {
   constructor(message: string) {
@@ -209,11 +210,11 @@ function decodePageVersionHistoryJson(value: unknown, label: string) {
 
 function parseWithSchema<T>(value: unknown, label: string, schema: z.ZodTypeAny): T {
   const decoded = decodePageVersionHistoryJson(value, label);
-  const parsed = schema.safeParse(decoded);
-  if (!parsed.success) {
+  try {
+    return schema.parse(decoded) as T;
+  } catch {
     throw new PageVersionHistoryIntegrityError(`${label} does not match the page-version history schema`);
   }
-  return parsed.data as T;
 }
 
 function normalizePageVersionBlockState(block: z.infer<typeof pageVersionBlockStateSchema>): PageVersionBlockState {

@@ -57,7 +57,7 @@ const fixedWriteFence = fixedServer.slice(
   fixedServer.indexOf("const currentRow = await dbClient.queryOne"),
   fixedServer.indexOf("const insert = await dbClient.execute", fixedServer.indexOf("const currentRow = await dbClient.queryOne"))
 );
-assert.match(fixedWriteFence, /SELECT MAX\(id\) AS max_update_id/);
+assert.match(fixedWriteFence, /SELECT id AS max_update_id, SHA2\(update_data, 256\) AS update_hash[\s\S]*ORDER BY id DESC[\s\S]*LIMIT 1[\s\S]*FOR UPDATE/);
 assert.match(fixedWriteFence, /assessCollaborationWriteCheckpoint/);
 assert.match(fixedWriteFence, /roomUpdateId:\s*room\.maxUpdateId/);
 assert.match(fixedServer, /result\.reason === "room-stale"[\s\S]*invalidateRoomForReload/);

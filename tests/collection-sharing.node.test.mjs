@@ -173,7 +173,7 @@ test("collection ADMIN capability is surfaced to page management UI and READ rem
 
 test("backup restore carries collection grants and rebuilds membership", async () => {
   const transfer = await read("../src/lib/data-transfer.ts");
-  assert.match(transfer, /collectionShares: z\.array\(collectionShareSchema\).*\.optional\(\)/);
+  assert.match(transfer, /collectionShares: backupArray\(collectionShareSchema, dataTransferResourceLimits.maxPageShares\)\.optional\(\)/);
   assert.match(transfer, /const collectionShares = await client\.query<BackupCollectionShare>/);
   assert.match(transfer, /collectionShares: snapshot\.collectionShares/);
   assert.match(transfer, /await rebuildOwnerPageCollectionMemberships\(client, userId\)/);

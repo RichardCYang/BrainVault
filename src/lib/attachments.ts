@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import path from "node:path";
+import { syncPath } from "./storage-sync.js";
 import { link, lstat, mkdir, open, readdir, rm } from "node:fs/promises";
 import { env } from "../config/env.js";
 import { assessAttachmentFileCountLimit, assessAttachmentStorageLimit } from "./attachment-storage-limit.js";
@@ -259,15 +260,6 @@ export async function cleanupStaleAttachmentTempFiles(nowMs = Date.now()) {
     removed += 1;
   }
   return removed;
-}
-
-async function syncPath(value: string) {
-  const handle = await open(value, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
 }
 
 export function getAttachmentFilePath(ownerId: string, blockId: string) {

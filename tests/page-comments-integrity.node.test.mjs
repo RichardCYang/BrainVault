@@ -70,7 +70,7 @@ test("complete backups and snapshot diffs preserve page discussions", async () =
 
   assert.match(limits, /maxPageComments: 200_000/);
   assert.match(transfer, /const pageCommentSchema = z\.object/);
-  assert.match(transfer, /pageComments: z\.array\(pageCommentSchema\)/);
+  assert.match(transfer, /pageComments: backupArray\(pageCommentSchema, dataTransferResourceLimits.maxPageComments\)/);
   assert.match(transfer, /pageComments: snapshot\.pageComments/);
   assert.match(transfer, /prepareRestorePageComments/);
   assert.match(transfer, /Page comment owner identity is invalid/);

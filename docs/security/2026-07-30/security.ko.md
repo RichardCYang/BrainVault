@@ -201,3 +201,13 @@ receive capacity, retained fragment, queued/active message payload는 각각 별
 오래된 regression 기대값은 이제 account-wide login throttling, passkey rename의 현재 authentication boundary, 미검증 bookmark placeholder, literal regex escaping, 실제 custom-icon mutation count, 더 강한 origin policy를 추적합니다. 관련 source assertion도 approval-aware login과 fail-closed discovery에 맞게 정렬했습니다. WebSocket performance assertion은 새 partial-frame deadline을 고려하면서 scratch-buffer 및 idle-timer 재사용을 계속 요구합니다. 집중 regression suite는 격리된 DNS, clock, transaction simulation으로 production function을 실행합니다. 실제 MariaDB, 실제 NAT64 translation, dependency-backed compilation, 브라우저 end-to-end 동작은 배포 환경에서 검증해야 합니다.
 
 이 업데이트는 새로운 audit trail 또는 log-file subsystem을 추가하지 않습니다.
+
+## 백업 검증과 Windows 저장소 (2026-11-05)
+
+ZIP manifest는 스키마 검증 전에 깊이, 객체 키 수, 배열 길이, 전체 값 수를 검사합니다. 각 배열과 버전 기록 내부 JSON은 첫 번째 잘못된 항목에서 검증을 중단하고, 백업 버전별 추가 검증 오류는 최대 20개로 제한합니다. 가져오기 오류에는 스키마 상세를 반환하지 않으며, 일반 요청 검증 오류는 메시지당 200자·최대 20개로 제한합니다. 백업 버전 1–6과 기존 항목 수 상한은 유지됩니다.
+
+스냅샷 삭제는 소유권 및 세션 오류를 그대로 전달합니다. DB COMMIT 결과가 불명확할 때만 결과를 재조회하고, 삭제 성공이 확인된 뒤 파일을 정리합니다. 결과를 확인할 수 없으면 복구 파일을 보존합니다.
+
+첨부파일 이동, 백업 복원, 스냅샷은 공통 동기화 함수를 사용합니다. Windows와 POSIX 모두 일반 파일을 fsync합니다. Windows에서는 Node의 디렉터리 fsync가 EPERM을 반환하므로 디렉터리 동기화만 생략합니다. POSIX 디렉터리 fsync 및 일반 파일의 권한·I/O 오류는 계속 처리합니다. 이 변경이 Windows 디렉터리 항목의 정전 시 영속성을 보장하는 것은 아닙니다.
+
+qs, Vite, Vitest 보안 패치를 적용했습니다. 스키마 호환성을 위해 Zod 3을 유지하므로 위 애플리케이션 방어를 적용해도 npm audit에는 해당 경고가 남습니다. Zod 4 이전에는 별도 호환성 검증이 필요하며, 이번 변경으로 의존성 경고가 모두 사라졌다고 볼 수 없습니다. [Zod 공식 보안 권고](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)를 참고하세요.

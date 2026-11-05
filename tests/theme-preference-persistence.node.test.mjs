@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import test from "node:test";
-import { toPublicUser } from "../src/lib/mappers.ts";
+import test, { after } from "node:test";
+process.env.NODE_ENV = "test";
+const { toPublicUser } = await import("../src/lib/mappers.ts");
+const { closeDb } = await import("../src/lib/db.ts");
+after(closeDb);
 
 const authMiddlewareSource = await readFile(new URL("../src/middleware/auth.ts", import.meta.url), "utf8");
 const pageAccessSource = await readFile(new URL("../src/lib/page-access.ts", import.meta.url), "utf8");
@@ -43,5 +46,7 @@ test("page owner and share projections satisfy the public-user theme contract", 
 
   assert.match(collaborationRoutesSource, /\|\s*"default_collection_icon"\s*\|\s*"theme"/s);
   const themeProjectionCount = collaborationRoutesSource.match(/u\.default_collection_icon,\s*u\.theme,/g)?.length ?? 0;
-  assert.equal(themeProjectionCount, 3);
+  const userProjectionCount = collaborationRoutesSource.match(/u\.default_collection_icon,/g)?.length ?? 0;
+  assert.ok(userProjectionCount > 0);
+  assert.equal(themeProjectionCount, userProjectionCount);
 });

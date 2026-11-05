@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { ZodError } from "zod";
 import { MulterError } from "multer";
 import { ApiError } from "../lib/http.js";
+import { boundedValidationDetails } from "../lib/validation-errors.js";
 
 function getDbError(error: unknown) {
   if (typeof error !== "object" || error === null) return null;
@@ -66,7 +67,7 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
       error: {
         code: "VALIDATION_ERROR",
         message: "Request validation failed",
-        details: error.flatten()
+        details: boundedValidationDetails(error)
       }
     });
     return;

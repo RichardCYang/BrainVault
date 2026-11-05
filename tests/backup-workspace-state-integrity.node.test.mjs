@@ -11,9 +11,9 @@ test("backup v5 preserves page version history and owned-page navigation state",
   const authRoutes = normalize(await readFile(new URL("../src/routes/auth.routes.ts", import.meta.url), "utf8"));
 
   assert.match(transfer, /const uploadedAssetBackupVersion = 3;\nconst completeWorkspaceBackupVersion = 4;\nconst explicitWorkspaceBackupVersion = 5;\nconst backupVersion = 6;/);
-  assert.match(transfer, /pageVersions: z\.array\(pageVersionSchema\)/);
-  assert.match(transfer, /navigationCollapsedPageIds: z\.array\(idSchema\)/);
-  assert.match(transfer, /navigationPageOrder: z\.array\(navigationPageOrderSchema\)/);
+  assert.match(transfer, /pageVersions: backupArray\(pageVersionSchema, dataTransferResourceLimits.maxPageVersions\)/);
+  assert.match(transfer, /navigationCollapsedPageIds: backupArray\(idSchema, dataTransferResourceLimits.maxPages\)/);
+  assert.match(transfer, /navigationPageOrder: backupArray\(navigationPageOrderSchema, dataTransferResourceLimits.maxPages\)/);
   assert.match(transfer, /Version 4 and newer backups must declare page version history/);
   assert.match(transfer, /Version 4 and newer backups must declare owned-page navigation preferences/);
   assert.match(transfer, /Page version edit version exceeds the current page version/);

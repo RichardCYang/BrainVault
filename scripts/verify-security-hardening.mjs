@@ -121,7 +121,7 @@ const authRoutesSource = contains("src/routes/auth.routes.ts", [
 assert.doesNotMatch(authRoutesSource, /res\.json\(\{[^}]*token/, "Authentication responses must not expose JWTs");
 
 const mfaRoutesSource = contains("src/routes/mfa.routes.ts", [
-  "SELECT id, auth_version FROM users WHERE id = ? FOR UPDATE",
+  /SELECT id, auth_version(?:, registration_approved)? FROM users WHERE id = \? FOR UPDATE/,
   "expectedAuthVersion: number",
   "normalizeAuthVersion(user.auth_version) !== expectedAuthVersion",
   "MAX(failed_attempts) AS failed_attempts",
@@ -498,7 +498,7 @@ contains("src/lib/collaboration-materialization.ts", ["z.string().regex(/^[a-zA-
 contains("src/lib/data-transfer.ts", [
   "cover_url: pageCoverUrlSchema.nullable()",
   "inspectCustomCoverBytes(pageCover.mimeType",
-  "pageCovers: z.array(pageCoverFileSchema)",
+  "pageCovers: backupArray(pageCoverFileSchema, dataTransferResourceLimits.maxPageCovers)",
   "normalizeAvatarDataUrl(manifest.account.avatar_data)",
   "The backup contains an identifier owned by another account"
 ]);

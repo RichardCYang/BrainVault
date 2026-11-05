@@ -7,7 +7,7 @@ const normalize = (value) => value.replace(/\r\n/g, "\n");
 test("backup v3 preserves every per-account attachment file, including retained unlinked files", async () => {
   const transfer = normalize(await readFile(new URL("../src/lib/data-transfer.ts", import.meta.url), "utf8"));
 
-  assert.match(transfer, /retainedAttachments: z\.array\(retainedAttachmentSchema\)/);
+  assert.match(transfer, /retainedAttachments: backupArray\(retainedAttachmentSchema, dataTransferResourceLimits.maxAttachments\)/);
   assert.match(transfer, /Version 3 and newer backups must declare retained attachment files/);
   assert.match(transfer, /const attachmentOwnerDir = storageOwnerDirectory\(attachmentUploadRoot, userId\)/);
   assert.match(transfer, /attachmentEntries = attachmentEntries\.filter\(\(entry\) => entry\.name !== dataRestoreGenerationMarkerName\)/);

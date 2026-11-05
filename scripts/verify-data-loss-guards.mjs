@@ -1117,7 +1117,8 @@ assertBefore(
   "transient blank title guard"
 );
 assert(
-  scheduleTitleSource.includes("pageDraftStore.removeTitle(scope.userId, scope.pageId, draftSourceId)"),
+  scheduleTitleSource.includes('if (!persistPageTitleDraftValue(""))')
+    && scheduleTitleSource.includes("scheduleDirectTitleRecoveryAdmission(recoveryAdmissionSequence, pageId)"),
   "Clearing a title can leave an older durable draft eligible for recovery"
 );
 const blockOrderSubmissionSource = section(
@@ -1142,7 +1143,7 @@ assert(
 );
 const deleteRecordSource = section(
   indexedDbRecoveryStorageSource,
-  "  function deleteRecord(key) {",
+  "  function deleteRecord(",
   "  const api = {"
 );
 assert(
@@ -1379,13 +1380,13 @@ const permanentDelete = section(client, "async function deleteNavigationTarget()
 assertBefore(
   permanentDelete,
   "assertNoPendingLocalPageDraftsForPages(serverPageIds",
-  "await submitPageDeleteTask(task, authenticationScope)",
+  "return submitPageDeleteTask(task, authenticationScope,",
   "permanent page deletion"
 );
 assertBefore(
   permanentDelete,
   "assertNoPendingLocalCollaborationRecoveryForPages(serverPageIds)",
-  "await submitPageDeleteTask(task, authenticationScope)",
+  "return submitPageDeleteTask(task, authenticationScope,",
   "permanent page deletion Yjs recovery"
 );
 
@@ -1458,7 +1459,7 @@ assert(
 assertBefore(
   blockDelete,
   "assertNoPendingLocalBlockDrafts(",
-  "const data = await submitBlockDeleteTask(task, authenticationScope)",
+  "const data = await submitBlockDeleteTask(task, authenticationScope,",
   "direct block deletion"
 );
 assert(
@@ -1466,7 +1467,8 @@ assert(
   "Block deletion must exclude only the deleting tab's own source"
 );
 assert(
-  blockDelete.includes("includeDescendants: preserveChildren || options.includeDescendants !== false")
+  blockDelete.includes('includeDescendants: deleteScope !== "root-only"')
+    && blockDelete.includes('const deleteScope = preserveChildren')
     && blockDelete.includes("expectedPageContentVersion: Number(state.selectedPage?.contentVersion ?? 1)")
     && blockDelete.includes("deletedVersions.map(({ id }) => id)"),
   "Preserve-children deletion can use a stale partial snapshot or delete preserved child drafts"
@@ -1486,11 +1488,11 @@ const preserveChildrenDeleteRoute = section(
 );
 assert(
   blockRouteSource.includes("preserveChildren: z.boolean().optional().default(false)")
-    && blockRouteSource.includes("expectedPageContentVersion: z.number().int().min(1).optional()")
+    && blockRouteSource.includes("expectedPageContentVersion: safeVersionSchema.optional()")
     && preserveChildrenDeleteRoute.includes("ORDER BY sort_order ASC, id ASC FOR UPDATE")
     && preserveChildrenDeleteRoute.includes("await promoteBlockChildrenBeforeDelete(client, target, hierarchyRows)")
     && preserveChildrenDeleteRoute.indexOf("await promoteBlockChildrenBeforeDelete")
-      < preserveChildrenDeleteRoute.indexOf('await client.execute("DELETE FROM blocks WHERE id = ?"')
+      < preserveChildrenDeleteRoute.indexOf('"DELETE FROM blocks WHERE id = ? AND page_id = ?"')
     && preserveChildrenDeleteRoute.includes("lockedAccess.page.content_version"),
   "Child promotion and empty-parent deletion are not fenced inside one page-locked SQL transaction"
 );
@@ -1536,7 +1538,7 @@ const attachmentUpload = section(
   "function requestAttachmentUpload"
 );
 assert(
-  attachmentUpload.includes("await deleteBlockWithVersionCheck(blockId, { includeDescendants: false })")
+  /await deleteBlockWithVersionCheck\(blockId,\s*\{\s*includeDescendants:\s*false/.test(attachmentUpload)
     && !attachmentUpload.includes("session.deleteBlock("),
   "Attachment replacement can still bypass the collaborative block-deletion recovery fence"
 );
@@ -1563,12 +1565,12 @@ const draftBase = { userId: "user", pageId: "page", expectedVersion: 1, revision
 createPageDraftStore(draftStorage, { sourceId: "tab-a" }).saveBlock({
   ...draftBase,
   blockId: "block-a",
-  payload: { type: "MARKDOWN", markdown: "acknowledged elsewhere" }
+  payload: { type: "MARKDOWN", markdown: "acknowledged elsewhere", checked: false, metadata: null }
 });
 createPageDraftStore(draftStorage, { sourceId: "tab-b" }).saveBlock({
   ...draftBase,
   blockId: "block-b",
-  payload: { type: "MARKDOWN", markdown: "must remain visible" }
+  payload: { type: "MARKDOWN", markdown: "must remain visible", checked: false, metadata: null }
 });
 draftStorage.shiftOnNextKey = true;
 const drafts = createPageDraftStore(draftStorage, { sourceId: "reader" }).loadUserDrafts("user");
@@ -1588,7 +1590,7 @@ recoveryOriginStore.saveBlock({
   userId: "user",
   pageId: "page",
   blockId: "block",
-  payload: { type: "MARKDOWN", markdown: "origin block" },
+  payload: { type: "MARKDOWN", markdown: "origin block", checked: false, metadata: null },
   expectedVersion: 1,
   revision: 1
 });
@@ -1612,7 +1614,7 @@ recoveryCurrentStore.saveBlock({
   userId: "user",
   pageId: "page",
   blockId: "block",
-  payload: { type: "MARKDOWN", markdown: "edited in current tab" },
+  payload: { type: "MARKDOWN", markdown: "edited in current tab", checked: false, metadata: null },
   expectedVersion: 1,
   revision: 2
 });
@@ -1773,7 +1775,7 @@ for (const sourceId of ["tab-a", "tab-b", "tab-c", "tab-survivor"]) {
   createPageDraftStore(repeatedDraftStorage, { sourceId }).saveBlock({
     ...draftBase,
     blockId: sourceId,
-    payload: { type: "MARKDOWN", markdown: sourceId }
+    payload: { type: "MARKDOWN", markdown: sourceId, checked: false, metadata: null }
   });
 }
 repeatedDraftStorage.shiftsRemaining = 3;
@@ -1867,7 +1869,7 @@ assert(
     pageId: "page",
     sourceId: "tab-empty",
     blockId: "block",
-    payload: { type: "MARKDOWN", markdown: "replacement" },
+    payload: { type: "MARKDOWN", markdown: "replacement", checked: false, metadata: null },
     expectedVersion: 1,
     revision: 1
   })

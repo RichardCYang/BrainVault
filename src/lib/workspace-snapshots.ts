@@ -2,7 +2,8 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { finished } from "node:stream/promises";
-import { lstat, mkdir, open, rename, rm } from "node:fs/promises";
+import { lstat, mkdir, rename, rm } from "node:fs/promises";
+import { syncPath } from "./storage-sync.js";
 import { env } from "../config/env.js";
 import { attachmentUploadRoot } from "./attachments.js";
 import {
@@ -13,7 +14,7 @@ import {
   type DataRestoreAuthScope
 } from "./data-transfer.js";
 import { assertCurrentAuthSessionBoundary, type AuthSessionBoundaryScope } from "./auth-sessions.js";
-import { db, transaction, type DbClient } from "./db.js";
+import { db, transaction, TransactionCommitOutcomeUnknownError, type DbClient } from "./db.js";
 import { ApiError } from "./http.js";
 import { createId } from "./id.js";
 import { diffWorkspaceManifests } from "./workspace-snapshot-diff.js";
@@ -52,15 +53,6 @@ function snapshotUserDirectory(userId: string) {
 
 function snapshotArchivePath(userId: string, snapshotId: string) {
   return path.join(snapshotUserDirectory(userId), `${safeSnapshotId(snapshotId)}.zip`);
-}
-
-async function syncPath(targetPath: string) {
-  const handle = await open(targetPath, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
 }
 
 async function ensureSnapshotUserDirectory(userId: string) {
@@ -298,6 +290,9 @@ export async function deleteWorkspaceSnapshot(
       await client.execute("DELETE FROM workspace_snapshots WHERE id = ? AND user_id = ?", [id, userId]);
     });
   } catch (error) {
+    // Only a COMMIT failure can mean our authorized deletion already succeeded.
+    // Missing/foreign rows, revoked sessions and rollback errors must propagate.
+    if (!(error instanceof TransactionCommitOutcomeUnknownError)) throw error;
     let stillExists: { id: string } | undefined;
     try {
       stillExists = await db.queryOne<{ id: string }>(

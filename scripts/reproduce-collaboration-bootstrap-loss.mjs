@@ -45,7 +45,8 @@ const materializationRoute = read("src/routes/collaboration.routes.ts");
 
 assert.doesNotMatch(vulnerableServer, /assessInitialCollaborationBootstrap/);
 assert.match(vulnerableServer, /currentUpdateId = toSafeUpdateId[\s\S]*INSERT INTO page_yjs_updates/);
-assert.match(materializationRoute, /row\.type === "ATTACHMENT" \|\| activeIds\.has\(row\.id\)[\s\S]*DELETE FROM blocks/);
+assert.match(materializationRoute, /row\.type === "ATTACHMENT"\s*\? deletedAttachmentIds\.has\(row\.id\)\s*: !activeIds\.has\(row\.id\)/);
+assert.match(materializationRoute, /const rowsToDelete = existingRows[\s\S]*deletedExistingIds\.has\(row\.id\)[\s\S]*DELETE FROM blocks WHERE id = \? AND page_id = \?/);
 assert.match(fixedServer, /assessInitialCollaborationBootstrap/);
 assert.match(fixedServer, /currentUpdateId === 0/);
 assert.match(fixedServer, /client\.socket\.close\(4012/);

@@ -6,6 +6,9 @@ import type { Dirent } from "node:fs";
 import type { Writable } from "node:stream";
 import { access, copyFile, link, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { z } from "zod";
+import { assertManifestValidationBudget } from "./backup-validation.js";
+import { failFastArray as backupArray } from "./validation-errors.js";
+import { syncPath } from "./storage-sync.js";
 import { env } from "../config/env.js";
 import {
   assertAttachmentStorageLimit,
@@ -401,117 +404,122 @@ const manifestSchema = z.object({
     theme: profileThemeSchema.optional()
   }).strict(),
   data: z.object({
-    pages: z.array(pageSchema).max(dataTransferResourceLimits.maxPages),
-    blocks: z.array(blockSchema).max(dataTransferResourceLimits.maxBlocks),
-    tags: z.array(tagSchema).max(dataTransferResourceLimits.maxTags),
-    pageTags: z.array(pageTagSchema).max(dataTransferResourceLimits.maxPageTags),
+    pages: backupArray(pageSchema, dataTransferResourceLimits.maxPages),
+    blocks: backupArray(blockSchema, dataTransferResourceLimits.maxBlocks),
+    tags: backupArray(tagSchema, dataTransferResourceLimits.maxTags),
+    pageTags: backupArray(pageTagSchema, dataTransferResourceLimits.maxPageTags),
     // Optional only for backward compatibility with backups exported before
     // page sharing relationships became part of the complete workspace format.
-    pageShares: z.array(pageShareSchema).max(dataTransferResourceLimits.maxPageShares).optional(),
+    pageShares: backupArray(pageShareSchema, dataTransferResourceLimits.maxPageShares).optional(),
     // Added compatibly to version 4, but required by version 5 so a current
     // backup cannot silently omit collection grants and still validate.
-    collectionShares: z.array(collectionShareSchema).max(dataTransferResourceLimits.maxPageShares).optional(),
+    collectionShares: backupArray(collectionShareSchema, dataTransferResourceLimits.maxPageShares).optional(),
     // Added compatibly to version 4, but required by version 5 so a current
     // backup cannot silently omit page discussions and still validate.
-    pageComments: z.array(pageCommentSchema).max(dataTransferResourceLimits.maxPageComments).optional(),
+    pageComments: backupArray(pageCommentSchema, dataTransferResourceLimits.maxPageComments).optional(),
     // Version 4 introduced user-visible page history and navigation state.
     // Version 5 retains v4 import compatibility while making all current
     // workspace-state sections explicit and complete.
-    pageVersions: z.array(pageVersionSchema).max(dataTransferResourceLimits.maxPageVersions).optional(),
-    navigationCollapsedPageIds: z.array(idSchema).max(dataTransferResourceLimits.maxPages).optional(),
-    navigationPageOrder: z.array(navigationPageOrderSchema).max(dataTransferResourceLimits.maxPages).optional()
+    pageVersions: backupArray(pageVersionSchema, dataTransferResourceLimits.maxPageVersions).optional(),
+    navigationCollapsedPageIds: backupArray(idSchema, dataTransferResourceLimits.maxPages).optional(),
+    navigationPageOrder: backupArray(navigationPageOrderSchema, dataTransferResourceLimits.maxPages).optional()
   }).strict(),
-  attachments: z.array(attachmentSchema).max(dataTransferResourceLimits.maxAttachments),
+  attachments: backupArray(attachmentSchema, dataTransferResourceLimits.maxAttachments),
   // Version 3 also preserves any account attachment file that is intentionally
   // left on disk without a current ATTACHMENT block (for example after an
   // ambiguous database commit outcome), so the per-account uploads directory is
   // byte-complete rather than silently dropping retained files.
-  retainedAttachments: z.array(retainedAttachmentSchema).max(dataTransferResourceLimits.maxAttachments).optional(),
+  retainedAttachments: backupArray(retainedAttachmentSchema, dataTransferResourceLimits.maxAttachments).optional(),
   // Version 2 moves custom cover bytes out of JSON so a handful of valid images
   // cannot exhaust the much smaller manifest limit. Version 1 remains importable.
-  pageCovers: z.array(pageCoverFileSchema).max(dataTransferResourceLimits.maxPageCovers).optional(),
+  pageCovers: backupArray(pageCoverFileSchema, dataTransferResourceLimits.maxPageCovers).optional(),
   // Version 3 makes every uploaded custom icon self-contained in the archive,
   // including files removed from the picker library but intentionally retained
   // on disk for immutable icon URLs and historical references.
-  customIcons: z.array(customIconFileSchema).max(dataTransferResourceLimits.maxCustomIcons).optional(),
-  customIconLibraryRemovals: z.array(customIconLibraryRemovalSchema)
-    .max(dataTransferResourceLimits.maxCustomIconLibraryRemovals)
-    .optional(),
+  customIcons: backupArray(customIconFileSchema, dataTransferResourceLimits.maxCustomIcons).optional(),
+  customIconLibraryRemovals: backupArray(customIconLibraryRemovalSchema,
+    dataTransferResourceLimits.maxCustomIconLibraryRemovals).optional(),
   // Version 6 preserves explicit owner-controlled icon publication grants.
   // Owner and public path are reconstructed, never trusted from the archive.
-  customIconPublications: z.array(customIconPublicationSchema)
-    .max(dataTransferResourceLimits.maxCustomIconPublications).optional()
+  customIconPublications: backupArray(customIconPublicationSchema,
+    dataTransferResourceLimits.maxCustomIconPublications).optional()
 }).strict().superRefine((manifest, context) => {
+  let issueCount = 0;
+  const addIssue = (issue: z.IssueData) => {
+    // Cross-version requirements can fail for every otherwise valid row too.
+    if (++issueCount > 20) invalidBackup("The backup manifest is invalid");
+    context.addIssue(issue);
+  };
   if (manifest.version >= backupVersion && !manifest.customIconPublications) {
-    context.addIssue({
+    addIssue({
       code: z.ZodIssueCode.custom, path: ["customIconPublications"],
       message: "Version 6 backups must declare custom icon publications"
     });
   }
   if (manifest.version < backupVersion && manifest.customIconPublications !== undefined) {
-    context.addIssue({
+    addIssue({
       code: z.ZodIssueCode.custom, path: ["customIconPublications"],
       message: "Backups before version 6 cannot declare custom icon publications"
     });
   }
   if (manifest.version !== legacyBackupVersion && !manifest.pageCovers) {
-    context.addIssue({
+    addIssue({
       code: z.ZodIssueCode.custom,
       path: ["pageCovers"],
       message: "Version 2 and newer backups must declare page cover files"
     });
   }
   if (manifest.version === legacyBackupVersion && manifest.pageCovers) {
-    context.addIssue({
+    addIssue({
       code: z.ZodIssueCode.custom,
       path: ["pageCovers"],
       message: "Version 1 backups cannot declare page cover files"
     });
   }
   if (manifest.version >= uploadedAssetBackupVersion && !manifest.retainedAttachments) {
-    context.addIssue({
+    addIssue({
       code: z.ZodIssueCode.custom,
       path: ["retainedAttachments"],
       message: "Version 3 and newer backups must declare retained attachment files"
     });
   }
   if (manifest.version < uploadedAssetBackupVersion && manifest.retainedAttachments) {
-    context.addIssue({
+    addIssue({
       code: z.ZodIssueCode.custom,
       path: ["retainedAttachments"],
       message: "Backups before version 3 cannot declare retained attachment files"
     });
   }
   if (manifest.version >= uploadedAssetBackupVersion && !manifest.customIcons) {
-    context.addIssue({
+    addIssue({
       code: z.ZodIssueCode.custom,
       path: ["customIcons"],
       message: "Version 3 and newer backups must declare uploaded custom icon files"
     });
   }
   if (manifest.version >= uploadedAssetBackupVersion && !manifest.customIconLibraryRemovals) {
-    context.addIssue({
+    addIssue({
       code: z.ZodIssueCode.custom,
       path: ["customIconLibraryRemovals"],
       message: "Version 3 and newer backups must declare custom icon library removal state"
     });
   }
   if (manifest.version < uploadedAssetBackupVersion && (manifest.customIcons || manifest.customIconLibraryRemovals)) {
-    context.addIssue({
+    addIssue({
       code: z.ZodIssueCode.custom,
       path: ["customIcons"],
       message: "Backups before version 3 cannot declare uploaded custom icon state"
     });
   }
   if (manifest.version >= completeWorkspaceBackupVersion && !manifest.data.pageVersions) {
-    context.addIssue({
+    addIssue({
       code: z.ZodIssueCode.custom,
       path: ["data", "pageVersions"],
       message: "Version 4 and newer backups must declare page version history"
     });
   }
   if (manifest.version >= completeWorkspaceBackupVersion && !manifest.data.navigationCollapsedPageIds) {
-    context.addIssue({
+    addIssue({
       code: z.ZodIssueCode.custom,
       path: ["data", "navigationCollapsedPageIds"],
       message: "Version 4 and newer backups must declare owned-page navigation preferences"
@@ -519,7 +527,7 @@ const manifestSchema = z.object({
   }
   if (manifest.version >= explicitWorkspaceBackupVersion) {
     if (manifest.account.theme === undefined) {
-      context.addIssue({
+      addIssue({
         code: z.ZodIssueCode.custom,
         path: ["account", "theme"],
         message: "Version 5 backups must declare the account theme"
@@ -532,7 +540,7 @@ const manifestSchema = z.object({
       ["navigationPageOrder", manifest.data.navigationPageOrder, "Version 5 backups must declare owned-page navigation order"]
     ] as const) {
       if (!value) {
-        context.addIssue({
+        addIssue({
           code: z.ZodIssueCode.custom,
           path: ["data", field],
           message
@@ -541,7 +549,7 @@ const manifestSchema = z.object({
     }
     manifest.data.pages.forEach((page, index) => {
       if (page.cover_position_x === undefined || page.cover_position_y === undefined) {
-        context.addIssue({
+        addIssue({
           code: z.ZodIssueCode.custom,
           path: ["data", "pages", index],
           message: "Version 5 pages must preserve both cover position coordinates"
@@ -550,7 +558,7 @@ const manifestSchema = z.object({
     });
     manifest.data.pageShares?.forEach((share, index) => {
       if (!share.shared_user_id) {
-        context.addIssue({
+        addIssue({
           code: z.ZodIssueCode.custom,
           path: ["data", "pageShares", index, "shared_user_id"],
           message: "Version 5 page shares must bind the collaborator account ID"
@@ -559,7 +567,7 @@ const manifestSchema = z.object({
     });
     manifest.data.collectionShares?.forEach((share, index) => {
       if (!share.updated_at) {
-        context.addIssue({
+        addIssue({
           code: z.ZodIssueCode.custom,
           path: ["data", "collectionShares", index, "updated_at"],
           message: "Version 5 collection shares must preserve their update timestamp"
@@ -568,7 +576,7 @@ const manifestSchema = z.object({
     });
     manifest.data.navigationPageOrder?.forEach((item, index) => {
       if (!item.updated_at) {
-        context.addIssue({
+        addIssue({
           code: z.ZodIssueCode.custom,
           path: ["data", "navigationPageOrder", index, "updated_at"],
           message: "Version 5 navigation order entries must preserve their update timestamp"
@@ -586,7 +594,7 @@ const manifestSchema = z.object({
       || manifest.data.navigationPageOrder
     )
   ) {
-    context.addIssue({
+    addIssue({
       code: z.ZodIssueCode.custom,
       path: ["data", "pageVersions"],
       message: "Backups before version 4 cannot declare collection shares, page comments, history, or navigation state"
@@ -595,6 +603,16 @@ const manifestSchema = z.object({
 });
 
 export type BrainVaultBackup = z.infer<typeof manifestSchema>;
+
+export function parseBackupManifest(value: unknown): BrainVaultBackup {
+  assertManifestValidationBudget(value);
+  try {
+    return manifestSchema.parse(value);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    invalidBackup("The backup manifest is invalid");
+  }
+}
 type BackupPage = BrainVaultBackup["data"]["pages"][number];
 type BackupBlock = BrainVaultBackup["data"]["blocks"][number];
 type BackupTag = BrainVaultBackup["data"]["tags"][number];
@@ -786,15 +804,6 @@ async function inspectFile(filePath: string): Promise<FileInspection> {
     size += BigInt(data.length);
   }
   return { size, sha256: hash.digest("hex"), crc32: checksum };
-}
-
-async function syncPath(value: string) {
-  const handle = await open(value, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
 }
 
 async function syncDirectoryIfPresent(value: string) {
@@ -1686,9 +1695,10 @@ export async function readUserDataBackupManifest(
       manifestEntry,
       enforceConfiguredSizeLimits ? maxManifestBytes : null
     );
-    manifest = manifestSchema.parse(JSON.parse(buffer.toString("utf8")));
+    manifest = parseBackupManifest(JSON.parse(buffer.toString("utf8")));
   } catch (error) {
-    invalidBackup("The backup manifest is invalid", error instanceof z.ZodError ? error.flatten() : undefined);
+    if (error instanceof ApiError) throw error;
+    invalidBackup("The backup manifest is invalid");
   }
   validateManifestRelations(manifest);
 
@@ -3702,9 +3712,10 @@ export async function importUserDataBackup(
       manifestEntry,
       enforceConfiguredSizeLimits ? maxManifestBytes : null
     );
-    manifest = manifestSchema.parse(JSON.parse(buffer.toString("utf8")));
+    manifest = parseBackupManifest(JSON.parse(buffer.toString("utf8")));
   } catch (error) {
-    invalidBackup("The backup manifest is invalid", error instanceof z.ZodError ? error.flatten() : undefined);
+    if (error instanceof ApiError) throw error;
+    invalidBackup("The backup manifest is invalid");
   }
   validateManifestRelations(manifest);
   const restoreBlockById = new Map(manifest.data.blocks.map((block) => [block.id, block]));

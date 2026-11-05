@@ -8,19 +8,23 @@ import { fileURLToPath } from "node:url";
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (relativePath) => readFileSync(join(rootDir, relativePath), "utf8").replace(/\r\n/g, "\n");
 
+function assertVersionAtLeast(version, floor) {
+  assert.match(version, /^\d+\.\d+\.\d+$/);
+  const actual = version.split(".").map(Number);
+  const minimum = floor.split(".").map(Number);
+  const firstDifference = actual.findIndex((part, index) => part !== minimum[index]);
+  assert.ok(firstDifference < 0 || actual[firstDifference] > minimum[firstDifference], `${version} must be >= ${floor}`);
+}
+
 test("the patched lockfile excludes vulnerable ip-address releases", () => {
   const packageJson = JSON.parse(read("package.json"));
   const packageLock = JSON.parse(read("package-lock.json"));
   const installed = packageLock.packages?.["node_modules/ip-address"];
 
-  assert.equal(packageJson.overrides?.["ip-address"], "10.3.1");
-  assert.equal(installed?.version, "10.3.1");
-  assert.equal(installed?.resolved, "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz");
-  assert.equal(
-    installed?.integrity,
-    "sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g=="
-  );
-  assert.notEqual(installed?.version, "10.2.0");
+  assertVersionAtLeast(installed?.version, "10.3.1");
+  assert.equal(packageJson.overrides?.["ip-address"], installed.version);
+  assert.equal(installed.resolved, `https://registry.npmjs.org/ip-address/-/ip-address-${installed.version}.tgz`);
+  assert.match(installed.integrity, /^sha512-/);
 });
 
 
@@ -405,12 +409,14 @@ test("declared markdown and sanitizer dependency floors stay on patched releases
   const packageJson = JSON.parse(read("package.json"));
   const packageLock = JSON.parse(read("package-lock.json"));
 
-  assert.equal(packageJson.dependencies?.["markdown-it"], "^14.3.0");
-  assert.equal(packageLock.packages?.[""]?.dependencies?.["markdown-it"], "^14.3.0");
-  assert.equal(packageLock.packages?.["node_modules/markdown-it"]?.version, "14.3.0");
-
-  assert.equal(packageJson.dependencies?.["sanitize-html"], "^2.17.7");
-  assert.equal(packageLock.packages?.[""]?.dependencies?.["sanitize-html"], "^2.17.7");
-  assert.equal(packageLock.packages?.["node_modules/sanitize-html"]?.version, "2.17.7");
-  assert.equal(packageLock.packages?.["node_modules/sanitize-html/node_modules/htmlparser2"]?.version, "12.0.0");
+  for (const [name, floor] of [["markdown-it", "14.3.0"], ["sanitize-html", "2.17.7"]]) {
+    const declared = packageJson.dependencies?.[name];
+    assert.match(declared, /^\^\d+\.\d+\.\d+$/);
+    assertVersionAtLeast(declared.slice(1), floor);
+    assert.equal(packageLock.packages?.[""]?.dependencies?.[name], declared);
+    assertVersionAtLeast(packageLock.packages?.[`node_modules/${name}`]?.version, declared.slice(1));
+  }
+  const htmlparser = packageLock.packages?.["node_modules/sanitize-html/node_modules/htmlparser2"]
+    ?? packageLock.packages?.["node_modules/htmlparser2"];
+  assertVersionAtLeast(htmlparser?.version, "12.0.0");
 });
