@@ -445,7 +445,7 @@ const manifestSchema = z.object({
     dataTransferResourceLimits.maxCustomIconPublications).optional()
 }).strict().superRefine((manifest, context) => {
   let issueCount = 0;
-  const addIssue = (issue: z.IssueData) => {
+  const addIssue = (issue: Parameters<typeof context.addIssue>[0]) => {
     // Cross-version requirements can fail for every otherwise valid row too.
     if (++issueCount > 20) invalidBackup("The backup manifest is invalid");
     context.addIssue(issue);

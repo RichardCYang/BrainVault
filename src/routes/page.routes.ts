@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
+import { env } from "../config/env.js";
 import { db, transaction, type DbClient, type DbValue } from "../lib/db.js";
 import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { createId } from "../lib/id.js";
@@ -163,7 +164,7 @@ const deletePageBodySchema = z
     expectedContentVersion: safeVersionSchema.optional(),
     mutationId: mutationIdSchema.optional()
   })
-  .default({});
+  .prefault({});
 
 const maxUnsignedBigIntString = "18446744073709551615";
 const unsignedBigIntStringSchema = z
@@ -702,6 +703,7 @@ function assertPageDeletionSnapshot(
 ) {
   if (
     createPageDeletionSnapshot(
+      env.JWT_SECRET,
       pages,
       blocks,
       shares,
@@ -1928,6 +1930,7 @@ pageRouter.get(
         const versionHistoryRows = await getPageDeletionVersionHistory(client, subtreeRows);
         return {
           snapshot: createPageDeletionSnapshot(
+            env.JWT_SECRET,
             subtreeRows,
             blockRows,
             shareRows,

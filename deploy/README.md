@@ -81,7 +81,17 @@ Copy `Caddyfile.example`, change the domain/backend, and reload Caddy. A basic `
 
 ### NGINX
 
-Copy the `map` and server blocks from `nginx.conf.example`, update the certificate paths, test with `nginx -t`, then reload. The WebSocket `Upgrade` and `Connection` headers are needed for `/api/collaboration/`.
+Copy the `map`, `limit_req_zone` and server blocks from `nginx.conf.example` into the `http` context, update the certificate paths, test with `nginx -t`, then reload. The WebSocket `Upgrade` and `Connection` headers are needed for `/api/collaboration/`.
+
+### Public ingress request limits
+
+Application rate-limit counters are process-local and reset on restart. BrainVault acquires a database-scoped application-instance lease before listening and rejects a second active app process for the same MariaDB database. Horizontal scaling is currently unsupported. Adding a proxy limiter does not remove that restriction: upload/import admission and collaboration coordination would also need shared backends. Database-backed login lockouts remain separate from these counters.
+
+The NGINX example adds IP limits for `/api/` and stricter limits for `/api/auth/` and `/api/mfa/`, returning HTTP 429. Its shared-memory zones cover workers on one NGINX ingress and retain their counters across application restarts. Static assets and `/health` are excluded. Tune the rates and bursts for normal autosave, collaboration reconnects and users behind a shared NAT. See the [NGINX request-limit documentation](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html).
+
+Keep every backend private so all public requests pass through the limiter. If another trusted proxy precedes NGINX, configure trusted real-client-IP handling there; never key a limit directly from an untrusted forwarding header. Multiple ingress hosts need a shared edge limiter or shared-store integration. This sample does not implement Redis or a global per-account quota, and it limits WebSocket handshakes rather than frames. Run `nginx -t` before reloading the deployment.
+
+Keep `JWT_SECRET` persistent across application restarts. It also keys deletion-preview HMACs; rotating it invalidates outstanding previews, which must be refreshed before deletion. Old unkeyed previews fail with `409 PAGE_EDIT_CONFLICT` after this update.
 
 ### Nginx Proxy Manager
 

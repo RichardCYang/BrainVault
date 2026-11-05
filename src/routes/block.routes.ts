@@ -144,7 +144,7 @@ const deleteBlockSchema = z
       });
     }
   })
-  .default({});
+  .prefault({});
 
 const moveBlockSchema = z.object({
   targetPageId: routeIdSchema,

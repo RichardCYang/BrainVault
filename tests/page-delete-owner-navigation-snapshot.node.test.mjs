@@ -12,6 +12,7 @@ const pages = [{
 
 function snapshot(collapsed = [], order = []) {
   return createPageDeletionSnapshot(
+    "test-page-deletion-secret-at-least-32-characters",
     pages,
     [],
     [],

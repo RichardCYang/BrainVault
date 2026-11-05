@@ -27,8 +27,8 @@ const knownInsecureDatabasePasswords = new Set(
 const booleanValue = z
   .enum(["true", "false", "1", "0", "yes", "no", "on", "off"])
   .transform((value) => ["true", "1", "yes", "on"].includes(value));
-const enabledByDefault = booleanValue.default("true");
-const disabledByDefault = booleanValue.default("false");
+const enabledByDefault = booleanValue.prefault("true");
+const disabledByDefault = booleanValue.prefault("false");
 const jwtExpirySchema = z.string().trim().regex(/^\d+[smhd]$/, "JWT_EXPIRES_IN must use s, m, h, or d units")
   .refine((value) => {
     const unitMs = { s: 1_000, m: 60_000, h: 60 * 60_000, d: 24 * 60 * 60_000 } as const;

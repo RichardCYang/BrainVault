@@ -1,9 +1,8 @@
 /**
- * Pre-Zod structural admission limit. Zod 3 can allocate an error per invalid
- * array item before it reports an array-length error. Walk the already-parsed
- * JSON without collecting validation errors, and fail closed before Zod sees
- * a pathologically wide/nested container. This mitigates resource exhaustion
- * while the incompatible Zod 4 major upgrade is assessed separately.
+ * Pre-Zod structural admission limit. Walk the already-parsed JSON without
+ * collecting validation errors, and fail closed before Zod sees a pathologically
+ * wide/nested container. Retain this independent work budget alongside Zod's
+ * patched collection validation and the bounded public error response.
  */
 export const REQUEST_VALIDATION_MAX_ARRAY_ITEMS = 10_000;
 export const REQUEST_VALIDATION_MAX_OBJECT_KEYS = 10_000;

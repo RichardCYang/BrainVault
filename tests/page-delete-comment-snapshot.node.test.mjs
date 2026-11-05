@@ -40,6 +40,7 @@ function comment(values) {
 
 function snapshot(comments) {
   return createPageDeletionSnapshot(
+    "test-page-deletion-secret-at-least-32-characters",
     pages,
     blocks,
     shares,

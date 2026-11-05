@@ -29,6 +29,7 @@ function history(values) {
 
 function snapshot(versionHistory) {
   return createPageDeletionSnapshot(
+    "test-page-deletion-secret-at-least-32-characters",
     pages,
     blocks,
     [],

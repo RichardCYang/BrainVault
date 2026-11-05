@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 
 export type PageDeletionSnapshotPage = {
   id: string;
@@ -96,6 +96,7 @@ export function hasPageDeletionMembershipOutsideCollectionScope(
 }
 
 export function createPageDeletionSnapshot(
+  secret: string,
   pages: readonly PageDeletionSnapshotPage[],
   blocks: readonly PageDeletionSnapshotBlock[],
   shares: readonly PageDeletionSnapshotShare[],
@@ -111,7 +112,14 @@ export function createPageDeletionSnapshot(
   if (!workspace?.ownerId || !Number.isSafeInteger(workspace.generation) || workspace.generation < 1) {
     throw new Error("Invalid page deletion workspace generation");
   }
-  const hash = createHash("sha256");
+  if (typeof secret !== "string" || secret.length < 32) {
+    throw new Error("Invalid page deletion snapshot secret");
+  }
+  // Delegated admins can preview deletion but cannot read owner-only history.
+  // A keyed digest prevents offline guesses of that hidden state. Keep the key
+  // stable across instances/restarts and separate this use from other HMACs.
+  const hash = createHmac("sha256", secret);
+  hash.update("brainvault:page-deletion-snapshot:v1\0");
   // A restore can recreate the same stable page/block/share identifiers and versions.
   // Bind destructive intent to the exact owner workspace generation so a stale
   // collection-admin confirmation cannot delete the newly restored generation.

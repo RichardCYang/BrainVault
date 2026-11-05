@@ -4,6 +4,8 @@ BrainVault supports two sharing scopes. An ordinary page can be shared directly 
 
 Archived pages cannot open live collaboration or accept a new direct page grant, but archiving preserves existing access grants while live collaboration is suspended so restoring the page can reactivate access. The virtual **Default Collection** is not a shareable collection object; collection sharing applies to persisted custom collections.
 
+Archiving is an organizational state, not access revocation: existing collaborators can still read the page, its rendered content and attachments through authenticated direct URLs. Normal active-page lists and search exclude archived pages. To make a page private, remove its effective collection and direct page grants; archiving alone does not do this.
+
 ## Collection sharing and permissions
 
 Open a custom collection by clicking its **name** in the sidebar. In the collection landing view, the owner and `ADMIN` collection collaborators see **Share collection** next to **Add page**. The button is hidden for the Default Collection, while an individual document is open, and for `READ`/`WRITE` collaborators.

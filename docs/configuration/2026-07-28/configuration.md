@@ -83,6 +83,8 @@ Never commit a real `.env` file.
 
 The attachment-upload and import admission gates use process-local state. BrainVault therefore acquires a database-scoped application-instance lease during startup and refuses to run a second active application process against the same MariaDB database. Horizontal scaling remains unsupported until these gates, request-rate counters, and collaboration coordination are moved to shared/distributed backends.
 
+For an additional limit at the public ingress that survives application restarts, see [deployment request limits](../../../deploy/README.md#public-ingress-request-limits). This does not enable horizontal scaling. Keep `JWT_SECRET` persistent across restarts: deletion-preview tokens also use it, and rotating it requires a fresh preview before permanent deletion.
+
 ## Development browser launch
 
 `npm run dev` always opens the local application in a private/incognito browser window after server readiness. This behavior is not controlled by an environment variable, and the launcher never falls back to a normal browser profile. Chrome, Edge, Firefox, and Brave are supported for automatic launch. The former `BRAINVAULT_DEV_BROWSER_PRIVATE` variable is ignored and can be removed from existing local `.env` files.

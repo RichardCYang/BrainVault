@@ -34,6 +34,8 @@ The sidebar collection three-dot menu is not the sharing entry point. Direct sha
 
 `ADMIN` is deliberately stronger. It satisfies the administration checks needed for collection sharing and supported page/collection management operations within the shared collection. Direct page-share creation remains owner-only so a collection administrator cannot mint a lower-priority grant that outlives the authorizing collection grant. A collection administrator is scope-limited: moving a page outside the shared collection is rejected with `COLLECTION_ADMIN_SCOPE_REQUIRED`.
 
+Collection administrators can invite other administrators. Grant `ADMIN` only to accounts trusted to delegate access to the whole collection. Successful create, update and remove requests emit a JSON `collection_share_changed` event to server stdout after the database commit, with actor/owner/target IDs, old/new permissions and grant generations, and cascade-revocation counts. Retain these events in an access-controlled external log sink. This is an operational audit trail, not a transactional database audit ledger: a crash or an unconfirmed commit can leave a log gap.
+
 ## Scope and inheritance
 
 Migration `068_collection_sharing.sql` creates two structures:

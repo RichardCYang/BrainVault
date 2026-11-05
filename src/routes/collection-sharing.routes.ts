@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db, transaction, type DbClient } from "../lib/db.js";
 import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { createId } from "../lib/id.js";
+import { auditCollectionShareChange } from "../lib/collection-share-audit.js";
 import { ApiError, notFound } from "../lib/http.js";
 import {
   assertPageCanAdminister,
@@ -678,6 +679,13 @@ collectionSharingRouter.post(
         };
       });
 
+      auditCollectionShareChange({
+        action: "create", actorId: actor.id, ownerId: managementAdmission.ownerId,
+        collectionId, targetId: result.targetId,
+        previousPermission: null, permission: result.created.permission,
+        previousGeneration: null, generation: result.created.share_generation,
+        revokedCollectionGrants: 0, revokedDirectGrants: 0
+      });
       for (const lineage of result.replacedDocumentLineages) {
         disconnectPageCollaboratorsForDocumentEpoch(
           lineage.pageId,
@@ -817,6 +825,7 @@ collectionSharingRouter.patch(
         if (!updated) throw notFound("Collection share");
         return {
           updated,
+          oldPermission: existing.permission,
           oldGeneration: existing.generation,
           pages,
           cascadedCollectionGrants,
@@ -824,6 +833,14 @@ collectionSharingRouter.patch(
         };
       });
 
+      auditCollectionShareChange({
+        action: "update", actorId: actor.id, ownerId: managementAdmission.ownerId,
+        collectionId, targetId: sharedUserId,
+        previousPermission: result.oldPermission, permission: result.updated.permission,
+        previousGeneration: result.oldGeneration, generation: result.updated.share_generation,
+        revokedCollectionGrants: result.cascadedCollectionGrants.length,
+        revokedDirectGrants: result.cascadedDirectGrants.length
+      });
       for (const page of result.pages) {
         disconnectSharedUserGrant(
           page.id,
@@ -954,6 +971,7 @@ collectionSharingRouter.delete(
         const rows = await getCollectionShareRows(collectionId, client);
         return {
           count: rows.length,
+          oldPermission: existing.permission,
           oldGeneration: existing.generation,
           pages,
           cascadedCollectionGrants,
@@ -962,6 +980,14 @@ collectionSharingRouter.delete(
         };
       });
 
+      auditCollectionShareChange({
+        action: "remove", actorId: actor.id, ownerId: managementAdmission.ownerId,
+        collectionId, targetId: sharedUserId,
+        previousPermission: result.oldPermission, permission: null,
+        previousGeneration: result.oldGeneration, generation: null,
+        revokedCollectionGrants: result.cascadedCollectionGrants.length,
+        revokedDirectGrants: result.cascadedDirectGrants.length
+      });
       for (const page of result.pages) {
         // Match the revoked collection generation so stale sockets are closed
         // even if another independent direct grant remains effective.

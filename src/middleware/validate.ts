@@ -1,12 +1,12 @@
 import type { NextFunction, Request, Response } from "express";
-import type { ZodTypeAny } from "zod";
+import type { ZodType } from "zod";
 import { ApiError } from "../lib/http.js";
 import { isWithinRequestValidationBudget } from "../lib/request-validation-budget.js";
 
 type ValidationSchemas = {
-  body?: ZodTypeAny;
-  params?: ZodTypeAny;
-  query?: ZodTypeAny;
+  body?: ZodType;
+  params?: ZodType<Request["params"]>;
+  query?: ZodType;
 };
 
 function ensureValidated(req: Request) {

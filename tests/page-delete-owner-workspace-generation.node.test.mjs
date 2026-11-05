@@ -14,6 +14,7 @@ const shares = [{
 
 function snapshot(ownerId, generation) {
   return createPageDeletionSnapshot(
+    "test-page-deletion-secret-at-least-32-characters",
     pages,
     blocks,
     shares,
