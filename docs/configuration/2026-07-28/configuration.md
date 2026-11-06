@@ -23,7 +23,7 @@ Never commit a real `.env` file.
 | `WEBAUTHN_RP_NAME` | `BrainVault` | Name shown during passkey registration |
 | `WEBAUTHN_RP_ID` | `localhost` | WebAuthn relying-party domain without scheme or port |
 | `WEBAUTHN_ORIGIN` | `http://localhost:4000` | Comma-separated exact browser origins accepted for WebAuthn responses |
-| `CORS_ORIGIN` | Local development origins | Comma-separated browser origins allowed to call the API |
+| `CORS_ORIGIN` | `PUBLIC_ORIGIN` only | Empty or omitted trusts only the canonical public origin. Explicit values are comma-separated exact origins for the HTTP API and collaboration WebSockets. Production requires HTTPS and rejects localhost (including subdomains), loopback IPs, and unspecified IPs. |
 | `PUBLIC_ORIGIN` | First `WEBAUTHN_ORIGIN` | Canonical browser-facing origin used for redirects and direct-certificate hostname validation; production requires HTTPS |
 | `HTTPS_MODE` | `off` | `off` for development/test HTTP, `proxy` for trusted reverse-proxy TLS, or `posh-acme` for direct HTTPS with Posh-ACME PEM files; production rejects `off` |
 | `POSH_ACME_CERT_PATH` | Not set | Required in `posh-acme` mode; order directory or `fullchain.cer`/`FullChainFile` path |
@@ -84,6 +84,10 @@ Never commit a real `.env` file.
 The attachment-upload and import admission gates use process-local state. BrainVault therefore acquires a database-scoped application-instance lease during startup and refuses to run a second active application process against the same MariaDB database. Horizontal scaling remains unsupported until these gates, request-rate counters, and collaboration coordination are moved to shared/distributed backends.
 
 For an additional limit at the public ingress that survives application restarts, see [deployment request limits](../../../deploy/README.md#public-ingress-request-limits). This does not enable horizontal scaling. Keep `JWT_SECRET` persistent across restarts: deletion-preview tokens also use it, and rotating it requires a fresh preview before permanent deletion.
+
+## Migrating existing CORS settings
+
+Existing `.env` files created from older templates are not updated automatically. For the built-in UI, set `CORS_ORIGIN=""`, match `PUBLIC_ORIGIN` to the actual browser URL, and restart the server. List the canonical origin and additional origins explicitly only when a separate trusted frontend is needed. Cookie-authenticated mutations still require `PUBLIC_ORIGIN`, and cross-site authentication remains blocked; adding an origin to CORS does not by itself enable login from another domain.
 
 ## Development browser launch
 

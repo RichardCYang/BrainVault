@@ -23,7 +23,7 @@ BrainVaultは環境変数からランタイム設定を読み取ります。ロ�
 | `WEBAUTHN_RP_NAME` | `BrainVault` | パスキー登録時に表示される名前 |
 | `WEBAUTHN_RP_ID` | `localhost` | schemeやportを含まないWebAuthn relying-partyドメイン |
 | `WEBAUTHN_ORIGIN` | `http://localhost:4000` | WebAuthn応答で受け入れる正確なブラウザーoriginのカンマ区切り一覧 |
-| `CORS_ORIGIN` | ローカル開発origin | API呼び出しを許可するブラウザーoriginのカンマ区切り一覧 |
+| `CORS_ORIGIN` | `PUBLIC_ORIGIN`のみ | 空欄または省略時は正規の公開originのみを信頼します。明示する場合はHTTP APIと共同編集WebSocketに許可する正確なoriginをカンマ区切りで指定します。本番ではHTTPSが必須で、localhost（サブドメインを含む）、loopback IP、unspecified IPは拒否されます。 |
 | `PUBLIC_ORIGIN` | 最初の`WEBAUTHN_ORIGIN` | リダイレクトおよび直接証明書ホスト名検証に使用する正規のブラウザー公開origin。本番ではHTTPSが必要です。 |
 | `HTTPS_MODE` | `off` | 開発／テストHTTPは`off`、信頼済みリバースプロキシTLSは`proxy`、Posh-ACME PEMファイルによる直接HTTPSは`posh-acme`。本番では`off`を拒否します。 |
 | `POSH_ACME_CERT_PATH` | 未設定 | `posh-acme`モードで必須。orderディレクトリまたは`fullchain.cer`/`FullChainFile`パス |
@@ -84,6 +84,10 @@ BrainVaultは環境変数からランタイム設定を読み取ります。ロ�
 添付ファイルアップロードとインポートのadmission gateはプロセスローカル状態を使用します。そのためBrainVaultは起動時にデータベーススコープのアプリケーションインスタンスleaseを取得し、同じMariaDBデータベースに対して2つ目のアクティブアプリケーションプロセスを実行することを拒否します。これらのgate、要求rateカウンター、共同編集coordinationが共有／分散バックエンドへ移行されるまでは水平スケーリングはサポートされません。
 
 アプリケーション再起動をまたいで保持される追加の入口制限は、[デプロイ時のリクエスト制限](../../../deploy/README.md#public-ingress-request-limits)を参照してください。この設定で水平スケーリングが可能になるわけではありません。再起動後も永続的な`JWT_SECRET`を維持してください。削除プレビュートークンもこのキーを使用するため、キー変更後は完全削除前にプレビューを再取得する必要があります。
+
+## CORS設定の移行
+
+以前のテンプレートから作成した`.env`は自動更新されません。組み込みUIを使用する場合は`CORS_ORIGIN=""`に変更し、`PUBLIC_ORIGIN`を実際のブラウザーURLに合わせて再起動してください。別の信頼済みフロントエンドが必要な場合だけ、正規originと追加originを明示します。Cookieによる変更要求は引き続き`PUBLIC_ORIGIN`に限定され、cross-site認証も拒否されます。CORSへの追加だけで別ドメインからのログインが許可されるわけではありません。
 
 ## 開発ブラウザーの起動
 

@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import net from "node:net";
 import { z } from "zod";
 import { assertSecureDatabaseTransport } from "../lib/database-url.js";
-import { parseNat64Prefix } from "../lib/network-address.js";
+import { canonicalIpAddressKey, parseNat64Prefix } from "../lib/network-address.js";
 import { normalizeTrustedProxyAddressRule } from "../lib/reverse-proxy.js";
 import { aiChatAnswerMaxLengthSchema } from "./ai-chat-limits.js";
 
@@ -54,7 +54,8 @@ const envSchema = z.object({
   WEBAUTHN_RP_NAME: z.string().trim().min(1).max(100).default("BrainVault"),
   WEBAUTHN_RP_ID: z.string().trim().min(1).default("localhost"),
   WEBAUTHN_ORIGIN: z.string().trim().min(1).default("http://localhost:4000"),
-  CORS_ORIGIN: z.string().default("http://localhost:4000,http://127.0.0.1:4000,http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173"),
+  // Empty/unset means only PUBLIC_ORIGIN; extra browser origins require explicit trust.
+  CORS_ORIGIN: z.string().trim().default(""),
   PUBLIC_ORIGIN: z.string().trim().min(1).optional(),
   HTTPS_MODE: z.enum(["off", "proxy", "posh-acme"]).default("off"),
   POSH_ACME_CERT_PATH: z.string().trim().min(1).max(4_096).optional(),
@@ -193,6 +194,19 @@ function parseExactHttpOrigins(name: "WEBAUTHN_ORIGIN" | "CORS_ORIGIN", value: s
     if (parsedEnv.NODE_ENV === "production" && parsed.protocol !== "https:") {
       throw new Error(`${name} must use HTTPS in production`);
     }
+    if (name === "CORS_ORIGIN" && parsedEnv.NODE_ENV === "production") {
+      const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "");
+      const address = canonicalIpAddressKey(hostname);
+      if (
+        hostname === "localhost" || hostname.endsWith(".localhost")
+        || address.startsWith("4:127.")
+        || address === "6:0000:0000:0000:0000:0000:0000:0000:0001"
+        || address === "4:0.0.0.0"
+        || address === "6:0000:0000:0000:0000:0000:0000:0000:0000"
+      ) {
+        throw new Error("CORS_ORIGIN must not include loopback or unspecified hosts in production");
+      }
+    }
   }
 
   return origins;
@@ -316,7 +330,6 @@ if (jwtSecret === mfaEncryptionKey) {
 }
 
 export const webAuthnOrigins = parseExactHttpOrigins("WEBAUTHN_ORIGIN", parsedEnv.WEBAUTHN_ORIGIN);
-export const corsOrigins = parseExactHttpOrigins("CORS_ORIGIN", parsedEnv.CORS_ORIGIN);
 
 for (const origin of webAuthnOrigins) {
   const hostname = new URL(origin).hostname;
@@ -326,6 +339,9 @@ for (const origin of webAuthnOrigins) {
 }
 
 const publicOrigin = parsePublicOrigin(parsedEnv.PUBLIC_ORIGIN ?? webAuthnOrigins[0]);
+// HTTP authentication, collaboration WebSockets, and CSP share this exact allowlist.
+// Never infer trusted browser origins from request Host or forwarding headers.
+export const corsOrigins = parseExactHttpOrigins("CORS_ORIGIN", parsedEnv.CORS_ORIGIN || publicOrigin);
 const bookmarkFetchAllowedPorts = parseBookmarkFetchAllowedPorts(parsedEnv.BOOKMARK_FETCH_ALLOWED_PORTS);
 const bookmarkFetchAllowedHosts = parseBookmarkFetchAllowedHosts(parsedEnv.BOOKMARK_FETCH_ALLOWED_HOSTS);
 const bookmarkFetchNat64Prefixes = parseBookmarkFetchNat64Prefixes(parsedEnv.BOOKMARK_FETCH_NAT64_PREFIXES);

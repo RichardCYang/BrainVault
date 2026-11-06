@@ -23,7 +23,7 @@ BrainVault는 환경 변수에서 런타임 설정을 읽습니다. 로컬 개�
 | `WEBAUTHN_RP_NAME` | `BrainVault` | 패스키 등록 중 표시되는 이름 |
 | `WEBAUTHN_RP_ID` | `localhost` | scheme 또는 port가 없는 WebAuthn relying-party 도메인 |
 | `WEBAUTHN_ORIGIN` | `http://localhost:4000` | WebAuthn 응답에 허용되는 정확한 브라우저 origin을 쉼표로 구분한 목록 |
-| `CORS_ORIGIN` | 로컬 개발 origin | API 호출을 허용할 브라우저 origin을 쉼표로 구분한 목록 |
+| `CORS_ORIGIN` | `PUBLIC_ORIGIN`만 허용 | 비어 있거나 생략하면 정식 공개 origin 하나만 신뢰합니다. 명시할 때는 HTTP API와 협업 WebSocket에 허용할 정확한 origin을 쉼표로 구분합니다. 운영 환경은 HTTPS만 허용하고 localhost(하위 도메인 포함), loopback 및 unspecified IP를 거부합니다. |
 | `PUBLIC_ORIGIN` | 첫 번째 `WEBAUTHN_ORIGIN` | 리디렉션 및 직접 인증서 호스트 이름 검증에 사용하는 정식 브라우저 공개 origin. 운영 환경에서는 HTTPS가 필요합니다. |
 | `HTTPS_MODE` | `off` | 개발/테스트 HTTP는 `off`, 신뢰된 리버스 프록시 TLS는 `proxy`, Posh-ACME PEM 파일로 직접 HTTPS를 제공할 때는 `posh-acme`. 운영 환경은 `off`를 거부합니다. |
 | `POSH_ACME_CERT_PATH` | 설정되지 않음 | `posh-acme` 모드에서 필수. order 디렉터리 또는 `fullchain.cer`/`FullChainFile` 경로 |
@@ -84,6 +84,10 @@ BrainVault는 환경 변수에서 런타임 설정을 읽습니다. 로컬 개�
 첨부파일 업로드와 가져오기 admission gate는 프로세스 로컬 상태를 사용합니다. 따라서 BrainVault는 시작 시 데이터베이스 범위의 애플리케이션 인스턴스 lease를 획득하고, 같은 MariaDB 데이터베이스에 두 번째 활성 애플리케이션 프로세스가 실행되는 것을 거부합니다. 이 gate, 요청 rate 카운터, 협업 coordination이 공유/분산 백엔드로 이동하기 전까지 수평 확장은 지원되지 않습니다.
 
 애플리케이션 재시작에도 유지되는 추가 공개 진입점 제한은 [배포 요청 제한](../../../deploy/README.md#public-ingress-request-limits)을 참고하세요. 이 설정이 수평 확장을 지원하게 만들지는 않습니다. 재시작 시에도 영구 `JWT_SECRET`을 유지해야 합니다. 삭제 미리보기 토큰도 이 키를 사용하므로 키를 교체하면 영구 삭제 전에 미리보기를 다시 조회해야 합니다.
+
+## 기존 CORS 설정 마이그레이션
+
+이전 템플릿으로 만든 `.env`는 자동 갱신되지 않습니다. 내장 UI를 사용한다면 `CORS_ORIGIN=""`로 바꾸고 `PUBLIC_ORIGIN`을 실제 브라우저 주소에 맞춘 뒤 서버를 재시작하세요. 별도의 신뢰할 수 있는 프런트엔드가 필요한 경우에만 정식 origin과 추가 origin을 명시합니다. 쿠키 기반 변경 요청은 계속 `PUBLIC_ORIGIN`으로 제한되며 cross-site 인증도 차단됩니다. CORS 목록에 추가하는 것만으로 다른 도메인에서의 로그인이 허용되지는 않습니다.
 
 ## 개발 브라우저 실행
 
