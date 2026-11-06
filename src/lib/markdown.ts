@@ -546,6 +546,15 @@ markdown.renderer.rules.math_block = (tokens, index) => `${renderMathPlaceholder
 
 const forbiddenRenderedTags = new Set(["script", "style", "svg", "math", "textarea", "xmp"]);
 
+// Keep this policy aligned with public/rendered-html-sanitizer.js. Only content
+// classes belong in an untrusted cache; editor/chrome classes can escape the
+// block via global CSS (for example, fixed account-settings overlays).
+const renderedClassPattern = /^(?:rendered-[a-z0-9_-]+|language-[a-z0-9_-]+|math-expression(?:--(?:inline|display))?|youtube-video-(?:frame|iframe|open-link)|is-(?:active|current|complete|weekend|today)|visually-hidden)$/;
+
+export function sanitizeRenderedClass(value: string) {
+  return value.split(/\s+/).filter((token) => renderedClassPattern.test(token)).join(" ");
+}
+
 const allowedTags = sanitizeHtml.defaults.allowedTags.concat([
   "div",
   "img",
@@ -668,6 +677,14 @@ const sanitizeOptions: sanitizeHtml.IOptions = {
     || (frame.tag === "iframe"
       && !/^https:\/\/www\.youtube(?:-nocookie)?\.com\/embed\//i.test(frame.attribs.src ?? "")),
   transformTags: {
+    "*": (tagName, attribs) => {
+      if (Object.hasOwn(attribs, "class")) {
+        const safeClass = sanitizeRenderedClass(attribs.class);
+        if (safeClass) attribs.class = safeClass;
+        else delete attribs.class;
+      }
+      return { tagName, attribs };
+    },
     a: sanitizeHtml.simpleTransform("a", { rel: "noopener noreferrer", target: "_blank" }),
     img: (tagName, attribs) => {
       const nextAttributes: sanitizeHtml.Attributes = {

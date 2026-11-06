@@ -22,6 +22,27 @@ import { diffWorkspaceManifests } from "./workspace-snapshot-diff.js";
 const snapshotIdPattern = /^snapshot_[a-f0-9]{32}$/;
 const snapshotStorageRoot = path.join(attachmentUploadRoot, ".workspace-snapshots");
 const snapshotDataTransferOptions = Object.freeze({ enforceConfiguredSizeLimits: false });
+const maxSnapshotArchiveBytes = BigInt(env.SNAPSHOT_MAX_ARCHIVE_MB) * 1024n * 1024n;
+const maxSnapshotStorageBytes = BigInt(env.SNAPSHOT_TOTAL_MAX_MB) * 1024n * 1024n;
+
+async function assertSnapshotCapacity(userId: string, client: DbClient, additionalBytes = 0n) {
+  // Call only after assertCurrentAuthSessionBoundary has locked the users row.
+  // That user lock serializes create/delete quota decisions across callers.
+  const usage = await client.queryOne<{ snapshot_count: number; total_bytes: string | number | bigint }>(
+    `SELECT COUNT(*) AS snapshot_count, COALESCE(SUM(archive_size), 0) AS total_bytes
+     FROM workspace_snapshots WHERE user_id = ?`,
+    [userId]
+  );
+  const snapshotCount = Number(usage?.snapshot_count ?? 0);
+  if (snapshotCount >= env.SNAPSHOT_MAX_COUNT) {
+    throw new ApiError(409, "SNAPSHOT_LIMIT_REACHED", "Delete an existing snapshot before creating another one");
+  }
+  const remainingBytes = maxSnapshotStorageBytes - BigInt(usage?.total_bytes ?? 0);
+  if (remainingBytes <= 0n || additionalBytes > remainingBytes) {
+    throw new ApiError(409, "SNAPSHOT_STORAGE_LIMIT_REACHED", "Delete an existing snapshot to free snapshot storage");
+  }
+  return remainingBytes;
+}
 
 type SnapshotRow = {
   id: string;
@@ -124,13 +145,17 @@ async function ensureSnapshotArchiveIntegrity(userId: string, row: SnapshotRow) 
   return filePath;
 }
 
-async function writeSnapshotArchive(userId: string, snapshotId: string) {
+async function writeSnapshotArchive(userId: string, snapshotId: string, remainingBytes: bigint) {
   const directory = await ensureSnapshotUserDirectory(userId);
-  const plan = await prepareUserDataBackup(userId, snapshotDataTransferOptions);
+  const plan = await prepareUserDataBackup(userId, {
+    maxArchiveBytes: remainingBytes < maxSnapshotArchiveBytes ? remainingBytes : maxSnapshotArchiveBytes,
+    maxManifestBytes: env.SNAPSHOT_MAX_MANIFEST_MB * 1024 * 1024
+  });
   const finalPath = snapshotArchivePath(userId, snapshotId);
   const temporaryPath = path.join(directory, `.${snapshotId}.${createId("tmp")}.zip`);
   let output: ReturnType<typeof createWriteStream> | null = null;
   let backupWriterInvoked = false;
+  let archiveRenamed = false;
 
   try {
     const stream = createWriteStream(temporaryPath, { flags: "wx", mode: 0o600 });
@@ -145,6 +170,7 @@ async function writeSnapshotArchive(userId: string, snapshotId: string) {
       throw new ApiError(500, "SNAPSHOT_WRITE_FAILED", "Snapshot archive length verification failed");
     }
     await rename(temporaryPath, finalPath);
+    archiveRenamed = true;
     await syncPath(directory);
     return {
       finalPath,
@@ -162,6 +188,9 @@ async function writeSnapshotArchive(userId: string, snapshotId: string) {
       await rm(plan.operationRoot, { recursive: true, force: true }).catch(() => undefined);
     }
     await rm(temporaryPath, { force: true }).catch(() => undefined);
+    // No metadata insertion has begun yet. A directory-sync failure after the
+    // rename must not leave an unaccounted archive outside the user's quota.
+    if (archiveRenamed) await rm(finalPath, { force: true }).catch(() => undefined);
     throw error;
   }
 }
@@ -196,8 +225,15 @@ export async function createWorkspaceSnapshot(
   userId: string,
   authScope: AuthSessionBoundaryScope
 ) {
+  // Reject full accounts before staging/copying any workspace files. The HTTP
+  // export gate permits one operation per user; the final locked recheck also
+  // covers direct callers and quota changes during archive preparation.
+  const remainingBytes = await transaction(async (client) => {
+    await assertCurrentAuthSessionBoundary(userId, authScope, client);
+    return assertSnapshotCapacity(userId, client);
+  });
   const snapshotId = createId("snapshot");
-  const { finalPath, inspection, counts } = await writeSnapshotArchive(userId, snapshotId);
+  const { finalPath, inspection, counts } = await writeSnapshotArchive(userId, snapshotId, remainingBytes);
 
   try {
     await transaction(async (client) => {
@@ -205,15 +241,7 @@ export async function createWorkspaceSnapshot(
       // Revalidate the exact credential/device session at the durable insertion
       // boundary so a request admitted before revocation cannot persist recovery data.
       await assertCurrentAuthSessionBoundary(userId, authScope, client);
-      const usage = await client.queryOne<{ snapshot_count: number }>(
-        `SELECT COUNT(*) AS snapshot_count
-         FROM workspace_snapshots WHERE user_id = ?`,
-        [userId]
-      );
-      const snapshotCount = Number(usage?.snapshot_count ?? 0);
-      if (snapshotCount >= env.SNAPSHOT_MAX_COUNT) {
-        throw new ApiError(409, "SNAPSHOT_LIMIT_REACHED", "Delete an existing snapshot before creating another one");
-      }
+      await assertSnapshotCapacity(userId, client, inspection.size);
       await client.execute(
         `INSERT INTO workspace_snapshots
            (id, user_id, archive_size, archive_sha256, page_count, block_count, attachment_count, page_version_count)

@@ -75,11 +75,17 @@ Never commit a real `.env` file.
 | `ATTACHMENT_UPLOAD_MAX_CONCURRENT` | `4` | Maximum attachment uploads processed concurrently by one application process; each account is also limited to one active upload |
 | `DATA_TRANSFER_MAX_SIZE_MB` | `1024` | Maximum size of one complete-data backup archive in megabytes; enforced on upload, ZIP contents, export staging, and the final export plan |
 | `DATA_TRANSFER_MAX_MANIFEST_SIZE_MB` | `16` | Maximum JSON manifest size buffered and parsed during backup export or import |
+| `SNAPSHOT_MAX_COUNT` | `20` | Maximum private workspace snapshots per account; checked before archive preparation and again at insertion |
+| `SNAPSHOT_MAX_ARCHIVE_MB` | `2048` | Maximum complete ZIP size for a new snapshot, including ZIP overhead; also bounds file staging |
+| `SNAPSHOT_TOTAL_MAX_MB` | `8192` | Maximum sum of snapshot archive bytes per account; checked under the user row lock |
+| `SNAPSHOT_MAX_MANIFEST_MB` | `16` | Maximum JSON manifest size when creating a snapshot; independent of network backup limits |
 | `DATA_EXPORT_WINDOW_MS` | `3600000` | Complete-data export limit window per authenticated user |
 | `DATA_EXPORT_MAX` | `20` | Complete-data exports allowed per authenticated user and window |
 | `DATA_IMPORT_WINDOW_MS` | `3600000` | Complete-data import limit window per authenticated user or fallback IP key |
 | `DATA_IMPORT_MAX` | `3` | Complete-data imports admitted per principal and window before multipart upload processing |
 | `DATA_IMPORT_MAX_CONCURRENT` | `2` | Maximum imports processed concurrently by one application process; each principal is also limited to one active import |
+
+Snapshot creation refuses to exceed the count or byte quotas. Existing snapshots are retained when limits are lowered, and their restore/comparison paths remain compatible with earlier archives. These are per-account creation quotas, not a server-wide disk reservation; size storage for the number of accounts and concurrent export staging.
 
 The attachment-upload and import admission gates use process-local state. BrainVault therefore acquires a database-scoped application-instance lease during startup and refuses to run a second active application process against the same MariaDB database. Horizontal scaling remains unsupported until these gates, request-rate counters, and collaboration coordination are moved to shared/distributed backends.
 

@@ -99,9 +99,9 @@ const maxManifestBytes = env.DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024;
 export type DataTransferOptions = Readonly<{
   /**
    * Keep the configured aggregate archive/manifest byte ceilings for ordinary
-   * network backup import/export. Server-owned workspace snapshots opt out of
-   * only these byte ceilings while retaining structural ZIP/count validation,
-   * authentication fences, storage validation, and route-level admission.
+   * network backup import/export. Existing server-owned snapshots opt out when
+   * read/restored; new snapshots use independent preparation byte ceilings.
+   * Structural ZIP/count validation and authentication fences always apply.
    */
   enforceConfiguredSizeLimits?: boolean;
 }>;
@@ -109,6 +109,13 @@ export type DataTransferOptions = Readonly<{
 function configuredSizeLimitsEnabled(options: DataTransferOptions | undefined) {
   return options?.enforceConfiguredSizeLimits !== false;
 }
+
+// Creation limits are separate from read/restore options: lowering a quota
+// must never make an already-created recovery point impossible to restore.
+export type BackupPreparationOptions = DataTransferOptions & Readonly<{
+  maxArchiveBytes?: bigint;
+  maxManifestBytes?: number;
+}>;
 const windowsReservedDeviceNamePattern = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 const idSchema = z
   .string()
@@ -1716,10 +1723,12 @@ export async function readUserDataBackupManifest(
   return manifest;
 }
 
-export async function prepareUserDataBackup(userId: string, options: DataTransferOptions = {}) {
+export async function prepareUserDataBackup(userId: string, options: BackupPreparationOptions = {}) {
   await ensureDataTransferDirectories();
-  const enforceConfiguredSizeLimits = configuredSizeLimitsEnabled(options);
-  const maxTransferBytes = BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n;
+  const enforceConfiguredSizeLimits = configuredSizeLimitsEnabled(options)
+    || options.maxArchiveBytes !== undefined || options.maxManifestBytes !== undefined;
+  const maxTransferBytes = options.maxArchiveBytes ?? BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n;
+  const maxManifestBytes = options.maxManifestBytes ?? env.DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024;
   const operationRoot = path.join(dataTransferTempDir, createId("export"));
   const stagedAttachmentDir = path.join(operationRoot, "attachments");
   const stagedPageCoverDir = path.join(operationRoot, "page-covers");
@@ -2229,6 +2238,9 @@ export async function prepareUserDataBackup(userId: string, options: DataTransfe
       ...pageCoverFiles.map((item) => ({ name: item.path, size: item.inspection.size })),
       ...customIconFiles.map((item) => ({ name: item.path, size: item.inspection.size }))
     ]);
+    if (enforceConfiguredSizeLimits && archiveSize > maxTransferBytes) {
+      throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The ZIP archive exceeds the configured backup limit");
+    }
     return {
       account: snapshot.account,
       manifest,

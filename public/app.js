@@ -13296,13 +13296,15 @@ function replaceKanbanData(
 
   requestAnimationFrame(() => {
     if (focusCardId) {
-      const title = row.querySelector(`.kanban-card[data-card-id="${focusCardId}"] .kanban-card-title`);
+      const card = [...row.querySelectorAll(".kanban-card")].find((element) => element.dataset.cardId === focusCardId);
+      const title = card?.querySelector(".kanban-card-title");
       title?.focus();
       title?.select();
       return;
     }
     if (focusStyleCardId) {
-      const details = row.querySelector(`.kanban-card[data-card-id="${focusStyleCardId}"] .kanban-card-style-menu`);
+      const card = [...row.querySelectorAll(".kanban-card")].find((element) => element.dataset.cardId === focusStyleCardId);
+      const details = card?.querySelector(".kanban-card-style-menu");
       if (details) {
         closeKanbanCardStyleMenus(details);
         details.open = true;
@@ -13312,7 +13314,8 @@ function replaceKanbanData(
       return;
     }
     if (focusColumnId) {
-      const title = row.querySelector(`.kanban-column[data-column-id="${focusColumnId}"] .kanban-column-title`);
+      const column = [...row.querySelectorAll(".kanban-column")].find((element) => element.dataset.columnId === focusColumnId);
+      const title = column?.querySelector(".kanban-column-title");
       title?.focus();
       title?.select();
       return;

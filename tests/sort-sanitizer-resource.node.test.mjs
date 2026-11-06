@@ -152,11 +152,16 @@ test('sort key caches remain invocation-local; no persistent cache or security/s
   }
 });
 
-test('sanitizer protocol allowlist and every node/attribute policy remain unchanged', () => {
+test('sanitizer retains the allocation rewrite and existing policies alongside the explicit content-class restriction', () => {
   const before = sourceFor('public/rendered-html-sanitizer.js', 'baseline').replace(/\r\n/g, '\n');
   let after = sourceFor('public/rendered-html-sanitizer.js').replace(/\r\n/g, '\n');
-  // Reverse only the allocation-only rewrite; any other security-policy edit
-  // must fail this exact-source assertion rather than being hidden by a mock.
+  // The class restriction is covered behaviorally in report-2026-11-06.test.js.
+  // Reverse that explicit policy change before checking the original rewrite.
+  const classPolicyStart = after.indexOf('// Keep this policy aligned with src/lib/markdown.ts.');
+  const classPolicyEnd = after.indexOf('// Keep this set aligned with sanitize-html', classPolicyStart);
+  assert.ok(classPolicyStart >= 0 && classPolicyEnd > classPolicyStart);
+  after = after.slice(0, classPolicyStart) + after.slice(classPolicyEnd);
+  after = after.replace('    if (name === "class") {\n      value = sanitizeRenderedClass(value);\n      if (!value) continue;\n    }\n', '');
   after = after
     .replace('const allowedRenderedHrefSchemes = new Set(["http:", "https:", "mailto:"]);\n', '')
     .replace('!allowedRenderedHrefSchemes.has(parsed.protocol)', '!new Set(["http:", "https:", "mailto:"]).has(parsed.protocol)')

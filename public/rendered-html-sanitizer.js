@@ -1,5 +1,13 @@
 const forbiddenRenderedTags = new Set(["script", "style", "svg", "math", "textarea", "xmp"]);
 
+// Keep this policy aligned with src/lib/markdown.ts. Never allow editor or
+// application-chrome classes through persisted HTML, including legacy caches.
+const renderedClassPattern = /^(?:rendered-[a-z0-9_-]+|language-[a-z0-9_-]+|math-expression(?:--(?:inline|display))?|youtube-video-(?:frame|iframe|open-link)|is-(?:active|current|complete|weekend|today)|visually-hidden)$/;
+
+function sanitizeRenderedClass(value) {
+  return value.split(/\s+/).filter((token) => renderedClassPattern.test(token)).join(" ");
+}
+
 // Keep this set aligned with sanitize-html's server policy in src/lib/markdown.ts.
 // The browser layer is defense-in-depth: it reconstructs a fresh DOM tree and
 // never inserts server-provided nodes directly into the live document.
@@ -127,6 +135,10 @@ function copySafeAttributes(source, target, tagName, allowAiControls) {
   for (const name of allowedAttributesFor(tagName, allowAiControls)) {
     if (!source.hasAttribute(name)) continue;
     let value = source.getAttribute(name) ?? "";
+    if (name === "class") {
+      value = sanitizeRenderedClass(value);
+      if (!value) continue;
+    }
 
     if (tagName === "a" && name === "href") {
       value = normalizeRenderedHref(value);

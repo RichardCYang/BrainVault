@@ -4,7 +4,7 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("workspace snapshots stay owner-scoped, private, checksummed, count bounded, and byte-unbounded", async () => {
+test("workspace snapshots stay owner-scoped, private, checksummed, and bounded at creation", async () => {
   const [snapshotLib, snapshotRoute, env, migration, app, dataRoute] = await Promise.all([
     read("src/lib/workspace-snapshots.ts"),
     read("src/routes/snapshot.routes.ts"),
@@ -36,8 +36,11 @@ test("workspace snapshots stay owner-scoped, private, checksummed, count bounded
   assert.match(env, /SNAPSHOT_MAX_COUNT/);
   assert.doesNotMatch(env, /SNAPSHOT_STORAGE_MAX_MB/);
   assert.match(snapshotLib, /snapshotCount >= env\.SNAPSHOT_MAX_COUNT/);
-  assert.doesNotMatch(snapshotLib, /SNAPSHOT_STORAGE_LIMIT_REACHED/);
-  assert.doesNotMatch(snapshotLib, /maxSnapshotStorageBytes/);
+  assert.match(snapshotLib, /SNAPSHOT_STORAGE_LIMIT_REACHED/);
+  assert.match(snapshotLib, /maxSnapshotStorageBytes/);
+  assert.match(env, /SNAPSHOT_MAX_ARCHIVE_MB/);
+  assert.match(env, /SNAPSHOT_TOTAL_MAX_MB/);
+  assert.match(env, /SNAPSHOT_MAX_MANIFEST_MB/);
   assert.match(snapshotLib, /snapshotDataTransferOptions = Object\.freeze\(\{ enforceConfiguredSizeLimits: false \}\)/);
   assert.doesNotMatch(dataRoute, /enforceConfiguredSizeLimits\s*:\s*false/);
 
@@ -47,13 +50,14 @@ test("workspace snapshots stay owner-scoped, private, checksummed, count bounded
   assert.doesNotMatch(snapshotRoute, /\.git(?:\/|\\)/);
 });
 
-test("snapshot creation, comparison, and restore reuse the validated backup boundary without configured byte ceilings", async () => {
+test("snapshot creation has independent byte ceilings while legacy comparison and restore stay compatible", async () => {
   const [snapshotLib, dataTransfer] = await Promise.all([
     read("src/lib/workspace-snapshots.ts"),
     read("src/lib/data-transfer.ts")
   ]);
 
   assert.match(snapshotLib, /prepareUserDataBackup\(userId, snapshotDataTransferOptions\)/);
+  assert.match(snapshotLib, /maxArchiveBytes: remainingBytes < maxSnapshotArchiveBytes/);
   assert.match(snapshotLib, /writeUserDataBackup\(plan, stream\)/);
   assert.match(snapshotLib, /importUserDataBackup\(userId, filePath, authScope, async \(client\) =>/);
   assert.match(snapshotLib, /}, snapshotDataTransferOptions\);/);
