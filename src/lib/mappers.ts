@@ -2,6 +2,7 @@ import type { BlockRow, PageRow, TagRow, UserRow } from "../types/domain.js";
 import { renderBlockHtml, sanitizeRenderedBlockHtml } from "./markdown.js";
 import { isCurrentAiChatHtmlCache } from "./ai-chat-cache.js";
 import { validateStoredBlockMetadata } from "./structured-metadata-integrity.js";
+import { boundedPublicProfileImage } from "./public-profile-summary.js";
 
 const storedCustomPageCoverSentinel = "custom-image:stored";
 
@@ -49,6 +50,14 @@ export function toPublicUser(
     ...(workspaceGeneration === null ? {} : { workspaceGeneration }),
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+export function toPublicUserFanout(row: Parameters<typeof toPublicUser>[0]) {
+  return {
+    ...toPublicUser(row),
+    avatarData: boundedPublicProfileImage(row.avatar_data),
+    defaultCollectionIcon: boundedPublicProfileImage(row.default_collection_icon)
   };
 }
 

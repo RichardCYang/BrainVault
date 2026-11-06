@@ -1,4 +1,5 @@
 import { ApiError } from "./http.js";
+import { assertImageDimensionsWithinLimit } from "./image-dimensions.js";
 
 export const supportedProfileLanguages = ["en", "ja", "ko", "fr", "de", "es", "pt"] as const;
 export type SupportedProfileLanguage = (typeof supportedProfileLanguages)[number];
@@ -37,5 +38,6 @@ export function normalizeAvatarDataUrl(value: string | null) {
     throw new ApiError(400, "INVALID_AVATAR", "Avatar image is invalid or too large");
   }
 
+  assertImageDimensionsWithinLimit(mimeType, bytes);
   return `data:${mimeType};base64,${payload}`;
 }

@@ -5,6 +5,7 @@ import { normalizeTrustedProxyAddressRule, createExpressTrustProxySetting, isTru
 import { isAiChatWithinRenderBudget } from '../src/lib/ai-chat-render-budget.ts';
 import { AI_CHAT_HTML_CACHE_MAX_CHARS, AI_CHAT_RENDERER_VERSION, isCurrentAiChatHtmlCache } from '../src/lib/ai-chat-cache.ts';
 import { isWithinRequestValidationBudget } from '../src/lib/request-validation-budget.ts';
+import { publicProfileSummaryProjection } from '../src/lib/public-profile-summary.ts';
 
 const read = (relative) => readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
@@ -57,13 +58,14 @@ test('BV-PT-01: current, bounded HTML cache is reusable; legacy and oversized ca
 
 test('BV-PT-03: share timestamp is distinct from user updated_at in SQL and JSON mapping', () => {
   const source = read('src/routes/collection-sharing.routes.ts');
-  const sql = source.match(/async function getCollectionShareRows[\s\S]+?`SELECT ([\s\S]+?)FROM collection_shares cs/);
+  const projectedSource = source.replace('${publicProfileSummaryProjection("u")}', publicProfileSummaryProjection("u"));
+  const sql = projectedSource.match(/async function getCollectionShareRows[\s\S]+?`SELECT ([\s\S]+?)FROM collection_shares cs/);
   assert.ok(sql, 'share rows SQL query is present');
   const labels = sql[1].split(',').map((part) => part.trim()).filter(Boolean).map((expression) => expression.match(/\bAS (\w+)$/i)?.[1] ?? expression.split('.').at(-1));
   assert.equal(new Set(labels).size, labels.length, `duplicate SQL labels: ${labels.join(', ')}`);
   assert.ok(labels.includes('updated_at') && labels.includes('share_updated_at'));
   assert.match(source, /updatedAt: row\.share_updated_at/);
-  assert.match(source, /user: toPublicUser\(row\)/);
+  assert.match(source, /user: toPublicUserFanout\(row\)/);
   // Calls to this shared query remain in list, create, PATCH and DELETE flows.
   assert.ok((source.match(/getCollectionShareRows\(collectionId, client\)/g) ?? []).length >= 4);
 });

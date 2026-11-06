@@ -18,7 +18,8 @@ import {
 import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { requireUser, routeIdSchema, usernameSchema } from "../utils/schemas.js";
-import { toPublicUser } from "../lib/mappers.js";
+import { toPublicUserFanout } from "../lib/mappers.js";
+import { publicProfileSummaryProjection } from "../lib/public-profile-summary.js";
 import type { PageRow, UserRow } from "../types/domain.js";
 import {
   disconnectPageCollaboratorsForDocumentEpoch,
@@ -82,7 +83,7 @@ type CollectionShareUserRow = Pick<
 
 function toCollectionSharePayload(row: CollectionShareUserRow) {
   return {
-    user: toPublicUser(row),
+    user: toPublicUserFanout(row),
     permission: row.permission,
     sharedAt: row.shared_at,
     updatedAt: row.share_updated_at,
@@ -101,8 +102,7 @@ async function lockCollectionSharingMutationUsers(client: DbClient, userIds: str
 
 async function getCollectionShareRows(collectionId: string, client: DbClient = db) {
   return client.query<CollectionShareUserRow>(
-    `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language,
-            u.default_collection_icon, u.theme, u.created_at, u.updated_at,
+    `SELECT ${publicProfileSummaryProjection("u")},
             cs.permission, cs.created_at AS shared_at, cs.updated_at AS share_updated_at,
             cs.generation AS share_generation
      FROM collection_shares cs

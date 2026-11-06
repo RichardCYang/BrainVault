@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ApiError } from "./http.js";
 import { isPrivateOrLocalHostname } from "./network-address.js";
+import { assertImageDimensionsWithinLimit } from "./image-dimensions.js";
 
 export const builtInIconPrefix = "icon:";
 export const imageIconPrefix = "image:";
@@ -76,6 +77,7 @@ function normalizeImageIconSource(source: string) {
     throw new ApiError(400, "INVALID_ICON", "Custom icon image is invalid or too large");
   }
 
+  assertImageDimensionsWithinLimit(mimeType, bytes);
   return `data:${mimeType};base64,${payload}`;
 }
 

@@ -425,6 +425,8 @@ const state = {
   pageComments: {
     pageId: null,
     entries: [],
+    totalCount: 0,
+    nextCursor: null,
     loading: false,
     submitting: false,
     expanded: false,
@@ -1442,6 +1444,7 @@ const elements = {
   pageCommentsPanel: $("#page-comments-panel"),
   pageCommentsPanelCount: $("#page-comments-panel-count"),
   pageCommentsRefresh: $("#page-comments-refresh"),
+  pageCommentsMore: $("#page-comments-more"),
   pageCommentsMessage: $("#page-comments-message"),
   pageCommentsList: $("#page-comments-list"),
   pageCommentsForm: $("#page-comments-form"),
@@ -11347,6 +11350,8 @@ function resetPageComments(pageId = null) {
   state.pageComments.requestId += 1;
   state.pageComments.pageId = pageId;
   state.pageComments.entries = [];
+  state.pageComments.totalCount = 0;
+  state.pageComments.nextCursor = null;
   state.pageComments.loading = false;
   state.pageComments.submitting = false;
   state.pageComments.expanded = false;
@@ -11493,7 +11498,7 @@ function renderPageComments() {
 
   const commentState = state.pageComments.pageId === page.id ? state.pageComments : null;
   const entries = commentState?.entries ?? [];
-  const count = entries.length;
+  const count = commentState?.totalCount ?? entries.length;
   const expanded = Boolean(commentState?.expanded);
   const busy = Boolean(
     commentState?.loading
@@ -11510,6 +11515,8 @@ function renderPageComments() {
   elements.pageCommentsPanelCount.textContent = t("comments.count", { count: formatNumber(count) });
   elements.pageCommentsRefresh.disabled = busy;
   elements.pageCommentsRefresh.textContent = commentState?.loading ? t("comments.loading") : t("comments.refresh");
+  elements.pageCommentsMore.classList.toggle("hidden", !commentState?.nextCursor);
+  elements.pageCommentsMore.disabled = busy;
 
   setPageCommentsMessage(commentState?.message ?? "", Boolean(commentState?.messageIsError));
   elements.pageCommentsList.replaceChildren();
@@ -11533,9 +11540,11 @@ function renderPageComments() {
 async function loadPageComments(
   pageId,
   navigationGeneration = workspaceNavigationGeneration,
-  { expand = false } = {}
+  { expand = false, append = false } = {}
 ) {
   if (!isCurrentPageCommentsContext(pageId, navigationGeneration)) return;
+  const cursor = append ? state.pageComments.nextCursor : null;
+  if (append && (!cursor || state.pageComments.loading)) return;
   const requestId = ++state.pageComments.requestId;
   const wasInitialized = state.pageComments.initialized;
   state.pageComments.loading = true;
@@ -11545,12 +11554,23 @@ async function loadPageComments(
   renderPageComments();
 
   try {
-    const data = await api(`/api/pages/${encodeURIComponent(pageId)}/comments`);
+    const data = await api(`/api/pages/${encodeURIComponent(pageId)}/comments${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
     if (
       requestId !== state.pageComments.requestId
       || !isCurrentPageCommentsContext(pageId, navigationGeneration)
     ) return;
-    state.pageComments.entries = Array.isArray(data?.comments) ? data.comments : [];
+    const incoming = Array.isArray(data?.comments) ? data.comments : [];
+    state.pageComments.entries = append
+      ? [...new Map([...state.pageComments.entries, ...incoming].map((entry) => [entry.id, entry])).values()]
+        .sort((left, right) => {
+          const leftKey = `${left.createdAt ?? ""}\0${left.id}`;
+          const rightKey = `${right.createdAt ?? ""}\0${right.id}`;
+          return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+        })
+      : incoming;
+    state.pageComments.totalCount = Number.isSafeInteger(data?.count) && data.count >= 0
+      ? data.count : state.pageComments.entries.length;
+    state.pageComments.nextCursor = typeof data?.nextCursor === "string" ? data.nextCursor : null;
     state.pageComments.loading = false;
     state.pageComments.initialized = true;
     state.pageComments.message = "";
@@ -11628,7 +11648,10 @@ async function submitPageComment() {
     if (data?.comment) {
       const existingIndex = state.pageComments.entries.findIndex((entry) => entry.id === data.comment.id);
       if (existingIndex >= 0) state.pageComments.entries[existingIndex] = data.comment;
-      else state.pageComments.entries.push(data.comment);
+      else {
+        state.pageComments.entries.push(data.comment);
+        state.pageComments.totalCount = (state.pageComments.totalCount ?? state.pageComments.entries.length - 1) + 1;
+      }
     }
     state.pageComments.initialized = true;
     state.pageComments.expanded = true;
@@ -11762,6 +11785,7 @@ async function deletePageComment(commentId) {
     });
     if (data === skippedApiRequest || !isCommentMutationCurrent()) return;
     state.pageComments.entries = state.pageComments.entries.filter((entry) => entry.id !== commentId);
+    state.pageComments.totalCount = Math.max(state.pageComments.entries.length, (state.pageComments.totalCount ?? 1) - 1);
     if (state.pageComments.editingId === commentId) {
       state.pageComments.editingId = null;
       state.pageComments.editingDraft = "";
@@ -21308,6 +21332,12 @@ elements.pageCommentsRefresh.addEventListener("click", () => {
   const pageId = state.selectedPage?.id;
   if (!pageId || state.pageComments.pageId !== pageId) return;
   void loadPageComments(pageId, workspaceNavigationGeneration, { expand: true });
+});
+
+elements.pageCommentsMore.addEventListener("click", () => {
+  const pageId = state.selectedPage?.id;
+  if (!pageId || state.pageComments.pageId !== pageId) return;
+  void loadPageComments(pageId, workspaceNavigationGeneration, { expand: true, append: true });
 });
 
 elements.pageCommentsForm.addEventListener("submit", (event) => {

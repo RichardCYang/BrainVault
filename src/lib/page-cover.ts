@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { isPrivateOrLocalHostname } from "./network-address.js";
+import { assertImageDimensionsWithinLimit } from "./image-dimensions.js";
 
 export const maxCustomCoverImageBytes = 2 * 1024 * 1024;
 export const maxPageCoverUrlLength = Math.ceil((maxCustomCoverImageBytes * 4) / 3) + 128;
@@ -57,6 +58,7 @@ export function inspectCustomCoverBytes(mimeType: string, bytes: Buffer) {
   if (!hasExpectedSignature(mimeType, bytes)) {
     throw new Error("Cover image content does not match its declared type");
   }
+  assertImageDimensionsWithinLimit(mimeType, bytes);
   return { mimeType, bytes };
 }
 

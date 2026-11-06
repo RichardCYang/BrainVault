@@ -9,6 +9,7 @@ import { createId } from "./id.js";
 import { ApiError } from "./http.js";
 import { isDefinitivePathAbsenceError } from "./filesystem-presence.js";
 import { imageIconPrefix, maxCustomIconBytes, normalizeIconValue } from "./icon-value.js";
+import { assertImageDimensionsWithinLimit } from "./image-dimensions.js";
 
 export const customIconLibraryLimit = 36;
 export const customIconUploadRoot = path.resolve(process.cwd(), "upload", "icons");
@@ -71,6 +72,17 @@ function hasValidIcoStructure(bytes: Buffer) {
 }
 
 export function detectCustomIconFileType(bytes: Buffer) {
+  const type = detectCustomIconSignature(bytes);
+  if (!type) return null;
+  try {
+    assertImageDimensionsWithinLimit(type.mimeType, bytes);
+    return type;
+  } catch {
+    return null;
+  }
+}
+
+function detectCustomIconSignature(bytes: Buffer) {
   if (!bytes.length || bytes.length > maxCustomIconBytes) return null;
   if (
     bytes.length >= 8

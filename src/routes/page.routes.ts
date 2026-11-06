@@ -21,7 +21,8 @@ import {
   assessPageVersionResetMutationReceipt,
   type PageVersionResetMutationReceipt
 } from "../lib/page-version-reset-mutation.js";
-import { toBlock, toPage, toPublicUser, toTag } from "../lib/mappers.js";
+import { toBlock, toPage, toPublicUserFanout, toTag } from "../lib/mappers.js";
+import { publicProfileSummaryProjection } from "../lib/public-profile-summary.js";
 import {
   assertPageCanAdminister,
   assertPageNotArchived,
@@ -1210,17 +1211,17 @@ async function buildPageListSummaries(
   // The workspace navigation never renders owner profile data. In compact mode
   // omit it entirely so a large avatar is not duplicated once per page. The
   // default API response remains backward compatible and includes owner data.
-  const ownerById = new Map<string, ReturnType<typeof toPublicUser>>();
+  const ownerById = new Map<string, ReturnType<typeof toPublicUserFanout>>();
   if (!compact) {
     const ownerIds = [...new Set(pageRows.map((row) => row.owner_id))];
     const ownerPlaceholders = ownerIds.map(() => "?").join(", ");
     const ownerRows = await client.query<PageListOwnerRow>(
-      `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon, theme, created_at, updated_at
+      `SELECT ${publicProfileSummaryProjection()}
        FROM users
        WHERE id IN (${ownerPlaceholders})`,
       ownerIds
     );
-    for (const owner of ownerRows) ownerById.set(owner.id, toPublicUser(owner));
+    for (const owner of ownerRows) ownerById.set(owner.id, toPublicUserFanout(owner));
   }
 
   return pageRows.map((row) => {

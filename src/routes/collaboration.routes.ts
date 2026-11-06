@@ -44,7 +44,8 @@ import {
   disconnectPageCollaboratorsForDocumentEpoch,
   disconnectSharedUserGrant
 } from "../lib/collaboration-server.js";
-import { toBlock, toPublicUser } from "../lib/mappers.js";
+import { toBlock, toPublicUserFanout } from "../lib/mappers.js";
+import { publicProfileSummaryProjection } from "../lib/public-profile-summary.js";
 import { renderBlockHtml } from "../lib/markdown.js";
 import {
   getBookmarkData,
@@ -334,6 +335,22 @@ const pageCommentParamsSchema = z.object({
 });
 
 const maxPageCommentsPerPage = 500;
+const pageCommentsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(100),
+  cursor: z.string().min(1).max(256).optional()
+});
+const pageCommentCursorSchema = z.object({
+  createdAt: z.string().regex(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/),
+  id: routeIdSchema
+}).strict();
+
+function decodePageCommentCursor(value: string) {
+  try {
+    return pageCommentCursorSchema.parse(JSON.parse(Buffer.from(value, "base64url").toString("utf8")));
+  } catch {
+    throw new ApiError(400, "INVALID_COMMENT_CURSOR", "The comment cursor is invalid");
+  }
+}
 
 // Pre-fix tabs may still send title/blocks/deletedAttachmentIds. Zod strips
 // those unknown fields, but the server never trusts or materializes them.
@@ -438,8 +455,8 @@ function assertShareablePage(page: PageRow) {
 
 async function getShareRows(pageId: string, ownerId: string, client: DbClient = db) {
   return client.query<ShareUserRow>(
-    `SELECT u.id, u.username, u.name, u.avatar_data, u.preferred_language, u.default_collection_icon, u.theme,
-            u.created_at, u.updated_at, ps.permission, ps.created_at AS shared_at, ps.generation AS share_generation
+    `SELECT ${publicProfileSummaryProjection("u")},
+            ps.permission, ps.created_at AS shared_at, ps.generation AS share_generation
      FROM page_shares ps
      INNER JOIN pages p ON p.id = ps.page_id AND p.owner_id = ?
      INNER JOIN users u ON u.id = ps.user_id
@@ -451,7 +468,7 @@ async function getShareRows(pageId: string, ownerId: string, client: DbClient = 
 
 function toSharePayload(row: ShareUserRow) {
   return {
-    user: toPublicUser(row),
+    user: toPublicUserFanout(row),
     permission: row.permission,
     sharedAt: row.shared_at,
     generation: row.share_generation
@@ -466,8 +483,7 @@ async function getPageCommentRow(
   return (await client.queryOne<PageCommentRow>(
     `SELECT pc.id AS comment_id, pc.page_id, pc.user_id, pc.body, pc.edit_version,
             pc.created_at AS comment_created_at, pc.updated_at AS comment_updated_at,
-            u.id, u.username, u.name, u.avatar_data, u.preferred_language,
-            u.default_collection_icon, u.theme, u.created_at, u.updated_at
+            ${publicProfileSummaryProjection("u")}
      FROM page_comments pc
      INNER JOIN users u ON u.id = pc.user_id
      WHERE pc.page_id = ? AND pc.id = ?`,
@@ -485,7 +501,7 @@ function toPageCommentPayload(
     pageId: row.page_id,
     body: row.body,
     version: Number(row.edit_version),
-    author: toPublicUser(row),
+    author: toPublicUserFanout(row),
     createdAt: row.comment_created_at,
     updatedAt: row.comment_updated_at,
     canEdit: isAuthor,
@@ -596,30 +612,43 @@ function canonicalJsonForComparison(value: unknown): string | null | undefined {
 
 collaborationRouter.get(
   "/pages/:pageId/comments",
-  validate({ params: idParamSchema }),
+  validate({ params: idParamSchema, query: pageCommentsQuerySchema }),
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
       const pageId = String(req.params.pageId);
+      const query = getValidatedQuery<z.infer<typeof pageCommentsQuerySchema>>(req);
+      const cursor = query.cursor ? decodePageCommentCursor(query.cursor) : null;
       const result = await transaction(async (client) => {
         const access = await getPageAccess(pageId, user.id, client);
-        const rows = await client.query<PageCommentRow>(
+        const rows = await client.query<PageCommentRow & { cursor_created_at: string }>(
           `SELECT pc.id AS comment_id, pc.page_id, pc.user_id, pc.body, pc.edit_version,
                   pc.created_at AS comment_created_at, pc.updated_at AS comment_updated_at,
-                  u.id, u.username, u.name, u.avatar_data, u.preferred_language,
-                  u.default_collection_icon, u.theme, u.created_at, u.updated_at
+                  DATE_FORMAT(pc.created_at, '%Y-%m-%d %H:%i:%s.%f') AS cursor_created_at,
+                  ${publicProfileSummaryProjection("u")}
            FROM page_comments pc
            INNER JOIN users u ON u.id = pc.user_id
-           WHERE pc.page_id = ?
+           WHERE pc.page_id = ?${cursor ? " AND (pc.created_at > ? OR (pc.created_at = ? AND pc.id > ?))" : ""}
            ORDER BY pc.created_at ASC, pc.id ASC
-           LIMIT ${maxPageCommentsPerPage}`,
-          [pageId]
+           LIMIT ?`,
+          cursor ? [pageId, cursor.createdAt, cursor.createdAt, cursor.id, query.limit + 1] : [pageId, query.limit + 1]
         );
         const viewer = { id: user.id, isOwner: access.role === "OWNER" || access.role === "ADMIN" };
-        return rows.map((row) => toPageCommentPayload(row, viewer));
+        const visible = rows.slice(0, query.limit);
+        const last = visible.at(-1);
+        const countRow = await client.queryOne<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM page_comments WHERE page_id = ?", [pageId]
+        );
+        return {
+          comments: visible.map((row) => toPageCommentPayload(row, viewer)),
+          count: Number(countRow?.count ?? 0),
+          nextCursor: rows.length > query.limit && last
+            ? Buffer.from(JSON.stringify({ createdAt: last.cursor_created_at, id: last.comment_id }), "utf8").toString("base64url")
+            : null
+        };
       });
       res.setHeader("Cache-Control", "private, no-store");
-      res.json({ comments: result, count: result.length });
+      res.json(result);
     } catch (error) {
       next(error);
     }

@@ -67,7 +67,7 @@ function accordion(icon: string) {
 }
 it("restore rejects forged and oversized icons and accepts valid legacy icons", () => {
   expect(() => assertLosslessBackupBlockMetadata(accordion("image:data:image/png;base64,dGhpcyBpcyBub3QgYSBwbmc="))).toThrow();
-  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlR0y8AAAAASUVORK5CYII=", "base64");
   expect(() => assertLosslessBackupBlockMetadata(accordion(`image:data:image/png;base64,${png.toString("base64")}`))).not.toThrow();
   const oversized = Buffer.concat([png, Buffer.alloc(512 * 1024)]);
   expect(() => assertLosslessBackupBlockMetadata(accordion(`image:data:image/png;base64,${oversized.toString("base64")}`))).toThrow();
