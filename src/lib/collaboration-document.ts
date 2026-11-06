@@ -1,3 +1,5 @@
+import { maxBlockHierarchyDepth } from "../utils/hierarchy.js";
+
 export type CollaborationHierarchyBlock = {
   id: string;
   parentBlockId: string | null;
@@ -58,7 +60,7 @@ export function validateCollaborationBlockHierarchy<T extends CollaborationHiera
     let nextDepth = current ? (depthCache.get(current.id) ?? 0) + 1 : 0;
     for (let index = path.length - 1; index >= 0; index -= 1) {
       const item = path[index];
-      if (nextDepth > 128) {
+      if (nextDepth >= maxBlockHierarchyDepth) {
         throw new CollaborationDocumentError(
           "BLOCK_NESTING_TOO_DEEP",
           "Block nesting cannot exceed 128 levels"

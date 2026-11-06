@@ -23,7 +23,7 @@ import { errorHandler, notFoundHandler } from "./middleware/error.js";
 import { requireAuth } from "./middleware/auth.js";
 import { createHttpsEnforcementMiddleware } from "./middleware/https.js";
 import { setPrivateNoStoreCacheControl } from "./lib/cache-control.js";
-import { createExpressTrustProxySetting } from "./lib/reverse-proxy.js";
+import { createExpressTrustProxySetting, getClientIpAddressFromTrustedProxyRequest } from "./lib/reverse-proxy.js";
 import { canUserReadCustomIcon, customIconUploadRoot, getCustomIconFilePath } from "./lib/custom-icons.js";
 import { bookmarkFetchGuardHeader, bookmarkFetchGuardValue } from "./lib/bookmark-host-policy.js";
 import {
@@ -142,6 +142,21 @@ export function createApp() {
     })
   );
   app.use(cors(corsOptionsDelegate));
+  // Validate the same proxy chain used by WebSocket upgrades before any IP-keyed
+  // rate limiter or country/VPN policy can consume Express's derived req.ip.
+  app.use((req, res, next) => {
+    if (env.HTTPS_HEALTHCHECK_BYPASS && req.path === "/health") {
+      next();
+      return;
+    }
+    if (env.HTTPS_MODE === "proxy" && getClientIpAddressFromTrustedProxyRequest(
+      req, env.TRUST_PROXY_ADDRESSES, env.TRUST_PROXY_ALLOW_PRIVATE_CLIENTS
+    ) === "unknown") {
+      res.status(400).json({ error: { code: "INVALID_CLIENT_IP", message: "A valid client network address is required" } });
+      return;
+    }
+    next();
+  });
   app.use(morgan(env.NODE_ENV === "production" ? productionAccessLogFormat : developmentAccessLogFormat));
   app.use(
     rateLimit({

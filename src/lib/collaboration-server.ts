@@ -591,7 +591,8 @@ export class PageCollaborationHub {
 
     const sourceIp = getClientIpAddressFromTrustedProxyRequest(
       request,
-      env.HTTPS_MODE === "proxy" ? env.TRUST_PROXY_ADDRESSES : []
+      env.HTTPS_MODE === "proxy" ? env.TRUST_PROXY_ADDRESSES : [],
+      env.TRUST_PROXY_ALLOW_PRIVATE_CLIENTS
     );
     if (sourceIp === "unknown") {
       rejectWebSocketUpgrade(socket, 400, "A valid client network address is required");

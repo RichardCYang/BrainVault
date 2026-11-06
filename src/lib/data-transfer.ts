@@ -40,6 +40,7 @@ import {
   type AuthSessionBoundaryScope
 } from "./auth-sessions.js";
 import { ApiError } from "./http.js";
+import { assertHierarchyDepth, maxBlockHierarchyDepth, maxPageHierarchyDepth } from "../utils/hierarchy.js";
 import { iconValueSchema, imageIconPrefix, maxCustomIconBytes, normalizeIconValue } from "./icon-value.js";
 import {
   createCustomCoverDataUrl,
@@ -62,6 +63,9 @@ import { renderBlockHtml } from "./markdown.js";
 import {
   parsePageVersionActorsJson,
   parsePageVersionChangesJson,
+  pageVersionChangesForBackup,
+  maxRestoredPageVersionRevision,
+  isPageVersionOmittedValue,
   parsePageVersionSummaryJson
 } from "./page-version-history.js";
 import { dataTransferResourceLimits, measureJsonUtf8BytesWithinLimit } from "./data-transfer-limits.js";
@@ -371,7 +375,7 @@ function pageVersionJsonColumnSchema(label: string, validateValue: (value: strin
 }
 const pageVersionSchema = z.object({
   page_id: idSchema,
-  revision: z.number().int().min(1).max(dataTransferResourceLimits.maxPageVersions),
+  revision: z.number().int().min(1).max(maxRestoredPageVersionRevision),
   page_edit_version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   page_content_version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   actors: pageVersionJsonColumnSchema("page version actors", parsePageVersionActorsJson),
@@ -1264,6 +1268,7 @@ function rebindPageVersionChangesJson(value: string, sourceUserId: string, targe
   if (!Array.isArray(parsed)) invalidBackup("Page version history changes must be an array");
 
   const rebindHistoryIcon = (candidate: unknown) => {
+    if (isPageVersionOmittedValue(candidate)) return candidate;
     if (candidate !== null && typeof candidate !== "string") {
       invalidBackup("Page version history contains an invalid icon value");
     }
@@ -1397,6 +1402,13 @@ function orderByParent<T>(items: T[], getId: (item: T) => string, getParent: (it
 
 function validateManifestRelations(manifest: BrainVaultBackup) {
   const { pages, blocks, tags, pageTags } = manifest.data;
+  try {
+    assertHierarchyDepth(new Map(pages.map((page) => [page.id, page.parent_page_id])), maxPageHierarchyDepth, "PAGE");
+    assertHierarchyDepth(new Map(blocks.map((block) => [block.id, block.parent_block_id])), maxBlockHierarchyDepth, "BLOCK");
+  } catch (error) {
+    if (error instanceof ApiError) invalidBackup(error.message);
+    throw error;
+  }
   const pageShares = manifest.data.pageShares ?? [];
   const collectionShares = manifest.data.collectionShares ?? [];
   const pageComments = manifest.data.pageComments ?? [];
@@ -1826,6 +1838,7 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
          ORDER BY pv.page_id ASC, pv.revision ASC`,
         [userId]
       );
+      for (const version of pageVersions) version.changes = pageVersionChangesForBackup(version.changes);
       const navigationCollapsedPageIds = (await client.query<{ page_id: string }>(
         `SELECT np.page_id
          FROM user_navigation_collapsed_pages np

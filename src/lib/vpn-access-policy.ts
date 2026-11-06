@@ -1,7 +1,8 @@
 import type { Request } from "express";
+import { env } from "../config/env.js";
 import { db, type DbClient } from "./db.js";
 import { normalizeIsoCountryCode, type IsoCountryCode } from "./country-codes.js";
-import { isPublicCountryLookupIp, normalizeCountryLookupIp } from "./geo-country.js";
+import { isCountryPolicyLocalNetworkIp, isPublicCountryLookupIp, normalizeCountryLookupIp } from "./geo-country.js";
 import { ApiError } from "./http.js";
 import { readTorExitAddresses } from "./tor-exit-list.js";
 import {
@@ -18,7 +19,7 @@ import {
 export type VpnRiskVerdict = "CLEAR" | "VPN" | "VPN_GATE" | "PROXY" | "TOR" | "UNKNOWN";
 export type VpnBlockReason = Extract<
   CountryLoginBlockReason,
-  "VPN_DETECTED" | "VPN_GATE_DETECTED" | "PROXY_DETECTED" | "TOR_DETECTED"
+  "VPN_DETECTED" | "VPN_GATE_DETECTED" | "PROXY_DETECTED" | "TOR_DETECTED" | "VPN_VERIFICATION_UNAVAILABLE"
 >;
 
 export type VpnProviderSignal = {
@@ -661,8 +662,8 @@ export function evaluateVpnSignals(
   if (!available.length) {
     return {
       verdict: "UNKNOWN",
-      blocked: false,
-      reason: null,
+      blocked: env.VPN_POLICY_FAIL_CLOSED,
+      reason: env.VPN_POLICY_FAIL_CLOSED ? "VPN_VERIFICATION_UNAVAILABLE" : null,
       confidence: 0,
       datacenter: false,
       timezoneMismatch,
@@ -752,12 +753,15 @@ export async function resolveVpnAccessRisk(
   const normalizedIp = normalizeCountryLookupIp(ipAddress);
   const webRtcSignal = normalizeClientWebRtcSignal(clientWebRtcSignal);
   if (!normalizedIp || !isPublicCountryLookupIp(normalizedIp)) {
+    const localAllowed = env.VPN_ALLOW_PRIVATE_NETWORK && normalizedIp !== null
+      && isCountryPolicyLocalNetworkIp(normalizedIp);
+    const blocked = env.VPN_POLICY_FAIL_CLOSED && !localAllowed;
     return {
       ipAddress: (normalizedIp ?? ipAddress) || "unknown",
       countryCode: null,
       verdict: "UNKNOWN",
-      blocked: false,
-      reason: null,
+      blocked,
+      reason: blocked ? "VPN_VERIFICATION_UNAVAILABLE" : null,
       confidence: 0,
       datacenter: false,
       timezoneMismatch: false,
@@ -806,7 +810,7 @@ export async function resolveVpnAccessRisk(
   });
   let countryCode = chooseCountryCode(signals) ?? vpnGate.countryCode;
 
-  if (!countryCode && decision.blocked) {
+  if (!countryCode && decision.blocked && decision.reason !== "VPN_VERIFICATION_UNAVAILABLE") {
     const location = await resolveCountryLoginLocation(normalizedIp);
     countryCode = location.countryCode;
   }
@@ -859,9 +863,11 @@ export async function enforceVpnAccessPolicy(
     client
   );
   throw new ApiError(
-    403,
+    resolution.reason === "VPN_VERIFICATION_UNAVAILABLE" ? 503 : 403,
     "VPN_ACCESS_BLOCKED",
-    "Access from a VPN, proxy, or Tor exit is blocked by the account security policy",
+    resolution.reason === "VPN_VERIFICATION_UNAVAILABLE"
+      ? "The account VPN policy cannot verify this connection; try again when network verification is available"
+      : "Access from a VPN, proxy, or Tor exit is blocked by the account security policy",
     {
       countryCode: resolution.countryCode,
       reason: resolution.reason,

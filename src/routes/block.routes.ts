@@ -7,6 +7,7 @@ import { db, transaction, type DbClient, type DbValue } from "../lib/db.js";
 import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { createId } from "../lib/id.js";
 import { env } from "../config/env.js";
+import { assertBlockParentChangesDepth, assertHierarchyDepth, maxBlockHierarchyDepth } from "../utils/hierarchy.js";
 import {
   attachmentFileExists,
   attachmentTempDir,
@@ -695,6 +696,12 @@ async function assertParentBlock(parentBlockId: string | null | undefined, pageI
   if (!parentBlockId) return;
   const parent = await client.queryOne("SELECT id FROM blocks WHERE id = ? AND page_id = ?", [parentBlockId, pageId]);
   if (!parent) throw new ApiError(400, "INVALID_PARENT_BLOCK", "Parent block must exist on the same page");
+  const rows = await client.query<{ id: string; parent_block_id: string | null }>(
+    "SELECT id, parent_block_id FROM blocks WHERE page_id = ?", [pageId]
+  );
+  const parents = new Map(rows.map((row) => [row.id, row.parent_block_id]));
+  parents.set("\u0000new-block", parentBlockId);
+  assertHierarchyDepth(parents, maxBlockHierarchyDepth, "BLOCK");
 }
 
 function assertReorderDoesNotCreateCycle(
@@ -1456,6 +1463,7 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
         }
         if (body.parentBlockId !== undefined) {
           assertReorderDoesNotCreateCycle(hierarchyRows, [{ id: blockId, parentBlockId: body.parentBlockId }]);
+          assertBlockParentChangesDepth(hierarchyRows, [{ id: blockId, parentBlockId: body.parentBlockId }]);
         }
       } else {
         const lockedBlock = await client.queryOne<BlockRow>(
@@ -2358,6 +2366,7 @@ blockRouter.post(
         }
 
         assertReorderDoesNotCreateCycle(hierarchyRows, items);
+        assertBlockParentChangesDepth(hierarchyRows, items);
 
         for (const item of items) {
           const result = item.parentBlockId !== undefined

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { env } from "../config/env.js";
+import { assertHierarchyDepth, maxPageHierarchyDepth } from "../utils/hierarchy.js";
 import { db, transaction, type DbClient, type DbValue } from "../lib/db.js";
 import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { createId } from "../lib/id.js";
@@ -340,6 +341,9 @@ function assertPageParentFromLockedRows(
   if (parent.is_archived) {
     throw new ApiError(409, "PARENT_PAGE_ARCHIVED", "Restore the destination page before moving this page");
   }
+  const parents = new Map(rows.map((row) => [row.id, row.parent_page_id]));
+  parents.set(pageId, parentPageId);
+  assertHierarchyDepth(parents, maxPageHierarchyDepth, "PAGE");
   let currentId: string | null = parentPageId;
   const visited = new Set<string>();
   while (currentId) {
@@ -1085,6 +1089,12 @@ async function assertOwnedParentPage(
   if (access.page.is_archived) {
     throw new ApiError(409, "PARENT_PAGE_ARCHIVED", "Restore the destination page before creating a subpage");
   }
+  const rows = await client.query<{ id: string; parent_page_id: string | null }>(
+    "SELECT id, parent_page_id FROM pages WHERE owner_id = ?", [access.page.owner_id]
+  );
+  const parents = new Map(rows.map((row) => [row.id, row.parent_page_id]));
+  parents.set("\u0000new-page", parentPageId);
+  assertHierarchyDepth(parents, maxPageHierarchyDepth, "PAGE");
   return access.page;
 }
 

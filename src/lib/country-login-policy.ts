@@ -20,6 +20,7 @@ export type CountryLoginBlockReason =
   | "VPN_GATE_DETECTED"
   | "PROXY_DETECTED"
   | "TOR_DETECTED"
+  | "VPN_VERIFICATION_UNAVAILABLE"
   | "TOTP_ATTEMPTS_EXCEEDED";
 
 export const defaultCountryBlockHistoryMonths = 3;

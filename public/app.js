@@ -2167,6 +2167,9 @@ function formatLoginCountry(countryCode) {
 }
 
 function translateApiError(data, status) {
+  if (data?.error?.code === "VPN_ACCESS_BLOCKED" && data?.error?.details?.reason === "VPN_VERIFICATION_UNAVAILABLE") {
+    return t("account.vpnVerificationUnavailable");
+  }
   const code = data?.error?.code;
   if (code && t(`errors.${code}`) !== `errors.${code}`) return t(`errors.${code}`);
   if (status >= 500) return t("errors.INTERNAL_SERVER_ERROR");
@@ -3746,6 +3749,7 @@ function renderBlockHistory() {
     VPN_GATE_DETECTED: "account.blockHistoryVpnGateDetected",
     PROXY_DETECTED: "account.blockHistoryProxyDetected",
     TOR_DETECTED: "account.blockHistoryTorDetected",
+    VPN_VERIFICATION_UNAVAILABLE: "account.vpnVerificationUnavailable",
     TOTP_ATTEMPTS_EXCEEDED: "account.blockHistoryTotpAttemptsExceeded"
   };
 
@@ -8798,6 +8802,9 @@ function summarizePageVersion(version) {
 }
 
 function formatPageVersionValue(field, value) {
+  if (value?.$pageVersionOmitted === true) {
+    return t("versions.valueOmitted", { bytes: value.bytes, sha256: value.sha256 });
+  }
   if (value === null || value === undefined || value === "") return t("versions.emptyValue");
   if (typeof value === "boolean") return t(value ? "versions.yes" : "versions.no");
   if (field === "type") return t(blockTypeLabels[value] ?? String(value));
@@ -8843,7 +8850,10 @@ function createPageVersionChangeCard(change) {
   const fields = document.createElement("div");
   fields.className = "page-version-field-list";
 
-  if (change.kind === "history-started") {
+  if (change.kind === "details-omitted") {
+    title.textContent = t("versions.detailsOmitted");
+    meta.textContent = t(change.reason === "LEGACY_INVALID" ? "versions.invalidDetails" : "versions.detailLimit");
+  } else if (change.kind === "history-started") {
     title.textContent = t("versions.historyStarted");
     meta.textContent = t("versions.baselineDescription");
     for (const [field, after] of Object.entries(change.page ?? {})) {
@@ -8866,7 +8876,9 @@ function createPageVersionChangeCard(change) {
       type: t(blockTypeLabels[change.block?.type] ?? String(change.block?.type ?? ""))
     });
     for (const field of ["type", "markdown", "checked", "parentBlockId", "sortOrder", "metadata"]) {
-      const value = change.block?.[field];
+      const value = field === "metadata" && change.block?.metadataOmitted
+        ? { $pageVersionOmitted: true, ...change.block.metadataOmitted }
+        : change.block?.[field];
       fields.append(createPageVersionFieldChange({
         field,
         before: created ? null : value,
@@ -9053,7 +9065,7 @@ function renderPageVersionHistoryDetail(version) {
   } else {
     const empty = document.createElement("p");
     empty.className = "muted";
-    empty.textContent = t("versions.noChanges");
+    empty.textContent = t(version.integrity === "invalid" ? "versions.invalidDetails" : "versions.noChanges");
     changeList.append(empty);
   }
   elements.pageVersionHistoryDetail.append(header, changeList);

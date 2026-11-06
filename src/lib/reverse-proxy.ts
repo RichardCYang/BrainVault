@@ -1,5 +1,6 @@
 import net from "node:net";
 import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
+import { isCountryPolicyLocalNetworkIp } from "./geo-country.js";
 
 export type ExpressTrustProxySetting = false | string[];
 
@@ -167,7 +168,8 @@ export function forwardedForAddresses(headers: IncomingHttpHeaders) {
 
 export function getClientIpAddressFromTrustedProxyRequest(
   request: Pick<IncomingMessage, "headers" | "socket">,
-  trustedProxyAddresses: readonly string[]
+  trustedProxyAddresses: readonly string[],
+  allowPrivateClients = false
 ) {
   const remoteAddress = normalizeNetworkIpAddress(request.socket.remoteAddress);
   if (!remoteAddress) return "unknown";
@@ -175,7 +177,7 @@ export function getClientIpAddressFromTrustedProxyRequest(
 
   const forwardedAddresses = forwardedForAddresses(request.headers);
   if (forwardedAddresses === null) return "unknown";
-  if (!forwardedAddresses.length) return remoteAddress;
+  if (!forwardedAddresses.length) return "unknown";
 
   // Match Express/proxy-addr's right-to-left trust boundary: only walk farther
   // into X-Forwarded-For while the immediately closer hop is explicitly trusted.
@@ -189,6 +191,7 @@ export function getClientIpAddressFromTrustedProxyRequest(
     selectedAddress = forwardedAddresses[index];
     closerHop = selectedAddress;
   }
+  if (!allowPrivateClients && isCountryPolicyLocalNetworkIp(selectedAddress)) return "unknown";
   return selectedAddress;
 }
 

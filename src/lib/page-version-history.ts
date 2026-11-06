@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { createHash } from "node:crypto";
+import { measureJsonUtf8BytesWithinLimit } from "./data-transfer-limits.js";
 import { failFastArray } from "./validation-errors.js";
 import type { DbClient } from "./db.js";
 import { describePageCoverUrlForHistory } from "./page-cover.js";
@@ -26,6 +28,7 @@ export type PageVersionBlockState = {
   checked: boolean;
   sortOrder: number;
   metadata: Record<string, unknown> | null;
+  metadataOmitted?: { bytes: number; sha256: string };
 };
 
 export type PageVersionPageState = {
@@ -46,7 +49,8 @@ export type PageVersionChange =
   | { kind: "page-updated"; fields: PageVersionFieldChange[] }
   | { kind: "block-created"; block: PageVersionBlockState }
   | { kind: "block-updated"; blockId: string; blockType: BlockRow["type"]; fields: PageVersionFieldChange[] }
-  | { kind: "block-deleted"; block: PageVersionBlockState };
+  | { kind: "block-deleted"; block: PageVersionBlockState }
+  | { kind: "details-omitted"; reason: "DETAIL_LIMIT" | "LEGACY_INVALID" };
 
 export type PageVersionSummary = {
   baseline: number;
@@ -61,6 +65,13 @@ export type PageVersionSummary = {
 const pageVersionHistoryMaxDepth = 16;
 const pageVersionHistoryMaxNodes = 100_000;
 const pageVersionHistoryMaxSerializedBytes = 4 * 1024 * 1024;
+export const pageVersionWriteMaxBytes = 256 * 1024;
+export const pageVersionValueInlineMaxBytes = 16 * 1024;
+export const pageVersionMaxRowsPerPage = 1_000;
+export const pageVersionMaxBytesPerPage = 16 * 1024 * 1024;
+// Row retention does not restart the public revision counter. Permit long-lived
+// histories while reserving ample safe-integer headroom after an import.
+export const maxRestoredPageVersionRevision = 0xffffffff;
 const forbiddenPageVersionHistoryKeys = new Set(["__proto__", "constructor", "prototype"]);
 const historyIdSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
 const historyNullableIdSchema = historyIdSchema.nullable();
@@ -84,6 +95,15 @@ const pageVersionFieldChangeSchema = z.object({
   before: z.unknown(),
   after: z.unknown()
 }).strict();
+const omittedHistoryValueSchema = z.object({
+  $pageVersionOmitted: z.literal(true),
+  bytes: z.number().int().nonnegative(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/)
+}).strict();
+
+export function isPageVersionOmittedValue(value: unknown) {
+  return omittedHistoryValueSchema.safeParse(value).success;
+}
 const pageVersionPageStateSchema = z.object({
   title: z.string().max(160),
   icon: z.string().max(1024 * 1024).nullable(),
@@ -102,9 +122,14 @@ const pageVersionBlockStateSchema = z.object({
   markdown: z.string().max(20_000),
   checked: z.boolean(),
   sortOrder: z.number().int(),
-  metadata: z.unknown().nullable()
+  metadata: z.unknown().nullable(),
+  metadataOmitted: z.object({ bytes: z.number().int().nonnegative(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional()
 }).strict();
 const pageVersionChangeSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("details-omitted"),
+    reason: z.enum(["DETAIL_LIMIT", "LEGACY_INVALID"])
+  }).strict(),
   z.object({
     kind: z.literal("history-started"),
     page: pageVersionPageStateSchema.omit({ tags: true })
@@ -218,6 +243,9 @@ function parseWithSchema<T>(value: unknown, label: string, schema: z.ZodTypeAny)
 }
 
 function normalizePageVersionBlockState(block: z.infer<typeof pageVersionBlockStateSchema>): PageVersionBlockState {
+  if (block.metadataOmitted && block.metadata !== null) {
+    throw new PageVersionHistoryIntegrityError("Omitted page version metadata must be null");
+  }
   const metadata = validateStoredBlockMetadata(block.type, block.metadata);
   if (block.metadata !== null && metadata === null) {
     throw new PageVersionHistoryIntegrityError("Page version block metadata is invalid");
@@ -424,6 +452,83 @@ function countPageVersionChanges(changes: PageVersionChange[]) {
   }, 0);
 }
 
+function describeOmittedHistoryValue(value: unknown) {
+  const serialized = JSON.stringify(value) ?? "null";
+  return {
+    bytes: Buffer.byteLength(serialized, "utf8"),
+    sha256: createHash("sha256").update(serialized).digest("hex")
+  };
+}
+
+function boundHistoryValue(value: unknown) {
+  if (measureJsonUtf8BytesWithinLimit(value, pageVersionValueInlineMaxBytes) !== null) return value;
+  return { $pageVersionOmitted: true, ...describeOmittedHistoryValue(value) };
+}
+
+// History is an audit log, not the canonical block store. Explicitly describe
+// omitted values without rejecting a valid edit or silently showing it as null.
+export function boundPageVersionChanges(changes: PageVersionChange[]): PageVersionChange[] {
+  const omitted: PageVersionChange[] = [{ kind: "details-omitted", reason: "DETAIL_LIMIT" }];
+  try {
+    const bounded = changes.map((change): PageVersionChange => {
+      if (change.kind === "block-created" || change.kind === "block-deleted") {
+        if (measureJsonUtf8BytesWithinLimit(change.block.metadata, pageVersionValueInlineMaxBytes) !== null) return change;
+        return { ...change, block: {
+          ...change.block, metadata: null, metadataOmitted: describeOmittedHistoryValue(change.block.metadata)
+        } };
+      }
+      if (change.kind === "page-updated" || change.kind === "block-updated") {
+        return { ...change, fields: change.fields.map((field) => ({
+          ...field, before: boundHistoryValue(field.before), after: boundHistoryValue(field.after)
+        })) };
+      }
+      return change;
+    });
+    if (measureJsonUtf8BytesWithinLimit(bounded, pageVersionWriteMaxBytes) === null) return omitted;
+    // Use the same schema/depth/node validation as reads and backup restore.
+    return parsePageVersionChangesJson(bounded);
+  } catch (error) {
+    if (error instanceof PageVersionHistoryIntegrityError || error instanceof RangeError) return omitted;
+    throw error;
+  }
+}
+
+export function pageVersionChangesForBackup(value: string) {
+  try {
+    parsePageVersionChangesJson(value);
+    return value;
+  } catch (error) {
+    if (!(error instanceof PageVersionHistoryIntegrityError)) throw error;
+    // Keep the revision/actors/summary and make the missing legacy detail
+    // explicit. A historical bad row must not prevent restoring current notes.
+    return JSON.stringify([{ kind: "details-omitted", reason: "LEGACY_INVALID" }]);
+  }
+}
+
+export async function prunePageVersionHistory(client: DbClient, pageId: string, revision: number) {
+  if (revision > pageVersionMaxRowsPerPage) {
+    await client.execute("DELETE FROM page_versions WHERE page_id = ? AND revision <= ?", [
+      pageId, revision - pageVersionMaxRowsPerPage
+    ]);
+  }
+  // The revision prune bounds this scan to 1,000 rows, including legacy history.
+  // Compute sizes in SQL so historical JSON never crosses the DB connection.
+  const expired = await client.queryOne<{ cutoff_revision: number | bigint | null }>(
+    `SELECT MAX(retained_versions.revision) AS cutoff_revision FROM (
+       SELECT revision,
+              SUM(OCTET_LENGTH(actors) + OCTET_LENGTH(change_summary) + OCTET_LENGTH(changes))
+                OVER (ORDER BY revision DESC ROWS UNBOUNDED PRECEDING) AS total_bytes
+       FROM page_versions WHERE page_id = ?
+     ) retained_versions WHERE retained_versions.total_bytes > ?`,
+    [pageId, pageVersionMaxBytesPerPage]
+  );
+  if (expired?.cutoff_revision !== null && expired?.cutoff_revision !== undefined) {
+    await client.execute("DELETE FROM page_versions WHERE page_id = ? AND revision <= ?", [
+      pageId, Number(expired.cutoff_revision)
+    ]);
+  }
+}
+
 export async function recordPageVersion(
   client: DbClient,
   input: {
@@ -436,7 +541,7 @@ export async function recordPageVersion(
   if (!input.changes.length) return null;
 
   const page = await client.queryOne<Pick<PageRow, "edit_version" | "content_version">>(
-    "SELECT edit_version, content_version FROM pages WHERE id = ?",
+    "SELECT edit_version, content_version FROM pages WHERE id = ? FOR UPDATE",
     [input.pageId]
   );
   if (!page) return null;
@@ -457,6 +562,11 @@ export async function recordPageVersion(
   const summary = summarizePageVersionChanges(input.changes);
   const changeCount = countPageVersionChanges(input.changes);
   const actors = input.actors.length ? input.actors : [{ id: "unknown", username: "unknown", name: null }];
+  const changesJson = JSON.stringify(boundPageVersionChanges(input.changes));
+  const actorsJson = JSON.stringify(parsePageVersionActorsJson(actors));
+  if (Buffer.byteLength(actorsJson, "utf8") > pageVersionWriteMaxBytes) {
+    throw new PageVersionHistoryIntegrityError("Page version actors exceed the write byte limit");
+  }
 
   const result = await client.execute<{ insertId: number | bigint }>(
     `INSERT INTO page_versions
@@ -468,13 +578,15 @@ export async function recordPageVersion(
       revision,
       Number(page.edit_version ?? 1),
       Number(page.content_version ?? 1),
-      JSON.stringify(actors),
+      actorsJson,
       input.source,
       changeCount,
       JSON.stringify(summary),
-      JSON.stringify(input.changes)
+      changesJson
     ]
   );
+
+  await prunePageVersionHistory(client, input.pageId, revision);
 
   return { id: Number(result.insertId), revision };
 }
@@ -533,9 +645,17 @@ export function mapPageVersionListRow(row: PageVersionRow) {
 }
 
 export function mapPageVersionDetailRow(row: PageVersionRow) {
+  let changes: PageVersionChange[] = [];
+  let integrity: "ok" | "invalid" = "ok";
+  try {
+    changes = parsePageVersionChangesJson(row.changes ?? []);
+  } catch {
+    integrity = "invalid";
+  }
   return {
     ...mapPageVersionListRow(row),
-    changes: parseStoredHistory(parsePageVersionChangesJson, row.changes ?? [], [] as PageVersionChange[])
+    changes,
+    integrity
   };
 }
 

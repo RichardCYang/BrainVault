@@ -1,3 +1,5 @@
+import { assertHierarchyDepth, maxBlockHierarchyDepth } from "./hierarchy.js";
+
 export type FlatBlock = {
   id: string;
   parentBlockId: string | null;
@@ -9,6 +11,7 @@ export type BlockNode<T extends FlatBlock> = T & {
 };
 
 export function buildBlockTree<T extends FlatBlock>(blocks: T[]): BlockNode<T>[] {
+  assertHierarchyDepth(new Map(blocks.map((block) => [block.id, block.parentBlockId])), maxBlockHierarchyDepth, "BLOCK");
   const byId = new Map<string, BlockNode<T>>();
   const roots: BlockNode<T>[] = [];
 
@@ -24,11 +27,11 @@ export function buildBlockTree<T extends FlatBlock>(blocks: T[]): BlockNode<T>[]
     }
   }
 
-  const sortNodes = (nodes: BlockNode<T>[]) => {
+  const pending = [roots];
+  while (pending.length) {
+    const nodes = pending.pop()!;
     nodes.sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id));
-    nodes.forEach((node) => sortNodes(node.children));
-  };
-
-  sortNodes(roots);
+    for (const node of nodes) if (node.children.length) pending.push(node.children);
+  }
   return roots;
 }
