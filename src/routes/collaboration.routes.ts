@@ -9,6 +9,12 @@ import {
   collaborationShareIpRateLimit
 } from "../middleware/auth-rate-limit.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
+import {
+  admitRecoveryUpload,
+  beginRecoveryUploadProcessing,
+  recoveryCandidateUploadRateLimit,
+  validateRecoveryUploadHeaders
+} from "../middleware/recovery-upload.js";
 import { idParamSchema, requireUser, routeIdSchema, safeVersionSchema, usernameSchema } from "../utils/schemas.js";
 import { ApiError, notFound } from "../lib/http.js";
 import { createId } from "../lib/id.js";
@@ -77,6 +83,7 @@ import type { BlockRow, PageRow, UserRow } from "../types/domain.js";
 import { assertNoActiveCollaborationWriteLeases } from "../lib/collaboration-write-lease.js";
 import { quarantineCollaborationHistoryForOwner } from "../lib/collaboration-quarantine.js";
 import {
+  assertRecoveryUploadGrant,
   deleteRecoveryCandidate,
   directRecoveryLineageKey,
   getRecoveryCandidate,
@@ -1253,9 +1260,25 @@ collaborationRouter.delete(
 collaborationRouter.post(
   "/recovery/pages/:pageId/candidates",
   validate({ params: idParamSchema, query: recoveryCandidateUploadQuerySchema }),
-  raw({ type: "application/octet-stream", limit: maxRecoveryCandidateBytes }),
+  recoveryCandidateUploadRateLimit,
+  validateRecoveryUploadHeaders,
+  admitRecoveryUpload,
   async (req, res, next) => {
     try {
+      const query = getValidatedQuery<{ kind: RecoveryCandidateKind; documentEpoch?: string }>(req);
+      const lineageKey = query.kind === "YJS_UPDATE" ? yjsRecoveryLineageKey(String(query.documentEpoch))
+        : query.kind === "YJS_LEGACY_UPDATE" ? legacyYjsRecoveryLineageKey() : directRecoveryLineageKey();
+      await assertRecoveryUploadGrant(String(req.params.pageId), requireUser(req.user).id, lineageKey);
+      if (!req.aborted && !res.destroyed) next();
+    } catch (error) {
+      next(error);
+    }
+  },
+  raw({ type: "application/octet-stream", limit: maxRecoveryCandidateBytes, inflate: false }),
+  async (req, res, next) => {
+    let releaseUpload: (() => void) | undefined;
+    try {
+      releaseUpload = beginRecoveryUploadProcessing(res);
       const user = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
@@ -1289,6 +1312,8 @@ collaborationRouter.post(
       res.status(stored.created ? 201 : 200).json({ candidate: stored });
     } catch (error) {
       next(error);
+    } finally {
+      releaseUpload?.();
     }
   }
 );

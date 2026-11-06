@@ -192,6 +192,22 @@ export async function preserveRecoveryGrantsForPages(
   }
 }
 
+// Admission is only a cheap preflight. Persistence rechecks this grant under
+// its transaction lock so expiry/revocation during upload still fails closed.
+export async function assertRecoveryUploadGrant(
+  pageId: string, principalId: string, lineageKey: string, client: DbClient = db
+) {
+  const grant = await client.queryOne<{ owner_id: string }>(
+    `SELECT owner_id FROM page_recovery_grants
+     WHERE page_id = ? AND principal_id = ? AND lineage_key = ?
+       AND purged_at IS NULL AND expires_at > CURRENT_TIMESTAMP(6)`,
+    [pageId, principalId, lineageKey]
+  );
+  if (!grant) {
+    throw new ApiError(404, "RECOVERY_GRANT_NOT_FOUND", "This recovery lineage is not registered for durable server recovery");
+  }
+}
+
 export async function storeRecoveryCandidate(input: {
   pageId: string;
   principalId: string;

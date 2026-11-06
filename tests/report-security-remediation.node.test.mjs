@@ -66,7 +66,10 @@ test("BV-34 infers RFC 6052 NAT64 prefixes from RFC 7050 ipv4only.arpa answers",
 
 test("BV-35 backup page-version revisions cannot poison future history increments", () => {
   const source = read("src/lib/data-transfer.ts");
-  assert.match(source, /revision: z\.number\(\)\.int\(\)\.min\(1\)\.max\(dataTransferResourceLimits\.maxPageVersions\)/);
+  assert.match(source, /revision: z\.number\(\)\.int\(\)\.min\(1\)\.max\(maxRestoredPageVersionRevision\)/);
+  const history = read("src/lib/page-version-history.ts");
+  assert.match(history, /maxRestoredPageVersionRevision = 0xffffffff/);
+  assert.match(history, /currentRevision >= Number\.MAX_SAFE_INTEGER/);
 });
 
 test("BV-36 hostname normalization strips all trailing root dots", () => {

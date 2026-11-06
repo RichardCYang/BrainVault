@@ -93,6 +93,16 @@ Keep every backend private so all public requests pass through the limiter. If a
 
 Keep `JWT_SECRET` persistent across application restarts. It also keys deletion-preview HMACs; rotating it invalidates outstanding previews, which must be refreshed before deletion. Old unkeyed previews fail with `409 PAGE_EDIT_CONFLICT` after this update.
 
+### Credential-safe proxy logging
+
+The NGINX example explicitly selects a minimal access-log format without query strings or request headers. Keep `Sec-WebSocket-Protocol`, `Cookie`, `Set-Cookie`, and `Authorization` out of access logs, tracing, WAF captures, and error/debug logs at every ingress. Collaboration subprotocols contain a 120-second, page- and session-bound ticket; the application requires the matching session cookie as well. Moving that ticket to another cookie would still require log redaction and a single shared cookie would collide across page tabs. Preserve the existing transport and redact credentials at the logging boundary. Do not enable full-header logging in production.
+
+### Password login recovery
+
+Account-wide password throttling deliberately applies across source networks, so someone who knows an account ID can temporarily prevent password login. The initial persisted lock is 30 seconds, grows on failures after expiry, and caps at 15 minutes; the independent default account request budget lasts six hours. Removing only the persisted lock does not remove that second restriction and weakens distributed guessing protection.
+
+Register a discoverable passkey before losing access. The **Passkey** sign-in flow uses separate admission limits and clears the password account counter and persisted lock only after verified WebAuthn authentication. An existing authenticated session can also call `POST /api/auth/login-lockout/reset`; this route cannot unlock another account and does not reset the shared IP budget. Without a passkey or an active session, password login must wait for the configured restrictions to expire. Keep an operator recovery process for that case; do not offer an anonymous reset based only on an account ID.
+
 ### Nginx Proxy Manager
 
 Create a Proxy Host with:

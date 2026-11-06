@@ -1,10 +1,64 @@
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { parseHTML } from "linkedom";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderBlockHtml, sanitizeRenderedBlockHtml, sanitizeRenderedClass } from "../src/lib/markdown.js";
 import { getKanbanData } from "../src/lib/kanban.js";
 import { assertStructuredBlockMetadataIntegrity } from "../src/lib/structured-metadata-integrity.js";
+import { createHash } from "node:crypto";
+import { EventEmitter, once } from "node:events";
+import http from "node:http";
+import request from "supertest";
+import katex from "katex";
+import { createApp } from "../src/app.js";
+import { admitRecoveryUpload, beginRecoveryUploadProcessing } from "../src/middleware/recovery-upload.js";
+import { maxRecoveryCandidateBytes } from "../src/lib/recovery-candidates.js";
+import { parseBackupManifest } from "../src/lib/data-transfer.js";
+import { maxRestoredPageVersionRevision, recordPageVersion } from "../src/lib/page-version-history.js";
+
+const state = vi.hoisted(() => ({
+  queryOne: vi.fn(), execute: vi.fn(), grant: true, revokeDuringStore: false
+}));
+vi.mock("../src/lib/db.js", () => {
+  const client = { queryOne: state.queryOne, execute: state.execute, query: async () => [] };
+  return { db: client, transaction: async (fn) => fn(client) };
+});
+vi.mock("../src/middleware/auth.js", async (original) => ({
+  ...await original(),
+  requireAuth: (req, _res, next) => {
+    req.user = { id: req.get("x-test-user") || "usr_recovery", username: "recovery" };
+    req.auth = { authVersion: 1, workspaceGeneration: 1, sessionId: "ses_recovery" };
+    next();
+  }
+}));
+vi.mock("node:os", async (original) => {
+  const actual = await original();
+  return { ...actual, default: { ...actual, networkInterfaces: () => ({}) } };
+});
+
+
+const uploadPath = "/api/recovery/pages/pag_review/candidates?kind=DIRECT_DRAFT&sourceId=draft&generation=local";
+let userSequence = 0;
+function upload(app = createApp()) {
+  return request(app).post(uploadPath).set("x-test-user", `usr_http_${++userSequence}`)
+    .set("Content-Type", "application/octet-stream");
+}
+
+beforeEach(() => {
+  state.grant = true;
+  state.revokeDuringStore = false;
+  state.execute.mockReset().mockResolvedValue({ affectedRows: 1 });
+  state.queryOne.mockReset().mockImplementation(async (sql, args) => {
+    if (sql.includes("FROM page_recovery_grants")) {
+      if (!state.grant || (state.revokeDuringStore && sql.includes("FOR UPDATE"))) return null;
+      return { owner_id: args[1] };
+    }
+    if (sql.includes("FROM users")) return { id: args[0], auth_version: 1, attachment_generation: 1 };
+    if (sql.includes("FROM user_auth_sessions")) return { id: "ses_recovery" };
+    if (sql.includes("COUNT(*)")) return { candidate_count: 0, payload_bytes: 0 };
+    return null;
+  });
+});
 
 const read = (file) => readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
 const sanitizer = read("public/rendered-html-sanitizer.js").replace("export function renderServerBlockHtml", "function renderServerBlockHtml");
@@ -89,4 +143,196 @@ describe("BV-2026-002 Kanban focus", () => {
     if (option !== "focusStyleCardId") expect(target.select).toHaveBeenCalledOnce();
     else expect(editor.querySelector("details").open).toBe(true);
   });
+});
+
+describe("report A: actual recovery HTTP route", () => {
+  it("rejects a missing grant before the client sends any of its declared 20 MiB body", async () => {
+    state.grant = false;
+    const server = createApp().listen(0, "127.0.0.1");
+    await once(server, "listening");
+    let pending;
+    try {
+      const response = await new Promise((resolve, reject) => {
+        pending = http.request({
+          hostname: "127.0.0.1", port: server.address().port, path: uploadPath, method: "POST",
+          headers: { "Content-Type": "application/octet-stream", "Content-Length": maxRecoveryCandidateBytes }
+        }, (res) => {
+          let body = "";
+          res.setEncoding("utf8");
+          res.on("data", (part) => { body += part; });
+          res.on("end", () => resolve({ status: res.statusCode, body: JSON.parse(body) }));
+        });
+        pending.on("error", reject);
+        pending.setTimeout(2000, () => pending.destroy(new Error("Server waited for an unauthorized body")));
+        pending.flushHeaders();
+      });
+      expect(response.status).toBe(404);
+      expect(response.body.error.code).toBe("RECOVERY_GRANT_NOT_FOUND");
+      expect(state.execute).not.toHaveBeenCalled();
+    } finally {
+      pending?.destroy();
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it("persists valid bytes and rechecks a revoked grant inside the durable transaction", async () => {
+    const payload = Buffer.from("browser recovery bytes");
+    const success = await upload().send(payload).expect(201);
+    expect(success.body.candidate.payloadSha256).toBe(createHash("sha256").update(payload).digest("hex"));
+    expect(state.execute.mock.calls.some(([sql]) => sql.includes("INSERT INTO page_recovery_candidates"))).toBe(true);
+    state.execute.mockClear();
+    state.revokeDuringStore = true;
+    const revoked = await upload().send(payload).expect(404);
+    expect(revoked.body.error.code).toBe("RECOVERY_GRANT_NOT_FOUND");
+    expect(state.execute.mock.calls.some(([sql]) => sql.includes("INSERT INTO page_recovery_candidates"))).toBe(false);
+  });
+
+  it("rejects forged JSON before the global JSON parser and compressed payloads before preflight", async () => {
+    const json = await upload().set("Content-Type", "application/json").send("{invalid-json").expect(415);
+    expect(json.body.error.code).toBe("INVALID_RECOVERY_CONTENT_TYPE");
+    await upload().set("Content-Encoding", "gzip").send(Buffer.from("gzip")).expect(415);
+    expect(state.queryOne).not.toHaveBeenCalled();
+  });
+
+  it("enforces the actual byte limit for chunked requests with no Content-Length", async () => {
+    const server = createApp().listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const status = await new Promise((resolve, reject) => {
+        const req = http.request({
+          hostname: "127.0.0.1", port: server.address().port, path: uploadPath, method: "POST",
+          headers: { "Content-Type": "application/octet-stream", "Transfer-Encoding": "chunked", "x-test-user": "usr_chunked" }
+        }, (res) => { res.resume(); res.on("end", () => resolve(res.statusCode)); });
+        req.on("error", reject);
+        req.end(Buffer.alloc(maxRecoveryCandidateBytes + 1));
+      });
+      expect(status).toBe(413);
+      expect(state.execute).not.toHaveBeenCalled();
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it("bounds account request churn across pages and releases capacity after rejected preflights", async () => {
+    state.grant = false;
+    const app = createApp();
+    for (let i = 0; i < 11; i++) {
+      const response = await request(app).post(uploadPath.replace("pag_review", `pag_${i}`))
+        .set("x-test-user", "usr_rate_churn").set("Content-Type", "application/octet-stream")
+        .send(Buffer.from("draft"));
+      expect(response.status).toBe(i < 10 ? 404 : 429);
+      if (i === 10) expect(response.body.error.code).toBe("RECOVERY_UPLOAD_RATE_LIMITED");
+    }
+    await upload(app).send(Buffer.from("draft")).expect(404);
+  });
+});
+
+it("keeps processing capacity occupied on disconnect until storage completes, and releases exactly once", () => {
+  const active = [];
+  function admit(id) {
+    const req = Object.assign(new EventEmitter(), { user: { id } });
+    const res = Object.assign(new EventEmitter(), { setHeader: vi.fn() });
+    const next = vi.fn();
+    admitRecoveryUpload(req, res, next);
+    if (!next.mock.calls[0][0]) active.push(res);
+    return { req, res, error: next.mock.calls[0][0] };
+  }
+  try {
+    const first = admit("usr_gate_a");
+    expect(first.error).toBeUndefined();
+    expect(admit("usr_gate_a").error.code).toBe("RECOVERY_UPLOAD_BUSY");
+    const second = admit("usr_gate_b");
+    expect(admit("usr_gate_c").error.code).toBe("RECOVERY_UPLOAD_BUSY");
+    const release = beginRecoveryUploadProcessing(first.res);
+    first.res.emit("close");
+    first.req.emit("aborted");
+    expect(admit("usr_gate_a").error.code).toBe("RECOVERY_UPLOAD_BUSY");
+    expect(admit("usr_gate_c").error.code).toBe("RECOVERY_UPLOAD_BUSY");
+    release(); release();
+    expect(admit("usr_gate_c").error).toBeUndefined();
+    second.req.emit("aborted");
+    expect(admit("usr_gate_b").error).toBeUndefined();
+  } finally {
+    for (const res of active) res.emit("finish");
+  }
+});
+
+it.each(["/api/auth/login", "/api/auth/register", "/api/auth/mfa/login/totp"])(
+  "bounds anonymous authentication JSON at 64 KiB: %s", async (path) => {
+    const response = await request(createApp()).post(path).send({ padding: "x".repeat(65 * 1024) }).expect(413);
+    expect(response.body.error.code).toBe("REQUEST_BODY_TOO_LARGE");
+    expect(state.queryOne).not.toHaveBeenCalled();
+  }
+);
+
+it("serves matching KaTeX scripts, CSS and fonts locally under a CSP that blocks inline style elements", async () => {
+  const app = createApp();
+  const root = await request(app).get("/").expect(200);
+  const csp = root.headers["content-security-policy"];
+  expect(csp).toContain("style-src 'self';");
+  expect(csp).toContain("style-src-elem 'self';");
+  expect(csp).toContain("style-src-attr 'unsafe-inline'");
+  expect(csp).not.toContain("katex@");
+  for (const file of ["katex.min.js", "katex.min.css"]) {
+    const path = `/vendor/katex/0.18.2/${file}`;
+    const sri = root.text.match(new RegExp(`(?:src|href)="${path}"\\s+integrity="([^"]+)"`))[1];
+    const bytes = readFileSync(`node_modules/katex/dist/${file}`);
+    expect(sri).toBe(`sha384-${createHash("sha384").update(bytes).digest("base64")}`);
+    const asset = await request(app).get(path).expect(200);
+    expect(asset.text).toBe(bytes.toString("utf8"));
+  }
+  const css = readFileSync("node_modules/katex/dist/katex.min.css", "utf8");
+  const font = css.match(/url\((fonts\/[^)]+\.woff2)\)/)[1];
+  await request(app).get(`/vendor/katex/0.18.2/${font}`).expect(200);
+  expect(root.text).not.toContain("cdn.jsdelivr.net/npm/katex@");
+});
+
+it("validates restored revision values independently of the retained row count", () => {
+  const manifest = {
+    format: "brainvault-backup", version: 6, exportedAt: "2026-11-06T00:00:00.000Z",
+    source: { userId: "usr_review", username: "review" },
+    account: { name: null, avatar_data: null, preferred_language: null, default_collection_icon: null, theme: "light" },
+    data: { pages: [], blocks: [], tags: [], pageTags: [], pageShares: [], collectionShares: [], pageComments: [],
+      navigationCollapsedPageIds: [], navigationPageOrder: [], pageVersions: [{
+      page_id: "pag_review", revision: 1, page_edit_version: 1, page_content_version: 1,
+      actors: "[]", source: "DIRECT", change_count: 0, changes: "[]", created_at: "2026-11-06 00:00:00.000",
+      change_summary: JSON.stringify({ baseline: 0, pageCreated: 0, pageFields: [], blocksCreated: 0,
+        blocksUpdated: 0, blocksDeleted: 0, blocksMoved: 0 })
+    }] }, attachments: [], retainedAttachments: [], pageCovers: [], customIcons: [],
+    customIconLibraryRemovals: [], customIconPublications: []
+  };
+  for (const revision of [1, 200_001, maxRestoredPageVersionRevision]) {
+    manifest.data.pageVersions[0].revision = revision;
+    expect(parseBackupManifest(manifest).data.pageVersions[0].revision).toBe(revision);
+  }
+  for (const revision of [0, 1.5, maxRestoredPageVersionRevision + 1, Number.MAX_SAFE_INTEGER, Infinity]) {
+    manifest.data.pageVersions[0].revision = revision;
+    expect(() => parseBackupManifest(manifest)).toThrow();
+  }
+});
+
+it("advances the largest restored revision exactly and rejects unsafe future increments before writes", async () => {
+  let revision = maxRestoredPageVersionRevision;
+  const client = {
+    queryOne: async (sql) => sql.includes("FROM pages") ? { edit_version: 1, content_version: 1 }
+      : sql.includes("SELECT MAX(revision)") ? { revision } : { cutoff_revision: null },
+    execute: vi.fn(async () => ({ insertId: 1, affectedRows: 1 }))
+  };
+  const input = { pageId: "pag_review", actors: [], source: "DIRECT",
+    changes: [{ kind: "page-updated", fields: [{ field: "title", before: "before", after: "after" }] }] };
+  expect((await recordPageVersion(client, input)).revision).toBe(0x100000000);
+  expect(client.execute.mock.calls.find(([sql]) => sql.includes("INSERT INTO page_versions"))[1][1]).toBe(0x100000000);
+  client.execute.mockClear();
+  revision = Number.MAX_SAFE_INTEGER;
+  await expect(recordPageVersion(client, input)).rejects.toThrow("cannot be advanced safely");
+  expect(client.execute).not.toHaveBeenCalled();
+});
+
+it("renders formulas while refusing inherited KaTeX trust settings", () => {
+  expect(katex.renderToString(String.raw`\frac{a^2}{b}`, { throwOnError: false })).toContain("katex");
+  const options = Object.create({ trust: true });
+  const untrusted = katex.renderToString(String.raw`\href{https://example.invalid/}{link}`, options);
+  expect(untrusted).not.toContain("href=");
 });

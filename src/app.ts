@@ -77,6 +77,7 @@ function isPublicAssetRateLimitExempt(req: Request, publicAssetPaths: ReadonlySe
   if (req.method !== "GET" && req.method !== "HEAD") return false;
   if (req.path === "/") return true;
   if (req.path.startsWith("/vendor/yjs/")) return true;
+  if (req.path.startsWith("/vendor/katex/0.18.2/")) return true;
   return publicAssetPaths.has(req.path);
 }
 
@@ -106,11 +107,14 @@ export function createApp() {
           ],
           scriptSrc: [
             "'self'",
-            "'sha256-AQrGHmNf2ToDPODxkNyXldxWl9tWr2pnwbahY0pFneE='",
-            "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js"
+            "'sha256-AQrGHmNf2ToDPODxkNyXldxWl9tWr2pnwbahY0pFneE='"
           ],
-          styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.css"],
-          fontSrc: ["'self'", "data:", "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/fonts/"],
+          styleSrc: ["'self'"],
+          styleSrcElem: ["'self'"],
+          // Editor sizing, colors and KaTeX use style attributes. Style elements
+          // remain restricted to local stylesheets, independently of attributes.
+          styleSrcAttr: ["'unsafe-inline'"],
+          fontSrc: ["'self'", "data:"],
           connectSrc: ["'self'", ...configuredWebSocketOrigins],
           // Mermaid's strictest browser isolation mode returns a data-URL
           // iframe. User-authored Markdown still cannot persist data iframes:
@@ -175,7 +179,14 @@ export function createApp() {
   // parser so chunked requests cannot bypass the bound.
   app.use("/api/auth/passkey", express.json({ limit: "64kb" }));
   app.use("/api/auth/mfa/login/passkey", express.json({ limit: "64kb" }));
-  app.use(express.json({ limit: "5mb" }));
+  app.use(["/api/auth/login", "/api/auth/register", "/api/auth/mfa/login"], express.json({ limit: "64kb" }));
+  const applicationJsonParser = express.json({ limit: "5mb" });
+  app.use((req, res, next) => {
+    // Recovery has an authenticated, admitted raw parser. A forged JSON content
+    // type must not allocate a buffer through the global parser before admission.
+    if (req.path.toLowerCase().startsWith("/api/recovery/")) return next();
+    applicationJsonParser(req, res, next);
+  });
   app.use(express.urlencoded({ extended: false }));
 
   // These module URLs are stable across deployments, so they must revalidate.
@@ -199,6 +210,11 @@ export function createApp() {
   app.get("/vendor/yjs/yjs.mjs", (_req, res, next) => {
     sendBrowserModule(res, next, path.join(browserModuleRoot, "yjs", "dist", "yjs.mjs"));
   });
+  // npm's lockfile pins and verifies the patched KaTeX release, including all
+  // font files referenced by its stylesheet, without runtime CDN requests.
+  app.use("/vendor/katex/0.18.2", express.static(path.join(browserModuleRoot, "katex", "dist"), {
+    dotfiles: "deny", index: false, redirect: false
+  }));
   app.get("/vendor/yjs/isomorphic/browser.mjs", (_req, res, next) => {
     sendBrowserModule(res, next, path.join(browserModuleRoot, "isomorphic.js", "browser.mjs"));
   });

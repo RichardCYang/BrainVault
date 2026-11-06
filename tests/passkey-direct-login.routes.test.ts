@@ -6,6 +6,7 @@ import {
   type KeyObject
 } from "node:crypto";
 import request from "supertest";
+import express from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const database = vi.hoisted(() => ({
@@ -20,6 +21,8 @@ vi.mock("../src/lib/db.js", () => ({
 }));
 
 import { createApp } from "../src/app.js";
+import { loginAccountRateLimit } from "../src/middleware/auth-rate-limit.js";
+import { env } from "../src/config/env.js";
 
 type ChallengeRow = {
   token_hash: string;
@@ -245,7 +248,7 @@ beforeEach(() => {
       return { affectedRows: 1 };
     }
     if (sql.includes("INSERT INTO user_login_attempts")) {
-      loginOutcomes.push(String(params[3]));
+      loginOutcomes.push(String(params[2]));
       return { affectedRows: 1 };
     }
     return { affectedRows: 1 };
@@ -253,6 +256,27 @@ beforeEach(() => {
 });
 
 describe("direct discoverable-passkey login", () => {
+  it("recovers through a real assertion while both password account restrictions are active", async () => {
+    user.login_locked_until = new Date(Date.now() + env.AUTH_LOGIN_LOCK_MAX_MS).toISOString();
+    user.failed_login_attempts = env.AUTH_LOGIN_LOCK_THRESHOLD;
+    const admission = express();
+    admission.use(express.json());
+    admission.post("/attempt", loginAccountRateLimit, (_req, res) => { res.sendStatus(401); });
+    const attempt = () => request(admission).post("/attempt").send({ username: user.username });
+    for (let i = 0; i < env.AUTH_LOGIN_ACCOUNT_MAX; i++) await attempt().expect(401);
+    await attempt().expect(429);
+
+    const { agent, response: optionsResponse } = await issueOptions();
+    await agent.post("/api/auth/passkey/verify").set("Origin", origin).send({
+      challengeToken: optionsResponse.body.challengeToken,
+      response: buildAssertion(optionsResponse.body.options.challenge)
+    }).expect(200);
+    expect(user.login_locked_until).toBeNull();
+    expect(user.failed_login_attempts).toBe(0);
+    await attempt().expect(401);
+    await loginAccountRateLimit.resetKey(`account:${createHash("sha256").update(String(user.username).trim().toLowerCase()).digest("hex")}`);
+  });
+
   it("issues username-less options and authenticates a real P-256 WebAuthn assertion", async () => {
     const { agent, response: optionsResponse } = await issueOptions();
 

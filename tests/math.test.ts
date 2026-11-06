@@ -44,10 +44,11 @@ describe("LaTeX editor integration", () => {
     expect(app).toContain('{ type: "MATH", command: "/math", icon: "math" }');
     expect(app).toContain('format === "math-inline"');
     expect(app).toContain("katex.render");
-    expect(index).toContain("katex@0.17.0/dist/katex.min.css");
+    expect(index).toContain("/vendor/katex/0.18.2/katex.min.css");
     expect(index).toContain('data-format="math-inline"');
     expect(styles).toContain(".math-block-preview");
-    expect(server).toContain("https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js");
+    expect(server).toContain('path.join(browserModuleRoot, "katex", "dist")');
+    expect(server).not.toContain("https://cdn.jsdelivr.net/npm/katex@");
     expect(server).not.toContain('scriptSrc: ["\'self\'", "https://cdn.jsdelivr.net"]');
     expect(migration).toContain("'MATH'");
     expect(dataTransfer).toContain("renderBlockHtml(block.type, block.markdown");
