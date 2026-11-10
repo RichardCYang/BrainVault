@@ -1254,7 +1254,7 @@ async function buildPageListSummaries(
     const shareCount = shareCountByPageId.get(row.id) ?? 0;
     const result = {
       ...page,
-      access: toAccessPayload({ role, scope, collectionId, collectionPermission }),
+      access: toAccessPayload({ page: row, role, scope, collectionId, collectionPermission }),
       collaboration: toCollaborationPayload({ shareCount }),
       tags: tagsByPageId.get(row.id) ?? []
     };

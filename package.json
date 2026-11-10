@@ -18,7 +18,7 @@
     "reproduce:bcrypt-password-boundary": "node --import=tsx scripts/reproduce-bcrypt-password-boundary.mjs",
     "reproduce:runtime-security-floor": "node --import=tsx scripts/reproduce-runtime-security-floor.mjs",
     "reproduce:passkey-direct-login": "node scripts/reproduce-passkey-direct-login.mjs",
-    "test:security": "vitest run tests/security-hardening.test.ts tests/auth-settings.routes.test.ts tests/bookmark.test.ts tests/migration-data-safety.test.ts tests/passkey-direct-login.routes.test.ts tests/passkey-direct-login-ui.test.ts",
+    "test:security": "vitest run tests/security-hardening.test.ts tests/auth-settings.routes.test.ts tests/bookmark.test.ts tests/migration-data-safety.test.ts tests/passkey-direct-login.routes.test.ts tests/passkey-direct-login-ui.test.ts tests/direct-page-share-authorization.test.ts",
     "reproduce:materialization-loss": "node scripts/reproduce-collaboration-materialization-loss.mjs",
     "reproduce:bootstrap-loss": "node --import=tsx scripts/reproduce-collaboration-bootstrap-loss.mjs",
     "reproduce:cross-instance-loss": "node scripts/reproduce-cross-instance-compaction-loss.mjs",

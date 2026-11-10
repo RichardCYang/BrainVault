@@ -9,7 +9,7 @@ function section(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-test("share list binds administrator authorization and owner-scoped share rows to one database snapshot", async () => {
+test("share list binds owner authorization and owner-scoped share rows to one database snapshot", async () => {
   const routes = (await readFile(new URL("../src/routes/collaboration.routes.ts", import.meta.url), "utf8"))
     .replace(/\r\n/g, "\n");
   const route = section(
@@ -21,6 +21,8 @@ test("share list binds administrator authorization and owner-scoped share rows t
   assert.match(route, /const rows = await transaction\(async \(client\) => \{/);
   assert.match(route, /const access = await getPageAccess\(pageId, user\.id, client\)/);
   assert.match(route, /assertPageCanAdminister\(access\)/);
+  assert.ok(route.indexOf("assertDirectPageShareOwner(access,") < route.indexOf("return getShareRows("));
+  assert.match(route, /assertDirectPageShareOwner\(access,/);
   assert.match(route, /return getShareRows\(pageId, access\.page\.owner_id, client\)/);
   assert.doesNotMatch(route, /getPageAccess\(pageId, user\.id\);/);
   assert.doesNotMatch(route, /const rows = await getShareRows\(pageId\);/);

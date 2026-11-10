@@ -272,9 +272,15 @@ export async function getBlockAccess(blockId: string, userId: string, client: Db
 
 export function toAccessPayload(
   access: Pick<PageAccess, "role" | "scope" | "collectionId" | "collectionPermission">
+    & { page: Pick<PageRow, "is_collection"> }
 ) {
   const canEdit = canEditPageAccess(access);
   const canAdminister = canAdministerPageAccess(access);
+  // Collection administrators manage collection grants. Direct page grants
+  // belong to the workspace owner, even on a page inside a shared collection.
+  const canManageSharing = access.page.is_collection
+    ? canAdminister
+    : access.role === "OWNER" && access.scope === "OWNER";
   return {
     role: access.role,
     scope: access.scope,
@@ -285,7 +291,7 @@ export function toAccessPayload(
         : "EDIT",
     collectionId: access.collectionId,
     canEdit,
-    canManageSharing: canAdminister,
+    canManageSharing,
     canManagePage: canAdminister,
     canCreatePages: canAdminister,
     canDeletePages: canAdminister,

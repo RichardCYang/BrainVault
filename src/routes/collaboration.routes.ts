@@ -29,6 +29,7 @@ import {
   assertPageCanAdminister,
   assertPageCanEdit,
   assertPageNotArchived,
+  type PageAccess,
   getEffectivePageShareCount,
   getPageAccess,
   toAccessPayload,
@@ -451,6 +452,12 @@ function assertShareablePage(page: PageRow) {
   }
   if (page.is_archived) {
     throw new ApiError(400, "ARCHIVED_PAGE_SHARING_UNSUPPORTED", "Restore the page before sharing it");
+  }
+}
+
+function assertDirectPageShareOwner(access: Pick<PageAccess, "role" | "scope">, message: string) {
+  if (access.role !== "OWNER" || access.scope !== "OWNER") {
+    throw new ApiError(403, "PAGE_OWNER_REQUIRED", message);
   }
 }
 
@@ -959,6 +966,7 @@ collaborationRouter.get(
       const rows = await transaction(async (client) => {
         const access = await getPageAccess(pageId, user.id, client);
         assertPageCanAdminister(access);
+        assertDirectPageShareOwner(access, "Direct page shares can only be viewed by the workspace owner");
         assertShareablePage(access.page);
         return getShareRows(pageId, access.page.owner_id, client);
       });
@@ -1003,9 +1011,7 @@ collaborationRouter.post(
         const access = await getPageAccess(pageId, actor.id, client, { lockPage: true, lockAccess: true });
         assertPageCanAdminister(access);
         assertPageShareAdministrationMutationAdmission(administrationAdmission, actor.id, access);
-        if (access.role !== "OWNER" || access.scope !== "OWNER") {
-          throw new ApiError(403, "PAGE_OWNER_REQUIRED", "Direct page shares can only be created by the workspace owner");
-        }
+        assertDirectPageShareOwner(access, "Direct page shares can only be created by the workspace owner");
         const page = access.page;
         const workspaceOwnerId = page.owner_id;
         assertShareablePage(page);
@@ -1127,9 +1133,7 @@ collaborationRouter.delete(
           { lockPage: true, lockAccess: true }
         );
         assertPageCanAdminister(access);
-        if (access.role !== "OWNER" || access.scope !== "OWNER") {
-          throw new ApiError(403, "PAGE_OWNER_REQUIRED", "Direct page shares can only be removed by the workspace owner");
-        }
+        assertDirectPageShareOwner(access, "Direct page shares can only be removed by the workspace owner");
         assertPageShareAdministrationMutationAdmission(administrationAdmission, actor.id, access);
         const page = access.page;
         const workspaceOwnerId = page.owner_id;
