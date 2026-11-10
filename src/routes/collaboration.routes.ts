@@ -1,6 +1,7 @@
 import { Router, raw } from "express";
 import { z } from "zod";
 import { db, transaction, type DbClient } from "../lib/db.js";
+import { admitPageProjection, assertStoredPageResourceBudget, addPageBlockUsage, emptyPageResourceUsage } from "../lib/page-resource-limits.js";
 import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import {
@@ -44,7 +45,7 @@ import {
   disconnectPageCollaboratorsForDocumentEpoch,
   disconnectSharedUserGrant
 } from "../lib/collaboration-server.js";
-import { toBlock, toPublicUserFanout } from "../lib/mappers.js";
+import { toBlocksWithinPageBudget, toPublicUserFanout } from "../lib/mappers.js";
 import { publicProfileSummaryProjection } from "../lib/public-profile-summary.js";
 import { renderBlockHtml } from "../lib/markdown.js";
 import {
@@ -1413,6 +1414,7 @@ collaborationRouter.delete(
 
 collaborationRouter.post(
   "/pages/:pageId/collaboration/session",
+  admitPageProjection,
   collaborationSessionPageRateLimit,
   validate({ params: idParamSchema }),
   async (req, res, next) => {
@@ -1443,6 +1445,7 @@ collaborationRouter.post(
           throw new ApiError(409, "COLLABORATION_DISABLED", "Add at least one shared user to enable collaboration");
         }
         const collaborationState = await ensureCollaborationState(pageId, client);
+        await assertStoredPageResourceBudget(client, pageId);
         const documentBlocks = await client.query<BlockRow>(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
           [pageId]
@@ -1476,7 +1479,7 @@ collaborationRouter.post(
         collaboration: toCollaborationPayload(session.access),
         document: {
           title: session.access.page.title,
-          blocks: session.documentBlocks.map(toBlock)
+          blocks: toBlocksWithinPageBudget(session.documentBlocks)
         }
       });
     } catch (error) {
@@ -1487,6 +1490,7 @@ collaborationRouter.post(
 
 collaborationRouter.put(
   "/pages/:pageId/collaboration/snapshot",
+  admitPageProjection,
   validate({ params: idParamSchema, body: materializeSchema }),
   async (req, res, next) => {
     const deletedFiles: string[] = [];
@@ -1583,6 +1587,7 @@ collaborationRouter.put(
           "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
           [pageId, attachmentOwnerId]
         );
+        await assertStoredPageResourceBudget(client, pageId);
         const currentBlocks = await client.query<BlockRow>(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
           [pageId]
@@ -1762,6 +1767,8 @@ collaborationRouter.put(
             ...block,
             metadata: assertLosslessStructuredMetadata(block.type, block.metadata) as Record<string, unknown> | null
           }));
+          const pageUsage = emptyPageResourceUsage();
+          for (const block of orderedBlocks) addPageBlockUsage(pageUsage, block);
           const activeIds = new Set(orderedBlocks.map((block) => block.id));
           const deletedAttachmentIds = new Set(materialization.deletedAttachmentIds);
           for (const blockId of deletedAttachmentIds) {
@@ -1774,6 +1781,7 @@ collaborationRouter.put(
             }
           }
 
+          await assertStoredPageResourceBudget(client, pageId, true);
           const existingRows = await client.query<BlockRow>(
             "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",
             [pageId]
@@ -2004,6 +2012,8 @@ collaborationRouter.put(
             "SELECT * FROM pages WHERE id = ? AND owner_id = ?",
             [pageId, attachmentOwnerId]
           );
+          await assertStoredPageResourceBudget(client, pageId, true);
+          await assertStoredPageResourceBudget(client, pageId);
           const currentBlocks = await client.query<BlockRow>(
             "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
             [pageId]
@@ -2133,7 +2143,7 @@ collaborationRouter.put(
         pageVersion: Number(result.page.edit_version ?? 1),
         pageContentVersion: Number(result.page.content_version ?? 1),
         pageUpdatedAt: result.page.updated_at,
-        blocks: result.blocks.map(toBlock)
+        blocks: toBlocksWithinPageBudget(result.blocks)
       });
     } catch (error) {
       try {

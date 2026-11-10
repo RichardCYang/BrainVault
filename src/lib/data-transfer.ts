@@ -42,6 +42,7 @@ import {
 import { ApiError } from "./http.js";
 import { assertHierarchyDepth, maxBlockHierarchyDepth, maxPageHierarchyDepth } from "../utils/hierarchy.js";
 import { iconValueSchema, imageIconPrefix, maxCustomIconBytes, normalizeIconValue } from "./icon-value.js";
+import { addPageBlockUsage, emptyPageResourceUsage, type PageResourceUsage } from "./page-resource-limits.js";
 import {
   createCustomCoverDataUrl,
   inspectCustomCoverBytes,
@@ -2887,19 +2888,24 @@ async function importRows(
   // intentionally stay invalidated so stale retries must pass current version
   // checks before they can affect or acknowledge the restored workspace.
   const orderedBlocks = orderByParent(manifest.data.blocks, (item) => item.id, (item) => item.parent_block_id);
+  const pageUsage = new Map<string, PageResourceUsage>();
   for (const block of orderedBlocks) {
     const restoredMetadata = rebindBlockMetadataCustomIcons(
       block,
       manifest.source.userId,
       userId
     );
+    const htmlCache = renderBlockHtml(block.type, block.markdown, Boolean(block.checked), restoredMetadata);
+    const usage = pageUsage.get(block.page_id) ?? emptyPageResourceUsage();
+    addPageBlockUsage(usage, { markdown: block.markdown, metadata: restoredMetadata, htmlCache });
+    pageUsage.set(block.page_id, usage);
     await client.execute(
       `INSERT INTO blocks
        (id, page_id, parent_block_id, type, markdown, html_cache, checked, sort_order, metadata, edit_version, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         block.id, block.page_id, block.parent_block_id, block.type, block.markdown,
-        renderBlockHtml(block.type, block.markdown, Boolean(block.checked), restoredMetadata),
+        htmlCache,
         block.checked, block.sort_order, restoredMetadata, restoreVersion, block.created_at, block.updated_at
       ]
     );
@@ -3743,6 +3749,14 @@ export async function importUserDataBackup(
     invalidBackup("The backup manifest is invalid");
   }
   validateManifestRelations(manifest);
+  // Check source/count limits before staging files or deleting existing data.
+  // Generated HTML is measured incrementally inside importRows' transaction.
+  const incomingPageUsage = new Map<string, PageResourceUsage>();
+  for (const block of manifest.data.blocks) {
+    const usage = incomingPageUsage.get(block.page_id) ?? emptyPageResourceUsage();
+    addPageBlockUsage(usage, { markdown: block.markdown, metadata: block.metadata });
+    incomingPageUsage.set(block.page_id, usage);
+  }
   const restoreBlockById = new Map(manifest.data.blocks.map((block) => [block.id, block]));
   const restoresCustomIcons = manifest.version >= uploadedAssetBackupVersion;
   const retainedAttachments = manifest.retainedAttachments ?? [];

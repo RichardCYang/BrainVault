@@ -2,6 +2,7 @@ import type { IncomingMessage, Server as HttpServer } from "node:http";
 import type { Server as HttpsServer } from "node:https";
 import type { Socket } from "node:net";
 import { createHash } from "node:crypto";
+import { assertStoredPageResourceBudget } from "./page-resource-limits.js";
 import { z } from "zod";
 import { createId } from "./id.js";
 import { CollaborationMemoryBudget, type CollaborationMemoryReservation } from "./collaboration-memory-budget.js";
@@ -1630,6 +1631,7 @@ export class PageCollaborationHub {
           // The first durable Yjs state initializes collaboration from SQL. It
           // must be an exact semantic copy, never a partial client document that
           // later materialization could interpret as intentional block deletion.
+          await assertStoredPageResourceBudget(dbClient, room.pageId, true);
           const storedBlocks = await dbClient.query<BlockRow>(
             "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",
             [room.pageId]

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
+import { assertStoredPageResourceBudget, emptyPageResourceUsage, addPageBlockUsage, pageResourceLimits } from "../src/lib/page-resource-limits.js";
 
 // Execute the actual route handler with deterministic transaction/worker doubles.
 // This verifies lock boundaries and race fencing, not MariaDB isolation or latency.
@@ -37,7 +38,7 @@ function setup({ duringReplay, beforeRequest, workerError } = {}) {
     shareCount: 1, shareGeneration: "grant", editable: true,
     authenticated: true, attachmentGeneration: 3, acceptHistory: true,
     transactionId: 0, activeTransaction: false, workerCalls: 0, blobReads: 0,
-    authChecks: 0, lockedAccessChecks: 0, writes: [], trace: []
+    authChecks: 0, lockedAccessChecks: 0, writes: [], trace: [], pageUsage: [], materializedBlocks: []
   };
   const hashUpdate = (updateData) => createHash("sha256").update(updateData).digest("hex");
   const cloneHistory = () => state.history.map((row) => ({
@@ -73,6 +74,7 @@ function setup({ duringReplay, beforeRequest, workerError } = {}) {
         }));
       }
       if (sql.startsWith("SELECT * FROM blocks")) return [];
+      if (sql.includes("OCTET_LENGTH(metadata)")) return state.pageUsage;
       throw new Error(`Unexpected query: ${sql}`);
     },
     async execute(sql, params) {
@@ -92,7 +94,8 @@ function setup({ duringReplay, beforeRequest, workerError } = {}) {
   const dependencies = {
     ApiError, CollaborationDocumentError, CollaborationValidationCapacityError,
     CollaborationValidationResourceLimitError, CollaborationHistoryTimeoutError,
-    Buffer, console,
+    Buffer, console, assertStoredPageResourceBudget, emptyPageResourceUsage, addPageBlockUsage,
+    toBlocksWithinPageBudget: (blocks) => blocks,
     requireUser: (user) => user,
     requireRequestAuthScope: () => ({ authVersion: 1, workspaceGeneration: 1 }),
     notFound: () => new ApiError(404, "NOT_FOUND", "Page not found"),
@@ -153,7 +156,7 @@ function setup({ duringReplay, beforeRequest, workerError } = {}) {
         state.trace.push("worker");
         await duringReplay?.(state);
         if (workerError) throw workerError;
-        return { materialization: { title: "New title", blocks: [], deletedAttachmentIds: [] } };
+        return { materialization: { title: "New title", blocks: state.materializedBlocks, deletedAttachmentIds: [] } };
       }
     },
     async removeDeletedAttachmentFiles() { throw new Error("No attachments in this fixture"); },
@@ -265,6 +268,31 @@ test("over-budget history is rejected before BLOB loading or worker dispatch", a
   const { error } = await h.run();
   assert.equal(error?.code, "COLLABORATION_HISTORY_REPLAY_LIMIT");
   assert.equal(h.state.blobReads, 0);
+  assert.equal(h.state.workerCalls, 0);
+  assert.equal(h.state.writes.length, 0);
+});
+
+test("oversized materialized block sets cannot mutate canonical rows or advance the checkpoint", async () => {
+  const h = setup({ beforeRequest: (s) => {
+    s.materializedBlocks = Array.from({ length: pageResourceLimits.maxBlocks + 1 }, (_, index) => ({
+      id: `block-${index}`, type: "MARKDOWN", markdown: "", metadata: null
+    }));
+  } });
+  const { response, error } = await h.run();
+  assert.equal(response, undefined);
+  assert.equal(error?.code, "PAGE_BLOCK_LIMIT_EXCEEDED");
+  assert.equal(h.state.writes.length, 0);
+  assert.equal(h.state.checkpoint.materialized_update_id, 0);
+});
+
+test("already-materialized oversized SQL pages are rejected before reading block bodies", async () => {
+  const h = setup({ beforeRequest: (s) => {
+    s.checkpoint.materialized_update_id = 7;
+    s.pageUsage = [{ metadata_bytes: pageResourceLimits.maxMetadataBytes + 1, markdown_bytes: 0, html_cache_bytes: 0 }];
+  } });
+  const { response, error } = await h.run();
+  assert.equal(response, undefined);
+  assert.equal(error?.code, "PAGE_METADATA_LIMIT_EXCEEDED");
   assert.equal(h.state.workerCalls, 0);
   assert.equal(h.state.writes.length, 0);
 });

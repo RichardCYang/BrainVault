@@ -4,6 +4,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import multer from "multer";
 import { z } from "zod";
 import { db, transaction, type DbClient, type DbValue } from "../lib/db.js";
+import { admitPageProjection, assertStoredPageResourceBudget, addPageBlockUsage } from "../lib/page-resource-limits.js";
 import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { createId } from "../lib/id.js";
 import { env } from "../config/env.js";
@@ -55,7 +56,7 @@ import {
   hasCanonicalStructuredMetadataPolicy,
   StructuredMetadataCanonicalityError
 } from "../lib/structured-metadata-canonical.js";
-import { toBlock } from "../lib/mappers.js";
+import { toBlock, toBlocksWithinPageBudget } from "../lib/mappers.js";
 import {
   BlockSortOrderIntegrityError,
   blockSortOrderLimits,
@@ -1095,6 +1096,7 @@ blockRouter.post(
               JSON.stringify(metadata)
             ]
           );
+          await assertStoredPageResourceBudget(client, pageId, true);
           const pageContentVersion = await advancePageContentVersion(client, pageId, ownerId);
           const createdBlock = await client.queryOne<BlockRow>("SELECT * FROM blocks WHERE id = ?", [id]);
           if (!createdBlock) throw new ApiError(500, "BLOCK_CREATE_FAILED", "Attachment block was not created");
@@ -1307,7 +1309,7 @@ blockRouter.get("/blocks/:blockId/attachment", validate({ params: idParamSchema 
   }
 });
 
-blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body: createBlockSchema }), async (req, res, next) => {
+blockRouter.post("/pages/:pageId/blocks", admitPageProjection, validate({ params: idParamSchema, body: createBlockSchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
     const authScope = requireRequestAuthScope(req);
@@ -1392,6 +1394,7 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
           prepared.metadata ? JSON.stringify(prepared.metadata) : null
         ]
       );
+      await assertStoredPageResourceBudget(client, pageId, true);
       let pageUpdatedAt: PageRow["updated_at"] | undefined;
       const pageContentVersion = await advancePageContentVersion(client, pageId, ownerId, (page) => {
         pageUpdatedAt = page.updated_at;
@@ -1425,7 +1428,7 @@ blockRouter.post("/pages/:pageId/blocks", validate({ params: idParamSchema, body
   }
 });
 
-blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: updateBlockSchema }), async (req, res, next) => {
+blockRouter.patch("/blocks/:blockId", admitPageProjection, validate({ params: idParamSchema, body: updateBlockSchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
     const authScope = requireRequestAuthScope(req);
@@ -1446,6 +1449,7 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
       let hierarchyRows: BlockRow[] | null = null;
 
       if (hierarchyChanged) {
+        await assertStoredPageResourceBudget(client, identity.page_id, true);
         hierarchyRows = await client.query<BlockRow>(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",
           [identity.page_id]
@@ -1626,6 +1630,7 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
             "This block was changed in another session. Your local edits were not overwritten."
           );
         }
+        await assertStoredPageResourceBudget(client, existing.page_id, true);
         pageContentVersion = await advancePageContentVersion(client, existing.page_id, lockedAccess.page.owner_id);
       }
 
@@ -1661,7 +1666,7 @@ blockRouter.patch("/blocks/:blockId", validate({ params: idParamSchema, body: up
 
 blockRouter.post(
   "/blocks/:blockId/move",
-  validate({ params: idParamSchema, body: moveBlockSchema }),
+  admitPageProjection, validate({ params: idParamSchema, body: moveBlockSchema }),
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
@@ -1751,6 +1756,7 @@ blockRouter.post(
           }
 
           const placeholders = movedBlockIds.map(() => "?").join(", ");
+          await assertStoredPageResourceBudget(client, receipt.target_page_id, true);
           const replayRows = await client.query<BlockRow>(
             `SELECT * FROM blocks
              WHERE page_id = ? AND id IN (${placeholders})
@@ -1831,6 +1837,7 @@ blockRouter.post(
           );
         }
 
+        await assertStoredPageResourceBudget(client, sourcePageId, true);
         const sourceRows = await client.query<BlockRow>(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC FOR UPDATE",
           [sourcePageId]
@@ -1849,6 +1856,11 @@ blockRouter.post(
           body.expectedVersions,
           "This block subtree changed in another session. No block was moved."
         );
+
+        const targetUsage = await assertStoredPageResourceBudget(client, body.targetPageId, true);
+        for (const row of subtreeRows) {
+          addPageBlockUsage(targetUsage, { markdown: row.markdown, metadata: row.metadata, htmlCache: row.html_cache });
+        }
 
         const targetRows = await client.query<BlockRow>(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC FOR UPDATE",
@@ -1924,10 +1936,12 @@ blockRouter.post(
 
         const sourcePageContentVersion = await advancePageContentVersion(client, sourcePageId, sourceAccess.page.owner_id);
         const targetPageContentVersion = await advancePageContentVersion(client, body.targetPageId, targetAccess.page.owner_id);
+        await assertStoredPageResourceBudget(client, sourcePageId);
         const sourceAfterRows = await client.query<BlockRow>(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC",
           [sourcePageId]
         );
+        await assertStoredPageResourceBudget(client, body.targetPageId);
         const targetAfterRows = await client.query<BlockRow>(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC",
           [body.targetPageId]
@@ -2000,7 +2014,7 @@ blockRouter.post(
 
 blockRouter.delete(
   "/blocks/:blockId",
-  validate({ params: idParamSchema, body: deleteBlockSchema }),
+  admitPageProjection, validate({ params: idParamSchema, body: deleteBlockSchema }),
   async (req, res, next) => {
   try {
     const user = requireUser(req.user);
@@ -2124,6 +2138,7 @@ blockRouter.delete(
       const lockedAccess = await getPageAccess(block.page_id, user.id, client, { lockPage: true, lockAccess: true });
       assertDirectBlockMutationAllowed(lockedAccess);
       assertPageNotArchived(lockedAccess.page);
+      await assertStoredPageResourceBudget(client, block.page_id, true);
       const hierarchyRows = await client.query<BlockRow>(
         "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC FOR UPDATE",
         [block.page_id]
@@ -2161,6 +2176,7 @@ blockRouter.delete(
         );
       }
       const pageContentVersion = await advancePageContentVersion(client, block.page_id, lockedAccess.page.owner_id);
+      if (body.preserveChildren) await assertStoredPageResourceBudget(client, block.page_id);
       const afterRows = body.preserveChildren
         ? await client.query<BlockRow>(
             "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC",
@@ -2216,7 +2232,7 @@ blockRouter.delete(
 
 blockRouter.post(
   "/pages/:pageId/blocks/reorder",
-  validate({ params: idParamSchema, body: reorderSchema }),
+  admitPageProjection, validate({ params: idParamSchema, body: reorderSchema }),
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
@@ -2246,6 +2262,7 @@ blockRouter.post(
                 "This mutation id was already used for a different request. The new order was not applied."
               );
             }
+            await assertStoredPageResourceBudget(client, pageId);
             const rows = await client.query<BlockRow>(
               "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC",
               [pageId]
@@ -2259,6 +2276,7 @@ blockRouter.post(
         assertDirectBlockMutationAllowed(lockedAccess);
         assertPageNotArchived(lockedPage);
 
+        await assertStoredPageResourceBudget(client, pageId, true);
         const hierarchyRows = await client.query<BlockRow>(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY id ASC FOR UPDATE",
           [pageId]
@@ -2404,6 +2422,7 @@ blockRouter.post(
             [user.id, mutationId, pageId, mutationHash]
           );
         }
+        await assertStoredPageResourceBudget(client, pageId);
         const rows = await client.query<BlockRow>(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY sort_order ASC, id ASC",
           [pageId]
@@ -2417,7 +2436,7 @@ blockRouter.post(
         return { rows, pageContentVersion, pageUpdatedAt };
       });
 
-      res.json({ blocks: result.rows.map(toBlock), pageContentVersion: result.pageContentVersion, pageUpdatedAt: result.pageUpdatedAt });
+      res.json({ blocks: toBlocksWithinPageBudget(result.rows), pageContentVersion: result.pageContentVersion, pageUpdatedAt: result.pageUpdatedAt });
     } catch (error) {
       next(error);
     }

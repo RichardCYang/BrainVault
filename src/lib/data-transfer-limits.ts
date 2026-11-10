@@ -45,6 +45,9 @@ export function measureJsonUtf8BytesWithinLimit(value: unknown, maxBytes: number
 
   const visit = (current: unknown, arrayItem = false): boolean => {
     if (current === null) return add(4);
+    // The database connector can return timestamp columns as Date objects.
+    // Match JSON.stringify's ISO/null projection instead of counting them as {}.
+    if (current instanceof Date) return visit(current.toJSON());
 
     switch (typeof current) {
       case "string":

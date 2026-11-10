@@ -9,6 +9,7 @@ import { createId } from "../lib/id.js";
 import { lockUserAttachmentGeneration, removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { renderBlockHtml, sanitizeRenderedBlockHtml } from "../lib/markdown.js";
 import { isCurrentAiChatHtmlCache } from "../lib/ai-chat-cache.js";
+import { admitPageProjection, assertStoredPageResourceBudget, assertPageResponseBudget, assertPageRenderBudget } from "../lib/page-resource-limits.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
 import { assessPageCreateMutationReceipt, type PageCreateMutationReceipt } from "../lib/page-create-mutation.js";
 import { assessPageDeleteMutationReceipt, type PageDeleteMutationReceipt } from "../lib/page-delete-mutation.js";
@@ -21,7 +22,7 @@ import {
   assessPageVersionResetMutationReceipt,
   type PageVersionResetMutationReceipt
 } from "../lib/page-version-reset-mutation.js";
-import { toBlock, toPage, toPublicUserFanout, toTag } from "../lib/mappers.js";
+import { toBlock, toBlocksWithinPageBudget, toPage, toPublicUserFanout, toTag } from "../lib/mappers.js";
 import { publicProfileSummaryProjection } from "../lib/public-profile-summary.js";
 import {
   assertPageCanAdminister,
@@ -1289,11 +1290,12 @@ async function replaceTags(client: DbClient, pageId: string, tagNames: string[])
 }
 
 async function getBlocks(pageId: string, client: DbClient = db) {
+  await assertStoredPageResourceBudget(client, pageId);
   const rows = await client.query<BlockRow>(
     "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
     [pageId]
   );
-  return rows.map(toBlock);
+  return toBlocksWithinPageBudget(rows);
 }
 
 async function getPageResponse(pageId: string, userId: string, client: DbClient = db) {
@@ -1318,7 +1320,7 @@ async function getPageResponse(pageId: string, userId: string, client: DbClient 
   const page = toPage(access.page);
   if (access.scope === "PAGE") page.parentPageId = null;
 
-  return {
+  const response = {
     ...page,
     owner: access.owner,
     access: toAccessPayload(access),
@@ -1334,6 +1336,8 @@ async function getPageResponse(pageId: string, userId: string, client: DbClient 
       return child;
     })
   };
+  assertPageResponseBudget({ page: response });
+  return response;
 }
 
 pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, next) => {
@@ -1450,7 +1454,7 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
   }
 });
 
-pageRouter.post("/", validate({ body: createPageSchema }), async (req, res, next) => {
+pageRouter.post("/", admitPageProjection, validate({ body: createPageSchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
     const authScope = requireRequestAuthScope(req);
@@ -1664,7 +1668,7 @@ pageRouter.get("/:pageId/cover", validate({ params: idParamSchema }), async (req
   }
 });
 
-pageRouter.get("/:pageId", validate({ params: idParamSchema }), async (req, res, next) => {
+pageRouter.get("/:pageId", admitPageProjection, validate({ params: idParamSchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
     const pageId = String(req.params.pageId);
@@ -1973,7 +1977,7 @@ pageRouter.get(
   }
 );
 
-pageRouter.patch("/:pageId", validate({ params: idParamSchema, body: updatePageSchema }), async (req, res, next) => {
+pageRouter.patch("/:pageId", admitPageProjection, validate({ params: idParamSchema, body: updatePageSchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
     const authScope = requireRequestAuthScope(req);
@@ -2675,7 +2679,7 @@ function escapeHtmlAttribute(value: string) {
     .replaceAll(">", "&gt;");
 }
 
-pageRouter.get("/:pageId/render", validate({ params: idParamSchema }), async (req, res, next) => {
+pageRouter.get("/:pageId/render", admitPageProjection, validate({ params: idParamSchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
     const pageId = String(req.params.pageId);
@@ -2683,11 +2687,13 @@ pageRouter.get("/:pageId/render", validate({ params: idParamSchema }), async (re
       // Keep collaborator authorization and rendered block reads on the same
       // page generation when a workspace restore reuses stable page ids.
       await getPageAccess(pageId, user.id, client);
+      await assertStoredPageResourceBudget(client, pageId);
       const rows = await client.query<BlockRow>(
         "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
         [pageId]
       );
 
+      let renderedBytes = 0;
       return rows
         .map((block) => {
           // AI chat citation rendering is version-sensitive. Only use html_cache
@@ -2697,12 +2703,16 @@ pageRouter.get("/:pageId/render", validate({ params: idParamSchema }), async (re
           const blockHtml = block.type === "CALLOUT" || (block.type === "AI_CHAT" && !isCurrentAiChatHtmlCache(block.html_cache)) || block.html_cache === null
             ? renderBlockHtml(block.type, block.markdown, Boolean(block.checked), block.metadata)
             : sanitizeRenderedBlockHtml(block.type, block.html_cache);
-          return `<section data-block-id="${escapeHtmlAttribute(block.id)}" data-block-type="${escapeHtmlAttribute(block.type)}">${blockHtml}</section>`;
+          const section = `<section data-block-id="${escapeHtmlAttribute(block.id)}" data-block-type="${escapeHtmlAttribute(block.type)}">${blockHtml}</section>`;
+          renderedBytes += Buffer.byteLength(section, "utf8") + 1;
+          assertPageRenderBudget(renderedBytes);
+          return section;
         })
         .join("\n");
     });
 
     res.setHeader("Cache-Control", "private, no-store");
+    assertPageResponseBudget({ html });
     res.json({ html });
   } catch (error) {
     next(error);
