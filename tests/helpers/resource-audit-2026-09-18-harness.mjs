@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
+import { assertBlockParentChangesDepth } from "../../src/utils/hierarchy.ts";
 
 export const root = new URL("../../", import.meta.url);
 export const baseline = JSON.parse(readFileSync(new URL("tests/fixtures/resource-audit-2026-09-18-baseline.json", root), "utf8"));
@@ -42,8 +43,8 @@ export function cycle(original = false, metrics = null) {
 }
 export function reorder(original = false, metrics = null) {
   const types = metrics ? collections(metrics) : { Map, Set };
-  const fn = new Function("hierarchyRows", "items", "ApiError", "Map", "Set", stripTypeScriptTypes(cycleSource(original) + reorderSource(original)) + "\nreturn true;");
-  return (rows, items) => fn(rows, items, ApiError, types.Map, types.Set);
+  const fn = new Function("hierarchyRows", "items", "ApiError", "Map", "Set", "assertBlockParentChangesDepth", stripTypeScriptTypes(cycleSource(original) + reorderSource(original)) + "\nreturn true;");
+  return (rows, items) => fn(rows, items, ApiError, types.Map, types.Set, assertBlockParentChangesDepth);
 }
 export function outcome(fn, ...args) {
   try { return { ok: true, value: fn(...args) }; }

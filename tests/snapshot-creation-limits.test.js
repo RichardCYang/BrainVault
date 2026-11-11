@@ -24,6 +24,8 @@ vi.mock("../src/lib/attachments.js", async (original) => ({
   getAttachmentFilePath: (ownerId, blockId) => path.join(mocks.root, ownerId, blockId)
 }));
 vi.mock("../src/lib/data-transfer.js", () => ({
+  admitDataRestore: async (userId, _scope, operationId, sourceKey) => ({ userId, operationId, sourceKey, fingerprint: "fixture" }),
+  replayCompletedDataRestore: async () => null,
   prepareUserDataBackup: mocks.prepare, writeUserDataBackup: mocks.write,
   importUserDataBackup: mocks.import, readUserDataBackupManifest: mocks.read
 }));
@@ -138,7 +140,8 @@ describe("BV-2026-003 snapshot creation", () => {
   it("does not apply creation limits when restoring an existing archive", async () => {
     const snapshot = await createWorkspaceSnapshot(userId, scope);
     await restoreWorkspaceSnapshot(userId, snapshot.id, scope);
-    expect(mocks.import).toHaveBeenCalledWith(userId, path.join(directory, `${snapshot.id}.zip`), scope, expect.any(Function), { enforceConfiguredSizeLimits: false });
+    expect(mocks.import).toHaveBeenCalledWith(userId, path.join(directory, `${snapshot.id}.zip`), scope, expect.any(Function),
+      { enforceConfiguredSizeLimits: false, admission: expect.objectContaining({ userId, sourceKey: `snapshot:${snapshot.id}` }) });
   });
 });
 

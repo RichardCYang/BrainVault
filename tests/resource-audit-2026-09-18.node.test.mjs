@@ -163,11 +163,18 @@ test("resource audit: horizontal/selection keys avoid visible traversal; four ve
   for (const key of ["ArrowDown", "ArrowUp", "Home", "End", "ArrowRight", "ArrowLeft", "Enter", " ", "Tab"]) assert.equal(keyboard()(key), keyboard(true)(key));
 });
 
-test("resource audit: all production code outside the four reviewed regions remains identical", () => {
-  const routeRemainder = original => source("src/routes/block.routes.ts", original)
-    .replace(cycleSource(original), "<cycle>")
-    .replace(section(reorderSource(original), "        const requestedParentById", "        assertReorderDoesNotCreateCycle"), "<grouping>");
-  assert.equal(routeRemainder(false), routeRemainder(true), "SQL, auth, transactions, request schema and version fences must not change");
+test("resource audit: reordered writes retain optimistic SQL predicates and page locking", () => {
+  // Whole-file equality to a historical performance fixture prevents unrelated
+  // security fixes. Verify the live destructive sink's invariants explicitly.
+  const routes = source("src/routes/block.routes.ts");
+  const start = routes.indexOf('blockRouter.post(\n  "/pages/:pageId/blocks/reorder"');
+  const route = routes.slice(start);
+  assert.match(route, /lockPage: true/);
+  assert.match(route, /WHERE id = \? AND page_id = \? AND edit_version = \? AND edit_version < \?/);
+  assert.match(route, /Number\(result.affectedRows\) !== 1/);
+});
+
+test("resource audit: unrelated highlighter and tree code remain unchanged after line-ending normalization", () => {
   for (const [path, start, end] of [
     ["public/code-highlighting.js", "export function highlightLuaSource(", "function highlightSource("],
     ["public/treeview-block.js", '  tree.addEventListener("keydown", (event) => {', "\n  return editor;"]

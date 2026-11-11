@@ -14,6 +14,17 @@ components:
       in: cookie
       name: brainvault_session
       description: HttpOnly SameSite=Strict browser session cookie.
+  parameters:
+    RestoreOperationId:
+      in: header
+      name: X-Restore-Operation-Id
+      required: true
+      description: Generate once per intentional restore and reuse after timeouts or uncertain outcomes. Completed replays preserve later edits. Reusing the ID with another source or archive returns 409 RESTORE_OPERATION_ID_REUSED.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+        pattern: '^[a-zA-Z0-9_-]+$'
   schemas:
     PublicUser:
       type: object
@@ -2446,6 +2457,8 @@ paths:
   /api/data/import:
     post:
       summary: Replace the authenticated account workspace from a BrainVault backup ZIP
+      parameters:
+        - $ref: '#/components/parameters/RestoreOperationId'
       description: Restored rows receive a new edit-version generation, and a durable restore journal automatically reconciles database, attachment, and version 3 custom-icon filesystem state after an interrupted process. Current-format direct page and collection sharing grants are resolved before destructive replacement; a missing collaborator fails closed. Retained unlinked attachment-upload files are restored under their original generated names, and uploaded custom-icon URLs are rebound to the destination account ID. Legacy backups preserve current grants for matching shareable page IDs and do not replace custom-icon storage.
       requestBody:
         required: true
@@ -2468,9 +2481,34 @@ paths:
         '400':
           description: Missing, malformed, incompatible, or integrity-failed backup
         '409':
-          description: Backup identifiers conflict with another account, or the workspace changed while the backup was being validated and no data was replaced
+          description: Restore operation ID reused with another archive/source, backup identifiers conflict with another account, or workspace changes since request admission prevented replacement
         '413':
           description: Backup exceeds DATA_TRANSFER_MAX_SIZE_MB
+  /api/snapshots/{snapshotId}/restore:
+    post:
+      summary: Restore an owned snapshot, or replay a previously completed restore
+      description: Captures the workspace fence before reading the archive. A completed receipt can replay even after the source snapshot is deleted; current authentication remains required.
+      parameters:
+        - $ref: '#/components/parameters/RestoreOperationId'
+        - in: path
+          name: snapshotId
+          required: true
+          schema:
+            type: string
+            pattern: '^snapshot_[a-f0-9]{32}$'
+      responses:
+        '200':
+          description: Snapshot restored, or original successful result replayed without replacement
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataImportResponse'
+        '400':
+          description: Missing or invalid restore operation ID
+        '404':
+          description: Snapshot not found and no completed receipt exists for this operation
+        '409':
+          description: Workspace or source snapshot changed, or restore operation ID was reused with another source
   /api/search:
     get:
       summary: Search pages and markdown blocks

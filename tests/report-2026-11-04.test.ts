@@ -23,7 +23,7 @@ vi.mock("../src/lib/db.js", () => ({
     return result;
   }
 }));
-vi.mock("../src/lib/auth-sessions.js", () => ({ assertCurrentAuthSessionBoundary: database.auth }));
+vi.mock("../src/lib/auth-sessions.js", () => ({ assertCurrentAuthSession: database.auth, assertCurrentAuthSessionBoundary: database.auth }));
 
 import { ApiError } from "../src/lib/http.js";
 import { errorHandler } from "../src/middleware/error.js";
@@ -96,7 +96,8 @@ describe("BV-2026-01 backup validation", () => {
     const app = express();
     app.post("/import", async (_req, res, next) => {
       try {
-        await importUserDataBackup("usr_report", zipPath, { authVersion: 1, workspaceGeneration: 1, sessionId: "test" });
+        await importUserDataBackup("usr_report", zipPath, { authVersion: 1, workspaceGeneration: 1, sessionId: "test" }, undefined,
+          { admission: { userId: "usr_report", operationId: "validation", sourceKey: "upload", fingerprint: "fixture" } });
         res.sendStatus(204);
       } catch (error) { next(error); }
     });

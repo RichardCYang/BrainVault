@@ -89,6 +89,7 @@ import { createEditorHistory } from "./editor-history.js";
 import { planConfirmedBlockInsertion } from "./block-insertion-result.js";
 import { createAccountProfileMutationQueue } from "./account-profile-mutation-queue.js";
 import { createMutationId, submitWithFreshMutationIdOnReuse } from "./mutation-id.js";
+import { createRestoreOperationStore } from "./restore-operation.js";
 import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-rebase.js";
 import {
   createPageCollaboration,
@@ -2179,11 +2180,12 @@ function translateApiError(data, status) {
   return data?.error?.message ?? data?.message ?? t("errors.unknown");
 }
 
-function createApiRequestError(message, { status = 0, code = null, ambiguous = false } = {}) {
+function createApiRequestError(message, { status = 0, code = null, ambiguous = false, retryAfterMs = 0 } = {}) {
   const error = new Error(message);
   error.status = status;
   error.code = code;
   error.ambiguous = ambiguous;
+  error.retryAfterMs = retryAfterMs;
   return error;
 }
 
@@ -2466,6 +2468,7 @@ async function api(path, options = {}) {
     throw createApiRequestError(translateApiError(data, response.status), {
       status: response.status,
       code: data?.error?.code ?? null,
+      retryAfterMs: Math.min(5_000, Math.max(0, Number(response.headers.get("Retry-After")) * 1_000)) || 0,
       ambiguous: response.status >= 500
     });
   }
@@ -2803,6 +2806,43 @@ function resetDataImportSelection() {
   syncAccountDataOperationControls();
 }
 
+const restoreOperationStore = createRestoreOperationStore(() => window.sessionStorage);
+async function submitWorkspaceRestore(path, sourceKey, body, activeOperation) {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  const authenticationScope = captureAuthenticatedSessionScope();
+  let operationId;
+  try {
+    operationId = restoreOperationStore.begin(targetKey, sourceKey);
+  } catch {
+    throw new Error(t("errors.RESTORE_RETRY_STATE_UNAVAILABLE"));
+  }
+  const isCurrent = () => isCurrentAuthenticatedSessionScope(authenticationScope)
+    && isCurrentAccountDataOperation(activeOperation);
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (!isCurrent()) return skippedApiRequest;
+      try {
+        const data = await api(path, {
+          method: "POST", body,
+          headers: { "X-Restore-Operation-Id": operationId },
+          beforeFetch: isCurrent
+        });
+        if (data === skippedApiRequest) return data;
+        if (!data?.user || !data?.counts) {
+          throw createApiRequestError(t("errors.invalidResponse"), { ambiguous: true });
+        }
+        return { data, operationId };
+      } catch (error) {
+        if (!isAmbiguousApiError(error) || attempt >= 1) throw error;
+      }
+    }
+  } catch (error) {
+    if (isDefinitiveApiError(error)) restoreOperationStore.complete(targetKey, sourceKey, operationId);
+    throw error;
+  }
+  return skippedApiRequest;
+}
+
 async function restoreUserDataBackup(file, { operation = null } = {}) {
   const targetKey = getAccountAvatarTargetKey(state.user);
   const activeOperation = operation ?? accountDataOperationGuard.begin(targetKey);
@@ -2821,10 +2861,19 @@ async function restoreUserDataBackup(file, { operation = null } = {}) {
 
       const formData = new FormData();
       formData.append("backup", file, file.name);
-      const data = await api("/api/data/import", { method: "POST", body: formData });
+      // The server binds this id to the archive hash. Keep one pending upload
+      // per account so renaming/reselecting a file after response loss cannot
+      // silently create a new destructive operation.
+      const sourceKey = "upload";
+      const restored = await submitWorkspaceRestore("/api/data/import", sourceKey, formData, activeOperation);
+      if (restored === skippedApiRequest) return { applied: false };
       // Preserve durable drafts from every tab. Restored rows receive fresh edit versions,
       // so pre-restore drafts are recovered as explicit conflicts instead of overwriting data.
-      return applyRestoredWorkspaceData(data, targetKey, activeOperation);
+      const applied = await applyRestoredWorkspaceData(restored.data, targetKey, activeOperation);
+      // Keep the receipt until the refreshed workspace is visible. A failed
+      // post-restore reload must not turn the next click into a second restore.
+      if (applied.applied) restoreOperationStore.complete(targetKey, sourceKey, restored.operationId);
+      return applied;
     })
   );
 }
@@ -3193,8 +3242,14 @@ async function restoreWorkspaceSnapshotClient(snapshotId, { operation = null } =
       if (!isCurrentAccountDataOperation(activeOperation)) return { applied: false };
       assertNoPendingLocalPageDraftsForPages(ownedPageIds, "status.destructiveLocalDraftsPending");
       assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds);
-      const data = await api(`/api/snapshots/${encodeURIComponent(snapshotId)}/restore`, { method: "POST" });
-      return applyRestoredWorkspaceData(data, targetKey, activeOperation);
+      const sourceKey = `snapshot:${snapshotId}`;
+      const restored = await submitWorkspaceRestore(
+        `/api/snapshots/${encodeURIComponent(snapshotId)}/restore`, sourceKey, undefined, activeOperation
+      );
+      if (restored === skippedApiRequest) return { applied: false };
+      const applied = await applyRestoredWorkspaceData(restored.data, targetKey, activeOperation);
+      if (applied.applied) restoreOperationStore.complete(targetKey, sourceKey, restored.operationId);
+      return applied;
     })
   );
 }
@@ -17367,6 +17422,7 @@ async function submitBlockCreateTask(
   if (requestGuard?.() === false) return skippedApiRequest;
   task.inFlight = true;
   let attempt = 0;
+  let busyAttempt = 0;
 
   try {
     while (attempt < 2) {
@@ -17399,6 +17455,18 @@ async function submitBlockCreateTask(
         return data;
       } catch (error) {
         if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        if (error?.code === "PAGE_PROJECTION_BUSY" && requestGuard?.() !== false) {
+          if (busyAttempt >= 3) throw error;
+          // Admission refused this create before any write. Keep the original
+          // mutation/version and recheck auth/navigation after the bounded wait.
+          const delayMs = Math.min(5_000, Math.max(
+            Number(error.retryAfterMs) || 0,
+            500 * (2 ** busyAttempt)
+          ));
+          busyAttempt += 1;
+          await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+          continue;
+        }
         attempt += 1;
         if (!isAmbiguousApiError(error) || attempt >= 2) {
           if (!isAmbiguousApiError(error) && pendingBlockCreateTasks.get(task.taskKey) === task) {

@@ -7,9 +7,11 @@ import { syncPath } from "./storage-sync.js";
 import { env } from "../config/env.js";
 import { attachmentUploadRoot } from "./attachments.js";
 import {
+  admitDataRestore,
   importUserDataBackup,
   prepareUserDataBackup,
   readUserDataBackupManifest,
+  replayCompletedDataRestore,
   writeUserDataBackup,
   type DataRestoreAuthScope
 } from "./data-transfer.js";
@@ -372,8 +374,13 @@ export async function deleteWorkspaceSnapshot(
 export async function restoreWorkspaceSnapshot(
   userId: string,
   snapshotId: string,
-  authScope: DataRestoreAuthScope
+  authScope: DataRestoreAuthScope,
+  operationId = createId("restore")
 ) {
+  const id = safeSnapshotId(snapshotId);
+  const admission = await admitDataRestore(userId, authScope, operationId, `snapshot:${id}`);
+  const completed = await replayCompletedDataRestore(userId, authScope, admission);
+  if (completed) return completed;
   const row = await getOwnedSnapshotRow(userId, snapshotId);
   const filePath = await ensureSnapshotArchiveIntegrity(userId, row);
   return importUserDataBackup(userId, filePath, authScope, async (client) => {
@@ -404,7 +411,7 @@ export async function restoreWorkspaceSnapshot(
         "The snapshot changed while the restore was being prepared. No data was replaced."
       );
     }
-  }, snapshotDataTransferOptions);
+  }, { ...snapshotDataTransferOptions, admission });
 }
 
 export async function diffWorkspaceSnapshot(userId: string, snapshotId: string) {

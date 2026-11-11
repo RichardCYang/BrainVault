@@ -104,6 +104,10 @@ UI 진입점과 자세한 역할/상속 동작은 [컬렉션 공유](../../colla
 
 ## 백업 공유 무결성
 
+`POST /api/data/import`와 `POST /api/snapshots/:snapshotId/restore`에는 `X-Restore-Operation-Id`가 필요합니다. 영문자·숫자·밑줄·하이픈 1~64자로 작업마다 ID를 만들고, 타임아웃·연결 오류·커밋 결과 불명 시 같은 ID로 재시도하세요. 완료 기록은 후속 워크스페이스 복원에도 유지되며 계정 삭제 시 제거됩니다. 같은 ID에 다른 복원 원본이나 SHA-256이 다른 업로드를 보내면 `409 RESTORE_OPERATION_ID_REUSED`, ID가 없거나 잘못되면 `400 RESTORE_OPERATION_ID_REQUIRED`를 반환합니다. 완료 요청의 재시도는 기존 집계와 현재 프로필을 반환하며 이후 편집을 보존합니다. 폐기된 로그인·세션은 재시도도 거부됩니다.
+
+서버는 multipart 처리나 스냅샷 아카이브 검증 전에 워크스페이스 지문을 기록하고 교체 직전 소유자·페이지 잠금 안에서 비교합니다. 그 사이 저장된 변경이 있으면 `409 DATA_RESTORE_CONFLICT`로 중단합니다. 완료 기록이 검증된 재시도만 이전 워크스페이스 세대로 결과를 조회할 수 있으며, 일반 변경 요청의 세대 검사는 유지됩니다.
+
 현재 형식 버전 5 manifest에는 `data.pageShares`와 `data.collectionShares`가 모두 필요합니다. 직접 페이지 항목에는 페이지 ID, 안정적인 협업자 계정 ID, 협업자 사용자 이름, `EDIT` 권한, 생성 시각이 포함됩니다. 컬렉션 항목에는 컬렉션 ID, 동일한 안정적 협업자 ID 쌍, `READ`/`WRITE`/`ADMIN` 권한, 생성 시각, 업데이트 시각이 포함됩니다. import는 대상 계정을 잠그고 파괴적 교체 전에 ID와 사용자 이름 쌍을 검증합니다. 계정 누락 또는 불일치, 자기 자신과의 공유, 중복 권한, 유효하지 않은 대상, 알 수 없는 페이지/컬렉션, 필수 v5 워크스페이스 섹션 누락이 있으면 데이터를 교체하지 않고 검증에 실패합니다.
 
 컬렉션 권한을 삽입하기 전에 복원된 페이지 계층에서 컬렉션 membership을 다시 구성합니다. 복원된 페이지 및 컬렉션 권한에는 새 causal generation이 부여됩니다. import 응답은 직접 페이지 권한 총계를 `counts.shares`/`sharing`에, 컬렉션 권한 총계를 `counts.collectionShares`/`collectionSharing`에 보고합니다.

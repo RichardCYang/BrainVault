@@ -36,9 +36,17 @@ import {
 } from "./custom-icons.js";
 import { db, transaction, type DbClient } from "./db.js";
 import {
+  assertCurrentAuthSession,
   assertCurrentAuthSessionBoundary,
   type AuthSessionBoundaryScope
 } from "./auth-sessions.js";
+import {
+  readDataRestoreReceipt,
+  replayDataRestoreReceipt,
+  requireRestoreOperationId,
+  type DataRestoreAdmission,
+  type DataRestoreSummary
+} from "./data-restore-operation.js";
 import { ApiError } from "./http.js";
 import { assertHierarchyDepth, maxBlockHierarchyDepth, maxPageHierarchyDepth } from "../utils/hierarchy.js";
 import { iconValueSchema, imageIconPrefix, maxCustomIconBytes, normalizeIconValue } from "./icon-value.js";
@@ -3693,13 +3701,57 @@ async function assertCurrentDataRestoreAuthentication(
 
 type DataRestoreCommitBoundaryGuard = (client: DbClient) => Promise<void>;
 
+// Establish the read fence before receiving/parsing an archive. Hold the owner
+// and page locks only for this snapshot, never for a slow network upload.
+export async function admitDataRestore(
+  userId: string,
+  authScope: DataRestoreAuthScope,
+  operationId: string,
+  sourceKey = "upload"
+): Promise<DataRestoreAdmission> {
+  requireRestoreOperationId(operationId);
+  return transaction(async (client) => {
+    await assertCurrentAuthSession(userId, authScope, client);
+    const receipt = await readDataRestoreReceipt(client, userId, operationId);
+    if (receipt && receipt.source_key !== sourceKey) {
+      throw new ApiError(409, "RESTORE_OPERATION_ID_REUSED", "This restore operation id was already used for a different backup.");
+    }
+    if (receipt) return { userId, operationId, sourceKey, fingerprint: null };
+    await assertCurrentDataRestoreAuthentication(client, userId, authScope);
+    const snapshot = await createWorkspaceRestoreSnapshot(userId, client, true, true);
+    return { userId, operationId, sourceKey, fingerprint: snapshot.fingerprint };
+  });
+}
+
+export async function replayCompletedDataRestore(
+  userId: string,
+  authScope: DataRestoreAuthScope,
+  admission: DataRestoreAdmission,
+  archiveSha256?: string
+) {
+  return transaction(async (client) => {
+    await assertCurrentAuthSession(userId, authScope, client);
+    const receipt = await readDataRestoreReceipt(client, userId, admission.operationId);
+    if (!receipt) return null;
+    const summary = replayDataRestoreReceipt(receipt, admission.sourceKey, archiveSha256 ?? receipt.archive_sha256);
+    const user = await client.queryOne<UserRow>("SELECT * FROM users WHERE id = ?", [userId]);
+    if (!user) throw new ApiError(404, "NOT_FOUND", "User not found after import");
+    return { user, ...summary };
+  });
+}
+
 export async function importUserDataBackup(
   userId: string,
   zipPath: string,
   authScope: DataRestoreAuthScope,
   commitBoundaryGuard?: DataRestoreCommitBoundaryGuard,
-  options: DataTransferOptions = {}
+  options: DataTransferOptions & { admission?: DataRestoreAdmission } = {}
 ) {
+  const admission = options.admission ?? await admitDataRestore(userId, authScope, createId("restore"));
+  if (admission.userId !== userId) throw new Error("Restore admission belongs to another account");
+  const archiveSha256 = (await inspectFile(zipPath)).sha256;
+  const completed = await replayCompletedDataRestore(userId, authScope, admission, archiveSha256);
+  if (completed) return completed;
   const enforceConfiguredSizeLimits = configuredSizeLimitsEnabled(options);
   let entries;
   try {
@@ -3796,9 +3848,7 @@ export async function importUserDataBackup(
   if (entries.length !== allowedEntries.size) invalidBackup("The ZIP archive is missing one or more declared entries");
 
   await assertNoForeignIdConflicts(userId, manifest);
-  const initialWorkspaceSnapshot = await transaction((client) =>
-    createWorkspaceRestoreSnapshot(userId, client, false, restoresCustomIcons)
-  );
+  const initialWorkspaceSnapshot = { fingerprint: admission.fingerprint };
   await ensureDataTransferDirectories();
   const operationId = createId("restore");
   const restoredAttachmentIds = [
@@ -3841,6 +3891,7 @@ export async function importUserDataBackup(
   let restoreCollectionSharingPlan: RestoreCollectionSharingPlan = { mode: "backup", shares: [] };
   let restorePageComments: RestoredPageComment[] = [];
   let restoreCollaboratorNavigation: RestoreCollaboratorNavigationPlan = { collapsed: [], order: [] };
+  let summary: DataRestoreSummary | null = null;
   await Promise.all([
     mkdir(stagedAttachmentDir, { recursive: true }),
     mkdir(stagedPageCoverDir, { recursive: true }),
@@ -3970,6 +4021,15 @@ export async function importUserDataBackup(
     let movedOldCustomIcons = false;
     try {
       await transaction(async (client) => {
+        // Retry lookup must precede the workspace-generation fence: this very
+        // operation may already have advanced that generation on another process.
+        // Credential/session revocation still rejects every replay.
+        await assertCurrentAuthSession(userId, authScope, client);
+        const receipt = await readDataRestoreReceipt(client, userId, admission.operationId);
+        if (receipt) {
+          summary = replayDataRestoreReceipt(receipt, admission.sourceKey, archiveSha256);
+          return;
+        }
         // A backup upload and its integrity checks can outlive the login generation
         // that admitted the request. Lock the credential and device-session boundary
         // before taking workspace locks so a revoked request cannot replace data.
@@ -3982,7 +4042,7 @@ export async function importUserDataBackup(
           userId,
           client,
           true,
-          restoresCustomIcons
+          true
         );
         if (lockedWorkspaceSnapshot.fingerprint !== initialWorkspaceSnapshot.fingerprint) {
           throw new ApiError(
@@ -4091,6 +4151,33 @@ export async function importUserDataBackup(
            VALUES (?, ?, CURRENT_TIMESTAMP(3))`,
           [userId, operationId]
         );
+        summary = {
+          counts: {
+            pages: manifest.data.pages.length,
+            blocks: manifest.data.blocks.length,
+            attachments: manifest.attachments.length,
+            retainedAttachments: retainedAttachments.length,
+            pageCovers: manifest.pageCovers?.length ?? 0,
+            customIcons: manifest.customIcons?.length ?? 0,
+            tags: manifest.data.tags.length,
+            shares: restoreSharingPlan.shares.length,
+            collectionShares: restoreCollectionSharingPlan.shares.length,
+            pageComments: restorePageComments.length,
+            pageVersions: manifest.data.pageVersions?.length ?? 0,
+            navigationCollapsedPages: manifest.data.navigationCollapsedPageIds?.length ?? 0,
+            navigationOrderedPages: manifest.data.navigationPageOrder?.length ?? 0
+          },
+          sharing: { mode: restoreSharingPlan.mode, count: restoreSharingPlan.shares.length },
+          collectionSharing: { mode: restoreCollectionSharingPlan.mode, count: restoreCollectionSharingPlan.shares.length }
+        };
+        // This receipt commits atomically with SQL replacement and the asset
+        // marker. Journal cleanup must never remove it or a delayed retry could
+        // destructively apply the same archive over newer edits.
+        await client.execute(
+          `INSERT INTO data_restore_receipts (user_id, operation_id, source_key, archive_sha256, result_json)
+           VALUES (?, ?, ?, ?, ?)`,
+          [userId, admission.operationId, admission.sourceKey, archiveSha256, JSON.stringify(summary)]
+        );
       });
     } catch (error) {
       if (!restoreJournal || !journalWritten) throw error;
@@ -4152,32 +4239,8 @@ export async function importUserDataBackup(
     }
     const user = await db.queryOne<UserRow>("SELECT * FROM users WHERE id = ?", [userId]);
     if (!user) throw new ApiError(404, "NOT_FOUND", "User not found after import");
-    return {
-      user,
-      counts: {
-        pages: manifest.data.pages.length,
-        blocks: manifest.data.blocks.length,
-        attachments: manifest.attachments.length,
-        retainedAttachments: retainedAttachments.length,
-        pageCovers: manifest.pageCovers?.length ?? 0,
-        customIcons: manifest.customIcons?.length ?? 0,
-        tags: manifest.data.tags.length,
-        shares: restoreSharingPlan.shares.length,
-        collectionShares: restoreCollectionSharingPlan.shares.length,
-        pageComments: restorePageComments.length,
-        pageVersions: manifest.data.pageVersions?.length ?? 0,
-        navigationCollapsedPages: manifest.data.navigationCollapsedPageIds?.length ?? 0,
-      navigationOrderedPages: manifest.data.navigationPageOrder?.length ?? 0
-      },
-      sharing: {
-        mode: restoreSharingPlan.mode,
-        count: restoreSharingPlan.shares.length
-      },
-      collectionSharing: {
-        mode: restoreCollectionSharingPlan.mode,
-        count: restoreCollectionSharingPlan.shares.length
-      }
-    };
+    if (!summary) throw new Error("Restore completed without a durable result");
+    return { user, ...(summary as DataRestoreSummary) };
   } finally {
     if (!journalWritten) {
       await rm(operationRoot, { recursive: true, force: true }).catch(() => undefined);

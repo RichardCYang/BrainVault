@@ -4,12 +4,14 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import multer from "multer";
 import { env } from "../config/env.js";
 import {
+  admitDataRestore,
   dataTransferTempDir,
   ensureDataTransferDirectories,
   importUserDataBackup,
   prepareUserDataBackup,
   writeUserDataBackup
 } from "../lib/data-transfer.js";
+import { requireRestoreOperationId, type DataRestoreAdmission } from "../lib/data-restore-operation.js";
 import { createId } from "../lib/id.js";
 import { ApiError } from "../lib/http.js";
 import { toPublicUser } from "../lib/mappers.js";
@@ -72,6 +74,19 @@ const backupUpload = multer({
   defParamCharset: "utf8"
 });
 
+const restoreAdmissions = new WeakMap<Request, DataRestoreAdmission>();
+async function admitBackupRestore(req: Request, _res: Response, next: NextFunction) {
+  try {
+    const user = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
+    const operationId = requireRestoreOperationId(req.header("X-Restore-Operation-Id"));
+    restoreAdmissions.set(req, await admitDataRestore(user.id, authScope, operationId));
+    if (!req.destroyed) next();
+  } catch (error) {
+    next(error);
+  }
+}
+
 dataRouter.get(
   "/export",
   requireSameOriginCookieRequest,
@@ -115,6 +130,7 @@ dataRouter.post(
   dataImportRateLimit,
   enforceBackupUploadRequestSize,
   dataImportConcurrencyLimit,
+  admitBackupRestore,
   backupUpload.single("backup"),
   async (req, res, next) => {
     const uploadPath = req.file?.path ?? null;
@@ -129,7 +145,9 @@ dataRouter.post(
         throw new ApiError(400, "INVALID_DATA_BACKUP", "Select a .zip backup exported by BrainVault");
       }
 
-      const result = await importUserDataBackup(user.id, uploadPath, authScope);
+      const admission = restoreAdmissions.get(req);
+      if (!admission) throw new Error("Restore admission is unavailable");
+      const result = await importUserDataBackup(user.id, uploadPath, authScope, undefined, { admission });
       res.json({ user: toPublicUser(result.user), counts: result.counts, sharing: result.sharing });
     } catch (error) {
       next(error);

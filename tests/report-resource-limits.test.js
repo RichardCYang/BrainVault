@@ -22,6 +22,7 @@ import { ApiError } from "../src/lib/http.js";
 
 const state = vi.hoisted(() => ({ query: vi.fn(), queryOne: vi.fn(), execute: vi.fn(), access: vi.fn() }));
 vi.mock("../src/lib/db.js", () => ({ db: state, transaction: async (fn) => fn(state) }));
+vi.mock("../src/lib/auth-sessions.js", async (original) => ({ ...await original(), assertCurrentAuthSession: vi.fn() }));
 vi.mock("../src/middleware/auth.js", async (original) => ({
   ...await original(),
   requireAuth: (req, _res, next) => {
@@ -354,8 +355,9 @@ describe("BV-2026-1106-02 image decoding budgets", () => {
       }
       await writer.finalize();
       const finished = once(output, "finish"); output.end(); await finished;
-      state.queryOne.mockResolvedValue(manifest.account);
-      await expect(importUserDataBackup("usr_test", archivePath, { authVersion: 1, sessionId: "ses_test", workspaceGeneration: 1 }))
+      state.queryOne.mockImplementation(async sql => sql.includes("data_restore_receipts") ? undefined : manifest.account);
+      await expect(importUserDataBackup("usr_test", archivePath, { authVersion: 1, sessionId: "ses_test", workspaceGeneration: 1 }, undefined,
+        { admission: { userId: "usr_test", operationId: "validation", sourceKey: "upload", fingerprint: "fixture" } }))
         .rejects.toMatchObject({ code: "INVALID_DATA_BACKUP", message: expect.stringContaining(kind === "cover" ? "Page cover content is invalid" : "Custom icon content is invalid") });
       expect(state.execute).not.toHaveBeenCalled();
     } finally {

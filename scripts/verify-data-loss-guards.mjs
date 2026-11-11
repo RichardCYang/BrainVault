@@ -1394,13 +1394,13 @@ const restore = section(client, "async function restoreUserDataBackup(file,", "f
 assertBefore(
   restore,
   "assertNoPendingLocalPageDraftsForPages(ownedPageIds",
-  'await api("/api/data/import"',
+  'await submitWorkspaceRestore("/api/data/import"',
   "workspace restore"
 );
 assertBefore(
   restore,
   "assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds)",
-  'await api("/api/data/import"',
+  'await submitWorkspaceRestore("/api/data/import"',
   "workspace restore Yjs recovery"
 );
 

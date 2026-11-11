@@ -111,7 +111,7 @@ test("backup route and manifest limits are applied before expensive import work"
   assert.match(envSource, /DATA_IMPORT_MAX_CONCURRENT:[^\n]+default\(2\)/);
   assert.match(
     routeSource,
-    /"\/import",\s*dataImportRateLimit,\s*enforceBackupUploadRequestSize,\s*dataImportConcurrencyLimit,\s*backupUpload\.single\("backup"\)/
+    /"\/import",\s*dataImportRateLimit,\s*enforceBackupUploadRequestSize,\s*dataImportConcurrencyLimit,\s*admitBackupRestore,\s*backupUpload\.single\("backup"\)/
   );
   assert.ok(middlewareSource.includes("DATA_IMPORT_RATE_LIMITED"));
   assert.ok(middlewareSource.includes("DATA_IMPORT_IN_PROGRESS"));

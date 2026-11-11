@@ -69,7 +69,7 @@ describe("Account settings layer", () => {
     expect(client).toContain("applyUserTheme");
     expect(client).toContain('enqueueAccountProfilePatch(targetKey, { theme: nextTheme })');
     expect(client).toContain('fetch("/api/data/export"');
-    expect(client).toContain('api("/api/data/import"');
+    expect(client).toContain('submitWorkspaceRestore("/api/data/import"');
   });
 
   it("includes responsive modal styling, localized copy, and persistent schema support", () => {

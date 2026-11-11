@@ -28,8 +28,8 @@ test("restore conflict fencing includes live filesystem asset generations", asyn
   assert.match(transfer, /async function listWorkspaceRestoreAssetFiles/);
   assert.match(transfer, /hash\.update\(`attachment-file\\0\$\{file\.name\}\\0\$\{file\.size\}\\n`\)/);
   assert.match(transfer, /hash\.update\(`custom-icon-file\\0\$\{file\.name\}\\0\$\{file\.size\}\\n`\)/);
-  assert.match(transfer, /createWorkspaceRestoreSnapshot\(userId, client, false, restoresCustomIcons\)/);
-  assert.match(transfer, /createWorkspaceRestoreSnapshot\([\s\S]*?true,[\s\S]*?restoresCustomIcons/);
+  assert.match(transfer, /createWorkspaceRestoreSnapshot\(userId, client, true, true\)/);
+  assert.match(transfer, /const lockedWorkspaceSnapshot = await createWorkspaceRestoreSnapshot\(\s*userId,\s*client,\s*true,\s*true/);
   assert.match(transfer, /DATA_RESTORE_ASSET_STORAGE_INVALID/);
 });
 

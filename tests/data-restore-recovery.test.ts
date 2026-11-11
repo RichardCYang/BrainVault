@@ -208,7 +208,7 @@ beforeEach(() => {
   database.execute.mockReset();
   database.query.mockResolvedValue([]);
   database.queryOne.mockImplementation(async (sql: string) => {
-    if (sql.includes("FROM users WHERE id = ?")) return { id: userId };
+    if (sql.includes("FROM users WHERE id = ?")) return { id: userId, attachment_generation: 1 };
     return database.marker ? { operation_id: database.marker } : undefined;
   });
   database.execute.mockResolvedValue({ affectedRows: 1 });

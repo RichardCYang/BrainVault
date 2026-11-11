@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const blockRoute = readFileSync(new URL("../src/routes/block.routes.ts", import.meta.url), "utf8");
-const collaborationServer = readFileSync(new URL("../src/lib/collaboration-server.ts", import.meta.url), "utf8");
+const blockRoute = readFileSync(new URL("../src/routes/block.routes.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const collaborationServer = readFileSync(new URL("../src/lib/collaboration-server.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 function between(source, start, end) {
   const from = source.indexOf(start);
@@ -23,7 +23,7 @@ test("canonical attachment upload remains the narrow REST exception for collabor
 
   const attachmentRoute = between(
     blockRoute,
-    'blockRouter.post(\r\n  "/pages/:pageId/attachments"',
+    'blockRouter.post(\n  "/pages/:pageId/attachments"',
     'blockRouter.get("/blocks/:blockId/attachment"'
   );
   assert.doesNotMatch(attachmentRoute, /assertDirectBlockMutationAllowed\s*\(/);
@@ -57,7 +57,7 @@ test("canonical attachment broadcast is fenced to the document generation that c
   const broadcast = between(
     collaborationServer,
     "export async function broadcastCanonicalAttachment",
-    "\r\n}"
+    "\n}"
   );
   assert.match(broadcast, /documentEpoch: string/);
   assert.match(

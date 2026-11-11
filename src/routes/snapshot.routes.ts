@@ -7,6 +7,7 @@ import {
   restoreWorkspaceSnapshot
 } from "../lib/workspace-snapshots.js";
 import { toPublicUser } from "../lib/mappers.js";
+import { requireRestoreOperationId } from "../lib/data-restore-operation.js";
 import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import {
   beginDataImportProcessing,
@@ -51,7 +52,8 @@ snapshotRouter.post<SnapshotRouteParams>(
       releaseDataImport = beginDataImportProcessing(res);
       const user = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
-      const result = await restoreWorkspaceSnapshot(user.id, req.params.snapshotId, authScope);
+      const operationId = requireRestoreOperationId(req.header("X-Restore-Operation-Id"));
+      const result = await restoreWorkspaceSnapshot(user.id, req.params.snapshotId, authScope, operationId);
       res.json({ user: toPublicUser(result.user), counts: result.counts, sharing: result.sharing });
     } finally {
       releaseDataImport?.();

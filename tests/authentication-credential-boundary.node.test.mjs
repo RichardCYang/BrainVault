@@ -111,13 +111,13 @@ test("credential rotation cancels account-data work before stale restores can re
       "backup restore",
       "async function restoreUserDataBackup",
       "function formatSnapshotSize",
-      'api("/api/data/import", { method: "POST", body: formData })'
+      'submitWorkspaceRestore("/api/data/import", sourceKey, formData, activeOperation)'
     ],
     [
       "snapshot restore",
       "async function restoreWorkspaceSnapshotClient",
       "function getUserInitials",
-      'api(`/api/snapshots/${encodeURIComponent(snapshotId)}/restore`, { method: "POST" })'
+      'submitWorkspaceRestore('
     ]
   ]) {
     const start = source.indexOf(startMarker);

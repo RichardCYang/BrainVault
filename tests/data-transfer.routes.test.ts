@@ -35,6 +35,7 @@ const store = vi.hoisted(() => ({
   collaborationMaterialized: new Map<string, number>(),
   collaborationMaterializationVersion: new Map<string, number>(),
   restoreMarker: null as string | null,
+  restoreReceipts: new Map<string, Record<string, unknown>>(),
   transactionHooks: [] as Array<() => void | Promise<void>>,
   failTransactionAfterCallback: false,
   restoreEvents: [] as string[],
@@ -100,6 +101,7 @@ beforeEach(async () => {
     preferred_language: "ko",
     default_collection_icon: "🧠",
     theme: "dark",
+    attachment_generation: 1,
     password_hash: "unchanged-password-hash",
     created_at: "2026-07-17 00:00:00.000000",
     updated_at: "2026-07-17 00:00:00.000000"
@@ -113,6 +115,8 @@ beforeEach(async () => {
     title: "Original Page",
     icon: "📄",
     cover_url: null,
+    cover_position_x: 50,
+    cover_position_y: 50,
     is_archived: 0,
     is_collection: 0,
     owner_id: userId,
@@ -148,6 +152,7 @@ beforeEach(async () => {
   store.collaborationMaterialized = new Map();
   store.collaborationMaterializationVersion = new Map();
   store.restoreMarker = null;
+  store.restoreReceipts = new Map();
   store.transactionHooks = [];
   store.failTransactionAfterCallback = false;
   store.restoreEvents = [];
@@ -159,6 +164,8 @@ beforeEach(async () => {
   store.execute.mockReset();
 
   store.queryOne.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
+    if (sql.includes("FROM user_auth_sessions")) return { id: params[0] };
+    if (sql.includes("FROM data_restore_receipts")) return store.restoreReceipts.get(String(params[1]));
     if (sql.includes("FROM data_restore_markers")) {
       return store.restoreMarker === params[1] ? { operation_id: store.restoreMarker } : undefined;
     }
@@ -176,6 +183,7 @@ beforeEach(async () => {
   });
 
   store.query.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
+    if (sql.includes("FROM collection_shares")) return [];
     if (sql.includes("LEFT JOIN page_yjs_updates")) {
       return params.map((id) => ({
         page_id: String(id),
@@ -185,7 +193,7 @@ beforeEach(async () => {
       }));
     }
     if (sql.includes("FROM pages WHERE owner_id = ? ORDER BY")) {
-      return [...store.pages.values()].filter((page) => page.owner_id === params[0]).map(({ owner_id: _owner, ...page }) => ({ ...page }));
+      return [...store.pages.values()].filter((page) => page.owner_id === params.at(-1)).map(({ owner_id: _owner, ...page }) => ({ ...page }));
     }
     if (sql.includes("FROM blocks b INNER JOIN pages p") && sql.includes("WHERE p.owner_id = ? ORDER BY")) {
       return [...store.blocks.values()].filter((block) => store.pages.get(String(block.page_id))?.owner_id === params[0]).map((block) => ({ ...block }));
@@ -232,7 +240,7 @@ beforeEach(async () => {
       const ownerId = String(params[1] ?? params[0]);
       return [...store.navigationPageOrder.entries()]
         .filter(([orderedPageId]) => store.pages.get(orderedPageId)?.owner_id === ownerId)
-        .map(([orderedPageId, sortOrder]) => ({ page_id: orderedPageId, sort_order: sortOrder }))
+        .map(([orderedPageId, sortOrder]) => ({ page_id: orderedPageId, sort_order: sortOrder, updated_at: "2026-07-17 00:00:00.000000" }))
         .sort((left, right) => left.sort_order - right.sort_order || left.page_id.localeCompare(right.page_id));
     }
     if (sql.includes("SELECT DISTINCT t.id")) return [...store.tags.values()].map((tag) => ({ ...tag }));
@@ -305,7 +313,7 @@ beforeEach(async () => {
         user_id: String(params[1]),
         permission: String(params[2]),
         shared_by: String(params[3]),
-        shared_at: String(params[4])
+        shared_at: String(params[5])
       });
     } else if (sql.includes("INSERT INTO page_versions")) {
       const [importedPageId, revision, pageEditVersion, pageContentVersion, actors, source, changeCount, changeSummary, changes, createdAt] = params;
@@ -336,6 +344,8 @@ beforeEach(async () => {
       });
     } else if (sql.includes("INSERT INTO data_restore_markers")) {
       store.restoreMarker = String(params[1]);
+    } else if (sql.includes("INSERT INTO data_restore_receipts")) {
+      store.restoreReceipts.set(String(params[1]), { source_key: params[2], archive_sha256: params[3], result_json: params[4] });
     } else if (sql.startsWith("DELETE FROM data_restore_markers")) {
       if (store.restoreMarker === params[1]) store.restoreMarker = null;
     }
@@ -355,6 +365,11 @@ afterAll(async () => {
 });
 
 describe("Complete data transfer routes", () => {
+  it("requires an operation id before accepting a backup upload", async () => {
+    const response = await request(createApp()).post("/api/data/import")
+      .set("Authorization", `Bearer ${token}`).expect(400);
+    expect(response.body.error.code).toBe("RESTORE_OPERATION_ID_REQUIRED");
+  });
   it("locks workspace pages before establishing the export snapshot", async () => {
     const plan = await prepareUserDataBackup(userId);
     try {
@@ -434,6 +449,7 @@ describe("Complete data transfer routes", () => {
 
     const response = await request(createApp())
       .post("/api/data/import")
+      .set("X-Restore-Operation-Id", "restore_test")
       .set("Authorization", `Bearer ${token}`)
       .attach("backup", exported.body as Buffer, { filename: "BrainVault-backup.zip", contentType: "application/zip" })
       .expect(409);
@@ -464,20 +480,13 @@ describe("Complete data transfer routes", () => {
     const activeIconId = "cicon_backup_active";
     const removedIconId = "cicon_backup_removed";
     const activeFileName = `${activeIconId}.png`;
-    const removedFileName = `${removedIconId}.webp`;
+    const removedFileName = `${removedIconId}.png`;
     const activePublicPath = `/upload/icons/${userId}/${activeFileName}`;
     const removedPublicPath = `/upload/icons/${userId}/${removedFileName}`;
     const activeValue = `image:${activePublicPath}`;
     const removedValue = `image:${removedPublicPath}`;
-    const activeBytes = Buffer.concat([
-      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-      Buffer.from("brainvault-active-icon")
-    ]);
-    const removedBytes = Buffer.concat([
-      Buffer.from("RIFF"),
-      Buffer.alloc(4),
-      Buffer.from("WEBPbrainvault-removed-icon")
-    ]);
+    const activeBytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlR0y8AAAAASUVORK5CYII=", "base64");
+    const removedBytes = Buffer.from(activeBytes);
     const removedHash = createHash("sha256").update(removedValue, "utf8").digest("hex");
     const retainedAttachmentId = "blk_retained_ambiguous";
     const retainedAttachmentBytes = Buffer.from("preserved after ambiguous attachment commit");
@@ -517,7 +526,7 @@ describe("Complete data transfer routes", () => {
     const manifestEntry = entries.find((entry) => entry.name === "brainvault-backup.json");
     expect(manifestEntry).toBeTruthy();
     const manifest = JSON.parse((await readZipEntryBuffer(zipPath, manifestEntry!, 1024 * 1024)).toString("utf8"));
-    expect(manifest.version).toBe(3);
+    expect(manifest.version).toBe(6);
     expect(manifest.retainedAttachments).toEqual([expect.objectContaining({
       fileName: retainedAttachmentId,
       path: `attachments/${retainedAttachmentId}`
@@ -545,6 +554,7 @@ describe("Complete data transfer routes", () => {
 
     const restored = await request(createApp())
       .post("/api/data/import")
+      .set("X-Restore-Operation-Id", "restore_test")
       .set("Authorization", `Bearer ${token}`)
       .attach("backup", exported.body as Buffer, {
         filename: "BrainVault-backup.zip",
@@ -619,7 +629,7 @@ describe("Complete data transfer routes", () => {
     expect(manifest.data.pageVersions).toHaveLength(1);
     expect(manifest.data.pageVersions[0]).toMatchObject({ page_id: pageId, revision: 3, source: "PAGE_UPDATE" });
     expect(manifest.data.navigationCollapsedPageIds).toEqual([pageId]);
-    expect(manifest.data.navigationPageOrder).toEqual([{ page_id: pageId, sort_order: 0 }]);
+    expect(manifest.data.navigationPageOrder).toEqual([{ page_id: pageId, sort_order: 0, updated_at: "2026-07-17 00:00:00.000000" }]);
     expect(manifest.attachments[0].sha256).toMatch(/^[a-f0-9]{64}$/);
 
     const stalePageVersion = Number(store.pages.get(pageId)!.edit_version);
@@ -635,13 +645,14 @@ describe("Complete data transfer routes", () => {
 
     const restored = await request(createApp())
       .post("/api/data/import")
+      .set("X-Restore-Operation-Id", "restore_test")
       .set("Authorization", `Bearer ${token}`)
       .attach("backup", exported.body as Buffer, { filename: "BrainVault-backup.zip", contentType: "application/zip" })
       .expect(200);
 
     expect(restored.body.counts).toEqual({
       pages: 1, blocks: 1, attachments: 1, retainedAttachments: 0, pageCovers: 0, customIcons: 0, tags: 1, shares: 1,
-      pageVersions: 1, navigationCollapsedPages: 1, navigationOrderedPages: 1
+      pageVersions: 1, navigationCollapsedPages: 1, navigationOrderedPages: 1, collectionShares: 0, pageComments: 0
     });
     expect(restored.body.sharing).toEqual({ mode: "backup", count: 1 });
     expect(store.pages.get(pageId)?.title).toBe("Original Page");
@@ -692,6 +703,7 @@ describe("Complete data transfer routes", () => {
 
     const response = await request(createApp())
       .post("/api/data/import")
+      .set("X-Restore-Operation-Id", "restore_test")
       .set("Authorization", `Bearer ${token}`)
       .attach("backup", exported.body as Buffer, {
         filename: "BrainVault-backup.zip",
@@ -728,6 +740,7 @@ describe("Complete data transfer routes", () => {
     store.shares = [];
     const restored = await request(createApp())
       .post("/api/data/import")
+      .set("X-Restore-Operation-Id", "restore_test")
       .set("Authorization", `Bearer ${token}`)
       .attach("backup", exported.body as Buffer, {
         filename: "BrainVault-backup.zip",
@@ -769,6 +782,7 @@ describe("Complete data transfer routes", () => {
 
     const response = await request(createApp())
       .post("/api/data/import")
+      .set("X-Restore-Operation-Id", "restore_test")
       .set("Authorization", `Bearer ${token}`)
       .attach("backup", exported.body as Buffer, { filename: "BrainVault-backup.zip", contentType: "application/zip" })
       .expect(409);
@@ -799,6 +813,7 @@ describe("Complete data transfer routes", () => {
 
     const response = await request(createApp())
       .post("/api/data/import")
+      .set("X-Restore-Operation-Id", "restore_test")
       .set("Authorization", `Bearer ${token}`)
       .attach("backup", exported.body as Buffer, { filename: "BrainVault-backup.zip", contentType: "application/zip" })
       .expect(409);
@@ -829,6 +844,7 @@ describe("Complete data transfer routes", () => {
 
     const response = await request(createApp())
       .post("/api/data/import")
+      .set("X-Restore-Operation-Id", "restore_test")
       .set("Authorization", `Bearer ${token}`)
       .attach("backup", exported.body as Buffer, { filename: "BrainVault-backup.zip", contentType: "application/zip" })
       .expect(409);
@@ -871,6 +887,7 @@ describe("Complete data transfer routes", () => {
 
     const response = await request(createApp())
       .post("/api/data/import")
+      .set("X-Restore-Operation-Id", "restore_test")
       .set("Authorization", `Bearer ${token}`)
       .attach("backup", exported.body as Buffer, { filename: "BrainVault-backup.zip", contentType: "application/zip" })
       .expect(409);
@@ -925,6 +942,7 @@ describe("Complete data transfer routes", () => {
 
     const response = await request(createApp())
       .post("/api/data/import")
+      .set("X-Restore-Operation-Id", "restore_test")
       .set("Authorization", `Bearer ${token}`)
       .attach("backup", exported.body as Buffer, { filename: "BrainVault-backup.zip", contentType: "application/zip" })
       .expect(409);
@@ -946,6 +964,7 @@ describe("Complete data transfer routes", () => {
     await writeFile(getAttachmentFilePath(userId, blockId), Buffer.from("changed bytes"));
     store.transactionHooks = [
       () => undefined,
+      () => undefined,
       () => {
         store.failTransactionAfterCallback = true;
       }
@@ -953,6 +972,7 @@ describe("Complete data transfer routes", () => {
 
     await request(createApp())
       .post("/api/data/import")
+      .set("X-Restore-Operation-Id", "restore_test")
       .set("Authorization", `Bearer ${token}`)
       .attach("backup", exported.body as Buffer, { filename: "BrainVault-backup.zip", contentType: "application/zip" })
       .expect(200);

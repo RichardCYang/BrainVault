@@ -24,7 +24,7 @@ vi.mock("../src/lib/db.js", () => ({
     finally { release(); }
   }
 }));
-vi.mock("../src/lib/auth-sessions.js", () => ({ assertCurrentAuthSessionBoundary: vi.fn() }));
+vi.mock("../src/lib/auth-sessions.js", () => ({ assertCurrentAuthSession: vi.fn(), assertCurrentAuthSessionBoundary: vi.fn() }));
 vi.mock("../src/middleware/auth.js", async (original) => ({
   ...await original(),
   requireAuth: (req, _res, next) => {
@@ -301,7 +301,10 @@ describe("REPORT.md aggregate page resource boundary", () => {
       const writer = new ZipWriter(output);
       await writer.add({ name: "brainvault-backup.json", size: BigInt(bytes.length), crc32: crc32(bytes), source: { kind: "buffer", data: bytes } });
       await writer.finalize(); output.end(); await once(output, "finish");
-      await expect(importUserDataBackup("usr_budget", zipPath)).rejects.toMatchObject({ statusCode: 413, code: "PAGE_BLOCK_LIMIT_EXCEEDED" });
+      await expect(importUserDataBackup("usr_budget", zipPath,
+        { authVersion: 1, workspaceGeneration: 1, sessionId: "ses_budget" }, undefined,
+        { admission: { userId: "usr_budget", operationId: "validation", sourceKey: "upload", fingerprint: "fixture" } }
+      )).rejects.toMatchObject({ statusCode: 413, code: "PAGE_BLOCK_LIMIT_EXCEEDED" });
       expect(state.execute).not.toHaveBeenCalled();
     } finally { await rm(directory, { recursive: true, force: true }); }
   });

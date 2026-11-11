@@ -21,7 +21,7 @@ test("workspace snapshot mutations capture the initiating auth scope in the HTTP
 
   const restore = section(routes, '"/:snapshotId/restore"', 'snapshotRouter.delete<SnapshotRouteParams>');
   assert.match(restore, /const authScope = requireRequestAuthScope\(req\)/);
-  assert.match(restore, /restoreWorkspaceSnapshot\(user\.id, req\.params\.snapshotId, authScope\)/);
+  assert.match(restore, /restoreWorkspaceSnapshot\(user\.id, req\.params\.snapshotId, authScope, operationId\)/);
 
   const deletion = section(routes, 'snapshotRouter.delete<SnapshotRouteParams>');
   assert.match(deletion, /const authScope = requireRequestAuthScope\(req\)/);

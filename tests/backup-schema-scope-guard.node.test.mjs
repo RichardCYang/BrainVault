@@ -40,6 +40,7 @@ const tableScope = new Map([
   ["block_move_mutations", "operational"],
   ["block_order_mutations", "operational"],
   ["data_restore_markers", "operational"],
+  ["data_restore_receipts", "operational"],
   ["page_collaboration_state", "operational"],
   ["page_collaboration_write_leases", "operational"],
   ["page_comment_create_mutations", "operational"],

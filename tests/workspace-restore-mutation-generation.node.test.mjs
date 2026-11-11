@@ -64,7 +64,7 @@ test("durable HTTP mutations are fenced from a workspace restore generation chan
     /assertCurrentDataRestoreAuthentication[\s\S]*assertCurrentAuthSessionBoundary\(userId, authScope, client\)/
   );
   assert.match(dataRoutes, /const authScope = requireRequestAuthScope\(req\)/);
-  assert.match(dataRoutes, /importUserDataBackup\(user\.id, uploadPath, authScope\)/);
+  assert.match(dataRoutes, /importUserDataBackup\(user\.id, uploadPath, authScope, undefined, \{ admission \}\)/);
 });
 
 test("live collaboration is fenced from the collaborator's workspace restore generation", async () => {

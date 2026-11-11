@@ -28,6 +28,8 @@
 
 ## Dependency lockfile reliability
 
+Vitest route fixtures explicitly enable optional bearer authentication and use test rate-limit ceilings independently of local `.env`. Production bearer authentication remains disabled by default. Source comparisons canonicalize CRLF to LF; retained historical fixture hashes continue to verify their original bytes.
+
 `package-lock.json` is committed and should stay in place during normal installs. The project-level `.npmrc` keeps registry URLs portable and limits fetch retries so registry failures return promptly instead of looking like a hung install.
 
 Before committing dependency changes, validate the lockfile:

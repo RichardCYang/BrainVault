@@ -60,7 +60,7 @@ test("snapshot creation has independent byte ceilings while legacy comparison an
   assert.match(snapshotLib, /maxArchiveBytes: remainingBytes < maxSnapshotArchiveBytes/);
   assert.match(snapshotLib, /writeUserDataBackup\(plan, stream\)/);
   assert.match(snapshotLib, /importUserDataBackup\(userId, filePath, authScope, async \(client\) =>/);
-  assert.match(snapshotLib, /}, snapshotDataTransferOptions\);/);
+  assert.match(snapshotLib, /}, \{ \.\.\.snapshotDataTransferOptions, admission \}\);/);
   assert.match(snapshotLib, /readUserDataBackupManifest\(filePath, snapshotDataTransferOptions\)/);
   assert.match(dataTransfer, /export type DataTransferOptions/);
   assert.match(dataTransfer, /enforceConfiguredSizeLimits\?: boolean/);
