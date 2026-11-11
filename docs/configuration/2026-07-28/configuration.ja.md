@@ -83,7 +83,7 @@ BrainVaultは環境変数からランタイム設定を読み取ります。ロ�
 
 添付ファイルアップロードとインポートのadmission gateはプロセスローカル状態を使用します。そのためBrainVaultは起動時にデータベーススコープのアプリケーションインスタンスleaseを取得し、同じMariaDBデータベースに対して2つ目のアクティブアプリケーションプロセスを実行することを拒否します。これらのgate、要求rateカウンター、共同編集coordinationが共有／分散バックエンドへ移行されるまでは水平スケーリングはサポートされません。
 
-アプリケーション再起動をまたいで保持される追加の入口制限は、[デプロイ時のリクエスト制限](../../../deploy/README.md#public-ingress-request-limits)を参照してください。この設定で水平スケーリングが可能になるわけではありません。再起動後も永続的な`JWT_SECRET`を維持してください。削除プレビュートークンもこのキーを使用するため、キー変更後は完全削除前にプレビューを再取得する必要があります。
+アプリケーション再起動をまたいで保持される追加の入口制限は、[デプロイ時のリクエスト制限](../../../deploy/README.jp.md#公開入口のリクエスト制限)を参照してください。この設定で水平スケーリングが可能になるわけではありません。再起動後も永続的な`JWT_SECRET`を維持してください。削除プレビュートークンもこのキーを使用するため、キー変更後は完全削除前にプレビューを再取得する必要があります。
 
 ## CORS設定の移行
 
@@ -148,7 +148,7 @@ TRUST_PROXY_ADDRESSES=""
 TRUST_PROXY_HOPS=0
 ```
 
-`POSH_ACME_CERT_PATH`は証明書orderディレクトリまたは`fullchain.cer`そのものを指せます。`POSH_ACME_KEY_PATH`で上書きしない限り、BrainVaultは同じディレクトリの`cert.key`を読み込みます。証明書は`PUBLIC_ORIGIN`のホスト名を含み、現在有効で、private keyと一致する必要があります。ファイルは起動時に読み込まれるため、証明書更新後はBrainVaultを再起動してください。直接Posh-ACMEおよびリバースプロキシの例はリポジトリの[HTTPSデプロイガイド](../../../deploy/README.md)を参照してください。
+`POSH_ACME_CERT_PATH`は証明書orderディレクトリまたは`fullchain.cer`そのものを指せます。`POSH_ACME_KEY_PATH`で上書きしない限り、BrainVaultは同じディレクトリの`cert.key`を読み込みます。証明書は`PUBLIC_ORIGIN`のホスト名を含み、現在有効で、private keyと一致する必要があります。ファイルは起動時に読み込まれるため、証明書更新後はBrainVaultを再起動してください。直接Posh-ACMEおよびリバースプロキシの例はリポジトリの[HTTPSデプロイガイド](../../../deploy/README.jp.md)を参照してください。
 
 `JWT_SECRET`と`MFA_ENCRYPTION_KEY`は異なる値である必要があります。既知のサンプル値と旧開発既定値は本番以外でも拒否されます。ユーザーがTOTPを登録した後に`MFA_ENCRYPTION_KEY`を不用意に変更しないでください。既存の暗号化済みauthenticatorシークレットはこのキーに依存しており、変更すると使用できなくなります。
 
@@ -166,4 +166,4 @@ TRUST_PROXY_HOPS=0
 
 ブラウザーはlockfile管理の`yjs`、`lib0`、`isomorphic.js`パッケージを基盤とするsame-originルートから、正確な`yjs@13.6.31` ESMビルドを読み込みます。Mermaid `11.17.2`もBrainVault自身のoriginから配信されます。`npm run build`はまずダウンロードまたは`BRAINVAULT_MERMAID_TARBALL`を使用し、固定済みnpmパッケージSHA-512 digestを検証して、承認されたブラウザーバンドルとライセンスだけを抽出します。インラインimport mapは正確なCSP hashで許可されます。正確な`katex@0.17.0`アセットはSubresource Integrity付きのバージョン固定外部CDNパスのままです。Content Security Policyはsame-originスクリプト、そのimport-map hash、正確なKaTeXスクリプト、`CORS_ORIGIN`から導出した正確なWebSocket originだけを許可します。Mermaid CDNスクリプトソース、CDNホスト全体、任意の`ws:`/`wss:`宛先は許可しません。
 
-完全な例は[共同編集](../../collaboration/2026-07-29/collaboration.ja.md#認証とネットワーク要件)および[HTTPSデプロイガイド](../../../deploy/README.md)を参照してください。
+完全な例は[共同編集](../../collaboration/2026-07-29/collaboration.ja.md#認証とネットワーク要件)および[HTTPSデプロイガイド](../../../deploy/README.jp.md)を参照してください。

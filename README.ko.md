@@ -93,7 +93,7 @@ npm run verify:security
 
 BrainVault는 Posh-ACME 인증서 파일을 사용해 HTTPS를 직접 종료하거나, Caddy, Synology DSM, NGINX, Nginx Proxy Manager 같은 신뢰할 수 있는 리버스 프록시 뒤에서 실행할 수 있습니다.
 
-예시는 [deploy/README.md](deploy/README.md)를 참고하세요.
+예시는 [HTTPS 배포 가이드](deploy/README.ko.md)를 참고하세요.
 
 ## 프로젝트 문서
 

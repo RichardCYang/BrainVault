@@ -93,7 +93,7 @@ npm run verify:security
 
 BrainVaultは、Posh-ACMEの証明書ファイルを使用してHTTPSを直接終端することも、Caddy、Synology DSM、NGINX、Nginx Proxy Managerなどの信頼できるリバースプロキシの背後で実行することもできます。
 
-例については[deploy/README.md](deploy/README.md)を参照してください。
+例については[HTTPSデプロイガイド](deploy/README.jp.md)を参照してください。
 
 ## プロジェクトドキュメント
 

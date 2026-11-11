@@ -85,7 +85,7 @@ WebSocket 티켓은 인증된 사용자 ID, 페이지 ID, document epoch가 들�
 
 프록시 모드에서는 직접 연결된 프록시가 `TRUST_PROXY_ADDRESSES`와 일치해야 합니다. 숫자 기반 hop trust는 거부됩니다. BrainVault는 해당 peer에서 하나의 정식 `X-Forwarded-Proto: https` 값만 인정하고, 보안 세션 쿠키를 유지하며, 공개 페이지 URL에서 `wss:` 브라우저 연결을 유도합니다. 평문 백엔드 HTTP 요청은 `HTTPS_REDIRECT` 설정에 따라 고정된 `PUBLIC_ORIGIN`으로 리디렉션되거나 거부됩니다. Posh-ACME 모드에서는 리스너 자체가 HTTPS이므로 forwarded-protocol 신뢰가 필요하지 않습니다.
 
-직접 Posh-ACME와 완전한 Caddy, NGINX, Nginx Proxy Manager, Synology DSM 설정은 저장소의 [HTTPS 배포 가이드](../../../deploy/README.md)에 있습니다. 포함된 NGINX 예시는 공유 location에서 WebSocket 업그레이드 헤더를 전달하므로 일반 API 요청과 `/api/collaboration/`이 같은 백엔드 포트를 사용합니다.
+직접 Posh-ACME와 완전한 Caddy, NGINX, Nginx Proxy Manager, Synology DSM 설정은 저장소의 [HTTPS 배포 가이드](../../../deploy/README.ko.md)에 있습니다. 포함된 NGINX 예시는 공유 location에서 WebSocket 업그레이드 헤더를 전달하므로 일반 API 요청과 `/api/collaboration/`이 같은 백엔드 포트를 사용합니다.
 
 브라우저는 `/vendor/yjs/yjs.mjs`에서 고정된 `yjs@13.6.31` ESM 빌드를 불러옵니다. BrainVault는 lockfile로 제어되는 `yjs`, `lib0`, `isomorphic.js` 패키지의 JavaScript 모듈 파일만 노출하며, CSP 해시가 있는 인라인 import map은 Yjs bare module specifier를 같은 origin의 경로로 해석합니다. 제3자 Yjs CDN 접근은 필요하지 않습니다. 이 same-origin 모듈 URL들은 content-versioned가 아니라 안정된 경로이므로 장기 `immutable` 캐싱 대신 재사용 시 재검증이 필요합니다. 이를 통해 새로 열린 탭이 배포 전 협업 런타임을 계속 유지하지 않도록 합니다.
 

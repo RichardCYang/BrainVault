@@ -83,7 +83,7 @@ BrainVault는 환경 변수에서 런타임 설정을 읽습니다. 로컬 개�
 
 첨부파일 업로드와 가져오기 admission gate는 프로세스 로컬 상태를 사용합니다. 따라서 BrainVault는 시작 시 데이터베이스 범위의 애플리케이션 인스턴스 lease를 획득하고, 같은 MariaDB 데이터베이스에 두 번째 활성 애플리케이션 프로세스가 실행되는 것을 거부합니다. 이 gate, 요청 rate 카운터, 협업 coordination이 공유/분산 백엔드로 이동하기 전까지 수평 확장은 지원되지 않습니다.
 
-애플리케이션 재시작에도 유지되는 추가 공개 진입점 제한은 [배포 요청 제한](../../../deploy/README.md#public-ingress-request-limits)을 참고하세요. 이 설정이 수평 확장을 지원하게 만들지는 않습니다. 재시작 시에도 영구 `JWT_SECRET`을 유지해야 합니다. 삭제 미리보기 토큰도 이 키를 사용하므로 키를 교체하면 영구 삭제 전에 미리보기를 다시 조회해야 합니다.
+애플리케이션 재시작에도 유지되는 추가 공개 진입점 제한은 [배포 요청 제한](../../../deploy/README.ko.md#공개-진입점-요청-제한)을 참고하세요. 이 설정이 수평 확장을 지원하게 만들지는 않습니다. 재시작 시에도 영구 `JWT_SECRET`을 유지해야 합니다. 삭제 미리보기 토큰도 이 키를 사용하므로 키를 교체하면 영구 삭제 전에 미리보기를 다시 조회해야 합니다.
 
 ## 기존 CORS 설정 마이그레이션
 
@@ -146,7 +146,7 @@ TRUST_PROXY_ADDRESSES=""
 TRUST_PROXY_HOPS=0
 ```
 
-`POSH_ACME_CERT_PATH`는 인증서 order 디렉터리 또는 `fullchain.cer` 자체를 가리킬 수 있습니다. `POSH_ACME_KEY_PATH`로 재정의하지 않으면 BrainVault는 같은 디렉터리의 `cert.key`를 읽습니다. 인증서는 `PUBLIC_ORIGIN`의 호스트 이름을 포함하고 현재 유효해야 하며 private key와 일치해야 합니다. 파일은 시작 시 로드되므로 인증서를 갱신한 뒤 BrainVault를 재시작하세요. 직접 Posh-ACME 및 리버스 프록시 예시는 저장소의 [HTTPS 배포 가이드](../../../deploy/README.md)를 참고하세요.
+`POSH_ACME_CERT_PATH`는 인증서 order 디렉터리 또는 `fullchain.cer` 자체를 가리킬 수 있습니다. `POSH_ACME_KEY_PATH`로 재정의하지 않으면 BrainVault는 같은 디렉터리의 `cert.key`를 읽습니다. 인증서는 `PUBLIC_ORIGIN`의 호스트 이름을 포함하고 현재 유효해야 하며 private key와 일치해야 합니다. 파일은 시작 시 로드되므로 인증서를 갱신한 뒤 BrainVault를 재시작하세요. 직접 Posh-ACME 및 리버스 프록시 예시는 저장소의 [HTTPS 배포 가이드](../../../deploy/README.ko.md)를 참고하세요.
 
 `JWT_SECRET`과 `MFA_ENCRYPTION_KEY`는 서로 달라야 합니다. 알려진 예시 값과 과거 개발 기본값은 운영 환경 밖에서도 거부됩니다. 사용자가 TOTP를 등록한 뒤에는 `MFA_ENCRYPTION_KEY`를 가볍게 변경하지 마세요. 기존에 암호화된 authenticator 비밀값은 이 키에 의존하며 키가 바뀌면 사용할 수 없게 됩니다.
 
@@ -164,4 +164,4 @@ TRUST_PROXY_HOPS=0
 
 브라우저는 lockfile로 제어되는 `yjs`, `lib0`, `isomorphic.js` 패키지에 기반한 same-origin 경로에서 정확한 `yjs@13.6.31` ESM 빌드를 불러옵니다. Mermaid `11.17.2`도 BrainVault 자체 origin에서 제공합니다. `npm run build`는 먼저 다운로드하거나 `BRAINVAULT_MERMAID_TARBALL`을 사용하고, 고정된 npm 패키지 SHA-512 digest를 검증한 뒤 승인된 브라우저 번들과 라이선스만 추출합니다. 인라인 import map은 정확한 CSP hash로 허용됩니다. 정확한 `katex@0.17.0` 자산은 Subresource Integrity가 있는 버전 지정 외부 CDN 경로에 그대로 유지됩니다. Content Security Policy는 same-origin 스크립트, 해당 import-map hash, 정확한 KaTeX 스크립트, `CORS_ORIGIN`에서 파생된 정확한 WebSocket origin만 허용합니다. Mermaid CDN 스크립트 소스, 전체 CDN 호스트, 임의의 `ws:`/`wss:` 대상은 허용하지 않습니다.
 
-완전한 예시는 [협업](../../collaboration/2026-07-29/collaboration.ko.md#인증-및-네트워크-요구-사항) 및 [HTTPS 배포 가이드](../../../deploy/README.md)를 참고하세요.
+완전한 예시는 [협업](../../collaboration/2026-07-29/collaboration.ko.md#인증-및-네트워크-요구-사항) 및 [HTTPS 배포 가이드](../../../deploy/README.ko.md)를 참고하세요.

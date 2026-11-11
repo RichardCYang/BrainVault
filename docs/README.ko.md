@@ -6,7 +6,7 @@
 | --- | --- |
 | 시작하기 | [설치, 데이터베이스 설정, 데모 데이터 및 운영 환경](getting-started/2026-07-27/getting-started.ko.md) |
 | 설정 | [환경 변수와 런타임 동작](configuration/2026-07-28/configuration.ko.md) |
-| HTTPS 배포 | [직접 TLS 및 리버스 프록시 예시](../deploy/README.md) |
+| HTTPS 배포 | [직접 TLS 및 리버스 프록시 예시](../deploy/README.ko.md) |
 | VPN/프록시 연결 측정 | [TCP/WebSocket 검증 및 Synology DSM 설정](../deploy/network-verification.ko.md) |
 | 개발 | [스크립트, 프로젝트 구조, 번역 및 미리보기 캡처](development/2026-07-28/development.ko.md) |
 | 협업 | [페이지 공유, Yjs/WebSocket 동기화, 영속성 및 배포](collaboration/2026-07-29/collaboration.ko.md) |

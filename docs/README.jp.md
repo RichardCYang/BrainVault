@@ -6,7 +6,7 @@
 | --- | --- |
 | はじめに | [インストール、データベース設定、デモデータ、本番環境](getting-started/2026-07-27/getting-started.ja.md) |
 | 設定 | [環境変数とランタイム動作](configuration/2026-07-28/configuration.ja.md) |
-| HTTPSデプロイ | [直接TLSとリバースプロキシの例](../deploy/README.md) |
+| HTTPSデプロイ | [直接TLSとリバースプロキシの例](../deploy/README.jp.md) |
 | VPN／プロキシ接続測定 | [TCP/WebSocket検証とSynology DSM設定](../deploy/network-verification.jp.md) |
 | 開発 | [スクリプト、プロジェクト構成、翻訳、プレビューキャプチャ](development/2026-07-28/development.ja.md) |
 | 共同編集 | [ページ共有、Yjs/WebSocket同期、永続化、デプロイ](collaboration/2026-07-29/collaboration.ja.md) |

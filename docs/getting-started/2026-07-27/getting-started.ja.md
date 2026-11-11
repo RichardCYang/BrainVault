@@ -122,6 +122,6 @@ npm start
 - プロキシモードではバックエンドHTTPポートを非公開にし、プロキシまたはローカルヘルスチェッカーのみが到達できるようにします。Posh-ACMEモードでは意図したHTTPSリスナーのみを公開します。
 - HTTPS、管理されたシークレットストレージ、データベースバックアップ、通常の本番監視を使用します。
 
-直接Posh-ACMEモードでは、共同編集トラフィックを同じネイティブHTTPSリスナーで処理します。リバースプロキシの背後では`/api/collaboration/`のWebSocketアップグレードを有効にし、元のorigin、host、protocolヘッダーを保持してください。[共同編集](../../collaboration/2026-07-29/collaboration.ja.md#認証とネットワーク要件)およびリポジトリの[HTTPSデプロイガイド](../../../deploy/README.md)を参照してください。
+直接Posh-ACMEモードでは、共同編集トラフィックを同じネイティブHTTPSリスナーで処理します。リバースプロキシの背後では`/api/collaboration/`のWebSocketアップグレードを有効にし、元のorigin、host、protocolヘッダーを保持してください。[共同編集](../../collaboration/2026-07-29/collaboration.ja.md#認証とネットワーク要件)およびリポジトリの[HTTPSデプロイガイド](../../../deploy/README.jp.md)を参照してください。
 
 `DATABASE_URL`にパスワードがない、または既知のデフォルトパスワードが含まれる場合、サーバーは起動を拒否します。本番環境では、どちらかの暗号学的シークレットが未設定または公開プレースホルダーとして既知の値である場合も拒否します。暗号学的シークレットを設定していない開発環境ではプロセスごとの一時値を使用し、`npm run env:init`は永続的なランダム値を書き込みます。詳細は[セキュリティ](../../security/2026-07-30/security.ja.md)と[設定](../../configuration/2026-07-28/configuration.ja.md)を参照してください。

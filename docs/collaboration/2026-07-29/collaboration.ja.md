@@ -85,7 +85,7 @@ WebSocketチケットは、認証済みユーザーID、ページID、document e
 
 プロキシモードでは、直接接続したプロキシが`TRUST_PROXY_ADDRESSES`と一致する必要があります。数値によるhop trustは拒否されます。BrainVaultはそのpeerからの正規`X-Forwarded-Proto: https`値を1つだけ認識し、安全なセッションCookieを保持し、公開ページURLから`wss:`ブラウザー接続を導出します。平文バックエンドHTTP要求は`HTTPS_REDIRECT`に応じて固定`PUBLIC_ORIGIN`へリダイレクトされるか拒否されます。Posh-ACMEモードではリスナー自体がHTTPSのため、forwarded-protocol信頼は不要です。
 
-直接Posh-ACMEと完全なCaddy、NGINX、Nginx Proxy Manager、Synology DSM設定はリポジトリの[HTTPSデプロイガイド](../../../deploy/README.md)にあります。付属NGINX例は共有locationでWebSocketアップグレードヘッダーを転送するため、通常API要求と`/api/collaboration/`が同じバックエンドポートを使用します。
+直接Posh-ACMEと完全なCaddy、NGINX、Nginx Proxy Manager、Synology DSM設定はリポジトリの[HTTPSデプロイガイド](../../../deploy/README.jp.md)にあります。付属NGINX例は共有locationでWebSocketアップグレードヘッダーを転送するため、通常API要求と`/api/collaboration/`が同じバックエンドポートを使用します。
 
 ブラウザーは`/vendor/yjs/yjs.mjs`から固定済み`yjs@13.6.31` ESMビルドを読み込みます。BrainVaultはlockfileで制御された`yjs`、`lib0`、`isomorphic.js`パッケージのJavaScriptモジュールファイルだけを公開し、CSPハッシュ付きインラインimport mapがYjsのbare module specifierを同一originのルートへ解決します。サードパーティYjs CDNへのアクセスは不要です。これらのsame-originモジュールURLはcontent-versionedではなく安定URLのため、長期`immutable`キャッシュではなく再利用時に再検証が必要です。これにより新規タブがデプロイ前の共同編集ランタイムを保持し続けることを防ぎます。
 

@@ -1,35 +1,82 @@
 **English** | [한국어](network-verification.ko.md) | [日本語](network-verification.jp.md)
 
-# TCP/WebSocket measurement for VPN/proxy blocking
+# VPN/proxy blocking: connection measurement
 
-The detector compares the original client's TCP RTT at the HTTPS ingress with server-measured WebSocket round trips. It makes no outbound measurement requests and launches no measurement processes. ICMP, ping executables, raw sockets, geographic reference servers, WebRTC discovery and VPN reputation services are not used. Containers do not need `NET_RAW`, `NET_ADMIN`, privileged mode or a ping package for this feature.
+BrainVault can block sign-ins that appear to come through a VPN or proxy. It does this by comparing two delay (RTT) measurements of the same browser connection. This guide explains how to set it up and what it can and cannot detect.
 
-## Synology DSM: HTTPS ingress to an HTTP container
+## Contents
 
-The supported deployment path is:
+- [At a glance](#at-a-glance)
+- [How it works](#how-it-works)
+- [Setup on Synology DSM](#setup-on-synology-dsm)
+- [Other ingress setups](#other-ingress-setups)
+- [Troubleshooting](#troubleshooting)
+- [Settings reference](#settings-reference)
+- [How a result is decided](#how-a-result-is-decided)
+- [Limits](#limits)
+
+## At a glance
+
+- **Requires a reverse proxy** (HTTPS ingress) that can report TCP_INFO for the browser's connection. Direct HTTPS mode cannot provide this ([details](#direct-https-mode)).
+- **Needs nothing extra in the container.** No ICMP, ping, raw sockets, `NET_RAW`, `NET_ADMIN`, or privileged mode. BrainVault sends no outbound measurement requests and uses no external services (no geographic reference servers, WebRTC discovery, or VPN reputation lists).
+- **Off by default.** You enable trust in the TCP measurement only after the proxy is configured correctly.
+- **Not a perfect VPN detector.** Many VPNs cannot be detected this way ([details](#what-it-can-and-cannot-detect)).
+
+New to the base HTTPS setup? Complete the [HTTPS deployment guide](README.md) first.
+
+## How it works
 
 ```text
 Browser -- HTTPS/WSS --> Synology DSM reverse proxy -- HTTP/WS --> BrainVault container
-         client TCP RTT measured here              WebSocket measured end to end
+         ① TCP RTT measured here                   ② WebSocket RTT measured end to end
 ```
 
-The TCP measurement must describe **browser-to-DSM**, obtained on the same client connection that carries the WebSocket upgrade. Measuring the container's socket would describe only DSM-to-container and would produce false positives. A private NAS/Docker address alone does not make a connection unverifiable. The public client address and valid ingress TCP information are required for a comparison.
+1. **TCP RTT**: the proxy reads the kernel's delay for the browser→proxy connection and passes it to BrainVault in request headers.
+2. **WebSocket RTT**: BrainVault measures the round trip all the way to the browser.
+3. **Compare**: if the WebSocket delay is consistently much larger than the TCP delay, there is probably an extra relay (for example a VPN or proxy server) in between.
 
-In DSM, edit the BrainVault reverse-proxy rule under **Control Panel > Login Portal > Advanced > Reverse Proxy**. Keep the source as HTTPS and the destination as the private container HTTP address. Under **Custom Header**, use **Create > WebSocket**. Preserve `Origin` and forward `X-Forwarded-Proto: https` and the actual client address through the existing trusted forwarding chain. Synology documents the WebSocket/custom-header controls in its [DSM reverse-proxy guide](https://kb.synology.com/en-in/DSM/help/DSM/AdminCenter/system_login_portal_advanced).
+> [!IMPORTANT]
+> The TCP measurement must be taken on the **browser→proxy** connection, the same connection that carries the WebSocket upgrade. Measuring the proxy→container connection would describe only the internal hop and cause false positives.
 
-Configure the following **request** headers at the HTTPS ingress, overwriting incoming values:
+A private NAS or Docker address is fine. What matters is that BrainVault receives the browser's public address and valid TCP information from the ingress.
 
-| Header | NGINX value | Purpose |
+## Setup on Synology DSM
+
+### Step 1. Prepare the reverse-proxy rule
+
+In DSM, open **Control Panel > Login Portal > Advanced > Reverse Proxy** and edit the BrainVault rule (see the [HTTPS deployment guide](README.md#synology-dsm-reverse-proxy) if you have none yet).
+
+- Source: HTTPS. Destination: the container's private HTTP address.
+- Under **Custom Header**, choose **Create > WebSocket**.
+- Keep the `Origin` header, and forward `X-Forwarded-Proto: https` and the real client address through your trusted forwarding chain.
+
+Synology describes these options in its [DSM reverse-proxy guide](https://kb.synology.com/en-in/DSM/help/DSM/AdminCenter/system_login_portal_advanced).
+
+### Step 2. Add the TCP measurement headers
+
+Add these **request** headers at the HTTPS ingress. They must **overwrite** any value sent by the client:
+
+| Header | NGINX value | Meaning |
 | --- | --- | --- |
-| `X-BrainVault-TCP-Peer-IP` | `$remote_addr` | Actual transport peer of the client connection |
+| `X-BrainVault-TCP-Peer-IP` | `$remote_addr` | Address at the other end of the client's TCP connection |
 | `X-BrainVault-TCP-RTT-Us` | `$tcpinfo_rtt` | Kernel TCP RTT, in microseconds |
 | `X-BrainVault-TCP-RTTVar-Us` | `$tcpinfo_rttvar` | Kernel TCP RTT variation, in microseconds |
 
-These variables come from NGINX's [TCP_INFO support](https://nginx.org/en/docs/http/ngx_http_core_module.html#var_tcpinfo_rtt); [NGINX's implementation](https://github.com/nginx/nginx/blob/master/src/http/ngx_http_variables.c) passes the kernel RTT and variation in microseconds. DSM versions and builds differ: custom-header controls alone do not guarantee that these variables are available or expanded. Verify that the generated proxy configuration evaluates them and that the backend receives numeric values on the WebSocket upgrade. A literal `$tcpinfo_rtt`, an empty value, or zero RTT is rejected. Do not substitute fixed RTT values. If the DSM build cannot supply TCP_INFO, this deployment needs an ingress with TCP_INFO support at the original client connection; adding NGINX **behind** DSM does not recover it. No changes to the NAS itself are made by this repository.
+These variables come from NGINX's [TCP_INFO support](https://nginx.org/en/docs/http/ngx_http_core_module.html#var_tcpinfo_rtt) (see the [NGINX source](https://github.com/nginx/nginx/blob/master/src/http/ngx_http_variables.c) for the units).
 
-Equivalent NGINX configuration is included in [nginx.conf.example](nginx.conf.example). If NGINX `real_ip` rewrites `$remote_addr`, use `$realip_remote_addr` for `X-BrainVault-TCP-Peer-IP` to retain the original transport peer. That peer must equal the verified client IP. A CDN or another TCP-terminating proxy in front of DSM measures a different connection; forwarding its client-IP assertion does not turn DSM's TCP RTT into the browser's RTT. Mismatching observations are rejected.
+> [!WARNING]
+> Support differs between DSM versions and builds. Having a custom-header screen does **not** guarantee that these variables exist or are filled in.
+>
+> - Check that the generated proxy configuration evaluates them and that BrainVault receives **numbers** on the WebSocket upgrade.
+> - A literal `$tcpinfo_rtt`, an empty value, or an RTT of `0` is rejected.
+> - Never type in fixed RTT values.
+> - If your DSM build cannot provide TCP_INFO, you need a different ingress that receives the browser's connection directly. Adding NGINX **behind** DSM does not help, because it never sees the original connection.
 
-After all three headers are generated and overwritten correctly, configure the container, using the peer address it actually sees:
+This repository does not change anything on the NAS itself.
+
+### Step 3. Configure BrainVault
+
+After all three headers are generated and overwritten correctly, set the following. Use the proxy address the container actually sees for `TRUST_PROXY_ADDRESSES`:
 
 ```env
 HTTPS_MODE=proxy
@@ -42,34 +89,109 @@ VPN_PROXY_RTT_MARGIN_MS=10
 VPN_MIN_EXCESS_RTT_MS=50
 ```
 
-Use the narrowest practical proxy trust rule and keep the container HTTP port private. Explicit TCP_INFO trust defaults to **false**, because a normal proxy can forward attacker-supplied custom headers. Enable it only after overwrite rules are installed. Duplicate headers, malformed values, untrusted peers, non-HTTPS forwarding, invalid forwarding chains and mismatching transport/client IPs cannot supply TCP evidence. Forward WebSocket upgrades for both `/api/network-verification/probe` and `/api/collaboration/`.
+Checklist:
 
-In account security settings, use **Measure connection again**. A working configuration shows **Client TCP RTT measured at the trusted ingress** and the measured WebSocket/TCP RTTs. The interface distinguishes disabled TCP information, missing TCP RTT and mismatching client information. Test from an external connection: the intentional local-network exemption does not validate the public ingress setup. The application does not publish measurement values or thresholds through its pre-authentication endpoints.
+- [ ] `TRUST_PROXY_ADDRESSES` is as narrow as possible.
+- [ ] The container's HTTP port is not public.
+- [ ] `VPN_TRUST_PROXY_TCP_INFO=true` is set **only after** the overwrite rules are in place. (A normal proxy would pass attacker-supplied headers straight through, which is why the default is `false`.)
+- [ ] WebSocket upgrades are forwarded for both `/api/network-verification/probe` and `/api/collaboration/`.
 
-## Measurements and decisions
+### Step 4. Verify in the app
 
-The browser requests a same-origin, one-use ticket and opens `/api/network-verification/probe`. The server captures TCP_INFO metadata on that upgrade, sends twelve unpredictable WebSocket protocol ping frames and times matching pong frames with its monotonic clock. These are TCP-based WebSocket control frames, not network ICMP packets. The browser submits only an opaque completion receipt; client-supplied RTTs and verdicts are ignored.
+1. Connect from an **external network** (for example a phone on mobile data). Access from the local network is intentionally exempt, so it does not prove the public setup works.
+2. Open the account security settings and click **Measure connection again**.
+3. A working setup shows **Client TCP RTT measured at the trusted ingress** together with the measured WebSocket and TCP RTTs.
 
-Two consecutive six-sample WebSocket windows are compared with the genuine ingress TCP snapshot. Both windows must exceed TCP RTT by the configured minimum plus the local-proxy margin and three times TCP RTT variation for `TUNNEL`. High RTT alone does not trigger detection. Noisy WebSocket timing, high TCP variation and incompatible estimates produce `INCONCLUSIVE`. Missing TCP evidence produces `UNKNOWN`, with any completed WebSocket samples retained. A single TCP snapshot is not represented as multiple independent transport measurements.
+If something is wrong, the screen tells you whether TCP information is disabled, the TCP RTT is missing, or the client information does not match. See [Troubleshooting](#troubleshooting).
 
-Completed probes redeem one-use receipts for opaque HttpOnly, SameSite=Strict cookies, Secure and `__Host-` prefixed on HTTPS. Evidence is bound to the browser handle and exact normalized client IP, expires after five minutes, and refreshes while the page is visible. Separate browsers sharing a NAT do not share verdicts. Password login, MFA, passkeys, authenticated requests and collaboration rechecks enforce this evidence.
+Measurement values and thresholds are never exposed through pre-authentication endpoints.
 
-## Policy and limits
+## Other ingress setups
+
+- **NGINX**: an equivalent configuration is in [nginx.conf.example](nginx.conf.example).
+- **NGINX with `real_ip`**: if `real_ip` rewrites `$remote_addr`, use `$realip_remote_addr` for `X-BrainVault-TCP-Peer-IP` so the original TCP peer is kept. That peer must equal the verified client IP.
+- **CDN or another TCP-terminating proxy in front**: the ingress then measures its connection to the CDN, not to the browser. Forwarding the CDN's client-IP header does not fix this, and mismatching observations are rejected.
+
+## Troubleshooting
+
+| What you see | Likely cause | What to do |
+| --- | --- | --- |
+| TCP information is disabled | `VPN_TRUST_PROXY_TCP_INFO` is `false` | Finish Step 2, then set it to `true` |
+| TCP RTT is missing | The ingress does not send numeric TCP_INFO headers (literal `$tcpinfo_rtt`, empty, or `0`) | Check the generated proxy config; use an ingress with TCP_INFO support |
+| Client information does not match | `X-BrainVault-TCP-Peer-IP` differs from the verified client IP (`real_ip`, CDN in front) | Use `$realip_remote_addr`, or remove the extra TCP-terminating hop |
+| No TCP evidence at all | Duplicate or malformed headers, untrusted proxy address, non-HTTPS forwarding, or an invalid forwarding chain | Check `TRUST_PROXY_ADDRESSES` and that headers are overwritten, not appended |
+| Works on LAN, fails outside | Local network is exempt, so the public path was never tested | Test from an external network |
+| Protected requests pause for about 20 seconds | A browser measurement failed | Fix the measurement setup above |
+
+## Settings reference
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `VPN_TRUST_PROXY_TCP_INFO` | `false` | Accept overwritten TCP_INFO from the explicitly trusted local HTTPS ingress |
-| `VPN_MIN_EXCESS_RTT_MS` | `50` | Minimum repeated extra delay in milliseconds; not a confidence percentage |
-| `VPN_PROXY_RTT_MARGIN_MS` | `10` | Extra uncertainty for the local reverse-proxy hop |
-| `VPN_ALLOW_PRIVATE_NETWORK` | `true` | Preserve direct LAN access; forwarded private clients also need `TRUST_PROXY_ALLOW_PRIVATE_CLIENTS=true` |
-| `VPN_POLICY_FAIL_CLOSED` | `true` | Refuse access for accounts with blocking enabled when measurement evidence is unavailable |
+| `VPN_TRUST_PROXY_TCP_INFO` | `false` | Accept TCP_INFO headers overwritten by the explicitly trusted local HTTPS ingress |
+| `VPN_MIN_EXCESS_RTT_MS` | `50` | Minimum repeated extra delay, in milliseconds (not a confidence percentage) |
+| `VPN_PROXY_RTT_MARGIN_MS` | `10` | Extra tolerance for the local reverse-proxy hop |
+| `VPN_ALLOW_PRIVATE_NETWORK` | `true` | Keep direct LAN access. Private clients that arrive through a proxy also need `TRUST_PROXY_ALLOW_PRIVATE_CLIENTS=true` |
+| `VPN_POLICY_FAIL_CLOSED` | `true` | Deny access for accounts with blocking enabled when no measurement evidence is available |
 
-Unavailability is not a detected tunnel. With fail-closed enabled, it can still prevent access under an account's blocking policy. False allows measurement failures without overriding detected tunnels. Accounts with blocking disabled remain accessible. Enabling a policy is refused if it would immediately block the current connection. Existing password/MFA and session-revocation protections still apply. Historical block records and separate country-login restrictions remain readable.
+**What happens when measurement fails?**
 
-Resource limits include 32 active measurement sockets globally, four per source IP, 30 tickets per minute per source IP, bounded expiring maps, a twelve-second measurement deadline, and twelve WebSocket samples. Ticket subprotocols, receipts and cookies must stay out of logs. A failed browser measurement can delay a subsequent protected request by approximately twenty seconds. No additional container capabilities or external reference lists are needed.
+- A failed measurement is **not** the same as a detected tunnel.
+- With `VPN_POLICY_FAIL_CLOSED=true`, accounts with blocking enabled are still denied when evidence is missing. With `false`, measurement failures are allowed, but detected tunnels stay blocked.
+- Accounts with blocking disabled are always accessible.
+- You cannot enable a blocking policy that would immediately block your current connection.
+- Existing password/MFA re-authentication and session-revocation protections still apply. Past block records and the separate country-based login restrictions remain viewable.
 
-## Detection scope
+## How a result is decided
 
-This comparison can expose a stable extra path when TCP is split at a relay but the WebSocket stream continues to the browser. It cannot reliably identify every residential VPN. WireGuard/OpenVPN and other tunnels can forward the client's TCP connection end to end, making TCP RTT and WebSocket RTT increase together. A nearby relay or one that answers WebSocket control frames itself can also evade this comparison. `CLEAR` means no extra TCP/WebSocket gap was observed; it does not certify the absence of a VPN. Network load and ingress scheduling can affect both timings. Calibrate with labeled direct, mobile, congested, local-proxy and residential-VPN traffic, and measure false positives and evidence availability separately. No deployment accuracy percentage is claimed.
+| Result | Meaning |
+| --- | --- |
+| `CLEAR` | No extra TCP/WebSocket gap was observed. This does **not** prove there is no VPN. |
+| `TUNNEL` | A consistent extra delay was observed. Treated as a VPN/proxy. |
+| `INCONCLUSIVE` | Timing was too noisy to decide (unstable WebSocket timing, high TCP variation, or inconsistent estimates). |
+| `UNKNOWN` | No TCP evidence was available. Any completed WebSocket samples are kept. |
 
-Direct Node.js HTTPS currently has WebSocket measurements but no native TCP_INFO collector. It reports `DIRECT_TCP_INFO_UNAVAILABLE`; request headers cannot substitute for kernel socket data. The implemented TCP collector targets the DSM/NGINX ingress deployment above.
+<details>
+<summary>Measurement details</summary>
+
+1. The browser requests a same-origin, one-use ticket and opens `/api/network-verification/probe`.
+2. The server records the TCP_INFO metadata from that upgrade request.
+3. The server sends twelve unpredictable WebSocket ping frames and times the matching pong frames with a monotonic clock. These are TCP-based WebSocket control frames, not ICMP packets.
+4. The browser submits only an opaque completion receipt. RTTs or verdicts claimed by the client are ignored.
+5. The twelve samples form two consecutive windows of six. The result is `TUNNEL` only if **both** windows exceed the TCP RTT plus `VPN_MIN_EXCESS_RTT_MS`, plus `VPN_PROXY_RTT_MARGIN_MS`, plus three times the TCP RTT variation. A high RTT alone never triggers detection. One TCP snapshot is never counted as several independent measurements.
+
+**Where the result is stored**
+
+- The receipt is exchanged for an opaque `HttpOnly`, `SameSite=Strict` cookie (also `Secure` with a `__Host-` prefix on HTTPS).
+- The result is bound to that browser and its exact normalized client IP, expires after five minutes, and refreshes while the page is visible.
+- Different browsers behind the same NAT do not share results.
+- It is enforced on password login, MFA, passkeys, authenticated requests, and collaboration rechecks.
+
+</details>
+
+## Limits
+
+### Resource limits
+
+| Item | Limit |
+| --- | --- |
+| Active measurement sockets | 32 in total, 4 per source IP |
+| Tickets | 30 per minute per source IP |
+| Measurement time | 12 seconds |
+| WebSocket samples | 12 |
+| Internal state | Size-limited maps with expiry |
+
+Keep ticket subprotocols, receipts, and cookies out of logs. A failed measurement can delay the next protected request by about 20 seconds.
+
+### What it can and cannot detect
+
+- **Can detect**: a relay that splits the TCP connection while the WebSocket stream continues to the browser, causing a stable extra delay.
+- **Cannot reliably detect**:
+  - Every residential VPN.
+  - WireGuard, OpenVPN, and other tunnels that forward the TCP connection end to end. TCP RTT and WebSocket RTT then rise together.
+  - A relay very close to the server, or one that answers WebSocket control frames itself.
+- Network load and ingress scheduling affect both measurements.
+- Before relying on it, calibrate with labeled traffic (direct, mobile, congested, local proxy, residential VPN), and measure the false-positive rate and how often evidence is available separately. No accuracy percentage is claimed.
+
+### Direct HTTPS mode
+
+Direct Node.js HTTPS (`HTTPS_MODE=posh-acme`) measures WebSocket RTT but has no built-in TCP_INFO collector. It reports `DIRECT_TCP_INFO_UNAVAILABLE`, and request headers cannot replace kernel socket data. The TCP collector targets the DSM/NGINX ingress setup described above.

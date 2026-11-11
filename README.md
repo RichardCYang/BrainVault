@@ -93,7 +93,7 @@ See the collaboration guides for permission details, reconnect behavior, and pro
 
 BrainVault can terminate HTTPS directly with Posh-ACME certificate files, or run behind a trusted reverse proxy such as Caddy, Synology DSM, NGINX, or Nginx Proxy Manager.
 
-See [deploy/README.md](deploy/README.md) for examples.
+See the [HTTPS deployment guide](deploy/README.md) for examples.
 
 ## Documentation
 

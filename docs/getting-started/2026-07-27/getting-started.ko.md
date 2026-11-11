@@ -122,6 +122,6 @@ npm start
 - 프록시 모드에서는 백엔드 HTTP 포트를 비공개로 유지하고 프록시 또는 로컬 상태 점검기만 접근하도록 하세요. Posh-ACME 모드에서는 의도한 HTTPS 리스너만 노출하세요.
 - HTTPS, 관리형 비밀 저장소, 데이터베이스 백업 및 일반적인 운영 모니터링을 사용하세요.
 
-직접 Posh-ACME 모드에서는 같은 네이티브 HTTPS 리스너로 협업 트래픽을 처리합니다. 리버스 프록시 뒤에서는 `/api/collaboration/`에 대해 WebSocket 업그레이드를 활성화하고 원래 origin, host, protocol 헤더를 보존하세요. [협업](../../collaboration/2026-07-29/collaboration.ko.md#인증-및-네트워크-요구-사항) 및 저장소의 [HTTPS 배포 가이드](../../../deploy/README.md)를 참고하세요.
+직접 Posh-ACME 모드에서는 같은 네이티브 HTTPS 리스너로 협업 트래픽을 처리합니다. 리버스 프록시 뒤에서는 `/api/collaboration/`에 대해 WebSocket 업그레이드를 활성화하고 원래 origin, host, protocol 헤더를 보존하세요. [협업](../../collaboration/2026-07-29/collaboration.ko.md#인증-및-네트워크-요구-사항) 및 저장소의 [HTTPS 배포 가이드](../../../deploy/README.ko.md)를 참고하세요.
 
 `DATABASE_URL`에 비밀번호가 없거나 알려진 기본 비밀번호가 포함되어 있으면 서버는 시작을 거부합니다. 운영 환경에서는 암호학적 비밀값 중 하나라도 없거나 공개 플레이스홀더로 알려진 값이면 역시 거부합니다. 개발 환경에서 암호학적 비밀값을 설정하지 않으면 프로세스마다 임시 값을 사용하고, `npm run env:init`은 지속적으로 사용할 임의 값을 기록합니다. 자세한 내용은 [보안](../../security/2026-07-30/security.ko.md) 및 [설정](../../configuration/2026-07-28/configuration.ko.md)을 참고하세요.
