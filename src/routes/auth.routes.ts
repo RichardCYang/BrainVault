@@ -1,3 +1,4 @@
+import { getNetworkVerificationContext } from "../lib/network-verification.js";
 import { randomInt } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
@@ -25,8 +26,6 @@ import { normalizeIsoCountryCode } from "../lib/country-codes.js";
 import {
   assertVpnPolicyAllowsCurrentConnection,
   enforceVpnAccessPolicy,
-  getClientTimeZone,
-  getClientWebRtcSignal,
   normalizeVpnBlockEnabled,
   resolveVpnAccessRisk
 } from "../lib/vpn-access-policy.js";
@@ -339,8 +338,7 @@ authRouter.post(
           user.id,
           user.vpn_block_enabled,
           sourceIp,
-          getClientTimeZone(req),
-          getClientWebRtcSignal(req)
+          getNetworkVerificationContext(req)
         );
       } catch (error) {
         if (!isPreAuthLoginPolicyDenial(error)) throw error;
@@ -877,8 +875,7 @@ authRouter.get("/vpn-block-policy", requireAuth, async (req, res, next) => {
     const enabled = normalizeVpnBlockEnabled(row.vpn_block_enabled);
     const risk = await resolveVpnAccessRisk(
       getClientIpAddress(req),
-      getClientTimeZone(req),
-      getClientWebRtcSignal(req)
+      getNetworkVerificationContext(req)
     );
     res.setHeader("Cache-Control", "private, no-store");
     res.json({
@@ -886,13 +883,7 @@ authRouter.get("/vpn-block-policy", requireAuth, async (req, res, next) => {
       currentIp: risk.ipAddress || "unknown",
       currentCountryCode: risk.countryCode,
       verdict: risk.verdict,
-      confidence: risk.confidence,
-      datacenter: risk.datacenter,
-      timezoneMismatch: risk.timezoneMismatch,
-      providerCount: risk.providerCount,
-      webRtcState: risk.webRtcState,
-      webRtcObservedIps: risk.webRtcObservedIps,
-      webRtcIpMismatch: risk.webRtcIpMismatch,
+      measurement: risk.measurement,
       supportingSignals: risk.supportingSignals
     });
   } catch (error) {
@@ -913,12 +904,11 @@ authRouter.put(
       const expectedAuthVersion = authScope.authVersion;
       const { currentPassword, enabled, stepUpToken } = req.body as z.infer<typeof vpnBlockPolicySchema>;
       const sourceIp = getClientIpAddress(req);
-      const clientTimeZone = getClientTimeZone(req);
+
       const risk = await assertVpnPolicyAllowsCurrentConnection(
         enabled,
         sourceIp,
-        clientTimeZone,
-        getClientWebRtcSignal(req)
+        getNetworkVerificationContext(req)
       );
 
       const updatedUser = await transaction(async (client) => {
@@ -959,13 +949,7 @@ authRouter.put(
         currentIp: risk.ipAddress || sourceIp || "unknown",
         currentCountryCode: risk.countryCode,
         verdict: risk.verdict,
-        confidence: risk.confidence,
-        datacenter: risk.datacenter,
-        timezoneMismatch: risk.timezoneMismatch,
-        providerCount: risk.providerCount,
-        webRtcState: risk.webRtcState,
-        webRtcObservedIps: risk.webRtcObservedIps,
-        webRtcIpMismatch: risk.webRtcIpMismatch,
+        measurement: risk.measurement,
         supportingSignals: risk.supportingSignals
       });
     } catch (error) {

@@ -8,6 +8,7 @@ import cors from "cors";
 import morgan from "morgan";
 import rateLimit from "express-rate-limit";
 import { BoundedRateLimitStore } from "./lib/bounded-rate-limit-store.js";
+import { networkVerificationRouter } from "./lib/network-verification.js";
 import { corsOrigins, env } from "./config/env.js";
 import { corsOptionsDelegate } from "./middleware/cors.js";
 import { authRouter } from "./routes/auth.routes.js";
@@ -177,6 +178,7 @@ export function createApp() {
   // Anonymous WebAuthn assertion endpoints have deliberately small, bounded JSON
   // contracts. Parse them with a tighter limit before the broader application
   // parser so chunked requests cannot bypass the bound.
+  app.use("/api/network-verification", express.json({ limit: "1kb" }), networkVerificationRouter);
   app.use("/api/auth/passkey", express.json({ limit: "64kb" }));
   app.use("/api/auth/mfa/login/passkey", express.json({ limit: "64kb" }));
   app.use(["/api/auth/login", "/api/auth/register", "/api/auth/mfa/login"], express.json({ limit: "64kb" }));

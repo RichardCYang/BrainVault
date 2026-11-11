@@ -96,6 +96,7 @@
     "multer": "^2.5.0",
     "qrcode": "^1.5.4",
     "sanitize-html": "^2.18.1",
+    "ws": "^8.22.2",
     "yjs": "13.6.31",
     "zod": "^4.6.7"
   },
@@ -110,6 +111,7 @@
     "@types/qrcode": "^1.5.6",
     "@types/sanitize-html": "^2.13.0",
     "@types/supertest": "^6.0.3",
+    "@types/ws": "^8.18.2",
     "linkedom": "^0.18.15",
     "open": "^11.0.0",
     "supertest": "^7.1.0",

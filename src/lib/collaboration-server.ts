@@ -1,3 +1,4 @@
+import { getNetworkVerificationContext, networkProbePath } from "./network-verification.js";
 import type { IncomingMessage, Server as HttpServer } from "node:http";
 import type { Server as HttpsServer } from "node:https";
 import type { Socket } from "node:net";
@@ -26,7 +27,7 @@ import { isAuthSessionActive, resolveAuthSessionId } from "./auth-sessions.js";
 import { authSessionCookieName } from "./session-cookie.js";
 import { readUniqueCookieValue } from "./session-cookie-policy.js";
 import { enforceCountryLoginPolicy } from "./country-login-policy.js";
-import { enforceVpnAccessPolicy, type ClientWebRtcSignal } from "./vpn-access-policy.js";
+import { enforceVpnAccessPolicy } from "./vpn-access-policy.js";
 import {
   acceptWebSocketUpgrade,
   parseWebSocketProtocols,
@@ -136,7 +137,7 @@ type ClientContext = {
   canEdit: boolean;
   authSessionId: string;
   ipAddress: string;
-  webRtcSignal: ClientWebRtcSignal;
+  networkContext: string | null;
   documentEpoch: string;
   synced: boolean;
   awareness: AwarenessState;
@@ -331,6 +332,7 @@ export class PageCollaborationHub {
   constructor(server: CollaborationNetworkServer) {
     this.server = server;
     this.upgradeHandler = (request, socket, head) => {
+      if (request.url?.split("?")[0] === networkProbePath) return;
       // Node hands ownership of an upgraded socket to the application before
       // any asynchronous authorization work begins. Contain transport errors
       // locally so an aborted handshake cannot become an uncaught process error.
@@ -666,10 +668,7 @@ export class PageCollaborationHub {
       }
       const collaborationState = await getCollaborationState(pageId);
       assertCollaborationDocumentEpoch(collaborationState, payload.documentEpoch);
-      const webRtcSignal: ClientWebRtcSignal = {
-        state: payload.webRtcState ?? "ABSENT",
-        observedIps: payload.webRtcObservedIps ?? []
-      };
+      const networkContext = getNetworkVerificationContext(request);
       const user = await db.queryOne<CollaborationProfile & {
         auth_version?: number;
         attachment_generation?: number | bigint | string;
@@ -707,7 +706,7 @@ export class PageCollaborationHub {
         return;
       }
       await enforceCountryLoginPolicy(user.id, user.country_login_mode, sourceIp);
-      await enforceVpnAccessPolicy(user.id, user.vpn_block_enabled, sourceIp, null, webRtcSignal);
+      await enforceVpnAccessPolicy(user.id, user.vpn_block_enabled, sourceIp, networkContext);
 
       if (this.closed) {
         rejectWebSocketUpgrade(socket, 503, "Collaboration server is shutting down");
@@ -747,7 +746,7 @@ export class PageCollaborationHub {
         canEdit: canEditPageAccess(access),
         authSessionId,
         ipAddress: sourceIp,
-        webRtcSignal,
+        networkContext,
         documentEpoch: payload.documentEpoch,
         synced: false,
         awareness: { blockId: null, field: null, control: null, selection: null },
@@ -829,7 +828,7 @@ export class PageCollaborationHub {
           return;
         }
         await enforceCountryLoginPolicy(payload.sub, currentUser.country_login_mode, sourceIp);
-        await enforceVpnAccessPolicy(payload.sub, currentUser.vpn_block_enabled, sourceIp, null, webRtcSignal);
+        await enforceVpnAccessPolicy(payload.sub, currentUser.vpn_block_enabled, sourceIp, networkContext);
         const currentAccess = await getPageAccess(pageId, payload.sub);
         assertCurrentCollaborationGrant(currentAccess, payload.shareGeneration);
         if (currentAccess.page.is_collection || currentAccess.page.is_archived || currentAccess.shareCount < 1) {
@@ -1340,8 +1339,7 @@ export class PageCollaborationHub {
           client.user.id,
           currentUser.vpn_block_enabled,
           client.ipAddress,
-          null,
-          client.webRtcSignal
+          client.networkContext
         );
 
         const access = await getPageAccess(room.pageId, client.user.id);
@@ -2009,8 +2007,7 @@ export class PageCollaborationHub {
                 client.user.id,
                 currentUser.vpn_block_enabled,
                 client.ipAddress,
-                null,
-                client.webRtcSignal
+                client.networkContext
               );
               const access = await getPageAccess(room.pageId, client.user.id);
               assertCurrentCollaborationGrant(access, client.shareGeneration);

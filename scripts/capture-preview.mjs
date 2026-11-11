@@ -124,9 +124,6 @@ function previewInjection() {
       body.preview-capture-ready * { caret-color: transparent !important; }
     </style>
     <script>
-      // The API client probes a public STUN server before workspace requests.
-      // Report WebRTC as disabled so the offline capture never waits on the network.
-      window.RTCPeerConnection = undefined;
       localStorage.setItem("brainvault.language", "en");
       window.addEventListener("DOMContentLoaded", () => {
         let opened = false;

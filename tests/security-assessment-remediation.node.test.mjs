@@ -276,7 +276,7 @@ function authHarness() {
     evaluatePasswordLogin:async(_c,_id,match)=>match?'ALLOWED':'DENIED',recordLoginAttempt:async()=>{},
     requireSameOriginBrowserRequest:noop,requireJsonRequestBody:noop,registrationRateLimit:noop,registrationGlobalRateLimit:noop,
     loginIpRateLimit:noop,loginAccountRateLimit:noop,validate:noop,registerSchema:{},loginSchema:{},
-    padRegistrationResponse:async()=>{},padLoginResponse:async()=>{},getClientIpAddress:()=> '8.8.8.8',getClientTimeZone:noop,getClientWebRtcSignal:noop,
+    padRegistrationResponse:async()=>{},padLoginResponse:async()=>{},getClientIpAddress:()=> '8.8.8.8',getNetworkVerificationContext:noop,
     enforceCountryLoginPolicy:async()=>{},enforceVpnAccessPolicy:async()=>{},isPreAuthLoginPolicyDenial:()=>false,
     getMfaMethods:async()=>({totp:false,passkey:false}),normalizeAuthVersion:()=>1,
     clearMfaCeremonyBinding:noop,setAuthSessionCookie:noop,signAuthToken:()=> 'token',toPublicUser:u=>({id:u.id})

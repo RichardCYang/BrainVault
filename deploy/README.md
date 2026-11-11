@@ -2,6 +2,8 @@
 
 BrainVault can terminate TLS itself with Posh-ACME PEM files or continue to listen on private HTTP behind a trusted reverse proxy.
 
+VPN/proxy blocking compares TCP RTT at the trusted ingress with server-measured WebSocket RTT. See connection measurement setup in [English](network-verification.md), [한국어](network-verification.ko.md), or [日本語](network-verification.jp.md) for Synology DSM HTTPS-to-HTTP forwarding, TCP_INFO headers, proxy trust and detection limits.
+
 ## Direct HTTPS with Posh-ACME
 
 Posh-ACME writes `fullchain.cer` (certificate plus issuing chain) and `cert.key` (private key) in each certificate order folder. Display the exact paths for the active order in PowerShell:

@@ -1,3 +1,4 @@
+import { getNetworkVerificationContext } from "../lib/network-verification.js";
 import type { NextFunction, Request, Response } from "express";
 import { env } from "../config/env.js";
 import { db } from "../lib/db.js";
@@ -5,7 +6,7 @@ import { normalizeAuthVersion, verifyAuthToken } from "../lib/auth.js";
 import { setPrivateNoStoreCacheControl } from "../lib/cache-control.js";
 import { ApiError } from "../lib/http.js";
 import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
-import { enforceVpnAccessPolicy, getClientTimeZone, getClientWebRtcSignal } from "../lib/vpn-access-policy.js";
+import { enforceVpnAccessPolicy } from "../lib/vpn-access-policy.js";
 import { getClientIpAddress } from "../lib/login-history.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { clearAuthSessionCookie, readAuthSessionCookie } from "../lib/session-cookie.js";
@@ -194,8 +195,7 @@ async function authenticateRequest(
       user.id,
       user.vpn_block_enabled,
       clientIp,
-      getClientTimeZone(req),
-      getClientWebRtcSignal(req)
+      getNetworkVerificationContext(req)
     );
 
     // Session revocation must apply uniformly to cookie and optional bearer credentials.

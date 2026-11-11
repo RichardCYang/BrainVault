@@ -130,6 +130,9 @@ const envSchema = z.object({
   TRUST_PROXY_ALLOW_PRIVATE_CLIENTS: disabledByDefault,
   VPN_POLICY_FAIL_CLOSED: enabledByDefault,
   VPN_ALLOW_PRIVATE_NETWORK: enabledByDefault,
+  VPN_MIN_EXCESS_RTT_MS: z.coerce.number().int().min(25).max(2_000).default(50),
+  VPN_PROXY_RTT_MARGIN_MS: z.coerce.number().int().min(0).max(500).default(10),
+  VPN_TRUST_PROXY_TCP_INFO: disabledByDefault,
   TRUST_PROXY_ADDRESSES: z.string().trim().max(2_048).default("")
 });
 

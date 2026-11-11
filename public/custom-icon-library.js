@@ -1,4 +1,4 @@
-import { applyWebRtcNetworkSignalHeaders, getWebRtcNetworkSignal } from "./webrtc-network-signal.js";
+import { ensureNetworkVerification } from "./network-verification.js";
 
 export const customIconLibraryLimit = 36;
 
@@ -21,9 +21,7 @@ function normalizeStoredEntry(entry) {
 
 async function request(path, options = {}) {
   const headers = new Headers(options.headers ?? {});
-  if (!headers.has("X-BrainVault-WebRTC-State")) {
-    applyWebRtcNetworkSignalHeaders(headers, await getWebRtcNetworkSignal());
-  }
+  await ensureNetworkVerification();
   let body = options.body;
   if (body && typeof body === "object" && !(body instanceof FormData)) {
     headers.set("Content-Type", "application/json");

@@ -80,7 +80,6 @@ import {
   CollaborationValidationPool,
   CollaborationValidationResourceLimitError
 } from "../lib/collaboration-update-worker-pool.js";
-import { getClientWebRtcSignal } from "../lib/vpn-access-policy.js";
 import { readAuthSessionCookie } from "../lib/session-cookie.js";
 import type { BlockRow, PageRow, UserRow } from "../types/domain.js";
 import { assertNoActiveCollaborationWriteLeases } from "../lib/collaboration-write-lease.js";
@@ -1457,7 +1456,6 @@ collaborationRouter.post(
         return { access, collaborationState, documentBlocks };
       });
       const authVersion = authScope.authVersion;
-      const webRtcSignal = getClientWebRtcSignal(req);
       const ticket = signCollaborationToken({
         sub: user.id,
         username: user.username,
@@ -1467,9 +1465,7 @@ collaborationRouter.post(
         authVersion,
         workspaceGeneration: authScope.workspaceGeneration,
         sessionBinding: createCollaborationSessionBinding(authSessionToken),
-        scope: "page:collaborate",
-        webRtcState: webRtcSignal.state,
-        webRtcObservedIps: webRtcSignal.observedIps
+        scope: "page:collaborate"
       });
       res.setHeader("Cache-Control", "private, no-store");
       res.json({

@@ -119,7 +119,7 @@ function loginHarness({ existing = true, approved = true, matches = true, rotate
     },
     recordLoginAttempt: noop, padLoginResponse: async () => { state.padded++; },
     enforceCountryLoginPolicy: noop, enforceVpnAccessPolicy: noop,
-    getClientTimeZone: noop, getClientWebRtcSignal: noop, isPreAuthLoginPolicyDenial: () => false,
+    getNetworkVerificationContext: noop, isPreAuthLoginPolicyDenial: () => false,
     getMfaMethods: async () => ({ totp: false, passkey: false }),
     signAuthToken: () => { state.signed++; return "session-token"; },
     clearMfaCeremonyBinding: noop, setAuthSessionCookie: noop, toPublicUser: (user) => ({ id: user.id })

@@ -7,6 +7,7 @@ Start with the root [README](../README.md) for a project overview and quick setu
 | Getting started | [Installation, database setup, demo data, and production](getting-started/2026-07-27/getting-started.md) |
 | Configuration | [Environment variables and runtime behavior](configuration/2026-07-28/configuration.md) |
 | HTTPS deployment | [Direct TLS and reverse-proxy examples](../deploy/README.md) |
+| VPN/proxy connection measurement | [TCP/WebSocket verification and Synology DSM setup](../deploy/network-verification.md) |
 | Development | [Scripts, project structure, translations, and preview capture](development/2026-07-28/development.md) |
 | Collaboration | [Page sharing, Yjs/WebSocket sync, persistence, and deployment](collaboration/2026-07-29/collaboration.md) |
 | Collection sharing | [READ/WRITE/ADMIN access, inheritance, API, and troubleshooting](collaboration/2026-09-02/collection-sharing.md) |

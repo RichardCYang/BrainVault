@@ -1,4 +1,4 @@
-**English** | [한국어](README.ko.md) | [日本語](README.ja.md)
+**English** | [한국어](README.ko.md) | [日本語](README.jp.md)
 
 # BrainVault
 
@@ -106,6 +106,7 @@ See [deploy/README.md](deploy/README.md) for examples.
 | [Collaboration](docs/collaboration/2026-07-29/collaboration.md) | Sharing, Yjs/WebSocket flow, persistence |
 | [Collection sharing](docs/collaboration/2026-09-02/collection-sharing.md) | Collection permissions and inheritance |
 | [Security](docs/security/2026-07-30/security.md) | Authentication, secrets, attachments, production boundaries |
+| [VPN/proxy connection measurement](deploy/network-verification.md) | TCP/WebSocket verification, Synology DSM setup, proxy trust, detection limits |
 | [API](docs/api/2026-07-30/api.md) | REST API overview |
 | [OpenAPI](docs/api/2026-07-30/openapi.yaml) | OpenAPI 3.1 specification |
 | [Development](docs/development/2026-07-28/development.md) | Project layout, scripts, translations, preview capture |

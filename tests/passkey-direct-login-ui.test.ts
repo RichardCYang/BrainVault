@@ -29,7 +29,7 @@ describe("direct passkey login UI contract", () => {
     expect(client).toContain('t("mfa.passkeyForegroundRequired")');
     expect(client).toContain('skipClientNetworkVerification = false');
     expect(client).toMatch(/api\("\/api\/auth\/passkey\/options"[\s\S]*?skipClientNetworkVerification: true/);
-    expect(client).toMatch(/api\("\/api\/auth\/me"[\s\S]*?skipClientNetworkVerification: true/);
+    expect(client).toContain("A returning session with network blocking enabled needs fresh evidence too.");
     expect(client).toContain("getWebAuthnCredential(optionsData.options, { trigger: elements.mfaLoginPasskey })");
     expect(styles).toContain('.auth-passkey-login[aria-disabled="true"]');
     expect(i18n).toContain("passkeyForegroundRequired:");

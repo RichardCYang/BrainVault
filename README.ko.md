@@ -1,4 +1,4 @@
-[English](README.md) | **한국어** | [日本語](README.ja.md)
+[English](README.md) | **한국어** | [日本語](README.jp.md)
 
 # BrainVault — 셀프호스팅 블록 기반 노트 웹앱
 
@@ -106,6 +106,7 @@ BrainVault는 Posh-ACME 인증서 파일을 사용해 HTTPS를 직접 종료하�
 | [협업](docs/collaboration/2026-07-29/collaboration.ko.md) | 공유, Yjs/WebSocket 흐름, 영속성 |
 | [컬렉션 공유](docs/collaboration/2026-09-02/collection-sharing.ko.md) | 컬렉션 권한과 상속 |
 | [보안](docs/security/2026-07-30/security.ko.md) | 인증, 비밀값, 첨부파일, 운영 환경 보안 경계 |
+| [VPN/프록시 연결 측정](deploy/network-verification.ko.md) | TCP/WebSocket 검증, Synology DSM 설정, 프록시 신뢰, 탐지 한계 |
 | [API](docs/api/2026-07-30/api.ko.md) | REST API 개요 |
 | [OpenAPI](docs/api/2026-07-30/openapi.yaml) | OpenAPI 3.1 명세 |
 | [개발](docs/development/2026-07-28/development.ko.md) | 프로젝트 구조, 스크립트, 번역, 미리보기 캡처 |

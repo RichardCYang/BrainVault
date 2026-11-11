@@ -1110,7 +1110,7 @@
                   <div class="account-security-section-heading">
                     <div>
                       <h4 id="account-vpn-block-title" data-i18n="account.vpnBlockTitle">VPN / proxy access blocking</h4>
-                      <p data-i18n="account.vpnBlockDescription">Block account access from high-confidence VPN, proxy, and Tor exit addresses.</p>
+                      <p data-i18n="account.vpnBlockDescription">Restrict access when repeated connection measurements indicate an additional tunnel path.</p>
                     </div>
                     <span id="account-vpn-block-status" class="country-login-status vpn-block-status" data-i18n="account.vpnBlockOff">Off</span>
                   </div>
@@ -1127,8 +1127,6 @@
                     <div class="country-login-current vpn-block-current">
                       <span data-i18n="account.vpnBlockCurrentIp">Current IP</span>
                       <strong id="account-vpn-block-current-ip">—</strong>
-                      <span data-i18n="account.vpnBlockCurrentCountry">Current country</span>
-                      <strong id="account-vpn-block-current-country">—</strong>
                       <span data-i18n="account.vpnBlockCurrentVerdict">Network assessment</span>
                       <strong id="account-vpn-block-current-verdict">—</strong>
                       <span data-i18n="account.vpnBlockCurrentSignals">Supporting signals</span>
@@ -1140,10 +1138,11 @@
                       <input id="account-vpn-block-password" type="password" autocomplete="current-password" maxlength="128" />
                     </div>
 
-                    <p class="country-login-warning" data-i18n="account.vpnBlockWarning">Detection uses free no-key network intelligence and the Tor exit list. Data-center and browser-timezone differences are supporting signals only; ambiguous results are not blocked. Saving revokes other active sessions.</p>
+                    <p class="country-login-warning" data-i18n="account.vpnBlockWarning">VPNs that forward TCP end to end may remain undetected. Missing TCP measurements follow the server verification policy. Saving revokes other active sessions.</p>
 
                     <div class="account-form-actions">
                       <button id="account-vpn-block-save" type="button" data-i18n="account.vpnBlockSave">Save VPN blocking policy</button>
+                      <button id="account-vpn-network-refresh" type="button" data-i18n="account.vpnMeasurementRefresh">Measure connection again</button>
                     </div>
                   </div>
                 </section>

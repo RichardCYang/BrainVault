@@ -21,12 +21,8 @@ test("network-policy caches revalidate known exact-IP facts off the authenticate
     read("src/lib/country-login-policy.ts")
   ]);
 
-  assert.match(vpn, /const providerSignalStaleMs = 15 \* 60_000;/);
-  assert.match(vpn, /const unavailableProviderSignalStaleMs = 2 \* 60_000;/);
-  assert.match(vpn, /const vpnGateMatchStaleMs = 5 \* 60_000;/);
-  assert.match(vpn, /if \(cached && cached\.staleUntil > now\) \{\s*void startProviderSignalRefresh/s);
-  assert.match(vpn, /if \(cached && cached\.staleUntil > now\) \{\s*void startVpnGateMatchRefresh/s);
-  assert.match(vpn, /const cacheKey = `\$\{provider\}\|\$\{ipAddress\}`;/);
+  assert.doesNotMatch(vpn, /fetch\(|providerSignalCache|WebRtc/);
+  assert.match(vpn, /getNetworkAssessment/);
 
   assert.match(country, /const successfulCountryStaleMs = 30 \* 60_000;/);
   assert.match(country, /const countryResolutionInFlight = new Map/);

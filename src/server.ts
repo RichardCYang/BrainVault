@@ -16,6 +16,7 @@ import { loadPoshAcmeTls } from "./lib/posh-acme-https.js";
 import { createExpressTrustProxySetting, describeExpressTrustProxySetting } from "./lib/reverse-proxy.js";
 import { assertSupportedNodeRuntime } from "./lib/runtime-security.js";
 import { initializePermanentTotpIpEnforcement } from "./lib/totp-ip-block.js";
+import { initializeNetworkVerification } from "./lib/network-verification.js";
 
 assertExplicitRuntimeEnvironment();
 assertSupportedNodeRuntime();
@@ -84,6 +85,7 @@ async function start() {
   }, 60_000);
   sessionPruneTimer.unref();
 
+  const networkVerification = await initializeNetworkVerification();
   const app = createApp();
   const displayHost = env.HOST === "0.0.0.0" || env.HOST === "::" ? "localhost" : env.HOST;
   const displayUrlHost = displayHost.includes(":") ? `[${displayHost}]` : displayHost;
@@ -96,6 +98,7 @@ async function start() {
   const server = poshAcmeTls
     ? createHttpsServer(poshAcmeTls.options, app)
     : createHttpServer(app);
+  networkVerification.attach(server);
   const collaborationHub = attachPageCollaborationServer(server);
   server.listen(env.PORT, env.HOST, () => {
     console.log(`BrainVault API listening on ${listenerUrl}`);
@@ -126,6 +129,7 @@ async function start() {
     await collaborationHub.close().catch((error) => {
       console.error("Failed to close collaboration server", error);
     });
+    await networkVerification.close();
     await new Promise<void>((resolve) => {
       server.close((error) => {
         if (error) console.error("Failed to close BrainVault network server", error);

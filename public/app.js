@@ -125,10 +125,7 @@ import {
   updateYouTubeVideoPreview
 } from "./youtube-block.js";
 import { restoreSessionAtBoot } from "./session-bootstrap.js";
-import {
-  applyWebRtcNetworkSignalHeaders,
-  getWebRtcNetworkSignal
-} from "./webrtc-network-signal.js";
+import { ensureNetworkVerification } from "./network-verification.js";
 import { parseWorkspaceLocation, serializeWorkspaceLocation } from "./workspace-location.js";
 import {
   createPageCoverOperationGuard,
@@ -381,13 +378,7 @@ const state = {
     currentIp: "unknown",
     currentCountryCode: null,
     verdict: "UNKNOWN",
-    confidence: 0,
-    datacenter: false,
-    timezoneMismatch: false,
-    providerCount: 0,
-    webRtcState: "ABSENT",
-    webRtcObservedIps: [],
-    webRtcIpMismatch: false,
+    measurement: null,
     supportingSignals: [],
     loading: false,
     saving: false,
@@ -1285,11 +1276,11 @@ const elements = {
   accountCountryLoginStatus: $("#account-country-login-status"),
   accountVpnBlockEnabled: $("#account-vpn-block-enabled"),
   accountVpnBlockCurrentIp: $("#account-vpn-block-current-ip"),
-  accountVpnBlockCurrentCountry: $("#account-vpn-block-current-country"),
   accountVpnBlockCurrentVerdict: $("#account-vpn-block-current-verdict"),
   accountVpnBlockCurrentSignals: $("#account-vpn-block-current-signals"),
   accountVpnBlockPassword: $("#account-vpn-block-password"),
   accountVpnBlockSave: $("#account-vpn-block-save"),
+  accountVpnNetworkRefresh: $("#account-vpn-network-refresh"),
   accountVpnBlockStatus: $("#account-vpn-block-status"),
   sidebarUserAvatar: $("#sidebar-user-avatar"),
   sidebarUserAvatarFallback: $("#sidebar-user-avatar-fallback"),
@@ -2315,35 +2306,8 @@ function canSupersedeBlockSaveError(error) {
   return isDefinitiveApiError(error) && error?.code === "BLOCK_METADATA_WOULD_TRUNCATE";
 }
 
-const browserTimeZoneCacheMs = 5 * 60_000;
-let browserTimeZoneCache = null;
-let browserTimeZoneCacheExpiresAt = 0;
-
-function getBrowserTimeZone() {
-  const now = Date.now();
-  if (now < browserTimeZoneCacheExpiresAt) return browserTimeZoneCache;
-
-  let value = null;
-  try {
-    const resolved = new Intl.DateTimeFormat().resolvedOptions().timeZone;
-    value = typeof resolved === "string" && resolved.length > 0 && resolved.length <= 64 ? resolved : null;
-  } catch {
-    value = null;
-  }
-  browserTimeZoneCache = value;
-  browserTimeZoneCacheExpiresAt = now + browserTimeZoneCacheMs;
-  return value;
-}
-
 async function applyClientNetworkVerificationHeaders(headers) {
-  const browserTimeZone = getBrowserTimeZone();
-  if (browserTimeZone && !headers.has("X-BrainVault-Timezone")) {
-    headers.set("X-BrainVault-Timezone", browserTimeZone);
-  }
-  if (!headers.has("X-BrainVault-WebRTC-State")) {
-    const webRtcSignal = await getWebRtcNetworkSignal();
-    applyWebRtcNetworkSignalHeaders(headers, webRtcSignal);
-  }
+  await ensureNetworkVerification();
   return headers;
 }
 
@@ -3459,13 +3423,7 @@ function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}
       currentIp: "unknown",
       currentCountryCode: null,
       verdict: "UNKNOWN",
-      confidence: 0,
-      datacenter: false,
-      timezoneMismatch: false,
-      providerCount: 0,
-      webRtcState: "ABSENT",
-      webRtcObservedIps: [],
-      webRtcIpMismatch: false,
+      measurement: null,
       supportingSignals: [],
       loading: false,
       saving: false,
@@ -4258,34 +4216,16 @@ async function saveCountryLoginPolicy() {
 }
 
 function normalizeVpnRiskVerdict(value) {
-  return ["CLEAR", "VPN", "VPN_GATE", "PROXY", "TOR", "UNKNOWN"].includes(value) ? value : "UNKNOWN";
+  return ["CLEAR", "TUNNEL", "INCONCLUSIVE", "UNKNOWN"].includes(value) ? value : "UNKNOWN";
 }
 
 function applyVpnBlockPolicyResponse(data) {
   state.vpnBlockPolicy.enabled = Boolean(data?.enabled);
   state.vpnBlockPolicy.currentIp = typeof data?.currentIp === "string" ? data.currentIp : "unknown";
-  state.vpnBlockPolicy.currentCountryCode = typeof data?.currentCountryCode === "string"
-    ? data.currentCountryCode.toUpperCase()
-    : null;
   state.vpnBlockPolicy.verdict = normalizeVpnRiskVerdict(data?.verdict);
-  state.vpnBlockPolicy.confidence = Number.isFinite(Number(data?.confidence))
-    ? Math.min(100, Math.max(0, Math.round(Number(data.confidence))))
-    : 0;
-  state.vpnBlockPolicy.datacenter = Boolean(data?.datacenter);
-  state.vpnBlockPolicy.timezoneMismatch = Boolean(data?.timezoneMismatch);
-  state.vpnBlockPolicy.providerCount = Number.isFinite(Number(data?.providerCount))
-    ? Math.max(0, Math.trunc(Number(data.providerCount)))
-    : 0;
-  state.vpnBlockPolicy.webRtcState = ["ABSENT", "AVAILABLE", "DISABLED", "UNAVAILABLE"].includes(data?.webRtcState)
-    ? data.webRtcState
-    : "ABSENT";
-  state.vpnBlockPolicy.webRtcObservedIps = Array.isArray(data?.webRtcObservedIps)
-    ? data.webRtcObservedIps.filter((value) => typeof value === "string" && value.length <= 64).slice(0, 4)
-    : [];
-  state.vpnBlockPolicy.webRtcIpMismatch = Boolean(data?.webRtcIpMismatch);
+  state.vpnBlockPolicy.measurement = data?.measurement && typeof data.measurement === "object" ? data.measurement : null;
   state.vpnBlockPolicy.supportingSignals = Array.isArray(data?.supportingSignals)
-    ? data.supportingSignals.filter((value) => typeof value === "string").slice(0, 16)
-    : [];
+    ? data.supportingSignals.filter((value) => typeof value === "string").slice(0, 16) : [];
 }
 
 function renderVpnBlockPolicy() {
@@ -4294,62 +4234,33 @@ function renderVpnBlockPolicy() {
   elements.accountVpnBlockEnabled.value = String(policy.enabled);
   elements.accountVpnBlockStatus.textContent = t(policy.enabled ? "account.vpnBlockOn" : "account.vpnBlockOff");
   elements.accountVpnBlockStatus.dataset.mode = policy.enabled ? "enabled" : "disabled";
-  elements.accountVpnBlockCurrentIp.textContent = policy.currentIp === "unknown"
-    ? t("account.loginHistoryUnknownIp")
-    : policy.currentIp;
-  elements.accountVpnBlockCurrentCountry.textContent = formatLoginCountry(policy.currentCountryCode);
-
-  const verdictKey = {
-    CLEAR: "account.vpnBlockRiskClear",
-    VPN: "account.vpnBlockRiskVpn",
-    VPN_GATE: "account.vpnBlockRiskVpnGate",
-    PROXY: "account.vpnBlockRiskProxy",
-    TOR: "account.vpnBlockRiskTor",
-    UNKNOWN: "account.vpnBlockRiskUnknown"
-  }[policy.verdict] ?? "account.vpnBlockRiskUnknown";
-  const verdict = t(verdictKey);
-  elements.accountVpnBlockCurrentVerdict.textContent = policy.loading
-    ? t("account.vpnBlockLoading")
-    : policy.providerCount > 0 || policy.verdict !== "UNKNOWN"
-      ? t("account.vpnBlockRiskWithConfidence", {
-          risk: verdict,
-          confidence: formatNumber(policy.confidence)
-        })
-      : verdict;
-
-  const supportingSignals = [];
-  if (policy.providerCount > 0) {
-    supportingSignals.push(t("account.vpnBlockProviderCount", { count: formatNumber(policy.providerCount) }));
+  elements.accountVpnBlockCurrentIp.textContent = policy.currentIp === "unknown" ? t("account.loginHistoryUnknownIp") : policy.currentIp;
+  const verdictKey = { CLEAR: "account.vpnBlockRiskClear", TUNNEL: "account.vpnBlockRiskTunnel", INCONCLUSIVE: "account.vpnBlockRiskInconclusive", UNKNOWN: "account.vpnBlockRiskUnknown" }[policy.verdict];
+  elements.accountVpnBlockCurrentVerdict.textContent = t(policy.loading ? "account.vpnBlockLoading" : verdictKey);
+  const signals = [];
+  const signalKeys = {
+    PRIVATE_NETWORK_EXEMPT: "account.vpnMeasurementLocal",
+    LOCAL_TRUSTED_PROXY: "account.vpnMeasurementLocalProxy",
+    TRUSTED_PROXY_TCP_INFO: "account.vpnMeasurementTcpProxy", DIRECT_TCP_INFO: "account.vpnMeasurementTcpDirect",
+    UNSTABLE_NETWORK: "account.vpnMeasurementUnstable",
+    UNSUPPORTED_PROXY_PATH: "account.vpnMeasurementProxyUnsupported",
+    MEASUREMENT_REQUIRED: "account.vpnMeasurementRequired", MEASUREMENT_NOT_RUNNING: "account.vpnMeasurementUnavailable",
+    TCP_INFO_UNAVAILABLE: "account.vpnMeasurementTcpUnavailable", DIRECT_TCP_INFO_UNAVAILABLE: "account.vpnMeasurementTcpUnavailable",
+    PROXY_TCP_INFO_DISABLED: "account.vpnMeasurementTcpDisabled",
+    UNTRUSTED_TCP_INFO_SOURCE: "account.vpnMeasurementTcpMismatch", TCP_INFO_CLIENT_MISMATCH: "account.vpnMeasurementTcpMismatch",
+    INSUFFICIENT_SAMPLES: "account.vpnMeasurementUnavailable",
+    REPEATED_CROSS_LAYER_GAP: "account.vpnMeasurementExcess", TCP_WEBSOCKET_COMPARISON_INCONCLUSIVE: "account.vpnBlockRiskInconclusive"
+  };
+  for (const signal of policy.supportingSignals) if (signalKeys[signal]) signals.push(t(signalKeys[signal]));
+  const measurement = policy.measurement;
+  if (Number.isFinite(measurement?.applicationRttMs) && Number.isFinite(measurement?.tcpRttMs)) {
+    signals.push(t("account.vpnMeasurementRtt", { application: formatNumber(Math.round(measurement.applicationRttMs)), tcp: formatNumber(Math.round(measurement.tcpRttMs)) }));
   }
-  if (policy.datacenter) supportingSignals.push(t("account.vpnBlockDatacenterSignal"));
-  if (policy.timezoneMismatch) supportingSignals.push(t("account.vpnBlockTimezoneSignal"));
-  if (policy.supportingSignals.includes("WEBRTC_HTTP_IP_MISMATCH")) {
-    supportingSignals.push(t("account.vpnBlockWebRtcMismatchSignal", {
-      ips: policy.webRtcObservedIps.join(", ") || t("account.loginHistoryUnknownIp")
-    }));
-  } else if (policy.supportingSignals.includes("WEBRTC_HTTP_IP_MATCH")) {
-    supportingSignals.push(t("account.vpnBlockWebRtcMatchSignal"));
-  } else if (policy.supportingSignals.includes("WEBRTC_DISABLED")) {
-    supportingSignals.push(t("account.vpnBlockWebRtcDisabledSignal"));
-  } else if (policy.supportingSignals.includes("WEBRTC_STUN_UNAVAILABLE")) {
-    supportingSignals.push(t("account.vpnBlockWebRtcUnavailableSignal"));
-  }
-  if (policy.supportingSignals.includes("VPN_GATE_DIRECTORY_DDNS_VERIFIED")) {
-    supportingSignals.push(t("account.vpnBlockVpnGateDdnsVerified"));
-  } else if (policy.supportingSignals.includes("VPN_GATE_DIRECTORY_PROVIDER_CORROBORATED")) {
-    supportingSignals.push(t("account.vpnBlockVpnGateProviderCorroborated"));
-  } else if (policy.supportingSignals.includes("VPN_GATE_DIRECTORY_UNVERIFIED")) {
-    supportingSignals.push(t("account.vpnBlockVpnGateUnverified"));
-  } else if (policy.supportingSignals.includes("VPN_GATE_PUBLIC_RELAY_DIRECTORY")) {
-    supportingSignals.push(t("account.vpnBlockVpnGateListed"));
-  }
-  elements.accountVpnBlockCurrentSignals.textContent = supportingSignals.length
-    ? supportingSignals.join(" · ")
-    : t("account.vpnBlockNoSupportingSignals");
-
+  elements.accountVpnBlockCurrentSignals.textContent = signals.length ? signals.join(" \u00b7 ") : t("account.vpnBlockNoSupportingSignals");
   elements.accountVpnBlockEnabled.disabled = busy;
   elements.accountVpnBlockPassword.disabled = busy;
   elements.accountVpnBlockSave.disabled = busy;
+  elements.accountVpnNetworkRefresh.disabled = busy;
   elements.accountVpnBlockSave.textContent = t(policy.saving ? "account.vpnBlockSaving" : "account.vpnBlockSave");
 }
 
@@ -4366,6 +4277,7 @@ async function loadVpnBlockPolicy({ force = false } = {}) {
   renderVpnBlockPolicy();
   setAccountMessage();
   try {
+    if (force) await ensureNetworkVerification({ force: true });
     const data = await api("/api/auth/vpn-block-policy");
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.vpnPolicy, operation)) return;
     applyVpnBlockPolicyResponse(data);
@@ -19663,13 +19575,9 @@ async function restoreWorkspaceLocationFromHash({ fallbackToHome = false } = {})
 
 
 async function loadMe() {
-  // /auth/me does not consume the timezone/WebRTC VPN signal server-side.
-  // Avoid starting the up-to-1.8s STUN discovery while the anonymous login
-  // screen is booting; otherwise an immediate passkey click can get queued
-  // behind that same in-flight signal before WebAuthn is even invoked.
+  // A returning session with network blocking enabled needs fresh evidence too.
   const data = await api("/api/auth/me", {
-    skipAuthReset: true,
-    skipClientNetworkVerification: true
+    skipAuthReset: true
   });
   return data.user;
 }
@@ -20402,6 +20310,9 @@ elements.accountVpnBlockEnabled.addEventListener("change", () => {
 
 elements.accountVpnBlockSave.addEventListener("click", () => {
   void saveVpnBlockPolicy();
+});
+elements.accountVpnNetworkRefresh.addEventListener("click", () => {
+  void loadVpnBlockPolicy({ force: true });
 });
 
 elements.accountDataExport.addEventListener("click", async () => {

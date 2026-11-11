@@ -1,6 +1,6 @@
 # Place this map in the http {} context.
 # Explicitly omit query strings, referrers, cookies, authorization and WebSocket
-# subprotocols (which carry short-lived collaboration tickets) from access logs.
+# subprotocols (which carry short-lived collaboration and measurement tickets) from access logs.
 log_format brainvault_safe '$remote_addr [$time_local] "$request_method $uri $server_protocol" '
                           '$status $body_bytes_sent';
 map $http_upgrade $connection_upgrade {
@@ -52,6 +52,14 @@ server {
         proxy_set_header X-Forwarded-Host  $host;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+
+        # Original client TCP_INFO, in microseconds. Enable
+        # VPN_TRUST_PROXY_TCP_INFO only after these headers are configured.
+        # Always overwrite incoming values. With real_ip rewriting, use the
+        # original transport peer ($realip_remote_addr), not a rewritten IP.
+        proxy_set_header X-BrainVault-TCP-Peer-IP   $remote_addr;
+        proxy_set_header X-BrainVault-TCP-RTT-Us    $tcpinfo_rtt;
+        proxy_set_header X-BrainVault-TCP-RTTVar-Us $tcpinfo_rttvar;
 
         proxy_set_header Upgrade    $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
