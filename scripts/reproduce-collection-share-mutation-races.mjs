@@ -6,7 +6,7 @@ function simulateFetchPreflightRace({ fixed }) {
   const mutationIsCurrent = () => dialogOpen && requestGeneration === capturedGeneration;
   const currentAtApiEntry = mutationIsCurrent();
 
-  // api() yields while preparing network-verification headers. The owner closes
+  // Request preparation can yield before dispatch. The owner closes
   // the dialog (or navigates to another collection) before fetch() is invoked.
   dialogOpen = false;
   requestGeneration += 1;

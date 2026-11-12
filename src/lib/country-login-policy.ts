@@ -16,11 +16,6 @@ export type CountryLoginBlockReason =
   | "BLOCKLISTED"
   | "COUNTRY_UNRESOLVED"
   | "POLICY_INVALID"
-  | "VPN_DETECTED"
-  | "VPN_GATE_DETECTED"
-  | "PROXY_DETECTED"
-  | "TOR_DETECTED"
-  | "VPN_VERIFICATION_UNAVAILABLE"
   | "TOTP_ATTEMPTS_EXCEEDED";
 
 export const defaultCountryBlockHistoryMonths = 3;
@@ -56,7 +51,7 @@ type CountryBlockRow = {
   id: string;
   ip_address: string;
   country_code: string | null;
-  reason: CountryLoginBlockReason;
+  reason: string;
   blocked_at: string | Date;
 };
 

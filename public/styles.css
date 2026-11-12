@@ -12092,14 +12092,12 @@ body.search-dialog-open {
 }
 
 .country-login-policy-form,
-.vpn-block-policy-form,
 .totp-ip-block-policy-form {
   display: grid;
   gap: 0.95rem;
 }
 
 .country-login-policy-form .form-field,
-.vpn-block-policy-form .form-field,
 .totp-ip-block-policy-form .form-field {
   display: grid;
   gap: 0.42rem;
@@ -12204,7 +12202,6 @@ body.search-dialog-open {
 
 .country-login-status[data-mode="allowlist"],
 .country-login-status[data-mode="blocklist"],
-.vpn-block-status[data-mode="enabled"],
 .totp-ip-block-status[data-mode="enabled"] {
   border-color: rgba(169, 120, 37, 0.28);
   background: rgba(169, 120, 37, 0.08);

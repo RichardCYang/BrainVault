@@ -54,7 +54,7 @@ test("comment create, edit, and delete revalidate page context at the fetch disp
     assert.match(
       source,
       /beforeFetch: isCommentMutationCurrent/,
-      "api dispatch must be fenced after async network verification and before fetch"
+      "api dispatch must revalidate the comment context before fetch"
     );
     assert.match(
       source,

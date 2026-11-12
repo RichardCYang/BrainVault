@@ -1,4 +1,3 @@
-import { getNetworkVerificationContext, networkProbePath } from "./network-verification.js";
 import type { IncomingMessage, Server as HttpServer } from "node:http";
 import type { Server as HttpsServer } from "node:https";
 import type { Socket } from "node:net";
@@ -27,7 +26,6 @@ import { isAuthSessionActive, resolveAuthSessionId } from "./auth-sessions.js";
 import { authSessionCookieName } from "./session-cookie.js";
 import { readUniqueCookieValue } from "./session-cookie-policy.js";
 import { enforceCountryLoginPolicy } from "./country-login-policy.js";
-import { enforceVpnAccessPolicy } from "./vpn-access-policy.js";
 import {
   acceptWebSocketUpgrade,
   parseWebSocketProtocols,
@@ -137,7 +135,6 @@ type ClientContext = {
   canEdit: boolean;
   authSessionId: string;
   ipAddress: string;
-  networkContext: string | null;
   documentEpoch: string;
   synced: boolean;
   awareness: AwarenessState;
@@ -332,7 +329,6 @@ export class PageCollaborationHub {
   constructor(server: CollaborationNetworkServer) {
     this.server = server;
     this.upgradeHandler = (request, socket, head) => {
-      if (request.url?.split("?")[0] === networkProbePath) return;
       // Node hands ownership of an upgraded socket to the application before
       // any asynchronous authorization work begins. Contain transport errors
       // locally so an aborted handshake cannot become an uncaught process error.
@@ -668,15 +664,13 @@ export class PageCollaborationHub {
       }
       const collaborationState = await getCollaborationState(pageId);
       assertCollaborationDocumentEpoch(collaborationState, payload.documentEpoch);
-      const networkContext = getNetworkVerificationContext(request);
       const user = await db.queryOne<CollaborationProfile & {
         auth_version?: number;
         attachment_generation?: number | bigint | string;
         registration_approved?: number | boolean | string;
         country_login_mode?: UserRow["country_login_mode"];
-        vpn_block_enabled?: UserRow["vpn_block_enabled"];
       }>(
-        "SELECT id, username, name, avatar_data, auth_version, attachment_generation, registration_approved, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
+        "SELECT id, username, name, avatar_data, auth_version, attachment_generation, registration_approved, country_login_mode FROM users WHERE id = ?",
         [payload.sub]
       );
       if (!user) {
@@ -706,7 +700,6 @@ export class PageCollaborationHub {
         return;
       }
       await enforceCountryLoginPolicy(user.id, user.country_login_mode, sourceIp);
-      await enforceVpnAccessPolicy(user.id, user.vpn_block_enabled, sourceIp, networkContext);
 
       if (this.closed) {
         rejectWebSocketUpgrade(socket, 503, "Collaboration server is shutting down");
@@ -746,7 +739,6 @@ export class PageCollaborationHub {
         canEdit: canEditPageAccess(access),
         authSessionId,
         ipAddress: sourceIp,
-        networkContext,
         documentEpoch: payload.documentEpoch,
         synced: false,
         awareness: { blockId: null, field: null, control: null, selection: null },
@@ -806,9 +798,8 @@ export class PageCollaborationHub {
           attachment_generation?: number | bigint | string;
           registration_approved?: number | boolean | string;
           country_login_mode?: UserRow["country_login_mode"];
-          vpn_block_enabled?: UserRow["vpn_block_enabled"];
         }>(
-          "SELECT auth_version, attachment_generation, registration_approved, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
+          "SELECT auth_version, attachment_generation, registration_approved, country_login_mode FROM users WHERE id = ?",
           [payload.sub]
         );
         if (!currentUser || Number(currentUser.auth_version ?? 1) !== payload.authVersion) {
@@ -828,7 +819,6 @@ export class PageCollaborationHub {
           return;
         }
         await enforceCountryLoginPolicy(payload.sub, currentUser.country_login_mode, sourceIp);
-        await enforceVpnAccessPolicy(payload.sub, currentUser.vpn_block_enabled, sourceIp, networkContext);
         const currentAccess = await getPageAccess(pageId, payload.sub);
         assertCurrentCollaborationGrant(currentAccess, payload.shareGeneration);
         if (currentAccess.page.is_collection || currentAccess.page.is_archived || currentAccess.shareCount < 1) {
@@ -845,10 +835,6 @@ export class PageCollaborationHub {
         }
         if (error instanceof ApiError && error.code === "COUNTRY_LOGIN_BLOCKED") {
           connection.close(4003, "Access from this IP country is blocked");
-          return;
-        }
-        if (error instanceof ApiError && error.code === "VPN_ACCESS_BLOCKED") {
-          connection.close(4003, "Access from this VPN, proxy, or Tor network is blocked");
           return;
         }
         if (error instanceof ApiError && error.statusCode === 404) {
@@ -1309,9 +1295,8 @@ export class PageCollaborationHub {
           attachment_generation?: number | bigint | string;
           registration_approved?: number | boolean | string;
           country_login_mode?: UserRow["country_login_mode"];
-          vpn_block_enabled?: UserRow["vpn_block_enabled"];
         }>(
-          "SELECT auth_version, attachment_generation, registration_approved, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
+          "SELECT auth_version, attachment_generation, registration_approved, country_login_mode FROM users WHERE id = ?",
           [client.user.id]
         );
         if (!currentUser || Number(currentUser.auth_version ?? 1) !== client.authVersion) {
@@ -1335,12 +1320,6 @@ export class PageCollaborationHub {
           throw new ApiError(401, "SESSION_REVOKED", "Authentication session was revoked");
         }
         await enforceCountryLoginPolicy(client.user.id, currentUser.country_login_mode, client.ipAddress);
-        await enforceVpnAccessPolicy(
-          client.user.id,
-          currentUser.vpn_block_enabled,
-          client.ipAddress,
-          client.networkContext
-        );
 
         const access = await getPageAccess(room.pageId, client.user.id);
         assertCurrentCollaborationGrant(access, client.shareGeneration);
@@ -1368,9 +1347,7 @@ export class PageCollaborationHub {
                 ? "Workspace was restored; reconnect before editing again"
                 : error instanceof ApiError && error.code === "COUNTRY_LOGIN_BLOCKED"
                   ? "Access from this IP country is blocked"
-                  : error instanceof ApiError && error.code === "VPN_ACCESS_BLOCKED"
-                    ? "Access from this VPN, proxy, or Tor network is blocked"
-                    : "Page access was removed"
+                  : "Page access was removed"
           );
         }
         return false;
@@ -1981,9 +1958,8 @@ export class PageCollaborationHub {
                 attachment_generation?: number | bigint | string;
                 registration_approved?: number | boolean | string;
                 country_login_mode?: UserRow["country_login_mode"];
-                vpn_block_enabled?: UserRow["vpn_block_enabled"];
               }>(
-                "SELECT auth_version, attachment_generation, registration_approved, country_login_mode, vpn_block_enabled FROM users WHERE id = ?",
+                "SELECT auth_version, attachment_generation, registration_approved, country_login_mode FROM users WHERE id = ?",
                 [client.user.id]
               );
               if (!currentUser || Number(currentUser.auth_version ?? 1) !== client.authVersion) {
@@ -2003,12 +1979,6 @@ export class PageCollaborationHub {
                 return;
               }
               await enforceCountryLoginPolicy(client.user.id, currentUser.country_login_mode, client.ipAddress);
-              await enforceVpnAccessPolicy(
-                client.user.id,
-                currentUser.vpn_block_enabled,
-                client.ipAddress,
-                client.networkContext
-              );
               const access = await getPageAccess(room.pageId, client.user.id);
               assertCurrentCollaborationGrant(access, client.shareGeneration);
               if (access.page.is_collection || access.page.is_archived || access.shareCount < 1) {
@@ -2024,10 +1994,6 @@ export class PageCollaborationHub {
             } catch (error) {
               if (error instanceof ApiError && error.code === "COUNTRY_LOGIN_BLOCKED") {
                 client.socket.close(4003, "Access from this IP country is blocked");
-                return;
-              }
-              if (error instanceof ApiError && error.code === "VPN_ACCESS_BLOCKED") {
-                client.socket.close(4003, "Access from this VPN, proxy, or Tor network is blocked");
                 return;
               }
               if (error instanceof ApiError && (error.statusCode === 403 || error.statusCode === 404)) {

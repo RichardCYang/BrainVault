@@ -125,7 +125,6 @@ import {
   updateYouTubeVideoPreview
 } from "./youtube-block.js";
 import { restoreSessionAtBoot } from "./session-bootstrap.js";
-import { ensureNetworkVerification } from "./network-verification.js";
 import { parseWorkspaceLocation, serializeWorkspaceLocation } from "./workspace-location.js";
 import {
   createPageCoverOperationGuard,
@@ -238,7 +237,6 @@ const accountSecurityOperationGuards = Object.freeze({
   totpIpPolicy: createAccountAvatarOperationGuard(),
   totpIpBlocks: createAccountAvatarOperationGuard(),
   countryPolicy: createAccountAvatarOperationGuard(),
-  vpnPolicy: createAccountAvatarOperationGuard(),
   mfaStatus: createAccountAvatarOperationGuard(),
   password: createAccountAvatarOperationGuard(),
   totpSetup: createAccountAvatarOperationGuard(),
@@ -369,17 +367,6 @@ const state = {
     countries: [],
     currentIp: "unknown",
     currentCountryCode: null,
-    loading: false,
-    saving: false,
-    loaded: false
-  },
-  vpnBlockPolicy: {
-    enabled: false,
-    currentIp: "unknown",
-    currentCountryCode: null,
-    verdict: "UNKNOWN",
-    measurement: null,
-    supportingSignals: [],
     loading: false,
     saving: false,
     loaded: false
@@ -1274,14 +1261,6 @@ const elements = {
   accountCountryLoginPassword: $("#account-country-login-password"),
   accountCountryLoginSave: $("#account-country-login-save"),
   accountCountryLoginStatus: $("#account-country-login-status"),
-  accountVpnBlockEnabled: $("#account-vpn-block-enabled"),
-  accountVpnBlockCurrentIp: $("#account-vpn-block-current-ip"),
-  accountVpnBlockCurrentVerdict: $("#account-vpn-block-current-verdict"),
-  accountVpnBlockCurrentSignals: $("#account-vpn-block-current-signals"),
-  accountVpnBlockPassword: $("#account-vpn-block-password"),
-  accountVpnBlockSave: $("#account-vpn-block-save"),
-  accountVpnNetworkRefresh: $("#account-vpn-network-refresh"),
-  accountVpnBlockStatus: $("#account-vpn-block-status"),
   sidebarUserAvatar: $("#sidebar-user-avatar"),
   sidebarUserAvatarFallback: $("#sidebar-user-avatar-fallback"),
   userUsername: $("#user-username"),
@@ -1912,11 +1891,7 @@ function requestDirectPasskeyOptions() {
   return api("/api/auth/passkey/options", {
     method: "POST",
     body: {},
-    skipAuthReset: true,
-    // This endpoint only creates a one-time WebAuthn challenge and does not
-    // read the VPN/timezone signal. Do not put STUN discovery in the critical
-    // path that prepares the native WebAuthn prompt. /verify still sends it.
-    skipClientNetworkVerification: true
+    skipAuthReset: true
   });
 }
 
@@ -2162,9 +2137,6 @@ function formatLoginCountry(countryCode) {
 }
 
 function translateApiError(data, status) {
-  if (data?.error?.code === "VPN_ACCESS_BLOCKED" && data?.error?.details?.reason === "VPN_VERIFICATION_UNAVAILABLE") {
-    return t("account.vpnVerificationUnavailable");
-  }
   const code = data?.error?.code;
   if (code && t(`errors.${code}`) !== `errors.${code}`) return t(`errors.${code}`);
   if (status >= 500) return t("errors.INTERNAL_SERVER_ERROR");
@@ -2306,11 +2278,6 @@ function canSupersedeBlockSaveError(error) {
   return isDefinitiveApiError(error) && error?.code === "BLOCK_METADATA_WOULD_TRUNCATE";
 }
 
-async function applyClientNetworkVerificationHeaders(headers) {
-  await ensureNetworkVerification();
-  return headers;
-}
-
 const skippedApiRequest = Symbol("skipped-api-request");
 
 class SkippedApiRequestDispatchError extends Error {
@@ -2323,7 +2290,6 @@ class SkippedApiRequestDispatchError extends Error {
 async function api(path, options = {}) {
   const {
     skipAuthReset = false,
-    skipClientNetworkVerification = false,
     beforeFetch = null,
     mutationTimeoutMs = 0,
     ...requestOptions
@@ -2331,9 +2297,6 @@ async function api(path, options = {}) {
   const authenticationScope = captureAuthenticatedSessionScope();
   const startedAuthenticated = Boolean(state.authenticated && authenticationScope.targetKey);
   const headers = new Headers(requestOptions.headers ?? {});
-  if (!skipClientNetworkVerification) {
-    await applyClientNetworkVerificationHeaders(headers);
-  }
   if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope)) {
     throw createApiRequestError(t("errors.UNAUTHENTICATED"), {
       status: 401,
@@ -2419,7 +2382,6 @@ async function api(path, options = {}) {
     const authenticationDenied = response.status === 401
       || (response.status === 403 && (
         data?.error?.code === "COUNTRY_LOGIN_BLOCKED"
-        || data?.error?.code === "VPN_ACCESS_BLOCKED"
         || data?.error?.code === "TOTP_IP_PERMANENTLY_BLOCKED"
       ));
     if (
@@ -2643,7 +2605,6 @@ async function downloadAttachment(block) {
 
   const attachment = getBlockAttachmentData(block);
   const headers = new Headers();
-  await applyClientNetworkVerificationHeaders(headers);
 
   let response;
   try {
@@ -2716,7 +2677,6 @@ async function downloadUserDataBackup({ operation = null } = {}) {
       assertNoPendingLocalCollaborationRecoveryForPages(ownedPageIds);
 
       const headers = new Headers();
-      await applyClientNetworkVerificationHeaders(headers);
       let response;
       try {
         response = await fetch("/api/data/export", { headers, credentials: "include" });
@@ -3388,9 +3348,6 @@ function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}
   state.countryLoginPolicy.loading = false;
   state.countryLoginPolicy.saving = false;
   state.countryLoginPolicy.loaded = false;
-  state.vpnBlockPolicy.loading = false;
-  state.vpnBlockPolicy.saving = false;
-  state.vpnBlockPolicy.loaded = false;
 
   if (clearSensitiveState) {
     const months = state.loginHistory.months || 3;
@@ -3418,17 +3375,6 @@ function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}
       saving: false,
       loaded: false
     };
-    state.vpnBlockPolicy = {
-      enabled: false,
-      currentIp: "unknown",
-      currentCountryCode: null,
-      verdict: "UNKNOWN",
-      measurement: null,
-      supportingSignals: [],
-      loading: false,
-      saving: false,
-      loaded: false
-    };
     state.mfaStatus = { totpEnabled: false, passkeys: [] };
     hideTotpSetup();
   }
@@ -3440,7 +3386,6 @@ function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}
   elements.accountTotpIpBlockPassword.value = "";
   elements.accountTotpIpUnblockPassword.value = "";
   elements.accountCountryLoginPassword.value = "";
-  elements.accountVpnBlockPassword.value = "";
   setAccountPasskeyRegistering(false);
 }
 
@@ -3761,11 +3706,6 @@ function renderBlockHistory() {
     BLOCKLISTED: "account.blockHistoryBlacklisted",
     COUNTRY_UNRESOLVED: "account.blockHistoryCountryUnresolved",
     POLICY_INVALID: "account.blockHistoryPolicyInvalid",
-    VPN_DETECTED: "account.blockHistoryVpnDetected",
-    VPN_GATE_DETECTED: "account.blockHistoryVpnGateDetected",
-    PROXY_DETECTED: "account.blockHistoryProxyDetected",
-    TOR_DETECTED: "account.blockHistoryTorDetected",
-    VPN_VERIFICATION_UNAVAILABLE: "account.vpnVerificationUnavailable",
     TOTP_ATTEMPTS_EXCEEDED: "account.blockHistoryTotpAttemptsExceeded"
   };
 
@@ -3781,7 +3721,7 @@ function renderBlockHistory() {
     const reasonCell = document.createElement("td");
     const reason = document.createElement("span");
     reason.className = "login-history-result failure";
-    reason.textContent = t(reasonTranslationKeys[block.reason] ?? "account.blockHistoryPolicyInvalid");
+    reason.textContent = reasonTranslationKeys[block.reason] ? t(reasonTranslationKeys[block.reason]) : block.reason;
     reasonCell.append(reason);
     row.append(timeCell, ipCell, countryCell, reasonCell);
     elements.accountBlockHistoryBody.append(row);
@@ -4215,125 +4155,6 @@ async function saveCountryLoginPolicy() {
   }
 }
 
-function normalizeVpnRiskVerdict(value) {
-  return ["CLEAR", "TUNNEL", "INCONCLUSIVE", "UNKNOWN"].includes(value) ? value : "UNKNOWN";
-}
-
-function applyVpnBlockPolicyResponse(data) {
-  state.vpnBlockPolicy.enabled = Boolean(data?.enabled);
-  state.vpnBlockPolicy.currentIp = typeof data?.currentIp === "string" ? data.currentIp : "unknown";
-  state.vpnBlockPolicy.verdict = normalizeVpnRiskVerdict(data?.verdict);
-  state.vpnBlockPolicy.measurement = data?.measurement && typeof data.measurement === "object" ? data.measurement : null;
-  state.vpnBlockPolicy.supportingSignals = Array.isArray(data?.supportingSignals)
-    ? data.supportingSignals.filter((value) => typeof value === "string").slice(0, 16) : [];
-}
-
-function renderVpnBlockPolicy() {
-  const policy = state.vpnBlockPolicy;
-  const busy = policy.loading || policy.saving;
-  elements.accountVpnBlockEnabled.value = String(policy.enabled);
-  elements.accountVpnBlockStatus.textContent = t(policy.enabled ? "account.vpnBlockOn" : "account.vpnBlockOff");
-  elements.accountVpnBlockStatus.dataset.mode = policy.enabled ? "enabled" : "disabled";
-  elements.accountVpnBlockCurrentIp.textContent = policy.currentIp === "unknown" ? t("account.loginHistoryUnknownIp") : policy.currentIp;
-  const verdictKey = { CLEAR: "account.vpnBlockRiskClear", TUNNEL: "account.vpnBlockRiskTunnel", INCONCLUSIVE: "account.vpnBlockRiskInconclusive", UNKNOWN: "account.vpnBlockRiskUnknown" }[policy.verdict];
-  elements.accountVpnBlockCurrentVerdict.textContent = t(policy.loading ? "account.vpnBlockLoading" : verdictKey);
-  const signals = [];
-  const signalKeys = {
-    PRIVATE_NETWORK_EXEMPT: "account.vpnMeasurementLocal",
-    LOCAL_TRUSTED_PROXY: "account.vpnMeasurementLocalProxy",
-    TRUSTED_PROXY_TCP_INFO: "account.vpnMeasurementTcpProxy", DIRECT_TCP_INFO: "account.vpnMeasurementTcpDirect",
-    UNSTABLE_NETWORK: "account.vpnMeasurementUnstable",
-    UNSUPPORTED_PROXY_PATH: "account.vpnMeasurementProxyUnsupported",
-    MEASUREMENT_REQUIRED: "account.vpnMeasurementRequired", MEASUREMENT_NOT_RUNNING: "account.vpnMeasurementUnavailable",
-    TCP_INFO_UNAVAILABLE: "account.vpnMeasurementTcpUnavailable", DIRECT_TCP_INFO_UNAVAILABLE: "account.vpnMeasurementTcpUnavailable",
-    PROXY_TCP_INFO_DISABLED: "account.vpnMeasurementTcpDisabled",
-    UNTRUSTED_TCP_INFO_SOURCE: "account.vpnMeasurementTcpMismatch", TCP_INFO_CLIENT_MISMATCH: "account.vpnMeasurementTcpMismatch",
-    INSUFFICIENT_SAMPLES: "account.vpnMeasurementUnavailable",
-    REPEATED_CROSS_LAYER_GAP: "account.vpnMeasurementExcess", TCP_WEBSOCKET_COMPARISON_INCONCLUSIVE: "account.vpnBlockRiskInconclusive"
-  };
-  for (const signal of policy.supportingSignals) if (signalKeys[signal]) signals.push(t(signalKeys[signal]));
-  const measurement = policy.measurement;
-  if (Number.isFinite(measurement?.applicationRttMs) && Number.isFinite(measurement?.tcpRttMs)) {
-    signals.push(t("account.vpnMeasurementRtt", { application: formatNumber(Math.round(measurement.applicationRttMs)), tcp: formatNumber(Math.round(measurement.tcpRttMs)) }));
-  }
-  elements.accountVpnBlockCurrentSignals.textContent = signals.length ? signals.join(" \u00b7 ") : t("account.vpnBlockNoSupportingSignals");
-  elements.accountVpnBlockEnabled.disabled = busy;
-  elements.accountVpnBlockPassword.disabled = busy;
-  elements.accountVpnBlockSave.disabled = busy;
-  elements.accountVpnNetworkRefresh.disabled = busy;
-  elements.accountVpnBlockSave.textContent = t(policy.saving ? "account.vpnBlockSaving" : "account.vpnBlockSave");
-}
-
-async function loadVpnBlockPolicy({ force = false } = {}) {
-  const targetKey = getAccountAvatarTargetKey(state.user);
-  if (!targetKey || !state.accountSettingsOpen || state.vpnBlockPolicy.loading) return;
-  if (!force && state.vpnBlockPolicy.loaded) {
-    renderVpnBlockPolicy();
-    return;
-  }
-
-  const operation = accountSecurityOperationGuards.vpnPolicy.begin(targetKey);
-  state.vpnBlockPolicy.loading = true;
-  renderVpnBlockPolicy();
-  setAccountMessage();
-  try {
-    if (force) await ensureNetworkVerification({ force: true });
-    const data = await api("/api/auth/vpn-block-policy");
-    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.vpnPolicy, operation)) return;
-    applyVpnBlockPolicyResponse(data);
-    state.vpnBlockPolicy.loaded = true;
-  } catch (error) {
-    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.vpnPolicy, operation)) return;
-    state.vpnBlockPolicy.loaded = false;
-    setAccountMessage(error.message, true);
-  } finally {
-    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.vpnPolicy, operation)) {
-      state.vpnBlockPolicy.loading = false;
-      renderVpnBlockPolicy();
-    }
-  }
-}
-
-async function saveVpnBlockPolicy() {
-  const targetKey = getAccountAvatarTargetKey(state.user);
-  if (!targetKey || state.vpnBlockPolicy.loading || state.vpnBlockPolicy.saving) return;
-  const enabled = elements.accountVpnBlockEnabled.value === "true";
-  const operation = accountSecurityOperationGuards.vpnPolicy.begin(targetKey);
-  state.vpnBlockPolicy.enabled = enabled;
-  state.vpnBlockPolicy.saving = true;
-  renderVpnBlockPolicy();
-  setAccountMessage();
-  try {
-    const stepUpToken = await requestMfaStepUpToken({
-      trigger: elements.accountVpnBlockSave,
-      action: "vpn-policy"
-    });
-    const data = await api("/api/auth/vpn-block-policy", {
-      method: "PUT",
-      body: {
-        currentPassword: elements.accountVpnBlockPassword.value,
-        enabled,
-        ...(stepUpToken ? { stepUpToken } : {})
-      }
-    });
-    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.vpnPolicy, operation)) return;
-    acceptRotatedAuthenticationSession();
-    applyVpnBlockPolicyResponse(data);
-    state.vpnBlockPolicy.loaded = true;
-    elements.accountVpnBlockPassword.value = "";
-    state.blockHistory.loadedMonths = null;
-    setAccountMessage(t("account.vpnBlockSaved"));
-  } catch (error) {
-    if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.vpnPolicy, operation)) return;
-    setAccountMessage(error.message, true);
-  } finally {
-    if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.vpnPolicy, operation)) {
-      state.vpnBlockPolicy.saving = false;
-      renderVpnBlockPolicy();
-    }
-  }
-}
-
 function loadActiveSecurityPanel() {
   if (state.activeSecurityPanel === "sessions") {
     void loadActiveSessions();
@@ -4354,7 +4175,6 @@ function loadActiveSecurityPanel() {
   void loadMfaSettings();
   void loadTotpIpBlockPolicy();
   void loadCountryLoginPolicy();
-  void loadVpnBlockPolicy();
 }
 
 function setSecurityPanel(panel, { focusTab = false, load = true } = {}) {
@@ -4895,7 +4715,6 @@ function fillAccountSettings() {
   resetDataImportSelection();
   elements.accountMfaPassword.value = "";
   elements.accountCountryLoginPassword.value = "";
-  elements.accountVpnBlockPassword.value = "";
   elements.accountPasskeyRegisterForm.reset();
   hideTotpSetup();
   populateLoginHistoryMonths();
@@ -4907,7 +4726,6 @@ function fillAccountSettings() {
   renderLoginHistory();
   renderBlockHistory();
   renderCountryLoginPolicy();
-  renderVpnBlockPolicy();
   renderWorkspaceSnapshots();
   updateUserIdentityUi();
 }
@@ -4968,7 +4786,6 @@ function closeAccountSettings({ restoreFocus = true, force = false } = {}) {
   elements.accountPasswordForm.reset();
   elements.accountMfaPassword.value = "";
   elements.accountCountryLoginPassword.value = "";
-  elements.accountVpnBlockPassword.value = "";
   elements.accountPasskeyRegisterForm.reset();
   hideTotpSetup();
   syncMobileSidebarAccessibility();
@@ -5144,7 +4961,6 @@ async function logout() {
   return withPageEditLock(async () => {
     try {
       const headers = new Headers();
-      await applyClientNetworkVerificationHeaders(headers);
       await fetch("/api/auth/logout", { method: "POST", credentials: "include", headers });
     } finally {
       resetAuthenticationSessionState();
@@ -10370,10 +10186,7 @@ async function downloadServerRecoveryCandidate(candidate) {
   const authenticationScope = captureAuthenticatedSessionScope();
   assertCurrentAuthenticatedSessionScope(authenticationScope);
   const headers = new Headers();
-  await applyClientNetworkVerificationHeaders(headers);
-  // Network-signal collection can yield long enough for another login to take
-  // over this browser. Fence the actual credentialed dispatch to the account
-  // that initiated the recovery download.
+  // Bind credentialed dispatch to the account that initiated the download.
   assertCurrentAuthenticatedSessionScope(authenticationScope);
   const response = await fetch(
     `/api/recovery/candidates/${encodeURIComponent(candidate.id)}`,
@@ -18206,8 +18019,7 @@ async function persistPageCover(
             expectedVersion,
             mutationId: task.mutationId
           },
-          // api() performs asynchronous network-verification work before fetch.
-          // Recheck the page/navigation intent after that work so a cover edit
+          // Recheck the page/navigation intent at dispatch so a cover edit
           // cannot be sent for a page the user has already started leaving.
           beforeFetch: isCoverIntentCurrent
         });
@@ -19575,7 +19387,6 @@ async function restoreWorkspaceLocationFromHash({ fallbackToHome = false } = {})
 
 
 async function loadMe() {
-  // A returning session with network blocking enabled needs fresh evidence too.
   const data = await api("/api/auth/me", {
     skipAuthReset: true
   });
@@ -20302,19 +20113,6 @@ elements.accountCountryLoginSave.addEventListener("click", () => {
   void saveCountryLoginPolicy();
 });
 
-elements.accountVpnBlockEnabled.addEventListener("change", () => {
-  state.vpnBlockPolicy.enabled = elements.accountVpnBlockEnabled.value === "true";
-  renderVpnBlockPolicy();
-  setAccountMessage();
-});
-
-elements.accountVpnBlockSave.addEventListener("click", () => {
-  void saveVpnBlockPolicy();
-});
-elements.accountVpnNetworkRefresh.addEventListener("click", () => {
-  void loadVpnBlockPolicy({ force: true });
-});
-
 elements.accountDataExport.addEventListener("click", async () => {
   if (state.accountDataOperationBusy) return;
   const targetKey = getAccountAvatarTargetKey(state.user);
@@ -20928,7 +20726,6 @@ function refreshLocalizedUi() {
     else {
       renderMfaSettings();
       renderCountryLoginPolicy();
-      renderVpnBlockPolicy();
     }
     renderWorkspaceSnapshots();
   }

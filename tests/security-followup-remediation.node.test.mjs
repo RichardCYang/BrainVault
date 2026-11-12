@@ -333,7 +333,6 @@ test("report follow-up hardening closes client HTML, bookmark, WebSocket, passke
   const attributionIndex = passkeyLogin.indexOf("knownUserId = passkey.user_id;");
   assert.ok(verifiedIndex >= 0 && attributionIndex > verifiedIndex, "passkey login history must be attributed only after a verified assertion");
   assert.match(passkeyLogin, /COUNTRY_LOGIN_BLOCKED/);
-  assert.match(passkeyLogin, /VPN_ACCESS_BLOCKED/);
   assert.match(mfaRoutes, /"\/passkeys",\s*requireAuth,\s*mfaSetupRateLimit/);
   assert.match(transfer, /windowsReservedDeviceNamePattern/);
 });

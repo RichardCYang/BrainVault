@@ -105,7 +105,6 @@ function resetHelper(resetKey) {
 const routes = [
   ["src/routes/auth.routes.ts", "authRouter", "put", "/totp-ip-block-policy", "requireAuth", "totpIpBlockPolicySchema"],
   ["src/routes/auth.routes.ts", "authRouter", "delete", "/totp-ip-blocks/:ipAddress", "requireAuthAllowTotpIpBlock", "totpIpUnblockSchema"],
-  ["src/routes/auth.routes.ts", "authRouter", "put", "/vpn-block-policy", "requireAuth", "vpnBlockPolicySchema"],
   ["src/routes/auth.routes.ts", "authRouter", "put", "/country-login-policy", "requireAuth", "countryLoginPolicySchema"],
   ["src/routes/auth.routes.ts", "authRouter", "post", "/password", "requireAuth", "passwordSchema"],
   ["src/routes/passkey-login.routes.ts", "passkeyLoginRouter", "post", "/options", "requireSameOriginBrowserRequest", "optionsSchema"]

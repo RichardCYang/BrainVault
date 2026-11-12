@@ -164,7 +164,6 @@ test("password login outcomes use uniform padding and hide pre-auth policy denia
   assert.match(source, /const targetDurationMs = 500 \+ randomInt\(0, 101\)/);
   assert.doesNotMatch(login, /isPermanentlyBlockedTotpIp/);
   assert.match(source, /error\.code === "COUNTRY_LOGIN_BLOCKED"/);
-  assert.match(source, /error\.code === "VPN_ACCESS_BLOCKED"/);
   assert.doesNotMatch(login, /new ApiError\(\s*403,\s*"TOTP_IP_PERMANENTLY_BLOCKED"/);
 });
 

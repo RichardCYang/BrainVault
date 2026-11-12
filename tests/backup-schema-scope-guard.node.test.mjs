@@ -103,7 +103,6 @@ const reviewedPortableDdlMigrations = [
   "042_custom_icon_library_removals.sql",
   "043_navigation_collapse_preferences.sql",
   "045_country_login_access_policy.sql",
-  "046_vpn_access_policy.sql",
   "048_blocks_list_types.sql",
   "049_navigation_page_order.sql",
   "050_totp_ip_permanent_block.sql",
@@ -120,7 +119,9 @@ const reviewedPortableDdlMigrations = [
   "077_custom_icon_tenant_identity.sql",
   "079_security_assessment_remediation.sql",
   // Registration approval is security state; it is never imported from a backup.
-  "080_registration_approval.sql"
+  "080_registration_approval.sql",
+  // Only retired security policy metadata changes; workspace exports are unaffected.
+  "083_remove_vpn_access_policy.sql"
 ];
 
 const createTablePattern = /CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+`?([A-Za-z0-9_]+)`?/gi;

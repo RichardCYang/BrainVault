@@ -106,7 +106,6 @@ BrainVaultは、Posh-ACMEの証明書ファイルを使用してHTTPSを直接�
 | [共同編集](docs/collaboration/2026-07-29/collaboration.ja.md) | 共有、Yjs/WebSocketフロー、永続化 |
 | [コレクション共有](docs/collaboration/2026-09-02/collection-sharing.ja.md) | コレクション権限と継承 |
 | [セキュリティ](docs/security/2026-07-30/security.ja.md) | 認証、シークレット、添付ファイル、本番環境のセキュリティ境界 |
-| [VPN／プロキシ接続測定](deploy/network-verification.jp.md) | TCP/WebSocket検証、Synology DSM設定、プロキシの信頼設定、検出の限界 |
 | [API](docs/api/2026-07-30/api.ja.md) | REST API概要 |
 | [OpenAPI](docs/api/2026-07-30/openapi.yaml) | OpenAPI 3.1仕様 |
 | [開発](docs/development/2026-07-28/development.ja.md) | プロジェクト構成、スクリプト、翻訳、プレビューキャプチャ |

@@ -63,7 +63,7 @@ function simulateFetchPreflightRace({ fixed }) {
     navigationGeneration === capturedNavigation
     && selectedPageId === "page-A";
 
-  // api() asynchronously prepares network-verification headers before fetch().
+  // Request preparation can yield before fetch().
   // A new navigation starts in that preflight gap.
   navigationGeneration += 1;
 

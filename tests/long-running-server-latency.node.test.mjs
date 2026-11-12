@@ -15,14 +15,8 @@ test("MariaDB pool retires burst-only idle sockets instead of keeping the full f
   assert.match(db, /keepAliveDelay: databaseSocketKeepAliveDelayMs/);
 });
 
-test("network-policy caches revalidate known exact-IP facts off the authenticated request critical path", async () => {
-  const [vpn, country] = await Promise.all([
-    read("src/lib/vpn-access-policy.ts"),
-    read("src/lib/country-login-policy.ts")
-  ]);
-
-  assert.doesNotMatch(vpn, /fetch\(|providerSignalCache|WebRtc/);
-  assert.match(vpn, /getNetworkAssessment/);
+test("country-policy caches revalidate known exact-IP facts off the authenticated request critical path", async () => {
+  const country = await read("src/lib/country-login-policy.ts");
 
   assert.match(country, /const successfulCountryStaleMs = 30 \* 60_000;/);
   assert.match(country, /const countryResolutionInFlight = new Map/);

@@ -1,4 +1,3 @@
-import { getNetworkVerificationContext } from "../lib/network-verification.js";
 import { timingSafeEqual } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
@@ -12,7 +11,6 @@ import { db, transaction, type DbClient } from "../lib/db.js";
 import { normalizeAuthVersion, signAuthToken } from "../lib/auth.js";
 import { ApiError } from "../lib/http.js";
 import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
-import { enforceVpnAccessPolicy } from "../lib/vpn-access-policy.js";
 import { getClientIpAddress, recordLoginAttempt } from "../lib/login-history.js";
 import {
   createOpaqueToken,
@@ -418,7 +416,6 @@ passkeyLoginRouter.post(
       if (previousCounter > 0 && newCounter <= previousCounter) throw loginFailure();
 
       await enforceCountryLoginPolicy(passkey.user_id, undefined, sourceIp);
-      await enforceVpnAccessPolicy(passkey.user_id, undefined, sourceIp, getNetworkVerificationContext(req));
 
       const result = await transaction(async (client) => {
         const user = await client.queryOne<UserRow>(
@@ -509,8 +506,7 @@ passkeyLoginRouter.post(
     } catch (error) {
       const auditableFailureCodes = new Set([
         "PASSKEY_LOGIN_FAILED",
-        "COUNTRY_LOGIN_BLOCKED",
-        "VPN_ACCESS_BLOCKED"
+        "COUNTRY_LOGIN_BLOCKED"
       ]);
       if (knownUserId && error instanceof ApiError && auditableFailureCodes.has(error.code)) {
         await recordLoginAttempt(knownUserId, sourceIp, "FAILURE");

@@ -40,7 +40,6 @@ test("account-security mutations revalidate the exact device session at the dura
     ["delete", "/sessions/:sessionId", /revokeAuthSession\(/],
     ["put", "/totp-ip-block-policy", /UPDATE users[\s\S]*totp_ip_block_enabled/],
     ["delete", "/totp-ip-blocks/:ipAddress", /DELETE FROM user_totp_ip_blocks/],
-    ["put", "/vpn-block-policy", /UPDATE users SET vpn_block_enabled/],
     ["put", "/country-login-policy", /UPDATE users SET country_login_mode/],
     ["post", "/password", /UPDATE users SET password_hash/],
   ]) {

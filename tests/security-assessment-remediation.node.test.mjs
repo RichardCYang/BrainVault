@@ -226,7 +226,7 @@ function totpHarness(threshold=3, {enabled=true,reused=false}={}) {
     mfaLoginTokenRateLimit:noop,requireActiveMfaLoginSession:noop,
     validate:noop,mfaLoginTotpSchema:{},maxMfaAttempts:8,hashOpaqueToken:v=>v,
     getClientIpAddress:()=> '8.8.8.8',requireMfaCeremonyBinding:()=> 'binding',
-    getActiveMfaSession:async token=>session(token),enforceMfaLoginNetworkAccess:async()=>{},
+    getActiveMfaSession:async token=>session(token),enforceMfaLoginCountryAccess:async()=>{},
     recordLoginAttempt:async(...a)=>assert.equal(a[3],activeClient),
     decryptMfaSecret:()=> 'test-secret',findMatchingTotpStep:(_s,value)=>{state.evaluations++;return value==='valid'?42:null;},
     completeMfaSession:async()=>{},createMfaLoginResult:()=>({token:'token',user:{id:'usr_owner'}}),
@@ -276,8 +276,7 @@ function authHarness() {
     evaluatePasswordLogin:async(_c,_id,match)=>match?'ALLOWED':'DENIED',recordLoginAttempt:async()=>{},
     requireSameOriginBrowserRequest:noop,requireJsonRequestBody:noop,registrationRateLimit:noop,registrationGlobalRateLimit:noop,
     loginIpRateLimit:noop,loginAccountRateLimit:noop,validate:noop,registerSchema:{},loginSchema:{},
-    padRegistrationResponse:async()=>{},padLoginResponse:async()=>{},getClientIpAddress:()=> '8.8.8.8',getNetworkVerificationContext:noop,
-    enforceCountryLoginPolicy:async()=>{},enforceVpnAccessPolicy:async()=>{},isPreAuthLoginPolicyDenial:()=>false,
+    padRegistrationResponse:async()=>{},padLoginResponse:async()=>{},getClientIpAddress:()=> '8.8.8.8',enforceCountryLoginPolicy:async()=>{},isPreAuthLoginPolicyDenial:()=>false,
     getMfaMethods:async()=>({totp:false,passkey:false}),normalizeAuthVersion:()=>1,
     clearMfaCeremonyBinding:noop,setAuthSessionCookie:noop,signAuthToken:()=> 'token',toPublicUser:u=>({id:u.id})
   };

@@ -14,7 +14,6 @@ BrainVault must be served over HTTPS in production. You can do this in one of tw
 - [Option A: Direct HTTPS with Posh-ACME](#option-a-direct-https-with-posh-acme)
 - [Option B: HTTPS through a reverse proxy](#option-b-https-through-a-reverse-proxy)
 - [Production operations](#production-operations)
-- [VPN/proxy blocking](#vpnproxy-blocking)
 - [Files in this directory](#files-in-this-directory)
 
 ## Choose a deployment mode
@@ -26,7 +25,6 @@ BrainVault must be served over HTTPS in production. You can do this in one of tw
 | Certificates | Posh-ACME files, read at startup | Managed by the proxy |
 | HTTP→HTTPS redirect | Not provided (no port 80 listener) | Provided by BrainVault or the proxy |
 | Ingress request limits | Application limits only | Can add proxy limits ([see below](#public-ingress-request-limits)) |
-| VPN/proxy measurement | WebSocket only (no TCP_INFO) | Full TCP/WebSocket comparison with a supported ingress |
 | Good fit | A single Windows host without a proxy | Most deployments, NAS, containers |
 
 If you are unsure, use a reverse proxy.
@@ -142,7 +140,7 @@ TRUST_PROXY_HOPS=0
 
 ### 2. Configure the proxy
 
-Every proxy must do three things: serve TLS for your domain, forward `X-Forwarded-Proto: https`, and allow WebSocket upgrades (used by `/api/collaboration/` and `/api/network-verification/probe`).
+Every proxy must do three things: serve TLS for your domain, forward `X-Forwarded-Proto: https`, and allow WebSocket upgrades (used by `/api/collaboration/`).
 
 #### Caddy
 
@@ -190,7 +188,7 @@ Nginx Proxy Manager normally sends the forwarded host and protocol headers. Allo
 4. Assign the `notes.example.com` certificate in DSM.
 5. Optional: add a separate HTTP source rule that redirects to HTTPS.
 
-Keep the destination port private. For VPN/proxy blocking on DSM, also follow the [connection measurement guide](network-verification.md).
+Keep the destination port private.
 
 ### 3. Verify
 
@@ -246,15 +244,10 @@ Removing only the stored lock does not clear the request budget and weakens prot
 
 Keep an operator recovery procedure for case 3. Do not offer an anonymous reset based only on an account ID.
 
-## VPN/proxy blocking
-
-VPN/proxy blocking compares the TCP RTT measured at the trusted ingress with the WebSocket RTT measured by the server. See the [connection measurement guide](network-verification.md) for Synology DSM setup, TCP_INFO headers, proxy trust, and detection limits.
-
 ## Files in this directory
 
 | File | Contents |
 | --- | --- |
 | `README.md` / [`README.ko.md`](README.ko.md) / [`README.jp.md`](README.jp.md) | This HTTPS deployment guide |
-| [`network-verification.md`](network-verification.md) / [`.ko.md`](network-verification.ko.md) / [`.jp.md`](network-verification.jp.md) | TCP/WebSocket measurement for VPN/proxy blocking |
 | [`Caddyfile.example`](Caddyfile.example) | Caddy reverse-proxy example |
-| [`nginx.conf.example`](nginx.conf.example) | NGINX example with redirect, WebSocket, request limits, safe logging, and TCP_INFO headers |
+| [`nginx.conf.example`](nginx.conf.example) | NGINX example with redirect, WebSocket, request limits, safe logging |

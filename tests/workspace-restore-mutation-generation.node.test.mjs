@@ -18,7 +18,7 @@ test("durable HTTP mutations are fenced from a workspace restore generation chan
 
   assert.match(
     auth,
-    /password_hash, vpn_block_enabled, auth_version, attachment_generation, registration_approved, created_at, updated_at/
+    /password_hash, auth_version, attachment_generation, registration_approved, created_at, updated_at/
   );
   assert.match(auth, /const workspaceGeneration = Number\(user\.attachment_generation \?\? 1\)/);
   assert.match(auth, /req\.auth = \{ authVersion, workspaceGeneration \}/);

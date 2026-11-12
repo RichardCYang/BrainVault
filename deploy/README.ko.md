@@ -14,7 +14,6 @@
 - [방식 A. Posh-ACME로 직접 HTTPS 제공](#방식-a-posh-acme로-직접-https-제공)
 - [방식 B. 리버스 프록시를 통한 HTTPS](#방식-b-리버스-프록시를-통한-https)
 - [운영 시 주의사항](#운영-시-주의사항)
-- [VPN/프록시 차단](#vpn프록시-차단)
 - [이 디렉터리의 파일](#이-디렉터리의-파일)
 
 ## 배포 방식 선택
@@ -26,7 +25,6 @@
 | 인증서 | Posh-ACME 파일, 시작 시 로드 | 프록시가 관리 |
 | HTTP→HTTPS 리디렉션 | 제공하지 않음 (80번 포트 미사용) | BrainVault 또는 프록시가 제공 |
 | 진입점 요청 제한 | 애플리케이션 제한만 적용 | 프록시 제한 추가 가능 ([아래 참고](#공개-진입점-요청-제한)) |
-| VPN/프록시 측정 | WebSocket만 측정 (TCP_INFO 없음) | 지원되는 진입점에서 TCP/WebSocket 전체 비교 |
 | 적합한 환경 | 프록시 없는 단일 Windows 호스트 | 대부분의 배포, NAS, 컨테이너 |
 
 잘 모르겠다면 리버스 프록시를 사용하세요.
@@ -142,7 +140,7 @@ TRUST_PROXY_HOPS=0
 
 ### 2. 프록시 설정
 
-어떤 프록시든 세 가지를 해야 합니다. 도메인의 TLS 제공, `X-Forwarded-Proto: https` 전달, WebSocket 업그레이드 허용(`/api/collaboration/`와 `/api/network-verification/probe`에서 사용)입니다.
+어떤 프록시든 세 가지를 해야 합니다. 도메인의 TLS 제공, `X-Forwarded-Proto: https` 전달, WebSocket 업그레이드 허용(`/api/collaboration/`에서 사용)입니다.
 
 #### Caddy
 
@@ -190,7 +188,7 @@ Nginx Proxy Manager는 일반적으로 전달 호스트와 프로토콜 헤더�
 4. DSM에서 `notes.example.com` 인증서를 지정합니다.
 5. 선택 사항: HTTPS로 리디렉션하는 별도의 HTTP 소스 규칙을 추가합니다.
 
-대상 포트는 외부에 공개하지 마세요. DSM에서 VPN/프록시 차단을 사용하려면 [연결 측정 가이드](network-verification.ko.md)도 따라 하세요.
+대상 포트는 외부에 공개하지 마세요.
 
 ### 3. 확인
 
@@ -246,15 +244,10 @@ NGINX 예시는 쿼리 문자열과 헤더를 기록하지 않는 최소한의 `
 
 3번 상황을 위한 운영자 복구 절차를 마련해 두세요. 계정 ID만으로 동작하는 익명 초기화 기능은 제공하지 마세요.
 
-## VPN/프록시 차단
-
-VPN/프록시 차단은 신뢰된 진입점에서 측정한 TCP RTT와 서버가 측정한 WebSocket RTT를 비교합니다. Synology DSM 설정, TCP_INFO 헤더, 프록시 신뢰, 탐지 한계는 [연결 측정 가이드](network-verification.ko.md)를 참고하세요.
-
 ## 이 디렉터리의 파일
 
 | 파일 | 내용 |
 | --- | --- |
 | [`README.md`](README.md) / `README.ko.md` / [`README.jp.md`](README.jp.md) | 이 HTTPS 배포 가이드 |
-| [`network-verification.md`](network-verification.md) / [`.ko.md`](network-verification.ko.md) / [`.jp.md`](network-verification.jp.md) | VPN/프록시 차단을 위한 TCP/WebSocket 측정 |
 | [`Caddyfile.example`](Caddyfile.example) | Caddy 리버스 프록시 예시 |
-| [`nginx.conf.example`](nginx.conf.example) | 리디렉션, WebSocket, 요청 제한, 안전한 로그, TCP_INFO 헤더를 포함한 NGINX 예시 |
+| [`nginx.conf.example`](nginx.conf.example) | 리디렉션, WebSocket, 요청 제한, 안전한 로그를 포함한 NGINX 예시 |

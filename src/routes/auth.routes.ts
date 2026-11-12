@@ -1,4 +1,3 @@
-import { getNetworkVerificationContext } from "../lib/network-verification.js";
 import { randomInt } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
@@ -23,12 +22,6 @@ import {
   resolveCountryLoginLocation
 } from "../lib/country-login-policy.js";
 import { normalizeIsoCountryCode } from "../lib/country-codes.js";
-import {
-  assertVpnPolicyAllowsCurrentConnection,
-  enforceVpnAccessPolicy,
-  normalizeVpnBlockEnabled,
-  resolveVpnAccessRisk
-} from "../lib/vpn-access-policy.js";
 import {
   defaultLoginHistoryMonths,
   getClientIpAddress,
@@ -126,12 +119,6 @@ const countryBlockHistoryQuerySchema = z.object({
 });
 
 const mfaStepUpTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
-
-const vpnBlockPolicySchema = z.object({
-  currentPassword: passwordInputSchema(1),
-  enabled: z.boolean(),
-  stepUpToken: mfaStepUpTokenSchema.optional()
-});
 
 const totpIpBlockPolicySchema = z.object({
   currentPassword: passwordInputSchema(1),
@@ -237,10 +224,7 @@ async function padLoginResponse(startedAt: number) {
 
 function isPreAuthLoginPolicyDenial(error: unknown) {
   return error instanceof ApiError
-    && (error.code === "COUNTRY_LOGIN_BLOCKED"
-      || error.code === "VPN_ACCESS_BLOCKED"
-      || error.code === "VPN_VERIFICATION_UNAVAILABLE"
-      || error.code === "VPN_POLICY_INVALID");
+    && error.code === "COUNTRY_LOGIN_BLOCKED";
 }
 
 authRouter.post(
@@ -334,12 +318,6 @@ authRouter.post(
       let policyDenied = false;
       try {
         await enforceCountryLoginPolicy(user.id, user.country_login_mode, sourceIp);
-        await enforceVpnAccessPolicy(
-          user.id,
-          user.vpn_block_enabled,
-          sourceIp,
-          getNetworkVerificationContext(req)
-        );
       } catch (error) {
         if (!isPreAuthLoginPolicyDenial(error)) throw error;
         policyDenied = true;
@@ -857,101 +835,6 @@ authRouter.delete(
 
       res.setHeader("Cache-Control", "private, no-store");
       res.json({ ok: true, ipAddress });
-    } catch (error) {
-      next(error);
-    }
-  }
-);
-
-authRouter.get("/vpn-block-policy", requireAuth, async (req, res, next) => {
-  try {
-    const currentUser = requireUser(req.user);
-    const row = await db.queryOne<{ vpn_block_enabled: unknown }>(
-      "SELECT vpn_block_enabled FROM users WHERE id = ?",
-      [currentUser.id]
-    );
-    if (!row) throw new ApiError(404, "NOT_FOUND", "User not found");
-
-    const enabled = normalizeVpnBlockEnabled(row.vpn_block_enabled);
-    const risk = await resolveVpnAccessRisk(
-      getClientIpAddress(req),
-      getNetworkVerificationContext(req)
-    );
-    res.setHeader("Cache-Control", "private, no-store");
-    res.json({
-      enabled,
-      currentIp: risk.ipAddress || "unknown",
-      currentCountryCode: risk.countryCode,
-      verdict: risk.verdict,
-      measurement: risk.measurement,
-      supportingSignals: risk.supportingSignals
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-authRouter.put(
-  "/vpn-block-policy",
-  requireAuth,
-  accountReauthenticationRateLimit,
-  loginLockoutRecoveryRateLimit,
-  validate({ body: vpnBlockPolicySchema }),
-  async (req, res, next) => {
-    try {
-      const currentUser = requireUser(req.user);
-      const authScope = requireRequestAuthScope(req);
-      const expectedAuthVersion = authScope.authVersion;
-      const { currentPassword, enabled, stepUpToken } = req.body as z.infer<typeof vpnBlockPolicySchema>;
-      const sourceIp = getClientIpAddress(req);
-
-      const risk = await assertVpnPolicyAllowsCurrentConnection(
-        enabled,
-        sourceIp,
-        getNetworkVerificationContext(req)
-      );
-
-      const updatedUser = await transaction(async (client) => {
-        await assertCurrentAuthSession(currentUser.id, authScope, client);
-        const user = await client.queryOne<UserRow>(
-          "SELECT * FROM users WHERE id = ? FOR UPDATE",
-          [currentUser.id]
-        );
-        if (!user) throw new ApiError(401, "UNAUTHENTICATED", "User no longer exists");
-        assertAuthenticationVersion(user, expectedAuthVersion);
-        if (!(await verifyPassword(currentPassword, user.password_hash))) {
-          throw new ApiError(400, "CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
-        }
-        await consumeMfaStepUpIfRequired(client, user.id, authScope, stepUpToken, "vpn-policy");
-
-        const authVersion = normalizeAuthVersion(user.auth_version) + 1;
-        await client.execute(
-          "UPDATE users SET vpn_block_enabled = ?, auth_version = ? WHERE id = ?",
-          [enabled ? 1 : 0, authVersion, user.id]
-        );
-        await client.execute("DELETE FROM mfa_login_sessions WHERE user_id = ?", [user.id]);
-        await client.execute("DELETE FROM webauthn_challenges WHERE user_id = ?", [user.id]);
-        await client.execute("DELETE FROM mfa_totp_setups WHERE user_id = ?", [user.id]);
-        await client.execute("DELETE FROM mfa_step_up_sessions WHERE user_id = ?", [user.id]);
-        return { ...user, vpn_block_enabled: enabled ? 1 : 0, auth_version: authVersion };
-      });
-
-      disconnectUserCollaborators(updatedUser.id, "VPN access policy changed");
-      const token = signAuthToken({
-        sub: updatedUser.id,
-        username: updatedUser.username,
-        authVersion: normalizeAuthVersion(updatedUser.auth_version)
-      });
-      setAuthSessionCookie(res, token);
-      res.setHeader("Cache-Control", "private, no-store");
-      res.json({
-        enabled,
-        currentIp: risk.ipAddress || sourceIp || "unknown",
-        currentCountryCode: risk.countryCode,
-        verdict: risk.verdict,
-        measurement: risk.measurement,
-        supportingSignals: risk.supportingSignals
-      });
     } catch (error) {
       next(error);
     }

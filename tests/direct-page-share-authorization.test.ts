@@ -22,7 +22,7 @@ const owner = {
   id: "usr_share_owner", username: "share-owner", name: "Owner", avatar_data: null,
   preferred_language: "en", default_collection_icon: null, theme: "light" as const,
   password_hash: "unused", auth_version: 1, attachment_generation: 1,
-  country_login_mode: "OFF", vpn_block_enabled: 0,
+  country_login_mode: "OFF",
   created_at: "2026-11-01T00:00:00.000Z", updated_at: "2026-11-01T00:00:00.000Z"
 };
 const admin = { ...owner, id: "usr_share_admin", username: "share-admin" };

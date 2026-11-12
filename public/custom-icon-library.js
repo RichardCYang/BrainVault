@@ -1,5 +1,3 @@
-import { ensureNetworkVerification } from "./network-verification.js";
-
 export const customIconLibraryLimit = 36;
 
 const customIconApiPath = "/api/custom-icons";
@@ -21,7 +19,6 @@ function normalizeStoredEntry(entry) {
 
 async function request(path, options = {}) {
   const headers = new Headers(options.headers ?? {});
-  await ensureNetworkVerification();
   let body = options.body;
   if (body && typeof body === "object" && !(body instanceof FormData)) {
     headers.set("Content-Type", "application/json");

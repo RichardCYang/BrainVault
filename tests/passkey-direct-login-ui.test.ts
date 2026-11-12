@@ -21,15 +21,12 @@ describe("direct passkey login UI contract", () => {
     expect(styles).toContain(".auth-passkey-login-section");
   });
 
-  it("keeps the native WebAuthn hand-off foreground-coupled and removes avoidable pre-prompt STUN waits", () => {
+  it("keeps the native WebAuthn hand-off foreground-coupled", () => {
     expect(client).toContain("function assertWebAuthnForeground(trigger)");
     expect(client).toContain('document.visibilityState === "visible"');
     expect(client).toContain("document.hasFocus()");
     expect(client).toContain('trigger.focus({ preventScroll: true })');
     expect(client).toContain('t("mfa.passkeyForegroundRequired")');
-    expect(client).toContain('skipClientNetworkVerification = false');
-    expect(client).toMatch(/api\("\/api\/auth\/passkey\/options"[\s\S]*?skipClientNetworkVerification: true/);
-    expect(client).toContain("A returning session with network blocking enabled needs fresh evidence too.");
     expect(client).toContain("getWebAuthnCredential(optionsData.options, { trigger: elements.mfaLoginPasskey })");
     expect(styles).toContain('.auth-passkey-login[aria-disabled="true"]');
     expect(i18n).toContain("passkeyForegroundRequired:");

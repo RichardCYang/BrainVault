@@ -103,16 +103,14 @@ test("collaborative delete rechecks intent after its queued local-mutation wait"
 test("api evaluates a destructive request gate synchronously at the transport dispatch boundary", async () => {
   const source = (await readFile(appUrl, "utf8")).replace(/\r\n/g, "\n");
   const api = section(source, "async function api(path, options = {})", "\nasync function fetchDatabaseUrlPreview");
-  const preflightIndex = api.indexOf("await applyClientNetworkVerificationHeaders(headers);");
-  const guardIndex = api.indexOf("const assertRequestDispatchCurrent = () =>", preflightIndex);
+  const guardIndex = api.indexOf("const assertRequestDispatchCurrent = () =>");
   const transportIndex = api.indexOf("await fetchApiResponseText(", guardIndex);
   const dispatchFenceIndex = api.indexOf(
     "beforeDispatch: assertRequestDispatchCurrent",
     transportIndex
   );
   assert.ok(
-    preflightIndex >= 0
-      && guardIndex > preflightIndex
+    guardIndex >= 0
       && transportIndex > guardIndex
       && dispatchFenceIndex > transportIndex
   );

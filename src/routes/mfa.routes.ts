@@ -1,4 +1,3 @@
-import { getNetworkVerificationContext } from "../lib/network-verification.js";
 import { timingSafeEqual } from "node:crypto";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import QRCode from "qrcode";
@@ -20,7 +19,6 @@ import { ApiError } from "../lib/http.js";
 import { assertCurrentAuthSession } from "../lib/auth-sessions.js";
 import { clearMfaCeremonyBinding, readMfaCeremonyBinding } from "../lib/mfa-ceremony-cookie.js";
 import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
-import { enforceVpnAccessPolicy } from "../lib/vpn-access-policy.js";
 import { getClientIpAddress, recordLoginAttempt, type LoginAttemptOutcome } from "../lib/login-history.js";
 import { clearTotpIpFailures, isPermanentlyBlockedTotpIp, recordTotpIpFailure } from "../lib/totp-ip-block.js";
 import { createId } from "../lib/id.js";
@@ -87,7 +85,6 @@ const mfaFailureCarryWindowMs = env.AUTH_MFA_ACCOUNT_WINDOW_MS;
 const mfaStepUpActionSchema = z.enum([
   "totp-ip-policy",
   "totp-ip-unblock",
-  "vpn-policy",
   "country-policy",
   "password-change",
   "totp-setup",
@@ -642,9 +639,8 @@ function requireMfaCeremonyBinding(req: Request) {
   return binding;
 }
 
-async function enforceMfaLoginNetworkAccess(pendingSession: MfaSessionRow, req: Request) {
+async function enforceMfaLoginCountryAccess(pendingSession: MfaSessionRow) {
   await enforceCountryLoginPolicy(pendingSession.user_id, undefined, pendingSession.source_ip);
-  await enforceVpnAccessPolicy(pendingSession.user_id, undefined, pendingSession.source_ip, getNetworkVerificationContext(req));
 }
 
 async function reserveMfaAttempt(mfaToken: string, sourceIp: string, binding: string, client?: DbClient) {
@@ -1444,7 +1440,7 @@ mfaRouter.post(
       const sourceIp = getClientIpAddress(req);
       const binding = requireMfaCeremonyBinding(req);
       const pendingSession = res.locals.mfaLoginSession as MfaSessionRow;
-      await enforceMfaLoginNetworkAccess(pendingSession, req);
+      await enforceMfaLoginCountryAccess(pendingSession);
       // Fast rejection is only an optimization. The authoritative gate below
       // holds the account lock through code evaluation AND failure persistence.
       if (await isPermanentlyBlockedTotpIp(pendingSession.source_ip, pendingSession.user_id)) {
@@ -1537,7 +1533,6 @@ mfaRouter.post(
       const binding = requireMfaCeremonyBinding(req);
       const session = res.locals.mfaLoginSession as MfaSessionRow;
       await enforceCountryLoginPolicy(session.user_id, undefined, session.source_ip);
-      await enforceVpnAccessPolicy(session.user_id, undefined, session.source_ip, getNetworkVerificationContext(req));
       const passkeys = await db.query<PasskeyRow>(
         `SELECT id, user_id, credential_id, webauthn_user_id, public_key, counter, transports,
                 device_type, backed_up, aaguid, name, created_at, updated_at, last_used_at
@@ -1586,7 +1581,7 @@ mfaRouter.post(
       const sourceIp = getClientIpAddress(req);
       const binding = requireMfaCeremonyBinding(req);
       const pendingSession = res.locals.mfaLoginSession as MfaSessionRow;
-      await enforceMfaLoginNetworkAccess(pendingSession, req);
+      await enforceMfaLoginCountryAccess(pendingSession);
       const activeSession = await reserveMfaAttempt(mfaToken, sourceIp, binding);
       session = activeSession;
       const contextHash = hashOpaqueToken(mfaToken);

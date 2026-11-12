@@ -14,7 +14,6 @@
 - [方式A. Posh-ACMEで直接HTTPSを提供](#方式a-posh-acmeで直接httpsを提供)
 - [方式B. リバースプロキシ経由のHTTPS](#方式b-リバースプロキシ経由のhttps)
 - [運用時の注意事項](#運用時の注意事項)
-- [VPN/プロキシのブロック](#vpnプロキシのブロック)
 - [このディレクトリのファイル](#このディレクトリのファイル)
 
 ## デプロイ方式の選択
@@ -26,7 +25,6 @@
 | 証明書 | Posh-ACMEのファイル、起動時に読み込み | プロキシが管理 |
 | HTTP→HTTPSリダイレクト | なし（80番ポートは使わない） | BrainVaultまたはプロキシが提供 |
 | 入口でのリクエスト制限 | アプリケーションの制限のみ | プロキシの制限を追加可能（[後述](#公開入口のリクエスト制限)） |
-| VPN/プロキシ測定 | WebSocketのみ（TCP_INFOなし） | 対応する入口でTCP/WebSocketを完全に比較 |
 | 向いている環境 | プロキシのない単一のWindowsホスト | ほとんどのデプロイ、NAS、コンテナ |
 
 迷ったらリバースプロキシを使ってください。
@@ -142,7 +140,7 @@ TRUST_PROXY_HOPS=0
 
 ### 2. プロキシを設定
 
-どのプロキシでも次の3つが必要です。ドメインのTLS提供、`X-Forwarded-Proto: https`の転送、WebSocketアップグレードの許可（`/api/collaboration/`と`/api/network-verification/probe`で使用）です。
+どのプロキシでも次の3つが必要です。ドメインのTLS提供、`X-Forwarded-Proto: https`の転送、WebSocketアップグレードの許可（`/api/collaboration/`で使用）です。
 
 #### Caddy
 
@@ -190,7 +188,7 @@ Nginx Proxy Managerは通常、転送用のホストとプロトコルのヘッ�
 4. DSMで`notes.example.com`の証明書を割り当てます。
 5. 任意：HTTPSへリダイレクトする別のHTTPソースルールを追加します。
 
-宛先ポートは外部に公開しないでください。DSMでVPN/プロキシのブロックを使う場合は、[接続測定ガイド](network-verification.jp.md)も参照してください。
+宛先ポートは外部に公開しないでください。
 
 ### 3. 確認
 
@@ -246,15 +244,10 @@ NGINXの例は、クエリ文字列やヘッダーを記録しない最小限の
 
 3の状況に備えて、運用者による復旧手順を用意してください。アカウントIDだけで動作する匿名のリセット機能は提供しないでください。
 
-## VPN/プロキシのブロック
-
-VPN/プロキシのブロックは、信頼された入口で測定したTCP RTTと、サーバーが測定したWebSocket RTTを比較します。Synology DSMの設定、TCP_INFOヘッダー、プロキシの信頼設定、検出の限界は[接続測定ガイド](network-verification.jp.md)を参照してください。
-
 ## このディレクトリのファイル
 
 | ファイル | 内容 |
 | --- | --- |
 | [`README.md`](README.md) / [`README.ko.md`](README.ko.md) / `README.jp.md` | このHTTPSデプロイガイド |
-| [`network-verification.md`](network-verification.md) / [`.ko.md`](network-verification.ko.md) / [`.jp.md`](network-verification.jp.md) | VPN/プロキシのブロックに使うTCP/WebSocket測定 |
 | [`Caddyfile.example`](Caddyfile.example) | Caddyのリバースプロキシの例 |
-| [`nginx.conf.example`](nginx.conf.example) | リダイレクト、WebSocket、リクエスト制限、安全なログ、TCP_INFOヘッダーを含むNGINXの例 |
+| [`nginx.conf.example`](nginx.conf.example) | リダイレクト、WebSocket、リクエスト制限、安全なログを含むNGINXの例 |

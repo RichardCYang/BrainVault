@@ -30,7 +30,6 @@ const owner = {
   updated_at: "2026-08-04T00:00:00.000Z",
   theme: "light",
   country_login_mode: "OFF",
-  vpn_block_enabled: 0,
   attachment_generation: 1
 };
 const editor = { ...owner, id: "usr_history_editor", username: "history-editor", name: "History Editor" };
@@ -89,7 +88,6 @@ beforeEach(() => {
     if (sql.includes("FROM user_totp_ip_blocks")) return undefined;
     if (sql.includes("FROM users WHERE id = ?")) {
       if (sql.includes("country_login_mode") && !sql.includes("username")) return { country_login_mode: "OFF" };
-      if (sql.includes("vpn_block_enabled") && !sql.includes("username")) return { vpn_block_enabled: 0 };
       return [owner, editor, outsider].find((user) => user.id === params[0]);
     }
     if (sql.includes("FROM pages WHERE id = ?")) return params[0] === page.id ? { ...page } : undefined;

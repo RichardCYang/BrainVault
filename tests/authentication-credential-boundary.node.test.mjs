@@ -133,7 +133,7 @@ test("credential rotation cancels account-data work before stale restores can re
   }
 });
 
-test("authenticated API requests revalidate auth scope around async network preparation", async () => {
+test("authenticated API requests revalidate auth scope before every transport attempt", async () => {
   const source = await read("public/app.js");
   const apiStart = source.indexOf("async function api(path, options = {})");
   const apiEnd = source.indexOf("function enqueueAccountProfilePatch", apiStart);
@@ -143,10 +143,8 @@ test("authenticated API requests revalidate auth scope around async network prep
   assert.match(apiSource, /const authenticationScope = captureAuthenticatedSessionScope\(\)/);
   assert.match(apiSource, /const startedAuthenticated = Boolean\(state\.authenticated && authenticationScope\.targetKey\)/);
 
-  const headerAwait = apiSource.indexOf("await applyClientNetworkVerificationHeaders(headers)");
   const postHeaderFence = apiSource.indexOf(
-    "if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope))",
-    headerAwait
+    "if (startedAuthenticated && !isCurrentAuthenticatedSessionScope(authenticationScope))"
   );
   const dispatchGuard = apiSource.indexOf("const assertRequestDispatchCurrent = () =>", postHeaderFence);
   const transportCall = apiSource.indexOf("await fetchApiResponseText(", dispatchGuard);
@@ -160,8 +158,8 @@ test("authenticated API requests revalidate auth scope around async network prep
   );
 
   assert.ok(
-    headerAwait >= 0 && headerAwait < postHeaderFence && postHeaderFence < dispatchGuard,
-    "an authenticated request must be rejected if network-signal preparation crosses an auth generation"
+    postHeaderFence >= 0 && postHeaderFence < dispatchGuard,
+    "an authenticated request must validate its auth generation before transport dispatch"
   );
   assert.match(
     apiSource.slice(dispatchGuard, transportCall),

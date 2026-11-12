@@ -142,7 +142,6 @@ test("collaboration revalidation amortizes durable checks and protects presence 
   assert.match(source, /if \(client\.accessValidationPromise\) return client\.accessValidationPromise;/);
   assert.doesNotMatch(source, /isPermanentlyBlockedTotpIp/);
   assert.match(source, /enforceCountryLoginPolicy\(client\.user\.id, currentUser\.country_login_mode, client\.ipAddress\)/);
-  assert.ok(source.includes("enforceVpnAccessPolicy("));
   assert.ok(source.includes("client.ipAddress"));
   assert.match(source, /targets\.map\(async \(target\) => \{[\s\S]*revalidateClientPageAccess\(room, target\)/);
 });

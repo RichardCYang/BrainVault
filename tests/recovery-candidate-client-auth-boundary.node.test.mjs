@@ -94,19 +94,9 @@ test("recovery candidate download fences credential dispatch, response bytes, di
   );
   assertBefore(
     download,
-    "await applyClientNetworkVerificationHeaders(headers)",
-    "const response = await fetch(",
-    "network verification must finish before the final pre-dispatch auth fence"
-  );
-  const verificationIndex = download.indexOf("await applyClientNetworkVerificationHeaders(headers)");
-  const fetchIndex = download.indexOf("const response = await fetch(");
-  const fenceBetweenVerificationAndFetch = download.indexOf(
     "assertCurrentAuthenticatedSessionScope(authenticationScope)",
-    verificationIndex
-  );
-  assert.ok(
-    fenceBetweenVerificationAndFetch > verificationIndex && fenceBetweenVerificationAndFetch < fetchIndex,
-    "credentialed fetch must be fenced after asynchronous network-signal collection"
+    "const response = await fetch(",
+    "credentialed fetch must be bound to the initiating auth scope"
   );
   assertBefore(
     download,

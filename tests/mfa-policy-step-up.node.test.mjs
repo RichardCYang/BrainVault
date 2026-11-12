@@ -20,7 +20,7 @@ function functionSection(name, nextName) {
 }
 
 test("security posture schemas accept the existing MFA step-up token", () => {
-  for (const schema of ["vpnBlockPolicySchema", "totpIpBlockPolicySchema", "countryLoginPolicySchema"]) {
+  for (const schema of ["totpIpBlockPolicySchema", "countryLoginPolicySchema"]) {
     const start = auth.indexOf(`const ${schema} =`);
     assert.ok(start >= 0, `missing ${schema}`);
     const end = auth.indexOf(";", start);
@@ -31,7 +31,6 @@ test("security posture schemas accept the existing MFA step-up token", () => {
 test("all login-defense policy mutations consume operation-scoped MFA step-up before changing security posture", () => {
   for (const [path, action] of [
     ["/totp-ip-block-policy", "totp-ip-policy"],
-    ["/vpn-block-policy", "vpn-policy"],
     ["/country-login-policy", "country-policy"]
   ]) {
     const section = routeSection(path);
@@ -47,7 +46,6 @@ test("account settings client obtains step-up proof before each policy PUT", () 
   for (const [name, path] of [
     ["saveTotpIpBlockPolicy", "/api/auth/totp-ip-block-policy"],
     ["saveCountryLoginPolicy", "/api/auth/country-login-policy"],
-    ["saveVpnBlockPolicy", "/api/auth/vpn-block-policy"]
   ]) {
     const section = functionSection(name);
     const stepUp = section.indexOf("await requestMfaStepUpToken(");
