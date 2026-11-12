@@ -90,10 +90,15 @@
             <div class="form-field">
               <label for="username" data-i18n="auth.username">ID</label>
               <input id="username" name="username" type="text" autocomplete="username webauthn" minlength="3" maxlength="40" pattern="[a-zA-Z0-9._-]+" required />
+              <p id="username-hint" class="field-help auth-register-hint hidden" data-i18n="auth.usernameHint">3–40 characters: letters, numbers, periods (.), underscores (_), and hyphens (-).</p>
             </div>
             <div class="form-field">
               <label for="password" data-i18n="auth.password">Password</label>
-              <input id="password" name="password" type="password" autocomplete="current-password" required />
+              <div class="password-input-wrap">
+                <input id="password" name="password" type="password" autocomplete="current-password" required />
+                <button id="password-visibility-toggle" class="password-visibility-toggle" type="button" aria-controls="password" aria-pressed="false">Show</button>
+              </div>
+              <p id="password-hint" class="field-help auth-register-hint hidden" data-i18n="auth.passwordHint">At least 8 characters (up to 72 bytes).</p>
             </div>
 
             <div id="register-fields" class="register-fields hidden">
@@ -101,6 +106,7 @@
                 <label for="name"><span data-i18n="auth.name">Name</span> <span class="field-note" data-i18n="auth.optional">Optional</span></label>
                 <input id="name" name="name" type="text" autocomplete="name" placeholder="Vault Keeper" data-i18n-placeholder="auth.namePlaceholder" />
               </div>
+              <p class="auth-approval-notice" data-i18n="auth.approvalNotice">New accounts can sign in after an administrator approves them.</p>
             </div>
 
             <div class="auth-actions">
@@ -1044,7 +1050,7 @@
                   <div class="account-security-section-heading">
                     <div>
                       <h4 id="account-totp-ip-block-title" data-i18n="account.totpIpBlockTitle">TOTP attempt limit</h4>
-                      <p data-i18n="account.totpIpBlockDescription">Permanently block the client IP after too many invalid authenticator codes.</p>
+                      <p data-i18n="account.totpIpBlockDescription">Temporarily block TOTP code verification from a client IP after too many invalid authenticator-app codes.</p>
                     </div>
                     <span id="account-totp-ip-block-status" class="country-login-status totp-ip-block-status" data-i18n="account.totpIpBlockOff">Off</span>
                   </div>
@@ -1061,7 +1067,7 @@
                     <div class="form-field">
                       <label for="account-totp-ip-block-threshold" data-i18n="account.totpIpBlockThreshold">Allowed invalid TOTP attempts</label>
                       <input id="account-totp-ip-block-threshold" type="number" min="1" max="8" step="1" value="3" inputmode="numeric" />
-                      <p class="field-help" data-i18n="account.totpIpBlockThresholdHint">Default: 3. The attempt that reaches this number permanently blocks the IP.</p>
+                      <p class="field-help" data-i18n="account.totpIpBlockThresholdHint">Default: 3. Reaching this number blocks TOTP verification from the IP for 24 hours.</p>
                     </div>
 
                     <div class="country-login-current">
@@ -1074,7 +1080,7 @@
                       <input id="account-totp-ip-block-password" type="password" autocomplete="current-password" maxlength="128" />
                     </div>
 
-                    <p class="country-login-warning" data-i18n="account.totpIpBlockWarning">When enabled, consecutive invalid TOTP codes from the same IP are counted. Reaching the configured limit permanently denies that IP at the server before the login page or API is served. Existing permanent blocks remain until manually unblocked.</p>
+                    <p class="country-login-warning" data-i18n="account.totpIpBlockWarning">When enabled, invalid TOTP codes are accumulated for the same account and IP until a TOTP succeeds or this policy is changed. Reaching the configured limit blocks only TOTP verification from that IP for 24 hours; existing authenticated sessions and passkey sign-in remain available.</p>
 
                     <div class="account-form-actions">
                       <button id="account-totp-ip-block-save" type="button" data-i18n="account.totpIpBlockSave">Save OTP attempt limit</button>
@@ -1261,8 +1267,8 @@
               <section id="account-security-panel-totp-blocks" class="account-security-panel hidden" role="tabpanel" aria-labelledby="account-security-tab-totp-blocks" data-security-panel-content="totp-blocks">
                 <div class="login-history-heading">
                   <div>
-                    <h4 data-i18n="account.totpIpBlocksTitle">Permanently blocked TOTP IPs</h4>
-                    <p data-i18n="account.totpIpBlocksDescription">Use another unblocked network to review and manually release IPs permanently blocked by this account's TOTP attempt limit.</p>
+                    <h4 data-i18n="account.totpIpBlocksTitle">IPs blocked by the TOTP limit</h4>
+                    <p data-i18n="account.totpIpBlocksDescription">Review and manually release IPs whose TOTP verification is temporarily blocked by this account's attempt limit.</p>
                   </div>
                   <button id="account-totp-ip-blocks-refresh" class="secondary compact" type="button" data-i18n="account.totpIpBlocksRefresh">Refresh</button>
                 </div>
@@ -1277,18 +1283,19 @@
 
                 <div class="login-history-table-wrap">
                   <table class="login-history-table permanent-totp-blocks-table">
-                    <caption class="visually-hidden" data-i18n="account.totpIpBlocksTableCaption">Active permanent TOTP IP blocks</caption>
+                    <caption class="visually-hidden" data-i18n="account.totpIpBlocksTableCaption">IPs currently blocked from TOTP verification</caption>
                     <thead>
                       <tr>
                         <th scope="col" data-i18n="account.loginHistoryTime">Time</th>
                         <th scope="col" data-i18n="account.loginHistoryIp">IP address</th>
                         <th scope="col" data-i18n="account.totpIpBlocksAttempts">Failed attempts</th>
+                        <th scope="col" data-i18n="account.totpIpBlocksExpires">Unblocks at</th>
                         <th scope="col" data-i18n="account.totpIpBlocksAction">Action</th>
                       </tr>
                     </thead>
                     <tbody id="account-totp-ip-blocks-body"></tbody>
                   </table>
-                  <p id="account-totp-ip-blocks-empty" class="login-history-empty hidden" data-i18n="account.totpIpBlocksEmpty">No IPs are currently permanently blocked by the TOTP attempt limit.</p>
+                  <p id="account-totp-ip-blocks-empty" class="login-history-empty hidden" data-i18n="account.totpIpBlocksEmpty">No IPs are currently blocked by the TOTP attempt limit.</p>
                 </div>
               </section>
             </section>

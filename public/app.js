@@ -1181,6 +1181,8 @@ let statusClearTimer = null;
 let statusDismissDeadline = null;
 let statusRemainingDelay = null;
 let statusDismissPaused = false;
+// An undo offer must not be silently replaced by a routine notice.
+let statusActionVisible = false;
 // Long enough to read a sentence, and paused while the pointer or keyboard
 // focus is on the toast. Errors stay until dismissed or replaced (WCAG 2.2.1).
 const statusDismissDelay = 4000;
@@ -1338,7 +1340,10 @@ const elements = {
   authSwitchLink: $("#auth-switch-link"),
   registerFields: $("#register-fields"),
   username: $("#username"),
+  usernameHint: $("#username-hint"),
   password: $("#password"),
+  passwordHint: $("#password-hint"),
+  passwordVisibilityToggle: $("#password-visibility-toggle"),
   name: $("#name"),
   userLabel: $("#user-label"),
   addCollectionButton: $("#add-collection-button"),
@@ -1813,6 +1818,15 @@ function setAuthMode(mode, updateHash = true) {
   elements.authPasskeyLoginSection.classList.toggle("hidden", isRegister);
   elements.username.autocomplete = isRegister ? "username" : "username webauthn";
   elements.password.autocomplete = isRegister ? "new-password" : "current-password";
+  // Sign-up states its rules up front instead of failing with a generic
+  // browser "match the requested format" message after submission.
+  elements.usernameHint.classList.toggle("hidden", !isRegister);
+  elements.passwordHint.classList.toggle("hidden", !isRegister);
+  toggleAttribute(elements.username, "aria-describedby", isRegister ? "username-hint" : null);
+  toggleAttribute(elements.password, "aria-describedby", isRegister ? "password-hint" : null);
+  toggleAttribute(elements.password, "minlength", isRegister ? "8" : null);
+  elements.username.setCustomValidity("");
+  syncPasswordVisibilityToggle();
 
   if (updateHash) {
     const hash = isRegister ? "#signup" : "#login";
@@ -1821,6 +1835,43 @@ function setAuthMode(mode, updateHash = true) {
   syncAuthOperationControls();
 }
 
+function toggleAttribute(element, name, value) {
+  if (value === null) element.removeAttribute(name);
+  else element.setAttribute(name, value);
+}
+
+function syncPasswordVisibilityToggle() {
+  const visible = elements.password.type === "text";
+  const label = t(visible ? "auth.hidePassword" : "auth.showPassword");
+  elements.passwordVisibilityToggle.textContent = label;
+  elements.passwordVisibilityToggle.setAttribute("aria-pressed", String(visible));
+  elements.passwordVisibilityToggle.setAttribute("aria-label", t(visible ? "auth.hidePasswordAria" : "auth.showPasswordAria"));
+}
+
+function setPasswordVisible(visible) {
+  elements.password.type = visible ? "text" : "password";
+  syncPasswordVisibilityToggle();
+}
+
+elements.passwordVisibilityToggle.addEventListener("click", () => {
+  const { selectionStart, selectionEnd } = elements.password;
+  setPasswordVisible(elements.password.type === "password");
+  elements.password.focus();
+  try {
+    elements.password.setSelectionRange(selectionStart, selectionEnd);
+  } catch {
+    // Some input types do not expose a selection range.
+  }
+});
+
+elements.username.addEventListener("input", () => elements.username.setCustomValidity(""));
+elements.username.addEventListener("invalid", () => {
+  const { validity } = elements.username;
+  if (validity.patternMismatch || validity.tooShort || validity.tooLong) {
+    elements.username.setCustomValidity(t("auth.usernameHint"));
+  }
+});
+
 function clearStatus() {
   window.clearTimeout(statusClearTimer);
   statusClearTimer = null;
@@ -1828,6 +1879,7 @@ function clearStatus() {
   statusRemainingDelay = null;
   // An emptied toast has no box, so a pending pointerleave may never arrive.
   statusDismissPaused = false;
+  statusActionVisible = false;
   elements.status.replaceChildren();
   elements.status.classList.remove("error");
 }
@@ -1859,11 +1911,22 @@ function resumeStatusDismiss() {
   if (statusRemainingDelay !== null) scheduleStatusDismiss(Math.max(statusRemainingDelay, 1500));
 }
 
+// Navigation success is already visible on screen, so it is not announced;
+// only a pending progress notice such as "Loading…" is cleared.
+function clearStatusIfShowing(message) {
+  const current = elements.status.querySelector(".status-message")?.textContent ?? "";
+  if (current && current === String(message ?? "").trim()) clearStatus();
+}
+
 function setStatus(message, isError = false, { dismissAfter, action } = {}) {
+  const text = String(message ?? "").trim();
+  const hasAction = Boolean(action?.label) && typeof action.onSelect === "function";
+  // Routine notices wait behind an open undo offer; errors and new offers win.
+  if (statusActionVisible && text && !isError && !hasAction) return;
+
   window.clearTimeout(statusClearTimer);
   statusClearTimer = null;
 
-  const text = String(message ?? "").trim();
   elements.status.classList.toggle("error", isError && Boolean(text));
   if (!text) {
     clearStatus();
@@ -1875,7 +1938,6 @@ function setStatus(message, isError = false, { dismissAfter, action } = {}) {
   messageElement.textContent = text;
   const children = [messageElement];
 
-  const hasAction = Boolean(action?.label) && typeof action.onSelect === "function";
   if (hasAction) {
     const actionButton = document.createElement("button");
     actionButton.type = "button";
@@ -1897,6 +1959,7 @@ function setStatus(message, isError = false, { dismissAfter, action } = {}) {
   dismissButton.addEventListener("click", clearStatus, { once: true });
   children.push(dismissButton);
   elements.status.replaceChildren(...children);
+  statusActionVisible = hasAction;
 
   const delay = dismissAfter ?? (
     isError ? statusErrorDismissDelay : hasAction ? statusActionDismissDelay : statusDismissDelay
@@ -4015,7 +4078,7 @@ function renderPermanentTotpIpBlocks() {
     const row = document.createElement("tr");
     row.className = "login-history-loading";
     const cell = document.createElement("td");
-    cell.colSpan = 4;
+    cell.colSpan = 5;
     cell.textContent = t("account.totpIpBlocksLoading");
     row.append(cell);
     elements.accountTotpIpBlocksBody.append(row);
@@ -4031,6 +4094,9 @@ function renderPermanentTotpIpBlocks() {
     ipCell.textContent = block.ipAddress === "unknown" ? t("account.loginHistoryUnknownIp") : block.ipAddress;
     const attemptsCell = document.createElement("td");
     attemptsCell.textContent = formatNumber(Number(block.failedAttempts) || 0);
+    // Blocks lift on their own after 24 hours; say when instead of implying permanence.
+    const expiresCell = document.createElement("td");
+    expiresCell.textContent = block.expiresAt ? formatDate(block.expiresAt) : "—";
     const actionCell = document.createElement("td");
     const button = document.createElement("button");
     button.type = "button";
@@ -4041,7 +4107,7 @@ function renderPermanentTotpIpBlocks() {
       ? t("account.totpIpUnblocking")
       : t("account.totpIpUnblock");
     actionCell.append(button);
-    row.append(timeCell, ipCell, attemptsCell, actionCell);
+    row.append(timeCell, ipCell, attemptsCell, expiresCell, actionCell);
     elements.accountTotpIpBlocksBody.append(row);
   });
 
@@ -4809,7 +4875,6 @@ async function performWorkspaceSearch({ live = false } = {}) {
     state.searchResults = Array.isArray(data?.results) ? data.results : [];
     state.searchLoading = false;
     renderSearchDialog();
-    if (!live) setStatus(t("status.searchLoaded"));
   } catch (error) {
     if (requestId !== state.searchRequestId || !state.searchDialogOpen) return;
     state.searchLoading = false;
@@ -16437,7 +16502,6 @@ function applyInlineFormat(format, value = "") {
       return;
     }
     closeInlineToolbar();
-    setStatus(t("status.formatApplied"));
     return;
   }
 
@@ -16489,7 +16553,6 @@ function applyInlineFormat(format, value = "") {
     return;
   }
   closeInlineToolbar();
-  setStatus(t("status.formatApplied"));
 }
 
 function getSlashContext(textarea) {
@@ -19922,7 +19985,7 @@ async function openPage(pageId, { skipFlush = false, requestedPageMode = null } 
       const summary = getPageSummaryById(pageId);
       if (isCollectionPage(summary)) {
         await showCollection(pageId, { skipFlush: true, navigationGeneration });
-        if (isCurrentWorkspaceNavigation(navigationGeneration)) setStatus(t("status.collectionOpened"));
+        if (isCurrentWorkspaceNavigation(navigationGeneration)) clearStatusIfShowing(t("status.loadingDocument"));
         return;
       }
 
@@ -19949,7 +20012,7 @@ async function openPage(pageId, { skipFlush = false, requestedPageMode = null } 
 
       if (isCollectionPage(data.page)) {
         await showCollection(pageId, { skipFlush: true, navigationGeneration });
-        if (isCurrentWorkspaceNavigation(navigationGeneration)) setStatus(t("status.collectionOpened"));
+        if (isCurrentWorkspaceNavigation(navigationGeneration)) clearStatusIfShowing(t("status.loadingDocument"));
         return;
       }
 
@@ -19993,12 +20056,12 @@ async function openPage(pageId, { skipFlush = false, requestedPageMode = null } 
       void loadPageComments(data.page.id, navigationGeneration);
       if (isCollaborativePage(data.page)) {
         await startPageCollaboration(data.page);
-        if (isCurrentWorkspaceNavigation(navigationGeneration)) setStatus(t("status.documentOpened"));
+        if (isCurrentWorkspaceNavigation(navigationGeneration)) clearStatusIfShowing(t("status.loadingDocument"));
       } else if (
         isCurrentWorkspaceNavigation(navigationGeneration)
           && !activatePersistedPageDraft(recovery)
       ) {
-        setStatus(t("status.documentOpened"));
+        clearStatusIfShowing(t("status.loadingDocument"));
       }
     },
     { flush: shouldFlush }
@@ -20049,7 +20112,6 @@ async function boot() {
     await restoreWorkspaceLocationFromHash({ fallbackToHome: true });
     if (!isCurrent()) return;
     renderShell();
-    setStatus(t("status.ready"));
     return;
   }
 
@@ -20079,7 +20141,6 @@ async function openHomeFromBrand() {
     await loadPages("", "", { navigationGeneration });
     if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
     await showHome({ skipFlush: true, navigationGeneration });
-    if (isCurrentWorkspaceNavigation(navigationGeneration)) setStatus(t("status.ready"));
   } catch (error) {
     if (isCurrentWorkspaceNavigation(navigationGeneration)) setStatus(error.message, true);
   }
@@ -20109,7 +20170,6 @@ elements.pagePath.addEventListener("click", async (event) => {
   try {
     if (target.dataset.pagePathKind === "collection") {
       await showCollection(target.dataset.pagePathId);
-      setStatus(t("status.collectionOpened"));
       return;
     }
     await openPage(target.dataset.pagePathId);
@@ -21284,6 +21344,7 @@ elements.authForm.addEventListener("submit", async (event) => {
       setAuthMode("login");
       elements.username.value = body.username;
       elements.password.value = "";
+      setPasswordVisible(false);
       setStatus(t("auth.registrationPending"));
       return;
     }
@@ -21372,7 +21433,6 @@ elements.defaultCollectionButton.addEventListener("click", async () => {
     await loadPages("", "", { navigationGeneration });
     if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
     await showCollection(defaultCollectionKey, { skipFlush: true, navigationGeneration });
-    if (isCurrentWorkspaceNavigation(navigationGeneration)) setStatus(t("status.collectionOpened"));
   } catch (error) {
     if (isCurrentWorkspaceNavigation(navigationGeneration)) setStatus(error.message, true);
   }
@@ -21419,9 +21479,6 @@ async function handleSidebarPageClick(event) {
         skipFlush: true,
         navigationGeneration: collectionNavigationGeneration
       });
-      if (isCurrentWorkspaceNavigation(collectionNavigationGeneration)) {
-        setStatus(t("status.collectionOpened"));
-      }
       return;
     }
     await openPage(item.dataset.pageId);

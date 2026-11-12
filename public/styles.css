@@ -3579,7 +3579,7 @@ body.is-kanban-column-dragging {
 .kanban-card-position {
   margin-right: auto;
   color: var(--muted-light);
-  font-size: 0.66rem;
+  font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -7036,6 +7036,9 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
 .database-table tr:hover .database-delete-row,
 .database-list-row:hover .database-delete-row,
 .database-board-card:hover .database-delete-row,
+.database-table tr:focus-within .database-delete-row,
+.database-list-row:focus-within .database-delete-row,
+.database-board-card:focus-within .database-delete-row,
 .database-delete-row:focus-visible {
   opacity: 1;
 }
@@ -7852,6 +7855,7 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
 }
 
 .gantt-task-row:hover .gantt-delete-task,
+.gantt-task-row:focus-within .gantt-delete-task,
 .gantt-delete-task:focus-visible {
   opacity: 1;
 }
@@ -7883,7 +7887,7 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
   border-right: 1px solid var(--gantt-line);
   color: var(--gantt-muted);
   padding: 0 0.45rem;
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   font-weight: 590;
   white-space: nowrap;
   overflow: hidden;
@@ -7900,7 +7904,7 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
   justify-content: center;
   border-right: 1px solid var(--gantt-line);
   color: var(--gantt-muted-light);
-  font-size: 0.66rem;
+  font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -8234,7 +8238,7 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
   border-right: 1px solid var(--line);
   color: var(--muted);
   padding: 0 0.4rem;
-  font-size: 0.66rem;
+  font-size: 0.72rem;
   font-weight: 590;
   overflow: hidden;
   white-space: nowrap;
@@ -8251,7 +8255,7 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
   justify-content: center;
   border-right: 1px solid var(--line);
   color: var(--muted-light);
-  font-size: 0.66rem;
+  font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -15128,6 +15132,7 @@ body.pdf-export-mode .remote-collaboration-caret {
 }
 
 .timetable-entry-row:hover .timetable-delete-entry,
+.timetable-entry-row:focus-within .timetable-delete-entry,
 .timetable-delete-entry:focus-visible {
   opacity: 1;
 }
@@ -18571,7 +18576,7 @@ html[data-theme="dark"] {
   color: var(--sidebar-reference-muted, var(--muted-light));
   padding: 1px 5px;
   font-family: inherit;
-  font-size: 10px;
+  font-size: 0.72rem;
   font-weight: 560;
   line-height: 16px;
   box-shadow: none;
@@ -19018,6 +19023,53 @@ body.auth-mode {
   line-height: 1.5;
 }
 
+/* Sign-up rules and the approval notice are read before submitting. */
+.auth-register-hint,
+.auth-approval-notice {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.auth-approval-notice {
+  margin-top: 0.6rem;
+  border-left: 3px solid var(--line-strong);
+  padding-left: 0.6rem;
+}
+
+.password-input-wrap {
+  position: relative;
+  display: grid;
+}
+
+.password-input-wrap input {
+  padding-right: 4.6rem;
+}
+
+.password-input-wrap .password-visibility-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0.3rem;
+  min-width: 2.75rem;
+  min-height: 2rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  padding: 0.2rem 0.55rem;
+  box-shadow: none;
+  font-size: 0.8rem;
+  font-weight: 600;
+  transform: translateY(-50%);
+}
+
+.password-input-wrap .password-visibility-toggle:hover {
+  background: var(--panel);
+  color: var(--ink);
+}
+
 .auth-switch {
   margin: 0.5rem 0 0;
   color: var(--muted);
@@ -19158,6 +19210,9 @@ body.auth-mode {
   .kanban-column-menu,
   .kanban-card-icon-button,
   .kanban-action-button,
+  .database-delete-row,
+  .gantt-delete-task,
+  .timetable-delete-entry,
   .country-login-chip button
 ) {
   position: relative;
@@ -19173,6 +19228,9 @@ body.auth-mode {
   .kanban-action-button,
   .kanban-card-drag-handle,
   .custom-icon-library-remove,
+  .database-delete-row,
+  .gantt-delete-task,
+  .timetable-delete-entry,
   .country-login-chip button
 )::after {
   position: absolute;
@@ -19191,9 +19249,21 @@ body.auth-mode {
     .kanban-action-button,
     .kanban-card-drag-handle,
     .custom-icon-library-remove,
+    .database-delete-row,
+    .gantt-delete-task,
+    .timetable-delete-entry,
     .country-login-chip button
   )::after {
     inset: -5px -7px;
+  }
+
+  /* Touch screens cannot hover, so row actions that reveal on hover elsewhere
+     stay visible here instead of being undiscoverable. */
+  .database-delete-row,
+  .gantt-delete-task,
+  .timetable-delete-entry,
+  .bookmark-item-actions {
+    opacity: 1;
   }
 
   .status-action,

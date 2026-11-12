@@ -5955,6 +5955,199 @@ for (const [language, addition] of Object.entries(uxRefreshTranslationAdditions)
   }
 }
 
+// Plain-language rewrites: status messages say what happened and what to do
+// next without internal storage/locking terms, sign-up states its rules before
+// submission, and TOTP IP blocks are described as the 24-hour, per-account
+// blocks the server actually enforces.
+const plainLanguageTranslationAdditions = {
+  en: {
+    auth: {
+      usernameHint: "3–40 characters: letters, numbers, periods (.), underscores (_), and hyphens (-).",
+      passwordHint: "At least 8 characters (up to 72 bytes).",
+      approvalNotice: "New accounts can sign in after an administrator approves them.",
+      showPassword: "Show",
+      hidePassword: "Hide",
+      showPasswordAria: "Show password",
+      hidePasswordAria: "Hide password"
+    },
+    status: {
+      durableRecoveryStorageUnavailable: "Editing is turned off because this browser can't keep a safety copy of your changes. Your last change wasn't applied. Allow site storage for BrainVault or leave private browsing, then reload the page.",
+      sessionRecoveryStorageActive: "Editing is on. This browser may delete the safety copy of unsaved changes when it closes (for example, in a private window), so wait for “Saved” before closing it.",
+      localRecoveryInspectionFailed: "Couldn't check this browser for unsaved changes, so nothing was changed. Keep your other BrainVault tabs open and try again.",
+      exclusiveTransitionLockUnavailable: "This browser can't coordinate safely between tabs, so nothing was changed. Use an up-to-date browser, open BrainVault over HTTPS, and try again.",
+      orphanedLocalDrafts: "Unsaved changes were found for a page that was deleted, can't be opened, or is now edited live with others. Copy them from below before clearing your browser data.",
+      orphanedCollaborationRecovery: "Live edits that never reached the server were found for a page that was deleted, can't be opened, or is no longer shared. Copy them from below before clearing your browser data.",
+      destructiveCollaborationRecoveryPending: "This can't be done yet: {count} live edit(s) on the affected pages haven't reached the server. Reconnect your open BrainVault tabs, wait for them to sync, and try again.",
+      workspaceLocalDraftsPending: "The backup can't start yet: {count} change(s) are still being saved. Wait until every open BrainVault tab shows “Saved”, then try again.",
+      destructiveLocalDraftsPending: "This can't be done yet: {count} change(s) on the affected pages are still being saved. Wait until every open BrainVault tab shows “Saved”, then try again.",
+      resolveRecoveredDraftConflict: "Your recovered changes conflict with a newer version on the server. Before saving or deleting, choose which to keep: use “Save block” in the block menu, or edit the page title and confirm."
+    },
+    account: {
+      totpIpBlocksTitle: "IPs blocked by the TOTP limit",
+      totpIpBlocksTableCaption: "IPs currently blocked from TOTP verification",
+      totpIpBlocksExpires: "Unblocks at",
+      totpIpBlocksEmpty: "No IPs are currently blocked by the TOTP attempt limit.",
+      totpIpBlocksLoading: "Loading blocked IPs...",
+      totpIpBlocksSummary: "Currently blocked · {count}",
+      totpIpUnblockConfirm: "Unblock {ip} now? TOTP codes from this IP will be accepted again for your account."
+    }
+  },
+  ja: {
+    auth: {
+      usernameHint: "3〜40文字:英字、数字、ピリオド(.)、アンダースコア(_)、ハイフン(-)が使えます。",
+      passwordHint: "8文字以上(72バイトまで)。",
+      approvalNotice: "新しいアカウントは管理者の承認後にサインインできます。",
+      showPassword: "表示",
+      hidePassword: "隠す",
+      showPasswordAria: "パスワードを表示",
+      hidePasswordAria: "パスワードを隠す"
+    },
+    status: {
+      durableRecoveryStorageUnavailable: "このブラウザーで変更内容の安全用コピーを保存できないため、編集を停止しました。直前の変更は反映されていません。BrainVault のサイトデータ保存を許可するかプライベートブラウズをやめてから、ページを再読み込みしてください。",
+      sessionRecoveryStorageActive: "編集できます。このブラウザーは閉じたときに未保存の変更の安全用コピーを削除することがあります(プライベートウィンドウなど)。「保存済み」になってから閉じてください。",
+      localRecoveryInspectionFailed: "このブラウザーの未保存の変更を確認できなかったため、何も変更していません。ほかの BrainVault タブを開いたまま、もう一度お試しください。",
+      exclusiveTransitionLockUnavailable: "このブラウザーではタブ間の安全な連携ができないため、何も変更していません。最新のブラウザーで HTTPS 経由で BrainVault を開き、もう一度お試しください。",
+      orphanedLocalDrafts: "削除された、開けない、または共同編集に切り替わったページの未保存の変更が見つかりました。ブラウザーのデータを消去する前に、下から内容をコピーしてください。",
+      orphanedCollaborationRecovery: "削除された、開けない、または共有が解除されたページで、サーバーに届いていないリアルタイム編集が見つかりました。ブラウザーのデータを消去する前に、下から内容をコピーしてください。",
+      destructiveCollaborationRecoveryPending: "まだ実行できません。対象ページのリアルタイム編集 {count} 件がサーバーに届いていません。開いている BrainVault タブを再接続し、同期が終わってから再度お試しください。",
+      workspaceLocalDraftsPending: "まだバックアップを開始できません。{count} 件の変更を保存中です。開いているすべての BrainVault タブが「保存済み」になってから再度お試しください。",
+      destructiveLocalDraftsPending: "まだ実行できません。対象ページの {count} 件の変更を保存中です。開いているすべての BrainVault タブが「保存済み」になってから再度お試しください。"
+    }
+  },
+  ko: {
+    auth: {
+      usernameHint: "3~40자, 영문·숫자·마침표(.)·밑줄(_)·하이픈(-)만 사용할 수 있습니다.",
+      passwordHint: "8자 이상 입력하세요(최대 72바이트).",
+      approvalNotice: "새 계정은 관리자가 승인한 뒤에 로그인할 수 있습니다.",
+      showPassword: "보기",
+      hidePassword: "숨기기",
+      showPasswordAria: "비밀번호 보기",
+      hidePasswordAria: "비밀번호 숨기기"
+    },
+    status: {
+      durableRecoveryStorageUnavailable: "이 브라우저에 변경 내용의 안전 사본을 저장할 수 없어 편집을 중지했습니다. 방금 한 변경은 반영되지 않았습니다. BrainVault의 사이트 데이터 저장을 허용하거나 시크릿 모드를 끈 뒤 페이지를 새로고침하세요.",
+      sessionRecoveryStorageActive: "편집할 수 있습니다. 이 브라우저는 창을 닫을 때 저장되지 않은 변경의 안전 사본을 지울 수 있으니(시크릿 창 등), ‘저장됨’이 표시된 뒤에 닫으세요.",
+      localRecoveryInspectionFailed: "이 브라우저에 남은 미저장 변경을 확인하지 못해 아무것도 변경하지 않았습니다. 다른 BrainVault 탭을 열어 둔 채 다시 시도하세요.",
+      exclusiveTransitionLockUnavailable: "이 브라우저에서는 탭 사이의 안전한 조율이 불가능해 아무것도 변경하지 않았습니다. 최신 브라우저에서 HTTPS 주소로 BrainVault를 연 뒤 다시 시도하세요.",
+      orphanedLocalDrafts: "삭제되었거나, 열 수 없거나, 공동 편집으로 바뀐 페이지의 저장되지 않은 변경을 찾았습니다. 브라우저 데이터를 지우기 전에 아래 내용을 복사해 두세요.",
+      orphanedCollaborationRecovery: "삭제되었거나, 열 수 없거나, 공유가 해제된 페이지에서 서버에 전달되지 않은 실시간 편집을 찾았습니다. 브라우저 데이터를 지우기 전에 아래 내용을 복사해 두세요.",
+      destructiveCollaborationRecoveryPending: "아직 진행할 수 없습니다. 대상 페이지의 실시간 편집 {count}개가 서버에 전달되지 않았습니다. 열려 있는 BrainVault 탭을 다시 연결해 동기화가 끝난 뒤 시도하세요.",
+      workspaceLocalDraftsPending: "아직 백업을 시작할 수 없습니다. 변경 {count}개를 저장하는 중입니다. 열려 있는 모든 BrainVault 탭에 ‘저장됨’이 표시된 뒤 다시 시도하세요.",
+      destructiveLocalDraftsPending: "아직 진행할 수 없습니다. 대상 페이지의 변경 {count}개를 저장하는 중입니다. 열려 있는 모든 BrainVault 탭에 ‘저장됨’이 표시된 뒤 다시 시도하세요.",
+      resolveRecoveredDraftConflict: "복구한 변경 내용이 서버의 더 최신 버전과 충돌합니다. 저장하거나 삭제하기 전에 어느 쪽을 남길지 정하세요. 블록 메뉴의 ‘블록 저장’을 쓰거나, 페이지 제목을 편집한 뒤 덮어쓰기를 확인하면 됩니다."
+    },
+    account: {
+      totpIpBlockDescription: "인증 앱 코드(TOTP)를 설정한 횟수 이상 틀리면, 그 IP에서의 TOTP 인증을 24시간 동안 차단합니다.",
+      totpIpBlockThresholdHint: "기본값은 3회입니다. 이 횟수에 도달하면 해당 IP의 TOTP 인증이 24시간 동안 차단됩니다.",
+      totpIpBlockWarning: "켜면 같은 계정·같은 IP의 TOTP 실패 횟수를, 올바른 코드로 인증하거나 이 정책을 바꿀 때까지 누적합니다. 설정 횟수에 도달하면 그 IP에서의 TOTP 인증만 24시간 동안 차단되며, 이미 로그인된 세션과 패스키 로그인은 계속 사용할 수 있습니다.",
+      totpIpBlocksTitle: "TOTP 횟수 제한으로 차단된 IP",
+      totpIpBlocksDescription: "이 계정의 TOTP 횟수 제한으로 일시 차단된 IP를 확인하고, 24시간이 지나기 전에 직접 해제할 수 있습니다.",
+      totpIpBlocksTableCaption: "현재 TOTP 인증이 차단된 IP",
+      totpIpBlocksExpires: "해제 예정",
+      totpIpBlocksEmpty: "현재 TOTP 횟수 제한으로 차단된 IP가 없습니다.",
+      totpIpBlocksLoading: "차단된 IP를 불러오는 중입니다...",
+      totpIpBlocksSummary: "현재 차단 · 총 {count}건",
+      totpIpUnblockConfirm: "{ip} 차단을 지금 해제할까요? 이 IP에서 입력한 TOTP 코드를 내 계정에서 다시 받습니다."
+    }
+  },
+  fr: {
+    auth: {
+      usernameHint: "3 à 40 caractères : lettres, chiffres, points (.), traits de soulignement (_) et traits d’union (-).",
+      passwordHint: "Au moins 8 caractères (72 octets maximum).",
+      approvalNotice: "Les nouveaux comptes peuvent se connecter après l’approbation d’un administrateur.",
+      showPassword: "Afficher",
+      hidePassword: "Masquer",
+      showPasswordAria: "Afficher le mot de passe",
+      hidePasswordAria: "Masquer le mot de passe"
+    },
+    status: {
+      durableRecoveryStorageUnavailable: "L’édition est désactivée, car ce navigateur ne peut pas conserver de copie de sécurité de vos modifications. Votre dernière modification n’a pas été appliquée. Autorisez le stockage du site pour BrainVault ou quittez la navigation privée, puis rechargez la page.",
+      sessionRecoveryStorageActive: "L’édition est activée. Ce navigateur peut supprimer la copie de sécurité des modifications non enregistrées à sa fermeture (par exemple en fenêtre privée) : attendez « Enregistré » avant de le fermer.",
+      localRecoveryInspectionFailed: "Impossible de vérifier les modifications non enregistrées dans ce navigateur ; rien n’a été modifié. Laissez vos autres onglets BrainVault ouverts et réessayez.",
+      exclusiveTransitionLockUnavailable: "Ce navigateur ne peut pas se coordonner en toute sécurité entre les onglets ; rien n’a été modifié. Utilisez un navigateur à jour, ouvrez BrainVault en HTTPS et réessayez.",
+      orphanedLocalDrafts: "Des modifications non enregistrées ont été trouvées pour une page supprimée, inaccessible ou désormais modifiée en direct à plusieurs. Copiez-les ci-dessous avant d’effacer les données du navigateur.",
+      orphanedCollaborationRecovery: "Des modifications en direct jamais reçues par le serveur ont été trouvées pour une page supprimée, inaccessible ou qui n’est plus partagée. Copiez-les ci-dessous avant d’effacer les données du navigateur.",
+      destructiveCollaborationRecoveryPending: "Impossible pour l’instant : {count} modification(s) en direct sur les pages concernées ne sont pas parvenues au serveur. Reconnectez vos onglets BrainVault ouverts, attendez la synchronisation, puis réessayez.",
+      workspaceLocalDraftsPending: "La sauvegarde ne peut pas encore démarrer : {count} modification(s) sont en cours d’enregistrement. Attendez que chaque onglet BrainVault ouvert affiche « Enregistré », puis réessayez.",
+      destructiveLocalDraftsPending: "Impossible pour l’instant : {count} modification(s) sur les pages concernées sont en cours d’enregistrement. Attendez que chaque onglet BrainVault ouvert affiche « Enregistré », puis réessayez."
+    }
+  },
+  de: {
+    auth: {
+      usernameHint: "3–40 Zeichen: Buchstaben, Ziffern, Punkte (.), Unterstriche (_) und Bindestriche (-).",
+      passwordHint: "Mindestens 8 Zeichen (höchstens 72 Byte).",
+      approvalNotice: "Neue Konten können sich anmelden, sobald ein Administrator sie freigegeben hat.",
+      showPassword: "Anzeigen",
+      hidePassword: "Verbergen",
+      showPasswordAria: "Passwort anzeigen",
+      hidePasswordAria: "Passwort verbergen"
+    },
+    status: {
+      durableRecoveryStorageUnavailable: "Bearbeiten ist ausgeschaltet, weil dieser Browser keine Sicherheitskopie deiner Änderungen speichern kann. Deine letzte Änderung wurde nicht übernommen. Erlaube Websitedaten für BrainVault oder verlasse das private Surfen und lade die Seite dann neu.",
+      sessionRecoveryStorageActive: "Bearbeiten ist eingeschaltet. Dieser Browser löscht die Sicherheitskopie ungespeicherter Änderungen möglicherweise beim Schließen (z. B. in einem privaten Fenster). Warte daher auf „Gespeichert“, bevor du ihn schließt.",
+      localRecoveryInspectionFailed: "Ungespeicherte Änderungen in diesem Browser konnten nicht geprüft werden, daher wurde nichts geändert. Lass deine anderen BrainVault-Tabs geöffnet und versuche es erneut.",
+      exclusiveTransitionLockUnavailable: "Dieser Browser kann sich nicht sicher zwischen Tabs abstimmen, daher wurde nichts geändert. Verwende einen aktuellen Browser, öffne BrainVault über HTTPS und versuche es erneut.",
+      orphanedLocalDrafts: "Es wurden ungespeicherte Änderungen für eine Seite gefunden, die gelöscht wurde, nicht geöffnet werden kann oder jetzt gemeinsam live bearbeitet wird. Kopiere sie unten, bevor du Browserdaten löschst.",
+      orphanedCollaborationRecovery: "Es wurden Live-Änderungen gefunden, die den Server nie erreicht haben – für eine Seite, die gelöscht wurde, nicht geöffnet werden kann oder nicht mehr geteilt ist. Kopiere sie unten, bevor du Browserdaten löschst.",
+      destructiveCollaborationRecoveryPending: "Das geht noch nicht: {count} Live-Änderung(en) an den betroffenen Seiten haben den Server nicht erreicht. Verbinde deine offenen BrainVault-Tabs neu, warte auf die Synchronisierung und versuche es erneut.",
+      workspaceLocalDraftsPending: "Die Sicherung kann noch nicht starten: {count} Änderung(en) werden noch gespeichert. Warte, bis jeder offene BrainVault-Tab „Gespeichert“ anzeigt, und versuche es dann erneut.",
+      destructiveLocalDraftsPending: "Das geht noch nicht: {count} Änderung(en) an den betroffenen Seiten werden noch gespeichert. Warte, bis jeder offene BrainVault-Tab „Gespeichert“ anzeigt, und versuche es dann erneut."
+    }
+  },
+  es: {
+    auth: {
+      usernameHint: "De 3 a 40 caracteres: letras, números, puntos (.), guiones bajos (_) y guiones (-).",
+      passwordHint: "Al menos 8 caracteres (máximo 72 bytes).",
+      approvalNotice: "Las cuentas nuevas pueden iniciar sesión cuando un administrador las aprueba.",
+      showPassword: "Mostrar",
+      hidePassword: "Ocultar",
+      showPasswordAria: "Mostrar contraseña",
+      hidePasswordAria: "Ocultar contraseña"
+    },
+    status: {
+      durableRecoveryStorageUnavailable: "La edición está desactivada porque este navegador no puede guardar una copia de seguridad de tus cambios. Tu último cambio no se aplicó. Permite el almacenamiento del sitio para BrainVault o sal de la navegación privada y vuelve a cargar la página.",
+      sessionRecoveryStorageActive: "La edición está activada. Este navegador puede borrar la copia de seguridad de los cambios sin guardar al cerrarse (por ejemplo, en una ventana privada), así que espera a ver «Guardado» antes de cerrarlo.",
+      localRecoveryInspectionFailed: "No se pudieron comprobar los cambios sin guardar en este navegador, así que no se cambió nada. Mantén abiertas tus otras pestañas de BrainVault e inténtalo de nuevo.",
+      exclusiveTransitionLockUnavailable: "Este navegador no puede coordinarse de forma segura entre pestañas, así que no se cambió nada. Usa un navegador actualizado, abre BrainVault con HTTPS e inténtalo de nuevo.",
+      orphanedLocalDrafts: "Se encontraron cambios sin guardar de una página eliminada, que no se puede abrir o que ahora se edita en directo con otras personas. Cópialos desde abajo antes de borrar los datos del navegador.",
+      orphanedCollaborationRecovery: "Se encontraron ediciones en directo que nunca llegaron al servidor, de una página eliminada, que no se puede abrir o que ya no está compartida. Cópialas desde abajo antes de borrar los datos del navegador.",
+      destructiveCollaborationRecoveryPending: "Todavía no se puede: {count} edición(es) en directo de las páginas afectadas no han llegado al servidor. Vuelve a conectar tus pestañas de BrainVault, espera a que se sincronicen e inténtalo de nuevo.",
+      workspaceLocalDraftsPending: "La copia de seguridad aún no puede empezar: se están guardando {count} cambio(s). Espera a que todas las pestañas de BrainVault abiertas muestren «Guardado» e inténtalo de nuevo.",
+      destructiveLocalDraftsPending: "Todavía no se puede: se están guardando {count} cambio(s) de las páginas afectadas. Espera a que todas las pestañas de BrainVault abiertas muestren «Guardado» e inténtalo de nuevo."
+    }
+  },
+  pt: {
+    auth: {
+      usernameHint: "De 3 a 40 caracteres: letras, números, pontos (.), sublinhados (_) e hifens (-).",
+      passwordHint: "Pelo menos 8 caracteres (até 72 bytes).",
+      approvalNotice: "Novas contas podem entrar depois que um administrador as aprovar.",
+      showPassword: "Mostrar",
+      hidePassword: "Ocultar",
+      showPasswordAria: "Mostrar senha",
+      hidePasswordAria: "Ocultar senha"
+    },
+    status: {
+      durableRecoveryStorageUnavailable: "A edição foi desativada porque este navegador não consegue guardar uma cópia de segurança das suas alterações. Sua última alteração não foi aplicada. Permita o armazenamento do site para o BrainVault ou saia da navegação privada e recarregue a página.",
+      sessionRecoveryStorageActive: "A edição está ativada. Este navegador pode apagar a cópia de segurança das alterações não salvas ao ser fechado (por exemplo, em uma janela privada), então espere aparecer “Salvo” antes de fechá-lo.",
+      localRecoveryInspectionFailed: "Não foi possível verificar alterações não salvas neste navegador, então nada foi alterado. Mantenha suas outras abas do BrainVault abertas e tente novamente.",
+      exclusiveTransitionLockUnavailable: "Este navegador não consegue se coordenar com segurança entre abas, então nada foi alterado. Use um navegador atualizado, abra o BrainVault via HTTPS e tente novamente.",
+      orphanedLocalDrafts: "Foram encontradas alterações não salvas de uma página excluída, que não pode ser aberta ou que agora é editada ao vivo com outras pessoas. Copie-as abaixo antes de limpar os dados do navegador.",
+      orphanedCollaborationRecovery: "Foram encontradas edições ao vivo que nunca chegaram ao servidor, de uma página excluída, que não pode ser aberta ou que não está mais compartilhada. Copie-as abaixo antes de limpar os dados do navegador.",
+      destructiveCollaborationRecoveryPending: "Ainda não é possível: {count} edição(ões) ao vivo nas páginas afetadas não chegaram ao servidor. Reconecte suas abas abertas do BrainVault, aguarde a sincronização e tente novamente.",
+      workspaceLocalDraftsPending: "O backup ainda não pode começar: {count} alteração(ões) ainda estão sendo salvas. Aguarde até que todas as abas abertas do BrainVault mostrem “Salvo” e tente novamente.",
+      destructiveLocalDraftsPending: "Ainda não é possível: {count} alteração(ões) nas páginas afetadas ainda estão sendo salvas. Aguarde até que todas as abas abertas do BrainVault mostrem “Salvo” e tente novamente."
+    }
+  }
+};
+
+for (const [language, addition] of Object.entries(plainLanguageTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  for (const [section, entries] of Object.entries(addition)) {
+    catalog[section] = { ...catalog[section], ...entries };
+  }
+}
+
 function readStorage(key) {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;

@@ -7,9 +7,12 @@ import { fileURLToPath } from "node:url";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const publicRoot = join(projectRoot, "public");
-const outputPath = join(projectRoot, "docs", "assets", "2026-11-04", "preview.png");
+// Screenshots live in a dated folder; bump this date when the preview is refreshed.
+const previewDate = "2026-11-12";
+const outputDirectory = join(projectRoot, "docs", "assets", previewDate);
+const outputPath = join(outputDirectory, "preview.png");
 const fixture = JSON.parse(await readFile(new URL("./demo-workspace.json", import.meta.url), "utf8"));
-const now = "2026-11-04T08:00:00.000Z";
+const now = `${previewDate}T08:00:00.000Z`;
 const previewPageId = "preview-page";
 
 const tagObjects = fixture.page.tags.map((name, index) => ({
@@ -216,7 +219,7 @@ function findChromium() {
   return null;
 }
 
-await mkdir(join(projectRoot, "docs", "assets", "2026-11-04"), { recursive: true });
+await mkdir(outputDirectory, { recursive: true });
 const chromiumPath = findChromium();
 if (!chromiumPath) {
   throw new Error("Chromium/Chrome was not found. Set BRAINVAULT_CHROMIUM_PATH and retry.");

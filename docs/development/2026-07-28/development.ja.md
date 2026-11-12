@@ -24,7 +24,7 @@
 | `npm start` | コンパイル済みサーバーを実行します。 |
 | `npm test` | lockfileを検証してテストスイートを1回実行します。 |
 | `npm run test:watch` | watchモードでテストを実行します。 |
-| `npm run preview:capture` | ローカルのブラウザーUIから`docs/assets/2026-11-04/preview.png`をキャプチャします。 |
+| `npm run preview:capture` | ローカルのブラウザーUIから`docs/assets/2026-11-12/preview.png`をキャプチャします。 |
 
 ## 依存関係lockfileの信頼性
 
@@ -90,7 +90,7 @@ BrainVault/
 npm run preview:capture
 ```
 
-ChromiumまたはChromeが必要です。このコマンドは[`docs/assets/2026-11-04/preview.png`](../../assets/2026-11-04/preview.png)を更新します。
+Chromium、Chrome、またはMicrosoft Edgeが必要です。ブラウザーが`PATH`にない場合は`BRAINVAULT_CHROMIUM_PATH`を指定してください。このコマンドは[`docs/assets/2026-11-12/preview.png`](../../assets/2026-11-12/preview.png)を更新します。新しい日付フォルダーにスクリーンショットを更新する場合は、`scripts/capture-preview.mjs`の`previewDate`を変更し、以前の画像を指すリンクも更新してください。
 
 ## 共同編集の実装
 

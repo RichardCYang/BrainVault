@@ -24,7 +24,7 @@
 | `npm start` | Run the compiled server |
 | `npm test` | Validate the lockfile and run the test suite once |
 | `npm run test:watch` | Run tests in watch mode |
-| `npm run preview:capture` | Capture `docs/assets/2026-11-04/preview.png` from the local browser UI |
+| `npm run preview:capture` | Capture `docs/assets/2026-11-12/preview.png` from the local browser UI |
 
 ## Dependency lockfile reliability
 
@@ -92,7 +92,7 @@ Regenerate it locally with:
 npm run preview:capture
 ```
 
-Chromium or Chrome is required. The command updates [`docs/assets/2026-11-04/preview.png`](../../assets/2026-11-04/preview.png).
+Chromium, Chrome, or Microsoft Edge is required; set `BRAINVAULT_CHROMIUM_PATH` when the browser is not on `PATH`. The command updates [`docs/assets/2026-11-12/preview.png`](../../assets/2026-11-12/preview.png). To publish a refreshed screenshot in a new dated folder, change `previewDate` in `scripts/capture-preview.mjs` and update the links that point to the previous image.
 
 ## Collaboration implementation
 
