@@ -222,6 +222,13 @@
               </svg>
               <span data-i18n="workspace.addCollection">Add collection</span>
             </button>
+            <button id="archive-open-button" type="button" class="sidebar-footer-button" aria-haspopup="dialog" aria-controls="archive-dialog">
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path class="icon-duo" d="M4.5 9h15v9.5a1.5 1.5 0 0 1-1.5 1.5H6a1.5 1.5 0 0 1-1.5-1.5V9Z"></path>
+                <path d="M3.5 4.5h17v4.5h-17zM4.5 9v9.5A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5V9M10 13h4"></path>
+              </svg>
+              <span data-i18n="archive.open">Archive</span>
+            </button>
           </div>
         </section>
       </aside>
@@ -841,6 +848,7 @@
                   <p data-i18n="account.themeDescription">Choose the color theme used across the entire workspace.</p>
                 </div>
                 <select id="theme-select" aria-label="Theme" data-i18n-aria-label="account.themeTitle">
+                  <option value="system" data-i18n="account.themeSystem">Match system</option>
                   <option value="light" data-i18n="account.themeLight">Light</option>
                   <option value="dark" data-i18n="account.themeDark">Dark</option>
                 </select>
@@ -1482,6 +1490,30 @@
         <span data-i18n="menu.deleteBlock">Delete block</span>
       </button>
     </div>
+    <dialog
+      id="archive-dialog"
+      class="block-move-dialog archive-dialog"
+      aria-labelledby="archive-dialog-title"
+      aria-describedby="archive-dialog-description"
+    >
+      <div class="block-move-dialog-surface">
+        <header class="block-move-dialog-header">
+          <div>
+            <h2 id="archive-dialog-title" data-i18n="archive.title">Archived pages</h2>
+            <p id="archive-dialog-description" data-i18n="archive.description">Archived pages are hidden from navigation and search. Restore a page to put it back where it was.</p>
+          </div>
+          <button
+            id="archive-dialog-close"
+            class="block-move-dialog-close"
+            type="button"
+            aria-label="Close archive"
+            data-i18n-aria-label="archive.close"
+          >×</button>
+        </header>
+        <p id="archive-dialog-message" class="block-move-message" role="status" aria-live="polite"></p>
+        <ul id="archive-list" class="archive-list"></ul>
+      </div>
+    </dialog>
     <dialog
       id="block-move-dialog"
       class="block-move-dialog"

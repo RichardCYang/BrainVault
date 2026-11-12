@@ -1,5 +1,6 @@
 import { joinSummaryPrefix } from "./summary-prefix.js";
 import { formatDateTime, formatNumber, t } from "./i18n.js";
+import { showConfirmDialog } from "./app-dialog.js";
 
 export const timetableLimits = Object.freeze({
   titleLength: 120,
@@ -493,11 +494,16 @@ export function createTimetableEditor(row, value, { onDirty = () => {} } = {}) {
       replaceEditor({ entryId: entry.id, field: "title" });
     } else if (action === "timetable-delete-entry") {
       const entry = timetable.entries.find((item) => item.id === button.dataset.entryId);
-      if (!entry || !window.confirm(t("timetable.confirmDeleteEntry", {
-        schedule: entry.title || `${entry.start}–${entry.end}`
-      }))) return;
-      timetable.entries = timetable.entries.filter((item) => item.id !== entry.id);
-      replaceEditor();
+      if (!entry) return;
+      void showConfirmDialog({
+        message: t("timetable.confirmDeleteEntry", { schedule: entry.title || `${entry.start}–${entry.end}` }),
+        confirmLabel: t("dialog.delete"),
+        danger: true
+      }).then((confirmed) => {
+        if (!confirmed || !editor.isConnected) return;
+        timetable.entries = timetable.entries.filter((item) => item.id !== entry.id);
+        replaceEditor();
+      });
     }
   });
 

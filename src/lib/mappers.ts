@@ -30,7 +30,7 @@ export function toPublicUser(
     | "updated_at"
   >
 ) {
-  const theme: "light" | "dark" = row.theme === "dark" ? "dark" : "light";
+  const theme: "light" | "dark" | "system" = row.theme === "dark" || row.theme === "system" ? row.theme : "light";
   const workspaceGeneration = row.attachment_generation === undefined
     ? null
     : Number(row.attachment_generation);

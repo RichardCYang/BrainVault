@@ -79,7 +79,13 @@ import {
 } from "./page-version-history.js";
 import { dataTransferResourceLimits, measureJsonUtf8BytesWithinLimit } from "./data-transfer-limits.js";
 import { blockSortOrderLimits } from "./block-order-integrity.js";
-import { maxAvatarBytes, normalizeAvatarDataUrl, supportedProfileLanguages } from "./profile.js";
+import {
+  maxAvatarBytes,
+  normalizeAvatarDataUrl,
+  supportedProfileLanguages,
+  supportedProfileThemes,
+  type SupportedProfileTheme
+} from "./profile.js";
 import {
   assertLosslessBackupBlockMetadata,
   BackupMetadataIntegrityError
@@ -165,7 +171,7 @@ const timestampSchema = z.string().min(1).max(40)
   .refine((value) => isValidMachineTimestamp(value, databaseTimestampPattern), "Backup timestamp is invalid");
 const exportedAtTimestampSchema = z.string().min(1).max(40)
   .refine((value) => isValidMachineTimestamp(value, exportedAtTimestampPattern), "Backup export timestamp is invalid");
-const profileThemeSchema = z.enum(["light", "dark"]);
+const profileThemeSchema = z.enum(supportedProfileThemes);
 const preferredLanguageSchema = z.enum(supportedProfileLanguages);
 const nullableString = (max: number) => z.string().max(max).nullable();
 const backupAvatarSchema = z
@@ -649,7 +655,7 @@ type WorkspaceRestoreAccountRow = {
   avatar_data: string | null;
   preferred_language: string | null;
   default_collection_icon: string | null;
-  theme: "light" | "dark";
+  theme: SupportedProfileTheme;
 };
 
 type WorkspaceRestorePageRow = {
@@ -792,7 +798,7 @@ type RawAccountRow = {
   avatar_data: string | null;
   preferred_language: string | null;
   default_collection_icon: string | null;
-  theme: "light" | "dark";
+  theme: SupportedProfileTheme;
 };
 
 type RawCustomIconRow = {

@@ -63,7 +63,7 @@ test("explicit context-menu delete captures subtree and mode before confirmation
   );
   const modeIndex = deletion.indexOf("const collaborativeAtIntent = isCollaborativePage()");
   const subtreeIndex = deletion.indexOf("getCollaborativeDeleteSubtreeSnapshot(");
-  const confirmIndex = deletion.indexOf('window.confirm(t("confirm.deleteBlock"))');
+  const confirmIndex = deletion.indexOf('message: t("confirm.deleteBlock")');
   const lockIndex = deletion.indexOf("await withPageEditLock(async () =>");
   assert.ok(modeIndex >= 0 && subtreeIndex > modeIndex);
   assert.ok(confirmIndex > subtreeIndex, "the destructive subtree snapshot must precede user confirmation waits");

@@ -1,5 +1,6 @@
 import { joinSummaryPrefix } from "./summary-prefix.js";
 import { formatNumber, t } from "./i18n.js";
+import { showConfirmDialog } from "./app-dialog.js";
 
 export const databaseLimits = {
   titleLength: 120,
@@ -1957,16 +1958,23 @@ export function createDatabaseEditor(row, value, { onDirty = () => {} } = {}) {
       replaceEditor({ openProperties: true, focusPropertyId: property.id });
     } else if (action === "database-delete-property") {
       const property = database.properties.find((item) => item.id === button.dataset.propertyId);
-      if (!property || property.type === "title" || !window.confirm(t("database.confirmDeleteProperty", { property: property.name }))) return;
-      database.properties = database.properties.filter((item) => item.id !== property.id);
-      database.rows.forEach((dataRow) => { delete dataRow.values[property.id]; });
-      database.views.forEach((view) => {
-        view.filters = view.filters.filter((filter) => filter.propertyId !== property.id);
-        view.sorts = view.sorts.filter((sort) => sort.propertyId !== property.id);
-        view.hiddenPropertyIds = view.hiddenPropertyIds.filter((id) => id !== property.id);
-        if (view.groupPropertyId === property.id) view.groupPropertyId = null;
+      if (!property || property.type === "title") return;
+      void showConfirmDialog({
+        message: t("database.confirmDeleteProperty", { property: property.name }),
+        confirmLabel: t("dialog.delete"),
+        danger: true
+      }).then((confirmed) => {
+        if (!confirmed || !editor.isConnected || !database.properties.some((item) => item.id === property.id)) return;
+        database.properties = database.properties.filter((item) => item.id !== property.id);
+        database.rows.forEach((dataRow) => { delete dataRow.values[property.id]; });
+        database.views.forEach((view) => {
+          view.filters = view.filters.filter((filter) => filter.propertyId !== property.id);
+          view.sorts = view.sorts.filter((sort) => sort.propertyId !== property.id);
+          view.hiddenPropertyIds = view.hiddenPropertyIds.filter((id) => id !== property.id);
+          if (view.groupPropertyId === property.id) view.groupPropertyId = null;
+        });
+        replaceEditor({ openProperties: true });
       });
-      replaceEditor({ openProperties: true });
     } else if (action === "database-add-row") {
       if (database.rows.length >= databaseLimits.rows) return;
       const values = {};
@@ -1980,9 +1988,16 @@ export function createDatabaseEditor(row, value, { onDirty = () => {} } = {}) {
       database.rows.push(dataRow);
       replaceEditor({ focusRowId: dataRow.id });
     } else if (action === "database-delete-row") {
-      if (!window.confirm(t("database.confirmDeleteRow"))) return;
-      database.rows = database.rows.filter((dataRow) => dataRow.id !== button.dataset.rowId);
-      replaceEditor();
+      const rowId = button.dataset.rowId;
+      void showConfirmDialog({
+        message: t("database.confirmDeleteRow"),
+        confirmLabel: t("dialog.delete"),
+        danger: true
+      }).then((confirmed) => {
+        if (!confirmed || !editor.isConnected) return;
+        database.rows = database.rows.filter((dataRow) => dataRow.id !== rowId);
+        replaceEditor();
+      });
     } else if (action === "database-remove-filter") {
       activeView.filters = activeView.filters.filter((filter) => filter.id !== button.dataset.filterId);
       replaceEditor({ openFilters: true });
@@ -1990,11 +2005,20 @@ export function createDatabaseEditor(row, value, { onDirty = () => {} } = {}) {
       activeView.sorts = activeView.sorts.filter((sort) => sort.id !== button.dataset.sortId);
       replaceEditor({ openSorts: true });
     } else if (action === "database-delete-view") {
-      if (database.views.length <= 1 || !window.confirm(t("database.confirmDeleteView", { view: activeView.name }))) return;
-      const index = database.views.findIndex((view) => view.id === activeView.id);
-      database.views.splice(index, 1);
-      database.activeViewId = database.views[Math.max(0, index - 1)]?.id ?? database.views[0].id;
-      replaceEditor();
+      if (database.views.length <= 1) return;
+      const viewId = activeView.id;
+      void showConfirmDialog({
+        message: t("database.confirmDeleteView", { view: activeView.name }),
+        confirmLabel: t("dialog.delete"),
+        danger: true
+      }).then((confirmed) => {
+        if (!confirmed || !editor.isConnected || database.views.length <= 1) return;
+        const index = database.views.findIndex((view) => view.id === viewId);
+        if (index < 0) return;
+        database.views.splice(index, 1);
+        database.activeViewId = database.views[Math.max(0, index - 1)]?.id ?? database.views[0].id;
+        replaceEditor();
+      });
     }
   });
 

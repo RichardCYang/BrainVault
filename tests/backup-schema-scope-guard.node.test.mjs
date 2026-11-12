@@ -121,7 +121,9 @@ const reviewedPortableDdlMigrations = [
   // Registration approval is security state; it is never imported from a backup.
   "080_registration_approval.sql",
   // Only retired security policy metadata changes; workspace exports are unaffected.
-  "083_remove_vpn_access_policy.sql"
+  "083_remove_vpn_access_policy.sql",
+  // Adds the "system" theme value; export, validation, and import accept it.
+  "084_user_theme_system_preference.sql"
 ];
 
 const createTablePattern = /CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+`?([A-Za-z0-9_]+)`?/gi;

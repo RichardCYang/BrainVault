@@ -4,7 +4,7 @@ import { assertImageDimensionsWithinLimit } from "./image-dimensions.js";
 export const supportedProfileLanguages = ["en", "ja", "ko", "fr", "de", "es", "pt"] as const;
 export type SupportedProfileLanguage = (typeof supportedProfileLanguages)[number];
 
-export const supportedProfileThemes = ["light", "dark"] as const;
+export const supportedProfileThemes = ["light", "dark", "system"] as const;
 export type SupportedProfileTheme = (typeof supportedProfileThemes)[number];
 
 export const maxAvatarBytes = 512 * 1024;

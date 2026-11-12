@@ -171,14 +171,56 @@ select:focus-visible {
 }
 
 .status:not(:empty) {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   min-height: 2.35rem;
-  padding: 0.62rem 0.85rem;
+  padding: 0.3rem 0.3rem 0.3rem 0.85rem;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.96);
   box-shadow: var(--shadow-popover);
   backdrop-filter: blur(10px);
   font-size: 0.9rem;
+  pointer-events: auto;
+}
+
+.status-message {
+  min-width: 0;
+  padding: 0.32rem 0;
+  overflow-wrap: anywhere;
+}
+
+.status-action,
+.status-dismiss {
+  flex: 0 0 auto;
+  min-height: 2rem;
+  border-color: transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent-text);
+  padding: 0.3rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.status-dismiss {
+  display: grid;
+  width: 2rem;
+  place-items: center;
+  color: var(--muted);
+  padding: 0;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.status-action:hover,
+.status-dismiss:hover {
+  background: var(--hover);
+  color: var(--ink-strong);
+}
+
+.status.error .status-dismiss {
+  color: inherit;
 }
 
 .status.error:not(:empty) {
@@ -316,7 +358,7 @@ h1 + p,
   display: block;
   margin: 0 0 0.05rem;
   color: var(--accent-text);
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   font-weight: 650;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -460,7 +502,7 @@ textarea {
 
 .user-identity small {
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   font-weight: 550;
 }
 
@@ -1262,7 +1304,7 @@ button.page-view-path-segment:focus-visible {
   background: color-mix(in srgb, var(--muted) 14%, transparent);
   color: var(--muted);
   padding-inline: 0.32rem;
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1409,7 +1451,7 @@ button.page-view-path-segment:focus-visible {
 .page-comment-edited {
   flex: 0 0 auto;
   color: var(--muted-light);
-  font-size: 0.66rem;
+  font-size: 0.7rem;
 }
 
 .page-comment-actions {
@@ -1507,7 +1549,7 @@ button.page-view-path-segment:focus-visible {
 
 .page-comments-length {
   color: var(--muted-light);
-  font-size: 0.64rem;
+  font-size: 0.7rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1556,7 +1598,7 @@ button.page-view-path-segment:focus-visible {
 .subpage-index-eyebrow {
   margin: 0 0 0.12rem;
   color: var(--muted-light);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   font-weight: 650;
   letter-spacing: 0.055em;
   text-transform: uppercase;
@@ -1908,7 +1950,7 @@ kbd {
   min-width: 0;
   overflow: hidden;
   color: var(--muted-light);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3442,7 +3484,7 @@ body.is-kanban-column-dragging {
   background: var(--accent-soft);
   color: var(--accent-text);
   padding: 0.09rem 0.32rem;
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 500;
   line-height: 1.35;
   overflow-wrap: anywhere;
@@ -3535,7 +3577,7 @@ body.is-kanban-column-dragging {
 .kanban-card-position {
   margin-right: auto;
   color: var(--muted-light);
-  font-size: 0.61rem;
+  font-size: 0.66rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -3827,7 +3869,7 @@ body.is-kanban-column-dragging {
   background: rgba(181, 42, 42, 0.06);
   color: var(--danger);
   padding: 0.4rem 0.58rem;
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   font-weight: 720;
   white-space: nowrap;
 }
@@ -3939,7 +3981,7 @@ body.is-kanban-column-dragging {
 .page-version-history-item-copy span,
 .page-version-history-item-copy small {
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   line-height: 1.42;
 }
 
@@ -3951,7 +3993,7 @@ body.is-kanban-column-dragging {
   background: rgba(95, 88, 81, 0.08);
   color: var(--muted);
   padding: 0.2rem 0.46rem;
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 760;
   white-space: nowrap;
 }
@@ -4053,7 +4095,7 @@ body.is-kanban-column-dragging {
   background: rgba(95, 88, 81, 0.08);
   color: var(--muted);
   padding: 0.24rem 0.5rem;
-  font-size: 0.64rem;
+  font-size: 0.7rem;
   font-weight: 690;
 }
 
@@ -4084,7 +4126,7 @@ body.is-kanban-column-dragging {
 
 .page-version-change-card-header span {
   color: var(--muted);
-  font-size: 0.66rem;
+  font-size: 0.7rem;
 }
 
 .page-version-field-list {
@@ -4099,7 +4141,7 @@ body.is-kanban-column-dragging {
 
 .page-version-field-name {
   color: var(--muted);
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   font-weight: 720;
 }
 
@@ -4123,7 +4165,7 @@ body.is-kanban-column-dragging {
   background: rgba(95, 88, 81, 0.05);
   color: var(--muted);
   padding: 0.3rem 0.45rem;
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   font-weight: 720;
 }
 
@@ -4539,7 +4581,7 @@ body.is-kanban-column-dragging {
 .block-move-dialog-header .kicker {
   margin-bottom: 0.3rem;
   color: var(--accent-text);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
 }
 
 .block-move-dialog-header h2 {
@@ -4623,6 +4665,181 @@ body.is-kanban-column-dragging {
 html[data-theme="dark"] .block-move-dialog {
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: #202127;
+}
+
+.archive-dialog {
+  width: min(36rem, calc(100vw - 2rem));
+}
+
+.archive-list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.archive-list:empty,
+.archive-dialog .block-move-message:empty {
+  display: none;
+}
+
+.archive-list-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel-soft);
+  padding: 0.55rem 0.6rem 0.55rem 0.75rem;
+}
+
+.archive-list-icon {
+  display: grid;
+  width: 1.6rem;
+  height: 1.6rem;
+  place-items: center;
+  font-size: 1.1rem;
+}
+
+.archive-list-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.archive-list-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.15rem;
+}
+
+.archive-list-copy strong {
+  overflow: hidden;
+  color: var(--ink-strong);
+  font-size: 0.9rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archive-list-copy small {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.archive-list-item button {
+  min-height: 2.25rem;
+}
+
+/* Themed confirm/prompt dialogs (public/app-dialog.js). */
+.app-dialog {
+  width: min(28rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  border: 0;
+  border-radius: var(--radius-dialog);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0;
+  box-shadow: 0 32px 100px rgba(22, 24, 28, 0.34);
+}
+
+.app-dialog::backdrop {
+  background: rgba(23, 27, 30, 0.48);
+  backdrop-filter: blur(4px);
+}
+
+.app-dialog-surface {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1.25rem;
+}
+
+.app-dialog-title {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: 1.1rem;
+}
+
+.app-dialog-message {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  white-space: pre-line;
+}
+
+.app-dialog-field {
+  display: grid;
+  gap: 0.42rem;
+  color: var(--ink-strong);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.app-dialog-field input {
+  width: 100%;
+  min-height: 2.65rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0.55rem 0.7rem;
+  font: inherit;
+  font-weight: 400;
+}
+
+.app-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  margin-top: 0.35rem;
+}
+
+.app-dialog-actions button {
+  min-width: 6rem;
+  min-height: 2.5rem;
+}
+
+button.app-dialog-danger {
+  border-color: transparent;
+  background: var(--danger);
+  color: #ffffff;
+}
+
+button.app-dialog-danger:hover {
+  background: color-mix(in srgb, var(--danger) 86%, #000000);
+}
+
+html[data-theme="dark"] .app-dialog {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #202127;
+}
+
+/* The dark danger tone is light, so it needs dark text (8:1) rather than white (2.2:1). */
+html[data-theme="dark"] button.app-dialog-danger {
+  color: #2a0d10;
+}
+
+html[data-theme="dark"] button.app-dialog-danger:hover {
+  background: color-mix(in srgb, var(--danger) 88%, #ffffff);
+}
+
+@media (max-width: 560px) {
+  .app-dialog {
+    width: calc(100vw - 1rem);
+  }
+
+  .app-dialog-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .app-dialog-actions button {
+    width: 100%;
+    min-width: 0;
+  }
 }
 
 @media (max-width: 560px) {
@@ -4992,7 +5209,7 @@ html[data-theme="dark"] .block-move-dialog {
 .rendered-kanban-summary {
   margin-left: auto;
   color: var(--muted-light);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
 }
 
 .rendered-kanban-board {
@@ -6355,7 +6572,7 @@ html[data-theme="dark"] .block-move-dialog {
 
 .database-settings-field > span {
   color: var(--database-muted-light);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   font-weight: 550;
 }
 
@@ -6600,7 +6817,7 @@ html[data-theme="dark"] .block-move-dialog {
   min-width: 1.22rem;
   margin-right: 0.28rem;
   color: var(--database-muted-light);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   font-weight: 650;
   text-align: center;
 }
@@ -6867,7 +7084,7 @@ html[data-theme="dark"] .block-move-dialog {
 .database-board-group-field > span {
   color: var(--database-muted-light);
   padding-inline: 0.35rem;
-  font-size: 0.62rem;
+  font-size: 0.7rem;
 }
 
 .database-board {
@@ -7109,7 +7326,7 @@ html[data-theme="dark"] .block-move-dialog {
   background: #efefed;
   color: #5f5e59;
   padding: 0.12rem 0.38rem;
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   line-height: 1.3;
 }
 
@@ -7149,7 +7366,7 @@ html[data-theme="dark"] .block-move-dialog {
 .rendered-database-list-property small,
 .rendered-database-card-property small {
   color: var(--muted-light);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
 }
 
 .rendered-database-board {
@@ -7506,7 +7723,7 @@ html[data-theme="dark"] .block-move-dialog {
 
 .gantt-task-header span {
   color: var(--gantt-muted-light);
-  font-size: 0.66rem;
+  font-size: 0.7rem;
 }
 
 .gantt-task-row,
@@ -7580,7 +7797,7 @@ html[data-theme="dark"] .block-move-dialog {
 .gantt-status-select {
   width: 100%;
   appearance: auto;
-  font-size: 0.67rem;
+  font-size: 0.7rem;
   font-weight: 570;
 }
 
@@ -7598,7 +7815,7 @@ html[data-theme="dark"] .block-move-dialog {
 
 .gantt-date-arrow {
   color: var(--gantt-muted-light);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
 }
 
 .gantt-progress-control {
@@ -7619,7 +7836,7 @@ html[data-theme="dark"] .block-move-dialog {
 
 .gantt-progress-output {
   color: var(--gantt-muted);
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -7681,7 +7898,7 @@ html[data-theme="dark"] .block-move-dialog {
   justify-content: center;
   border-right: 1px solid var(--gantt-line);
   color: var(--gantt-muted-light);
-  font-size: 0.62rem;
+  font-size: 0.66rem;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -7805,7 +8022,7 @@ html[data-theme="dark"] .block-move-dialog {
 
 .gantt-bar-progress-label {
   flex: 0 0 auto;
-  font-size: 0.61rem;
+  font-size: 0.7rem;
   font-variant-numeric: tabular-nums;
   opacity: 0.88;
 }
@@ -7846,7 +8063,7 @@ html[data-theme="dark"] .block-move-dialog {
 
 .gantt-interaction-hint {
   color: var(--gantt-muted-light);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
 }
 
 /* Read-only rendering for shared pages and exports */
@@ -7887,7 +8104,7 @@ html[data-theme="dark"] .block-move-dialog {
 
 .rendered-gantt > header > span {
   color: var(--muted-light);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   white-space: nowrap;
 }
 
@@ -7924,7 +8141,7 @@ html[data-theme="dark"] .block-move-dialog {
   border-bottom: 1px solid var(--line);
   padding: 0.62rem 0.62rem 0.48rem;
   color: var(--muted);
-  font-size: 0.66rem;
+  font-size: 0.7rem;
 }
 
 .rendered-gantt-task-header strong {
@@ -7941,7 +8158,7 @@ html[data-theme="dark"] .block-move-dialog {
   border-right: 1px solid var(--line-strong);
   border-bottom: 1px solid var(--line);
   padding: 0.38rem 0.62rem;
-  font-size: 0.68rem;
+  font-size: 0.7rem;
 }
 
 .rendered-gantt-task-row > div {
@@ -7963,7 +8180,7 @@ html[data-theme="dark"] .block-move-dialog {
 .rendered-gantt-task-row small {
   grid-column: 2;
   color: var(--muted-light);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7981,7 +8198,7 @@ html[data-theme="dark"] .block-move-dialog {
   align-items: center;
   border-radius: var(--radius-sm);
   padding: 0.12rem 0.32rem;
-  font-size: 0.57rem;
+  font-size: 0.7rem;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -8015,7 +8232,7 @@ html[data-theme="dark"] .block-move-dialog {
   border-right: 1px solid var(--line);
   color: var(--muted);
   padding: 0 0.4rem;
-  font-size: 0.63rem;
+  font-size: 0.66rem;
   font-weight: 590;
   overflow: hidden;
   white-space: nowrap;
@@ -8032,7 +8249,7 @@ html[data-theme="dark"] .block-move-dialog {
   justify-content: center;
   border-right: 1px solid var(--line);
   color: var(--muted-light);
-  font-size: 0.58rem;
+  font-size: 0.66rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -8100,7 +8317,7 @@ html[data-theme="dark"] .block-move-dialog {
   z-index: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   text-overflow: ellipsis;
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.16);
   white-space: nowrap;
@@ -8603,7 +8820,7 @@ html[data-theme="dark"] .block-move-dialog {
   gap: 0.34rem;
   overflow: hidden;
   color: var(--muted-light);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -8769,7 +8986,7 @@ html[data-theme="dark"] .block-move-dialog {
   gap: 0.34rem;
   overflow: hidden;
   color: var(--muted-light);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -9147,7 +9364,7 @@ body.search-dialog-open {
 .account-settings-kicker {
   margin: 0 0 0.12rem;
   color: var(--accent-text);
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   font-weight: 750;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -10452,7 +10669,7 @@ body.search-dialog-open {
   .app-mode .brand-eyebrow {
     margin-bottom: 0.02rem;
     color: var(--chrome-text-faint);
-    font-size: 0.61rem;
+    font-size: 0.7rem;
     font-weight: 700;
     letter-spacing: 0.075em;
     text-transform: uppercase;
@@ -10516,7 +10733,7 @@ body.search-dialog-open {
     min-height: 2rem;
     padding: 0.36rem 0.48rem;
     color: var(--chrome-text-soft);
-    font-size: 0.66rem;
+    font-size: 0.7rem;
     font-weight: 760;
     letter-spacing: 0.075em;
   }
@@ -10775,7 +10992,7 @@ body.search-dialog-open {
     border-radius: var(--radius-md);
     background: var(--chrome-surface-soft);
     color: var(--chrome-accent);
-    font-size: 0.65rem;
+    font-size: 0.7rem;
     font-weight: 760;
   }
 
@@ -10914,7 +11131,7 @@ body.search-dialog-open {
 
   .app-mode .page-view .kicker {
     color: var(--chrome-text-faint);
-    font-size: 0.69rem;
+    font-size: 0.7rem;
     font-weight: 650;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -11539,7 +11756,7 @@ body.search-dialog-open {
 
   .app-mode .user-identity small {
     color: var(--workspace-sidebar-muted);
-    font-size: 0.64rem;
+    font-size: 0.7rem;
     font-weight: 560;
   }
 
@@ -11612,7 +11829,7 @@ body.search-dialog-open {
     display: block;
     margin: 0.2rem 0.5rem 0.28rem;
     color: #99938e;
-    font-size: 0.66rem;
+    font-size: 0.7rem;
     font-weight: 720;
     letter-spacing: 0.065em;
     line-height: 1.3;
@@ -11683,7 +11900,7 @@ body.search-dialog-open {
 
   .app-mode .count-pill {
     color: #99938d;
-    font-size: 0.68rem;
+    font-size: 0.7rem;
   }
 
   .app-mode .sidebar-add-button,
@@ -12012,7 +12229,7 @@ body.search-dialog-open {
 .login-history-table th {
   background: rgba(248, 243, 239, 0.72);
   color: var(--muted);
-  font-size: 0.67rem;
+  font-size: 0.7rem;
   font-weight: 760;
   letter-spacing: 0.02em;
 }
@@ -12044,7 +12261,7 @@ body.search-dialog-open {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0.27rem 0.48rem;
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   font-weight: 760;
 }
 
@@ -12195,7 +12412,7 @@ body.search-dialog-open {
   background: var(--panel);
   color: var(--muted);
   padding: 0.3rem 0.52rem;
-  font-size: 0.67rem;
+  font-size: 0.7rem;
   font-weight: 760;
   white-space: nowrap;
 }
@@ -12286,7 +12503,7 @@ body.search-dialog-open {
   background: var(--panel);
   color: var(--muted);
   padding: 0.3rem 0.55rem;
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   font-weight: 750;
   white-space: nowrap;
 }
@@ -12328,7 +12545,7 @@ body.search-dialog-open {
 button.compact {
   min-height: 1.85rem;
   padding: 0.32rem 0.55rem;
-  font-size: 0.68rem;
+  font-size: 0.7rem;
 }
 
 button.danger {
@@ -12457,7 +12674,7 @@ button.danger {
 
 .passkey-list-copy small {
   color: var(--muted);
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   line-height: 1.45;
 }
 
@@ -12601,7 +12818,7 @@ button.danger {
 .ai-chat-setting-caption,
 .ai-chat-setting-field > span {
   color: var(--muted-light);
-  font-size: 0.67rem;
+  font-size: 0.7rem;
   font-weight: 600;
   letter-spacing: 0.01em;
 }
@@ -12626,7 +12843,7 @@ button.danger {
   background: transparent;
   color: var(--muted);
   padding: 0.28rem 0.46rem 0.28rem 0.34rem;
-  font-size: 0.69rem;
+  font-size: 0.7rem;
   font-weight: 650;
   white-space: nowrap;
   cursor: pointer;
@@ -12665,7 +12882,7 @@ button.danger {
   color: var(--muted);
   padding: 0.28rem 0.42rem;
   font: inherit;
-  font-size: 0.69rem;
+  font-size: 0.7rem;
   font-weight: 650;
   white-space: nowrap;
   cursor: pointer;
@@ -12694,7 +12911,7 @@ button.danger {
   border-top: 1px solid color-mix(in srgb, var(--ai-chat-line) 72%, transparent);
   color: var(--muted);
   padding: 0.42rem 0.08rem 0;
-  font-size: 0.69rem;
+  font-size: 0.7rem;
   font-weight: 650;
   cursor: pointer;
 }
@@ -12850,7 +13067,7 @@ button.danger {
 
 .ai-chat-turn-label {
   color: var(--muted-light);
-  font-size: 0.67rem;
+  font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
@@ -12927,7 +13144,7 @@ button.danger {
   gap: 0.38rem;
   min-width: 0;
   color: var(--muted);
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   line-height: 1.3;
 }
 
@@ -12944,7 +13161,7 @@ button.danger {
   border-radius: var(--radius-sm);
   background: var(--active);
   color: var(--accent-text);
-  font-size: 0.65rem;
+  font-size: 0.66rem;
   font-weight: 850;
 }
 
@@ -12983,7 +13200,7 @@ button.danger {
   background: var(--ai-chat-panel-soft);
   color: var(--muted);
   padding: 0.14rem 0.34rem;
-  font-size: 0.62rem;
+  font-size: 0.7rem;
 }
 
 .ai-chat-model-preview.is-empty {
@@ -12997,7 +13214,7 @@ button.danger {
   align-items: center;
   gap: 0.35rem;
   color: var(--muted-light);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   white-space: nowrap;
 }
 
@@ -13008,7 +13225,7 @@ button.danger {
 .ai-chat-turn-time-control .ai-chat-time-input {
   min-height: 1.8rem;
   padding: 0.28rem 0.4rem;
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -13114,7 +13331,7 @@ button.danger {
   color: var(--muted);
   padding: 0.18rem 0.4rem;
   font: inherit;
-  font-size: 0.69rem;
+  font-size: 0.7rem;
   font-weight: 650;
   cursor: pointer;
 }
@@ -13264,13 +13481,13 @@ button.danger {
   border-radius: var(--radius-sm);
   background: var(--panel-soft);
   padding: 0.14rem 0.34rem;
-  font-size: 0.64rem;
+  font-size: 0.7rem;
 }
 
 .rendered-ai-chat-time {
   margin-left: auto;
   color: var(--muted-light);
-  font-size: 0.64rem;
+  font-size: 0.7rem;
 }
 
 .rendered-ai-chat-content {
@@ -13938,7 +14155,7 @@ body.pdf-export-mode .rendered-ai-chat-pagination {
   border-radius: 999px;
   padding: 0.18rem 0.48rem;
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -14036,7 +14253,7 @@ body.pdf-export-mode .rendered-ai-chat-pagination {
 .account-snapshot-page-block-summary {
   margin-left: auto;
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   white-space: nowrap;
 }
 
@@ -14102,7 +14319,7 @@ body.pdf-export-mode .rendered-ai-chat-pagination {
 .account-snapshot-diff-value strong {
   margin-bottom: 0.14rem;
   color: var(--muted);
-  font-size: 0.64rem;
+  font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -14111,7 +14328,7 @@ body.pdf-export-mode .rendered-ai-chat-pagination {
   overflow-wrap: anywhere;
   color: var(--ink-strong);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   line-height: 1.45;
   white-space: pre-wrap;
 }
@@ -14252,7 +14469,7 @@ body.pdf-export-mode .rendered-ai-chat-pagination {
   border-radius: 50%;
   background: var(--accent-soft-strong);
   color: var(--accent-ink);
-  font-size: 0.58rem;
+  font-size: 0.66rem;
   font-weight: 750;
   text-transform: uppercase;
 }
@@ -14284,7 +14501,7 @@ body.pdf-export-mode .rendered-ai-chat-pagination {
   background: var(--remote-caret-color, var(--focus));
   padding: 0.18rem 0.42rem;
   color: #fff;
-  font-size: 0.64rem;
+  font-size: 0.7rem;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -14322,7 +14539,7 @@ body.pdf-export-mode .rendered-ai-chat-pagination {
   box-shadow: 0 4px 12px rgba(22, 24, 28, 0.2);
   padding: 0.2rem 0.42rem;
   color: #fff;
-  font-size: 0.67rem;
+  font-size: 0.7rem;
   font-weight: 750;
   line-height: 1.2;
   text-overflow: ellipsis;
@@ -14854,7 +15071,7 @@ body.pdf-export-mode .remote-collaboration-caret {
 .timetable-time-arrow {
   align-self: center;
   color: var(--timetable-muted-light);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
 }
 
 .timetable-input {
@@ -14947,7 +15164,7 @@ body.pdf-export-mode .remote-collaboration-caret {
 
 .timetable-input-hint {
   color: var(--timetable-muted-light);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   text-align: right;
 }
 
@@ -14982,7 +15199,7 @@ body.pdf-export-mode .remote-collaboration-caret {
 .rendered-timetable > header span,
 .rendered-timetable > header > time {
   color: var(--muted-light);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -15025,7 +15242,7 @@ body.pdf-export-mode .remote-collaboration-caret {
 
 .rendered-timetable-table th {
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   font-weight: 520;
 }
 
@@ -15196,7 +15413,7 @@ body.pdf-export-mode .remote-collaboration-caret {
 
 .rendered-code-language {
   color: #7d6a4f;
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.025em;
 }
@@ -15270,7 +15487,7 @@ body.pdf-export-mode .remote-collaboration-caret {
   color: var(--muted);
   box-shadow: 0 1px 5px rgba(36, 40, 43, 0.08);
   font: inherit;
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   font-weight: 700;
   line-height: 1;
   cursor: pointer;
@@ -16691,7 +16908,7 @@ html[data-theme="dark"] .rendered-gantt-status--blocked { background: #513529; c
 .page-cover-position-panel p {
   margin: 0;
   color: rgba(255, 255, 255, 0.74);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   line-height: 1.45;
 }
 
@@ -16758,7 +16975,7 @@ html[data-theme="dark"] .rendered-gantt-status--blocked { background: #513529; c
 .page-cover-dialog-header .kicker {
   margin: 0 0 0.3rem;
   color: var(--accent-text);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
 }
 
 .page-cover-dialog-header h2,
@@ -16836,7 +17053,7 @@ html[data-theme="dark"] .rendered-gantt-status--blocked { background: #513529; c
   background: rgba(21, 24, 27, 0.72);
   color: #ffffff;
   padding: 0.24rem 0.48rem;
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   opacity: 0;
   transition: opacity 120ms ease;
 }
@@ -17535,7 +17752,7 @@ body.is-navigation-dragging {
 
 .active-session-device small {
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
 }
 
 .active-session-current-badge {
@@ -17547,7 +17764,7 @@ body.is-navigation-dragging {
   background: rgba(32, 139, 98, 0.08);
   color: #16704d;
   padding: 0.2rem 0.42rem;
-  font-size: 0.63rem;
+  font-size: 0.7rem;
   font-weight: 760;
 }
 
@@ -18237,7 +18454,7 @@ html[data-theme="dark"] {
 }
 
 .rendered-treeview-leaf {
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   color: var(--muted-light);
 }
 
@@ -18273,7 +18490,7 @@ html[data-theme="dark"] {
 
 .rendered-treeview-note > header small {
   color: var(--muted-light);
-  font-size: 0.66rem;
+  font-size: 0.7rem;
 }
 
 .rendered-treeview-note > div {
@@ -18926,5 +19143,63 @@ body.auth-mode {
 
   .auth-header h2 {
     font-size: 1.6rem;
+  }
+}
+
+/* Small icon buttons keep their visual size but get a larger invisible hit
+   area: at least 24px everywhere (WCAG 2.5.8) and roomier on touch screens. */
+:where(
+  .sidebar-add-button,
+  .doc-expand-button,
+  .navigation-more-button,
+  .kanban-card-delete,
+  .kanban-column-menu,
+  .kanban-card-icon-button,
+  .kanban-action-button,
+  .country-login-chip button
+) {
+  position: relative;
+}
+
+:where(
+  .sidebar-add-button,
+  .doc-expand-button,
+  .navigation-more-button,
+  .kanban-card-delete,
+  .kanban-column-menu,
+  .kanban-card-icon-button,
+  .kanban-action-button,
+  .kanban-card-drag-handle,
+  .custom-icon-library-remove,
+  .country-login-chip button
+)::after {
+  position: absolute;
+  inset: -3px;
+  content: "";
+}
+
+@media (hover: none), (pointer: coarse) {
+  :where(
+    .sidebar-add-button,
+    .doc-expand-button,
+    .navigation-more-button,
+    .kanban-card-delete,
+    .kanban-column-menu,
+    .kanban-card-icon-button,
+    .kanban-action-button,
+    .kanban-card-drag-handle,
+    .custom-icon-library-remove,
+    .country-login-chip button
+  )::after {
+    inset: -5px -7px;
+  }
+
+  .status-action,
+  .status-dismiss {
+    min-height: 2.5rem;
+  }
+
+  .status-dismiss {
+    width: 2.5rem;
   }
 }

@@ -90,6 +90,7 @@ import { planConfirmedBlockInsertion } from "./block-insertion-result.js";
 import { createAccountProfileMutationQueue } from "./account-profile-mutation-queue.js";
 import { createMutationId, submitWithFreshMutationIdOnReuse } from "./mutation-id.js";
 import { createRestoreOperationStore } from "./restore-operation.js";
+import { showConfirmDialog, showPromptDialog } from "./app-dialog.js";
 import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-rebase.js";
 import {
   createPageCollaboration,
@@ -153,7 +154,8 @@ const defaultCollectionKey = "__default_collection__";
 const recentEmojiStorageKey = "brainvault.recentEmojis";
 const emojiSkinToneStorageKey = "brainvault.emojiSkinTone";
 const themeStorageKey = "brainvault.theme";
-const supportedThemes = new Set(["light", "dark"]);
+const supportedThemes = new Set(["light", "dark", "system"]);
+const systemDarkThemeQuery = window.matchMedia?.("(prefers-color-scheme: dark)") ?? null;
 const pageEditorHistory = createEditorHistory({ maxEntries: 80, maxBytes: 8 * 1024 * 1024, captureTimeout: 600 });
 let applyingEditorHistory = false;
 const themeColorByTheme = Object.freeze({ light: "#f6f4f1", dark: "#15161a" });
@@ -1176,8 +1178,14 @@ let pageTitleLastDurableValue = "";
 let localDraftStorageWarningShown = false;
 let beforeUnloadProtectionActive = false;
 let statusClearTimer = null;
-const statusDismissDelay = 2400;
-const statusErrorDismissDelay = 6000;
+let statusDismissDeadline = null;
+let statusRemainingDelay = null;
+let statusDismissPaused = false;
+// Long enough to read a sentence, and paused while the pointer or keyboard
+// focus is on the toast. Errors stay until dismissed or replaced (WCAG 2.2.1).
+const statusDismissDelay = 4000;
+const statusActionDismissDelay = 8000;
+const statusErrorDismissDelay = 0;
 let activeBlockDrag = null;
 let activeKanbanCardDrag = null;
 let activeKanbanColumnDrag = null;
@@ -1461,6 +1469,11 @@ const elements = {
   slashMenu: $("#slash-menu"),
   blockContextMenu: $("#block-context-menu"),
   blockMoveMenuItem: $("#block-move-menu-item"),
+  archiveOpenButton: $("#archive-open-button"),
+  archiveDialog: $("#archive-dialog"),
+  archiveDialogClose: $("#archive-dialog-close"),
+  archiveDialogMessage: $("#archive-dialog-message"),
+  archiveList: $("#archive-list"),
   blockMoveDialog: $("#block-move-dialog"),
   blockMoveForm: $("#block-move-form"),
   blockMoveClose: $("#block-move-close"),
@@ -1806,54 +1819,143 @@ function setAuthMode(mode, updateHash = true) {
 function clearStatus() {
   window.clearTimeout(statusClearTimer);
   statusClearTimer = null;
-  elements.status.textContent = "";
+  statusDismissDeadline = null;
+  statusRemainingDelay = null;
+  // An emptied toast has no box, so a pending pointerleave may never arrive.
+  statusDismissPaused = false;
+  elements.status.replaceChildren();
   elements.status.classList.remove("error");
 }
 
-function setStatus(message, isError = false, { dismissAfter } = {}) {
+function scheduleStatusDismiss(delay) {
+  window.clearTimeout(statusClearTimer);
+  statusClearTimer = null;
+  statusDismissDeadline = null;
+  statusRemainingDelay = Number.isFinite(delay) && delay > 0 ? delay : null;
+  if (statusRemainingDelay === null || statusDismissPaused) return;
+  statusDismissDeadline = Date.now() + delay;
+  statusClearTimer = window.setTimeout(clearStatus, delay);
+}
+
+function pauseStatusDismiss() {
+  statusDismissPaused = true;
+  if (statusClearTimer === null || statusDismissDeadline === null) return;
+  window.clearTimeout(statusClearTimer);
+  statusClearTimer = null;
+  statusRemainingDelay = Math.max(0, statusDismissDeadline - Date.now());
+  statusDismissDeadline = null;
+}
+
+function resumeStatusDismiss() {
+  if (!statusDismissPaused) return;
+  if (elements.status.matches(":hover") || elements.status.contains(document.activeElement)) return;
+  statusDismissPaused = false;
+  // Give the reader a moment after looking away instead of vanishing at once.
+  if (statusRemainingDelay !== null) scheduleStatusDismiss(Math.max(statusRemainingDelay, 1500));
+}
+
+function setStatus(message, isError = false, { dismissAfter, action } = {}) {
   window.clearTimeout(statusClearTimer);
   statusClearTimer = null;
 
   const text = String(message ?? "").trim();
-  elements.status.textContent = text;
   elements.status.classList.toggle("error", isError && Boolean(text));
-  if (!text) return;
-
-  const delay = dismissAfter ?? (isError ? statusErrorDismissDelay : statusDismissDelay);
-  if (Number.isFinite(delay) && delay > 0) {
-    statusClearTimer = window.setTimeout(clearStatus, delay);
+  if (!text) {
+    clearStatus();
+    return;
   }
+
+  const messageElement = document.createElement("span");
+  messageElement.className = "status-message";
+  messageElement.textContent = text;
+  const children = [messageElement];
+
+  const hasAction = Boolean(action?.label) && typeof action.onSelect === "function";
+  if (hasAction) {
+    const actionButton = document.createElement("button");
+    actionButton.type = "button";
+    actionButton.className = "status-action";
+    actionButton.textContent = action.label;
+    actionButton.addEventListener("click", () => {
+      clearStatus();
+      action.onSelect();
+    }, { once: true });
+    children.push(actionButton);
+  }
+
+  const dismissButton = document.createElement("button");
+  dismissButton.type = "button";
+  dismissButton.className = "status-dismiss";
+  dismissButton.setAttribute("aria-label", t("status.dismiss"));
+  dismissButton.title = t("status.dismiss");
+  dismissButton.textContent = "×";
+  dismissButton.addEventListener("click", clearStatus, { once: true });
+  children.push(dismissButton);
+  elements.status.replaceChildren(...children);
+
+  const delay = dismissAfter ?? (
+    isError ? statusErrorDismissDelay : hasAction ? statusActionDismissDelay : statusDismissDelay
+  );
+  scheduleStatusDismiss(delay);
+}
+
+elements.status.addEventListener("pointerenter", pauseStatusDismiss);
+elements.status.addEventListener("pointerleave", resumeStatusDismiss);
+elements.status.addEventListener("focusin", pauseStatusDismiss);
+elements.status.addEventListener("focusout", () => window.setTimeout(resumeStatusDismiss));
+
+// Every full-screen layer (search, settings, sharing) is modal: the workspace
+// behind it must not take keyboard focus or pointer input until all close.
+function syncWorkspaceShellInert() {
+  elements.shell.inert = Boolean(
+    state.searchDialogOpen
+    || state.accountSettingsOpen
+    || state.sharePageOpen
+    || state.shareCollectionOpen
+  );
 }
 
 function setAuthenticated(value) {
   state.authenticated = Boolean(value);
 }
 
+// The stored preference may be "system"; the rendered theme is always light or dark.
 function normalizeTheme(value) {
-  return supportedThemes.has(value) ? value : "light";
+  return supportedThemes.has(value) ? value : "system";
+}
+
+function resolveTheme(preference) {
+  if (preference !== "system") return preference;
+  return systemDarkThemeQuery?.matches ? "dark" : "light";
 }
 
 function getActiveTheme() {
-  return normalizeTheme(document.documentElement.dataset.theme);
+  return normalizeTheme(document.documentElement.dataset.themePreference ?? document.documentElement.dataset.theme);
 }
 
 function applyTheme(value, { persist = true } = {}) {
-  const theme = normalizeTheme(value);
+  const preference = normalizeTheme(value);
+  const theme = resolveTheme(preference);
   document.documentElement.dataset.theme = theme;
+  document.documentElement.dataset.themePreference = preference;
   document.documentElement.style.colorScheme = theme;
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", themeColorByTheme[theme]);
 
   if (persist) {
     try {
-      window.localStorage.setItem(themeStorageKey, theme);
+      window.localStorage.setItem(themeStorageKey, preference);
     } catch {
       // The authenticated server preference remains authoritative when storage
       // is unavailable (for example, in privacy-hardened browsing contexts).
     }
   }
   requestAnimationFrame(() => void hydrateMermaidPreviews(document, { force: true }));
-  return theme;
+  return preference;
 }
+
+systemDarkThemeQuery?.addEventListener?.("change", () => {
+  if (getActiveTheme() === "system") applyTheme("system", { persist: false });
+});
 
 function applyUserTheme() {
   return applyTheme(state.user?.theme);
@@ -3560,10 +3662,20 @@ async function revokeActiveSession(sessionId) {
   if (!targetKey || !session || state.activeSessions.loading || state.activeSessions.revokingSessionId) return;
 
   const ip = session.ipAddress === "unknown" ? t("account.loginHistoryUnknownIp") : session.ipAddress;
-  const confirmed = window.confirm(session.isCurrent
-    ? t("account.activeSessionsCurrentLogoutConfirm")
-    : t("account.activeSessionsLogoutConfirm", { browser: session.browserLabel || session.browserName, ip }));
+  const confirmed = await showConfirmDialog({
+    message: session.isCurrent
+      ? t("account.activeSessionsCurrentLogoutConfirm")
+      : t("account.activeSessionsLogoutConfirm", { browser: session.browserLabel || session.browserName, ip }),
+    confirmLabel: t("dialog.signOut"),
+    danger: true
+  });
   if (!confirmed) return;
+  if (
+    getAccountAvatarTargetKey(state.user) !== targetKey
+    || state.activeSessions.loading
+    || state.activeSessions.revokingSessionId
+    || !state.activeSessions.sessions.some((item) => item?.id === sessionId)
+  ) return;
 
   const run = async () => {
     const operation = accountSecurityOperationGuards.activeSessions.begin(targetKey);
@@ -3973,7 +4085,15 @@ async function unblockPermanentTotpIp(ipAddress) {
     elements.accountTotpIpUnblockPassword.focus();
     return;
   }
-  if (!window.confirm(t("account.totpIpUnblockConfirm", { ip: ipAddress }))) return;
+  if (!await showConfirmDialog({
+    message: t("account.totpIpUnblockConfirm", { ip: ipAddress }),
+    confirmLabel: t("dialog.unblock")
+  })) return;
+  if (
+    getAccountAvatarTargetKey(state.user) !== targetKey
+    || state.totpIpBlocks.loading
+    || state.totpIpBlocks.unblockingIp
+  ) return;
 
   const operation = accountSecurityOperationGuards.totpIpBlocks.begin(targetKey);
   state.totpIpBlocks.unblockingIp = ipAddress;
@@ -4246,7 +4366,15 @@ async function requestMfaStepUpToken({ trigger = null, action, resourceId = null
   const scope = { action, ...(resourceId ? { resourceId } : {}) };
 
   if (state.mfaStatus.totpEnabled) {
-    const code = window.prompt(t("mfa.stepUpTotpPrompt"))?.trim();
+    const code = (await showPromptDialog({
+      title: t("dialog.verifyTitle"),
+      message: t("mfa.stepUpTotpPrompt"),
+      label: t("dialog.codeLabel"),
+      confirmLabel: t("dialog.verify"),
+      inputMode: "numeric",
+      autocomplete: "one-time-code",
+      maxLength: 6
+    }))?.trim();
     if (!code) throw new Error(t("mfa.stepUpRequired"));
     const result = await api("/api/auth/mfa/step-up/totp", {
       method: "POST",
@@ -4307,14 +4435,21 @@ function renderPasskeyList() {
     actions.className = "passkey-list-actions";
     actions.append(
       createPasskeyActionButton("mfa.renamePasskey", "secondary compact", async (event) => {
-        const nextName = window.prompt(t("mfa.renamePrompt"), passkey.name)?.trim();
+        const trigger = event.currentTarget;
+        const nextName = (await showPromptDialog({
+          title: t("dialog.renameTitle"),
+          message: t("mfa.renamePrompt"),
+          label: t("dialog.nameLabel"),
+          defaultValue: passkey.name,
+          confirmLabel: t("dialog.rename")
+        }))?.trim();
         if (!nextName || nextName === passkey.name) return;
         const currentPassword = requireMfaPassword();
         const targetKey = getAccountAvatarTargetKey(state.user);
         if (!currentPassword || !targetKey) return;
         try {
           const stepUpToken = await requestMfaStepUpToken({
-            trigger: event.currentTarget,
+            trigger,
             action: "passkey-rename",
             resourceId: passkey.id
           });
@@ -4332,13 +4467,19 @@ function renderPasskeyList() {
         }
       }),
       createPasskeyActionButton("mfa.removePasskey", "secondary danger compact", async (event) => {
-        if (!window.confirm(t("mfa.removePasskeyConfirm", { name: passkey.name }))) return;
+        const trigger = event.currentTarget;
+        if (!await showConfirmDialog({
+          title: t("dialog.deleteTitle"),
+          message: t("mfa.removePasskeyConfirm", { name: passkey.name }),
+          confirmLabel: t("dialog.remove"),
+          danger: true
+        })) return;
         const currentPassword = requireMfaPassword();
         const targetKey = getAccountAvatarTargetKey(state.user);
         if (!currentPassword || !targetKey) return;
         try {
           const stepUpToken = await requestMfaStepUpToken({
-            trigger: event.currentTarget,
+            trigger,
             action: "passkey-delete",
             resourceId: passkey.id
           });
@@ -4516,7 +4657,7 @@ function openSearchDialog() {
   elements.searchLayer.setAttribute("aria-hidden", "false");
   elements.sidebarSearchShortcut.setAttribute("aria-expanded", "true");
   document.body.classList.add("search-dialog-open");
-  elements.shell.inert = true;
+  syncWorkspaceShellInert();
   renderSearchDialog();
   window.requestAnimationFrame(() => {
     elements.searchInput.focus();
@@ -4537,7 +4678,7 @@ function closeSearchDialog({ restoreFocus = true } = {}) {
   elements.searchLayer.setAttribute("aria-hidden", "true");
   elements.sidebarSearchShortcut.setAttribute("aria-expanded", "false");
   document.body.classList.remove("search-dialog-open");
-  elements.shell.inert = false;
+  syncWorkspaceShellInert();
   renderSearchDialog();
   syncMobileSidebarAccessibility();
   if (restoreFocus && state.user) elements.sidebarSearchShortcut.focus();
@@ -4764,7 +4905,7 @@ function openAccountSettings(panel = "profile") {
   elements.accountSettingsLayer.classList.remove("hidden");
   elements.accountSettingsLayer.setAttribute("aria-hidden", "false");
   document.body.classList.add("account-settings-open");
-  elements.shell.inert = true;
+  syncWorkspaceShellInert();
   window.requestAnimationFrame(() => {
     const selectedTab = elements.accountSettingsTabs.find((tab) => tab.dataset.accountPanel === state.activeAccountPanel);
     (selectedTab ?? elements.accountSettingsDialog).focus();
@@ -4780,7 +4921,7 @@ function closeAccountSettings({ restoreFocus = true, force = false } = {}) {
   elements.accountSettingsLayer.classList.add("hidden");
   elements.accountSettingsLayer.setAttribute("aria-hidden", "true");
   document.body.classList.remove("account-settings-open");
-  elements.shell.inert = false;
+  syncWorkspaceShellInert();
   setAccountMessage();
   elements.accountAvatarInput.value = "";
   elements.accountPasswordForm.reset();
@@ -7933,6 +8074,9 @@ function persistBlockDraft(row, payload = null) {
 }
 
 function confirmRecoveredDraftOverwrite() {
+  // Deliberately the native, synchronous confirm: this runs inside input and
+  // beforeinput handlers that must decide before the edit is applied. If the
+  // browser suppresses dialogs it returns false, which keeps the server copy.
   return window.confirm(t("confirm.overwriteRecoveredDraft"));
 }
 
@@ -8914,7 +9058,18 @@ async function resetPageVersionHistory() {
   if (!requireWritablePage()) return;
 
   const title = page.title || t("newDocumentTitle");
-  if (!window.confirm(t("versions.resetConfirm", { title }))) return;
+  if (!await showConfirmDialog({
+    title: t("dialog.deleteTitle"),
+    message: t("versions.resetConfirm", { title }),
+    confirmLabel: t("dialog.deleteHistory"),
+    danger: true
+  })) return;
+  if (
+    state.selectedPage?.id !== pageId
+    || state.pageVersionHistory.pageId !== pageId
+    || state.pageVersionHistory.loading
+    || state.pageVersionHistory.resetting
+  ) return;
 
   const navigationGeneration = workspaceNavigationGeneration;
   const isResetIntentCurrent = () => (
@@ -9771,9 +9926,13 @@ async function deleteNavigationTarget() {
       task = getPageDeleteTask(authenticationScope, target.id, deletionSnapshot.snapshot, serverPageIds);
     }
 
-    const ok = window.confirm(
-      t(isCollection ? "confirm.deleteCollection" : "confirm.deletePage", { title: target.title })
-    );
+    const ok = await showConfirmDialog({
+      title: t("dialog.deleteTitle"),
+      message: t(isCollection ? "confirm.deleteCollection" : "confirm.deletePage", { title: target.title }),
+      confirmLabel: t("dialog.delete"),
+      danger: true
+    }) && isCurrentAuthenticatedSessionScope(authenticationScope)
+      && isCurrentWorkspaceNavigation(navigationGeneration);
     if (!ok) {
       if (!task.attempted && pendingPageDeleteTasks.get(task.taskKey) === task) {
         pendingPageDeleteTasks.delete(task.taskKey);
@@ -11544,7 +11703,13 @@ async function deletePageComment(commentId) {
     }
     return;
   }
-  if (!window.confirm(t("comments.deleteConfirm"))) return;
+  if (!await showConfirmDialog({
+    title: t("dialog.deleteTitle"),
+    message: t("comments.deleteConfirm"),
+    confirmLabel: t("dialog.delete"),
+    danger: true
+  })) return;
+  if (state.selectedPage?.id !== pageId || state.pageComments.submitting || state.pageComments.busyCommentId) return;
   const navigationGeneration = workspaceNavigationGeneration;
   const authenticationScope = captureAuthenticatedSessionScope();
   const isCommentMutationCurrent = () => (
@@ -11689,6 +11854,7 @@ async function openSharePageDialog() {
   elements.sharePageForm.classList.toggle("hidden", !canCreateDirectShare);
   elements.sharePageLayer.classList.remove("hidden");
   elements.sharePageLayer.setAttribute("aria-hidden", "false");
+  syncWorkspaceShellInert();
   renderSharePageList();
   await loadPageShares(pageId, requestGeneration);
   if (isCurrentSharePageRequest(requestGeneration, pageId)) {
@@ -11708,6 +11874,7 @@ function closeSharePageDialog({ restoreFocus = true } = {}) {
   state.sharePageEntries = [];
   elements.sharePageLayer.classList.add("hidden");
   elements.sharePageLayer.setAttribute("aria-hidden", "true");
+  syncWorkspaceShellInert();
   elements.sharePageForm.reset();
   renderSharePageList();
   setSharePageMessage();
@@ -11828,6 +11995,7 @@ async function openShareCollectionDialog() {
   state.shareCollectionEntries = [];
   elements.shareCollectionLayer.classList.remove("hidden");
   elements.shareCollectionLayer.setAttribute("aria-hidden", "false");
+  syncWorkspaceShellInert();
   renderShareCollectionList();
   await loadCollectionShares(collection.id, requestGeneration);
   if (isCurrentShareCollectionRequest(requestGeneration, collection.id)) {
@@ -11844,6 +12012,7 @@ function closeShareCollectionDialog({ restoreFocus = true } = {}) {
   state.shareCollectionEntries = [];
   elements.shareCollectionLayer.classList.add("hidden");
   elements.shareCollectionLayer.setAttribute("aria-hidden", "true");
+  syncWorkspaceShellInert();
   elements.shareCollectionForm.reset();
   renderShareCollectionList();
   setShareCollectionMessage();
@@ -13177,9 +13346,16 @@ function handleKanbanAction(row, button) {
     const message = column.cards.length
       ? t("confirm.deleteKanbanColumnWithCards", { count: formatNumber(column.cards.length) })
       : t("confirm.deleteKanbanColumn");
-    if (!window.confirm(message)) return;
-    data.columns.splice(columnIndex, 1);
-    replaceKanbanData(row, data);
+    const columnId = column.id;
+    void showConfirmDialog({ message, confirmLabel: t("dialog.delete"), danger: true }).then((confirmed) => {
+      // The board can rerender while the dialog is open; delete by id from fresh data.
+      if (!confirmed || !row.isConnected) return;
+      const latest = extractKanbanData(row);
+      const latestIndex = latest.columns.findIndex((item) => item.id === columnId);
+      if (latest.columns.length <= 1 || latestIndex < 0) return;
+      latest.columns.splice(latestIndex, 1);
+      replaceKanbanData(row, latest);
+    });
     return;
   }
 
@@ -13205,9 +13381,19 @@ function handleKanbanAction(row, button) {
   if (!found) return;
 
   if (action === "kanban-delete-card") {
-    if (!window.confirm(t("confirm.deleteKanbanCard"))) return;
-    found.column.cards.splice(found.cardIndex, 1);
-    replaceKanbanData(row, data);
+    const cardId = button.dataset.cardId;
+    void showConfirmDialog({
+      message: t("confirm.deleteKanbanCard"),
+      confirmLabel: t("dialog.delete"),
+      danger: true
+    }).then((confirmed) => {
+      if (!confirmed || !row.isConnected) return;
+      const latest = extractKanbanData(row);
+      const latestCard = findKanbanCard(latest, cardId);
+      if (!latestCard) return;
+      latestCard.column.cards.splice(latestCard.cardIndex, 1);
+      replaceKanbanData(row, latest);
+    });
     return;
   }
 
@@ -19300,7 +19486,14 @@ async function createWorkspacePage(
 
 async function createCollection() {
   if (state.workspaceCreateBusy) return { applied: false };
-  const requestedName = window.prompt(t("collection.createPrompt"), t("collection.defaultName"));
+  const requestedName = await showPromptDialog({
+    title: t("dialog.createCollectionTitle"),
+    label: t("collection.createPrompt"),
+    defaultValue: t("collection.defaultName"),
+    confirmLabel: t("dialog.create"),
+    maxLength: 160
+  });
+  if (state.workspaceCreateBusy) return { applied: false };
   if (requestedName === null) return { applied: false };
 
   const name = requestedName.trim().slice(0, 160);
@@ -19800,7 +19993,17 @@ async function removeCustomIconLibraryItem(index) {
   const userId = state.user?.id;
   if (!entry?.value || !userId || state.customIconLibraryRemovingValues.has(entry.value)) return;
 
-  if (!globalThis.confirm(t("emoji.customLibraryRemoveConfirm"))) return;
+  if (!await showConfirmDialog({
+    message: t("emoji.customLibraryRemoveConfirm"),
+    confirmLabel: t("dialog.remove"),
+    danger: true
+  })) return;
+  if (
+    state.emojiSaving
+    || state.user?.id !== userId
+    || state.customIconLibrary[index]?.value !== entry.value
+    || state.customIconLibraryRemovingValues.has(entry.value)
+  ) return;
 
   // Invalidate any older refresh so a stale GET cannot reinsert the item after removal.
   customIconLibraryLoadGeneration += 1;
@@ -20144,7 +20347,12 @@ elements.accountDataImport.addEventListener("click", async () => {
   const [file] = elements.accountDataInput.files ?? [];
   const targetKey = getAccountAvatarTargetKey(state.user);
   if (!file || !targetKey) return;
-  if (!window.confirm(t("account.importConfirm"))) return;
+  if (!await showConfirmDialog({
+    message: t("account.importConfirm"),
+    confirmLabel: t("dialog.import"),
+    danger: true
+  })) return;
+  if (state.accountDataOperationBusy || getAccountAvatarTargetKey(state.user) !== targetKey) return;
 
   const operation = accountDataOperationGuard.begin(targetKey);
   setAccountDataOperationBusy(true);
@@ -20210,8 +20418,24 @@ elements.accountSnapshotList.addEventListener("click", async (event) => {
   const targetKey = getAccountAvatarTargetKey(state.user);
   if (!snapshot || !targetKey) return;
 
-  if (action === "restore" && !window.confirm(t("account.snapshotRestoreConfirm", { date: formatDate(snapshot.createdAt) }))) return;
-  if (action === "delete" && !window.confirm(t("account.snapshotDeleteConfirm", { date: formatDate(snapshot.createdAt) }))) return;
+  if (action === "restore" || action === "delete") {
+    const confirmed = await showConfirmDialog({
+      title: action === "delete" ? t("dialog.deleteTitle") : t("dialog.confirmTitle"),
+      message: t(
+        action === "restore" ? "account.snapshotRestoreConfirm" : "account.snapshotDeleteConfirm",
+        { date: formatDate(snapshot.createdAt) }
+      ),
+      confirmLabel: action === "restore" ? t("dialog.restore") : t("dialog.delete"),
+      danger: true
+    });
+    if (!confirmed) return;
+    if (
+      state.snapshots.loading
+      || state.accountDataOperationBusy
+      || getAccountAvatarTargetKey(state.user) !== targetKey
+      || !state.snapshots.items.some((item) => item.id === snapshotId)
+    ) return;
+  }
 
   const operation = accountDataOperationGuard.begin(targetKey);
   setAccountDataOperationBusy(true);
@@ -20500,7 +20724,12 @@ elements.accountTotpCancel.addEventListener("click", () => {
 });
 
 elements.accountTotpDisable.addEventListener("click", async (event) => {
-  if (!window.confirm(t("mfa.disableTotpConfirm"))) return;
+  const trigger = event.currentTarget;
+  if (!await showConfirmDialog({
+    message: t("mfa.disableTotpConfirm"),
+    confirmLabel: t("dialog.turnOff"),
+    danger: true
+  })) return;
   const targetKey = getAccountAvatarTargetKey(state.user);
   const currentPassword = requireMfaPassword();
   if (!targetKey || !currentPassword) return;
@@ -20508,7 +20737,7 @@ elements.accountTotpDisable.addEventListener("click", async (event) => {
   elements.accountTotpDisable.disabled = true;
   try {
     const stepUpToken = await requestMfaStepUpToken({
-      trigger: event.currentTarget,
+      trigger,
       action: "totp-disable"
     });
     await api("/api/auth/mfa/totp", {
@@ -21589,7 +21818,13 @@ elements.pageCoverCustomInput.addEventListener("change", async () => {
 });
 
 elements.pageCoverRemoveButton.addEventListener("click", async () => {
-  if (!window.confirm(t("cover.removeConfirm"))) return;
+  const coverPageId = state.selectedPage?.id;
+  if (!await showConfirmDialog({
+    message: t("cover.removeConfirm"),
+    confirmLabel: t("dialog.remove"),
+    danger: true
+  })) return;
+  if (!coverPageId || state.selectedPage?.id !== coverPageId) return;
   closePageCoverPositionEditor();
   try {
     await persistPageCover(
@@ -21917,8 +22152,18 @@ elements.archivePageButton.addEventListener("click", async () => {
     return;
   }
   closePageActionsMenu({ restoreFocus: true });
-  const ok = window.confirm(t("confirm.archivePage"));
+  const pageIdAtPrompt = state.selectedPage?.id;
+  const navigationGenerationAtPrompt = workspaceNavigationGeneration;
+  const ok = await showConfirmDialog({
+    message: t("confirm.archivePage"),
+    confirmLabel: t("dialog.archive")
+  });
   if (!ok) return;
+  if (
+    !pageIdAtPrompt
+    || state.selectedPage?.id !== pageIdAtPrompt
+    || !isCurrentWorkspaceNavigation(navigationGenerationAtPrompt)
+  ) return;
 
   // Bind the archive to the exact page/view generation that the user confirmed
   // before any persistence/transition wait. The edit version is read only after
@@ -21970,13 +22215,170 @@ elements.archivePageButton.addEventListener("click", async () => {
         || !isCurrentWorkspaceNavigation(navigationGeneration)
       ) return;
       renderSelectedPage();
-      setStatus(t("status.pageArchived"));
+      const archivedVersion = getPositiveVersion(archiveResult?.page?.version);
+      setStatus(t("status.pageArchived"), false, archivedVersion === null ? {} : {
+        action: {
+          label: t("status.undo"),
+          onSelect: () => void restoreArchivedPage(pageId, archivedVersion, { openAfterRestore: true })
+        }
+      });
     });
   } catch (error) {
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
     if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
     setStatus(error.message, true);
   }
+});
+
+// Archived pages leave navigation and search, so the archive dialog is the
+// only way back. Restoring is a restore-only PATCH guarded by the page version.
+async function restoreArchivedPage(pageId, expectedVersion, { openAfterRestore = false, announce = true } = {}) {
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if (!pageId || expectedVersion === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) {
+    return { restored: false };
+  }
+  const task = { mutationId: createMutationId() };
+  try {
+    await submitWithFreshMutationIdOnReuse(task, () => api(`/api/pages/${encodeURIComponent(pageId)}`, {
+      method: "PATCH",
+      body: { isArchived: false, expectedVersion, mutationId: task.mutationId }
+    }));
+  } catch (error) {
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { restored: false };
+    if (announce) setStatus(error.message, true);
+    return { restored: false, error };
+  }
+  if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { restored: true };
+  try {
+    await loadPages(elements.searchInput.value.trim(), state.activeTag);
+    if (openAfterRestore && isCurrentAuthenticatedSessionScope(authenticationScope)) await openPage(pageId);
+  } catch (error) {
+    if (announce && isCurrentAuthenticatedSessionScope(authenticationScope)) setStatus(error.message, true);
+    return { restored: true };
+  }
+  if (announce && isCurrentAuthenticatedSessionScope(authenticationScope)) setStatus(t("status.pageRestored"));
+  return { restored: true };
+}
+
+const archiveDialogState = {
+  generation: 0,
+  loading: false,
+  pages: [],
+  restoringIds: new Set(),
+  message: "",
+  messageIsError: false
+};
+
+function renderArchiveDialog() {
+  const { loading, pages, restoringIds, message, messageIsError } = archiveDialogState;
+  elements.archiveDialogMessage.textContent = message
+    || (loading ? t("archive.loading") : pages.length ? "" : t("archive.empty"));
+  elements.archiveDialogMessage.classList.toggle("is-error", Boolean(message) && messageIsError);
+  elements.archiveList.setAttribute("aria-busy", loading ? "true" : "false");
+  elements.archiveList.replaceChildren(...pages.map((page) => {
+    const title = page.title || t("archive.untitled");
+    const item = document.createElement("li");
+    item.className = "archive-list-item";
+
+    const icon = document.createElement("span");
+    icon.className = "archive-list-icon";
+    renderIconValue(icon, page.icon, page.isCollection ? "📁" : "📄");
+
+    const copy = document.createElement("div");
+    copy.className = "archive-list-copy";
+    const name = document.createElement("strong");
+    name.textContent = title;
+    copy.append(name);
+    if (page.updatedAt) {
+      const edited = document.createElement("small");
+      edited.textContent = t("archive.edited", { date: formatDate(page.updatedAt) });
+      copy.append(edited);
+    }
+
+    const restoring = restoringIds.has(page.id);
+    const restore = document.createElement("button");
+    restore.type = "button";
+    restore.className = "secondary compact";
+    restore.dataset.pageId = page.id;
+    restore.disabled = restoring;
+    restore.textContent = restoring ? t("archive.restoring") : t("archive.restore");
+    restore.setAttribute("aria-label", `${t("archive.restore")}: ${title}`);
+
+    item.append(icon, copy, restore);
+    return item;
+  }));
+}
+
+async function loadArchivedPages() {
+  const generation = ++archiveDialogState.generation;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  archiveDialogState.loading = true;
+  archiveDialogState.message = "";
+  renderArchiveDialog();
+  try {
+    const pages = await fetchAllPageSummaries({ archived: true });
+    if (generation !== archiveDialogState.generation || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    archiveDialogState.pages = pages.filter((page) => page?.isArchived);
+  } catch (error) {
+    if (generation !== archiveDialogState.generation) return;
+    archiveDialogState.message = error.message;
+    archiveDialogState.messageIsError = true;
+  } finally {
+    if (generation === archiveDialogState.generation) {
+      archiveDialogState.loading = false;
+      renderArchiveDialog();
+    }
+  }
+}
+
+function openArchiveDialog() {
+  if (!state.user || elements.archiveDialog.open) return;
+  closeMobileSidebar();
+  archiveDialogState.pages = [];
+  archiveDialogState.restoringIds.clear();
+  elements.archiveDialog.showModal();
+  elements.archiveDialogClose.focus();
+  void loadArchivedPages();
+}
+
+elements.archiveOpenButton.addEventListener("click", openArchiveDialog);
+elements.archiveDialogClose.addEventListener("click", () => elements.archiveDialog.close());
+elements.archiveDialog.addEventListener("close", () => {
+  archiveDialogState.generation += 1;
+  archiveDialogState.loading = false;
+});
+elements.archiveDialog.addEventListener("click", (event) => {
+  // A click on the backdrop lands on the <dialog> element itself.
+  if (event.target === elements.archiveDialog) elements.archiveDialog.close();
+});
+// Keep workspace shortcuts (Ctrl/Cmd+K, Escape handlers) from acting behind the modal.
+elements.archiveDialog.addEventListener("keydown", (event) => event.stopPropagation());
+elements.archiveList.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-page-id]");
+  if (!button) return;
+  const page = archiveDialogState.pages.find((item) => item.id === button.dataset.pageId);
+  if (!page || archiveDialogState.restoringIds.has(page.id)) return;
+  const generation = archiveDialogState.generation;
+  archiveDialogState.restoringIds.add(page.id);
+  archiveDialogState.message = "";
+  renderArchiveDialog();
+  const result = await restoreArchivedPage(page.id, getPositiveVersion(page.version), { announce: false });
+  archiveDialogState.restoringIds.delete(page.id);
+  if (generation !== archiveDialogState.generation) {
+    if (result.restored) setStatus(t("status.pageRestored"));
+    else if (result.error) setStatus(result.error.message, true);
+    return;
+  }
+  if (result.restored) {
+    archiveDialogState.pages = archiveDialogState.pages.filter((item) => item.id !== page.id);
+    archiveDialogState.message = t("status.pageRestored");
+    archiveDialogState.messageIsError = false;
+    renderArchiveDialog();
+    return;
+  }
+  archiveDialogState.message = result.error?.message || t("errors.unknown");
+  archiveDialogState.messageIsError = true;
+  renderArchiveDialog();
 });
 
 for (const eventName of ["focusin", "input", "keyup", "mouseup", "change"]) {
@@ -22733,6 +23135,21 @@ elements.pageMoveForm.addEventListener("submit", async (event) => {
   }
 });
 
+const confirmFreeDeleteBlockTypes = new Set([
+  "MARKDOWN", "HEADING_1", "HEADING_2", "HEADING_3", "HEADING_4", "HEADING_5",
+  "TODO", "UNORDERED_LIST", "ORDERED_LIST", "QUOTE"
+]);
+
+function isBlockDeletionTrivial(row, blockId) {
+  if (!confirmFreeDeleteBlockTypes.has(row.dataset.blockType ?? "MARKDOWN")) return false;
+  const blocks = state.selectedPage?.blocks ?? [];
+  if (blocks.some((block) => block.parentBlockId === blockId)) return false;
+  if (elements.blockList.querySelector(`.editor-block-row[data-parent-block-id="${CSS.escape(blockId)}"]`)) return false;
+  const liveText = getBlockTextarea(row)?.value ?? "";
+  const savedText = getBlockById(blockId)?.markdown ?? "";
+  return !liveText.trim() && !savedText.trim();
+}
+
 elements.blockContextMenu.addEventListener("click", async (event) => {
   if (!requireWritablePage()) return;
   const button = event.target.closest("button[data-action]");
@@ -22799,8 +23216,20 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
         setStatus(t("sharing.syncRequired"), true);
         return;
       }
-      const ok = window.confirm(t("confirm.deleteBlock"));
+      // Asking before removing an empty line is friction without protection:
+      // nothing can be lost. Anything with content or children still asks.
+      const pageIdAtIntent = state.selectedPage.id;
+      const ok = isBlockDeletionTrivial(row, blockId) || await showConfirmDialog({
+        title: t("dialog.deleteTitle"),
+        message: t("confirm.deleteBlock"),
+        confirmLabel: t("dialog.delete"),
+        danger: true
+      });
       if (!ok) return;
+      if (state.selectedPage?.id !== pageIdAtIntent || !getBlockById(blockId)) {
+        closeBlockContextMenu();
+        return;
+      }
       const authenticationScope = captureAuthenticatedSessionScope();
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
       closeBlockContextMenu();

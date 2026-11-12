@@ -26,6 +26,6 @@ describe("Kanban column drag ordering", () => {
   it("keeps click behavior on the same button wired to the existing delete action", () => {
     expect(client).toContain('"kanban-delete-column",');
     expect(client).toContain('if (action === "kanban-delete-column")');
-    expect(client).toContain('if (!window.confirm(message)) return;');
+    expect(client).toContain('void showConfirmDialog({ message, confirmLabel: t("dialog.delete"), danger: true })');
   });
 });

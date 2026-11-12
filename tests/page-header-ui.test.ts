@@ -52,7 +52,7 @@ describe("Page view header and actions menu", () => {
   it("auto-dismisses page-open status messages and keeps the toast out of the header area", () => {
     expect(client).toContain("let statusClearTimer = null");
     expect(client).toContain("statusClearTimer = window.setTimeout(clearStatus, delay)");
-    expect(client).toContain("const statusDismissDelay = 2400");
+    expect(client).toContain("const statusDismissDelay = 4000");
     expect(styles).toMatch(/\.status\s*\{[\s\S]*?bottom:\s*max\(1rem, env\(safe-area-inset-bottom\)\);/);
     expect(styles).not.toMatch(/\.status\s*\{[\s\S]*?top:\s*0\.85rem;/);
   });

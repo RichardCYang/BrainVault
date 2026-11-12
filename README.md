@@ -10,7 +10,8 @@ BrainVault is a self-hosted block-based notes app built with Node.js, Express, T
 
 - Block editor with nested content, drag-and-drop ordering, slash commands, tables, databases, Kanban boards, Gantt timelines, lists, toggles, and tree views
 - Rich text, Markdown, syntax-highlighted code, callouts, bookmarks, videos, attachments, AI chat blocks, formulas, and Mermaid diagrams
-- Page collections, nested pages, custom icons and covers, archiving, version history, PDF export, and ZIP backup/restore
+- Page collections, nested pages, custom icons and covers, archiving with an archive view for restoring pages, version history, PDF export, and ZIP backup/restore
+- Light, dark, and match-system themes
 - Page sharing and collection sharing with Yjs-based live collaboration
 - Crash-recovery support for browser drafts and collaborative edits
 - Search across page titles and block content

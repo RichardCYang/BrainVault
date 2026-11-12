@@ -8,7 +8,9 @@ const counted = {};
 for (const side of ['client','server']) counted[side]={before:await loadModule(side,'baseline',{instrument:true}),after:await loadModule(side,'current',{instrument:true})};
 
 for (const side of ['client','server']) test(`${side}: all normalization, option validation and view filtering/sorting stay byte-identical`,()=>{
-  const a=sourceFor(side,'baseline').replace(/\r\n/g,'\n'),b=sourceFor(side).replace(/\r\n/g,'\n');
+  const a=sourceFor(side,'baseline').replace(/\r\n/g,'\n');
+  // Reviewed: the themed confirm dialog import does not touch normalization or view logic.
+  const b=sourceFor(side).replace(/\r\n/g,'\n').replace('import { showConfirmDialog } from "./app-dialog.js";\n','');
   const end=side==='client'?'function getOption(':'function escapeHtml(';
   assert.equal(b.slice(0,b.indexOf(end)),a.slice(0,a.indexOf(end)));
   if(side==='client') {

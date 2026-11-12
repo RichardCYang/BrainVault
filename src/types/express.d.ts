@@ -13,7 +13,7 @@ declare global {
         avatarData: string | null;
         preferredLanguage: string | null;
         defaultCollectionIcon: string | null;
-        theme: "light" | "dark";
+        theme: "light" | "dark" | "system";
         workspaceGeneration?: number;
         createdAt: string;
         updatedAt: string;

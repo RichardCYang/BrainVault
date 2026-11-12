@@ -5,7 +5,7 @@ export type UserRow = {
   avatar_data: string | null;
   preferred_language: string | null;
   default_collection_icon: string | null;
-  theme: "light" | "dark" | null;
+  theme: "light" | "dark" | "system" | null;
   country_login_mode?: "OFF" | "ALLOWLIST" | "BLOCKLIST";
   password_hash: string;
   registration_approved?: 0 | 1 | boolean | number | string;

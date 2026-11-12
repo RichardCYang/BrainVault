@@ -5473,6 +5473,144 @@ for (const [language, addition] of Object.entries(snapshotAccountTranslationAddi
   Object.assign(catalog.errors, addition.errors);
 }
 
+const usabilityTranslationAdditions = {
+  en: {
+    dialog: {
+      confirmTitle: "Please confirm", promptTitle: "Enter a value", deleteTitle: "Delete?",
+      confirm: "Confirm", ok: "OK", cancel: "Cancel", delete: "Delete", remove: "Remove", archive: "Archive",
+      restore: "Restore", signOut: "Sign out", turnOff: "Turn off", unblock: "Unblock", import: "Import",
+      create: "Create", rename: "Rename", verify: "Verify", deleteHistory: "Delete history",
+      verifyTitle: "Two-step verification", codeLabel: "6-digit code", renameTitle: "Rename passkey",
+      nameLabel: "Name", createCollectionTitle: "New collection"
+    },
+    status: { dismiss: "Dismiss", undo: "Undo", pageRestored: "Page restored." },
+    archive: {
+      open: "Archive", title: "Archived pages",
+      description: "Archived pages are hidden from navigation and search. Restore a page to put it back where it was.",
+      loading: "Loading archived pages…", empty: "No archived pages.", restore: "Restore", restoring: "Restoring…",
+      edited: "Last edited {date}", close: "Close archive", untitled: "Untitled"
+    },
+    account: { themeSystem: "Match system" }
+  },
+  ja: {
+    dialog: {
+      confirmTitle: "確認", promptTitle: "入力", deleteTitle: "削除しますか？",
+      confirm: "確認", ok: "OK", cancel: "キャンセル", delete: "削除", remove: "削除", archive: "アーカイブ",
+      restore: "復元", signOut: "ログアウト", turnOff: "オフにする", unblock: "ブロック解除", import: "インポート",
+      create: "作成", rename: "名前を変更", verify: "確認", deleteHistory: "履歴を削除",
+      verifyTitle: "2段階認証", codeLabel: "6桁のコード", renameTitle: "パスキーの名前を変更",
+      nameLabel: "名前", createCollectionTitle: "新しいコレクション"
+    },
+    status: { dismiss: "閉じる", undo: "元に戻す", pageRestored: "ページを復元しました。" },
+    archive: {
+      open: "アーカイブ", title: "アーカイブ済みのページ",
+      description: "アーカイブしたページはナビゲーションと検索に表示されません。復元すると元の場所に戻ります。",
+      loading: "アーカイブ済みのページを読み込んでいます…", empty: "アーカイブ済みのページはありません。", restore: "復元", restoring: "復元しています…",
+      edited: "最終編集 {date}", close: "アーカイブを閉じる", untitled: "無題"
+    },
+    account: { themeSystem: "システム設定に合わせる" }
+  },
+  ko: {
+    dialog: {
+      confirmTitle: "확인", promptTitle: "입력", deleteTitle: "삭제할까요?",
+      confirm: "확인", ok: "확인", cancel: "취소", delete: "삭제", remove: "제거", archive: "보관",
+      restore: "복원", signOut: "로그아웃", turnOff: "끄기", unblock: "차단 해제", import: "가져오기",
+      create: "만들기", rename: "이름 변경", verify: "확인", deleteHistory: "기록 삭제",
+      verifyTitle: "2단계 인증", codeLabel: "6자리 코드", renameTitle: "패스키 이름 변경",
+      nameLabel: "이름", createCollectionTitle: "새 컬렉션"
+    },
+    status: { dismiss: "닫기", undo: "실행 취소", pageRestored: "문서를 복원했습니다." },
+    archive: {
+      open: "보관함", title: "보관한 문서",
+      description: "보관한 문서는 탐색과 검색에 표시되지 않습니다. 복원하면 원래 위치로 돌아갑니다.",
+      loading: "보관한 문서를 불러오는 중…", empty: "보관한 문서가 없습니다.", restore: "복원", restoring: "복원하는 중…",
+      edited: "마지막 편집 {date}", close: "보관함 닫기", untitled: "제목 없음"
+    },
+    account: { themeSystem: "시스템 설정 따르기" }
+  },
+  fr: {
+    dialog: {
+      confirmTitle: "Confirmation", promptTitle: "Saisir une valeur", deleteTitle: "Supprimer ?",
+      confirm: "Confirmer", ok: "OK", cancel: "Annuler", delete: "Supprimer", remove: "Retirer", archive: "Archiver",
+      restore: "Restaurer", signOut: "Se déconnecter", turnOff: "Désactiver", unblock: "Débloquer", import: "Importer",
+      create: "Créer", rename: "Renommer", verify: "Vérifier", deleteHistory: "Supprimer l’historique",
+      verifyTitle: "Validation en deux étapes", codeLabel: "Code à 6 chiffres", renameTitle: "Renommer la clé d’accès",
+      nameLabel: "Nom", createCollectionTitle: "Nouvelle collection"
+    },
+    status: { dismiss: "Fermer", undo: "Annuler", pageRestored: "Page restaurée." },
+    archive: {
+      open: "Archives", title: "Pages archivées",
+      description: "Les pages archivées sont masquées de la navigation et de la recherche. Restaurez une page pour la remettre à sa place.",
+      loading: "Chargement des pages archivées…", empty: "Aucune page archivée.", restore: "Restaurer", restoring: "Restauration…",
+      edited: "Modifiée le {date}", close: "Fermer les archives", untitled: "Sans titre"
+    },
+    account: { themeSystem: "Suivre le système" }
+  },
+  de: {
+    dialog: {
+      confirmTitle: "Bestätigen", promptTitle: "Wert eingeben", deleteTitle: "Löschen?",
+      confirm: "Bestätigen", ok: "OK", cancel: "Abbrechen", delete: "Löschen", remove: "Entfernen", archive: "Archivieren",
+      restore: "Wiederherstellen", signOut: "Abmelden", turnOff: "Deaktivieren", unblock: "Entsperren", import: "Importieren",
+      create: "Erstellen", rename: "Umbenennen", verify: "Bestätigen", deleteHistory: "Verlauf löschen",
+      verifyTitle: "Zweistufige Bestätigung", codeLabel: "6-stelliger Code", renameTitle: "Passkey umbenennen",
+      nameLabel: "Name", createCollectionTitle: "Neue Sammlung"
+    },
+    status: { dismiss: "Schließen", undo: "Rückgängig", pageRestored: "Seite wiederhergestellt." },
+    archive: {
+      open: "Archiv", title: "Archivierte Seiten",
+      description: "Archivierte Seiten sind in Navigation und Suche ausgeblendet. Stelle eine Seite wieder her, um sie an ihren Platz zurückzubringen.",
+      loading: "Archivierte Seiten werden geladen…", empty: "Keine archivierten Seiten.", restore: "Wiederherstellen", restoring: "Wird wiederhergestellt…",
+      edited: "Zuletzt bearbeitet {date}", close: "Archiv schließen", untitled: "Ohne Titel"
+    },
+    account: { themeSystem: "Systemeinstellung verwenden" }
+  },
+  es: {
+    dialog: {
+      confirmTitle: "Confirmar", promptTitle: "Introduce un valor", deleteTitle: "¿Eliminar?",
+      confirm: "Confirmar", ok: "Aceptar", cancel: "Cancelar", delete: "Eliminar", remove: "Quitar", archive: "Archivar",
+      restore: "Restaurar", signOut: "Cerrar sesión", turnOff: "Desactivar", unblock: "Desbloquear", import: "Importar",
+      create: "Crear", rename: "Cambiar nombre", verify: "Verificar", deleteHistory: "Eliminar historial",
+      verifyTitle: "Verificación en dos pasos", codeLabel: "Código de 6 dígitos", renameTitle: "Cambiar nombre de la llave de acceso",
+      nameLabel: "Nombre", createCollectionTitle: "Nueva colección"
+    },
+    status: { dismiss: "Cerrar", undo: "Deshacer", pageRestored: "Página restaurada." },
+    archive: {
+      open: "Archivo", title: "Páginas archivadas",
+      description: "Las páginas archivadas no aparecen en la navegación ni en la búsqueda. Restaura una página para devolverla a su lugar.",
+      loading: "Cargando páginas archivadas…", empty: "No hay páginas archivadas.", restore: "Restaurar", restoring: "Restaurando…",
+      edited: "Última edición {date}", close: "Cerrar archivo", untitled: "Sin título"
+    },
+    account: { themeSystem: "Usar la configuración del sistema" }
+  },
+  pt: {
+    dialog: {
+      confirmTitle: "Confirmar", promptTitle: "Digite um valor", deleteTitle: "Excluir?",
+      confirm: "Confirmar", ok: "OK", cancel: "Cancelar", delete: "Excluir", remove: "Remover", archive: "Arquivar",
+      restore: "Restaurar", signOut: "Sair", turnOff: "Desativar", unblock: "Desbloquear", import: "Importar",
+      create: "Criar", rename: "Renomear", verify: "Verificar", deleteHistory: "Excluir histórico",
+      verifyTitle: "Verificação em duas etapas", codeLabel: "Código de 6 dígitos", renameTitle: "Renomear chave de acesso",
+      nameLabel: "Nome", createCollectionTitle: "Nova coleção"
+    },
+    status: { dismiss: "Fechar", undo: "Desfazer", pageRestored: "Página restaurada." },
+    archive: {
+      open: "Arquivo", title: "Páginas arquivadas",
+      description: "Páginas arquivadas ficam ocultas na navegação e na pesquisa. Restaure uma página para devolvê-la ao lugar original.",
+      loading: "Carregando páginas arquivadas…", empty: "Nenhuma página arquivada.", restore: "Restaurar", restoring: "Restaurando…",
+      edited: "Última edição {date}", close: "Fechar arquivo", untitled: "Sem título"
+    },
+    account: { themeSystem: "Seguir o sistema" }
+  }
+};
+
+for (const [language, addition] of Object.entries(usabilityTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  catalog.dialog = { ...catalog.dialog, ...addition.dialog };
+  catalog.archive = { ...catalog.archive, ...addition.archive };
+  Object.assign(catalog.status, addition.status);
+  Object.assign(catalog.account, addition.account);
+}
+
 function readStorage(key) {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;

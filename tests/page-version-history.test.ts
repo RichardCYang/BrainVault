@@ -75,7 +75,7 @@ describe("Page version history", () => {
     expect(client).toContain("const pageVersionResetRequestTimeoutMs = 15_000");
     expect(client).toMatch(/submitPageVersionResetTask[\s\S]*mutationTimeoutMs: pageVersionResetRequestTimeoutMs/);
     expect(client).toContain('method: "DELETE"');
-    expect(client).toContain("window.confirm");
+    expect(client).toContain('message: t("versions.resetConfirm", { title })');
     expect(client).toContain("createPageVersionFieldChange");
     expect(styles).toContain(".page-version-history-dialog");
     expect(styles).toContain(".page-version-before-after");

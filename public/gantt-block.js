@@ -1,5 +1,6 @@
 import { joinSummaryPrefix } from "./summary-prefix.js";
 import { formatDateTime, formatNumber, t } from "./i18n.js";
+import { showConfirmDialog } from "./app-dialog.js";
 
 export const ganttLimits = Object.freeze({
   titleLength: 120,
@@ -821,9 +822,16 @@ export function createGanttEditor(row, value, { onDirty = () => {} } = {}) {
       replaceEditor({ taskId: task.id, field: "title" });
     } else if (action === "gantt-delete-task") {
       const task = gantt.tasks.find((item) => item.id === button.dataset.taskId);
-      if (!task || !window.confirm(t("gantt.confirmDeleteTask", { task: task.title || t("gantt.untitledTask") }))) return;
-      gantt.tasks = gantt.tasks.filter((item) => item.id !== task.id);
-      replaceEditor();
+      if (!task) return;
+      void showConfirmDialog({
+        message: t("gantt.confirmDeleteTask", { task: task.title || t("gantt.untitledTask") }),
+        confirmLabel: t("dialog.delete"),
+        danger: true
+      }).then((confirmed) => {
+        if (!confirmed || !editor.isConnected) return;
+        gantt.tasks = gantt.tasks.filter((item) => item.id !== task.id);
+        replaceEditor();
+      });
     }
   });
 

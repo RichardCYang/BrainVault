@@ -100,7 +100,7 @@ describe("Account settings routes", () => {
     await request(createApp())
       .patch("/api/auth/profile")
       .set("Authorization", `Bearer ${token}`)
-      .send({ theme: "system" })
+      .send({ theme: "sepia" })
       .expect(400);
   });
 
