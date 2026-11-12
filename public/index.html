@@ -352,8 +352,8 @@
             >📁</button>
             <h2 id="collection-view-title" class="collection-view-title"></h2>
             <div class="collection-view-actions">
-              <button id="collection-add-page-button" type="button" class="secondary">Add page</button>
-              <button id="share-collection-button" type="button" class="secondary">Share collection</button>
+              <button id="collection-add-page-button" type="button" class="secondary" data-i18n="collectionSharing.addPage">Add page</button>
+              <button id="share-collection-button" type="button" class="secondary" data-i18n="collectionSharing.button">Share collection</button>
             </div>
           </div>
           <div id="collection-view-list" class="collection-view-list document-tree"></div>
@@ -413,13 +413,56 @@
                 <span id="collaboration-presence" class="collaboration-presence" aria-label="Active collaborators"></span>
               </div>
               <button id="share-page-button" type="button" class="secondary share-page-button hidden" data-i18n="sharing.button">Share</button>
-              <span id="page-mode-badge" class="page-mode-badge" role="status">
-                <span class="page-mode-badge-icon" aria-hidden="true">◉</span>
-                <span id="page-mode-badge-label" data-i18n="page.readMode">Read mode</span>
-              </span>
-              <button id="save-page-button" type="button" class="secondary" data-i18n="page.save">Save</button>
+              <button
+                id="page-mode-badge"
+                type="button"
+                class="page-mode-badge"
+                aria-label="Switch to write mode"
+                title="Switch to write mode"
+              >
+                <span id="page-mode-badge-icon" class="page-mode-badge-icon" aria-hidden="true">✎</span>
+                <span id="page-mode-badge-label" data-i18n="page.startEditing">Edit</span>
+              </button>
+              <button
+                id="save-page-button"
+                type="button"
+                class="secondary page-save-state"
+                data-save-state="saved"
+                aria-keyshortcuts="Control+S Meta+S"
+              >Saved</button>
             </div>
           </div>
+
+          <section
+            id="subpage-index"
+            class="subpage-index hidden"
+            aria-labelledby="subpage-index-heading"
+          >
+            <div class="subpage-index-header">
+              <div>
+                <p class="subpage-index-eyebrow" data-i18n="page.subpagesEyebrow">Page index</p>
+                <h2 id="subpage-index-heading" data-i18n="page.subpagesTitle">Subpages</h2>
+              </div>
+              <span id="subpage-index-count" class="subpage-index-count" aria-hidden="true"></span>
+            </div>
+            <nav
+              id="subpage-index-list"
+              class="subpage-index-list"
+              aria-label="Subpages"
+              data-i18n-aria-label="page.subpagesAria"
+            ></nav>
+          </section>
+
+          <section class="document-editor" aria-labelledby="document-editor-heading">
+            <div class="section-title-row block-editor-header">
+              <div>
+                <h2 id="document-editor-heading" data-i18n="page.content">Page content</h2>
+                <p id="block-editor-help" class="block-editor-help" data-i18n-html="page.editorHelp">Press <kbd>Enter</kbd> for a new block · <kbd>Shift</kbd> + <kbd>Enter</kbd> for a line break · <kbd>Backspace</kbd> on an empty block to delete it</p>
+              </div>
+              <span id="block-count" class="muted"></span>
+            </div>
+            <div id="block-list" class="block-list block-row-editor" aria-label="Unified block document editor" data-i18n-aria-label="page.editorAria"></div>
+          </section>
 
           <section id="page-comments" class="page-comments" aria-labelledby="page-comments-summary-label">
             <button
@@ -464,37 +507,6 @@
               </form>
             </div>
           </section>
-
-          <section
-            id="subpage-index"
-            class="subpage-index hidden"
-            aria-labelledby="subpage-index-heading"
-          >
-            <div class="subpage-index-header">
-              <div>
-                <p class="subpage-index-eyebrow" data-i18n="page.subpagesEyebrow">Page index</p>
-                <h2 id="subpage-index-heading" data-i18n="page.subpagesTitle">Subpages</h2>
-              </div>
-              <span id="subpage-index-count" class="subpage-index-count" aria-hidden="true"></span>
-            </div>
-            <nav
-              id="subpage-index-list"
-              class="subpage-index-list"
-              aria-label="Subpages"
-              data-i18n-aria-label="page.subpagesAria"
-            ></nav>
-          </section>
-
-          <section class="document-editor" aria-labelledby="document-editor-heading">
-            <div class="section-title-row block-editor-header">
-              <div>
-                <h2 id="document-editor-heading" data-i18n="page.content">Page content</h2>
-                <p id="block-editor-help" class="block-editor-help" data-i18n-html="page.editorHelp">Press <kbd>Enter</kbd> for a new block · <kbd>Shift</kbd> + <kbd>Enter</kbd> for a line break · <kbd>Backspace</kbd> on an empty block to delete it</p>
-              </div>
-              <span id="block-count" class="muted"></span>
-            </div>
-            <div id="block-list" class="block-list block-row-editor" aria-label="Unified block document editor" data-i18n-aria-label="page.editorAria"></div>
-          </section>
         </section>
       </main>
     </div>
@@ -508,7 +520,7 @@
             <h2 id="page-cover-dialog-title" data-i18n="cover.dialogTitle">Choose a cover</h2>
             <p data-i18n="cover.dialogDescription">Use a built-in cover or upload your own image.</p>
           </div>
-          <button id="page-cover-dialog-close" class="page-cover-dialog-close" type="button" data-i18n-aria-label="cover.close" aria-label="Close cover picker">×</button>
+          <button id="page-cover-dialog-close" class="page-cover-dialog-close" type="button" data-i18n-aria-label="cover.close" aria-label="Close cover picker"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg></button>
         </header>
         <div class="page-cover-default-grid" data-i18n-aria-label="cover.defaultsAria" aria-label="Default cover images">
           <button type="button" class="page-cover-option" data-cover-url="/img/default_cover/coverimg1.png"><img data-cover-preview-src="/img/default_cover/thumbnails/coverimg1.webp" alt="" loading="lazy" decoding="async" /><span data-i18n="cover.defaultOption">Default cover</span></button>
@@ -559,7 +571,7 @@
             title="Close sharing dialog"
             data-i18n-aria-label="sharing.close"
             data-i18n-title="sharing.close"
-          >×</button>
+          ><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg></button>
         </header>
         <form id="share-page-form" class="share-page-form">
           <label for="share-page-username" data-i18n="sharing.usernameLabel">User login ID</label>
@@ -593,6 +605,7 @@
         class="share-page-backdrop"
         type="button"
         aria-label="Close collection sharing dialog"
+        data-i18n-aria-label="collectionSharing.close"
         tabindex="-1"
       ></button>
       <section
@@ -605,27 +618,27 @@
       >
         <header class="share-page-header">
           <div>
-            <p class="kicker">Collection collaboration</p>
-            <h2 id="share-collection-title">Share this collection</h2>
-            <p class="muted">Collection access overrides page-level sharing. Choose read, read/write, or administrator access.</p>
+            <p class="kicker" data-i18n="collectionSharing.kicker">Collection collaboration</p>
+            <h2 id="share-collection-title" data-i18n="collectionSharing.title">Share this collection</h2>
+            <p class="muted" data-i18n="collectionSharing.description">Collection access overrides page-level sharing. Choose read, read/write, or administrator access.</p>
           </div>
-          <button id="share-collection-close" class="share-page-close" type="button" aria-label="Close collection sharing dialog">×</button>
+          <button id="share-collection-close" class="share-page-close" type="button" aria-label="Close collection sharing dialog" title="Close collection sharing dialog" data-i18n-aria-label="collectionSharing.close" data-i18n-title="collectionSharing.close"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg></button>
         </header>
         <form id="share-collection-form" class="share-page-form">
-          <label for="share-collection-username">User login ID</label>
+          <label for="share-collection-username" data-i18n="collectionSharing.usernameLabel">User login ID</label>
           <div class="share-page-form-row collection-share-form-row">
-            <input id="share-collection-username" type="text" required minlength="3" maxlength="40" autocomplete="off" spellcheck="false" placeholder="username" />
-            <select id="share-collection-permission" aria-label="Collection permission">
-              <option value="READ">Read</option>
-              <option value="WRITE">Read / write</option>
-              <option value="ADMIN">Administrator</option>
+            <input id="share-collection-username" type="text" required minlength="3" maxlength="40" autocomplete="off" spellcheck="false" placeholder="username" data-i18n-placeholder="sharing.usernamePlaceholder" />
+            <select id="share-collection-permission" aria-label="Collection permission" data-i18n-aria-label="collectionSharing.permissionAria">
+              <option value="READ" data-i18n="collectionSharing.permissionRead">Read</option>
+              <option value="WRITE" data-i18n="collectionSharing.permissionWrite">Read / write</option>
+              <option value="ADMIN" data-i18n="collectionSharing.permissionAdmin">Administrator</option>
             </select>
-            <button id="share-collection-submit" type="submit">Add user</button>
+            <button id="share-collection-submit" type="submit" data-i18n="collectionSharing.add">Add user</button>
           </div>
         </form>
         <p id="share-collection-message" class="share-page-message" role="status" aria-live="polite"></p>
         <div class="share-page-list-heading">
-          <strong>People with collection access</strong>
+          <strong data-i18n="collectionSharing.peopleWithAccess">People with collection access</strong>
           <span id="share-collection-count" class="muted"></span>
         </div>
         <ul id="share-collection-list" class="share-page-list"></ul>
@@ -1022,6 +1035,11 @@
                 </article>
                 </section>
 
+                <details class="account-security-advanced">
+                  <summary>
+                    <span class="account-security-advanced-title" data-i18n="account.advancedSecurityTitle">Advanced sign-in policies</span>
+                    <span class="account-security-advanced-description" data-i18n="account.advancedSecurityDescription">Limit authenticator attempts by IP and restrict sign-ins by country.</span>
+                  </summary>
                 <section class="account-security-section totp-ip-block-policy-section" aria-labelledby="account-totp-ip-block-title">
                   <div class="account-security-section-heading">
                     <div>
@@ -1113,6 +1131,7 @@
                     </div>
                   </div>
                 </section>
+                </details>
 
                 <section class="account-security-section" aria-labelledby="account-password-title">
                 <div class="account-security-section-heading">
@@ -1298,6 +1317,14 @@
         </svg>
         <span data-i18n="navigationMenu.movePage">Move to another page</span>
       </button>
+      <button id="navigation-archive-page-button" type="button" data-action="archive-navigation-page" role="menuitem">
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path class="icon-duo" d="M3.5 3.5h17v3h-17z"></path><path d="M4.5 6.5h15v13h-15z"></path>
+          <path d="M3.5 3.5h17v3h-17zM9 11h6"></path>
+        </svg>
+        <span data-i18n="navigationMenu.archivePage">Archive</span>
+      </button>
+      <div class="page-action-menu-separator" role="separator"></div>
       <button type="button" data-action="delete-navigation-item" class="danger-menu-item" role="menuitem">
         <svg aria-hidden="true" viewBox="0 0 24 24">
           <path class="icon-duo" d="M7 7h10l-1 13H8z"></path><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"></path>
@@ -1481,7 +1508,7 @@
         <span aria-hidden="true">↗</span>
         <span data-i18n="menu.moveBlock">Move to another page</span>
       </button>
-      <button type="button" data-action="save-block" role="menuitem">
+      <button id="block-save-menu-item" type="button" data-action="save-block" role="menuitem">
         <span aria-hidden="true">✓</span>
         <span data-i18n="menu.saveBlock">Save block</span>
       </button>
@@ -1508,7 +1535,7 @@
             type="button"
             aria-label="Close archive"
             data-i18n-aria-label="archive.close"
-          >×</button>
+          ><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg></button>
         </header>
         <p id="archive-dialog-message" class="block-move-message" role="status" aria-live="polite"></p>
         <ul id="archive-list" class="archive-list"></ul>
@@ -1533,8 +1560,21 @@
             type="button"
             aria-label="Close move dialog"
             data-i18n-aria-label="blockMove.close"
-          >×</button>
+          ><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg></button>
         </header>
+        <label class="block-move-field" for="block-move-page-filter">
+          <span data-i18n="blockMove.filterLabel">Find a page</span>
+          <input
+            id="block-move-page-filter"
+            class="move-destination-filter"
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            aria-controls="block-move-page-select"
+            placeholder="Type to filter pages…"
+            data-i18n-placeholder="blockMove.filterPlaceholder"
+          />
+        </label>
         <label class="block-move-field" for="block-move-page-select">
           <span data-i18n="blockMove.destination">Destination page</span>
           <select id="block-move-page-select" required></select>
@@ -1565,8 +1605,21 @@
             type="button"
             aria-label="Close page move dialog"
             data-i18n-aria-label="pageMove.close"
-          >×</button>
+          ><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg></button>
         </header>
+        <label class="block-move-field" for="page-move-page-filter">
+          <span data-i18n="pageMove.filterLabel">Find a page</span>
+          <input
+            id="page-move-page-filter"
+            class="move-destination-filter"
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            aria-controls="page-move-page-select"
+            placeholder="Type to filter pages…"
+            data-i18n-placeholder="pageMove.filterPlaceholder"
+          />
+        </label>
         <label class="block-move-field" for="page-move-page-select">
           <span data-i18n="pageMove.destination">Destination parent page</span>
           <select id="page-move-page-select" required></select>
@@ -1661,7 +1714,7 @@
               title="Close"
               data-i18n-aria-label="emoji.close"
               data-i18n-title="emoji.close"
-            >×</button>
+            ><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg></button>
           </div>
         </header>
 

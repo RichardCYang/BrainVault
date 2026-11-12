@@ -1263,7 +1263,9 @@ button.page-view-path-segment:focus-visible {
 
 .page-comments {
   width: min(100%, 46rem);
-  margin: -1.08rem 0 1.65rem;
+  margin: 2.25rem 0 1.5rem;
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
 }
 
 .page-comments-toggle {
@@ -19201,5 +19203,136 @@ body.auth-mode {
 
   .status-dismiss {
     width: 2.5rem;
+  }
+}
+
+/* Page toolbar: Edit/Done toggle and autosave indicator.
+   The toggle names the action it performs; "Edit" is the primary call to
+   action in read mode, "Done" is a quiet secondary control in write mode. */
+.page-toolbar .button-row button.page-mode-badge,
+.app-mode .page-toolbar .button-row button.page-mode-badge {
+  gap: 0.36rem;
+  border-color: transparent;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+  padding-inline: 0.85rem;
+}
+
+.page-toolbar .button-row button.page-mode-badge:hover,
+.app-mode .page-toolbar .button-row button.page-mode-badge:hover {
+  border-color: transparent;
+  background: var(--accent-hover);
+  color: var(--accent-ink);
+}
+
+.page-toolbar .button-row button.page-mode-badge.is-write-mode,
+.app-mode .page-toolbar .button-row button.page-mode-badge.is-write-mode {
+  border-color: var(--chrome-line, var(--line-strong));
+  background: transparent;
+  color: var(--ink);
+}
+
+.page-toolbar .button-row button.page-mode-badge.is-write-mode:hover,
+.app-mode .page-toolbar .button-row button.page-mode-badge.is-write-mode:hover {
+  border-color: var(--chrome-line-strong, var(--line-strong));
+  background: var(--chrome-surface-soft, var(--panel));
+}
+
+.page-mode-badge .page-mode-badge-icon {
+  font-size: 0.9em;
+}
+
+.page-toolbar .button-row button.page-save-state[data-save-state="saved"],
+.page-toolbar .button-row button.page-save-state[data-save-state="saving"],
+.app-mode .page-toolbar .button-row button.page-save-state[data-save-state="saved"],
+.app-mode .page-toolbar .button-row button.page-save-state[data-save-state="saving"] {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 560;
+}
+
+.page-toolbar .button-row button.page-save-state[data-save-state="saved"]:hover,
+.app-mode .page-toolbar .button-row button.page-save-state[data-save-state="saved"]:hover {
+  color: var(--ink);
+}
+
+.page-toolbar .button-row button.page-save-state[data-save-state="error"],
+.app-mode .page-toolbar .button-row button.page-save-state[data-save-state="error"] {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* Every dialog close button uses the same stroked X icon. */
+:is(.page-cover-dialog-close, .share-page-close, .block-move-dialog-close, .emoji-picker-close) svg {
+  width: 1.05rem;
+  height: 1.05rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* Rarely used, high-impact sign-in policies stay one click away instead of
+   filling the security page by default. */
+.account-security-advanced {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 0 1rem;
+}
+
+.account-security-advanced > summary {
+  display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr);
+  column-gap: 0.35rem;
+  row-gap: 0.2rem;
+  padding: 0.9rem 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.account-security-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.account-security-advanced > summary::before {
+  content: "▸";
+  grid-row: 1 / span 2;
+  align-self: start;
+  display: block;
+  width: 1rem;
+  line-height: 1.5;
+  text-align: center;
+  transform-origin: 50% 50%;
+  color: var(--muted);
+  transition: transform 120ms ease;
+}
+
+.account-security-advanced[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.account-security-advanced-title {
+  color: var(--ink-strong);
+  font-weight: 650;
+}
+
+.account-security-advanced-description {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.account-security-advanced[open] {
+  padding-bottom: 1rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-security-advanced > summary::before {
+    transition: none;
   }
 }

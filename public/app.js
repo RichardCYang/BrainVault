@@ -1392,6 +1392,7 @@ const elements = {
   pageVersionHistoryDetailEmpty: $("#page-version-history-detail-empty"),
   pageVersionHistoryDetail: $("#page-version-history-detail"),
   pageModeBadge: $("#page-mode-badge"),
+  pageModeBadgeIcon: $("#page-mode-badge-icon"),
   pageModeBadgeLabel: $("#page-mode-badge-label"),
   pageView: $("#page-view"),
   pageCover: $("#page-cover"),
@@ -1441,6 +1442,7 @@ const elements = {
   sharePageButton: $("#share-page-button"),
   exportPdfButton: $("#export-pdf-button"),
   savePageButton: $("#save-page-button"),
+  blockSaveMenuItem: $("#block-save-menu-item"),
   archivePageButton: $("#archive-page-button"),
   sharePageLayer: $("#share-page-layer"),
   sharePageBackdrop: $("#share-page-backdrop"),
@@ -1478,6 +1480,7 @@ const elements = {
   blockMoveForm: $("#block-move-form"),
   blockMoveClose: $("#block-move-close"),
   blockMovePageSelect: $("#block-move-page-select"),
+  blockMovePageFilter: $("#block-move-page-filter"),
   blockMoveMessage: $("#block-move-message"),
   blockMoveCancel: $("#block-move-cancel"),
   blockMoveSubmit: $("#block-move-submit"),
@@ -1485,10 +1488,12 @@ const elements = {
   navigationAddSubpageButton: $("#navigation-add-subpage-button"),
   navigationMovePageButton: $("#navigation-move-page-button"),
   navigationDeleteLabel: $("#navigation-delete-label"),
+  navigationArchivePageButton: $("#navigation-archive-page-button"),
   pageMoveDialog: $("#page-move-dialog"),
   pageMoveForm: $("#page-move-form"),
   pageMoveClose: $("#page-move-close"),
   pageMovePageSelect: $("#page-move-page-select"),
+  pageMovePageFilter: $("#page-move-page-filter"),
   pageMoveMessage: $("#page-move-message"),
   pageMoveCancel: $("#page-move-cancel"),
   pageMoveSubmit: $("#page-move-submit"),
@@ -4777,9 +4782,12 @@ function handleWorkspaceSearchShortcut(event) {
   openSearchDialog();
 }
 
-async function performWorkspaceSearch() {
+async function performWorkspaceSearch({ live = false } = {}) {
+  window.clearTimeout(liveSearchTimer);
+  liveSearchTimer = null;
   const query = elements.searchInput.value.trim();
-  elements.searchInput.value = query;
+  // Live (as-you-type) searches must not rewrite the field under the caret.
+  if (!live) elements.searchInput.value = query;
   syncSearchClearButton();
 
   if (!query) {
@@ -4801,7 +4809,7 @@ async function performWorkspaceSearch() {
     state.searchResults = Array.isArray(data?.results) ? data.results : [];
     state.searchLoading = false;
     renderSearchDialog();
-    setStatus(t("status.searchLoaded"));
+    if (!live) setStatus(t("status.searchLoaded"));
   } catch (error) {
     if (requestId !== state.searchRequestId || !state.searchDialogOpen) return;
     state.searchLoading = false;
@@ -7587,7 +7595,15 @@ function reportReadOnlyBlocked() {
     setStatus(t("sharing.syncRequired"), true);
     return;
   }
-  setStatus(t("status.readOnlyBlocked"));
+  const canSwitchToWrite = canEditPage() && !isPageInteractionLocked() && !isPageModeMutationFenced();
+  setStatus(t("status.readOnlyBlocked"), false, canSwitchToWrite ? {
+    action: {
+      label: t("page.startEditing"),
+      onSelect: () => {
+        void setPageMode(pageModes.WRITE).catch((error) => setStatus(error.message, true));
+      }
+    }
+  } : {});
 }
 
 function requireWritablePage({ announce = true } = {}) {
@@ -7746,6 +7762,7 @@ function syncPageModeUi({ contentRebuilt = false, focusPending = false } = {}) {
   elements.pageIconButton.disabled = controlsReadOnly || !manager;
   elements.savePageButton.disabled = controlsReadOnly;
   elements.savePageButton.classList.toggle("hidden", readOnly);
+  syncPageSaveIndicator({ force: true });
   elements.archivePageButton.disabled = controlsReadOnly || !manager;
   elements.archivePageButton.classList.toggle("hidden", !manager);
   elements.sharePageButton.classList.toggle("hidden", !state.selectedPage || !canManagePageSharing());
@@ -7763,8 +7780,16 @@ function syncPageModeUi({ contentRebuilt = false, focusPending = false } = {}) {
   elements.pageModeToggleIcon.textContent = readOnly ? "◉" : "✎";
   elements.pageModeToggleLabel.textContent = t(modeLabelKey);
   elements.pageModeToggleDescription.textContent = t(modeDescriptionKey);
+  // The toolbar button is the primary way in and out of write mode: it names
+  // the action it performs ("Edit" / "Done") rather than the current state.
+  const modeActionAriaKey = readOnly ? "page.startEditingAria" : "page.finishEditingAria";
+  elements.pageModeBadge.classList.toggle("hidden", !state.selectedPage || !canEdit);
+  elements.pageModeBadge.disabled = elements.pageModeToggle.disabled;
   elements.pageModeBadge.classList.toggle("is-write-mode", !readOnly);
-  elements.pageModeBadgeLabel.textContent = t(modeLabelKey);
+  elements.pageModeBadge.setAttribute("aria-label", t(modeActionAriaKey));
+  elements.pageModeBadge.title = t(modeActionAriaKey);
+  elements.pageModeBadgeIcon.textContent = readOnly ? "✎" : "✓";
+  elements.pageModeBadgeLabel.textContent = t(readOnly ? "page.startEditing" : "page.finishEditing");
   syncPageCoverControls();
 
   // syncPageModeUi() is also the cheap status/lock refresh path. Only walk every
@@ -7835,8 +7860,23 @@ function handleBeforeUnload(event) {
   event.returnValue = "";
 }
 
+// The toolbar save control doubles as the autosave indicator: "Saved" when
+// everything reached the server, "Saving…" while edits are pending (clicking
+// saves now), and "Retry save" after a failure.
+function syncPageSaveIndicator({ force = false, pending = hasPendingPageEdits() } = {}) {
+  const button = elements.savePageButton;
+  const hasError = Boolean(elements.blockList.querySelector(".editor-block-row.save-error"));
+  const saveState = hasError ? "error" : pending ? "saving" : "saved";
+  if (!force && button.dataset.saveState === saveState) return;
+  button.dataset.saveState = saveState;
+  const labelKey = saveState === "error" ? "page.saveRetry" : saveState === "saving" ? "page.saving" : "page.saved";
+  button.textContent = t(labelKey);
+  button.title = t("page.saveNowTitle");
+}
+
 function syncBeforeUnloadProtection() {
   const shouldProtect = hasPendingPageEdits();
+  syncPageSaveIndicator({ pending: shouldProtect });
   if (shouldProtect === beforeUnloadProtectionActive) return;
   beforeUnloadProtectionActive = shouldProtect;
   if (shouldProtect) window.addEventListener("beforeunload", handleBeforeUnload);
@@ -9292,6 +9332,10 @@ function openNavigationContextMenu(trigger, { focusFirst = false } = {}) {
   elements.navigationAddSubpageButton.disabled = state.workspaceCreateBusy;
   elements.navigationMovePageButton.classList.toggle("hidden", kind !== "page");
   elements.navigationMovePageButton.disabled = kind !== "page" || pageMoveSubmitting;
+  // Archiving is the reversible way to remove a page, so it sits before the
+  // permanent delete and is offered wherever the page can be managed.
+  elements.navigationArchivePageButton.classList.toggle("hidden", kind !== "page");
+  elements.navigationArchivePageButton.disabled = kind !== "page" || !canManagePage(getPageSummaryById(id));
   elements.navigationDeleteLabel.textContent = t(
     kind === "collection" ? "navigationMenu.deleteCollection" : "navigationMenu.deletePage"
   );
@@ -9299,7 +9343,7 @@ function openNavigationContextMenu(trigger, { focusFirst = false } = {}) {
   if (deleteButton) {
     const ownerRequired = kind === "collection" && !isPageOwner(getPageSummaryById(id));
     deleteButton.disabled = ownerRequired;
-    deleteButton.title = ownerRequired ? "Only the workspace owner can permanently delete a collection root." : "";
+    deleteButton.title = ownerRequired ? t("ownership.deleteCollectionOwnerOnly") : "";
   }
   positionNavigationContextMenu(trigger);
 
@@ -9362,6 +9406,48 @@ function getPageMoveDestinationLabel(page) {
   return getPagePathSegments(page, pageLookup).map(({ title }) => title).join(" / ");
 }
 
+// Destination pickers can hold every page in the workspace. A filter field
+// narrows the <select> by path text so long lists stay usable.
+const moveDestinationOptionLists = new WeakMap();
+
+function rememberMoveDestinationOptions(select, filterInput) {
+  moveDestinationOptionLists.set(select, [...select.options]);
+  if (filterInput) {
+    filterInput.value = "";
+    filterInput.disabled = select.options.length <= 1;
+  }
+}
+
+function filterMoveDestinationOptions(select, query) {
+  const allOptions = moveDestinationOptionLists.get(select);
+  if (!allOptions) return;
+  const needle = String(query ?? "").trim().toLocaleLowerCase(getLocale());
+  const [placeholder, ...destinations] = allOptions;
+  const selectedValue = select.value;
+  const matches = needle
+    ? destinations.filter((option) => option.textContent.toLocaleLowerCase(getLocale()).includes(needle))
+    : destinations;
+  select.replaceChildren(placeholder, ...matches);
+  if (matches.length === 1) select.value = matches[0].value;
+  else if (matches.some((option) => option.value === selectedValue)) select.value = selectedValue;
+  else select.value = "";
+}
+
+for (const [filterInput, select] of [
+  [elements.pageMovePageFilter, elements.pageMovePageSelect],
+  [elements.blockMovePageFilter, elements.blockMovePageSelect]
+]) {
+  filterInput.addEventListener("input", () => filterMoveDestinationOptions(select, filterInput.value));
+  filterInput.addEventListener("keydown", (event) => {
+    // Enter in the filter should pick the narrowed destination, not submit an
+    // empty choice; ArrowDown hands focus to the list.
+    if (event.key === "ArrowDown" || (event.key === "Enter" && !select.value)) {
+      event.preventDefault();
+      select.focus();
+    }
+  });
+}
+
 function setPageMoveMessage(message = "", isError = false) {
   elements.pageMoveMessage.textContent = message;
   elements.pageMoveMessage.classList.toggle("is-error", Boolean(isError));
@@ -9401,6 +9487,7 @@ function renderPageMoveDestinations() {
     option.textContent = getPageMoveDestinationLabel(page, pageLookup);
     elements.pageMovePageSelect.append(option);
   }
+  rememberMoveDestinationOptions(elements.pageMovePageSelect, elements.pageMovePageFilter);
 
   setPageMoveMessage(destinations.length ? "" : t("pageMove.noDestinations"), destinations.length === 0);
   setPageMoveSubmitting(false);
@@ -9433,7 +9520,7 @@ function openPageMoveDialog(pageId, returnFocus = null) {
   renderPageMoveDestinations();
   if (!elements.pageMoveDialog.open) elements.pageMoveDialog.showModal();
   if (elements.pageMovePageSelect.disabled) elements.pageMoveCancel.focus();
-  else elements.pageMovePageSelect.focus();
+  else elements.pageMovePageFilter.focus();
 }
 
 async function submitPageMoveMutation(
@@ -9818,12 +9905,33 @@ async function submitPageDeleteTask(task, authenticationScope, { requestGuard = 
   }
 }
 
+// Archive from the sidebar reuses the page-level archive flow (confirmation,
+// pending-edit flush, cross-tab persistence fence and Undo) rather than a
+// second code path: open the page ready for changes, then archive it there.
+async function archiveNavigationPage() {
+  const target = state.activeNavigationMenuTarget;
+  if (!target || target.kind !== "page") return;
+  closeNavigationContextMenu();
+  closeMobileSidebar({ restoreFocus: false });
+  if (state.workspaceView !== "page" || state.selectedPage?.id !== target.id) {
+    await openPage(target.id, { requestedPageMode: pageModes.WRITE });
+  } else if (isPageReadOnly()) {
+    await setPageMode(pageModes.WRITE, { announce: false });
+  }
+  if (state.workspaceView !== "page" || state.selectedPage?.id !== target.id) return;
+  if (elements.archivePageButton.disabled || elements.archivePageButton.classList.contains("hidden")) {
+    reportReadOnlyBlocked();
+    return;
+  }
+  elements.archivePageButton.click();
+}
+
 async function deleteNavigationTarget() {
   const target = state.activeNavigationMenuTarget;
   if (!target) return;
   if (target.kind === "collection" && !isPageOwner(getPageSummaryById(target.id))) {
     closeNavigationContextMenu({ restoreFocus: true });
-    throw new Error("Only the workspace owner can permanently delete a collection root.");
+    throw new Error(t("ownership.deleteCollectionOwnerOnly"));
   }
   // Page writer sessions are fenced by the page owner's workspace, not by
   // the acting administrator. Bind that owner before any asynchronous wait so
@@ -10415,7 +10523,7 @@ function appendServerRecoveryCandidatePanel() {
   for (const candidate of serverRecoveryCandidates) {
     if (candidate.untrusted || candidate.principalId !== candidate.ownerId) {
       const warning = document.createElement("p");
-      warning.textContent = "Untrusted collaborator recovery draft. Download only after verifying its author; it is never restored automatically.";
+      warning.textContent = t("recovery.untrustedDraftWarning");
       panel.append(warning);
     }
     const details = document.createElement("pre");
@@ -11802,7 +11910,7 @@ function renderSharePageList() {
     remove.textContent = t("sharing.remove");
     const ownerCanRevoke = isPageOwner(state.selectedPage);
     remove.disabled = !ownerCanRevoke;
-    if (!ownerCanRevoke) remove.title = "Only the workspace owner can revoke a direct page grant.";
+    if (!ownerCanRevoke) remove.title = t("ownership.revokeOwnerOnly");
     item.append(avatar, copy, remove);
     elements.sharePageList.append(item);
   }
@@ -11902,7 +12010,7 @@ function renderShareCollectionList() {
   if (!state.shareCollectionEntries.length) {
     const empty = document.createElement("li");
     empty.className = "share-page-empty";
-    empty.textContent = "Only you can access this collection.";
+    empty.textContent = t("collectionSharing.onlyYou");
     elements.shareCollectionList.append(empty);
     return;
   }
@@ -11934,7 +12042,11 @@ function renderShareCollectionList() {
     permission.dataset.username = share.user?.username ?? "";
     permission.dataset.generation = share.generation ?? "";
     permission.setAttribute("aria-label", `Permission for @${share.user?.username ?? "user"}`);
-    for (const [value, label] of [["READ", "Read"], ["WRITE", "Read / write"], ["ADMIN", "Administrator"]]) {
+    for (const [value, label] of [
+      ["READ", t("collectionSharing.permissionRead")],
+      ["WRITE", t("collectionSharing.permissionWrite")],
+      ["ADMIN", t("collectionSharing.permissionAdmin")]
+    ]) {
       const option = document.createElement("option");
       option.value = value;
       option.textContent = label;
@@ -15128,6 +15240,7 @@ function renderBlockMoveDestinations() {
     option.textContent = getBlockMoveDestinationLabel(page, pageLookup);
     elements.blockMovePageSelect.append(option);
   }
+  rememberMoveDestinationOptions(elements.blockMovePageSelect, elements.blockMovePageFilter);
 
   setBlockMoveMessage(destinations.length ? "" : t("blockMove.noDestinations"), destinations.length === 0);
   setBlockMoveSubmitting(false);
@@ -15160,7 +15273,7 @@ function openBlockMoveDialog(blockId, returnFocus = null) {
   renderBlockMoveDestinations();
   if (!elements.blockMoveDialog.open) elements.blockMoveDialog.showModal();
   if (elements.blockMovePageSelect.disabled) elements.blockMoveCancel.focus();
-  else elements.blockMovePageSelect.focus();
+  else elements.blockMovePageFilter.focus();
 }
 
 function closeBlockContextMenu({ restoreFocus = false } = {}) {
@@ -15223,6 +15336,12 @@ function openBlockContextMenu(row, handle, { focusFirst = false } = {}) {
   syncCalloutTypeMenu(row);
   syncAccordionOptionsMenu(row);
   elements.blockMoveMenuItem.classList.toggle("hidden", !canMoveBlockFromPage());
+  // Blocks save automatically; a manual save is only meaningful to retry a
+  // failed save or to keep this tab's version of a conflicting draft.
+  elements.blockSaveMenuItem.classList.toggle(
+    "hidden",
+    !(row.classList.contains("save-error") || row.dataset.draftConflict === "true")
+  );
   positionBlockContextMenu(handle);
 
   if (focusFirst) getBlockContextMenuItems()[0]?.focus();
@@ -19478,10 +19597,30 @@ async function createWorkspacePage(
     if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
     clearAcknowledgedTask();
     setStatus(t(createdKey, createdArgs));
+    // A page that was just created exists to be written in: enter write mode
+    // and put the caret in the title so the user can name it immediately.
+    if (!payload.isCollection) await enterWriteModeForCreatedPage(data.page.id);
     return { applied: true, page: data.page };
   } finally {
     if (isCurrentAuthenticatedSessionScope(authenticationScope)) setWorkspaceCreateBusy(false);
   }
+}
+
+async function enterWriteModeForCreatedPage(pageId) {
+  const isCreatedPageCurrent = () => (
+    state.workspaceView === "page" && state.selectedPage?.id === pageId
+  );
+  if (!isCreatedPageCurrent() || !canEditPage()) return;
+  try {
+    await setPageMode(pageModes.WRITE, { announce: false });
+  } catch (error) {
+    // The page itself was created; staying in read mode is a safe fallback.
+    console.error("Could not enter write mode for the new page", error);
+    return;
+  }
+  if (!isCreatedPageCurrent() || isPageReadOnly()) return;
+  elements.pageTitle.focus({ preventScroll: true });
+  elements.pageTitle.select();
 }
 
 async function createCollection() {
@@ -19530,15 +19669,45 @@ function getCurrentWorkspaceLocation() {
   return { view: "home" };
 }
 
-function syncWorkspaceLocation() {
-  if (!state.authenticated || !state.user) return;
-  const hash = serializeWorkspaceLocation(getCurrentWorkspaceLocation());
-  const target = `${window.location.pathname}${window.location.search}${hash}`;
-  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  if (current !== target) window.history.replaceState(null, "", target);
+// While a destination is being restored from the URL (reload, Back/Forward),
+// the browser already owns that history entry: rewriting it must not add one.
+let workspaceLocationRestoreDepth = 0;
+
+function isSameWorkspaceDestination(left, right) {
+  if (!left || !right || left.view !== right.view) return false;
+  if (left.view === "page") return left.pageId === right.pageId;
+  if (left.view === "collection") return left.collectionId === right.collectionId;
+  return true;
 }
 
-async function restoreWorkspaceLocationFromHash({ fallbackToHome = false } = {}) {
+function syncWorkspaceLocation({ replace = false } = {}) {
+  if (!state.authenticated || !state.user) return;
+  const location = getCurrentWorkspaceLocation();
+  const hash = serializeWorkspaceLocation(location);
+  const target = `${window.location.pathname}${window.location.search}${hash}`;
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (current === target) return;
+  // Moving to another page, collection, or home is a navigation the Back
+  // button should undo; a read/write mode switch only refines the same entry.
+  const currentLocation = parseWorkspaceLocation(window.location.hash);
+  const createsHistoryEntry = !replace
+    && workspaceLocationRestoreDepth === 0
+    && Boolean(currentLocation)
+    && !isSameWorkspaceDestination(currentLocation, location);
+  if (createsHistoryEntry) window.history.pushState(null, "", target);
+  else window.history.replaceState(null, "", target);
+}
+
+async function restoreWorkspaceLocationFromHash(options = {}) {
+  workspaceLocationRestoreDepth += 1;
+  try {
+    return await restoreWorkspaceLocationFromHashUnchecked(options);
+  } finally {
+    workspaceLocationRestoreDepth -= 1;
+  }
+}
+
+async function restoreWorkspaceLocationFromHashUnchecked({ fallbackToHome = false } = {}) {
   if (!state.authenticated || !state.user) return false;
   const destination = parseWorkspaceLocation(window.location.hash);
 
@@ -20914,11 +21083,11 @@ window.addEventListener("hashchange", () => {
   if (state.authenticated && state.user) {
     const destination = parseWorkspaceLocation(window.location.hash);
     if (!destination) {
-      syncWorkspaceLocation();
+      syncWorkspaceLocation({ replace: true });
       return;
     }
     void restoreWorkspaceLocationFromHash().catch((error) => {
-      syncWorkspaceLocation();
+      syncWorkspaceLocation({ replace: true });
       setStatus(error?.message ?? t("errors.unknown"), true);
     });
     return;
@@ -21115,7 +21284,7 @@ elements.authForm.addEventListener("submit", async (event) => {
       setAuthMode("login");
       elements.username.value = body.username;
       elements.password.value = "";
-      setStatus("Registration request received. New accounts require operator approval before sign-in.");
+      setStatus(t("auth.registrationPending"));
       return;
     }
     if (data?.mfaRequired) {
@@ -21157,8 +21326,24 @@ elements.searchForm.addEventListener("submit", (event) => {
   void performWorkspaceSearch();
 });
 
-elements.searchInput.addEventListener("input", () => {
+// Quick Find shows results while typing; Enter still searches immediately.
+const liveSearchDelayMs = 300;
+let liveSearchTimer = null;
+
+elements.searchInput.addEventListener("input", (event) => {
+  window.clearTimeout(liveSearchTimer);
+  liveSearchTimer = null;
   resetSearchDialogState({ clearInput: false });
+  // Wait for IME composition (Korean/Japanese) to settle before querying.
+  if (event.isComposing || !elements.searchInput.value.trim()) return;
+  liveSearchTimer = window.setTimeout(() => {
+    liveSearchTimer = null;
+    if (state.searchDialogOpen) void performWorkspaceSearch({ live: true });
+  }, liveSearchDelayMs);
+});
+
+elements.searchInput.addEventListener("compositionend", () => {
+  elements.searchInput.dispatchEvent(new Event("input"));
 });
 
 elements.searchClear.addEventListener("click", () => {
@@ -21214,6 +21399,11 @@ async function handleSidebarPageClick(event) {
 
   const item = event.target.closest("[data-page-id], [data-collection-id]");
   if (!item) return;
+  if (event.ctrlKey || event.metaKey || event.shiftKey) {
+    event.preventDefault();
+    openWorkspaceItemInNewTab(item);
+    return;
+  }
   closeMobileSidebar({ restoreFocus: true });
   let collectionNavigationGeneration = null;
   try {
@@ -21241,6 +21431,54 @@ async function handleSidebarPageClick(event) {
       || isCurrentWorkspaceNavigation(collectionNavigationGeneration)
     ) setStatus(error.message, true);
   }
+}
+
+// Pages and collections are buttons, so give them the link behaviors people
+// expect from a navigation list: Ctrl/⌘/Shift+click or middle-click opens the
+// item in a new tab, and right-click opens the same menu as the ⋮ button.
+function getWorkspaceItemUrl(item) {
+  const location = item.dataset.collectionId
+    ? { view: "collection", collectionId: item.dataset.collectionId }
+    : { view: "page", pageId: item.dataset.pageId };
+  return `${window.location.pathname}${window.location.search}${serializeWorkspaceLocation(location)}`;
+}
+
+function getNavigationItemFromEvent(event) {
+  if (event.target.closest("[data-page-children-toggle-id], .navigation-more-button")) return null;
+  return event.target.closest("[data-page-id], [data-collection-id]");
+}
+
+function openWorkspaceItemInNewTab(item) {
+  window.open(getWorkspaceItemUrl(item), "_blank", "noopener");
+}
+
+function handleSidebarItemAuxClick(event) {
+  if (event.button !== 1) return;
+  const item = getNavigationItemFromEvent(event);
+  if (!item) return;
+  event.preventDefault();
+  openWorkspaceItemInNewTab(item);
+}
+
+function handleSidebarItemMouseDown(event) {
+  // Stop the browser's middle-button autoscroll so auxclick can open a tab.
+  if (event.button === 1 && getNavigationItemFromEvent(event)) event.preventDefault();
+}
+
+function handleSidebarItemContextMenu(event) {
+  // The ⋮ handle doubles as the drag handle (long-press on touch); leave it alone.
+  if (event.target.closest(".navigation-more-button")) return;
+  const row = event.target.closest(".document-item-row, .collection-title-row");
+  const trigger = row?.querySelector(".navigation-more-button");
+  if (!trigger || trigger.disabled) return;
+  event.preventDefault();
+  openNavigationContextMenu(trigger);
+}
+
+for (const list of [elements.pageList, elements.collectionList, elements.collectionViewList]) {
+  list.addEventListener("auxclick", handleSidebarItemAuxClick);
+  list.addEventListener("mousedown", handleSidebarItemMouseDown);
+  list.addEventListener("contextmenu", handleSidebarItemContextMenu);
 }
 
 elements.pageList.addEventListener("click", handleSidebarPageClick);
@@ -21951,6 +22189,15 @@ elements.pageTitle.addEventListener("focus", () => updateCollaborationAwareness(
 elements.pageTitle.addEventListener("keyup", () => updateCollaborationAwareness(elements.pageTitle));
 elements.pageTitle.addEventListener("mouseup", () => updateCollaborationAwareness(elements.pageTitle));
 
+elements.pageModeBadge.addEventListener("click", async () => {
+  const nextMode = isPageReadOnly() ? pageModes.WRITE : pageModes.READ;
+  try {
+    await setPageMode(nextMode);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+});
+
 elements.pageModeToggle.addEventListener("click", async () => {
   const nextMode = isPageReadOnly() ? pageModes.WRITE : pageModes.READ;
   closePageActionsMenu({ restoreFocus: false });
@@ -22014,7 +22261,46 @@ elements.exportPdfButton.addEventListener("click", () => {
   });
 });
 
+// Ctrl/⌘+S is muscle memory in any editor. Edits already save automatically,
+// so the shortcut only pushes pending edits out now (without rebuilding the
+// editor or moving the caret) and never opens the browser's "Save page as".
+async function saveCurrentPageNow() {
+  if (!requireWritablePage()) return;
+  if (hasUnresolvedDraftConflicts()) {
+    reportUnresolvedDraftConflict();
+    return;
+  }
+  const pageId = state.selectedPage.id;
+  try {
+    await flushPendingPageEdits();
+    if (state.selectedPage?.id !== pageId) return;
+    syncBeforeUnloadProtection();
+    if (!hasPendingPageEdits()) setStatus(t("status.pageSaved"));
+  } catch (error) {
+    if (state.selectedPage?.id === pageId) setStatus(error.message, true);
+  }
+}
+
+document.addEventListener("keydown", (event) => {
+  if (
+    event.defaultPrevented
+    || event.isComposing
+    || event.altKey
+    || event.shiftKey
+    || !(event.ctrlKey || event.metaKey)
+    || String(event.key ?? "").toLowerCase() !== "s"
+  ) return;
+  if (!state.user || state.workspaceView !== "page" || !state.selectedPage) return;
+  event.preventDefault();
+  if (isPageReadOnly()) return;
+  void saveCurrentPageNow();
+});
+
 elements.savePageButton.addEventListener("click", async () => {
+  if (elements.savePageButton.dataset.saveState === "saved" && !hasPendingPageEdits()) {
+    setStatus(t("status.pageSaved"));
+    return;
+  }
   if (!requireWritablePage()) return;
   if (hasUnresolvedDraftConflicts()) {
     reportUnresolvedDraftConflict();
@@ -23401,6 +23687,10 @@ elements.navigationContextMenu.addEventListener("click", async (event) => {
       if (!target || target.kind !== "page") return;
       closeNavigationContextMenu();
       openPageMoveDialog(target.id, returnFocus);
+      return;
+    }
+    if (button.dataset.action === "archive-navigation-page") {
+      await archiveNavigationPage();
       return;
     }
     if (button.dataset.action === "delete-navigation-item") await deleteNavigationTarget();

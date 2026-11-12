@@ -45,7 +45,12 @@ test("page mode defaults safely to read unless write is explicitly requested", (
 
 test("authenticated navigation synchronizes the URL and boot restores it", () => {
   assert.match(appSource, /import \{ parseWorkspaceLocation, serializeWorkspaceLocation \} from "\.\/workspace-location\.js";/);
-  assert.match(appSource, /function syncWorkspaceLocation\(\)/);
+  assert.match(appSource, /function syncWorkspaceLocation\(\{ replace = false \} = \{\}\)/);
+  // Moving between destinations adds a history entry so Back/Forward work;
+  // mode switches and URL-driven restores only rewrite the current entry.
+  assert.match(appSource, /window\.history\.pushState\(null, "", target\)/);
+  assert.match(appSource, /workspaceLocationRestoreDepth === 0/);
+  assert.match(appSource, /!isSameWorkspaceDestination\(currentLocation, location\)/);
   assert.match(appSource, /async function restoreWorkspaceLocationFromHash/);
   assert.match(appSource, /await restoreWorkspaceLocationFromHash\(\{ fallbackToHome: true \}\);/);
   assert.match(appSource, /result\.outcome === "ready"[\s\S]*renderPages\(\);[\s\S]*await restoreWorkspaceLocationFromHash\(\{ fallbackToHome: true \}\);[\s\S]*renderShell\(\);/);

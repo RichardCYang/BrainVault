@@ -309,8 +309,9 @@ export const translationCatalogs = {
       openCollection: "Open actions for collection “{title}”",
       addSubpage: "Add subpage",
       movePage: "Move to another page",
-      deletePage: "Delete page",
-      deleteCollection: "Delete collection"
+      deletePage: "Delete permanently",
+      deleteCollection: "Delete collection permanently",
+      archivePage: "Archive"
     },
     collection: {
       heading: "📁 Default collection",
@@ -420,7 +421,15 @@ export const translationCatalogs = {
       editorAria: "Unified block document editor",
       subpagesEyebrow: "Page index",
       subpagesTitle: "Subpages",
-      subpagesAria: "Subpages"
+      subpagesAria: "Subpages",
+      startEditing: "Edit",
+      finishEditing: "Done",
+      startEditingAria: "Switch to write mode",
+      finishEditingAria: "Finish editing and switch to read mode",
+      saving: "Saving…",
+      saved: "Saved",
+      saveRetry: "Retry save",
+      saveNowTitle: "Changes save automatically · Save now (Ctrl/⌘+S)"
     },
     cover: {
       regionAria: "Page cover",
@@ -950,7 +959,7 @@ export const translationCatalogs = {
       pdfSaveInstructions: "In the print dialog, choose Save as PDF.",
       pdfDialogClosed: "The PDF export dialog was closed.",
       creatingDocument: "Creating a page in the default collection...",
-      documentCreated: "Page created in read mode.",
+      documentCreated: "Page created.",
       creatingSubpage: "Creating a subpage...",
       subpageCreated: "Subpage created in read mode.",
       creatingCollection: "Creating the collection...",
@@ -1162,8 +1171,9 @@ export const translationCatalogs = {
       openCollection: "コレクション「{title}」の操作を開く",
       addSubpage: "サブページを追加",
       movePage: "別のページへ移動",
-      deletePage: "ページを削除",
-      deleteCollection: "コレクションを削除"
+      deletePage: "完全に削除",
+      deleteCollection: "コレクションを完全に削除",
+      archivePage: "アーカイブ"
     },
     collection: {
       heading: "📁 デフォルトコレクション",
@@ -1211,7 +1221,15 @@ export const translationCatalogs = {
       editorAria: "統合ブロックドキュメントエディター",
       subpagesEyebrow: "ページ目次",
       subpagesTitle: "サブページ",
-      subpagesAria: "サブページ目次"
+      subpagesAria: "サブページ目次",
+      startEditing: "編集",
+      finishEditing: "完了",
+      startEditingAria: "編集モードに切り替え",
+      finishEditingAria: "編集を終えて閲覧モードに切り替え",
+      saving: "保存中…",
+      saved: "保存済み",
+      saveRetry: "再保存",
+      saveNowTitle: "変更は自動保存されます · 今すぐ保存 (Ctrl/⌘+S)"
     },
     sharing: {
       button: "共有",
@@ -1414,7 +1432,7 @@ export const translationCatalogs = {
       pdfSaveInstructions: "印刷ダイアログで「PDFとして保存」を選択してください。",
       pdfDialogClosed: "PDF書き出しダイアログを閉じました。",
       creatingDocument: "デフォルトコレクションに新しいページを作成しています...",
-      documentCreated: "ページを閲覧モードで作成しました。",
+      documentCreated: "ページを作成しました。",
       creatingSubpage: "サブページを作成しています...",
       subpageCreated: "サブページを作成しました。",
       creatingCollection: "コレクションを作成しています...",
@@ -1606,8 +1624,9 @@ export const translationCatalogs = {
       openCollection: "“{title}” 컬렉션 메뉴 열기",
       addSubpage: "하위 페이지 추가",
       movePage: "다른 페이지로 이동하기",
-      deletePage: "페이지 삭제",
-      deleteCollection: "컬렉션 삭제"
+      deletePage: "영구 삭제",
+      deleteCollection: "컬렉션 영구 삭제",
+      archivePage: "보관하기"
     },
     collection: {
       heading: "📁 기본 컬렉션",
@@ -1717,7 +1736,15 @@ export const translationCatalogs = {
       editorAria: "통합 블록 문서 에디터",
       subpagesEyebrow: "페이지 목차",
       subpagesTitle: "하위 페이지",
-      subpagesAria: "하위 페이지 목차"
+      subpagesAria: "하위 페이지 목차",
+      startEditing: "편집",
+      finishEditing: "완료",
+      startEditingAria: "쓰기 모드로 전환",
+      finishEditingAria: "편집을 마치고 읽기 모드로 전환",
+      saving: "저장 중…",
+      saved: "저장됨",
+      saveRetry: "다시 저장",
+      saveNowTitle: "변경 사항은 자동 저장됩니다 · 지금 저장 (Ctrl/⌘+S)"
     },
     cover: {
       regionAria: "페이지 커버",
@@ -2226,7 +2253,7 @@ export const translationCatalogs = {
       pdfSaveInstructions: "인쇄 창에서 ‘PDF로 저장’을 선택하세요.",
       pdfDialogClosed: "PDF 내보내기 창을 닫았습니다.",
       creatingDocument: "기본 컬렉션에 새 문서를 만드는 중입니다...",
-      documentCreated: "읽기 모드로 새 문서를 만들었습니다.",
+      documentCreated: "새 페이지를 만들었습니다.",
       creatingSubpage: "하위 페이지를 만드는 중입니다...",
       subpageCreated: "하위 페이지를 만들었습니다.",
       creatingCollection: "컬렉션을 만드는 중입니다...",
@@ -2436,8 +2463,9 @@ export const translationCatalogs = {
       openCollection: "Ouvrir les actions de la collection « {title} »",
       addSubpage: "Ajouter une sous-page",
       movePage: "Déplacer vers une autre page",
-      deletePage: "Supprimer la page",
-      deleteCollection: "Supprimer la collection"
+      deletePage: "Supprimer définitivement",
+      deleteCollection: "Supprimer définitivement la collection",
+      archivePage: "Archiver"
     },
     collection: {
       heading: "📁 Collection par défaut",
@@ -2485,7 +2513,15 @@ export const translationCatalogs = {
       editorAria: "Éditeur de document à blocs unifié",
       subpagesEyebrow: "Index de page",
       subpagesTitle: "Sous-pages",
-      subpagesAria: "Sous-pages"
+      subpagesAria: "Sous-pages",
+      startEditing: "Modifier",
+      finishEditing: "Terminé",
+      startEditingAria: "Passer en mode édition",
+      finishEditingAria: "Terminer la modification et passer en mode lecture",
+      saving: "Enregistrement…",
+      saved: "Enregistré",
+      saveRetry: "Réessayer",
+      saveNowTitle: "Les modifications sont enregistrées automatiquement · Enregistrer maintenant (Ctrl/⌘+S)"
     },
     sharing: {
       button: "Partager",
@@ -2688,7 +2724,7 @@ export const translationCatalogs = {
       pdfSaveInstructions: "Dans la boîte de dialogue d’impression, choisissez Enregistrer au format PDF.",
       pdfDialogClosed: "La boîte de dialogue d’export PDF a été fermée.",
       creatingDocument: "Création d’une page dans la collection par défaut...",
-      documentCreated: "Page créée en mode lecture.",
+      documentCreated: "Page créée.",
       creatingSubpage: "Création de la sous-page...",
       subpageCreated: "Sous-page créée.",
       creatingCollection: "Création de la collection...",
@@ -2851,8 +2887,9 @@ export const translationCatalogs = {
       openCollection: "Aktionen für die Sammlung „{title}“ öffnen",
       addSubpage: "Unterseite hinzufügen",
       movePage: "Auf eine andere Seite verschieben",
-      deletePage: "Seite löschen",
-      deleteCollection: "Sammlung löschen"
+      deletePage: "Endgültig löschen",
+      deleteCollection: "Sammlung endgültig löschen",
+      archivePage: "Archivieren"
     },
     collection: {
       heading: "📁 Standardsammlung",
@@ -2900,7 +2937,15 @@ export const translationCatalogs = {
       editorAria: "Einheitlicher Block-Dokumenteditor",
       subpagesEyebrow: "Seitenübersicht",
       subpagesTitle: "Unterseiten",
-      subpagesAria: "Unterseiten"
+      subpagesAria: "Unterseiten",
+      startEditing: "Bearbeiten",
+      finishEditing: "Fertig",
+      startEditingAria: "In den Bearbeitungsmodus wechseln",
+      finishEditingAria: "Bearbeitung beenden und in den Lesemodus wechseln",
+      saving: "Wird gespeichert…",
+      saved: "Gespeichert",
+      saveRetry: "Erneut speichern",
+      saveNowTitle: "Änderungen werden automatisch gespeichert · Jetzt speichern (Strg/⌘+S)"
     },
     sharing: {
       button: "Teilen",
@@ -3103,7 +3148,7 @@ export const translationCatalogs = {
       pdfSaveInstructions: "Wähle im Druckdialog Als PDF speichern.",
       pdfDialogClosed: "Der PDF-Exportdialog wurde geschlossen.",
       creatingDocument: "Seite wird in der Standardsammlung erstellt...",
-      documentCreated: "Seite im Lesemodus erstellt.",
+      documentCreated: "Seite erstellt.",
       creatingSubpage: "Unterseite wird erstellt...",
       subpageCreated: "Unterseite erstellt.",
       creatingCollection: "Sammlung wird erstellt...",
@@ -3266,8 +3311,9 @@ export const translationCatalogs = {
       openCollection: "Abrir acciones de la colección «{title}»",
       addSubpage: "Añadir subpágina",
       movePage: "Mover a otra página",
-      deletePage: "Eliminar página",
-      deleteCollection: "Eliminar colección"
+      deletePage: "Eliminar definitivamente",
+      deleteCollection: "Eliminar la colección definitivamente",
+      archivePage: "Archivar"
     },
     collection: {
       heading: "📁 Colección predeterminada",
@@ -3315,7 +3361,15 @@ export const translationCatalogs = {
       editorAria: "Editor unificado de documentos por bloques",
       subpagesEyebrow: "Índice de página",
       subpagesTitle: "Subpáginas",
-      subpagesAria: "Subpáginas"
+      subpagesAria: "Subpáginas",
+      startEditing: "Editar",
+      finishEditing: "Listo",
+      startEditingAria: "Cambiar al modo edición",
+      finishEditingAria: "Terminar de editar y cambiar al modo lectura",
+      saving: "Guardando…",
+      saved: "Guardado",
+      saveRetry: "Reintentar",
+      saveNowTitle: "Los cambios se guardan automáticamente · Guardar ahora (Ctrl/⌘+S)"
     },
     sharing: {
       button: "Compartir",
@@ -3518,7 +3572,7 @@ export const translationCatalogs = {
       pdfSaveInstructions: "En el cuadro de impresión, elige Guardar como PDF.",
       pdfDialogClosed: "Se cerró el cuadro de exportación a PDF.",
       creatingDocument: "Creando una página en la colección predeterminada...",
-      documentCreated: "Página creada en modo lectura.",
+      documentCreated: "Página creada.",
       creatingSubpage: "Creando una subpágina...",
       subpageCreated: "Subpágina creada.",
       creatingCollection: "Creando la colección...",
@@ -3681,8 +3735,9 @@ export const translationCatalogs = {
       openCollection: "Abrir ações da coleção “{title}”",
       addSubpage: "Adicionar subpágina",
       movePage: "Mover para outra página",
-      deletePage: "Excluir página",
-      deleteCollection: "Excluir coleção"
+      deletePage: "Excluir permanentemente",
+      deleteCollection: "Excluir a coleção permanentemente",
+      archivePage: "Arquivar"
     },
     collection: {
       heading: "📁 Coleção padrão",
@@ -3730,7 +3785,15 @@ export const translationCatalogs = {
       editorAria: "Editor unificado de documentos em blocos",
       subpagesEyebrow: "Índice da página",
       subpagesTitle: "Subpáginas",
-      subpagesAria: "Subpáginas"
+      subpagesAria: "Subpáginas",
+      startEditing: "Editar",
+      finishEditing: "Concluir",
+      startEditingAria: "Mudar para o modo de edição",
+      finishEditingAria: "Concluir a edição e mudar para o modo de leitura",
+      saving: "Salvando…",
+      saved: "Salvo",
+      saveRetry: "Tentar novamente",
+      saveNowTitle: "As alterações são salvas automaticamente · Salvar agora (Ctrl/⌘+S)"
     },
     sharing: {
       button: "Compartilhar",
@@ -3933,7 +3996,7 @@ export const translationCatalogs = {
       pdfSaveInstructions: "Na caixa de impressão, escolha Salvar como PDF.",
       pdfDialogClosed: "A caixa de exportação em PDF foi fechada.",
       creatingDocument: "Criando uma página na coleção padrão...",
-      documentCreated: "Página criada no modo de leitura.",
+      documentCreated: "Página criada.",
       creatingSubpage: "Criando uma subpágina...",
       subpageCreated: "Subpágina criada.",
       creatingCollection: "Criando a coleção...",
@@ -5609,6 +5672,287 @@ for (const [language, addition] of Object.entries(usabilityTranslationAdditions)
   catalog.archive = { ...catalog.archive, ...addition.archive };
   Object.assign(catalog.status, addition.status);
   Object.assign(catalog.account, addition.account);
+}
+
+// UX refresh strings (move filters, collection sharing, ownership notices).
+// Merged per section so existing keys in each catalog stay intact.
+const uxRefreshTranslationAdditions = {
+  "en": {
+    "blockMove": {
+      "filterLabel": "Find a page",
+      "filterPlaceholder": "Type to filter pages…"
+    },
+    "collectionSharing": {
+      "button": "Share collection",
+      "addPage": "Add page",
+      "kicker": "Collection collaboration",
+      "title": "Share this collection",
+      "description": "Collection access overrides page-level sharing. Choose read, read/write, or administrator access.",
+      "close": "Close collection sharing dialog",
+      "usernameLabel": "User login ID",
+      "permissionAria": "Collection permission",
+      "permissionRead": "Read",
+      "permissionWrite": "Read / write",
+      "permissionAdmin": "Administrator",
+      "add": "Add user",
+      "peopleWithAccess": "People with collection access",
+      "onlyYou": "Only you can access this collection."
+    },
+    "ownership": {
+      "deleteCollectionOwnerOnly": "Only the workspace owner can permanently delete a collection root.",
+      "revokeOwnerOnly": "Only the workspace owner can revoke a direct page grant."
+    },
+    "auth": {
+      "registrationPending": "Registration request received. New accounts require operator approval before sign-in."
+    },
+    "recovery": {
+      "untrustedDraftWarning": "Untrusted collaborator recovery draft. Download only after verifying its author; it is never restored automatically."
+    },
+    "pageMove": {
+      "filterLabel": "Find a page",
+      "filterPlaceholder": "Type to filter pages…"
+    }
+  },
+  "ja": {
+    "blockMove": {
+      "filterLabel": "ページを検索",
+      "filterPlaceholder": "入力してページを絞り込み…"
+    },
+    "collectionSharing": {
+      "button": "コレクションを共有",
+      "addPage": "ページを追加",
+      "kicker": "コレクションの共同編集",
+      "title": "このコレクションを共有",
+      "description": "コレクションの権限はページ単位の共有より優先されます。閲覧、閲覧/編集、管理者のいずれかを選んでください。",
+      "close": "コレクション共有ダイアログを閉じる",
+      "usernameLabel": "ユーザーのログインID",
+      "permissionAria": "コレクションの権限",
+      "permissionRead": "閲覧",
+      "permissionWrite": "閲覧 / 編集",
+      "permissionAdmin": "管理者",
+      "add": "ユーザーを追加",
+      "peopleWithAccess": "コレクションにアクセスできるユーザー",
+      "onlyYou": "このコレクションにアクセスできるのはあなただけです。"
+    },
+    "ownership": {
+      "deleteCollectionOwnerOnly": "コレクションを完全に削除できるのはワークスペースの所有者だけです。",
+      "revokeOwnerOnly": "ページへの直接の権限を取り消せるのはワークスペースの所有者だけです。"
+    },
+    "auth": {
+      "registrationPending": "登録申請を受け付けました。新しいアカウントはサインイン前に管理者の承認が必要です。"
+    },
+    "recovery": {
+      "untrustedDraftWarning": "信頼できない共同編集者の復旧下書きです。作成者を確認してからダウンロードしてください。自動では復元されません。"
+    },
+    "pageMove": {
+      "filterLabel": "ページを検索",
+      "filterPlaceholder": "入力してページを絞り込み…"
+    }
+  },
+  "ko": {
+    "blockMove": {
+      "filterLabel": "페이지 찾기",
+      "filterPlaceholder": "입력하여 페이지 필터…"
+    },
+    "collectionSharing": {
+      "button": "컬렉션 공유",
+      "addPage": "페이지 추가",
+      "kicker": "컬렉션 협업",
+      "title": "이 컬렉션 공유",
+      "description": "컬렉션 권한은 페이지별 공유보다 우선합니다. 읽기, 읽기/쓰기, 관리자 중에서 선택하세요.",
+      "close": "컬렉션 공유 창 닫기",
+      "usernameLabel": "사용자 로그인 ID",
+      "permissionAria": "컬렉션 권한",
+      "permissionRead": "읽기",
+      "permissionWrite": "읽기 / 쓰기",
+      "permissionAdmin": "관리자",
+      "add": "사용자 추가",
+      "peopleWithAccess": "컬렉션에 접근할 수 있는 사용자",
+      "onlyYou": "이 컬렉션에는 나만 접근할 수 있습니다."
+    },
+    "ownership": {
+      "deleteCollectionOwnerOnly": "컬렉션은 워크스페이스 소유자만 영구 삭제할 수 있습니다.",
+      "revokeOwnerOnly": "페이지에 직접 부여된 권한은 워크스페이스 소유자만 취소할 수 있습니다."
+    },
+    "auth": {
+      "registrationPending": "가입 요청을 접수했습니다. 새 계정은 관리자의 승인 후에 로그인할 수 있습니다."
+    },
+    "recovery": {
+      "untrustedDraftWarning": "신뢰할 수 없는 협업자의 복구 초안입니다. 작성자를 확인한 뒤에만 내려받으세요. 자동으로 복원되지 않습니다."
+    },
+    "pageMove": {
+      "filterLabel": "페이지 찾기",
+      "filterPlaceholder": "입력하여 페이지 필터…"
+    }
+  },
+  "fr": {
+    "blockMove": {
+      "filterLabel": "Trouver une page",
+      "filterPlaceholder": "Saisissez pour filtrer les pages…"
+    },
+    "collectionSharing": {
+      "button": "Partager la collection",
+      "addPage": "Ajouter une page",
+      "kicker": "Collaboration sur la collection",
+      "title": "Partager cette collection",
+      "description": "L’accès à la collection prime sur le partage par page. Choisissez lecture, lecture/écriture ou administrateur.",
+      "close": "Fermer le partage de la collection",
+      "usernameLabel": "Identifiant de l’utilisateur",
+      "permissionAria": "Autorisation sur la collection",
+      "permissionRead": "Lecture",
+      "permissionWrite": "Lecture / écriture",
+      "permissionAdmin": "Administrateur",
+      "add": "Ajouter l’utilisateur",
+      "peopleWithAccess": "Personnes ayant accès à la collection",
+      "onlyYou": "Vous seul avez accès à cette collection."
+    },
+    "ownership": {
+      "deleteCollectionOwnerOnly": "Seul le propriétaire de l’espace de travail peut supprimer définitivement une collection.",
+      "revokeOwnerOnly": "Seul le propriétaire de l’espace de travail peut révoquer un accès direct à la page."
+    },
+    "auth": {
+      "registrationPending": "Demande d’inscription reçue. Les nouveaux comptes doivent être approuvés par l’opérateur avant la connexion."
+    },
+    "recovery": {
+      "untrustedDraftWarning": "Brouillon de récupération d’un collaborateur non vérifié. Téléchargez-le seulement après avoir vérifié son auteur ; il n’est jamais restauré automatiquement."
+    },
+    "pageMove": {
+      "filterLabel": "Trouver une page",
+      "filterPlaceholder": "Saisissez pour filtrer les pages…"
+    }
+  },
+  "de": {
+    "blockMove": {
+      "filterLabel": "Seite suchen",
+      "filterPlaceholder": "Tippen, um Seiten zu filtern…"
+    },
+    "collectionSharing": {
+      "button": "Sammlung teilen",
+      "addPage": "Seite hinzufügen",
+      "kicker": "Zusammenarbeit an der Sammlung",
+      "title": "Diese Sammlung teilen",
+      "description": "Der Sammlungszugriff hat Vorrang vor der Freigabe einzelner Seiten. Wählen Sie Lesen, Lesen/Schreiben oder Administrator.",
+      "close": "Sammlungsfreigabe schließen",
+      "usernameLabel": "Anmelde-ID des Benutzers",
+      "permissionAria": "Sammlungsberechtigung",
+      "permissionRead": "Lesen",
+      "permissionWrite": "Lesen / Schreiben",
+      "permissionAdmin": "Administrator*in",
+      "add": "Benutzer hinzufügen",
+      "peopleWithAccess": "Personen mit Zugriff auf die Sammlung",
+      "onlyYou": "Nur Sie haben Zugriff auf diese Sammlung."
+    },
+    "ownership": {
+      "deleteCollectionOwnerOnly": "Nur der Besitzer des Arbeitsbereichs kann eine Sammlung endgültig löschen.",
+      "revokeOwnerOnly": "Nur der Besitzer des Arbeitsbereichs kann eine direkte Seitenfreigabe widerrufen."
+    },
+    "auth": {
+      "registrationPending": "Registrierungsanfrage erhalten. Neue Konten müssen vor der Anmeldung vom Betreiber freigegeben werden."
+    },
+    "recovery": {
+      "untrustedDraftWarning": "Nicht vertrauenswürdiger Wiederherstellungsentwurf eines Mitarbeitenden. Erst nach Prüfung des Autors herunterladen; er wird nie automatisch wiederhergestellt."
+    },
+    "pageMove": {
+      "filterLabel": "Seite suchen",
+      "filterPlaceholder": "Tippen, um Seiten zu filtern…"
+    }
+  },
+  "es": {
+    "blockMove": {
+      "filterLabel": "Buscar una página",
+      "filterPlaceholder": "Escribe para filtrar páginas…"
+    },
+    "collectionSharing": {
+      "button": "Compartir colección",
+      "addPage": "Añadir página",
+      "kicker": "Colaboración en la colección",
+      "title": "Compartir esta colección",
+      "description": "El acceso a la colección prevalece sobre el uso compartido por página. Elige lectura, lectura/escritura o administrador.",
+      "close": "Cerrar el uso compartido de la colección",
+      "usernameLabel": "ID de inicio de sesión del usuario",
+      "permissionAria": "Permiso de la colección",
+      "permissionRead": "Lectura",
+      "permissionWrite": "Lectura / escritura",
+      "permissionAdmin": "Administrador",
+      "add": "Añadir usuario",
+      "peopleWithAccess": "Personas con acceso a la colección",
+      "onlyYou": "Solo tú puedes acceder a esta colección."
+    },
+    "ownership": {
+      "deleteCollectionOwnerOnly": "Solo el propietario del espacio de trabajo puede eliminar definitivamente una colección.",
+      "revokeOwnerOnly": "Solo el propietario del espacio de trabajo puede revocar un permiso directo de la página."
+    },
+    "auth": {
+      "registrationPending": "Solicitud de registro recibida. Las cuentas nuevas requieren la aprobación del operador antes de iniciar sesión."
+    },
+    "recovery": {
+      "untrustedDraftWarning": "Borrador de recuperación de un colaborador no verificado. Descárgalo solo después de verificar su autor; nunca se restaura automáticamente."
+    },
+    "pageMove": {
+      "filterLabel": "Buscar una página",
+      "filterPlaceholder": "Escribe para filtrar páginas…"
+    }
+  },
+  "pt": {
+    "blockMove": {
+      "filterLabel": "Encontrar uma página",
+      "filterPlaceholder": "Digite para filtrar páginas…"
+    },
+    "collectionSharing": {
+      "button": "Compartilhar coleção",
+      "addPage": "Adicionar página",
+      "kicker": "Colaboração na coleção",
+      "title": "Compartilhar esta coleção",
+      "description": "O acesso à coleção prevalece sobre o compartilhamento por página. Escolha leitura, leitura/escrita ou administrador.",
+      "close": "Fechar o compartilhamento da coleção",
+      "usernameLabel": "ID de login do usuário",
+      "permissionAria": "Permissão da coleção",
+      "permissionRead": "Leitura",
+      "permissionWrite": "Leitura / escrita",
+      "permissionAdmin": "Administrador",
+      "add": "Adicionar usuário",
+      "peopleWithAccess": "Pessoas com acesso à coleção",
+      "onlyYou": "Somente você pode acessar esta coleção."
+    },
+    "ownership": {
+      "deleteCollectionOwnerOnly": "Somente o proprietário do espaço de trabalho pode excluir uma coleção permanentemente.",
+      "revokeOwnerOnly": "Somente o proprietário do espaço de trabalho pode revogar uma permissão direta da página."
+    },
+    "auth": {
+      "registrationPending": "Solicitação de cadastro recebida. Novas contas precisam da aprovação do operador antes de entrar."
+    },
+    "recovery": {
+      "untrustedDraftWarning": "Rascunho de recuperação de um colaborador não verificado. Baixe somente após verificar o autor; ele nunca é restaurado automaticamente."
+    },
+    "pageMove": {
+      "filterLabel": "Encontrar uma página",
+      "filterPlaceholder": "Digite para filtrar páginas…"
+    }
+  }
+};
+
+const advancedSecurityStrings = {
+  en: ["Advanced sign-in policies", "Limit authenticator attempts by IP and restrict sign-ins by country."],
+  ja: ["高度なサインインポリシー", "IPごとの認証コード試行回数の制限と、国別のサインイン制限を設定します。"],
+  ko: ["고급 로그인 정책", "IP별 인증 코드 시도 횟수를 제한하고 국가별로 로그인을 제한합니다."],
+  fr: ["Règles de connexion avancées", "Limitez les tentatives de code par IP et restreignez les connexions par pays."],
+  de: ["Erweiterte Anmelderichtlinien", "Codeversuche pro IP begrenzen und Anmeldungen nach Land einschränken."],
+  es: ["Políticas de inicio de sesión avanzadas", "Limita los intentos de código por IP y restringe los inicios de sesión por país."],
+  pt: ["Políticas de login avançadas", "Limite as tentativas de código por IP e restrinja logins por país."]
+};
+for (const [language, [title, description]] of Object.entries(advancedSecurityStrings)) {
+  uxRefreshTranslationAdditions[language].account = {
+    advancedSecurityTitle: title,
+    advancedSecurityDescription: description
+  };
+}
+
+for (const [language, addition] of Object.entries(uxRefreshTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  for (const [section, entries] of Object.entries(addition)) {
+    catalog[section] = { ...catalog[section], ...entries };
+  }
 }
 
 function readStorage(key) {

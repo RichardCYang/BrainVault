@@ -51,8 +51,9 @@ describe("Page and collection deletion menus", () => {
 
   it("localizes the Korean menu, confirmation, progress, and completion messages", () => {
     expect(i18n).toContain('openPage: "“{title}” 페이지 메뉴 열기"');
-    expect(i18n).toContain('deletePage: "페이지 삭제"');
-    expect(i18n).toContain('deleteCollection: "컬렉션 삭제"');
+    expect(i18n).toContain('deletePage: "영구 삭제"');
+    expect(i18n).toContain('deleteCollection: "컬렉션 영구 삭제"');
+    expect(i18n).toContain('archivePage: "보관하기"');
     expect(i18n).toContain('deletingCollection: "컬렉션을 삭제하는 중입니다..."');
     expect(i18n).toContain('collectionDeleted: "컬렉션을 삭제했습니다."');
   });
